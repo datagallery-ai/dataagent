@@ -1,0 +1,35 @@
+AGENT_CONFIG:
+  name: "agent_b"
+  type: "react"
+  backend: "langgraph"
+
+MODEL:
+  deepseek:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v3.2"
+      temperature: 0.7
+
+SCENARIO:
+  chat:
+    input: a query to process
+    task: use slow_tool_agent_b to process the query
+    instructions: ONLY call slow_tool_agent_b. Do NOT use any other tool.
+    output_format: the tool result data
+
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "deepseek"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+
+TOOLS:
+  local_functions:
+    - module: "tests.e2e.concurrency.slow_tools"
+      function: "slow_tool_agent_b"

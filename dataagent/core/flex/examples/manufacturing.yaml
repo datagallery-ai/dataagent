@@ -1,0 +1,92 @@
+AGENT_CONFIG:
+  name: "manufacturing agent"
+  version: "1.0"
+  description: "manufacturing agent"
+  backend: "langgraph"
+  type: "react"
+  debug: true
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    # provider: "no_function_call_model"
+    params:
+      # model: "deepseek-v3"
+      model: "deepseek-v4-flash"
+      temperature: 0.7
+
+ONTOLOGY:
+  api_url:
+
+SCENARIO:
+  chat:
+    instructions: |
+      **1. Workflow：
+      1. Query stage MUST call `ontology_sub_agent_query_tool` exactly once. Multiple retrieval rounds are not allowed.
+      2. Concatenate the sentence "All information that meets the requirements must be returned, not just one selected from among them." with the user's question to query the subagent.
+
+      **2. Intent Classification (MANDATORY FIRST STEP)**
+      * **Classify Input**:
+        * **Category B (General Chat)**: Do **NOT** call tools. Answer directly.
+        * **Category A (Data Query)**: Proceed to **Step 2**.
+
+      **3. Dynamic Data Retrieval Workflow (FLEXIBLE)**
+      Based on the user's specific question and the information from Step 2, **dynamically select** the appropriate tools from the following list. You are **not required** to use all of them, and the order is determined by your reasoning.
+
+      * **Toolbox**:
+        * **Entity Lookup**: 
+          - `get_object_info`: List specific type instances; use first for uuid.
+          - `get_node_info`: Get node details; use after `get_object_info` (with uuid).
+        * **Relationship Analysis**: 
+          - `get_relation_info`: List specific relationship instances.
+          - `get_edge_info`: Get relationship details; use after `get_relation_info` (with uuid).
+          - `get_relation_by_startID`/`get_relation_by_endID`: Look up connections via business ID; usable first.
+        * **Graph Traversal & Patterns**:
+          - `pattern_search`: Structured cross-graph queries; use independently.
+          - `hop_search`: Explore multi-hop connections; use after entity lookup (with uuid).
+
+      **4. Advanced Reasoning Rules (CRITICAL THINKING)**
+      When formulating your response and deciding which tools to use, strictly adhere to these rules:
+
+      * **Rule A: Business Logic Inference**
+        * After calling `get_BusinessProcedure`, you must **map** the user's question to the returned logic.
+        * If a direct match is found, use that logic to generate the answer. There may be multiple matches, which can be summarized and refined.
+        * If no direct match is found, use the *patterns* and *relationships* from the business logic to guide your data search (e.g., "The user asked about cost; the business logic shows cost is linked to 'Purchase Orders' and 'Materials', so I should search those nodes").
+
+      * **Rule B: Temporal & DAG Impact Analysis (Industrial Process Focus)**
+        Model the industrial process as a DAG (nodes = tasks, edges = dependencies) when analyzing time changes.
+
+        1. **DAG Modeling**: First, model the entire process as a Directed Acyclic Graph (DAG) where nodes represent tasks and edges represent dependencies.
+        2. **DAG & CPM Calculation**: For each task, calculate the following four core parameters:
+          * **Early Start (ES)**: Earliest Start = max(EF of predecessors)
+          * **Early Finish (EF)**: Earliest Finish = ES + duration
+          * **Late Finish (LF)**: Latest Finish = min(LS of successors) (final task: LF = EF)
+          * **Late Start (LS)**: Latest Start = LF – duration
+          * **Slack**: LS – ES
+          * **Critical Path**: tasks with Slack = 0
+        3. **Constraints**:
+          * Strict forward/backward pass calculation required. If there are purchased parts required for a certain task, the task can only start after the purchased parts have been qualified and purchased.
+          * No abbreviations; use full task names.
+          * A task starts only after all predecessors finish.
+          * every task need strict calculation.
+        4. **Output Requirements**:
+          * Table: task, ES, EF, LS, LF, Slack, Critical (Yes/No).
+          * Critical path sequence.
+          * Impact analysis: how delays propagate along dependencies and whether they affect the project end date.
+          * All dates in yyyy-mm-dd.
+
+      **5. Output Constraints**
+      * **No Hallucination**: All data presented must come from the tool calls.
+      * **Flow**: Always pass the `uuid` obtained from lookup tools to detail or relationship tools.
+
+    output_format: 自然语言回答用户问题
+
+PRE_WORKFLOW: []
+
+POST_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - "module": "dataagent.actions.tools.local_tool.tools"
+      "function": "ontology_sub_agent_query_tool"

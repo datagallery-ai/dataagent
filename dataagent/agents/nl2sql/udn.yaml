@@ -1,0 +1,33 @@
+AGENT_CONFIG:
+  name: "NL2SQL Agent"
+  backend: "langgraph"
+  type: "nl2sql"
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "qwen3-30b-a3b"
+      temperature: 0.0
+CORE:
+  coordinator: {}
+  perceptor:
+    user_sql_rules: "sql_rules_udn"
+  generator:
+    strategies: ["prompt"]
+    num_samples: 1
+DATABASE:
+  db_id: "udn"
+  engine: "postgres"
+  sql_service_engine: "udn"
+  config:
+    path: ""
+METAVISOR:
+  metavisor_url: "http://8.92.9.151:41000"
+  udn:
+    table_selection:
+      llm_topk: 4
+      vector_topk: 20
+    evidence_selection:
+      mode: "keywords"
+      topk: 5

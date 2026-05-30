@@ -1,0 +1,145 @@
+site_name: DataAgent Docs
+docs_dir: .
+site_dir: ../site
+
+exclude_docs: |
+  mkdocs部署说明.md
+
+validation:
+  omitted_files: ignore
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: zh
+          name: 中文
+          default: true
+          build: true
+          site_name: DataAgent 文档
+          theme:
+            language: zh
+            palette:
+              - scheme: default
+                toggle:
+                  name: 切换到深色模式
+              - scheme: slate
+                toggle:
+                  name: 切换到浅色模式
+          nav:
+            - 主页: index.md
+            - 安装与开始:
+                - 安装部署: installation/installation.md
+                - 快速开始: quick_start/quick_start.md
+                - 数据库安装指导:
+                    - 数据库安装指导: installation_doc/database_install/database_install.md
+                    - 数据库镜像拉取: installation_doc/database_install/image-pull.md
+                    - 数据库服务部署: installation_doc/database_install/service-deployment.md
+                    - 场景数据导入: installation_doc/database_install/scenario-data-import.md
+                    - Semantic Service 部署指南: installation_doc/database_install/semantic-service-deployment.md
+            - 功能特性:
+                - 功能特性: function/function.md
+                - Semantic Service 使用指南: semantic_service/semantic-service-user-guide.md
+                - openJiuwen 使用指南: openJiuwen/openJiuwen-user-guide.md
+            - 架构文档:
+                - 架构文档索引: design_doc/design_doc.md
+                - context 模块设计: design_doc/Context_Module_Design.md
+                - 规划引擎模块设计: design_doc/Planning_Engine_Module_Design.md
+                - action 管理模块设计: design_doc/Action_Management_Module_Design.md
+            - 接口设计:
+                - 接口设计索引: api_doc/api_doc.md
+                - A2A 北向服务接口: api_doc/A2A_Northbound_Service_Interface.md
+                - Python SDK 接口: api_doc/PythonSDK.md
+            - 应用案例:
+                - 应用案例索引: case/case.md
+                - 构建数据分析 Agent: case/build-a-dataagent-from-scratch.md
+                - 构建 NL2SQL 专用 Agent: case/build-an-nl2sql-application.md
+            - 说明: explain/explain.md
+            - 里程碑: milestone/milestone.md
+        - locale: en
+          name: English
+          build: true
+          site_name: DataAgent Docs
+          theme:
+            language: en
+          nav:
+            - Home: index.md
+            - Installation & Getting Started:
+                - Installation: installation/installation.md
+                - Quick Start: quick_start/quick_start.md
+                - Database Installation:
+                    - Database Installation Guide: installation_doc/database_install/database_install.md
+                    - Pull Docker Images: installation_doc/database_install/image-pull.md
+                    - Deploy Database Services: installation_doc/database_install/service-deployment.md
+                    - Import Scenario Data: installation_doc/database_install/scenario-data-import.md
+                    - Semantic Service Deployment Guide: installation_doc/database_install/semantic-service-deployment.md
+            - Features:
+                - Features: function/function.md
+                - Semantic Service User Guide: semantic_service/semantic-service-user-guide.md
+                - openJiuwen User Guide: openJiuwen/openJiuwen-user-guide.md
+            - Architecture:
+                - Architecture Index: design_doc/design_doc.md
+                - Context Module Design: design_doc/Context_Module_Design.md
+                - Planning Engine Module Design: design_doc/Planning_Engine_Module_Design.md
+                - Action Management Module Design: design_doc/Action_Management_Module_Design.md
+            - API Design:
+                - API Design Index: api_doc/api_doc.md
+                - A2A Northbound Service Interface: api_doc/A2A_Northbound_Service_Interface.md
+                - Python SDK Interface: api_doc/PythonSDK.md
+            - Application Cases:
+                - Application Cases Index: case/case.md
+                - Build a Data Analysis Agent: case/build-a-dataagent-from-scratch.md
+                - Build a Dedicated NL2SQL Agent: case/build-an-nl2sql-application.md
+            - Notes: explain/explain.md
+            - Milestone: milestone/milestone.md
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_div_format
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+extra_css:
+  - static/stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - static/javascripts/mermaid-init.js
+  - static/javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js

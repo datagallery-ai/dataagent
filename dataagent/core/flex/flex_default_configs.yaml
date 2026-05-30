@@ -1,0 +1,51 @@
+# Flex Agent 默认配置（兜底配置）
+# from_config 加载优先级（后者覆盖前者）：
+# 1. flex/flex_default_configs.yaml（本文件，提供默认值）
+# 2. 用户指定的 yaml 配置文件
+# 3. .env 环境变量配置（最高优先级）
+
+
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 8192
+
+POST_WORKFLOW: []
+
+# ── 上下文压缩与 IR 转换参数（均可通过用户 YAML 覆盖） ──
+# compress_token_limit: 消息 token 超过此值 1.2 倍时触发 LLM 折叠压缩
+# compress_message_cnt: 消息数量超过此值时触发压缩
+# file_node_threshold: IR 转换中长文本落盘为 FileNode 的最小字符阈值
+# 示例：
+# CONTEXT:
+#   compress_token_limit: 32768
+#   compress_message_cnt: 200
+#   file_node_threshold: 500
+
+# Bash 工具命令白名单（可选）
+# 配置后仅允许 bash 工具执行列表中声明的命令，未配置则不限制。
+# 示例：
+# BASH_TOOL_WHITELIST:
+#   - ls
+#   - cat
+
+HOOKS:
+  agent:
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - name: pruner
+    executor:
+      pre:
+        # - name: pre_metadata_tracker
+      post:
+        # - name: post_metadata_tracker

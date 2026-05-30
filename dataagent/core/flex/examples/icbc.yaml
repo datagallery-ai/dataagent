@@ -1,0 +1,69 @@
+AGENT_CONFIG:
+  name: "Financial Ontology Agent"
+  version: "1.0"
+  description: "Financial ontology analytics agent"
+  backend: "langgraph"
+  type: "react"
+  mode: "dev"
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    # provider: "no_function_call_model"
+    params:
+      # model: "deepseek-v3"
+      model: "deepseek-v4-flash"
+      temperature: 0.7
+      # 通过设置 _is_icbc 选择是否调用专用后端接口，仅当 provider 为 “no_function_call_model” 时可使用
+      # _is_icbc: False
+      # enable_thinking: True
+
+
+SCENARIO:
+  personal: 企业金融分析智能助手，可以利用各种工具解决各项金融分析事务。
+  chat:
+    input: 自然语言任务query
+    task: |
+      - 支持三类任务，模型需根据 query 自动判断：
+        (1) 日常知识问答任务；
+        (2) 银行指标任务；
+        (3) 深度分析报告任务。
+    instructions: |
+      🔒统一执行策略（适用于本场景）：
+      - 主Agent在任何本体/图谱任务开始前，必须先调用 `get_ontology_description_tool` 获取本体结构（实体/关系/属性）。
+      - 主Agent在本体/图谱任务中只允许调用一次 `ontology_sub_agent_query_tool`。
+      - 严禁并发调用或多次调用 sub-agent。
+      - 该单次调用由子Agent完成全部本体查询与分析，再将结构化结果返回主Agent。
+      - 主Agent基于返回结果生成结论与报告。
+
+      🎯任务分类逻辑：
+      - (1) 日常知识问答：
+          → 直接回答问题，可自行组织知识推理
+          → 不调用 save_report_to_markdown 工具
+      - (2) 银行指标类任务：
+          → 必须且只调用一次 ontology_sub_agent_query_tool（ontology 子代理）处理本体相关检索与分析
+          → 仅传入自然语言 query
+          → 主代理只消费子代理返回的 structured JSON（original_msg），据此整理结论
+          → 不调用 save_report_to_markdown 工具
+      - (3) 深度分析报告任务：
+          → 依次调用：
+            a. ontology_sub_agent_query_tool（ontology 子代理，且仅调用一次）获取完整结构化数据
+            b. file_saver（将结构化结果保存为分析文件）
+            c. report_generator（生成 Markdown 报告内容）
+            d. save_report_to_markdown（最终保存报告）
+          → 最终回答中需要告知用户报告已生成与保存路径
+    output_format: 自然语言回答用户问题
+
+PRE_WORKFLOW: []
+
+POST_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - "module": "dataagent.actions.tools.local_tool.tools"
+      "function": "ontology_sub_agent_query_tool"
+    - "module": "dataagent.actions.tools.local_tool.tools"
+      "function": "get_ontology_description_tool"
+
+

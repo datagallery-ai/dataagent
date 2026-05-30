@@ -1,0 +1,87 @@
+AGENT_CONFIG:
+  name: "Biomedical Research Agent"
+  version: "1.0"
+  description: "Biomedical research assistant agent"
+  backend: "langgraph"
+  type: "react"
+  mode: "dev"
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.7
+
+SCENARIO:
+  personal: You are an AI assistant designed to parse and extract key entities from user query in a biomedical research context.
+  system_prompt: |
+    # Role
+    You are an AI assistant designed to parse and extract key entities from user query in a biomedical research context.
+
+    # Input Format
+    The input consists of a query and reference lists:
+    <query>...</query>
+    <cell>...</cell>
+    <pseudovirus>...</pseudovirus>
+    <antibody>...</antibody>
+
+    # Instructions
+    Look at the list of reference cell, pseudovirus, and antibody, extract the following entities from the query:
+      - Cell
+      - Pseudovirus
+      - Antibody
+    If a term in the query is not matched **exactly**​ in the reference lists, treat it as unmatched.
+    First, check whether these quantities are sufficient.
+
+    # Output
+    A json block, containing an object with keys "cell", "pseudovirus", and "antibody".
+    If an entity is not mentioned in the query, set its value to null.
+
+    # Example
+    Input:
+    <query>帮我安排BD55-1111和XBB.1.5的中和实验</query>
+    <cell>['huh-7', 'celltype6634']</cell>
+    <pseudovirus>['XBB.1.5']</pseudovirus>
+    <antibody>['BD55-1111']</antibody>
+
+    Output:
+    ```json
+    {
+      "cell": null,
+      "pseudovirus": "XBB.1.5",
+      "antibody": "BD55-1111"
+    }
+    ```
+  user_prompt: |
+    <query>
+    {{ query }}
+    </query>
+
+    <cell>
+    {{ cell }}
+    </cell>
+
+    <pseudovirus>
+    {{ pseudovirus }}
+    </pseudovirus>
+
+    <antibody>
+    {{ antibody }}
+    </antibody>
+  chat:
+    instructions: |
+      Must directly pass through the user's complete query to the ontology_sub_agent without any analysis.
+
+PRE_WORKFLOW: []
+
+POST_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - "module": "dataagent.actions.tools.local_tool.tools"
+      "function": "ontology_sub_agent_query_tool"
+    - "module": "dataagent.actions.tools.local_tool.tools"
+      "function": "get_ontology_description_tool"
+

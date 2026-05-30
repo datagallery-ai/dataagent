@@ -1,0 +1,66 @@
+AGENT_CONFIG:
+  name: "电商分析专家"
+  type: "react"
+  backend: "langgraph"
+  enable_human_feedback: true  # 启用 HITL 功能
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    tool_call_mode: "native" #参数为可选（native/structured），默认为native
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.7
+  jina_v3:
+    name: "jina_v3"
+    model_type: "embedding"
+    provider: "embedding"
+    params:
+      model: "jina-v3"
+
+SCENARIO:
+  chat:
+    input: data engineering prompt
+    task: run a tool chain and summarize
+    instructions: |
+      先调用这个工具：perceive_metadata_from_memory
+      After you generate the report, you can end the process.
+    output_format: done
+
+MEMORY:
+  path_prefix: "/data1/agent/agent_database/usr_graph"
+  index_prefix: "ecommerce"
+  embedding_model: "jina_v3"
+  long_term_storage:
+    backend: "elasticsearch"
+    url: $env{MEMORY_LONG_TERM_STORAGE_URL}
+  short_term_storage:
+    backend: "postgresql"
+    url: $env{MEMORY_SHORT_TERM_STORAGE_URL}
+
+DATASOURCE:
+  database_address: $env{DATASOURCE_DATABASE_ADDRESS}
+  database_table_name: "Ecommerce"
+
+PRE_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - module: "dataagent.actions.perceptor.perceptor_atomic"
+      function: "perceive_metadata_from_memory"
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "natural_language_to_plot"
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "natural_language_to_sql"
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "report_generator"
+  mcp_servers:
+    - server_id: "analyzer"
+      transport_type: "stdio"
+      config:
+        command: "python"
+        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2analyze"]
+        env: {}
+        test: test
+      description: "数据分析工具服务器"

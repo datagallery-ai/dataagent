@@ -1,0 +1,230 @@
+:root {
+  /* 正文字体——优先 Noto/思源/文泉驿，其次系统 UI 字体 */
+  --md-text-font: "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC",
+    "WenQuanYi Micro Hei", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+
+  /* 代码字体——优先常见编程字体 + Noto 等宽兜底 */
+  --md-code-font: "JetBrains Mono", "Fira Code", "Cascadia Mono", "SFMono-Regular",
+    Menlo, Monaco, Consolas, "Liberation Mono", "Noto Sans Mono CJK SC",
+    "Noto Sans Mono", monospace;
+}
+
+/* 兜底——确保正文/标题/导航/表格等都使用统一字体 */
+body,
+.md-header,
+.md-tabs,
+.md-nav,
+.md-typeset,
+.md-typeset table:not([class]) {
+  font-family: var(--md-text-font);
+}
+
+/* 代码区域字体统一（inline code + code block） */
+.md-typeset code,
+.md-typeset pre,
+.md-typeset pre code {
+  font-family: var(--md-code-font);
+}
+
+.md-typeset {
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.hero__actions {
+  margin-top: 0.9rem;
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.hero__actions .md-button {
+  border-radius: 10px;
+}
+
+/* 按钮风格 */
+.md-typeset .md-button {
+  border-radius: 10px;
+}
+
+/* 浅色模式风格 */
+[data-md-color-scheme="default"][data-md-color-primary="black"] {
+  --md-primary-fg-color: #111827; /* slate-900 */
+  --md-primary-fg-color--light: rgba(17, 24, 39, 0.54);
+  --md-primary-fg-color--dark: #0b1220;
+}
+[data-md-color-scheme="default"] .md-typeset .md-button {
+  border: 1px solid var(--md-primary-fg-color);
+  color: var(--md-primary-fg-color);
+  background-color: transparent;
+}
+[data-md-color-scheme="default"] .md-typeset .md-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+[data-md-color-scheme="default"] .md-typeset .md-button--primary {
+  background-color: #f3f4f6; /* gray-100 */
+  border-color: #d1d5db;     /* gray-300 */
+  color: #111827;            /* slate-900 */
+  text-shadow: none;
+}
+[data-md-color-scheme="default"] .md-typeset .md-button--primary:hover {
+  background-color: #e5e7eb; /* gray-200 */
+  filter: none;
+}
+
+/* 深色模式风格 */
+[data-md-color-scheme="slate"] .md-typeset .md-button {
+  border: 1px solid var(--md-primary-bg-color);
+  color: var(--md-primary-bg-color);
+  background-color: transparent;
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button--primary {
+  background-color: var(--md-primary-fg-color);
+  border-color: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button--primary:hover {
+  background-color: rgba(0, 0, 0, 0.85);
+}
+
+/* 标题样式优化 */
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 1.5em;
+  margin-bottom: 0.6em;
+}
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  font-weight: 600;
+}
+
+.md-content__inner > h1:first-child {
+  margin-top: 0;
+}
+
+/* 字号 */
+.md-typeset h1 { font-size: clamp(1.35rem, 1.6vw, 1.55rem); line-height: 1.25; }
+.md-typeset h2 { font-size: clamp(1.10rem, 1.2vw, 1.25rem); line-height: 1.3; }
+.md-typeset h3 { font-size: 1.00rem; line-height: 1.35; }
+.md-typeset h4 { font-size: 0.90rem; line-height: 1.35; }
+
+/* 表格首列按内容自动扩宽 */
+.md-typeset table:not([class]) {
+  table-layout: auto;
+}
+.md-typeset table:not([class]) th:first-child,
+.md-typeset table:not([class]) td:first-child {
+  white-space: nowrap;
+  width: 1%;
+}
+
+/* 表格补齐竖向边框*/
+.md-typeset table:not([class]) {
+  border-collapse: collapse;
+  border: 1px solid var(--md-default-fg-color--lightest, rgba(0, 0, 0, 0.12));
+}
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td {
+  border: 1px solid var(--md-default-fg-color--lightest, rgba(0, 0, 0, 0.12));
+}
+
+/* 正文两端对齐*/
+.md-typeset p,
+.md-typeset li {
+  text-align: justify;
+  text-justify: inter-ideograph;
+}
+
+/* 顶栏/标签栏跟随主题主色 */
+.md-header,
+.md-tabs {
+  background-color: var(--md-primary-fg-color);
+}
+
+/* 顶栏文字默认用主色背景对比色 */
+.md-header__title,
+.md-header__button,
+.md-tabs__link {
+  color: var(--md-primary-bg-color);
+}
+
+/* hover/active 用强调色 */
+.md-tabs__link:hover,
+.md-tabs__link--active {
+  color: var(--md-accent-fg-color);
+}
+
+/* 宽版布局（Material）*/
+:root {
+  --ferry-content-width-vw: 96;   /* 96vw：接近全宽，但仍保留边距 */
+  --ferry-content-max-width: 2200px;
+}
+
+/* 让整体网格容器铺满视口，避免主题默认 max-width 约束 */
+.md-grid {
+  max-width: 100%;
+}
+
+/* 正文区域不再被内层容器二次限制宽度 */
+.md-main__inner,
+.md-content__inner {
+  max-width: none;
+}
+
+/* 将可读宽度限制放到 typeset 层：既“宽版”，又不会无限拉伸 */
+@media (min-width: 60em) {
+  .md-typeset {
+    max-width: min(calc(var(--ferry-content-width-vw) * 1vw), var(--ferry-content-max-width));
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/* 调宽页面但保持居中 */
+:root {
+  /* 整体页面容器最大宽度（含左右侧栏/目录等） */
+  --ferry-layout-max-width: 1800px;
+  /* 正文可读区域最大宽度（只约束文章内容，不影响左右侧栏） */
+  --ferry-readable-max-width: 1400px;
+  /* 大屏：左右各预留 1/10 视口宽度 */
+  --ferry-side-reserve: calc(100vw / 10);
+}
+
+@media (min-width: 60em) {
+  /* 顶栏/顶部目录栏居中 */
+  .md-header__inner,
+  .md-tabs__inner {
+    width: 100%;
+    max-width: min(calc(100vw - (2 * var(--ferry-side-reserve))), var(--ferry-layout-max-width)) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-sizing: border-box;
+  }
+
+  /* 加宽整体布局容器，但仍保持居中 */
+  .md-grid {
+    max-width: min(calc(100vw - (2 * var(--ferry-side-reserve))), var(--ferry-layout-max-width));
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* 文章内容做"可读宽度"限制，并保持居中 */
+  .md-typeset {
+    max-width: min(100%, var(--ferry-readable-max-width));
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/* 调整左侧导航栏宽度，让它显示更窄 */
+:root {
+  --md-nav-width: 12rem; /* Material for MkDocs 默认是 18.1rem，调整为 12rem */
+}

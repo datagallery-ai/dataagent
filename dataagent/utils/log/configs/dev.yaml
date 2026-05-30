@@ -1,0 +1,18 @@
+# DataAgent 开发环境日志配置
+LOGGING:
+  level: "DEBUG"                    # 开发环境使用DEBUG级别
+  console: true                     # 输出到控制台
+  file_path: "/tmp/dataagent/dev_dataagent.log" # 开发环境日志文件
+  rotation: "50 MB"                 # 较小的轮转大小
+  retention: "3 days"               # 较短的保留时间
+  compression: "zip"                # 压缩格式
+  json_logs: false                  # 开发环境使用可读格式
+  
+  # 开发环境友好的格式
+  format: "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> | <level>{message}</level>"
+
+# 环境变量配置说明
+# 开发环境可以通过以下环境变量覆盖配置：
+# DATAAGENT_LOG_LEVEL=DEBUG
+# DATAAGENT_LOG_FILE=/tmp/dataagent/dev_dataagent.log
+# DATAAGENT_LOG_CONSOLE=true

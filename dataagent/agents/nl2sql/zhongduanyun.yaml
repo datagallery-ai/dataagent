@@ -1,0 +1,27 @@
+AGENT_CONFIG:
+  name: "NL2SQL Agent"
+  backend: "langgraph"
+  type: "nl2sql"
+MODEL:
+  deepseek:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+CORE:
+  coordinator: {}
+  perceptor:
+    user_schema: "schema_zhongduanyun"
+    user_evidence: "udf_zhongduanyun"
+    user_few_shot_examples: "few_shot_examples_zhongduanyun"
+    user_sql_rules: "sql_rules_zhongduanyun"
+  generator:
+    strategies: ["icl"]
+  validator: {}
+  reflector: {}
+  executor: {}
+  selector: {}
+DATABASE:
+  engine: "hive"
+  config: ""

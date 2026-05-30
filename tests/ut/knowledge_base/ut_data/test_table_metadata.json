@@ -1,0 +1,42 @@
+{
+    "csv1.csv": {
+        "id": 0,
+        "file_description": "This CSV file, `csv1.csv`, contains metadata for sequencing sample files, adhering to NCBI submission guidelines. It includes columns such as SRR and SRP numbers, sample details, library information, taxonomy, file paths, and sequencing platform details. The file records metadata for sequencing samples, with file extensions such as .fastq, .fastq.gz, .fq, and .fq.gz. Each row represents a unique library ID, and additional filenames are included for paired-end samples.",
+        "schema": {
+            "accession": {
+                "id": 1,
+                "schema_description": "The SRR number assigned to a study in the NCBI Sequence Read Archive (SRA) database.",
+                "data_type": "ID",
+                "relationship": [],
+                "potential_relationship": []
+            },
+            "study": {
+                "id": 2,
+                "schema_description": "The column contains the SRP number assigned to the study by NCBI.",
+                "data_type": "ID",
+                "relationship": [],
+                "potential_relationship": []
+            }
+        }
+    },
+    "csv2.csv": {
+        "id": 24,
+        "file_description": "This CSV file serves as a metadata file for sequencing reference files, containing information about genome and feature files along with taxonomy. It includes columns for filename_reference (path to the genome file), filename_feature (path to the feature file), and taxonomy (species name). The supported file extensions for the reference files are .fasta, .fasta.gz, .gff, and .gtf.",
+        "schema": {
+            "filename_reference": {
+                "id": 25,
+                "schema_description": "The path to the reference genome file, typically in .fasta or .fasta.gz format.",
+                "data_type": "Path",
+                "relationship": [],
+                "potential_relationship": []
+            },
+            "filename_feature": {
+                "id": 26,
+                "schema_description": "The column specifies the path to the reference feature file, typically in .gff or .gtf format.",
+                "data_type": "Path",
+                "relationship": [],
+                "potential_relationship": []
+            }
+        }
+    }
+}

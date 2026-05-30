@@ -1,0 +1,19 @@
+# DataAgent 生产环境日志配置
+LOGGING:
+  level: "INFO"                     # 生产环境使用INFO级别
+  console: false                    # 生产环境不输出到控制台
+  file_path: "/var/log/dataagent/dataagent.log" # 生产环境日志文件
+  rotation: "500 MB"                # 较大的轮转大小
+  retention: "30 days"              # 较长的保留时间
+  compression: "gz"                 # 高效压缩
+  json_logs: true                   # 生产环境使用JSON格式便于解析
+  
+  # 生产环境格式（JSON模式下此格式可能被忽略）
+  format: "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"
+
+# 环境变量配置说明
+# 生产环境可以通过以下环境变量覆盖配置：
+# DATAAGENT_LOG_LEVEL=INFO
+# DATAAGENT_LOG_FILE=/var/log/dataagent/dataagent.log
+# DATAAGENT_LOG_CONSOLE=false
+# DATAAGENT_LOG_JSON=true

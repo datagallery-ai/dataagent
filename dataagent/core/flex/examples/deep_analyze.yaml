@@ -1,0 +1,7 @@
+AGENT_CONFIG:
+  name: Deep Analyze Agent
+  version: '1.0'
+  description: Deep Analyze Agent
+  backend: langgraph
+  type: react
+  agent_type: deep_analyze

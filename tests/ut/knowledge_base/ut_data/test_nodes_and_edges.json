@@ -1,0 +1,41 @@
+{
+  "nodes": [
+    {
+      "id": "operation_1",
+      "type": "operation",
+      "label": "DNA extraction",
+      "description": "Extraction of genomic DNA from leaf tissues of Chinese chestnut cultivars",
+      "properties": {
+        "method": "Standard DNA extraction protocol",
+        "tissue_type": "Young leaves"
+      },
+      "edam_annotation": {
+        "topic": "topic_3168",
+        "operation": "operation_3695"
+      }
+    },
+    {
+      "id": "operation_2",
+      "type": "operation",
+      "label": "GBS library construction",
+      "description": "Construction of genotyping by sequencing libraries using restriction enzymes",
+      "properties": {
+        "method": "GBS protocol with restriction enzyme digestion",
+        "insert_size": "300-500 bp"
+      },
+      "edam_annotation": {
+        "topic": "topic_3168",
+        "operation": "operation_3933"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_2",
+      "source": "operation_1",
+      "target": "operation_2",
+      "relationship": "provides_input_to",
+      "description": "Extracted DNA used for GBS library construction"
+    }
+  ]
+}

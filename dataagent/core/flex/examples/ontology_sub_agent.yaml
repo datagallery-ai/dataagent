@@ -1,0 +1,42 @@
+AGENT_CONFIG:
+  name: "ontology sub agent"
+  version: "1.0"
+  description: "Ontology dedicated sub-agent for structured querying"
+  backend: "langgraph"
+  type: "react"
+  debug: true
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.1
+
+SCENARIO:
+  chat:
+    input: 自然语言本体查询
+    task: 将用户查询转换为本体工具调用，并返回结构化JSON结果
+    instructions: |
+      你是专门的 ontology 子代理，只做本体查询。
+
+      处理规则：
+      1) 仅处理本体相关任务，必须首先调用get_business_procedure和get_ontology_description，一定要结合查询出来的业务逻辑进行完整数据检索。
+      2) 如果不涉及工具参数相互依赖的问题，必须进行同时并行查询，即同时下发多个工具调用请求。
+      3) 当用户问题涉及安排实验时，必须调用ontology_search完成查询。
+      4) 当用户问题涉及生产影响/排程/延期传播时，必须在子代理内部执行 Rule A（DAG/CPM）分析并输出结构化结果。
+      5) 最终答案必须输出为单个 JSON 对象，不要输出额外说明文字。
+      6) JSON 推荐结构：
+         {
+           "result": <结构化结果>,
+           "summary": "<简短结论>"
+         }
+    output_format: 严格JSON对象
+
+ENV:
+  - module: "dataagent.actions.gym.OntologyEnv"
+
+PRE_WORKFLOW: []
+
+POST_WORKFLOW: []

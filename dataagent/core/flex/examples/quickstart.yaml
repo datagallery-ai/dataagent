@@ -1,0 +1,15 @@
+AGENT_CONFIG:
+  name: "Quickstart Agent"
+  version: "1.0"
+  description: "Quickstart Agent"
+  backend: "langgraph"
+  type: "react"
+
+MODEL:
+  chat_model:
+    provider: "bailian"
+    model_type: "chat"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.7
+      enable_thinking: true

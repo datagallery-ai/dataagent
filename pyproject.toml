@@ -1,0 +1,201 @@
+[build-system]
+requires = ["setuptools>=67.6.1,<81", "wheel", "Cython>=3.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dataagent"
+version = "0.1.0"
+description = "DataAgent - A powerful multi-modal Data Agent workflow template framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # ---- DataAgent core ----
+    "a2a-sdk>=1.0.2",
+    "protobuf==6.33.5",
+    "elasticsearch==8.17.1",
+    "httpx==0.28.1",
+    "jinja2>=3.1.0",
+    "langchain==1.2.11",
+    "langgraph==1.1.3",
+    "litellm==1.80.0",
+    "loguru==0.7.3",
+    "mcp==1.12.2",
+    "pandas==2.3.2",
+    "prompt-toolkit>=3.0.52",
+    "psutil==6.0.0",
+    "pyarrow==23.0.1",
+    "pydantic==2.12.5",
+    "python-dotenv==1.1.1",
+    "pyvis==0.3.2",
+    "PyYAML==6.0.2",
+    "rich>=13.0.0",
+    "jieba>=0.42.1",
+    # ---- tools/skills ----
+    "matplotlib==3.10.1",
+    "numpy==2.3.5",
+    "seaborn>=0.13.2",
+    # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
+    "psycopg>=3.2.10",
+    "psycopg-binary>=3.3.2",
+    "psycopg2-binary>=2.9.0",
+    "pymysql==1.1.2",
+    "sqlalchemy==2.0.22",
+    "uvicorn==0.34.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dataagent*"]
+namespaces = true
+
+[project.optional-dependencies]
+server = [
+    "fastapi==0.116.1",
+    "passlib>=1.7.4",
+    "python-jose>=3.5.0",
+    "sqlmodel>=0.0.24",
+    "cryptography==46.0.7",
+    "langgraph-checkpoint-postgres>=2.0.23",
+    "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
+]
+jiuwen = [
+    "openjiuwen==0.1.1"
+]
+mkdoc = [
+    "mkdocs>=1.6,<2.0",
+    "mkdocs-material>=9.6.0",
+    "mkdocs-static-i18n>=1.2.0",
+    "pymdown-extensions>=10.8.0",
+]
+nl2sql = [
+    "sqlglot>=28.1.0",
+]
+test = [
+    "dataagent[server]",
+    "setuptools>=67.6.1,<81",
+    "pytest>=8.4.2",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=1.2.0",
+    "diff-cover>=7.5",
+    "pytest-html==2.1.1",
+    "py"
+]
+a2a-server = [
+    "grpcio>=1.60.0",
+]
+
+tool = [
+    "mplfonts>=0.0.11",
+]
+
+[tool.setuptools.package-data]
+"*" = [
+    "*.md",
+    "*.yaml",
+    "*.ttf",
+    "*.otf",
+]
+"dataagent.actions.skills.ecommerce_analysis" = [
+    "assets/*.ttf",
+    "assets/*.otf",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.0.1",
+    "ipywidgets>=8.1.7",
+    "widgetsnbextension>=4.0.14",
+    "black",
+    "ruff>=0.14.0",
+    "pyright>=1.1.394",
+    "mypy>=1.18.2",
+    "codespell"
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--verbose --color=yes"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["dataagent"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/migrations/*"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]
+[tool.diff-cover]
+fail_under = 80
+exclude = ["*/dataagent/*", "*/tests/*"]
+
+# Pyright 配置
+[tool.pyright]
+pythonVersion = "3.11"
+pythonPlatform = "Linux"
+strict = false
+reportLevel = "error"
+reportMissingImports = true
+reportMissingTypeStubs = "warning"
+reportUntypedFunctionDecorator = "warning"
+exclude = [
+    ".venv",
+    "dist",
+    "build",
+    "tests/mocks"
+]
+
+# Radon 配置
+[tool.radon.raw]
+exclude = "*/tests/*,*/__pycache__/*"
+
+[tool.radon.cc]
+min = "C"
+exclude = "*/tests/*,*/__pycache__/*"
+output-format = "json"
+
+[tool.radon.mi]
+exclude = "*/tests/*,*/__pycache__/*"
+multi = true
+show = true
+
+[tool.codespell]
+skip = "*.pdf,*.png,*.jpg,*.min.js,./lib/*"
+
+[tool.uv]
+override-dependencies = [
+    "httpx==0.28.1",
+    "sqlalchemy==2.0.22",
+    "pydantic==2.12.5"
+]
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [".venv", "dist", "build", "docs", "examples", "scripts", "evaluation/benchmarks/dacomp"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["B008", "E203", "E501", "F401"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15

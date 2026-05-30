@@ -1,0 +1,42 @@
+AGENT_CONFIG:
+  name: "NL2SQL Agent"
+  backend: "langgraph"
+  type: "nl2sql"
+MODEL:
+  deepseek:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+CORE:
+  coordinator: {}
+  perceptor:
+    user_schema: null  # name of .md file under templates/nl2sql/perceptor/
+    user_evidence: null
+    user_sql_rules: "sql_rules_bird"
+    user_few_shot_examples: null
+  generator:
+    strategies: ["prompt"]  # "prompt", "icl", "skeleton", "dc"
+    num_workers: 1  # parallelization for each strategy
+    num_samples: 3  # number of SQLs to generate in "prompt" strategy
+  validator:
+    db_explain: true
+    keyword_match: false
+    metadata_match: false
+  reflector:
+    threshold: 0.9
+  executor:
+    limit: -1  # all
+    preview_limit: 5
+  selector:
+    threshold: 0.9
+DATABASE:
+  db_id: "superhero"
+  engine: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
+  sql_service_engine: null  # "udn"
+  config:
+    path: ""  # replace with actual superhero.sqlite path
+METAVISOR:
+  metavisor_url: "http://8.92.9.151:41000"
+  valuematch_url: "http://8.92.9.151:8000"

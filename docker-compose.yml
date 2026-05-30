@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库服务 (单实例包含两个数据库)
+  # 数据库1: datapilot (主业务数据库)
+  # 数据库2: langgraph (LangGraph数据库)
+  postgres:
+    image: postgres:15-alpine
+    container_name: datapilot-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-datapilot}
+      POSTGRES_USER: ${DATABASE_USER:-datapilot_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d/
+    networks:
+      - datapilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-datapilot_user} -d ${DATABASE_NAME:-datapilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin 管理界面 (可选)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: datapilot-pgadmin
+    restart: unless-stopped
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@datapilot.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - datapilot-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - tools  # 可选服务，使用 --profile tools 启动
+
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  datapilot-network:
+    driver: bridge
+    name: datapilot-network
