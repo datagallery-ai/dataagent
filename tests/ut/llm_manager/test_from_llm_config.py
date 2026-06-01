@@ -1,37 +1,11 @@
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
-"""验证 ``LLMClient.from_llm_config`` 与 ``OpenAIProvider`` 的统一构造路径。
-
-覆盖点：
-
-* ``LLMClient.from_llm_config`` 正确解析 ``{PROVIDER}_BASE_URL`` /
-  ``{PROVIDER}_API_KEY`` 环境变量；
-* ``client_params()`` 中的 ``base_url`` / ``api_key`` 优先于环境变量；
-* 未配置 ``.env`` 时，可从 ``params`` 读取 ``base_url`` / ``api_key``；
-* ``client_params()`` 中的非显式字段（如 ``temperature`` / ``enable_thinking``）
-  作为 litellm 透传 kwargs 落入 ``_extra``；
-* 缺失模型 / URL / API key 时显式抛 ``ValueError``；
-* ``OpenAIProvider.create_llm`` 返回的就是 ``LLMClient`` 实例（不再依赖
-  ``langchain_community``）。
-"""
-
 from __future__ import annotations
 
 import pytest
 
+from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 from dataagent.core.managers.llm_manager.llm_client import LLMClient
 from dataagent.core.managers.llm_manager.llm_config import LLMConfig
-from dataagent.core.managers.llm_manager.providers import OpenAIProvider
+from dataagent.core.managers.llm_manager.llm_manager import LLMManager
 
 
 def _make_config(**params_overrides) -> LLMConfig:
@@ -54,11 +28,7 @@ def test_from_llm_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None
     assert client._model == "deepseek-v3.2"
     assert client._api_base == "https://example.invalid/v1"
     assert client._api_key == "sk-test"
-    # tool_call_mode 默认 native
-    assert client._tool_call_mode == "native"
-    # YAML 透传字段会进 _extra（litellm kwargs）
     assert client._extra.get("enable_thinking") is True
-    # 默认补齐 custom_llm_provider=openai，沿用旧 OpenAIProvider 语义
     assert client._extra.get("custom_llm_provider") == "openai"
 
 
@@ -114,12 +84,30 @@ def test_from_llm_config_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> Non
         LLMClient.from_llm_config(_make_config())
 
 
-def test_openai_provider_returns_llm_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """OpenAIProvider.create_llm 应统一返回 LLMClient（不再返回 ChatLiteLLM 子类）。"""
+def test_llm_manager_create_llm_uses_llm_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLMManager.create_llm 底层应为 LLMClient（经 LangChainChatModelAdapter 包装）。"""
     monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-test")
 
-    provider = OpenAIProvider()
-    llm = provider.create_llm(_make_config())
+    manager = LLMManager()
+    adapter = manager.create_llm(_make_config())
 
-    assert isinstance(llm, LLMClient)
+    assert isinstance(adapter, LangChainChatModelAdapter)
+    assert isinstance(adapter.raw, LLMClient)
+
+
+def test_llm_manager_create_llm_embedding_registers_config_only() -> None:
+    """embedding 模型只缓存配置，不构造 LLMClient。"""
+    manager = LLMManager()
+    config = LLMConfig(
+        name="jina_v3",
+        provider="jina",
+        model_type="embedding",
+        params={"model": "jina-embeddings-v3"},
+    )
+
+    instance = manager.create_llm(config)
+
+    assert instance is None
+    assert manager.get_llm("jina_v3") is None
+    assert manager.get_llm_config("jina_v3") is config

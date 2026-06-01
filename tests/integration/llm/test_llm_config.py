@@ -12,6 +12,8 @@
 # ============================================================================
 import os
 
+import pytest
+
 from dataagent.core.managers.llm_manager import LLMConfig, llm_manager
 
 
@@ -51,16 +53,25 @@ def test_llm_config_from_dict():
     assert config.client_kwargs["temperature"] == 0.5
 
 
-def test_create_llm():
-    """测试LLM管理器（会触发真实 LLM 调用，需在具备密钥的集成环境运行）"""
+def test_create_llm(monkeypatch: pytest.MonkeyPatch):
+    """测试 LLM 管理器（真实调用；须设置 DEEPSEEK_CHAT_BASE_URL / DEEPSEEK_CHAT_API_KEY）。
+
+    ``LLMClient.from_llm_config`` 只从 ``{PROVIDER}_BASE_URL`` / ``{PROVIDER}_API_KEY`` 读连接信息，
+    ``params.base_url`` / ``params.api_key`` 会被忽略，因此 ``provider`` 须与 env 前缀一致。
+    """
+    api_key = os.getenv("DEEPSEEK_CHAT_API_KEY")
+    if not api_key:
+        pytest.skip("DEEPSEEK_CHAT_API_KEY not set")
+    base_url = os.getenv("DEEPSEEK_CHAT_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("DEEPSEEK_CHAT_BASE_URL", base_url)
+    monkeypatch.setenv("DEEPSEEK_CHAT_API_KEY", api_key)
+
     config = {
         "name": "DEEPSEEK_CHAT",
         "model_type": "chat",
-        "provider": "openai",
+        "provider": "deepseek_chat",
         "params": {
-            "base_url": "https://api.deepseek.com",
             "model": "deepseek-chat",
-            "api_key": os.getenv("DEEPSEEK_CHAT_API_KEY", ""),
             "temperature": 0.7,
             "max_tokens": 2048,
             "timeout": 90,

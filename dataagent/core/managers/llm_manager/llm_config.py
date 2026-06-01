@@ -22,7 +22,6 @@ class LLMConfig:
         provider: str,
         model_type: Literal["chat", "embedding"],
         section: str | None = None,
-        tool_call_mode: Literal["native", "structured"] = "native",
         **client_kwargs,
     ):
         """
@@ -33,7 +32,6 @@ class LLMConfig:
             provider: 提供商名称
             model_type: 模型类型，支持"chat"或"embedding"
             section: 对应 YAML 中 MODEL 下的 key，由 LLMManager 在 init_from_config 时通过 section 字段注入。
-            tool_call_mode: 工具调用模式，支持 "native"（原生）/ "structured"（JSON schema）
             **client_kwargs: 实例化LLM实例时，传入给官方API的参数（如model、api_key、base_url等）
         """
         self.name = name
@@ -41,10 +39,7 @@ class LLMConfig:
         self.model_type = model_type
         if self.model_type not in ["chat", "embedding"]:
             raise ValueError(f"不支持的模型类型: {type}，支持的类型为: chat, embedding")
-        if tool_call_mode not in ["native", "structured"]:
-            raise ValueError(f"不支持的工具调用模式: {tool_call_mode}，支持的模式为: native, structured")
         self.section = section or name
-        self.tool_call_mode = tool_call_mode
 
         # 所有其他参数都存储在 extra_params 字典中
         self.client_kwargs = client_kwargs.copy()
@@ -71,7 +66,6 @@ class LLMConfig:
             "name": self.name,
             "provider": self.provider,
             "model_type": self.model_type,
-            "tool_call_mode": self.tool_call_mode,
         }
         result.update(self.client_params())
         return result

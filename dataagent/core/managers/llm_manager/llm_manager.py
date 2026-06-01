@@ -10,13 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from loguru import logger
 
 from dataagent.core.managers.llm_manager.adapters import ChatModel, LangChainChatModelAdapter
+from dataagent.core.managers.llm_manager.llm_client import LLMClient
 from dataagent.core.managers.llm_manager.llm_config import LLMConfig
-from dataagent.core.managers.llm_manager.providers import get_provider
 
 
 class LLMManager:
@@ -32,13 +32,11 @@ class LLMManager:
     def __init__(self):
         if not self._initialized:
             self.llm_cache: dict[str, dict] = {}
-            self.backend: Literal["langgraph", "openjiuwen"] = "langgraph"
             self._initialized = True
 
     def init_from_config(self, config: dict[str, Any]):
         """初始化管理器"""
         logger.trace("=== Initializing LLM Manager 🛠️ ===")
-        self.backend = (config.get("AGENT_CONFIG", {})).get("backend", "langgraph")
         # 遍历 MODEL 配置时，同时保留 section 名称
         for section_name, llm_dict in (config.get("MODEL", {}) or {}).items():
             if not isinstance(llm_dict, dict):
@@ -50,22 +48,22 @@ class LLMManager:
 
             llm_cfg = LLMConfig.from_dict(cfg)
             self.create_llm(llm_cfg)
-            logger.trace(f"✅ LLM instance for {llm_cfg.name} (section={llm_cfg.section}) created.")
 
-    def create_llm(self, config: LLMConfig | dict[str, Any]) -> Any:
-        """根据配置创建LLM实例并缓存"""
+    def create_llm(self, config: LLMConfig | dict[str, Any]) -> ChatModel | None:
+        """根据配置创建 LLM 实例并缓存；embedding 仅注册配置，不构造 LLMClient。"""
         if isinstance(config, dict):
             config = LLMConfig.from_dict(config)
         if config.name in self.llm_cache:
             logger.warning(f"⚠️ '{config.name}' model configuration already exists, will be overwritten.")
+        if config.model_type == "embedding":
+            self.llm_cache[config.name] = {"llm_config": config, "llm_instance": None}
+            logger.trace(f"✅ Embedding config for {config.name} (section={config.section}) registered.")
+            return None
         try:
-            provider = get_provider(config.provider, backend=self.backend)
-        except ValueError as e:
-            raise ValueError(f"Unsupported LLM provider: {config.provider} (backend={self.backend})") from e
-        try:
-            raw_instance = provider.create_llm(config)
+            raw_instance = LLMClient.from_llm_config(config)
             llm_instance: ChatModel = LangChainChatModelAdapter(raw_instance, config)
             self.llm_cache[config.name] = {"llm_config": config, "llm_instance": llm_instance}
+            logger.trace(f"✅ LLM instance for {config.name} (section={config.section}) created.")
             return llm_instance
         except Exception as e:
             raise ValueError(f"❌ Creating {config.model_type} model instance failed.") from e
@@ -112,6 +110,6 @@ class LLMManager:
                     logger.debug("runtime.llm('planner') unavailable, fallback to cached chat llm")
         for rec in self.llm_cache.values():
             llm_config, llm_instance = rec["llm_config"], rec["llm_instance"]
-            if llm_config.model_type == "chat":
+            if llm_config.model_type == "chat" and llm_instance is not None:
                 return llm_instance
         raise RuntimeError("Default LLM not found.")

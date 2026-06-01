@@ -101,7 +101,6 @@ def _runtime_from_merged_config(merged: dict, monkeypatch: pytest.MonkeyPatch, *
                 "model": "stub-model",
                 "api_base": "http://127.0.0.1:9/v1",
                 "api_key": "stub",
-                "tool_call_mode": "native",
                 "custom_llm_provider": "openai",
             }
         },

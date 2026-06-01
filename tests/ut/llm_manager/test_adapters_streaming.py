@@ -71,7 +71,7 @@ def test_astream_aggregates_stream_chunks_into_final_response():
                 ),
             ]
         ),
-        config=SimpleNamespace(tool_call_mode="native"),
+        config=SimpleNamespace(),
     )
 
     chunks = _collect_stream(adapter)
@@ -97,7 +97,7 @@ def test_astream_keeps_usage_when_trailing_tool_chunk_has_no_usage():
                 ),
             ]
         ),
-        config=SimpleNamespace(tool_call_mode="native"),
+        config=SimpleNamespace(),
     )
 
     chunks = _collect_stream(adapter)
@@ -111,7 +111,7 @@ def test_astream_keeps_usage_when_trailing_tool_chunk_has_no_usage():
 
 def test_llm_perf_name_includes_logical_name_and_model():
     raw = SimpleNamespace(model="qwen3-coder")
-    adapter = LangChainChatModelAdapter(raw, config=SimpleNamespace(name="planner", tool_call_mode="native"))
+    adapter = LangChainChatModelAdapter(raw, config=SimpleNamespace(name="planner"))
 
     assert adapter._llm_perf_name == "planner:qwen3-coder"
 
@@ -119,7 +119,7 @@ def test_llm_perf_name_includes_logical_name_and_model():
 def test_astream_falls_back_to_ainvoke_when_streaming_is_unavailable():
     adapter = LangChainChatModelAdapter(
         FakeInvokeModel(FakeChunk(content="fallback response", usage_metadata={"total_tokens": 3})),
-        config=SimpleNamespace(tool_call_mode="native"),
+        config=SimpleNamespace(),
     )
 
     chunks = _collect_stream(adapter)

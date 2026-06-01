@@ -255,7 +255,6 @@ def test_llm_event_records_immediate_caller(tmp_path: Path, perf_home: Path) -> 
     llm_event = next(ev for ev in collector.events if ev["kind"] == "llm")
     assert llm_event["extra"]["caller_kind"] == "node"
     assert llm_event["extra"]["caller_name"] == "planner"
-    assert "tool_call_mode" not in llm_event["extra"]
 
 
 def test_llm_called_inside_tool_is_recorded_with_tool_caller(
@@ -270,7 +269,7 @@ def test_llm_called_inside_tool_is_recorded_with_tool_caller(
                 usage_metadata={"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
             ),
         ),
-        config=SimpleNamespace(name="tool_llm", tool_call_mode="native"),
+        config=SimpleNamespace(name="tool_llm"),
     )
     monkeypatch.setattr(llm_manager, "get_default_llm", lambda: adapter)
 
@@ -464,7 +463,7 @@ def test_context_ir_llm_call_records_caller(tmp_path: Path, perf_home: Path, mon
                 usage_metadata={"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
             ),
         ),
-        config=SimpleNamespace(name="planner", tool_call_mode="native"),
+        config=SimpleNamespace(name="planner"),
     )
     monkeypatch.setattr(llm_manager, "get_default_llm", lambda: adapter)
 
