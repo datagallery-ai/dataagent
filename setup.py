@@ -26,7 +26,6 @@ EXCLUDE_FILES = {
         "__init__.py",
         "icbc_env.py",
         "__main__.py",
-        "providers.py",
         "schemas.py",
         "server.py",
         "chat_model.py",

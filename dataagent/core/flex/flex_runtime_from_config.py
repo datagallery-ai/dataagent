@@ -9,7 +9,7 @@
 
 ``env.llm_configs`` 的 **键** 为节点名、``HOOKS`` 里声明的 hook ``name``（见
 :func:`_merge_hook_llm_configs`），或 ``MODEL`` 中未挂节点的模型名；**值** 只存调用所需扁平参数：
-``model`` / ``api_base`` / ``api_key`` / ``tool_call_mode``，以及原 ``params`` 展开后的 litellm 透传项
+``model`` / ``api_base`` / ``api_key``，以及原 ``params`` 展开后的 litellm 透传项
 （如 ``temperature``）。不在 env 中存放 ``name`` / ``provider`` / ``section`` / ``model_type``（这些仅在
 解析 YAML 时使用）。
 
@@ -26,7 +26,7 @@ from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
 
-# YAML 合并阶段使用、不写入 env.llm_configs 值的键（``tool_call_mode`` 会写入 env）
+# YAML 合并阶段使用、不写入 env.llm_configs 值的键
 _LLM_YAML_ONLY_KEYS = frozenset({"name", "provider", "model_type", "section", "params"})
 
 
@@ -49,7 +49,6 @@ def resolve_llm_config_entry(
     merged: dict[str, Any] = {**base, **entry}
     merged.setdefault("name", model_key)
     merged.setdefault("model_type", "chat")
-    merged.setdefault("tool_call_mode", "native")
     if "params" not in merged or not isinstance(merged["params"], dict):
         merged["params"] = dict(merged.get("params") or {})
 
@@ -88,7 +87,6 @@ def resolve_llm_config_entry(
         )
 
     flat: dict[str, Any] = {
-        "tool_call_mode": merged.get("tool_call_mode") or "native",
         "model": str(model_name),
         "api_base": api_base,
         "api_key": api_key,

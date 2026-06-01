@@ -66,6 +66,48 @@ class LLMStreamChunk:
     done: bool = False
 
 
+@dataclass
+class _StreamAccum:
+    """流式 merge 内部状态：用 list 累积文本，避免 str 逐片相加的 O(n²) 拷贝。"""
+
+    content_parts: list[str] = field(default_factory=list)
+    reasoning_parts: list[str] = field(default_factory=list)
+    usage_metadata: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    invalid_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    raw: Any = None
+
+    def append_chunk(self, chunk_resp: LLMResponse) -> None:
+        """合并单个流式 chunk 的文本与元数据。"""
+        self.content_parts.append(chunk_resp.content)
+        if chunk_resp.reasoning_content:
+            self.reasoning_parts.append(chunk_resp.reasoning_content)
+        self.usage_metadata = _merge_usage_metadata(chunk_resp.usage_metadata, self.usage_metadata)
+        if chunk_resp.tool_calls:
+            self.tool_calls = list(chunk_resp.tool_calls)
+        if chunk_resp.invalid_tool_calls:
+            self.invalid_tool_calls = list(chunk_resp.invalid_tool_calls)
+        self.raw = chunk_resp.raw
+
+    def to_llm_response(self) -> LLMResponse:
+        """将累积状态化为最终 LLMResponse。"""
+        return LLMResponse(
+            content="".join(self.content_parts),
+            usage_metadata=self.usage_metadata,
+            reasoning_content="".join(self.reasoning_parts),
+            tool_calls=list(self.tool_calls),
+            invalid_tool_calls=list(self.invalid_tool_calls),
+            raw=self.raw,
+        )
+
+
+def coerce_chat_input_to_messages(chat_input: Any) -> Any:
+    """将裸 str 转为 OpenAI 风格 user message，兼容 LangChain 旧式 llm.invoke(\"...\") 调用。"""
+    if isinstance(chat_input, str):
+        return [{"role": "user", "content": chat_input}]
+    return chat_input
+
+
 @runtime_checkable
 class ChatModel(Protocol):
     """DataAgent 侧统一 ChatModel 协议（对外不暴露具体 SDK）。"""
@@ -129,20 +171,16 @@ class LangChainChatModelAdapter:
         self,
         raw_model: Any,
         config: Any = None,
-        bound_tools: list[Any] | None = None,
     ):
         """
         初始化适配器，持有原始模型实例。
 
         Args:
             raw_model: 底层 LLM 实例（来自 langchain 或其他 SDK）。
-            config: LLMConfig 实例，提供 tool_call_mode 等配置。可选，兼容旧调用。
-            bound_tools: structured 模式下绑定的工具列表
-            （仅非 :class:`~dataagent.core.managers.llm_manager.llm_client.LLMClient` 路径）。可选。
+            config: LLMConfig 实例，提供 logical name 等元数据。可选，兼容旧调用。
         """
         self._raw = raw_model
         self._config = config
-        self._bound_tools: list[Any] | None = bound_tools
 
     def __call__(self, *args: Any, **kwargs: Any) -> LLMResponse:
         """允许直接调用实例，内部转发给 invoke。"""
@@ -158,11 +196,6 @@ class LangChainChatModelAdapter:
     def raw(self) -> Any:
         """返回被包装的原始模型对象。"""
         return self._raw
-
-    @property
-    def _tool_call_mode(self) -> str:
-        """获取当前 tool_call_mode，兼容无 config 的情况。"""
-        return getattr(self._config, "tool_call_mode", "native")
 
     @property
     def _llm_perf_name(self) -> str:
@@ -318,6 +351,100 @@ class LangChainChatModelAdapter:
         )
 
     @classmethod
+    def messages_to_openai_dicts(cls, chat_input: Any) -> Any:
+        """非 langchain 后端：LangChain Message / dict 列表 → OpenAI dict messages。"""
+        return cls._normalize_lc_messages_to_openai_dicts(chat_input)
+
+    @classmethod
+    def _normalize_lc_messages_to_openai_dicts(cls, chat_input: Any) -> Any:
+        """
+        raw 模型非 langchain 时，尽量将 langchain messages 转为 OpenAI dict messages。
+        非 list / 空 list 时直接返回原输入。原先「首元素为 dict 则整表原样返回」会跳过
+        assistant+tool_calls 的 reasoning_content 补全（Thinking 模式 API 必填），已移除。
+        """
+        if not isinstance(chat_input, list) or not chat_input:
+            return chat_input
+
+        def _infer_role(*, msg_type: Any, cls_name: str) -> str:
+            if msg_type in {"human", "user"} or cls_name == "HumanMessage":
+                return "user"
+            if msg_type in {"ai", "assistant"} or cls_name == "AIMessage":
+                return "assistant"
+            if msg_type == "system" or cls_name == "SystemMessage":
+                return "system"
+            if msg_type == "tool" or cls_name == "ToolMessage":
+                return "tool"
+            # 未识别：按 user 兜底
+            return "user"
+
+        def _maybe_add_tool_fields(m: dict[str, Any], msg: Any) -> None:
+            tool_call_id = getattr(msg, "tool_call_id", None)
+            name = getattr(msg, "name", None)
+            if tool_call_id is not None:
+                m["tool_call_id"] = tool_call_id
+            if name is not None:
+                m["name"] = name
+
+        def _maybe_add_assistant_tool_calls(m: dict[str, Any], msg: Any) -> None:
+            tc = getattr(msg, "tool_calls", None)
+            if not tc:
+                return
+            if isinstance(tc, list):
+                converted_tc: list[dict[str, Any]] = []
+                for one in tc:
+                    conv = cls._to_openai_tool_call(one)
+                    if conv is not None:
+                        converted_tc.append(conv)
+                if converted_tc:
+                    m["tool_calls"] = converted_tc
+                return
+            if isinstance(tc, dict):
+                conv = cls._to_openai_tool_call(tc)
+                if conv is not None:
+                    m["tool_calls"] = [conv]
+
+        def _ensure_reasoning_for_assistant_tool_calls(m: dict[str, Any], lc_msg: Any | None) -> None:
+            """DashScope 等 Thinking 模式：带 tool_calls 的 assistant 必须带 reasoning_content 字段。"""
+            if m.get("role") != "assistant" or not m.get("tool_calls"):
+                return
+            if lc_msg is not None:
+                rc = cls._extract_reasoning_content(lc_msg)
+                m["reasoning_content"] = rc if rc else ""
+                return
+            if m.get("reasoning_content") is not None:
+                return
+            m["reasoning_content"] = str(m.get("reasoning") or "")
+
+        converted_msgs: list[dict[str, Any]] = []
+        for msg in chat_input:
+            # 已经是 dict 的直接透传
+            if isinstance(msg, dict):
+                m2 = dict(msg)
+                _ensure_reasoning_for_assistant_tool_calls(m2, None)
+                converted_msgs.append(m2)
+                continue
+
+            cls_name = getattr(getattr(msg, "__class__", None), "__name__", "") or ""
+            msg_type = getattr(msg, "type", None)  # langchain 常见：human/ai/system/tool
+            content = getattr(msg, "content", "")
+
+            role = _infer_role(msg_type=msg_type, cls_name=cls_name)
+            m: dict[str, Any] = {"role": role, "content": str(content or "")}
+
+            # tool message 补充字段
+            if role == "tool":
+                _maybe_add_tool_fields(m, msg)
+
+            # assistant message 若包含 tool_calls，尽量透传（并转换为 OpenAI 兼容格式）
+            if role == "assistant":
+                _maybe_add_assistant_tool_calls(m, msg)
+                _ensure_reasoning_for_assistant_tool_calls(m, msg)
+
+            converted_msgs.append(m)
+
+        return converted_msgs if converted_msgs else chat_input
+
+    @classmethod
     def _wrap_output(cls, out: Any) -> LLMResponse:
         """解析模型输出并封装为统一响应结构。"""
         # langchain 通常返回 AIMessage，具备 content / usage_metadata
@@ -362,70 +489,29 @@ class LangChainChatModelAdapter:
             raw=out,
         )
 
-    @classmethod
-    def _merge_llm_response_pair(
-        cls,
-        accumulated_resp: LLMResponse,
-        chunk_resp: LLMResponse,
-    ) -> LLMResponse:
-        """将两个已规范化的 LLMResponse 做流式字段合并（content / reasoning / tool_calls）。"""
-        usage = _merge_usage_metadata(chunk_resp.usage_metadata, accumulated_resp.usage_metadata)
-        reasoning_merged = (accumulated_resp.reasoning_content or "") + (chunk_resp.reasoning_content or "")
-        # 流式末尾块常携带完整 tool_calls；与 content 不同，不应做列表拼接（会重复或顺序错乱）。
-        merged_tool_calls = (chunk_resp.tool_calls if chunk_resp.tool_calls else accumulated_resp.tool_calls) or []
-        merged_invalid = (
-            chunk_resp.invalid_tool_calls if chunk_resp.invalid_tool_calls else accumulated_resp.invalid_tool_calls
-        ) or []
-        return LLMResponse(
-            content=accumulated_resp.content + chunk_resp.content,
-            usage_metadata=usage,
-            reasoning_content=reasoning_merged,
-            tool_calls=list(merged_tool_calls),
-            invalid_tool_calls=list(merged_invalid),
-            raw=chunk_resp.raw,
-        )
-
-    @classmethod
-    def _merge_stream_output(cls, accumulated: Any, chunk: Any) -> Any:
-        """将两侧先规范为 LLMResponse，再合并；避免 LLMResponse 与 LLMClientMessage 等混用导致 + 失败。"""
-        if accumulated is None:
-            return chunk
-        accumulated_resp = accumulated if isinstance(accumulated, LLMResponse) else cls._wrap_output(accumulated)
-        chunk_resp = chunk if isinstance(chunk, LLMResponse) else cls._wrap_output(chunk)
-        return cls._merge_llm_response_pair(accumulated_resp, chunk_resp)
-
     def invoke(self, chat_input: Any, **kwargs: Any) -> LLMResponse:
         """规范化输入并同步调用模型。"""
-        mode = self._tool_call_mode
-        if not self._is_llm_client():
-            chat_input, kwargs = self._prepare_tool_call_input(chat_input, kwargs, mode)
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="invoke") as h:
-            resp = self._invoke_inner(chat_input, kwargs, mode)
+            resp = self._invoke_inner(chat_input, kwargs)
             self._fill_llm_extra(h, resp)
             return resp
 
     async def ainvoke(self, chat_input: Any, **kwargs: Any) -> LLMResponse:
         """规范化输入并异步调用模型。"""
-        mode = self._tool_call_mode
-        if not self._is_llm_client():
-            chat_input, kwargs = self._prepare_tool_call_input(chat_input, kwargs, mode)
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="ainvoke") as h:
-            resp = await self._ainvoke_inner(chat_input, kwargs, mode)
+            norm_input = self._normalize_input_for_langchain(chat_input)
+            resp = await self._ainvoke_normalized(norm_input, kwargs)
             self._fill_llm_extra(h, resp)
             return resp
 
     async def astream(self, chat_input: Any, **kwargs: Any) -> AsyncIterator[LLMStreamChunk]:
         """规范化输入并优先使用底层流式能力；不支持时回退到一次性调用。"""
-        mode = self._tool_call_mode
-        if not self._is_llm_client():
-            chat_input, kwargs = self._prepare_tool_call_input(chat_input, kwargs, mode)
-
         norm_input = self._normalize_input_for_langchain(chat_input)
         raw_fn = getattr(self._raw, "astream", None)
 
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="astream") as h:
             if not callable(raw_fn):
-                final_resp = await self._ainvoke_without_before_hooks(chat_input, kwargs, mode)
+                final_resp = await self._ainvoke_normalized(norm_input, kwargs)
                 self._fill_llm_extra(h, final_resp)
                 yield LLMStreamChunk(final_response=final_resp, done=True)
                 return
@@ -435,92 +521,70 @@ class LangChainChatModelAdapter:
             stream = raw_fn(norm_input, **kwargs)
             logger.debug("LLM stream created rid={} stream_type={}", rid, type(stream).__name__)
 
-            accumulated_raw: Any = None
+            accumulated: _StreamAccum | None = None
             chunk_count = 0
             if hasattr(stream, "__aiter__"):
                 async for out in cast(AsyncIterator[Any], stream):
                     chunk_count += 1
-                    accumulated_raw = self._merge_stream_output(accumulated_raw, out)
-                    text = self._content_to_text(getattr(out, "content", out))
-                    reasoning = self._extract_reasoning_content(out)
-                    if text or reasoning:
-                        yield LLMStreamChunk(content=text, reasoning_content=reasoning, raw=out)
+                    accumulated, stream_chunk = self._stream_out_step(accumulated, out)
+                    if stream_chunk is not None:
+                        yield stream_chunk
             else:
                 for out in cast(Iterator[Any], stream):
                     chunk_count += 1
-                    accumulated_raw = self._merge_stream_output(accumulated_raw, out)
-                    text = self._content_to_text(getattr(out, "content", out))
-                    reasoning = self._extract_reasoning_content(out)
-                    if text or reasoning:
-                        yield LLMStreamChunk(content=text, reasoning_content=reasoning, raw=out)
+                    accumulated, stream_chunk = self._stream_out_step(accumulated, out)
+                    if stream_chunk is not None:
+                        yield stream_chunk
 
-            final_resp = self._finalize_response(accumulated_raw, chat_input, kwargs, mode)
+            final_resp = accumulated.to_llm_response() if accumulated is not None else self._wrap_output(None)
             log_llm_done("LLM stream finished", final_resp, rid=rid)
             self._fill_llm_extra(h, final_resp)
             h["chunk_count"] = chunk_count
-            yield LLMStreamChunk(final_response=final_resp, raw=accumulated_raw, done=True)
+            yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LangChainChatModelAdapter:
-        """
-        绑定工具。根据 tool_call_mode 分支：
-        - native：直接调用底层 bind_tools。
-        - structured：存储工具列表，在 invoke 时注入。
-        """
-        if self._is_llm_client():
-            fn = getattr(self._raw, "bind_tools", None)
-            if callable(fn):
-                new_raw = fn(tools, **kwargs)
-                return LangChainChatModelAdapter(new_raw, self._config)
-            return self
+        """绑定工具，委托底层 bind_tools。"""
+        fn = getattr(self._raw, "bind_tools", None)
+        if callable(fn):
+            new_raw = fn(tools, **kwargs)
+            return LangChainChatModelAdapter(new_raw, self._config)
+        return self
 
-        mode = self._tool_call_mode
-
-        if mode == "native":
-            fn = getattr(self._raw, "bind_tools", None)
-            if callable(fn):
-                new_raw = fn(tools, **kwargs)
-                return LangChainChatModelAdapter(new_raw, self._config)
-            return self
-        bound = tools if isinstance(tools, list) else [tools]
-        return LangChainChatModelAdapter(self._raw, self._config, bound_tools=bound)
-
-    def normalize_lc_messages_to_openai_dicts(self, chat_input: Any) -> Any:
-        """公开入口：将 LangChain messages 转为 OpenAI 风格 dict（供 LLMClient 等外部调用）。"""
-        return self._normalize_lc_messages_to_openai_dicts(chat_input)
-
-    def _is_llm_client(self) -> bool:
-        try:
-            from dataagent.core.managers.llm_manager.llm_client import LLMClient
-
-            return isinstance(self._raw, LLMClient)
-        except ImportError:
-            return False
+    def _stream_out_step(
+        self, accumulated: _StreamAccum | None, out: Any
+    ) -> tuple[_StreamAccum, LLMStreamChunk | None]:
+        chunk_resp = out if isinstance(out, LLMResponse) else self._wrap_output(out)
+        if accumulated is None:
+            accumulated = _StreamAccum()
+        accumulated.append_chunk(chunk_resp)
+        if not chunk_resp.content and not chunk_resp.reasoning_content:
+            return accumulated, None
+        return accumulated, LLMStreamChunk(
+            content=chunk_resp.content,
+            reasoning_content=chunk_resp.reasoning_content or "",
+            raw=out,
+        )
 
     def _invoke_inner(
         self,
         chat_input: Any,
         kwargs: dict[str, Any],
-        mode: str,
     ) -> LLMResponse:
         rid = uuid4().hex[:8]
         logger.debug("Start to invoke llm rid={}", rid)
         norm_input = self._normalize_input_for_langchain(chat_input)
         out = self._raw.invoke(norm_input, **kwargs)
         resp = self._wrap_output(out)
-        if not self._is_llm_client():
-            resp = self._parse_tool_calls_if_needed(resp, mode)
         log_llm_done("LLM invoke finished", resp, rid=rid)
         return resp
 
-    async def _ainvoke_inner(
+    async def _ainvoke_normalized(
         self,
-        chat_input: Any,
+        norm_input: Any,
         kwargs: dict[str, Any],
-        mode: str,
     ) -> LLMResponse:
         rid = uuid4().hex[:8]
         logger.debug("Start to invoke llm rid={}", rid)
-        norm_input = self._normalize_input_for_langchain(chat_input)
         raw_fn = getattr(self._raw, "ainvoke", None)
         if callable(raw_fn):
             out = raw_fn(norm_input, **kwargs)
@@ -530,213 +594,17 @@ class LangChainChatModelAdapter:
             out = self._raw.invoke(norm_input, **kwargs)
 
         resp = self._wrap_output(out)
-        if not self._is_llm_client():
-            resp = self._parse_tool_calls_if_needed(resp, mode)
         log_llm_done("LLM invoke finished", resp, rid=rid)
         return resp
-
-    async def _ainvoke_without_before_hooks(
-        self,
-        chat_input: Any,
-        kwargs: dict[str, Any],
-        mode: str,
-    ) -> LLMResponse:
-        """在 before hooks 已执行的前提下完成一次性调用。"""
-        rid = uuid4().hex[:8]
-        logger.debug("Start to invoke llm rid={}", rid)
-        norm_input = self._normalize_input_for_langchain(chat_input)
-        raw_fn = getattr(self._raw, "ainvoke", None)
-        if callable(raw_fn):
-            out = raw_fn(norm_input, **kwargs)
-            if inspect.isawaitable(out):
-                out = await out  # type: ignore[misc]
-        else:
-            out = self._raw.invoke(norm_input, **kwargs)
-        resp = self._finalize_response(out, chat_input, kwargs, mode)
-        log_llm_done("LLM invoke finished", resp, rid=rid)
-        return resp
-
-    def _finalize_response(
-        self,
-        out: Any,
-        chat_input: Any,
-        kwargs: dict[str, Any],
-        mode: str,
-    ) -> LLMResponse:
-        """将底层输出收敛为最终 LLMResponse。"""
-        resp = out if isinstance(out, LLMResponse) else self._wrap_output(out)
-        if not self._is_llm_client():
-            resp = self._parse_tool_calls_if_needed(resp, mode)
-        return resp
-
-    # ===== tool_call_mode 处理辅助方法 =====
-
-    def _prepare_tool_call_input(
-        self, chat_input: Any, kwargs: dict[str, Any], mode: str
-    ) -> tuple[Any, dict[str, Any]]:
-        """
-        准备阶段：根据 tool_call_mode 注入 prompt 和设置参数。
-
-        仅支持 structured 模式的 tool-call：注入 JSON schema + 设置 response_format。
-
-        Args:
-            chat_input: 原始输入消息
-            kwargs: 调用参数
-            mode: tool_call_mode (native 或 structured)
-
-        Returns:
-            (修改后的 chat_input, 修改后的 kwargs)
-        """
-        # structured 模式：注入 JSON schema + 设置 response_format
-        if self._bound_tools and mode == "structured":
-            from dataagent.core.managers.llm_manager.tool_prompt_builder import (
-                build_tool_calling_prompt,
-                convert_tools_to_openai_schema,
-                prepend_to_system_message,
-            )
-
-            tools_schema = convert_tools_to_openai_schema(self._bound_tools)
-            injection = build_tool_calling_prompt(tools_schema)
-            chat_input = prepend_to_system_message(chat_input, injection)
-            kwargs.setdefault("response_format", {"type": "json_object"})
-
-        return chat_input, kwargs
-
-    def _parse_tool_calls_if_needed(self, resp: LLMResponse, mode: str) -> LLMResponse:
-        """
-        解析阶段：如果需要，从响应文本中解析 tool_calls。
-
-        仅支持 structured 模式：从响应 JSON 中解析 tool_calls 并清理 content。
-        如果底层模型已经通过原生能力返回了 tool_calls，则跳过 structured 解析，
-        避免空 content 覆盖已有的 tool_calls。
-
-        Args:
-            resp: 原始 LLMResponse
-            mode: tool_call_mode (native 或 structured)
-
-        Returns:
-            处理后的 LLMResponse（可能包含解析出的 tool_calls）
-        """
-        # 如果底层模型已返回原生 tool_calls，直接使用，不再走 structured 解析
-        if resp.tool_calls:
-            return resp
-
-        # structured 模式：从 content 文本中解析 tool_calls 并清理 content
-        if self._bound_tools and mode == "structured":
-            from dataagent.core.managers.llm_manager.tool_call_parser import parse_tool_calls
-
-            tool_calls, invalid, cleaned_content = parse_tool_calls(resp.content)
-            return LLMResponse(
-                content=cleaned_content,
-                usage_metadata=resp.usage_metadata,
-                reasoning_content=resp.reasoning_content,
-                tool_calls=tool_calls,
-                invalid_tool_calls=invalid,
-                raw=resp.raw,
-            )
-
-        # native 模式或无工具调用：直接返回
-        return resp
-
-    # ===== 输入规范化 =====
-
-    def _normalize_lc_messages_to_openai_dicts(self, chat_input: Any) -> Any:
-        """
-        raw 模型非 langchain 时，尽量将 langchain messages 转为 OpenAI dict messages。
-        非 list / 空 list 时直接返回原输入。原先「首元素为 dict 则整表原样返回」会跳过
-        assistant+tool_calls 的 reasoning_content 补全（Thinking 模式 API 必填），已移除。
-        """
-        if not isinstance(chat_input, list) or not chat_input:
-            return chat_input
-
-        def _infer_role(*, msg_type: Any, cls_name: str) -> str:
-            if msg_type in {"human", "user"} or cls_name == "HumanMessage":
-                return "user"
-            if msg_type in {"ai", "assistant"} or cls_name == "AIMessage":
-                return "assistant"
-            if msg_type == "system" or cls_name == "SystemMessage":
-                return "system"
-            if msg_type == "tool" or cls_name == "ToolMessage":
-                return "tool"
-            # 未识别：按 user 兜底
-            return "user"
-
-        def _maybe_add_tool_fields(m: dict[str, Any], msg: Any) -> None:
-            tool_call_id = getattr(msg, "tool_call_id", None)
-            name = getattr(msg, "name", None)
-            if tool_call_id is not None:
-                m["tool_call_id"] = tool_call_id
-            if name is not None:
-                m["name"] = name
-
-        def _maybe_add_assistant_tool_calls(m: dict[str, Any], msg: Any) -> None:
-            tc = getattr(msg, "tool_calls", None)
-            if not tc:
-                return
-            if isinstance(tc, list):
-                converted_tc: list[dict[str, Any]] = []
-                for one in tc:
-                    conv = self._to_openai_tool_call(one)
-                    if conv is not None:
-                        converted_tc.append(conv)
-                if converted_tc:
-                    m["tool_calls"] = converted_tc
-                return
-            if isinstance(tc, dict):
-                conv = self._to_openai_tool_call(tc)
-                if conv is not None:
-                    m["tool_calls"] = [conv]
-
-        def _ensure_reasoning_for_assistant_tool_calls(m: dict[str, Any], lc_msg: Any | None) -> None:
-            """DashScope 等 Thinking 模式：带 tool_calls 的 assistant 必须带 reasoning_content 字段。"""
-            if m.get("role") != "assistant" or not m.get("tool_calls"):
-                return
-            if lc_msg is not None:
-                rc = self._extract_reasoning_content(lc_msg)
-                m["reasoning_content"] = rc if rc else ""
-                return
-            if m.get("reasoning_content") is not None:
-                return
-            m["reasoning_content"] = str(m.get("reasoning") or "")
-
-        converted_msgs: list[dict[str, Any]] = []
-        for msg in chat_input:
-            # 已经是 dict 的直接透传
-            if isinstance(msg, dict):
-                m2 = dict(msg)
-                _ensure_reasoning_for_assistant_tool_calls(m2, None)
-                converted_msgs.append(m2)
-                continue
-
-            cls_name = getattr(getattr(msg, "__class__", None), "__name__", "") or ""
-            msg_type = getattr(msg, "type", None)  # langchain 常见：human/ai/system/tool
-            content = getattr(msg, "content", "")
-
-            role = _infer_role(msg_type=msg_type, cls_name=cls_name)
-            m: dict[str, Any] = {"role": role, "content": str(content or "")}
-
-            # tool message 补充字段
-            if role == "tool":
-                _maybe_add_tool_fields(m, msg)
-
-            # assistant message 若包含 tool_calls，尽量透传（并转换为 OpenAI 兼容格式）
-            if role == "assistant":
-                _maybe_add_assistant_tool_calls(m, msg)
-                _ensure_reasoning_for_assistant_tool_calls(m, msg)
-
-            converted_msgs.append(m)
-
-        return converted_msgs if converted_msgs else chat_input
 
     def _normalize_input_for_langchain(self, chat_input: Any) -> Any:
         """
         统一输入格式：
-        - raw 模型来自 langchain 时：若业务侧传入 OpenAI 风格 dict messages（[{role,content,...}]），转换为 langchain messages。
-        - raw 模型非 langchain（如 openjiuwen/self wrapper）时：若业务侧传入 langchain messages（HumanMessage/AIMessage/...），
-          转换为 OpenAI 风格 dict messages（[{role,content,...}]），避免底层模型访问 msg.role 时报错。
-        - 仅在需要时懒加载 langchain_core.messages，减少非 langgraph 场景的依赖风险。
+        - raw 模型来自 langchain 时：OpenAI dict messages 转为 langchain messages。
+        - raw 模型非 langchain 时：langchain messages 转为 OpenAI dict messages。
         """
+        chat_input = coerce_chat_input_to_messages(chat_input)
         raw_mod = getattr(self._raw, "__module__", "") or ""
         if not raw_mod.startswith("langchain"):
-            return self._normalize_lc_messages_to_openai_dicts(chat_input)
+            return type(self)._normalize_lc_messages_to_openai_dicts(chat_input)
         return self._normalize_openai_dicts_to_lc_messages(chat_input)

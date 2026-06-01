@@ -1,15 +1,21 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # ============================================================================
-"""基于 litellm 的 chat client，供 ``Runtime.llm()``（flex 路径）使用。
+"""基于 litellm 的 chat client — DataAgent 主架构唯一 LLM 底层实现。
 
-- **配置入口**：:mod:`dataagent.core.flex.flex_runtime_from_config` 将 YAML + 环境变量解析为
-  ``env.llm_configs``：value 仅含 ``model`` / ``api_base`` / ``api_key`` / ``tool_call_mode`` 及 litellm 透传；
-  逻辑名只出现在 dict 的 **键** 与 ``runtime.llm(name)`` 的 ``name``。
-- **对外工厂**：:func:`llm_adapter_from_env_cfg` 组装 ``LangChainChatModelAdapter``（内部再建
-  :class:`LLMClient` 与适配器所需的 :class:`~dataagent.core.managers.llm_manager.llm_config.LLMConfig`）。
-
-非 flex 的 ``LLMManager`` / ``providers`` 仍走 LangChain ChatLiteLLM，与本模块独立。
+- **Flex**：:mod:`dataagent.core.flex.flex_runtime_from_config` 解析 ``env.llm_configs``；
+  :func:`llm_adapter_from_env_cfg` 组装 ``LangChainChatModelAdapter``（内部建 ``LLMClient``）。
+- **LLMManager**：:meth:`~dataagent.core.managers.llm_manager.llm_manager.LLMManager.create_llm`
+  经 :meth:`LLMClient.from_llm_config` 构造同一 ``LLMClient``。
 
 重试：litellm ``num_retries=0`` + ``retry_policy`` 白名单（429/Timeout）；
 DataAgent 薄层仅对 5xx/``APIConnectionError`` 重试。失败统一映射为 :class:`LLMCallError`。
@@ -23,7 +29,8 @@ import os
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, cast
+from functools import lru_cache
+from typing import Any
 
 from litellm.exceptions import (
     APIConnectionError,
@@ -46,9 +53,6 @@ from loguru import logger
 
 from dataagent.core.managers.llm_manager.llm_config import LLMConfig
 from dataagent.utils.constants import DEFAULT_LLM_MAX_RETRIES, DEFAULT_LLM_RETRY_POLICY
-
-# ``env.llm_configs[name]`` 中不传给 litellm 的键（仅 LLMClient 显式参数）
-_ENV_LLM_RESERVED_KEYS = frozenset({"model", "api_base", "api_key", "tool_call_mode"})
 
 
 class LLMErrorCategory(StrEnum):
@@ -212,22 +216,13 @@ async def _acall_with_transient_retry(
     raise RuntimeError("Unexpected error in transient retry loop")  # pragma: no cover
 
 
-def _normalize_tool_call_mode(cfg: dict[str, Any]) -> Literal["native", "structured"]:
-    """规范化 tool_call_mode 字段。如果未设置或非法则返回 'native'。"""
-    tcm = cfg.get("tool_call_mode") or "native"
-    if tcm not in ("native", "structured"):
-        return "native"
-    return cast(Literal["native", "structured"], tcm)
-
-
 def _llm_config_for_adapter(cfg: dict[str, Any], logical_name: str) -> LLMConfig:
-    """供 ``LangChainChatModelAdapter`` 使用；适配器主要读取 ``tool_call_mode``。"""
+    """供 ``LangChainChatModelAdapter`` 使用；适配器读取 logical name 等元数据。"""
     return LLMConfig(
         name=logical_name,
         provider="openai",
         model_type="chat",
         section=logical_name,
-        tool_call_mode=_normalize_tool_call_mode(cfg),
         params={},
     )
 
@@ -245,8 +240,18 @@ class LLMClientMessage:
     raw: Any = None
 
 
+@lru_cache(maxsize=1)
+def _litellm():
+    import litellm
+
+    litellm.ssl_verify = False
+    litellm.modify_params = True
+    litellm.suppress_debug_info = True
+    return litellm
+
+
 class LLMClient:
-    """litellm 直连；native / structured tool 模式在类内处理。"""
+    """litellm 直连；工具调用走 OpenAI native tools API。"""
 
     def __init__(
         self,
@@ -254,7 +259,6 @@ class LLMClient:
         model: str,
         api_base: str,
         api_key: str,
-        tool_call_mode: Literal["native", "structured"] = "native",
         tools: list[Any] | None = None,
         **litellm_kwargs: Any,
     ) -> None:
@@ -262,7 +266,6 @@ class LLMClient:
         self._model = model
         self._api_base = api_base
         self._api_key = api_key
-        self._tool_call_mode = tool_call_mode
         self._tools: list[Any] = list(tools) if tools else []
         self._extra = litellm_kwargs
 
@@ -446,10 +449,8 @@ class LLMClient:
         """将 LangChain Message 对象列表转换为 dict 格式消息"""
         from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 
-        class _NonLangChainRaw:
-            __module__ = "dataagent.llm_client_bridge"
-
-        return LangChainChatModelAdapter(_NonLangChainRaw()).normalize_lc_messages_to_openai_dicts(messages)
+        converted = LangChainChatModelAdapter.messages_to_openai_dicts(messages)
+        return converted if isinstance(converted, list) else messages
 
     @staticmethod
     def _stream_chunk_to_dict(chunk: Any) -> dict[str, Any]:
@@ -504,11 +505,10 @@ class LLMClient:
         * ``api_base`` / ``api_key`` 优先取自 ``client_params()`` 中的 ``base_url`` /
           ``api_key``；未配置时再读环境变量 ``{PROVIDER}_BASE_URL`` /
           ``{PROVIDER}_API_KEY``（``PROVIDER`` 为 ``config.provider`` 的大写形式）。
-        * ``tool_call_mode`` 取自 ``config.tool_call_mode``（默认 ``"native"``）。
         * ``client_params()`` 中除上述显式参数外，全部作为 litellm 透传 kwargs；
           ``custom_llm_provider`` 默认置为 ``"openai"``（沿用旧 ``OpenAIProvider`` 语义）。
 
-        与 :func:`_llm_client_from_env_cfg` 的区别仅在于配置形态：
+        与 :meth:`from_env_cfg` 的区别仅在于配置形态：
         前者接 ``LLMConfig``（YAML ``MODEL.<name>`` 嵌套 ``params``），后者接 Flex
         :data:`env.llm_configs` 的扁平 dict。两者构造目标都是同一个 ``LLMClient``。
         """
@@ -546,17 +546,28 @@ class LLMClient:
         # 沿用旧 OpenAIProvider 行为：未声明则按 OpenAI 兼容协议
         params.setdefault("custom_llm_provider", "openai")
 
-        tool_call_mode = cast(
-            Literal["native", "structured"],
-            config.tool_call_mode if config.tool_call_mode in ("native", "structured") else "native",
-        )
-
         return cls(
             model=str(model),
             api_base=str(api_base),
             api_key=str(api_key),
-            tool_call_mode=tool_call_mode,
             **params,
+        )
+
+    @classmethod
+    def from_env_cfg(cls, cfg: Mapping[str, Any]) -> LLMClient:
+        """由 ``env.llm_configs`` 扁平项构造 litellm 客户端。"""
+        model = cfg.get("model")
+        if not model:
+            raise ValueError("LLM config must include top-level 'model'")
+        if not cfg.get("api_base") or not cfg.get("api_key"):
+            raise ValueError("LLM config must include api_base and api_key")
+        extra = {k: v for k, v in cfg.items() if k not in ("model", "api_base", "api_key")}
+        extra.setdefault("custom_llm_provider", "openai")
+        return cls(
+            model=str(model),
+            api_base=str(cfg["api_base"]),
+            api_key=str(cfg["api_key"]),
+            **extra,
         )
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LLMClient:
@@ -566,17 +577,13 @@ class LLMClient:
             model=self._model,
             api_base=self._api_base,
             api_key=self._api_key,
-            tool_call_mode=cast(Literal["native", "structured"], self._tool_call_mode),
             tools=bound,
             **{**self._extra, **kwargs},
         )
 
     def invoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以同步方式调用模型生成回复"""
-        import litellm
-
-        litellm.ssl_verify = False
-        litellm.modify_params = True
+        litellm = _litellm()
         msgs, call_kw = self._prepare_messages_and_kwargs(messages, kwargs)
         call_kw, max_attempts = _normalize_litellm_retry_kwargs(call_kw)
         logger.debug(
@@ -604,10 +611,7 @@ class LLMClient:
 
     async def ainvoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以异步方式调用模型生成回复"""
-        import litellm
-
-        litellm.ssl_verify = False
-        litellm.modify_params = True
+        litellm = _litellm()
         msgs, call_kw = self._prepare_messages_and_kwargs(messages, kwargs)
         call_kw, max_attempts = _normalize_litellm_retry_kwargs(call_kw)
         logger.debug(
@@ -635,10 +639,7 @@ class LLMClient:
 
     async def astream(self, messages: list[Any], **kwargs: Any) -> AsyncIterator[LLMClientMessage]:
         """以异步方式流式调用模型，逐步产生消息块"""
-        import litellm
-
-        litellm.ssl_verify = False
-        litellm.modify_params = True
+        litellm = _litellm()
         msgs, call_kw = self._prepare_messages_and_kwargs(messages, kwargs)
         call_kw, max_attempts = _normalize_litellm_retry_kwargs(call_kw)
         call_kw = {**call_kw, "stream": True}
@@ -704,25 +705,14 @@ class LLMClient:
     def _prepare_messages_and_kwargs(
         self, messages: list[Any], kwargs: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """根据当前工具模式及参数构建最终消息和请求参数，供 litellm 使用"""
-        from dataagent.core.managers.llm_manager.tool_prompt_builder import (
-            build_tool_calling_prompt,
-            convert_tools_to_openai_schema,
-            prepend_to_system_message,
-        )
-
+        """根据当前工具及参数构建最终消息和请求参数，供 litellm 使用（输入已由 adapter 规范化）。"""
         call_kw = {**self._extra, **kwargs}
         timeout = call_kw.pop("timeout", None)
         if timeout is not None:
             call_kw.setdefault("request_timeout", timeout)
 
         msgs: list[Any] = messages
-        if self._tools and self._tool_call_mode == "structured":
-            tools_schema = convert_tools_to_openai_schema(self._tools)
-            injection = build_tool_calling_prompt(tools_schema)
-            msgs = prepend_to_system_message(msgs, injection)
-            call_kw.setdefault("response_format", {"type": "json_object"})
-        elif self._tools and self._tool_call_mode == "native":
+        if self._tools:
             openai_tools = self._tools_to_openai(self._tools)
             if openai_tools:
                 call_kw["tools"] = openai_tools
@@ -816,7 +806,7 @@ class LLMClient:
                 "output_tokens": int(getattr(usage, "completion_tokens", None) or 0),
                 "total_tokens": int(getattr(usage, "total_tokens", None) or 0),
             }
-        out = LLMClientMessage(
+        return LLMClientMessage(
             content=content,
             reasoning_content=str(rc) if rc else "",
             tool_calls=self._tool_calls_to_dicts(tool_calls),
@@ -824,19 +814,6 @@ class LLMClient:
             usage_metadata=usage_dict,
             raw=resp,
         )
-        if self._tool_call_mode == "structured" and self._tools and not out.tool_calls:
-            from dataagent.core.managers.llm_manager.tool_call_parser import parse_tool_calls
-
-            tcs, invalid, cleaned = parse_tool_calls(out.content)
-            out = LLMClientMessage(
-                content=cleaned,
-                reasoning_content=out.reasoning_content,
-                tool_calls=tcs,
-                invalid_tool_calls=invalid,
-                usage_metadata=out.usage_metadata,
-                raw=out.raw,
-            )
-        return out
 
     def _wrap_stream_chunk(self, chunk: Any) -> LLMClientMessage:
         """将流式响应块转为 LLMClientMessage，仅取部分字段"""
@@ -861,29 +838,11 @@ class LLMClient:
         )
 
 
-def _llm_client_from_env_cfg(cfg: dict[str, Any]) -> LLMClient:
-    """由 ``env.llm_configs`` 扁平项构造 litellm 客户端。"""
-    model = cfg.get("model")
-    if not model:
-        raise ValueError("LLM config must include top-level 'model'")
-    if not cfg.get("api_base") or not cfg.get("api_key"):
-        raise ValueError("LLM config must include api_base and api_key")
-    extra = {k: v for k, v in cfg.items() if k not in _ENV_LLM_RESERVED_KEYS}
-    extra.setdefault("custom_llm_provider", "openai")
-    return LLMClient(
-        model=str(model),
-        api_base=str(cfg["api_base"]),
-        api_key=str(cfg["api_key"]),
-        tool_call_mode=_normalize_tool_call_mode(cfg),
-        **extra,
-    )
-
-
 def llm_adapter_from_env_cfg(cfg: dict[str, Any], logical_name: str) -> Any:
     """``env.llm_configs[logical_name]`` → ``LangChainChatModelAdapter``（供 ``Runtime.llm`` 懒加载缓存）。"""
     from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 
     return LangChainChatModelAdapter(
-        _llm_client_from_env_cfg(cfg),
+        LLMClient.from_env_cfg(cfg),
         _llm_config_for_adapter(cfg, logical_name),
     )
