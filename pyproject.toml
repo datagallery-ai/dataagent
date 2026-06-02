@@ -12,7 +12,6 @@ dependencies = [
     # ---- DataAgent core ----
     "a2a-sdk>=1.0.2",
     "protobuf==6.33.5",
-    "elasticsearch==8.17.1",
     "httpx==0.28.1",
     "jinja2>=3.1.0",
     "langchain==1.2.11",
@@ -57,6 +56,8 @@ server = [
     "cryptography==46.0.7",
     "langgraph-checkpoint-postgres>=2.0.23",
     "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
+    "elasticsearch==8.17.1",
+
 ]
 jiuwen = [
     "openjiuwen==0.1.1"
@@ -94,10 +95,6 @@ tool = [
     "*.yaml",
     "*.ttf",
     "*.otf",
-]
-"dataagent.actions.skills.ecommerce_analysis" = [
-    "assets/*.ttf",
-    "assets/*.otf",
 ]
 
 [dependency-groups]
