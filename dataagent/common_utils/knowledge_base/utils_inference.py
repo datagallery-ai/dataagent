@@ -61,7 +61,7 @@ def embedding(
 def model_inference(query: str) -> str:
     """Inference using LLM."""
     llm = llm_manager.get_default_llm()
-    output = llm.invoke(query).content
+    output = llm.invoke([{"role": "user", "content": query}]).content
     return output
 
 
