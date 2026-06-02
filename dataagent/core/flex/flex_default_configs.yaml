@@ -46,6 +46,4 @@ HOOKS:
         - name: pruner
     executor:
       pre:
-        # - name: pre_metadata_tracker
       post:
-        # - name: post_metadata_tracker

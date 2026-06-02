@@ -29,11 +29,10 @@ TOOLS: # 工具包（可选，场景已有内置工具）
     - name: "a2a_name"
       agent_id: "agent名称"
       url: "agent地址"
-  mcp: # mcp服务
-    - name: "mcp_name"
-      server_id: "mcp server名称"
-      transport_type: "mcp通信方式"
-      config: {} # 不同通信方式的配置
+  mcp_servers: # MCP 服务
+    - server_id: "mcp_name"
+      transport_type: "stdio"
+      config: {}
   skill: # skill工具服务
     - name: "skill_name"
       path: "skill路径"

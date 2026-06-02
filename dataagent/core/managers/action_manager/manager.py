@@ -422,8 +422,6 @@ class ToolManager:
             self._register_local_tools(tools_config["local_functions"])
         if "mcp_servers" in tools_config:
             self._register_mcp_servers_from_config(tools_config["mcp_servers"])
-        elif "MCP" in tools_config:
-            self._register_mcp_tools_from_config(tools_config["MCP"])
         if "A2A" in tools_config:
             self._register_a2a_tools_from_config(tools_config["A2A"])
 
@@ -755,37 +753,6 @@ class ToolManager:
                 logger.trace(f"✅ Local tool: '{name}' registered.")
             except Exception as e:
                 logger.warning(f"❌ Local tool: '{name}' registration failed: {e}.")
-
-    def _register_mcp_tools_from_config(self, tools: list[dict[str, Any]]):
-        """从配置注册MCP工具"""
-        for tool_config in tools:
-            if not isinstance(tool_config, dict):
-                continue
-
-            # 获取服务器ID（字典的第一个键）
-            server_id = list(tool_config.keys())[0]
-            server_config = tool_config[server_id]
-
-            command = server_config.get("command")
-            args = server_config.get("args", [])
-            env = server_config.get("env")
-            cwd = server_config.get("cwd")
-
-            if not command:
-                logger.warning(f"❌ MCP server: '{server_id}' missing command configuration")
-                continue
-
-            try:
-                # 注册MCP服务器
-                self.register_mcp_server(
-                    server_id=server_id,
-                    transport_type="stdio",
-                    config={"command": command, "args": args, "env": env, "cwd": cwd},
-                )
-                logger.trace(f"✅ MCP server: '{server_id}' registered.")
-
-            except Exception as e:
-                logger.warning(f"❌ MCP server: '{server_id}' registration failed: {e}.")
 
     def _register_mcp_servers_from_config(self, servers: list[dict[str, Any]]):
         """从配置注册MCP服务器"""

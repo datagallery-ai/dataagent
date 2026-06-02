@@ -1,0 +1,268 @@
+# DataAgent Flex Agent 全量配置参考
+#
+# 用途：展示所有可配置项及常见可选值；实际项目请按需删减，勿直接用于生产。
+#
+# 加载优先级（后者覆盖前者）：
+#   1. dataagent/core/flex/flex_default_configs.yaml（默认兜底）
+#   2. 本文件（用户 YAML）
+#   3. .env 环境变量（最高优先级，如 AGENT_CONFIG__backend）
+#
+# 变量插值（config_manager 在加载后解析）：
+#   - yaml.xxxxxxx                       引用yaml文件内的配置项
+#   - ${MODEL.chat_model.params.model}   引用同文件内其它配置项
+#   - $env{DEEPSEEK_API_KEY}             引用环境变量（未设置则启动失败）
+#
+# 入口：
+#   DataAgent.from_config("dataagent/core/flex/examples/example.yaml")
+#
+# 顶层 enable_human_feedback 与 AGENT_CONFIG.enable_human_feedback 等价（ToolManager 两处都会读）。
+
+# ── 跨会话召回（cross_session_recall hook 读取，可选） ───────────────────────
+CROSS_SESSION_RECALL:
+  enable: true
+  top_k: 3
+  max_chars_per_session: 1500
+
+# ── 遗留 / 工具专用顶层键（可选） ───────────────────────────────────────────
+# ONTOLOGY_SERVICE_URL: "http://127.0.0.1:32000"  # perceptor_atomic 等旧路径
+# TAVILY_API_KEY: $env{TAVILY_API_KEY}             # MCP 搜索工具 env 注入
+
+# ── 工作区（可选） ───────────────────────────────────────────────────────────
+# path / allow_path 非空时须为绝对路径（允许 ~/...）；相对路径会在加载时报错。
+WORKSPACE:
+  path: "/tmp/dataagent_workspace"   # Agent 工作目录；空/null 则走运行时默认
+  target_path: "/tmp/dataagent_output"  # 部分 schema 导出工具写入目录（search_udf_functions 等）
+  allow_path:                    # sub_agent_tool 等可访问的额外绝对路径白名单
+    - "$env{PWD}/dataagent/core/flex/examples"
+
+# ── Agent 主配置 ─────────────────────────────────────────────────────────────
+AGENT_CONFIG:
+  name: "Example Agent"
+  version: "1.0"
+  description: "全量配置示例 Agent"
+  # backend: 工作流/LLM 适配后端
+  #   - langgraph（默认）
+  #   - openjiuwen
+  backend: "langgraph"
+  # type: Agent 引擎类型（DataAgent.select_engine 分流）
+  #   - react（默认，Flex Agent）
+  #   - nl2sql（NL2SQL 专用流水线，需 CORE 段）
+  type: "react"
+  debug: true                   # 调试模式，默认 true
+  enable_human_feedback: false  # HITL：注册 request_human_feedback 工具
+  terminal_mode: true           # chat() 下终端交互模式，默认 true
+  enable_portrait: false        # 启用 portraiter hook 的 LLM 用户画像
+  max_iter: null                # 最大迭代轮次；null/省略 = 不限制
+  token_limit: null             # token 上限；null/省略 = 不限制
+  hierarchy: "MAIN"             # 运行时层级标识（如子 Agent 为 SUB）
+  relevant_skills_limit: null   # planner skill 选择上限；0 = 禁用 LLM 选 skill
+
+# 与 AGENT_CONFIG.enable_human_feedback 等效，ToolManager 也会读顶层键
+# enable_human_feedback: false
+
+# ── 运行模式（通常由 DataAgent.select_engine 注入，一般无需手写） ─────────────
+# 决定 SCENARIO 下取哪一段 instructions。
+# mode: "chat"
+
+# ── 模型配置 ─────────────────────────────────────────────────────────────────
+# 键名即 MODEL 槽位；节点 chat_model.name / hook model 引用这些键。
+# provider 用于读取环境变量 {PROVIDER}_BASE_URL / {PROVIDER}_API_KEY
+# 常见 provider: bailian | deepseek | openai | local | embedding 等
+MODEL:
+  chat_model:
+    model_type: "chat"          # chat | embedding
+    provider: "bailian"
+    tool_call_mode: "native"    # native | structured
+    params:
+      model: "deepseek-v3.2"
+      temperature: 0.7
+      enable_thinking: true     # 部分模型支持思考链
+      # base_url: "https://..." # 非空时覆盖 {PROVIDER}_BASE_URL
+      # api_key: "sk-xxx"       # 非生产推荐；通常走 {PROVIDER}_API_KEY 环境变量
+      timeout: 300
+  text_embedding:
+    name: "text_embedding"      # 可选显式 name，默认同键名
+    model_type: "embedding"
+    provider: "bailian"
+    params:
+      model: "text-embedding-v4"
+
+# ── 场景 / 指令（可选） ─────────────────────────────────────────────────────
+# 按 mode（或任意子键）组织；build_agent_env 会提取 instructions 注入 env。
+# structured_instructions 可写在 SCENARIO 顶层（reward_utils 读取）或 chat 子键下（data_engineering 示例）。
+SCENARIO:
+  # 顶层 structured_instructions（reward 约束图用）
+  structured_instructions:
+    - "tool_a -> tool_b"
+  # personal: "场景人设描述（自定义键，按需使用）"
+  chat:
+    input: "用户输入描述"
+    task: "Agent 要完成的目标"
+    instructions: |
+      在此注入先验知识、行为约束、工具使用顺序等
+
+# ── 工作流节点 ───────────────────────────────────────────────────────────────
+# 默认由 flex_default_configs.yaml 提供 PRE/ACTOR/POST；用户 YAML 可覆盖。
+# 每个节点必填: node, module；可选: chat_model, prompt_template, 及节点专有参数。
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"        # 引用 MODEL.chat_model
+    # prompt_template: 与 node/module/chat_model 同级
+    # 每个 message_type（system/user）二选一 path 或 content；path 须绝对路径或 ~/...
+    prompt_template:
+      system:
+        content: |
+          追加到 planner system prompt 的 Jinja2 片段（可选）。
+        # path: "/abs/path/to/planner_system.md"
+      user:
+        content: |
+          追加到 planner user prompt 的 Jinja2 片段（可选）。
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 8192  # 工具结果截断长度，默认 8192
+    max_concurrency: 5            # 工具并发上限（可选，正整数）
+
+POST_WORKFLOW: []
+
+# ── Hook（可选，默认见 flex_default_configs.yaml） ───────────────────────────
+# 内置 hook name: pruner | portraiter | pre_metadata_tracker | post_metadata_tracker | cross_session_recall
+# 带 model 的 hook 项须为字典：name + model（引用 MODEL 槽位）
+HOOKS:
+  agent:
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - name: pruner
+        # - name: cross_session_recall
+        #   model: chat_model
+    executor:
+      pre: []
+      post: []
+
+# ── 工具（可选） ─────────────────────────────────────────────────────────────
+TOOLS:
+  # builtin: 覆盖内置 local tool 注册列表（高级，一般省略）
+  # builtin: []
+
+  # skills: 显式 allowlist；省略某来源 = 禁用该来源 skill
+  skills:
+    builtin:
+      - pdf
+      # - docx
+
+  local_functions:
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "sub_agent_tool"   # function 与 name 二选一；name 可覆盖注册名
+      name: "sub_agent_tool"
+      category: "general"
+      description: |
+        工具描述（可选，覆盖函数 docstring）。
+      config:                      # 传给 register_local_tool 的额外参数
+        llm_model: "chat_model"
+
+  mcp_servers:
+    - server_id: "analyzer"
+      transport_type: "stdio"      # stdio | sse | ...
+      config:
+        command: "python"
+        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2analyze"]
+        env: {}
+        cwd: null
+      description: "MCP 工具服务器"
+
+  # A2A Agent 注册
+  A2A:
+    - my_a2a_agent:
+        base_url: "http://127.0.0.1:8080"
+        auth_token: null
+        timeout: 30
+
+# ── Gym 环境（可选，FlexAgent.from_config 初始化 ENV） ───────────────────────
+# 单环境 dict 或多环境 list（合并为 CompoundEnv）。
+# module 必填；其余字段传给 Env.__init__。
+ENV:
+  - module: "dataagent.actions.gym.ArithmeticEnv"
+  # - module: "dataagent.actions.gym.OntologyEnv"
+  # - module: "dataagent.actions.gym.SQLiteEnv"
+  #   db_path: "/abs/path/to/db.sqlite"
+
+# ── 上下文压缩 / 历史（可选） ───────────────────────────────────────────────
+CONTEXT:
+  compress_token_limit: 32768   # 消息 token 超 1.2 倍时触发 LLM 压缩
+  compress_message_cnt: 200     # 消息条数超阈值时触发压缩
+  file_node_threshold: 500      # IR 长文本落盘 FileNode 的最小字符数
+  # 历史存储（Builder.set_history 映射到此段）
+  backend: "postgresql"         # 如 postgresql
+  url: "postgresql://user:pass@127.0.0.1:5432/history_db"
+  database:                     # context_trajectory 读取的路径（与 url 可并存）
+    url: "postgresql://user:pass@127.0.0.1:5432/history_db"
+  # vis:                        # constants 中预留的可视化参数，当前代码未接入
+  #   node_size_dot: 20
+
+# ── Bash 工具命令白名单（可选，未配置则不限制） ─────────────────────────────
+BASH_TOOL_WHITELIST:
+  - ls
+  - cat
+  - pwd
+
+# ── Swarm / 子 Agent 并发（可选） ───────────────────────────────────────────
+SWARM:
+  enable: false
+  worker_max_concurrent: 2      # 非负整数；省略/null = 不限制
+
+# ── 数据库（NL2SQL / SQL 工具，可选） ───────────────────────────────────────
+DATABASE:
+  db_id: "superhero"
+  engine: "sqlite"              # sqlite | mysql | hive | postgres
+  sql_service_engine: null      # 如 udn
+  config:
+    path: "/abs/path/to/superhero.sqlite"
+
+# ── NL2SQL 专用流水线（type: nl2sql 时使用，按顺序启用节点） ─────────────────
+CORE:
+  coordinator:
+    chat_model_name: "chat_model"  # NL2SQL 节点可选；覆盖默认 LLM 槽位
+  perceptor:
+    top_k: 10                   # schema linking 候选表数量
+    user_schema: null           # templates/nl2sql/perceptor/ 下 .md 文件名
+    user_evidence: null
+    user_sql_rules: "sql_rules_bird"
+    user_few_shot_examples: null
+  generator:
+    strategies: ["prompt"]        # prompt | icl | skeleton | dc
+    num_workers: 1
+    num_samples: 3
+  validator:
+    db_explain: true
+    keyword_match: false
+    metadata_match: false
+  reflector:
+    threshold: 0.9
+  executor:
+    limit: -1                   # -1 = 全部
+    preview_limit: 5
+  selector:
+    threshold: 0.9
+
+# ── 元数据增强（ChatBI / NL2SQL，可选） ─────────────────────────────────────
+METAVISOR:
+  url: "127.0.0.1:31000"        # 格式 host:port
+  metavisor_url: "http://127.0.0.1:41000"  # NL2SQL perceptor 实际读取的 URL
+  scene: "ecommerce_prod"
+  valuematch_enabled: false
+  valuematch_url: "http://127.0.0.1:8000"
+
+# ── 本体服务（可选） ─────────────────────────────────────────────────────────
+ONTOLOGY:
+  url: "127.0.0.1:32000"
+  api_url: "http://127.0.0.1:32000"  # 部分示例使用的别名
+  scene: "dataagent_ontology"        # OntologyEnv / 工具运行时 SCENE
+  api:                          # OntologyEnv / ManufacureEnv 实际读取
+    url: "http://127.0.0.1:32000"
