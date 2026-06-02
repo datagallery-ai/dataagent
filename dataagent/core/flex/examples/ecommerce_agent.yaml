@@ -22,8 +22,7 @@ SCENARIO:
   chat:
     input: data engineering prompt
     task: run a tool chain and summarize
-    instructions: |
-      先调用这个工具：perceive_metadata_from_memory
+    instructions: 先调用这个工具：perceive_metadata_from_memory
       After you generate the report, you can end the process.
     output_format: done
 
@@ -54,12 +53,3 @@ TOOLS:
       function: "natural_language_to_sql"
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "report_generator"
-  mcp_servers:
-    - server_id: "analyzer"
-      transport_type: "stdio"
-      config:
-        command: "python"
-        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2analyze"]
-        env: {}
-        test: test
-      description: "数据分析工具服务器"

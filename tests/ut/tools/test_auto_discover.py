@@ -46,14 +46,14 @@ def _mcp_tools_config() -> dict[str, Any]:
         "TOOLS": {
             "mcp_servers": [
                 {
-                    "server_id": "analyzer",
+                    "server_id": "nl2sql",
                     "transport_type": "stdio",
                     "config": {
                         "command": "python",
-                        "args": ["-m", "dataagent.actions.tools.mcp_tool.nl2analyze"],
+                        "args": ["-m", "dataagent.actions.tools.mcp_tool.nl2sql"],
                         "env": {},
                     },
-                    "description": "数据分析工具服务器",
+                    "description": "自然语言转SQL工具服务器",
                 },
             ],
         },
@@ -91,7 +91,7 @@ def test_init_from_config_triggers_auto_discover_for_mcp(monkeypatch: pytest.Mon
 
     assert tool_manager.is_auto_discover_enabled()
     assert discover_calls == ["discover_all_sync"]
-    assert "analyzer" in tool_manager._registered_mcp_servers
+    assert "nl2sql" in tool_manager._registered_mcp_servers
 
 
 def test_init_from_config_skips_auto_discover_without_remote_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,15 +154,14 @@ def test_init_from_config_registers_discovered_mcp_tools(monkeypatch: pytest.Mon
                 MCPServerConfig.create_stdio_config(server_id, "python", ["-m", "dummy_mcp_server"]),
             )
             mcp_tool = MCPTool(
-                name="statistical_analyzer",
-                description="Perform statistical analysis on CSV data",
+                name="nl2sql",
+                description="Query the database using natural language",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "csv_path": {"type": "string"},
-                        "json_path": {"type": "string"},
+                        "query": {"type": "string"},
                     },
-                    "required": ["csv_path", "json_path"],
+                    "required": ["query"],
                 },
             )
             tool = MCPToolWrapper(client, mcp_tool)
@@ -175,5 +174,5 @@ def test_init_from_config_registers_discovered_mcp_tools(monkeypatch: pytest.Mon
     tool_manager.init_from_config(_mcp_tools_config())
 
     assert tool_manager.is_auto_discover_enabled()
-    assert tool_manager.exists("statistical_analyzer")
-    assert "statistical_analyzer" in [t.name for t in tool_manager.get_all_tool_instances()]
+    assert tool_manager.exists("nl2sql")
+    assert "nl2sql" in [t.name for t in tool_manager.get_all_tool_instances()]

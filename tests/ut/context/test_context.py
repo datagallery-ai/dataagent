@@ -83,7 +83,7 @@ if __name__ == "__main__":
         label="report_generator",
         description="""
     Based on the provided analysis and images, generate a detailed Markdown-formatted report.
-    Running **statistical_analyzer**, **llm_analyzer**, and **natural_language_to_plot** beforehand is recommended.""",
+    Running **llm_analyzer** and **natural_language_to_plot** beforehand is recommended.""",
         tool_params="""
     query (str): User's request for the report, which may include specific focus areas or analysis points.
     output_path (str): Output MD file path.
