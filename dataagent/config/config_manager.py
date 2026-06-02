@@ -21,18 +21,14 @@ from typing import Any
 import yaml
 from loguru import logger
 
-# Load .env file if it exists
-try:
-    from dotenv import load_dotenv
+from dataagent.utils.env_file_loader import load_env_file
 
-    env_path = Path(os.getcwd()) / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
-        logger.trace(f"Loaded environment variables from: {env_path}")
-    else:
-        logger.warning(f".env file not found at: {env_path}")
-except ImportError:
-    logger.warning("python-dotenv not installed, .env file will not be loaded")
+env_path = Path(os.getcwd()) / ".env"
+if env_path.exists():
+    load_env_file(env_path)
+    logger.trace(f"Loaded environment variables from: {env_path}")
+else:
+    logger.warning(f".env file not found at: {env_path}")
 
 
 class ConfigManager:

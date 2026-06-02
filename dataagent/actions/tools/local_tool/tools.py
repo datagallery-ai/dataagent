@@ -997,13 +997,13 @@ def report_generator(
 ) -> dict[str, str]:
     """Based on the provided analysis and images, generate a detailed Markdown-formatted report.
 
-    Running **statistical_analyzer**, **llm_analyzer**, and **natural_language_to_plot** beforehand is recommended.
+    Running **llm_analyzer** and **natural_language_to_plot** beforehand is recommended.
 
     Args:
         query (str): User's request for the report, which may include specific focus areas or analysis points.
         output_path (str): Absolute workspace path for the output Markdown file.
         analysis_path (str): Absolute workspace path to a saved analysis file (e.g. from
-            statistical_analyzer or llm_analyzer).
+            llm_analyzer).
         images_path (str): Absolute workspace path to a JSONL file with image paths and descriptions (optional).
 
     Returns:
