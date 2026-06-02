@@ -12,7 +12,6 @@ dependencies = [
     # ---- DataAgent core ----
     "a2a-sdk>=1.0.2",
     "protobuf==6.33.5",
-    "httpx==0.28.1",
     "jinja2>=3.1.0",
     "langchain==1.2.11",
     "langgraph==1.1.3",
