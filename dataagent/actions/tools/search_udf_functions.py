@@ -407,7 +407,7 @@ def _build_udf_basic_for_nl2sql(
     Args:
         workspace_path: 工作空间路径，默认为 None
         output_path: 输出路径，默认为 None
-        save_file: 是否保存结果到 schema_zhongduanyun_udf_basic.md，默认为 True
+        save_file: 是否保存结果到 udf_zdy.md，默认为 True
         target_dir: nl2sql subagent 目标目录，来自 ``WORKSPACE.target_path``。
 
     Returns:
@@ -465,7 +465,7 @@ def _build_udf_basic_for_nl2sql(
 
     # 保存 UDF 基础信息到文件
     if save_file and udf_basic:
-        save_path = os.path.join(workspace_path, "schema_zhongduanyun_udf_basic.md")
+        save_path = os.path.join(workspace_path, "udf_zdy.md")
         with open(save_path, "w", encoding="utf-8") as f:
             f.write("udf_basic = ")
             f.write(json.dumps(udf_basic, ensure_ascii=False, indent=2))
@@ -473,7 +473,7 @@ def _build_udf_basic_for_nl2sql(
         # 复制到 nl2sql subagent 指定的 目标目录
         if target_dir:
             os.makedirs(target_dir, exist_ok=True)
-            target_path = os.path.join(target_dir, "schema_zhongduanyun_udf_basic.md")
+            target_path = os.path.join(target_dir, "udf_zdy.md")
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write("udf_basic = ")
                 f.write(json.dumps(udf_basic, ensure_ascii=False, indent=2))

@@ -11,12 +11,6 @@ MODEL:
     params:
       model: "deepseek-v4-flash"
       temperature: 0.0
-  qwen3_coder:
-    model_type: "chat"
-    provider: "bailian"
-    params:
-      model: "qwen3-coder-480b-a35b-instruct"
-      temperature: 0.0
 
 SCENARIO:
   chat:
@@ -30,9 +24,8 @@ TOOLS:
   local_functions:
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "nl2sql_sub_agent_tool"
-      description: 使用该工具，将用户输入的sql语句转化成执行后的结果。
       config:
-        llm_model: qwen3_coder
+        llm_model: chat_model
 
 PRE_WORKFLOW: []
 POST_WORKFLOW: []
@@ -41,12 +34,11 @@ DATABASE:
   db_id: "superhero"
   engine: "sqlite"
   config:
-    # SQLite 路径：相对于进程当前工作目录（一般在仓库根目录运行；可把 superhero.sqlite 放在仓库根）
-    path: "superhero.sqlite"
+    path: ""
 
 METAVISOR:
-  metavisor_url: "8.92.9.151:41000"
-  valuematch_url: "8.92.9.151:8000"
+  metavisor_url: "http://8.92.9.151:41000"
+  valuematch_url: "http://8.92.9.151:8000"
 
 SWARM:
   enable: false
