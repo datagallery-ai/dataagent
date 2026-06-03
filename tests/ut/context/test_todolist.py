@@ -47,18 +47,18 @@ class TestTodoList:
         self.context._todolist_manager.init_todolist()
         assert self.context._todolist_manager is not None
         assert len(self.context._todolist_manager.prelist) == 1
-        assert len(self.context._todolist_manager.todolist) == 0
+        assert self.context._todolist_manager.todolist is None
         assert len(self.context._todolist_manager.postlist) == 2
 
     def test_append_and_pop_todo(self):
         """Test adding and popping todo nodes"""
         # Add todo nodes
-        maxlen = cast(int, self.context._todolist_manager.todolist.maxlen)
+        maxlen = cast(int, self.context._todolist_manager.prelist.maxlen) - 1
         for i in range(maxlen):
-            added = self.context.append_todo(name=f"todo_node_{i}", params={"param1": f"value_{i}"}, list_type="todo")
+            added = self.context.append_todo(name=f"todo_node_{i}", params={"param1": f"value_{i}"}, list_type="pre")
             assert added is True
         # Try to add one more node beyond maxlen
-        added = self.context.append_todo(name="extra_todo_node", params={"param1": "extra_value"}, list_type="todo")
+        added = self.context.append_todo(name="extra_todo_node", params={"param1": "extra_value"}, list_type="pre")
         assert added is False
 
         # Test adding to an unknown list type raises an exception

@@ -214,6 +214,11 @@ class Context:
         """Whether historical runs have been restored into this Context instance."""
         return self._restored
 
+    @property
+    def todolist_manager(self) -> TodoListManager:
+        """The todolist of the context."""
+        return self._todolist_manager
+
     @staticmethod
     def load_meta_from_json(user_id: str, session_id: str, run_id: int, sub_id: int = 0) -> dict[str, Any]:
         """
