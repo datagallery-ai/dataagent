@@ -36,6 +36,17 @@ POST_WORKFLOW: []
 #   - ls
 #   - cat
 
+# ── Skill 目录配置（可通过用户 YAML 覆盖） ──
+# TOOLS.skills.custom_dirs: 一个或多个额外 Skill 目录路径。
+# - 默认 `actions/skills` 仍会自动扫描，无需在 YAML 中配置
+# - 相对路径按 dataagent 包内路径解析
+# - 绝对路径按原样扫描
+# 示例：
+# TOOLS:
+#   skills:
+#     custom_dirs:
+#       - /abs/path/to/custom_skills
+
 HOOKS:
   agent:
     post:

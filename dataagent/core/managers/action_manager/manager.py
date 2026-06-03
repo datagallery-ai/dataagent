@@ -14,7 +14,7 @@ import asyncio
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -190,6 +190,29 @@ class ToolManager:
         return {str(item).strip() for item in configured if str(item).strip()}
 
     @staticmethod
+    def _extract_skill_directory_paths(tools_config: Mapping[str, Any] | None) -> list[str]:
+        """Return builtin skill directory roots from TOOLS.skills.custom_dirs.
+
+        The YAML form is a list of one or more directories. Relative paths are
+        resolved under the installed dataagent package unless the caller already
+        provides absolute paths.
+        """
+        if not isinstance(tools_config, Mapping):
+            return []
+        skills_config = tools_config.get("skills")
+        if skills_config is None:
+            return ["actions/skills"]
+        if not isinstance(skills_config, Mapping):
+            raise ValueError("TOOLS.skills must be a mapping.")
+        raw = skills_config.get("custom_dirs")
+        if raw is None:
+            return ["actions/skills"]
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+            raise ValueError("TOOLS.skills.custom_dirs must be a list of directory paths.")
+        paths = [str(item).strip() for item in raw if str(item).strip()]
+        return paths or ["actions/skills"]
+
+    @staticmethod
     def _parse_skill_frontmatter(skill_root: Path) -> dict[str, Any] | None:
         """Parse SKILL.md frontmatter into normalized skill metadata."""
         skill_md = skill_root / "SKILL.md"
@@ -332,7 +355,12 @@ class ToolManager:
             LocalToolWrapper = _get_local_tool_wrapper()
             tool_context = self._build_tool_execution_context()
             tool_wrapper = LocalToolWrapper(
-                func_or_class, tool_name, category, description, tool_context=tool_context, **kwargs
+                func_or_class,
+                tool_name,
+                category,
+                description,
+                tool_context=tool_context,
+                **kwargs,
             )
         elif inspect.isclass(func_or_class) and issubclass(func_or_class, BaseTool):
             tool_wrapper = func_or_class(name=tool_name, category=category, description=description, **kwargs)
@@ -821,18 +849,36 @@ class ToolManager:
         return discovered, discovered_names
 
     def _discover_builtin_skills(self, config: Mapping[str, Any]) -> list[dict[str, Any]]:
-        """Discover builtin skills using the configured allowlist plus defaults."""
+        """Discover builtin skills from default and extra configured directories.
+
+        The default `actions/skills` tree keeps its original allowlist behavior.
+        Extra directories listed in `TOOLS.skills.custom_dirs` are scanned directly
+        without an additional name allowlist filter.
+        """
         tools_config = config.get("TOOLS", {}) if isinstance(config, Mapping) else {}
         builtin_allowlist = set(self._extract_skill_allowlist(tools_config, "builtin"))
         builtin_allowlist.update(DEFAULT_BUILTIN_SKILL_NAMES)
 
-        builtin_skills, discovered_builtin_names = self._discover_skills_from_root(
-            root=dataagent_package_path("actions", "skills"),
-            allowlist=builtin_allowlist,
-        )
-        for missing_name in sorted(builtin_allowlist - discovered_builtin_names):
-            logger.warning(f"Configured builtin skill '{missing_name}' was not found in the discovered skill set. ")
-        return builtin_skills
+        discovered: list[dict[str, Any]] = []
+        discovered_names: set[str] = set()
+
+        default_root = dataagent_package_path("actions", "skills")
+        default_skills, default_names = self._discover_skills_from_root(root=default_root, allowlist=builtin_allowlist)
+        discovered.extend(default_skills)
+        discovered_names.update(default_names)
+
+        for rel_path in self._extract_skill_directory_paths(tools_config):
+            if rel_path == "actions/skills":
+                continue
+            root = Path(rel_path) if Path(rel_path).is_absolute() else dataagent_package_path(*str(rel_path).split("/"))
+            extra_skills, extra_names = self._discover_skills_from_root(root=root, allowlist=None)
+            for skill in extra_skills:
+                if skill["name"] not in discovered_names:
+                    discovered.append(skill)
+                    discovered_names.add(skill["name"])
+            discovered_names.update(extra_names)
+
+        return discovered
 
     async def _try_lazy_discover_mcp_async(self, name: str) -> bool:
         """异步尝试懒加载MCP工具（仅限本 Agent 注册的 server）"""
