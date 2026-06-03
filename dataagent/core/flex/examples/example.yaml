@@ -156,6 +156,8 @@ TOOLS:
     builtin:
       - pdf
       # - docx
+    custom_dirs:
+      - /abs/path/to/custom_skills
 
   local_functions:
     - module: "dataagent.actions.tools.local_tool.tools"
