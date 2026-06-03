@@ -44,6 +44,26 @@ _BUILTIN_LOCAL_TOOL_CATALOG: dict[str, dict[str, str]] = {
     },
     "grep": {"name": "grep", "function": "grep", "module": "dataagent.actions.tools.local_tool.tools"},
     "glob": {"name": "glob", "function": "glob", "module": "dataagent.actions.tools.local_tool.tools"},
+    "create_plan": {
+        "name": "create_plan",
+        "function": "create_plan",
+        "module": "dataagent.actions.tools.local_tool.plan",
+    },
+    "update_plan": {
+        "name": "update_plan",
+        "function": "update_plan",
+        "module": "dataagent.actions.tools.local_tool.plan",
+    },
+    "delete_plan": {
+        "name": "delete_plan",
+        "function": "delete_plan",
+        "module": "dataagent.actions.tools.local_tool.plan",
+    },
+    "complete_current_todo": {
+        "name": "complete_current_todo",
+        "function": "complete_current_todo",
+        "module": "dataagent.actions.tools.local_tool.plan",
+    },
 }
 
 

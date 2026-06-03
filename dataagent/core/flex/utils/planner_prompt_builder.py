@@ -119,6 +119,10 @@ def prepare_flex_planner_prompt(
     )
     sync_flex_planner_user_human_to_state(runtime, state, user_message)
     messages = [system_message] + build_messages(list(state.get("messages") or []), context=context)
+    todo_message = build_todo_message(context=context)
+    if todo_message:
+        messages.append(todo_message)
+
     return messages
 
 
@@ -145,6 +149,14 @@ def sync_flex_planner_user_human_to_state(
     # openjiuwen：漏置 pending 或 messages 尚未初始化时，避免 Planner 仅有 SystemMessage
     if not state.get("messages"):
         state["messages"] = [user_message]
+
+
+def build_todo_message(context: Context) -> HumanMessage | None:
+    """构建包含待办指令的 HumanMessage。"""
+    todo_template = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/todo")
+    return build_human_message(
+        prompt_template=todo_template, prompt_str="", **_build_plan_prompt_variables(context=context)
+    )
 
 
 def _build_skill_entries_prompt(skills: list[dict[str, Any]], *, section_title: str) -> str:
@@ -802,3 +814,35 @@ def _allow_path_bullet_lines(config: dict[str, Any]) -> str:
     if not paths:
         return ""
     return "\n".join(f"- `{p}`" for p in paths)
+
+
+def _build_plan_prompt_variables(context: Context) -> dict[str, Any]:
+    """从进程内全局 Plan 快照构建 planner 模板变量。"""
+    plan = context.todolist_manager.todolist
+    if plan is None:
+        return {
+            "has_plan": False,
+            "plan_all_todos_done": False,
+            "plan_introduction": "",
+            "plan_approach": "",
+            "plan_current_todo": "",
+            "plan_todos_overview": "",
+        }
+
+    incomplete = [t for t in plan.todos if not t.completed]
+    all_done = len(plan.todos) == 0 or not incomplete
+    current_todo = incomplete[0].title if incomplete else ""
+
+    overview_lines: list[str] = []
+    for item in plan.todos:
+        mark = "x" if item.completed else " "
+        overview_lines.append(f"- [{mark}] {item.title}")
+
+    return {
+        "has_plan": True,
+        "plan_all_todos_done": all_done,
+        "plan_introduction": plan.introduction,
+        "plan_approach": plan.approach,
+        "plan_current_todo": current_todo,
+        "plan_todos_overview": "\n".join(overview_lines),
+    }

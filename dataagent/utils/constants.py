@@ -300,6 +300,10 @@ DEFAULT_BUILTIN_LOCAL_TOOLS: tuple[str, ...] = (
     "write_file",
     "grep",
     "glob",
+    "create_plan",
+    "update_plan",
+    "delete_plan",
+    "complete_current_todo",
 )
 """默认注册的本地工具模块名列表。"""
 
