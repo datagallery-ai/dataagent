@@ -12,16 +12,13 @@ MODEL:
 CORE:
   coordinator: {}
   perceptor:
-    user_schema: "schema_zhongduanyun"
-    user_evidence: "udf_zhongduanyun"
-    user_few_shot_examples: "few_shot_examples_zhongduanyun"
-    user_sql_rules: "sql_rules_zhongduanyun"
+    user_schema: "schema_zdy"
+    user_evidence: "udf_zdy"
+    user_sql_rules: "sql_rules_zdy"
   generator:
-    strategies: ["icl"]
+    strategies: ["prompt"]
+    num_samples: 1
   validator: {}
   reflector: {}
-  executor: {}
-  selector: {}
 DATABASE:
   engine: "hive"
-  config: ""

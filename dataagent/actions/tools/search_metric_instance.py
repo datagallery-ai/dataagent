@@ -374,7 +374,7 @@ def _build_schema_ir_for_nl2sql(
     Args:
         workspace_path: 工作空间路径,默认为None
         output_path: 输出路径，默认为 None
-        save_file: 是否保存结果到 schema_zhongduanyun_schemair.md，默认为 True
+        save_file: 是否保存结果到 schema_zdy.md，默认为 True
         target_dir: nl2sql subagent 目标目录，来自 ``WORKSPACE.target_path``。
 
     Returns:
@@ -422,7 +422,7 @@ def _build_schema_ir_for_nl2sql(
 
     # 保存 schema_ir 中间表示
     if save_file and schema_ir:
-        save_path = os.path.join(workspace_path, "schema_zhongduanyun_schemair.md")
+        save_path = os.path.join(workspace_path, "schema_zdy.md")
         with open(save_path, "w", encoding="utf-8") as f:
             f.write("schema_ir = ")
             f.write(json.dumps(schema_ir, ensure_ascii=False, indent=2))
@@ -430,7 +430,7 @@ def _build_schema_ir_for_nl2sql(
     # 复制到 nl2sql subagent 指定的目标目录
     if save_file and schema_ir and target_dir:
         os.makedirs(target_dir, exist_ok=True)
-        target_path = os.path.join(target_dir, "schema_zhongduanyun_schemair.md")
+        target_path = os.path.join(target_dir, "schema_zdy.md")
         with open(target_path, "w", encoding="utf-8") as f:
             f.write("schema_ir = ")
             f.write(json.dumps(schema_ir, ensure_ascii=False, indent=2))

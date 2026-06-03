@@ -34,7 +34,6 @@ CORE:
 DATABASE:
   db_id: "superhero"
   engine: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
-  sql_service_engine: null  # "udn"
   config:
     path: ""  # replace with actual superhero.sqlite path
 METAVISOR:

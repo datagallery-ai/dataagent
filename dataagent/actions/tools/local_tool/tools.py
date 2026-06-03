@@ -1213,8 +1213,20 @@ async def nl2sql_sub_agent_tool(
             "original_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
             "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
         }
-
     sql = sub_state.get("sql", "")
+    try:
+        import sqlglot
+
+        dialect = source_config["DATABASE"]["engine"]
+        sql = sqlglot.parse_one(sql, read=dialect).sql(pretty=True)
+    except Exception:
+        try:
+            import sqlparse
+
+            sql = sqlparse.format(sql, reindent=True, keyword_case="upper")
+        except Exception:
+            logger.warning("SQL cannot be reformatted.")
+
     columns = sub_state.get("columns") or []
     rows = sub_state.get("rows") or []
 
