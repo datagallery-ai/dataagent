@@ -116,7 +116,7 @@ class TestExecutorClassifyError:
 
     def test_keyword_file_not_found(self, executor):
         """测试 file not found 关键词"""
-        keywords = ["not found", "no such file", "does not exist"]
+        keywords = ["file not found", "no such file", "does not exist"]
         for keyword in keywords:
             error = Exception(f"Path {keyword}")
             policy = executor._classify_error(error)
