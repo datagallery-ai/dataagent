@@ -105,7 +105,7 @@ class LangGraphWorkflowBackend:
     async def resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> dict[str, Any]:
         """
         LangGraph 恢复：
-        - 需要 checkpointer（AsyncPostgresSaver）参与
+        - 需要 checkpointer 参与
         - 输入使用 Command(resume=message)
         - config.configurable.thread_id 使用 checkpoint_id
         """
@@ -115,7 +115,7 @@ class LangGraphWorkflowBackend:
         checkpointer = kwargs.pop("checkpointer", None)
         config = kwargs.pop("config", None) or {"configurable": {"thread_id": str(checkpoint_id)}}
         if checkpointer is None:
-            raise ValueError("LangGraph resume requires 'checkpointer' (e.g., AsyncPostgresSaver).")
+            raise ValueError("LangGraph resume requires 'checkpointer'.")
         if getattr(self._wf, "graph", None) is None:
             self._wf.ensure_graph_built()  # type: ignore[attr-defined]
         compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
@@ -129,7 +129,7 @@ class LangGraphWorkflowBackend:
         checkpointer = kwargs.pop("checkpointer", None)
         config = kwargs.pop("config", None) or {"configurable": {"thread_id": str(checkpoint_id)}}
         if checkpointer is None:
-            raise ValueError("LangGraph astream_resume requires 'checkpointer' (e.g., AsyncPostgresSaver).")
+            raise ValueError("LangGraph astream_resume requires 'checkpointer'.")
         if getattr(self._wf, "graph", None) is None:
             self._wf.ensure_graph_built()  # type: ignore[attr-defined]
         compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)

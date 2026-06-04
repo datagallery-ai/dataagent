@@ -27,7 +27,7 @@ class SqliteCheckpointStore:
     SQLite checkpoint store（用于 openjiuwen human_feedback “中断-恢复”）。
 
     目标：
-    - 与 PostgresCheckpointStore 保持一致：save()/load()
+    - save()/load()
     - 以单文件 sqlite 方式持久化（适合本地/轻量部署）
     """
 

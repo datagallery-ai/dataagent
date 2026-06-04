@@ -142,7 +142,7 @@ class TestPerceptor:
         if not os.getenv("MEMORY_LONG_TERM_STORAGE_URL", "").strip():
             os.environ["MEMORY_LONG_TERM_STORAGE_URL"] = "http://127.0.0.1:9200"
         if not os.getenv("MEMORY_SHORT_TERM_STORAGE_URL", "").strip():
-            os.environ["MEMORY_SHORT_TERM_STORAGE_URL"] = "postgresql://user:pass@127.0.0.1:5432/db"
+            os.environ["MEMORY_SHORT_TERM_STORAGE_URL"] = "sqlite:///./test.db"
         if not os.getenv("DATASOURCE_DATABASE_ADDRESS", "").strip():
             os.environ["DATASOURCE_DATABASE_ADDRESS"] = "mysql+pymysql://user:pass@127.0.0.1:3306/Ecommerce"
         if not os.getenv("EMBEDDING_BASE_URL", "").strip():

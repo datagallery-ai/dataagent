@@ -16,27 +16,23 @@ dependencies = [
     "langchain==1.3.2",
     "litellm==1.80.0",
     "loguru==0.7.3",
+    "networkx==3.4.2",
     "mcp==1.12.2",
     "pandas==2.3.2",
-    "prompt-toolkit>=3.0.52",
     "psutil==6.0.0",
     "pyarrow==23.0.1",
     "pydantic==2.12.5",
-    "pyvis==0.3.2",
     "PyYAML==6.0.2",
-    "rich>=13.0.0",
     "jieba>=0.42.1",
     # ---- tools/skills ----
     "matplotlib==3.10.1",
     "numpy==2.3.5",
     "seaborn>=0.13.2",
     # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
-    "psycopg>=3.2.10",
-    "psycopg-binary>=3.3.2",
-    "psycopg2-binary>=2.9.0",
     "pymysql==1.1.2",
     "sqlalchemy==2.0.49",
     "uvicorn==0.34.0",
+    "rich>=13.0.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -51,7 +47,6 @@ server = [
     "python-jose>=3.5.0",
     "sqlmodel>=0.0.24",
     "cryptography==46.0.7",
-    "langgraph-checkpoint-postgres>=2.0.23",
     "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
     "elasticsearch==8.17.1",
 
@@ -82,7 +77,9 @@ test = [
 a2a-server = [
     "grpcio>=1.60.0",
 ]
-
+trajectory_graph = [
+    "pyvis==0.3.2",
+]
 tool = [
     "mplfonts>=0.0.11",
 ]

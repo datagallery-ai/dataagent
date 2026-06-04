@@ -85,7 +85,7 @@ def build_kb_ut_config_manager() -> ConfigManager:
     cm = ConfigManager()
     cm.set("MEMORY.enabled", True)
     cm.set("MEMORY.long_term_storage.backend", "elasticsearch")
-    cm.set("MEMORY.short_term_storage.backend", "postgresql")
+    cm.set("MEMORY.short_term_storage.backend", "sqlite")
     cm.set("MEMORY.embedding_model", "jina_v3")
     cm.set("MODEL.jina_v3.name", "jina_v3")
     cm.set("MODEL.jina_v3.model_type", "embedding")

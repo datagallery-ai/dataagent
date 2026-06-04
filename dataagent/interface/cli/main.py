@@ -19,11 +19,53 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import yaml
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.prompt import Prompt
-from rich.rule import Rule
+
+try:
+    from rich.console import Console
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+    from rich.rule import Rule
+
+    RICH_AVAILABLE = True
+except ImportError:
+    import builtins
+
+    RICH_AVAILABLE = False
+
+    class Console:  # type: ignore[no-redef]
+        @classmethod
+        def print(cls, *args: object, **kwargs: object) -> None:
+            sep = kwargs.get("sep", " ")
+            end = kwargs.get("end", "\n")
+            builtins.print(sep.join(str(a) for a in args), end=end)
+
+    class Markdown:  # type: ignore[no-redef]
+        def __init__(self, text: str, **_: object) -> None:
+            self._text = text
+
+        def __str__(self) -> str:
+            return self._text
+
+    class Panel:  # type: ignore[no-redef]
+        def __init__(self, content: object, **_: object) -> None:
+            self._content = str(content)
+
+        def __str__(self) -> str:
+            return self._content
+
+    class Prompt:  # type: ignore[no-redef]
+        @staticmethod
+        def ask(prompt_text: str, **_: object) -> str:
+            return input(f"{prompt_text} ")
+
+    class Rule:  # type: ignore[no-redef]
+        def __init__(self, title: str = "", **_: object) -> None:
+            pass
+
+        def __str__(self) -> str:
+            return "---"
+
 
 from dataagent.config import ConfigManager
 from dataagent.interface.sdk.agent import DataAgent
@@ -152,7 +194,7 @@ def log_terminal_welcome(title: str = "DataAgent 交互模式", support_multilin
         "输入 `help` 查看帮助信息",
     ]
     if support_multiline:
-        lines.append("支持多行输入，Alt+Enter 换行，Enter 发送")
+        lines.append("支持多行输入，Ctrl+J 换行，Enter 发送")
     console.print()
     console.print(
         Panel(
@@ -166,28 +208,10 @@ def log_terminal_welcome(title: str = "DataAgent 交互模式", support_multilin
 
 
 async def _read_multiline_input() -> str:
-    """读取多行用户输入。Alt+Enter 换行，Enter 提交。
+    """读取多行用户输入。Alt+Enter 换行，Enter 提交。"""
+    from dataagent.utils.cli.terminal_input import multiline_input
 
-    - prompt_toolkit 异步 API 避免在已有 asyncio 事件循环内嵌套调用 asyncio.run()。
-    - Alt+Enter（ESC + 0x0d）是 PTY/SSH 环境下唯一可靠的换行键；
-      Ctrl+Enter 在该环境中与 Enter 发送完全相同的字节（0x0d），无法区分。
-    - 支持直接粘贴多行文本，粘贴内容中的换行符会被正确渲染，Enter 一次提交全部。
-    """
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.key_binding import KeyBindings
-
-    kb = KeyBindings()
-
-    @kb.add("escape", "enter")
-    def _insert_newline(event) -> None:  # type: ignore[no-untyped-def]
-        event.current_buffer.insert_text("\n")
-
-    session: PromptSession[str] = PromptSession()
-    result = await session.prompt_async(
-        "输入你的问题 (Alt+Enter 换行，Enter 发送，'quit'/'exit'/'q' 退出):\n>",
-        key_bindings=kb,
-    )
-    return result.strip()
+    return (await asyncio.to_thread(multiline_input, "> ")).strip()
 
 
 def _cli_optional_str(value: str | None) -> str | None:
@@ -230,6 +254,7 @@ async def _run_terminal_chat_loop(
 
     run_id = 0
     stream_enabled = bool(getattr(getattr(agent, "_chat_agent", None), "debug", False))
+    skip_display = stream_enabled and RICH_AVAILABLE
     while True:
         try:
             user_input = await get_user_input()
@@ -262,7 +287,7 @@ async def _run_terminal_chat_loop(
                         padding=(1, 2),
                     )
                 )
-            elif not stream_enabled and isinstance(response, dict) and response.get("messages"):
+            elif not skip_display and isinstance(response, dict) and response.get("messages"):
                 final_message = response["messages"][-1]
                 final_content = getattr(final_message, "content", str(final_message))
                 if final_content:

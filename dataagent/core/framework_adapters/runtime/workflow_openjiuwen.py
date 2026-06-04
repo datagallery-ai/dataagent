@@ -27,7 +27,6 @@ from sqlalchemy.engine.url import make_url
 from dataagent.common_utils.storer_utils import deserialize_state_from_store, serialize_state_for_store
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_router import BaseRouter
-from dataagent.core.framework_adapters.checkpoints.postgres_store import PostgresCheckpointStore
 from dataagent.core.framework_adapters.checkpoints.sqlite_store import SqliteCheckpointStore
 from dataagent.core.framework_adapters.runtime.context import (
     GlobalStateProxy,
@@ -504,12 +503,9 @@ class OpenJiuWenWorkflow:
         # - 读取 GLOBAL_STATE_KEY
         return get_global_state_snapshot(runtime)
 
-    def _get_checkpoint_store(self) -> PostgresCheckpointStore | SqliteCheckpointStore:
+    def _get_checkpoint_store(self) -> SqliteCheckpointStore:
         """
-        openjiuwen checkpoint：支持 PostgreSQL / SQLite。
-
-        连接串来源（全局统一一键切换）：
-        - 仅使用 DATABASE_URL
+        openjiuwen checkpoint：SQLite。
         """
         cfg = self.config
         database_url: str | None = None
@@ -525,20 +521,10 @@ class OpenJiuWenWorkflow:
         if not database_url:
             raise ValueError("openjiuwen checkpoint 未配置数据库连接。请配置 DATABASE_URL。")
 
-        # sqlalchemy stubs 在部分环境下不完整，这里用 getattr + Any 做类型兜底
         url_obj: Any = make_url(str(database_url))
-        driver = str(getattr(url_obj, "drivername", "") or "").lower()
-        if driver.startswith("postgresql"):
-            return PostgresCheckpointStore(str(database_url), table_name=table)
-
-        if driver.startswith("sqlite"):
-            # sqlite:///./x.db -> ./x.db ; sqlite:////abs/x.db -> /abs/x.db ; sqlite:///:memory: -> :memory:
-            sqlite_path = str(getattr(url_obj, "database", "") or "").strip() or ":memory:"
-            return SqliteCheckpointStore(sqlite_path, table_name=table)
-
-        raise ValueError(
-            f"openjiuwen checkpoint 不支持的数据库类型: {getattr(url_obj, 'drivername', None)!r}。仅支持 PostgreSQL/SQLite。"
-        )
+        # sqlite:///./x.db -> ./x.db ; sqlite:////abs/x.db -> /abs/x.db ; sqlite:///:memory: -> :memory:
+        sqlite_path = str(getattr(url_obj, "database", "") or "").strip() or ":memory:"
+        return SqliteCheckpointStore(sqlite_path, table_name=table)
 
     def _merge_delta(self, current_state: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
         """

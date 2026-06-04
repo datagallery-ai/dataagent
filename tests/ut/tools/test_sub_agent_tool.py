@@ -801,7 +801,7 @@ TOOLS:
 
     runtime_database = {
         "db_id": "runtime_db",
-        "engine": "postgres",
+        "engine": "sqlite",
         "config": {"host": "127.0.0.1", "port": 5432},
     }
     runtime_metavisor = {

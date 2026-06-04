@@ -15,7 +15,6 @@ import pandas as pd
 
 from dataagent.common_utils.knowledge_base.utils_common import (
     StorageConnectorElasticSearch,
-    StorageConnectorGaussVector,
 )
 from dataagent.common_utils.knowledge_base.utils_inference import embedding, model_inference
 from dataagent.common_utils.knowledge_base.utils_knowledgebase import chunk_markdown
@@ -173,6 +172,8 @@ class KnowledgeBase:
         if storage_type == "elasticsearch":
             self.storage = StorageConnectorElasticSearch(hosts=hostaddress)
         elif storage_type == "gaussvector":
+            from dataagent.common_utils.knowledge_base.utils_common import StorageConnectorGaussVector
+
             self.storage = StorageConnectorGaussVector(hosts=hostaddress)
         else:
             raise ValueError(

@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from loguru import logger
 
 from dataagent.utils.env_file_loader import load_env_file
+from dataagent.utils.log import logger
 
 env_path = Path(os.getcwd()) / ".env"
 if env_path.exists():

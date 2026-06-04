@@ -27,15 +27,33 @@ import re
 import time
 from typing import Any
 
-from rich.console import Console, Group
-from rich.live import Live
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.rule import Rule
-from rich.spinner import Spinner
-from rich.table import Table
-from rich.text import Text
-from rich.tree import Tree
+from loguru import logger
+
+try:
+    from rich.console import Console, Group
+    from rich.live import Live
+    from rich.markdown import Markdown
+    from rich.panel import Panel
+    from rich.rule import Rule
+    from rich.spinner import Spinner
+    from rich.table import Table
+    from rich.text import Text
+    from rich.tree import Tree
+
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+    logger.info("Rich library not found. Install rich with `uv sync --extra cli` to enable enhanced CLI output.")
+    Console = None  # type: ignore[assignment]
+    Group = None  # type: ignore[assignment]
+    Live = None  # type: ignore[assignment]
+    Markdown = None  # type: ignore[assignment]
+    Panel = None  # type: ignore[assignment]
+    Rule = None  # type: ignore[assignment]
+    Spinner = None  # type: ignore[assignment]
+    Table = None  # type: ignore[assignment]
+    Text = None  # type: ignore[assignment]
+    Tree = None  # type: ignore[assignment]
 
 from dataagent.utils.constants import (
     DEFAULT_INITIAL_THINKING_MIN_DISPLAY_SECONDS,
@@ -686,8 +704,6 @@ class StreamRenderer:
             try:
                 self._status.stop()
             except (RuntimeError, OSError):
-                from loguru import logger
-
                 logger.warning("Failed to stop status", exc_info=True)
             self._status = None
 
