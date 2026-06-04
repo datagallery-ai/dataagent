@@ -16,7 +16,6 @@ import re
 
 import networkx as nx
 import pandas as pd
-from pyvis.network import Network  # type: ignore
 
 
 def generate_color(n: int) -> list[str]:
@@ -228,6 +227,8 @@ def graph_to_html(config: dict, G: nx.MultiDiGraph | nx.DiGraph, output_html: st
         G (Union[nx.MultiDiGraph, nx.DiGraph]): The graph object.
         output_html (str): Path to save HTML file.
     """
+    from pyvis.network import Network  # type: ignore
+
     net = Network(height="800px", width="100%", bgcolor="#f9f9f9", font_color="black", directed=True)  # type: ignore
     net.barnes_hut(
         gravity=-25000, central_gravity=-1500, spring_length=500, spring_strength=0.03, damping=0.09, overlap=0

@@ -10,13 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import inspect
 import itertools
 
 import numpy as np
 import pandas as pd
 
-from dataagent.common_utils.knowledge_base.utils_common import MySQLReader, PostgreSQLReader
+from dataagent.common_utils.knowledge_base.utils_common import MySQLReader
 from dataagent.common_utils.knowledge_base.utils_inference import cosine_similarity, embedding, model_inference
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 
@@ -82,10 +81,6 @@ def extract_information(
         if table_path.startswith("mysql+pymysql://"):
             url, table = table_path.rpartition("/")[0], table_path.rpartition("/")[-1]
             return MySQLReader(url=url).load_table(table_name=table)
-
-        if table_path.startswith("postgresql+psycopg2://"):
-            url, table = table_path.rpartition("/")[0], table_path.rpartition("/")[-1]
-            return PostgreSQLReader(url=url).load_table(table_name=table)
 
         return pd.read_csv(table_path, keep_default_na=False)
 
@@ -270,46 +265,3 @@ def infer_joinable_relationship(
         distance_threshold=distance_threshold,
     )
     return out
-
-
-def docstring_to_metadata(docstring: str, tool_type: str = "tool") -> dict[str, str]:
-    """Extract function docstring and convert it to a dictionary.
-
-    Args:
-        docstring (str): The docstring to be parsed.
-
-    Returns:
-        dict[str, str]: Parsed tool metadata with type, description, parameters, output.
-    """
-    doc = inspect.cleandoc(docstring) or ""
-    lines = doc.splitlines()
-    description_lines, args_lines, returns_lines = [], [], []
-    mode = "description"
-    for line in lines:
-        s = line.rstrip()
-        if s.strip() in {"Args:", "Parameters:"}:
-            mode = "args"
-            continue
-        if s.strip() == "Returns:":
-            mode = "returns"
-            continue
-        if s.strip() in {"Raises:", "Examples:"}:
-            break
-        if mode == "description":
-            if s.strip() == "":
-                continue
-            description_lines.append(s.strip())
-        elif mode == "args":
-            if s.strip() == "":
-                continue
-            args_lines.append(s.strip())
-        elif mode == "returns":
-            if s.strip() == "":
-                continue
-            returns_lines.append(s.strip())
-    return {
-        "type": tool_type,
-        "description": "\n".join(description_lines),
-        "parameters": "\n".join(args_lines),
-        "output": "\n".join(returns_lines),
-    }

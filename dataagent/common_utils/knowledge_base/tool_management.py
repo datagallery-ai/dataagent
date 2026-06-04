@@ -15,7 +15,6 @@ import numpy as np
 
 from dataagent.common_utils.knowledge_base.utils_common import (
     StorageConnectorElasticSearch,
-    StorageConnectorGaussVector,
 )
 from dataagent.common_utils.knowledge_base.utils_inference import cosine_similarity, embedding
 from dataagent.common_utils.knowledge_base.utils_metadata import create_tool_schema_template
@@ -100,12 +99,8 @@ class ToolManagement:
         self.mapping_edges = mapping_edge
         if storage_type == "elasticsearch":
             self.storage = StorageConnectorElasticSearch(hosts=hostaddress)
-        elif storage_type == "gaussvector":
-            self.storage = StorageConnectorGaussVector(hosts=hostaddress)
         else:
-            raise ValueError(
-                f'Unsupported storage type {storage_type}. Supported connectors are ["elasticsearch", "gaussvector"].'
-            )
+            raise ValueError(f'Unsupported storage type {storage_type}. Supported connectors are ["elasticsearch"].')
 
         self.storage.create_table(table_name=self.index_nodes, mapping=self.mapping_nodes)
         self.storage.create_table(table_name=self.index_edges, mapping=self.mapping_edges)

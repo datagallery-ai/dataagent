@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import contextlib
 import json
 from pathlib import Path
@@ -17,7 +18,6 @@ from typing import Any, cast
 
 from langchain_core.messages import ToolMessage
 from loguru import logger
-from prompt_toolkit import prompt
 
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
@@ -115,7 +115,7 @@ class HumanFeedbackNode(BaseNode):
             try:
                 rendered_by_renderer = render_active_human_feedback_prompt(reason=reason, pending_action=pending_action)
                 prompt_text = "请提供您的意见： " if rendered_by_renderer else feedback_msg + "\n"
-                user_feedback = prompt(prompt_text, in_thread=True)
+                user_feedback = await asyncio.to_thread(input, prompt_text)
             finally:
                 resume_active_renderer()
 
@@ -267,7 +267,7 @@ class HumanFeedbackNode(BaseNode):
                 # node_link_graph 会保留节点属性（包括 query / additional_files）
                 import networkx as nx  # noqa: PLC0415
 
-                g = nx.node_link_graph(data=trajectory_dict)
+                g = nx.node_link_graph(data=trajectory_dict, edges="edges")
                 attrs = g.nodes.get(initial_pt, {}) if initial_pt in g.nodes else {}
                 query_text = str(attrs.get("query", "") or "")
                 additional_files_val = attrs.get("additional_files", [])
@@ -299,7 +299,7 @@ class HumanFeedbackNode(BaseNode):
                 trajectory_dict = json.load(f)
             import networkx as nx  # noqa: PLC0415
 
-            loaded = nx.node_link_graph(data=trajectory_dict)
+            loaded = nx.node_link_graph(data=trajectory_dict, edges="edges")
             traj_ref = ctx.get_trajectory(trimmed=False)
             traj_ref.clear()
             traj_ref.add_nodes_from(loaded.nodes(data=True))

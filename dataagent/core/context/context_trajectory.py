@@ -25,8 +25,6 @@ from networkx.classes.digraph import DiGraph
 
 from dataagent.core.context.contextIR import BaseIR, DataNode, IRManager, StateNode
 from dataagent.core.context.todolist_manager import TodoListManager
-from dataagent.core.context.utils_context_storage import create_table, get_IR_from_pg, save_IR_to_pg
-from dataagent.core.context.utils_context_trajectory import graph_to_html, html_config
 from dataagent.utils.runtime_paths import resolve_session_root
 
 _IR_ADD_SKIP_KEYS = frozenset(
@@ -188,9 +186,12 @@ class Context:
         self._restored: bool = False
         self._persisted: bool = False
         self._pg_url: str | None = init_opts.database_url
+        self._pg_url = None
         self.messages: dict[Any, Any] = {}
         self.pending_tasks: dict[str, list[asyncio.Task[Any]]] = defaultdict(list)
         if self._pg_url:
+            from dataagent.core.context.utils_context_storage import create_table
+
             create_table(url=self._pg_url)
         self._profiled_nodes: set[str] = set()
 
@@ -279,7 +280,7 @@ class Context:
         try:
             with open(store_path) as f:
                 trajectory_dict = json.load(f)
-                return nx.node_link_graph(data=trajectory_dict)
+                return nx.node_link_graph(data=trajectory_dict, edges="edges")
         except Exception as e:
             logger.warning(f"Failed to load context from JSON file: {e}")
             return DiGraph()
@@ -756,7 +757,7 @@ class Context:
                 current_run_trajectory.add_edge(source, target, **attrs)
 
         with open(savepath, "w") as f:
-            trajectory_dict = nx.node_link_data(current_run_trajectory)
+            trajectory_dict = nx.node_link_data(current_run_trajectory, edges="edges")
             json.dump(trajectory_dict, f, indent=4, ensure_ascii=False, default=str)
         logger.debug(f"Persisted context to JSON file: {savepath}")
         return str(savepath)
@@ -806,6 +807,16 @@ class Context:
         Args:
             output_html (str): full path of output html file
         """
+        try:
+            import pyvis
+        except ImportError:
+            logger.error(
+                "Pyvis is required for trajectory visualization. Install it via `uv sync --extra trajectory_graph`."
+            )
+            return
+        from dataagent.core.context.utils_context_trajectory import graph_to_html, html_config
+
+        logger.trace(pyvis.__version__)
         config: dict[str, Any] = html_config(self._trajectory)
         graph_to_html(config=config, G=self._trajectory, output_html=output_html)
 
@@ -858,6 +869,7 @@ class Context:
         """
         if not self._pg_url:
             return {}
+        from dataagent.core.context.utils_context_storage import get_IR_from_pg
 
         logger.debug(
             f"Context: Loading IR from PostgreSQL for user={user_id}, session={session_id}, run={run_id}, sub={sub_id}"
@@ -874,6 +886,7 @@ class Context:
         """
         if not self._pg_url:
             return
+        from dataagent.core.context.utils_context_storage import save_IR_to_pg
 
         save_IR_to_pg(url=self._pg_url, node_type=node_type, ir_data=ir_data)
 

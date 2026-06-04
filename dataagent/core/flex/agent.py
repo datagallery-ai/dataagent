@@ -39,7 +39,7 @@ from dataagent.core.flex.workflow.router import FlexRouter, LimitReachedError
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
 from dataagent.core.managers.action_manager.manager import ToolManager
-from dataagent.utils.cli.rich_renderer import StreamRenderer, reset_active_renderer, set_active_renderer
+from dataagent.utils.cli.rich_renderer import RICH_AVAILABLE, StreamRenderer, reset_active_renderer, set_active_renderer
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.import_utils import import_class
 
@@ -281,7 +281,7 @@ class FlexAgent(BaseAgent):
         """
         # Extract agent config and mode
         agent_config = config.get("AGENT_CONFIG", {})
-        debug = agent_config.get("debug", True)
+        debug = agent_config.get("debug", False)
         backend = agent_config.get("backend", "langgraph")
         mode = config.get("mode")
 
@@ -383,7 +383,7 @@ class FlexAgent(BaseAgent):
         ):
             final_state: dict[str, Any] = {}
             try:
-                if self.debug:
+                if self.debug and RICH_AVAILABLE:
                     renderer = StreamRenderer()
                     renderer.start(initial_node="planner")
                     renderer_token = set_active_renderer(renderer)
@@ -416,7 +416,6 @@ class FlexAgent(BaseAgent):
                 if call_context:
                     try:
                         await call_context.wait_pending_tasks()
-                        call_context.persist_to_pg()
                         call_context.persist_to_json()
                     except Exception as e:
                         logger.warning(f"Failed to persist context after chat completion: {e}")
@@ -439,7 +438,6 @@ class FlexAgent(BaseAgent):
                 if call_context:
                     try:
                         await call_context.wait_pending_tasks()
-                        call_context.persist_to_pg()
                         call_context.persist_to_json()
                     except Exception as pe:
                         logger.warning(f"Failed to persist context after limit reached: {pe}")
@@ -450,7 +448,6 @@ class FlexAgent(BaseAgent):
                 if call_context:
                     try:
                         await call_context.wait_pending_tasks()
-                        call_context.persist_to_pg()
                         call_context.persist_to_json()
                     except Exception as persist_error:
                         logger.warning(f"Failed to persist context after chat error: {persist_error}")
@@ -694,11 +691,6 @@ class FlexAgent(BaseAgent):
                 await ctx.wait_pending_tasks()
             except Exception as e:
                 logger.warning(f"Context profiling / pending task wait failed: {e}")
-
-            try:
-                ctx.persist_to_pg()
-            except Exception as e:
-                logger.warning(f"Failed to persist context to PG after streaming completion: {e}")
 
             try:
                 ctx.persist_to_json()

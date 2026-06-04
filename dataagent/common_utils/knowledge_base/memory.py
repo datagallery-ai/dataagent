@@ -23,7 +23,7 @@ from loguru import logger
 from dataagent.common_utils.knowledge_base.knowledge_base import KnowledgeBase
 from dataagent.common_utils.knowledge_base.metadata_management import MetadataManagement
 from dataagent.common_utils.knowledge_base.tool_management import ToolManagement
-from dataagent.common_utils.knowledge_base.utils_common import MySQLReader, PostgreSQLReader
+from dataagent.common_utils.knowledge_base.utils_common import MySQLReader
 from dataagent.common_utils.knowledge_base.utils_inference import model_inference
 from dataagent.common_utils.knowledge_base.utils_memory import graph_to_html, html_config
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
@@ -703,14 +703,10 @@ class Memory:
             url, table_name = table_path.rpartition("/")[0], table_path.rpartition("/")[-1]
             mysql = MySQLReader(url=url)
             df = mysql.load_table(table_name=table_name)
-        elif table_source_type == "PostgresQL":
-            url, table_name = table_path.rpartition("/")[0], table_path.rpartition("/")[-1]
-            pgsql = PostgreSQLReader(url=url)
-            df = pgsql.load_table(table_name=table_name)
         else:
             raise ValueError(
                 f"Not supported table_source_type '{table_source_type}'. "
-                "The supported types are 'localfile', 'MySQL' and 'PostgresQL'."
+                "The supported types are 'localfile' and 'MySQL'."
             )
 
         query = ", ".join(list(df.columns))

@@ -18,8 +18,6 @@ from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel, create_model
 
-from dataagent.common_utils.knowledge_base.utils_metadata import docstring_to_metadata
-
 
 class ParameterType(Enum):
     """参数类型"""
@@ -279,3 +277,46 @@ class ToolSchema:
             return (True, None)
         except Exception as e:
             return (False, str(e))
+
+
+def docstring_to_metadata(docstring: str, tool_type: str = "tool") -> dict[str, str]:
+    """Extract function docstring and convert it to a dictionary.
+
+    Args:
+        docstring (str): The docstring to be parsed.
+
+    Returns:
+        dict[str, str]: Parsed tool metadata with type, description, parameters, output.
+    """
+    doc = inspect.cleandoc(docstring) or ""
+    lines = doc.splitlines()
+    description_lines, args_lines, returns_lines = [], [], []
+    mode = "description"
+    for line in lines:
+        s = line.rstrip()
+        if s.strip() in {"Args:", "Parameters:"}:
+            mode = "args"
+            continue
+        if s.strip() == "Returns:":
+            mode = "returns"
+            continue
+        if s.strip() in {"Raises:", "Examples:"}:
+            break
+        if mode == "description":
+            if s.strip() == "":
+                continue
+            description_lines.append(s.strip())
+        elif mode == "args":
+            if s.strip() == "":
+                continue
+            args_lines.append(s.strip())
+        elif mode == "returns":
+            if s.strip() == "":
+                continue
+            returns_lines.append(s.strip())
+    return {
+        "type": tool_type,
+        "description": "\n".join(description_lines),
+        "parameters": "\n".join(args_lines),
+        "output": "\n".join(returns_lines),
+    }
