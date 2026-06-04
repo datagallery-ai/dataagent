@@ -182,6 +182,9 @@ class Planner(BaseNode):
             return self._build_result(context, ai_message, state)
 
         except Exception as e:
+            import traceback
+
+            logger.error(f"Error traceback: {traceback.format_exc()}")
             return self._build_error_result(writer, e, terminal_mode=terminal_mode)
 
     def _prepare_messages_to_process(self, state: FlexState, context: Any, runtime: Any) -> Any:

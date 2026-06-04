@@ -193,6 +193,7 @@ class PerceptorNode(BaseNL2SQLNode):
             return ""
         workspace = self._get_agent_config("WORKSPACE.path")
         if workspace:
-            prompt_path = Path(workspace) / f"{name}.md"
+            prompt_path = Path(name) if Path(name).is_file() else Path(workspace) / f"{name}.md"
+            logger.info(f"nl2sql get prompt_path: {prompt_path}")
             return prompt_path.read_text(encoding="utf-8")
         return PromptTemplate.from_package_relative(f"{NL2SQL_PROMPT_PREFIX}/user/{name}").content
