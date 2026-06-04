@@ -104,7 +104,7 @@ def classify_exception(exc: Exception) -> tuple[ErrorType, ErrorPolicy]:
     if "rate limit" in exc_msg or "quota" in exc_msg or "too many" in exc_msg or "429" in exc_msg:
         return (ErrorType.RATE_LIMIT, ERROR_POLICIES[ErrorType.RATE_LIMIT])
     if (
-        "not found" in exc_msg
+        "file not found" in exc_msg
         or "no such file" in exc_msg
         or "does not exist" in exc_msg
         or "command not found" in exc_msg
