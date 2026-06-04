@@ -107,16 +107,18 @@ class TestToolExecutionContextRuntimeInjection:
         cm = ConfigManager()
 
         def _probe(*, _tool_context: ToolExecutionContext) -> str:
-            return str((_tool_context.tool_config or {}).get("llm_model"))
+            cfg = _tool_context.tool_config or {}
+            return f"{cfg.get('llm_model')}|{cfg.get('abc')}"
 
         wrapper = LocalToolWrapper(
             _probe,
             name="cfg_probe",
             tool_context=ToolExecutionContext(config_manager=cm),
             llm_model="deepseek",
+            abc="custom",
         )
         import asyncio
 
         result = asyncio.run(wrapper.acall())
         assert result.success is True
-        assert result.data == "deepseek"
+        assert result.data == "deepseek|custom"

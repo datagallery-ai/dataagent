@@ -29,8 +29,8 @@ class ToolExecutionContext:
     This object is not part of the LLM-visible tool schema. Tools that need Agent YAML
     configuration should declare a keyword-only ``_tool_context`` parameter.
 
-    ``tool_config`` carries the current tool instance's YAML ``config`` slice (e.g.
-    ``llm_model`` / ``embedding_model``), merged at call time from
+    ``tool_config`` carries the current tool instance's YAML
+    ``TOOLS.local_functions[].config`` dict (arbitrary keys), merged at call time from
     :class:`~dataagent.actions.tools.local.LocalToolWrapper`.
 
     ``runtime`` is resolved at **call time** via

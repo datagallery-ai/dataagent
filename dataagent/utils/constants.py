@@ -83,14 +83,6 @@ DEFAULT_PRUNER_TOKEN_LIMIT: int = DEFAULT_COMPRESS_TOKEN_LIMIT
 # ============================================================================
 
 
-# ── 工具 YAML 绑定键 ─────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/actions/tools/local.py（LocalToolWrapper 合并 per-call tool_config）
-# 建议 YAML 路径: TOOLS.local_functions[].config.llm_model / embedding_model
-
-TOOL_BINDING_CONFIG_KEYS: frozenset[str] = frozenset({"llm_model", "embedding_model"})
-"""从 ``TOOLS.local_functions[].config`` 合并进 `ToolExecutionContext.tool_config` 的键。"""
-
-
 # ── 工具调用超时 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/tools.py
 # 建议 YAML 路径: TOOLS.*_timeout

@@ -15,6 +15,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -826,7 +827,11 @@ TOOLS:
     agent_cm.set("DATABASE", runtime_database)
     agent_cm.set("METAVISOR", runtime_metavisor)
     agent_cm.set("MODEL.deepseek", runtime_model)
-    tool_ctx = ToolExecutionContext(config_manager=agent_cm, tool_config={"llm_model": "deepseek"})
+    tool_ctx = ToolExecutionContext(
+        config_manager=agent_cm,
+        tool_config={"llm_model": "deepseek"},
+        runtime=SimpleNamespace(workspace_dir=workspace.resolve()),
+    )
 
     async def _fake_sub_agent_tool(query: str, config_path: str, **kwargs):
         captured["query"] = query
@@ -858,7 +863,6 @@ TOOLS:
     result = asyncio.run(
         nl2sql_sub_agent_tool(
             query="查询测试",
-            workspace=str(workspace),
             sql_filename="query.sql",
             csv_filename="result.csv",
             _tool_context=tool_ctx,
@@ -927,7 +931,10 @@ def test_nl2sql_sub_agent_tool_passes_internal_subagent_context(monkeypatch, tmp
     from dataagent.config.config_manager import ConfigManager
 
     agent_cm = ConfigManager()
-    tool_ctx = ToolExecutionContext(config_manager=agent_cm)
+    tool_ctx = ToolExecutionContext(
+        config_manager=agent_cm,
+        runtime=SimpleNamespace(workspace_dir=workspace.resolve()),
+    )
 
     monkeypatch.setattr("dataagent.actions.tools.local_tool.tools.sub_agent_tool", _fake_sub_agent_tool)
     token = set_subagent_runtime_context(user_id="main-user", session_id="main-session", sub_id=8)
@@ -936,7 +943,6 @@ def test_nl2sql_sub_agent_tool_passes_internal_subagent_context(monkeypatch, tmp
         result = asyncio.run(
             nl2sql_sub_agent_tool(
                 query="查询测试",
-                workspace=str(workspace),
                 sql_filename="query.sql",
                 csv_filename="result.csv",
                 _tool_context=tool_ctx,
@@ -983,7 +989,10 @@ def test_nl2sql_sub_agent_tool_ignores_none_error_field(monkeypatch, tmp_path):
     from dataagent.actions.tools.context import ToolExecutionContext
     from dataagent.config.config_manager import ConfigManager
 
-    tool_ctx = ToolExecutionContext(config_manager=ConfigManager())
+    tool_ctx = ToolExecutionContext(
+        config_manager=ConfigManager(),
+        runtime=SimpleNamespace(workspace_dir=workspace.resolve()),
+    )
 
     monkeypatch.setattr("dataagent.actions.tools.local_tool.tools.dataagent_package_root", lambda: package_root)
     monkeypatch.setattr("dataagent.actions.tools.local_tool.tools.sub_agent_tool", _fake_sub_agent_tool)
@@ -993,7 +1002,6 @@ def test_nl2sql_sub_agent_tool_ignores_none_error_field(monkeypatch, tmp_path):
     result = asyncio.run(
         nl2sql_sub_agent_tool(
             query="查询测试",
-            workspace=str(workspace),
             sql_filename="query.sql",
             csv_filename="result.csv",
             _tool_context=tool_ctx,
