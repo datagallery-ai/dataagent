@@ -475,16 +475,6 @@ class Context:
 
         self._node_counts[node_type] += 1
         self._update_current_pointer(node_type, predecessor_node, label, add_pt, remove_pt)
-        if add_pt and node_type == "Action" and predecessor_node[0].startswith("State"):
-            self.pending_tasks["update_state"].append(
-                asyncio.create_task(
-                    self.update_state(
-                        graph_node_label=predecessor_node[0],
-                        action=kwargs.get("action", ""),
-                        params=kwargs.get("params", ""),
-                    ),
-                )
-            )
         return node_name
 
     async def update_state(self, graph_node_label: str, action: dict[str, Any], params: dict[str, Any]) -> None:
