@@ -105,6 +105,27 @@ class TestToolExecutionContextInjection:
         assert result.data == "chat_model"
         await tm.cleanup()
 
+    async def test_tool_config_includes_arbitrary_yaml_keys(self):
+        """Per-tool YAML config passes arbitrary keys (not only llm_model) into _tool_context."""
+        cm = ConfigManager()
+        tm = ToolManager(config_manager=cm)
+
+        def read_custom_key(query: str, *, _tool_context: ToolExecutionContext) -> str:
+            _ = query
+            return str((_tool_context.tool_config or {}).get("abc"))
+
+        tm.register_local_tool(
+            read_custom_key,
+            name="read_custom_key",
+            category="test",
+            llm_model="chat_model",
+            abc="abc_value",
+        )
+        result = await tm.acall("read_custom_key", query="x")
+        assert result.success is True
+        assert result.data == "abc_value"
+        await tm.cleanup()
+
     async def test_different_tools_get_different_tool_config(self):
         """Two tools registered on one ToolManager receive各自 llm_model binding."""
         cm = ConfigManager()

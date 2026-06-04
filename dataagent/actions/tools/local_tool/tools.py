@@ -1141,13 +1141,14 @@ def _extract_structured_json(raw: Any) -> dict[str, Any] | None:
 
 async def nl2sql_sub_agent_tool(
     query: str,
-    workspace: str,
     sql_filename: str,
     csv_filename: str,
     *,
     _tool_context: ToolExecutionContext,
 ):
     """Convert natural language query to SQL. One SQL query at a time.
+    SQL and CSV files are saved under the current Agent session workspace (set when
+    the run starts)
 
     A good query should explicitly describe:
     - business goal and statistical intent
@@ -1159,12 +1160,23 @@ async def nl2sql_sub_agent_tool(
 
     Args:
         - query (str): Natural language query.
-        - workspace (str): Absolute path to save/load files.
-        - sql_filename (str): Filename for the generated SQL (with .sql extension).
-        - csv_filename (str): Filename for query results (with .csv extension).
+        - sql_filename: Filename for the generated SQL (with ``.sql`` extension), saved under the session workspace.
+        - csv_filename: Filename for query results (with ``.csv`` extension), saved under the session workspace.
 
     """
-    source_config_path = dataagent_package_root() / "agents" / "nl2sql" / "nl2sql_agent.yaml"
+    runtime = _tool_context.runtime
+    if runtime is None or runtime.workspace_dir is None:
+        raise RuntimeError(
+            "nl2sql_sub_agent_tool: session workspace is unavailable; "
+            "set initial_state.workspace (or chat(workspace=...)) before calling this tool."
+        )
+    workspace = str(Path(runtime.workspace_dir).expanduser().resolve())
+    raw_source_config = _tool_context.tool_config.get("source_config_path")
+    if raw_source_config:
+        logger.debug(f"use source_config_path from user config yaml : {raw_source_config}")
+        source_config_path = Path(str(raw_source_config)).expanduser().resolve()
+    else:
+        source_config_path = dataagent_package_root() / "agents" / "nl2sql" / "nl2sql_agent.yaml"
     user_prompt_path = dataagent_package_root() / "agents" / "nl2sql" / "prompts" / "user"
     with source_config_path.open(encoding="utf-8") as f:
         source_config = yaml.safe_load(f) or {}

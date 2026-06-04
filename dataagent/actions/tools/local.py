@@ -19,7 +19,6 @@ from typing import get_type_hints
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.core.managers.action_manager.base import BaseTool, ErrorType, ToolResult, ToolType, classify_exception
 from dataagent.core.managers.action_manager.schemas import ToolSchema
-from dataagent.utils.constants import TOOL_BINDING_CONFIG_KEYS
 
 
 def _classify_exception(exc: Exception) -> ErrorType:
@@ -125,9 +124,9 @@ class LocalToolWrapper(BaseTool):
                 error_type=error_type,
             )
 
-    def _tool_binding_config(self) -> dict:
-        """Return YAML ``config`` keys bound to this tool instance (e.g. ``llm_model``)."""
-        return {k: v for k, v in (self.config or {}).items() if k in TOOL_BINDING_CONFIG_KEYS}
+    def _tool_per_call_config(self) -> dict:
+        """Return a shallow copy of this tool's YAML ``TOOLS.local_functions[].config`` slice."""
+        return dict(self.config or {})
 
     def _build_injected_tool_context(self) -> ToolExecutionContext:
         """Merge per-Agent context, per-tool YAML ``config``, and active ``Runtime``.
@@ -138,7 +137,7 @@ class LocalToolWrapper(BaseTool):
         from dataagent.core.framework_adapters.runtime.context import get_current_runtime
 
         base = self.tool_context
-        tool_config = self._tool_binding_config()
+        tool_config = self._tool_per_call_config()
         return ToolExecutionContext(
             config_manager=base.config_manager if base is not None else None,
             tool_config=tool_config,
