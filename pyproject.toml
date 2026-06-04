@@ -37,7 +37,6 @@ dependencies = [
     "pymysql==1.1.2",
     "sqlalchemy==2.0.22",
     "uvicorn==0.34.0",
-    "sqlparse>=0.5.5",
 ]
 
 [tool.setuptools.packages.find]
@@ -68,6 +67,7 @@ mkdoc = [
 ]
 nl2sql = [
     "sqlglot>=28.1.0",
+    "sqlparse>=0.5.5"
 ]
 test = [
     "dataagent[server]",
