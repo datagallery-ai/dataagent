@@ -35,7 +35,7 @@ dependencies = [
     "psycopg-binary>=3.3.2",
     "psycopg2-binary>=2.9.0",
     "pymysql==1.1.2",
-    "sqlalchemy==2.0.22",
+    "sqlalchemy==2.0.49",
     "uvicorn==0.34.0",
 ]
 
@@ -180,7 +180,7 @@ skip = "*.pdf,*.png,*.jpg,*.min.js,./lib/*"
 [tool.uv]
 override-dependencies = [
     "httpx==0.28.1",
-    "sqlalchemy==2.0.22",
+    "sqlalchemy==2.0.49",
     "pydantic==2.12.5"
 ]
 [tool.ruff]
