@@ -23,6 +23,7 @@ from loguru import logger
 
 from dataagent.actions.tools.backfill import ToolArgBackfiller
 from dataagent.actions.tools.concurrency import ConcurrencyController
+from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolHookRunner, readonly_tool_args
 from dataagent.actions.tools.local_tool.sandbox import (
     reset_current_sandbox,
     set_current_sandbox,
@@ -124,6 +125,24 @@ class Executor(BaseNode):
         if isinstance(value, (dict, list)):
             return json.dumps(value, ensure_ascii=False)
         return str(value)
+
+    @staticmethod
+    def _apply_hook_failure_to_execution(
+        execution: NormalizedToolExecution,
+        exc: Exception,
+        *,
+        phase: str,
+    ) -> NormalizedToolExecution:
+        """Mark a successful tool run as failed when post-hook raises."""
+        prefix = "[post-hook]" if phase == "post" else "[hook]"
+        message = str(exc)
+        if not message.startswith("["):
+            message = f"{prefix} {message}"
+        execution.success = False
+        execution.error_text = message
+        execution.error_type = ErrorType.VALIDATION_ERROR.value
+        execution.retry_info = {"attempt": 0, "max_retries": 0, "retriable": False}
+        return execution
 
     def reconfig(self, **kwargs):
         max_concurrency = kwargs.get("max_concurrency")
@@ -561,52 +580,141 @@ class Executor(BaseNode):
             setup.metadata["backfill_changes"] = backfill_changes
         self._check_bash_whitelist(setup.tool_name, tool_args, setup.tool_call_id, runtime)
 
+        pre_hooks, post_hooks = self._resolve_tool_hooks(runtime, setup.tool_name)
+        hook_inv = self._build_tool_hook_invocation(
+            setup=setup,
+            tool_args=tool_args,
+            runtime=runtime,
+            phase="pre",
+        )
+
         try:
-            execution = await self._try_execute_tool(
-                setup.tool_name,
-                tool_args,
-                setup.tool_call_id,
-                setup.metadata,
-                setup.context_token,
-                setup.guard_token,
-                runtime=runtime,
-            )
+            await ToolHookRunner.run_pre_hooks(pre_hooks, hook_inv)
+        except Exception as exc:
             self._finalize_tool_progress_safe(setup.progress_finalize)
-            return execution
+            self._reset_context(setup.context_token, setup.guard_token)
+            return self._failed_execution_from_hook(setup, dict(hook_inv.tool_args), exc, phase="pre")
+
+        execution: NormalizedToolExecution | None = None
+        tool_result: ToolResult | None = None
+        policy = DEFAULT_RETRY_POLICY
+        last_error_type = ErrorType.UNKNOWN
+
+        try:
+            tool_result = await self._invoke_manager_tool_async(setup.tool_name, tool_args, runtime=runtime)
+            self._reset_context(setup.context_token, setup.guard_token)
+            execution = self._normalize_tool_execution(
+                tool_name=setup.tool_name,
+                tool_call_id=setup.tool_call_id,
+                tool_args=tool_args,
+                result=tool_result,
+                metadata={**setup.metadata, "source": "tool_manager"},
+            )
         except Exception as exc:
             last_error = exc
             policy = self._classify_error(exc)
             last_error_type = policy.error_type
             final_max_retries = policy.max_retries
 
-        retry_result, last_error, last_error_type, final_max_retries = await self._retry_tool_execution(
-            tool_name=setup.tool_name,
-            tool_args=tool_args,
-            tool_call_id=setup.tool_call_id,
-            context_token=setup.context_token,
-            guard_token=setup.guard_token,
-            policy=policy,
-            last_error=last_error,
-            last_error_type=last_error_type,
-            final_max_retries=final_max_retries,
-            metadata=setup.metadata,
-            runtime=runtime,
-        )
-        if retry_result is not None:
-            self._finalize_tool_progress_safe(setup.progress_finalize)
-            return retry_result
+            retry_result, last_error, last_error_type, final_max_retries = await self._retry_tool_execution(
+                tool_name=setup.tool_name,
+                tool_args=tool_args,
+                tool_call_id=setup.tool_call_id,
+                context_token=setup.context_token,
+                guard_token=setup.guard_token,
+                policy=policy,
+                last_error=last_error,
+                last_error_type=last_error_type,
+                final_max_retries=final_max_retries,
+                metadata=setup.metadata,
+                runtime=runtime,
+            )
+            if retry_result is not None:
+                execution = retry_result
+            else:
+                logger.debug(
+                    f"[Executor] Tool '{setup.tool_name}' failed after {policy.max_retries} retries: {last_error}"
+                )
+                self._reset_context(setup.context_token, setup.guard_token)
+                execution = NormalizedToolExecution(
+                    tool_name=setup.tool_name,
+                    tool_call_id=setup.tool_call_id,
+                    tool_args=tool_args,
+                    success=False,
+                    error_text=str(last_error),
+                    error_type=last_error_type.value,
+                    retry_info={
+                        "attempt": policy.max_retries,
+                        "max_retries": final_max_retries,
+                        "retriable": policy.retriable,
+                    },
+                    metadata=setup.metadata,
+                )
 
-        logger.debug(f"[Executor] Tool '{setup.tool_name}' failed after {policy.max_retries} retries: {last_error}")
+        if execution is not None and post_hooks:
+            hook_inv.phase = "post"
+            hook_inv.tool_args = readonly_tool_args(tool_args)
+            hook_inv.tool_result = tool_result
+            hook_inv.execution = execution
+            try:
+                await ToolHookRunner.run_post_hooks(post_hooks, hook_inv)
+            except Exception as exc:
+                execution = self._apply_hook_failure_to_execution(execution, exc, phase="post")
+
         self._finalize_tool_progress_safe(setup.progress_finalize)
-        self._reset_context(setup.context_token, setup.guard_token)
+        return execution
+
+    def _resolve_tool_hooks(self, runtime: Any, tool_name: str) -> tuple[list[Any], list[Any]]:
+        """Return pre/post hook lists registered on the tool instance."""
+        if runtime is None or not hasattr(runtime, "get_tool"):
+            return [], []
+        try:
+            tool = runtime.get_tool(tool_name)
+        except Exception:
+            return [], []
+        pre = list(getattr(tool, "pre_hooks", None) or [])
+        post = list(getattr(tool, "post_hooks", None) or [])
+        return pre, post
+
+    def _build_tool_hook_invocation(
+        self,
+        *,
+        setup: _ToolCallExecutionSetup,
+        tool_args: dict[str, Any],
+        runtime: Any,
+        phase: str,
+    ) -> ToolHookInvocation:
+        """Build per-call hook invocation (shared ``hook_context`` across pre/post)."""
+        return ToolHookInvocation(
+            tool_name=setup.tool_name,
+            tool_call_id=setup.tool_call_id,
+            tool_args=readonly_tool_args(tool_args),
+            runtime=runtime,
+            metadata=dict(setup.metadata),
+            phase=phase,  # type: ignore[arg-type]
+        )
+
+    def _failed_execution_from_hook(
+        self,
+        setup: _ToolCallExecutionSetup,
+        tool_args: dict[str, Any],
+        exc: Exception,
+        *,
+        phase: str,
+    ) -> NormalizedToolExecution:
+        """Convert a hook failure into ``NormalizedToolExecution`` (no tool retry)."""
+        prefix = "[pre-hook]" if phase == "pre" else "[post-hook]"
+        message = str(exc)
+        if not message.startswith("["):
+            message = f"{prefix} {message}"
         return NormalizedToolExecution(
             tool_name=setup.tool_name,
             tool_call_id=setup.tool_call_id,
             tool_args=tool_args,
             success=False,
-            error_text=str(last_error),
-            error_type=last_error_type.value,
-            retry_info={"attempt": policy.max_retries, "max_retries": final_max_retries, "retriable": policy.retriable},
+            error_text=message,
+            error_type=ErrorType.VALIDATION_ERROR.value,
+            retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
             metadata=setup.metadata,
         )
 

@@ -844,9 +844,10 @@ class FlexAgent(BaseAgent):
     def _register_hooks_from_config(self, config: dict[str, Any]) -> None:
         """从 ``config['HOOKS']`` 挂载 agent / 节点级 hook。
 
-        仅 **内置 hook**（见 :data:`dataagent.core.flex.hooks.registry.BUILTIN_HOOK_REGISTRY`），YAML 禁止 ``import``。
+        **字符串项** 可为内置短名（见 :data:`dataagent.core.flex.hooks.registry.BUILTIN_HOOK_REGISTRY`）
+        或 ``module.path.callable``（与 tool hook 相同）。YAML 字典项禁止 ``import`` 字段。
 
-        **``name``**：内置标识，用于解析实现；若带 ``model``，合并结果写入 ``env.llm_configs[name]``。
+        **``name``**（字典项）：内置短名，用于解析实现；若带 ``model``，合并结果写入 ``env.llm_configs[name]``。
         Hook 内须 ``runtime.llm("<name>")`` 与该 ``name`` 字符串一致。
 
         **``model``**：引用当前 YAML 里 **``MODEL`` 已声明的槽名**（如 ``qwen3``），语义同节点 ``chat_model``；
@@ -863,7 +864,7 @@ class FlexAgent(BaseAgent):
         项类型：
 
         - **可调用对象**：仅代码/测试注入 ``(state)`` / ``(state, runtime)``；
-        - **字符串**：内置 ``name``，见上；
+        - **字符串**：内置短名或 ``module.path.callable``；
         - **字典**：必填 ``name``；需要按某 MODEL 槽填 ``model``。
 
         同侧多个 hook 按列表自上而下顺序注册。

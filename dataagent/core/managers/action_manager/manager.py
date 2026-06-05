@@ -142,6 +142,10 @@ class ToolManager:
         # 自动发现状态
         self._auto_discover_enabled = False
 
+        # MCP server_id / A2A agent_id -> resolved hook callables (see load_tool_hooks_from_config)
+        self._mcp_server_hooks: dict[str, Any] = {}
+        self._a2a_agent_hooks: dict[str, Any] = {}
+
     @property
     def mcp_registry(self):
         """获取MCP工具注册表（延迟加载）"""
@@ -341,6 +345,13 @@ class ToolManager:
             yaml_description,
         )
 
+    @staticmethod
+    def _load_hooks_from_tool_config(entry: dict[str, Any]):
+        """Parse ``hooks`` from a TOOLS registry entry (local / mcp_servers / A2A)."""
+        from dataagent.actions.tools.hooks.config import load_tool_hooks_from_config
+
+        return load_tool_hooks_from_config(entry.get("hooks"))
+
     def enable_auto_discover(self):
         """启用自动发现功能（只执行一次）"""
         if not self._auto_discover_enabled:
@@ -421,7 +432,12 @@ class ToolManager:
         """发现并注册MCP工具（per-Agent）"""
         self._registered_mcp_servers.add(server_id)
         tools = await self.mcp_registry.list_server_tools(server_id)
+        hook_lists = self._mcp_server_hooks.get(server_id)
         for tool in tools:
+            if hook_lists is not None:
+                from dataagent.actions.tools.hooks.config import attach_hooks_to_tool
+
+                attach_hooks_to_tool(tool, hook_lists)
             self._tool_instances[tool.name] = tool
             schema = tool.get_schema()
             self._tool_schemas[tool.name] = schema
@@ -431,7 +447,12 @@ class ToolManager:
         """发现并注册A2A工具（per-Agent）"""
         self._registered_a2a_agents.add(agent_id)
         tools = await self.a2a_registry.list_agent_tools(agent_id)
+        hook_lists = self._a2a_agent_hooks.get(agent_id)
         for tool in tools:
+            if hook_lists is not None:
+                from dataagent.actions.tools.hooks.config import attach_hooks_to_tool
+
+                attach_hooks_to_tool(tool, hook_lists)
             self._tool_instances[tool.name] = tool
             schema = tool.get_schema()
             self._tool_schemas[tool.name] = schema
@@ -709,6 +730,8 @@ class ToolManager:
         self._user_skills.clear()
         self._registered_mcp_servers.clear()
         self._registered_a2a_agents.clear()
+        self._mcp_server_hooks.clear()
+        self._a2a_agent_hooks.clear()
 
         if self.tool_registry:
             self.tool_registry.clear()
@@ -798,6 +821,11 @@ class ToolManager:
                 if resolved_description is not None:
                     register_kwargs["description"] = resolved_description
                 self.register_local_tool(func, **register_kwargs)
+                hook_lists = self._load_hooks_from_tool_config(tool_config)
+                if hook_lists.pre or hook_lists.post:
+                    from dataagent.actions.tools.hooks.config import attach_hooks_to_tool
+
+                    attach_hooks_to_tool(self._tool_instances[name], hook_lists)
                 logger.trace(f"✅ Local tool: '{name}' registered.")
             except Exception as e:
                 logger.warning(f"❌ Local tool: '{name}' registration failed: {e}.")
@@ -815,6 +843,9 @@ class ToolManager:
                 continue
             try:
                 self.register_mcp_server(server_id=server_id, transport_type=transport_type, config=config)
+                hook_lists = self._load_hooks_from_tool_config(server_config)
+                if hook_lists.pre or hook_lists.post:
+                    self._mcp_server_hooks[server_id] = hook_lists
                 logger.trace(f"✅ MCP server: '{server_id}' registered with {transport_type} transport.")
             except Exception as e:
                 logger.warning(f"❌ MCP server: '{server_id}' registration failed: {e}.")
@@ -839,6 +870,9 @@ class ToolManager:
 
             try:
                 self.register_a2a_agent(agent_id=agent_id, base_url=base_url, auth_token=auth_token, timeout=timeout)
+                hook_lists = self._load_hooks_from_tool_config(agent_config)
+                if hook_lists.pre or hook_lists.post:
+                    self._a2a_agent_hooks[agent_id] = hook_lists
                 logger.trace(f"✅ A2A agent: '{agent_id}' registered.")
 
             except Exception as e:
