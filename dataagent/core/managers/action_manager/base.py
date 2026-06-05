@@ -183,6 +183,8 @@ class BaseTool(ABC):
         self.description = description
         self.config = kwargs
         self.tool_type = ToolType.CUSTOM
+        self.pre_hooks: list = []
+        self.post_hooks: list = []
 
     @abstractmethod
     def call(self, **kwargs) -> ToolResult:

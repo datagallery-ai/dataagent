@@ -140,26 +140,15 @@ def import_callable(callable_path: str):
 
 
 def import_callable_from_spec(spec: str) -> Any:
-    """
-    Import a callable from either ``module.path.function`` (last segment attribute)
-    or ``package.module:function`` (colon separates module path from callable name).
+    """Import a callable from ``module.path.function`` (same rules as :func:`import_callable`).
 
-    Colon form supports nested packages and any callable name (e.g. ``snake_case``).
+    Args:
+        spec: Dotted path; the last segment is the attribute name on the imported module.
+
+    Returns:
+        The resolved callable.
+
+    Raises:
+        ValueError, ImportError, AttributeError, TypeError: Same as :func:`import_callable`.
     """
-    if not spec or not isinstance(spec, str):
-        raise ValueError(f"Invalid callable spec: {spec!r}")
-    spec = spec.strip()
-    if not spec:
-        raise ValueError("Empty callable spec")
-    if ":" in spec:
-        mod_part, _, attr = spec.partition(":")
-        mod_part = mod_part.strip()
-        attr = attr.strip()
-        if not mod_part or not attr:
-            raise ValueError(f"Callable spec must be 'module.path:callable', got: {spec!r}")
-        module = importlib.import_module(mod_part)
-        obj = getattr(module, attr)
-        if not callable(obj):
-            raise TypeError(f"{spec!r} is not callable")
-        return obj
     return import_callable(spec)

@@ -136,10 +136,12 @@ HOOKS:
   agent:
     post:
       - name: portraiter
+      # - dataagent.core.flex.hooks.portraiter.portraiter # 与以上 name: portraiter 等价
   nodes:
     planner:
       pre:
         - name: pruner
+        # - dataagent.core.flex.hooks.pruner.pruner # 与以上 name: pruner 等价
         # - name: cross_session_recall
         #   model: chat_model
     executor:
@@ -168,6 +170,14 @@ TOOLS:
         工具描述（可选，覆盖函数 docstring）。
       config:                      # 传给 register_local_tool 的额外参数
         llm_model: "chat_model"
+      #  可选，单次 tool call 的 pre/post（见 hooks/examples/example_hooks.py）
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.example_hooks.pre_hook1
+          - dataagent.actions.tools.hooks.examples.example_hooks.pre_hook2
+        post:
+          - dataagent.actions.tools.hooks.examples.example_hooks.post_hook1
+          - dataagent.actions.tools.hooks.examples.example_hooks.post_hook2
 
   mcp_servers:
     - server_id: "analyzer"
@@ -178,6 +188,12 @@ TOOLS:
         env: {}
         cwd: null
       description: "MCP 工具服务器"
+      # 该 server 下所有 discovered 工具共用以下 hooks
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.example_hooks.audit_pre
+        post:
+          - dataagent.actions.tools.hooks.examples.example_hooks.audit_post
 
   # A2A Agent 注册
   A2A:
@@ -185,6 +201,12 @@ TOOLS:
         base_url: "http://127.0.0.1:8080"
         auth_token: null
         timeout: 30
+        # 该 agent 下所有 discovered 工具共用以下 hooks
+        hooks:
+          pre:
+            - dataagent.actions.tools.hooks.examples.example_hooks.audit_pre
+          post:
+            - dataagent.actions.tools.hooks.examples.example_hooks.audit_post
 
 # ── Gym 环境（可选，FlexAgent.from_config 初始化 ENV） ───────────────────────
 # 单环境 dict 或多环境 list（合并为 CompoundEnv）。
