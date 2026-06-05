@@ -2729,7 +2729,7 @@ def _build_nl2sql_sub_agent_config(
                 bound_llm_model_name: runtime_model_copy,
             }
     agent_tools = [i.get("function", "") for i in config_manager.get("TOOLS", {}).get("local_functions", {})]
-    if "search_metric_instance" in agent_tools:
+    if "search_metric_instance" in agent_tools or "search_tables_with_typename" in agent_tools:
         temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
     if "search_udf_function_by_name_keyword" in agent_tools:
         temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
