@@ -18,7 +18,8 @@
   经 :meth:`LLMClient.from_llm_config` 构造同一 ``LLMClient``。
 
 重试：litellm ``num_retries=0`` + ``retry_policy`` 白名单（429/Timeout）；
-DataAgent 薄层仅对 5xx/``APIConnectionError`` 重试。失败统一映射为 :class:`LLMCallError`。
+DataAgent 对 5xx/``APIConnectionError``/Timeout（含 ``httpx.TimeoutException``）重试，
+``astream`` 读流阶段与建流共用同一 ``num_retries`` 计数。失败统一映射为 :class:`LLMCallError`。
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Any
 
+import httpx
 from litellm.exceptions import (
     APIConnectionError,
     APIResponseValidationError,
@@ -127,7 +129,7 @@ def map_litellm_exception(
 
     if isinstance(exc, RateLimitError):
         category = LLMErrorCategory.RATE_LIMIT
-    elif isinstance(exc, Timeout):
+    elif isinstance(exc, (Timeout, httpx.TimeoutException)):
         category = LLMErrorCategory.TIMEOUT
     elif isinstance(exc, APIConnectionError):
         category = LLMErrorCategory.CONNECTION
@@ -182,6 +184,21 @@ _DATAAGENT_TRANSIENT_EXCEPTIONS = (
 )
 
 
+def _should_dataagent_retry(exc: BaseException, *, attempt: int, max_attempts: int) -> bool:
+    """策略 D：DataAgent 薄层是否在抛出 ``LLMCallError`` 前继续重试。
+
+    与 ``_normalize_litellm_retry_kwargs`` 返回的 ``max_attempts`` 共用计数；
+    覆盖 litellm ``TimeoutErrorRetries`` 未识别的 ``httpx.TimeoutException``。
+    """
+    if attempt >= max_attempts:
+        return False
+    if isinstance(exc, _DATAAGENT_TRANSIENT_EXCEPTIONS):
+        return True
+    if isinstance(exc, Timeout):
+        return True
+    return isinstance(exc, httpx.TimeoutException)
+
+
 def _call_with_transient_retry(
     operation,
     *,
@@ -193,7 +210,7 @@ def _call_with_transient_retry(
         try:
             return operation()
         except Exception as e:
-            if attempt < max_attempts and isinstance(e, _DATAAGENT_TRANSIENT_EXCEPTIONS):
+            if _should_dataagent_retry(e, attempt=attempt, max_attempts=max_attempts):
                 continue
             raise map_litellm_exception(e, model=model, api_base=api_base) from e
     raise RuntimeError("Unexpected error in transient retry loop")  # pragma: no cover
@@ -210,7 +227,7 @@ async def _acall_with_transient_retry(
         try:
             return await operation()
         except Exception as e:
-            if attempt < max_attempts and isinstance(e, _DATAAGENT_TRANSIENT_EXCEPTIONS):
+            if _should_dataagent_retry(e, attempt=attempt, max_attempts=max_attempts):
                 continue
             raise map_litellm_exception(e, model=model, api_base=api_base) from e
     raise RuntimeError("Unexpected error in transient retry loop")  # pragma: no cover
@@ -656,51 +673,47 @@ class LLMClient:
                 **call_kw,
             )
 
-        stream = await _acall_with_transient_retry(
-            _get_stream,
-            max_attempts=max_attempts,
-            model=self._model,
-            api_base=self._api_base,
-        )
-        # OpenAI 流式 tool_calls 按 index 分片出现在 delta 中；_wrap_stream_chunk 只读 content，
-        # 若不累积则最终合并结果 tool_calls 恒为空，Executor 无法执行工具。
-        by_index: dict[int, dict[str, str]] = {}
-        stream_finish_reason = ""
+        # OpenAI 流式 tool_calls 按 index 分片出现在 delta 中；建流 + 读流共用薄层重试。
+        for attempt in range(max_attempts + 1):
+            by_index: dict[int, dict[str, str]] = {}
+            stream_finish_reason = ""
 
-        def _yield_chunk(chunk: Any) -> LLMClientMessage:
-            nonlocal stream_finish_reason
-            finish_reason = self._feed_stream_tool_call_deltas(chunk, by_index)
-            if finish_reason:
-                stream_finish_reason = finish_reason
-            wrapped = self._wrap_stream_chunk(chunk)
-            return LLMClientMessage(
-                content=wrapped.content,
-                reasoning_content=wrapped.reasoning_content,
-                tool_calls=[],
-                invalid_tool_calls=[],
-                usage_metadata=wrapped.usage_metadata,
-                raw=wrapped.raw,
-            )
+            try:
+                stream = await _get_stream()
+                if hasattr(stream, "__aiter__"):
+                    async for chunk in stream:
+                        msg, finish_reason = self._stream_chunk_message(chunk, by_index)
+                        if finish_reason:
+                            stream_finish_reason = finish_reason
+                        yield msg
+                else:
+                    for chunk in stream:
+                        msg, finish_reason = self._stream_chunk_message(chunk, by_index)
+                        if finish_reason:
+                            stream_finish_reason = finish_reason
+                        yield msg
+            except Exception as e:
+                if _should_dataagent_retry(e, attempt=attempt, max_attempts=max_attempts):
+                    logger.warning(
+                        "astream.dataagent_retry attempt={}/{} model={} error_type={}",
+                        attempt + 1,
+                        max_attempts,
+                        self._model,
+                        type(e).__name__,
+                    )
+                    continue
+                raise map_litellm_exception(e, model=self._model, api_base=self._api_base) from e
 
-        try:
-            if hasattr(stream, "__aiter__"):
-                async for chunk in stream:
-                    yield _yield_chunk(chunk)
-            else:
-                for chunk in stream:
-                    yield _yield_chunk(chunk)
-        except Exception as e:
-            raise map_litellm_exception(e, model=self._model, api_base=self._api_base) from e
-
-        final_tc, final_invalid = self._finalize_stream_tool_calls_for_lc(by_index, stream_finish_reason)
-        if final_tc or final_invalid:
-            yield LLMClientMessage(
-                content="",
-                reasoning_content="",
-                tool_calls=final_tc,
-                invalid_tool_calls=final_invalid,
-                raw=None,
-            )
+            final_tc, final_invalid = self._finalize_stream_tool_calls_for_lc(by_index, stream_finish_reason)
+            if final_tc or final_invalid:
+                yield LLMClientMessage(
+                    content="",
+                    reasoning_content="",
+                    tool_calls=final_tc,
+                    invalid_tool_calls=final_invalid,
+                    raw=None,
+                )
+            return
 
     def _prepare_messages_and_kwargs(
         self, messages: list[Any], kwargs: dict[str, Any]
@@ -720,6 +733,34 @@ class LLMClient:
         if msgs and not isinstance(msgs[0], dict):
             msgs = self._lc_messages_to_dicts(msgs)
         return msgs, call_kw
+
+    def _stream_chunk_message(
+        self,
+        chunk: Any,
+        tool_buf: dict[int, dict[str, str]],
+    ) -> tuple[LLMClientMessage, str | None]:
+        """Build one streaming chunk message and optional finish_reason from tool-call deltas.
+
+        Args:
+            chunk: Raw LiteLLM stream chunk.
+            tool_buf: Per-attempt accumulator for tool-call fragments keyed by index.
+
+        Returns:
+            ``(message, finish_reason)`` where ``finish_reason`` is set when the stream ends.
+        """
+        finish_reason = self._feed_stream_tool_call_deltas(chunk, tool_buf)
+        wrapped = self._wrap_stream_chunk(chunk)
+        return (
+            LLMClientMessage(
+                content=wrapped.content,
+                reasoning_content=wrapped.reasoning_content,
+                tool_calls=[],
+                invalid_tool_calls=[],
+                usage_metadata=wrapped.usage_metadata,
+                raw=wrapped.raw,
+            ),
+            finish_reason or None,
+        )
 
     def _feed_stream_tool_call_deltas(
         self,
