@@ -78,7 +78,7 @@ async def document_recall_tool(
     enhanced_parts: list[str] = []
     if document_paths:
         path_lines = "\n".join(f"  - {p}" for p in document_paths)
-        enhanced_parts.append(f"需要检索的文档列表：\n{path_lines}")
+        enhanced_parts.append(f"需要检索的文档：\n{document_paths}")
     main_documents = _tool_context.config_manager.get("DOCUMENTS")
     if isinstance(main_documents, dict):
         pre_paths = main_documents.get("paths") or []
