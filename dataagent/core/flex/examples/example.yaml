@@ -180,14 +180,14 @@ TOOLS:
           - dataagent.actions.tools.hooks.examples.example_hooks.post_hook2
 
   mcp_servers:
-    - server_id: "analyzer"
+    - server_id: "nl2sql"
       transport_type: "stdio"      # stdio | sse | ...
       config:
         command: "python"
-        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2analyze"]
+        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2sql"]
         env: {}
         cwd: null
-      description: "MCP 工具服务器"
+      description: "nl2sql mcp server"
       # 该 server 下所有 discovered 工具共用以下 hooks
       hooks:
         pre:
