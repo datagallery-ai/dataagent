@@ -73,7 +73,7 @@ class _MetaVisorClient:
 # ============================================================
 
 
-def search_tables_and_columns(keywords: list[str], top_k: int, _tool_context: ToolExecutionContext) -> dict:
+def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context: ToolExecutionContext) -> dict:
     """Search for relevant database tables and columns by semantic keywords.
 
     Use this tool when you need to discover which tables and columns are
@@ -185,7 +185,7 @@ def search_tables_and_columns(keywords: list[str], top_k: int, _tool_context: To
     return _fmt(detail, msg, {"per_db": per_db, "tables_with_columns": tables_with_columns})
 
 
-def search_tables_with_typename(keywords: str, _tool_context: ToolExecutionContext):
+def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionContext):
     """基于给定的一个或多个关键字查找相关的表。
 
     函数会用关键字和不同类型检索相关表，再将每种类型的查表结果进行合并。
@@ -241,7 +241,7 @@ def search_tables_with_typename(keywords: str, _tool_context: ToolExecutionConte
     tables_with_3type["data_table_result"] = data_table_qn_list
     tables_with_3type["data_column_result"] = data_column_qn_list
     tables_with_3type["metric_instance_result"] = metric_instance_qn_list
-    tables_with_3type["merged_table_set"] = merged_table_set
+    tables_with_3type["merged_table_set"] = list(merged_table_set)
     output_path, current_time = _get_workspace_path()
     _save_tables_with_columns_to_json(
         tables_with_3type, "output_search_tables_with_3type_result", output_path, current_time
@@ -251,6 +251,11 @@ def search_tables_with_typename(keywords: str, _tool_context: ToolExecutionConte
     output_path, current_time = _get_workspace_path()
     _save_tables_with_columns_to_json(tables_with_columns, "output_search_tables_with_type", output_path, current_time)
 
+    # 保存 summary 到 .metric_dir 目录
+    output_path, current_time = _get_workspace_path()
+    with open(output_path / f"output_search_tables_with_type_summary_{current_time}.txt", "w", encoding="utf-8") as f:
+        f.write(res)
+
     return {
         "original_msg": res,
         "frontend_msg": res,
@@ -258,7 +263,7 @@ def search_tables_with_typename(keywords: str, _tool_context: ToolExecutionConte
     }
 
 
-def get_table_schema(table_name: str, _tool_context: ToolExecutionContext) -> dict:
+def get_table_schema(table_name: str, *, _tool_context: ToolExecutionContext) -> dict:
     """Get the full column schema of a specific table from MetaVisor.
 
     Use this tool when you already know the table name (in ``db.table``
