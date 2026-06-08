@@ -17,8 +17,7 @@ import pytest
 
 from dataagent.config.config_manager import ConfigManager
 from dataagent.core.context.context_trajectory import ContextFactory, build_context_init_options
-from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.core.managers.prompt_manager import PromptTemplate
+from dataagent.core.context.contextIR import BaseIR
 
 
 def parent_dir(path: str, levels: int = 1):
@@ -40,19 +39,6 @@ class TestDataIRProfiling:
             os.environ["MEMORY_SHORT_TERM_STORAGE_URL"] = "sqlite:///./test.db"
         if not os.getenv("DATASOURCE_DATABASE_ADDRESS", "").strip():
             os.environ["DATASOURCE_DATABASE_ADDRESS"] = "mysql+pymysql://user:pass@127.0.0.1:3306/Ecommerce"
-        # ecommerce_agent.yaml chat provider uses "bailian" by default; ensure its env is present for init.
-        if not os.getenv("BAILIAN_BASE_URL", "").strip():
-            os.environ["BAILIAN_BASE_URL"] = "http://127.0.0.1:9999"
-        if not os.getenv("BAILIAN_API_KEY", "").strip():
-            os.environ["BAILIAN_API_KEY"] = "test-key"
-
-        # This test loads `ecommerce_agent.yaml`, which defines an embedding model with provider "embedding".
-        # The embedding provider reads base_url/api_key from env vars.
-        # In CI and local runs without a populated `.env`, these may be empty and cause init to fail.
-        if not os.getenv("EMBEDDING_BASE_URL", "").strip():
-            os.environ["EMBEDDING_BASE_URL"] = "http://127.0.0.1:9998/v1"
-        if not os.getenv("EMBEDDING_API_KEY", "").strip():
-            os.environ["EMBEDDING_API_KEY"] = "test-key"
 
         yaml_path = os.path.join(
             parent_dir(path=os.path.abspath(__file__), levels=4),
@@ -71,7 +57,6 @@ class TestDataIRProfiling:
         )
         cm = ConfigManager()
         cm.reload(yaml_path, default_config_path=default_yaml_path)
-        llm_manager.init_from_config(cm.get_all())
         context = ContextFactory.get_context(
             user_id="jiutian_applicationlayer",
             session_id="#00001",
@@ -86,8 +71,16 @@ class TestDataIRProfiling:
         ContextFactory.clear_context()
 
     @pytest.mark.asyncio
-    async def test_profiling(self):
+    async def test_profiling(self, monkeypatch):
         """测试DataIRProfiling功能"""
+        llm_calls = []
+
+        async def fake_llm_infer_async(cls, system_prompt: str, user_prompt: str) -> str:
+            llm_calls.append((cls.__name__, system_prompt, user_prompt))
+            return f"mock profiling description for {cls.__name__}"
+
+        monkeypatch.setattr(BaseIR, "llm_infer_async", classmethod(fake_llm_infer_async))
+
         context = ContextFactory.get_context(
             user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
         )
@@ -115,3 +108,4 @@ class TestDataIRProfiling:
         assert context._IR._nodes["Table"]["测试表01"].description
         assert context._trajectory.nodes["Table(测试表02)"]["description"]
         assert context._IR._nodes["Table"]["测试表02"].description
+        assert len(llm_calls) == 2

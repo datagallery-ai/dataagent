@@ -20,7 +20,7 @@ from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.config.config_manager import ConfigManager
 
 
-def test_natural_language_to_sql_forwards_tool_context_to_load_table():
+def test_natural_language_to_sql_forwards_tool_context_to_load_table(tmp_path):
     """load_table receives the same _tool_context as the parent tool."""
     from dataagent.actions.tools.local_tool.tools import natural_language_to_sql
 
@@ -52,8 +52,8 @@ def test_natural_language_to_sql_forwards_tool_context_to_load_table():
         result = natural_language_to_sql(
             query="test",
             data_schema="t: []",
-            sql_save_path="/tmp/q.sql",
-            csv_save_path="/tmp/q.csv",
+            sql_save_path=str(tmp_path / "q.sql"),
+            csv_save_path=str(tmp_path / "q.csv"),
             _tool_context=ctx,
         )
 
