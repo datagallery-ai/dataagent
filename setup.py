@@ -13,10 +13,9 @@
 import glob
 import os
 import shutil
-import sys
 
 from Cython.Build import cythonize  # pyright: ignore[reportMissingImports]
-from setuptools import Command, Extension, find_namespace_packages, setup
+from setuptools import Extension, find_namespace_packages, setup
 from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
 
@@ -100,26 +99,6 @@ class BuildExt(build_ext):
             shutil.rmtree(BUILD_TMP_DIR, ignore_errors=True)
 
 
-class CleanExt(Command):
-    """清理 Cython 中间产物：build_cython/ 与源码树内的 *.so。"""
-
-    description = "Remove Cython intermediates (build_cython/ and *.so under source dirs)"
-    user_options = []
-
-    def initialize_options(self):
-        """初始化命令选项；本命令无自定义选项，留空实现以满足 Command 接口。"""
-
-    def finalize_options(self):
-        """完成命令选项的解析；本命令无自定义选项，留空实现以满足 Command 接口。"""
-
-    def run(self):
-        """执行清理：删除 build_cython/ 临时目录，并移除源码树下所有 *.so 产物。"""
-        shutil.rmtree(BUILD_TMP_DIR, ignore_errors=True)
-        for source_dir in SOURCE_DIRS:
-            for so_file in glob.glob(os.path.join(source_dir, "**", "*.so"), recursive=True):
-                os.remove(so_file)
-
-
 def get_ext_modules():
     """Collect Cython extension modules for packaging"""
     extensions = []
@@ -134,14 +113,9 @@ def get_ext_modules():
     return extensions
 
 
-# clean_ext 是纯清理命令，跳过 cythonize 全量编译。
-_skip_cythonize = "clean_ext" in sys.argv
-
 kwargs = {
     "packages": find_namespace_packages(include=["dataagent*"]),
-    "ext_modules": []
-    if _skip_cythonize
-    else cythonize(
+    "ext_modules": cythonize(
         get_ext_modules(),
         compiler_directives={"language_level": "3", "annotation_typing": False},
         build_dir=BUILD_TMP_DIR,
@@ -151,7 +125,6 @@ kwargs = {
     "cmdclass": {
         "build_py": BuildPy,
         "build_ext": BuildExt,
-        "clean_ext": CleanExt,
     },
 }
 
