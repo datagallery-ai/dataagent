@@ -136,7 +136,7 @@ def _build_filter_from_args(args: Any) -> dict[str, Any]:
     return {}
 
 
-ENTRYPOINT = "python .skills/ontology_service/scripts/ontology_cli.py"
+ENTRYPOINT = "python scripts/ontology_cli.py"
 SHARED_ARGUMENTS = {
     "--scene",
     "--ontology-url",
