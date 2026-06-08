@@ -11,6 +11,7 @@
 # limitations under the License.
 # ============================================================================
 import inspect
+import re
 import types
 from dataclasses import dataclass
 from enum import Enum
@@ -130,15 +131,18 @@ class ToolSchema:
         return type_mapping.get(json_type, str)
 
     @classmethod
-    def from_function(cls, func: callable, name: str | None = None, description: str | None = None) -> "ToolSchema":
+    def from_function(cls, func: callable, name: str | None = None) -> "ToolSchema":
         """从函数生成Schema"""
         if name is None:
             name = func.__name__
-        if description is None:
-            description = func.__doc__ or f"Function {name}"
+
+        docstring = func.__doc__ or f"Function {name}"
+        metadata = docstring_to_metadata(docstring)
+        description = metadata.get("description") or docstring
 
         signature = inspect.signature(func)
         type_hints = get_type_hints(func)
+        param_descriptions = cls._parse_docstring_param_descriptions(metadata.get("parameters", ""))
         parameters = []
 
         for param_name, param in signature.parameters.items():
@@ -155,7 +159,7 @@ class ToolSchema:
                     type=param_type,
                     required=required,
                     default=default,
-                    description=f"Parameter {param_name}",
+                    description=param_descriptions.get(param_name, f"Parameter {param_name}"),
                 )
             )
 
@@ -222,6 +226,43 @@ class ToolSchema:
         metadata = {"agent_id": agent_id, "original_definition": tool_definition}
 
         return cls(name, description, parameters, "a2a_tool", metadata)
+
+    @classmethod
+    def _parse_docstring_param_descriptions(cls, args_section: str) -> dict[str, str]:
+        """Parse parameter descriptions from Args section string.
+
+        Handles formats like:
+            a (str): The first parameter.
+            b (int): The second parameter.
+        """
+        result: dict[str, str] = {}
+        if not args_section:
+            return result
+        lines = args_section.splitlines()
+        current_param = None
+        current_desc = []
+
+        for line in lines:
+            s = line.rstrip()
+            if not s.strip():
+                continue
+            param_match = re.match(r"^\s*(\w+)\s*[:(]", s)
+            if param_match:
+                if current_param:
+                    result[current_param] = " ".join(current_desc).strip()
+                current_param = param_match.group(1)
+                desc_part = s[s.index(":") + 1 :].strip() if ":" in s else s[s.index("(") + 1 : s.index(")")].strip()
+                current_desc = [desc_part] if desc_part else []
+            elif current_param and (s.startswith(("    ", "\t", " " * 8)) or not s[0].isalnum()):
+                current_desc.append(s.strip())
+            elif current_param:
+                if s.startswith("-"):
+                    continue
+                current_desc.append(s.strip())
+
+        if current_param:
+            result[current_param] = " ".join(current_desc).strip()
+        return result
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
