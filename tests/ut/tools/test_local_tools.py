@@ -148,3 +148,97 @@ async def test_register_local_tools_appends_yaml_description_for_sub_agent_tool(
     assert "Args:" in desc
     assert desc.index("Supplement (from agent configuration)") < desc.index("Args:")
     await tm.cleanup()
+
+
+def _func_with_docstring_args(path: str, purpose: str, offset: int | None = 1, limit: int | None = None) -> dict:
+    """Read a file from the local filesystem.
+
+    Reads a file and returns its content. You can access any file directly by
+    using this tool. If the user provides a path to a file, assume that path is
+    valid. It is okay to read a file that does not exist; an error will be
+    returned.
+
+    Usage:
+    - Use absolute paths under the workspace root for workspace files. For
+      additional read-only roots listed in the task context, use their absolute
+      host paths. For skill resources, use ``skill/<name>/...`` paths.
+    - By default it reads the entire file from line 1. For large files, use
+      ``offset`` and ``limit`` to read only the relevant section.
+    - When you already know which part of the file you need, only read that
+      part — this is important for larger files.
+    - Results are returned with line numbers (``N\\tline``) starting at 1.
+    - This tool can only read text files, not directories. To list a directory,
+      use the bash tool with ``ls``.
+    - If you read a file that exists but has empty contents you will receive a
+      system reminder warning in place of file contents.
+    - Binary files and files exceeding the size budget will be rejected with a
+      clear error message.
+
+    Args:
+        path (str): Absolute path under the workspace root, read-only root, or
+            ``skill/<name>/...`` for skill assets.
+        purpose (str): Brief description of why this file is being read (required, non-empty).
+        offset (int | None): The line number to start reading from (1-based). Only provide
+            if the file is too large to read at once.
+        limit (int | None): The number of lines to read. Only provide if the file is too
+            large to read at once.
+    """
+    return {}
+
+
+@pytest.mark.asyncio
+async def test_from_function_parses_docstring_param_descriptions():
+    """ToolSchema.from_function extracts parameter descriptions from docstring Args section."""
+    tm = ToolManager()
+    tm.register_local_tool(_func_with_docstring_args, name="func_with_docstring_args", category="test")
+
+    schema = tm.get("func_with_docstring_args").get_schema()
+
+    assert (
+        schema.description
+        == "Read a file from the local filesystem.\nReads a file and returns its content. You can access any file directly by\nusing this tool. If the user provides a path to a file, assume that path is\nvalid. It is okay to read a file that does not exist; an error will be\nreturned.\nUsage:\n- Use absolute paths under the workspace root for workspace files. For\nadditional read-only roots listed in the task context, use their absolute\nhost paths. For skill resources, use ``skill/<name>/...`` paths.\n- By default it reads the entire file from line 1. For large files, use\n``offset`` and ``limit`` to read only the relevant section.\n- When you already know which part of the file you need, only read that\npart — this is important for larger files.\n- Results are returned with line numbers (``N\\tline``) starting at 1.\n- This tool can only read text files, not directories. To list a directory,\nuse the bash tool with ``ls``.\n- If you read a file that exists but has empty contents you will receive a\nsystem reminder warning in place of file contents.\n- Binary files and files exceeding the size budget will be rejected with a\nclear error message."
+    )
+
+    param_dict = {p.name: p for p in schema.parameters}
+
+    assert (
+        param_dict["path"].description == "Absolute path under the workspace root, read-only root, or "
+        "``skill/<name>/...`` for skill assets."
+    )
+    assert (
+        param_dict["purpose"].description == "Brief description of why this file is being read (required, non-empty)."
+    )
+    assert (
+        param_dict["offset"].description
+        == "The line number to start reading from (1-based). Only provide if the file is too large to read at once."
+    )
+    assert (
+        param_dict["limit"].description
+        == "The number of lines to read. Only provide if the file is too large to read at once."
+    )
+
+    assert param_dict["path"].required is True
+    assert param_dict["purpose"].required is True
+    assert param_dict["offset"].required is False
+    assert param_dict["limit"].required is False
+
+    await tm.cleanup()
+
+
+def _func_no_docstring(path: str, name: str) -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_from_function_falls_back_to_placeholder_when_no_docstring():
+    """When docstring has no Args section, parameter description falls back to 'Parameter {name}'."""
+    tm = ToolManager()
+    tm.register_local_tool(_func_no_docstring, name="func_no_docstring", category="test")
+
+    schema = tm.get("func_no_docstring").get_schema()
+    param_dict = {p.name: p for p in schema.parameters}
+
+    assert param_dict["path"].description == "Parameter path"
+    assert param_dict["name"].description == "Parameter name"
+
+    await tm.cleanup()

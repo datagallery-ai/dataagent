@@ -60,7 +60,7 @@ class LocalToolWrapper(BaseTool):
 
     def get_schema(self) -> ToolSchema:
         """生成工具Schema"""
-        return ToolSchema.from_function(self.func, self.name, self.description)
+        return ToolSchema.from_function(self.func, self.name)
 
     def call(self, **kwargs) -> ToolResult:
         """执行本地函数"""
