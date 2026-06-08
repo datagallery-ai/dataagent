@@ -48,7 +48,7 @@ server = [
     "sqlmodel>=0.0.24",
     "cryptography==46.0.7",
     "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
-    "elasticsearch==8.17.1",
+    "elasticsearch>=7.17.12,<8",
 
 ]
 jiuwen = [
