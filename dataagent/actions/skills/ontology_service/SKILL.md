@@ -12,7 +12,7 @@ Use this skill to query a Galatea ontology / knowledge-graph service through det
 Use one entrypoint for all normal work:
 
 ```bash
-python .skills/ontology_service/scripts/ontology_cli.py <command> ...
+python scripts/ontology_cli.py <command> ...
 ```
 
 Resolve relative paths against `SKILL_WORKSPACE_PATH` returned by `load_skill`. Prefer `ontology_cli.py`; inspect other files under `scripts/` only when maintaining the skill.
