@@ -409,9 +409,7 @@ class FlexAgent(BaseAgent):
                     final_state = await self.workflow_backend.ainvoke(initial_state)
                     logger.trace(f"Chat completed ({self.mode} mode)")
 
-                for hook in self._post_hooks:
-                    final_state = hook(final_state, runtime)  # type: ignore[assignment]
-                final_state = dict(final_state)
+                final_state = self._run_agent_post_hooks(final_state, runtime)
 
                 if call_context:
                     try:
@@ -522,6 +520,10 @@ class FlexAgent(BaseAgent):
         else:
             initial_state_arg = dict(context_state)  # normalize after hooks
 
+        langgraph_config = kw.get("config") if isinstance(kw.get("config"), dict) else None
+        langgraph_checkpointer = kw.get("checkpointer")
+        langgraph_store = kw.get("store")
+
         stream = self.workflow_backend.astream(initial_state_arg, **kw)
         with self._performance_run(
             state=context_state if isinstance(context_state, dict) else None,
@@ -532,6 +534,9 @@ class FlexAgent(BaseAgent):
                 initial_state_for_persist=initial_state_for_persist,
                 runtime=runtime,
                 log_parse_error=False,
+                langgraph_config=langgraph_config,
+                langgraph_checkpointer=langgraph_checkpointer,
+                langgraph_store=langgraph_store,
             ):
                 yield item
 
@@ -648,6 +653,40 @@ class FlexAgent(BaseAgent):
         except Exception as e:  # pragma: no cover - 仅兜底日志
             logger.debug(f"register_query failed in _ensure_context_with_query: {e}")
 
+    def _run_agent_post_hooks(self, state: dict[str, Any], runtime: Any) -> dict[str, Any]:
+        """执行 agent 级 post-hooks，与 ``chat()`` 收尾一致。"""
+        final_state = dict(state)
+        for hook in self._post_hooks:
+            final_state = hook(final_state, runtime)  # type: ignore[assignment]
+        return dict(final_state)
+
+    async def _read_langgraph_final_state_after_stream(
+        self,
+        *,
+        stream_final_state: dict[str, Any],
+        langgraph_config: dict[str, Any] | None,
+        langgraph_checkpointer: Any,
+        langgraph_store: Any = None,
+    ) -> dict[str, Any]:
+        """astream 结束后解析图终态：有 checkpointer 时优先读取，否则用 stream 收集到的 values。"""
+        aget_fn = getattr(self.workflow_backend, "aget_graph_state", None)
+        if langgraph_config and langgraph_checkpointer is not None and callable(aget_fn):
+            try:
+                resolved = await aget_fn(
+                    config=langgraph_config,
+                    checkpointer=langgraph_checkpointer,
+                    store=langgraph_store,
+                )
+                if resolved:
+                    logger.debug(
+                        "[FlexAgent] astream final state from checkpointer, messages={}",
+                        len(resolved.get("messages") or []),
+                    )
+                    return resolved
+            except Exception as e:
+                logger.warning(f"[FlexAgent] aget_graph_state failed: {e}")
+        return dict(stream_final_state) if stream_final_state else {}
+
     async def _finalize_context_after_stream(
         self,
         initial_state: dict[str, Any] | None,
@@ -700,24 +739,18 @@ class FlexAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"Context finalization after streaming failed: {e}")
 
-        # post-hooks：side-effect only，丢弃返回值（如 portraiter 写回 memory）
-        # 合并 initial_state 到 final_state，确保 user_id/session_id 等字段存在
-        effective_state = dict(final_state) if final_state else {}
-        if initial_state:
-            for k, v in initial_state.items():
-                if k not in effective_state:
-                    effective_state[k] = v
-
-        if self._post_hooks and effective_state:
+        # post-hooks：与 chat() 相同，只使用图终态（不用 initial 快照补 messages 等字段）
+        if self._post_hooks and final_state:
             logger.debug(f"[FlexAgent] Running {len(self._post_hooks)} post-hooks")
-            logger.debug(f"[FlexAgent] effective_state keys: {list(effective_state.keys())}")
-            for i, hook in enumerate(self._post_hooks):
-                try:
-                    logger.debug(f"[FlexAgent] Running post-hook {i}: {hook}")
-                    hook(effective_state, runtime)  # type: ignore[arg-type]
-                    logger.debug(f"[FlexAgent] Post-hook {i} completed")
-                except Exception as e:
-                    logger.warning(f"Post-hook {i} failed in astream: {e}\n{traceback.format_exc()}")
+            logger.debug(
+                "[FlexAgent] post-hook state keys: {} messages_count={}",
+                list(final_state.keys()),
+                len(final_state.get("messages") or []),
+            )
+            try:
+                self._run_agent_post_hooks(dict(final_state), runtime)
+            except Exception as e:
+                logger.warning(f"Post-hooks failed in astream: {e}\n{traceback.format_exc()}")
 
     def _get_or_init_context(self, req: dict[str, Any], runtime: Any = None):
         """Return context for ids in request; create new if not exists.
@@ -962,21 +995,41 @@ class FlexAgent(BaseAgent):
         initial_state_for_persist: dict[str, Any] | None,
         runtime: Any = None,
         log_parse_error: bool = False,
+        langgraph_config: dict[str, Any] | None = None,
+        langgraph_checkpointer: Any = None,
+        langgraph_store: Any = None,
     ) -> AsyncGenerator[Any, None]:
-        """_stream_with_finalization"""
+        """消费 workflow stream，结束后读取图终态并触发 Context / post-hook 收尾。"""
         interrupted = False
-        final_state: dict[str, Any] = {}
+        stream_final_state: dict[str, Any] = {}
         try:
             async for item in stream:
                 if self._is_interrupt_stream_item(item, log_parse_error=log_parse_error):
                     interrupted = True
-                # 收集最后一个完整 state 快照，供 post-hooks 使用
-                if isinstance(item, tuple) and len(item) == 2:
-                    mode, data = item
+                if isinstance(item, dict):
+                    stream_final_state = item
+                elif isinstance(item, tuple):
+                    mode: Any = None
+                    data: Any = None
+                    if len(item) == 3:
+                        _, mode, data = item
+                    elif len(item) == 2:
+                        mode, data = item
                     if mode == "values" and isinstance(data, dict):
-                        final_state = data
+                        stream_final_state = data
                 yield item
         finally:
+            resolved_final_state: dict[str, Any] = {}
+            if not interrupted:
+                resolved_final_state = await self._read_langgraph_final_state_after_stream(
+                    stream_final_state=stream_final_state,
+                    langgraph_config=langgraph_config,
+                    langgraph_checkpointer=langgraph_checkpointer,
+                    langgraph_store=langgraph_store,
+                )
             await self._finalize_context_after_stream(
-                initial_state_for_persist, interrupted, final_state=final_state, runtime=runtime
+                initial_state_for_persist,
+                interrupted,
+                final_state=resolved_final_state,
+                runtime=runtime,
             )

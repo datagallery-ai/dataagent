@@ -135,6 +135,23 @@ class LangGraphWorkflowBackend:
         compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
         return compiled.astream(input=Command(resume=message), config=config, **kwargs)
 
+    async def aget_graph_state(
+        self,
+        *,
+        config: dict[str, Any],
+        checkpointer: Any,
+        store: Any = None,
+    ) -> dict[str, Any]:
+        """读取 checkpointer 中当前 thread 的最新图 state。"""
+        if getattr(self._wf, "graph", None) is None:
+            self._wf.ensure_graph_built()  # type: ignore[attr-defined]
+        compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
+        snapshot = await compiled.aget_state(config)
+        values = getattr(snapshot, "values", None)
+        if isinstance(values, dict):
+            return dict(values)
+        return {}
+
     def _astream_native(self, **kwargs: Any) -> AsyncIterator[Any]:
         """
         langgraph 原生 astream 入口（内部使用）。
