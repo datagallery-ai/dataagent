@@ -27,7 +27,6 @@ dependencies = [
     # ---- tools/skills ----
     "matplotlib==3.10.1",
     "numpy==2.3.5",
-    "seaborn>=0.13.2",
     # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
     "pymysql==1.1.2",
     "sqlalchemy==2.0.49",
@@ -82,6 +81,7 @@ trajectory_graph = [
 ]
 tool = [
     "mplfonts>=0.0.11",
+    "seaborn>=0.13.2",
 ]
 
 [tool.setuptools.package-data]
