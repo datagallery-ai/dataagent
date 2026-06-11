@@ -801,7 +801,8 @@ class Context:
             import pyvis
         except ImportError:
             logger.error(
-                "Pyvis is required for trajectory visualization. Install it via `uv sync --extra trajectory_graph`."
+                "Pyvis is required for trajectory visualization. "
+                "Install it via `pip install dataagent[all]` or `pip install pyvis`."
             )
             return
         from dataagent.core.context.utils_context_trajectory import graph_to_html, html_config

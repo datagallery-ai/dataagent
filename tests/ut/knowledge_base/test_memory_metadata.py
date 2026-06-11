@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("elasticsearch", reason="requires dataagent[all]")
+
 from dataagent.common_utils.knowledge_base.memory import Memory
 
 

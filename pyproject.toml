@@ -20,13 +20,11 @@ dependencies = [
     "mcp==1.26.0",
     "pandas==2.3.2",
     "psutil==6.0.0",
-    "pyarrow==23.0.1",
     "pydantic==2.12.5",
     "PyYAML==6.0.2",
     "jieba>=0.42.1",
     # ---- tools/skills ----
     "matplotlib==3.10.1",
-    "numpy==2.3.5",
     # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
     "pymysql==1.1.2",
     "sqlalchemy==2.0.49",
@@ -40,6 +38,15 @@ include = ["dataagent*"]
 namespaces = true
 
 [project.optional-dependencies]
+
+all = [
+    "dataagent[server]",
+    "dataagent[nl2sql]",
+    "dataagent[a2a-server]",
+    "dataagent[trajectory_graph]",
+    "dataagent[tool]",
+]
+
 server = [
     "fastapi==0.116.1",
     "passlib>=1.7.4",
@@ -48,7 +55,6 @@ server = [
     "cryptography==46.0.7",
     "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
     "elasticsearch>=7.17.12,<8",
-
 ]
 jiuwen = [
     "openjiuwen==0.1.1"
