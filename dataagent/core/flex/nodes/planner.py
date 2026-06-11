@@ -126,6 +126,7 @@ class Planner(BaseNode):
         terminal_mode = bool(state.get("terminal_mode", False))
         streamed_content = False
         reasoning_emitted = False
+        break_after_thinking_emitted = False
         final_resp: LLMResponse | None = None
         try:
             if terminal_mode:
@@ -143,20 +144,24 @@ class Planner(BaseNode):
                         self._emit_planner_stream_event(writer, phase="content", content=chunk.content)
                         streamed_content = True
                     continue
+                if chunk.reasoning_content:
+                    # 必须用 reasoning_content，勿写入 content，否则前端会把 thinking 当正文与回复粘在一起
+                    writer(
+                        {
+                            "type": "output_msg",
+                            "node_name": self.name,
+                            "content": "",
+                            "reasoning_content": chunk.reasoning_content,
+                        }
+                    )
+                    reasoning_emitted = True
                 if not chunk.content:
                     continue
+                # 思考流结束后、正文开始前插入 break，便于前端新开回答气泡
+                if reasoning_emitted and not break_after_thinking_emitted:
+                    writer({"type": "break"})
+                    break_after_thinking_emitted = True
                 if not streamed_content:
-                    # emit reasoning before first content chunk so it appears above the answer
-                    if chunk.reasoning_content and not reasoning_emitted:
-                        writer(
-                            {
-                                "type": "output_msg",
-                                "node_name": self.name,
-                                "content": "",
-                                "reasoning_content": chunk.reasoning_content,
-                            }
-                        )
-                        reasoning_emitted = True
                     writer(
                         {
                             "type": "output_msg",
