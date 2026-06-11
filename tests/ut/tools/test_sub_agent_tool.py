@@ -13,6 +13,7 @@
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -884,7 +885,8 @@ TOOLS:
             },
         }
     }
-    assert "SELECT 1 AS value" in sql_path.read_text(encoding="utf-8")
+    sql_text = re.sub(r"\s+", " ", sql_path.read_text(encoding="utf-8")).strip()
+    assert sql_text == "SELECT 1 AS value"
     assert "value" in csv_path.read_text(encoding="utf-8")
     assert "SQL 文件已保存到" in result["frontend_msg"]
 

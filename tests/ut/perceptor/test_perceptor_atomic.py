@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("elasticsearch", reason="requires dataagent[all]")
+
 from loguru import logger
 
 from dataagent.actions.perceptor.perceptor_atomic import (

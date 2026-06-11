@@ -286,14 +286,7 @@ class TableNode(DataNode):
             return df.loc[:, ~df.columns.str.match(r"^Unnamed:\s*\d+$")]
 
         if path.endswith(".parquet"):
-            if n_rows >= 0:
-                import pyarrow as pa  # pyright: ignore[reportMissingTypeStubs]
-                from pyarrow.parquet import ParquetFile  # pyright: ignore[reportMissingTypeStubs]
-
-                pf = ParquetFile(path)
-                return pa.Table.from_batches([next(pf.iter_batches(batch_size=n_rows))]).to_pandas()
-            else:
-                return pd.read_parquet(path)
+            return pd.read_parquet(path)
 
         raise ValueError(f"Unsupported file type: {path}")
 
