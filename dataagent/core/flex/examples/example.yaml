@@ -217,16 +217,37 @@ ENV:
   # - module: "dataagent.actions.gym.SQLiteEnv"
   #   db_path: "/abs/path/to/db.sqlite"
 
-# ── 上下文压缩 / 历史（可选） ───────────────────────────────────────────────
+# ── Context 轨迹 / 消息压缩 / 历史（可选） ─────────────────────────────────
+# 本段统一使用顶层键 CONTEXT（与代码 runtime.get_config("CONTEXT.*") 一致）。
+#
+# Planner 每轮 pre-step 相关开关（三者可组合；默认全 false = 最轻量）：
+#
+#   enable_state_inference  enable_profiling  enable_summary   效果
+#   ───────────────────────  ────────────────  ───────────────  ─────────────────────────────────────────
+#   false                    false             *                默认：无额外 LLM；StateNode 仅写入模型原始输出
+#   false                    true              *                仅为 File/Table 等 DataNode 生成 description
+#   true                     false             false            每轮 state 推断；无 data_lineage、无 IR 解包
+#   true                     false             true             同上；且首轮无 past_state 时注入跨 run graph_summary
+#   true                     true              false            完整链路：DataNode profiling → state 推断 → 按需 IR 解包
+#   true                     true              true             同上；且首轮无 past_state 时注入跨 run graph_summary
+#
+# 依赖关系：
+#   - enable_summary 仅在 enable_state_inference=true 且当前轮尚无 past_state（ReAct 第一轮）时生效
+#   - IR 解包（[IR Unpacked] HumanMessage）依赖 enable_profiling=true；仅开 state_inference 不会解包
+#   - profiling / state 推断 / state_update 的 LLM 调用走 llm_manager.get_default_llm()，与 planner 主模型独立
+#
+# 与消息压缩独立（不共用上述开关）：
+#   - compress_* + HOOKS.nodes.planner.pre 挂 pruner：超阈值时折叠 state.messages
 CONTEXT:
-  compress_token_limit: 32768   # 消息 token 超 1.2 倍时触发 LLM 压缩
+  # ── 状态推断（planner 每轮 pre-step，默认 false） ──
+  enable_state_inference: false # true 时调用 infer_state_and_unpack_ir，写入 7 维 StateNode
+  enable_summary: false         # 首轮无 past_state 时，是否注入历史 run 的 graph_summary
+  enable_profiling: false       # 是否启用数据对象IR profiling功能
+  # ── 消息历史压缩（需 HOOKS.nodes.planner.pre 挂 pruner） ──
+  compress_token_limit: 32768   # 消息 token 超 1.2 倍时触发 LLM 折叠
   compress_message_cnt: 200     # 消息条数超阈值时触发压缩
-  file_node_threshold: 500      # IR 长文本落盘 FileNode 的最小字符数
-  # 历史存储（Builder.set_history 映射到此段）
-  backend: "postgresql"         # 如 postgresql
-  url: "postgresql://user:pass@127.0.0.1:5432/history_db"
-  database:                     # context_trajectory 读取的路径（与 url 可并存）
-    url: "postgresql://user:pass@127.0.0.1:5432/history_db"
+  # ── IR 转换 ──
+  file_node_threshold: 500      # 工具输出超长时落盘为 FileNode，供 data_lineage / IR 解包
   # vis:                        # constants 中预留的可视化参数，当前代码未接入
   #   node_size_dot: 20
 

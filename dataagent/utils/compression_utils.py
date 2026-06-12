@@ -10,6 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -23,6 +25,7 @@ from langchain_core.messages import (
 from langchain_core.messages.utils import count_tokens_approximately
 from loguru import logger
 
+from dataagent.core.context.context import Context
 from dataagent.core.context.flex_context_formatting import format_one_message
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
@@ -235,3 +238,140 @@ def _should_compress(
     if len(tot_messages) > strategy.message_cnt:
         return True
     return count_tokens_approximately(tot_messages) > (1.2 * strategy.token_limit)
+
+
+async def infer_state_and_unpack_ir(
+    context: Context,
+    *,
+    runtime: Any = None,
+) -> tuple[dict[str, str], str]:
+    """Merged single-LLM-call version of infer_perfect_state_space + unpack_data_ir.
+
+    Returns (perfect_state_space_dict, unpacked_data_ir_string).
+    """
+    import ast
+
+    from dataagent.utils.converter.ir_message_consumer import get_recent_read_files
+
+    prompt = _prepare_prompt_to_infer_state_and_unpack(context, runtime=runtime)
+    llm = llm_manager.get_default_llm()
+    response = await llm.ainvoke(prompt)
+    content_str = str(response.content) if response.content is not None else ""
+    ir_unpack_enabled = runtime is not None and bool(runtime.get_config("CONTEXT.enable_profiling", False))
+
+    # Parse perfect_state_space
+    perfect_state_space_dict = {}
+    state_match = re.search(
+        r"<perfect_state_space>\s*(\{.*?\})\s*</perfect_state_space>",
+        content_str,
+        flags=re.DOTALL,
+    )
+    if state_match:
+        try:
+            parsed = json.loads(state_match.group(1))
+            perfect_state_space_dict = {
+                "goal_intent": parsed.get("goal_intent", ""),
+                "belief_about_world": parsed.get("belief_about_world", ""),
+                "action_history_summary": parsed.get("action_history_summary", ""),
+                "current_position": parsed.get("current_position", ""),
+                "available_actions": parsed.get("available_actions", ""),
+                "user_feedback_state": parsed.get("user_feedback_state", ""),
+                "epistemic_state": parsed.get("epistemic_state", ""),
+            }
+        except json.JSONDecodeError:
+            pass
+
+    if not ir_unpack_enabled:
+        logger.debug("IR unpack skipped: CONTEXT.enable_profiling is false")
+        return perfect_state_space_dict, ""
+
+    # Parse unpack_data_ir
+    recent_read_files = get_recent_read_files(context)
+    unpacked_data_ir_list: list[str] = []
+    ir_match = re.search(
+        r"<unpack_data_ir>\s*(.*?)\s*</unpack_data_ir>",
+        content_str,
+        flags=re.DOTALL,
+    )
+    if ir_match:
+        ir_content = ir_match.group(1).strip()
+        try:
+            unpacked_data_ir_list = ast.literal_eval(ir_content)
+        except Exception:
+            unpacked_data_ir_list = _extract_ir_tokens(ir_content)
+
+    output_str = ""
+    debug_str: list[str] = []
+    from dataagent.core.context.utils_context_filesystem import lineage_path_key
+
+    for i in unpacked_data_ir_list:
+        path, content = context.get_full_data(graph_node_label=i)
+        if path and lineage_path_key(p=path) in recent_read_files:
+            continue
+        if len(content) > 1000:
+            content = content[:600] + f"\n[truncated: omitted middle {len(content) - 1000} chars]\n" + content[-400:]
+        output_str += f"[IR Unpacked] {i}, path: {path}, content: {content}\n"
+        debug_str.append(i)
+
+    logger.warning(f"Unpacked data IR (merged): [{','.join(debug_str)}]")
+    return perfect_state_space_dict, output_str
+
+
+def _extract_ir_tokens(content_str: str) -> list[str]:
+    """When model output is not a valid Python literal, extract tokens like 'File(file00001)'."""
+    if not content_str:
+        return []
+    TOKEN_PATTERN = re.compile(r"\b(?:Table|File|Script)\([^)]*\)")
+    tokens = TOKEN_PATTERN.findall(content_str)
+    seen = set()
+    result: list[str] = []
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+
+    return result
+
+
+def _prepare_prompt_to_infer_state_and_unpack(
+    context: Context,
+    *,
+    runtime: Any = None,
+) -> list[dict[str, str]]:
+    """Build infer prompt; IR-unpack sections controlled by template flags."""
+    from dataagent.utils.converter.ir_message_consumer import (
+        build_available_actions,
+        build_history_context,
+        build_past_action,
+        build_past_perfect_state,
+        build_query_and_instruction_text,
+        format_data_lineage,
+    )
+
+    ir_unpack_enabled = runtime is not None and bool(runtime.get_config("CONTEXT.enable_profiling", False))
+    enable_summary = runtime is not None and bool(runtime.get_config("CONTEXT.enable_summary", False))
+    past_state_dict, past_state_string = build_past_perfect_state(context)
+
+    prompt_variables: dict[str, Any] = {
+        "past_state": past_state_string,
+        "past_action": build_past_action(context),
+        "available_actions": build_available_actions(runtime=runtime),
+        "enable_ir_unpack": ir_unpack_enabled,
+        "enable_summary": enable_summary,
+        "user_query": "",
+        "history_context": "",
+        "data_lineage": format_data_lineage(context, past_state_dict) if ir_unpack_enabled else "",
+    }
+    if not past_state_string:
+        prompt_variables["user_query"] = build_query_and_instruction_text(context)
+        if enable_summary:
+            prompt_variables["history_context"] = build_history_context(context)
+
+    template_base = f"{PROMPT_MD_PREFIX}/context"
+    system_prompt = PromptTemplate.from_package_relative(f"{template_base}/system_infer").apply_prompt_template(
+        **prompt_variables
+    )
+    user_prompt = PromptTemplate.from_package_relative(f"{template_base}/user_infer").apply_prompt_template(
+        **prompt_variables
+    )
+    return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]

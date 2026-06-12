@@ -22,7 +22,7 @@ IR 替换后已很短”的场景下误触发压缩。
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from langchain_core.messages import AnyMessage, RemoveMessage
 from loguru import logger
@@ -38,9 +38,6 @@ from dataagent.utils.constants import (
     DEFAULT_COMPRESS_MESSAGE_CNT,
     DEFAULT_PRUNER_TOKEN_LIMIT,
 )
-
-if TYPE_CHECKING:
-    from dataagent.core.context.context_trajectory import Context
 
 
 def pruner(state: FlexState, runtime: Runtime) -> FlexState:

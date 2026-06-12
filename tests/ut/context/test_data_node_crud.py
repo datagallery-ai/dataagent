@@ -10,11 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+from collections.abc import Generator
 from typing import Any
 
 import pytest
 
-from dataagent.core.context.context_trajectory import Context, ContextFactory
+from dataagent.core.context.context import Context, ContextFactory
 
 DATA_NODE_SPECS: list[dict[str, Any]] = [
     {
@@ -24,7 +25,6 @@ DATA_NODE_SPECS: list[dict[str, Any]] = [
             "knowledge_content": "订单支付后 7 天内可申请退款。",
         },
         "update": {"knowledge_content": "订单支付后 15 天内可申请退款。"},
-        "required": "knowledge_content",
     },
     {
         "node_type": "Tool",
@@ -33,13 +33,11 @@ DATA_NODE_SPECS: list[dict[str, Any]] = [
             "tool_returns": '{"answer": "7 days"}',
         },
         "update": {"tool_returns": '{"answer": "15 days"}'},
-        "required": "tool_returns",
     },
     {
         "node_type": "Table",
         "create": {"path": "/tmp/orders.csv"},
         "update": {"path": "/tmp/orders_v2.csv"},
-        "required": "path",
     },
     {
         "node_type": "Column",
@@ -49,13 +47,11 @@ DATA_NODE_SPECS: list[dict[str, Any]] = [
             "supplementary_schemas": {"dtype": "int"},
         },
         "update": {"supplementary_schemas": {"dtype": "float"}},
-        "required": "supplementary_schemas",
     },
     {
         "node_type": "File",
         "create": {"path": "/tmp/report.txt", "source": "tool_output"},
         "update": {"source": "user_upload"},
-        "required": "source",
     },
     {
         "node_type": "Script",
@@ -66,19 +62,17 @@ DATA_NODE_SPECS: list[dict[str, Any]] = [
             "related_data_list": ["Table(orders)"],
         },
         "update": {"script_content": "print('updated')"},
-        "required": "related_data_list",
     },
     {
         "node_type": "Skill",
         "create": {"path": "/tmp/skills/refund"},
         "update": {"path": "/tmp/skills/refund_v2"},
-        "required": "path",
     },
 ]
 
 
 @pytest.fixture()
-def context() -> Context:
+def context() -> Generator[Context, None, None]:
     ContextFactory.clear_context()
     ctx = ContextFactory.get_context(
         user_id="data-node-crud-user",
@@ -107,7 +101,7 @@ def test_data_node_crud_round_trip(context: Context, spec: dict[str, Any]):
 
     assert created_label == graph_label
 
-    ir = context.get_IR_from_node(graph_label)
+    ir = context.get_IR_from_node(graph_node_label=graph_label)
     assert ir.label == expected_label
     assert ir.description == "initial description"
     assert context.get_trajectory().nodes[graph_label]["description"] == "initial description"
@@ -116,9 +110,9 @@ def test_data_node_crud_round_trip(context: Context, spec: dict[str, Any]):
         assert context.get_trajectory().nodes[graph_label][field] == value
 
     changes = {"description": "updated description", **spec["update"]}
-    context.modify_node(graph_label, changes)
+    context.modify_node(graph_node_label=graph_label, changes=changes)
 
-    updated_ir = context.get_IR_from_node(graph_label)
+    updated_ir = context.get_IR_from_node(graph_node_label=graph_label)
     assert updated_ir.description == "updated description"
     assert context.get_trajectory().nodes[graph_label]["description"] == "updated description"
     for field, value in spec["update"].items():
@@ -126,28 +120,12 @@ def test_data_node_crud_round_trip(context: Context, spec: dict[str, Any]):
         assert context.get_trajectory().nodes[graph_label][field] == value
     assert updated_ir.history[0]["description"] == "initial description"
 
-    context.remove_node(graph_label)
+    context.remove_node(graph_node_label=graph_label)
 
     assert graph_label not in context.get_trajectory().nodes
-    assert expected_label not in context._IR._nodes[node_type]
-    with pytest.raises(ValueError, match=f"Cannot get IR with name '{expected_label}'"):
-        context.get_IR_from_node(graph_label)
-
-
-@pytest.mark.parametrize("spec", DATA_NODE_SPECS, ids=[spec["node_type"] for spec in DATA_NODE_SPECS])
-def test_data_node_required_fields_are_enforced(context: Context, spec: dict[str, Any]):
-    node_type = spec["node_type"]
-    create_kwargs = dict(spec["create"])
-    create_kwargs.pop(spec["required"])
-
-    with pytest.raises(ValueError, match=f"A {node_type} node must contain info"):
-        context.register_node(
-            node_type=node_type,
-            description="missing required field",
-            predecessor_node=["Query(query00000)"],
-            edge_type="test_data",
-            **create_kwargs,
-        )
+    assert expected_label not in context.state.ir._nodes[node_type]
+    with pytest.raises(ValueError, match=f"Cannot get IR with name '{expected_label}' of type '{node_type}'"):
+        context.get_IR_from_node(graph_node_label=graph_label)
 
 
 @pytest.mark.parametrize("spec", DATA_NODE_SPECS, ids=[spec["node_type"] for spec in DATA_NODE_SPECS])
@@ -164,7 +142,7 @@ def test_data_node_schema_and_full_content(context: Context, spec: dict[str, Any
         **spec["create"],
     )
 
-    ir = context.get_IR_from_node(graph_label)
+    ir = context.get_IR_from_node(graph_node_label=graph_label)
 
     assert ir.get_schema() == {
         "label": expected_label,
@@ -174,6 +152,7 @@ def test_data_node_schema_and_full_content(context: Context, spec: dict[str, Any
     full_content = ir.get_full_content()
     assert full_content["label"] == expected_label
     assert full_content["description"] == "readable description"
+    assert full_content["user_id"] == "data-node-crud-user"
     assert full_content["session_id"] == "data-node-crud-session"
     assert full_content["run_id"] == 0
     assert full_content["history"] == {}

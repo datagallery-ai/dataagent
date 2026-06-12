@@ -11,7 +11,7 @@
 # limitations under the License.
 # ============================================================================
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.core.context.context_trajectory import Context, ContextFactory
+from dataagent.core.context.context import Context, ContextFactory
 
 
 def create_plan(

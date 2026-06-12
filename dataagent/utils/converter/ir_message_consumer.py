@@ -23,7 +23,7 @@ IRMessageConsumer — 在 planner 端消费 IR 节点，用 IR 摘要替换较�
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from loguru import logger
@@ -35,8 +35,8 @@ from dataagent.utils.constants import (
 )
 
 if TYPE_CHECKING:
-    from dataagent.core.context.context_trajectory import Context
-    from dataagent.core.context.contextIR import DataNode
+    from dataagent.core.context.context import Context
+    from dataagent.core.context.context_ir import ActionNode, DataNode, KnowledgeNode, QueryNode, StateNode
 
 
 @dataclass
@@ -204,7 +204,7 @@ def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
     action_label = f"Action({tool_call_id})"
 
     try:
-        data_nodes: list[DataNode] = context.get_next_data_node(action_label)
+        data_nodes: list[DataNode] = context.get_next_data_node(action_node_label=action_label)
     except (ValueError, KeyError):
         logger.debug(f"IR consumer: Action node '{action_label}' not found in trajectory, keeping original content")
         return msg
@@ -218,3 +218,226 @@ def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
         tool_call_id=tool_call_id,
         name=tool_name,
     )
+
+
+def build_query_and_instruction_text(context: Context) -> str:
+    """
+    Build the query and instruction text to infer perfect state.
+
+    Args:
+        context(Context): The context object.
+
+    Returns:
+        str: The query and instruction text.
+    """
+    query_node_label = context.initial_pt or ""
+    query_ir = cast("QueryNode", context.get_IR_from_node(graph_node_label=query_node_label))
+    user_query = query_ir.query
+    traj = context.get_trajectory()
+    decendent_nodes = traj.successors(query_node_label)
+    user_instruction = ""
+    for node in decendent_nodes:
+        if node.startswith("Knowledge"):
+            knowledge_ir = cast("KnowledgeNode", context.get_IR_from_node(graph_node_label=node))
+            user_instruction = knowledge_ir.knowledge_content
+            break
+
+    return f"query: {user_query}\nuser_instruction: {user_instruction}"
+
+
+def build_past_perfect_state(context: Context) -> tuple[dict[str, str], str]:
+    """
+    Build the past perfect state text to infer perfect state.
+
+    Args:
+        context(Context): The context object.
+
+    Returns:
+        tuple[dict[str, str], str]: The past perfect state dictionary and text.
+    """
+    active_branch = sorted(context.get_active_branch())
+    if not active_branch:
+        return {}, ""
+    active_nodes = active_branch[0]
+    traj = context.get_trajectory(trimmed=True)
+    past_state_nodes = traj.predecessors(active_nodes)
+    for node in past_state_nodes:
+        if node.startswith("State"):
+            state_ir = cast("StateNode", context.get_IR_from_node(graph_node_label=node))
+            state_string = (
+                "goal_intent: {goal}\n"
+                "belief_about_world: {belief}\n"
+                "action_history_summary: {action_history}\n"
+                "current_position: {current_status}\n"
+                "user_feedback_state: {feedback}\n"
+                "epistemic_state: {uncertainty}"
+            ).format(
+                goal=state_ir.goal or "",
+                belief=state_ir.belief or "",
+                action_history=state_ir.action_history or "",
+                current_status=state_ir.current_status or "",
+                feedback=state_ir.feedback or "",
+                uncertainty=state_ir.uncentainty or "",
+            )
+            state_dict = {
+                "goal_intent": state_ir.goal or "",
+                "belief_about_world": state_ir.belief or "",
+                "action_history_summary": state_ir.action_history or "",
+                "current_position": state_ir.current_status or "",
+                "user_feedback_state": state_ir.feedback or "",
+                "epistemic_state": state_ir.uncentainty or "",
+            }
+            return state_dict, state_string
+    return {}, ""
+
+
+def build_past_action(context: Context) -> str:
+    """
+    Build the past action text to infer perfect state.
+
+    Args:
+        context(Context): The context object.
+
+    Returns:
+        str: The past action text.
+    """
+    active_nodes = context.get_active_branch()
+    if any(not i.startswith("Action") for i in active_nodes):
+        return ""
+
+    summaries: list[str] = []
+    for idx, action_label in enumerate(active_nodes):
+        ir = cast("ActionNode", context.get_IR_from_node(graph_node_label=action_label))
+        try:
+            data_nodes: list[DataNode] = context.get_next_data_node(action_node_label=action_label)
+        except Exception:
+            data_nodes = []
+
+        header = f"[IR Summary {idx:02d}] tool={ir.action}, input={ir.params}, success={ir.success}, output={ir.output}"
+        lines = [header, "Artifacts produced:"]
+        if data_nodes:
+            for node in data_nodes:
+                line = _render_single_node(node)
+                if line:
+                    lines.append(f"- {line}")
+        else:
+            lines.append("- (no artifacts)")
+
+        summaries.append("\n".join(lines))
+
+    return "\n\n".join(summaries)
+
+
+def build_available_actions(*, runtime: Any = None) -> str:
+    """
+    Build the available actions text to infer perfect state.
+
+    Returns:
+        The available actions text.
+    """
+    tm = getattr(runtime, "tool_manager", None) if runtime is not None else None
+    if tm is None:
+        return ""
+
+    available_actions_str = ""
+    for action in tm.list_tools():
+        action_schema = tm.get_schema(action)
+        available_actions_str += f"{action}: {action_schema.description}\n"
+
+    return available_actions_str
+
+
+def build_history_context(context: Context) -> str:
+    """
+    Build the history context text to infer perfect state.
+
+    Args:
+        context(Context): The context object.
+
+    Returns:
+        str: The history context text.
+    """
+    from dataagent.utils.converter.graph_summary import load_run_summary_messages
+
+    historical_messages = load_run_summary_messages(context, context.get_all_historical_trajectories())
+    return "\n".join(str(message.content) for message in historical_messages)
+
+
+def format_data_lineage(context: Context, current_state: dict[str, str] | None = None) -> str:
+    """
+    Format the data lineage as text.
+
+    Args:
+        context(Context): The context object.
+        current_state(dict[str, str] | None): The current state of the agent (Default: `None`).
+
+    Returns:
+        str: The formatted data lineage as text.
+    """
+    if current_state is None:
+        current_state = {}
+
+    blocks: list[str] = []
+    groups = context.get_lineage(text_file_only=True)
+    for group in groups:
+        if not group:
+            continue
+
+        path = getattr(group[0][0], "path", None) or ""
+        lines = [f"[IR Lineage] path: {path}"]
+        for data_ir, action_ir, state_ir in group:
+            data_type = data_ir.__class__.__name__.replace("Node", "")
+            desc = data_ir.description or ""
+            if action_ir is None:  # case 1: action_ir is None
+                agent_status = "已收到用户query"
+                source_from = "user upload"
+            else:  # case 2: action_ir is not None
+                agent_status = state_ir.current_status if state_ir else current_state.get("current_position", "")
+                source_from = action_ir.action if action_ir else ""
+
+            lines.append(
+                f"- {data_type}({data_ir.label}), description: {desc}; "
+                f"agent_status: {agent_status}; source_from: {source_from};"
+            )
+
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
+
+
+def get_recent_read_files(context: Context) -> set[str]:
+    """
+    Get the recent read files.
+
+    Args:
+        context(Context): The context object.
+
+    Returns:
+        set[str]: The recent read file paths.
+    """
+    import networkx as nx
+
+    from dataagent.core.context.utils_context_filesystem import lineage_path_key
+
+    recent_read_files: set[str] = set()
+    if context.initial_pt is None or not context.get_active_branch():
+        return recent_read_files
+
+    if DEFAULT_IR_RECENT_TURNS <= 0:
+        return recent_read_files
+
+    G = context.get_trajectory(trimmed=True)
+    if G.number_of_nodes() == 0:
+        return recent_read_files
+
+    ordered = [str(n) for n in nx.topological_sort(G)]
+    recent_states = [n for n in ordered if n.startswith("State")][-DEFAULT_IR_RECENT_TURNS:]
+    action_labels = [a for s in recent_states for a in G.successors(s) if a.startswith("Action")]
+    for a in action_labels:
+        action_ir = cast("ActionNode", context.get_IR_from_node(graph_node_label=a))
+        if action_ir.action == "read_file":
+            path = action_ir.params.get("path")
+            if path:
+                recent_read_files.add(lineage_path_key(p=str(path)))
+
+    return recent_read_files

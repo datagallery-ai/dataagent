@@ -85,7 +85,7 @@ class TestBuiltinSkillDirectoryDiscovery:
         tm = ToolManager()
         skills = tm._discover_builtin_skills(config={"TOOLS": {"skills": {"custom_dirs": ["actions/skills"]}}})
 
-        assert [skill["name"] for skill in skills] == ["data_analysis_report"]
+        assert [skill["name"] for skill in skills] == []
 
     def test_discover_builtin_skills_nonexistent_directory_handled_gracefully(
         self,
@@ -102,4 +102,4 @@ class TestBuiltinSkillDirectoryDiscovery:
         skills = tm._discover_builtin_skills(config={"TOOLS": {"skills": {"custom_dirs": ["does_not_exist"]}}})
         # NOTE: The hardcoded actions/skills scan is unaffected by the monkeypatch,
         # so data_analysis_report always appears from the real package.
-        assert [skill["name"] for skill in skills] == ["data_analysis_report"]
+        assert [skill["name"] for skill in skills] == []

@@ -22,7 +22,7 @@ import networkx as nx
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
-from dataagent.core.context.context_trajectory import Context
+from dataagent.core.context.context import Context
 from dataagent.core.managers.prompt_manager.template import PromptTemplate
 from dataagent.utils.constants import DEFAULT_MAX_TOOL_RESULT_LENGTH
 from dataagent.utils.parsing_utils import extract_action_payloads, parse_action_payloads_to_tool_calls
@@ -252,7 +252,7 @@ def parse_actions_to_ai_message(text: str) -> AIMessage:
     )
 
 
-def record_message(context: Context, message: BaseMessage):
+def record_message(context: Context, message: BaseMessage, perfect_state_space: dict[str, str] | None = None):
     """
     When a message is produced, it will be processed to a node in the context.
     An AIMessage produced in a planner node will be processed to a StateNode,
@@ -260,18 +260,31 @@ def record_message(context: Context, message: BaseMessage):
     After the action is done, information of the ActionNode will be complemented (output, success).
     """
     if isinstance(message, AIMessage):
+        state_fields = perfect_state_space
+        if state_fields is None:
+            state_fields = {}
         adding_new_pt = True
-        if context.messages.get("pending_branch", "Not recorded current pt") == "Not recorded current pt":
+        if context.state.messages.get("pending_branch", "Not recorded current pt") == "Not recorded current pt":
             node_kwargs = {
                 "node_type": "State",
                 "description": "",
                 "predecessor_node": _last_node_name(context),  # Only sequential running is supported now
-                "state": str(message.content),
+                "goal": state_fields.get("goal_intent", ""),
+                "belief": state_fields.get("belief_about_world", ""),
+                "action_history": state_fields.get("action_history_summary", ""),
+                "current_status": state_fields.get("current_position", ""),
+                "available_actions": state_fields.get("available_actions", ""),
+                "feedback": state_fields.get("user_feedback_state", ""),
+                "uncentainty": state_fields.get("epistemic_state", ""),
+                "content": str(message.content or ""),
+                "reasoning_content": str(message.additional_kwargs.get("reasoning_content", "")),
             }
             pending_branch = [context.register_node(**node_kwargs)]
             adding_new_pt = False
+            state_update = False
         else:  # Branch trimmed, need add new branch pointer to pending branch.
-            pending_branch = context.messages.pop("pending_branch")
+            pending_branch = context.state.messages.pop("pending_branch")
+            state_update = True
 
         all_tool_calls = message.tool_calls + message.invalid_tool_calls
         for tool_call in all_tool_calls:
@@ -288,10 +301,16 @@ def record_message(context: Context, message: BaseMessage):
             }
             context.register_node(**new_action_node)
             adding_new_pt = True
+
+        if state_update:
+            context.update_state(graph_node_label=pending_branch[0])
+
     elif isinstance(message, ToolMessage):
         tool_label = f"Action({message.tool_call_id})"
         try:
-            context.modify_node(tool_label, {"output": message.content, "success": message.status == "success"})
+            context.modify_node(
+                graph_node_label=tool_label, changes={"output": message.content, "success": message.status == "success"}
+            )
         except Exception as e:
             logger.error(f"Failed to modify node {tool_label}: {e}")
     else:

@@ -28,7 +28,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from loguru import logger
 
 from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.context.context_trajectory import Context
+from dataagent.core.context.context import Context
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate

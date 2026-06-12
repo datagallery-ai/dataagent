@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import networkx as nx
 from langchain_core.messages import BaseMessage, HumanMessage
@@ -31,7 +31,7 @@ from dataagent.utils.compression_utils import direct_fold
 from dataagent.utils.converter.ir_message_consumer import DataNodeRenderSnapshot, render_data_node_snapshot
 
 if TYPE_CHECKING:
-    from dataagent.core.context.context_trajectory import Context
+    from dataagent.core.context.context import Context
 
 DATA_NODE_PREFIXES = ("Table", "Column", "Knowledge", "Tool", "Script", "File", "Skill")
 INTERNAL_NODE_PREFIXES = ("Table",)
@@ -131,7 +131,7 @@ def _render_single_trajectory_trace(
                 lines.append(_render_data_nodes(graph, data_node_ids, action_name))
 
         elif node_type == "State":
-            state_text = node_attrs.get("state", "")
+            state_text = node_attrs.get("content") or node_attrs.get("state", "")
             if state_text:
                 lines.append(f"State: {state_text}")
 
@@ -142,10 +142,10 @@ def _render_single_trajectory_trace(
     return "\n".join(lines)
 
 
-def get_summary_cache_path(context: Any, run_id: int, sub_id: int = 0) -> Path:
+def get_summary_cache_path(context: Context, run_id: int, sub_id: int = 0) -> Path:
     """Return the on-disk cache path for a run summary."""
-    user_id = getattr(context, "_user_id", None)
-    session_id = getattr(context, "_session_id", None)
+    user_id = context.state.user_id
+    session_id = context.state.session_id
     if not user_id or not session_id:
         raise ValueError("Context is missing user_id/session_id required for summary cache path.")
     return (
@@ -191,7 +191,7 @@ def _create_and_cache_run_summary(
 
 
 def load_run_summary_messages(
-    context: Any,
+    context: Context,
     historical_trajectories: dict[int, nx.DiGraph],
     *,
     sub_id: int = 0,

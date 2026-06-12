@@ -89,6 +89,12 @@ tool = [
     "mplfonts>=0.0.11",
     "seaborn>=0.13.2",
 ]
+wps = [
+    "openpyxl>=3.1.5",
+    "pyvis>=0.3.2",
+    "pywin32>=311",
+    "scikit-learn>=1.9.0",
+]
 
 [tool.setuptools.package-data]
 "*" = [

@@ -12,7 +12,7 @@
 # ============================================================================
 import os
 
-from dataagent.core.context.context_trajectory import ContextFactory
+from dataagent.core.context.context import ContextFactory
 
 if __name__ == "__main__":
     a = ContextFactory.get_context(user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0)
@@ -134,8 +134,16 @@ if __name__ == "__main__":
     a.register_node(
         node_type="State",
         description="完成了perceptor的查询",
-        state="查询到与用户query相关的信息，包括存款表中的性别/年龄/金额三列。可用的工具有natural_language_to_sql和\
+        goal="",
+        belief="",
+        action_history="",
+        current_status="查询到与用户query相关的信息，包括存款表中的性别/年龄/金额三列。可用的工具有natural_language_to_sql和\
             report_generator。居民消费信心可以用存款数额来衡量，有一段示例sql语句可以用来计算某一年的存款金额。",
+        available_actions="",
+        feedback="",
+        uncentainty="",
+        content="",
+        reasoning_content="",
         predecessor_node=["Action(action00000)"],
     )
     a.register_node(
@@ -174,7 +182,15 @@ if __name__ == "__main__":
     a.register_node(
         node_type="State",
         description="计算得到2025年与2024年存款总金额",
-        state="2025年相较于2024年，总体存款存在下降",
+        goal="",
+        belief="",
+        action_history="",
+        current_status="2025年相较于2024年，总体存款存在下降",
+        available_actions="",
+        feedback="",
+        uncentainty="",
+        content="",
+        reasoning_content="",
         predecessor_node=["Action(action00001)"],
     )
     a.register_node(
@@ -212,7 +228,15 @@ if __name__ == "__main__":
     a.register_node(
         node_type="State",
         description="计算得到2025年与2024年不同性别存款金额",
-        state="2025年相较上一年，男性存款发生显著下降，女性存款没有显著变化",
+        goal="",
+        belief="",
+        action_history="",
+        current_status="2025年相较上一年，男性存款发生显著下降，女性存款没有显著变化",
+        available_actions="",
+        feedback="",
+        uncentainty="",
+        content="",
+        reasoning_content="",
         predecessor_node=["Action(action00002)"],
     )
     a.register_node(
@@ -240,8 +264,16 @@ if __name__ == "__main__":
     a.register_node(
         node_type="State",
         description="完成分析，可以回答用户query了",
-        state="2025年居民的总体消费信息增强了，表现在男性的存款减少了，信心增强了；女性没有显著变化。",
+        goal="",
+        belief="",
+        action_history="",
+        current_status="2025年居民的总体消费信息增强了，表现在男性的存款减少了，信心增强了；女性没有显著变化。",
+        available_actions="",
+        feedback="",
+        uncentainty="",
+        content="",
+        reasoning_content="",
         predecessor_node=["Action(action00003)"],
         remove_pt=True,
     )
-    a.show(os.path.join(os.path.dirname(__file__), "temp.html"))
+    a.show(output_html=os.path.join(os.path.dirname(__file__), "temp.html"))

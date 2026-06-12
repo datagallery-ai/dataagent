@@ -12,12 +12,13 @@
 # ============================================================================
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 
 from dataagent.core.cbb.base_node import BaseNode
+from dataagent.core.context.context import Context
 from dataagent.core.flex.utils.context_from_state import get_context_for_flex_state
 from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
 from dataagent.core.flex.workflow.state import FlexState
@@ -25,6 +26,7 @@ from dataagent.core.framework_adapters.runtime.context import get_stream_writer
 from dataagent.core.managers.llm_manager.adapters import LLMResponse, normalize_usage_metadata
 from dataagent.core.managers.llm_manager.llm_client import LLMCallError
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
+from dataagent.utils.compression_utils import infer_state_and_unpack_ir
 from dataagent.utils.env_utils import get_env
 from dataagent.utils.formatting_utils import format_tool_calls_for_display
 from dataagent.utils.messages_utils import parse_actions_to_ai_message, record_message
@@ -120,8 +122,15 @@ class Planner(BaseNode):
             tools = runtime.get_tools_for_llm()
             self.llm = base.bind_tools(tools) if tools else base
         writer = get_stream_writer()
-        context = get_context_for_flex_state(state, runtime)
-        messages_to_process = self._prepare_messages_to_process(state, context, runtime)
+        context = cast(Context, get_context_for_flex_state(state, runtime))
+        unpacked_data_ir = ""
+        current_state: dict[str, str] | None = None
+        if runtime.get_config("CONTEXT.enable_profiling", False):
+            context.profiling()
+        await context.wait_pending_tasks()
+        if runtime.get_config("CONTEXT.enable_state_inference", False):
+            current_state, unpacked_data_ir = await infer_state_and_unpack_ir(context, runtime=runtime)
+        messages_to_process = self._prepare_messages_to_process(state, context, runtime, unpacked_data_ir)
         _dump_context_prompt_if_enabled(messages_to_process, state)
         terminal_mode = bool(state.get("terminal_mode", False))
         streamed_content = False
@@ -184,7 +193,7 @@ class Planner(BaseNode):
                 terminal_mode=terminal_mode,
                 reasoning_already_emitted=reasoning_emitted,
             )
-            return self._build_result(context, ai_message, state)
+            return self._build_result(context, ai_message, state, current_state)
 
         except Exception as e:
             import traceback
@@ -192,7 +201,9 @@ class Planner(BaseNode):
             logger.error(f"Error traceback: {traceback.format_exc()}")
             return self._build_error_result(writer, e, terminal_mode=terminal_mode)
 
-    def _prepare_messages_to_process(self, state: FlexState, context: Any, runtime: Any) -> Any:
+    def _prepare_messages_to_process(
+        self, state: FlexState, context: Context, runtime: Any, unpacked_data_ir: str = ""
+    ) -> Any:
         workspace = runtime.workspace_dir
 
         extra: dict[str, Any] = {}
@@ -201,7 +212,7 @@ class Planner(BaseNode):
             if memory_str:
                 extra["memory"] = memory_str
 
-        return prepare_flex_planner_prompt(
+        messages_to_process = prepare_flex_planner_prompt(
             context=context,
             state=state,
             system_prompt=self.system_prompt,
@@ -210,6 +221,9 @@ class Planner(BaseNode):
             workspace=workspace,
             **extra,
         )
+        if unpacked_data_ir:
+            messages_to_process += [HumanMessage(content=unpacked_data_ir)]
+        return messages_to_process
 
     def _normalize_ai_message(self, resp: Any) -> AIMessage:
         ai_message = self._to_ai_message(resp)
@@ -326,8 +340,14 @@ class Planner(BaseNode):
             }
         )
 
-    def _build_result(self, context: Any, ai_message: AIMessage, state: FlexState) -> dict[str, Any] | FlexState:
-        record_message(context, ai_message)
+    def _build_result(
+        self,
+        context: Context,
+        ai_message: AIMessage,
+        state: FlexState,
+        current_state: dict[str, str] | None = None,
+    ) -> dict[str, Any] | FlexState:
+        record_message(context, ai_message, perfect_state_space=current_state)
 
         curr_iter = int(state.get("curr_iter", 0)) + 1
 
@@ -343,6 +363,13 @@ class Planner(BaseNode):
             }
 
         if len(ai_message.tool_calls) == 0 and len(ai_message.invalid_tool_calls) == 0:
+            context.register_node(
+                node_type="Response",
+                description="agent response",
+                predecessor_node=list(context.state.current_pt),
+                response=ai_message.content,
+                reasoning_content=ai_message.additional_kwargs.get("reasoning_content", ""),
+            )
             return {
                 "messages": ai_message,
                 "complete": True,

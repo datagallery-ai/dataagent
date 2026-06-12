@@ -391,13 +391,20 @@ class RuntimeEnvironmentCollector:
         db_path = Path(path).expanduser().resolve()
         if not db_path.exists() or not os.access(db_path, os.R_OK):
             return False
+        conn: sqlite3.Connection | None = None
         try:
-            uri = f"file:{db_path.as_posix()}?mode=ro"
-            with sqlite3.connect(uri, uri=True) as conn:
-                conn.execute("SELECT 1")
+            uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
+            conn = sqlite3.connect(uri, uri=True)
+            cur = conn.execute("SELECT 1")
+            cur.fetchone()
+            cur.close()
             return True
-        except sqlite3.Error:
+        except sqlite3.Error as e:
+            logger.debug(f"SQLite readability check failed for {db_path}: {e}")
             return False
+        finally:
+            if conn is not None:
+                conn.close()
 
     def collect(self) -> dict[str, Any]:
         """收集环境信息（system/runtime/resources/database）。"""

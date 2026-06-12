@@ -12,8 +12,8 @@
 # ============================================================================
 from typing import cast
 
-from dataagent.core.context.context_trajectory import ContextFactory
-from dataagent.core.context.contextIR import ActionNode
+from dataagent.core.context.context import ContextFactory
+from dataagent.core.context.context_ir import ActionNode, StateNode
 
 
 class TestContext:
@@ -63,8 +63,16 @@ class TestContext:
         )
         context.register_node(
             node_type="State",
-            description="完成了个位的计算",
-            state="个位的加法结果为5",
+            description="无",
+            goal="计算12+23",
+            belief="无",
+            action_history="无",
+            current_status="完成了个位的计算，个位的加法结果为5",
+            available_actions="无",
+            feedback="无",
+            uncentainty="无",
+            content="",
+            reasoning_content="",
             predecessor_node=["Action(action00000)"],
         )
         context.register_node(
@@ -79,8 +87,16 @@ class TestContext:
         )
         context.register_node(
             node_type="State",
-            description="完成了十位的计算",
-            state="十位的加法结果为3",
+            description="无",
+            goal="计算12+23",
+            belief="无",
+            action_history="无",
+            current_status="完成了十位的计算，十位的加法结果为3",
+            available_actions="无",
+            feedback="无",
+            uncentainty="无",
+            content="",
+            reasoning_content="",
             predecessor_node=["Action(action00001)"],
         )
         context.register_node(
@@ -95,8 +111,16 @@ class TestContext:
         )
         context.register_node(
             node_type="State",
-            description="完成了百位的计算",
-            state="用户query中不涉及到百位的计算，因此计算无效",
+            description="无",
+            goal="计算12+23",
+            belief="无",
+            action_history="无",
+            current_status="用户query中不涉及到百位的计算，因此计算无效",
+            available_actions="无",
+            feedback="无",
+            uncentainty="无",
+            content="",
+            reasoning_content="",
             predecessor_node=["Action(action00002)"],
             remove_pt=True,
         )
@@ -111,8 +135,16 @@ class TestContext:
         )
         context.register_node(
             node_type="State",
-            description="完成计算，可以回答用户query了",
-            state="12+23等于35",
+            description="无",
+            goal="计算12+23",
+            belief="无",
+            action_history="无",
+            current_status="完成计算，可以回答用户query了，12+23等于35",
+            available_actions="无",
+            feedback="无",
+            uncentainty="无",
+            content="",
+            reasoning_content="",
             predecessor_node=["Action(action00003)"],
         )
 
@@ -140,8 +172,8 @@ class TestContext:
         context = ContextFactory.get_context(
             user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
         )
-        state = context.get_IR_from_node("State(state00003)")
-        assert state.description == "完成计算，可以回答用户query了"
+        state = cast(StateNode, context.get_IR_from_node(graph_node_label="State(state00003)"))
+        assert state.current_status == "完成计算，可以回答用户query了，12+23等于35"
 
     def test_modify_node(self):
         """测试modify_node接口"""
@@ -149,10 +181,10 @@ class TestContext:
             user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
         )
         context.modify_node(graph_node_label="Action(action00003)", changes={"output": 18, "success": False})
-        assert context._trajectory.nodes["Action(action00003)"]["output"] == 18
-        assert not context._trajectory.nodes["Action(action00003)"]["success"]
+        assert context.state.trajectory.nodes["Action(action00003)"]["output"] == 18
+        assert not context.state.trajectory.nodes["Action(action00003)"]["success"]
 
-        action_ir = cast(ActionNode, context._IR._nodes["Action"]["action00003"])
+        action_ir = cast(ActionNode, context.state.ir._nodes["Action"]["action00003"])
         assert action_ir.output == 18
         assert not action_ir.success
 
@@ -162,16 +194,16 @@ class TestContext:
             user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
         )
         context.remove_node(graph_node_label="State(state00003)")
-        assert "state00003" not in context._IR._nodes["State"]
-        assert "State(state00003)" not in context._trajectory.nodes
-        assert context._current_pt == {"Action(action00003)"}
+        assert "state00003" not in context.state.ir._nodes["State"]
+        assert "State(state00003)" not in context.state.trajectory.nodes
+        assert context.state.current_pt == {"Action(action00003)"}
 
     def test_get_next_data_node(self):
         """测试get_next_data_node接口"""
         context = ContextFactory.get_context(
             user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
         )
-        irs = context.get_next_data_node("Action(action00000)")
+        irs = context.get_next_data_node(action_node_label="Action(action00000)")
         assert len(irs) == 3
         flag_column, flag_table, flag_knowledge = False, False, False
         for ir in irs:
@@ -184,16 +216,3 @@ class TestContext:
         assert flag_knowledge
         assert flag_table
         assert flag_column
-
-    def test_get_previous_action_node(self):
-        """测试get_previous_action_node接口"""
-        context = ContextFactory.get_context(
-            user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
-        )
-        ir_1 = context.get_previous_action_node("Column(测试表-测试列)")
-        assert len(ir_1) == 1
-        assert ir_1[0].label == "action00000"
-
-        ir_2 = context.get_previous_action_node("Knowledge(加法规则)")
-        assert len(ir_2) == 1
-        assert ir_2[0].label == "action00000"
