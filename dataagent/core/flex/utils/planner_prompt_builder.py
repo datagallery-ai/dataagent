@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,18 @@ def prepare_flex_planner_prompt(
     return messages
 
 
+def _save_human_message_to_full(state: Any, user_message: HumanMessage) -> None:
+    """将用户 HumanMessage 增量追加到 messages_full.json。"""
+    try:
+        from dataagent.core.flex.hooks.history_writer import save_messages_full
+
+        user_id = str(state.get("user_id") or "")
+        session_id = str(state.get("session_id") or "")
+        save_messages_full(user_id, session_id, [user_message])
+    except Exception:
+        logger.warning(f"写入用户 HumanMessage 到 messages_full.json 失败: {traceback.format_exc()}")
+
+
 def sync_flex_planner_user_human_to_state(
     runtime: Runtime,
     state: Any,
@@ -145,10 +158,12 @@ def sync_flex_planner_user_human_to_state(
         msgs.append(user_message)
         state["messages"] = msgs
         runtime.clear_flex_planner_user_sync_pending()
+        _save_human_message_to_full(state, user_message)
         return
     # openjiuwen：漏置 pending 或 messages 尚未初始化时，避免 Planner 仅有 SystemMessage
     if not state.get("messages"):
         state["messages"] = [user_message]
+        _save_human_message_to_full(state, user_message)
 
 
 def build_todo_message(context: Context) -> HumanMessage | None:
