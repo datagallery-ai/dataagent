@@ -11,7 +11,10 @@
 # limitations under the License.
 # ============================================================================
 import inspect
+import traceback
 from typing import Any
+
+from loguru import logger
 
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.utils.performance import callable_perf_name, get_current_collector
@@ -121,6 +124,16 @@ class BaseNode:
             result_msgs = result.get("messages", [])
             if result_msgs and not isinstance(result_msgs, list):
                 result_msgs = [result_msgs]
+            # 增量追加 node 原始输出到 messages_full.json
+            if result_msgs:
+                try:
+                    from dataagent.core.flex.hooks.history_writer import save_messages_full
+
+                    user_id = str(state.get("user_id") or "")
+                    session_id = str(state.get("session_id") or "")
+                    save_messages_full(user_id, session_id, result_msgs)
+                except Exception:
+                    logger.warning(f"[{self.name}] 写入 messages_full.json 失败: {traceback.format_exc()}")
             # 仅构造 messages 合并后的结果；不复制 state 的其他字段，
             # 避免 num_turns 等 Annotated[int, add] 字段被 reducer 重复累加。
             new_messages = [*state.get("messages", []), *result_msgs]
