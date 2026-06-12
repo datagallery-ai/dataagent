@@ -16,8 +16,8 @@ import os
 import pytest
 
 from dataagent.config.config_manager import ConfigManager
-from dataagent.core.context.context_trajectory import ContextFactory, build_context_init_options
-from dataagent.core.context.contextIR import BaseIR
+from dataagent.core.context.context import ContextFactory, build_context_init_options
+from dataagent.core.context.context_ir import BaseIR
 
 
 def parent_dir(path: str, levels: int = 1):
@@ -101,11 +101,11 @@ class TestDataIRProfiling:
             edge_type="test_data_type",
         )
         context.profiling()
-        if context.pending_tasks["profiling"]:
-            await asyncio.gather(*context.pending_tasks["profiling"])
+        if context.state.pending_tasks["profiling"]:
+            await asyncio.gather(*context.state.pending_tasks["profiling"])
 
-        assert context._trajectory.nodes["Table(测试表01)"]["description"]
-        assert context._IR._nodes["Table"]["测试表01"].description
-        assert context._trajectory.nodes["Table(测试表02)"]["description"]
-        assert context._IR._nodes["Table"]["测试表02"].description
+        assert context.state.trajectory.nodes["Table(测试表01)"]["description"]
+        assert context.state.ir._nodes["Table"]["测试表01"].description
+        assert context.state.trajectory.nodes["Table(测试表02)"]["description"]
+        assert context.state.ir._nodes["Table"]["测试表02"].description
         assert len(llm_calls) == 2

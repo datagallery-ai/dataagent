@@ -75,7 +75,7 @@ async def test_two_agents_concurrent_chat_no_tool_leakage(
     monkeypatch.setenv("BAILIAN_BASE_URL", "http://127.0.0.1:9999")
     monkeypatch.setenv("BAILIAN_API_KEY", "test-key")
     # ── disable context persistence ──
-    from dataagent.core.context.context_trajectory import Context
+    from dataagent.core.context.context import Context
 
     monkeypatch.setattr(Context, "persist_to_json", lambda _self: None, raising=True)
     monkeypatch.setattr(Context, "persist_meta_to_json", lambda _self: None, raising=True)

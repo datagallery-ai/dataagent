@@ -11,7 +11,7 @@
 # limitations under the License.
 # ============================================================================
 from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.context.context_trajectory import ContextFactory
+from dataagent.core.context.context import ContextFactory
 
 
 def get_current_query(runtime: Runtime) -> str | None:

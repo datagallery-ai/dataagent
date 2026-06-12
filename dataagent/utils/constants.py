@@ -282,7 +282,7 @@ DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL: int = 10000
 # 完整工具目录见 dataagent/core/managers/action_manager/manager.py（_BUILTIN_LOCAL_TOOL_CATALOG）
 # 此处仅声明默认启用的工具名（与目录取交集）；YAML 可用 TOOLS.builtin 覆盖（含 [] 表示不注册）
 
-DEFAULT_BUILTIN_SKILL_NAMES: frozenset[str] = frozenset({"data_analysis_report"})
+DEFAULT_BUILTIN_SKILL_NAMES: frozenset[str] = frozenset({})
 """始终有资格被发现的内置 Skill 名称集合。"""
 
 DEFAULT_BUILTIN_LOCAL_TOOLS: tuple[str, ...] = (

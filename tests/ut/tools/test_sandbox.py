@@ -37,6 +37,15 @@ from dataagent.actions.tools.local_tool.sandbox import (
 )
 
 
+def _patch_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    """Make Path.home() resolve to *home* on Linux and Windows."""
+    home_str = str(home)
+    monkeypatch.setenv("HOME", home_str)
+    monkeypatch.setenv("USERPROFILE", home_str)
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+
+
 def _bwrap_functional() -> bool:
     """Check whether bwrap can actually create a sandbox."""
     if not shutil.which("bwrap"):
@@ -293,7 +302,7 @@ class TestBuildWorkspaceMountLists:
 
     def test_skips_nonexistent_optional_paths(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         # 空 HOME 下不存在的可选工具链不应被挂载
-        monkeypatch.setenv("HOME", str(tmp_path))
+        _patch_home(monkeypatch, tmp_path)
         ws = tmp_path / "ws"
         ws.mkdir()
         readonly_binds, writable_binds = build_workspace_mount_lists(resolved_workspace=ws)
@@ -305,6 +314,7 @@ class TestBuildWorkspaceMountLists:
         assert str(ws) in writable_binds
         assert not any(".cache" in p for p in writable_binds)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows symlink creation requires elevated privileges")
     def test_os_config_bind_paths_follows_resolv_symlink(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """symlink 目标在 L0 外时，应 bind 解析后的目录（替代硬编码 /mnt/wsl）。"""
         import dataagent.actions.tools.local_tool.sandbox as sandbox_module
@@ -324,7 +334,7 @@ class TestBuildWorkspaceMountLists:
         fake_home = tmp_path / "home"
         (fake_home / ".local/bin").mkdir(parents=True)
         (fake_home / ".cache").mkdir()
-        monkeypatch.setenv("HOME", str(fake_home))
+        _patch_home(monkeypatch, fake_home)
         ws = tmp_path / "ws"
         ws.mkdir()
 
@@ -408,6 +418,7 @@ class TestRuntimePythonBindPaths:
         assert str(prefix.resolve()) in binds
         assert str(pkg.resolve()) in binds
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows symlink creation requires elevated privileges")
     def test_includes_base_prefix_when_different_from_venv(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         """uv 风格 venv：sys.executable 指向 base_prefix 下的真实解释器。"""
         venv = tmp_path / "project" / ".venv"

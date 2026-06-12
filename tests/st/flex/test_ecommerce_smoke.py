@@ -109,11 +109,8 @@ def test_st_ecommerce_yaml_with_mock_llm_and_tools(
     monkeypatch.setenv("MEMORY_SHORT_TERM_STORAGE_URL", "postgresql://user:pass@127.0.0.1:5432/db")
     monkeypatch.setenv("DATASOURCE_DATABASE_ADDRESS", "mysql+pymysql://user:pass@127.0.0.1:3306/Ecommerce")
 
-    # 禁用 context DB/落盘副作用（ContextTrajectory 默认按 PG 处理）
-    monkeypatch.setenv("CONTEXT_DATABASE_URL", "")
-    from dataagent.core.context.context_trajectory import Context
+    from dataagent.core.context.context import Context
 
-    monkeypatch.setattr(Context, "persist_to_pg", lambda _self: None, raising=True)
     monkeypatch.setattr(Context, "persist_to_json", lambda _self: None, raising=True)
     monkeypatch.setattr(Context, "persist_meta_to_json", lambda _self: None, raising=True)
 

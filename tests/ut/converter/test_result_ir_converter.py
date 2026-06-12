@@ -22,10 +22,12 @@ Unit tests for ResultIRConverter.
 
 import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from dataagent.core.context.context_trajectory import Context, ContextFactory
+from dataagent.core.context.context import Context, ContextFactory
+from dataagent.core.context.context_ir import ColumnNode, FileNode, ScriptNode, TableNode
 from dataagent.utils.converter.result_ir_converter import ResultIRConverter
 
 
@@ -89,7 +91,7 @@ class TestTableDetection:
         tables = _labels_of(created, "Table")
         columns = _labels_of(created, "Column")
         assert len(tables) >= 1
-        assert context.get_IR_from_node(tables[0]).path == ""
+        assert cast(TableNode, context.get_IR_from_node(graph_node_label=tables[0])).path == ""
         assert len(columns) == 2
         for col in columns:
             preds = list(context.get_trajectory().predecessors(col))
@@ -109,7 +111,7 @@ class TestTableDetection:
 
         tables = _labels_of(created, "Table")
         assert len(tables) == 1
-        assert context.get_IR_from_node(tables[0]).path == ""
+        assert cast(TableNode, context.get_IR_from_node(graph_node_label=tables[0])).path == ""
 
     def test_no_table_when_no_indicators(self, context: Context):
         """反例: result 无 columns/data → 不产生 TableNode。"""
@@ -126,7 +128,7 @@ class TestTableDetection:
 
     def test_from_dataframe(self, context: Context):
         """result 中的 pd.DataFrame → 持久化为 CSV → TableNode + ColumnNode。"""
-        import pandas as pd
+        import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
 
         df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
         created = ResultIRConverter.convert(
@@ -140,11 +142,11 @@ class TestTableDetection:
 
         tables = _labels_of(created, "Table")
         assert len(tables) >= 1
-        assert context.get_IR_from_node(tables[0]).path.endswith(".csv")
+        assert cast(TableNode, context.get_IR_from_node(graph_node_label=tables[0])).path.endswith(".csv")
 
     def test_from_dataframe_persists_to_workspace(self, context: Context, tmp_path: Path):
         """workspace 存在时 DataFrame 持久化到 workspace 目录内。"""
-        import pandas as pd
+        import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
 
         df = pd.DataFrame({"x": [1]})
         created = ResultIRConverter.convert(
@@ -160,7 +162,7 @@ class TestTableDetection:
 
         tables = _labels_of(created, "Table")
         assert len(tables) >= 1
-        table_path = context.get_IR_from_node(tables[0]).path
+        table_path = cast(TableNode, context.get_IR_from_node(graph_node_label=tables[0])).path
         assert table_path.startswith(str(tmp_path))
         assert Path(table_path).exists()
 
@@ -181,7 +183,7 @@ class TestScriptDetection:
         )
         scripts = _labels_of(created, "Script")
         assert len(scripts) == 1
-        ir = context.get_IR_from_node(scripts[0])
+        ir = cast(ScriptNode, context.get_IR_from_node(graph_node_label=scripts[0]))
         assert ir.script_content == sql
         assert ir.script_type == "sql"
 
@@ -198,7 +200,7 @@ class TestScriptDetection:
         )
         scripts = _labels_of(created, "Script")
         assert len(scripts) == 1
-        assert context.get_IR_from_node(scripts[0]).script_type == "python"
+        assert cast(ScriptNode, context.get_IR_from_node(graph_node_label=scripts[0])).script_type == "python"
 
     def test_empty_arg_creates_nothing(self, context: Context):
         """反例: 空字符串 → 不创建 ScriptNode。"""
@@ -238,7 +240,7 @@ class TestDataFieldDetection:
         )
         tables = _labels_of(created, "Table")
         assert len(tables) == 2
-        ir0 = context.get_IR_from_node(tables[0])
+        ir0 = cast(TableNode, context.get_IR_from_node(graph_node_label=tables[0]))
         assert ir0.path in ("db.orders", "db.users")
 
     def test_table_entries_at_current_level(self, context: Context):
@@ -291,7 +293,7 @@ class TestDataFieldDetection:
         tables = _labels_of(created, "Table")
         assert len(columns) == 1
         assert len(tables) == 1
-        col_ir = context.get_IR_from_node(columns[0])
+        col_ir = cast(ColumnNode, context.get_IR_from_node(graph_node_label=columns[0]))
         assert col_ir.from_table == "db.orders"
         preds = list(context.get_trajectory().predecessors(columns[0]))
         assert len(preds) == 1
@@ -337,7 +339,7 @@ class TestKnowledgeFallback:
         )
         fn = _labels_of(created, "File")
         assert len(fn) == 1
-        node = context.get_IR_from_node(fn[0])
+        node = cast(FileNode, context.get_IR_from_node(graph_node_label=fn[0]))
         assert node.source == "analysis"
         assert Path(node.path).exists()
 
@@ -409,7 +411,7 @@ class TestFilePipeline:
         )
         assert len(_labels_of(created, "Script")) == 1
         assert _labels_of(created, "File") == []
-        ir = context.get_IR_from_node(_labels_of(created, "Script")[0])
+        ir = cast(ScriptNode, context.get_IR_from_node(graph_node_label=_labels_of(created, "Script")[0]))
         assert ir.script_type == "sql"
 
     def test_new_generic_files_create_file_nodes(self, context: Context, tmp_path: Path):
@@ -572,7 +574,7 @@ class TestCombinedScenarios:
 
     def test_dataframe_persisted_to_workspace_not_duplicated(self, context: Context, tmp_path: Path):
         """DataFrame 持久化到 workspace → 内容Pipeline建 Table，文件Pipeline跳过该 CSV。"""
-        import pandas as pd
+        import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
 
         df = pd.DataFrame({"a": [1]})
         pre = ResultIRConverter.snapshot_dir(str(tmp_path))
@@ -590,3 +592,109 @@ class TestCombinedScenarios:
 
         tables = _labels_of(created, "Table")
         assert len(tables) == 1
+
+
+class TestReadFilePipeline:
+    """Pipeline 3：read_file 去重与 refers_to 边。"""
+
+    def test_read_file_creates_file_node_on_first_read(self, context: Context, tmp_path: Path):
+        """首次 read_file → 注册 FileNode。"""
+        f = tmp_path / "notes.txt"
+        f.write_text("hello world", encoding="utf-8")
+        resolved = str(f.resolve())
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": resolved},
+            result="hello world",
+            action_node_label=ACTION_LABEL,
+        )
+        file_labels = _labels_of(created, "File")
+        assert len(file_labels) == 1
+        ir = cast(FileNode, context.get_IR_from_node(graph_node_label=file_labels[0]))
+        assert ir.path == resolved
+
+    def test_read_file_existing_file_adds_refers_to_only(self, context: Context, tmp_path: Path):
+        """再次 read_file 同一文件（MD5 不变）→ 仅 refers_to，不新建节点。"""
+        f = tmp_path / "notes.txt"
+        f.write_text("hello world", encoding="utf-8")
+        resolved = str(f.resolve())
+
+        first = ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": resolved},
+            result="hello world",
+            action_node_label=ACTION_LABEL,
+        )
+        file_label = _labels_of(first, "File")[0]
+
+        context.register_node(
+            node_type="Action",
+            label="read_again",
+            description="second read",
+            predecessor_node=["Query(query00000)"],
+            edge_type="triggers",
+            action="read_file",
+            params={"path": resolved},
+            output="hello world",
+            success=True,
+            add_pt=True,
+        )
+        second_action = "Action(read_again)"
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="read_again",
+            tool_args={"path": resolved},
+            result="hello world",
+            action_node_label=second_action,
+        )
+        assert len(created) == 0
+
+        traj = context.get_trajectory()
+        assert traj.has_edge(second_action, file_label)
+        assert traj.get_edge_data(second_action, file_label, {}).get("edge_type") == "refers_to"
+
+    def test_read_file_modified_content_creates_new_node(self, context: Context, tmp_path: Path):
+        """同路径但内容变更（MD5 不同）→ 注册新版本 FileNode。"""
+        f = tmp_path / "notes.txt"
+        f.write_text("version one", encoding="utf-8")
+        resolved = str(f.resolve())
+
+        ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": resolved},
+            result="version one",
+            action_node_label=ACTION_LABEL,
+        )
+
+        f.write_text("version two", encoding="utf-8")
+        context.register_node(
+            node_type="Action",
+            label="read_modified",
+            description="read after modify",
+            predecessor_node=["Query(query00000)"],
+            edge_type="triggers",
+            action="read_file",
+            params={"path": resolved},
+            output="version two",
+            success=True,
+            add_pt=True,
+        )
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="read_modified",
+            tool_args={"path": resolved},
+            result="version two",
+            action_node_label="Action(read_modified)",
+        )
+        assert len(_labels_of(created, "File")) == 1

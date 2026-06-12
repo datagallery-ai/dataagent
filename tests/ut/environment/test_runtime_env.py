@@ -14,7 +14,6 @@
 
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -176,7 +175,7 @@ class TestRuntimeEnvironmentCollector:
             info = collector._get_database_info()
         assert info["engine"] == "mysql"
 
-    def test_check_db_readable_sqlite_file_path(self):
+    def test_check_db_readable_sqlite_file_path(self, tmp_path):
         """sqlite 文件路径应只读打开且不会创建新文件。"""
         collector = RuntimeEnvironmentCollector()
 
@@ -184,13 +183,11 @@ class TestRuntimeEnvironmentCollector:
         assert collector._check_db_readable("/tmp/__not_exist_for_test__.sqlite") is False
 
         # 2) 存在且是有效 sqlite 文件：应走只读连接
-        with tempfile.TemporaryDirectory() as td:
-            db_path = Path(td) / "test.sqlite"
-            conn = sqlite3.connect(str(db_path))
+        db_path = tmp_path / "test.sqlite"
+        with sqlite3.connect(str(db_path)) as conn:
             conn.execute("SELECT 1")
-            conn.close()
 
-            assert collector._check_db_readable(str(db_path)) is True
+        assert collector._check_db_readable(str(db_path)) is True
 
     def test_format_with_zero_cpu_usage(self):
         """CPU 使用率为 0.0 时也应展示。"""

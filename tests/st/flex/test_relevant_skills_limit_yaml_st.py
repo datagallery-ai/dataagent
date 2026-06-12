@@ -72,20 +72,25 @@ def _inject_skill_selector_prompts(monkeypatch: pytest.MonkeyPatch, **paths: str
     )
 
 
-def _write_agent_yaml(tmp_path: Path, *, relevant_skills_limit: object) -> Path:
+def _write_agent_yaml(
+    tmp_path: Path,
+    *,
+    relevant_skills_limit: object,
+    builtin_skill_names: list[str] | None = None,
+) -> Path:
     cfg_path = tmp_path / "agent_relevant_skills_limit_st.yaml"
+    payload: dict[str, Any] = {
+        "AGENT_CONFIG": {
+            "name": "st_relevant_skills_limit",
+            "backend": "langgraph",
+            "type": "react",
+            "relevant_skills_limit": relevant_skills_limit,
+        },
+    }
+    if builtin_skill_names:
+        payload["TOOLS"] = {"skills": {"builtin": list(builtin_skill_names)}}
     cfg_path.write_text(
-        yaml.safe_dump(
-            {
-                "AGENT_CONFIG": {
-                    "name": "st_relevant_skills_limit",
-                    "backend": "langgraph",
-                    "type": "react",
-                    "relevant_skills_limit": relevant_skills_limit,
-                }
-            },
-            allow_unicode=True,
-        ),
+        yaml.safe_dump(payload, allow_unicode=True),
         encoding="utf-8",
     )
     return cfg_path
@@ -171,7 +176,11 @@ def test_st_build_flex_skill_prompt_variables_skill_selector_sees_yaml_limit_wit
     若实现退化为仅用 ``runtime.env`` 拼 ``AGENT_CONFIG`` 且未带上 ``relevant_skills_limit``，
     则 ``relevant_skills_limit`` 变为 ``None``，不会进入本 LLM 分支（或系统提示不会出现 ``SYS limit=3``）。
     """
-    cfg_path = _write_agent_yaml(tmp_path, relevant_skills_limit=3)
+    cfg_path = _write_agent_yaml(
+        tmp_path,
+        relevant_skills_limit=3,
+        builtin_skill_names=["data_analysis_report"],
+    )
     agent = DataAgent.from_config(cfg_path)
     merged = agent.config.get_all() or {}
     assert planner_prompt_builder._get_relevant_skills_limit(merged) == 3

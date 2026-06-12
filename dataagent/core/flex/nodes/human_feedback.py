@@ -10,11 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import json
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import ToolMessage
 from loguru import logger
@@ -33,6 +34,9 @@ from dataagent.utils.cli.rich_renderer import (
     suspend_active_renderer,
 )
 from dataagent.utils.runtime_paths import resolve_session_root
+
+if TYPE_CHECKING:
+    from dataagent.core.context.context import Context
 
 
 class HumanFeedbackNode(BaseNode):
@@ -206,15 +210,14 @@ class HumanFeedbackNode(BaseNode):
 
     def _safe_restore_previous_runs(
         self,
-        ctx: Any,
+        ctx: Context,
         *,
         user_id: str,
         session_id: str,
         run_id: int,
         sub_id: int = 0,
-        output_path: Path | None,
     ) -> None:
-        """_safe_restore_previous_runs"""
+        """Restore historical runs (run_id < current) from trajectory JSON snapshots."""
         try:
             if run_id > 0:
                 ctx.restore_previous_runs(
@@ -222,7 +225,6 @@ class HumanFeedbackNode(BaseNode):
                     session_id=session_id,
                     current_run_id=run_id,
                     sub_id=sub_id,
-                    output_path=output_path,
                 )
         except Exception as e:
             logger.warning(f"[HITL] 通过 restore_previous_runs 恢复历史 Context 失败：{e}")
@@ -232,7 +234,7 @@ class HumanFeedbackNode(BaseNode):
         """_safe_load_context_meta"""
         try:
             # 延迟导入以避免循环依赖
-            from dataagent.core.context.context_trajectory import Context  # type: ignore
+            from dataagent.core.context.context import Context
 
             meta_val = (
                 Context.load_meta_from_json(user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id) or {}
@@ -307,7 +309,7 @@ class HumanFeedbackNode(BaseNode):
         except Exception as e:
             logger.warning(f"[HITL] 通过 JSON 快照重建当前 run 的轨迹失败：{e}")
 
-    def _safe_apply_meta_to_context(self, ctx: Any, *, meta: dict[str, Any]) -> None:
+    def _safe_apply_meta_to_context(self, ctx: Context, *, meta: dict[str, Any]) -> None:
         """_safe_apply_meta_to_context"""
         try:
             current_pt = meta.get("current_pt") or []
@@ -317,7 +319,7 @@ class HumanFeedbackNode(BaseNode):
                 active.update({str(x) for x in current_pt})
             ctx_msgs = meta.get("messages") or {}
             if isinstance(ctx_msgs, dict):
-                ctx.messages.update(ctx_msgs)
+                ctx.state.messages.update(ctx_msgs)
         except Exception as e:
             logger.warning(f"[HITL] 应用 meta JSON（current_pt/messages）失败：{e}")
 
@@ -346,9 +348,6 @@ class HumanFeedbackNode(BaseNode):
             user_id = str(state.get("user_id", "") or "")
             session_id = str(state.get("session_id", "") or "")
             sub_id = int(state.get("sub_id", 0) or 0)
-            output_path = state.get("output_path", None)
-
-            path_obj = Path(output_path) if output_path else None
 
             # === 1) 历史 run：使用 Context 自身的恢复能力 ===
             self._safe_restore_previous_runs(
@@ -357,7 +356,6 @@ class HumanFeedbackNode(BaseNode):
                 session_id=session_id,
                 run_id=run_id,
                 sub_id=sub_id,
-                output_path=path_obj,
             )
 
             # === 2) 当前 run：从 JSON/meta 快照恢复 ===

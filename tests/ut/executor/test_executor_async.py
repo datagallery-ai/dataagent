@@ -20,7 +20,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
-from dataagent.core.context.context_trajectory import ContextFactory
+from dataagent.core.context.context import ContextFactory
 from dataagent.core.flex.nodes import executor as executor_module
 from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import ToolResult

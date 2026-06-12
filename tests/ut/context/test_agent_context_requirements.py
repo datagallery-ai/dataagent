@@ -16,13 +16,8 @@
 2. 实例化销毁时自动持久化存储
 """
 
-from typing import cast
-from unittest.mock import MagicMock, patch
-
 from dataagent.core.cbb.base_node import BaseNode
-from dataagent.core.context.context_trajectory import Context, ContextFactory
-from dataagent.core.context.contextIR import QueryNode
-from dataagent.core.flex.agent import FlexAgent
+from dataagent.core.context.context import ContextFactory
 
 
 class MockActorNode(BaseNode):

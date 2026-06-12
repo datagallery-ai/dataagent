@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from dataagent.config.config_manager import ConfigManager
-from dataagent.core.context.context_trajectory import ContextFactory, build_context_init_options
+from dataagent.core.context.context import ContextFactory, build_context_init_options
 
 
 class TestTodoList:
@@ -38,10 +38,10 @@ class TestTodoList:
 
     def test_context_initialized(self):
         assert self.context is not None
-        assert self.context._user_id == "jiutian_applicationlayer"
-        assert self.context._session_id == "#00001"
-        assert self.context._run_id == 0
-        assert self.context._sub_id == 0
+        assert self.context.state.user_id == "jiutian_applicationlayer"
+        assert self.context.state.session_id == "#00001"
+        assert self.context.state.run_id == 0
+        assert self.context.state.sub_id == 0
 
     def test_init_todolist_manager(self):
         self.context._todolist_manager.init_todolist()
@@ -77,7 +77,7 @@ class TestTodoList:
 
         # pop empty post list
         node = self.context.pop_todo(list_type="post")
-        assert node is None
+        assert node == {}
 
 
 if __name__ == "__main__":

@@ -80,7 +80,6 @@ def test_st_arithmetic_yaml_with_mock_llm(
     - **LLM**：monkeypatch `Runtime.llm()`，返回 `_FakeChatModel`（不发真实模型请求）。
     - **工具执行**：monkeypatch `Executor._invoke_manager_tool_async()`，对 `multiply/add` 直接返回结果，
       避免依赖 `ArithmeticEnv` 或 `tool_manager` 的真实注册与执行。
-    - **Context 持久化**：禁用 `Context.persist_to_pg/json/meta`，避免依赖真实 PostgreSQL 或本地落盘副作用。
     """
     if backend == "openjiuwen":
         pytest.importorskip("openjiuwen")
@@ -88,13 +87,9 @@ def test_st_arithmetic_yaml_with_mock_llm(
     # flex_runtime_from_config 会在初始化阶段解析 provider 环境变量（如 BAILIAN_BASE_URL / BAILIAN_API_KEY）。
     monkeypatch.setenv("BAILIAN_BASE_URL", "http://127.0.0.1:9999")
     monkeypatch.setenv("BAILIAN_API_KEY", "test-key")
-    # arithmetic.yaml 的 CONTEXT.database.url 来自 env。
-    # ContextTrajectory 当前实现假定是 PG（会跑 pg_database），所以 ST 里直接禁用 context DB 持久化。
-    monkeypatch.setenv("CONTEXT_DATABASE_URL", "")
 
-    from dataagent.core.context.context_trajectory import Context
+    from dataagent.core.context.context import Context
 
-    monkeypatch.setattr(Context, "persist_to_pg", lambda _self: None, raising=True)
     monkeypatch.setattr(Context, "persist_to_json", lambda _self: None, raising=True)
     monkeypatch.setattr(Context, "persist_meta_to_json", lambda _self: None, raising=True)
 

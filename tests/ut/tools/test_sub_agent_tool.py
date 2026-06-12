@@ -662,7 +662,7 @@ def test_run_subprocess_async_keeps_stderr_status_progress_callback():
 
     assert result["returncode"] == 0
     assert result["stdout"] == "ok"
-    assert result["stderr"] == "=== Coordinator ===\nSELECT 1"
+    assert result["stderr"].replace("\r\n", "\n").replace("\r", "\n") == "=== Coordinator ===\nSELECT 1"
     assert seen_status == [
         ("tool-call-id", "Coordinator"),
         ("tool-call-id", "Coordinator: SELECT 1"),

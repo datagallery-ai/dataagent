@@ -15,8 +15,7 @@
 Covers: read_file, edit_file, write_file, glob, grep.
 """
 
-import os
-import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -149,7 +148,7 @@ class TestEditFileEncoding:
 
     def test_preserves_lf(self, workspace: Path):
         f = workspace / "lf.txt"
-        f.write_text("aaa\nbbb\nccc\n", encoding="utf-8")
+        f.write_bytes(b"aaa\nbbb\nccc\n")  # 不要用 write_text
         tools.edit_file(str(f), op="replace_first", anchor="bbb", text="BBB", purpose="test")
         raw = f.read_bytes()
         assert b"\r\n" not in raw
@@ -185,6 +184,7 @@ class TestEditFileLargeFile:
 
 
 class TestEditFileAtomicWrite:
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows does not preserve Unix permission bits")
     def test_preserves_permissions(self, workspace: Path):
         f = workspace / "perm.txt"
         f.write_text("aaa\n", encoding="utf-8")
@@ -224,6 +224,7 @@ class TestWriteFileLargeContent:
 
 
 class TestWriteFileAtomicWrite:
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows does not preserve Unix permission bits")
     def test_preserves_permissions_on_update(self, workspace: Path):
         f = workspace / "perm2.txt"
         f.write_text("old\n", encoding="utf-8")

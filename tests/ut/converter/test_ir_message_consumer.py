@@ -20,15 +20,19 @@ Unit tests for IRMessageConsumer.
 """
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
+from dataagent.core.context.context import ContextFactory
+from dataagent.core.context.utils_context_filesystem import lineage_path_key
 from dataagent.utils.converter.ir_message_consumer import (
     assign_turn_indices,
+    format_data_lineage,
+    get_recent_read_files,
     render_ir_summary,
     should_replace,
     try_replace_with_ir,
@@ -92,7 +96,7 @@ class _FakeFileNode(_FakeDataNode):
 def _patch_isinstance():
     """Monkey-patch isinstance checks for fake nodes by using real IR class registries."""
     import dataagent.utils.converter.ir_message_consumer as mod
-    from dataagent.core.context.contextIR import (
+    from dataagent.core.context.context_ir import (
         ColumnNode,
         FileNode,
         KnowledgeNode,
@@ -140,10 +144,10 @@ def _make_mock_context(ir_map: dict[str, list] | None = None) -> MagicMock:
 
     ctx = MagicMock()
 
-    def _get_next_data_node(action_label: str):
-        if action_label in ir_map:
-            return ir_map[action_label]
-        raise ValueError(f"Action node '{action_label}' not found")
+    def _get_next_data_node(*, action_node_label: str):
+        if action_node_label in ir_map:
+            return ir_map[action_node_label]
+        raise ValueError(f"Action node '{action_node_label}' not found")
 
     ctx.get_next_data_node = MagicMock(side_effect=_get_next_data_node)
     return ctx
@@ -157,7 +161,7 @@ class TestAssignTurnIndices:
         assert assign_turn_indices([]) == []
 
     def test_single_ai_message(self):
-        messages = [AIMessage(content="hello")]
+        messages: list[AnyMessage] = [AIMessage(content="hello")]
         assert assign_turn_indices(messages) == [0]
 
     def test_ai_tool_pattern(self):
@@ -225,7 +229,7 @@ class TestShouldReplace:
 class TestRenderIRSummary:
     @pytest.fixture(autouse=True)
     def _import_ir_classes(self):
-        from dataagent.core.context.contextIR import (
+        from dataagent.core.context.context_ir import (
             FileNode,
             KnowledgeNode,
             ScriptNode,
@@ -247,6 +251,7 @@ class TestRenderIRSummary:
         node = self.TableNode(
             label="table00001",
             description="订单表",
+            user_id="user",
             session_id="s",
             run_id=0,
             path="/tmp/orders.csv",
@@ -260,6 +265,7 @@ class TestRenderIRSummary:
         node = self.FileNode(
             label="file00001",
             description="报告文件",
+            user_id="user",
             session_id="s",
             run_id=0,
             path="/tmp/report.pdf",
@@ -271,15 +277,16 @@ class TestRenderIRSummary:
 
     def test_multiple_nodes(self):
         nodes = [
-            self.TableNode(label="t1", description="表1", session_id="s", run_id=0, path="/a.csv"),
+            self.TableNode(label="t1", description="表1", user_id="user", session_id="s", run_id=0, path="/a.csv"),
             self.ScriptNode(
                 label="s1",
                 description="脚本1",
+                user_id="user",
                 session_id="s",
                 run_id=0,
                 script_content="SELECT 1",
                 script_type="sql",
-                path=None,
+                path="",
                 related_data_list=[],
             ),
         ]
@@ -295,7 +302,7 @@ class TestRenderIRSummary:
 class TestBuildIRAwareMessages:
     @pytest.fixture(autouse=True)
     def _import_ir_classes(self):
-        from dataagent.core.context.contextIR import KnowledgeNode, TableNode
+        from dataagent.core.context.context_ir import KnowledgeNode, TableNode
 
         self.TableNode = TableNode
         self.KnowledgeNode = KnowledgeNode
@@ -317,6 +324,7 @@ class TestBuildIRAwareMessages:
         knowledge = self.KnowledgeNode(
             label="k1",
             description="知识",
+            user_id="user",
             session_id="s",
             run_id=0,
             knowledge_type="tool_output",
@@ -340,6 +348,7 @@ class TestBuildIRAwareMessages:
         knowledge = self.KnowledgeNode(
             label="k_old",
             description="旧轮次的分析结果",
+            user_id="user",
             session_id="s",
             run_id=0,
             knowledge_type="tool_output",
@@ -389,6 +398,7 @@ class TestBuildIRAwareMessages:
         table = self.TableNode(
             label="t1",
             description="表1",
+            user_id="user",
             session_id="s",
             run_id=0,
             path="/data/t1.csv",
@@ -420,3 +430,97 @@ class TestBuildIRAwareMessages:
         assert len(result) == 2
         assert isinstance(result[0], HumanMessage)
         assert result[0].content == "hello"
+
+
+@pytest.fixture(autouse=True)
+def _clear_context_factory_for_lineage():
+    ContextFactory.clear_context()
+    yield
+    ContextFactory.clear_context()
+
+
+class TestDataLineageHelpers:
+    """format_data_lineage / get_recent_read_files 专项测试。"""
+
+    def test_format_data_lineage_includes_tool_produced_file(self, tmp_path):
+        f = tmp_path / "report.md"
+        f.write_text("# report", encoding="utf-8")
+        resolved = str(f.resolve())
+
+        ctx = ContextFactory.get_context(user_id="u1", session_id="s1", run_id=0, sub_id=0)
+        ctx.register_query(query="analyze report", additional_files=[])
+        ctx.register_node(
+            node_type="Action",
+            label="act01",
+            description="read report",
+            predecessor_node=["Query(query00000)"],
+            action="read_file",
+            params={"path": resolved},
+            output="ok",
+            success=True,
+        )
+        ctx.register_node(
+            node_type="File",
+            label="report01",
+            description="quarterly report",
+            predecessor_node=["Action(act01)"],
+            edge_type="produces",
+            path=resolved,
+            source="read_file",
+        )
+        ctx.register_node(
+            node_type="State",
+            description="read done",
+            goal="analyze",
+            belief="",
+            action_history="",
+            current_status="report loaded",
+            available_actions="",
+            feedback="",
+            uncentainty="",
+            content="",
+            reasoning_content="",
+            predecessor_node=["Action(act01)"],
+        )
+
+        text = format_data_lineage(ctx)
+        assert "[IR Lineage] path:" in text
+        assert "quarterly report" in text
+        assert "read_file" in text
+        assert "report loaded" in text
+
+    def test_get_recent_read_files_collects_normalized_paths(self, tmp_path):
+        f = tmp_path / "data.txt"
+        f.write_text("payload", encoding="utf-8")
+        resolved = str(f.resolve())
+
+        ctx = ContextFactory.get_context(user_id="u2", session_id="s2", run_id=0, sub_id=0)
+        ctx.register_query(query="read data", additional_files=[])
+        ctx.register_node(
+            node_type="State",
+            description="before read",
+            goal="",
+            belief="",
+            action_history="",
+            current_status="",
+            available_actions="",
+            feedback="",
+            uncentainty="",
+            content="",
+            reasoning_content="",
+            predecessor_node=["Query(query00000)"],
+        )
+        ctx.register_node(
+            node_type="Action",
+            label="rf01",
+            description="read",
+            predecessor_node=["State(state00000)"],
+            action="read_file",
+            params={"path": resolved},
+            output="payload",
+            success=True,
+            add_pt=True,
+        )
+
+        recent = get_recent_read_files(ctx)
+        assert lineage_path_key(p=resolved) in recent

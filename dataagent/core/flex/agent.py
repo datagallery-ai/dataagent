@@ -30,7 +30,7 @@ from dataagent.core.cbb.agent_env import Env
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.context.context_trajectory import ContextFactory, build_context_init_options
+from dataagent.core.context.context import ContextFactory, build_context_init_options
 from dataagent.core.flex.flex_runtime_from_config import build_agent_env_from_flex_config
 from dataagent.core.flex.hooks.agent_turn import session_history_restore
 from dataagent.core.flex.hooks.cross_session_recall import cross_session_recall
@@ -415,6 +415,7 @@ class FlexAgent(BaseAgent):
                     try:
                         await call_context.wait_pending_tasks()
                         call_context.persist_to_json()
+                        call_context.show()
                     except Exception as e:
                         logger.warning(f"Failed to persist context after chat completion: {e}")
 
@@ -437,6 +438,7 @@ class FlexAgent(BaseAgent):
                     try:
                         await call_context.wait_pending_tasks()
                         call_context.persist_to_json()
+                        call_context.show()
                     except Exception as pe:
                         logger.warning(f"Failed to persist context after limit reached: {pe}")
                 latest["state"] = state
@@ -447,6 +449,7 @@ class FlexAgent(BaseAgent):
                     try:
                         await call_context.wait_pending_tasks()
                         call_context.persist_to_json()
+                        call_context.show()
                     except Exception as persist_error:
                         logger.warning(f"Failed to persist context after chat error: {persist_error}")
                 logger.error(f"Chat execution failed: {e}\nTraceback: {traceback.format_exc()}")
@@ -714,19 +717,21 @@ class FlexAgent(BaseAgent):
         if ctx is None:
             return
 
-        # 中断轮次：只用于 checkpoint + 快照恢复，这里仅落 JSON/meta，不写 PG。
+        # 中断轮次：只用于 checkpoint + 快照恢复。
         if interrupted:
             try:
                 ctx.persist_to_json()
                 ctx.persist_meta_to_json()
+                ctx.show()
             except Exception as e:
                 logger.warning(f"Failed to persist context snapshot to JSON/meta after interrupt: {e}")
             return
 
         try:
-            # 与 chat() 保持一致：profiling + 等待异步任务 + PG/JSON/meta 持久化
+            # 与 chat() 保持一致：profiling + 等待异步任务 + JSON/meta 持久化
             try:
-                ctx.profiling()
+                if runtime.get_config("CONTEXT.enable_profiling", False):
+                    ctx.profiling()
                 await ctx.wait_pending_tasks()
             except Exception as e:
                 logger.warning(f"Context profiling / pending task wait failed: {e}")
@@ -734,6 +739,7 @@ class FlexAgent(BaseAgent):
             try:
                 ctx.persist_to_json()
                 ctx.persist_meta_to_json()
+                ctx.show()
             except Exception as e:
                 logger.warning(f"Failed to persist context to JSON/meta after streaming completion: {e}")
         except Exception as e:

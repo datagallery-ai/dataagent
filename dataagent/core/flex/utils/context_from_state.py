@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Resolve :class:`~dataagent.core.context.context_trajectory.Context` from Flex workflow state."""
+"""Resolve :class:`~dataagent.core.context.context.Context` from Flex workflow state."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.core.context.context_trajectory import Context, ContextFactory, build_context_init_options
+from dataagent.core.context.context import Context, ContextFactory, build_context_init_options
 
 
 def get_context_for_flex_state(
@@ -32,7 +32,7 @@ def get_context_for_flex_state(
     Get or create the cached Context for identifiers in ``state``.
 
     When ``runtime`` is provided, PRE/POST workflow and database URL options are taken from
-    ``runtime.config_manager`` via :func:`~dataagent.core.context.context_trajectory.build_context_init_options`.
+    ``runtime.config_manager`` via :func:`~dataagent.core.context.context.build_context_init_options`.
 
     Args:
         state: Flex state containing ``user_id``, ``session_id``, ``run_id``, and ``sub_id``.

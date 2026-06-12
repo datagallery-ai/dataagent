@@ -33,7 +33,8 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.core.context.context_trajectory import Context
+from dataagent.core.context.context import Context
+from dataagent.core.context.utils_context_filesystem import lineage_path_key, md5_file
 from dataagent.utils.constants import (
     DEFAULT_IR_COLUMN_SAMPLE_ROWS,
     DEFAULT_IR_COLUMN_UNIQUE_SAMPLES,
@@ -102,7 +103,7 @@ def _persist_dataframe(
 def _find_dataframes(obj: Any, prefix: str = "result") -> list[tuple[str, Any]]:
     """递归搜索对象中的 pd.DataFrame 实例。返回 [(标识名, df), ...]。"""
     try:
-        import pandas as pd
+        import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
     except ImportError:
         return []
 
@@ -185,7 +186,7 @@ def _get_known_data_paths(context: Context) -> set[str]:
 
     首次调用时扫描当前 + 历史 trajectory 构建索引，后续调用 O(1)。
     """
-    existing = context.messages.get(_KNOWN_PATHS_KEY)
+    existing = context.state.messages.get(_KNOWN_PATHS_KEY)
     if isinstance(existing, set):
         return existing
 
@@ -207,7 +208,7 @@ def _get_known_data_paths(context: Context) -> set[str]:
     for hist_graph in context.get_all_historical_trajectories().values():
         _scan_graph(hist_graph)
 
-    context.messages[_KNOWN_PATHS_KEY] = used
+    context.state.messages[_KNOWN_PATHS_KEY] = used
     return used
 
 
@@ -233,6 +234,7 @@ class ResultIRConverter:
         两条独立Pipeline：
         - Pipeline 1（内容）：从 result / tool_args 提取内存中的结构化数据
         - Pipeline 2（文件）：通过 workspace 快照差集发现新增或修改的文件
+        - Pipeline 3（read_file）：校验read file工具读取的文件是否存在context中
 
         Args:
             pre_existing_files: 工具执行前的 workspace 快照 {绝对路径: mtime}。
@@ -260,8 +262,8 @@ class ResultIRConverter:
         file_created = cls._file_pipeline(
             context, tool_name, tool_args, action_node_label, workspace_path, pre_existing_files, content_paths
         )
-
-        return content_created + file_created
+        file_newly_read = cls._read_file_pipeline(context, tool_name, tool_args, action_node_label)
+        return content_created + file_created + file_newly_read
 
     @classmethod
     def snapshot_dir(cls, directory: str | Path | None) -> dict[str, float]:
@@ -382,6 +384,56 @@ class ResultIRConverter:
                 known_paths.add(fpath)
 
         return created
+
+    # ── Pipeline 3：read_file校验 ──────────────────────────────────────────
+
+    @classmethod
+    def _read_file_pipeline(
+        cls,
+        context: Context,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        action_node_label: str,
+    ) -> list[str]:
+        """read_file校验：校验read file工具读取的文件是否存在context中"""
+        if tool_name != "read_file":
+            return []
+
+        path = tool_args.get("path")
+        if not path:
+            return []
+
+        p = Path(path).expanduser()
+        if not p.exists() or not p.is_file():
+            return []
+
+        context_recorded_files = context.get_recorded_files()
+        path_key = lineage_path_key(p=str(p))
+        if path_key in context_recorded_files and md5_file(p=str(p)) == context_recorded_files[path_key][1]:
+            context.add_edge_manually(
+                from_node=action_node_label, to_node=context_recorded_files[path_key][0], edge_type="refers_to"
+            )
+            return []
+
+        ext = p.suffix.lower()
+        if ext in TABLE_FILE_EXTS:
+            label = cls._register_table_node(context, action_node_label, tool_name, str(p))
+        elif ext in EXT_SCRIPT_TYPE_MAP:
+            label = cls._register_script_node(
+                context,
+                action_node_label,
+                tool_name,
+                script_content=_safe_read_file(p),
+                script_type=EXT_SCRIPT_TYPE_MAP[ext],
+                path=str(p),
+            )
+        else:
+            label = cls._register_file_node(context, action_node_label, tool_name, path=path)
+
+        if label:
+            return [label]
+        else:
+            return []
 
     # ── Pipeline 1 子步骤 ────────────────────────────────────────────
 
@@ -544,7 +596,9 @@ class ResultIRConverter:
         for entry in source.get("tool") or []:
             if not isinstance(entry, dict) or "label" not in entry:
                 continue
-            kwargs = {k: entry.get(k) for k in ("tool_params", "tool_returns")}
+
+            tool_params = entry.get("tool_params")
+            tool_returns = entry.get("tool_returns")
             try:
                 label = context.register_node(
                     node_type="Tool",
@@ -552,7 +606,8 @@ class ResultIRConverter:
                     description=entry.get("description", ""),
                     predecessor_node=[action_node_label],
                     edge_type="produces",
-                    **kwargs,
+                    tool_params="" if tool_params is None else str(tool_params),
+                    tool_returns="" if tool_returns is None else str(tool_returns),
                 )
                 created.append(label)
                 logger.debug(f"IR converter: created ToolNode '{label}' from structured IR")

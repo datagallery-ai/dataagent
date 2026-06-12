@@ -452,7 +452,7 @@ def test_attribute_calls_marks_caller_without_extra_event(tmp_path: Path, perf_h
 
 def test_context_ir_llm_call_records_caller(tmp_path: Path, perf_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """通过 BaseIR.llm_infer_async 的所有 context 推理，都应自动归因到 context:<子类名>。"""
-    from dataagent.core.context.contextIR import KnowledgeNode
+    from dataagent.core.context.context_ir import KnowledgeNode
 
     collector = _make_collector(tmp_path)
     adapter = LangChainChatModelAdapter(
@@ -470,6 +470,7 @@ def test_context_ir_llm_call_records_caller(tmp_path: Path, perf_home: Path, mon
     node = KnowledgeNode(
         label="snippet",
         description=None,
+        user_id="u",
         session_id="s",
         run_id=1,
         knowledge_type="domain",
