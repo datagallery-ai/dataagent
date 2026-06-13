@@ -296,7 +296,7 @@ def _validate_comment_text(
 ) -> list[str]:
     """Validate common COMMENT text rules."""
     reasons: list[str] = []
-    disallowed_chars = ("*", "x")
+    disallowed_chars = ("*", "x", "✖", "✖️", "×")
 
     if not comment.strip():
         reasons.append(empty_reason or f"{comment_label}不能为空")
