@@ -5,7 +5,7 @@
 当前项目使用的 openJiuwen 版本为：
 
 ```text
-openjiuwen==0.1.1
+openjiuwen==0.1.14
 ```
 
 
@@ -35,8 +35,8 @@ DataAgent 在工作流执行、流式事件和中断恢复上接入了 openJiuwe
 | openJiuwen 特性 | DataAgent 中的使用方式 | 对用户的价值 |
 | --- | --- | --- |
 | openJiuwen Workflow | `backend: "openjiuwen"` 时，通过 `OpenJiuWenWorkflow` 构建并执行 ReAct 工作流。 | 同一套 DataAgent YAML 可以切换到 openJiuwen 工作流引擎运行。 |
-| `WorkflowRuntime` | 每次 `ainvoke` / `astream` 时创建或复用 openJiuwen runtime，并把 DataAgent runtime 注入节点执行过程。 | 节点仍按 DataAgent 的 Planner、Executor、工具机制开发，不需要直接关心 openJiuwen runtime 差异。 |
-| `Workflow.compile(runtime)` | openJiuwen workflow 在运行时绑定 runtime 后 compile。当前实现避免跨轮复用已绑定旧 runtime 的 compiled graph。 | 多轮对话中 `run_id`、`session_id`、workspace 等状态不会串到上一轮。 |
+| `Workflow Session` | 每次 `ainvoke` / `astream` 时创建或复用 openJiuwen workflow session，并把 DataAgent runtime 注入节点执行过程。 | 节点仍按 DataAgent 的 Planner、Executor、工具机制开发，不需要直接关心 openJiuwen 会话实现差异。 |
+| `Workflow.compile(session)` | openJiuwen workflow 在运行时绑定 session 后 compile。当前实现避免跨轮复用已绑定旧 session 的 compiled graph。 | 多轮对话中 `run_id`、`session_id`、workspace 等状态不会串到上一轮。 |
 | `global_state` / `update_global_state` | DataAgent 用 openJiuwen 的 global state 承载 FlexState，并在节点执行后把 delta 合并回 global state。 | 保持 Planner、Executor、多轮消息和工具结果在 openJiuwen 后端下可持续推进。 |
 | Reducer 语义适配 | 对 `messages` 等字段按追加语义合并，对带 reducer 的字段按 reducer 聚合，其他字段默认覆盖。 | 对齐 LangGraph 下的 state 更新行为，避免消息流被覆盖。 |
 | `write_stream` | 在 `astream` 中接入 openJiuwen runtime 的 `write_stream`，并用旁路队列把节点事件实时 yield 给上层。 | 服务端可以持续返回模型、工具、中断等运行事件。 |
@@ -62,12 +62,12 @@ uv sync --extra jiuwen
 uv run --extra jiuwen python your_script.py
 ```
 
-`pyproject.toml` 中当前固定依赖为 `openjiuwen==0.1.1`：
+`pyproject.toml` 中当前固定依赖为 `openjiuwen==0.1.14`：
 
 ```toml
 [project.optional-dependencies]
 jiuwen = [
-    "openjiuwen==0.1.1"
+    "openjiuwen==0.1.14"
 ]
 ```
 
@@ -204,7 +204,7 @@ export LLM_SSL_CERT="/path/to/cert.pem"
 export LLM_SSL_VERIFY="true"
 ```
 
-openJiuwen 流式输出使用的是 openJiuwen runtime 的 `write_stream` 能力。DataAgent 在 `OpenJiuWenWorkflow.astream()` 中把 `write_stream(data)` 写入旁路队列，再由 `astream()` 持续消费并返回给上层。这样 Planner、Executor、工具执行和 human feedback 中断都可以作为流式事件输出。
+openJiuwen 流式输出使用的是 openJiuwen session 的 `write_stream` 能力。DataAgent 在 `OpenJiuWenWorkflow.astream()` 中把 `write_stream(data)` 写入旁路队列，再由 `astream()` 持续消费并返回给上层。这样 Planner、Executor、工具执行和 human feedback 中断都可以作为流式事件输出。
 
 ## 7. 中断与恢复
 

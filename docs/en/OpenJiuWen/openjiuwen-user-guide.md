@@ -5,7 +5,7 @@ This guide explains how DataAgent integrates with openJiuwen. In this project, o
 The openJiuwen version used in this project is:
 
 ```text
-openjiuwen==0.1.1
+openjiuwen==0.1.14
 ```
 
 ## 1. When to Use
@@ -34,8 +34,8 @@ DataAgent integrates openJiuwen for workflow execution, streaming events, and in
 | openJiuwen feature | How DataAgent uses it | User benefit |
 | --- | --- | --- |
 | openJiuwen Workflow | With `backend: "openjiuwen"`, `OpenJiuWenWorkflow` builds and runs ReAct workflows. | The same DataAgent YAML can switch to the openJiuwen engine. |
-| `WorkflowRuntime` | Each `ainvoke` / `astream` creates or reuses an openJiuwen runtime and injects the DataAgent runtime into node execution. | Nodes still use DataAgent Planner, Executor, and tools without caring about openJiuwen runtime details. |
-| `Workflow.compile(runtime)` | openJiuwen workflow binds runtime at run time, then compiles. The implementation avoids reusing a compiled graph tied to an old runtime across turns. | `run_id`, `session_id`, workspace, etc. do not leak from the previous turn. |
+| `Workflow Session` | Each `ainvoke` / `astream` creates or reuses an openJiuwen workflow session and injects the DataAgent runtime into node execution. | Nodes still use DataAgent Planner, Executor, and tools without caring about openJiuwen session internals. |
+| `Workflow.compile(session)` | openJiuwen workflow binds session at run time, then compiles. The implementation avoids reusing a compiled graph tied to an old session across turns. | `run_id`, `session_id`, workspace, etc. do not leak from the previous turn. |
 | `global_state` / `update_global_state` | DataAgent carries `FlexState` in openJiuwen global state and merges deltas after node execution. | Planner, Executor, multi-turn messages, and tool results keep progressing on the openJiuwen backend. |
 | Reducer semantics | `messages` append; fields with reducers aggregate; other fields overwrite by default. | Aligns with LangGraph state updates and avoids overwriting message streams. |
 | `write_stream` | `astream` hooks openJiuwen `write_stream` and yields node events to the caller via a side queue. | The server can stream model, tool, and interrupt events continuously. |
@@ -66,7 +66,7 @@ uv run --extra jiuwen python your_script.py
 ```toml
 [project.optional-dependencies]
 jiuwen = [
-    "openjiuwen==0.1.1"
+    "openjiuwen==0.1.14"
 ]
 ```
 
@@ -203,7 +203,7 @@ export LLM_SSL_CERT="/path/to/cert.pem"
 export LLM_SSL_VERIFY="true"
 ```
 
-openJiuwen streaming uses runtime `write_stream`. `OpenJiuWenWorkflow.astream()` pushes `write_stream(data)` into a side queue; `astream()` consumes it and returns events upstream so Planner, Executor, tools, and human-feedback interrupts can stream.
+openJiuwen streaming uses session `write_stream`. `OpenJiuWenWorkflow.astream()` pushes `write_stream(data)` into a side queue; `astream()` consumes it and returns events upstream so Planner, Executor, tools, and human-feedback interrupts can stream.
 
 ## 7. Interrupt and Resume
 

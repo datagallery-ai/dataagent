@@ -56,7 +56,7 @@ class HumanFeedbackNode(BaseNode):
     @staticmethod
     def _clear_human_feedback_resume_on_runtime(runtime: Any) -> None:
         """
-        Clear ``__human_feedback_resume__`` on the workflow runtime global state (OpenJiuWen resume path).
+        Clear ``__human_feedback_resume__`` on the active workflow session global state.
 
         Args:
             runtime: Per-invocation Runtime passed into :meth:`_aprocess`.
@@ -124,7 +124,7 @@ class HumanFeedbackNode(BaseNode):
                 resume_active_renderer()
 
         elif isinstance(state.get("__human_feedback_resume__"), str) and state.get("__human_feedback_resume__").strip():
-            # 路径2：OpenJiuWen 恢复
+            # 路径2：工作流 session 恢复
             resume_feedback = state["__human_feedback_resume__"]
             user_feedback = resume_feedback.strip()
             updated_state = {"__human_feedback_resume__": ""}
@@ -329,7 +329,7 @@ class HumanFeedbackNode(BaseNode):
 
         适用场景：
         - langgraph backend：HITL 中断前后请求落在不同 worker / 进程重启；
-        - openjiuwen backend：__human_feedback_resume__ 分支恢复时。
+        - openjiuwen backend：``__human_feedback_resume__`` 分支恢复时。
 
         触发条件：
         - ctx 非空；

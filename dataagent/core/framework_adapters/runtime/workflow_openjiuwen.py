@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import queue
 import re
@@ -27,9 +28,11 @@ from sqlalchemy.engine.url import make_url
 from dataagent.common_utils.storer_utils import deserialize_state_from_store, serialize_state_for_store
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_router import BaseRouter
+from dataagent.core.context.context import ContextFactory, build_context_init_options
 from dataagent.core.framework_adapters.checkpoints.sqlite_store import SqliteCheckpointStore
 from dataagent.core.framework_adapters.runtime.context import (
     GlobalStateProxy,
+    _resolve_ojw_global_state_key,
     clear_current_backend_runtime,
     clear_current_runtime,
     clear_current_stream_queue,
@@ -38,6 +41,64 @@ from dataagent.core.framework_adapters.runtime.context import (
     set_current_runtime,
     set_current_stream_queue,
 )
+
+
+def _resolve_ojw_workflow_runtime_class() -> type[Any]:
+    """Return the openjiuwen 0.1.14 workflow session class."""
+    from openjiuwen.core.session.internal.workflow import WorkflowSession  # type: ignore[import-not-found]
+
+    return WorkflowSession
+
+
+def _resolve_ojw_inputs_and_config_keys() -> tuple[str, str]:
+    """Return the openjiuwen 0.1.14 graph input/config keys."""
+    from openjiuwen.core.graph.base import CONFIG_KEY, INPUTS_KEY  # type: ignore[import-not-found]
+
+    return INPUTS_KEY, CONFIG_KEY
+
+
+def _resolve_ojw_workflow_types() -> tuple[type[Any], type[Any], type[Any], Any, Any]:
+    """Return the openjiuwen 0.1.14 workflow/component/end types."""
+    from openjiuwen.core.graph.pregel.constants import END  # type: ignore[import-not-found]
+    from openjiuwen.core.workflow import Workflow as OJWWorkflow  # type: ignore[import-not-found]
+    from openjiuwen.core.workflow.components.component import (  # type: ignore[import-not-found]
+        ComponentExecutable,
+        WorkflowComponent,
+    )
+    from openjiuwen.core.workflow.components.flow.end_comp import End  # type: ignore[import-not-found]
+
+    return WorkflowComponent, ComponentExecutable, End, OJWWorkflow, END
+
+
+def _resolve_ojw_graph_interrupt_type() -> type[Exception]:
+    """Return the openjiuwen 0.1.14 GraphInterrupt type."""
+    from openjiuwen.core.graph.pregel.base import GraphInterrupt  # type: ignore[import-not-found]
+
+    return GraphInterrupt
+
+
+def _get_workflow_internal(workflow: Any) -> Any | None:
+    """Return workflow internal object when available."""
+    return getattr(workflow, "_internal", None)
+
+
+async def _reset_workflow_internal(workflow: Any) -> None:
+    """Reset workflow internal state when supported."""
+    internal_workflow = _get_workflow_internal(workflow)
+    reset = getattr(internal_workflow, "reset", None)
+    if not callable(reset):
+        return
+    reset_result = reset()
+    if inspect.isawaitable(reset_result):
+        await reset_result
+
+
+def _compile_workflow_internal(workflow: Any, runtime: Any) -> Any:
+    """Compile workflow against the current runtime/session."""
+    internal_workflow = _get_workflow_internal(workflow)
+    if internal_workflow is None:
+        raise ValueError("Workflow internal compiler is unavailable")
+    return internal_workflow.compile(runtime, context=None)
 
 
 class OpenJiuWenWorkflow:
@@ -105,12 +166,7 @@ class OpenJiuWenWorkflow:
 
     @staticmethod
     def _ojw_is_graph_interrupt(e: Exception) -> bool:
-        try:
-            from openjiuwen.graph.pregel import GraphInterrupt  # type: ignore[import-not-found]
-
-            return isinstance(e, GraphInterrupt)
-        except Exception:
-            return False
+        return isinstance(e, _resolve_ojw_graph_interrupt_type())
 
     @staticmethod
     def _ojw_try_write_global(runtime: Any, merged_delta: dict[str, Any]) -> None:
@@ -136,7 +192,87 @@ class OpenJiuWenWorkflow:
             if hasattr(st_obj2, "commit"):
                 st_obj2.commit()  # type: ignore[attr-defined]
         except Exception:
-            pass
+            logger.debug("[workflow_openjiuwen] commit skipped: %s", runtime)
+
+    @staticmethod
+    def _ojw_reset_global_state(runtime: Any, initial_state: dict[str, Any]) -> None:
+        state_obj = None
+        try:
+            _, base_runtime = _unwrap_runtime(runtime)
+            state_obj = runtime.state()  # type: ignore[assignment]
+            if base_runtime:
+                state_obj = base_runtime.state()  # type: ignore[assignment]
+        except Exception:
+            state_obj = None
+            logger.debug("[workflow_openjiuwen] reset global state skipped: %s", runtime)
+
+        if state_obj is not None:
+            try:
+                state_dict = state_obj.get_state() or {}
+                resolved_global_state_key = _resolve_ojw_global_state_key()
+                state_dict[resolved_global_state_key] = dict(initial_state)
+                if hasattr(state_obj, "commit"):
+                    state_obj.commit()  # type: ignore[attr-defined]
+                return
+            except Exception:
+                logger.debug("[workflow_openjiuwen] reset global state skipped: %s", state_obj)
+
+        try:
+            update_global_state = getattr(runtime, "update_global_state", None)
+            if callable(update_global_state):
+                update_global_state(dict(initial_state))
+                OpenJiuWenWorkflow._ojw_try_commit(runtime)
+        except Exception:
+            logger.debug("[workflow_openjiuwen] reset global state skipped: %s", runtime)
+
+    @staticmethod
+    def _ojw_try_ensure_context_query(state: Any, runtime: Any) -> None:
+        if runtime is None or not isinstance(state, dict):
+            return
+        query_text = str(state.get("user_query") or "").strip()
+        if not query_text:
+            return
+        user_id = str(state.get("user_id") or "").strip()
+        session_id = str(state.get("session_id") or "").strip()
+        if not user_id or not session_id:
+            return
+        try:
+            run_id = int(state.get("run_id", 0) or 0)
+            sub_id = int(state.get("sub_id", 0) or 0)
+            options = None
+            config_manager = getattr(runtime, "config_manager", None)
+            if config_manager is not None:
+                options = build_context_init_options(config_manager)
+            call_context = ContextFactory.get_context(
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_id,
+                sub_id=sub_id,
+                options=options,
+            )
+            if not getattr(call_context, "has_initial_pt", False):
+                call_context.register_query(query=query_text, additional_files=[])
+        except Exception as exc:
+            logger.debug(f"[workflow_openjiuwen] ensure context query skipped: {exc}")
+
+    @staticmethod
+    def _ojw_try_ensure_planner_user_message(state: Any, runtime: Any, node_name: str) -> None:
+        if node_name != "planner" or runtime is None or not isinstance(state, dict):
+            return
+        query_text = str(state.get("user_query") or "").strip()
+        if not query_text:
+            return
+        state["user_query"] = query_text
+        raw_messages = state.get("messages")
+        messages = [] if raw_messages is None else list(raw_messages)
+        for message in messages:
+            content = str(getattr(message, "content", "") or "")
+            if query_text and query_text in content:
+                return
+        from dataagent.utils.messages_utils import build_human_message
+
+        messages.append(build_human_message(prompt_str=query_text))
+        state["messages"] = messages
 
     @staticmethod
     async def _ojw_call_node(node: BaseNode, state_for_node: Any, runtime: Any = None) -> Any:
@@ -178,9 +314,9 @@ class OpenJiuWenWorkflow:
 
         async def _gen() -> AsyncIterator[Any]:
             _ = kwargs
-            from openjiuwen.core.runtime.workflow import WorkflowRuntime  # type: ignore[import-not-found]
+            workflow_runtime_cls = _resolve_ojw_workflow_runtime_class()
 
-            rt = runtime or WorkflowRuntime(workflow_id="dataagent_openjiuwen")
+            rt = runtime or workflow_runtime_cls(workflow_id="dataagent_openjiuwen")
             # 注意：openjiuwen 的节点执行可能发生在不同的 event loop/thread。
             # asyncio.Queue 跨 loop put 会失败（并被我们吞掉），导致前端收不到 output_msg。
             # 这里使用线程安全的 queue.Queue 作为事件缓冲。
@@ -199,6 +335,7 @@ class OpenJiuWenWorkflow:
                         item = q.get_nowait()
                         yield ("custom", item)
                     except queue.Empty:
+                        logger.debug("queue empty, sleep a bit")
                         await asyncio.sleep(0.05)
                         continue
                 final_state = await task
@@ -230,12 +367,12 @@ class OpenJiuWenWorkflow:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """异步执行工作流，处理状态初始化、执行循环及中断检查点保存。"""
-        from openjiuwen.core.common.constants.constant import CONFIG_KEY, INPUTS_KEY  # type: ignore[import-not-found]
-        from openjiuwen.core.runtime.workflow import WorkflowRuntime  # type: ignore[import-not-found]
+        inputs_key, config_key = _resolve_ojw_inputs_and_config_keys()
+        workflow_runtime_cls = _resolve_ojw_workflow_runtime_class()
 
-        rt = runtime or WorkflowRuntime(workflow_id="dataagent_openjiuwen")
+        rt = runtime or workflow_runtime_cls(workflow_id="dataagent_openjiuwen")
         start_node = start_at or self.router.entry_point
-        compiled = self._ensure_compiled(rt, start_at=start_node)
+        compiled_graph = self._ensure_compiled(rt, start_at=start_node)
 
         # 构建 openjiuwen config（字典操作，不会抛异常）
         # openjiuwen 的 Pregel 引擎默认 recursion_limit 很小（常见为 1），
@@ -255,11 +392,12 @@ class OpenJiuWenWorkflow:
             ctx_fn = getattr(rt, "context", None)
             if callable(ctx_fn):
                 try:
-                    raw_ctx = ctx_fn()  # openjiuwen 版本差异：返回类型可能不是 dict[str, Any]
+                    raw_ctx = ctx_fn()  # runtime.context() 返回值未必严格是 dict[str, Any]
                     # 统一 key 为 str，避免部分实现返回 bytes 等导致类型/序列化问题
                     base_cfg = {str(k): v for k, v in raw_ctx.items()} if isinstance(raw_ctx, dict) else {}
                 except Exception:
                     base_cfg = {}
+                    logger.debug("failed to extract runtime context")
 
             # best-effort：从 initial_state 提取会话 id
             sid = (
@@ -283,6 +421,7 @@ class OpenJiuWenWorkflow:
         initial_state.setdefault("messages", [])
         # dispatcher/executor/router 会用到，提前补齐避免 KeyError
         initial_state.setdefault("in_progress_tasks", ["<empty_marker>"])
+        self._ojw_reset_global_state(rt, initial_state)
         try:
             if hasattr(rt.state(), "commit_user_inputs"):
                 rt.state().commit_user_inputs(initial_state)  # type: ignore[attr-defined]
@@ -296,8 +435,8 @@ class OpenJiuWenWorkflow:
                 if hasattr(rt.state(), "commit"):
                     rt.state().commit()  # type: ignore[attr-defined]
 
-            await compiled.invoke({INPUTS_KEY: initial_state, CONFIG_KEY: ojw_cfg}, rt)
-            return self._snapshot_global_state(rt)
+            await compiled_graph.invoke({inputs_key: initial_state, config_key: ojw_cfg}, rt)
+            return self._finalize_workflow_result(rt)
         except OpenJiuWenInterrupt as intr:
             # 1) snapshot 当前 global_state
             gs = self._snapshot_global_state(rt)
@@ -310,6 +449,7 @@ class OpenJiuWenWorkflow:
                 interrupt_message=intr.message,
                 state=serial_state,
             )
+            logger.debug("[workflow_openjiuwen] execution interrupted, checkpoint_id=%s", checkpoint_id)
             # 4) 返回一个“可被上层识别的中断响应”（对齐 langgraph 的 __interrupt__ 语义）
             return {
                 "__interrupt__": [{"value": intr.message}],
@@ -348,6 +488,12 @@ class OpenJiuWenWorkflow:
 
             logger.error(f"OpenJiuWen workflow execution failed: {e}\nTraceback: {traceback.format_exc()}")
             raise
+        finally:
+            with contextlib.suppress(Exception):
+                await rt.close()
+            if self.workflow is not None:
+                with contextlib.suppress(Exception):
+                    await _reset_workflow_internal(self.workflow)
 
     def load_checkpoint_state(self, checkpoint_id: str) -> tuple[str, dict[str, Any]]:
         """
@@ -366,6 +512,7 @@ class OpenJiuWenWorkflow:
         runtime: Any,
         snapshot_global_state: Any,
         merge_delta: Any,
+        inputs: Any | None = None,
     ) -> dict[str, Any]:
         """
         执行节点组件逻辑（从 _build_graph 中提取，降低复杂度）。
@@ -387,6 +534,19 @@ class OpenJiuWenWorkflow:
         self._ojw_try_set_stream_queue()
         try:
             state_proxy: Any = GlobalStateProxy(runtime)
+            if isinstance(inputs, dict) and inputs:
+                state_proxy.update(inputs)
+            self._ojw_try_ensure_context_query(state_proxy, runtime_for_node)
+            self._ojw_try_ensure_planner_user_message(state_proxy, runtime_for_node, node.name)
+            if isinstance(inputs, dict):
+                logger.info(
+                    "[workflow_openjiuwen] node={} input_keys={} query={} user_query={} messages_type={}",
+                    node.name,
+                    sorted(inputs.keys()),
+                    repr(inputs.get("query", None))[:200],
+                    repr(inputs.get("user_query", None))[:200],
+                    type(inputs.get("messages", None)).__name__,
+                )
             node_name = node.name
             state_for_node: Any = state_proxy
             # 节点侧需要 DataAgent Runtime（runtime.llm 等）；无注入时回退 openjiuwen 解包结果（非 flex 场景）。
@@ -405,7 +565,7 @@ class OpenJiuWenWorkflow:
             if isinstance(stream_queue, queue.Queue):
                 set_current_stream_queue(stream_queue)
         except Exception:
-            pass
+            logger.debug("failed to set stream queue")
 
     async def _ojw_execute_node_with_interrupt(
         self,
@@ -431,29 +591,34 @@ class OpenJiuWenWorkflow:
         merge_delta: Any,
         delta: Any,
     ) -> dict[str, Any]:
-        # 写回并 commit，确保 router 阶段可见。
+        # 写回 global_state 供路由/后续节点读取；但返回给 openjiuwen 图的仍应是“当前节点原始 delta”，
+        # 避免把整份 merged state 当作节点 outputs 继续传给后继/end，导致与 langgraph 语义偏离。
         current_state = snapshot_global_state(runtime)
-        merged_delta = merge_delta(current_state, dict(delta) if isinstance(delta, dict) else {})
+        node_delta = dict(delta) if isinstance(delta, dict) else {}
+        merged_delta = merge_delta(current_state, node_delta)
 
-        # 不同 openjiuwen wrapper 的 update_global_state 可能只写入"局部视图"；优先写 state.update_global，再 commit。
+        # 某些 openjiuwen wrapper 的 update_global_state 可能只写入"局部视图"；优先写 state.update_global，再 commit。
         self._ojw_try_write_global(runtime, merged_delta)
         self._ojw_try_commit(runtime)
-        return merged_delta
+        return node_delta
 
     def _build_graph(self, *, start_at: str) -> None:
         """构建 openjiuwen 计算图，定义节点封装器与条件路由逻辑。"""
-        from openjiuwen.core.component.base import WorkflowComponent  # type: ignore[import-not-found]
-        from openjiuwen.core.component.end_comp import End  # type: ignore[import-not-found]
-        from openjiuwen.core.runtime.base import ComponentExecutable  # type: ignore[import-not-found]
-        from openjiuwen.core.workflow.base import Workflow as OJWWorkflow  # type: ignore[import-not-found]
-        from openjiuwen.graph.pregel import END  # type: ignore[import-not-found]
+        resolved_workflow_types = _resolve_ojw_workflow_types()
+        (
+            workflow_component_cls,
+            component_executable_cls,
+            end_cls,
+            workflow_cls,
+            end_symbol,
+        ) = resolved_workflow_types
 
         # 在闭包中捕获需要的方法，避免直接访问受保护成员
         snapshot_global_state = self._snapshot_global_state
         merge_delta = self._merge_delta
         self_outer = self
 
-        class _NodeComponent(WorkflowComponent, ComponentExecutable):
+        class _NodeComponent(workflow_component_cls, component_executable_cls):
             def __init__(self, node: BaseNode):
                 """初始化节点组件适配器。"""
                 super().__init__()
@@ -461,13 +626,26 @@ class OpenJiuWenWorkflow:
 
             async def invoke(self, inputs: Any, runtime: Any, context: Any) -> dict[str, Any]:
                 """封装节点执行逻辑，处理上下文注入、机制触发及异常转换。"""
-                return await self_outer.invoke_node_component(self._node, runtime, snapshot_global_state, merge_delta)
+                return await self_outer.invoke_node_component(
+                    self._node,
+                    runtime,
+                    snapshot_global_state,
+                    merge_delta,
+                    inputs=inputs,
+                )
 
-        wf = OJWWorkflow()
+        wf = workflow_cls()
+        start_node_component: _NodeComponent | None = None
         for name, node in self.nodes.items():
-            wf.add_workflow_comp(name, _NodeComponent(node))
-        wf.set_end_comp(self._end_comp_id, End())
-        wf.start_comp(start_at)
+            node_component = _NodeComponent(node)
+            if name == start_at:
+                start_node_component = node_component
+                continue
+            wf.add_workflow_comp(name, node_component)
+        if start_node_component is None:
+            raise ValueError(f"Start node not found: {start_at}")
+        wf.set_start_comp(start_at, start_node_component)
+        wf.set_end_comp(self._end_comp_id, end_cls())
 
         for name in self.nodes:
             route_func = self.router.routing_rules.get(name)
@@ -475,10 +653,11 @@ class OpenJiuWenWorkflow:
                 raise ValueError(f"No routing function found for node: {name}")
 
             def _make_router(f):
-                def _router(*, runtime):
-                    # 对齐 dataagent_jiuwen 迁移方式：路由函数直接用 GlobalStateProxy(runtime)
-                    nxt = f(GlobalStateProxy(runtime))
-                    if nxt in ("__end__", END):
+                def _router(*, session):
+                    # openjiuwen 0.1.14 对带 session 参数的普通 router 会注入 RouterSession。
+                    # 路由阶段不要依赖节点 invoke 时设置的 ContextVar；直接基于 session 读 global_state 才稳定。
+                    nxt = f(GlobalStateProxy(session))
+                    if nxt in ("__end__", end_symbol):
                         return self._end_comp_id
                     return nxt
 
@@ -489,12 +668,12 @@ class OpenJiuWenWorkflow:
         self.workflow = wf
 
     def _ensure_compiled(self, runtime: Any, *, start_at: str) -> Any:
-        """按 start_at 懒构建 Workflow，并对**当前** runtime 编译可执行图。"""
+        """按 start_at 懒构建 Workflow，并基于当前 session runtime 生成 compiled graph。"""
         if start_at not in self._graph_built_for_start:
             self._build_graph(start_at=start_at)
             self._graph_built_for_start.add(start_at)
         assert self.workflow is not None
-        return self.workflow.compile(runtime)
+        return _compile_workflow_internal(self.workflow, runtime)
 
     def _snapshot_global_state(self, runtime: Any) -> dict[str, Any]:
         """获取当前运行时的全局状态快照（plain dict）。"""
@@ -502,6 +681,27 @@ class OpenJiuWenWorkflow:
         # - base() 为空时会回退到 runtime.state()
         # - 读取 GLOBAL_STATE_KEY
         return get_global_state_snapshot(runtime)
+
+    def _finalize_workflow_result(self, runtime: Any) -> dict[str, Any]:
+        """对齐 openjiuwen Workflow.invoke()：返回 end 节点 outputs，并补齐 global_state 中的完整 FlexState 字段。"""
+        global_state = self._snapshot_global_state(runtime)
+        try:
+            state_obj = runtime.state()
+            get_outputs = getattr(state_obj, "get_outputs", None)
+            if callable(get_outputs):
+                outputs = get_outputs(self._end_comp_id)
+                if isinstance(outputs, dict):
+                    output_payload = outputs.get("output")
+                    if isinstance(output_payload, dict):
+                        merged = dict(global_state)
+                        merged.update(output_payload)
+                        return merged
+                    merged = dict(global_state)
+                    merged.update(outputs)
+                    return merged
+        except Exception:
+            logger.debug("failed to extract structured outputs", exc_info=True)
+        return global_state
 
     def _get_checkpoint_store(self) -> SqliteCheckpointStore:
         """
@@ -518,6 +718,7 @@ class OpenJiuWenWorkflow:
                     table = str(cfg.get("AGENT_CONFIG.checkpoint_postgres_table", table) or table)
         except Exception:
             database_url = None
+            logger.debug("failed to extract checkpoint config from workflow config", exc_info=True)
         if not database_url:
             raise ValueError("openjiuwen checkpoint 未配置数据库连接。请配置 DATABASE_URL。")
 
@@ -559,6 +760,7 @@ class OpenJiuWenWorkflow:
             try:
                 return [_msg_sig(x) for x in new_list[: len(old_list)]] == [_msg_sig(x) for x in old_list]
             except Exception:
+                logger.debug("failed to _is_prefix on non-message list")
                 return False
 
         def _is_remove_all_message(message: Any) -> bool:
@@ -613,6 +815,7 @@ class OpenJiuWenWorkflow:
                     merged[k] = reducer(cur, v)
                 except Exception:
                     # reducer 失败则兜底覆盖，避免把整个节点执行打崩
+                    logger.debug(f"failed to reduce state field {k}", exc_info=True)
                     merged[k] = v
                 continue
 
@@ -655,6 +858,7 @@ def _unwrap_runtime(runtime: Any) -> tuple[Any, Any | None]:
                 base_runtime = base_fn()
             except Exception:
                 base_runtime = None
+                logger.debug("failed to unwrap runtime", exc_info=True)
             if base_runtime is not None:
                 return current_runtime, base_runtime
 
@@ -681,7 +885,7 @@ def _extract_interrupt_message(e: Exception) -> str:
             if val is not None:
                 return str(val)
     except Exception:
-        pass
+        logger.debug("failed to extract interrupt message from e.interrupts", exc_info=True)
     try:
         if e.args:
             first = e.args[0]
@@ -689,7 +893,7 @@ def _extract_interrupt_message(e: Exception) -> str:
             if val is not None:
                 return str(val)
     except Exception:
-        pass
+        logger.debug("failed to extract interrupt message from e.args[0].value", exc_info=True)
     return str(e)
 
 
@@ -703,5 +907,5 @@ def _parse_component_name_from_error(err: str) -> str | None:
         if m:
             return m.group(1)
     except Exception:
-        pass
+        logger.debug("failed to parse component name from error", exc_info=True)
     return None
