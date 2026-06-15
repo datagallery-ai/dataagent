@@ -16,6 +16,11 @@ from typing import Any
 from dataagent.agents.nl2sql.errors import LLMOutputParseError
 from dataagent.utils.constants import DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH
 
+# 匹配未被单引号包裹的 ${...} 模板（如 ${starttime, -5, yyyyMMdd}）
+_PLACEHOLDER_BRACE = re.compile(r"(?<!\')\$\{[^}]+\}(?!')")
+# 匹配未被单引号包裹的 $var 模板（如 $date）；排除 ${...} 中的 $
+_PLACEHOLDER_SIMPLE = re.compile(r"(?<!\')\$(?!\{)[a-zA-Z_][a-zA-Z0-9_]*(?!')")
+
 
 def iter_semantic_column_payloads(raw: Any) -> list[dict]:
     if raw is None:
@@ -59,6 +64,13 @@ def format_udn_evidence(columns: dict[str, dict[str, Any]], semantic: bool = Fal
     return "\n".join(lines).rstrip() + "\n"
 
 
+def quote_sql_placeholders(sql: str) -> str:
+    """Wrap unquoted $ / ${} template placeholders in single quotes."""
+    sql = _PLACEHOLDER_BRACE.sub(lambda m: f"'{m.group(0)}'", sql)
+    sql = _PLACEHOLDER_SIMPLE.sub(lambda m: f"'{m.group(0)}'", sql)
+    return sql
+
+
 def sql_parser(content: str) -> list[str]:
     m = re.findall(r"```sql\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
@@ -68,6 +80,7 @@ def sql_parser(content: str) -> list[str]:
         sql = sql.replace("\xa0", " ").strip().rstrip(";")
         sql = re.sub(r"/\*.*?\*/|--.*?$", "", sql, flags=re.S | re.M)
         sql = re.sub(r"\s+", " ", sql).strip()
+        sql = quote_sql_placeholders(sql)
         sqls.append(sql)
     return sqls
 

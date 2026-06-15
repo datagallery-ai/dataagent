@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
+from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser, quote_sql_placeholders
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_REFLECTOR_THRESHOLD
 from dataagent.utils.log import logger
@@ -56,4 +56,4 @@ class ReflectorNode(BaseNL2SQLNode):
         cases = [{"id": v.id, "sql": v.sql, "issues": v.issues} for v in val_res]
         cases = json.dumps(cases, ensure_ascii=False, separators=(",", ":"))
         context = {"cases": cases, "prompt": val_res[0].prompt}  # We only have 1 prompt for now.
-        return [x["sql"] for x in json.loads(json_parser(self.execute_with_llm(context)))]
+        return [quote_sql_placeholders(x["sql"]) for x in json.loads(json_parser(self.execute_with_llm(context)))]
