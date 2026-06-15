@@ -144,10 +144,10 @@ def _to_existing_file_path(raw_path: str, workspace: Path | None) -> str | None:
     for cand in candidates:
         try:
             resolved = cand.resolve()
+            if resolved.is_file():
+                return str(resolved)
         except (OSError, RuntimeError, ValueError):
             continue
-        if resolved.is_file():
-            return str(resolved)
     return None
 
 
