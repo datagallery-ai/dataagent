@@ -25,7 +25,7 @@ from dataagent.actions.tools.local_tool.sandbox import (
     build_workspace_mount_lists,
     create_sandbox,
 )
-from dataagent.config.config_manager import ConfigManager, build_prompt
+from dataagent.config.config_manager import ConfigManager, build_prompt_append
 from dataagent.core.cbb.agent_env import Env
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.cbb.base_node import BaseNode
@@ -38,7 +38,7 @@ from dataagent.core.flex.hooks.registry import resolve_builtin_hook
 from dataagent.core.flex.workflow.router import FlexRouter, LimitReachedError
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
-from dataagent.core.managers.action_manager.manager import ToolManager
+from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
 from dataagent.utils.cli.rich_renderer import RICH_AVAILABLE, StreamRenderer, reset_active_renderer, set_active_renderer
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.import_utils import import_class
@@ -149,6 +149,26 @@ class FlexAgent(BaseAgent):
         self._register_hooks_from_config(config or {})
 
     @staticmethod
+    def import_hook_from_suite_root(
+        relative_spec: str,
+        *,
+        root: Path,
+        suite_name: str,
+        location: str,
+    ) -> Any:
+        """Import a hook callable relative to a Suite root directory."""
+        from dataagent.utils.import_utils import import_callable_from_suite_root
+
+        try:
+            return import_callable_from_suite_root(
+                relative_spec,
+                root=root,
+                suite_name=suite_name,
+            )
+        except Exception as exc:
+            raise ValueError(f"{location}: failed to import Suite hook {relative_spec!r} from {root}: {exc}") from exc
+
+    @staticmethod
     def _create_nodes_from_config(
         nodes_config: list[dict[str, Any]],
         env: Env | None = None,
@@ -161,8 +181,8 @@ class FlexAgent(BaseAgent):
                 - node: Node identifier/name
                 - module: Python module path (e.g., "dataagent.core.flex.nodes.planner.Planner")
                 - chat_model: Optional chat model config
-                - prompt_template: Optional prompt append config (per message_type 仅支持
-                  ``path`` 或 ``content`` 二选一；不配则节点走 ``PromptTemplate.from_package_relative`` 缺省回落)
+                - prompt_template: Optional prompt append config (per message_type 支持单条
+                  ``path``/``content`` 或 spec 列表；不配则节点走 ``PromptTemplate.from_package_relative`` 缺省回落)
                 - Other node-specific parameters (merged into constructor kwargs)
             env: Shared environment for nodes that accept ``env``.
 
@@ -204,7 +224,7 @@ class FlexAgent(BaseAgent):
                 for mt in ("system", "user"):
                     spec = prompt_template_config.get(mt)
                     if spec:
-                        prompt_appends[mt] = build_prompt(spec)
+                        prompt_appends[mt] = build_prompt_append(spec)
                 if prompt_appends:
                     node_kwargs["prompt_appends"] = prompt_appends
             for key, value in node_config.items():
@@ -257,6 +277,22 @@ class FlexAgent(BaseAgent):
             if cm is not None:
                 return cm
         return agent_config_manager
+
+    @staticmethod
+    def _import_hook_from_suite_root(
+        relative_spec: str,
+        *,
+        root: Path,
+        suite_name: str,
+        location: str,
+    ) -> Any:
+        """Backward-compatible alias for :meth:`import_hook_from_suite_root`."""
+        return FlexAgent.import_hook_from_suite_root(
+            relative_spec,
+            root=root,
+            suite_name=suite_name,
+            location=location,
+        )
 
     @classmethod
     def from_config(cls, config: dict[str, Any], config_manager: ConfigManager | None = None) -> "FlexAgent":
@@ -848,7 +884,12 @@ class FlexAgent(BaseAgent):
             raise RuntimeError("workspace is required before refreshing runtime workspace context")
         skills = tm.list_skills() if tm is not None else []
         skill_aliases = {skill["name"]: Path(str(skill["path"])).resolve() for skill in skills}
-        allow_read_roots = [Path(p).resolve() for p in ToolManager.workspace_allow_path_list(self.config or {})]
+        cm = getattr(self, "config_manager", None)
+        settings = cm.get_all() if cm is not None else (self.config or {})
+        activated_suites = getattr(cm, "activated_suites", None) or []
+        allow_read_roots = [
+            Path(p).expanduser().resolve() for p in effective_workspace_allow_paths(settings, activated_suites)
+        ]
         resolved_workspace = Path(str(workspace)).expanduser().resolve()
 
         # 默认开启：若系统未安装 bwrap，则 create_sandbox 会自动回退为 NoopSandbox 并打印 warning。
@@ -956,10 +997,11 @@ class FlexAgent(BaseAgent):
         if isinstance(item, dict):
             hook_name = str(item.get("name") or "").strip()
             if not hook_name:
-                raise ValueError(f"{location}: hook mapping requires built-in 'name' (no custom import in YAML)")
+                raise ValueError(f"{location}: hook mapping requires non-empty 'name'")
             if item.get("import") is not None:
                 raise ValueError(
-                    f"{location}: 'import' is not supported in HOOKS YAML; use 'name' from built-in registry only"
+                    f"{location}: 'import' is not supported in HOOKS YAML; use 'name' (built-in short name, "
+                    "framework dotted path, or Suite-prefixed path)"
                 )
             raw_model = item.get("model")
             has_model = False
@@ -972,15 +1014,55 @@ class FlexAgent(BaseAgent):
                     has_model = True
             if has_model:
                 hook_llm_key = hook_name
-            fn = resolve_builtin_hook(hook_name)
+            fn = self._resolve_hook_callable(hook_name, location=location)
             BaseAgent._validate_hook(fn, location)
             return self._maybe_warn_hook_llm_missing(fn, hook_llm_key, location)
         if isinstance(item, str):
-            fn = resolve_builtin_hook(item.strip())
+            spec = item.strip()
+            fn = self._resolve_hook_callable(spec, location=location)
             BaseAgent._validate_hook(fn, location)
             return self._maybe_warn_hook_llm_missing(fn, None, location)
         fn = BaseAgent._validate_hook(item, location)
         return self._maybe_warn_hook_llm_missing(fn, None, location)
+
+    def _resolve_hook_callable(self, spec: str, *, location: str) -> Any:
+        """
+        Resolve a hook spec to a callable.
+
+        Supports built-in short names, framework dotted paths, and ``{suite_name}.`` prefixed
+        Suite hooks loaded from the activated suite root.
+        """
+        suite_fn = self._try_resolve_suite_hook(spec, location=location)
+        if suite_fn is not None:
+            return suite_fn
+        return resolve_builtin_hook(spec)
+
+    def _try_resolve_suite_hook(self, spec: str, *, location: str) -> Any | None:
+        """Load a Suite hook when ``spec`` starts with an activated Suite name prefix."""
+        activated = getattr(getattr(self, "config_manager", None), "activated_suites", None) or []
+        ordered = sorted(
+            (entry for entry in activated if isinstance(entry, dict)),
+            key=lambda item: len(str(item.get("name") or "")),
+            reverse=True,
+        )
+        for entry in ordered:
+            suite_name = str(entry.get("name") or "").strip()
+            root_raw = entry.get("root")
+            if not suite_name or not root_raw:
+                continue
+            prefix = f"{suite_name}."
+            if not spec.startswith(prefix):
+                continue
+            relative = spec[len(prefix) :]
+            if not relative:
+                raise ValueError(f"{location}: invalid Suite hook spec {spec!r}")
+            return self.import_hook_from_suite_root(
+                relative,
+                root=Path(str(root_raw)),
+                suite_name=suite_name,
+                location=location,
+            )
+        return None
 
     def _run_builtin_agent_pre_hooks(self, state: dict[str, Any], runtime: Any = None) -> dict[str, Any]:
         """运行默认内置 agent pre 链（先于 YAML ``HOOKS.agent.pre``）。

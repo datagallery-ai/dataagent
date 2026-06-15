@@ -2,10 +2,17 @@
 #
 # 用途：展示所有可配置项及常见可选值；实际项目请按需删减，勿直接用于生产。
 #
-# 加载优先级（后者覆盖前者）：
-#   1. dataagent/core/flex/flex_default_configs.yaml（默认兜底）
-#   2. 本文件（用户 YAML）
-#   3. .env 环境变量（最高优先级，如 AGENT_CONFIG__backend）
+# 配置合并（ConfigManager.reload → merge_layers）：
+#   1. flex_default_configs.yaml（default 层，最低优先级）
+#   2. 激活的 Suite 层（若有 SUITE.include，按 priority 从低到高）
+#   3. 本文件用户实际写出的 key（user 层，最高优先级）
+#   4. .env / 环境变量（LLM 密钥等，维持现网，高于 YAML 合并结果）
+#
+# 合并语义（与旧版 _deep_merge 的差异，启用 Suite 后全局生效）：
+#   - dict / 标量：高优先级层覆盖低层
+#   - list（TOOLS.*、HOOKS 槽位、SUBAGENT_CONFIGS、prompt_template.system/user 等）：
+#     跨层追加，高优在前；用户层不能通过写 list 清空下层已合并项
+#   - ACTOR_LOOP / PRE_WORKFLOW / POST_WORKFLOW：按 node 结构合并（用户可新增 node；Suite 不可）
 #
 # 变量插值（config_manager 在加载后解析）：
 #   - yaml.xxxxxxx                       引用yaml文件内的配置项
@@ -32,8 +39,12 @@ CROSS_SESSION_RECALL:
 WORKSPACE:
   path: "/tmp/dataagent_workspace"   # Agent 工作目录；空/null 则走运行时默认
   target_path: "/tmp/dataagent_output"  # 部分 schema 导出工具写入目录（search_udf_functions 等）
-  allow_path:                    # sub_agent_tool 等可访问的额外绝对路径白名单
+  allow_path:                    # sub_agent_tool / SUBAGENT_CONFIGS 运行期可访问的额外绝对路径白名单
     - "$env{PWD}/dataagent/core/flex/examples"
+
+# SUBAGENT_CONFIGS: 非空时隐式注册 sub_agent_tool（勿在 TOOLS.local_functions 声明）
+# SUBAGENT_CONFIGS:
+#   - path: "/abs/path/to/subagent.yaml"
 
 # ── Agent 主配置 ─────────────────────────────────────────────────────────────
 AGENT_CONFIG:
@@ -112,15 +123,20 @@ ACTOR_LOOP:
     chat_model:
       name: "chat_model"        # 引用 MODEL.chat_model
     # prompt_template: 与 node/module/chat_model 同级
-    # 每个 message_type（system/user）二选一 path 或 content；path 须绝对路径或 ~/...
+    # 每个 message_type（system/user）支持单条或列表；每条二选一 path 或 content；path 须绝对路径或 ~/...
     prompt_template:
       system:
-        content: |
-          追加到 planner system prompt 的 Jinja2 片段（可选）。
-        # path: "/abs/path/to/planner_system.md"
+        - content: |
+            追加到 planner system prompt 的 Jinja2 片段1（可选）。
+        - content: |
+            追加到 planner system prompt 的 Jinja2 片段2（可选）。
+        # 以下 path 须为真实存在的绝对路径；示例占位请勿直接启用
+        # - path: "/tmp/prompt_test/planner_system1.md"
+        # - path: "/tmp/prompt_test/planner_system2.md"
       user:
-        content: |
-          追加到 planner user prompt 的 Jinja2 片段（可选）。
+        - content: |
+            追加到 planner user prompt 的 Jinja2 片段（可选）。
+        - path: "/tmp/prompt_test/user_extra.md"   # 须先创建该文件
 
   - node: "executor"
     module: "dataagent.core.flex.nodes.executor.Executor"
@@ -162,9 +178,10 @@ TOOLS:
       - /abs/path/to/custom_skills
 
   local_functions:
+  # sub_agent_tool 由 SUBAGENT_CONFIGS 隐式注册，勿在 local_functions 中声明。
     - module: "dataagent.actions.tools.local_tool.tools"
-      function: "sub_agent_tool"   # function 与 name 二选一；name 可覆盖注册名
-      name: "sub_agent_tool"
+      function: "natural_language_to_sql"   # function 与 name 二选一；name 可覆盖注册名
+      name: "natural_language_to_sql"
       category: "general"
       description: |
         工具描述（可选，覆盖函数 docstring）。

@@ -26,6 +26,8 @@ from dataagent.utils.constants import (
     DEFAULT_BUILTIN_LOCAL_TOOLS,
     DEFAULT_BUILTIN_SKILL_NAMES,
     DEFAULT_MCP_DISCOVERY_TIMEOUT,
+    SUBAGENT_TOOL_CATALOG_HEADER,
+    SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS,
 )
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_user_root
 
@@ -182,12 +184,7 @@ class ToolManager:
         return out
 
     @staticmethod
-    def _generate_schema(tool: BaseTool) -> ToolSchema:
-        """生成工具Schema"""
-        return tool.get_schema()
-
-    @staticmethod
-    def _extract_skill_allowlist(
+    def extract_skill_allowlist(
         tools_config: Mapping[str, Any] | None,
         source: str,
     ) -> set[str]:
@@ -214,7 +211,7 @@ class ToolManager:
         return {str(item).strip() for item in configured if str(item).strip()}
 
     @staticmethod
-    def _extract_skill_directory_paths(tools_config: Mapping[str, Any] | None) -> list[str]:
+    def extract_skill_directory_paths(tools_config: Mapping[str, Any] | None) -> list[str]:
         """Return builtin skill directory roots from TOOLS.skills.custom_dirs.
 
         The YAML form is a list of one or more directories. Relative paths are
@@ -235,6 +232,86 @@ class ToolManager:
             raise ValueError("TOOLS.skills.custom_dirs must be a list of directory paths.")
         paths = [str(item).strip() for item in raw if str(item).strip()]
         return paths or ["actions/skills"]
+
+    @staticmethod
+    def discover_skills_from_root(
+        *,
+        root: Path,
+        allowlist: set[str] | None,
+    ) -> tuple[list[dict[str, Any]], set[str]]:
+        """Discover skills from a root directory and apply allowlist filtering."""
+        if not root.is_dir():
+            return [], set()
+
+        discovered: list[dict[str, Any]] = []
+        discovered_names: set[str] = set()
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            metadata = ToolManager._parse_skill_frontmatter(child)
+            if metadata is None:
+                continue
+            discovered_names.add(metadata["name"])
+            if allowlist is not None and metadata["name"] not in allowlist:
+                continue
+            discovered.append(metadata)
+        return discovered, discovered_names
+
+    @staticmethod
+    def is_explicit_sub_agent_tool_entry(tool_config: Mapping[str, Any]) -> bool:
+        """Return whether a ``TOOLS.local_functions`` entry declares ``sub_agent_tool``."""
+        fn = tool_config.get("function") or tool_config.get("name")
+        return str(fn or "").strip() == "sub_agent_tool"
+
+    @staticmethod
+    def resolve_subagent_config_path(raw_path: Any) -> Path:
+        """Resolve and validate one ``SUBAGENT_CONFIGS`` entry path (absolute only)."""
+        if raw_path is None or not str(raw_path).strip():
+            raise ValueError("SUBAGENT_CONFIGS entry requires non-empty 'path'")
+        path = Path(str(raw_path).strip()).expanduser()
+        if not path.is_absolute():
+            raise ValueError(
+                f"SUBAGENT_CONFIGS path must be absolute (or ~/...); relative paths are not allowed: {raw_path!r}"
+            )
+        return path
+
+    @staticmethod
+    def load_subagent_catalog_metadata(path: Path) -> tuple[str, str]:
+        """Load ``AGENT_CONFIG.name`` and ``description`` from a subagent yaml file."""
+        if not path.is_file():
+            raise FileNotFoundError(f"SUBAGENT_CONFIGS path does not exist or is not a file: {path}")
+        with open(path, encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"SUBAGENT_CONFIGS yaml root must be a mapping: {path}")
+        agent_cfg = payload.get("AGENT_CONFIG")
+        if not isinstance(agent_cfg, Mapping):
+            raise ValueError(f"SUBAGENT_CONFIGS yaml must contain AGENT_CONFIG section: {path}")
+        name = str(agent_cfg.get("name") or "").strip()
+        description = str(agent_cfg.get("description") or "").strip()
+        if not name:
+            raise ValueError(f"SUBAGENT_CONFIGS yaml missing AGENT_CONFIG.name: {path}")
+        if not description:
+            raise ValueError(f"SUBAGENT_CONFIGS yaml missing AGENT_CONFIG.description: {path}")
+        return name, description
+
+    @staticmethod
+    def _generate_schema(tool: BaseTool) -> ToolSchema:
+        """生成工具Schema"""
+        return tool.get_schema()
+
+    @staticmethod
+    def _extract_skill_allowlist(
+        tools_config: Mapping[str, Any] | None,
+        source: str,
+    ) -> set[str]:
+        """Backward-compatible alias for :meth:`extract_skill_allowlist`."""
+        return ToolManager.extract_skill_allowlist(tools_config, source)
+
+    @staticmethod
+    def _extract_skill_directory_paths(tools_config: Mapping[str, Any] | None) -> list[str]:
+        """Backward-compatible alias for :meth:`extract_skill_directory_paths`."""
+        return ToolManager.extract_skill_directory_paths(tools_config)
 
     @staticmethod
     def _parse_skill_frontmatter(skill_root: Path) -> dict[str, Any] | None:
@@ -319,6 +396,21 @@ class ToolManager:
         return f"{base}{block}"
 
     @staticmethod
+    def _is_explicit_sub_agent_tool_entry(tool_config: Mapping[str, Any]) -> bool:
+        """Backward-compatible alias for :meth:`is_explicit_sub_agent_tool_entry`."""
+        return ToolManager.is_explicit_sub_agent_tool_entry(tool_config)
+
+    @staticmethod
+    def _resolve_subagent_config_path(raw_path: Any) -> Path:
+        """Backward-compatible alias for :meth:`resolve_subagent_config_path`."""
+        return ToolManager.resolve_subagent_config_path(raw_path)
+
+    @staticmethod
+    def _load_subagent_catalog_metadata(path: Path) -> tuple[str, str]:
+        """Backward-compatible alias for :meth:`load_subagent_catalog_metadata`."""
+        return ToolManager.load_subagent_catalog_metadata(path)
+
+    @staticmethod
     def _resolve_registered_tool_description(
         *,
         tool_name: str,
@@ -351,6 +443,27 @@ class ToolManager:
         from dataagent.actions.tools.hooks.config import load_tool_hooks_from_config
 
         return load_tool_hooks_from_config(entry.get("hooks"))
+
+    @classmethod
+    def _build_sub_agent_tool_yaml_supplement(cls, config: Mapping[str, Any]) -> str:
+        """Build dynamic + static supplement for implicit ``sub_agent_tool`` registration."""
+        entries = config.get("SUBAGENT_CONFIGS") or []
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            raise ValueError("SUBAGENT_CONFIGS must be a list of mappings with 'path'")
+        catalog_lines: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise ValueError("SUBAGENT_CONFIGS items must be mappings with 'path'")
+            path = cls.resolve_subagent_config_path(entry.get("path"))
+            _name, description = cls.load_subagent_catalog_metadata(path)
+            catalog_lines.append(f"- {path}: {description}")
+        blocks = []
+        if catalog_lines:
+            blocks.append(SUBAGENT_TOOL_CATALOG_HEADER)
+            blocks.extend(catalog_lines)
+            blocks.append("")
+        blocks.append(SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS.strip())
+        return "\n".join(blocks).strip()
 
     def enable_auto_discover(self):
         """启用自动发现功能（只执行一次）"""
@@ -484,6 +597,7 @@ class ToolManager:
             self._register_hitl_tool()
 
         self._register_builtin_local_tools(tools_config)
+        self._register_implicit_sub_agent_tool(config)
 
         if not tools_config:
             return
@@ -604,7 +718,7 @@ class ToolManager:
             self._user_skills = {}
             return []
 
-        user_skills, _ = self._discover_skills_from_root(
+        user_skills, _ = self.discover_skills_from_root(
             root=resolve_user_root(user_id=user_id) / "skills",
             allowlist=None,
         )
@@ -798,6 +912,11 @@ class ToolManager:
         for tool_config in tools:
             if not isinstance(tool_config, dict):
                 continue
+            if self._is_explicit_sub_agent_tool_entry(tool_config):
+                raise ValueError(
+                    "TOOLS.local_functions must not declare sub_agent_tool; "
+                    "use SUBAGENT_CONFIGS to register subagents instead."
+                )
             module_path = tool_config.get("module")
             name = tool_config.get("function") or tool_config.get("name")
             category = tool_config.get("category", "general")
@@ -829,6 +948,21 @@ class ToolManager:
                 logger.trace(f"✅ Local tool: '{name}' registered.")
             except Exception as e:
                 logger.warning(f"❌ Local tool: '{name}' registration failed: {e}.")
+
+    def _register_implicit_sub_agent_tool(self, config: Mapping[str, Any]) -> None:
+        """Register ``sub_agent_tool`` when ``SUBAGENT_CONFIGS`` is non-empty."""
+        entries = config.get("SUBAGENT_CONFIGS") or []
+        if not entries:
+            return
+        from dataagent.actions.tools.local_tool.tools import sub_agent_tool
+
+        supplement = self._build_sub_agent_tool_yaml_supplement(config)
+        description = self._merge_sub_agent_yaml_supplement_into_docstring(sub_agent_tool.__doc__ or "", supplement)
+        try:
+            self.register_local_tool(sub_agent_tool, name="sub_agent_tool", description=description)
+            logger.trace("✅ Implicit sub_agent_tool registered from SUBAGENT_CONFIGS.")
+        except Exception as e:
+            logger.warning("❌ Implicit sub_agent_tool registration failed: {}", e)
 
     def _register_mcp_servers_from_config(self, servers: list[dict[str, Any]]):
         """从配置注册MCP服务器"""
@@ -878,30 +1012,6 @@ class ToolManager:
             except Exception as e:
                 logger.warning(f"❌ A2A agent: '{agent_id}' registration failed: {e}.")
 
-    def _discover_skills_from_root(
-        self,
-        *,
-        root: Path,
-        allowlist: set[str] | None,
-    ) -> tuple[list[dict[str, Any]], set[str]]:
-        """Discover skills from a root directory and apply allowlist filtering."""
-        if not root.is_dir():
-            return [], set()
-
-        discovered: list[dict[str, Any]] = []
-        discovered_names: set[str] = set()
-        for child in sorted(root.iterdir()):
-            if not child.is_dir():
-                continue
-            metadata = self._parse_skill_frontmatter(child)
-            if metadata is None:
-                continue
-            discovered_names.add(metadata["name"])
-            if allowlist is not None and metadata["name"] not in allowlist:
-                continue
-            discovered.append(metadata)
-        return discovered, discovered_names
-
     def _discover_builtin_skills(self, config: Mapping[str, Any]) -> list[dict[str, Any]]:
         """Discover builtin skills from default and extra configured directories.
 
@@ -917,7 +1027,7 @@ class ToolManager:
         discovered_names: set[str] = set()
 
         default_root = dataagent_package_path("actions", "skills")
-        default_skills, default_names = self._discover_skills_from_root(root=default_root, allowlist=builtin_allowlist)
+        default_skills, default_names = self.discover_skills_from_root(root=default_root, allowlist=builtin_allowlist)
         discovered.extend(default_skills)
         discovered_names.update(default_names)
 
@@ -925,7 +1035,7 @@ class ToolManager:
             if rel_path == "actions/skills":
                 continue
             root = Path(rel_path) if Path(rel_path).is_absolute() else dataagent_package_path(*str(rel_path).split("/"))
-            extra_skills, extra_names = self._discover_skills_from_root(root=root, allowlist=None)
+            extra_skills, extra_names = self.discover_skills_from_root(root=root, allowlist=None)
             for skill in extra_skills:
                 if skill["name"] not in discovered_names:
                     discovered.append(skill)

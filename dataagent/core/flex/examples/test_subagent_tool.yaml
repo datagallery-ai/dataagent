@@ -17,19 +17,9 @@ SCENARIO:
   chat:
     instructions: 当你即将使用sub_agent_tool工具时，如果当前会话有相关的subagent历史运行记录，请优先复用该子agent来完成任务。
 
-TOOLS:
-  local_functions:
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "sub_agent_tool"
-      description: |
+SUBAGENT_CONFIGS:
+  - path: "$env{PWD}/dataagent/core/flex/examples/arithmetic.yaml"
 
-        可选的 config_path 及用途：
-        - dataagent/core/flex/examples/arithmetic.yaml：算数 agent，用于计算算数（相对仓库根目录）。
-
-        调用时请在参数中显式传入 config_path 为上述路径之一，并严格遵循工具的参数要求，例如：
-        - query: "What is 5 + 3 * 2"
-        - config_path: "dataagent/core/flex/examples/arithmetic.yaml"
-  
 SWARM:
   enable: true
   worker_max_concurrent: 2

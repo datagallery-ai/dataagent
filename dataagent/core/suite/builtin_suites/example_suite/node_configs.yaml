@@ -1,0 +1,18 @@
+# =============================================================================
+# node_configs.yaml — 覆盖 default ACTOR_LOOP 已有节点的参数（本文件整体选填）
+# =============================================================================
+# 格式：{ node_name: { 参数键: 值, ... } }
+# 约束：node_name 必须是 flex_default_configs.yaml 里 ACTOR_LOOP 已存在的 node（如 planner、executor）
+#       Suite 不得新增 workflow 节点，只能覆盖 default 已有 node
+# 合并：按 node 名结构型并入 ACTOR_LOOP，标量字段由高层覆盖
+# =============================================================================
+
+# 【选填块】executor 节点参数补丁
+executor:
+  # 【选填】工具返回内容截断长度（覆盖 default 8192）
+  max_tool_result_length: 8192
+
+# planner 节点示例（选填，取消注释可用）：
+# planner:
+#   chat_model:
+#     name: "chat_model"

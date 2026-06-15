@@ -1,0 +1,19 @@
+# =============================================================================
+# tools/tools.yaml — 贡献顶层 TOOLS 段（本文件整体选填）
+# =============================================================================
+# 允许：local_functions、mcp_servers、A2A
+# 禁止：TOOLS.skills（Skill 请放 <suite_root>/skills/ 目录，合并时写入 custom_dirs）
+# 禁止：local_functions 中声明 sub_agent_tool（Subagent 请放 subagents/*.yaml）
+# 合并：各 list 跨层追加，高优 Suite 条目在前；
+# =============================================================================
+
+TOOLS:
+  local_functions:
+    - module: "dataagent.actions.perceptor.perceptor_atomic"
+      function: "perceive_metadata_from_memory"
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "natural_language_to_plot"
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "natural_language_to_sql"
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "report_generator"

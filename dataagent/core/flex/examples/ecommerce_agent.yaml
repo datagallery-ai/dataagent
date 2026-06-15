@@ -3,6 +3,11 @@ AGENT_CONFIG:
   type: "react"
   backend: "langgraph"
   enable_human_feedback: true  # 启用 HITL 功能
+  debug: true
+
+SUITE:
+  include:
+    - ecommerce_suite
 
 MODEL:
   chat_model:
@@ -11,12 +16,6 @@ MODEL:
     params:
       model: "deepseek-v4-flash"
       temperature: 0.7
-  jina_v3:
-    name: "jina_v3"
-    model_type: "embedding"
-    provider: "embedding"
-    params:
-      model: "jina-v3"
 
 SCENARIO:
   chat:
@@ -42,14 +41,3 @@ DATASOURCE:
   database_table_name: "Ecommerce"
 
 PRE_WORKFLOW: []
-
-TOOLS:
-  local_functions:
-    - module: "dataagent.actions.perceptor.perceptor_atomic"
-      function: "perceive_metadata_from_memory"
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "natural_language_to_plot"
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "natural_language_to_sql"
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "report_generator"

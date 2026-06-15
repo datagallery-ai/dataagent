@@ -20,6 +20,7 @@ from dataagent.actions.tools.local_tool.sandbox import create_sandbox
 from dataagent.config import ConfigManager
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.suite.debug_dump import dump_merged_config
 from dataagent.utils.log import logger
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
@@ -134,6 +135,7 @@ class DataAgent:
             workspace,
         )
         self._ensure_workspace(initial_state)
+        self._dump_runtime_config(initial_state)
         kwargs["initial_state"] = initial_state
         if "workspace" in kwargs:
             kwargs["workspace"] = workspace
@@ -201,6 +203,7 @@ class DataAgent:
         logger.debug(f"当前 workspace：{initial_state['workspace']}")
         try:
             self._ensure_workspace(initial_state)
+            self._dump_runtime_config(initial_state)
             extra: dict[str, Any] = {}
             if checkpoint_id:
                 extra["checkpoint_id"] = checkpoint_id
@@ -307,3 +310,21 @@ class DataAgent:
             initial_state["workspace"] = resolved_workspace
 
         return initial_state
+
+    def _dump_runtime_config(self, initial_state: Mapping[str, Any]) -> None:
+        """
+        Persist merged Agent settings under the resolved workspace ``.runtime/`` directory.
+
+        Invoked on each ``chat()`` / ``astream()`` turn after workspace is materialized.
+        Skipped when only ``from_config`` / ``reload()`` runs without a chat entrypoint.
+        """
+        workspace = initial_state.get("workspace")
+        if workspace is None:
+            return
+        if hasattr(self.config, "get_all") and callable(self.config.get_all):
+            settings = self.config.get_all()
+        elif hasattr(self.config, "settings") and isinstance(getattr(self.config, "settings", None), dict):
+            settings = dict(self.config.settings)
+        else:
+            settings = dict(self.config) if isinstance(self.config, Mapping) else {}
+        dump_merged_config(settings, workspace=workspace)

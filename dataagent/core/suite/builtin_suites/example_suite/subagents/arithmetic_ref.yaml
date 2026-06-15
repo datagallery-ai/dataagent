@@ -1,0 +1,51 @@
+# =============================================================================
+# subagents/*.yaml — 子 Agent 完整配置（目录内每个文件贡献一条 SUBAGENT_CONFIGS）
+# =============================================================================
+# 扫描：仅 subagents/ 直接子文件 *.yaml / *.yml（不递归子目录）
+# 合并：path 解析为绝对路径追加到 SUBAGENT_CONFIGS；须全局唯一 path 与 AGENT_CONFIG.name
+# 运行期：sub_agent_tool 读取本文件；path 须在 workspace / allow_path / 激活 Suite root 内
+# =============================================================================
+
+# 【必填段】子 Agent 元数据
+AGENT_CONFIG:
+  # 【必填】子 Agent 名称（合并后全局唯一）
+  name: "arithmetic agent"
+  # 【选填】版本
+  version: "1.0"
+  # 【必填】工具目录说明（写入 sub_agent_tool 描述，缺则扫描/校验报错）
+  description: "kindergarten level arithmetic agent (example_suite catalog entry)"
+  # 【选填】后端
+  backend: "langgraph"
+  # 【必填】类型（如 react）
+  type: "react"
+  # 【选填】调试开关
+  debug: true
+
+# 【必填段】子 Agent 运行所需 MODEL（结构同 Flex 用户 YAML）
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.7
+
+# 【选填段】场景默认指令
+SCENARIO:
+  chat:
+    input: an arithmetic question
+    task: answer user's question
+    instructions: answer the question
+
+# 【选填】前后置 workflow
+PRE_WORKFLOW: []
+POST_WORKFLOW: []
+
+# 【必填段】子 Agent 节点图（至少含 planner / executor 等运行所需节点）
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"

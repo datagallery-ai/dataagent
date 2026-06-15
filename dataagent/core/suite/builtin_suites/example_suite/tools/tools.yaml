@@ -1,0 +1,64 @@
+# =============================================================================
+# tools/tools.yaml — 贡献顶层 TOOLS 段（本文件整体选填）
+# =============================================================================
+# 允许：local_functions、mcp_servers、A2A
+# 禁止：TOOLS.skills（Skill 请放 <suite_root>/skills/ 目录，合并时写入 custom_dirs）
+# 禁止：local_functions 中声明 sub_agent_tool（Subagent 请放 subagents/*.yaml）
+# 合并：各 list 跨层追加，高优 Suite 条目在前；
+# =============================================================================
+
+TOOLS:
+  # 【选填】本地函数工具列表
+  local_functions:
+    - # 【必填】实现模块路径
+      module: "dataagent.actions.tools.local_tool.tools"
+      # 【必填】函数名（与 module 二选一可仅用 function；注册名默认同 function）
+      function: "file_saver"
+      # 【选填】覆盖注册名（集成测试/文档示例用）
+      name: "example_suite_file_saver"
+      # 【选填】工具描述
+      # description: "..."
+      # 【选填】传给 register_local_tool 的额外参数
+      # config:
+      #   llm_model: "chat_model"
+      # 【选填】单工具 pre/post hook（框架全路径，非 Suite 前缀）
+      # hooks:
+      #   pre: []
+      #   post: []
+
+  # 【选填】MCP Server 列表
+  mcp_servers:
+    - # 【必填】server 唯一 id
+      server_id: "nl2sql"
+      # 【必填】传输类型：stdio | sse | ...
+      transport_type: "stdio"
+      # 【必填】连接配置
+      config:
+        command: "python"
+        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2sql"]
+        env: {}
+        cwd: null
+      # 【选填】说明
+      description: "nl2sql mcp server"
+      # 【选填】该 server 下所有 discovered 工具共用的 hooks
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.example_hooks.audit_pre
+        post:
+          - dataagent.actions.tools.hooks.examples.example_hooks.audit_post
+
+  # 【选填】A2A Agent 列表（每项为单 key 字典，key 即 agent id）
+  A2A:
+    - my_a2a_agent:
+        # 【必填】服务 base URL
+        base_url: "http://127.0.0.1:8080"
+        # 【选填】认证 token
+        auth_token: null
+        # 【选填】超时秒数
+        timeout: 30
+        # 【选填】该 agent 下所有 discovered 工具共用的 hooks
+        hooks:
+          pre:
+            - dataagent.actions.tools.hooks.examples.example_hooks.audit_pre
+          post:
+            - dataagent.actions.tools.hooks.examples.example_hooks.audit_post
