@@ -40,6 +40,13 @@ def organize_workspace(state: FlexState, runtime: Runtime) -> FlexState:
         try:
             sql_dir.mkdir(exist_ok=True)
             dest_path = sql_dir / file_path.name
+
+            if dest_path.exists():
+                if dest_path.stat().st_mtime >= file_path.stat().st_mtime:
+                    logger.info(f"Skip moving {file_path.name}: destination is newer or same age")
+                    continue
+                dest_path.unlink()
+
             shutil.move(str(file_path), str(dest_path))
             moved_files.append(file_path.name)
             logger.info(f"Moved {file_path.name} to {sql_dir}")
