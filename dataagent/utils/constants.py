@@ -231,7 +231,7 @@ DEFAULT_IR_KNOWLEDGE_MIN_LENGTH: int = 500
 DEFAULT_IR_MAX_FILE_CHARS: int = 10000
 """IR 转换时 _safe_read_file 默认最大读取字符数。"""
 
-DEFAULT_IR_MAX_PATH_LEN: int = 4096
+DEFAULT_IR_MAX_PATH_LEN: int = 256
 """IR 转换时路径字符串最大长度。"""
 
 DEFAULT_IR_COLUMN_SAMPLE_ROWS: int = 100
