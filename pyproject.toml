@@ -57,7 +57,7 @@ server = [
     "elasticsearch>=7.17.12,<8",
 ]
 jiuwen = [
-    "openjiuwen==0.1.1"
+    "openjiuwen==0.1.14"
 ]
 mkdoc = [
     "mkdocs>=1.6,<2.0",
@@ -192,6 +192,7 @@ override-dependencies = [
     "sqlalchemy==2.0.49",
     "pydantic==2.12.5",
     "mcp==1.26.0",
+    "uvicorn==0.34.0"
 ]
 [tool.ruff]
 target-version = "py311"

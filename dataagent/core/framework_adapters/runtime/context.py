@@ -35,6 +35,20 @@ _current_stream_queue: contextvars.ContextVar[Any] = contextvars.ContextVar(
 _STREAM_QUEUE_ATTR = "_dataagent_stream_queue"
 
 
+def _resolve_ojw_global_state_key() -> str:
+    """Return the openjiuwen 0.1.14 global state key."""
+    from openjiuwen.core.session.state.base import GLOBAL_STATE_KEY  # type: ignore[import-not-found]
+
+    return GLOBAL_STATE_KEY
+
+
+def _resolve_ojw_interrupt_types() -> tuple[type[Any], type[Any]]:
+    """Return the openjiuwen 0.1.14 interrupt classes."""
+    from openjiuwen.core.graph.pregel.base import GraphInterrupt, Interrupt  # type: ignore[import-not-found]
+
+    return GraphInterrupt, Interrupt
+
+
 def set_current_runtime(runtime: Any) -> None:
     """设置当前 Context 中的运行时对象。"""
     _current_runtime.set(runtime)
@@ -154,7 +168,7 @@ class GlobalStateProxy(dict):
     def _snapshot(self) -> dict[str, Any]:
         """获取底层 global_state 的全量快照。"""
         try:
-            from openjiuwen.core.runtime.state import GLOBAL_STATE_KEY  # type: ignore[import-not-found]
+            global_state_key = _resolve_ojw_global_state_key()
 
             # openjiuwen：runtime 可能是 wrapper，base() 可能为 None。
             # 这时仍应从自身 state() 读取 GLOBAL_STATE_KEY，而不是直接返回空 dict。
@@ -168,8 +182,8 @@ class GlobalStateProxy(dict):
             if state_obj is None:
                 return {}
             state_dict = state_obj.get_state() or {}
-            global_state = state_dict.get(GLOBAL_STATE_KEY) or {}
-            snap = global_state if isinstance(global_state, dict) else {}
+            stored_global_state = state_dict.get(global_state_key) or {}
+            snap = stored_global_state if isinstance(stored_global_state, dict) else {}
             # 合并本地更新，确保写后读一致（local 覆盖 snap）
             if self._local_updates:
                 return {**snap, **self._local_updates}
@@ -242,7 +256,7 @@ def get_global_state_snapshot(runtime: Any | None = None) -> dict[str, Any]:
     if runtime_obj is None:
         raise RuntimeError("No active backend runtime in context. Did you call workflow invoke/ainvoke?")
     try:
-        from openjiuwen.core.runtime.state import GLOBAL_STATE_KEY  # type: ignore[import-not-found]
+        global_state_key = _resolve_ojw_global_state_key()
 
         # openjiuwen：有时 current_runtime 会被设置为 base runtime（WorkflowRuntime），其 base() 可能为 None。
         # 这时仍应从自身 state() 读取 GLOBAL_STATE_KEY，而不是直接返回空 dict。
@@ -256,8 +270,8 @@ def get_global_state_snapshot(runtime: Any | None = None) -> dict[str, Any]:
         if state_obj is None:
             return {}
         state_dict = state_obj.get_state() or {}
-        global_state = state_dict.get(GLOBAL_STATE_KEY) or {}
-        return global_state if isinstance(global_state, dict) else {}
+        stored_global_state = state_dict.get(global_state_key) or {}
+        return stored_global_state if isinstance(stored_global_state, dict) else {}
     except Exception:
         return {}
 
@@ -307,7 +321,7 @@ def get_stream_writer() -> Callable[[dict[str, Any]], None]:
             return
         try:
             loop = asyncio.get_running_loop()
-            # openjiuwen 不同版本 write_stream 可能是 sync/async
+            # openjiuwen 的 write_stream 入口可能返回 sync 或 async 结果
             result = write_stream(data)
             if inspect.isawaitable(result):
                 loop.create_task(cast(Coroutine[Any, Any, Any], result))
@@ -331,7 +345,7 @@ def interrupt(message: Any) -> Any:
 
         return _lg_interrupt(message)
 
-    from openjiuwen.graph.pregel import GraphInterrupt, Interrupt  # type: ignore[import-not-found]
+    graph_interrupt_cls, interrupt_cls = _resolve_ojw_interrupt_types()
 
     msg = json.dumps(message, ensure_ascii=False) if isinstance(message, (dict, list)) else str(message)
 
@@ -370,4 +384,4 @@ def interrupt(message: Any) -> Any:
         _commit_base_state(runtime)
     except Exception:
         pass
-    raise GraphInterrupt(Interrupt(msg))
+    raise graph_interrupt_cls(interrupt_cls(msg))

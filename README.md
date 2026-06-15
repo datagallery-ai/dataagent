@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
   <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
   <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/openJiuwen-0.1.1-purple" alt="openJiuwen">
+  <img src="https://img.shields.io/badge/openJiuwen-0.1.14-purple" alt="openJiuwen">
   <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
 </p>
 

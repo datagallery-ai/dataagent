@@ -119,7 +119,13 @@ def prepare_flex_planner_prompt(
         **prompt_kwargs,
     )
     sync_flex_planner_user_human_to_state(runtime, state, user_message)
-    messages = [system_message] + build_messages(list(state.get("messages") or []), context=context)
+    history_messages = build_messages(list(state.get("messages") or []), context=context)
+    has_current_user_message = any(
+        getattr(message, "type", None) == getattr(user_message, "type", None)
+        and str(getattr(message, "content", "") or "") == str(user_message.content or "")
+        for message in history_messages
+    )
+    messages = [system_message] + ([] if has_current_user_message else [user_message]) + history_messages
     todo_message = build_todo_message(context=context)
     if todo_message:
         messages.append(todo_message)
