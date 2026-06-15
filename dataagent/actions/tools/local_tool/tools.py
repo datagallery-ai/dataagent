@@ -1749,7 +1749,7 @@ async def ontology_sub_agent_query_tool(
             os.environ["SCENE"] = previous_scene
 
 
-async def bash(command: str, purpose: str, timeout: int = DEFAULT_BASH_TIMEOUT) -> dict[str, Any]:
+async def bash(command: str, purpose: str | None = None, timeout: int = DEFAULT_BASH_TIMEOUT) -> dict[str, Any]:
     """Executes a given bash command and returns its output.
 
     The working directory is set to the workspace root. Shell state does not
@@ -1778,12 +1778,10 @@ async def bash(command: str, purpose: str, timeout: int = DEFAULT_BASH_TIMEOUT) 
 
     Args:
         command (str): The command to execute.
-        purpose (str): Clear, concise description of what this command does (required, non-empty).
+        purpose (str | None): Clear, concise description of what this command does (optional).
         timeout (int): Optional timeout in seconds (default __BASH_TIMEOUT__).
     """
     normalized_purpose = str(purpose or "").strip()
-    if not normalized_purpose:
-        raise ValueError("'purpose' is required and must not be empty.")
 
     if not command or not str(command).strip():
         raise ValueError("'command' is required and must not be empty.")
@@ -1824,7 +1822,7 @@ async def bash(command: str, purpose: str, timeout: int = DEFAULT_BASH_TIMEOUT) 
     original_msg = "\n".join(parts) or "(no output)"
 
     status_label = "succeeded" if exit_code == 0 else f"failed (exit code {exit_code})"
-    frontend_msg = f"bash {status_label} — {normalized_purpose}"
+    frontend_msg = f"bash {status_label}" + (f" — {normalized_purpose}" if normalized_purpose else "")
 
     return {
         "original_msg": original_msg,
@@ -1837,7 +1835,7 @@ async def bash(command: str, purpose: str, timeout: int = DEFAULT_BASH_TIMEOUT) 
     }
 
 
-def apply_patch(diff: str, purpose: str) -> dict[str, Any]:
+def apply_patch(diff: str, purpose: str | None = None) -> dict[str, Any]:
     """Apply a unified diff patch to existing files.
 
     Use this tool when:
@@ -1848,7 +1846,7 @@ def apply_patch(diff: str, purpose: str) -> dict[str, Any]:
     Args:
         diff (str): A valid unified diff string (git-style). ``+++`` file paths must be
             absolute under the workspace root (or resolve under it the same way as ``write_file``).
-        purpose (str): Brief description of why this patch is being applied (required, non-empty).
+        purpose (str | None): Brief description of why this patch is being applied (optional).
 
     Returns:
         dict[str, Any]: Tool-style output with:
@@ -1857,8 +1855,6 @@ def apply_patch(diff: str, purpose: str) -> dict[str, Any]:
             - data: A dict containing ``applied`` and ``failed`` file lists.
     """
     normalized_purpose = str(purpose or "").strip()
-    if not normalized_purpose:
-        raise ValueError("'purpose' is required and must not be empty.")
 
     files: dict[str, list[str]] = {}
     current_file: str | None = None
@@ -1906,8 +1902,9 @@ def apply_patch(diff: str, purpose: str) -> dict[str, Any]:
         original_msg_parts.append(f"Failed ({len(failed)}): {failed}")
     original_msg = "\n".join(original_msg_parts)
     frontend_msg = (
-        f"\n\napply_patch 工具执行完成 — {normalized_purpose}\n\n"
-        f"成功应用: {len(applied)} 个文件，失败: {len(failed)} 个文件"
+        "\n\napply_patch 工具执行完成"
+        + (f" — {normalized_purpose}" if normalized_purpose else "")
+        + f"\n\n成功应用: {len(applied)} 个文件，失败: {len(failed)} 个文件"
     )
     return {
         "original_msg": original_msg,
@@ -1921,7 +1918,7 @@ def edit_file(
     op: str,
     anchor: str,
     text: str,
-    purpose: str,
+    purpose: str | None = None,
 ) -> dict[str, Any]:
     """Edit an existing file using anchor-based operations.
 
@@ -1955,11 +1952,9 @@ def edit_file(
         op (str): One of: ``replace_first``, ``replace_all``, ``insert_before``, ``insert_after``.
         anchor (str): The literal text to locate in the file (must be unique for replace_first).
         text (str): The text to replace with or insert (must be different from anchor for replacements).
-        purpose (str): Brief description of why this file is being modified (required, non-empty).
+        purpose (str | None): Brief description of why this file is being modified (optional).
     """
     normalized_purpose = str(purpose or "").strip()
-    if not normalized_purpose:
-        raise ValueError("'purpose' is required and must not be empty.")
 
     valid_ops = {"replace_first", "replace_all", "insert_before", "insert_after"}
     if op not in valid_ops:
@@ -2020,7 +2015,11 @@ def edit_file(
     diff_text = _compute_unified_diff(original, new_text, path) if changed else "(no changes)"
     return {
         "original_msg": f"{message}: {path}\n\n{diff_text}",
-        "frontend_msg": f"\n\nedit_file 工具执行完成 — {normalized_purpose}\n\n{message}: {path}",
+        "frontend_msg": (
+            "\n\nedit_file 工具执行完成"
+            + (f" — {normalized_purpose}" if normalized_purpose else "")
+            + f"\n\n{message}: {path}"
+        ),
         "data": {
             "changed": changed,
             "path": str(p.resolve()),
@@ -2158,7 +2157,9 @@ def _compute_unified_diff(
     return result
 
 
-def read_file(path: str, purpose: str, offset: int | None = 1, limit: int | None = None) -> dict[str, Any]:
+def read_file(
+    path: str, purpose: str | None = None, offset: int | None = 1, limit: int | None = None
+) -> dict[str, Any]:
     """Read a file from the local filesystem.
 
     Reads a file and returns its content. You can access any file directly by
@@ -2185,15 +2186,13 @@ def read_file(path: str, purpose: str, offset: int | None = 1, limit: int | None
     Args:
         path (str): Absolute path under the workspace root, read-only root, or
             ``skill/<name>/...`` for skill assets.
-        purpose (str): Brief description of why this file is being read (required, non-empty).
+        purpose (str | None): Brief description of why this file is being read (optional).
         offset (int | None): The line number to start reading from (1-based). Only provide
             if the file is too large to read at once.
         limit (int | None): The number of lines to read. Only provide if the file is too
             large to read at once.
     """
     normalized_purpose = str(purpose or "").strip()
-    if not normalized_purpose:
-        raise ValueError("'purpose' is required and must not be empty.")
 
     p = _resolve_and_authorize(path, "path", operation="read_file", mode="read")
     if not p.exists():
@@ -2280,8 +2279,9 @@ def read_file(path: str, purpose: str, offset: int | None = 1, limit: int | None
     return {
         "original_msg": numbered,
         "frontend_msg": (
-            f"\n\nread_file 工具执行完成 — {normalized_purpose}\n\n"
-            f"已读取: {path}（{collected_bytes} 字节，{line_count} 行，从第 {start_line} 行开始"
+            "\n\nread_file 工具执行完成"
+            + (f" — {normalized_purpose}" if normalized_purpose else "")
+            + f"\n\n已读取: {path}（{collected_bytes} 字节，{line_count} 行，从第 {start_line} 行开始"
             + (f"，最多 {limit_lines} 行" if limit_lines is not None else "")
             + ("，已截断）" if truncated else "）")
         ),
@@ -2294,7 +2294,7 @@ def read_file(path: str, purpose: str, offset: int | None = 1, limit: int | None
     }
 
 
-def write_file(path: str, content: str, purpose: str) -> dict[str, Any]:
+def write_file(path: str, content: str, purpose: str | None = None) -> dict[str, Any]:
     """Write a file to the local filesystem.
 
     Writes a file to the workspace. If the file already exists it will be
@@ -2319,11 +2319,9 @@ def write_file(path: str, content: str, purpose: str) -> dict[str, Any]:
     Args:
         path (str): Absolute path under the workspace root for the file to create or overwrite.
         content (str): The content to write to the file.
-        purpose (str): Brief description of why this file is being created/updated (required, non-empty).
+        purpose (str | None): Brief description of why this file is being created/updated (optional).
     """
     normalized_purpose = str(purpose or "").strip()
-    if not normalized_purpose:
-        raise ValueError("'purpose' is required and must not be empty.")
 
     p = _resolve_and_authorize(path, "path", operation="write_file", mode="write")
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -2350,7 +2348,9 @@ def write_file(path: str, content: str, purpose: str) -> dict[str, Any]:
     return {
         "original_msg": summary,
         "frontend_msg": (
-            f"\n\nwrite_file 工具执行完成 — {normalized_purpose}\n\n已写入: {p.resolve()}（{len(data)} 字节）"
+            "\n\nwrite_file 工具执行完成"
+            + (f" — {normalized_purpose}" if normalized_purpose else "")
+            + f"\n\n已写入: {p.resolve()}（{len(data)} 字节）"
         ),
         "data": {
             "path": str(p.resolve()),
