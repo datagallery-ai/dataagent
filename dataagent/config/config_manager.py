@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import copy
 import os
 import re
 import threading
@@ -43,6 +44,7 @@ class ConfigManager:
         """
         self.config_path = Path(config_path) if config_path else None
         self.settings: dict[str, Any] = {}
+        self.activated_suites: list[dict[str, str]] = []
         self._lock = threading.Lock()
         self.last_reload = None
 
@@ -52,6 +54,45 @@ class ConfigManager:
         # 如果直接使用 ConfigManager(config_path)，只会加载该配置文件。
         if self.config_path:
             self.reload(str(self.config_path))
+
+    @staticmethod
+    def merge_configs(base_config, override_config):
+        """
+        Merge two configuration mappings using ``merge_layers``.
+
+        Unlike legacy ``_deep_merge``, list-valued keys (``TOOLS.*``, ``HOOKS`` slots,
+        ``SUBAGENT_CONFIGS``, workflow lists, etc.) are **appended** with the override
+        layer before the base layer. Dict/scalar keys in the override still win.
+
+        Args:
+            base_config: Lower-priority mapping (treated as the default layer).
+            override_config: Higher-priority mapping (treated as the user layer).
+
+        Returns:
+            Merged configuration dict.
+        """
+        from dataagent.core.suite.merge import merge_layers
+
+        return merge_layers([base_config or {}, override_config or {}])
+
+    @staticmethod
+    def _validate_workspace_path_no_config_refs(*configs: Mapping[str, Any]) -> None:
+        """Reject ``${...}`` in ``WORKSPACE.path`` (must not reference other config keys)."""
+        for config in configs:
+            if not isinstance(config, Mapping):
+                continue
+            ws = config.get("WORKSPACE")
+            if not isinstance(ws, Mapping):
+                continue
+            raw = ws.get("path")
+            if raw is None:
+                continue
+            text = str(raw)
+            if "${" in text:
+                raise ValueError(
+                    "WORKSPACE.path must not use ${...} config references; "
+                    "use a literal absolute path or ~/... instead."
+                )
 
     @staticmethod
     def _validate_workspace_yaml_config(config: Mapping[str, Any]) -> None:
@@ -110,40 +151,63 @@ class ConfigManager:
             f"got {type(raw).__name__}: {raw!r}."
         )
 
+    @staticmethod
+    def _get_raw_value_from(config: Mapping[str, Any], key: str) -> Any:
+        """
+        Resolve a dotted configuration path against a mapping root.
+
+        Used during ``reload()`` interpolation so ``${...}`` references resolve
+        against the in-flight ``working`` config, not stale ``self.settings``.
+
+        Args:
+            config: Configuration mapping root (e.g. pre-merge ``working`` dict).
+            key: Dotted path such as ``MODEL.chat_model.params.model``.
+
+        Returns:
+            Resolved value, or ``None`` when any segment is missing.
+        """
+        value: Any = config
+        for segment in key.split("."):
+            if isinstance(value, Mapping) and segment in value:
+                value = value[segment]
+            else:
+                return None
+        return value
+
     def copy(self) -> "ConfigManager":
         """deep copy of a config"""
 
         new_config = ConfigManager()
         new_config.config_path = self.config_path
         new_config.settings = self.get_all()
+        new_config.activated_suites = list(self.activated_suites)
         return new_config
-
-    def merge_configs(self, base_config, override_config):
-        """Public method to merge two configurations"""
-        merged = {}
-        self._deep_merge(merged, base_config)
-        self._deep_merge(merged, override_config)
-        return merged
 
     def reload(self, config_path: str, default_config_path: str | None = None) -> None:
         """
         Reload configuration.
 
-        加载顺序：
-        1. 默认配置文件 default_config_path
-        2. 必选：用户指定的主配置文件 config_path
-        3. 处理变量插值
+        1. Load default and user YAML (each deep-copied).
+        2. Merge into ``tmp``, interpolate, validate workspace/swarm settings.
+        3. Extract the user merge layer from user-written paths only.
+        4. Discover and activate suites when ``SUITE`` is present.
+        5. ``merge_layers([default, suite layers…, user layer])``, validate, assign ``settings``.
         """
         with self._lock:
-            self.settings.clear()
+            from dataagent.core.suite.activation import activate_suites, order_suites_for_merge
+            from dataagent.core.suite.discovery import discover_suite_index
+            from dataagent.core.suite.merge import extract_user_layer, merge_layers
+            from dataagent.core.suite.suite_layer import build_suite_layers
+            from dataagent.core.suite.validation import validate_merged_config
 
-            # 1. 先加载默认配置
+            default_config: dict[str, Any] = {}
             if default_config_path:
                 default_yaml = Path(default_config_path)
                 try:
                     with open(default_yaml, encoding="utf-8") as f:
-                        default_config = yaml.safe_load(f) or {}
-                    self._deep_merge(self.settings, default_config)
+                        loaded = yaml.safe_load(f) or {}
+                    if isinstance(loaded, dict):
+                        default_config = copy.deepcopy(loaded)
                     logger.trace(f"Loaded default configuration file: {default_yaml}")
                 except Exception as e:
                     raise RuntimeError(f"Failed to load default configuration file {default_yaml}") from e
@@ -152,36 +216,64 @@ class ConfigManager:
                     "No default configuration file provided, may cause critical errors if using REACT type agent"
                 )
 
-            # 2. 用户主配置（覆盖默认配置）
             yaml_file = Path(config_path)
-            self.config_path = yaml_file.resolve()
+            resolved_config_path = yaml_file.resolve()
             try:
                 with open(yaml_file, encoding="utf-8") as f:
-                    file_config = yaml.safe_load(f) or {}
-
-                # Merge directly into settings
-                self._deep_merge(self.settings, file_config)
+                    user_config = yaml.safe_load(f) or {}
+                user_config = {} if not isinstance(user_config, dict) else copy.deepcopy(user_config)
                 logger.trace(f"Loaded configuration file: {yaml_file}")
-
             except Exception as e:
-                # 如果找不到配置文件则直接抛出异常，避免继续执行
                 raise RuntimeError(f"Failed to load configuration file {yaml_file}: {e}") from e
 
-            # 3. 变量插值，允许在yaml文件中用 ${...} 引用其他配置项，支持 $env{VAR} 引用环境变量
-            self._process_interpolation(self.settings)
-            # 5. WORKSPACE.path / allow_path 在启动前校验（非空则须为绝对路径）
-            self._validate_workspace_yaml_config(self.settings)
-            # 6. SWARM keys（逐步扩展）：worker_max_concurrent 须为非负整数或省略
-            self._validate_swarm_yaml_config(self.settings)
+            user_keys = set(user_config.keys())
+            working: dict[str, Any] = copy.deepcopy(default_config)
+            self._deep_merge(working, user_config)
 
+            self._validate_workspace_path_no_config_refs(user_config, default_config)
+            self._process_interpolation(working)
+            self._validate_workspace_yaml_config(working)
+            self._validate_swarm_yaml_config(working)
+
+            user_layer = extract_user_layer(working, user_config)
+            default_actor_nodes = {
+                str(item.get("node")).strip()
+                for item in default_config.get("ACTOR_LOOP", [])
+                if isinstance(item, dict) and item.get("node")
+            }
+
+            suite_layers: list[dict[str, Any]] = []
+            activated_meta: list[dict[str, str]] = []
+            if "SUITE" in user_keys:
+                suite_config = user_layer.get("SUITE")
+                if suite_config is None:
+                    suite_config = user_config.get("SUITE")
+                index = discover_suite_index(config=working)
+                activated = activate_suites(
+                    suite_config=suite_config if isinstance(suite_config, dict) else None,
+                    index=index,
+                )
+                suite_layers, activated_meta = build_suite_layers(
+                    order_suites_for_merge(activated),
+                    default_actor_nodes=default_actor_nodes,
+                )
+                logger.debug("Activated suites: {}", [m["name"] for m in activated_meta])
+
+            layers = [default_config, *suite_layers, user_layer]
+            result = merge_layers(layers)
+            result.pop("SUITE", None)
+
+            validate_merged_config(result, activated_suites=activated_meta)
+
+            self.config_path = resolved_config_path
+            self.settings = result
+            self.activated_suites = activated_meta
             self.last_reload = datetime.now(timezone(timedelta(hours=8)))  # 东八区
 
     def get_all(self) -> dict:
         """
         返回所有当前配置（深拷贝，防止外部修改）
         """
-        import copy
-
         with self._lock:
             return copy.deepcopy(self.settings)
 
@@ -277,7 +369,7 @@ class ConfigManager:
                     result = value
                     for match in matches:
                         # Get the referenced value
-                        ref_value = self._get_raw_value(match)
+                        ref_value = self._get_raw_value_from(config_dict, match)
                         if ref_value is not None:
                             result = result.replace(f"${{{match}}}", str(ref_value))
                         else:
@@ -301,33 +393,28 @@ class ConfigManager:
             raise
 
     def _get_raw_value(self, key: str) -> Any:
-        """Get raw configuration value without environment variable override"""
-        keys = key.split(".")
-        value = self.settings
-
-        for k in keys:
-            if isinstance(value, dict) and k in value:
-                value = value[k]
-            else:
-                return None
-
-        return value
+        """Get raw configuration value from committed ``self.settings``."""
+        return self._get_raw_value_from(self.settings, key)
 
 
 def build_prompt(spec: dict[str, Any]) -> Any:
     """
-    将 yaml ``prompt_template.<message_type>`` 的 spec 转为 PromptTemplate`
-    仅在 flex 加载节点配置时由 ``dataagent.core.flex.agent`` 调用，
+    将 yaml ``prompt_template.<message_type>`` 的单条 spec 转为 ``PromptTemplate``。
+
+    仅在 flex 加载节点配置时由 ``build_prompt_append`` / ``dataagent.core.flex.agent`` 调用。
     spec 必须恰好包含 ``path`` 或 ``content`` 之一（互斥）：
 
     - ``path``：**绝对路径**字符串（允许 ``~/...``，会先 ``expanduser``）；**不支持**相对路径。
     - ``content``：直接作为追加 prompt 正文（Jinja2 模板）。
 
-    返回的 ``PromptTemplate`` 仅包含从文件或字符串读入的正文。
+    Returns:
+        ``PromptTemplate`` 仅包含从文件或字符串读入的正文。
     """
     # 延迟导入，避免 ``dataagent.config`` 与 ``prompt_manager`` 在包初始化阶段形成环依赖。
     from dataagent.core.managers.prompt_manager.template import PromptTemplate
 
+    if not isinstance(spec, dict):
+        raise ValueError(f"prompt_template spec must be a mapping, got: {type(spec).__name__}")
     has_path = "path" in spec and spec["path"] is not None
     has_content = "content" in spec and spec["content"] is not None
     if has_path == has_content:
@@ -341,3 +428,31 @@ def build_prompt(spec: dict[str, Any]) -> Any:
             )
         return PromptTemplate.from_file(str(path))
     return PromptTemplate.from_string(spec["content"])
+
+
+def build_prompt_append(spec_or_list: Any) -> Any:
+    """
+    将 ``prompt_template.<message_type>`` 的 YAML 值转为单个追加用 ``PromptTemplate``。
+
+    支持单条 spec（dict）或多条 spec 列表（高优条目应排在列表前部）；多条时按顺序拼接正文，
+    段间以空行分隔。
+
+    Args:
+        spec_or_list: 单条 ``{path|content}`` 映射，或非空 spec 列表。
+
+    Returns:
+        合并后的 ``PromptTemplate``，供 Planner ``prompt_appends`` 使用。
+    """
+    from dataagent.core.managers.prompt_manager.template import PromptTemplate
+
+    if isinstance(spec_or_list, list):
+        if not spec_or_list:
+            raise ValueError("prompt_template message_type list must not be empty")
+        parts = [build_prompt(item) for item in spec_or_list]
+        combined = "\n\n".join(part.content for part in parts)
+        return PromptTemplate.from_string(combined)
+    if isinstance(spec_or_list, dict):
+        return build_prompt(spec_or_list)
+    raise ValueError(
+        f"prompt_template message_type must be a mapping or list of mappings, got: {type(spec_or_list).__name__}"
+    )

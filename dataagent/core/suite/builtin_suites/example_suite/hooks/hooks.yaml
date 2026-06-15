@@ -1,0 +1,30 @@
+# =============================================================================
+# hooks/hooks.yaml — 贡献顶层 HOOKS 段（本文件整体选填）
+# =============================================================================
+# 条目形态：与用户 YAML 相同
+#   - 字符串：相对 <suite_root> 的 module.path.callable（合并后自动加 {suite_name}. 前缀）
+#   - 字典：name（必填）+ model（选填，仅 hook 内需 runtime.llm 时；引用 MODEL 槽位名）
+# 禁止：内置 registry 短名（如 pruner、portraiter）
+# 实现：须在 hooks/*.py 中提供可调用对象；hooks/__init__.py 建议保留便于本地调试
+# 加载：运行期按文件直载 hooks/custom_hooks.py，不支持包内相对导入（见 custom_hooks.py）
+# Hook 签名：(state) 或 (state, runtime)，不可用 **kwargs 作第二参
+# =============================================================================
+
+HOOKS:
+  # 【选填】Agent 级 hook
+  # agent:
+  #   pre: []
+  #   post: []
+
+  # 【选填】节点级 hook
+  nodes:
+    planner:
+      pre:
+        # 【选填】字符串项：相对 suite_root 的 callable 路径
+        - hooks.custom_hooks.suite_example_pre
+    executor:
+      post:
+        - hooks.custom_hooks.suite_example_post
+        # 【选填】字典项：hook 内 ``runtime.llm(<合并后 name>)`` 时使用 MODEL 槽位
+        - name: hooks.custom_hooks.suite_example_with_model
+          model: chat_model

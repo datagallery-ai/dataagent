@@ -1,8 +1,7 @@
-# Flex Agent 默认配置（兜底配置）
-# from_config 加载优先级（后者覆盖前者）：
-# 1. flex/flex_default_configs.yaml（本文件，提供默认值）
-# 2. 用户指定的 yaml 配置文件
-# 3. .env 环境变量配置（最高优先级）
+# Flex Agent 默认配置（兜底 default 层）
+# 合并顺序：本文件 → 激活 Suite → 用户 YAML（仅用户写出的 key）→ .env 环境变量
+# list 型配置（HOOKS、TOOLS 等）与用户/Suite 跨层追加并存（高优在前），非整段替换
+# ConfigManager.merge_configs() 同样使用 merge_layers：list 追加、dict/标量覆盖
 
 
 PRE_WORKFLOW: []

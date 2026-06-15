@@ -1,0 +1,21 @@
+# =============================================================================
+# models.yaml — 贡献顶层 MODEL 段（本文件整体选填）
+# =============================================================================
+# 合并：dict 递归并入 result.MODEL；用户 YAML 已写的同 key 由用户层覆盖
+# 结构：与 Flex 用户 YAML 中 MODEL 段一致
+# =============================================================================
+
+MODEL:
+  # 【选填】聊天模型槽位（名称可自定义，须与节点 chat_model.name 引用一致）
+  chat_model:
+    params:
+      # 【选填】模型参数；示例为 Suite 层覆盖 temperature
+      temperature: 0.1
+
+  # 【选填】嵌入模型槽位示例
+  embedding_model:
+    name: "jina_v3"
+    model_type: "embedding"
+    provider: "embedding"
+    params:
+      model: "jina-v3"

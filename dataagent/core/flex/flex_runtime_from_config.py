@@ -24,7 +24,6 @@ from typing import Any
 
 from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
 
 # YAML 合并阶段使用、不写入 env.llm_configs 值的键
 _LLM_YAML_ONLY_KEYS = frozenset({"name", "provider", "model_type", "section", "params"})
@@ -135,10 +134,13 @@ def _merge_hook_llm_configs(
 ) -> None:
     """为 HOOKS 字典项（含 ``name`` + ``model``）写入 ``llm_configs[hook_name]``。
 
-    - **hook 的 ``name``**：内置 hook 标识，也是 ``llm_configs`` 里本条配置的键。
+    - **hook 的 ``name``**：合并后的 hook 标识（内置短名或 ``{suite_name}.hooks...`` 全路径），
+      也是 ``llm_configs`` 里本条配置的键。
     - **``model``**：引用 ``MODEL`` 中**已存在**的槽名（与节点 ``chat_model`` 同源），**不得**写未在
       ``MODEL`` 中出现的键。合并后的扁平参数挂在 ``llm_configs[hook_name]``，供
-      ``runtime.llm(hook_name)`` 使用（hook 内传入的 ``name`` 须与 YAML ``name`` 一致）。
+      ``runtime.llm(hook_name)`` 使用（hook 内须使用与 YAML ``name`` 一致的键）。
+
+    内置短名与 Suite 前缀 hook 均支持 ``model:``；不再要求 ``name`` 出现在内置 registry。
 
     仅处理 **字典** 形式的 HOOK 项；YAML 里写 ``- pruner`` 字符串的项不会进入本函数，见
     :meth:`dataagent.core.flex.agent.FlexAgent._register_hooks_from_config`。
@@ -161,8 +163,6 @@ def _merge_hook_llm_configs(
         if not hook_name:
             raise ValueError("HOOKS: hook entry with 'model' must set 'name' (used as env.llm_configs key)")
 
-        if hook_name not in BUILTIN_HOOK_REGISTRY:
-            raise ValueError(f"HOOKS: unknown hook name {hook_name!r}. Built-in: {sorted(BUILTIN_HOOK_REGISTRY)}")
         if hook_name in llm_configs:
             raise ValueError(
                 f"HOOKS: hook name {hook_name!r} collides with existing llm_configs key "

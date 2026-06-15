@@ -1,0 +1,32 @@
+# =============================================================================
+# suite.yaml — Suite 包根目录元数据（整个 Suite 目录下唯一必填文件）
+# =============================================================================
+# 放置位置：<suite_root>/suite.yaml
+# 激活条件：用户 YAML 的 SUITE.include 列出本 name，且 enabled 为 true（或被用户目录同名覆盖）。
+# =============================================================================
+
+# 【必填】Suite 全局唯一标识；须为合法 Python 标识符（用作 Hook 合并后的 import 前缀
+name: ecommerce_suite
+
+# 【选填】语义化版本；预留版本管理功能
+version: "0.1.0"
+
+# 【选填】展示名称
+display_name: "电商场景suite"
+
+# 【选填】说明文本
+description: >
+  将电商场景下的数据分析和决策支持能力集成到Agent中，包括数据分析、市场趋势预测、客户行为分析等。
+
+# 【选填】合并优先级，数值越大越优先（默认 0）；同 priority 按 name 字母序决定 list 顺序
+priority: 50
+
+# 【选填】是否与 SUITE.include 共同决定激活；内置模板上库前建议 false，本地验证可 true
+enabled: true
+
+# 【选填】依赖的其他 Suite name 列表；被依赖 Suite 须已激活，本期不校验 version 字段
+# 示例：requires: [{name: base_suite, version: ">=1.0.0"}]
+requires: []
+
+# 【选填】互斥 Suite name 列表；与其中任一同时激活则 reload 报错
+conflicts: []

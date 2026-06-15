@@ -31,7 +31,7 @@ class TestBuiltinSkillDirectoryDiscovery:
         )
 
         tm = ToolManager()
-        skills, names = tm._discover_skills_from_root(root=tmp_path, allowlist=None)
+        skills, names = tm.discover_skills_from_root(root=tmp_path, allowlist=None)
         assert len(skills) == 1
         assert skills[0]["name"] == "test_skill"
         assert skills[0]["description"] == "A test skill"
@@ -53,7 +53,7 @@ class TestBuiltinSkillDirectoryDiscovery:
         )
 
         tm = ToolManager()
-        skills, names = tm._discover_skills_from_root(root=tmp_path, allowlist={"skill_a"})
+        skills, names = tm.discover_skills_from_root(root=tmp_path, allowlist={"skill_a"})
         assert len(skills) == 1
         assert skills[0]["name"] == "skill_a"
         # NOTE: The current implementation adds names before allowlist filtering,

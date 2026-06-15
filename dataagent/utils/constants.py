@@ -93,6 +93,16 @@ DEFAULT_BASH_TIMEOUT: int = 600
 DEFAULT_SUBAGENT_TOOL_TIMEOUT: int = 3600
 """子 Agent 工具调用的默认超时（秒）。"""
 
+SUBAGENT_TOOL_CATALOG_HEADER: str = "可选的 config_path 及用途："
+"""``sub_agent_tool`` 工具说明中 worker 目录段标题（由 ``SUBAGENT_CONFIGS`` 动态生成列表）。"""
+
+SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
+调用时请在参数中显式传入 config_path 为上述绝对路径之一，并严格遵循工具的参数要求，例如：
+- query: "What is 5 + 3 * 2"
+- config_path: "/abs/path/to/subagent.yaml"
+"""
+"""``sub_agent_tool`` 固定调用说明（硬编码，不放入 ``SUBAGENT_CONFIGS``）。"""
+
 MAX_WORKER_METADATA_ARTIFACTS: int = 50
 """Worker ``metadata.json`` 中 ``artifacts`` 路径列表最大条数。
 

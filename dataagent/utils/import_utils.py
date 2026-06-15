@@ -17,7 +17,10 @@ Import Utilities
 Utilities for dynamic importing of classes and modules from string paths.
 """
 
+import hashlib
 import importlib
+import importlib.util
+from pathlib import Path
 from typing import Any
 
 
@@ -152,3 +155,61 @@ def import_callable_from_spec(spec: str) -> Any:
         ValueError, ImportError, AttributeError, TypeError: Same as :func:`import_callable`.
     """
     return import_callable(spec)
+
+
+def import_callable_from_suite_root(relative_spec: str, *, root: Path, suite_name: str) -> Any:
+    """
+    Import a Suite hook callable from a dotted path relative to ``root``.
+
+    Loads the target ``.py`` file via :func:`importlib.util.spec_from_file_location` with a
+    Suite-scoped module name so multiple Suites can share the same relative path (e.g.
+    ``hooks.custom_hooks``) without ``sys.path`` or ``sys.modules`` collisions.
+
+    Suite hook modules must not rely on package-relative imports (``from .common import`` or
+    ``from hooks.common import``). Use absolute imports (e.g. ``dataagent.*``) or keep helpers
+    in the same file.
+
+    Args:
+        relative_spec: Relative ``module.path.callable`` under ``root`` (e.g.
+            ``hooks.custom_hooks.suite_example_pre``).
+        root: Resolved Suite root directory.
+        suite_name: Suite ``name`` from ``suite.yaml`` (used in the isolated module name).
+
+    Returns:
+        The resolved callable.
+
+    Raises:
+        ValueError: Invalid ``relative_spec`` format.
+        ImportError: Module file missing or load failed.
+        AttributeError, TypeError: Callable missing or not callable.
+    """
+    spec_text = str(relative_spec or "").strip()
+    if not spec_text:
+        raise ValueError("Suite hook spec must be non-empty")
+    parts = spec_text.rsplit(".", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Suite hook spec must be module.path.callable, got: {relative_spec!r}")
+
+    module_path, callable_name = parts
+    file_path = root / module_path.replace(".", "/")
+    if file_path.suffix != ".py":
+        file_path = file_path.with_suffix(".py")
+    if not file_path.is_file():
+        raise ImportError(f"Suite hook module file not found: {file_path}")
+
+    digest = hashlib.sha256(str(file_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    safe_suite = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in suite_name)
+    module_name = f"_dataagent_suite_{safe_suite}_{digest}"
+    module_spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if module_spec is None or module_spec.loader is None:
+        raise ImportError(f"Cannot create module spec for Suite hook file: {file_path}")
+
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    try:
+        imported_callable = getattr(module, callable_name)
+    except AttributeError as exc:
+        raise AttributeError(f"Suite hook module '{file_path}' has no attribute '{callable_name}'") from exc
+    if not callable(imported_callable):
+        raise TypeError(f"'{relative_spec}' is not callable")
+    return imported_callable
