@@ -28,6 +28,7 @@ class ValidatorNode(BaseNL2SQLNode):
         self.db_explain = kwargs.pop("db_explain", False)
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
+        self.select_only = kwargs.pop("select_only", True)
         self._value_match_client = None
 
     @property
@@ -114,7 +115,7 @@ class ValidatorNode(BaseNL2SQLNode):
             return []
         try:
             parsed = sqlglot.parse_one(sql, read=self.engine, error_level=sqlglot.errors.ErrorLevel.RAISE)
-            if not isinstance(parsed, sqlglot.exp.Select):
+            if self.select_only and not isinstance(parsed, sqlglot.exp.Select):
                 return ["Only SELECT statement is allowed."]
             return []
         except Exception as e:
