@@ -68,6 +68,7 @@ except ImportError:
 
 
 from dataagent.config import ConfigManager
+from dataagent.core.suite.debug_dump import format_settings_yaml, write_merged_config_to_dir
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.interface.sdk.loader import load_agent_from_config
 from dataagent.utils.log import logger
@@ -169,6 +170,48 @@ def run_config_check(config_path: str | Path, default_config_path: str | None = 
     if exit_code == 0:
         logger.info("配置诊断通过。")
     return exit_code
+
+
+def _resolve_default_config_path() -> str | None:
+    """Return the packaged default flex config path when present."""
+    candidate = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
+def run_config_dryrun(
+    config_path: str | Path,
+    *,
+    config_output: str | Path | None = None,
+) -> None:
+    """
+    Merge configuration via ``ConfigManager.reload`` and print the result without starting Agent.
+
+    Args:
+        config_path: User YAML configuration path.
+        config_output: Optional directory to write ``dataagent_config_<timestamp>.yaml``.
+
+    Raises:
+        Exception: Propagates ``reload()`` failures (same as normal Agent startup).
+    """
+    config_file = resolve_config_path(config_path)
+    default_config_path = _resolve_default_config_path()
+    config_manager = ConfigManager()
+    config_manager.reload(str(config_file), default_config_path=default_config_path)
+    if config_manager.get("AGENT_CONFIG.type") is None:
+        config_manager.set("AGENT_CONFIG.type", "react")
+
+    merged_yaml = format_settings_yaml(config_manager.get_all()).rstrip("\n")
+    logger.info("")
+    logger.opt(raw=True).info("{}\n", merged_yaml)
+
+    if config_output is not None:
+        written_path = write_merged_config_to_dir(
+            config_manager.get_all(),
+            output_dir=config_output,
+        )
+        logger.info("Wrote merged configuration to {}", written_path)
 
 
 def load_agent_from_config_path(config_path: str | Path) -> DataAgent:
@@ -606,6 +649,17 @@ def main():
         metavar="SESSION_ID",
         help="会话 ID：默认本进程内生成 时间戳+uuid；指定则固定该会话 ID（messages.json 默认续接）",
     )
+    parser.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="仅合并配置并输出 YAML，不启动 Agent（可与 --config_output 写盘）",
+    )
+    parser.add_argument(
+        "--config_output",
+        default=None,
+        metavar="DIR",
+        help="dryrun 模式下将合并 YAML 写入目录（文件名带 UTC 时间戳）；未指定则仅打印到终端",
+    )
     parser.add_argument("--version", "-v", action="version", version="DataAgent 0.1.0")
 
     args = parser.parse_args()
@@ -625,6 +679,13 @@ def main():
         if not args.config:
             parser.print_help()
             sys.exit(1)
+
+        if args.config_output and not args.dryrun:
+            logger.warning("--config_output is ignored without --dryrun")
+
+        if args.dryrun:
+            run_config_dryrun(args.config, config_output=args.config_output)
+            return
 
         asyncio.run(
             run_terminal_mode(
