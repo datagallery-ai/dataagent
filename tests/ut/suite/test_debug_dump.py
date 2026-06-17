@@ -26,8 +26,9 @@ def test_format_settings_yaml_inserts_blank_lines_between_top_level_keys() -> No
     assert "ACTOR_LOOP:" in text
     assert "POST_WORKFLOW:" in text
     assert "HOOKS:" in text
+    assert text.index("HOOKS:") < text.index("ACTOR_LOOP:")
+    assert "\n\nACTOR_LOOP:" in text
     assert "\n\nPOST_WORKFLOW:" in text
-    assert "\n\nHOOKS:" in text
 
 
 def test_dump_merged_config_writes_dataagent_config_file(tmp_path) -> None:

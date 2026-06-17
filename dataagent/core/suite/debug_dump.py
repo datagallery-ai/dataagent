@@ -22,10 +22,37 @@ from typing import Any
 import yaml
 from loguru import logger
 
+from dataagent.utils.constants import MERGED_CONFIG_TOP_LEVEL_KEY_ORDER
+
+
+def _iter_top_level_keys_for_display(settings: Mapping[str, Any]) -> list[str]:
+    """
+    Return top-level keys for YAML output: preferred order first, then remaining keys.
+
+    Args:
+        settings: Merged configuration mapping.
+
+    Returns:
+        Ordered key list for :func:`format_settings_yaml`.
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for key in MERGED_CONFIG_TOP_LEVEL_KEY_ORDER:
+        if key in settings:
+            ordered.append(key)
+            seen.add(key)
+    for key in settings:
+        if key not in seen:
+            ordered.append(key)
+    return ordered
+
 
 def format_settings_yaml(settings: Mapping[str, Any]) -> str:
     """
     Serialize settings with a blank line between each top-level configuration key.
+
+    Top-level sections are emitted in :data:`MERGED_CONFIG_TOP_LEVEL_KEY_ORDER` when present;
+    any other keys keep their original order from ``settings``.
 
     Args:
         settings: Merged configuration mapping.
@@ -34,9 +61,9 @@ def format_settings_yaml(settings: Mapping[str, Any]) -> str:
         YAML text suitable for writing to ``dataagent_config_*.yaml``.
     """
     parts: list[str] = []
-    for key, value in settings.items():
+    for key in _iter_top_level_keys_for_display(settings):
         chunk = yaml.safe_dump(
-            {key: value},
+            {key: settings[key]},
             allow_unicode=True,
             sort_keys=False,
             default_flow_style=False,
@@ -79,4 +106,34 @@ def dump_merged_config(
     with open(target, "w", encoding="utf-8") as handle:
         handle.write(format_settings_yaml(settings))
     logger.debug("Wrote runtime configuration dump to {}", target)
+    return target
+
+
+def write_merged_config_to_dir(
+    settings: Mapping[str, Any],
+    *,
+    output_dir: str | Path,
+) -> Path:
+    """
+    Write merged settings to ``<output_dir>/dataagent_config_<timestamp>.yaml``.
+
+    Args:
+        settings: Final merged configuration dict.
+        output_dir: Target directory; created when missing.
+
+    Returns:
+        Written file path.
+
+    Raises:
+        ValueError: ``output_dir`` exists but is not a directory.
+        OSError: Directory creation or file write failed.
+    """
+    directory = Path(output_dir).expanduser().resolve()
+    if directory.exists() and not directory.is_dir():
+        raise ValueError(f"--config_output must be a directory, got file: {directory}")
+    directory.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    target = directory / f"dataagent_config_{ts}.yaml"
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write(format_settings_yaml(settings))
     return target

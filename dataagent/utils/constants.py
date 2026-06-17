@@ -414,6 +414,37 @@ DEFAULT_MODE: str = "chat"
 """未指定时的默认运行模式。DataAgent 属性 setter 已可控制。"""
 
 
+# ── 合并配置 YAML 展示顺序 ───────────────────────────────────────────────────
+# 当前使用位置: dataagent/core/suite/debug_dump.py（``format_settings_yaml``）
+# 仅影响 dryrun / ``.runtime`` dump 等序列化输出顺序，不影响 ``merge_layers`` / ``reload`` 语义。
+
+MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
+    "AGENT_CONFIG",
+    "MODEL",
+    "WORKSPACE",
+    "SCENARIO",
+    "TOOLS",
+    "HOOKS",
+    "SUBAGENT_CONFIGS",
+    "ACTOR_LOOP",
+    "PRE_WORKFLOW",
+    "POST_WORKFLOW",
+    "USER_ID",
+    "ENV",
+    "MEMORY",
+    "DATASOURCE",
+    "DATABASE",
+    "CORE",
+    "METAVISOR",
+    "ONTOLOGY",
+    "SWARM",
+    "CONTEXT",
+    "CROSS_SESSION_RECALL",
+    "BASH_TOOL_WHITELIST",
+)
+"""合并后 Agent 配置 YAML 的顶层段推荐输出顺序；未列出的 key 保持 ``settings`` 原有顺序追加在末尾。"""
+
+
 # ── Context Trajectory TodoList ──────────────────────────────────────────────
 # 当前定义位置: dataagent/core/context/todolist_manager.py, context_trajectory.py
 
