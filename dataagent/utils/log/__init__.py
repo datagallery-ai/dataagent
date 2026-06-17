@@ -45,6 +45,7 @@ _log_file_level = get_env("DATAAGENT_LOG_FILE_LEVEL", default="TRACE")
 _log_file = get_env("DATAAGENT_LOG_FILE")  # 未设置时自动落到默认会话日志路径
 _log_console_raw = get_env("DATAAGENT_LOG_CONSOLE", default="true")
 _log_console = (_log_console_raw or "true").lower() == "true"
+_log_process_name = get_env("DATAAGENT_LOG_PROCESS_NAME") or "main"
 
 # 初始化全局日志 - 默认控制台 + 会话日志文件
 init_logger(
@@ -53,10 +54,11 @@ init_logger(
         file_level=_log_file_level or "TRACE",
         file_path=_log_file,
         console=_log_console,
+        process_name=_log_process_name,
         rotation="100 MB",
         retention="7 days",
         file_path_explicit=_log_file is not None,
     )
 )
 
-logger = get_logger()
+logger = get_logger(_log_process_name)
