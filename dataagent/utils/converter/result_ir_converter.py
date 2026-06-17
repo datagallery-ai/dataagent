@@ -626,8 +626,16 @@ class ResultIRConverter:
         workspace: Path | None,
         knowledge_min_length: int = DEFAULT_IR_KNOWLEDGE_MIN_LENGTH,
     ) -> list[str]:
-        """长文本兜底：将工具结果落盘到 workspace 文件，创建 FileNode。"""
+        """长文本兜底：将工具结果落盘到 workspace 文件，创建 FileNode。
+
+        阈值检测与 _build_tool_message 一致：优先使用 result 中的 original_msg
+        （模型实际可见的文本），没有则回退到 _result_to_text(result)。
+        """
         text = _result_to_text(result)
+        if isinstance(result, dict):
+            original_msg = result.get("original_msg")
+            if isinstance(original_msg, str) and original_msg:
+                text = original_msg
         if len(text) < knowledge_min_length:
             return []
 
