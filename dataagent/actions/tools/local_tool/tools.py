@@ -76,7 +76,7 @@ from dataagent.utils.constants import (
 )
 from dataagent.utils.fix_md_image_path import fix_markdown_image_paths, load_images_as_json
 from dataagent.utils.formatting_utils import get_available_chinese_font
-from dataagent.utils.runtime_paths import dataagent_package_root
+from dataagent.utils.runtime_paths import dataagent_package_root, resolve_user_root
 
 _subagent_runtime_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "subagent_runtime_context",
@@ -1315,6 +1315,12 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
             next_run_id=next_run_id,
         )
         env = dict(os.environ)
+        sub_agent_session_id = f"subagent_{resolved_session_id}_{worker_sub_id}"
+        sub_agent_log_path = (
+            resolve_user_root(user_id=resolved_user_id) / "logs" / f"{sub_agent_session_id}_{worker_sub_id}.log"
+        ).resolve()
+        env["DATAAGENT_LOG_FILE"] = str(sub_agent_log_path)
+        env["DATAAGENT_LOG_PROCESS_NAME"] = "subagent"
         cmd = [
             sys.executable,
             "-m",

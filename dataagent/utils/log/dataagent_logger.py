@@ -284,7 +284,7 @@ def init_logger(config: LoggerConfig | None = None) -> None:
     """初始化全局日志器的便捷函数"""
     global logger
     _dataagent_logger.init_logger(config)
-    logger = _dataagent_logger.get_logger()
+    logger = _dataagent_logger.get_logger(config.process_name if config else None)
 
 
 def get_logger(process_name: str | None = None):

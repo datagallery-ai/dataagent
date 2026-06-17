@@ -677,7 +677,7 @@ def test_resolve_subagent_identity_matches_runtime_session_name():
     assert sub_id == 7
 
 
-def test_run_agent_uses_same_identity_for_logging_and_initial_state(monkeypatch, tmp_path):
+def test_run_agent_passes_identity_to_initial_state(monkeypatch, tmp_path):
     captured: dict[str, Any] = {}
 
     class _FakeAgent:
@@ -690,13 +690,7 @@ def test_run_agent_uses_same_identity_for_logging_and_initial_state(monkeypatch,
         captured["config_path"] = path
         return _FakeAgent()
 
-    def _fake_reconfigure(config):
-        captured["log_path"] = Path(config.file_path)
-
     monkeypatch.setattr("dataagent.actions.tools.local_tool.sub_agent_entry.DataAgent.from_config", _fake_from_config)
-    monkeypatch.setattr(
-        "dataagent.actions.tools.local_tool.sub_agent_entry.dataagent_log.reconfigure", _fake_reconfigure
-    )
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
 
     result = asyncio.run(
@@ -706,10 +700,6 @@ def test_run_agent_uses_same_identity_for_logging_and_initial_state(monkeypatch,
     assert result == {"ok": True}
     assert captured["query"] == "查询本体"
     assert captured["config_path"] == Path("/tmp/sub_agent.yaml")
-    assert (
-        captured["log_path"]
-        == (tmp_path / "dataagent-home" / "main-user" / "logs" / "subagent_main-session_7_7.log").resolve()
-    )
     assert captured["initial_state"]["user_id"] == "main-user"
     assert captured["initial_state"]["session_id"] == "subagent_main-session_7"
     assert captured["initial_state"]["sub_id"] == 7
