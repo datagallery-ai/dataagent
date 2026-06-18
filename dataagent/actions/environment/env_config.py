@@ -10,6 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+from __future__ import annotations
+
+import inspect
 from typing import Any
 
 from dataagent.actions.environment.compound_env import CompoundEnv
@@ -17,7 +20,11 @@ from dataagent.actions.environment.env import Env
 from dataagent.utils.import_utils import import_class
 
 
-def from_config(config: list[dict[str, Any]] | dict[str, Any]) -> Env:
+def from_config(
+    config: list[dict[str, Any]] | dict[str, Any],
+    *,
+    config_manager: Any | None = None,
+) -> Env:
     """
     Create an Env instance from configuration.
 
@@ -26,6 +33,8 @@ def from_config(config: list[dict[str, Any]] | dict[str, Any]) -> Env:
                 Each dict must contain a "module" field specifying the Env subclass
                 to instantiate (e.g., "mypackage.envs.MyEnv").
                 Other fields in the dict are passed as keyword arguments to __init__.
+        config_manager: Optional per-Agent ConfigManager injected into Env classes
+            whose ``__init__`` accepts a ``config_manager`` parameter.
 
     Returns:
         An Env instance. If config is a list, returns a CompoundEnv.
@@ -55,20 +64,30 @@ def from_config(config: list[dict[str, Any]] | dict[str, Any]) -> Env:
         if not config:
             raise ValueError("Configuration list cannot be empty")
 
-        envs = [_create_single_env(env_config) for env_config in config]
+        envs = [_create_single_env(env_config, config_manager=config_manager) for env_config in config]
         return CompoundEnv(envs)
     if isinstance(config, dict):
         # Create a single environment
-        return _create_single_env(config)
+        return _create_single_env(config, config_manager=config_manager)
     raise ValueError(f"Configuration must be a dict or list of dicts, got {type(config)}")
 
 
-def _create_single_env(config: dict[str, Any]) -> Env:
+def _accepts_config_manager(env_class: type) -> bool:
+    """Return True when ``env_class.__init__`` declares a ``config_manager`` parameter."""
+    try:
+        signature = inspect.signature(env_class.__init__)
+    except (TypeError, ValueError):
+        return False
+    return "config_manager" in signature.parameters
+
+
+def _create_single_env(config: dict[str, Any], *, config_manager: Any | None = None) -> Env:
     """
     Create a single Env instance from a configuration dict.
 
     Args:
         config: Configuration dict with "module" field and optional init parameters
+        config_manager: Optional per-Agent ConfigManager to inject when supported
 
     Returns:
         An Env instance
@@ -93,6 +112,8 @@ def _create_single_env(config: dict[str, Any]) -> Env:
 
     # Extract init parameters (everything except "module")
     init_params = {k: v for k, v in config.items() if k != "module"}
+    if config_manager is not None and "config_manager" not in init_params and _accepts_config_manager(env_class):
+        init_params["config_manager"] = config_manager
 
     # Instantiate the environment
     try:
