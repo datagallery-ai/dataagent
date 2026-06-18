@@ -324,7 +324,7 @@ class FlexAgent(BaseAgent):
         # Initialize environment
         if config and config.get("ENV"):
             try:
-                env = env_from_config(config.get("ENV"))
+                env = env_from_config(config.get("ENV"), config_manager=config_manager)
                 env.init()
             except Exception as e:
                 logger.error(f"Failed to initialize environment: {e}")
@@ -518,7 +518,7 @@ class FlexAgent(BaseAgent):
 
         self.config.update({"ENV": env_config})
 
-        env = env_from_config(env_config)
+        env = env_from_config(env_config, config_manager=self.config_manager)
         env.init()
         self.env = env
 
