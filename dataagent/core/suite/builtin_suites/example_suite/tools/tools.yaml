@@ -25,6 +25,11 @@ TOOLS:
       # hooks:
       #   pre: []
       #   post: []
+    - module: "dataagent.core.suite.builtin_suites.example_suite.tools.example_tool"
+      function: "read_suite_doc"
+      name: "example_suite_read_doc"
+      config:
+        suite_name: "example_suite"
 
   # 【选填】MCP Server 列表
   mcp_servers:

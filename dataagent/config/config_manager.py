@@ -322,6 +322,27 @@ class ConfigManager:
 
             return value
 
+    def get_activated_suite_root(self, suite_name: str) -> Path:
+        """
+        Return the absolute root directory for one activated Suite.
+
+        Args:
+            suite_name: ``name`` from ``suite.yaml`` (e.g. ``ecommerce_suite``).
+
+        Returns:
+            Resolved absolute Suite root directory.
+
+        Raises:
+            ValueError: ``suite_name`` is empty, or the Suite is not activated.
+        """
+        from dataagent.core.suite.activated_suites import resolve_activated_suite_root
+
+        with self._lock:
+            return resolve_activated_suite_root(
+                suite_name,
+                activated_suites=self.activated_suites,
+            )
+
     def update(self, new_config: dict[str, Any]):
         """
         update config

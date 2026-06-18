@@ -58,3 +58,56 @@ def test_prompts_unknown_actor_loop_node_raises(tmp_path: Path) -> None:
     suite = _suite_record(suite_root, name="prompt_suite")
     with pytest.raises(ValueError, match="unknown ACTOR_LOOP nodes"):
         build_suite_layers([suite], default_actor_nodes={"executor"})
+
+
+def test_hooks_layer_prefixes_suite_local_specs(tmp_path: Path) -> None:
+    """Suite-local hook paths must receive a ``{suite_name}.`` merge prefix."""
+    suite_root = tmp_path / "local_hooks_suite"
+    hooks_dir = suite_root / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (suite_root / "suite.yaml").write_text(yaml.safe_dump({"name": "local_hooks_suite"}), encoding="utf-8")
+    (hooks_dir / "hooks.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "HOOKS": {
+                    "agent": {
+                        "post": ["hooks.custom_hooks.organize_workspace"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    suite = SuiteRecord(name="local_hooks_suite", root=suite_root, priority=0, enabled=True, meta={})
+    layers, _unknown = build_suite_layers([suite], default_actor_nodes={"planner", "executor"})
+    assert layers[0]["HOOKS"]["agent"]["post"] == ["local_hooks_suite.hooks.custom_hooks.organize_workspace"]
+
+
+def test_hooks_layer_skips_prefix_for_framework_specs(tmp_path: Path) -> None:
+    """Framework hook paths starting with ``dataagent.`` must not receive a suite prefix."""
+    framework_hook = "dataagent.core.flex.hooks.organize_workspace.organize_workspace"
+    suite_root = tmp_path / "framework_hooks_suite"
+    hooks_dir = suite_root / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (suite_root / "suite.yaml").write_text(yaml.safe_dump({"name": "framework_hooks_suite"}), encoding="utf-8")
+    (hooks_dir / "hooks.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "HOOKS": {
+                    "agent": {
+                        "post": [
+                            framework_hook,
+                            {"name": framework_hook, "model": "chat_model"},
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    suite = SuiteRecord(name="framework_hooks_suite", root=suite_root, priority=0, enabled=True, meta={})
+    layers, _unknown = build_suite_layers([suite], default_actor_nodes={"planner", "executor"})
+    post_hooks = layers[0]["HOOKS"]["agent"]["post"]
+    assert post_hooks[0] == framework_hook
+    assert post_hooks[1]["name"] == framework_hook
+    assert post_hooks[1]["model"] == "chat_model"
