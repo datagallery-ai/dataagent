@@ -71,6 +71,11 @@ AGENT_CONFIG:
 # 与 AGENT_CONFIG.enable_human_feedback 等效，ToolManager 也会读顶层键
 # enable_human_feedback: false
 
+# 启用 suite功能，并激活 example_suite
+SUITE:
+  include:
+    - example_suite
+
 # ── 运行模式（通常由 DataAgent.select_engine 注入，一般无需手写） ─────────────
 # 决定 SCENARIO 下取哪一段 instructions。
 # mode: "chat"

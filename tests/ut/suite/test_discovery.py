@@ -81,6 +81,29 @@ def test_discover_skips_suite_with_builtin_hook_short_name(tmp_path: Path, monke
     assert "bad_hooks_suite" not in index
 
 
+def test_discover_accepts_suite_with_framework_hook_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scan must accept Suite hooks.yaml entries that reference framework ``dataagent.*`` paths."""
+    home = tmp_path / "dataagent_home"
+    root = home / "suites" / "framework_hook_suite"
+    hooks_dir = root / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (root / "suite.yaml").write_text(
+        yaml.safe_dump({"name": "framework_hook_suite", "enabled": True}, sort_keys=False),
+        encoding="utf-8",
+    )
+    hooks_doc = {
+        "HOOKS": {
+            "agent": {
+                "post": ["dataagent.core.flex.hooks.organize_workspace.organize_workspace"],
+            }
+        }
+    }
+    (hooks_dir / "hooks.yaml").write_text(yaml.safe_dump(hooks_doc), encoding="utf-8")
+    monkeypatch.setenv("DATAAGENT_HOME", str(home))
+    index = discover_suite_index()
+    assert "framework_hook_suite" in index
+
+
 def test_discover_skips_suite_with_invalid_dotted_hook_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Scan must reject hook specs that are not module.path.callable."""
     _install_invalid_hooks_suite(tmp_path, monkeypatch, hook_spec="hooks.bad")

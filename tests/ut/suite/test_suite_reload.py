@@ -216,6 +216,23 @@ def test_reload_partial_hooks_without_suite_succeeds(tmp_path: Path) -> None:
     assert planner_pre == [{"name": "pruner"}]
 
 
+def test_reload_suite_framework_hook_keeps_dataagent_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Suite ``dataagent.*`` hook specs must merge without a ``{suite_name}.`` prefix."""
+    framework_hook = "dataagent.core.flex.hooks.organize_workspace.organize_workspace"
+    _install_minimal_suite(
+        tmp_path,
+        monkeypatch,
+        name="framework_hook_suite",
+        hooks_pre=framework_hook,
+    )
+    user_path = _write_reload_user_config(tmp_path, include=["framework_hook_suite"])
+    cm = ConfigManager()
+    cm.reload(str(user_path), str(DEFAULT_CONFIG))
+    specs = _collect_hook_specs(cm.settings.get("HOOKS", {}))
+    assert framework_hook in specs
+    assert "framework_hook_suite.dataagent.core.flex.hooks.organize_workspace.organize_workspace" not in specs
+
+
 def test_reload_failure_preserves_previous_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Failed reload must not mutate committed settings, activated_suites, or config_path."""
     import copy

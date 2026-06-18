@@ -12,6 +12,7 @@
 # ============================================================================
 """Agent configuration Suite: discovery, merge, and validation."""
 
+from dataagent.core.suite.activated_suites import resolve_activated_suite_root
 from dataagent.core.suite.activation import activate_suites, order_suites_for_merge
 from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
 from dataagent.core.suite.discovery import discover_suite_index, scan_suite_paths
@@ -20,6 +21,7 @@ from dataagent.core.suite.suite_layer import build_suite_layers
 from dataagent.core.suite.validation import validate_merged_config, validate_unique_skill_names
 
 __all__ = [
+    "resolve_activated_suite_root",
     "effective_workspace_allow_paths",
     "activate_suites",
     "order_suites_for_merge",

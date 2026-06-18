@@ -112,8 +112,18 @@ def _load_tools_layer(root: Path) -> dict[str, Any]:
     return dict(tools) if isinstance(tools, Mapping) else {}
 
 
+def _is_framework_hook_spec(spec: str) -> bool:
+    """
+    Return whether a Suite hook spec references a framework callable by absolute path.
+
+    Framework paths (``dataagent.*``) are merged without a ``{suite_name}.`` prefix so
+    runtime resolution reuses ``resolve_builtin_hook`` like user YAML entries.
+    """
+    return str(spec or "").strip().startswith("dataagent.")
+
+
 def _load_hooks_layer(root: Path, *, suite_name: str) -> dict[str, Any]:
-    """Load hooks and prefix callable paths with ``{suite_name}.``."""
+    """Load hooks and prefix suite-local callable paths with ``{suite_name}.``."""
     hooks_yaml = root / "hooks" / "hooks.yaml"
     if not hooks_yaml.is_file():
         return {}
@@ -141,16 +151,22 @@ def _prefix_hooks_dict(hooks: Mapping[str, Any], *, suite_name: str) -> dict[str
 
 
 def _prefix_hook_item(item: Any, *, suite_name: str) -> Any:
-    """Prefix one hook list entry with the Suite name."""
+    """
+    Prefix one hook list entry with the Suite name.
+
+    Suite-local specs (e.g. ``hooks.custom_hooks.audit_pre``) become
+    ``{suite_name}.hooks.custom_hooks.audit_pre``. Framework specs starting with
+    ``dataagent.`` are left unchanged.
+    """
     if isinstance(item, str):
         rel = item.strip()
-        if rel.startswith(f"{suite_name}."):
+        if rel.startswith(f"{suite_name}.") or _is_framework_hook_spec(rel):
             return rel
         return f"{suite_name}.{rel}"
     if isinstance(item, Mapping):
         patched = dict(item)
         raw_name = str(patched.get("name") or "").strip()
-        if raw_name and not raw_name.startswith(f"{suite_name}."):
+        if raw_name and not raw_name.startswith(f"{suite_name}.") and not _is_framework_hook_spec(raw_name):
             patched["name"] = f"{suite_name}.{raw_name}"
         return patched
     return item

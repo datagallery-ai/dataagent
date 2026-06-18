@@ -26,8 +26,8 @@ description: >
 # 【选填】合并优先级，数值越大越优先（默认 0）；同 priority 按 name 字母序决定 list 顺序
 priority: 50
 
-# 【选填】是否与 SUITE.include 共同决定激活；内置模板上库前建议 false，本地验证可 true
-enabled: true
+# 【选填】是否与 SUITE.include 共同决定激活
+enabled: false
 
 # 【选填】依赖的其他 Suite name 列表；被依赖 Suite 须已激活，本期不校验 version 字段
 # 示例：requires: [{name: base_suite, version: ">=1.0.0"}]

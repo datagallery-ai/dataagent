@@ -119,6 +119,15 @@ def test_resolve_hook_callable_loads_example_suite_hook() -> None:
     BaseAgent._validate_hook(fn, "nodes.planner.pre")
 
 
+def test_resolve_hook_callable_loads_framework_hook_from_suite_merge() -> None:
+    """Merged Suite ``dataagent.*`` hook specs must resolve via ``resolve_builtin_hook``."""
+    framework_hook = "dataagent.core.flex.hooks.organize_workspace.organize_workspace"
+    agent = object.__new__(FlexAgent)
+    agent.config_manager = type("_CM", (), {"activated_suites": []})()
+    fn = agent._resolve_hook_callable(framework_hook, location="agent.post")
+    BaseAgent._validate_hook(fn, "agent.post")
+
+
 def test_suite_hook_relative_import_fails(tmp_path) -> None:
     """Package-relative imports inside Suite hook files are not supported."""
     root = tmp_path / "rel_import_suite"
