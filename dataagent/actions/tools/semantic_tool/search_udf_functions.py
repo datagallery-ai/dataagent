@@ -62,7 +62,7 @@ def search_udf_function_by_name_keyword(
         return _fmt(
             "未提供 UDF 名称关键字。",
             "没有输入 UDF 名称关键字，请提供搜索关键字",
-            {"udf_name_keyword": udf_name_keyword, "entities": [], "approximateCount": 0},
+            {"udf_name_keyword": udf_name_keyword, "entities": []},
         )
 
     if attributes is None:
@@ -87,7 +87,6 @@ def search_udf_function_by_name_keyword(
     )
 
     entities = result_json.get("entities", [])
-    approximate_count = result_json.get("approximateCount", 0)
 
     # 生成 summary 并保存结果
     summary, workspace_path, output_path = _save_basic_search_results(keywords, result_json)
@@ -114,7 +113,6 @@ def search_udf_function_by_name_keyword(
         summary,
         {
             "entities": entities,
-            "approximateCount": approximate_count,
         },
     )
 
@@ -193,7 +191,6 @@ def search_udf_function_by_dsl(
         summary,
         {
             "entities": enriched_entities,
-            "approximateCount": len(enriched_entities),
         },
     )
 
@@ -250,8 +247,7 @@ def _save_basic_search_results(keywords: list, result_json: dict) -> tuple[str, 
         tuple[str, Any, Any]: 前端摘要、工作空间路径、输出目录路径。
     """
     entities = result_json.get("entities", [])
-    approximate_count = result_json.get("approximateCount", 0)
-    summary = _generate_basic_search_summary(keywords, entities, approximate_count)
+    summary = _generate_basic_search_summary(keywords, entities)
 
     workspace_path, output_path, current_time = _prepare_udf_output_dir(".udf_basic_dir", "udf_basic")
 
@@ -431,23 +427,19 @@ def _prepare_udf_output_dir(dir_name: str, log_name: str) -> tuple[Any, Any, str
     return workspace_path, output_path, current_time
 
 
-def _generate_basic_search_summary(keywords: list, entities: list, approximate_count: int) -> str:
+def _generate_basic_search_summary(keywords: list, entities: list) -> str:
     """
     生成 UDF basic search 的前端摘要文本。
 
     Args:
         keywords: 标准化后的搜索关键字列表。
         entities: basic search 返回的实体列表。
-        approximate_count: basic search 返回的近似匹配总数。
 
     Returns:
         str: 前端摘要文本。
     """
     qualified_names = [entity.get("attributes", {}).get("qualified_name", "") for entity in entities]
-    return (
-        f"根据关键字 {keywords} 搜索 UDF 函数，"
-        f"共找到 {approximate_count} 个匹配结果，返回 {len(entities)} 个 UDF 函数实体：{qualified_names}"
-    )
+    return f"根据关键字 {keywords} 搜索 UDF 函数，共返回 {len(entities)} 个 UDF 函数实体：{qualified_names}"
 
 
 def _generate_dsl_search_summary(attribute_name: str, attribute_value: str, enriched_entities: list) -> str:
