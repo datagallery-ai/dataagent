@@ -318,7 +318,7 @@ CORE:
   selector:
     threshold: 0.9
 
-# ── 元数据增强（ChatBI / NL2SQL，可选） ─────────────────────────────────────
+# ── 元数据增强（NL2SQL，可选） ──────────────────────────────────────────────
 METAVISOR:
   url: "127.0.0.1:31000"        # 格式 host:port
   metavisor_url: "http://127.0.0.1:41000"  # NL2SQL perceptor 实际读取的 URL

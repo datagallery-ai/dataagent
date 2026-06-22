@@ -10,18 +10,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import copy
 import shutil
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 
 from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
 
-if TYPE_CHECKING:
-    from dataagent.interface.sdk.agent import DataAgent
+_AGENT_PRESET_PATHS = {
+    "deep_analyze": ("core", "flex", "examples", "deep_analyze.yaml"),
+}
+
+
+def _require_supported_agent_type(agent_type: Any, *, source: str | Path) -> str:
+    """Return a builder preset name or raise a configuration error."""
+    if not isinstance(agent_type, str):
+        raise ValueError(
+            f"Failed to resolve `agent_type` from config: {source}. "
+            "Please ensure `AGENT_CONFIG.agent_type` is a string."
+        )
+    if agent_type not in _AGENT_PRESET_PATHS:
+        supported_values = ", ".join(sorted(_AGENT_PRESET_PATHS))
+        raise ValueError(
+            f"Unsupported `agent_type`: {agent_type!r} from config: {source}. Supported values are: {supported_values}."
+        )
+    return agent_type
 
 
 def get_agent_type(config: Any, *, source: str | Path) -> str:
@@ -33,40 +48,28 @@ def get_agent_type(config: Any, *, source: str | Path) -> str:
         raise ValueError(
             f"Failed to resolve `agent_type` from config: {source}. Please ensure `AGENT_CONFIG.agent_type` exists."
         ) from None
-    if not isinstance(agent_type, str):
-        raise ValueError(
-            f"Failed to resolve `agent_type` from config: {source}. "
-            "Please ensure `AGENT_CONFIG.agent_type` is a string."
-        )
-    return agent_type
+    return _require_supported_agent_type(agent_type, source=source)
 
 
-def create_instance_by_agent_type(*, agent_type: str, config_path: str | Path) -> "DataAgent":
-    """根据 agent_type 创建对应的 Agent。"""
-    # config_path 为临时 YAML 文件路径，待整合预制 Agent 的默认 YAML 配置后，后续 from_config 使用该路径加载。
-    if agent_type == "data_analyze":
-        from dataagent.interface.sdk.agent import DataAgent
-
-        return DataAgent.from_config(config=config_path)
-    raise ValueError(
-        f"Unsupported `agent_type`: {agent_type!r} from config: {config_path}. Supported values are: data_analyze."
-    )
-
-
-def resolve_example_yaml_path(*, agent_type: str) -> Path | None:
+def resolve_example_yaml_path(*, agent_type: str) -> Path:
     """按 agent_type 返回预制 Agent 示例 YAML 的源路径。"""
-    if agent_type == "deep_analyze":
-        return dataagent_package_path("core", "flex", "examples", "deep_analyze.yaml")
-    return None
+    agent_type = _require_supported_agent_type(agent_type, source="agent_type")
+    return dataagent_package_path(*_AGENT_PRESET_PATHS[agent_type])
 
 
-def get_original_yaml_path(*, agent_type: str, output_dir: Path) -> Path | None:
+def _output_path(output_dir: Path, filename: str) -> Path:
+    output_dir = output_dir.resolve()
+    path = (output_dir / filename).resolve()
+    if not path.is_relative_to(output_dir):
+        raise ValueError(f"Builder output path escapes the output directory: {filename!r}.")
+    return path
+
+
+def get_original_yaml_path(*, agent_type: str, output_dir: Path) -> Path:
     """按 agent_type 生成 original YAML 文件并返回路径。"""
     example_config_path = resolve_example_yaml_path(agent_type=agent_type)
-    if example_config_path is None:
-        return None
 
-    original_yaml_path = output_dir / f"original_{agent_type}_config.yaml"
+    original_yaml_path = _output_path(output_dir, f"original_{agent_type}_config.yaml")
     if original_yaml_path.exists():
         with suppress(OSError):
             original_yaml_path.unlink()
@@ -76,7 +79,7 @@ def get_original_yaml_path(*, agent_type: str, output_dir: Path) -> Path | None:
 
 def write_temp_yaml_path(*, agent_type: str, config_dict: dict, output_dir: Path) -> Path:
     """生成 temp YAML 文件并返回路径。"""
-    temp_yaml_path = output_dir / f"temp_{agent_type}_config.yaml"
+    temp_yaml_path = _output_path(output_dir, f"temp_{agent_type}_config.yaml")
     if temp_yaml_path.exists():
         with suppress(OSError):
             temp_yaml_path.unlink()
@@ -104,56 +107,6 @@ def merge_yaml_cfg_val(original_value: Any, new_value: Any) -> Any:
     if isinstance(original_value, list) and isinstance(new_value, list):
         return [*original_value, *new_value]
     return new_value
-
-
-def replace_chatbi_core_models_with_default_chat_model(
-    *,
-    original_config: dict[str, Any],
-    temp_config: dict[str, Any],
-) -> dict[str, Any]:
-    """chatbi 场景下，将 CORE 引用模型替换为 default_chat_model 配置。"""
-    model_cfg = temp_config.get("MODEL", {})
-    if model_cfg is None:
-        model_cfg = {}
-    if not isinstance(model_cfg, dict):
-        return temp_config
-    default_chat_model = model_cfg.get("default_chat_model")
-    if not isinstance(default_chat_model, dict):
-        return temp_config
-
-    core_cfg = original_config.get("CORE", {})
-    if core_cfg is None:
-        core_cfg = {}
-    if not isinstance(core_cfg, dict):
-        return temp_config
-    core_chat_model_names: set[str] = set()
-    for node_cfg in core_cfg.values():
-        if not isinstance(node_cfg, dict):
-            continue
-        chat_model_name = node_cfg.get("chat_model_name")
-        if not isinstance(chat_model_name, str):
-            continue
-        core_chat_model_names.add(chat_model_name)
-    if not core_chat_model_names:
-        return temp_config
-
-    original_model_cfg = original_config.get("MODEL", {})
-    if original_model_cfg is None:
-        original_model_cfg = {}
-    if not isinstance(original_model_cfg, dict):
-        return temp_config
-
-    replaced_model_cfg = dict(model_cfg)
-    for model_key, model_value in original_model_cfg.items():
-        if not isinstance(model_value, dict):
-            continue
-        model_name = model_value.get("name")
-        if model_name in core_chat_model_names:
-            replaced_model_cfg[model_key] = copy.deepcopy(default_chat_model)
-
-    updated_temp_config = dict(temp_config)
-    updated_temp_config["MODEL"] = replaced_model_cfg
-    return updated_temp_config
 
 
 def replace_set_scenario_fields_with_original_scenario(
@@ -215,17 +168,17 @@ def get_merge_yaml_path(
     *,
     agent_type: str,
     output_dir: Path,
-    original_yaml_path: Path | None,
+    original_yaml_path: Path,
     temp_yaml_path: Path,
 ) -> Path:
     """合并 original/temp YAML 文件，生成 merged YAML 并返回路径。"""
-    merged_yaml_path = output_dir / f"merged_{agent_type}_config.yaml"
+    merged_yaml_path = _output_path(output_dir, f"merged_{agent_type}_config.yaml")
     if merged_yaml_path.exists():
         with suppress(OSError):
             merged_yaml_path.unlink()
 
     original_config: Any = {}
-    if original_yaml_path is not None and original_yaml_path.exists():
+    if original_yaml_path.exists():
         with original_yaml_path.open("r", encoding="utf-8") as original_file:
             original_config = yaml.safe_load(original_file) or {}
 
@@ -287,6 +240,7 @@ def remove_sensitive_info_of_output_yamls(*, output_dir: Path) -> None:
 
 def get_final_yaml(*, agent_type: str, config_dict: dict) -> Path:
     """在 ``~/.dataagent/.builder/output`` 下生成 original/temp/merged YAML，并返回 merged 路径供加载。"""
+    agent_type = _require_supported_agent_type(agent_type, source="config_dict")
     output_dir = dataagent_home() / ".builder" / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
