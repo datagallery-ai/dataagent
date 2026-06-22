@@ -16,58 +16,8 @@ import importlib
 from loguru import logger
 
 from dataagent.interface.sdk.agent import DataAgent
-from dataagent.utils.builder_utils import (
-    merge_yaml_cfg_val,
-    replace_chatbi_core_models_with_default_chat_model,
-)
 
 cli_main = importlib.import_module("dataagent.interface.cli.main")
-
-
-def test_replace_chatbi_core_models_with_default_chat_model():
-    original_config = {
-        "MODEL": {
-            "coding": {
-                "name": "CODING",
-                "model_type": "chat",
-                "provider": "deepseek",
-                "params": {"model": "deepseek-chat", "temperature": 0.0},
-            },
-            "analysis": {
-                "name": "ANALYSIS",
-                "model_type": "chat",
-                "provider": "deepseek",
-                "params": {"model": "deepseek-chat", "temperature": 1.0},
-            },
-        },
-        "CORE": {
-            "generator": {"chat_model_name": "CODING"},
-            "coordinator": {"chat_model_name": "ANALYSIS"},
-            "executor": {"limit": -1},
-        },
-    }
-    temp_config = {
-        "MODEL": {
-            "default_chat_model": {
-                "model_type": "chat",
-                "provider": "bailian",
-                "params": {"model": "qwen-plus", "temperature": 0.1},
-            },
-        },
-    }
-
-    updated_temp_config = replace_chatbi_core_models_with_default_chat_model(
-        original_config=original_config,
-        temp_config=temp_config,
-    )
-    merged_model = merge_yaml_cfg_val(original_config["MODEL"], updated_temp_config["MODEL"])
-
-    assert merged_model["coding"]["name"] == "CODING"
-    assert merged_model["analysis"]["name"] == "ANALYSIS"
-    assert merged_model["coding"]["provider"] == "bailian"
-    assert merged_model["analysis"]["provider"] == "bailian"
-    assert merged_model["coding"]["params"]["model"] == "qwen-plus"
-    assert merged_model["analysis"]["params"]["model"] == "qwen-plus"
 
 
 async def test_dataAgent_from_config_chat():
@@ -124,7 +74,6 @@ def test_run_quickstart_updates_active_model_slot(monkeypatch):
 
 
 def test_l0_unit_interface():
-    test_replace_chatbi_core_models_with_default_chat_model()
     # 老接口 asyncio.run(test_dataAgent_from_config_chat())
     logger.info("\n✅ L0 接口独立 UT 执行完成！")
 

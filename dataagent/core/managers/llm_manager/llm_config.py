@@ -45,9 +45,10 @@ class LLMConfig:
         self.client_kwargs = client_kwargs.copy()
 
     def __repr__(self) -> str:
-        params_dict = self.to_dict()
-        params_str = ", ".join(f"{k}={repr(v)}" for k, v in params_dict.items())
-        return f"LLMConfig({params_str})"
+        return (
+            f"LLMConfig(name={self.name!r}, provider={self.provider!r}, "
+            f"model_type={self.model_type!r}, section={self.section!r})"
+        )
 
     def __str__(self) -> str:
         return self.__repr__()

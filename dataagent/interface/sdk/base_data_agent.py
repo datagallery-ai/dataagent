@@ -23,6 +23,8 @@ from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.framework_adapters.runtime.workflow import LangGraphWorkflow
 from dataagent.utils.log import logger
 
+_DATABASE_ENGINES_FOR_LOGGING = frozenset({"hive", "mysql", "postgres", "postgresql", "sqlite"})
+
 
 class BaseDataAgent:
     """L1 层 DataAgent 高码开发入口类
@@ -277,7 +279,6 @@ class BaseDataAgent:
             "config": config or {},
         }
 
-        logger.debug(f"✅ 数据库配置完成: engine={engine}, db_id={db_id}")
         return self
 
     def set_metavisor(
@@ -412,14 +413,21 @@ class BaseDataAgent:
         # 注册 METAVISOR 配置
         if self._metavisor_cfg:
             self._config_manager.set("METAVISOR", self._metavisor_cfg)
-            logger.debug(f"📝 已注册 METAVISOR 配置: {self._metavisor_cfg}")
+            logger.debug("📝 已注册 METAVISOR 配置: enabled={}", bool(self._metavisor_cfg.get("enable")))
 
         # 注册 ONTOLOGY 配置
         if self._ontology_cfg:
             self._config_manager.set("ONTOLOGY", self._ontology_cfg)
-            logger.debug(f"📝 已注册 ONTOLOGY 配置: {self._ontology_cfg}")
+            logger.debug("📝 已注册 ONTOLOGY 配置: enabled={}", bool(self._ontology_cfg.get("enable")))
 
         # 注册 DATABASE 配置
         if self._database_cfg:
             self._config_manager.set("DATABASE", self._database_cfg)
-            logger.debug(f"📝 已注册 DATABASE 配置: {self._database_cfg}")
+            engine = self._database_cfg.get("engine")
+            normalized_engine = str(engine).lower() if isinstance(engine, str) else ""
+            engine_for_log = normalized_engine if normalized_engine in _DATABASE_ENGINES_FOR_LOGGING else "other"
+            logger.debug(
+                "📝 已注册 DATABASE 配置: engine={}, has_config={}",
+                engine_for_log,
+                bool(self._database_cfg.get("config")),
+            )

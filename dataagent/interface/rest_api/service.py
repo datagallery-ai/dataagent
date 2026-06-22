@@ -19,6 +19,12 @@ from typing import Any
 from dataagent.interface.sdk.agent import DataAgent
 
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.DOTALL | re.IGNORECASE)
+_PUBLIC_ERROR_FIELD_TYPES = {
+    "code": str,
+    "http_status": int,
+    "component": str,
+    "retryable": bool,
+}
 
 
 class DataAgentService:
@@ -148,14 +154,15 @@ class DataAgentService:
         """Format final agent state for the REST API."""
 
         if not isinstance(state, dict):
-            return {"result": {"success": False, "message": str(state)}}
+            return self._format_error("Agent returned an invalid result")
         if isinstance(state.get("error"), dict):
             return self._normalize_error_payload(state["error"])
         if state.get("success") is False:
-            message = str(state.get("message") or state.get("error") or "Agent failed")
-            return self._make_error(message, state)
+            message = state.get("message")
+            message = message if isinstance(message, str) and message.strip() else "Agent failed"
+            return self._format_error(message)
         if state.get("error"):
-            return self._make_error(str(state["error"]), state)
+            return self._format_error("Agent failed")
 
         if self._agent_type() == "nl2sql":
             sql = str(state.get("sql") or "")
@@ -187,7 +194,7 @@ class DataAgentService:
             content = ""
 
         if not content:
-            return self._make_error("Agent returned an empty result", state)
+            return self._format_error("Agent returned an empty result")
         match = _ANSWER_TAG_RE.search(content)
         sql = match.group(1).strip() if match else ""
         payload = {
@@ -215,21 +222,17 @@ class DataAgentService:
             }
         }
 
-    def _make_error(self, message: str, detail: Any | None = None) -> dict[str, Any]:
-        """Format agent error payload with optional detail."""
-        payload = self._format_error(message)
-        if detail not in (None, ""):
-            payload["result"]["detail"] = detail
-        return payload
-
     def _normalize_error_payload(self, error: Any) -> dict[str, Any]:
         """Normalize agent stream error payloads."""
         if isinstance(error, dict):
-            if error.get("success") is False:
-                return {"result": error}
-            message = str(error.get("message") or error)
-            return self._make_error(message, error)
-        return self._make_error(str(error))
+            message = error.get("message")
+            payload = self._format_error(message if isinstance(message, str) else "Agent failed")
+            for field, expected_type in _PUBLIC_ERROR_FIELD_TYPES.items():
+                value = error.get(field)
+                if isinstance(value, expected_type) and not (expected_type is int and isinstance(value, bool)):
+                    payload["result"][field] = value
+            return payload
+        return self._format_error(str(error))
 
     def _agent_error_code(self) -> str:
         """Return the fallback agent error code."""

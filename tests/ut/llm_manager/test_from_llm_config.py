@@ -18,6 +18,25 @@ def _make_config(**params_overrides) -> LLMConfig:
     )
 
 
+def test_llm_config_string_representations_do_not_expose_client_params() -> None:
+    """repr/str must only expose safe LLM metadata."""
+    config = _make_config(
+        api_key="sk-sensitive-secret",
+        base_url="https://user:password@internal.example/v1",
+        headers={"Authorization": "Bearer private-token"},
+    )
+
+    expected = "LLMConfig(name='qwen3_coder', provider='qwen3_coder', model_type='chat', section='qwen3_coder')"
+    assert repr(config) == expected
+    assert str(config) == expected
+    assert "sk-sensitive-secret" not in repr(config)
+    assert "private-token" not in repr(config)
+    assert "internal.example" not in repr(config)
+
+    assert config.client_params()["api_key"] == "sk-sensitive-secret"
+    assert config.to_dict()["api_key"] == "sk-sensitive-secret"
+
+
 def test_from_llm_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-test")
