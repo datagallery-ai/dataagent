@@ -22,6 +22,7 @@ from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
 
 # ============================================================
 # 工具主函数
@@ -70,7 +71,7 @@ def search_udf_function_by_name_keyword(
 
     # 企业语义服务元数据 UDF 基础搜索 API 基础 URL 和认证
     base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = ("admin", "admin")
+    auth = get_metavisor_auth(_tool_context.config_manager)
 
     # 调用企业语义服务元数据 UDF 基础搜索 API
     supported_attributes = ["function_description", "prototype", "type", "category", "description", "name"]
@@ -149,7 +150,7 @@ def search_udf_function_by_dsl(
 
     # 企业语义服务元数据 UDF DSL 搜索 API 基础 URL 和认证
     base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = ("admin", "admin")
+    auth = get_metavisor_auth(_tool_context.config_manager)
 
     # 使用 DSL 搜索获取 UDF 函数的 guid
     dsl_result = _dsl_search(

@@ -322,6 +322,8 @@ CORE:
 METAVISOR:
   url: "127.0.0.1:31000"        # 格式 host:port
   metavisor_url: "http://127.0.0.1:41000"  # NL2SQL perceptor 实际读取的 URL
+  username: "example"             # 示例值，实际部署请覆盖
+  password: "123456"             # 示例值，实际部署请覆盖
   scene: "ecommerce_prod"
   valuematch_enabled: false
   valuematch_url: "http://127.0.0.1:8000"
