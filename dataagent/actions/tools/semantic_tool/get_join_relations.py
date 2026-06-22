@@ -16,6 +16,7 @@ import requests
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
 
 
 def _fmt(original: str, frontend: str, data: Any) -> dict:
@@ -46,7 +47,7 @@ def get_join_relations(table_names: list[str], *, _tool_context: ToolExecutionCo
 
     # MetaVisor 服务地址和认证配置
     base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = ("admin", "admin")
+    auth = get_metavisor_auth(_tool_context.config_manager)
 
     # 构建请求参数
     params = [("dbTableNames", name) for name in names]

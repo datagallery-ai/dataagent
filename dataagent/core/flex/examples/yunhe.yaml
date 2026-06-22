@@ -19,3 +19,5 @@ DATABASE:
 
 METAVISOR:
     metavisor_url: "8.92.9.151:41000" #UEG useless
+    username: "example"             # 示例值，实际部署请覆盖
+    password: "123456"              # 示例值，实际部署请覆盖
