@@ -13,10 +13,10 @@
 """Runtime per-Agent ConfigManager access tests."""
 
 import pytest
-
-from dataagent.config.config_manager import ConfigManager
 from dataagent.core.cbb.agent_env import Env
 from dataagent.core.cbb.runtime import Runtime
+
+from dataagent.config.config_manager import ConfigManager
 
 
 def _minimal_env(**kwargs) -> Env:

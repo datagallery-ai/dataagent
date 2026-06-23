@@ -12,12 +12,13 @@
 # ============================================================================
 """ToolExecutionContext.runtime injection via LocalToolWrapper."""
 
-from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local import LocalToolWrapper
-from dataagent.config.config_manager import ConfigManager
 from dataagent.core.cbb.agent_env import Env
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.framework_adapters.runtime.context import clear_current_runtime, set_current_runtime
+
+from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.config.config_manager import ConfigManager
 
 
 def _minimal_env(**kwargs) -> Env:

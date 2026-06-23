@@ -84,24 +84,13 @@ DEFAULT_PRUNER_TOKEN_LIMIT: int = DEFAULT_COMPRESS_TOKEN_LIMIT
 
 
 # ── 工具调用超时 ─────────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/actions/tools/local_tool/tools.py
-# 建议 YAML 路径: TOOLS.*_timeout
+# 这些常量保留为外部兼容接口；DeepAgent Harness 工具使用 OpenJiuWen 自身限制。
 
 DEFAULT_BASH_TIMEOUT: int = 600
 """Bash 工具命令执行的默认超时（秒）。"""
 
 DEFAULT_SUBAGENT_TOOL_TIMEOUT: int = 3600
 """子 Agent 工具调用的默认超时（秒）。"""
-
-SUBAGENT_TOOL_CATALOG_HEADER: str = "可选的 config_path 及用途："
-"""``sub_agent_tool`` 工具说明中 worker 目录段标题（由 ``SUBAGENT_CONFIGS`` 动态生成列表）。"""
-
-SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
-调用时请在参数中显式传入 config_path 为上述绝对路径之一，并严格遵循工具的参数要求，例如：
-- query: "What is 5 + 3 * 2"
-- config_path: "/abs/path/to/subagent.yaml"
-"""
-"""``sub_agent_tool`` 固定调用说明（硬编码，不放入 ``SUBAGENT_CONFIGS``）。"""
 
 MAX_WORKER_METADATA_ARTIFACTS: int = 50
 """Worker ``metadata.json`` 中 ``artifacts`` 路径列表最大条数。
@@ -111,10 +100,7 @@ MAX_WORKER_METADATA_ARTIFACTS: int = 50
 """
 
 WORKER_LOCK_TTL_GRACE_SECONDS: int = 60
-"""子 Agent worker 锁 TTL 在 ``sub_agent_tool`` 超时之外的额外缓冲（秒）。
-
-当前使用位置: dataagent/actions/tools/local_tool/tools.py（``acquire_worker_lock`` 的 ``ttl_seconds``）。
-"""
+"""子 Agent worker 锁 TTL 在 ``sub_agent_tool`` 超时之外的额外缓冲（秒）。"""
 
 DEFAULT_GREP_TIMEOUT: int = 30
 """Grep 子进程超时（秒）。"""
@@ -127,11 +113,9 @@ DEFAULT_GREP_HEAD_LIMIT: int = 250
 
 
 # ── 文件工具限制 ─────────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/actions/tools/local_tool/tools.py
-# 建议 YAML 路径: TOOLS.read_max_file_size / read_max_output_bytes / diff_max_chars / skip_dirs
 
 DEFAULT_READ_MAX_FILE_SIZE: int = 262144
-"""全文件读取阈值（字节，256 KB）。超过此大小的文件只做 head/tail 读取。"""
+"""全文件读取阈值（字节，256 KB）。"""
 
 DEFAULT_READ_MAX_OUTPUT_BYTES: int = 102400
 """Read 工具单次读取的最大输出预算（字节，100 KB）。"""
@@ -231,7 +215,7 @@ DEFAULT_IR_KNOWLEDGE_MIN_LENGTH: int = 500
 DEFAULT_IR_MAX_FILE_CHARS: int = 10000
 """IR 转换时 _safe_read_file 默认最大读取字符数。"""
 
-DEFAULT_IR_MAX_PATH_LEN: int = 256
+DEFAULT_IR_MAX_PATH_LEN: int = 4096
 """IR 转换时路径字符串最大长度。"""
 
 DEFAULT_IR_COLUMN_SAMPLE_ROWS: int = 100
@@ -288,26 +272,8 @@ DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL: int = 10000
 """SQLite 进度处理器回调间隔（虚拟机器指令数）。"""
 
 
-# ── 内置工具注册 ─────────────────────────────────────────────────────────────
-# 完整工具目录见 dataagent/core/managers/action_manager/manager.py（_BUILTIN_LOCAL_TOOL_CATALOG）
-# 此处仅声明默认启用的工具名（与目录取交集）；YAML 可用 TOOLS.builtin 覆盖（含 [] 表示不注册）
-
-DEFAULT_BUILTIN_SKILL_NAMES: frozenset[str] = frozenset({})
+DEFAULT_BUILTIN_SKILL_NAMES: frozenset[str] = frozenset({"data_analysis_report"})
 """始终有资格被发现的内置 Skill 名称集合。"""
-
-DEFAULT_BUILTIN_LOCAL_TOOLS: tuple[str, ...] = (
-    "bash",
-    "edit_file",
-    "read_file",
-    "write_file",
-    "grep",
-    "glob",
-    "create_plan",
-    "update_plan",
-    "delete_plan",
-    "complete_current_todo",
-)
-"""默认注册的本地工具模块名列表。"""
 
 
 # ============================================================================
@@ -412,37 +378,6 @@ DEFAULT_BACKEND: str = "langgraph"
 
 DEFAULT_MODE: str = "chat"
 """未指定时的默认运行模式。DataAgent 属性 setter 已可控制。"""
-
-
-# ── 合并配置 YAML 展示顺序 ───────────────────────────────────────────────────
-# 当前使用位置: dataagent/core/suite/debug_dump.py（``format_settings_yaml``）
-# 仅影响 dryrun / ``.runtime`` dump 等序列化输出顺序，不影响 ``merge_layers`` / ``reload`` 语义。
-
-MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
-    "AGENT_CONFIG",
-    "MODEL",
-    "WORKSPACE",
-    "SCENARIO",
-    "TOOLS",
-    "HOOKS",
-    "SUBAGENT_CONFIGS",
-    "ACTOR_LOOP",
-    "PRE_WORKFLOW",
-    "POST_WORKFLOW",
-    "USER_ID",
-    "ENV",
-    "MEMORY",
-    "DATASOURCE",
-    "DATABASE",
-    "CORE",
-    "METAVISOR",
-    "ONTOLOGY",
-    "SWARM",
-    "CONTEXT",
-    "CROSS_SESSION_RECALL",
-    "BASH_TOOL_WHITELIST",
-)
-"""合并后 Agent 配置 YAML 的顶层段推荐输出顺序；未列出的 key 保持 ``settings`` 原有顺序追加在末尾。"""
 
 
 # ── Context Trajectory TodoList ──────────────────────────────────────────────

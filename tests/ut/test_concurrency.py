@@ -15,7 +15,6 @@
 import asyncio
 
 import pytest
-
 from dataagent.actions.tools.concurrency import (
     DEFAULT_CPU_BUFFER,
     DEFAULT_MAX_CONCURRENCY_CAP,

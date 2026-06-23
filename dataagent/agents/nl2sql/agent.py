@@ -16,6 +16,9 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any
 
+from dataagent.core.cbb.base_agent import BaseAgent
+from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
+
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes import (
     BaseNL2SQLNode,
@@ -29,8 +32,6 @@ from dataagent.agents.nl2sql.nodes import (
 )
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, get_default_state
-from dataagent.core.cbb.base_agent import BaseAgent
-from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
 from dataagent.core.utils.performance import make_perf_state_holder, update_latest_state_from_stream_item
 
 

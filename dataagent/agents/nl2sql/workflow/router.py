@@ -10,8 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.core.cbb.base_router import BaseRouter
+
+from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 
 
 class NL2SQLRouter(BaseRouter):

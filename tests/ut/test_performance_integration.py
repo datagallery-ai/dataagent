@@ -31,10 +31,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
+
 from dataagent.core.utils.performance import (
     PerformanceCollector,
     bind_current_collector,

@@ -13,11 +13,12 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.managers.prompt_manager import PromptTemplate
+
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
-from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.core.utils.performance import submit_in_perf_context
 from dataagent.utils.constants import DEFAULT_NL2SQL_NUM_SAMPLES, DEFAULT_NL2SQL_NUM_WORKERS, NL2SQL_PROMPT_PREFIX
 from dataagent.utils.log import logger

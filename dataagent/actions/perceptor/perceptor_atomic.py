@@ -15,12 +15,12 @@ from itertools import product
 from typing import Any
 
 import requests
-from loguru import logger
-
-from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.common_utils.knowledge_base.memory import MemoryFactory
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
+from loguru import logger
+
+from dataagent.actions.tools.context import ToolExecutionContext
 
 
 class MetaVisorClient:

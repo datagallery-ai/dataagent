@@ -18,8 +18,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+
+from dataagent.actions.tools.context import ToolExecutionContext
 
 
 def save_recall_entry(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 from dataagent.core.managers.llm_manager.llm_client import LLMClient
 from dataagent.core.managers.llm_manager.llm_config import LLMConfig

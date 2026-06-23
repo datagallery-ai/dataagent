@@ -18,8 +18,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dataagent.config.config_manager import ConfigManager
     from dataagent.core.cbb.runtime import Runtime
+
+    from dataagent.config.config_manager import ConfigManager
 
 
 @dataclass(frozen=True, slots=True)

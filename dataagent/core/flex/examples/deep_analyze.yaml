@@ -1,7 +1,32 @@
+# DeepAgent 简单配置示例
+# 使用:
+#   uv run python -m dataagent --config dataagent/core/flex/examples/deep_analyze.yaml
+
 AGENT_CONFIG:
-  name: Deep Analyze Agent
-  version: '1.0'
-  description: Deep Analyze Agent
-  backend: langgraph
+  name: DeepAnalyzeAgent
+  version: "1.0"
+  description: 基于 openjiuwen DeepAgent 的数据分析助手
   type: react
   agent_type: deep_analyze
+  debug: true
+  max_iter: 15
+
+# 模型配置 — 至少需要 chat_model
+# provider 决定环境变量读取: {PROVIDER}_BASE_URL / {PROVIDER}_API_KEY
+MODEL:
+  chat_model:
+    provider: openai
+    params:
+      model: gpt-4.1-mini
+      temperature: 0.7
+
+SCENARIO:
+  chat:
+    instructions: |
+      你是一个智能数据分析助手。使用工具完成用户的数据分析任务。
+      当需要执行代码时，使用 python 或 bash 工具。
+      当需要读取文件时，使用 Read 工具。
+      不要猜测，始终基于实际数据回答。
+
+WORKSPACE:
+  path: /tmp/dataagent_workspace
