@@ -18,6 +18,8 @@ Provides:
 3. Type coercion with fallback strategy
 """
 
+import ast
+import json
 import types
 import typing
 from dataclasses import dataclass, field
@@ -198,6 +200,38 @@ class SchemaValidator:
         return corrected, warnings
 
     @staticmethod
+    def _try_parse_list_value(value: Any) -> list[Any] | None:
+        if isinstance(value, list):
+            return value
+        if not isinstance(value, str):
+            return [value]
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else [parsed]
+        except (json.JSONDecodeError, TypeError):
+            return [value]
+
+    @staticmethod
+    def _try_parse_dict_value(value: Any) -> dict[str, Any] | None:
+        if isinstance(value, dict):
+            return value
+        if not isinstance(value, str):
+            return None
+        try:
+            result = json.loads(value)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+        try:
+            result = ast.literal_eval(value)
+            if isinstance(result, dict):
+                return result
+            raise TypeError(f"Cannot convert {type(value).__name__} to dict")
+        except SyntaxError as err:
+            raise TypeError(f"Cannot parse string as dict: '{value}'") from err
+
+    @staticmethod
     def _coerce_type(
         param_name: str,
         value: Any,
@@ -205,22 +239,21 @@ class SchemaValidator:
         is_required: bool,
         default_value: Any,
     ) -> tuple[Any, ValidationWarning | None]:
-        """尝试类型转换
+        """尝试类型转换。
 
         Args:
-            param_name: 参数名
-            value: 原始值
-            expected_type: 期望的 Python 类型
-            is_required: 是否为必填参数
-            default_value: 参数默认值
+            param_name: 参数名。
+            value: 原始值。
+            expected_type: 期望的 Python 类型。
+            is_required: 是否为必填参数。
+            default_value: 参数默认值。
 
         Returns:
-            (转换后的值或原值, 警告或None)
+            (转换后的值或原值, 警告或 None)。
         """
         if value is None:
             return value, None
 
-        # 类型匹配或可隐式转换（如 int -> float）
         runtime_types = SchemaValidator._runtime_expected_types(expected_type)
         if runtime_types is not None and isinstance(value, runtime_types):
             return value, None
@@ -249,14 +282,11 @@ class SchemaValidator:
                 corrected_value=default_value,
             )
 
-        # 尝试转换
         try:
-            if expected_type is int:
-                # 处理 bool -> int (True -> 1, False -> 0)
+            if runtime_types == (int,):
                 if isinstance(value, (bool, float)):
                     new_value = int(value)
                 elif isinstance(value, str):
-                    # 处理字符串 "true"/"false" -> 1/0
                     if value.lower() in ("true", "yes", "1"):
                         new_value = 1
                     elif value.lower() in ("false", "no", "0"):
@@ -265,23 +295,21 @@ class SchemaValidator:
                         new_value = int(float(value))
                 else:
                     raise ValueError(f"Cannot convert {type(value).__name__} to int")
-            elif expected_type is float:
-                if isinstance(value, bool):
-                    new_value = float(int(value))
-                elif isinstance(value, str):
-                    new_value = float(value)
-                else:
-                    new_value = float(value)
-            elif expected_type is str:
+            elif runtime_types == (float,):
+                new_value = float(int(value)) if isinstance(value, bool) else float(value)
+            elif runtime_types == (str,):
                 new_value = str(value)
-            elif expected_type is bool:
+            elif runtime_types == (bool,):
                 new_value = value.lower() in ("true", "yes", "1", "on") if isinstance(value, str) else bool(value)
-            elif expected_type is list:
-                new_value = [value] if not isinstance(value, list) else value
-            elif expected_type is dict:
-                if not isinstance(value, dict):
+            elif runtime_types == (list,):
+                parsed = SchemaValidator._try_parse_list_value(value)
+                if parsed is None:
+                    raise TypeError(f"Cannot convert {type(value).__name__} to list")
+                new_value = parsed
+            elif runtime_types == (dict,):
+                new_value = SchemaValidator._try_parse_dict_value(value)
+                if new_value is None:
                     raise TypeError(f"Cannot convert {type(value).__name__} to dict")
-                new_value = value
             else:
                 raise TypeError(f"Unsupported type: {expected_type}")
 
@@ -295,7 +323,6 @@ class SchemaValidator:
             )
         except (ValueError, TypeError):
             if is_required:
-                # 必填参数类型错误：返回错误信息（不返回具体转换值）
                 return None, ValidationWarning(
                     param_name=param_name,
                     warning_type="type_error",
@@ -304,16 +331,14 @@ class SchemaValidator:
                     original_value=value,
                     corrected_value=None,
                 )
-            else:
-                # 选填参数类型错误：回退到默认值
-                return default_value, ValidationWarning(
-                    param_name=param_name,
-                    warning_type="type_coercion",
-                    message=f"Parameter '{param_name}' has invalid type: expected {expected_type.__name__}, "
-                    f"got {type(value).__name__}. Falling back to default: {default_value!r}",
-                    original_value=value,
-                    corrected_value=default_value,
-                )
+            return default_value, ValidationWarning(
+                param_name=param_name,
+                warning_type="type_coercion",
+                message=f"Parameter '{param_name}' has invalid type: expected {expected_type.__name__}, "
+                f"got {type(value).__name__}. Falling back to default: {default_value!r}",
+                original_value=value,
+                corrected_value=default_value,
+            )
 
     def validate(
         self,
@@ -401,7 +426,7 @@ class SchemaValidator:
                     warnings.append(type_warning)
                     if new_value is not None:
                         corrected_args[param_name] = new_value
-                    elif type_warning.warning_type == "type_coercion" and type_warning.corrected_value is not None:
+                    elif type_warning.warning_type == "type_coercion":
                         corrected_args[param_name] = type_warning.corrected_value
 
         if errors:
