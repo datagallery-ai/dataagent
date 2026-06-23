@@ -68,7 +68,11 @@ class LocalToolWrapper(BaseTool):
             # 验证参数
             is_valid, error = self.validate_input(**kwargs)
             if not is_valid:
-                return ToolResult(success=False, error=f"Invalid input parameters for tool '{self.name}': {error}")
+                return ToolResult(
+                    success=False,
+                    error=f"Invalid input parameters for tool '{self.name}': {error}",
+                    error_type=ErrorType.VALIDATION_ERROR,
+                )
 
             if inspect.iscoroutinefunction(self.func):
                 return ToolResult(
@@ -101,7 +105,11 @@ class LocalToolWrapper(BaseTool):
         try:
             is_valid, error = self.validate_input(**kwargs)
             if not is_valid:
-                return ToolResult(success=False, error=f"Invalid input parameters for tool '{self.name}': {error}")
+                return ToolResult(
+                    success=False,
+                    error=f"Invalid input parameters for tool '{self.name}': {error}",
+                    error_type=ErrorType.VALIDATION_ERROR,
+                )
 
             inject_err = self._inject_tool_context(kwargs)
             if inject_err is not None:

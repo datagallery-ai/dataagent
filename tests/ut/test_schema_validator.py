@@ -522,10 +522,7 @@ class TestOptionalParamTypeConversion:
         assert result.corrected_args["count"] == 42
 
     def test_optional_dict_from_json_string(self):
-        """fvt_dataagent_workflow_optional_paraverify_005: 选填参数dict类型，传入非dict但可解析类型时转换成功
-
-        注意: 当前实现 dict 类型不支持从字符串解析，只支持 dict 类型直接传递
-        """
+        """fvt_dataagent_workflow_optional_paraverify_005: 选填参数dict类型，传入JSON字符串时转换成功"""
         schema = ToolSchema(
             name="test_tool",
             description="Test dict conversion",
@@ -546,11 +543,64 @@ class TestOptionalParamTypeConversion:
         assert result.valid is True
         assert result.corrected_args["config"] == {"key": "value"}
 
+        # 传入 JSON 字符串 -> 解析为 dict
+        result = validator.validate("test_tool", {"config": '{"key": "value", "num": 123}'}, schema)
+        assert result.valid is True
+        assert result.corrected_args["config"] == {"key": "value", "num": 123}
+
+        # 传入无法解析的字符串 -> 回退到默认值
+        result = validator.validate("test_tool", {"config": "not a json"}, schema)
+        assert result.valid is True
+        assert result.corrected_args["config"] == {"is_default": True}
+        assert any("Falling back to default" in w.message for w in result.warnings)
+
         # 传入 int (无法转换) -> 回退到默认值
         result = validator.validate("test_tool", {"config": 1234}, schema)
         assert result.valid is True
         assert result.corrected_args["config"] == {"is_default": True}
         assert any("Falling back to default" in w.message for w in result.warnings)
+
+    def test_optional_list_from_json_string(self):
+        """fvt_dataagent_workflow_optional_paraverify_010: 选填参数list类型，传入JSON字符串时转换成功"""
+        schema = ToolSchema(
+            name="test_tool",
+            description="Test list conversion",
+            parameters=[
+                ParameterSchema(
+                    name="items",
+                    type=list,
+                    required=False,
+                    default=["default"],
+                    description="Items parameter",
+                ),
+            ],
+        )
+        validator = SchemaValidator()
+
+        # 传入正确类型的 list
+        result = validator.validate("test_tool", {"items": ["a", "b", "c"]}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == ["a", "b", "c"]
+
+        # 传入 JSON 字符串 -> 解析为 list
+        result = validator.validate("test_tool", {"items": "[1, 2, 3]"}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [1, 2, 3]
+
+        # 传入 JSON 字符串（包含对象）-> 解析为 list
+        result = validator.validate("test_tool", {"items": '[{"id": 1}, {"id": 2}]'}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [{"id": 1}, {"id": 2}]
+
+        # 传入普通字符串（无法解析为 JSON 数组）-> 包装为 [value]
+        result = validator.validate("test_tool", {"items": "not a json array"}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == ["not a json array"]
+
+        # 传入无法解析的字符串（JSON 对象不是数组）-> 包装为 [value]
+        result = validator.validate("test_tool", {"items": '{"key": "value"}'}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [{"key": "value"}]
 
     def test_optional_float_from_convertible_types(self):
         """fvt_dataagent_workflow_optional_paraverify_006: 选填参数float类型，传入可转换类型时转换成功"""
@@ -717,10 +767,61 @@ class TestRequiredParamTypeConversion:
         assert result.valid is True
         assert result.corrected_args["config"] == {"key": "value"}
 
+        # 传入 JSON 字符串 -> 解析为 dict
+        result = validator.validate("test_tool", {"config": '{"key": "value", "num": 123}'}, schema)
+        assert result.valid is True
+        assert result.corrected_args["config"] == {"key": "value", "num": 123}
+
         # 传入 int (无法转换) -> 验证失败
         result = validator.validate("test_tool", {"config": 1234}, schema)
         assert result.valid is False
         assert any("dict" in e.message.lower() for e in result.errors)
+
+        # 传入无法解析的字符串 -> 验证失败
+        result = validator.validate("test_tool", {"config": "not a json"}, schema)
+        assert result.valid is False
+        assert any("dict" in e.message.lower() for e in result.errors)
+
+    def test_required_list_from_compatible_types(self):
+        """fvt_dataagent_workflow_required_paraverify_008: 必填参数list类型，传入可兼容类型时转换成功"""
+        schema = ToolSchema(
+            name="test_tool",
+            description="Test required list conversion",
+            parameters=[
+                ParameterSchema(name="items", type=list, required=True, description="Items parameter"),
+            ],
+        )
+        validator = SchemaValidator()
+
+        # 传入正确的 list
+        result = validator.validate("test_tool", {"items": ["a", "b", "c"]}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == ["a", "b", "c"]
+
+        # 传入 JSON 字符串 -> 解析为 list
+        result = validator.validate("test_tool", {"items": "[1, 2, 3]"}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [1, 2, 3]
+
+        # 传入 JSON 字符串（包含对象）-> 解析为 list
+        result = validator.validate("test_tool", {"items": '[{"id": 1}, {"id": 2}]'}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [{"id": 1}, {"id": 2}]
+
+        # 传入普通字符串（无法解析为 JSON 数组）-> 包装为 [value]
+        result = validator.validate("test_tool", {"items": "single item"}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == ["single item"]
+
+        # 传入无法解析的字符串（JSON 对象不是数组）-> 包装为 [value]
+        result = validator.validate("test_tool", {"items": '{"key": "value"}'}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [{"key": "value"}]
+
+        # 传入 int (无法转换) -> 包装为 [value]
+        result = validator.validate("test_tool", {"items": 123}, schema)
+        assert result.valid is True
+        assert result.corrected_args["items"] == [123]
 
     def test_required_float_from_convertible_types(self):
         """fvt_dataagent_workflow_required_paraverify_005: 必填参数float类型，传入可兼容类型时转换成功"""
