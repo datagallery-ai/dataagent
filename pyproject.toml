@@ -10,25 +10,29 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # ---- DataAgent core ----
+    "openjiuwen>=0.1.14",
     "a2a-sdk>=1.0.2",
     "protobuf==6.33.5",
     "jinja2>=3.1.0",
     "langchain==1.3.2",
-    "litellm==1.80.0",
     "loguru==0.7.3",
     "networkx==3.4.2",
     "mcp==1.26.0",
     "pandas==2.3.2",
     "psutil==6.0.0",
+    "pyarrow==23.0.1",
     "pydantic==2.12.5",
     "PyYAML==6.0.2",
     "jieba>=0.42.1",
     # ---- tools/skills ----
     "matplotlib==3.10.1",
+    "numpy==2.3.5",
     # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
     "pymysql==1.1.2",
     "sqlalchemy==2.0.49",
-    "uvicorn==0.34.0",
+    "aiosqlite>=0.20.0",
+    "greenlet>=3.0.0",
+    "uvicorn>=0.35.0",
     "rich>=13.0.0",
 ]
 
@@ -38,25 +42,15 @@ include = ["dataagent*"]
 namespaces = true
 
 [project.optional-dependencies]
-
-all = [
-    "dataagent[server]",
-    "dataagent[nl2sql]",
-    "dataagent[a2a-server]",
-    "dataagent[trajectory_graph]",
-    "dataagent[tool]",
-]
-
 server = [
     "fastapi==0.116.1",
     "passlib>=1.7.4",
     "python-jose>=3.5.0",
     "sqlmodel>=0.0.24",
     "cryptography==46.0.7",
+    "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
     "elasticsearch>=7.17.12,<8",
-]
-jiuwen = [
-    "openjiuwen==0.1.14"
+
 ]
 mkdoc = [
     "mkdocs>=1.6,<2.0",
@@ -87,12 +81,6 @@ trajectory_graph = [
 tool = [
     "mplfonts>=0.0.11",
     "seaborn>=0.13.2",
-]
-wps = [
-    "openpyxl>=3.1.5",
-    "pyvis>=0.3.2",
-    "pywin32>=311",
-    "scikit-learn>=1.9.0",
 ]
 
 [tool.setuptools.package-data]
@@ -191,7 +179,6 @@ override-dependencies = [
     "sqlalchemy==2.0.49",
     "pydantic==2.12.5",
     "mcp==1.26.0",
-    "uvicorn==0.34.0"
 ]
 [tool.ruff]
 target-version = "py311"

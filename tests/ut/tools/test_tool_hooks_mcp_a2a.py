@@ -17,12 +17,12 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from mcp.types import Tool as MCPTool
-
-from dataagent.actions.tools.a2a import A2AClientWrapper, A2AToolWrapper, AgentConfig
 from dataagent.actions.tools.hooks.examples import example_hooks
 from dataagent.actions.tools.mcp import MCPClientWrapper, MCPServerConfig, MCPToolWrapper
 from dataagent.core.managers.action_manager.manager import ToolManager
+from mcp.types import Tool as MCPTool
+
+from dataagent.actions.tools.a2a import A2AClientWrapper, A2AToolWrapper, AgentConfig
 
 _HOOK_PRE = "dataagent.actions.tools.hooks.examples.example_hooks.audit_pre"
 _HOOK_POST = "dataagent.actions.tools.hooks.examples.example_hooks.audit_post"

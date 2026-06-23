@@ -11,12 +11,11 @@
 # limitations under the License.
 # ============================================================================
 import pytest
-import yaml
-
-from dataagent.actions.tools import BaseTool, ToolResult
 from dataagent.core.managers.action_manager import ToolSchema
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.action_manager.schemas import ParameterSchema
+
+from dataagent.actions.tools import BaseTool, ToolResult
 
 tool_manager = ToolManager()
 
@@ -129,36 +128,25 @@ async def test_register_local_tools_falls_back_to_docstring_without_yaml_descrip
 
 
 @pytest.mark.asyncio
-async def test_implicit_sub_agent_tool_appends_catalog_description(tmp_path):
-    """``SUBAGENT_CONFIGS`` implicitly registers ``sub_agent_tool`` with catalog text."""
-    subagent_yaml = tmp_path / "worker.yaml"
-    subagent_yaml.write_text(
-        yaml.safe_dump({"AGENT_CONFIG": {"name": "arith", "description": "does math"}}),
-        encoding="utf-8",
-    )
+async def test_register_local_tools_appends_yaml_description_for_sub_agent_tool():
+    """``sub_agent_tool`` YAML description supplements the docstring instead of replacing it."""
     tm = ToolManager()
-    tm._register_implicit_sub_agent_tool({"SUBAGENT_CONFIGS": [{"path": str(subagent_yaml)}]})
+    yaml_supplement = "可选 config_path：/path/to/arithmetic.yaml"
+    tm._register_local_tools(
+        [
+            {
+                "module": "dataagent.actions.tools.local_tool.tools",
+                "function": "sub_agent_tool",
+                "description": yaml_supplement,
+            }
+        ]
+    )
     desc = tm.get("sub_agent_tool").description
     assert "Starts a sub Agent in a separate subprocess" in desc
-    assert "does math" in desc
-    assert str(subagent_yaml) in desc
+    assert yaml_supplement in desc
+    assert "Supplement (from agent configuration)" in desc
     assert "Args:" in desc
-    await tm.cleanup()
-
-
-@pytest.mark.asyncio
-async def test_register_local_tools_rejects_explicit_sub_agent_tool():
-    """Explicit ``sub_agent_tool`` in ``TOOLS.local_functions`` is forbidden."""
-    tm = ToolManager()
-    with pytest.raises(ValueError, match="SUBAGENT_CONFIGS"):
-        tm._register_local_tools(
-            [
-                {
-                    "module": "dataagent.actions.tools.local_tool.tools",
-                    "function": "sub_agent_tool",
-                }
-            ]
-        )
+    assert desc.index("Supplement (from agent configuration)") < desc.index("Args:")
     await tm.cleanup()
 
 

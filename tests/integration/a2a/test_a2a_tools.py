@@ -11,7 +11,6 @@
 # limitations under the License.
 # ============================================================================
 import pytest
-
 from dataagent.core.managers.action_manager.manager import ToolManager
 
 tool_manager = ToolManager()

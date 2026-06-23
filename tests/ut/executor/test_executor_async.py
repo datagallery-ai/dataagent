@@ -17,14 +17,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
-
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
-from dataagent.core.context.context import ContextFactory
 from dataagent.core.flex.nodes import executor as executor_module
 from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import ToolResult
 from dataagent.utils.messages_utils import MAX_TOOL_RESULT_LENGTH
+from langchain_core.messages import AIMessage, ToolMessage
+
+from dataagent.core.context.context_trajectory import ContextFactory
 
 
 def _make_runtime(*, call_tool, workspace, tool_manager=None, bash_tool_whitelist=None, agent_config=None):

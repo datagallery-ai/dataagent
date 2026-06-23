@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from dataagent.core.managers.prompt_manager import PromptTemplate
+
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.metavisor_client import MetaVisorClient
 from dataagent.agents.nl2sql.utils.nl2sql_utils import (
@@ -24,7 +26,6 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     select_semantic_columns,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import DEFAULT_NL2SQL_SCHEMA_TOP_K, NL2SQL_PROMPT_PREFIX
 from dataagent.utils.log import logger
 

@@ -13,10 +13,8 @@
 """UT: MemoryFactory caches per ConfigManager instance, not only rag_id."""
 
 import pytest
-
-pytest.importorskip("elasticsearch", reason="requires dataagent[all]")
-
 from dataagent.common_utils.knowledge_base.memory import MemoryFactory, _memory_instance_cache_key
+
 from dataagent.config import ConfigManager
 
 

@@ -84,16 +84,6 @@ TOOLS:
     - name: merge_recall_results
       function: merge_recall_results
       module: dataagent.agents.document_recall.tools
-  builtin:
-    - name: grep
-      module: dataagent.actions.tools.local_tool.tools
-      function: grep
-    - name: read_file
-      module: dataagent.actions.tools.local_tool.tools
-      function: read_file
-    - name: glob
-      module: dataagent.actions.tools.local_tool.tools
-      function: glob
 
 PRE_WORKFLOW: []
 

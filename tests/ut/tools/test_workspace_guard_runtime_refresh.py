@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-
 from dataagent.actions.tools.local_tool.sandbox import BubblewrapSandbox, NoopSandbox
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]

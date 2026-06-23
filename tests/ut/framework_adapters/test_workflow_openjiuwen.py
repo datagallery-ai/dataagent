@@ -10,9 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
-
 from dataagent.core.framework_adapters.runtime.workflow_openjiuwen import OpenJiuWenWorkflow
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 
 
 def test_merge_delta_consumes_remove_all_message() -> None:

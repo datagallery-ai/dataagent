@@ -13,12 +13,12 @@
 """ToolExecutionContext injection and per-Agent ConfigManager isolation tests."""
 
 import pytest
-
-from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.config.config_manager import ConfigManager
 from dataagent.core.managers.action_manager.base import ToolError
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.action_manager.schemas import ToolSchema
+
+from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.config.config_manager import ConfigManager
 
 
 def read_db_id_sync(query: str, *, _tool_context: ToolExecutionContext) -> str:

@@ -22,11 +22,10 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
-from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
 
 
@@ -195,7 +194,7 @@ def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionCo
         keywords（str）: 一个或多个关键字，多个关键字之间以空格分割。
     """
     base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
+    auth = ("admin", "admin")
     topk = 20
 
     keyword_list = keywords.split()
@@ -315,8 +314,7 @@ def get_table_schema(table_name: str, *, _tool_context: ToolExecutionContext) ->
     table_description = ""
     try:
         table_qualified_name = f"{table_name}@hive"
-        auth = get_metavisor_auth(_tool_context.config_manager)
-        table_description = get_table_description(table_qualified_name, base_url, auth)
+        table_description = get_table_description(table_qualified_name, base_url, ("admin", "admin"))
     except Exception as e:
         logger.warning(f"[get_table_schema] 获取表描述失败: {e}")
 

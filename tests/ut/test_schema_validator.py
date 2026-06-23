@@ -15,6 +15,7 @@
 from typing import Union
 
 import pytest
+from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
 
 from dataagent.actions.tools.schema_validator import (
     ParamsValueError,
@@ -23,7 +24,6 @@ from dataagent.actions.tools.schema_validator import (
     ValidationResult,
     ValidationWarning,
 )
-from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
 
 
 class TestValidationError:

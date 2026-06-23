@@ -11,24 +11,19 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
-import re
-import shutil
-from collections import defaultdict
 from collections.abc import Generator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from functools import wraps
 from typing import Any
 
 import networkx as nx
-import yaml
-from loguru import logger
-
-from dataagent.core.context.utils_context_filesystem import is_text_file, lineage_path_key, load_file, load_table
+import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
+from loguru import logger
+
 from dataagent.core.utils.performance import attribute_calls
-from dataagent.utils.runtime_paths import resolve_session_root
 
 
 @dataclass
@@ -39,7 +34,6 @@ class BaseIR:
 
     label: str  # 节点名称
     description: str | None  # 节点描述
-    user_id: str  # 所属用户 id
     session_id: str  # 所属session id
     run_id: int  # 所属run id
     created_at: datetime = field(init=False)  # 创建时间
@@ -52,7 +46,7 @@ class BaseIR:
         self.created_at = datetime.now(timezone(timedelta(hours=8)))
 
     @classmethod
-    async def llm_infer_async(cls, *, system_prompt: str, user_prompt: str) -> str:
+    async def llm_infer_async(cls, system_prompt: str, user_prompt: str) -> str:
         """
         Uniform LLM inference.
 
@@ -97,6 +91,31 @@ class BaseIR:
         return asdict(self)
 
 
+NODE_REGISTRY: dict[str, tuple[type[BaseIR], list[str]]] = {}
+
+
+def register_node(node_type: str, required_fields: list[str]):
+    """
+    Decorator function for node registration.
+
+    Args:
+        node_type (str): node type
+        required_fields (list[str]): required inputs during node initialization
+    """
+
+    def decorator(cls):
+        NODE_REGISTRY[node_type] = (cls, required_fields)
+
+        @wraps(cls)
+        def wrapped_function(*args, **kwargs):
+            return cls(*args, **kwargs)
+
+        return wrapped_function
+
+    return decorator
+
+
+@register_node("Query", ["query", "additional_files"])
 @dataclass
 class QueryNode(BaseIR):
     """
@@ -107,16 +126,7 @@ class QueryNode(BaseIR):
     additional_files: list[str]  # 辅助文件
 
 
-@dataclass
-class ResponseNode(BaseIR):
-    """
-    Dataclass model for Response node IR.
-    """
-
-    response: str  # agent回答
-    reasoning_content: str  # agent的原始推理思考轨迹
-
-
+@register_node("Action", ["action", "params", "output", "success"])
 @dataclass
 class ActionNode(BaseIR):
     """
@@ -129,29 +139,22 @@ class ActionNode(BaseIR):
     success: bool  # action是否执行成功
 
 
+@register_node("State", ["state"])
 @dataclass
 class StateNode(BaseIR):
     """
     Dataclass model for State node IR.
     """
 
-    content: str  # agent的原始推理输出内容
-    reasoning_content: str  # agent的原始推理思考轨迹
-    goal: str  # 当前agent的目标
-    belief: str  # 当前agent的信念
-    action_history: str  # 当前agent的行动历史摘要
-    current_status: str  # 当前agent的位置
-    available_actions: str  # 当前agent的可选动作
-    feedback: str  # 当前agent得到的人工反馈
-    uncentainty: str  # 当前agent的不确定性
+    state: str  # 当前agent的结论
 
-    async def update_state_async(self, *, history: nx.DiGraph, new_action: list[dict[str, Any]]) -> str:
+    async def update_state_async(self, history: nx.DiGraph, new_action: dict[str, Any]) -> str:
         """
-        Get new the state description of the node when additional execution directions are provided.
+        Get new the state description of the node when an additional execution direction is provided.
 
         Args:
             history (nx.DiGraph): history search direction that have already been executed
-            new_action (list[dict[str, Any]]): new actions to be executed
+            new_action (dict[str, Any]): new action to be executed
 
         Returns:
             str, updated state description
@@ -161,23 +164,18 @@ class StateNode(BaseIR):
             "edges": list(history.edges.data()),
         }
         prompt_variables = {
-            "current_state": {
-                "goal_intent": self.goal,
-                "belief_about_world": self.belief,
-                "action_history_summary": self.action_history,
-                "current_position": self.current_status,
-                "available_actions": self.available_actions,
-                "user_feedback_state": self.feedback,
-                "epistemic_state": self.uncentainty,
-            },
+            "current_state": self.state,
             "failed_trajectory": failed_trajectory,
-            "new_actions": new_action,
+            "new_action_name": new_action.get("action", ""),
+            "new_action_params": new_action.get("params", ""),
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/system_update_state").content
+        system_prompt = PromptTemplate.from_package_relative(
+            f"{PROMPT_MD_PREFIX}/irmanager/system_update_state"
+        ).content
         user_prompt = PromptTemplate.from_package_relative(
-            f"{PROMPT_MD_PREFIX}/context/user_update_state"
+            f"{PROMPT_MD_PREFIX}/irmanager/user_update_state"
         ).apply_prompt_template(**prompt_variables)
-        return await self.llm_infer_async(system_prompt=system_prompt, user_prompt=user_prompt)
+        return await self.llm_infer_async(system_prompt, user_prompt)
 
 
 @dataclass
@@ -187,37 +185,12 @@ class DataNode(BaseIR):
     - Provides default schema / full_content export logic
     """
 
-    def __post_init__(self):
-        """
-        Post-initialize data node. Auto backup file if the node has a path.
-        """
-        super().__post_init__()
-        path = getattr(self, "path", None)
-        if hasattr(self, "path_backup") and isinstance(path, str) and path and not self.path_backup:
-            p = Path(path).expanduser()
-            if p.exists() and p.is_file():
-                node_type = self.__class__.__name__.replace("Node", "")
-                backup_path = (
-                    resolve_session_root(user_id=self.user_id, session_id=self.session_id)
-                    / ".context"
-                    / "backup"
-                    / f"{node_type}({self.label}){p.suffix}"
-                )
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(src=p, dst=backup_path)
-                self.path_backup = str(backup_path)
-
     async def infer_description_async(self, **kwargs: Any) -> Any:
         """Infer description of a given node based on its attributes."""
         pass
 
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        """
-        Get full data of the node.
-        """
-        raise NotImplementedError("Subclasses must implement this method.")
 
-
+@register_node("Knowledge", ["knowledge_type", "knowledge_content"])
 @dataclass
 class KnowledgeNode(DataNode):
     """
@@ -244,16 +217,14 @@ class KnowledgeNode(DataNode):
             else self.knowledge_content,
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/user").apply_prompt_template(
+        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
+        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
             **prompt_variables
         )
-        return await self.llm_infer_async(system_prompt=system_prompt, user_prompt=user_prompt)
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        return self.knowledge_content
+        return await self.llm_infer_async(system_prompt, user_prompt)
 
 
+@register_node("Tool", ["tool_params", "tool_returns"])
 @dataclass
 class ToolNode(DataNode):
     """
@@ -278,16 +249,14 @@ class ToolNode(DataNode):
             "data_preview": str({"tool_params": self.tool_params, "tool_returns": self.tool_returns}),
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/user").apply_prompt_template(
+        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
+        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
             **prompt_variables
         )
-        return await self.llm_infer_async(system_prompt=system_prompt, user_prompt=user_prompt)
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        return str({"tool_params": self.tool_params, "tool_returns": self.tool_returns})
+        return await self.llm_infer_async(system_prompt, user_prompt)
 
 
+@register_node("Table", ["path"])
 @dataclass
 class TableNode(DataNode):
     """
@@ -295,7 +264,38 @@ class TableNode(DataNode):
     """
 
     path: str  # 表路径
-    path_backup: str = field(default="")  # 表备份路径
+
+    @staticmethod
+    def load_table(path: str, n_rows: int = -1) -> pd.DataFrame:
+        """
+        Load table from path.
+
+        Args:
+            path (str): path of the table, supported file types are .csv, .tsv and .parquet
+            n_rows (int): number of rows to load, if -1, load all rows
+
+        Returns:
+            pd.DataFrame, loaded table of top rows
+        """
+        if path.endswith(".csv"):
+            df = pd.read_csv(path, keep_default_na=False, nrows=n_rows if n_rows >= 0 else None)
+            return df.loc[:, ~df.columns.str.match(r"^Unnamed:\s*\d+$")]
+
+        if path.endswith(".tsv"):
+            df = pd.read_csv(path, sep="\t", keep_default_na=False, nrows=n_rows if n_rows >= 0 else None)
+            return df.loc[:, ~df.columns.str.match(r"^Unnamed:\s*\d+$")]
+
+        if path.endswith(".parquet"):
+            if n_rows >= 0:
+                import pyarrow as pa  # pyright: ignore[reportMissingTypeStubs]
+                from pyarrow.parquet import ParquetFile  # pyright: ignore[reportMissingTypeStubs]
+
+                pf = ParquetFile(path)
+                return pa.Table.from_batches([next(pf.iter_batches(batch_size=n_rows))]).to_pandas()
+            else:
+                return pd.read_parquet(path)
+
+        raise ValueError(f"Unsupported file type: {path}")
 
     async def infer_description_async(self, **kwargs: Any) -> str:
         """
@@ -305,7 +305,7 @@ class TableNode(DataNode):
             str, inferred description
         """
         try:
-            data_preview = load_table(path=self.path, n_rows=50).to_string(index=False)
+            data_preview = self.load_table(path=self.path, n_rows=50).to_string(index=False)
         except Exception:
             data_preview = "No preview available."
 
@@ -317,21 +317,14 @@ class TableNode(DataNode):
             "data_preview": data_preview,
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/user").apply_prompt_template(
+        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
+        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
             **prompt_variables
         )
-        return await self.llm_infer_async(system_prompt=system_prompt, user_prompt=user_prompt)
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        try:
-            if from_backup and self.path_backup:
-                return load_table(path=self.path_backup).to_string(index=False)
-            return load_table(path=self.path).to_string(index=False)
-        except Exception:
-            return f"Unsupported file type: {self.path}, please use SQL or other tools to load the data if necessary."
+        return await self.llm_infer_async(system_prompt, user_prompt)
 
 
+@register_node("Column", ["from_table", "values", "supplementary_schemas"])
 @dataclass
 class ColumnNode(DataNode):
     """
@@ -342,13 +335,8 @@ class ColumnNode(DataNode):
     values: dict[str, Any] | None  # 列值
     supplementary_schemas: dict[str, Any]
 
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        """
-        Get full data of the column node.
-        """
-        return f"Please read data from the table directly: {self.from_table}"
 
-
+@register_node("File", ["path", "source"])
 @dataclass
 class FileNode(DataNode):
     """
@@ -357,7 +345,33 @@ class FileNode(DataNode):
 
     path: str
     source: str
-    path_backup: str = field(default="")
+
+    @staticmethod
+    def is_text_file(filepath: str, sample_size: int = 8192) -> bool:
+        """
+        Check if a file is a text file using heuristic method.
+
+        Args:
+            filepath (str): path of the file
+            sample_size (int): size of the sample to read (Default: `8192`)
+
+        Returns:
+            bool, True if the file is a text file, False otherwise
+        """
+        with open(filepath, "rb") as f:
+            sample = f.read(sample_size)
+        if not sample:
+            return True
+        # binary files usually have null bytes
+        if b"\x00" in sample:
+            return False
+        try:
+            decoded = sample.decode("utf-8", errors="replace")
+            # not utf-8 text if many characters are replaced
+            replacement_count = decoded.count("\ufffd")
+            return replacement_count <= max(1, len(decoded) * 0.01)  # at most 1% replacements
+        except Exception:
+            return False
 
     async def infer_description_async(self, **kwargs: Any) -> str:
         """
@@ -366,9 +380,15 @@ class FileNode(DataNode):
         Returns:
             str, inferred description
         """
-        try:
-            data_preview = load_file(filepath=self.path, max_lines=50)
-        except Exception:
+        if self.is_text_file(self.path):
+            with open(self.path, encoding="utf-8") as f:
+                lines = []
+                for i, line in enumerate(f):
+                    if i >= 50:
+                        break
+                    lines.append(line)
+                data_preview = "".join(lines)
+        else:
             data_preview = "No preview available."
 
         prompt_variables = {
@@ -379,21 +399,14 @@ class FileNode(DataNode):
             "data_preview": data_preview,
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/user").apply_prompt_template(
+        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
+        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
             **prompt_variables
         )
-        return await self.llm_infer_async(system_prompt=system_prompt, user_prompt=user_prompt)
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        try:
-            if from_backup and self.path_backup:
-                return load_file(filepath=self.path_backup)
-            return load_file(filepath=self.path)
-        except Exception:
-            return f"Binary file detected: {self.path}. Cannot read the content."
+        return await self.llm_infer_async(system_prompt, user_prompt)
 
 
+@register_node("Script", ["script_content", "script_type", "path", "related_data_list"])
 @dataclass
 class ScriptNode(DataNode):
     """
@@ -402,9 +415,8 @@ class ScriptNode(DataNode):
 
     script_content: str
     script_type: str
+    path: str | None
     related_data_list: list[str]
-    path: str = field(default="")
-    path_backup: str = field(default="")
 
     async def infer_description_async(self, **kwargs: Any) -> str:
         """
@@ -413,85 +425,29 @@ class ScriptNode(DataNode):
         Returns:
             str, inferred description
         """
-        data_preview = self.get_full_data()
         prompt_variables = {
             "node_type": self.__class__.__name__.replace("Node", ""),
             "label": self.label,
             "from_action": str(kwargs.get("from_action", {})),
             "from_state": str(kwargs.get("from_state", {})),
-            "data_preview": data_preview[:600] if len(data_preview) > 600 else data_preview,
+            "data_preview": self.script_content[:600] if len(self.script_content) > 600 else self.script_content,
             "extra_info": f"This script is written in {self.script_type} language.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/context/user").apply_prompt_template(
+        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
+        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
             **prompt_variables
         )
-        return await self.llm_infer_async(system_prompt=system_prompt, user_prompt=user_prompt)
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        if from_backup and self.path_backup:
-            return load_file(filepath=self.path_backup)
-        if self.path:
-            return load_file(filepath=self.path)
-        if self.script_content:
-            return self.script_content
-        return "No data preview available."
+        return await self.llm_infer_async(system_prompt, user_prompt)
 
 
+@register_node("Skill", ["path"])
 @dataclass
 class SkillNode(DataNode):
     """
     Skill Node IR
     """
 
-    path: str
-
-    async def infer_description_async(self, **kwargs: Any) -> str:
-        try:
-            content = load_file(filepath=self.path)
-        except Exception:
-            return "No description available."
-        # 匹配形如下方的字符串，注意---最后需要以换行符作为结尾
-        # ---
-        # group 1
-        # ---
-        # group 2
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", content, flags=re.DOTALL)
-        if match is None:
-            return content[:600]
-        try:
-            meta = yaml.safe_load(match.group(1))
-            desc = (meta or {}).get("description", "")
-            if desc:
-                return str(desc)
-        except Exception:
-            logger.warning("Cannot parse yaml formatter.")
-        return content[:600]
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        try:
-            content = load_file(filepath=self.path)
-        except Exception:
-            return f"Unable to read skill file: {self.path}"
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", content, flags=re.DOTALL)
-        if match:
-            return match.group(2)
-        return content
-
-
-NODE_REGISTRY: dict[str, type[BaseIR]] = {
-    "Query": QueryNode,
-    "Response": ResponseNode,
-    "State": StateNode,
-    "Action": ActionNode,
-    "Knowledge": KnowledgeNode,
-    "Tool": ToolNode,
-    "Table": TableNode,
-    "Column": ColumnNode,
-    "File": FileNode,
-    "Script": ScriptNode,
-    "Skill": SkillNode,
-}
+    path: str  # skill包路径
 
 
 class IRManager:
@@ -499,42 +455,23 @@ class IRManager:
     Manager class of IR. Support IR recording and retrieval.
     """
 
-    def __init__(self, *, node_types: list[str] | None = None) -> None:
+    def __init__(self, node_types: list[str] | None = None) -> None:
         """
         Initialize IRManager.
 
         Args:
             node_types (Optional[list[str]]): node types to be managed
-             (Default: `["Query", "Response","State", "Action", "Knowledge", "Tool", "Table", "Column", "File",
+             (Default: `["Query", "State", "Action", "Knowledge", "Tool", "Table", "Column", "File",
               "Script", "Skill"]`)
         """
         if node_types is None:
-            node_types = [
-                "Query",
-                "Response",
-                "State",
-                "Action",
-                "Knowledge",
-                "Tool",
-                "Table",
-                "Column",
-                "File",
-                "Script",
-                "Skill",
-            ]
+            node_types = ["Query", "State", "Action", "Knowledge", "Tool", "Table", "Column", "File", "Script", "Skill"]
 
         self._nodes: dict[str, dict[str, BaseIR]] = {i: {} for i in node_types}
 
     @staticmethod
     def _format_IR(
-        *,
-        node_type: str,
-        label: str,
-        description: str | None,
-        user_id: str,
-        session_id: str,
-        run_id: int,
-        **kwargs: Any,
+        node_type: str, label: str, description: str | None, session_id: str, run_id: int, **kwargs: Any
     ) -> BaseIR:
         """
         Create IR based on given node_type and attributes.
@@ -543,20 +480,17 @@ class IRManager:
             node_type (str): node type, assumed to be an element in self._nodes
             label (str): node label
             description (Optional[str]): node description
-            user_id (str): user id to which this node belongs
             session_id (str): session id to which this node belongs
             run_id (int): run id to which this node belongs
-            **kwargs: additional parameters to be passed to __init__() of various nodes:
-                - Query: ["query", "additional_files"]
-                - State: ["goal", "belief", "action_history", "current_status", "available_actions", "feedback",
-                    "uncentainty", "content", "reasoning_content"]
-                - Action: ["action", "params", "output", "success"]
-                - Knowledge: ["knowledge_type", "knowledge_content"]
-                - Tool: ["tool_params", "tool_returns"]
-                - Table: ["path"]
-                - Column: ["from_table", "values", "supplementary_schemas"]
-                - File: ["path", "source"]
-                - Script: ["script_content", "script_type", "related_data_list"]
+            **kwargs: additional parameters to be passed to __init__() of various nodes: \
+                - Query: ["query", "additional_files"] \
+                - State: ["state"] \
+                - Action: ["action", "params", "output", "success"] \
+                - Knowledge: ["knowledge_type", "knowledge_content"] \
+                - Tool: ["tool_params", "tool_returns"] \
+                - Table: ["path"] \
+                - Column: ["from_table", "values", "supplementary_schemas"] \
+                - Skill: ["path"]
 
         Returns:
             BaseIR, created IR of given node_type
@@ -564,10 +498,16 @@ class IRManager:
         if node_type not in NODE_REGISTRY:
             raise ValueError(f"Unknown node type: '{node_type}'.")
 
-        node_class = NODE_REGISTRY[node_type]
-        IR: BaseIR = node_class(
-            label=label, description=description, user_id=user_id, session_id=session_id, run_id=run_id, **kwargs
-        )
+        node_class, required_fields = NODE_REGISTRY[node_type]
+        if any(i not in kwargs for i in required_fields):
+            raise ValueError(f"A {node_type} node must contain info about '{required_fields}'.")
+
+        init_fields = required_fields.copy()
+        if "history" in kwargs:
+            init_fields.append("history")
+
+        kwargs = {i: kwargs[i] for i in init_fields}
+        IR: BaseIR = node_class(label=label, description=description, session_id=session_id, run_id=run_id, **kwargs)
         return IR
 
     def iter_nodes(self) -> Generator[tuple[str, str, BaseIR]]:
@@ -580,7 +520,7 @@ class IRManager:
             for label, node in node_dict.items():
                 yield node_type, label, node
 
-    def get_IR(self, *, label: str, node_type: str) -> BaseIR:
+    def get_IR(self, label: str, node_type: str) -> BaseIR:
         """
         Retrieve IR based on node_type and label.
 
@@ -602,10 +542,8 @@ class IRManager:
 
     def add_IR(
         self,
-        *,
         node_type: str,
         label: str,
-        user_id: str,
         session_id: str,
         run_id: int,
         description: str | None = None,
@@ -618,7 +556,6 @@ class IRManager:
             node_type (str): node type to be added
             label (str): node label to be added
             description (Optional[str]): node description to be added, if None will be inferred
-            user_id (str): user id to which this node belongs
             session_id (str): session id to which this node belongs
             run_id (int): run id to which this node belongs
             **kwargs: additional parameters to be passed to self._format_IR(): \
@@ -628,28 +565,10 @@ class IRManager:
         if node_type not in self._nodes:
             raise ValueError(f"Current context does not have IR of type '{node_type}'.")
 
-        # 兼容旧版state字段
-        if node_type == "State" and "state" in kwargs:
-            legacy = kwargs.pop("state")
-            kwargs.setdefault("content", legacy)
-            for _field in (
-                "reasoning_content",
-                "goal",
-                "belief",
-                "action_history",
-                "current_status",
-                "available_actions",
-                "feedback",
-                "uncentainty",
-            ):
-                kwargs.setdefault(_field, "")
-            logger.info("State field is deprecated. Please use content field instead.")
-
         IR: BaseIR = self._format_IR(
             node_type=node_type,
             label=label,
             description=description,
-            user_id=user_id,
             session_id=session_id,
             run_id=run_id,
             **kwargs,
@@ -659,7 +578,7 @@ class IRManager:
         else:
             raise ValueError("Multiple nodes with same label detected.")
 
-    def modify_IR(self, *, label: str, node_type: str, changes: dict[str, Any]) -> None:
+    def modify_IR(self, label: str, node_type: str, changes: dict[str, Any]) -> None:
         """
         Modify current IR in IRManager.
 
@@ -683,7 +602,7 @@ class IRManager:
             self._nodes[node_type][label].history[version_id][attr] = getattr(self._nodes[node_type][label], attr)
             setattr(self._nodes[node_type][label], attr, value)
 
-    def remove_IR(self, *, label: str, node_type: str) -> None:
+    def remove_IR(self, label: str, node_type: str) -> None:
         """
         Remove current IR in IRManager. Do nothing if IR does not exist.
 
@@ -696,40 +615,3 @@ class IRManager:
 
         if label in self._nodes[node_type]:
             del self._nodes[node_type][label]
-
-    def show_data_lineage(self, *, text_file_only: bool = False) -> list[list[tuple[str, None, None]]]:
-        """
-        Show the lineage of the data ir.
-
-        Args:
-            text_file_only (bool): whether to only show text files (Default: `False`)
-
-        Returns:
-            list[list[tuple[str, None, None]]], the lineage of the data ir
-        """
-        groups: dict[str, list[tuple[datetime, tuple[str, None, None]]]] = defaultdict(list)
-        for node_type, label, node in self.iter_nodes():
-            if node_type not in ("Table", "File", "Script"):
-                continue
-
-            raw = getattr(node, "path", None)
-            if not raw or not isinstance(raw, str):
-                continue
-
-            if text_file_only and not is_text_file(filepath=raw):
-                continue
-
-            key = lineage_path_key(p=raw)
-            groups[key].append((node.created_at, (f"{node_type}({label})", None, None)))
-
-        # sort outer list by earliest created_at timestamp
-        def earliest(ts: list[tuple[datetime, tuple[str, None, None]]]) -> datetime:
-            return min(t for t, _ in ts)
-
-        ordered_keys = sorted(groups.keys(), key=lambda k: earliest(groups[k]))
-        out: list[list[tuple[str, None, None]]] = []
-        for k in ordered_keys:
-            items = sorted(groups[k], key=lambda x: x[0], reverse=True)
-            out.append([s for _, s in items])
-
-        return out

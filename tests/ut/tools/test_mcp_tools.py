@@ -13,7 +13,6 @@
 import sys
 
 import pytest
-
 from dataagent.core.managers.action_manager.manager import ToolManager
 
 tool_manager = ToolManager()

@@ -19,6 +19,7 @@ from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
+
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX
 
 

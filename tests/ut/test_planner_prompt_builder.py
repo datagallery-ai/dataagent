@@ -792,8 +792,9 @@ def test_yaml_content_append_reaches_planner_llm_messages(monkeypatch):
     走 _prepare_messages_to_process 真实路径（不 mock prepare_flex_planner_prompt），
     断言追加 prompt 渲染后出现在最终 messages 中，同时内置 system 基座仍保留。
     """
-    from dataagent.core.context.context import ContextFactory
     from dataagent.core.flex.nodes.planner import Planner
+
+    from dataagent.core.context.context_trajectory import ContextFactory
 
     planner = Planner(
         name="planner",
@@ -869,8 +870,9 @@ def test_yaml_content_append_reaches_planner_llm_messages(monkeypatch):
 
 
 def test_prepare_flex_planner_prompt_injects_worker_metadata_into_system(monkeypatch, tmp_path):
-    from dataagent.core.context.context import ContextFactory
     from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+
+    from dataagent.core.context.context_trajectory import ContextFactory
     from dataagent.core.swarm.worker_metadata import upsert_worker_metadata
 
     ContextFactory.clear_context()
@@ -954,8 +956,9 @@ def test_prepare_flex_planner_prompt_injects_worker_metadata_into_system(monkeyp
 
 
 def test_prepare_flex_planner_prompt_skips_worker_metadata_when_swarm_disabled(monkeypatch, tmp_path):
-    from dataagent.core.context.context import ContextFactory
     from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+
+    from dataagent.core.context.context_trajectory import ContextFactory
 
     ContextFactory.clear_context()
     monkeypatch.setattr(planner_prompt_builder.llm_manager, "get_default_llm", lambda: None)

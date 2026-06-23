@@ -20,9 +20,9 @@ get_node_prompts 等），新方案下注册能力下沉为：
 """
 
 import pytest
+from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import NL2SQL_PROMPT_PREFIX
-from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 
 
 def test_from_package_relative_returns_prompt_template_for_existing_path():

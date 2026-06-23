@@ -19,15 +19,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 import requests
+from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.utils.info_utils import get_current_query
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
-from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
 from dataagent.actions.tools.semantic_tool.get_join_relations import get_join_relations
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
-from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.utils.info_utils import get_current_query
 
 
 # ============================================================
@@ -48,7 +47,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     """
     # 语义感知增强-元数据增强模块 基础URL和认证
     base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
+    auth = ("admin", "admin")
 
     # Step 1: 根据 ”模型传入的 keywords”，粗召回筛选出与 keywords 相关的 “metric_instance、data_column、data_table”
     result_json = _coarse_recall_metric_instances(keywords, base_url, auth)

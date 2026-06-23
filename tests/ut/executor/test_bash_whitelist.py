@@ -13,10 +13,9 @@
 import pathlib
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
-
 from dataagent.core.flex.nodes import executor as executor_module
 from dataagent.core.flex.nodes.executor import Executor, _extract_base_commands
+from langchain_core.messages import AIMessage, ToolMessage
 
 
 class _StubSandbox:

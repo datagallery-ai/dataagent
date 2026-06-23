@@ -1,10 +1,9 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 from types import SimpleNamespace
 
-from langchain_core.messages import HumanMessage
-
 # pylint: disable=protected-access
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter, coerce_chat_input_to_messages
+from langchain_core.messages import HumanMessage
 
 
 class _NonLangChainRaw:

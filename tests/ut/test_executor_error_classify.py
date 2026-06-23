@@ -13,8 +13,6 @@
 """Executor 错误分类单元测试"""
 
 import pytest
-
-from dataagent.actions.environment import Env
 from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import (
     DEFAULT_RETRY_POLICY,
@@ -22,6 +20,8 @@ from dataagent.core.managers.action_manager.base import (
     ErrorType,
     ToolError,
 )
+
+from dataagent.actions.environment import Env
 
 
 class TestExecutorClassifyError:

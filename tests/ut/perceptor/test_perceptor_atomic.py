@@ -15,9 +15,8 @@ from dataclasses import dataclass
 from unittest.mock import patch
 
 import pytest
-
-pytest.importorskip("elasticsearch", reason="requires dataagent[all]")
-
+from dataagent.core.managers.action_manager.manager import ToolManager
+from dataagent.core.managers.llm_manager import llm_manager
 from loguru import logger
 
 from dataagent.actions.perceptor.perceptor_atomic import (
@@ -28,8 +27,6 @@ from dataagent.actions.perceptor.perceptor_atomic import (
 )
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.config.config_manager import ConfigManager
-from dataagent.core.managers.action_manager.manager import ToolManager
-from dataagent.core.managers.llm_manager import llm_manager
 
 _tool_manager_stub = ToolManager()
 _tool_manager_stub.enable_auto_discover = lambda: None

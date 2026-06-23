@@ -1,15 +1,24 @@
+# Quickstart 配置 — 通过交互式命令行填充
+
 AGENT_CONFIG:
-  name: "Quickstart Agent"
-  version: "1.0"
-  description: "Quickstart Agent"
-  backend: "langgraph"
-  type: "react"
+  name: QuickstartAgent
+  description: DataAgent Quickstart
+  type: react
+  debug: true
+  enable_human_feedback: true
 
 MODEL:
   chat_model:
-    provider: "bailian"
+    provider: "deepseek"
     model_type: "chat"
     params:
       model: "deepseek-v4-flash"
       temperature: 0.7
-      enable_thinking: true
+
+SCENARIO:
+  chat:
+    instructions: |
+      你是一个智能数据分析助手。使用工具完成用户的数据分析任务。
+
+WORKSPACE:
+  path: /tmp/dataagent_workspace

@@ -17,10 +17,10 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-
-from dataagent.config.config_manager import ConfigManager
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.llm_manager.llm_config import LLMConfig
+
+from dataagent.config.config_manager import ConfigManager
 
 _EMBEDDING_MODULES = (
     "dataagent.common_utils.knowledge_base.knowledge_base",

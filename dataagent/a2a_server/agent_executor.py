@@ -214,24 +214,11 @@ class DataAgentExecutor(AgentExecutor):
         return response
 
     def _has_error_response(self, response: Any) -> bool:
-        """Check if the response contains an error.
-
-        Errors can be in two places:
-        1. Top-level: response.get("error") - from DataAgent.chat() exception handling
-        2. Nested: response["messages"][-1].additional_kwargs.get("error") - from FlexAgent planner
-        """
+        """Check if the response contains an error."""
         if not isinstance(response, dict):
             return False
-
         if "error" in response:
             return True
-
-        if response.get("messages"):
-            last_msg = response["messages"][-1]
-            if isinstance(last_msg, dict):
-                return bool(last_msg.get("additional_kwargs", {}).get("error"))
-            return bool(getattr(last_msg, "additional_kwargs", {}).get("error"))
-
         return False
 
     def _extract_error_message(self, response: Any) -> str:
