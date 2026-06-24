@@ -129,14 +129,39 @@ class ChatModel(Protocol):
         ...
 
 
+def _int_or_zero(val: Any) -> int:
+    try:
+        return int(val or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def normalize_usage_metadata(usage: Any) -> dict[str, Any]:
-    """补齐 langchain AIMessage 所需的 usage_metadata 必填字段。"""
+    """补齐 langchain AIMessage 所需的 usage_metadata 必填字段，保留 cache/reasoning 子字段。
+
+    Handles both:
+    - OpenAI/DeepSeek: ``input_cache_read_tokens`` / ``input_cache_creation_tokens`` /
+      ``output_reasoning_tokens`` at root (from ``_extract_detail_tokens``)
+    - Anthropic fallback: ``cache_read_input_tokens`` / ``cache_creation_input_tokens`` /
+      ``reasoning_tokens`` at root (when extraction did not rename them)
+    """
     usage_dict = cast(dict[str, Any], usage or {}) if isinstance(usage, dict) else {}
     return {
-        "input_tokens": int(usage_dict.get("input_tokens") or 0),
-        "output_tokens": int(usage_dict.get("output_tokens") or 0),
-        "total_tokens": int(usage_dict.get("total_tokens") or 0),
-        **usage_dict,
+        "input_tokens": _int_or_zero(usage_dict.get("input_tokens")),
+        "output_tokens": _int_or_zero(usage_dict.get("output_tokens")),
+        "total_tokens": _int_or_zero(usage_dict.get("total_tokens")),
+        "input_cache_read_tokens": _int_or_zero(
+            usage_dict.get("input_cache_read_tokens")
+            or usage_dict.get("cache_read_input_tokens")
+        ),
+        "input_cache_creation_tokens": _int_or_zero(
+            usage_dict.get("input_cache_creation_tokens")
+            or usage_dict.get("cache_creation_input_tokens")
+        ),
+        "output_reasoning_tokens": _int_or_zero(
+            usage_dict.get("output_reasoning_tokens")
+            or usage_dict.get("reasoning_tokens")
+        ),
     }
 
 
@@ -429,7 +454,11 @@ class LangChainChatModelAdapter:
             content = getattr(msg, "content", "")
 
             role = _infer_role(msg_type=msg_type, cls_name=cls_name)
-            m: dict[str, Any] = {"role": role, "content": str(content or "")}
+
+            if isinstance(content, list):
+                m: dict[str, Any] = {"role": role, "content": content}
+            else:
+                m: dict[str, Any] = {"role": role, "content": str(content or "")}
 
             # tool message 补充字段
             if role == "tool":

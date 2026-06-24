@@ -35,7 +35,6 @@ from langchain_core.messages import BaseMessage
 from dataagent.core.context.message_history import read_messages_file, serialize_message, write_messages_file
 from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
-
 def resolve_history_persistence_context(
     state: Mapping[str, Any],
     runtime: Any = None,

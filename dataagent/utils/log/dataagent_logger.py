@@ -26,7 +26,21 @@ from typing import Any
 
 from loguru import logger as _loguru_logger
 
-from dataagent.utils.runtime_paths import dataagent_home
+from dataagent.utils.constants import _TZ_CN
+from dataagent.utils.runtime_paths import dataagent_home, resolve_user_root
+
+
+def _cn_format(record: dict) -> str:
+    record["time"] = record["time"].astimezone(_TZ_CN)
+    return record["format"]
+
+
+def _make_format(fmt_string: str) -> Any:
+    """Create a format callable that converts loguru time to UTC+8 before formatting."""
+    def formatter(record: dict) -> str:
+        record["time"] = record["time"].astimezone(_TZ_CN)
+        return fmt_string
+    return formatter
 
 
 @dataclass(slots=True)
@@ -72,7 +86,10 @@ class DataAgentLogger:
         if cls._initialized and process_name in cls._logger_instances:
             return
 
-        file_path = effective_config.file_path or cls._build_default_log_file_path()
+        if not effective_config.file_path_explicit and effective_config.file_path is None:
+            file_path = None
+        else:
+            file_path = effective_config.file_path or cls._build_default_log_file_path()
         effective_config = replace(
             effective_config,
             process_name=process_name,
@@ -94,21 +111,23 @@ class DataAgentLogger:
                         "<level>{level: <8}</level> | "
                         f"<magenta>{process_name}</magenta> | "
                         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                        "<level>{message}</level>"
+                        "<level>{message}</level>\n"
                     )
                 else:
                     format_string = (
                         "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
                         "<level>{level: <8}</level> | "
                         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                        "<level>{message}</level>"
+                        "<level>{message}</level>\n"
                     )
+
+        format_callable = format_string if effective_config.json_logs else _make_format(format_string)
 
         if effective_config.console:
             _loguru_logger.add(
                 sys.stderr,
                 level=effective_config.console_level,
-                format=format_string,
+                format=format_callable,
                 colorize=True,
                 backtrace=True,
                 diagnose=True,
@@ -122,7 +141,7 @@ class DataAgentLogger:
                 _loguru_logger.add(
                     file_path,
                     level=effective_config.file_level,
-                    format=format_string,
+                    format=format_callable,
                     mode="a",
                     rotation=effective_config.rotation,
                     retention=effective_config.retention,
@@ -140,7 +159,7 @@ class DataAgentLogger:
                     _loguru_logger.add(
                         sys.stderr,
                         level=effective_config.console_level,
-                        format=format_string,
+                        format=format_callable,
                         colorize=True,
                         backtrace=True,
                         diagnose=True,
@@ -245,10 +264,47 @@ class DataAgentLogger:
         return cls._initialized
 
     @classmethod
-    def _build_default_log_file_path(cls) -> str:
+    def _build_default_log_file_path(cls, *, process_name: str = "main") -> str:
         """Build the default log path under ``<dataagent_home>/logs`` using a timestamped file name."""
-        stamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
-        return str(((dataagent_home() / "logs") / f"{stamp}.log").resolve())
+        stamp = datetime.now(tz=_TZ_CN).strftime("%Y%m%d_%H%M%S_%f")
+        prefix = f"{process_name}_" if process_name and process_name != "main" else "main_"
+        return str(((dataagent_home() / "logs") / f"{prefix}{stamp}.log").resolve())
+
+    @classmethod
+    def build_session_log_path(cls, *, user_id: str, session_id: str, process_name: str = "main") -> str:
+        """Build a per-user session-specific log path.
+
+        Returns a path like ``~/.dataagent/{user_id}/logs/main_{session_id}.log``
+        or ``~/.dataagent/{user_id}/logs/subagent_{session_id}_{sub_id}.log``.
+        """
+        prefix = f"{process_name}_" if process_name and process_name != "main" else "main_"
+        return str(
+            (resolve_user_root(user_id=user_id) / "logs" / f"{prefix}{session_id}.log").resolve()
+        )
+
+    @classmethod
+    def setup_session_log(cls, *, user_id: str, session_id: str, process_name: str = "main") -> None:
+        """Reconfigure the logger to write to a per-user session-specific log file.
+
+        This should be called when a main-agent session starts so that its logs
+        are stored alongside the sub-agent logs under the same per-user directory.
+
+        Skips reconfiguration if the logger is already configured for a sub-agent
+        process (``process_name != "main"``), to avoid overriding the sub-agent's
+        own log setup in ``sub_agent_entry.py``.
+        """
+        current_config = cls._config or LoggerConfig()
+        if current_config.process_name and current_config.process_name != "main":
+            return
+        session_log_path = cls.build_session_log_path(user_id=user_id, session_id=session_id, process_name=process_name)
+        cls.reconfigure(
+            replace(
+                current_config,
+                process_name=process_name,
+                file_path=session_log_path,
+                file_path_explicit=True,
+            )
+        )
 
     @classmethod
     def _redirect_prints_to_logger(cls, process_name: str) -> None:
@@ -309,3 +365,22 @@ def setup_subprocess_logging(process_name: str):
     """设置子进程日志"""
     _dataagent_logger.setup_subprocess_logging(process_name)
     return get_logger(process_name)
+
+
+def setup_session_log(*, user_id: str, session_id: str, process_name: str = "main") -> None:
+    """将主 Agent 日志重定向到 per-user 目录下的会话日志文件。
+
+    若当前进程已配置为 sub-agent（process_name != "main"），则跳过，避免
+    覆盖 sub-agent 在 ``sub_agent_entry.py`` 中已完成的日志配置。
+    """
+    global logger
+    current_config = DataAgentLogger._config or LoggerConfig()
+    if current_config.process_name and current_config.process_name != "main":
+        return
+    _dataagent_logger.setup_session_log(user_id=user_id, session_id=session_id, process_name=process_name)
+    logger = _dataagent_logger.get_logger(process_name)
+
+
+def build_session_log_path(*, user_id: str, session_id: str, process_name: str = "main") -> str:
+    """构建 per-user 会话日志文件路径。"""
+    return _dataagent_logger.build_session_log_path(user_id=user_id, session_id=session_id, process_name=process_name)

@@ -746,6 +746,10 @@ def test_run_agent_passes_identity_to_initial_state(monkeypatch, tmp_path):
     assert result == {"ok": True}
     assert captured["query"] == "查询本体"
     assert captured["config_path"] == Path("/tmp/sub_agent.yaml")
+    assert (
+        captured["log_path"]
+        == (tmp_path / "dataagent-home" / "main-user" / "logs" / "subagent_main-session_7.log").resolve()
+    )
     assert captured["initial_state"]["user_id"] == "main-user"
     assert captured["initial_state"]["session_id"] == "subagent_main-session_7"
     assert captured["initial_state"]["sub_id"] == 7

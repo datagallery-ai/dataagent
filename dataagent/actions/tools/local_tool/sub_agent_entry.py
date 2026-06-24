@@ -146,6 +146,12 @@ async def _run_agent(
     resolved_user_id, resolved_session_id, resolved_sub_id = _resolve_subagent_identity(
         user_id=user_id, session_id=session_id, sub_id=sub_id
     )
+    log_path = (
+        resolve_user_root(user_id=resolved_user_id) / "logs" / f"{resolved_session_id}.log"
+    ).resolve()
+    dataagent_log.reconfigure(
+        dataagent_log.LoggerConfig(process_name="subagent", file_path=str(log_path), file_path_explicit=True)
+    )
     agent = DataAgent.from_config(Path(config_path))
     initial_state = _load_initial_state_file(initial_state_file)
     defaults = {

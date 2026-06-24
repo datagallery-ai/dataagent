@@ -25,7 +25,7 @@ import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -77,7 +77,7 @@ from dataagent.utils.constants import (
 )
 from dataagent.utils.fix_md_image_path import fix_markdown_image_paths, load_images_as_json
 from dataagent.utils.formatting_utils import get_available_chinese_font
-from dataagent.utils.runtime_paths import dataagent_package_root, resolve_user_root
+from dataagent.utils.runtime_paths import dataagent_package_root, resolve_session_root, resolve_user_root
 
 _subagent_runtime_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "subagent_runtime_context",
@@ -92,6 +92,7 @@ def set_subagent_runtime_context(
     session_id: str | None,
     sub_id: int | None,
     parent_user_query: str | None = None,
+    run_id: int | None = None,
     progress_callback: Any | None = None,  # Callable[[str, str], None]
     tool_call_id: str | None = None,
     agent_config: dict[str, Any] | None = None,
@@ -104,6 +105,7 @@ def set_subagent_runtime_context(
             "session_id": None if session_id is None else str(session_id).strip(),
             "sub_id": sub_id,
             "parent_user_query": None if parent_user_query is None else str(parent_user_query),
+            "run_id": run_id,
             "progress_callback": progress_callback,
             "tool_call_id": tool_call_id,
             "agent_config": dict(agent_config) if isinstance(agent_config, dict) else {},
@@ -346,6 +348,15 @@ def _handle_subagent_completed(
     stderr = completed.get("stderr") or ""
     rc = int(completed.get("returncode") or 0)
     stripped = stdout.strip()
+
+    # Log captured sub-agent stderr to main agent's logger for visibility
+    if stderr.strip():
+        logger.debug(f"[subagent:{worker_sub_id}] stderr captured ({len(stderr)} chars)")
+        for line in stderr.strip().splitlines()[:30]:
+            logger.debug(f"[subagent:{worker_sub_id}] {line}")
+        truncated = stderr.strip().splitlines()
+        if len(truncated) > 30:
+            logger.debug(f"[subagent:{worker_sub_id}] ... ({len(truncated) - 30} more lines omitted)")
 
     parsed: Any = None
     if stripped:
@@ -1048,7 +1059,7 @@ def report_generator(
         images_path = _resolve_tool_file_path(images_path, "images_path")
     images = load_images_as_json(images_path) if images_path else ""
     report_analysis = _load_analysis_content(analysis_path)
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_time = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
     llm = llm_manager.get_default_llm()
     system_prompt = f"""You are a professional MD report generation assistant. Follow these rules:
 1. Generate well-structured MD documents based only on the provided analysis inputs and \
@@ -1218,6 +1229,8 @@ async def nl2sql_sub_agent_tool(
         source_config,
         config_manager=_tool_context.config_manager,
         tool_config=_tool_context.tool_config,
+        user_id=str(runtime.user_id or ""),
+        session_id=str(runtime.session_id or ""),
     )
     guard = get_current_sandbox()
     temp_root = guard.workspace_root or Path.cwd().resolve()
@@ -1256,6 +1269,32 @@ async def nl2sql_sub_agent_tool(
             "original_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
             "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
         }
+
+    trajectory_src = sub_state.get("_trajectory_path")
+    trajectory_dest = None
+    uid = str(runtime.user_id or "anonymous")
+    sid = str(runtime.session_id or "default_session")
+    if trajectory_src and Path(trajectory_src).is_file():
+        trajectory_src_path = Path(trajectory_src).resolve()
+        parent_memory = resolve_session_root(user_id=uid, session_id=sid) / ".memory"
+        parent_memory.mkdir(parents=True, exist_ok=True)
+        candidate_dest = (parent_memory / trajectory_src_path.name).resolve()
+        if trajectory_src_path != candidate_dest:
+            shutil.move(str(trajectory_src_path), str(candidate_dest))
+            trajectory_dest = candidate_dest
+            logger.info(f"NL2SQL trajectory moved to: {trajectory_dest}")
+        else:
+            trajectory_dest = trajectory_src_path
+
+    sub_id_val = res.get("sub_id")
+    if isinstance(sub_id_val, int):
+        subagent_session_root = resolve_session_root(
+            user_id=uid,
+            session_id=f"subagent_{sid}_{sub_id_val}",
+        )
+        if subagent_session_root.is_dir():
+            shutil.rmtree(subagent_session_root, ignore_errors=True)
+
     sql = sub_state.get("sql", "")
     try:
         import sqlglot
@@ -1285,9 +1324,15 @@ async def nl2sql_sub_agent_tool(
         f"CSV 结果已保存到：`{str(csv_path)}`\n\n"
         f"生成的SQL语句如下:\n```sql\n{sql}\n```"
     )
+    trajectory_info = ""
+    if trajectory_dest:
+        trajectory_info = f"\n\n轨迹文件已保存到：`{str(trajectory_dest)}`"
+    original_msg = f"SQL 执行完成，SQL 文件已保存到：{str(sql_path)}，查询结果已保存到：{str(csv_path)}"
+    if trajectory_dest:
+        original_msg += f"，轨迹文件已保存到：{str(trajectory_dest)}"
     return {
-        "original_msg": f"SQL 执行完成，SQL 文件已保存到：{str(sql_path)}，查询结果已保存到：{str(csv_path)}",
-        "frontend_msg": frontend_msg_md,
+        "original_msg": original_msg,
+        "frontend_msg": frontend_msg_md + trajectory_info,
     }
 
 
@@ -1348,6 +1393,7 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
             parent_user_query=parent_user_query,
         )
         env = dict(os.environ)
+        env.setdefault("DATAAGENT_CONTEXT_DUMP", "1")
         sub_agent_session_id = f"subagent_{resolved_session_id}_{worker_sub_id}"
         sub_agent_log_path = (
             resolve_user_root(user_id=resolved_user_id) / "logs" / f"{sub_agent_session_id}_{worker_sub_id}.log"
@@ -1530,6 +1576,9 @@ async def sub_agent_tool(
         sub_id=worker_sub_id,
         reuse_worker_state=reuse_worker_state,
     )
+    parent_run_id = subagent_context.get("run_id")
+    if parent_run_id is not None and not swarm_on:
+        next_run_id = int(parent_run_id)
     lock = acquire_worker_lock(
         user_id=resolved_user_id,
         parent_session_id=resolved_session_id,
@@ -1681,6 +1730,8 @@ def _prepare_worker_initial_state_file(
         "run_id": int(next_run_id),
         "sub_id": int(sub_id),
         "parent_user_query": str(parent_user_query or ""),
+        "_parent_session_id": parent_session_id,
+        "_parent_run_id": int(next_run_id),
     }
     workspace_root = get_current_sandbox().workspace_root
     if workspace_root is not None:
@@ -2781,11 +2832,21 @@ def _resolve_bound_llm_model_name(*, tool_config: dict[str, Any] | None = None) 
     return bound or None
 
 
+def _deep_merge_dict(target: dict, source: dict) -> None:
+    for key, value in source.items():
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+            _deep_merge_dict(target[key], value)
+        else:
+            target[key] = value
+
+
 def _build_nl2sql_sub_agent_config(
     source_config: dict[str, Any],
     *,
     config_manager: Any,
     tool_config: dict[str, Any] | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     temp_config = copy.deepcopy(source_config)
 
@@ -2810,12 +2871,21 @@ def _build_nl2sql_sub_agent_config(
             }
     agent_tools = [i.get("function", "") for i in config_manager.get("TOOLS", {}).get("local_functions", {})]
     if "search_metric_instance" in agent_tools or "search_tables_with_typename" in agent_tools:
-        temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_schema"] = "schema_schemair"
     if "search_udf_function_by_name_keyword" in agent_tools:
-        temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_evidence"] = "schema_udf_basic"
     if "metadata_recall" in agent_tools:
-        temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
-        temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_schema"] = "schema_schemair"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_evidence"] = "schema_udf_basic"
+
+    core_overrides = tool_config.get("core_config") if tool_config else None
+    if isinstance(core_overrides, dict) and core_overrides:
+        _deep_merge_dict(temp_config.setdefault("CORE", {}), core_overrides)
+
+    if user_id:
+        temp_config["USER_ID"] = str(user_id).strip()
+    if session_id:
+        temp_config["SESSION_ID"] = str(session_id).strip()
 
     return temp_config
 

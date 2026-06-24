@@ -264,6 +264,7 @@ def _litellm():
     litellm.ssl_verify = False
     litellm.modify_params = True
     litellm.suppress_debug_info = True
+
     return litellm
 
 
@@ -560,7 +561,6 @@ class LLMClient:
                 f"Set MODEL.{config.name}.params.api_key or {provider_env}_API_KEY in .env."
             )
 
-        # 沿用旧 OpenAIProvider 行为：未声明则按 OpenAI 兼容协议
         params.setdefault("custom_llm_provider", "openai")
 
         return cls(
@@ -732,6 +732,7 @@ class LLMClient:
 
         if msgs and not isinstance(msgs[0], dict):
             msgs = self._lc_messages_to_dicts(msgs)
+
         return msgs, call_kw
 
     def _stream_chunk_message(
@@ -831,7 +832,6 @@ class LLMClient:
         return str(finish_reason or "")
 
     def _wrap_response(self, resp: Any) -> LLMClientMessage:
-        """将 litellm 响应包装为 LLMClientMessage，包括工具调用、推理内容等解析"""
         msg = resp.choices[0].message
         content = getattr(msg, "content", None) or ""
         if not isinstance(content, str):
@@ -847,6 +847,7 @@ class LLMClient:
                 "output_tokens": int(getattr(usage, "completion_tokens", None) or 0),
                 "total_tokens": int(getattr(usage, "total_tokens", None) or 0),
             }
+            _extract_detail_tokens(usage, usage_dict)
         return LLMClientMessage(
             content=content,
             reasoning_content=str(rc) if rc else "",
@@ -857,7 +858,6 @@ class LLMClient:
         )
 
     def _wrap_stream_chunk(self, chunk: Any) -> LLMClientMessage:
-        """将流式响应块转为 LLMClientMessage，仅取部分字段"""
         chunk_dict = chunk if isinstance(chunk, dict) else self._stream_chunk_to_dict(chunk)
         choices = chunk_dict.get("choices") or []
         usage = chunk_dict.get("usage") or {}
@@ -866,6 +866,8 @@ class LLMClient:
             "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
             "total_tokens": int(usage.get("total_tokens") or 0),
         }
+        if usage:
+            _extract_detail_tokens_from_dict(usage, usage_dict)
         if not choices:
             return LLMClientMessage(content="", usage_metadata=usage_dict, raw=chunk_dict)
         delta = choices[0].get("delta") or {}
@@ -877,6 +879,56 @@ class LLMClient:
             usage_metadata=usage_dict,
             raw=chunk_dict,
         )
+
+
+def _safe_int(val: Any) -> int:
+    try:
+        return int(val or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_assign(obj: Any, attr: str, target: dict[str, Any], target_key: str) -> None:
+    """Safely read *attr* from *obj* and store the int in *target[target_key]*."""
+    target[target_key] = _safe_int(getattr(obj, attr, None))
+
+
+def _extract_detail_tokens(usage: Any, target: dict[str, Any]) -> None:
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    if prompt_details:
+        target["input_cache_read_tokens"] = _safe_int(getattr(prompt_details, "cached_tokens", None))
+        target["input_cache_creation_tokens"] = _safe_int(
+            getattr(prompt_details, "cache_creation_tokens", None)
+            or getattr(prompt_details, "cache_creation_input_tokens", None)
+        )
+    else:
+        _safe_assign(usage, "cache_read_input_tokens", target, "input_cache_read_tokens")
+        _safe_assign(usage, "cache_creation_input_tokens", target, "input_cache_creation_tokens")
+
+    completion_details = getattr(usage, "completion_tokens_details", None)
+    if completion_details:
+        target["output_reasoning_tokens"] = _safe_int(getattr(completion_details, "reasoning_tokens", None))
+    else:
+        _safe_assign(usage, "reasoning_tokens", target, "output_reasoning_tokens")
+
+
+def _extract_detail_tokens_from_dict(usage: dict, target: dict[str, Any]) -> None:
+    prompt_details = usage.get("prompt_tokens_details")
+    if isinstance(prompt_details, dict):
+        target["input_cache_read_tokens"] = _safe_int(prompt_details.get("cached_tokens"))
+        target["input_cache_creation_tokens"] = _safe_int(
+            prompt_details.get("cache_creation_tokens")
+            or prompt_details.get("cache_creation_input_tokens")
+        )
+    else:
+        target["input_cache_read_tokens"] = _safe_int(usage.get("cache_read_input_tokens"))
+        target["input_cache_creation_tokens"] = _safe_int(usage.get("cache_creation_input_tokens"))
+
+    completion_details = usage.get("completion_tokens_details")
+    if isinstance(completion_details, dict):
+        target["output_reasoning_tokens"] = _safe_int(completion_details.get("reasoning_tokens"))
+    else:
+        target["output_reasoning_tokens"] = _safe_int(usage.get("reasoning_tokens"))
 
 
 def llm_adapter_from_env_cfg(cfg: dict[str, Any], logical_name: str) -> Any:
