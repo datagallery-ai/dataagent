@@ -1,0 +1,72 @@
+AGENT_CONFIG:
+  name: "DataAgent for Changping Lab"
+  version: "1.0"
+  description: "DataAgent for Changping Lab"
+  backend: "langgraph"
+  type: "react"
+  mode: "dev"
+  enable_human_feedback: true
+
+WORKSPACE:
+  path: "__WORKSPACE_DIR__"
+  allow_path:
+    - "__WORKSPACE_DIR__"
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "openai"
+    params:
+      model: "Qwen3.7-Plus"
+      base_url: "$env{OPENAI_BASE_URL}"
+      api_key: "$env{OPENAI_API_KEY}"
+      temperature: 0
+
+SCENARIO:
+  personal: "You are an AI assistant in a biology research context."
+  chat:
+    instructions: "先调用get_ontology_description_tool工具"
+
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 32000
+
+POST_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "nl2sql_sub_agent_tool"
+      config:
+        llm_model: "chat_model"
+        core_config:
+          perceptor:
+            user_sql_rules: null
+            user_few_shot_examples: null
+          generator:
+            strategies: ["prompt"]
+            num_samples: 1
+
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "get_ontology_description_tool"
+  skills:
+    custom_dirs:
+      - "skills"
+
+DATABASE:
+  db_id: "changping02"
+  engine: "sqlite"
+  config:
+    path: "__WORKSPACE_DIR__/changping02.sqlite"
+
+METAVISOR:
+  metavisor_url: "http://localhost:31000"
+  valuematch_enable: false

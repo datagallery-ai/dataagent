@@ -1,0 +1,1475 @@
+{
+        "changping02": {
+            "data_sources_info": {
+                "data_source_info1": {
+                    "data_source_type": "sqlite",
+                    "connection_string": ""
+                }
+            },
+            "entities": [
+                {
+                    "api_name": "ProteinSamples",
+                    "display_name": "protein_samples",
+                    "description": "Direct mapping entity for table changping02.protein_samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.protein_samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "ProteinSamplesId"
+                    ],
+                    "title_property": "ProteinSamplesId",
+                    "properties": [
+                        {
+                            "api_name": "ProteinSamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "ProteinSamplesProteinId",
+                            "display_name": "protein_id",
+                            "description": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
+                            "column_name": "protein_id",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        },
+                        {
+                            "api_name": "ProteinSamplesConcentration",
+                            "display_name": "concentration",
+                            "description": "浓度，单位为ng/ul",
+                            "column_name": "concentration",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "ProteinSamplesDescription",
+                            "display_name": "description",
+                            "description": "一段额外的文字描述，可能包含样本的特殊构造形式等",
+                            "column_name": "description",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "ProteinSamplesVolume",
+                            "display_name": "volume",
+                            "description": "样本体积，单位为ul",
+                            "column_name": "volume",
+                            "alias_table_name": "table1",
+                            "data_type": "List[str]"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Experiments",
+                    "display_name": "experiments",
+                    "description": "Direct mapping entity for table changping02.experiments",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.experiments",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "ExperimentsId"
+                    ],
+                    "title_property": "ExperimentsStatus",
+                    "properties": [
+                        {
+                            "api_name": "ExperimentsStatus",
+                            "display_name": "status",
+                            "description": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
+                            "column_name": "status",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "ExperimentsId",
+                            "display_name": "id",
+                            "description": "实验具有一个唯一编号，与LIMS中的编号对应",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "ExperimentsEndDate",
+                            "display_name": "end_date",
+                            "description": "结束日期",
+                            "column_name": "end_date",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "ExperimentsOperator",
+                            "display_name": "operator",
+                            "description": "操作人",
+                            "column_name": "operator",
+                            "alias_table_name": "table1",
+                            "data_type": "date"
+                        },
+                        {
+                            "api_name": "ExperimentsStartDate",
+                            "display_name": "start_date",
+                            "description": "开始日期",
+                            "column_name": "start_date",
+                            "alias_table_name": "table1",
+                            "data_type": "ExperimentStatus"
+                        },
+                        {
+                            "api_name": "ExperimentsSubmitter",
+                            "display_name": "submitter",
+                            "description": "提出人",
+                            "column_name": "submitter",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "ExperimentsType",
+                            "display_name": "type",
+                            "description": "实验类型，区分不同的实验子类",
+                            "column_name": "type",
+                            "alias_table_name": "table1",
+                            "data_type": "List[float]"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "NeutralizationIc50FitData",
+                    "display_name": "neutralization_ic50_fit_data",
+                    "description": "Direct mapping entity for table changping02.neutralization_ic50_fit_data",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.neutralization_ic50_fit_data",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "NeutralizationIc50FitDataId"
+                    ],
+                    "title_property": "NeutralizationIc50FitDataFitSuccess",
+                    "properties": [
+                        {
+                            "api_name": "NeutralizationIc50FitDataFitSuccess",
+                            "display_name": "fit_success",
+                            "description": "是否成功拟合半数抑制浓度（IC50）的标记",
+                            "column_name": "fit_success",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        },
+                        {
+                            "api_name": "NeutralizationIc50FitDataId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationIc50FitDataIc50",
+                            "display_name": "ic50",
+                            "description": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
+                            "column_name": "ic50",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationIc50FitDataFitInfo",
+                            "display_name": "fit_info",
+                            "description": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
+                            "column_name": "fit_info",
+                            "alias_table_name": "table1",
+                            "data_type": "bool"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "PseudovirusSamples",
+                    "display_name": "pseudovirus_samples",
+                    "description": "Direct mapping entity for table changping02.pseudovirus_samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.pseudovirus_samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "PseudovirusSamplesId"
+                    ],
+                    "title_property": "PseudovirusSamplesVirusType",
+                    "properties": [
+                        {
+                            "api_name": "PseudovirusSamplesVirusType",
+                            "display_name": "virus_type",
+                            "description": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
+                            "column_name": "virus_type",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        },
+                        {
+                            "api_name": "PseudovirusSamplesAntigens",
+                            "display_name": "antigens",
+                            "description": "病毒关键抗原，与一个或多个Protein的id连接",
+                            "column_name": "antigens",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "PseudovirusSamplesPseudovirusId",
+                            "display_name": "pseudovirus_id",
+                            "description": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
+                            "column_name": "pseudovirus_id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "PseudovirusSamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "PseudovirusSamplesVolume",
+                            "display_name": "volume",
+                            "description": "样本体积，单位为ul",
+                            "column_name": "volume",
+                            "alias_table_name": "table1",
+                            "data_type": "List[str]"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "DataSamples",
+                    "display_name": "data_samples",
+                    "description": "Direct mapping entity for table changping02.data_samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.data_samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "DataSamplesId"
+                    ],
+                    "title_property": "DataSamplesId",
+                    "properties": [
+                        {
+                            "api_name": "DataSamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "date"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "NeutralizationExperiments",
+                    "display_name": "neutralization_experiments",
+                    "description": "Direct mapping entity for table changping02.neutralization_experiments",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.neutralization_experiments",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "NeutralizationExperimentsId"
+                    ],
+                    "title_property": "NeutralizationExperimentsCellSampleId",
+                    "properties": [
+                        {
+                            "api_name": "NeutralizationExperimentsCellSampleId",
+                            "display_name": "cell_sample_id",
+                            "description": "输入的细胞样本，细胞类型、细胞余量需符合要求",
+                            "column_name": "cell_sample_id",
+                            "alias_table_name": "table1",
+                            "data_type": "List[int]"
+                        },
+                        {
+                            "api_name": "NeutralizationExperimentsResultId",
+                            "display_name": "result_id",
+                            "description": "实验输出一个对应该实验的结果对象",
+                            "column_name": "result_id",
+                            "alias_table_name": "table1",
+                            "data_type": "dict"
+                        },
+                        {
+                            "api_name": "NeutralizationExperimentsId",
+                            "display_name": "id",
+                            "description": "实验的唯一编号，与父类实验表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        },
+                        {
+                            "api_name": "NeutralizationExperimentsDilutionFactors",
+                            "display_name": "dilution_factors",
+                            "description": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
+                            "column_name": "dilution_factors",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationExperimentsPseudovirusSampleId",
+                            "display_name": "pseudovirus_sample_id",
+                            "description": "输入的假病毒样本，样本体积具有一定要求",
+                            "column_name": "pseudovirus_sample_id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationExperimentsInhibitorSampleId",
+                            "display_name": "inhibitor_sample_id",
+                            "description": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
+                            "column_name": "inhibitor_sample_id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationExperimentsInhibitorConcentration",
+                            "display_name": "inhibitor_concentration",
+                            "description": "inhibitor的起始浓度，单位为ng/ul",
+                            "column_name": "inhibitor_concentration",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Users",
+                    "display_name": "users",
+                    "description": "Direct mapping entity for table changping02.users",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.users",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "UsersId"
+                    ],
+                    "title_property": "UsersName",
+                    "properties": [
+                        {
+                            "api_name": "UsersId",
+                            "display_name": "id",
+                            "description": "用户唯一ID，自增",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "UsersStatus",
+                            "display_name": "status",
+                            "description": "用户状态（忙碌/空闲）",
+                            "column_name": "status",
+                            "alias_table_name": "table1",
+                            "data_type": "datetime.datetime"
+                        },
+                        {
+                            "api_name": "UsersName",
+                            "display_name": "name",
+                            "description": "用户姓名",
+                            "column_name": "name",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "UsersEmail",
+                            "display_name": "email",
+                            "description": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
+                            "column_name": "email",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "NeutralizationData",
+                    "display_name": "neutralization_data",
+                    "description": "Direct mapping entity for table changping02.neutralization_data",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.neutralization_data",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "NeutralizationDataId"
+                    ],
+                    "title_property": "NeutralizationDataVcReadings",
+                    "properties": [
+                        {
+                            "api_name": "NeutralizationDataVcReadings",
+                            "display_name": "vc_readings",
+                            "description": "空参考，有多个点",
+                            "column_name": "vc_readings",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationDataRawReadings",
+                            "display_name": "raw_readings",
+                            "description": "原始读数点，和浓度点一一对应",
+                            "column_name": "raw_readings",
+                            "alias_table_name": "table1",
+                            "data_type": "List[float]"
+                        },
+                        {
+                            "api_name": "NeutralizationDataId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "List[float]"
+                        },
+                        {
+                            "api_name": "NeutralizationDataConcentrations",
+                            "display_name": "concentrations",
+                            "description": "浓度点",
+                            "column_name": "concentrations",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Samples",
+                    "display_name": "samples",
+                    "description": "Direct mapping entity for table changping02.samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "SamplesId"
+                    ],
+                    "title_property": "SamplesType",
+                    "properties": [
+                        {
+                            "api_name": "SamplesType",
+                            "display_name": "type",
+                            "description": "样本类型，区分不同的样本子类",
+                            "column_name": "type",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "SamplesSource",
+                            "display_name": "source",
+                            "description": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
+                            "column_name": "source",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "SamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "WetSamples",
+                    "display_name": "wet_samples",
+                    "description": "Direct mapping entity for table changping02.wet_samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.wet_samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "WetSamplesId"
+                    ],
+                    "title_property": "WetSamplesStatus",
+                    "properties": [
+                        {
+                            "api_name": "WetSamplesStatus",
+                            "display_name": "status",
+                            "description": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
+                            "column_name": "status",
+                            "alias_table_name": "table1",
+                            "data_type": "text"
+                        },
+                        {
+                            "api_name": "WetSamplesCreateTime",
+                            "display_name": "create_time",
+                            "description": "建立时间",
+                            "column_name": "create_time",
+                            "alias_table_name": "table1",
+                            "data_type": "int"
+                        },
+                        {
+                            "api_name": "WetSamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "WetSamplesSampleId",
+                            "display_name": "sample_id",
+                            "description": "样本在样本库中的唯一编号",
+                            "column_name": "sample_id",
+                            "alias_table_name": "table1",
+                            "data_type": "WetSampleStatus"
+                        },
+                        {
+                            "api_name": "WetSamplesFreezeCount",
+                            "display_name": "freeze_count",
+                            "description": "冻融次数，次数越多，样本则越不可靠",
+                            "column_name": "freeze_count",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "CellSamples",
+                    "display_name": "cell_samples",
+                    "description": "Direct mapping entity for table changping02.cell_samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.cell_samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "CellSamplesId"
+                    ],
+                    "title_property": "CellSamplesCellType",
+                    "properties": [
+                        {
+                            "api_name": "CellSamplesCellType",
+                            "display_name": "cell_type",
+                            "description": "细胞类型，即细胞系的名称",
+                            "column_name": "cell_type",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "CellSamplesCellId",
+                            "display_name": "cell_id",
+                            "description": "指向一个抽象的细胞，其中包含所需的科研相关信息",
+                            "column_name": "cell_id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "CellSamplesCellCount",
+                            "display_name": "cell_count",
+                            "description": "细胞样本数量",
+                            "column_name": "cell_count",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "CellSamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "List[str]"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "ProteinChains",
+                    "display_name": "protein_chains",
+                    "description": "Direct mapping entity for table changping02.protein_chains",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.protein_chains",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "ProteinChainsId"
+                    ],
+                    "title_property": "ProteinChainsName",
+                    "properties": [
+                        {
+                            "api_name": "ProteinChainsId",
+                            "display_name": "id",
+                            "description": "自增ID",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "ProteinChainsSequence",
+                            "display_name": "sequence",
+                            "description": "氨基酸序列",
+                            "column_name": "sequence",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        },
+                        {
+                            "api_name": "ProteinChainsName",
+                            "display_name": "name",
+                            "description": "蛋白质链名称",
+                            "column_name": "name",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Cells",
+                    "display_name": "cells",
+                    "description": "Direct mapping entity for table changping02.cells",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.cells",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "CellsId"
+                    ],
+                    "title_property": "CellsName",
+                    "properties": [
+                        {
+                            "api_name": "CellsDescription",
+                            "display_name": "description",
+                            "description": "细胞描述",
+                            "column_name": "description",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "CellsName",
+                            "display_name": "name",
+                            "description": "细胞名称",
+                            "column_name": "name",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "CellsId",
+                            "display_name": "id",
+                            "description": "细胞唯一编号",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "CellsAliases",
+                            "display_name": "aliases",
+                            "description": "别名列表。细胞的别名也可以用于检索。",
+                            "column_name": "aliases",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Proteins",
+                    "display_name": "proteins",
+                    "description": "Direct mapping entity for table changping02.proteins",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.proteins",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "ProteinsId"
+                    ],
+                    "title_property": "ProteinsName",
+                    "properties": [
+                        {
+                            "api_name": "ProteinsName",
+                            "display_name": "name",
+                            "description": "蛋白质名称",
+                            "column_name": "name",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "ProteinsType",
+                            "display_name": "type",
+                            "description": "子类类型",
+                            "column_name": "type",
+                            "alias_table_name": "table1",
+                            "data_type": "List[int]"
+                        },
+                        {
+                            "api_name": "ProteinsChains",
+                            "display_name": "chains",
+                            "description": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
+                            "column_name": "chains",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "ProteinsAliases",
+                            "display_name": "aliases",
+                            "description": "别名列表。蛋白质的别名也可以用于检索。",
+                            "column_name": "aliases",
+                            "alias_table_name": "table1",
+                            "data_type": "List[int]"
+                        },
+                        {
+                            "api_name": "ProteinsId",
+                            "display_name": "id",
+                            "description": "自增ID",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Antibodies",
+                    "display_name": "antibodies",
+                    "description": "Direct mapping entity for table changping02.antibodies",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.antibodies",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "AntibodiesId"
+                    ],
+                    "title_property": "AntibodiesLightVShmAaCount",
+                    "properties": [
+                        {
+                            "api_name": "AntibodiesLightVShmAaCount",
+                            "display_name": "light_v_shm_aa_count",
+                            "description": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
+                            "column_name": "light_v_shm_aa_count",
+                            "alias_table_name": "table1",
+                            "data_type": "int"
+                        },
+                        {
+                            "api_name": "AntibodiesVGeneLight",
+                            "display_name": "v_gene_light",
+                            "description": "轻链的V基因",
+                            "column_name": "v_gene_light",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "AntibodiesDGeneHeavy",
+                            "display_name": "d_gene_heavy",
+                            "description": "重链的D基因",
+                            "column_name": "d_gene_heavy",
+                            "alias_table_name": "table1",
+                            "data_type": "int"
+                        },
+                        {
+                            "api_name": "AntibodiesOriginalIsotype",
+                            "display_name": "original_isotype",
+                            "description": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
+                            "column_name": "original_isotype",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodiesId",
+                            "display_name": "id",
+                            "description": "抽象的抗体，属于一种protein",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodiesOriginalLightNtSeq",
+                            "display_name": "original_light_nt_seq",
+                            "description": "原始来源的轻链可变区DNA序列",
+                            "column_name": "original_light_nt_seq",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodiesHeavyVShmAaCount",
+                            "display_name": "heavy_v_shm_aa_count",
+                            "description": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
+                            "column_name": "heavy_v_shm_aa_count",
+                            "alias_table_name": "table1",
+                            "data_type": "int"
+                        },
+                        {
+                            "api_name": "AntibodiesOriginalHeavyNtSeq",
+                            "display_name": "original_heavy_nt_seq",
+                            "description": "原始来源的重链可变区DNA序列",
+                            "column_name": "original_heavy_nt_seq",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodiesJGeneHeavy",
+                            "display_name": "j_gene_heavy",
+                            "description": "重链的J基因",
+                            "column_name": "j_gene_heavy",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodiesJGeneLight",
+                            "display_name": "j_gene_light",
+                            "description": "轻链的J基因",
+                            "column_name": "j_gene_light",
+                            "alias_table_name": "table1",
+                            "data_type": "int"
+                        },
+                        {
+                            "api_name": "AntibodiesVGeneHeavy",
+                            "display_name": "v_gene_heavy",
+                            "description": "重链的V基因，例如IGHV3-53*01",
+                            "column_name": "v_gene_heavy",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodiesHeavyVShmNtCount",
+                            "display_name": "heavy_v_shm_nt_count",
+                            "description": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
+                            "column_name": "heavy_v_shm_nt_count",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "AntibodiesLightVShmNtCount",
+                            "display_name": "light_v_shm_nt_count",
+                            "description": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
+                            "column_name": "light_v_shm_nt_count",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "AntibodySamples",
+                    "display_name": "antibody_samples",
+                    "description": "Direct mapping entity for table changping02.antibody_samples",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.antibody_samples",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "AntibodySamplesId"
+                    ],
+                    "title_property": "AntibodySamplesVolume",
+                    "properties": [
+                        {
+                            "api_name": "AntibodySamplesVolume",
+                            "display_name": "volume",
+                            "description": "样本体积，单位为ul",
+                            "column_name": "volume",
+                            "alias_table_name": "table1",
+                            "data_type": "int"
+                        },
+                        {
+                            "api_name": "AntibodySamplesConcentration",
+                            "display_name": "concentration",
+                            "description": "浓度，单位为ng/ul",
+                            "column_name": "concentration",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "AntibodySamplesAntibodyId",
+                            "display_name": "antibody_id",
+                            "description": "指向一个抽象的抗体，其中包含所需的科研相关信息",
+                            "column_name": "antibody_id",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        },
+                        {
+                            "api_name": "AntibodySamplesDescription",
+                            "display_name": "description",
+                            "description": "一段额外的文字描述，可能包含样本的特殊构造形式等",
+                            "column_name": "description",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "AntibodySamplesId",
+                            "display_name": "id",
+                            "description": "样本的唯一编号，与父类样本表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "float"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "NeutralizationIc50Fits",
+                    "display_name": "neutralization_ic50_fits",
+                    "description": "Direct mapping entity for table changping02.neutralization_ic50_fits",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.neutralization_ic50_fits",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "NeutralizationIc50FitsId"
+                    ],
+                    "title_property": "NeutralizationIc50FitsId",
+                    "properties": [
+                        {
+                            "api_name": "NeutralizationIc50FitsId",
+                            "display_name": "id",
+                            "description": "实验的唯一编号，与父类实验表的id一致",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationIc50FitsOutputDataId",
+                            "display_name": "output_data_id",
+                            "description": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
+                            "column_name": "output_data_id",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "NeutralizationIc50FitsInputDataId",
+                            "display_name": "input_data_id",
+                            "description": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
+                            "column_name": "input_data_id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "NeutralizationIc50FitsModelType",
+                            "display_name": "model_type",
+                            "description": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
+                            "column_name": "model_type",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                },
+                {
+                    "api_name": "Pseudoviruses",
+                    "display_name": "pseudoviruses",
+                    "description": "Direct mapping entity for table changping02.pseudoviruses",
+                    "data_sources": {
+                        "table1": {
+                            "data_source_name": "data_source_info1",
+                            "full_table_name": "changping02.pseudoviruses",
+                            "condition": "",
+                            "primary_key_columns": [
+                                "id"
+                            ]
+                        }
+                    },
+                    "primary_properties": [
+                        "PseudovirusesId"
+                    ],
+                    "title_property": "PseudovirusesName",
+                    "properties": [
+                        {
+                            "api_name": "PseudovirusesAntigens",
+                            "display_name": "antigens",
+                            "description": "病毒关键抗原，与一个或多个Protein的id连接",
+                            "column_name": "antigens",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "PseudovirusesId",
+                            "display_name": "id",
+                            "description": "自增ID",
+                            "column_name": "id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "PseudovirusesVirusType",
+                            "display_name": "virus_type",
+                            "description": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
+                            "column_name": "virus_type",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        },
+                        {
+                            "api_name": "PseudovirusesAliases",
+                            "display_name": "aliases",
+                            "description": "别名列表。病毒的别名也可以用于检索。",
+                            "column_name": "aliases",
+                            "alias_table_name": "table1",
+                            "data_type": "List[int]"
+                        },
+                        {
+                            "api_name": "PseudovirusesPseudovirusId",
+                            "display_name": "pseudovirus_id",
+                            "description": "假病毒编号",
+                            "column_name": "pseudovirus_id",
+                            "alias_table_name": "table1",
+                            "data_type": "str"
+                        },
+                        {
+                            "api_name": "PseudovirusesName",
+                            "display_name": "name",
+                            "description": "病毒名称",
+                            "column_name": "name",
+                            "alias_table_name": "table1",
+                            "data_type": "bigint"
+                        }
+                    ]
+                }
+            ],
+            "relations": [
+                {
+                    "api_name": "RelatesToAntibodies",
+                    "source_entity_type": "Proteins",
+                    "target_entity_type": "Antibodies",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "ProteinsId"
+                        ],
+                        "target_properties": [
+                            "AntibodiesId"
+                        ]
+                    },
+                    "display_name": "Proteins关联到Antibodies",
+                    "description": "changping02.antibodies.id = changping02.proteins.id"
+                },
+                {
+                    "api_name": "RelatesToAntibodySamples",
+                    "source_entity_type": "WetSamples",
+                    "target_entity_type": "AntibodySamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "WetSamplesId"
+                        ],
+                        "target_properties": [
+                            "AntibodySamplesId"
+                        ]
+                    },
+                    "display_name": "WetSamples关联到AntibodySamples",
+                    "description": "changping02.antibody_samples.id = changping02.wet_samples.id"
+                },
+                {
+                    "api_name": "RelatesToAntibodySamples_2",
+                    "source_entity_type": "Antibodies",
+                    "target_entity_type": "AntibodySamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "AntibodiesId"
+                        ],
+                        "target_properties": [
+                            "AntibodySamplesAntibodyId"
+                        ]
+                    },
+                    "display_name": "Antibodies关联到AntibodySamples",
+                    "description": "changping02.antibody_samples.antibody_id = changping02.antibodies.id"
+                },
+                {
+                    "api_name": "RelatesToCellSamples",
+                    "source_entity_type": "WetSamples",
+                    "target_entity_type": "CellSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "WetSamplesId"
+                        ],
+                        "target_properties": [
+                            "CellSamplesId"
+                        ]
+                    },
+                    "display_name": "WetSamples关联到CellSamples",
+                    "description": "changping02.cell_samples.id = changping02.wet_samples.id"
+                },
+                {
+                    "api_name": "RelatesToCellSamples_2",
+                    "source_entity_type": "Cells",
+                    "target_entity_type": "CellSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "CellsId"
+                        ],
+                        "target_properties": [
+                            "CellSamplesCellId"
+                        ]
+                    },
+                    "display_name": "Cells关联到CellSamples",
+                    "description": "changping02.cell_samples.cell_id = changping02.cells.id"
+                },
+                {
+                    "api_name": "RelatesToDataSamples",
+                    "source_entity_type": "Samples",
+                    "target_entity_type": "DataSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "SamplesId"
+                        ],
+                        "target_properties": [
+                            "DataSamplesId"
+                        ]
+                    },
+                    "display_name": "Samples关联到DataSamples",
+                    "description": "changping02.data_samples.id = changping02.samples.id"
+                },
+                {
+                    "api_name": "RelatesToExperiments",
+                    "source_entity_type": "Users",
+                    "target_entity_type": "Experiments",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "UsersId",
+                            "UsersId"
+                        ],
+                        "target_properties": [
+                            "ExperimentsSubmitter",
+                            "ExperimentsOperator"
+                        ]
+                    },
+                    "display_name": "Users关联到Experiments",
+                    "description": "changping02.experiments.submitter = changping02.users.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationData",
+                    "source_entity_type": "DataSamples",
+                    "target_entity_type": "NeutralizationData",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "DataSamplesId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationDataId"
+                        ]
+                    },
+                    "display_name": "DataSamples关联到NeutralizationData",
+                    "description": "changping02.neutralization_data.id = changping02.data_samples.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationExperiments",
+                    "source_entity_type": "Experiments",
+                    "target_entity_type": "NeutralizationExperiments",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "ExperimentsId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationExperimentsId"
+                        ]
+                    },
+                    "display_name": "Experiments关联到NeutralizationExperiments",
+                    "description": "changping02.neutralization_experiments.id = changping02.experiments.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationExperiments_2",
+                    "source_entity_type": "CellSamples",
+                    "target_entity_type": "NeutralizationExperiments",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "CellSamplesId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationExperimentsCellSampleId"
+                        ]
+                    },
+                    "display_name": "CellSamples关联到NeutralizationExperiments",
+                    "description": "changping02.neutralization_experiments.cell_sample_id = changping02.cell_samples.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationExperiments_3",
+                    "source_entity_type": "WetSamples",
+                    "target_entity_type": "NeutralizationExperiments",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "WetSamplesId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationExperimentsInhibitorSampleId"
+                        ]
+                    },
+                    "display_name": "WetSamples关联到NeutralizationExperiments",
+                    "description": "changping02.neutralization_experiments.inhibitor_sample_id = changping02.wet_samples.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationExperiments_4",
+                    "source_entity_type": "PseudovirusSamples",
+                    "target_entity_type": "NeutralizationExperiments",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "PseudovirusSamplesId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationExperimentsPseudovirusSampleId"
+                        ]
+                    },
+                    "display_name": "PseudovirusSamples关联到NeutralizationExperiments",
+                    "description": "changping02.neutralization_experiments.pseudovirus_sample_id = changping02.pseudovirus_samples.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationExperiments_5",
+                    "source_entity_type": "NeutralizationData",
+                    "target_entity_type": "NeutralizationExperiments",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "NeutralizationDataId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationExperimentsResultId"
+                        ]
+                    },
+                    "display_name": "NeutralizationData关联到NeutralizationExperiments",
+                    "description": "changping02.neutralization_experiments.result_id = changping02.neutralization_data.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationIc50FitData",
+                    "source_entity_type": "DataSamples",
+                    "target_entity_type": "NeutralizationIc50FitData",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "DataSamplesId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationIc50FitDataId"
+                        ]
+                    },
+                    "display_name": "DataSamples关联到NeutralizationIc50FitData",
+                    "description": "changping02.neutralization_ic50_fit_data.id = changping02.data_samples.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationIc50Fits",
+                    "source_entity_type": "Experiments",
+                    "target_entity_type": "NeutralizationIc50Fits",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "ExperimentsId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationIc50FitsId"
+                        ]
+                    },
+                    "display_name": "Experiments关联到NeutralizationIc50Fits",
+                    "description": "changping02.neutralization_ic50_fits.id = changping02.experiments.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationIc50Fits_2",
+                    "source_entity_type": "NeutralizationData",
+                    "target_entity_type": "NeutralizationIc50Fits",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "NeutralizationDataId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationIc50FitsInputDataId"
+                        ]
+                    },
+                    "display_name": "NeutralizationData关联到NeutralizationIc50Fits",
+                    "description": "changping02.neutralization_ic50_fits.input_data_id = changping02.neutralization_data.id"
+                },
+                {
+                    "api_name": "RelatesToNeutralizationIc50Fits_3",
+                    "source_entity_type": "NeutralizationIc50FitData",
+                    "target_entity_type": "NeutralizationIc50Fits",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "NeutralizationIc50FitDataId"
+                        ],
+                        "target_properties": [
+                            "NeutralizationIc50FitsOutputDataId"
+                        ]
+                    },
+                    "display_name": "NeutralizationIc50FitData关联到NeutralizationIc50Fits",
+                    "description": "changping02.neutralization_ic50_fits.output_data_id = changping02.neutralization_ic50_fit_data.id"
+                },
+                {
+                    "api_name": "RelatesToProteinSamples",
+                    "source_entity_type": "WetSamples",
+                    "target_entity_type": "ProteinSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "WetSamplesId"
+                        ],
+                        "target_properties": [
+                            "ProteinSamplesId"
+                        ]
+                    },
+                    "display_name": "WetSamples关联到ProteinSamples",
+                    "description": "changping02.protein_samples.id = changping02.wet_samples.id"
+                },
+                {
+                    "api_name": "RelatesToProteinSamples_2",
+                    "source_entity_type": "Proteins",
+                    "target_entity_type": "ProteinSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "ProteinsId"
+                        ],
+                        "target_properties": [
+                            "ProteinSamplesProteinId"
+                        ]
+                    },
+                    "display_name": "Proteins关联到ProteinSamples",
+                    "description": "changping02.protein_samples.protein_id = changping02.proteins.id"
+                },
+                {
+                    "api_name": "RelatesToPseudovirusSamples",
+                    "source_entity_type": "WetSamples",
+                    "target_entity_type": "PseudovirusSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "WetSamplesId"
+                        ],
+                        "target_properties": [
+                            "PseudovirusSamplesId"
+                        ]
+                    },
+                    "display_name": "WetSamples关联到PseudovirusSamples",
+                    "description": "changping02.pseudovirus_samples.id = changping02.wet_samples.id"
+                },
+                {
+                    "api_name": "RelatesToPseudovirusSamples_2",
+                    "source_entity_type": "Pseudoviruses",
+                    "target_entity_type": "PseudovirusSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "PseudovirusesId"
+                        ],
+                        "target_properties": [
+                            "PseudovirusSamplesPseudovirusId"
+                        ]
+                    },
+                    "display_name": "Pseudoviruses关联到PseudovirusSamples",
+                    "description": "changping02.pseudovirus_samples.pseudovirus_id = changping02.pseudoviruses.id"
+                },
+                {
+                    "api_name": "RelatesToSamples",
+                    "source_entity_type": "Experiments",
+                    "target_entity_type": "Samples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "ExperimentsId"
+                        ],
+                        "target_properties": [
+                            "SamplesSource"
+                        ]
+                    },
+                    "display_name": "Experiments关联到Samples",
+                    "description": "changping02.samples.source = changping02.experiments.id"
+                },
+                {
+                    "api_name": "RelatesToWetSamples",
+                    "source_entity_type": "Samples",
+                    "target_entity_type": "WetSamples",
+                    "cardinality": "MANY_TO_ONE",
+                    "mapping_keys": {
+                        "source_properties": [
+                            "SamplesId"
+                        ],
+                        "target_properties": [
+                            "WetSamplesId"
+                        ]
+                    },
+                    "display_name": "Samples关联到WetSamples",
+                    "description": "changping02.wet_samples.id = changping02.samples.id"
+                }
+            ],
+            "actions": []
+        }
+    }
