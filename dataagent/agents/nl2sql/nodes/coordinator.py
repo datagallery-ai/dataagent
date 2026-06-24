@@ -24,6 +24,10 @@ class CoordinatorNode(BaseNL2SQLNode):
         super().__init__(name="coordinator", **kwargs)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        self._trajectory_recorder.record_node_start(
+            node_name="coordinator",
+            purpose=f"Parse question into semantic question and keywords: {state['question']}",
+        )
         context = {"question": state["question"]}
         res = json.loads(json_parser(self.execute_with_llm(context)))
         state["semantic_question"] = res["semantic_question"]

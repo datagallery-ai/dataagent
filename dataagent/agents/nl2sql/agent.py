@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
@@ -27,11 +29,15 @@ from dataagent.agents.nl2sql.nodes import (
     SelectorNode,
     ValidatorNode,
 )
+from dataagent.agents.nl2sql.utils.trajectory_recorder import NL2SQLTrajectoryRecorder
+from dataagent.utils.constants import _TZ_CN
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, get_default_state
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
 from dataagent.core.utils.performance import make_perf_state_holder, update_latest_state_from_stream_item
+from dataagent.utils.log import logger
+from dataagent.utils.runtime_paths import resolve_session_root
 
 
 class NL2SQLAgent(BaseAgent):
@@ -84,8 +90,68 @@ class NL2SQLAgent(BaseAgent):
         router = NL2SQLRouter(enabled_nodes)
         return cls(backend="langgraph", nodes=node_instances, router=router, config=config)
 
+    def _distribute_trajectory_recorder(self, recorder: NL2SQLTrajectoryRecorder) -> None:
+        for node in self.nodes:
+            if hasattr(node, "set_trajectory_recorder"):
+                node.set_trajectory_recorder(recorder)
+
+    def _distribute_context_dump_dir(
+        self, init: dict[str, Any], *, session_id: str | None = None
+    ) -> None:
+        from dataagent.utils.env_utils import get_env_bool
+        if not get_env_bool("DATAAGENT_CONTEXT_DUMP"):
+            return
+        try:
+            from dataagent.utils.runtime_paths import resolve_session_root
+            user_id = str(init.get("user_id") or "anonymous")
+            cfg = self._config_obj
+            cfg_session_id = cfg.get("SESSION_ID") if isinstance(cfg, dict) else None
+            parent_session_id = init.get("_parent_session_id")
+            if cfg_session_id:
+                effective_session_id = str(cfg_session_id)
+            elif parent_session_id:
+                effective_session_id = str(parent_session_id)
+            elif session_id:
+                effective_session_id = str(session_id)
+            else:
+                effective_session_id = str(init.get("session_id") or "default_session")
+            run_id = init.get("_parent_run_id", init.get("run_id", 0))
+            base_dir = (
+                resolve_session_root(user_id=user_id, session_id=effective_session_id)
+                / ".memory"
+                / "context_dump"
+                / f"run_{run_id}"
+            )
+            existing = [d.name for d in base_dir.iterdir() if d.is_dir() and d.name.startswith("nl2sql_")] if base_dir.is_dir() else []
+            next_idx = len(existing) + 1
+            dump_dir = base_dir / f"nl2sql_{next_idx:02d}"
+            logger.info(f"[_distribute_context_dump_dir] session_id={effective_session_id}, user_id={user_id}, run_id={run_id}, dump_dir={dump_dir}")
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning(f"Failed to init NL2SQL context dump dir: {exc}")
+            return
+        shared_seq: list[int] = [0]
+        for node in self.nodes:
+            node.set_context_dump_dir(dump_dir)
+            node._context_dump_seq = shared_seq
+        logger.info(f"[_distribute_context_dump_dir] distributed dump_dir to {len(self.nodes)} nodes")
+
+    def _write_trajectory(self, recorder: NL2SQLTrajectoryRecorder, session_root: Path | None) -> Path | None:
+        if session_root is None:
+            return None
+        trajectory_dir = session_root / ".memory"
+        trajectory_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(tz=_TZ_CN).strftime("%Y%m%d_%H%M%S")
+        suffix = uuid.uuid4().hex[:8]
+        trajectory_path = trajectory_dir / f"nl2sql_trajectory_{ts}_{suffix}.json"
+        recorder.write_trajectory(trajectory_path)
+        logger.info(f"NL2SQL trajectory written to: {trajectory_path}")
+        return trajectory_path
+
     async def chat(self, message: str, initial_state: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """Run one NL2SQL chat turn."""
+        recorder = NL2SQLTrajectoryRecorder()
+        session_root = None
         try:
             checkpoint_id: str | None = kwargs.pop("checkpoint_id", None)
             session_id: str | None = kwargs.pop("session_id", None)
@@ -97,14 +163,36 @@ class NL2SQLAgent(BaseAgent):
                 session_id = str(uuid.uuid4())
             init = initial_state or kwargs.pop("initial_state", None) or {}
             state = get_default_state(question=message, **init)
+            recorder.record_node_start(node_name="nl2sql_entry", purpose=f"NL2SQL query: {message}")
+            self._distribute_trajectory_recorder(recorder)
+            self._distribute_context_dump_dir(init, session_id=session_id)
+            cfg = self._config_obj
+            if isinstance(cfg, dict):
+                uid = cfg.get("USER_ID", "anonymous")
+                sid = cfg.get("SESSION_ID") or session_id
+                if uid and sid:
+                    session_root = resolve_session_root(user_id=str(uid), session_id=str(sid))
             latest, flush_provider = make_perf_state_holder(state)
             with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
                 final_state = await self.workflow_backend.ainvoke(state)
                 if isinstance(final_state, dict):
                     latest["state"] = final_state
-                return final_state
+            trajectory_path = self._write_trajectory(recorder, session_root)
+            if trajectory_path and isinstance(final_state, dict):
+                final_state["_trajectory_path"] = str(trajectory_path)
+            return final_state
         except NL2SQLError as exc:
-            return {"error": exc.to_dict()}
+            trajectory_path = self._write_trajectory(recorder, session_root)
+            err_dict = exc.to_dict()
+            if trajectory_path:
+                err_dict["_trajectory_path"] = str(trajectory_path)
+            return {"error": err_dict}
+        except Exception as exc:
+            trajectory_path = self._write_trajectory(recorder, session_root)
+            err_dict = {"message": str(exc), "type": exc.__class__.__name__}
+            if trajectory_path:
+                err_dict["_trajectory_path"] = str(trajectory_path)
+            return {"error": err_dict}
 
     def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
         """Stream NL2SQL workflow via LangGraph native astream."""

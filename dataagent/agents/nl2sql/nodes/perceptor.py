@@ -66,19 +66,19 @@ class PerceptorNode(BaseNL2SQLNode):
                 raise SemanticServiceCallError(detail=str(exc)) from exc
         return self._semantic_client
 
-    def build_evidence_str(self, keywords: list[str]) -> str:
+    def build_evidence_str(self, keywords: list[str] | None) -> str:
         catalog = self._udn_column_metadata()
         if self.evidence_mode == "keywords":
             selected = self._semantic_udn_columns(keywords, self.evidence_topk, catalog)
             return format_udn_evidence(selected, semantic=True) if selected else ""
         return format_udn_evidence(catalog, semantic=False)
 
-    def udn_schema_linking(self, question: str, keywords: list[str]):
+    def udn_schema_linking(self, question: str, keywords: list[str] | None):
         candidates = self._vector_table_candidates(keywords)
         tables = self._select_udn_tables(question, candidates)
         return self.full_schema(allow_tables=tables)
 
-    def schema_linking(self, keywords: list[str]):
+    def schema_linking(self, keywords: list[str] | None):
         """
         state["schema"] = {
           "tbl1": {
@@ -92,6 +92,8 @@ class PerceptorNode(BaseNL2SQLNode):
         }
         state["joins"] = [("tbl1.col1", "tbl2.col1"), ...]
         """
+        if not keywords:
+            return {}, []
         dt_set, tc_set, j_set, dt_desc, schema = set(), set(), set(), {}, {}
         raw = self._call_semantic_service(self.semantic_client.semantic_search_columns, self.db, keywords, self.top_k)
         for payload in iter_semantic_column_payloads(raw):
@@ -157,6 +159,10 @@ class PerceptorNode(BaseNL2SQLNode):
             raise SemanticServiceCallError(detail=str(exc)) from exc
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        self._trajectory_recorder.record_node_start(
+            node_name="perceptor",
+            purpose=f"Build schema information for question: {state['question']}",
+        )
         for attr, key in [
             ("schema_str", self.user_schema),
             ("evidence", self.user_evidence),
@@ -185,12 +191,14 @@ class PerceptorNode(BaseNL2SQLNode):
         return out
 
     def _semantic_udn_columns(
-        self, keywords: list[str], top_k: int, catalog: dict[str, dict[str, Any]]
+        self, keywords: list[str] | None, top_k: int, catalog: dict[str, dict[str, Any]]
     ) -> dict[str, dict[str, Any]]:
         raw = self._call_semantic_service(self.semantic_client.semantic_search_columns, self.db, keywords, top_k)
         return select_semantic_columns(raw, catalog)
 
-    def _vector_table_candidates(self, keywords: list[str]) -> list[dict[str, Any]]:
+    def _vector_table_candidates(self, keywords: list[str] | None) -> list[dict[str, Any]]:
+        if not keywords:
+            return []
         best: dict[str, dict[str, Any]] = {}
         raw = self._call_semantic_service(
             self.semantic_client.vector_search_table_desc, self.db, keywords, self.table_vector_topk
@@ -221,7 +229,7 @@ class PerceptorNode(BaseNL2SQLNode):
         context = {"top_n": self.table_llm_topk, "question": question, "tables": json.dumps(tables, ensure_ascii=False)}
         return json.loads(json_parser(self.execute_with_llm(context, action="filter_udn_table_")))
 
-    def _load_prompt(self, name: str) -> str:
+    def _load_prompt(self, name: str | None) -> str:
         if not name:
             return ""
         workspace = self._get_agent_config("WORKSPACE.path")

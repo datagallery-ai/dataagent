@@ -27,12 +27,23 @@ class ExecutorNode(BaseNL2SQLNode):
         self.preview_limit = kwargs.pop("preview_limit", DEFAULT_NL2SQL_PREVIEW_LIMIT)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        self._trajectory_recorder.record_node_start(
+            node_name="executor",
+            purpose=f"Execute SQL candidates against database engine: {self.sql_service_engine}",
+        )
         config = self._get_agent_config("DATABASE.config", {}) or {}
         state["execution_results"] = []
         p = []
         with build_sql_service(self.sql_service_engine, config) as service:
             for v in state["validation_results"]:
+                tid = self._trajectory_recorder.record_tool_call(
+                    tool_name="sql_execute",
+                    args={"sql": v.sql, "engine": self.sql_service_engine},
+                    purpose=f"Execute SQL candidate #{v.id} against {self.sql_service_engine} database",
+                )
                 v.columns, rows, v.error = service.execute(v.sql)
+                exec_result = f"columns={v.columns}, rows_count={len(rows) if rows else 0}, error={v.error}"
+                self._trajectory_recorder.record_tool_result(content=exec_result, tool_call_id=tid)
                 state["execution_results"].append(v)
                 v.rows = None if rows is None else (rows[: self.limit] if self.limit >= 0 else rows)
                 v.rows_preview = (

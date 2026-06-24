@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
+from dataagent.agents.nl2sql.utils.metavisor_client import ValueMatchClient
 from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, json_parser, metadata_parser
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
@@ -28,8 +29,19 @@ class ValidatorNode(BaseNL2SQLNode):
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.select_only = kwargs.pop("select_only", True)
+        self._value_match_client = None
+
+    @property
+    def value_match_client(self):
+        if self._value_match_client is None:
+            self._value_match_client = ValueMatchClient(self._get_agent_config("METAVISOR.valuematch_url"))
+        return self._value_match_client
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        self._trajectory_recorder.record_node_start(
+            node_name="validator",
+            purpose="Validate SQL candidates with semantic, syntax, and metadata checks",
+        )
         semantic_res = self._validate_semantic(state)
         syntax_res = self._validate_syntax(state["generation_results"])
         if self.metadata_match:

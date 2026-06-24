@@ -343,6 +343,7 @@ class Executor(BaseNode):
                     user_id=str(state.get("user_id")) if state.get("user_id") is not None else None,
                     session_id=str(state.get("session_id")) if state.get("session_id") is not None else None,
                     sub_id=int(state.get("sub_id")) if state.get("sub_id") is not None else None,
+                    run_id=int(state.get("run_id")) if state.get("run_id") is not None else None,
                     runtime=runtime,
                 )
 
@@ -548,6 +549,7 @@ class Executor(BaseNode):
         user_id: str | None = None,
         session_id: str | None = None,
         sub_id: int | None = None,
+        run_id: int | None = None,
         runtime: Any = None,
     ) -> NormalizedToolExecution:
         return await self._execute_tool_call_impl(
@@ -556,6 +558,7 @@ class Executor(BaseNode):
             user_id=user_id,
             session_id=session_id,
             sub_id=sub_id,
+            run_id=run_id,
             runtime=runtime,
         )
 
@@ -567,9 +570,10 @@ class Executor(BaseNode):
         user_id: str | None,
         session_id: str | None,
         sub_id: int | None,
+        run_id: int | None,
         runtime: Any,
     ) -> NormalizedToolExecution:
-        setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, runtime)
+        setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, run_id, runtime)
         tool_args, backfill_changes = self._validate_and_backfill_args(
             tool_name=setup.tool_name,
             tool_args=setup.tool_args,
@@ -796,6 +800,7 @@ class Executor(BaseNode):
         user_id: str | None,
         session_id: str | None,
         sub_id: int | None,
+        run_id: int | None,
         runtime: Any,
     ) -> _ToolCallExecutionSetup:
         """Prepare progress emitter, metadata, sandbox guard, and subagent runtime context for one tool call.
@@ -847,6 +852,7 @@ class Executor(BaseNode):
             session_id=session_id,
             sub_id=sub_id,
             parent_user_query=getattr(runtime, "parent_user_query", None) or getattr(runtime, "user_query", None),
+            run_id=run_id,
             progress_callback=progress_cb,
             tool_call_id=tool_call_id,
             agent_config=agent_cfg,

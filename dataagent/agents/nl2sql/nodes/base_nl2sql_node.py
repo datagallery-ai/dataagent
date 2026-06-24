@@ -13,13 +13,44 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+from dataagent.agents.nl2sql.utils.trajectory_recorder import NL2SQLTrajectoryRecorder, _NullRecorder
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
-from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX
+from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, _TZ_CN
+from dataagent.utils.env_utils import get_env_bool
+from dataagent.utils.log import logger
+
+_NODE_PURPOSES = {
+    "coordinator": "Parse question into semantic question and keywords",
+    "perceptor": "Build schema information from MetaVisor or user-provided files",
+    "generator": "Generate SQL candidates from multiple strategies",
+    "validator": "Validate SQL candidates with semantic, syntax, and metadata checks",
+    "reflector": "Fix SQL issues and retry validation",
+    "executor": "Execute SQL candidates against the database",
+    "selector": "Select the best SQL result based on confidence scoring",
+}
+
+_TYPE_LABELS = {
+    SystemMessage: "SYSTEM",
+    HumanMessage: "HUMAN",
+    AIMessage: "AI",
+    ToolMessage: "TOOL",
+}
+
+_SCHEMA_NODES = {"generator", "validator", "selector"}
+
+_NL2SQL_COMMON_SYSTEM_KEY = f"{NL2SQL_PROMPT_PREFIX}/nl2sql_common_system"
+
+
+
 
 
 class BaseNL2SQLNode(BaseNode):
@@ -33,6 +64,50 @@ class BaseNL2SQLNode(BaseNode):
         """
         super().__init__(name=name, **kwargs)
         self._config_manager = config_manager
+        self._trajectory_recorder: NL2SQLTrajectoryRecorder | _NullRecorder = _NullRecorder()
+        self._nl2sql_context_dump_dir: Path | None = None
+        self._context_dump_seq: list[int] = [0]
+        self._context_dump_enabled: bool = get_env_bool("DATAAGENT_CONTEXT_DUMP")
+        self._common_system_cache: str | None = None
+
+    def set_trajectory_recorder(self, recorder: NL2SQLTrajectoryRecorder | _NullRecorder | None) -> None:
+        self._trajectory_recorder = recorder if recorder is not None else _NullRecorder()
+
+    def set_context_dump_dir(self, dump_dir: Any | None) -> None:
+        if dump_dir is not None:
+            self._nl2sql_context_dump_dir = Path(dump_dir)
+        else:
+            self._nl2sql_context_dump_dir = None
+
+    def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
+        if not self._context_dump_enabled:
+            return
+        if self._nl2sql_context_dump_dir is None:
+            return
+        try:
+            self._context_dump_seq[0] += 1
+            seq = self._context_dump_seq[0]
+            label = f"{node_name}_{action}" if action else node_name
+            dump_file = self._nl2sql_context_dump_dir / f"{seq:02d}_round_{label}.txt"
+            separator = "=" * 80
+            ts = datetime.now(tz=_TZ_CN).strftime("%Y-%m-%d %H:%M:%S")
+            with dump_file.open("w", encoding="utf-8") as f:
+                f.write(f"{separator}\n")
+                f.write(f"  NL2SQL Prompt Dump  |  {ts}  |  node: {label}\n")
+                f.write(f"{separator}\n\n")
+                f.write("--- [0] SYSTEM ---\n")
+                f.write(f"{system_prompt}\n\n")
+                f.write("--- [1] HUMAN ---\n")
+                f.write(f"{user_prompt}\n\n")
+                f.write("--- [2] AI ---\n")
+                f.write(f"{result}\n\n")
+                f.write(f"{separator}\n")
+                f.write("  END OF DUMP\n")
+                f.write(f"{separator}\n")
+            logger.info(f"NL2SQL context dump saved: {seq:02d}_round_{label}.txt")
+        except Exception as exc:
+            self._context_dump_seq[0] -= 1
+            logger.warning(f"Failed to dump NL2SQL context: {exc}")
 
     @property
     def db(self):
@@ -47,19 +122,60 @@ class BaseNL2SQLNode(BaseNode):
         svc = self._get_agent_config("DATABASE.sql_service_engine")
         return svc if svc else self.engine
 
+    def _get_common_system(self) -> str:
+        if self._common_system_cache is None:
+            self._common_system_cache = PromptTemplate.from_package_relative(
+                _NL2SQL_COMMON_SYSTEM_KEY
+            ).content
+        return self._common_system_cache
+
     def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
         llm = llm_manager.get_default_llm()
-        system_prompt = PromptTemplate.from_package_relative(
+        node_system = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}system"
         ).content
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}user"
         ).apply_prompt_template(**context)
-        prompts = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        return llm.invoke(prompts).content
+
+        schema_str = context.get("schema", "")
+
+        prompts = [
+            {"role": "system", "content": node_system},
+            {"role": "user", "content": user_prompt},
+        ]
+        system_prompt = node_system
+        full_user = user_prompt
+
+        prompt_summary = f"[system] {system_prompt[:500]}\n[user] {full_user[:500]}"
+        purpose = _NODE_PURPOSES.get(self.name, f"Execute LLM call in {self.name}")
+        if action:
+            purpose = f"{purpose} (action: {action})"
+        response = llm.invoke(prompts)
+        content = response.content
+        self._dump_llm_context(system_prompt, full_user, content, self.name, action)
+        usage_metadata = None
+        um = getattr(response, "usage_metadata", None)
+        if isinstance(um, dict):
+            usage_metadata = {
+                "input_tokens": int(um.get("input_tokens") or 0),
+                "output_tokens": int(um.get("output_tokens") or 0),
+                "total_tokens": int(um.get("total_tokens") or 0),
+                "input_cache_read_tokens": int(um.get("input_cache_read_tokens") or 0),
+                "input_cache_creation_tokens": int(um.get("input_cache_creation_tokens") or 0),
+                "output_reasoning_tokens": int(um.get("output_reasoning_tokens") or 0),
+            }
+        self._trajectory_recorder.record_llm_call(
+                node_name=self.name,
+                action=action,
+                purpose=purpose,
+                prompt_summary=prompt_summary,
+                result_summary=content[:2000] if len(content) > 2000 else content,
+                usage_metadata=usage_metadata,
+            )
+        return content
 
     def _get_agent_config(self, key: str, default: Any = None) -> Any:
-        """Read configuration from the bound per-Agent ConfigManager."""
         if self._config_manager is None:
             raise RuntimeError(
                 f"NL2SQL node {self.name!r} has no config_manager; pass config_manager when constructing the node."
