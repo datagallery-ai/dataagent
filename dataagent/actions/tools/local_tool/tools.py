@@ -2739,6 +2739,9 @@ def _build_nl2sql_sub_agent_config(
         temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
     if "search_udf_function_by_name_keyword" in agent_tools:
         temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
+    if "metadata_recall" in agent_tools:
+        temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
+        temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
 
     return temp_config
 
