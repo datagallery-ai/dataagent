@@ -59,7 +59,7 @@ async def chat(
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `user_query` | `str` | 必填 | 用户输入的查询文本 |
-| `session_id` | `str \| None` | `None` | 会话 ID。不传时优先取 `initial_state` 中的 `session_id`，其次复用 `self.session_id`，最后自动生成 |
+| `session_id` | `str \| None` | `None` | 会话 ID。不传时优先取 `initial_state` 中的 `session_id`；若仍未提供，则为本次调用自动生成新的 ID |
 | `workspace` | `Path \| str \| None` | `None` | 工作目录覆盖。传入后覆盖配置文件中的工作目录设置 |
 | `initial_state` | `dict \| None` | `None` | 初始状态字典，可携带 `user_id`、`session_id`、`messages` 等字段 |
 
