@@ -43,7 +43,6 @@ class DataAgent:
 
         self._chat_agent_instance = None
 
-        self.session_id = None
         logger.trace(f"DataAgent initialized with {self.backend} backend")
 
     def __repr__(self) -> str:
@@ -194,10 +193,8 @@ class DataAgent:
             if sid is not None and str(sid).strip():
                 session_id = str(sid).strip()
         if not session_id:
-            # 仅在 self.session_id 为空时生成新 id（不回写外部传入值，避免并发覆盖）
-            if not self.session_id:
-                self.session_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
-            session_id = self.session_id
+            # 在外部未传入 session_id时，自动生成新的session_id并使用
+            session_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
         workspace = self._validate_workspace(workspace)
         initial_state = self._initialize_state(initial_state, session_id, workspace)
         logger.debug(f"当前 workspace：{initial_state['workspace']}")

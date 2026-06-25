@@ -59,7 +59,7 @@ Triggers a single-turn agent conversation. When `debug=True` (default), conversa
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `user_query` | `str` | required | User query text |
-| `session_id` | `str \| None` | `None` | Session ID. When omitted, first tries `initial_state.session_id`, then reuses `self.session_id`, finally auto-generates |
+| `session_id` | `str \| None` | `None` | Session ID. When omitted, first tries `initial_state.session_id`; if still unset, auto-generates a new ID for this call |
 | `workspace` | `Path \| str \| None` | `None` | Workspace override. Overrides the workspace setting in the config file |
 | `initial_state` | `dict \| None` | `None` | Initial state dict, can carry `user_id`, `session_id`, `messages`, etc. |
 
