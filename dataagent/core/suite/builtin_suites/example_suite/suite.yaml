@@ -29,9 +29,10 @@ priority: 50
 # 【选填】是否与 SUITE.include 共同决定激活
 enabled: false
 
-# 【选填】依赖的其他 Suite name 列表；被依赖 Suite 须已激活，本期不校验 version 字段
-# 示例：requires: [{name: base_suite, version: ">=1.0.0"}]
+# 【选填】依赖的其他 Suite name 列表；被依赖 Suite 须已激活
+# 示例：requires: ["suite_name1", "suite_name2"]
 requires: []
 
 # 【选填】互斥 Suite name 列表；与其中任一同时激活则 reload 报错
+# 示例：conflicts: ["suite_name3", "suite_name4"]
 conflicts: []

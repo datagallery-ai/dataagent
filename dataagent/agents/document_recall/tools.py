@@ -48,7 +48,7 @@ def save_recall_entry(
     guard = get_current_sandbox()
     workspace = guard.workspace_root or Path.cwd().resolve()
     cm = _tool_context.config_manager
-    recall_id = cm.get("DOCUMENT_RECALL.run_id") if cm else "default"
+    recall_id = cm.get("DOCUMENT_RECALL.run_id") if cm.get("DOCUMENT_RECALL.run_id") else "default"
     run_dir = workspace / "document_recall" / recall_id
     entries_dir = run_dir / "recall_entries"
     entries_dir.mkdir(parents=True, exist_ok=True)
@@ -90,7 +90,7 @@ def merge_recall_results(
     guard = get_current_sandbox()
     workspace = guard.workspace_root or Path.cwd().resolve()
     cm = _tool_context.config_manager
-    recall_id = cm.get("DOCUMENT_RECALL.run_id") if cm else "default"
+    recall_id = cm.get("DOCUMENT_RECALL.run_id") if cm.get("DOCUMENT_RECALL.run_id") else "default"
     run_dir = workspace / "document_recall" / recall_id
     entries_dir = run_dir / "recall_entries"
 

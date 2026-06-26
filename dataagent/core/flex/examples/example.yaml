@@ -60,7 +60,7 @@ AGENT_CONFIG:
   #   - nl2sql（NL2SQL 专用流水线，需 CORE 段）
   type: "react"
   debug: true                   # 调试模式，默认 true
-  enable_human_feedback: false  # HITL：注册 request_human_feedback 工具
+  enable_human_feedback: false  # HITL：启用 HITL 功能， 触发条件见 SCENARIO.chat.human_feedback_conditions
   terminal_mode: true           # chat() 下终端交互模式，默认 true
   enable_portrait: false        # 启用 portraiter hook 的 LLM 用户画像
   max_iter: null                # 最大迭代轮次；null/省略 = 不限制
@@ -116,6 +116,10 @@ SCENARIO:
     task: "Agent 要完成的目标"
     instructions: |
       在此注入先验知识、行为约束、工具使用顺序等
+    # human_feedback_conditions: 可选；可配 str 或者 list
+    # human_feedback_conditions:
+    #   - "调用xxx工具之前"
+    #   - "调用yyy工具之前"
 
 # ── 工作流节点 ───────────────────────────────────────────────────────────────
 # 默认由 flex_default_configs.yaml 提供 PRE/ACTOR/POST；用户 YAML 可覆盖。

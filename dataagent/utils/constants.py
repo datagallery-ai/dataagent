@@ -103,6 +103,11 @@ SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
 """
 """``sub_agent_tool`` 固定调用说明（硬编码，不放入 ``SUBAGENT_CONFIGS``）。"""
 
+HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX: str = (
+    "请调用request_human_feedback工具，询问用户是否需要进一步的指导或是否同意操作。"
+)
+"""``human_feedback_conditions`` 每条条件展开后追加的固定动作说明。"""
+
 MAX_WORKER_METADATA_ARTIFACTS: int = 50
 """Worker ``metadata.json`` 中 ``artifacts`` 路径列表最大条数。
 
