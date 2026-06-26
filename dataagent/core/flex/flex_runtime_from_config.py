@@ -24,6 +24,7 @@ from typing import Any
 
 from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
+from dataagent.core.flex.utils.hitl_config import resolve_scenario_instructions
 
 # YAML 合并阶段使用、不写入 env.llm_configs 值的键
 _LLM_YAML_ONLY_KEYS = frozenset({"name", "provider", "model_type", "section", "params"})
@@ -254,16 +255,7 @@ def build_agent_env_from_flex_config(
     all_nodes = config.get("ACTOR_LOOP", []) + config.get("PRE_WORKFLOW", []) + config.get("POST_WORKFLOW", [])
     max_concurrency = _get_node_config_int(all_nodes, "executor", "max_concurrency")
 
-    instructions = ""
-    scenario = config.get("SCENARIO", {}) or {}
-    if isinstance(scenario, dict):
-        if mode and isinstance(scenario.get(mode), dict):
-            instructions = str(scenario[mode].get("instructions", "") or "").strip()
-        if not instructions:
-            for sc in scenario.values():
-                if isinstance(sc, dict) and sc.get("instructions"):
-                    instructions = str(sc["instructions"]).strip()
-                    break
+    instructions = resolve_scenario_instructions(config, mode=mode)
 
     llm_configs = build_llm_configs_from_flex_config(config)
 
