@@ -15,6 +15,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -667,6 +668,44 @@ def test_run_subprocess_async_keeps_stderr_status_progress_callback():
         ("tool-call-id", "Coordinator"),
         ("tool-call-id", "Coordinator: SELECT 1"),
     ]
+
+
+def test_run_subprocess_async_timeout_cleans_up_pipe_holding_children():
+    """超时后应杀掉整个进程组，避免子进程持有 stdout/stderr pipe 导致清理阶段挂住。"""
+    child_code = "import time; time.sleep(30)"
+    parent_code = (
+        f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {child_code!r}]); time.sleep(30)"
+    )
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            asyncio.wait_for(
+                _run_subprocess_async([sys.executable, "-c", parent_code], timeout=0.2),
+                timeout=2,
+            )
+        )
+
+    assert time.monotonic() - start < 1.8
+
+
+def test_run_subprocess_async_progress_timeout_covers_wait_after_streams_close():
+    """进度回调路径下，stdout/stderr 提前关闭后等待进程退出也必须受 timeout 约束。"""
+    start = time.monotonic()
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            asyncio.wait_for(
+                _run_subprocess_async(
+                    ["/bin/sh", "-c", "exec >/dev/null 2>/dev/null; sleep 30"],
+                    timeout=0.2,
+                    progress_callback=lambda *_args: None,
+                    tool_call_id="tool-call-id",
+                ),
+                timeout=2,
+            )
+        )
+
+    assert time.monotonic() - start < 1.8
 
 
 def test_resolve_subagent_identity_matches_runtime_session_name():

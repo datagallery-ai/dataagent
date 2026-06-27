@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,7 @@ _subagent_runtime_context: contextvars.ContextVar[dict[str, Any] | None] = conte
     "subagent_runtime_context",
     default=None,
 )
+_PROCESS_TIMEOUT_CLEANUP_SECONDS = 1
 
 
 def set_subagent_runtime_context(
@@ -506,6 +508,36 @@ def _build_shell_env() -> dict[str, str]:
     return dict(os.environ)
 
 
+async def _terminate_process_tree_async(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            logger.debug("Subprocess already exited before timeout cleanup: pid={}", process.pid)
+
+
+async def _wait_for_subprocess_async(
+    awaitable: Any,
+    process: asyncio.subprocess.Process,
+    *,
+    timeout: int | float,
+) -> Any:
+    task = asyncio.ensure_future(awaitable)
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        return task.result()
+
+    await _terminate_process_tree_async(process)
+    done, _ = await asyncio.wait({task}, timeout=_PROCESS_TIMEOUT_CLEANUP_SECONDS)
+    if task not in done:
+        task.cancel()
+        logger.warning("Timed out while cleaning up subprocess after timeout: pid={}", process.pid)
+    raise TimeoutError
+
+
 async def _run_subprocess_async(
     cmd: list[str],
     *,
@@ -528,6 +560,7 @@ async def _run_subprocess_async(
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
         env=env,
+        start_new_session=os.name != "nt",
     )
     try:
         if progress_callback and tool_call_id:
@@ -567,27 +600,21 @@ async def _run_subprocess_async(
                     extract_subagent_status(decoded, tool_call_id, progress_callback)
                     stderr_lines.append(decoded)
 
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(_drain_stdout(), _drain_stderr()),
-                    timeout=timeout,
-                )
-                await process.wait()
-            except TimeoutError as exc:
-                process.kill()
-                await process.communicate()
-                raise TimeoutError from exc
+            await _wait_for_subprocess_async(
+                asyncio.gather(_drain_stdout(), _drain_stderr(), process.wait()),
+                process,
+                timeout=timeout,
+            )
 
             stdout_bytes = b"".join(stdout_chunks)
             stderr_bytes = "\n".join(stderr_lines).encode("utf-8")
         else:
             # 无回调：保持原有的阻塞式读取
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout)
-            except TimeoutError as exc:
-                process.kill()
-                await process.communicate()
-                raise TimeoutError from exc
+            stdout_bytes, stderr_bytes = await _wait_for_subprocess_async(
+                process.communicate(),
+                process,
+                timeout=timeout,
+            )
     finally:
         # 清理去重缓存和各 handler 的 per-tool-call 状态
         if tool_call_id:
