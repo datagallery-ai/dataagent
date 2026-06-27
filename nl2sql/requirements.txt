@@ -1,0 +1,27 @@
+# NL2SQL 项目统一依赖
+# 安装: pip install -r requirements.txt
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Step3b (Single-Combination) 运行时依赖
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+requests>=2.28              # LLM API 与 REST 调用（传递提供 charset_normalizer，供 schema_utils 识别 CSV 编码）
+urllib3>=2.0                # 禁用 SSL 警告
+numpy>=1.24                 # 向量运算、结果相似度与 few-shot 欧氏距离 KNN 选样
+sentence-transformers>=2.2  # 问题 embedding（延迟加载）
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Step4a SFT Selector 运行时依赖（版本已锁定勿升级；实测环境 CUDA 12.4 / RTX 3090）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+transformers==4.56.2     # tokenizer 与 chat template（vllm 0.13.0 强制 >=4.56.0,<5）
+vllm==0.13.0             # SFT selector 推理（0.20+ 需 CUDA 13/驱动 580+，不兼容 550.x）
+# flashinfer-python / flashinfer-cubin 由 vllm 0.13.0 间接引入，无需显式安装；
+# 二者须为同一版本（实测 0.5.3），否则启动报 cubin/version mismatch
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 其他模块依赖（Step1 预处理 / 本地 LSH 索引 / 数据处理等）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+datasketch>=1.6         # 本地 LSH 索引构建与近似匹配（MinHash）
+tabulate>=0.9           # SQL 执行结果 psql 风格表格渲染
+pydantic>=2.0            # 数据验证
+pandas>=2.0              # 数据处理
+tqdm>=4.65               # 进度条
