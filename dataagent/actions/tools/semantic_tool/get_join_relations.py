@@ -16,7 +16,7 @@ import requests
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
+from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 
 
 def _fmt(original: str, frontend: str, data: Any) -> dict:
@@ -45,21 +45,11 @@ def get_join_relations(table_names: list[str], *, _tool_context: ToolExecutionCo
     if not names:
         return _fmt("表名列表为空。", "表名列表为空。", {"joins": []})
 
-    # MetaVisor 服务地址和认证配置
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
-
-    # 构建请求参数
-    params = [("dbTableNames", name) for name in names]
-    params.append(("limit", 2000))
-    url = f"{base_url}/api/metaVisor/v3/advanced-search/joinable-tables"
-
     try:
-        resp = requests.get(url, params=params, auth=auth, timeout=30, headers={"Accept": "application/json"})
-        resp.raise_for_status()
-        raw = resp.json()
-    except requests.RequestException as e:
-        logger.error(f"请求 MetaVisor joinable-tables 失败：{e}")
+        client = SemanticServiceClient.from_config(_tool_context.config_manager)
+        raw = client.get_joinable_tables(names, limit=2000)
+    except (requests.RequestException, ValueError) as e:
+        logger.error(f"请求语义服务 joinable-tables 失败：{e}")
         return _fmt(f"请求失败：{e}", "查询 JOIN 关系失败。", {"joins": []})
 
     joins: list[dict[str, Any]] = []

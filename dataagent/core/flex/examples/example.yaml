@@ -205,6 +205,18 @@ TOOLS:
           - dataagent.actions.tools.hooks.examples.example_hooks.post_hook1
           - dataagent.actions.tools.hooks.examples.example_hooks.post_hook2
 
+    # semantic-service 基础检索：语义层表清单
+    - module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
+      function: "list_semantic_layer_tables"
+      name: "list_semantic_layer_tables"
+      category: "semantic"
+
+    # semantic-service 基础检索：语义层表 schema
+    - module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
+      function: "get_semantic_layer_table_schema"
+      name: "get_semantic_layer_table_schema"
+      category: "semantic"
+
   mcp_servers:
     - server_id: "nl2sql"
       transport_type: "stdio"      # stdio | sse | ...
@@ -322,7 +334,15 @@ CORE:
   selector:
     threshold: 0.9
 
-# ── 元数据增强（NL2SQL，可选） ──────────────────────────────────────────────
+# ── 企业语义引擎服务（semantic_tool，可选） ─────────────────────────────────
+SEMANTIC_LAYER:
+  base_url: "http://127.0.0.1:31000"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                      # 未启用认证时保持 null；启用认证时填写
+  password: null                      # 未启用认证时保持 null；启用认证时填写
+  timeout: 30
+  verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
+
+# ── 元数据增强（NL2SQL/旧链路，可选） ───────────────────────────────────────
 METAVISOR:
   url: "127.0.0.1:31000"        # 格式 host:port
   metavisor_url: "http://127.0.0.1:41000"  # NL2SQL perceptor 实际读取的 URL

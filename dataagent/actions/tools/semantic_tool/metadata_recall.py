@@ -141,8 +141,11 @@ def _build_metadata_recall_sub_agent_config(
 
     temp_config["WORKSPACE"] = {"path": str(workspace_root.resolve())}
 
+    semantic_layer = config_manager.get("SEMANTIC_LAYER")
     metavisor = config_manager.get("METAVISOR")
     database_id = config_manager.get("DATABASE.db_id")
+    if semantic_layer:
+        temp_config["SEMANTIC_LAYER"] = semantic_layer
     temp_config["METAVISOR"] = metavisor if metavisor else {}
     temp_config["DATABASE"] = {"db_id": database_id} if database_id else {}
 

@@ -1,0 +1,90 @@
+AGENT_CONFIG:
+  name: "Semantic Service Test Agent"
+  version: "1.0"
+  description: "用于测试 DataAgent semantic_tool 对接 semantic-service 的工具链路"
+  backend: "langgraph"
+  type: "react"
+  max_iter: 30
+  debug: false
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "minimax"
+    params:
+      model: "MiniMax-M2.7"
+      temperature: 0.0
+      timeout: 60
+
+DATABASE:
+  db_id: "demo_db"                    # 转测时替换为 semantic-service 中真实 databaseName
+
+SEMANTIC_LAYER:
+  base_url: "http://127.0.0.1:31000"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                      # 未启用认证时保持 null；启用认证时填写
+  password: null                      # 未启用认证时保持 null；启用认证时填写
+  timeout: 30
+  verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
+
+SCENARIO:
+  chat:
+    input: 语义服务测试查询
+    task: 测试 semantic-service 提供的表、列、schema、JOIN、指标、UDF 和基础检索接口是否可通过 DataAgent semantic tools 正常访问
+    instructions: |
+      你是 semantic-service 测试 Agent。你的任务是根据用户输入，选择合适的 semantic tools 检索语义服务中的表、列、schema、JOIN、指标、UDF 或语义层基础元数据。
+
+      ## 工具选择
+      - 需要查看语义层元数据表清单或元数据表结构时，使用 `list_semantic_layer_tables`、`get_semantic_layer_table_schema`。
+      - 需要检索业务表、字段、指标相关信息时，使用 `search_metric_instance`、`search_tables_and_columns`、`search_tables_with_typename`、`get_table_schema`。
+      - 需要检索 UDF 函数信息时，使用 `search_udf_function_by_name_keyword` 或 `search_udf_function_by_dsl`。
+      - 需要确认多表关联关系时，使用 `get_join_relations`。
+
+      ## 执行要求
+      - 优先围绕用户指定的能力执行最小必要工具调用。
+      - 如果某个工具返回空结果或异常，说明失败接口和失败原因，并尝试使用同类工具补充验证。
+      - 输出时按工具名归类展示结果摘要，标明是否成功访问 semantic-service。
+      - 工具返回文件路径时视为该工具已完成返回，不要读取、打开或解析该文件路径。
+      - 本测试只关注工具调用是否成功，不校验或汇总落盘文件内容。
+
+TOOLS:
+  local_functions:
+    - name: "list_semantic_layer_tables"
+      module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
+      function: "list_semantic_layer_tables"
+    - name: "get_semantic_layer_table_schema"
+      module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
+      function: "get_semantic_layer_table_schema"
+    - name: "search_metric_instance"
+      module: "dataagent.actions.tools.semantic_tool.search_metric_instance"
+      function: "search_metric_instance"
+    - name: "search_tables_and_columns"
+      module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "search_tables_and_columns"
+    - name: "search_tables_with_typename"
+      module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "search_tables_with_typename"
+    - name: "get_table_schema"
+      module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "get_table_schema"
+    - name: "search_udf_function_by_name_keyword"
+      module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
+      function: "search_udf_function_by_name_keyword"
+    - name: "search_udf_function_by_dsl"
+      module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
+      function: "search_udf_function_by_dsl"
+    - name: "get_join_relations"
+      module: "dataagent.actions.tools.semantic_tool.get_join_relations"
+      function: "get_join_relations"
+
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+
+POST_WORKFLOW: []

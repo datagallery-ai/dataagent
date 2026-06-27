@@ -18,14 +18,13 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-import requests
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
-from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
 from dataagent.actions.tools.semantic_tool.get_join_relations import get_join_relations
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
+from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.utils.info_utils import get_current_query
 
@@ -46,12 +45,10 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     Returns:
         dict: 包含原始 JSON 字符串、前端摘要和结构化数据的工具返回值。
     """
-    # 语义感知增强-元数据增强模块 基础URL和认证
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
 
     # Step 1: 根据 ”模型传入的 keywords”，粗召回筛选出与 keywords 相关的 “metric_instance、data_column、data_table”
-    result_json = _coarse_recall_metric_instances(keywords, base_url, auth)
+    result_json = _coarse_recall_metric_instances(keywords, client)
 
     # Step 2: 根据 “粗召回的 typeName”，筛选出 “metric_instance、data_column、data_table 的 qualified_name”
     typed_recall_result = _filter_metric_instances_by_type(
@@ -65,7 +62,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     data_table_list = [entity["qualified_name"] for entity in data_table_fulltext_list]
 
     # Step 3-8: 根据 Step2 粗召回返回的 “metric_instance 的 qualified_name”，独立扩充召回结果
-    metric_instance_recall_result = _recall_from_metric_instances(metric_instance_list, base_url, auth)
+    metric_instance_recall_result = _recall_from_metric_instances(metric_instance_list, client)
     metric_instance_column_list = metric_instance_recall_result["metric_instance_column_list"]
     metric_instance_table_list = metric_instance_recall_result["metric_instance_table_list"]
     tables_from_metric_instance_column_list = metric_instance_recall_result["tables_from_metric_instance_column_list"]
@@ -76,12 +73,12 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     tables_with_columns = metric_instance_recall_result["tables_with_columns"]
 
     # Step 9-10: 根据 Step2 粗召回返回的 “data_column qualified_name”，独立扩充召回结果
-    data_column_recall_result = _recall_from_data_columns(data_column_list, tables_with_columns, base_url, auth)
+    data_column_recall_result = _recall_from_data_columns(data_column_list, tables_with_columns, client)
     tables_from_data_column_list = data_column_recall_result["tables_from_data_column_list"]
     tables_with_columns = data_column_recall_result["tables_with_columns"]
 
     # Step 11-12: 根据 Step2 粗召回返回的 “data_table qualified_name”，独立扩充召回结果
-    data_table_recall_result = _recall_from_data_tables(data_table_list, tables_with_columns, base_url, auth)
+    data_table_recall_result = _recall_from_data_tables(data_table_list, tables_with_columns, client)
     columns_from_data_table_list = data_table_recall_result["columns_from_data_table_list"]
     tables_with_columns = data_table_recall_result["tables_with_columns"]
 
@@ -95,8 +92,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
             "columns_from_data_table_list": columns_from_data_table_list,
             "tables_with_columns": tables_with_columns,
         },
-        base_url,
-        auth,
+        client,
     )
     tables_from_metric_instance_column_list = described_tables["tables_from_metric_instance_column_list"]
     columns_from_metric_instance_column_tables = described_tables["columns_from_metric_instance_column_tables"]
@@ -148,7 +144,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     _build_schema_ir_for_nl2sql(
         workspace_path=str(workspace_path),
         output_path=str(output_path),
-        base_url=base_url,
+        base_url=client.base_url,
         save_file=True,
         _tool_context=_tool_context,
     )
@@ -181,7 +177,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
 # ----------------------------
 
 
-def _coarse_recall_metric_instances(keywords: list[str], base_url: str, auth: tuple) -> dict:
+def _coarse_recall_metric_instances(keywords: list[str], client: SemanticServiceClient) -> dict:
     """
     Step 1：根据关键词执行全文粗召回。
 
@@ -190,17 +186,13 @@ def _coarse_recall_metric_instances(keywords: list[str], base_url: str, auth: tu
 
     Args:
         keywords: 关键词列表
-        base_url: API基础URL
-        auth: 认证元组 (用户名, 密码)
+        client: 统一语义服务客户端
 
     Returns:
         dict: API返回的JSON结果
     """
     query_str = " ".join(keywords)
-    search_url = f"{base_url}/api/metaVisor/v3/search/fulltext"
-    params = {"query": query_str, "limit": 100, "offset": 0, "excludeDeletedEntities": "true"}
-    result = requests.get(search_url, params=params, auth=auth)
-    return result.json()
+    return client.search_fulltext(query_str, limit=100, offset=0, exclude_deleted=True)
 
 
 def _filter_metric_instances_by_type(
@@ -246,7 +238,7 @@ def _filter_metric_instances_by_type(
     return filtered_result
 
 
-def _recall_from_metric_instances(metric_instance_list: list[str], base_url: str, auth: tuple) -> dict[str, Any]:
+def _recall_from_metric_instances(metric_instance_list: list[str], client: SemanticServiceClient) -> dict[str, Any]:
     """
     Step 3-8：根据 metric_instance qualified_name 独立扩充召回结果。
 
@@ -255,27 +247,26 @@ def _recall_from_metric_instances(metric_instance_list: list[str], base_url: str
 
     Args:
         metric_instance_list: metric_instance qualified_name 列表
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         dict[str, Any]: metric_instance 召回链路的中间结果和合并后的表列信息。
     """
     # Step 3: 根据 “metric_instance 的 qualified_name”，提取出 ”指标列的 qualified_name” 和 “指标表的 qualified_name”
     metric_instance_column_list, metric_instance_table_list = _extract_columns_and_tables_from_metric(
-        metric_instance_list, base_url, auth
+        metric_instance_list, client
     )
 
     # Step 4: 根据 “指标列的 qualified_name”，获取 “指标列详情“ 和 ”指标列所在表信息”
-    tables_from_metric_instance_column_list = _get_column_details(metric_instance_column_list, base_url, auth)
+    tables_from_metric_instance_column_list = _get_column_details(metric_instance_column_list, client)
     tables_with_columns = copy.deepcopy(tables_from_metric_instance_column_list)
 
     # Step 5: 根据 “指标列所在表的 qualified_name”，获取 “指标列所在表的所有列信息”（扩充召回结果）
     tables_from_columns = list(tables_from_metric_instance_column_list.keys())
-    columns_from_metric_instance_column_tables = _get_table_all_columns_details(tables_from_columns, base_url, auth)
+    columns_from_metric_instance_column_tables = _get_table_all_columns_details(tables_from_columns, client)
 
     # Step 6: 根据 “指标表的 qualified_name”，获取 “指标表的所有列信息”（扩充召回结果）
-    columns_from_metric_instance_table_list = _get_table_all_columns_details(metric_instance_table_list, base_url, auth)
+    columns_from_metric_instance_table_list = _get_table_all_columns_details(metric_instance_table_list, client)
 
     # Step 7（可选）: 合并 Step4 和 Step5
     # （可选）tables_with_columns = _merge_table_columns(tables_with_columns, columns_from_metric_instance_column_tables)
@@ -294,7 +285,7 @@ def _recall_from_metric_instances(metric_instance_list: list[str], base_url: str
 
 
 def _recall_from_data_columns(
-    data_column_list: list[str], tables_with_columns: dict, base_url: str, auth: tuple
+    data_column_list: list[str], tables_with_columns: dict, client: SemanticServiceClient
 ) -> dict[str, Any]:
     """
     Step 9-10：根据 data_column qualified_name 独立扩充召回结果。
@@ -304,14 +295,13 @@ def _recall_from_data_columns(
     Args:
         data_column_list: data_column qualified_name 列表
         tables_with_columns: 已有的表列召回结果
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         dict[str, Any]: data_column 召回链路的中间结果和合并后的表列信息。
     """
     # Step 9: 根据 Step2 返回的 “data_column qualified_name”，获取列详情和所在表信息（扩充召回结果）
-    tables_from_data_column_list = _get_column_details(data_column_list, base_url, auth)
+    tables_from_data_column_list = _get_column_details(data_column_list, client)
 
     # Step 10（可选）: 合并 Step2 中 data_column 独立扩充出的召回结果
     tables_with_columns = _merge_table_columns(tables_with_columns, tables_from_data_column_list)
@@ -323,7 +313,7 @@ def _recall_from_data_columns(
 
 
 def _recall_from_data_tables(
-    data_table_list: list[str], tables_with_columns: dict, base_url: str, auth: tuple
+    data_table_list: list[str], tables_with_columns: dict, client: SemanticServiceClient
 ) -> dict[str, Any]:
     """
     Step 11-12：根据 data_table qualified_name 独立扩充召回结果。
@@ -333,14 +323,13 @@ def _recall_from_data_tables(
     Args:
         data_table_list: data_table qualified_name 列表
         tables_with_columns: 已有的表列召回结果
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         dict[str, Any]: data_table 召回链路的中间结果和合并后的表列信息。
     """
     # Step 11: 根据 Step2 返回的 “data_table qualified_name”，获取表的所有列信息（扩充召回结果）
-    columns_from_data_table_list = _get_table_all_columns_details(data_table_list, base_url, auth)
+    columns_from_data_table_list = _get_table_all_columns_details(data_table_list, client)
 
     # Step 12（可选）: 合并 Step2 中 data_table 独立扩充出的召回结果
     tables_with_columns = _merge_table_columns(tables_with_columns, columns_from_data_table_list)
@@ -525,7 +514,7 @@ def _extract_entity_description(attributes: dict) -> str:
 
 
 def _extract_columns_and_tables_from_metric(
-    metric_qualified_names: list[str], base_url: str, auth: tuple
+    metric_qualified_names: list[str], client: SemanticServiceClient
 ) -> tuple[list[str], list[str]]:
     """
     Step 3：根据 metric_instance qualified_name 提取指标列和指标表。
@@ -535,8 +524,7 @@ def _extract_columns_and_tables_from_metric(
 
     Args:
         metric_qualified_names: metric_instance qualified_name 列表
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         tuple[list[str], list[str]]: 指标列 qualified_name 列表、指标表名列表。
@@ -544,9 +532,7 @@ def _extract_columns_and_tables_from_metric(
     column_list = []
     table_list = []
     for metric_name in metric_qualified_names:
-        metric_detail_url = f"{base_url}/api/metaVisor/v3/entity/uniqueAttribute/type/metric_instance"
-        metric_params = {"attr:qualified_name": metric_name}
-        metric_detail = requests.get(metric_detail_url, params=metric_params, auth=auth).json()
+        metric_detail = client.get_entity_by_unique_attribute("metric_instance", "qualified_name", metric_name)
 
         # 提取列
         for column in metric_detail.get("entity", {}).get("relationshipAttributes", {}).get("sourceColumns", []):
@@ -566,7 +552,7 @@ def _extract_columns_and_tables_from_metric(
     return column_list, table_list
 
 
-def _get_column_details(column_qualified_names: list[str], base_url: str, auth: tuple) -> dict:
+def _get_column_details(column_qualified_names: list[str], client: SemanticServiceClient) -> dict:
     """
     Step 4/9：根据列 qualified_name 获取列详情和所在表信息。
 
@@ -574,17 +560,14 @@ def _get_column_details(column_qualified_names: list[str], base_url: str, auth: 
 
     Args:
         column_qualified_names: 列 qualified_name 列表
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         dict: {表名: [列信息列表]}。
     """
     tables_columns = {}
     for column_qualified_name in column_qualified_names:
-        column_detail_url = f"{base_url}/api/metaVisor/v3/entity/uniqueAttribute/type/data_column"
-        column_params = {"attr:qualified_name": column_qualified_name}
-        column_detail = requests.get(column_detail_url, params=column_params, auth=auth).json()
+        column_detail = client.get_entity_by_unique_attribute("data_column", "qualified_name", column_qualified_name)
 
         table_name = column_detail.get("entity", {}).get("attributes", {}).get("table_id")
         column = column_detail.get("entity", {}).get("attributes", {})
@@ -601,7 +584,7 @@ def _get_column_details(column_qualified_names: list[str], base_url: str, auth: 
     return tables_columns
 
 
-def _get_table_all_columns_details(table_names: list[str], base_url: str, auth: tuple) -> dict:
+def _get_table_all_columns_details(table_names: list[str], client: SemanticServiceClient) -> dict:
     """
     Step 5/6/11：根据表名获取表的所有列信息。
 
@@ -609,8 +592,7 @@ def _get_table_all_columns_details(table_names: list[str], base_url: str, auth: 
 
     Args:
         table_names: 表名列表
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         dict: {表名: [列信息列表]}。
@@ -618,9 +600,7 @@ def _get_table_all_columns_details(table_names: list[str], base_url: str, auth: 
     tables_columns = {}
     for table_name in table_names:
         tables_columns[table_name] = []
-        table_columns_url = f"{base_url}/api/metaVisor/v3/advanced-search/table-columns-info"
-        params = {"tableName": table_name, "limit": 100}
-        all_columns = requests.get(table_columns_url, params=params, auth=auth).json()
+        all_columns = client.get_table_columns_info(table_name, limit=100)
 
         tables_columns[table_name] = [
             {
@@ -655,21 +635,22 @@ def _normalize_column_description(description: Any) -> str:
     return description_text
 
 
-def _attach_table_descriptions_to_metric_results(metric_results: dict[str, dict], base_url: str, auth: tuple) -> dict:
+def _attach_table_descriptions_to_metric_results(
+    metric_results: dict[str, dict], client: SemanticServiceClient
+) -> dict:
     """
     为 metric 召回链路的各类表列结果统一补充表描述。
 
     Args:
         metric_results: 多个表列结果字典，value 结构为 {表名: [列信息列表]}
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         dict: 已补充表描述的多个表列结果字典。
     """
     table_description_cache: dict[str, str] = {}
     return {
-        result_name: _attach_table_descriptions(tables_columns, base_url, auth, table_description_cache)
+        result_name: _attach_table_descriptions(tables_columns, client, table_description_cache)
         for result_name, tables_columns in metric_results.items()
     }
 
@@ -905,8 +886,7 @@ def _merge_described_column_into_result(output_metric_final: dict[str, dict], ca
 
 def _attach_table_descriptions(
     tables_columns: dict,
-    base_url: str,
-    auth: tuple,
+    client: SemanticServiceClient,
     description_cache: dict[str, str] | None = None,
 ) -> dict:
     """
@@ -914,8 +894,7 @@ def _attach_table_descriptions(
 
     Args:
         tables_columns: 表列信息字典，结构为 {表名: [列信息列表]}
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
         description_cache: 表描述缓存，避免多个中间结果重复查询同一张表
 
     Returns:
@@ -926,7 +905,7 @@ def _attach_table_descriptions(
     for table_name, columns in tables_columns.items():
         table_qualified_name = f"{table_name}@hive"
         if table_qualified_name not in cache:
-            cache[table_qualified_name] = get_table_description(table_qualified_name, base_url, auth)
+            cache[table_qualified_name] = get_table_description(table_qualified_name, client)
         result[table_name] = {
             "table_name": table_name,
             "table_description": cache[table_qualified_name],
