@@ -12,14 +12,14 @@
 # ============================================================================
 """Tests for effective workspace allow-path resolution."""
 
-from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
-from dataagent.core.suite.validation import validate_merged_config
+from dataagent.suite.allow_paths import effective_workspace_allow_paths
+from dataagent.suite.validation import validate_merged_config
 from dataagent.utils.runtime_paths import dataagent_package_path
 
 
 def test_effective_allow_paths_merges_user_and_suite_roots() -> None:
     user_allow = "/tmp/user_extra"
-    suite_root = str(dataagent_package_path("core", "suite", "builtin_suites", "example_suite"))
+    suite_root = str(dataagent_package_path("suite", "builtin_suites", "example_suite"))
     settings = {"WORKSPACE": {"allow_path": [user_allow]}}
     activated = [{"name": "example_suite", "root": suite_root}]
     paths = effective_workspace_allow_paths(settings, activated)
@@ -28,7 +28,7 @@ def test_effective_allow_paths_merges_user_and_suite_roots() -> None:
 
 
 def test_effective_allow_paths_dedupes_suite_root() -> None:
-    suite_root = str(dataagent_package_path("core", "suite", "builtin_suites", "example_suite"))
+    suite_root = str(dataagent_package_path("suite", "builtin_suites", "example_suite"))
     settings: dict = {}
     activated = [{"name": "example_suite", "root": suite_root}]
     first = effective_workspace_allow_paths(settings, activated)
@@ -38,7 +38,7 @@ def test_effective_allow_paths_dedupes_suite_root() -> None:
 
 
 def test_validate_subagent_path_allowed_by_activated_suite_root() -> None:
-    suite_root = dataagent_package_path("core", "suite", "builtin_suites", "example_suite")
+    suite_root = dataagent_package_path("suite", "builtin_suites", "example_suite")
     subagent = suite_root / "subagents" / "arithmetic_ref.yaml"
     config = {"SUBAGENT_CONFIGS": [{"path": str(subagent)}]}
     activated = [{"name": "example_suite", "root": str(suite_root)}]

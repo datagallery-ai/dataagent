@@ -18,6 +18,7 @@ def build_harness_tools(
     *,
     read_sys_operation: SysOperation | None = None,
     bash_allowlist: tuple[str, ...] | None = None,
+    todo_workspace: str | None = None,
 ) -> list[Tool]:
     """Build the standard harness tool set.
 
@@ -31,12 +32,19 @@ def build_harness_tools(
         ReadFileTool,
         WriteFileTool,
     )
-    from openjiuwen.harness.tools.todo import TodoCreateTool, TodoGetTool, TodoListTool, TodoModifyTool
+    from openjiuwen.harness.tools.todo import (
+        TodoCreateTool,
+        TodoGetTool,
+        TodoListTool,
+        TodoLockManager,
+        TodoModifyTool,
+    )
     from openjiuwen.harness.tools.web_tools import WebFetchWebpageTool, WebFreeSearchTool
 
     from dataagent.core.deep_agent.builders.tools.bash import build_bash_tool
 
     read_operation = read_sys_operation or sys_operation
+    todo_lock_manager = TodoLockManager()
     tools = [
         ReadFileTool(operation=read_operation, language=language),
         WriteFileTool(operation=sys_operation, language=language),
@@ -46,10 +54,30 @@ def build_harness_tools(
         ListDirTool(operation=read_operation, language=language),
         WebFetchWebpageTool(language=language),
         WebFreeSearchTool(language=language),
-        TodoCreateTool(operation=sys_operation, language=language),
-        TodoListTool(operation=sys_operation, language=language),
-        TodoModifyTool(operation=sys_operation, language=language),
-        TodoGetTool(operation=sys_operation, language=language),
+        TodoCreateTool(
+            operation=sys_operation,
+            workspace=todo_workspace,
+            language=language,
+            lock_manager=todo_lock_manager,
+        ),
+        TodoListTool(
+            operation=sys_operation,
+            workspace=todo_workspace,
+            language=language,
+            lock_manager=todo_lock_manager,
+        ),
+        TodoModifyTool(
+            operation=sys_operation,
+            workspace=todo_workspace,
+            language=language,
+            lock_manager=todo_lock_manager,
+        ),
+        TodoGetTool(
+            operation=sys_operation,
+            workspace=todo_workspace,
+            language=language,
+            lock_manager=todo_lock_manager,
+        ),
     ]
     bash_tool = build_bash_tool(
         sys_operation,

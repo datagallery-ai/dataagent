@@ -120,6 +120,78 @@ class _FakeDeepAgent:
         yield {"output": "streamed"}
 
 
+class _SchemaDictStreamDeepAgent(_FakeDeepAgent):
+    async def stream(self, inputs: dict[str, Any], session: _FakeSession):
+        """Yield Jiuwen OutputSchema-like dict chunks."""
+        self.session = session
+        yield {"type": "llm_output", "index": 0, "payload": {"content": "hello"}}
+        yield {"type": "llm_usage", "index": 1, "payload": {"usage_metadata": {"total_tokens": 1}}}
+        yield {"type": "answer", "index": 1, "payload": {"output": "hello", "result_type": "answer"}}
+
+
+class _TracerStreamDeepAgent(_FakeDeepAgent):
+    async def stream(self, inputs: dict[str, Any], session: _FakeSession):
+        """Yield Jiuwen tracer chunks around assistant output."""
+        self.session = session
+        yield {
+            "type": "tracer_agent",
+            "payload": {
+                "traceId": "trace-1",
+                "invokeId": "invoke-1",
+                "name": "list_files",
+                "status": "start",
+                "inputs": {"inputs": {"path": "/tmp/workspace"}},
+                "metaData": {"type": "tool", "class_name": "list_files"},
+            },
+        }
+        yield {
+            "type": "tracer_agent",
+            "payload": {
+                "traceId": "trace-1",
+                "invokeId": "invoke-1",
+                "name": "list_files",
+                "status": "finish",
+                "inputs": {"inputs": {"path": "/tmp/workspace"}},
+                "outputs": {"outputs": {"success": True, "content": "a.csv"}},
+                "metaData": {"type": "tool", "class_name": "list_files"},
+            },
+        }
+        yield {"type": "llm_output", "index": 2, "payload": {"content": "done"}}
+
+
+class _StructuredToolResultStreamDeepAgent(_FakeDeepAgent):
+    async def stream(self, inputs: dict[str, Any], session: _FakeSession):
+        """Yield structured tool results that only carry data fields."""
+        self.session = session
+        yield {
+            "type": "tracer_agent",
+            "payload": {
+                "name": "list_files",
+                "status": "finish",
+                "outputs": {"outputs": {"success": True, "data": {"files": ["a.md"], "dirs": ["skills"]}}},
+                "metaData": {"type": "tool", "class_name": "list_files"},
+            },
+        }
+        yield {
+            "type": "tracer_agent",
+            "payload": {
+                "name": "glob",
+                "status": "finish",
+                "outputs": {"outputs": {"success": True, "data": {"filenames": ["AGENT.md", "SOUL.md"]}}},
+                "metaData": {"type": "tool", "class_name": "glob"},
+            },
+        }
+        yield {
+            "type": "tracer_agent",
+            "payload": {
+                "name": "skill_tool",
+                "status": "finish",
+                "outputs": {"outputs": {"success": True, "data": {"skill_content": "# Skill"}}},
+                "metaData": {"type": "tool", "class_name": "skill_tool"},
+            },
+        }
+
+
 @pytest.mark.asyncio
 async def test_chat_binds_card_and_runs_non_stream_session_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
@@ -194,6 +266,129 @@ async def test_stream_returns_checkpoint_identity(
             "checkpoint_id": "stream-checkpoint",
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_extracts_content_from_jiuwen_schema_dict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Schema-like dict chunks should stream payload content, not raw dictionaries."""
+    def fake_create_agent_session(*, session_id: str, card: Any):
+        return _FakeSession(session_id, card)
+
+    @asynccontextmanager
+    async def fake_lease(spec: CheckpointerSpec):
+        yield
+
+    monkeypatch.setattr(
+        "openjiuwen.core.session.agent.create_agent_session",
+        fake_create_agent_session,
+    )
+    monkeypatch.setattr(agent_module, "checkpointer_lease", fake_lease)
+
+    agent = agent_module.DataAgent({"WORKSPACE": {"path": str(tmp_path)}})
+    agent._deep_agent = _SchemaDictStreamDeepAgent()
+    agent._checkpointer_spec = CheckpointerSpec(type="in_memory", conf={})
+
+    items = [
+        item
+        async for item in agent.astream(
+            initial_state={"user_query": "hello"},
+            checkpoint_id="schema-dict-stream",
+        )
+    ]
+
+    assert items[0] == ("custom", {"type": "llm_output", "index": 0, "payload": {"content": "hello"}})
+    assert items[1] == (
+        "updates",
+        {
+            "messages": [{"role": "assistant", "content": "hello"}],
+            "final_answer": "hello",
+            "complete": True,
+            "session_id": "schema-dict-stream",
+            "checkpoint_id": "schema-dict-stream",
+        },
+    )
+    assert "llm_usage" not in str(items)
+
+
+@pytest.mark.asyncio
+async def test_stream_converts_jiuwen_tracer_chunks_to_tool_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Tracer chunks should become Jiuwen-style tool events and stay out of messages."""
+    def fake_create_agent_session(*, session_id: str, card: Any):
+        return _FakeSession(session_id, card)
+
+    @asynccontextmanager
+    async def fake_lease(spec: CheckpointerSpec):
+        yield
+
+    monkeypatch.setattr(
+        "openjiuwen.core.session.agent.create_agent_session",
+        fake_create_agent_session,
+    )
+    monkeypatch.setattr(agent_module, "checkpointer_lease", fake_lease)
+
+    agent = agent_module.DataAgent({"WORKSPACE": {"path": str(tmp_path)}})
+    agent._deep_agent = _TracerStreamDeepAgent()
+    agent._checkpointer_spec = CheckpointerSpec(type="in_memory", conf={})
+
+    items = [
+        item
+        async for item in agent.astream(
+            initial_state={"user_query": "list files"},
+            checkpoint_id="tracer-stream",
+        )
+    ]
+
+    assert items[0][1]["type"] == "tool_call"
+    assert items[0][1]["payload"]["tool_args"] == {"path": "/tmp/workspace"}
+    assert items[1][1]["type"] == "tool_result"
+    assert items[1][1]["payload"]["tool_output"] == {"success": True, "content": "a.csv"}
+    assert items[1][1]["payload"]["tool_result"] == "a.csv"
+    assert items[2] == ("custom", {"type": "llm_output", "index": 2, "payload": {"content": "done"}})
+    assert items[-1][1]["messages"] == [{"role": "assistant", "content": "done"}]
+    assert "tracer_agent" not in str(items[-1])
+
+
+@pytest.mark.asyncio
+async def test_stream_extracts_structured_tool_result_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Structured Jiuwen ToolOutput.data should be displayed as tool_result text."""
+    def fake_create_agent_session(*, session_id: str, card: Any):
+        return _FakeSession(session_id, card)
+
+    @asynccontextmanager
+    async def fake_lease(spec: CheckpointerSpec):
+        yield
+
+    monkeypatch.setattr(
+        "openjiuwen.core.session.agent.create_agent_session",
+        fake_create_agent_session,
+    )
+    monkeypatch.setattr(agent_module, "checkpointer_lease", fake_lease)
+
+    agent = agent_module.DataAgent({"WORKSPACE": {"path": str(tmp_path)}})
+    agent._deep_agent = _StructuredToolResultStreamDeepAgent()
+    agent._checkpointer_spec = CheckpointerSpec(type="in_memory", conf={})
+
+    items = [
+        item
+        async for item in agent.astream(
+            initial_state={"user_query": "show tools"},
+            checkpoint_id="structured-tools",
+        )
+    ]
+
+    payloads = [item[1]["payload"] for item in items if item[0] == "custom"]
+    assert payloads[0]["tool_result"] == "skills/\na.md"
+    assert payloads[1]["tool_result"] == "AGENT.md\nSOUL.md"
+    assert payloads[2]["tool_result"] == "# Skill"
 
 
 @pytest.mark.asyncio

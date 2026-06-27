@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from dataagent.core.suite.validation import validate_merged_config, validate_strict_duplicates
+from dataagent.suite.validation import validate_merged_config, validate_strict_duplicates
 from dataagent.utils.runtime_paths import dataagent_package_path
 
 
@@ -58,7 +58,7 @@ def test_validate_accepts_example_suite_subagent_path_with_user_allow_path() -> 
     config = {
         "SUBAGENT_CONFIGS": [{"path": str(subagent)}],
         "WORKSPACE": {
-            "allow_path": [str(dataagent_package_path("core", "suite", "builtin_suites"))],
+            "allow_path": [str(dataagent_package_path("suite", "builtin_suites"))],
         },
     }
     validate_merged_config(config)

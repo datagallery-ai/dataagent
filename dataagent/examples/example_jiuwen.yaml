@@ -1,0 +1,66 @@
+# OpenJiuWen DeepAgent 有效配置示例
+#
+# 本文件只包含当前 DataAgent 运行时实际消费的字段。所有未注释字段都会影响
+# DeepAgent 构建或运行行为，不包含仅能被 YAML 加载但没有运行时消费者的旧字段。
+#
+# 运行前需要设置：
+#   DEEPSEEK_BASE_URL=https://api.deepseek.com
+#   DEEPSEEK_API_KEY=<your-api-key>
+
+AGENT_CONFIG:
+  name: "Jiuwen Example Agent"
+  version: "1.0"
+  description: "使用 OpenJiuWen DeepAgent 执行数据分析任务"
+  max_iter: 20
+  enable_human_feedback: true
+
+MODEL:
+  chat_model:
+    provider: "deepseek"
+    params:
+      model: "deepseek-chat"
+      temperature: 0.2
+      top_p: 0.9
+      max_tokens: 8192
+      timeout: 300
+      max_retries: 3
+      verify_ssl: false
+
+SCENARIO:
+  chat:
+    task: "理解用户的数据分析目标，并使用可用工具完成任务。"
+    instructions: |
+      先确认输入数据和预期输出，再执行分析。
+      只在工作区内创建或修改文件；allow_path 只允许读取。
+
+WORKSPACE:
+  path: "/tmp/dataagent_workspace"
+  allow_path:
+    - "/tmp/dataagent_readonly"
+
+TOOLS:
+  skills:
+    builtin:
+      - "data_analysis_report"
+  local_functions:
+    - module: "dataagent.utils.formatting_utils"
+      function: "format_llm_output"
+      name: "parse_llm_json"
+      description: "移除模型思考片段并解析其中的 JSON 内容。"
+      category: "general"
+
+BASH_TOOL_WHITELIST:
+  - "ls"
+  - "cat"
+  - "pwd"
+  - "python"
+
+CHECKPOINTER:
+  type: "persistence"
+  conf:
+    db_type: "sqlite"
+    db_path: ".checkpoints/example"
+
+CONTEXT:
+  compress_token_limit: 32768
+  compress_message_cnt: 200

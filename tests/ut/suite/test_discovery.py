@@ -18,14 +18,14 @@ import pytest
 import yaml
 
 from dataagent.config.config_manager import ConfigManager
-from dataagent.core.suite.discovery import discover_suite_index, scan_suite_paths
+from dataagent.suite.discovery import discover_suite_index, scan_suite_paths
 from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
 
 
 def test_scan_suite_paths_user_and_builtin_suites() -> None:
     paths = scan_suite_paths()
     assert paths[0] == dataagent_home() / "suites"
-    builtin_suites = dataagent_package_path("core", "suite", "builtin_suites")
+    builtin_suites = dataagent_package_path("suite", "builtin_suites")
     assert builtin_suites in paths
     assert paths[-1] == builtin_suites
     assert dataagent_package_path("suites") not in paths
@@ -39,11 +39,11 @@ def test_reload_without_suite_skips_discovery(monkeypatch) -> None:
         called["discover"] = True
         return {}
 
-    monkeypatch.setattr("dataagent.core.suite.discovery.discover_suite_index", _fake_discover)
-    default = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
+    monkeypatch.setattr("dataagent.suite.discovery.discover_suite_index", _fake_discover)
+    default = dataagent_package_path("examples", "default_configs.yaml")
     cm = ConfigManager()
     cm.reload(
-        str(dataagent_package_path("core", "flex", "examples", "test_subagent_tool.yaml")),
+        str(dataagent_package_path("examples", "quickstart.yaml")),
         str(default),
     )
     assert called["discover"] is False

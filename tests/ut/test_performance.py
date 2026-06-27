@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Tests for dataagent.core.utils.performance."""
+"""Tests for dataagent.utils.performance."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from dataagent.core.utils.performance import (
+from dataagent.utils.performance import (
     PerformanceCollector,
     bind_current_collector,
     build_state_summary,

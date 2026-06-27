@@ -162,6 +162,22 @@ def test_harness_tools_use_unique_openjiuwen_implementations(tmp_path: Path) -> 
     assert isinstance(tools_by_name["bash"], BashTool)
 
 
+def test_harness_todo_tools_use_configured_workspace(tmp_path: Path) -> None:
+    binding = build_sys_operations(
+        WorkspaceAccessPolicy.from_config({}, workspace_root=tmp_path),
+        agent_name=f"todo-workspace-{tmp_path.name}",
+    )
+    tools = build_harness_tools(
+        binding.primary,
+        read_sys_operation=binding.read_only,
+        todo_workspace=str(tmp_path),
+    )
+    tools_by_name = {tool.card.name: tool for tool in tools}
+
+    for name in ("todo_create", "todo_list", "todo_modify", "todo_get"):
+        assert tools_by_name[name].workspace == str(tmp_path)
+
+
 def test_empty_bash_allowlist_disables_bash_tool(tmp_path: Path) -> None:
     binding = build_sys_operations(
         WorkspaceAccessPolicy.from_config({}, workspace_root=tmp_path),

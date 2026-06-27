@@ -57,6 +57,7 @@ class DeepAgentAdapter:
         *,
         language: str = "cn",
         read_sys_operation: SysOperation | None = None,
+        todo_workspace: str | None = None,
     ) -> list[Tool | ToolCard]:
         self._log_diagnostics()
 
@@ -67,6 +68,7 @@ class DeepAgentAdapter:
                 language=language,
                 read_sys_operation=read_sys_operation,
                 bash_allowlist=self.spec.bash_allowlist,
+                todo_workspace=todo_workspace,
             ),
             source="OpenJiuWen harness",
         )

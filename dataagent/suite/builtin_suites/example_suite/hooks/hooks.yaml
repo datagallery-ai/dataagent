@@ -23,8 +23,6 @@ HOOKS:
       pre:
         # 【选填】字符串项：相对 suite_root 的 callable 路径
         - hooks.custom_hooks.suite_example_pre
-        # 【选填】引用内置 hook 时，使用 dataagent.xxx 前缀
-        - dataagent.core.flex.hooks.organize_workspace.organize_workspace
     executor:
       post:
         - hooks.custom_hooks.suite_example_post
