@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from dataagent.core.suite.activation import activate_suites, order_suites_for_merge
-from dataagent.core.suite.types import SuiteIndexEntry
+from dataagent.suite.activation import activate_suites, order_suites_for_merge
+from dataagent.suite.types import SuiteIndexEntry
 
 
 def _entry(

@@ -19,7 +19,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.core.suite.types import SuiteIndexEntry, SuiteRecord
+from dataagent.suite.types import SuiteIndexEntry, SuiteRecord
 
 
 def _parse_priority_override(raw: Any, *, field_path: str) -> int | None:

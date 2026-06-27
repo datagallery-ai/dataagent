@@ -23,7 +23,7 @@ import yaml
 from jinja2 import Environment
 from loguru import logger
 
-from dataagent.core.suite.types import SuiteIndexEntry
+from dataagent.suite.types import SuiteIndexEntry
 from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
 
 _SUITE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -41,10 +41,10 @@ def scan_suite_paths() -> list[Path]:
 
     搜索顺序（同名时先出现的优先）：
     1. ``~/.dataagent/suites/``（或 ``DATAAGENT_HOME/suites/``）— 用户安装，可覆盖内置同名 Suite
-    2. ``<dataagent_pkg>/core/suite/builtin_suites/`` — 随包分发的内置 Suite
+    2. ``<dataagent_pkg>/suite/builtin_suites/`` — 随包分发的内置 Suite
     """
     paths: list[Path] = [dataagent_home() / "suites"]
-    builtin_suites = dataagent_package_path("core", "suite", "builtin_suites")
+    builtin_suites = dataagent_package_path("suite", "builtin_suites")
     if builtin_suites.is_dir():
         paths.append(builtin_suites)
     return paths
@@ -267,14 +267,10 @@ def _validate_suite_hooks_node(node: Any, *, suite_name: str, path: str) -> None
 
 def _validate_suite_hook_item(item: Any, *, suite_name: str, path: str) -> None:
     """Validate one Suite hook list entry (string or dict with ``name``)."""
-    from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
-
     if isinstance(item, str):
         spec = item.strip()
         if not spec:
             raise ValueError(f"{path}: empty hook spec")
-        if spec in BUILTIN_HOOK_REGISTRY:
-            raise ValueError(f"{path}: builtin short name {spec!r} is not allowed in Suite hooks")
         if spec.startswith(f"{suite_name}."):
             raise ValueError(f"{path}: must not include suite name prefix {suite_name!r}")
         _validate_suite_hook_dotted_path(spec, path=path)
@@ -283,8 +279,6 @@ def _validate_suite_hook_item(item: Any, *, suite_name: str, path: str) -> None:
         raw_name = str(item.get("name") or "").strip()
         if not raw_name:
             raise ValueError(f"{path}: hook dict missing non-empty 'name'")
-        if raw_name in BUILTIN_HOOK_REGISTRY:
-            raise ValueError(f"{path}: builtin short name {raw_name!r} is not allowed in Suite hooks")
         if raw_name.startswith(f"{suite_name}."):
             raise ValueError(f"{path}: must not include suite name prefix {suite_name!r}")
         _validate_suite_hook_dotted_path(raw_name, path=path)

@@ -122,14 +122,14 @@ Follow the prompts to enter model configuration and start chatting with the Agen
 
 ```bash
 # Terminal interactive mode
-uv run -m dataagent --config dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent --config dataagent/examples/quickstart.yaml
 ```
 
 ### 🔍 Config check
 
 ```bash
 # Check environment variable references in config
-uv run -m dataagent config check dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent config check dataagent/examples/quickstart.yaml
 ```
 
 ## 📖 Usage

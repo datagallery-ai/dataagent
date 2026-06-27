@@ -20,15 +20,15 @@ import pytest
 import yaml
 
 from dataagent.config.config_manager import ConfigManager
-from dataagent.core.suite.activated_suites import resolve_activated_suite_root
+from dataagent.suite.activated_suites import resolve_activated_suite_root
 from dataagent.utils.runtime_paths import dataagent_package_path
 
-DEFAULT_CONFIG = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
+DEFAULT_CONFIG = dataagent_package_path("examples", "default_configs.yaml")
 
 
 def test_resolve_activated_suite_root_returns_absolute_path() -> None:
     """Activated Suite metadata must resolve to an absolute root path."""
-    suite_root = dataagent_package_path("core", "suite", "builtin_suites", "example_suite")
+    suite_root = dataagent_package_path("suite", "builtin_suites", "example_suite")
     activated = [{"name": "example_suite", "root": str(suite_root)}]
     resolved = resolve_activated_suite_root("example_suite", activated)
     assert resolved.is_absolute()

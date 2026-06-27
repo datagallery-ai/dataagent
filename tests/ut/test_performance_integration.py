@@ -35,7 +35,7 @@ from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 
-from dataagent.core.utils.performance import (
+from dataagent.utils.performance import (
     PerformanceCollector,
     bind_current_collector,
     measure_tool,
@@ -433,7 +433,7 @@ def test_summary_records_min_max_ms_per_bucket(tmp_path: Path, perf_home: Path) 
 
 def test_attribute_calls_marks_caller_without_extra_event(tmp_path: Path, perf_home: Path) -> None:
     """attribute_calls 只压栈、不产生 measurement 事件，仅用来给内部 LLM 调用打 caller。"""
-    from dataagent.core.utils.performance import attribute_calls
+    from dataagent.utils.performance import attribute_calls
 
     collector = _make_collector(tmp_path)
     with (

@@ -13,8 +13,8 @@
 """DataAgent 全局可配置常量。
 
 本文件集中管理所有跨模块使用的可配置常量，按功能分类排列：
-  - 压缩与LLM调用：消息压缩阈值、LLM 重试退避、Flex Pruner
-  - 工具执行与并发控制：工具超时、文件限制、结果截断、沙箱、MCP 发现、并发度、Swarm Worker metadata / messages 简易裁剪
+  - 压缩与LLM调用：消息压缩阈值、LLM 重试退避、旧 Pruner 兼容值
+  - 工具执行与并发控制：工具超时、文件限制、结果截断、沙箱、MCP 发现、并发度、旧 Worker 兼容值
   - NL2SQL与IR与知识图谱：NL2SQL 各阶段参数、IR 转换/消费者、Bioinfo Skill、内置工具注册
   - UI渲染与可视化：Rich 渲染器、Context 轨迹图
   - 数据库与运行时探测：连接探测、进程等待、CPU 采样
@@ -27,9 +27,32 @@
 # 压缩与LLM调用
 # ============================================================================
 
+MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
+    "AGENT_CONFIG",
+    "USER_ID",
+    "SESSION_ID",
+    "RUN_ID",
+    "SUB_ID",
+    "SUITE",
+    "WORKSPACE",
+    "MODEL",
+    "SCENARIO",
+    "TOOLS",
+    "HOOKS",
+    "PRE_WORKFLOW",
+    "ACTOR_LOOP",
+    "POST_WORKFLOW",
+    "SUBAGENT_CONFIGS",
+    "SANDBOX",
+    "CHECKPOINT",
+    "HITL",
+    "CONTEXT",
+)
+"""Runtime merged config dump 的顶层字段展示顺序。"""
+
 
 # ── Cross-Session Recall ────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/flex/hooks/cross_session_recall.py
+# 历史定义位置: dataagent/core/flex/hooks/cross_session_recall.py
 # 建议 YAML 路径: CROSS_SESSION_RECALL.enable / top_k / max_chars_per_session
 
 DEFAULT_CROSS_SESSION_RECALL_TOP_K: int = 3
@@ -57,7 +80,7 @@ DEFAULT_COMPRESS_MAX_RETRIES: int = 3
 
 
 # ── LLM 调用重试 ─────────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/managers/llm_manager/llm_client.py
+# Jiuwen 模型调用由 dataagent/core/deep_agent/model_builder.py 适配。
 # YAML 可选: MODEL[*].params.num_retries（覆盖重试次数 N）
 
 DEFAULT_LLM_MAX_RETRIES: int = 3
@@ -71,12 +94,12 @@ DEFAULT_LLM_RETRY_POLICY: dict[str, int] = {
 """litellm 不可重试 4xx；429/Timeout 次数由 llm_client._normalize 按 max_attempts 注入。"""
 
 
-# ── Flex Pruner Hook ─────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/flex/hooks/pruner.py (复用 compression_utils 中值)
+# ── 旧 Pruner Hook 兼容值 ────────────────────────────────────────────────────
+# DeepAgent 上下文压缩由 dataagent/core/deep_agent/builders/context.py 适配。
 # 建议 YAML 路径: AGENT_CONFIG.pruner_token_limit
 
 DEFAULT_PRUNER_TOKEN_LIMIT: int = DEFAULT_COMPRESS_TOKEN_LIMIT
-"""Flex Pruner 在规划器 pre-hook 中触发消息压缩的 token 阈值。"""
+"""旧 Pruner 在规划器 pre-hook 中触发消息压缩的 token 阈值。"""
 
 # ============================================================================
 # 工具执行与并发控制
@@ -96,7 +119,7 @@ MAX_WORKER_METADATA_ARTIFACTS: int = 50
 """Worker ``metadata.json`` 中 ``artifacts`` 路径列表最大条数。
 
 超出时丢弃更早的记录、保留列表末尾（可视作较新的路径）。
-当前使用位置: dataagent/core/swarm/worker_metadata.py（``upsert_worker_metadata``）。
+保留为旧配置兼容常量；Jiuwen subagent 接入后不再由 ``core/swarm`` 消费。
 """
 
 WORKER_LOCK_TTL_GRACE_SECONDS: int = 60
@@ -136,7 +159,7 @@ DEFAULT_MAX_TOOL_RESULT_LENGTH: int = 8192
 
 
 # ── Metadata Tracker ─────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/flex/hooks/metadata_tracker.py
+# 历史定义位置: dataagent/core/flex/hooks/metadata_tracker.py
 # 建议 YAML 路径: AGENT_CONFIG.metadata_tool_args_max_bytes / metadata_description_max_bytes
 
 DEFAULT_METADATA_TOOL_ARGS_MAX_BYTES: int = 1024
@@ -164,7 +187,7 @@ DEFAULT_MIN_CONCURRENCY: int = 1
 
 
 # ── MCP / A2A 工具发现超时 ──────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/managers/action_manager/manager.py
+# DeepAgent MCP/A2A 发现由 dataagent/core/deep_agent/builders/tools/ 适配。
 # 建议 YAML 路径: TOOLS.mcp_discovery_timeout / mcp_cleanup_timeout
 
 DEFAULT_MCP_DISCOVERY_TIMEOUT: float = 60.0
@@ -358,7 +381,7 @@ DEFAULT_CPU_SAMPLE_SECONDS: float = 0.5
 
 
 # ── 默认回退值 ───────────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/flex/agent.py
+# DeepAgent 默认用户/会话值由 DataAgent SDK 和 runtime path 适配层消费。
 # 建议 YAML 路径: 这些已有 YAML 对应字段 (USER_ID / SESSION_ID / RUN_ID / SUB_ID)
 
 DEFAULT_USER_ID: str = "anonymous"

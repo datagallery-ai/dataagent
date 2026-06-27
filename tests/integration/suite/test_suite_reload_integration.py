@@ -23,12 +23,12 @@ import yaml
 
 from dataagent.config.config_manager import ConfigManager
 from dataagent.core.flex.flex_runtime_from_config import build_llm_configs_from_flex_config
-from dataagent.core.suite.activation import activate_suites
-from dataagent.core.suite.discovery import discover_suite_index
+from dataagent.suite.activation import activate_suites
+from dataagent.suite.discovery import discover_suite_index
 from dataagent.utils.runtime_paths import dataagent_package_path
 
 DEFAULT_CONFIG = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
-BUILTIN_EXAMPLE_ROOT = dataagent_package_path("core", "suite", "builtin_suites", "example_suite")
+BUILTIN_EXAMPLE_ROOT = dataagent_package_path("suite", "builtin_suites", "example_suite")
 EXAMPLE_SYSTEM_PROMPT_PATH = BUILTIN_EXAMPLE_ROOT / "prompts" / "system" / "example_suite1.md"
 EXAMPLE_USER_PROMPT_PATH = BUILTIN_EXAMPLE_ROOT / "prompts" / "user" / "example_suite_user1.md"
 EXAMPLE_ARITHMETIC_SUBAGENT_PATH = BUILTIN_EXAMPLE_ROOT / "subagents" / "arithmetic_ref.yaml"

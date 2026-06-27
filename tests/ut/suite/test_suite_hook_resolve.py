@@ -18,7 +18,7 @@ from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.flex.agent import FlexAgent
 from dataagent.utils.runtime_paths import dataagent_package_path
 
-EXAMPLE_SUITE_ROOT = dataagent_package_path("core", "suite", "builtin_suites", "example_suite")
+EXAMPLE_SUITE_ROOT = dataagent_package_path("suite", "builtin_suites", "example_suite")
 
 
 def test_example_suite_hook_import_passes_flex_validation() -> None:

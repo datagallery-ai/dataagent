@@ -16,7 +16,7 @@ display_name: "Example Suite (reference template)"
 
 # 【选填】说明文本
 description: >
-  内置参考 Suite 模板（core/suite/builtin_suites/example_suite）。
+  内置参考 Suite 模板（suite/builtin_suites/example_suite）。
   目录约定（除 suite.yaml 外均可选）：
   suite.yaml【必填】| models.yaml | tools/tools.yaml | hooks/hooks.yaml+hooks/*.py |
   prompts/system/* + prompts/user/* | skills/<name>/SKILL.md | subagents/*.yaml | node_configs.yaml。

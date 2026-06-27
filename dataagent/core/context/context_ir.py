@@ -10,7 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import asyncio
 from collections.abc import Generator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -19,11 +18,8 @@ from typing import Any
 
 import networkx as nx
 import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
-from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
-from loguru import logger
 
-from dataagent.core.utils.performance import attribute_calls
+from dataagent.core.context.prompt_template import ContextPromptTemplate
 
 
 @dataclass
@@ -57,17 +53,7 @@ class BaseIR:
         Returns:
             str, inferred content
         """
-        llm = llm_manager.get_default_llm()
-        prompts = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        try:
-            with attribute_calls("context", cls.__name__):
-                response = await asyncio.to_thread(llm.invoke, prompts)
-            return response.content
-        except Exception:
-            return "default description"
+        return "default description"
 
     def get_schema(self) -> dict[str, Any]:
         """
@@ -169,12 +155,10 @@ class StateNode(BaseIR):
             "new_action_name": new_action.get("action", ""),
             "new_action_params": new_action.get("params", ""),
         }
-        system_prompt = PromptTemplate.from_package_relative(
-            f"{PROMPT_MD_PREFIX}/irmanager/system_update_state"
-        ).content
-        user_prompt = PromptTemplate.from_package_relative(
-            f"{PROMPT_MD_PREFIX}/irmanager/user_update_state"
-        ).apply_prompt_template(**prompt_variables)
+        system_prompt = ContextPromptTemplate.from_context_prompt("system_update_state").content
+        user_prompt = ContextPromptTemplate.from_context_prompt("user_update_state").apply_prompt_template(
+            **prompt_variables
+        )
         return await self.llm_infer_async(system_prompt, user_prompt)
 
 
@@ -217,8 +201,8 @@ class KnowledgeNode(DataNode):
             else self.knowledge_content,
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
+        system_prompt = ContextPromptTemplate.from_context_prompt("system").content
+        user_prompt = ContextPromptTemplate.from_context_prompt("user").apply_prompt_template(
             **prompt_variables
         )
         return await self.llm_infer_async(system_prompt, user_prompt)
@@ -249,8 +233,8 @@ class ToolNode(DataNode):
             "data_preview": str({"tool_params": self.tool_params, "tool_returns": self.tool_returns}),
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
+        system_prompt = ContextPromptTemplate.from_context_prompt("system").content
+        user_prompt = ContextPromptTemplate.from_context_prompt("user").apply_prompt_template(
             **prompt_variables
         )
         return await self.llm_infer_async(system_prompt, user_prompt)
@@ -317,8 +301,8 @@ class TableNode(DataNode):
             "data_preview": data_preview,
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
+        system_prompt = ContextPromptTemplate.from_context_prompt("system").content
+        user_prompt = ContextPromptTemplate.from_context_prompt("user").apply_prompt_template(
             **prompt_variables
         )
         return await self.llm_infer_async(system_prompt, user_prompt)
@@ -399,8 +383,8 @@ class FileNode(DataNode):
             "data_preview": data_preview,
             "extra_info": "No extra info provided.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
+        system_prompt = ContextPromptTemplate.from_context_prompt("system").content
+        user_prompt = ContextPromptTemplate.from_context_prompt("user").apply_prompt_template(
             **prompt_variables
         )
         return await self.llm_infer_async(system_prompt, user_prompt)
@@ -433,8 +417,8 @@ class ScriptNode(DataNode):
             "data_preview": self.script_content[:600] if len(self.script_content) > 600 else self.script_content,
             "extra_info": f"This script is written in {self.script_type} language.",
         }
-        system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/system").content
-        user_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/irmanager/user").apply_prompt_template(
+        system_prompt = ContextPromptTemplate.from_context_prompt("system").content
+        user_prompt = ContextPromptTemplate.from_context_prompt("user").apply_prompt_template(
             **prompt_variables
         )
         return await self.llm_infer_async(system_prompt, user_prompt)

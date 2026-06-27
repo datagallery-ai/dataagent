@@ -34,8 +34,8 @@ def build_a2a_agents(specs: Iterable[A2AAgentSpec]) -> list[A2AAgentBinding]:
 
     from openjiuwen.core.runner.drunner.remote_client.remote_agent import RemoteAgent
     from openjiuwen.core.runner.drunner.remote_client.remote_client_config import ProtocolEnum
-    from openjiuwen.extensions.a2a.a2a_agentcard_adapter import A2AAgentCardAdapter
     from openjiuwen.core.single_agent.schema.agent_card import AgentCard
+    from openjiuwen.extensions.a2a.a2a_agentcard_adapter import A2AAgentCardAdapter
 
     bindings: list[A2AAgentBinding] = []
     for spec in normalized_specs:

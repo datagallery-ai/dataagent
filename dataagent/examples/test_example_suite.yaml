@@ -3,11 +3,11 @@
 # 内置 example_suite 当前 enabled: true 时可直接 SUITE.include 激活；上库前会改回 false，
 # 届时需复制到用户目录并启用：
 #   mkdir -p ~/.dataagent/suites
-#   cp -r dataagent/core/suite/builtin_suites/example_suite ~/.dataagent/suites/
+#   cp -r dataagent/suite/builtin_suites/example_suite ~/.dataagent/suites/
 #   # 编辑 ~/.dataagent/suites/example_suite/suite.yaml ，将 enabled 改为 true
 #
 # 启动：
-#   uv run -m dataagent --config dataagent/core/flex/examples/test_example_suite.yaml
+#   uv run -m dataagent --config dataagent/examples/test_example_suite.yaml
 #
 # 启用后预期（合并结果，见 <workspace>/.runtime/dataagent_config_*.yaml）：
 # - MODEL.chat_model.params.temperature = 0.1（来自 example_suite/models.yaml）
@@ -17,9 +17,8 @@
 # - planner prompt_template.system 含 prompts/system/example_suite.md
 # - planner prompt_template.user 含 prompts/user/example_suite_user.md
 # - executor.max_tool_result_length = 8192
-# - SUBAGENT_CONFIGS 含 arithmetic_ref、echo_ref
 # - TOOLS.skills.custom_dirs 含 example_suite/skills（目录内 skill 运行期全扫描）
-# - subagent 路径无 allow_path warning（suite root 自动注入）
+# - suite root 自动注入 allow_path
 
 AGENT_CONFIG:
   name: "Example Suite Test"

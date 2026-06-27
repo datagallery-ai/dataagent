@@ -18,12 +18,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import yaml
 from loguru import logger
 
-from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
-from dataagent.core.managers.action_manager.manager import ToolManager
-from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
-from dataagent.core.suite.merge import WORKFLOW_TOP_KEYS
+from dataagent.suite.allow_paths import effective_workspace_allow_paths
+from dataagent.suite.merge import WORKFLOW_TOP_KEYS
 from dataagent.utils.constants import DEFAULT_BUILTIN_SKILL_NAMES
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
@@ -160,9 +159,7 @@ def _subagent_path_key(item: Any) -> str:
     raw = item.get("path")
     if raw is None:
         return ""
-    path = ToolManager.resolve_subagent_config_path(raw)
-    ToolManager.load_subagent_catalog_metadata(path)
-    return str(path)
+    return str(_resolve_subagent_config_path(raw))
 
 
 def _subagent_name_key(item: Any) -> str:
@@ -171,9 +168,18 @@ def _subagent_name_key(item: Any) -> str:
     raw = item.get("path")
     if raw is None:
         return ""
-    path = ToolManager.resolve_subagent_config_path(raw)
-    name, _ = ToolManager.load_subagent_catalog_metadata(path)
-    return name
+    path = _resolve_subagent_config_path(raw)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            doc = yaml.safe_load(handle) or {}
+    except OSError:
+        return ""
+    if not isinstance(doc, Mapping):
+        return ""
+    agent_config = doc.get("AGENT_CONFIG")
+    if not isinstance(agent_config, Mapping):
+        return ""
+    return str(agent_config.get("name") or "").strip()
 
 
 def _workflow_node_key(item: Any) -> str:
@@ -212,7 +218,7 @@ def _normalize_hook_item(item: Any) -> str:
         return ""
     if not spec:
         return ""
-    return BUILTIN_HOOK_REGISTRY.get(spec, spec)
+    return spec
 
 
 def validate_unique_skill_names(result: Mapping[str, Any]) -> None:
@@ -233,25 +239,22 @@ def validate_unique_skill_names(result: Mapping[str, Any]) -> None:
         registrations.setdefault(name, []).append((source, path))
 
     tools_mapping = dict(tools)
-    builtin_allowlist = set(ToolManager.extract_skill_allowlist(tools_mapping, "builtin"))
+    builtin_allowlist = set(_extract_skill_allowlist(tools_mapping, "builtin"))
     builtin_allowlist.update(DEFAULT_BUILTIN_SKILL_NAMES)
 
     default_root = dataagent_package_path("actions", "skills")
-    package_skills, _ = ToolManager.discover_skills_from_root(
-        root=default_root,
-        allowlist=builtin_allowlist,
-    )
+    package_skills = _discover_skills_from_root(root=default_root, allowlist=builtin_allowlist)
     for skill in package_skills:
-        _register(skill["name"], "actions/skills (allowlist)", skill["path"])
+        _register(skill.get("name", ""), "actions/skills (allowlist)", skill.get("path", ""))
 
-    for raw_path in ToolManager.extract_skill_directory_paths(tools_mapping):
+    for raw_path in _extract_skill_directory_paths(tools_mapping):
         if raw_path == "actions/skills":
             continue
         root = Path(raw_path) if Path(raw_path).is_absolute() else dataagent_package_path(*str(raw_path).split("/"))
         source_label = f"TOOLS.skills.custom_dirs ({root})"
-        extra_skills, _ = ToolManager.discover_skills_from_root(root=root, allowlist=None)
+        extra_skills = _discover_skills_from_root(root=root, allowlist=None)
         for skill in extra_skills:
-            _register(skill["name"], source_label, skill["path"])
+            _register(skill.get("name", ""), source_label, skill.get("path", ""))
 
     for name, entries in registrations.items():
         unique_paths = {path for _, path in entries}
@@ -272,7 +275,7 @@ def _validate_no_explicit_sub_agent_tool(result: Mapping[str, Any]) -> None:
     if not isinstance(local_functions, Sequence) or isinstance(local_functions, (str, bytes)):
         return
     for item in local_functions:
-        if isinstance(item, Mapping) and ToolManager.is_explicit_sub_agent_tool_entry(item):
+        if isinstance(item, Mapping) and str(item.get("function") or "").strip() == "sub_agent_tool":
             raise ValueError("TOOLS.local_functions must not declare sub_agent_tool; use SUBAGENT_CONFIGS instead.")
 
 
@@ -307,7 +310,7 @@ def _validate_subagent_paths(
         if not isinstance(entry, Mapping):
             continue
         try:
-            path = ToolManager.resolve_subagent_config_path(entry.get("path"))
+            path = _resolve_subagent_config_path(entry.get("path"))
         except ValueError:
             continue
         if not _allowed(path):
@@ -317,3 +320,68 @@ def _validate_subagent_paths(
                 "runtime sandbox may reject sub_agent_tool calls",
                 path,
             )
+
+
+def _resolve_subagent_config_path(raw_path: Any) -> Path:
+    """Resolve a subagent config path without depending on the old ToolManager."""
+    if raw_path is None or not str(raw_path).strip():
+        raise ValueError("subagent path must be non-empty")
+    path = Path(str(raw_path)).expanduser()
+    if not path.is_absolute():
+        path = dataagent_package_path(*path.parts)
+    return path.resolve()
+
+
+def _extract_skill_allowlist(tools_mapping: Mapping[str, Any], key: str) -> list[str]:
+    """Extract ``TOOLS.skills.<key>`` as a list of names."""
+    skills = tools_mapping.get("skills")
+    if not isinstance(skills, Mapping):
+        return []
+    raw_items = skills.get(key)
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        return []
+    return [str(item).strip() for item in raw_items if str(item).strip()]
+
+
+def _extract_skill_directory_paths(tools_mapping: Mapping[str, Any]) -> list[str]:
+    """Extract custom skill directory paths from ``TOOLS.skills.custom_dirs``."""
+    skills = tools_mapping.get("skills")
+    if not isinstance(skills, Mapping):
+        return []
+    raw_items = skills.get("custom_dirs")
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        return []
+    return [str(item).strip() for item in raw_items if str(item).strip()]
+
+
+def _discover_skills_from_root(root: Path, allowlist: set[str] | None) -> list[dict[str, str]]:
+    """Discover SKILL.md entries under one root."""
+    if not root.is_dir():
+        return []
+    discovered: list[dict[str, str]] = []
+    for skill_dir in root.iterdir():
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_dir.is_dir() or not skill_md.is_file():
+            continue
+        name = _load_skill_name(skill_md, default=skill_dir.name)
+        if allowlist is not None and name not in allowlist:
+            continue
+        discovered.append({"name": name, "path": str(skill_dir)})
+    return discovered
+
+
+def _load_skill_name(skill_md: Path, *, default: str) -> str:
+    """Load a skill name from SKILL.md frontmatter, falling back to directory name."""
+    try:
+        content = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return default
+    if not content.startswith("---"):
+        return default
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return default
+    metadata = yaml.safe_load(parts[1])
+    if not isinstance(metadata, Mapping):
+        return default
+    return str(metadata.get("name") or default).strip()

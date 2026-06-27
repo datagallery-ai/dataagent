@@ -43,6 +43,7 @@ class ConfigManager:
         """
         self.config_path = Path(config_path) if config_path else None
         self.settings: dict[str, Any] = {}
+        self.activated_suites: list[dict[str, str]] = []
         self._lock = threading.Lock()
         self.last_reload = None
 
@@ -86,40 +87,13 @@ class ConfigManager:
                     f"WORKSPACE.allow_path entries must be absolute paths; relative path not allowed: {s!r}"
                 )
 
-    @staticmethod
-    def _validate_swarm_yaml_config(config: Mapping[str, Any]) -> None:
-        """Validate ``SWARM.worker_max_concurrent`` after YAML load.
-
-        Only ``None``/omitted or a non-negative Python ``int`` is allowed.
-        ``bool`` is rejected because it is a subclass of ``int`` in Python.
-        Strings, floats, and negative integers are rejected.
-        """
-        swarm = config.get("SWARM")
-        if not isinstance(swarm, Mapping):
-            return
-        raw = swarm.get("worker_max_concurrent")
-        if raw is None:
-            return
-        if isinstance(raw, bool):
-            raise ValueError(
-                "SWARM.worker_max_concurrent must be a non-negative integer or omitted/null; "
-                "boolean values are not allowed."
-            )
-        if isinstance(raw, int):
-            if raw < 0:
-                raise ValueError(f"SWARM.worker_max_concurrent must be non-negative, got {raw!r}.")
-            return
-        raise ValueError(
-            "SWARM.worker_max_concurrent must be a non-negative integer or omitted/null; "
-            f"got {type(raw).__name__}: {raw!r}."
-        )
-
     def copy(self) -> "ConfigManager":
         """deep copy of a config"""
 
         new_config = ConfigManager()
         new_config.config_path = self.config_path
         new_config.settings = self.get_all()
+        new_config.activated_suites = list(self.activated_suites)
         return new_config
 
     def merge_configs(self, base_config, override_config):
@@ -140,6 +114,9 @@ class ConfigManager:
         """
         with self._lock:
             self.settings.clear()
+            self.activated_suites = []
+            default_config: dict[str, Any] = {}
+            file_config: dict[str, Any] = {}
 
             # 1. 先加载默认配置
             if default_config_path:
@@ -173,11 +150,9 @@ class ConfigManager:
 
             # 3. 变量插值，允许在yaml文件中用 ${...} 引用其他配置项，支持 $env{VAR} 引用环境变量
             self._process_interpolation(self.settings)
+            self._apply_suite_layers(default_config=default_config, file_config=file_config)
             # 5. WORKSPACE.path / allow_path 在启动前校验（非空则须为绝对路径）
             self._validate_workspace_yaml_config(self.settings)
-            # 6. SWARM keys（逐步扩展）：worker_max_concurrent 须为非负整数或省略
-            self._validate_swarm_yaml_config(self.settings)
-
             self.last_reload = datetime.now(timezone(timedelta(hours=8)))  # 东八区
 
     def get_all(self) -> dict:
@@ -234,6 +209,12 @@ class ConfigManager:
 
             return value
 
+    def get_activated_suite_root(self, suite_name: str) -> Path:
+        """Return the root path for one activated Suite."""
+        from dataagent.suite.activated_suites import resolve_activated_suite_root
+
+        return resolve_activated_suite_root(suite_name, self.activated_suites)
+
     def update(self, new_config: dict[str, Any]):
         """
         update config
@@ -249,6 +230,35 @@ class ConfigManager:
                 self._deep_merge(target[key], value)
             else:
                 target[key] = value
+
+    def _apply_suite_layers(self, *, default_config: dict[str, Any], file_config: dict[str, Any]) -> None:
+        """Apply Suite layers when the user YAML explicitly includes suites."""
+        suite_config = file_config.get("SUITE")
+        if not isinstance(suite_config, Mapping) or not suite_config.get("include"):
+            return
+
+        from dataagent.suite.activation import activate_suites, order_suites_for_merge
+        from dataagent.suite.discovery import discover_suite_index
+        from dataagent.suite.merge import extract_user_layer, merge_layers
+        from dataagent.suite.suite_layer import build_suite_layers
+        from dataagent.suite.validation import validate_merged_config
+
+        default_actor_nodes = {
+            str(item.get("node") or "").strip()
+            for item in default_config.get("ACTOR_LOOP", [])
+            if isinstance(item, Mapping) and str(item.get("node") or "").strip()
+        }
+        index = discover_suite_index(config=self.settings)
+        activated = activate_suites(suite_config=suite_config, index=index)
+        suite_layers, activated_suites = build_suite_layers(
+            order_suites_for_merge(activated),
+            default_actor_nodes=default_actor_nodes,
+        )
+        user_layer = extract_user_layer(self.settings, file_config)
+        self.settings = merge_layers([default_config, *suite_layers, user_layer])
+        self.activated_suites = activated_suites
+        self._process_interpolation(self.settings)
+        validate_merged_config(self.settings, activated_suites=self.activated_suites)
 
     def _process_interpolation(self, config_dict: dict) -> None:
         """Process variable interpolation in configuration values"""

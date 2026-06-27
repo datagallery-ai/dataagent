@@ -122,14 +122,14 @@ uv run -m dataagent quickstart
 
 ```bash
 # 终端交互模式
-uv run -m dataagent --config dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent --config dataagent/examples/quickstart.yaml
 ```
 
 ### 🔍 配置检查
 
 ```bash
 # 检查配置文件中的环境变量引用
-uv run -m dataagent config check dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent config check dataagent/examples/quickstart.yaml
 ```
 
 ## 📖 使用方法

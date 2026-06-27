@@ -12,8 +12,8 @@
 # ============================================================================
 """Tests for ``merge_layers``."""
 
-from dataagent.core.suite.merge import extract_user_layer, merge_layers
-from dataagent.core.suite.validation import validate_strict_duplicates
+from dataagent.suite.merge import extract_user_layer, merge_layers
+from dataagent.suite.validation import validate_strict_duplicates
 
 
 def test_merge_layers_list_append_high_priority_first() -> None:

@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from dataagent.core.suite.types import SuiteRecord
+from dataagent.suite.types import SuiteRecord
 
 
 def build_suite_layers(

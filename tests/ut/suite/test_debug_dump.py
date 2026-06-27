@@ -12,7 +12,7 @@
 # ============================================================================
 """Tests for runtime configuration debug dump."""
 
-from dataagent.core.suite.debug_dump import dump_merged_config, format_settings_yaml
+from dataagent.suite.debug_dump import dump_merged_config, format_settings_yaml
 
 
 def test_format_settings_yaml_inserts_blank_lines_between_top_level_keys() -> None:

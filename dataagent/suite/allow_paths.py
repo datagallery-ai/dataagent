@@ -18,8 +18,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from dataagent.core.managers.action_manager.manager import ToolManager
-
 
 def effective_workspace_allow_paths(
     settings: Mapping[str, Any],
@@ -39,7 +37,7 @@ def effective_workspace_allow_paths(
     Returns:
         De-duplicated absolute path strings (user entries first, then suite roots).
     """
-    paths: list[str] = list(ToolManager.workspace_allow_path_list(settings))
+    paths: list[str] = _workspace_allow_path_list(settings)
     seen: set[str] = set()
     for item in paths:
         try:
@@ -62,3 +60,14 @@ def effective_workspace_allow_paths(
         paths.append(resolved)
         seen.add(resolved)
     return paths
+
+
+def _workspace_allow_path_list(settings: Mapping[str, Any]) -> list[str]:
+    """Read ``WORKSPACE.allow_path`` as a normalized string list."""
+    workspace = settings.get("WORKSPACE")
+    if not isinstance(workspace, Mapping):
+        return []
+    raw_paths = workspace.get("allow_path")
+    if not isinstance(raw_paths, Sequence) or isinstance(raw_paths, (str, bytes)):
+        return []
+    return [str(item).strip() for item in raw_paths if str(item).strip()]

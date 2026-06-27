@@ -1,6 +1,6 @@
 # DeepAgent 简单配置示例
 # 使用:
-#   uv run python -m dataagent --config dataagent/core/flex/examples/deep_analyze.yaml
+#   uv run python -m dataagent --config dataagent/examples/deep_analyze.yaml
 
 AGENT_CONFIG:
   name: DeepAnalyzeAgent

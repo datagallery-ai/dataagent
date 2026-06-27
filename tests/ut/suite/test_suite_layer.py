@@ -19,8 +19,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dataagent.core.suite.suite_layer import build_suite_layers
-from dataagent.core.suite.types import SuiteRecord
+from dataagent.suite.suite_layer import build_suite_layers
+from dataagent.suite.types import SuiteRecord
 
 
 def _suite_record(tmp_path: Path, name: str = "test_suite") -> SuiteRecord:

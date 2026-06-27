@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import UTC, datetime
@@ -128,6 +129,7 @@ class DataAgent:
         tools = adapter.build_tools(
             sys_operations.primary,
             read_sys_operation=sys_operations.read_only,
+            todo_workspace=str(workspace_path),
         )
         mcps = adapter.build_mcps()
         a2a_agents = adapter.build_a2a_agents()
@@ -392,16 +394,15 @@ class DataAgent:
                 stream = self._deep_agent.stream(inputs, session)
                 collected_messages: list[Any] = []
                 collected_interrupts: list[dict[str, Any]] = []
+                streamed_output_parts: list[str] = []
+                final_output = ""
+                has_llm_output = False
 
                 async for chunk in stream:
                     # DeepAgent yields structured output from ReActAgent
                     # Wrap as (mode, data) tuples for backward compatibility
                     if isinstance(chunk, tuple):
                         yield chunk
-                    elif isinstance(chunk, dict):
-                        content = chunk.get("content") or chunk.get("output") or str(chunk)
-                        collected_messages.append(chunk)
-                        yield ("custom", {"type": "output_msg", "content": content})
                     else:
                         plain_chunk = self._to_plain_data(chunk)
                         interrupt = self._extract_interrupt(plain_chunk)
@@ -409,14 +410,35 @@ class DataAgent:
                             collected_interrupts.append(interrupt)
                             yield ("custom", {"type": "interaction", **interrupt})
                         else:
-                            collected_messages.append(plain_chunk)
-                            yield (
-                                "custom",
-                                {
-                                    "type": "output_msg",
-                                    "content": self._extract_stream_content(plain_chunk),
-                                },
-                            )
+                            chunk_type = str(plain_chunk.get("type", "")) if isinstance(plain_chunk, Mapping) else ""
+                            content = self._extract_stream_content(plain_chunk)
+                            if chunk_type == "llm_usage":
+                                continue
+                            if chunk_type == "tracer_agent":
+                                tool_event = self._extract_tool_stream_event(plain_chunk)
+                                if tool_event is not None:
+                                    yield ("custom", tool_event)
+                                continue
+                            if chunk_type == "llm_reasoning":
+                                if content:
+                                    yield ("custom", plain_chunk)
+                                continue
+                            if chunk_type == "answer":
+                                final_output = content
+                                if not has_llm_output and content:
+                                    streamed_output_parts.append(content)
+                                    yield ("custom", plain_chunk)
+                                continue
+                            if chunk_type == "llm_output":
+                                has_llm_output = True
+                                streamed_output_parts.append(content)
+                                yield ("custom", plain_chunk)
+                                continue
+                            elif isinstance(plain_chunk, Mapping) and plain_chunk.get("type") and plain_chunk.get("payload"):
+                                collected_messages.append({"content": content})
+                            else:
+                                collected_messages.append(plain_chunk)
+                            yield ("custom", plain_chunk if isinstance(plain_chunk, dict) else {"type": "message", "content": content})
 
                 self._session = session
                 if collected_interrupts:
@@ -435,14 +457,20 @@ class DataAgent:
                         },
                     )
                     return
+                final_content = final_output or "".join(streamed_output_parts)
+                if final_content:
+                    collected_messages = [{"role": "assistant", "content": final_content}]
+                update_payload = {
+                    "messages": collected_messages,
+                    "complete": True,
+                    "session_id": session_id,
+                    "checkpoint_id": session_id,
+                }
+                if final_content:
+                    update_payload["final_answer"] = final_content
                 yield (
                     "updates",
-                    {
-                        "messages": collected_messages,
-                        "complete": True,
-                        "session_id": session_id,
-                        "checkpoint_id": session_id,
-                    },
+                    update_payload,
                 )
 
             except Exception as e:
@@ -662,6 +690,102 @@ class DataAgent:
             else "tool_confirmation",
             **DataAgent._to_plain_data(request),
         }
+
+    @staticmethod
+    def _extract_tool_status_event(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, Mapping) or value.get("type") != "tracer_agent":
+            return None
+        payload = value.get("payload", {})
+        if not isinstance(payload, Mapping):
+            return None
+        metadata = payload.get("metaData", {})
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if metadata.get("type") != "tool":
+            return None
+
+        status = str(payload.get("status", ""))
+        normalized_status = "running" if status == "start" else status
+        if status == "finish":
+            normalized_status = "success"
+        if payload.get("error"):
+            normalized_status = "error"
+
+        inputs = payload.get("inputs", {})
+        tool_args = inputs.get("inputs", inputs) if isinstance(inputs, Mapping) else {}
+
+        outputs = payload.get("outputs", {})
+        output_payload: Any = {}
+        if isinstance(outputs, Mapping):
+            output_payload = outputs.get("outputs", outputs)
+        tool_output = DataAgent._to_plain_data(output_payload)
+
+        return {
+            "type": "tool_status",
+            "tool_call_id": str(payload.get("invokeId") or payload.get("traceId") or ""),
+            "tool_name": str(payload.get("name") or metadata.get("class_name") or "unknown"),
+            "status": normalized_status,
+            "tool_args": DataAgent._to_plain_data(tool_args),
+            "tool_output": tool_output,
+            "content": DataAgent._extract_tool_content(tool_output),
+            "error": str(payload.get("error") or ""),
+        }
+
+    @staticmethod
+    def _extract_tool_stream_event(value: Any) -> dict[str, Any] | None:
+        """Convert Jiuwen tracer tool chunks to Jiuwen CLI-style tool events."""
+        status_event = DataAgent._extract_tool_status_event(value)
+        if status_event is None:
+            return None
+        payload = {
+            "tool_name": status_event.get("tool_name", "unknown"),
+            "tool_args": status_event.get("tool_args", {}),
+            "tool_call_id": status_event.get("tool_call_id", ""),
+        }
+        status = str(status_event.get("status") or "")
+        if status in {"running", "start"}:
+            return {"type": "tool_call", "payload": payload}
+        payload["tool_result"] = status_event.get("content") or DataAgent._extract_tool_content(
+            status_event.get("tool_output")
+        )
+        payload["tool_output"] = status_event.get("tool_output")
+        payload["error"] = status_event.get("error", "")
+        payload["status"] = status
+        return {"type": "tool_result", "payload": payload}
+
+    @staticmethod
+    def _extract_tool_content(value: Any) -> str:
+        if isinstance(value, Mapping):
+            content = value.get("content")
+            if content is not None:
+                return str(content)
+            data = value.get("data")
+            if isinstance(data, Mapping):
+                nested_content = data.get("content")
+                if nested_content is not None:
+                    return str(nested_content)
+                skill_content = data.get("skill_content")
+                if skill_content is not None:
+                    return str(skill_content)
+                filenames = data.get("filenames")
+                if isinstance(filenames, Sequence) and not isinstance(filenames, (str, bytes, bytearray)):
+                    return "\n".join(str(item) for item in filenames)
+                files = data.get("files")
+                dirs = data.get("dirs")
+                if isinstance(files, Sequence) or isinstance(dirs, Sequence):
+                    lines: list[str] = []
+                    if isinstance(dirs, Sequence) and not isinstance(dirs, (str, bytes, bytearray)):
+                        lines.extend(f"{item}/" for item in dirs)
+                    if isinstance(files, Sequence) and not isinstance(files, (str, bytes, bytearray)):
+                        lines.extend(str(item) for item in files)
+                    return "\n".join(lines)
+                if data:
+                    return json.dumps(DataAgent._to_plain_data(data), ensure_ascii=False, indent=2)
+            for key in ("output", "result", "message"):
+                fallback = value.get(key)
+                if fallback is not None:
+                    return str(fallback)
+            return ""
+        return str(value) if value is not None else ""
 
     @staticmethod
     def _extract_stream_content(value: Any) -> str:

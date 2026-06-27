@@ -65,6 +65,7 @@ except ImportError:
 from dataagent.config import ConfigManager
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.interface.sdk.loader import load_agent_from_config
+from dataagent.utils.cli.rich_renderer import StreamRenderer
 from dataagent.utils.log import logger
 from dataagent.utils.runtime_paths import dataagent_package_path
 
@@ -245,6 +246,50 @@ def _cli_optional_str(value: str | None) -> str | None:
     return stripped if stripped else None
 
 
+def _split_stream_item(item: object) -> tuple[str, dict]:
+    if not isinstance(item, tuple):
+        return "custom", {"type": "output_msg", "content": str(item)}
+    if len(item) >= 3:
+        _, mode, data = item[:3]
+    elif len(item) >= 2:
+        mode, data = item[:2]
+    else:
+        return "custom", {"type": "output_msg", "content": str(item)}
+    if not isinstance(data, dict):
+        data = {"type": "output_msg", "content": str(data)}
+    return str(mode), data
+
+
+async def _stream_agent_response(
+    agent: DataAgent,
+    *,
+    user_query: str,
+    initial_state: dict,
+    renderer: StreamRenderer,
+    checkpoint_id: str | None = None,
+    human_feedback: dict | None = None,
+) -> dict:
+    response: dict = {}
+    stream_initial_state = dict(initial_state)
+    stream_initial_state["user_query"] = user_query
+    renderer.start()
+    try:
+        async for item in agent.astream(
+            initial_state=stream_initial_state,
+            checkpoint_id=checkpoint_id,
+            human_feedback=human_feedback,
+        ):
+            mode, data = _split_stream_item(item)
+            if mode == "updates":
+                response = data
+                continue
+            if mode == "custom":
+                renderer.handle_event(data)
+    finally:
+        renderer.stop()
+    return response
+
+
 async def _run_terminal_chat_loop(
     agent: DataAgent,
     get_user_input: Callable[[], Awaitable[str]],
@@ -281,41 +326,28 @@ async def _run_terminal_chat_loop(
             }
             if uid is not None:
                 initial_state["user_id"] = uid
-            response = await agent.chat(user_query=user_input, initial_state=initial_state)
+            renderer = StreamRenderer(console)
+            response = await _stream_agent_response(
+                agent,
+                user_query=user_input,
+                initial_state=initial_state,
+                renderer=renderer,
+            )
             while isinstance(response, dict) and response.get("interrupted"):
                 feedback = await _prompt_for_human_feedback(response)
-                response = await agent.chat(
+                renderer = StreamRenderer(console)
+                response = await _stream_agent_response(
+                    agent,
                     user_query="",
+                    renderer=renderer,
                     checkpoint_id=session_id_resolved,
                     initial_state=initial_state,
                     human_feedback=feedback,
                 )
             if isinstance(response, dict) and response.get("error"):
-                console.print(
-                    Panel(
-                        str(response.get("final_answer") or response["error"]),
-                        title="[bold red]❌ 错误[/bold red]",
-                        border_style="red",
-                        padding=(1, 2),
-                    )
-                )
+                renderer.render_error(str(response.get("final_answer") or response.get("error")))
             elif isinstance(response, dict) and response.get("messages"):
-                messages = response["messages"]
-                if messages:
-                    last_msg = messages[-1]
-                    final_content = (
-                        last_msg.get("content", str(last_msg)) if isinstance(last_msg, dict) else str(last_msg)
-                    )
-                    if final_content:
-                        console.print(
-                            Panel(
-                                Markdown(str(final_content)),
-                                title="[bold cyan]🤖 Agent[/bold cyan]",
-                                border_style="cyan",
-                                padding=(1, 2),
-                            )
-                        )
-                        console.print()
+                renderer.render_final_result(response)
             run_id += 1
 
         except KeyboardInterrupt:
@@ -360,9 +392,9 @@ def mask_api_key(api_key: str) -> str:
 
 async def run_quickstart() -> None:
     try:
-        quickstart_config = dataagent_package_path("core", "flex", "examples", "quickstart.yaml")
+        quickstart_config = dataagent_package_path("examples", "quickstart.yaml")
         config_file = resolve_config_path(str(quickstart_config))
-        quickstart_config = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
+        quickstart_config = dataagent_package_path("examples", "default_configs.yaml")
         default_config = resolve_config_path(str(quickstart_config))
 
         logger.trace(f"正在加载 Quickstart 示例配置文件: {config_file}")
@@ -500,7 +532,7 @@ def main():
         epilog="""
 示例用法:
   # 终端交互模式
-  python -m dataagent --config dataagent/core/flex/examples/deep_analyze.yaml
+  python -m dataagent --config dataagent/examples/deep_analyze.yaml
 
   # 指定用户与会话 ID
   python -m dataagent --config path/to.yaml --user alice --session 20260101_my_session --portrait
