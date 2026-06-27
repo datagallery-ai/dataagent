@@ -21,53 +21,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import requests
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
-from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
-
-
-class _MetaVisorClient:
-    """Thin REST client for MetaVisor v3 advanced-search API."""
-
-    def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip("/") + "/"
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json"})
-
-    def get_table_list(self, db: str) -> list:
-        """Get table metadata list for a database."""
-        return self._get("table-list", params={"databaseName": db})
-
-    def get_table_columns_info(self, table_name: str) -> dict:
-        """Get all column metadata for a table."""
-        return self._get("table-columns-info", params={"tableName": table_name, "limit": 1000})
-
-    def semantic_search_columns(self, db: str, keywords: list[str], top_k: int) -> list:
-        """Search semantically related columns for keywords."""
-        return self._get(
-            "semantic-search-columns",
-            params={
-                "databaseName": db,
-                "keywords": keywords,
-                "topK": top_k,
-                "searchColumns": "true",
-                "searchValues": "false",
-                "limit": 1000,
-            },
-        )
-
-    # ----- internal -----
-
-    def _get(self, path: str, params: Any = None):
-        url = f"{self.base_url}{path}"
-        resp = self.session.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-
+from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 
 # ============================================================
 # 工具主函数
@@ -99,10 +58,7 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
     if not dbs:
         return _fmt("DATABASE.db_id 未配置。", "数据库未配置。", {})
 
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    advanced_search_url = f"{base_url}/api/metaVisor/v3/advanced-search"
-
-    client = _MetaVisorClient(advanced_search_url)
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
     kw_str = ", ".join(keywords)
 
     per_db: dict[str, dict] = {}
@@ -194,14 +150,13 @@ def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionCo
     Args:
         keywords（str）: 一个或多个关键字，多个关键字之间以空格分割。
     """
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
     topk = 20
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
 
     keyword_list = keywords.split()
-    data_table_result = _fulltext_search_with_typename(keyword_list, "data_table", base_url, auth, topk)
-    data_column_result = _fulltext_search_with_typename(keyword_list, "data_column", base_url, auth, topk)
-    metric_instance_result = _fulltext_search_with_typename(keyword_list, "metric_instance", base_url, auth, topk)
+    data_table_result = _fulltext_search_with_typename(keyword_list, "data_table", client, topk)
+    data_column_result = _fulltext_search_with_typename(keyword_list, "data_column", client, topk)
+    metric_instance_result = _fulltext_search_with_typename(keyword_list, "metric_instance", client, topk)
 
     metric_instance_entities = metric_instance_result.get("fullTextResult", [])
     data_column_entities = data_column_result.get("fullTextResult", [])
@@ -222,13 +177,13 @@ def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionCo
     data_table_from_type_table = [table_qn.split("@")[0] for table_qn in data_table_qn_list]
     data_table_from_type_column = [column_qn.split("@")[0].rsplit(".", 1)[0] for column_qn in data_column_qn_list]
 
-    _, metric_instance_table_list = _extract_columns_and_tables_from_metric(metric_instance_qn_list, base_url, auth)
+    _, metric_instance_table_list = _extract_columns_and_tables_from_metric(metric_instance_qn_list, client)
 
     merged_table_set = set()
     merged_table_set.update(data_table_from_type_table, data_table_from_type_column, metric_instance_table_list)
 
     tables_columns = {table: [] for table in merged_table_set}
-    tables_with_columns = _attach_table_descriptions(tables_columns, base_url, auth)
+    tables_with_columns = _attach_table_descriptions(tables_columns, client)
 
     res = f"匹配关键字的表如下：（关键字为 {keywords}）"
     for table_key, table_dict in tables_with_columns.items():
@@ -280,10 +235,7 @@ def get_table_schema(table_name: str, *, _tool_context: ToolExecutionContext) ->
     if not table_name:
         return _fmt("未提供表名。", "未提供表名。", {})
 
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    advanced_search_url = f"{base_url}/api/metaVisor/v3/advanced-search"
-
-    client = _MetaVisorClient(advanced_search_url)
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
     cols_raw = client.get_table_columns_info(table_name)
 
     columns: list[dict] = []
@@ -315,8 +267,7 @@ def get_table_schema(table_name: str, *, _tool_context: ToolExecutionContext) ->
     table_description = ""
     try:
         table_qualified_name = f"{table_name}@hive"
-        auth = get_metavisor_auth(_tool_context.config_manager)
-        table_description = get_table_description(table_qualified_name, base_url, auth)
+        table_description = get_table_description(table_qualified_name, client)
     except Exception as e:
         logger.warning(f"[get_table_schema] 获取表描述失败: {e}")
 
@@ -471,37 +422,26 @@ def _get_workspace_path() -> tuple[Path, str]:
 def _fulltext_search_with_typename(
     keywords: list[str],
     typename: str,
-    base_url: str,
-    auth: tuple,
+    client: SemanticServiceClient,
     topk: int,
 ) -> dict:
-    """根据关键词和不同类型，从 MetaVisor API 查询结果。
+    """根据关键词和不同类型，从语义服务 API 查询结果。
 
     Args:
         keywords: 关键词列表
         typename: 实体类型
-        base_url: API基础URL
-        auth: 认证元组（用户名，密码）
+        client: 统一语义服务客户端
         topk: 返回的记录条数
 
     Returns:
         dict: API返回的JSON结果
     """
     query_str = " ".join(keywords)
-    search_url = f"{base_url}/api/metaVisor/v3/search/fulltext"
-    params = {
-        "query": query_str,
-        "typeName": typename,
-        "limit": topk,
-        "offset": 0,
-        "excludeDeletedEntities": "false",
-    }
-    result = requests.get(search_url, params=params, auth=auth)
-    return result.json()
+    return client.search_fulltext(query_str, type_name=typename, limit=topk, offset=0, exclude_deleted=False)
 
 
 def _extract_columns_and_tables_from_metric(
-    metric_qualified_names: list[str], base_url: str, auth: tuple
+    metric_qualified_names: list[str], client: SemanticServiceClient
 ) -> tuple[list[str], list[str]]:
     """
     根据 metric_instance qualified_name 提取指标列和指标表。
@@ -511,8 +451,7 @@ def _extract_columns_and_tables_from_metric(
 
     Args:
         metric_qualified_names: metric_instance qualified_name 列表
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
 
     Returns:
         tuple[list[str], list[str]]: 指标列 qualified_name 列表、指标表名列表。
@@ -520,9 +459,7 @@ def _extract_columns_and_tables_from_metric(
     column_list = []
     table_list = []
     for metric_name in metric_qualified_names:
-        metric_detail_url = f"{base_url}/api/metaVisor/v3/entity/uniqueAttribute/type/metric_instance"
-        metric_params = {"attr:qualified_name": metric_name}
-        metric_detail = requests.get(metric_detail_url, params=metric_params, auth=auth).json()
+        metric_detail = client.get_entity_by_unique_attribute("metric_instance", "qualified_name", metric_name)
 
         # 提取列
         for column in metric_detail.get("entity", {}).get("relationshipAttributes", {}).get("sourceColumns", []):
@@ -544,8 +481,7 @@ def _extract_columns_and_tables_from_metric(
 
 def _attach_table_descriptions(
     tables_columns: dict,
-    base_url: str,
-    auth: tuple,
+    client: SemanticServiceClient,
     description_cache: dict[str, str] | None = None,
 ) -> dict:
     """
@@ -553,8 +489,7 @@ def _attach_table_descriptions(
 
     Args:
         tables_columns: 表列信息字典，结构为 {表名: [列信息列表]}
-        base_url: API基础URL
-        auth: 认证元组
+        client: 统一语义服务客户端
         description_cache: 表描述缓存，避免多个中间结果重复查询同一张表
 
     Returns:
@@ -565,7 +500,7 @@ def _attach_table_descriptions(
     for table_name, columns in tables_columns.items():
         table_qualified_name = f"{table_name}@hive"
         if table_qualified_name not in cache:
-            cache[table_qualified_name] = get_table_description(table_qualified_name, base_url, auth)
+            cache[table_qualified_name] = get_table_description(table_qualified_name, client)
         result[table_name] = {
             "table_name": table_name,
             "table_description": cache[table_qualified_name],

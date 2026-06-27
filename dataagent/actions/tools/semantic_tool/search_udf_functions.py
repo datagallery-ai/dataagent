@@ -17,12 +17,11 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-import requests
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
-from dataagent.actions.tools.semantic_tool.auth import get_metavisor_auth
+from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 
 # ============================================================
 # 工具主函数
@@ -69,9 +68,7 @@ def search_udf_function_by_name_keyword(
     if attributes is None:
         attributes = ["category", "type", "prototype", "args", "function_description", "examples", "qualified_name"]
 
-    # 企业语义服务元数据 UDF 基础搜索 API 基础 URL 和认证
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
 
     # 调用企业语义服务元数据 UDF 基础搜索 API
     supported_attributes = ["function_description", "prototype", "type", "category", "description", "name"]
@@ -82,8 +79,7 @@ def search_udf_function_by_name_keyword(
         offset=offset,
         limit=limit,
         attributes=attributes,
-        base_url=base_url,
-        auth=auth,
+        client=client,
         attribute_name=search_attributes,
     )
 
@@ -148,21 +144,18 @@ def search_udf_function_by_dsl(
             {"attribute_name": attribute_name, "attribute_value": attribute_value, "entities": []},
         )
 
-    # 企业语义服务元数据 UDF DSL 搜索 API 基础 URL 和认证
-    base_url = _tool_context.config_manager.get("METAVISOR.metavisor_url")
-    auth = get_metavisor_auth(_tool_context.config_manager)
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
 
     # 使用 DSL 搜索获取 UDF 函数的 guid
     dsl_result = _dsl_search(
         attribute_name=attribute_name,
         attribute_value=normalized_attr_value,
         operator=operator,
-        base_url=base_url,
-        auth=auth,
+        client=client,
     )
 
     # 根据 guid 查询 UDF 函数的完整实体信息
-    enriched_entities = _enrich_udf_entities_by_guid(dsl_result.get("entities", []), base_url, auth)
+    enriched_entities = _enrich_udf_entities_by_guid(dsl_result.get("entities", []), client)
 
     # 生成 summary 并保存结果
     summary, workspace_path, output_path = _save_dsl_search_results(
@@ -263,14 +256,13 @@ def _save_basic_search_results(keywords: list, result_json: dict) -> tuple[str, 
     return summary, workspace_path, output_path
 
 
-def _enrich_udf_entities_by_guid(entities: list, base_url: str, auth: tuple) -> list:
+def _enrich_udf_entities_by_guid(entities: list, client: SemanticServiceClient) -> list:
     """
     根据 DSL 搜索返回的 GUID 列表查询完整 UDF 实体详情。
 
     Args:
         entities: DSL 搜索返回的实体摘要列表。
-        base_url: API基础URL。
-        auth: 认证元组 (用户名, 密码)。
+        client: 统一语义服务客户端。
 
     Returns:
         list: 成功查询到的完整 UDF 实体列表。
@@ -280,7 +272,7 @@ def _enrich_udf_entities_by_guid(entities: list, base_url: str, auth: tuple) -> 
     for entity in entities:
         guid = entity.get("guid")
         if guid:
-            entity_detail = _get_entity_by_guid(guid, base_url, auth)
+            entity_detail = _get_entity_by_guid(guid, client)
             if entity_detail:
                 enriched_entities.append(entity_detail)
 
@@ -341,20 +333,18 @@ def _basic_search_udf_function(
     offset: int,
     limit: int,
     attributes: list,
-    base_url: str,
-    auth: tuple,
+    client: SemanticServiceClient,
     attribute_name: str | list = "all",
 ) -> dict:
     """
-    调用 POST /api/metaVisor/v3/search/basic API 进行 UDF 函数基础搜索
+    调用 POST /api/semantic/v1/search/basic API 进行 UDF 函数基础搜索
 
     Args:
         keywords: 用于过滤的关键字列表
         offset: 分页偏移
         limit: 分页限制
         attributes: 返回属性列表
-        base_url: API基础URL
-        auth: 认证元组 (用户名, 密码)
+        client: 统一语义服务客户端
         attribute_name: 搜索的属性名，支持字符串或列表，与 search_udf_function_by_name_keyword 保持一致
                       - 字符串 "all"：在所有支持的属性中使用 OR 关系搜索
                       - 字符串（具体属性名）：在单个指定属性中搜索
@@ -363,8 +353,6 @@ def _basic_search_udf_function(
     Returns:
         dict: API返回的JSON结果
     """
-    search_url = f"{base_url}/api/metaVisor/v3/search/basic"
-
     # 统一处理为列表格式
     supported_attributes = ["function_description", "prototype", "type", "category", "description", "name"]
 
@@ -398,10 +386,7 @@ def _basic_search_udf_function(
         "attributes": attributes,
     }
 
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-
-    response = requests.post(search_url, json=payload, headers=headers, auth=auth)
-    return response.json()
+    return client.search_basic(payload)
 
 
 def _prepare_udf_output_dir(dir_name: str, log_name: str) -> tuple[Any, Any, str]:
@@ -586,16 +571,20 @@ def _build_udf_for_nl2sql(
     return udf_basic
 
 
-def _dsl_search(attribute_name: str, attribute_value: str, operator: str, base_url: str, auth: tuple) -> dict:
+def _dsl_search(
+    attribute_name: str,
+    attribute_value: str,
+    operator: str,
+    client: SemanticServiceClient,
+) -> dict:
     """
-    调用 GET /api/metaVisor/v3/search/dsl API 进行 DSL 搜索
+    调用 GET /api/semantic/v1/search/dsl API 进行 DSL 搜索
 
     Args:
         attribute_name: 要搜索的属性名
         attribute_value: 要匹配的属性值
         operator: 操作符（如 "like"）
-        base_url: API基础URL
-        auth: 认证元组 (用户名, 密码)
+        client: 统一语义服务客户端
 
     Returns:
         dict: API返回的JSON结果
@@ -604,31 +593,19 @@ def _dsl_search(attribute_name: str, attribute_value: str, operator: str, base_u
     safe_attribute_value = attribute_value.replace("\\", "\\\\").replace('"', '\\"')
     dsl_query = f'udf_function where {attribute_name} {operator} "*{safe_attribute_value}*"'
 
-    search_url = f"{base_url}/api/metaVisor/v3/search/dsl"
-
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-
-    # 使用 params 参数，让 requests 自动处理 URL 编码
-    response = requests.get(search_url, headers=headers, auth=auth, params={"query": dsl_query})
-    return response.json()
+    return client.search_dsl(dsl_query)
 
 
-def _get_entity_by_guid(guid: str, base_url: str, auth: tuple) -> dict:
+def _get_entity_by_guid(guid: str, client: SemanticServiceClient) -> dict:
     """
-    调用 GET /api/metaVisor/v3/entity/guid/{guid} API 获取 UDF 函数的实体详情
+    调用 GET /api/semantic/v1/entity/guid/{guid} API 获取 UDF 函数的实体详情
 
     Args:
         guid: 实体的 GUID
-        base_url: API基础URL
-        auth: 认证元组 (用户名, 密码)
+        client: 统一语义服务客户端
 
     Returns:
         dict: 实体详情（entity 字段内容），如果失败返回空字典
     """
-    entity_url = f"{base_url}/api/metaVisor/v3/entity/guid/{guid}"
-
-    headers = {"Accept": "application/json"}
-
-    response = requests.get(entity_url, headers=headers, auth=auth, verify=False)
-    result = response.json()
+    result = client.get_entity_by_guid(guid)
     return result.get("entity", {})

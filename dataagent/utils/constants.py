@@ -440,6 +440,7 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "DATASOURCE",
     "DATABASE",
     "CORE",
+    "SEMANTIC_LAYER",
     "METAVISOR",
     "ONTOLOGY",
     "SWARM",
