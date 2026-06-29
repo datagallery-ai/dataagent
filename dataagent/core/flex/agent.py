@@ -11,6 +11,7 @@
 # limitations under the License.
 
 import json
+import os
 import traceback
 from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
@@ -317,7 +318,11 @@ class FlexAgent(BaseAgent):
         """
         # Extract agent config and mode
         agent_config = config.get("AGENT_CONFIG", {})
-        debug = agent_config.get("debug", False)
+        debug = (
+            get_env_bool("AGENT_CONFIG_DEBUG")
+            if "AGENT_CONFIG_DEBUG" in os.environ
+            else agent_config.get("debug", False)
+        )
         backend = agent_config.get("backend", "langgraph")
         mode = config.get("mode")
 
