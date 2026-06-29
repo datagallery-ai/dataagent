@@ -138,3 +138,30 @@ uv run -m dataagent serve-a2a \
 ```
 dataagent/core/flex/examples/
 ```
+
+## 8. 可选：接入数据库语义服务 {#optional-semantic-service}
+
+Semantic Service（Semantic Layer REST 服务）是 DataAgent 的**外部可选组件**，不是启动 Agent 的必选依赖。完成上文步骤后，你已经可以运行 Flex/ReAct Agent、调用 SDK 或启动 A2A 服务。
+
+当你需要以下能力时，再部署 Semantic Service 并导入场景数据：
+
+| 场景 | 是否需要 Semantic Service |
+| --- | --- |
+| 交互式对话、通用工具调用 | 否 |
+| NL2SQL：自然语言查库、生成 SQL | 是 |
+| 表/字段语义检索、JOIN 路径、SQL Few-shot | 是 |
+| 向量语义搜索（表描述、列描述召回） | 是（需启用向量模型） |
+
+### 8.1 推荐阅读顺序
+
+按下列顺序完成语义层试用链路（约 30–60 分钟，含模型下载）：
+
+| 步骤 | 文档 | 做什么 |
+| --- | --- | --- |
+| 1 | [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md) | 下载服务包、启动 PostgreSQL/pgvector、配置并启动 REST 服务 |
+| 2 | [场景数据导入](../installation_doc/database_install/scenario-data-import.md) | 创建 demo 业务库、导入元数据、验证检索 API |
+| 3 | [构建 NL2SQL 专用 Agent](../case/build-an-nl2sql-application.md) | 配置 `DATABASE` / `METAVISOR` 并运行 NL2SQL |
+| 4 | [构建数据分析 Agent](../case/build-a-dataagent-from-scratch.md) | 主 Agent 按需调用 NL2SQL 子 Agent |
+
+!!! note "关于 demo 业务库"
+    场景教程中的 `demo_retail.sqlite` 是运行时创建的**示例业务数据库**，不是 Semantic Layer 服务包自带内容。Semantic Service 只保存该库的元数据（表、字段、关系等），真实数据仍由 Agent 的 `DATABASE.config.path` 指向 SQLite 文件。

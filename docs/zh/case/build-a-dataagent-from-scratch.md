@@ -50,16 +50,15 @@ FlexAgent（AGENT_CONFIG.type = react）
 
 1. 已完成项目安装，并能在仓库根目录执行 `uv run ...`。
 2. 已配置模型环境变量，例如 `BAILIAN_BASE_URL` 和 `BAILIAN_API_KEY`。
-3. 已准备业务数据库。SQLite 场景建议使用绝对路径。
-4. 已完成 MetaVisor/Semantic Service 部署和元数据导入。
+3. **当主 Agent 需要调用 NL2SQL 时**：已完成 Semantic Service 部署与场景数据导入：
+   - [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)
+   - [场景数据导入](../installation_doc/database_install/scenario-data-import.md)
+4. demo SQLite 业务库已创建，Agent 配置中使用**绝对路径**（`demo_db` / `demo_retail.sqlite`；业务库非 Semantic Layer 服务包自带）。
 5. 已准备可写的 workspace，用于保存子 Agent 生成的 SQL 和 CSV 文件。
 
-MetaVisor/Semantic Service 的部署和数据导入请参考：
+若尚未部署 Semantic Service，从 [快速开始 §8](../quick_start/quick_start.md#optional-semantic-service) 的可选路径开始。
 
-- [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)
-- [数据库服务部署](../installation_doc/database_install/service-deployment.md)
-- [场景数据导入](../installation_doc/database_install/scenario-data-import.md)
-- [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)
+MetaVisor/Semantic Service 说明见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。
 
 ## 4. 编写主 Agent 配置
 
@@ -79,7 +78,7 @@ dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml
 | `TOOLS.local_functions` | 注册 `nl2sql_sub_agent_tool`。 |
 | `DATABASE` / `METAVISOR` | 主 Agent 持有运行时数据库和 Semantic Service 配置，并覆盖给子 Agent。 |
 
-示例配置：
+示例配置（结构与仓库 `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml` 一致；`demo_db` 与路径按场景教程替换）：
 
 ```yaml
 AGENT_CONFIG:
@@ -93,52 +92,49 @@ MODEL:
     model_type: "chat"
     provider: "bailian"
     params:
-      model: "Qwen3.6-Plus"
-      temperature: 0.0
-  qwen3_coder:
-    model_type: "chat"
-    provider: "bailian"
-    params:
-      model: "Qwen3.6-Plus"
+      model: "deepseek-v4-flash"
       temperature: 0.0
 
 SCENARIO:
   chat:
-    input: "data analysis question"
-    task: "complete data analysis and call NL2SQL sub-agent when SQL is required"
+    input: "nl2sql question"
+    task: "launch nl2sql as a sub agent and return DONE"
     instructions: |
-      完成用户的数据分析任务。
-      如果需要执行数据库查询，调用 nl2sql_sub_agent_tool。
-      调用工具时必须明确传入 query、workspace、sql_filename 和 csv_filename。
-      query 应写清楚业务目标、指标口径、过滤条件、分组粒度和输出字段。
-      回答时说明生成的 SQL 文件路径和 CSV 结果文件路径。
-    output_format: "回答用户问题，并说明 SQL/CSV 结果文件路径"
+      完成数据分析任务，如果需要执行sql查询，则调用`nl2sql_sub_agent_tool`工具。
+    output_format: "DONE"
 
 TOOLS:
   local_functions:
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "nl2sql_sub_agent_tool"
-      description: "将自然语言数据查询交给 NL2SQL 子 Agent，并保存 SQL 与 CSV 结果。"
       config:
-        llm_model: qwen3_coder
+        llm_model: chat_model
+
+PRE_WORKFLOW: []
+POST_WORKFLOW: []
 
 DATABASE:
   db_id: "demo_db"
   engine: "sqlite"
   config:
-    path: "/absolute/path/to/demo_retail.sqlite"
+    path: "/absolute/path/to/data/demo_retail.sqlite"
 
 METAVISOR:
-  metavisor_url: "http://host:32000"
-  valuematch_url: "http://host:8000"
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
+
+SWARM:
+  enable: false
 ```
 
 注意：
 
 - `TOOLS.local_functions[].function` 必须是 `nl2sql_sub_agent_tool`。
-- `config.llm_model` 指向主 Agent `MODEL` 中的一个 section，例如 `qwen3_coder`。
+- `config.llm_model` 指向主 Agent `MODEL` 中的一个 section，与仓库示例一致为 `chat_model`。
 - `DATABASE` 和 `METAVISOR` 写在主 Agent YAML 中，不需要手工改临时子 Agent 配置。
-- `SCENARIO.chat.instructions` 要明确要求传入 `workspace`、`sql_filename` 和 `csv_filename`，否则工具无法保存结果文件。
+- 调用工具时需传入 `query`、`sql_filename`、`csv_filename`；`workspace` 由运行时 `initial_state.workspace`（或 `chat(workspace=...)`）提供，见 §6 示例。
 
 ## 5. 子 Agent 配置覆盖逻辑
 
@@ -156,9 +152,8 @@ METAVISOR:
 | 参数 | 说明 |
 | --- | --- |
 | `query` | 交给 NL2SQL 子 Agent 的自然语言查询。应尽量明确业务目标、指标、过滤条件、分组和输出字段。 |
-| `workspace` | SQL 和 CSV 文件保存目录，必须是可写路径。 |
-| `sql_filename` | 生成 SQL 的文件名，例如 `monthly_orders.sql`。 |
-| `csv_filename` | 查询结果 CSV 的文件名，例如 `monthly_orders.csv`。 |
+| `sql_filename` | 生成 SQL 的文件名，例如 `monthly_orders.sql`（保存于会话 `workspace`）。 |
+| `csv_filename` | 查询结果 CSV 的文件名，例如 `monthly_orders.csv`（保存于会话 `workspace`）。 |
 
 ## 6. 运行主 Agent
 
@@ -234,11 +229,11 @@ ls -lh /tmp/dataagent-nl2sql-demo
 
 ### 9.1 主 Agent 没有调用 NL2SQL 工具
 
-检查 `SCENARIO.chat.instructions` 是否明确写了“需要数据库查询时调用 `nl2sql_sub_agent_tool`”，并要求传入四个工具参数。
+检查 `SCENARIO.chat.instructions` 是否明确写了“需要数据库查询时调用 `nl2sql_sub_agent_tool`”，并确保运行时已设置 `workspace`。
 
 ### 9.2 工具提示缺少参数
 
-`nl2sql_sub_agent_tool` 需要 `query`、`workspace`、`sql_filename` 和 `csv_filename`。如果模型没有传全，补强 `SCENARIO`，让它在调用工具前明确文件名和保存目录。
+`nl2sql_sub_agent_tool` 需要 `query`、`sql_filename` 和 `csv_filename`；会话 `workspace` 需在运行前通过 `initial_state.workspace` 或 `chat(workspace=...)` 设置。若模型没有传全文件名，可在 `SCENARIO` 中补充说明。
 
 ### 9.3 子 Agent 数据库配置不对
 

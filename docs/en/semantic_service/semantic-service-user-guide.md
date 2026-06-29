@@ -70,8 +70,10 @@ DATABASE:
     path: "/path/to/your.sqlite"
 
 METAVISOR:
-  metavisor_url: "http://host:32000"
-  valuematch_url: "host:8000"
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
 ```
 
 For full configuration, run commands, and troubleshooting, see [Build a Dedicated NL2SQL Agent](../case/build-an-nl2sql-application.md).

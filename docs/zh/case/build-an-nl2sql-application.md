@@ -32,10 +32,10 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
       └─ Selector：选择最终 SQL 与结果
 ```
 
-其中 MetaVisor 提供表、字段、字段描述、join 关系和值匹配等增强元数据。本文不展开 MetaVisor 的完整部署流程，部署和数据导入请参考：
+其中 MetaVisor 提供表、字段、字段描述、join 关系和值匹配等增强元数据。部署和数据导入请参考（**NL2SQL 案例必需**）：
 
+- [快速开始 §8：可选接入数据库语义服务](../quick_start/quick_start.md#optional-semantic-service)
 - [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)
-- [数据库服务部署](../installation_doc/database_install/service-deployment.md)
 - [场景数据导入](../installation_doc/database_install/scenario-data-import.md)
 - [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)
 
@@ -53,10 +53,36 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
 
 1. 已完成项目安装，并能在仓库根目录执行 `uv run ...`。
 2. 已配置模型环境变量，例如 `BAILIAN_BASE_URL` 和 `BAILIAN_API_KEY`。
-3. 已准备业务数据库。SQLite 场景需要本地 `.sqlite` 文件；MySQL/PostgreSQL 场景需要服务可连接。
-4. 已完成 MetaVisor/Semantic Service 部署和元数据导入，并确认服务地址可访问。
+3. **（必需）** 已完成 Semantic Service 部署与场景数据导入（NL2SQL 依赖外部语义服务）：
+   - [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)
+   - [场景数据导入](../installation_doc/database_install/scenario-data-import.md)
+4. 已准备 demo SQLite 业务库，并在 Agent 配置中使用**绝对路径**（示例逻辑库 `demo_db`，文件由教程创建，非服务包自带）。
+5. 确认 `METAVISOR.metavisor_url` 可访问，且 `DATABASE.db_id` 与元数据 `databaseName` 一致。
 
-如果只是本地快速验证，建议先使用 SQLite 数据库文件；如果要复现更完整的业务数据流程，再结合后续部署教程准备 MySQL、PostgreSQL、Elasticsearch 和 MetaVisor。
+若你尚未部署 Semantic Service，请从 [快速开始 §8](../quick_start/quick_start.md#optional-semantic-service) 的可选路径开始。
+
+示例配置中的 SQLite 路径与 Semantic Service 连接（字段与仓库内置 YAML 一致，值按 demo 场景替换）：
+
+```yaml
+DATABASE:
+  db_id: "demo_db"
+  engine: "sqlite"
+  config:
+    path: "/absolute/path/to/data/demo_retail.sqlite"
+
+METAVISOR:
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
+```
+
+跑通后可尝试的验证问题：
+
+- 「各城市成交额排名」
+- 「每月订单量是多少」
+
+MetaVisor/Semantic Service 能力说明见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。
 
 ## 4. 编写 NL2SQL Agent 配置
 
@@ -76,7 +102,7 @@ dataagent/agents/nl2sql/nl2sql_agent.yaml
 | `DATABASE` | 指定数据库标识、数据库类型和连接参数。 |
 | `METAVISOR` | 指定增强元数据和值匹配服务地址。 |
 
-示例配置：
+示例配置（结构与仓库 `dataagent/agents/nl2sql/nl2sql_agent.yaml` 一致；`demo_db` 与路径按场景教程替换）：
 
 ```yaml
 AGENT_CONFIG:
@@ -89,7 +115,7 @@ MODEL:
     model_type: "chat"
     provider: "bailian"
     params:
-      model: "Qwen3.6-Plus"
+      model: "deepseek-v4-flash"
       temperature: 0.0
 
 CORE:
@@ -118,13 +144,14 @@ CORE:
 DATABASE:
   db_id: "demo_db"
   engine: "sqlite"
-  sql_service_engine: null
   config:
-    path: "/absolute/path/to/demo_retail.sqlite"
+    path: "/absolute/path/to/data/demo_retail.sqlite"
 
 METAVISOR:
-  metavisor_url: "http://host:32000"
-  valuematch_url: "http://host:8000"
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
 ```
 
 配置时重点检查：
@@ -133,6 +160,7 @@ METAVISOR:
 - `DATABASE.engine` 要和实际数据库一致，例如 `sqlite`、`mysql`、`postgres`。
 - SQLite 的 `DATABASE.config.path` 建议使用绝对路径，避免从不同目录启动时找不到文件。
 - 模型的 `api_key` 不建议写入 YAML，优先放到 `.env` 中。
+- `METAVISOR.metavisor_url` 与 `METAVISOR.valuematch_url` 指向已部署的 Semantic Service；`username` / `password` 按实际部署填写。
 
 ## 5. 运行专用 Agent
 

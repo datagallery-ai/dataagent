@@ -1,86 +1,74 @@
 # Semantic Service Deployment Guide
 
-Semantic Service is the metadata service used by NL2SQL. It does not store real business data; it stores which tables exist in your database, what columns mean, how tables join, and which fields support metric aggregation.
-
-In short:
+Semantic Service (Semantic Layer REST service) is an **optional external component** of DataAgent. It supplies metadata for NL2SQL: tables, columns, JOIN relationships, SQL Few-shot, and vector semantic search. It does not store real business data—only the "database manual" for models.
 
 - Real business data stays in SQLite, MySQL, PostgreSQL, and other databases.
-- Semantic Service stores the "database manual" for models.
-- Before querying, DataAgent / NL2SQL Agent fetches tables, columns, join relationships, and value-matching information from Semantic Service.
+- Semantic Service stores semantic metadata for DataAgent / NL2SQL Agent to query before generating SQL.
+- Starting an Agent **does not require** Semantic Service; deploy it only for NL2SQL or database semantic enhancement.
 
-If you want to understand NL2SQL first, read [Build a Dedicated NL2SQL Agent](../../case/build-an-nl2sql-application.md). When you are ready to connect your own database, deploy Semantic Service using this guide.
+If you have not run the Agent yet, see [Quick Start](../../quick_start/quick_start.md). After deployment, continue with [Scenario Data Import](scenario-data-import.md), then [NL2SQL case study](../../case/build-an-nl2sql-application.md).
 
-If you are following the database installation guides from the start, complete these first:
+> **Working directory**: After extracting the tar package, `cd` into the **service package root** (directory name usually matches the archive; below we use `semantic-layer-<version>/`). Except for Docker and model download, run subsequent commands in that directory.
 
-1. [Pull Docker Images](image-pull.md): prepare Docker images.
-2. [Deploy Database Services](service-deployment.md): start MySQL, PostgreSQL, Elasticsearch, and other base services.
-3. [Scenario Data Import](scenario-data-import.md): optional sample business data.
+## 1. Deployment goals
 
-This guide follows those steps and answers "how does NL2SQL know what tables and columns mean?" Earlier guides prepare real data and base services; this one prepares the Semantic Service metadata service.
+When finished you will have:
 
-## 1. What You Need at the End
+- A running Semantic Layer REST service
+- A PostgreSQL semantic-layer database with pgvector indexes
+- Working table search, column search, vector search, SQL Few-shot, and JOIN path APIs
 
-After deployment, you need two service URLs in Agent YAML:
+Default ports (**examples**; override via environment variables):
 
-```yaml
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
-  valuematch_url: "http://localhost:8000"
-```
-
-Also ensure Agent database settings match metadata imported into Semantic Service:
-
-```yaml
-DATABASE:
-  db_id: "sales_db"
-  engine: "sqlite"
-  config:
-    path: "/path/to/sales.sqlite"
-```
-
-Three fields matter most:
-
-| Field | Plain-language meaning |
+| Service | Address (example) |
 | --- | --- |
-| `DATABASE.db_id` | Name of this database registered in Semantic Service, for example `sales_db`. |
-| `DATABASE.engine` | Real database type, for example `sqlite`, `mysql`, or `postgres`. |
-| `METAVISOR.metavisor_url` | Semantic Service URL; NL2SQL reads table and column descriptions through it. |
+| Semantic Layer | `http://localhost:${SEMANTIC_PORT}` |
+| REST v3 base URL | `$BASE` (see below) |
+| PostgreSQL | `localhost:${PG_PORT}` |
 
-`db_id` and `engine` must match imported Semantic Service metadata; otherwise NL2SQL cannot resolve tables and columns.
+Before continuing, export ( **example values**: `SEMANTIC_PORT=32000`, `PG_PORT=54321`):
 
-## 2. Overall Flow
-
-The integration breaks down into five steps:
-
-```text
-1. 准备 PostgreSQL
-   用来存放 Semantic Service 的元数据
-
-2. 启动 Semantic Service
-   提供 HTTP 接口，供 DataAgent 查询元数据
-
-3. 验证服务可访问
-   curl 健康检查返回 HTTP 200
-
-4. 导入业务库元数据
-   告诉 Semantic Service：有哪些表、字段、关系
-
-5. 修改 Agent YAML
-   配置 DATABASE 和 METAVISOR，然后运行 NL2SQL
+```bash
+export SEMANTIC_PORT="${SEMANTIC_PORT:-32000}"
+export PG_PORT="${PG_PORT:-54321}"
+export BASE="http://localhost:${SEMANTIC_PORT}/api/metaVisor/v3"
 ```
 
-This guide follows that order.
+> `.properties` files **do not** expand shell variables; JDBC port literals must match `$PG_PORT` (example: `54321`).
 
-## 3. Prepare the Environment
+### 1.1 Two trial paths
 
-You need:
-
-| Tool | Purpose | Recommendation |
+| Path | Use case | Key steps |
 | --- | --- | --- |
-| Docker | Start PostgreSQL quickly | Docker reduces installation friction. |
-| Java 8+ | Run Semantic Service | Check with `java -version`. |
-| Semantic Service distribution | The service itself | `semantic-layer-0.1.0.tar.gz` (download in section 6). |
-| A business database | Data source NL2SQL queries | Start with a SQLite file if you are new. |
+| **Full trial (recommended)** | Vector search, SQL Few-shot, all features | PG → model → config A → start → [Scenario data import](scenario-data-import.md) |
+| **Lite trial** | Service startup, metadata CRUD, partial text search | PG → skip model → config B → start → [Scenario data import](scenario-data-import.md) |
+
+### 1.2 Recommended order until service is ready
+
+| Step | Section | Action | Done when |
+| --- | --- | --- | --- |
+| 1 | §2 Prerequisites | Check Java 21+, `curl` | `java -version` OK |
+| 2 | §3 Download package | Download and extract | `bin/start.sh` exists |
+| 3 | §4.1 Docker PG | Start PostgreSQL | Container in `docker ps` |
+| 4 | §5 Vector model | Download model (full path) | `.pt` and `tokenizer.json` exist |
+| 5 | §6 Configure | Edit `conf/*.properties` | JDBC and model paths correct |
+| 6 | §7 Start | `./bin/start.sh -p $SEMANTIC_PORT` | REST returns 200 |
+| 7 | §8 Verify | Hit REST endpoints | `types/typedefs` returns 200 |
+
+Import demo business data and metadata in [Scenario Data Import](scenario-data-import.md).
+
+## 2. Prerequisites
+
+| Dependency | Requirement | Notes |
+| --- | --- | --- |
+| Linux / macOS | Linux recommended | Examples assume Linux |
+| Java | **JDK 21+** | Required to run the service package |
+| PostgreSQL | 13+ | Needs `uuid-ossp`, `vector`, `pg_trgm` |
+| pgvector | 0.5+ | Vector semantic search |
+| curl | Recent version | REST API calls |
+| wget | Recent version | Downloads (or use curl) |
+| Docker | **Recommended** | One command for PostgreSQL 16 + pgvector |
+| Disk | ≥ 2 GB free | Package + model (~228 MB) + PG data |
 
 Check Java:
 
@@ -88,110 +76,181 @@ Check Java:
 java -version
 ```
 
-If Java is missing, install Java 8 or newer.
+Output should include **21** or higher.
 
-## 4. Start PostgreSQL
-
-Semantic Service needs a database for metadata and vector indexes. The default deployment recommends PostgreSQL with pgvector; in enterprise environments, you can also connect Semantic Service to an existing GaussVector database as the semantic-retrieval backend:
+`bin/start.sh` uses **`java` on PATH**. If the default is not 21:
 
 ```bash
-docker run -d \
-  --name semantic-service-pg \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=semantic_layer \
-  -p 54321:5432 \
-  pgvector/pgvector:pg16
+export PATH="/path/to/jdk-21/bin:$PATH"
+java -version
 ```
 
-This starts PostgreSQL with:
+## 3. Download and extract service package
 
-| Setting | Value |
-| --- | --- |
-| Database name | `semantic_layer` |
-| Username | `postgres` |
-| Password | `postgres` |
-| Host port | `54321` |
-
-Verify connectivity:
-
-```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c "SELECT version();"
-```
-
-If you see the PostgreSQL version, the database is up.
-
-### 4.1 Enable Required Extensions
-
-Run:
-
-```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c 'CREATE EXTENSION IF NOT EXISTS vector;'
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
-```
-
-These extensions support UUIDs, vector search, and fuzzy text search. You only need to confirm the commands succeed. If you use GaussVector, make sure the target database has the required vector type, distance operators, and index capabilities enabled, and put the connection details in the Semantic Service configuration.
-
-## 5. Initialize Semantic Service Schema
-
-The Semantic Service distribution usually includes initialization SQL named like:
+**Download URL** (version per your distribution link):
 
 ```text
-create_semantic_layer.sql
+https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz
 ```
 
-Find that file in the distribution, then run:
+Optional: pre-download vector model (~228 MB) and PostgreSQL image in parallel:
 
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer \
-  -f /path/to/create_semantic_layer.sql
+export DOWNLOAD_DIR="${DOWNLOAD_DIR:-./downloads}"
+mkdir -p "$DOWNLOAD_DIR" && cd "$DOWNLOAD_DIR"
+
+wget -c -O semantic-layer.tar.gz \
+  'https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz'
+
+wget -c -O bge-base-zh-v1.5.tar.gz \
+  https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
+
+docker pull pgvector/pgvector:pg16
 ```
 
-Replace `/path/to/create_semantic_layer.sql` with the path on your machine.
-
-Verify tables were created:
+Download and extract:
 
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c "\dt"
+export SERVICE_PKG_URL='https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz'
+
+wget -O semantic-layer.tar.gz "$SERVICE_PKG_URL"
+tar xzf semantic-layer.tar.gz
+cd semantic-layer-*
 ```
 
-If you see tables such as `data_table`, `data_column`, `semantic_term`, and `sql_process`, initialization succeeded.
+Replace `wget -c -O file URL` with `curl -fsSL -C - -o file URL` if wget is unavailable.
 
-!!! warning
-    Some initialization scripts drop and recreate the database. Read the SQL before running it in production so you do not delete existing data.
-
-## 6. Extract and Configure Semantic Service
-
-Download and extract `semantic-layer-0.1.0.tar.gz`:
-
-```bash
-wget https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz
-mkdir -p ~/semantic-service
-tar xzf semantic-layer-0.1.0.tar.gz -C ~/semantic-service
-cd ~/semantic-service/semantic-layer-0.1.0
-```
-
-Typical layout:
+Expected layout:
 
 ```text
-semantic-layer-0.1.0/
+semantic-layer-<version>/
 ├── bin/
 │   ├── start.sh
-│   └── stop.sh
+│   ├── stop.sh
+│   └── create_semantic_layer.sql
 ├── conf/
-│   └── semantic-service-application.properties
+│   ├── semantic-service-application.properties
+│   └── ...
 ├── lib/
 └── webapp/
 ```
 
-Edit:
+## 4. Prepare PostgreSQL
 
-```text
-conf/semantic-service-application.properties
+Semantic layer data lives in **PostgreSQL** with **pgvector** for vector search.
+
+**Recommended**: If Docker is available, use the `pgvector/pgvector` image—no separate PostgreSQL/pgvector install.
+
+### 4.1 Recommended: Docker one command (with pgvector)
+
+Requires Docker and permission to run `docker`. Use `$PG_PORT` from §1 (example `54321`).
+
+```bash
+docker run -d --name semantic-layer-pg \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=semantic_layer \
+  -p "${PG_PORT}:5432" \
+  --restart unless-stopped \
+  pgvector/pgvector:pg16
 ```
 
-Configure the database connection first:
+| Item | Value | Meaning |
+| --- | --- | --- |
+| Image | `pgvector/pgvector:pg16` | PostgreSQL 16 + pgvector |
+| Container | `semantic-layer-pg` | Easy stop/start/logs |
+| Host port | `$PG_PORT` | Maps to container `5432` |
+| Database | `semantic_layer` | Matches JDBC config |
+
+Verify:
+
+```bash
+docker ps | grep semantic-layer-pg
+```
+
+Optional extension check:
+
+```bash
+docker exec -it semantic-layer-pg psql -U postgres -d semantic_layer -c \
+  "SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector','uuid-ossp','pg_trgm');"
+```
+
+You **do not need** manual `CREATE EXTENSION` on first deploy: `bin/create_semantic_layer.sql` runs during `start.sh` initialization.
+
+Persistence with a volume:
+
+```bash
+docker run -d --name semantic-layer-pg \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=semantic_layer \
+  -p "${PG_PORT}:5432" \
+  -v semantic-layer-pg-data:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  pgvector/pgvector:pg16
+```
+
+### 4.2 Alternative: existing PostgreSQL
+
+For PostgreSQL 13+, ensure connectivity and permissions, then:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+Update JDBC URL in `conf/semantic-service-application.properties`.
+
+### 4.3 Not recommended: bare-metal PostgreSQL install
+
+For quick trials, avoid long apt/yum + pgvector compile paths. Prefer an environment with Docker.
+
+## 5. Prepare vector model (optional)
+
+Full semantic search (vector search, SQL Few-shot, vector columns on import) needs **`BAAI/bge-base-zh-v1.5`** locally. For metadata CRUD and partial text search only, **skip this section** and use lite config in §6.
+
+**Order**: When enabling vectors, finish download/validation here **before** setting `model.path` and starting the service in §6.
+
+### 5.1 Download and extract
+
+Package ~ **228 MB**:
+
+```text
+https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
+```
+
+```bash
+export MODEL_ROOT=/opt/models
+mkdir -p "$MODEL_ROOT" && cd "$MODEL_ROOT"
+
+wget -O bge-base-zh-v1.5.tar.gz \
+  https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
+tar xzf bge-base-zh-v1.5.tar.gz
+```
+
+Expect `bge-base-zh-v1.5/bge-base-zh-v1.5.pt` and `tokenizer.json`.
+
+### 5.2 Validate
+
+```bash
+ls -lh "$MODEL_ROOT/bge-base-zh-v1.5/bge-base-zh-v1.5.pt"
+ls -lh "$MODEL_ROOT/bge-base-zh-v1.5/tokenizer.json"
+```
+
+### 5.3 Copy tokenizer to conf (recommended)
+
+From the **service package root**:
+
+```bash
+cp "$MODEL_ROOT/bge-base-zh-v1.5/tokenizer.json" conf/tokenizer.json
+```
+
+## 6. Configure service
+
+Edit `conf/semantic-service-application.properties`.
+
+### 6.1 Database connection
 
 ```properties
 semantic_service.db.url=jdbc:postgresql://localhost:54321/semantic_layer
@@ -199,249 +258,149 @@ semantic_service.db.user=postgres
 semantic_service.db.password=postgres
 ```
 
-If PostgreSQL is not on localhost, change `localhost:54321` to the actual host and port.
+Port must match `$PG_PORT`. Optional shell update:
 
-## 7. Vector Model Setup
-
-Semantic Service can use embedding models for semantic search. The generated vectors can be stored in pgvector, GaussVector, or a compatible vector backend for table-description, column-description, and semantic-keyword recall. On first deploy, if you have no model yet, disable vector features and bring the service up first:
-
-```properties
-semantic_service.vector.embedding.service.enable=false
+```bash
+sed -i "s|^semantic_service.db.url=.*|semantic_service.db.url=jdbc:postgresql://localhost:${PG_PORT}/semantic_layer|" \
+  conf/semantic-service-application.properties
 ```
 
-This simplifies deployment and is enough to validate the service and metadata import flow.
+### 6.2 Vector embedding
 
-When a local model is ready, configure its path:
+**Option A: full vector capabilities** (after §5)
 
 ```properties
+semantic_service.vector.embedding.service.enable=true
 semantic_service.vector.embedding.model.name=BAAI/bge-base-zh-v1.5
-semantic_service.vector.embedding.model.path=/opt/models/BAAI/bge-base-zh-v1.5
+semantic_service.vector.embedding.model.path=/opt/models/bge-base-zh-v1.5
 semantic_service.vector.embedding.dimensions=768
 semantic_service.vector.embedding.cache.size=1000
 ```
 
-Model output dimension, the configured `dimensions`, and the database `vector(N)` or GaussVector vector-field dimension must match.
+**Option B: lite mode** (skip §5)
 
-## 8. Start Semantic Service
-
-From the extracted service directory:
-
-```bash
-./bin/start.sh -p 32000
+```properties
+semantic_service.vector.embedding.service.enable=false
+semantic_service.vector.embedding.model.path=
 ```
 
-Port `32000` is an example; use any free port.
+> If embedding was off during import, vector columns stay empty until you re-enable embedding and update or re-import entities ([Scenario data import](scenario-data-import.md)).
 
-Stop the service:
+## 7. Start service
+
+Run from the **service package root**.
+
+```bash
+java -version
+./bin/start.sh -p "${SEMANTIC_PORT}"
+```
+
+Notes:
+
+- Reads `conf/semantic-service-application.properties` and initializes `semantic_layer` via `bin/create_semantic_layer.sql`.
+- Without local `psql`, initialization can use `docker exec` when the PG container is running.
+- First start usually **1–2 minutes**; vector model load may add **1–3 minutes**.
+
+Success message: `Semantic Service is ready!`
+
+Clean rebuild (test only):
+
+```bash
+./bin/start.sh -p "${SEMANTIC_PORT}" -c
+```
+
+Stop:
 
 ```bash
 ./bin/stop.sh
 ```
 
-If startup fails, check whether the port is in use:
+Logs:
 
 ```bash
-lsof -nP -iTCP:32000 -sTCP:LISTEN
+tail -f logs/application.log
 ```
 
-## 9. Verify the Service
+With vectors enabled, expect `Model loaded OK: BAAI/bge-base-zh-v1.5`.
 
-Run:
+## 8. Verify service
 
 ```bash
-curl -sS -o /dev/null -w "HTTP %{http_code}\n" \
-  http://localhost:32000/api/metaVisor/v3/types/typedefs
+curl -sS -o /dev/null -w "%{http_code}\n" "$BASE/types/typedefs"
 ```
 
-Expected:
+`200` means REST is reachable.
 
-```text
-HTTP 200
-```
-
-If the status is not 200, check logs:
+Full vector path—confirm model load:
 
 ```bash
-tail -100 logs/jetty-console.log
-tail -100 logs/application.log
+grep -E 'Model loaded OK|Local embedding model initialized|Failed' logs/application.log | tail -5
 ```
 
-Common causes:
+## 9. Align with DataAgent configuration
 
-- Wrong PostgreSQL host, username, or password.
-- Initialization SQL not run; tables missing.
-- Port already in use.
-- Incorrect vector model path.
-
-## 10. Import Business Database Metadata
-
-After the service starts, import the "business database manual." Without it, NL2SQL can reach Semantic Service but cannot see your tables and columns.
-
-Semantic Service stores metadata, not business rows. For example, if your database has an `orders` table, tell Semantic Service:
-
-- Which database it belongs to: `sales_db`
-- Table name: `orders`
-- Columns: `order_id`, `order_amount`, `order_time`
-- What each column means
-- How tables join
-
-### 10.1 Minimal Table Metadata Example
-
-Minimal example for one table:
-
-```json
-{
-  "entities": [
-    {
-      "typeName": "data_table",
-      "attributes": {
-        "qualifiedName": "sales_db.orders@sqlite",
-        "databaseName": "sales_db",
-        "schemaName": "main",
-        "tableName": "orders",
-        "tableNameEn": "orders",
-        "sourceType": "sqlite",
-        "llmContext": "订单表，记录订单金额、下单时间和客户信息",
-        "status": "Active"
-      }
-    }
-  ],
-  "relationships": []
-}
-```
-
-Save as `metadata.json` and import:
-
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d @metadata.json \
-  "http://localhost:32000/api/metaVisor/v3/entity/bulk"
-```
-
-### 10.2 Import Columns and Relationships Too
-
-Tables alone are not enough. Column descriptions and relationships make NL2SQL useful.
-
-Column entities are usually `data_column`; table–column links use `table_has_column`. Table joins use `table_join_relationship`.
-
-Naming convention:
-
-| Object | `qualifiedName` example |
-| --- | --- |
-| Table | `sales_db.orders@sqlite` |
-| Column | `sales_db.orders.order_amount@sqlite` |
-
-Describe business meaning clearly in column metadata. Example:
-
-```json
-{
-  "typeName": "data_column",
-  "attributes": {
-    "qualifiedName": "sales_db.orders.order_amount@sqlite",
-    "databaseName": "sales_db",
-    "tableNameEn": "orders",
-    "columnNameEn": "order_amount",
-    "sourceType": "sqlite",
-    "value_type": "number",
-    "llmContext": "订单实付金额，单位为元，可用于销售额、GMV 等统计",
-    "status": "Active"
-  }
-}
-```
-
-## 11. Align with DataAgent Configuration
-
-The most common mistake is mismatched names.
-
-If DataAgent YAML has:
+After [Scenario data import](scenario-data-import.md), configure Agent YAML:
 
 ```yaml
 DATABASE:
-  db_id: "sales_db"
+  db_id: "demo_db"
   engine: "sqlite"
   config:
-    path: "/path/to/sales.sqlite"
-```
-
-Semantic Service metadata should satisfy:
-
-| DataAgent | Semantic Service metadata |
-| --- | --- |
-| `db_id: sales_db` | `databaseName: "sales_db"` |
-| `engine: sqlite` | `sourceType: "sqlite"` |
-| Table `orders` | `tableNameEn: "orders"` |
-| SQLite engine | `qualifiedName` suffix `@sqlite` |
-
-The SQLite file path lives only in DataAgent YAML; Semantic Service does not store `.sqlite` paths.
-
-## 12. Use in DataAgent
-
-After deployment and metadata import, configure NL2SQL Agent or main Agent YAML:
-
-```yaml
-DATABASE:
-  db_id: "sales_db"
-  engine: "sqlite"
-  config:
-    path: "/path/to/sales.sqlite"
+    path: "/absolute/path/to/demo_retail.sqlite"
 
 METAVISOR:
   metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
   valuematch_url: "http://localhost:8000"
 ```
 
-Then follow the case tutorials:
+| DataAgent | Semantic Service metadata |
+| --- | --- |
+| `DATABASE.db_id` | `databaseName` |
+| `DATABASE.engine` | `sourceType` |
+| SQLite table names | `tableNameEn` |
+| `qualifiedName` suffix | `@sqlite` / `@mysql` / `@postgresql` |
 
-- [Build a Dedicated NL2SQL Agent](../../case/build-an-nl2sql-application.md)
-- [Build a Data Analysis Agent](../../case/build-a-dataagent-from-scratch.md)
+SQLite file paths live only in DataAgent YAML; Semantic Service does not store them.
 
-## 13. Common Issues
+## 10. Common issues
 
-### 13.1 `curl` does not return HTTP 200
+### 10.1 `types/typedefs` returns 000 or connection failed
 
-Check:
+Check service process, `SEMANTIC_PORT`, and `logs/application.log`.
 
-- Service is running.
-- Port is correct.
-- PostgreSQL is reachable.
-- Logs for database or model errors.
+### 10.2 Startup fails: cannot connect to PostgreSQL
 
-### 13.2 NL2SQL cannot find tables
+JDBC port must match `$PG_PORT` and Docker port mapping.
 
-Usually config and metadata are misaligned. Verify:
+### 10.3 Empty vector search
 
-- `DATABASE.db_id` equals metadata `databaseName`.
-- `DATABASE.engine` equals metadata `sourceType`.
-- `qualifiedName` suffix is correct, for example `@sqlite` for SQLite.
-- Table and column names match the real database.
+Often: embedding off during import, wrong model path, or model not loaded. Check `Model loaded OK` in logs.
 
-### 13.3 Generated SQL does not match business definitions
+### 10.4 `entity/bulk` duplicate key
 
-Enrich field and metric semantics:
+Test environments: `./bin/stop.sh && ./bin/start.sh -p "${SEMANTIC_PORT}" -c` then re-import.
 
-- Write clear meanings in `data_column.llmContext`.
-- Add units, aggregation rules, and filters for metric fields.
-- Add `table_join_relationship` for common joins.
+### 10.5 Java version: 503 or `UnsupportedClassVersionError`
 
-### 13.4 Vector model errors
+Requires **Java 21+**. Fix PATH, then restart.
 
-To get deployment working first, set:
+### 10.6 Vector model or glibc issues
 
-```properties
-semantic_service.vector.embedding.service.enable=false
-```
+Older Linux may hit `GLIBC_2.xx not found` or 503. Use option B (`enable=false`) if vectors are not required yet.
 
-After the service and metadata import work, configure a local model.
+## 11. Next steps
 
-## 14. Checklist
+- [Scenario data import](scenario-data-import.md): demo business DB, metadata, API verification
+- [Build a dedicated NL2SQL Agent](../../case/build-an-nl2sql-application.md)
+- [Semantic Service user guide](../../semantic_service/semantic-service-user-guide.md)
 
-- [ ] PostgreSQL container is running.
-- [ ] `semantic_layer` database is reachable.
-- [ ] Initialization SQL has been executed.
-- [ ] JDBC URL in Semantic Service config is correct.
-- [ ] `/api/metaVisor/v3/types/typedefs` returns HTTP 200.
-- [ ] At least one table and its column metadata are imported.
-- [ ] DataAgent `DATABASE.db_id` matches metadata `databaseName`.
-- [ ] DataAgent `DATABASE.engine` matches metadata `sourceType`.
-- [ ] DataAgent `METAVISOR.metavisor_url` points to Semantic Service.
+## 12. Checklist
+
+- [ ] PostgreSQL (pgvector) running; `semantic_layer` reachable
+- [ ] Java 21+ on PATH
+- [ ] JDBC config correct
+- [ ] `$BASE/types/typedefs` returns HTTP 200
+- [ ] (Full path) logs show `Model loaded OK`
+- [ ] [Scenario data import](scenario-data-import.md) done and search APIs verified
