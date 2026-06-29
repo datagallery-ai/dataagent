@@ -1,16 +1,23 @@
 # Database Installation Guide
 
-This section is organized in the order: prepare the base databases, import business data, then connect Semantic Service.
+This section is organized by goal. **Semantic Service (Semantic Layer REST service) is an optional external component** of DataAgent for NL2SQL and database semantic enhancement; running an Agent does not require this section.
+
+## Recommended reading paths
+
+| Goal | Order |
+| --- | --- |
+| Run an Agent only | [Quick Start](../../quick_start/quick_start.md) main path—skip this section |
+| NL2SQL / database semantic capabilities | [Semantic Service Deployment Guide](semantic-service-deployment.md) → [Scenario Data Import](scenario-data-import.md) → [Application cases](../../case/case.md) |
+| MySQL / PostgreSQL / Elasticsearch base stack | [Pull Docker Images](image-pull.md) → [Deploy Database Services](service-deployment.md) (extended scenarios; not required for Semantic Service) |
+
+## Document index
+
+### Semantic service (optional for NL2SQL)
+
+1. [Semantic Service Deployment Guide](semantic-service-deployment.md) — standalone package, PostgreSQL/pgvector, vector model, startup and verification
+2. [Scenario Data Import](scenario-data-import.md) — demo business DB, metadata bulk import, search API verification
+
+### Base database environment (extended)
 
 1. [Pull Docker Images](image-pull.md)
 2. [Deploy Database Services](service-deployment.md)
-3. [Import Scenario Data](scenario-data-import.md)
-4. [Semantic Service Deployment Guide](semantic-service-deployment.md)
-
-Recommended reading paths:
-
-| Goal | Reading order |
-| --- | --- |
-| Start MySQL / PostgreSQL / Elasticsearch only | Read 1 and 2. |
-| Import the retail sample data | Continue with 3 after 1 and 2. |
-| Enable NL2SQL with table/column semantics and join relationships | Continue with 4 after 1 and 2; add 3 if you want the sample business data. |

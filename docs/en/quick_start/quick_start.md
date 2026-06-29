@@ -138,3 +138,30 @@ Reference the example configs in the repository:
 ```
 dataagent/core/flex/examples/
 ```
+
+## 8. Optional: Connect Database Semantic Service {#optional-semantic-service}
+
+Semantic Service (Semantic Layer REST service) is an **optional external component** of DataAgent—not required to start an Agent. After the steps above, you can already run a Flex/ReAct Agent, use the SDK, or start an A2A server.
+
+Deploy Semantic Service and import scenario data when you need:
+
+| Scenario | Semantic Service required? |
+| --- | --- |
+| Interactive chat, general tool use | No |
+| NL2SQL: natural language to SQL | Yes |
+| Table/column semantic search, JOIN paths, SQL Few-shot | Yes |
+| Vector semantic search (table/column description recall) | Yes (vector model required) |
+
+### 8.1 Recommended reading order
+
+Follow this order for the semantic-layer trial path (about 30–60 minutes including model download):
+
+| Step | Document | What to do |
+| --- | --- | --- |
+| 1 | [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) | Download the service package, start PostgreSQL/pgvector, configure and start the REST service |
+| 2 | [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md) | Create demo business DB, import metadata, verify search APIs |
+| 3 | [Build a Dedicated NL2SQL Agent](../case/build-an-nl2sql-application.md) | Configure `DATABASE` / `METAVISOR` and run NL2SQL |
+| 4 | [Build a Data Analysis Agent](../case/build-a-dataagent-from-scratch.md) | Main Agent calls NL2SQL sub-Agent on demand |
+
+!!! note "About the demo business database"
+    `demo_retail.sqlite` in the scenario tutorial is a **sample business database created at runtime**—it is not bundled with the Semantic Layer service package. Semantic Service stores only metadata (tables, columns, relationships); real data is read via Agent `DATABASE.config.path` pointing at the SQLite file.

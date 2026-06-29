@@ -46,20 +46,19 @@ The key point of this pattern: `DATABASE` and `METAVISOR` live in the main Agent
 
 ## 3. Prerequisites
 
-Before you start, confirm the following:
+Before you start, confirm:
 
 1. Project installation is complete and you can run `uv run ...` from the repository root.
-2. Model environment variables are configured, for example `BAILIAN_BASE_URL` and `BAILIAN_API_KEY`.
-3. A business database is ready. For SQLite, use an absolute file path.
-4. MetaVisor/Semantic Service deployment and metadata import are complete.
-5. A writable workspace is available for SQL and CSV files produced by the sub-Agent.
+2. Model environment variables are configured, e.g. `BAILIAN_BASE_URL` and `BAILIAN_API_KEY`.
+3. **When the main Agent calls NL2SQL**: Semantic Service deployment and scenario data import are complete:
+   - [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
+   - [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
+4. Demo SQLite database created; use an **absolute path** in Agent config (`demo_db` / `demo_retail.sqlite`; not bundled with the Semantic Layer package).
+5. A writable workspace is available for SQL and CSV files from the sub-Agent.
 
-For MetaVisor/Semantic Service deployment and data import, see:
+If Semantic Service is not deployed, start from [Quick Start §8](../quick_start/quick_start.md#optional-semantic-service).
 
-- [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
-- [Database Service Deployment](../installation_doc/database_install/service-deployment.md)
-- [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
-- [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md)
+See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md).
 
 ## 4. Author the Main Agent Configuration
 
@@ -79,7 +78,7 @@ A main Agent that calls an NL2SQL sub-Agent has four main configuration blocks.
 | `TOOLS.local_functions` | Register `nl2sql_sub_agent_tool`. |
 | `DATABASE` / `METAVISOR` | The main Agent holds runtime database and Semantic Service settings and overlays them onto the sub-Agent. |
 
-Example configuration:
+Example configuration (same structure as repository `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml`; replace `demo_db` and paths for your scenario):
 
 ```yaml
 AGENT_CONFIG:
@@ -93,52 +92,49 @@ MODEL:
     model_type: "chat"
     provider: "bailian"
     params:
-      model: "Qwen3.6-Plus"
-      temperature: 0.0
-  qwen3_coder:
-    model_type: "chat"
-    provider: "bailian"
-    params:
-      model: "Qwen3.6-Plus"
+      model: "deepseek-v4-flash"
       temperature: 0.0
 
 SCENARIO:
   chat:
-    input: "data analysis question"
-    task: "complete data analysis and call NL2SQL sub-agent when SQL is required"
+    input: "nl2sql question"
+    task: "launch nl2sql as a sub agent and return DONE"
     instructions: |
-      完成用户的数据分析任务。
-      如果需要执行数据库查询，调用 nl2sql_sub_agent_tool。
-      调用工具时必须明确传入 query、workspace、sql_filename 和 csv_filename。
-      query 应写清楚业务目标、指标口径、过滤条件、分组粒度和输出字段。
-      回答时说明生成的 SQL 文件路径和 CSV 结果文件路径。
-    output_format: "回答用户问题，并说明 SQL/CSV 结果文件路径"
+      Complete the data analysis task; call `nl2sql_sub_agent_tool` when a SQL query is needed.
+    output_format: "DONE"
 
 TOOLS:
   local_functions:
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "nl2sql_sub_agent_tool"
-      description: "将自然语言数据查询交给 NL2SQL 子 Agent，并保存 SQL 与 CSV 结果。"
       config:
-        llm_model: qwen3_coder
+        llm_model: chat_model
+
+PRE_WORKFLOW: []
+POST_WORKFLOW: []
 
 DATABASE:
   db_id: "demo_db"
   engine: "sqlite"
   config:
-    path: "/absolute/path/to/demo_retail.sqlite"
+    path: "/absolute/path/to/data/demo_retail.sqlite"
 
 METAVISOR:
-  metavisor_url: "http://host:32000"
-  valuematch_url: "http://host:8000"
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
+
+SWARM:
+  enable: false
 ```
 
 Notes:
 
 - `TOOLS.local_functions[].function` must be `nl2sql_sub_agent_tool`.
-- `config.llm_model` must point to a section under main Agent `MODEL`, for example `qwen3_coder`.
+- `config.llm_model` must point to a section under main Agent `MODEL`; the repository example uses `chat_model`.
 - Put `DATABASE` and `METAVISOR` in the main Agent YAML; you do not need to edit the temporary sub-Agent config by hand.
-- `SCENARIO.chat.instructions` must require `workspace`, `sql_filename`, and `csv_filename`; otherwise the tool cannot save result files.
+- The tool requires `query`, `sql_filename`, and `csv_filename`; `workspace` comes from runtime `initial_state.workspace` (or `chat(workspace=...)`)—see §6.
 
 ## 5. Sub-Agent Configuration Overlay Logic
 
@@ -156,9 +152,8 @@ Tool parameters:
 | Parameter | Description |
 | --- | --- |
 | `query` | Natural language query passed to the NL2SQL sub-Agent. State the business goal, metrics, filters, grouping, and output columns as clearly as possible. |
-| `workspace` | Directory for SQL and CSV files; must be writable. |
-| `sql_filename` | Filename for generated SQL, for example `monthly_orders.sql`. |
-| `csv_filename` | Filename for the result CSV, for example `monthly_orders.csv`. |
+| `sql_filename` | Filename for generated SQL, e.g. `monthly_orders.sql` (saved under session `workspace`). |
+| `csv_filename` | Filename for the result CSV, e.g. `monthly_orders.csv` (saved under session `workspace`). |
 
 ## 6. Run the Main Agent
 
@@ -234,11 +229,11 @@ If the tool fails, check the message for:
 
 ### 9.1 Main Agent does not call the NL2SQL tool
 
-Check that `SCENARIO.chat.instructions` explicitly says to call `nl2sql_sub_agent_tool` when a database query is needed, and that all four tool parameters must be passed.
+Check that `SCENARIO.chat.instructions` tells the model to call `nl2sql_sub_agent_tool` when a database query is needed, and that `workspace` is set at runtime.
 
 ### 9.2 Tool reports missing parameters
 
-`nl2sql_sub_agent_tool` requires `query`, `workspace`, `sql_filename`, and `csv_filename`. If the model omits any of them, strengthen `SCENARIO` so filenames and the save directory are specified before the tool call.
+`nl2sql_sub_agent_tool` requires `query`, `sql_filename`, and `csv_filename`. Set session `workspace` via `initial_state.workspace` or `chat(workspace=...)` before running. Strengthen `SCENARIO` if the model omits filenames.
 
 ### 9.3 Sub-Agent database configuration is wrong
 

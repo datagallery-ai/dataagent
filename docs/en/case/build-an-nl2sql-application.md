@@ -32,10 +32,10 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
       └─ Selector：选择最终 SQL 与结果
 ```
 
-MetaVisor supplies enriched metadata: tables, columns, descriptions, join relationships, and value matching. This guide does not cover full MetaVisor deployment; for deployment and data import see:
+MetaVisor supplies enriched metadata. Deployment and import (**required for NL2SQL cases**):
 
+- [Quick Start §8: optional semantic service](../quick_start/quick_start.md#optional-semantic-service)
 - [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
-- [Database Service Deployment](../installation_doc/database_install/service-deployment.md)
 - [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
 - [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md)
 
@@ -49,14 +49,40 @@ After deployment, you need three key values:
 
 ## 3. Prerequisites
 
-Before you start, confirm the following:
+Before you start, confirm:
 
 1. Project installation is complete and you can run `uv run ...` from the repository root.
-2. Model environment variables are configured, for example `BAILIAN_BASE_URL` and `BAILIAN_API_KEY`.
-3. A business database is ready. SQLite needs a local `.sqlite` file; MySQL/PostgreSQL need reachable services.
-4. MetaVisor/Semantic Service deployment and metadata import are complete, and service URLs are reachable.
+2. Model environment variables are configured, e.g. `BAILIAN_BASE_URL` and `BAILIAN_API_KEY`.
+3. **(Required)** Semantic Service deployment and scenario data import (NL2SQL depends on the external semantic service):
+   - [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
+   - [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
+4. Demo SQLite business database ready with an **absolute path** in Agent config (logical `demo_db`; file created by the tutorial, not bundled with the service package).
+5. `METAVISOR.metavisor_url` is reachable and `DATABASE.db_id` matches metadata `databaseName`.
 
-For a quick local check, start with a SQLite file; for a fuller business data flow, follow the deployment guides for MySQL, PostgreSQL, Elasticsearch, and MetaVisor.
+If Semantic Service is not deployed yet, start from [Quick Start §8](../quick_start/quick_start.md#optional-semantic-service).
+
+Example SQLite path and Semantic Service connection (same fields as the built-in YAML; values adapted for the demo scenario):
+
+```yaml
+DATABASE:
+  db_id: "demo_db"
+  engine: "sqlite"
+  config:
+    path: "/absolute/path/to/data/demo_retail.sqlite"
+
+METAVISOR:
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
+```
+
+Sample verification questions:
+
+- City-level GMV ranking (各城市成交额排名)
+- Monthly order count (每月订单量是多少)
+
+See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md) for MetaVisor capabilities.
 
 ## 4. Author the NL2SQL Agent Configuration
 
@@ -76,7 +102,7 @@ You can edit that file or copy it as your own business config. Core configuratio
 | `DATABASE` | Database id, engine, and connection parameters. |
 | `METAVISOR` | Enriched metadata and value-matching service URLs. |
 
-Example configuration:
+Example configuration (same structure as repository `dataagent/agents/nl2sql/nl2sql_agent.yaml`; replace `demo_db` and paths for your scenario):
 
 ```yaml
 AGENT_CONFIG:
@@ -89,7 +115,7 @@ MODEL:
     model_type: "chat"
     provider: "bailian"
     params:
-      model: "Qwen3.6-Plus"
+      model: "deepseek-v4-flash"
       temperature: 0.0
 
 CORE:
@@ -118,13 +144,14 @@ CORE:
 DATABASE:
   db_id: "demo_db"
   engine: "sqlite"
-  sql_service_engine: null
   config:
-    path: "/absolute/path/to/demo_retail.sqlite"
+    path: "/absolute/path/to/data/demo_retail.sqlite"
 
 METAVISOR:
-  metavisor_url: "http://host:32000"
-  valuematch_url: "http://host:8000"
+  metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
+  valuematch_url: "http://localhost:8000"
 ```
 
 When configuring, verify:
@@ -133,6 +160,7 @@ When configuring, verify:
 - `DATABASE.engine` matches the real database, for example `sqlite`, `mysql`, or `postgres`.
 - For SQLite, prefer an absolute path in `DATABASE.config.path` so the file is found regardless of the working directory.
 - Do not put `api_key` in YAML; use `.env` instead.
+- Point `METAVISOR.metavisor_url` and `METAVISOR.valuematch_url` at your deployed Semantic Service; set `username` / `password` for your deployment.
 
 ## 5. Run the Dedicated Agent
 

@@ -1,86 +1,74 @@
 # Semantic Service 部署指南
 
-Semantic Service 是给 NL2SQL 使用的“元数据服务”。它不保存真实业务数据，而是保存数据库里有哪些表、字段是什么意思、表之间怎么关联、哪些字段可以用于指标统计等信息。
+Semantic Service（Semantic Layer REST 服务）是 DataAgent 的**外部可选组件**，为 NL2SQL 提供表、字段、JOIN 关系、SQL Few-shot 和向量语义检索等元数据能力。它不保存真实业务数据，只保存“给模型看的数据库说明书”。
 
-简单说：
+- 真实业务数据仍在 SQLite、MySQL、PostgreSQL 等业务库中。
+- Semantic Service 保存语义元数据，供 DataAgent / NL2SQL Agent 在生成 SQL 前查询。
+- 启动 Agent **不需要** Semantic Service；只有 NL2SQL 或数据库语义增强场景才需要部署。
 
-- 真实业务数据仍然在你的 SQLite、MySQL、PostgreSQL 等数据库里。
-- Semantic Service 保存“给模型看的数据库说明书”。
-- DataAgent / NL2SQL Agent 查询数据库前，会先从 Semantic Service 获取表、字段、join 关系和值匹配信息。
+若你尚未跑通 Agent 本体，请先看 [快速开始](../../quick_start/quick_start.md)。部署完成后，继续 [场景数据导入](scenario-data-import.md) 导入 demo 元数据，再进入 [NL2SQL 案例](../../case/build-an-nl2sql-application.md)。
 
-如果你只是想先理解 NL2SQL，可以先看 [构建 NL2SQL 专用 Agent](../../case/build-an-nl2sql-application.md)。如果你已经准备接入自己的数据库，再按本文部署 Semantic Service。
+> **工作目录约定**：解压 tar 包后 `cd` 进入**服务包根目录**（目录名通常与压缩包一致，下文以 `semantic-layer-<version>/` 表示）。除 Docker、模型下载外，后续命令均在此目录执行。
 
-如果你是按数据库安装指导从头开始，建议先完成：
+## 1. 部署目标
 
-1. [数据库镜像拉取](image-pull.md)：准备 Docker 镜像。
-2. [数据库服务部署](service-deployment.md)：启动 MySQL、PostgreSQL、Elasticsearch 等基础服务。
-3. [场景数据导入](scenario-data-import.md)：可选，导入示例业务数据。
+完成后将得到：
 
-本文接在这些步骤之后，解决的是“让 NL2SQL 知道表和字段是什么意思”的问题。也就是说，前几篇准备真实数据和基础服务，本文准备 Semantic Service metadata 服务。
+- 一个运行中的 Semantic Layer REST 服务
+- 一个 PostgreSQL 语义层数据库（含 pgvector 向量索引）
+- 可用的表检索、列检索、向量检索、SQL Few-shot、JOIN 关系查询接口
 
-## 1. 你最终需要得到什么
+默认端口**示例**（可通过环境变量修改）：
 
-部署完成后，你需要拿到两个服务地址，并写进 Agent YAML：
-
-```yaml
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
-  valuematch_url: "http://localhost:8000"
-```
-
-还需要确保 Agent 的数据库配置和导入到 Semantic Service 的元数据一致：
-
-```yaml
-DATABASE:
-  db_id: "sales_db"
-  engine: "sqlite"
-  config:
-    path: "/path/to/sales.sqlite"
-```
-
-三个字段最关键：
-
-| 字段 | 小白解释 |
+| 服务 | 地址（示例） |
 | --- | --- |
-| `DATABASE.db_id` | 这套数据库在 Semantic Service 中注册的名字，例如 `sales_db`。 |
-| `DATABASE.engine` | 真实数据库类型，例如 `sqlite`、`mysql`、`postgres`。 |
-| `METAVISOR.metavisor_url` | Semantic Service 地址，NL2SQL 会通过它读取表和字段说明。 |
+| Semantic Layer | `http://localhost:${SEMANTIC_PORT}` |
+| REST v3 Base URL | `$BASE`（见下方） |
+| PostgreSQL | `localhost:${PG_PORT}` |
 
-`db_id` 和 `engine` 必须和你导入 Semantic Service 的元数据一致，否则 NL2SQL 会查不到对应表字段。
+在后续操作前先 export（**示例取值**：`SEMANTIC_PORT=32000`，`PG_PORT=54321`）：
 
-## 2. 先理解整体流程
-
-整个接入过程可以拆成 5 步：
-
-```text
-1. 准备 PostgreSQL
-   用来存放 Semantic Service 的元数据
-
-2. 启动 Semantic Service
-   提供 HTTP 接口，供 DataAgent 查询元数据
-
-3. 验证服务可访问
-   curl 健康检查返回 HTTP 200
-
-4. 导入业务库元数据
-   告诉 Semantic Service：有哪些表、字段、关系
-
-5. 修改 Agent YAML
-   配置 DATABASE 和 METAVISOR，然后运行 NL2SQL
+```bash
+export SEMANTIC_PORT="${SEMANTIC_PORT:-32000}"
+export PG_PORT="${PG_PORT:-54321}"
+export BASE="http://localhost:${SEMANTIC_PORT}/api/metaVisor/v3"
 ```
 
-本文会按这个顺序展开。
+> `.properties` 配置文件**不支持** shell 变量，其中的 JDBC 端口须写**与 `$PG_PORT` 相同的数字**（示例即 `54321`）。
 
-## 3. 准备环境
+### 1.1 两条试用路径
 
-你需要准备：
-
-| 工具 | 用途 | 新手建议 |
+| 路径 | 适用场景 | 关键步骤 |
 | --- | --- | --- |
-| Docker | 快速启动 PostgreSQL | 推荐使用 Docker，少踩安装坑。 |
-| Java 8+ | 运行 Semantic Service | 先用 `java -version` 检查。 |
-| Semantic Service 发行包 | 服务本体 | `semantic-layer-0.1.0.tar.gz`（见第 6 节下载）。 |
-| 一个业务数据库 | NL2SQL 最终查询的数据源 | 新手建议先用 SQLite 文件。 |
+| **完整试用（推荐）** | 体验向量搜索、SQL Few-shot 等全部能力 | 准备 PG → 下载模型 → 方案 A 配置 → 启动 → [场景数据导入](scenario-data-import.md) |
+| **轻量试用** | 仅验证服务启动、元数据 CRUD、部分文本搜索 | 准备 PG → 跳过模型 → 方案 B 配置 → 启动 → [场景数据导入](scenario-data-import.md) |
+
+### 1.2 从零到服务就绪的推荐顺序
+
+| 步骤 | 章节 | 做什么 | 完成标志 |
+| --- | --- | --- | --- |
+| 1 | §2 前置条件 | 检查 Java 21+、`curl` | `java -version` 正常 |
+| 2 | §3 下载并解压服务包 | 下载并解压服务包 | 存在 `bin/start.sh` |
+| 3 | §4.1 Docker 启动 PG | Docker 启动 PostgreSQL | `docker ps` 可见容器 |
+| 4 | §5 准备向量模型 | 下载向量模型（完整路径） | `.pt` 与 `tokenizer.json` 存在 |
+| 5 | §6 配置服务 | 编辑 `conf/*.properties` | JDBC 与向量路径正确 |
+| 6 | §7 启动服务 | `./bin/start.sh -p $SEMANTIC_PORT` | REST 返回 200 |
+| 7 | §8 验证服务 | 检查 REST 接口 | `types/typedefs` 返回 200 |
+
+导入 demo 业务库与元数据见 [场景数据导入](scenario-data-import.md)。
+
+## 2. 前置条件
+
+| 依赖 | 要求 | 说明 |
+| --- | --- | --- |
+| Linux / macOS | 推荐 Linux | 示例命令以 Linux 为主 |
+| Java | **JDK 21+** | 服务包运行需要 Java 21 |
+| PostgreSQL | 13+ | 需支持 `uuid-ossp`、`vector`、`pg_trgm` |
+| pgvector | 0.5+ | 用于语义向量检索 |
+| curl | 任意较新版本 | 调用 REST API |
+| wget | 任意较新版本 | 下载服务包与模型（无 wget 时可用 curl） |
+| Docker | **推荐** | 一条命令拉起 PostgreSQL 16 + pgvector |
+| 磁盘空间 | ≥ 2 GB 可用 | 服务包 + 模型（~228 MB）+ PostgreSQL 数据 |
 
 检查 Java：
 
@@ -88,110 +76,188 @@ DATABASE:
 java -version
 ```
 
-如果没有 Java，需要先安装 Java 8 或更高版本。
+期望输出含 **21** 或更高版本。
 
-## 4. 启动 PostgreSQL
-
-Semantic Service 需要数据库保存元数据和向量索引。默认部署推荐直接用带 pgvector 的 PostgreSQL 镜像；在企业环境中，也可以对接已有的 GaussVector 向量数据库作为语义检索底座：
+`bin/start.sh` 使用当前 shell **PATH 中的 `java`**。若默认 Java 不是 21，启动前将其 `bin` 目录置于 PATH 最前：
 
 ```bash
-docker run -d \
-  --name semantic-service-pg \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=semantic_layer \
-  -p 54321:5432 \
-  pgvector/pgvector:pg16
+export PATH="/path/to/jdk-21/bin:$PATH"
+java -version
 ```
 
-这条命令会启动一个 PostgreSQL：
+## 3. 下载并解压服务包
 
-| 配置 | 值 |
-| --- | --- |
-| 数据库名 | `semantic_layer` |
-| 用户名 | `postgres` |
-| 密码 | `postgres` |
-| 宿主机端口 | `54321` |
-
-验证能否连接：
-
-```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c "SELECT version();"
-```
-
-如果能看到 PostgreSQL 版本信息，说明数据库已启动。
-
-### 4.1 启用必要扩展
-
-继续执行：
-
-```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c 'CREATE EXTENSION IF NOT EXISTS vector;'
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
-```
-
-这些扩展分别用于 UUID、向量检索和文本模糊检索。新手不需要理解内部细节，只要确认命令执行成功即可。如果使用 GaussVector，请确认目标库已经启用对应的向量类型、距离算子和索引能力，并保证连接信息写入 Semantic Service 配置。
-
-## 5. 初始化 Semantic Service 表结构
-
-Semantic Service 发行包通常会提供初始化 SQL，名字一般类似：
+**服务包下载地址**（版本以实际分发链接为准）：
 
 ```text
-create_semantic_layer.sql
+https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz
 ```
 
-请先在发行包中找到这个 SQL 文件，然后执行：
+可选：并行预下载向量模型（完整路径，约 228 MB）与 PostgreSQL 镜像，节省等待时间：
 
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer \
-  -f /path/to/create_semantic_layer.sql
+export DOWNLOAD_DIR="${DOWNLOAD_DIR:-./downloads}"
+mkdir -p "$DOWNLOAD_DIR" && cd "$DOWNLOAD_DIR"
+
+wget -c -O semantic-layer.tar.gz \
+  'https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz'
+
+wget -c -O bge-base-zh-v1.5.tar.gz \
+  https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
+
+docker pull pgvector/pgvector:pg16
 ```
 
-把 `/path/to/create_semantic_layer.sql` 替换成你本机真实路径。
-
-执行后检查表是否创建成功：
+下载并解压服务包：
 
 ```bash
-PGPASSWORD=postgres psql -h localhost -p 54321 -U postgres -d semantic_layer -c "\dt"
+export SERVICE_PKG_URL='https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz'
+
+wget -O semantic-layer.tar.gz "$SERVICE_PKG_URL"
+tar xzf semantic-layer.tar.gz
+cd semantic-layer-*
 ```
 
-如果能看到 `data_table`、`data_column`、`semantic_term`、`sql_process` 等表，说明初始化成功。
+若无 `wget`，将 `wget -c -O file URL` 替换为 `curl -fsSL -C - -o file URL`。
 
-!!! warning
-    有些初始化脚本会删库重建。生产环境执行前务必先阅读 SQL 内容，确认不会误删已有数据。
-
-## 6. 解压并配置 Semantic Service
-
-下载并解压 `semantic-layer-0.1.0.tar.gz`：
-
-```bash
-wget https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz
-mkdir -p ~/semantic-service
-tar xzf semantic-layer-0.1.0.tar.gz -C ~/semantic-service
-cd ~/semantic-service/semantic-layer-0.1.0
-```
-
-常见目录结构如下：
+解压后目录应类似：
 
 ```text
-semantic-layer-0.1.0/
+semantic-layer-<version>/
 ├── bin/
 │   ├── start.sh
-│   └── stop.sh
+│   ├── stop.sh
+│   └── create_semantic_layer.sql
 ├── conf/
-│   └── semantic-service-application.properties
+│   ├── semantic-service-application.properties
+│   └── ...
 ├── lib/
 └── webapp/
 ```
 
-编辑配置文件：
+## 4. 准备 PostgreSQL
 
-```text
-conf/semantic-service-application.properties
+Semantic Layer 的语义层数据存放在 **PostgreSQL** 中，且依赖 **pgvector** 扩展做向量检索。
+
+**推荐做法**：若机器上已安装 Docker，直接拉取 `pgvector/pgvector` 镜像即可，**无需单独安装 PostgreSQL 和 pgvector**。
+
+### 4.1 推荐：Docker 一键启动（含 pgvector）
+
+**前置**：已安装 Docker，且当前用户有执行 `docker` 的权限。端口使用 §1 中的 `$PG_PORT`（示例 `54321`）。
+
+```bash
+docker run -d --name semantic-layer-pg \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=semantic_layer \
+  -p "${PG_PORT}:5432" \
+  --restart unless-stopped \
+  pgvector/pgvector:pg16
 ```
 
-先配置数据库连接：
+| 项 | 值 | 含义 |
+| --- | --- | --- |
+| 镜像 | `pgvector/pgvector:pg16` | PostgreSQL 16 + pgvector |
+| 容器名 | `semantic-layer-pg` | 便于 stop/start/logs |
+| 宿主机端口 | `$PG_PORT` | 映射到容器内 `5432` |
+| 库名 | `semantic_layer` | 与服务 JDBC 配置一致 |
+
+验证容器：
+
+```bash
+docker ps | grep semantic-layer-pg
+```
+
+验证 pgvector 扩展（可选）：
+
+```bash
+docker exec -it semantic-layer-pg psql -U postgres -d semantic_layer -c \
+  "SELECT extname, extversion FROM pg_extension WHERE extname IN ('vector','uuid-ossp','pg_trgm');"
+```
+
+首次部署时，**不必手动执行** `CREATE EXTENSION`：服务包内的 `bin/create_semantic_layer.sql` 会在 `start.sh` 初始化库时一并创建扩展和表。
+
+常用运维：
+
+```bash
+docker logs -f semantic-layer-pg
+docker stop semantic-layer-pg && docker start semantic-layer-pg
+```
+
+如需持久化数据，可增加 volume：
+
+```bash
+docker run -d --name semantic-layer-pg \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=semantic_layer \
+  -p "${PG_PORT}:5432" \
+  -v semantic-layer-pg-data:/var/lib/postgresql/data \
+  --restart unless-stopped \
+  pgvector/pgvector:pg16
+```
+
+### 4.2 备选：使用已有 PostgreSQL 实例
+
+若已有 PostgreSQL（13+），请确认网络可达、账号具备建库建表权限，并在目标库中执行：
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+将 `conf/semantic-service-application.properties` 中的 JDBC URL 改为实际地址。
+
+### 4.3 不推荐：从零在本机安装 PostgreSQL
+
+快速体验场景 **不建议** 走 apt/yum 安装 PostgreSQL 再单独装 pgvector 的长路径。若既无 Docker、又无现成 PG，优先申请可跑 Docker 的环境。
+
+## 5. 准备向量模型（可选）
+
+完整语义检索（向量搜索、SQL Few-shot、导入时自动写入向量列）需要本地 embedding 模型 **`BAAI/bge-base-zh-v1.5`**。若仅需元数据 CRUD 和部分文本搜索，**可跳过本节**，直接在第 6 节关闭向量开关。
+
+**顺序**：启用向量时，须**先**完成本节下载与校验，**再**在第 6 节填写 `model.path` 并启动服务。
+
+### 5.1 下载与解压
+
+官方模型包约 **228 MB**：
+
+```text
+https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
+```
+
+```bash
+export MODEL_ROOT=/opt/models
+mkdir -p "$MODEL_ROOT" && cd "$MODEL_ROOT"
+
+wget -O bge-base-zh-v1.5.tar.gz \
+  https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
+tar xzf bge-base-zh-v1.5.tar.gz
+```
+
+解压后应包含 `bge-base-zh-v1.5/bge-base-zh-v1.5.pt` 与 `tokenizer.json`。
+
+### 5.2 校验
+
+```bash
+ls -lh "$MODEL_ROOT/bge-base-zh-v1.5/bge-base-zh-v1.5.pt"
+ls -lh "$MODEL_ROOT/bge-base-zh-v1.5/tokenizer.json"
+```
+
+### 5.3 复制 tokenizer 到 conf（推荐）
+
+内网无法访问 HuggingFace 时，在**服务包根目录**执行：
+
+```bash
+cp "$MODEL_ROOT/bge-base-zh-v1.5/tokenizer.json" conf/tokenizer.json
+```
+
+## 6. 配置服务
+
+编辑 `conf/semantic-service-application.properties`。
+
+### 6.1 数据库连接
 
 ```properties
 semantic_service.db.url=jdbc:postgresql://localhost:54321/semantic_layer
@@ -199,38 +265,58 @@ semantic_service.db.user=postgres
 semantic_service.db.password=postgres
 ```
 
-如果 PostgreSQL 不在本机，把 `localhost:54321` 改成实际地址。
+JDBC 端口须与 `$PG_PORT` 一致。可选：用 shell 写入：
 
-## 7. 处理向量模型
-
-Semantic Service 可以用 embedding 模型做语义搜索，生成的向量可写入 pgvector 或 GaussVector 等向量存储，用于表描述、字段描述和语义关键词召回。第一次部署时，如果你还没有准备模型，可以先关闭向量能力，先把服务跑起来：
-
-```properties
-semantic_service.vector.embedding.service.enable=false
+```bash
+sed -i "s|^semantic_service.db.url=.*|semantic_service.db.url=jdbc:postgresql://localhost:${PG_PORT}/semantic_layer|" \
+  conf/semantic-service-application.properties
 ```
 
-这样做的好处是部署步骤更简单，适合先验证服务和元数据导入流程。
+### 6.2 向量嵌入
 
-如果你已经准备好本地模型，再配置模型路径：
+**方案 A：完整向量能力**（已完成第 5 节时选用）
 
 ```properties
+semantic_service.vector.embedding.service.enable=true
 semantic_service.vector.embedding.model.name=BAAI/bge-base-zh-v1.5
-semantic_service.vector.embedding.model.path=/opt/models/BAAI/bge-base-zh-v1.5
+semantic_service.vector.embedding.model.path=/opt/models/bge-base-zh-v1.5
 semantic_service.vector.embedding.dimensions=768
 semantic_service.vector.embedding.cache.size=1000
 ```
 
-注意：模型输出维度、配置里的 `dimensions`、数据库里的 `vector(N)` 或 GaussVector 向量字段维度必须一致。
+**方案 B：轻量模式**（跳过第 5 节时选用）
 
-## 8. 启动 Semantic Service
-
-在解压后的服务目录中执行：
-
-```bash
-./bin/start.sh -p 32000
+```properties
+semantic_service.vector.embedding.service.enable=false
+semantic_service.vector.embedding.model.path=
 ```
 
-这里用 `32000` 作为示例端口。你也可以换成其他空闲端口。
+> 导入元数据时若向量开关为关闭，向量列不会写入。后续再打开向量后，需对实体执行更新或重新导入（见 [场景数据导入](scenario-data-import.md)）。
+
+## 7. 启动服务
+
+以下命令均在**服务包根目录**执行。
+
+启动前确认 Java 21 已在 PATH 中：
+
+```bash
+java -version
+./bin/start.sh -p "${SEMANTIC_PORT}"
+```
+
+说明：
+
+- 脚本会读取 `conf/semantic-service-application.properties`，并在 PostgreSQL 中自动初始化 `semantic_layer` 库（执行 `bin/create_semantic_layer.sql`）。
+- 若本机无 `psql` 客户端但 Docker PG 容器在运行，脚本会通过 `docker exec` 完成建库。
+- 首次启动通常需 **1–2 分钟**；启用向量模型可能再额外 **1–3 分钟**。
+
+启动成功时终端应出现 `Semantic Service is ready!`。
+
+清库重建（测试环境）：
+
+```bash
+./bin/start.sh -p "${SEMANTIC_PORT}" -c
+```
 
 停止服务：
 
@@ -238,212 +324,92 @@ semantic_service.vector.embedding.cache.size=1000
 ./bin/stop.sh
 ```
 
-如果启动失败，先检查端口是否被占用：
+查看日志：
 
 ```bash
-lsof -nP -iTCP:32000 -sTCP:LISTEN
+tail -f logs/application.log
 ```
 
-## 9. 验证服务是否启动成功
+若启用了向量模型，日志中应看到 `Model loaded OK: BAAI/bge-base-zh-v1.5`。
 
-执行：
+## 8. 验证服务可用
 
 ```bash
-curl -sS -o /dev/null -w "HTTP %{http_code}\n" \
-  http://localhost:32000/api/metaVisor/v3/types/typedefs
+curl -sS -o /dev/null -w "%{http_code}\n" "$BASE/types/typedefs"
 ```
 
-如果返回：
+返回 `200` 表示 REST 服务可访问。
 
-```text
-HTTP 200
-```
-
-说明 Semantic Service 已经能访问。
-
-如果不是 200，查看日志：
+完整向量路径下，确认模型已加载：
 
 ```bash
-tail -100 logs/jetty-console.log
-tail -100 logs/application.log
+grep -E 'Model loaded OK|Local embedding model initialized|Failed' logs/application.log | tail -5
 ```
 
-常见原因包括：
+## 9. 与 DataAgent 配置对齐
 
-- PostgreSQL 地址、用户名或密码配置错。
-- 初始化 SQL 没执行，表不存在。
-- 端口被占用。
-- 向量模型路径配置错。
-
-## 10. 导入业务库元数据
-
-服务启动后，还需要导入“业务数据库说明书”。否则 NL2SQL 虽然能访问 Semantic Service，但查不到你的表和字段。
-
-Semantic Service 存的是元数据，不存真实业务数据。例如你的业务库里有一张订单表 `orders`，你需要告诉 Semantic Service：
-
-- 这张表属于哪个数据库：`sales_db`
-- 表名是什么：`orders`
-- 字段有哪些：`order_id`、`order_amount`、`order_time`
-- 字段分别是什么意思
-- 表之间怎么 join
-
-### 10.1 最小表元数据示例
-
-下面是一张表的最小示例：
-
-```json
-{
-  "entities": [
-    {
-      "typeName": "data_table",
-      "attributes": {
-        "qualifiedName": "sales_db.orders@sqlite",
-        "databaseName": "sales_db",
-        "schemaName": "main",
-        "tableName": "orders",
-        "tableNameEn": "orders",
-        "sourceType": "sqlite",
-        "llmContext": "订单表，记录订单金额、下单时间和客户信息",
-        "status": "Active"
-      }
-    }
-  ],
-  "relationships": []
-}
-```
-
-保存为 `metadata.json` 后导入：
-
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d @metadata.json \
-  "http://localhost:32000/api/metaVisor/v3/entity/bulk"
-```
-
-### 10.2 字段和关系也要导入
-
-只导入表还不够。真正让 NL2SQL 好用的是字段描述和表关系。
-
-字段实体通常是 `data_column`，表字段关系通常是 `table_has_column`。表之间的 join 关系通常是 `table_join_relationship`。
-
-命名建议：
-
-| 对象 | `qualifiedName` 示例 |
-| --- | --- |
-| 表 | `sales_db.orders@sqlite` |
-| 字段 | `sales_db.orders.order_amount@sqlite` |
-
-字段描述应尽量写清楚业务含义。例如：
-
-```json
-{
-  "typeName": "data_column",
-  "attributes": {
-    "qualifiedName": "sales_db.orders.order_amount@sqlite",
-    "databaseName": "sales_db",
-    "tableNameEn": "orders",
-    "columnNameEn": "order_amount",
-    "sourceType": "sqlite",
-    "value_type": "number",
-    "llmContext": "订单实付金额，单位为元，可用于销售额、GMV 等统计",
-    "status": "Active"
-  }
-}
-```
-
-## 11. 和 DataAgent 配置对齐
-
-导入元数据时，最容易出错的是名字对不上。
-
-如果 DataAgent YAML 写的是：
+完成 [场景数据导入](scenario-data-import.md) 后，在 Agent YAML 中配置：
 
 ```yaml
 DATABASE:
-  db_id: "sales_db"
+  db_id: "demo_db"
   engine: "sqlite"
   config:
-    path: "/path/to/sales.sqlite"
-```
-
-那么 Semantic Service 中的元数据应满足：
-
-| DataAgent | Semantic Service 元数据 |
-| --- | --- |
-| `db_id: sales_db` | `databaseName: "sales_db"` |
-| `engine: sqlite` | `sourceType: "sqlite"` |
-| 表名 `orders` | `tableNameEn: "orders"` |
-| SQLite 引擎 | `qualifiedName` 后缀使用 `@sqlite` |
-
-SQLite 文件路径只写在 DataAgent YAML 中，Semantic Service 不保存 `.sqlite` 文件路径。
-
-## 12. 在 DataAgent 中使用
-
-完成部署和元数据导入后，在 NL2SQL Agent 或主 Agent YAML 中配置：
-
-```yaml
-DATABASE:
-  db_id: "sales_db"
-  engine: "sqlite"
-  config:
-    path: "/path/to/sales.sqlite"
+    path: "/absolute/path/to/demo_retail.sqlite"
 
 METAVISOR:
   metavisor_url: "http://localhost:32000"
+  username: "example"
+  password: "123456"
   valuematch_url: "http://localhost:8000"
 ```
 
-然后按 case 教程运行：
+| DataAgent | Semantic Service 元数据 |
+| --- | --- |
+| `DATABASE.db_id` | `databaseName` |
+| `DATABASE.engine` | `sourceType` |
+| SQLite 表名 | `tableNameEn` |
+| `qualifiedName` 后缀 | `@sqlite` / `@mysql` / `@postgresql` |
 
+SQLite 文件路径只写在 DataAgent YAML 中，Semantic Service 不保存 `.sqlite` 路径。
+
+## 10. 常见问题
+
+### 10.1 `types/typedefs` 返回 000 或连接失败
+
+检查服务是否启动、`SEMANTIC_PORT` 是否正确，查看 `logs/application.log`。
+
+### 10.2 启动失败，无法连接 PostgreSQL
+
+确认 JDBC URL 端口与 `$PG_PORT`、Docker 映射端口一致。
+
+### 10.3 向量搜索为空
+
+常见原因：导入时 embedding 未开启、模型路径错误、模型未加载成功。检查日志中的 `Model loaded OK`。
+
+### 10.4 `entity/bulk` 重复导入报 duplicate key
+
+测试环境可 `./bin/stop.sh && ./bin/start.sh -p "${SEMANTIC_PORT}" -c` 清库后重试。
+
+### 10.5 Java 版本导致 503 或 `UnsupportedClassVersionError`
+
+服务需 **Java 21+**。调整 PATH 后 `./bin/stop.sh && ./bin/start.sh -p "${SEMANTIC_PORT}"`。
+
+### 10.6 向量模型或 glibc 相关问题
+
+较旧 Linux 可能出现 `GLIBC_2.xx not found` 或 503。暂不需要向量时使用第 6 节方案 B（`enable=false`）。
+
+## 11. 下一步
+
+- [场景数据导入](scenario-data-import.md)：创建 demo 业务库、导入元数据、验证检索 API
 - [构建 NL2SQL 专用 Agent](../../case/build-an-nl2sql-application.md)
-- [构建数据分析 Agent](../../case/build-a-dataagent-from-scratch.md)
+- [Semantic Service 使用指南](../../semantic_service/semantic-service-user-guide.md)
 
-## 13. 常见问题
+## 12. 检查清单
 
-### 13.1 `curl` 不是 HTTP 200
-
-优先检查：
-
-- 服务是否启动。
-- 端口是否写错。
-- PostgreSQL 是否能连接。
-- 日志里是否有数据库或模型错误。
-
-### 13.2 NL2SQL 查不到表
-
-通常是配置和元数据没对齐。检查：
-
-- `DATABASE.db_id` 是否等于元数据中的 `databaseName`。
-- `DATABASE.engine` 是否等于元数据中的 `sourceType`。
-- `qualifiedName` 后缀是否正确，例如 SQLite 用 `@sqlite`。
-- 表名和字段名是否和真实数据库一致。
-
-### 13.3 SQL 生成结果不符合业务口径
-
-优先补充字段和指标语义：
-
-- 给 `data_column.llmContext` 写清楚字段含义。
-- 给指标字段补充单位、统计口径和过滤条件。
-- 给常用 join 补充 `table_join_relationship`。
-
-### 13.4 向量模型报错
-
-如果只是先跑通部署，可以先设置：
-
-```properties
-semantic_service.vector.embedding.service.enable=false
-```
-
-等服务和元数据导入流程跑通后，再回头配置本地模型。
-
-## 14. 新手检查清单
-
-- [ ] PostgreSQL 容器已启动。
-- [ ] `semantic_layer` 数据库可连接。
-- [ ] 初始化 SQL 已执行。
-- [ ] Semantic Service 配置中的 JDBC 地址正确。
-- [ ] `/api/metaVisor/v3/types/typedefs` 返回 HTTP 200。
-- [ ] 已导入至少一张表和它的字段元数据。
-- [ ] DataAgent 的 `DATABASE.db_id` 和元数据 `databaseName` 一致。
-- [ ] DataAgent 的 `DATABASE.engine` 和元数据 `sourceType` 一致。
-- [ ] DataAgent 的 `METAVISOR.metavisor_url` 指向 Semantic Service 地址。
+- [ ] PostgreSQL（pgvector）已启动，`semantic_layer` 可连接
+- [ ] Java 21+ 已在 PATH 中
+- [ ] Semantic Service JDBC 配置正确
+- [ ] `$BASE/types/typedefs` 返回 HTTP 200
+- [ ] （完整路径）日志含 `Model loaded OK`
+- [ ] 已完成 [场景数据导入](scenario-data-import.md) 并验证检索接口
