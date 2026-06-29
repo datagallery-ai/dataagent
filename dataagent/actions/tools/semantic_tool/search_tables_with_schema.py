@@ -142,6 +142,47 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
     return _fmt(detail, msg, {"per_db": per_db, "tables_with_columns": tables_with_columns})
 
 
+def search_tables_with_semantic_retrieve(query: str, *, _tool_context: ToolExecutionContext):
+    """基于给定的完整的用户query查找相关的表。
+
+    函数会理解用户query，使用多种检索方法检索与query相关的表，再将每种检索方法的查表结果进行合并。
+
+    Args:
+        query（str）: 原始的完整用户query。
+    
+    Returns:
+        dict with ``data``，返回与用户query相关的表及其描述。
+    """
+    client = SemanticServiceClient.from_config(_tool_context.config_manager)
+    result = client.semantic_search_tables(query)
+
+    recalled_tables = []
+    res = f"匹配原始query的表如下：（query为 {query}）"
+    if "dataAccessPlan" in result:
+        tables = result["dataAccessPlan"].get("tables", [])
+        for table in tables:
+            res += "\n"
+            res += f"{table.get('db', '')}.{table.get('table', '')} 描述：{table.get('description', '')}"
+            recalled_tables.append(f"{table.get('db', '')}.{table.get('table', '')}")
+
+    # 保存召回的 tables 到 .metric_dir 目录
+    tables_columns = {table: [] for table in recalled_tables}
+    tables_with_columns = _attach_table_descriptions(tables_columns, client)
+    output_path, current_time = _get_workspace_path()
+    _save_tables_with_columns_to_json(tables_with_columns, "output_search_tables_with_type", output_path, current_time)
+
+    # 保存 summary 到 .metric_dir 目录
+    out_path, current_time = _get_workspace_path()
+    with open(out_path / f"output_search_tables_with_retrieve_summary_{current_time}.txt", "w", encoding="utf-8") as f:
+        f.write(res)
+
+    return {
+        "original_msg": res,
+        "frontend_msg": res,
+        "data": res,
+    }
+
+
 def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionContext):
     """基于给定的一个或多个关键字查找相关的表。
 

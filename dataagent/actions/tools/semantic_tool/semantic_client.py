@@ -105,6 +105,11 @@ class SemanticServiceClient:
         """Get column metadata for a table."""
         return self.get("advanced-search/table-columns-info", params={"tableName": table_name, "limit": limit})
 
+    def semantic_search_tables(self, query: str, top_k: int) -> dict:
+        """Search tables by query."""
+        payload = {"query": query}
+        return self.post("semantic/retrieve", json=payload, headers={"Content-Type": "application/json"})
+
     def semantic_search_columns(self, database_name: str, keywords: list[str], top_k: int) -> list:
         """Search columns by semantic keywords."""
         return self.get(
