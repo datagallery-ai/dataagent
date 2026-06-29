@@ -135,6 +135,7 @@ def test_sub_agent_tool_uses_contextvar_runtime_context(monkeypatch, tmp_path):
     ):
         captured["cmd"] = cmd
         captured["timeout"] = timeout
+        captured["initial_state"] = json.loads(Path(cmd[cmd.index("--initial-state-file") + 1]).read_text())
         sub_id = int(cmd[cmd.index("--sub-id") + 1])
         return {
             "stdout": json.dumps(
@@ -163,7 +164,12 @@ def test_sub_agent_tool_uses_contextvar_runtime_context(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr("dataagent.actions.tools.local_tool.tools._run_subprocess_async", _fake_run_subprocess_async)
-    token = set_subagent_runtime_context(user_id="main-user", session_id="main-session", sub_id=7)
+    token = set_subagent_runtime_context(
+        user_id="main-user",
+        session_id="main-session",
+        sub_id=7,
+        parent_user_query="主 Agent 原始问题",
+    )
 
     try:
         out = asyncio.run(
@@ -185,6 +191,7 @@ def test_sub_agent_tool_uses_contextvar_runtime_context(monkeypatch, tmp_path):
     assert "--session-id" in captured["cmd"]
     assert "main-session" in captured["cmd"]
     assert "--sub-id" in captured["cmd"]
+    assert captured.get("initial_state", {}).get("parent_user_query") == "主 Agent 原始问题"
 
 
 def test_sub_agent_tool_fallback_default_ids_when_no_runtime_context(monkeypatch, tmp_path):

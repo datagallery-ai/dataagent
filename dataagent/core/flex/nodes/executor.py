@@ -846,6 +846,7 @@ class Executor(BaseNode):
             user_id=user_id,
             session_id=session_id,
             sub_id=sub_id,
+            parent_user_query=getattr(runtime, "parent_user_query", None) or getattr(runtime, "user_query", None),
             progress_callback=progress_cb,
             tool_call_id=tool_call_id,
             agent_config=agent_cfg,

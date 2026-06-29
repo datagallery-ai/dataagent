@@ -91,6 +91,7 @@ def set_subagent_runtime_context(
     user_id: str | None,
     session_id: str | None,
     sub_id: int | None,
+    parent_user_query: str | None = None,
     progress_callback: Any | None = None,  # Callable[[str, str], None]
     tool_call_id: str | None = None,
     agent_config: dict[str, Any] | None = None,
@@ -101,6 +102,7 @@ def set_subagent_runtime_context(
             "user_id": None if user_id is None else str(user_id).strip(),
             "session_id": None if session_id is None else str(session_id).strip(),
             "sub_id": sub_id,
+            "parent_user_query": None if parent_user_query is None else str(parent_user_query),
             "progress_callback": progress_callback,
             "tool_call_id": tool_call_id,
             "agent_config": dict(agent_config) if isinstance(agent_config, dict) else {},
@@ -1325,6 +1327,7 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
     swarm_on: bool,
     reuse_worker_state: bool,
     next_run_id: int,
+    parent_user_query: str | None,
     timeout: int,
     progress_callback: Any,
     tool_call_id: str | None,
@@ -1340,6 +1343,7 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
             swarm_on=swarm_on,
             reuse_worker_state=reuse_worker_state,
             next_run_id=next_run_id,
+            parent_user_query=parent_user_query,
         )
         env = dict(os.environ)
         sub_agent_session_id = f"subagent_{resolved_session_id}_{worker_sub_id}"
@@ -1542,6 +1546,7 @@ async def sub_agent_tool(
             swarm_on=swarm_on,
             reuse_worker_state=reuse_worker_state,
             next_run_id=next_run_id,
+            parent_user_query=subagent_context.get("parent_user_query"),
             timeout=timeout,
             progress_callback=subagent_context.get("progress_callback"),
             tool_call_id=subagent_context.get("tool_call_id"),
@@ -1611,6 +1616,7 @@ def _prepare_worker_initial_state_file(
     swarm_on: bool,
     reuse_worker_state: bool,
     next_run_id: int,
+    parent_user_query: str | None = None,
 ) -> Path:
     """Create a workspace-visible initial-state file readable by the child process.
 
@@ -1638,6 +1644,7 @@ def _prepare_worker_initial_state_file(
         "session_id": worker_sess,
         "run_id": int(next_run_id),
         "sub_id": int(sub_id),
+        "parent_user_query": str(parent_user_query or ""),
     }
     workspace_root = get_current_sandbox().workspace_root
     if workspace_root is not None:
