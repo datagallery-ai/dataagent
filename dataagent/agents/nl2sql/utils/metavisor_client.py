@@ -25,7 +25,7 @@ _Params = dict[str, Any] | list[tuple[str, Any]]
 
 class MetaVisorClient:
     def __init__(self, metavisor_url: str):
-        self.base_url = f"{metavisor_url}/api/metaVisor/v3/advanced-search/"
+        self.base_url = f"{metavisor_url}/api/semantic/v1/advanced-search/"
         self.s = requests.Session()
         self.headers = {"Accept": "application/json"}
 
