@@ -37,7 +37,7 @@ DATABASE:
   config:
     path: ""  # replace with actual superhero.sqlite path
 METAVISOR:
-  metavisor_url: "http://8.92.9.151:41000"
+  metavisor_url: "http://8.92.9.219:40399"
   username: "example"             # 示例值，实际部署请覆盖
   password: "123456"              # 示例值，实际部署请覆盖
   valuematch_url: "http://8.92.9.151:8000"
