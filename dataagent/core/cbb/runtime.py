@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from dataagent.actions.tools.local_tool.sandbox import Sandbox
 from dataagent.core.cbb.agent_env import Env
@@ -99,6 +99,8 @@ class Runtime:
         self.session_id: str = "default_session"
         self.run_id: int = 0
         self.sub_id: int = 0
+        self.user_query: Optional[str] = None  # noqa: UP045
+        self.parent_user_query: Optional[str] = None  # noqa: UP045
 
     @property
     def stream(self) -> StreamCursor:
@@ -233,6 +235,15 @@ class Runtime:
         self.session_id = sid or "default_session"
         self.run_id = int(state.get("run_id", self.run_id) or 0)
         self.sub_id = int(state.get("sub_id", self.sub_id) or 0)
+        user_query = state.get("user_query")
+        if user_query is not None:
+            self.user_query = str(user_query)
+
+        parent_user_query = state.get("parent_user_query")
+        if parent_user_query is not None:
+            self.parent_user_query = str(parent_user_query)
+        elif self.sub_id == 0 and self.user_query is not None:
+            self.parent_user_query = self.user_query
 
     def llm(self, name: str) -> Any:
         """按 ``name`` 取 ``env.llm_configs[name]``，懒加载并缓存 ``LangChainChatModelAdapter``。
