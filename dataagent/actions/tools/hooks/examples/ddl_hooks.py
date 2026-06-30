@@ -143,8 +143,8 @@ def _validate_table_ddl(sql_text: str) -> list[str]:
     """Validate table name and table-level COMMENT rules."""
     reasons: list[str] = []
 
-    # 表名规则：只能包含小写字母、数字或下划线
-    table_name_valid_re = re.compile(r"^[a-z0-9_]+$")
+    # 表名规则：只能包含小写字母、数字或下划线，且必须以ods/dwd/dws/dim/ads开头
+    table_name_valid_re = re.compile(r"^(ods|dwd|dws|dim|ads)[a-z0-9_]+$")
 
     # 表级 COMMENT 规则：表级 COMMENT 当前明确拒绝 * 和 x，其他字符默认允许
     ddl_table_comment_re = re.compile(
@@ -178,7 +178,7 @@ def _validate_table_ddl(sql_text: str) -> list[str]:
     for table_name in table_matches:
         if not table_name_valid_re.fullmatch(table_name):
             reasons.append(
-                f"DDL 中表名'{table_name}'不符合命名规则，只能包含小写字母、数字或下划线"
+                f"DDL 中表名'{table_name}'不符合命名规则，只能包含小写字母、数字或下划线，且必须以ods/dwd/dws/dim/ads开头"
             )
 
     # 表级 COMMENT 规则校验
@@ -296,7 +296,7 @@ def _validate_comment_text(
 ) -> list[str]:
     """Validate common COMMENT text rules."""
     reasons: list[str] = []
-    disallowed_chars = ("*", "x", "✖", "✖️", "×")
+    disallowed_chars = ("*", "x", "✖", "✖️", "×", "@")
 
     if not comment.strip():
         reasons.append(empty_reason or f"{comment_label}不能为空")

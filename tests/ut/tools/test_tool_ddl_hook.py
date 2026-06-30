@@ -22,12 +22,13 @@ from dataagent.interface.sdk.agent import DataAgent
 async def main():
     config_path = "dataagent/core/flex/examples/test_ddl_hook.yaml"
     agent = DataAgent.from_config(config_path)
-    # 样例 DDL 缺少表级 COMMENT 关键字，字段 COMMENT 内容包含特殊字符 *
+    # 样例表名不是以ods/dwd/dws/dim/ads开头
+    # 样例 DDL 缺少表级 COMMENT 关键字，字段 COMMENT 内容包含特殊字符 *、@
     query = """
     Write the DDL as the following example to the file named create_test_ddl.sql.
 
-    CREATE TABLE ads_noah_ocpd_userfeat_user_second_type_usage_time_30d (
-    oaid_sha256 STRING COMMENT '设备OAID的SHA256加密值',
+    CREATE TABLE noah_ocpd_userfeat_user_second_type_usage_time_30d (
+    oaid_sha256 STRING COMMENT '设备OAID的SHA256加密值@',
     app_second_type STRING COMMENT '应用二级类型',
     user_use_total_mins_7d DECIMAL(26, 2) COMMENT '用户7天使用总时长（分钟）',
     user_use_total_mins_30d DECIMAL(26, 2) COMMENT '用户30天使用总时长（分钟）',
