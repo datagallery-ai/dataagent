@@ -165,6 +165,7 @@ All JSON-RPC requests must satisfy:
 | Method | Description | Streaming |
 |--------|-------------|-----------|
 | `SendMessage` | Send a message (non-streaming) | No |
+| `SendStreamingMessage` | Send a message (streaming SSE) | Yes |
 | `GetTask` | Query task status | No |
 | `ListTasks` | List tasks | No |
 | `CancelTask` | Cancel a task | No |
@@ -290,7 +291,65 @@ Send a message to the agent and wait for the complete result.
 }
 ```
 
-### 4.4 GetTask — Query Task
+### 4.4 SendStreamingMessage — Send Message (Streaming SSE)
+
+Send a message and receive real-time agent output via Server-Sent Events (SSE).
+
+**Request Format:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "SendStreamingMessage",
+  "params": {
+    "message": {
+      "role": "ROLE_USER",
+      "parts": [
+        {
+          "text": "Please analyze sales data and show results in real-time"
+        }
+      ]
+    }
+  }
+}
+```
+
+**params Field Reference:** Same as `SendMessage`.
+
+**Streaming Response (SSE):**
+
+Streaming responses are delivered via Server-Sent Events, with each event containing real-time status updates.
+
+```
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"kind":"status","status":{"state":"working","message":{"role":"ROLE_AGENT","parts":[{"text":"Analyzing..."}]}}}}
+
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"kind":"status","status":{"state":"working","message":{"role":"ROLE_AGENT","parts":[{"text":"Analyzing... Sales show an upward trend..."}]}}}}
+
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"kind":"status","status":{"state":"completed","message":{"role":"ROLE_AGENT","parts":[{"text":"Based on the analysis..."}]}}}}
+```
+
+**Event Types:**
+
+| Event Type | Description |
+|------------|-------------|
+| `status` | Status update event, containing `state` (working/completed/failed) and `message` |
+| `artifact` | Artifact event, containing the final execution result |
+
+**TaskState Transitions:**
+
+```
+submitted → working → completed
+                ↓
+             failed/canceled
+```
+
+---
+
+### 4.5 GetTask — Query Task
 
 **Request Format:**
 
@@ -403,6 +462,7 @@ REST endpoints are mounted under the `/a2a/rest` path prefix.
 | Method | Path | Description | Streaming |
 |--------|------|-------------|-----------|
 | POST | `/a2a/rest/message:send` | Send message | No |
+| POST | `/a2a/rest/message:stream` | Send message (streaming SSE) | Yes |
 | GET | `/a2a/rest/tasks/{id}` | Query task | No |
 | GET | `/a2a/rest/tasks` | List tasks | No |
 | POST | `/a2a/rest/tasks/{id}:cancel` | Cancel task | No |
@@ -447,7 +507,36 @@ curl -X POST http://127.0.0.1:9999/a2a/rest/message:send \
 }
 ```
 
-### 5.3 GET /tasks/{id} — Query Task
+### 5.3 POST /message:stream — Send Message (Streaming SSE)
+
+Receive real-time agent output via Server-Sent Events.
+
+**Request:**
+
+```bash
+curl -X POST http://127.0.0.1:9999/a2a/rest/message:stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": {
+      "role": "ROLE_USER",
+      "parts": [{"text": "Please analyze sales data"}]
+    }
+  }'
+```
+
+**Streaming Response (SSE):**
+
+```bash
+event: message
+data: {"task":{"id":"task-xxx","status":{"state":"working","message":{"role":"ROLE_AGENT","parts":[{"text":"Analyzing..."}]}}}}
+
+event: message
+data: {"task":{"id":"task-xxx","status":{"state":"completed","message":{"role":"ROLE_AGENT","parts":[{"text":"Analysis complete..."}]}}}}
+```
+
+---
+
+### 5.4 GET /tasks/{id} — Query Task
 
 ```bash
 curl http://127.0.0.1:9999/a2a/rest/tasks/task-abc123?history_length=10
@@ -459,7 +548,7 @@ curl http://127.0.0.1:9999/a2a/rest/tasks/task-abc123?history_length=10
 |-----------|------|----------|-------------|
 | `history_length` | int | No | Number of history messages to return |
 
-### 5.4 GET /tasks — List Tasks
+### 5.5 GET /tasks — List Tasks
 
 ```bash
 curl "http://127.0.0.1:9999/a2a/rest/tasks?context_id=session-001&page_size=20"
@@ -467,7 +556,7 @@ curl "http://127.0.0.1:9999/a2a/rest/tasks?context_id=session-001&page_size=20"
 
 **Query Parameters:** Same as the JSON-RPC `ListTasks` params fields.
 
-### 5.5 POST /tasks/{id}:cancel — Cancel Task
+### 5.6 POST /tasks/{id}:cancel — Cancel Task
 
 ```bash
 curl -X POST http://127.0.0.1:9999/a2a/rest/tasks/task-abc123:cancel
