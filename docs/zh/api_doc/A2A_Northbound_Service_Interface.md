@@ -165,6 +165,7 @@ Content-Type: application/json
 | 方法名 | 说明 | 流式 |
 |--------|------|------|
 | `SendMessage` | 发送消息（非流式） | 否 |
+| `SendStreamingMessage` | 发送消息（流式 SSE） | 是 |
 | `GetTask` | 查询任务状态 | 否 |
 | `ListTasks` | 列出任务 | 否 |
 | `CancelTask` | 取消任务 | 否 |
@@ -290,7 +291,65 @@ Content-Type: application/json
 }
 ```
 
-### 4.4 GetTask — 查询任务
+### 4.4 SendStreamingMessage — 发送消息（流式 SSE）
+
+向 Agent 发送消息，以 Server-Sent Events（SSE）流式接收 Agent 的实时输出。
+
+**请求格式：**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "SendStreamingMessage",
+  "params": {
+    "message": {
+      "role": "ROLE_USER",
+      "parts": [
+        {
+          "text": "请帮我分析销售数据并实时展示结果"
+        }
+      ]
+    }
+  }
+}
+```
+
+**params 字段说明：** 与 `SendMessage` 完全相同。
+
+**流式响应（SSE）：**
+
+流式响应通过 Server-Sent Events 返回，每个事件包含实时的状态更新。
+
+```
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"kind":"status","status":{"state":"working","message":{"role":"ROLE_AGENT","parts":[{"text":"正在分析..."}]}}}}
+
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"kind":"status","status":{"state":"working","message":{"role":"ROLE_AGENT","parts":[{"text":"正在分析...根据数据，销售额呈现上升趋势..."}]}}}}
+
+event: message
+data: {"jsonrpc":"2.0","id":"1","result":{"kind":"status","status":{"state":"completed","message":{"role":"ROLE_AGENT","parts":[{"text":"根据分析结果..."}]}}}}
+```
+
+**流式事件类型：**
+
+| 事件类型 | 说明 |
+|---------|------|
+| `status` | 状态更新事件，包含 `state`（working/completed/failed）和 `message` |
+| `artifact` | 产出物事件，包含最终的执行结果 |
+
+**TaskState 状态流转：**
+
+```
+submitted → working → completed
+                ↓
+             failed/canceled
+```
+
+---
+
+### 4.5 GetTask — 查询任务
 
 **请求格式：**
 
@@ -403,6 +462,7 @@ REST 接口挂载在 `/a2a/rest` 路径前缀下。
 | 方法 | 路径 | 说明 | 流式 |
 |------|------|------|------|
 | POST | `/a2a/rest/message:send` | 发送消息 | 否 |
+| POST | `/a2a/rest/message:stream` | 发送消息（流式 SSE） | 是 |
 | GET | `/a2a/rest/tasks/{id}` | 查询任务 | 否 |
 | GET | `/a2a/rest/tasks` | 列出任务 | 否 |
 | POST | `/a2a/rest/tasks/{id}:cancel` | 取消任务 | 否 |
@@ -447,7 +507,36 @@ curl -X POST http://127.0.0.1:9999/a2a/rest/message:send \
 }
 ```
 
-### 5.3 GET /tasks/{id} — 查询任务
+### 5.3 POST /message:stream — 发送消息（流式 SSE）
+
+通过 Server-Sent Events 流式接收 Agent 的实时输出。
+
+**请求：**
+
+```bash
+curl -X POST http://127.0.0.1:9999/a2a/rest/message:stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": {
+      "role": "ROLE_USER",
+      "parts": [{"text": "请帮我分析销售数据"}]
+    }
+  }'
+```
+
+**流式响应（SSE）：**
+
+```bash
+event: message
+data: {"task":{"id":"task-xxx","status":{"state":"working","message":{"role":"ROLE_AGENT","parts":[{"text":"正在分析..."}]}}}}
+
+event: message
+data: {"task":{"id":"task-xxx","status":{"state":"completed","message":{"role":"ROLE_AGENT","parts":[{"text":"分析完成..."}]}}}}
+```
+
+---
+
+### 5.4 GET /tasks/{id} — 查询任务
 
 ```bash
 curl http://127.0.0.1:9999/a2a/rest/tasks/task-abc123?history_length=10
@@ -459,7 +548,7 @@ curl http://127.0.0.1:9999/a2a/rest/tasks/task-abc123?history_length=10
 |------|------|------|------|
 | `history_length` | int | 否 | 返回的历史消息数量 |
 
-### 5.4 GET /tasks — 列出任务
+### 5.5 GET /tasks — 列出任务
 
 ```bash
 curl "http://127.0.0.1:9999/a2a/rest/tasks?context_id=session-001&page_size=20"
@@ -467,7 +556,7 @@ curl "http://127.0.0.1:9999/a2a/rest/tasks?context_id=session-001&page_size=20"
 
 **查询参数：** 与 JSON-RPC `ListTasks` 的 params 字段一致。
 
-### 5.5 POST /tasks/{id}:cancel — 取消任务
+### 5.6 POST /tasks/{id}:cancel — 取消任务
 
 ```bash
 curl -X POST http://127.0.0.1:9999/a2a/rest/tasks/task-abc123:cancel

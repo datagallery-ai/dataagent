@@ -13,6 +13,7 @@
 """DataAgentExecutor — bridges A2A 1.0 requests to DataAgent."""
 
 import asyncio
+import re
 import uuid
 from typing import Any
 
@@ -56,6 +57,10 @@ class DataAgentExecutor(AgentExecutor):
 
         Publishes task status updates and artifacts to the event queue,
         supporting both sync and streaming (SSE) responses.
+
+        This implementation uses agent.astream() to enable true streaming,
+        where each output chunk is converted to an A2A TaskStatusUpdateEvent
+        and sent via the event queue for SSE delivery.
         """
         task = context.current_task or new_task(
             task_id=context.task_id,
@@ -86,51 +91,15 @@ class DataAgentExecutor(AgentExecutor):
                     )
                 )
 
-                response = await self._execute_agent_chat(user_text, session_id, context.task_id)
-
-                if cancel_event.is_set():
-                    await event_queue.enqueue_event(
-                        new_text_status_update_event(
-                            task_id=context.task_id,
-                            context_id=context.context_id,
-                            state=TaskState.TASK_STATE_CANCELED,
-                            text="Task was canceled.",
-                        )
-                    )
-                    return
-
-                result_text = _extract_final_answer(response)
-
-                has_error = self._has_error_response(response)
-                if has_error:
-                    error_msg = self._extract_error_message(response)
-                    logger.error(f"Agent execution failed: {error_msg}")
-                    await event_queue.enqueue_event(
-                        new_text_status_update_event(
-                            task_id=context.task_id,
-                            context_id=context.context_id,
-                            state=TaskState.TASK_STATE_FAILED,
-                            text=str(error_msg) if error_msg else "Agent execution failed",
-                        )
-                    )
-                    return
-
-                logger.info("Agent execution completed successfully")
-
-                await event_queue.enqueue_event(
-                    TaskArtifactUpdateEvent(
-                        task_id=context.task_id,
-                        context_id=context.context_id,
-                        artifact=new_text_artifact(name="dataagent_result", text=result_text),
-                    )
-                )
-                await event_queue.enqueue_event(
-                    new_text_status_update_event(
-                        task_id=context.task_id,
-                        context_id=context.context_id,
-                        state=TaskState.TASK_STATE_COMPLETED,
-                        text=result_text,
-                    )
+                # Use streaming mode: agent.astream() with on_queue_send_stream
+                # to stream each chunk as a TaskStatusUpdateEvent
+                await self._execute_agent_astream(
+                    user_text=user_text,
+                    session_id=session_id,
+                    task_id=context.task_id,
+                    context_id=context.context_id,
+                    event_queue=event_queue,
+                    cancel_event=cancel_event,
                 )
 
         except asyncio.CancelledError:
@@ -166,6 +135,487 @@ class DataAgentExecutor(AgentExecutor):
                 context_id=context.context_id,
                 state=TaskState.TASK_STATE_CANCELED,
                 text="Task was canceled.",
+            )
+        )
+
+    async def _execute_agent_astream(
+        self,
+        user_text: str,
+        session_id: str,
+        task_id: str,
+        context_id: str | None,
+        event_queue: EventQueue,
+        cancel_event: asyncio.Event,
+    ) -> None:
+        """Execute agent with streaming, sending each chunk as an A2A event.
+
+        This method wraps agent.astream() to provide true streaming support.
+        Each output chunk is sent via the event queue as a TaskStatusUpdateEvent,
+        which is then delivered to the client via SSE.
+
+        Args:
+            user_text: The user's input text.
+            session_id: The session ID for conversation context.
+            task_id: The A2A task ID.
+            context_id: The A2A context ID.
+            event_queue: The event queue for sending A2A events.
+            cancel_event: Event to signal cancellation.
+        """
+        async with self._run_lock:
+            run_id = self._run_counters.get(session_id, 0)
+            self._run_counters[session_id] = run_id + 1
+
+        initial_state = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "user_query": user_text,
+        }
+
+        try:
+            # Use agent's astream method for true streaming
+            # Explicitly specify stream_mode to ensure chunked output
+            stream_response = self._agent.astream(
+                input=initial_state,
+                session_id=session_id,
+                initial_state=initial_state,
+                stream_mode=["values", "custom"],  # Explicit stream modes for FlexAgent
+            )
+
+            # Track incremental deltas separately from full state snapshots
+            stream_text = ""  # For custom/delta chunks (use +=)
+            latest_state_text = ""  # For values/updates snapshots (use assignment)
+            final_state: dict[str, Any] = {}  # Track the latest state for structured error checks
+            chunk_count = 0
+
+            async for chunk in stream_response:
+                chunk_count += 1
+                logger.debug(
+                    f"[A2A Streaming] Chunk #{chunk_count}: type={type(chunk).__name__}, value={repr(chunk)[:500]}"
+                )
+
+                if cancel_event.is_set():
+                    await event_queue.enqueue_event(
+                        new_text_status_update_event(
+                            task_id=task_id,
+                            context_id=context_id,
+                            state=TaskState.TASK_STATE_CANCELED,
+                            text="Task was canceled.",
+                        )
+                    )
+                    return
+
+                # Unpack the chunk to determine mode and data
+                mode, data = self._unpack_stream_chunk(chunk)
+
+                if mode == "custom" and isinstance(data, dict):
+                    # Custom mode: treat as incremental delta, use +=
+                    delta = self._extract_custom_delta_text(data)
+                    if delta:
+                        # Append to the current text (snapshot or previous deltas)
+                        stream_text += delta
+                        latest_state_text = stream_text
+                        await self._emit_working(event_queue, task_id, context_id, stream_text)
+
+                elif mode in ("values", "updates") and isinstance(data, dict):
+                    # Values/updates mode: treat as full state snapshot
+                    # Snapshot replaces all previous content (including deltas)
+                    final_state = data
+                    snapshot = self._extract_state_answer_text(data)
+                    if snapshot:
+                        stream_text = snapshot
+                        latest_state_text = snapshot
+                        await self._emit_working(event_queue, task_id, context_id, snapshot)
+
+                elif mode == "unknown" and isinstance(data, str) and data.strip():
+                    # Raw string chunks: treat as incremental delta
+                    stream_text += data
+                    latest_state_text = stream_text
+                    await self._emit_working(event_queue, task_id, context_id, stream_text)
+
+            # Use the final state snapshot as primary text, fallback to stream_text
+            final_text = latest_state_text or stream_text
+
+            # Check for errors using structured state, not natural language text
+            if self._has_error_final_state(final_state):
+                logger.error("Agent streaming completed with error in final state")
+                await event_queue.enqueue_event(
+                    new_text_status_update_event(
+                        task_id=task_id,
+                        context_id=context_id,
+                        state=TaskState.TASK_STATE_FAILED,
+                        text=final_text or "Agent execution failed",
+                    )
+                )
+                return
+
+            # Send final artifact and completion status
+            await event_queue.enqueue_event(
+                TaskArtifactUpdateEvent(
+                    task_id=task_id,
+                    context_id=context_id,
+                    artifact=new_text_artifact(name="dataagent_result", text=final_text),
+                )
+            )
+            await event_queue.enqueue_event(
+                new_text_status_update_event(
+                    task_id=task_id,
+                    context_id=context_id,
+                    state=TaskState.TASK_STATE_COMPLETED,
+                    text=final_text,
+                )
+            )
+
+        except asyncio.CancelledError:
+            await event_queue.enqueue_event(
+                new_text_status_update_event(
+                    task_id=task_id,
+                    context_id=context_id,
+                    state=TaskState.TASK_STATE_CANCELED,
+                    text="Task was canceled.",
+                )
+            )
+            return
+        except Exception as e:
+            logger.error(f"Streaming execution failed: {e}")
+            await event_queue.enqueue_event(
+                new_text_status_update_event(
+                    task_id=task_id,
+                    context_id=context_id,
+                    state=TaskState.TASK_STATE_FAILED,
+                    text=f"Error: {str(e)}",
+                )
+            )
+
+    def _clean_chunk_text(self, text: str) -> str:
+        """Clean up chunk text by removing common prefixes and formatting.
+
+        FlexAgent streaming often includes prefixes like '**planner:**' which
+        should be stripped for cleaner output.
+
+        Args:
+            text: Raw text from chunk.
+
+        Returns:
+            Cleaned text.
+        """
+        if not text:
+            return ""
+
+        # Remove common streaming prefixes
+        # Pattern: **node_name:** at the start of text, possibly followed by newlines
+        text = re.sub(r"^\*\*[a-zA-Z_]+\*\*:\s*", "", text)
+        text = re.sub(r"^\*\*[a-zA-Z_]+\*\*\n+", "", text)
+
+        # Remove repeated newlines at the start
+        text = re.sub(r"^\n+", "", text)
+
+        return text
+
+    def _extract_chunk_text(self, chunk: Any) -> str:
+        """Extract text content from various FlexAgent chunk formats.
+
+        Handles:
+        - dict with 'content' or 'text' key
+        - tuple (mode, data) from langgraph streaming
+        - tuple (_, mode, data) from langgraph streaming
+        - AIMessage or similar with content attribute
+        - string directly
+
+        Returns:
+            Extracted text content or empty string.
+        """
+        if chunk is None:
+            return ""
+
+        # Handle string directly
+        if isinstance(chunk, str):
+            text = self._clean_chunk_text(chunk)
+            return text
+
+        # Handle dict with content/text
+        if isinstance(chunk, dict):
+            # Check common keys for text content
+            for key in ("content", "text", "answer", "final_answer", "result", "response"):
+                if key in chunk:
+                    value = chunk[key]
+                    if isinstance(value, str) and value.strip():
+                        return self._clean_chunk_text(value)
+            return ""
+
+        # Handle tuple format: (mode, data) or (_, mode, data)
+        if isinstance(chunk, tuple):
+            if len(chunk) == 2:
+                mode, data = chunk
+            elif len(chunk) == 3:
+                _, mode, data = chunk
+            else:
+                return ""
+
+            # Process data based on mode
+            if mode in ("values", "updates") and isinstance(data, dict):
+                # Try to extract text from state dict
+                for key in ("content", "text", "answer", "final_answer"):
+                    if key in data:
+                        value = data[key]
+                        if isinstance(value, str) and value.strip():
+                            return self._clean_chunk_text(value)
+                # Try to extract from messages
+                messages = data.get("messages", [])
+                if messages and isinstance(messages, list):
+                    last_msg = messages[-1]
+                    content = getattr(last_msg, "content", None) if hasattr(last_msg, "content") else None
+                    if isinstance(content, str) and content.strip():
+                        return self._clean_chunk_text(content)
+                    if isinstance(content, list):
+                        # Handle content blocks (common in newer langchain)
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                text = block.get("text", "")
+                                if isinstance(text, str) and text.strip():
+                                    return self._clean_chunk_text(text)
+                            elif hasattr(block, "text"):
+                                text = block.text
+                                if isinstance(text, str) and text.strip():
+                                    return self._clean_chunk_text(text)
+            elif mode == "custom" and isinstance(data, dict):
+                # Custom mode often contains streaming tokens
+                for key in ("content", "text", "token"):
+                    if key in data:
+                        value = data[key]
+                        if isinstance(value, str) and value.strip():
+                            return self._clean_chunk_text(value)
+            return ""
+
+        # Handle objects with content attribute (e.g., AIMessage)
+        if hasattr(chunk, "content"):
+            content = chunk.content
+            if isinstance(content, str) and content.strip():
+                return self._clean_chunk_text(content)
+            if isinstance(content, list):
+                # Handle content blocks
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if isinstance(text, str) and text.strip():
+                            return self._clean_chunk_text(text)
+                    elif hasattr(block, "text"):
+                        text = block.text
+                        if isinstance(text, str) and text.strip():
+                            return self._clean_chunk_text(text)
+            return ""
+
+        # Fallback: try to get any text-like attribute
+        for attr_name in ("output", "result", "value", "message", "data"):
+            if hasattr(chunk, attr_name):
+                attr_val = getattr(chunk, attr_name)
+                if isinstance(attr_val, str) and attr_val.strip():
+                    return self._clean_chunk_text(attr_val)
+                if isinstance(attr_val, dict):
+                    for key in ("text", "content", "value"):
+                        if key in attr_val:
+                            val = attr_val[key]
+                            if isinstance(val, str) and val.strip():
+                                return self._clean_chunk_text(val)
+
+        # Last resort: try str() conversion if chunk is not empty
+        chunk_str = str(chunk)
+        if chunk_str and chunk_str not in ("None", "()", "[]", "{}"):
+            logger.debug(f"[A2A Streaming] Fallback str() conversion: {chunk_str[:200]}")
+            return self._clean_chunk_text(chunk_str)
+
+        return ""
+
+    def _unpack_stream_chunk(self, chunk: Any) -> tuple[str, Any]:
+        """Unpack a streaming chunk to extract mode and data.
+
+        Handles various chunk formats from FlexAgent/LangGraph:
+        - tuple (mode, data)
+        - tuple (_, mode, data)
+        - dict with 'type' or 'mode' key
+        - other formats (returns ("unknown", chunk))
+
+        Returns:
+            Tuple of (mode, data).
+        """
+        if isinstance(chunk, tuple):
+            if len(chunk) == 2:
+                mode, data = chunk
+                return (str(mode) if mode else "unknown", data)
+            elif len(chunk) == 3:
+                _, mode, data = chunk
+                return (str(mode) if mode else "unknown", data)
+
+        if isinstance(chunk, dict):
+            mode = chunk.get("type") or chunk.get("mode") or "unknown"
+            return (str(mode), chunk)
+
+        return ("unknown", chunk)
+
+    def _extract_custom_delta_text(self, data: dict[str, Any]) -> str:
+        """Extract incremental delta text from custom event data.
+
+        Custom events typically contain streaming tokens that should be
+        appended (not replaced).
+
+        Args:
+            data: The data dict from a custom event.
+
+        Returns:
+            Extracted delta text or empty string.
+        """
+        if not isinstance(data, dict):
+            return ""
+
+        for key in ("content", "text", "token", "delta"):
+            if key in data:
+                value = data[key]
+                if isinstance(value, str) and value.strip():
+                    return self._clean_chunk_text(value)
+
+        return ""
+
+    def _extract_state_answer_text(self, data: dict[str, Any]) -> str:
+        """Extract the answer text from a full state snapshot (values/updates mode).
+
+        This should be used for values/updates mode where we get full state
+        snapshots, not incremental deltas. The returned text should be used
+        with assignment, not +=.
+
+        Args:
+            data: The state dict from a values/updates event.
+
+        Returns:
+            Extracted answer text or empty string.
+        """
+        if not isinstance(data, dict):
+            return ""
+
+        # Try direct answer keys first
+        for key in ("content", "text", "answer", "final_answer", "result", "response"):
+            if key in data:
+                value = data[key]
+                if isinstance(value, str) and value.strip():
+                    return self._clean_chunk_text(value)
+
+        # Try to extract from messages
+        messages = data.get("messages", [])
+        if messages and isinstance(messages, list):
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                content = last_msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    return self._clean_chunk_text(content)
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block.get("text", "")
+                            if isinstance(text, str) and text.strip():
+                                return self._clean_chunk_text(text)
+            else:
+                content = getattr(last_msg, "content", None)
+                if isinstance(content, str) and content.strip():
+                    return self._clean_chunk_text(content)
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block.get("text", "")
+                            if isinstance(text, str) and text.strip():
+                                return self._clean_chunk_text(text)
+                        elif hasattr(block, "text"):
+                            text = block.text
+                            if isinstance(text, str) and text.strip():
+                                return self._clean_chunk_text(text)
+
+        return ""
+
+    def _has_error_final_state(self, state: dict[str, Any]) -> bool:
+        """Check if the final state indicates an error using structured signals.
+
+        This avoids false positives from natural language that may legitimately
+        contain words like "error" or "failed".
+
+        Error signals checked:
+        - Top-level: state["error"], state["errors"], state["exception"]
+        - Status: state["status"] in {"error", "failed"}
+        - Message metadata: last_message.additional_kwargs["error"]
+        - Message metadata: last_message.response_metadata["error"]
+
+        Args:
+            state: The final state dict from values/updates streaming.
+
+        Returns:
+            True if structured error signal found, False otherwise.
+        """
+        if not isinstance(state, dict):
+            return False
+
+        # Check top-level error fields
+        if state.get("error") or state.get("errors") or state.get("exception"):
+            return True
+
+        # Check status field
+        status = str(state.get("status") or "").lower()
+        if status in {"error", "failed"}:
+            return True
+
+        # Check message metadata for error signals
+        messages = state.get("messages") or []
+        if messages:
+            last_msg = messages[-1]
+            if isinstance(last_msg, dict):
+                additional_kwargs = last_msg.get("additional_kwargs") or {}
+                response_metadata = last_msg.get("response_metadata") or {}
+            else:
+                additional_kwargs = getattr(last_msg, "additional_kwargs", {}) or {}
+                response_metadata = getattr(last_msg, "response_metadata", {}) or {}
+
+            if additional_kwargs.get("error") or response_metadata.get("error"):
+                return True
+
+        return False
+
+    def _has_error_response_string(self, text: str) -> bool:
+        """Check if text contains a machine-formatted error prefix.
+
+        This method is kept for backward compatibility but should be avoided
+        in the normal success/failure decision path. Prefer _has_error_final_state()
+        for structured error detection.
+
+        Only matches machine-formatted error prefixes like:
+        - "Error:"
+        - "Agent execution failed:"
+
+        Args:
+            text: Text to check.
+
+        Returns:
+            True if machine-formatted error prefix found.
+        """
+        if not isinstance(text, str):
+            return False
+        return text.startswith("Error:") or text.startswith("Agent execution failed:")
+
+    async def _emit_working(
+        self,
+        event_queue: EventQueue,
+        task_id: str,
+        context_id: str | None,
+        text: str,
+    ) -> None:
+        """Emit a WORKING status update with the current text.
+
+        Args:
+            event_queue: The event queue for sending A2A events.
+            task_id: The A2A task ID.
+            context_id: The A2A context ID.
+            text: Current accumulated text to send.
+        """
+        await event_queue.enqueue_event(
+            new_text_status_update_event(
+                task_id=task_id,
+                context_id=context_id,
+                state=TaskState.TASK_STATE_WORKING,
+                text=text,
             )
         )
 
