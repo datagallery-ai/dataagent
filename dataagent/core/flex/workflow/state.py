@@ -42,3 +42,9 @@ class FlexState(BaseState):
 
     # Cross-session memory: Retrieved historical session summaries for context
     cross_session_memory: str = ""
+
+    # Intent understanding (意图理解模板)
+    intent_complete: bool = True  # 本轮意图是否填满，默认 True 保证向后兼容
+    intent_slots: dict = {}  # 已抽取的槽位 {field: value}
+    missing_slots: list = []  # 缺口 [{field, reason, impact}]
+    intent_missing_message: str = ""  # 槽位缺失时返回给用户的前端提示

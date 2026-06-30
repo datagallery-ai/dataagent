@@ -16,6 +16,7 @@ BUILTIN_HOOK_REGISTRY: dict[str, str] = {
     "cross_session_recall": "dataagent.core.flex.hooks.cross_session_recall.cross_session_recall",
     "context_reference_rewriter": "dataagent.core.flex.hooks.context_reference_rewriter.context_reference_rewriter",
     "organize_workspace": "dataagent.core.flex.hooks.organize_workspace.organize_workspace",
+    "intent_understanding": "dataagent.core.flex.hooks.intent_understanding.intent_understanding",
 }
 
 

@@ -117,6 +117,8 @@ class BaseNode:
             for hook in self.pre_hooks:
                 with collector.measure("hook", callable_perf_name(hook)):
                     state = hook(state, runtime)
+            if bool(state.get("complete", False)):
+                return dict(state)
             result = await self._aprocess(state, runtime)
             for hook in self.post_hooks:
                 with collector.measure("hook", callable_perf_name(hook)):

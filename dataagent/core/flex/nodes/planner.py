@@ -121,6 +121,19 @@ class Planner(BaseNode):
             base = runtime.llm(self.name)
             tools = runtime.get_tools_for_llm()
             self.llm = base.bind_tools(tools) if tools else base
+
+        # 意图未填满：仅由 hook 记录意图状态，此处作为正常 planner 结果返回缺口提示，
+        # 不依赖 BaseNode 全局短路，避免影响 pruner 的消息归并与后处理节点执行。
+        if not state.get("intent_complete", True) and state.get("missing_slots"):
+            return {
+                "messages": AIMessage(content=state.get("intent_missing_message", "缺少必要信息，无法完成请求。")),
+                "complete": True,
+                "intent_complete": False,
+                "intent_slots": state.get("intent_slots", {}),
+                "missing_slots": state.get("missing_slots", []),
+                "intent_missing_message": state.get("intent_missing_message", ""),
+            }
+
         writer = get_stream_writer()
         context = cast(Context, get_context_for_flex_state(state, runtime))
         unpacked_data_ir = ""

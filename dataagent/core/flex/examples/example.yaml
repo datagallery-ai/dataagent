@@ -103,6 +103,24 @@ MODEL:
     params:
       model: "text-embedding-v4"
 
+  # 意图理解专用模型
+  intent_llm:
+    provider: "deepseek"
+    model_type: "chat"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+      base_url: "https://api.deepseek.com"
+      api_key: "xxxxxxxxxxx"  # 从环境变量 DEEPSEEK_API_KEY 读取
+
+# ── 意图模板（可选，配合 intent_understanding hook） ────────────────────────
+INTENT_TEMPLATE:
+  fields: [dataset, metric, time_range]
+  template: |
+    分析数据集 {{ dataset }} 中 {{ metric }} 在 {{ time_range }} 的趋势。
+  example: |
+    示例：分析数据集 sales 中 revenue 在 2025 年 的趋势。
+
 # ── 场景 / 指令（可选） ─────────────────────────────────────────────────────
 # 按 mode（或任意子键）组织；build_agent_env 会提取 instructions 注入 env。
 # structured_instructions 可写在 SCENARIO 顶层（reward_utils 读取）或 chat 子键下（data_engineering 示例）。
@@ -169,6 +187,8 @@ HOOKS:
         # - dataagent.core.flex.hooks.pruner.pruner # 与以上 name: pruner 等价
         # - name: cross_session_recall
         #   model: chat_model
+        - name: intent_understanding
+          model: intent_llm
     executor:
       pre: []
       post: []
