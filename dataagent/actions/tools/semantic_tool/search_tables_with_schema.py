@@ -143,16 +143,23 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
 
 
 def search_tables_with_semantic_retrieve(query: str, *, _tool_context: ToolExecutionContext):
-    """基于给定的完整的用户query查找相关的表。
+    """基于完整的原始用户query查找相关的表。
 
+    函数会先检查传入的query是否是完整的原始用户query，如果不是，函数会舍弃传入的query参数，主动获取完整的原始用户query。
     函数会理解用户query，使用多种检索方法检索与query相关的表，再将每种检索方法的查表结果进行合并。
 
     Args:
-        query（str）: 原始的完整用户query。
-    
+        query（str）: 完整的原始用户query。
+
     Returns:
-        dict with ``data``，返回与用户query相关的表及其描述。
+        dict with ``data``，返回与原始用户query相关的表及其描述。
     """
+
+    from dataagent.utils.info_utils import get_current_query
+
+    # 手动替换成完整的原始用户 query
+    query = get_current_query(_tool_context.runtime)
+
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
     result = client.semantic_search_tables(query)
 
@@ -169,7 +176,9 @@ def search_tables_with_semantic_retrieve(query: str, *, _tool_context: ToolExecu
     tables_columns = {table: [] for table in recalled_tables}
     tables_with_columns = _attach_table_descriptions(tables_columns, client)
     output_path, current_time = _get_workspace_path()
-    _save_tables_with_columns_to_json(tables_with_columns, "output_search_tables_with_type", output_path, current_time)
+    _save_tables_with_columns_to_json(
+        tables_with_columns, "output_search_tables_with_semantic_retrieve", output_path, current_time
+    )
 
     # 保存 summary 到 .metric_dir 目录
     out_path, current_time = _get_workspace_path()
