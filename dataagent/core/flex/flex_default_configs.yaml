@@ -48,6 +48,9 @@ POST_WORKFLOW: []
 
 HOOKS:
   agent:
+    pre:
+      - name: context_reference_rewriter
+        model: chat_model
     post:
       - name: portraiter
   nodes:

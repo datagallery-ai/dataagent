@@ -372,6 +372,7 @@ class FlexAgent(BaseAgent):
     ) -> dict[str, Any]:
         """与 agent 进行一轮对话；性能数据只通过 ``.performance/*.jsonl`` 落盘与日志查看。"""
         initial_state["user_query"] = message
+        initial_state["raw_user_query"] = message
 
         # 🆕 注入 HITL 配置到 initial_state（从 self.config 读取）
         agent_config = (self.config or {}).get("AGENT_CONFIG", {})
@@ -548,6 +549,8 @@ class FlexAgent(BaseAgent):
         runtime = self._create_call_runtime()
 
         if isinstance(context_state, dict) and context_state:
+            if "user_query" in context_state:
+                context_state["raw_user_query"] = str(context_state.get("user_query") or "")
             initial_state_for_persist = context_state
             self._prepare_context_for_langgraph_stream(context_state, runtime)
             if str(context_state.get("user_query") or "").strip():
@@ -620,6 +623,8 @@ class FlexAgent(BaseAgent):
 
         # OpenJiuWen 分支：对齐 LangGraph 行为，补齐 Context + initial_pt
         if initial_state:
+            if "user_query" in initial_state:
+                initial_state["raw_user_query"] = str(initial_state.get("user_query") or "")
             try:
                 self._refresh_workspace_runtime_context(initial_state, runtime)
                 self._ensure_context_with_query(initial_state, runtime)

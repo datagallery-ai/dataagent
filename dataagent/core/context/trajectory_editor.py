@@ -117,6 +117,7 @@ class TrajectoryEditor:
             run_id=self._ctx.state.run_id,
             query=query,
             additional_files=additional_files,
+            raw_user_query=query,
         )
         self._ctx.state.trajectory.add_node(
             node_for_adding=query_node,
@@ -124,6 +125,7 @@ class TrajectoryEditor:
             description="User query No." + sequence_number,
             query=query,
             additional_files=additional_files,
+            raw_user_query=query,
             run_id=self._ctx.state.run_id,
         )
         self._ctx.state.node_counts["Query"] += 1
