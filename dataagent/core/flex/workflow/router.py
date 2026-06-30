@@ -116,9 +116,15 @@ class FlexRouter(BaseRouter):
         # 为 actor 节点构建路由，第一个 actor 节点需要特殊处理（插入 HITL 检查）
         if len(actor_nodes) > 1:
             # 第一个 actor (通常是 Planner) 后检查 HITL
+            node_after_loop = post_nodes[0] if post_nodes else "__end__"
+
             def _route_after_first_actor(state):
                 """第一个 actor 执行完后持久化消息，检查是否需要 HITL"""
                 _write_message_history(state)
+
+                if state.get("complete", False):
+                    logger.debug("[Router] 首个 actor 已结束，直接返回结束节点")
+                    return node_after_loop
 
                 # 检查 HITL 是否启用
                 if not state.get("enable_human_feedback", False):
