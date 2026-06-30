@@ -103,8 +103,9 @@ class QueryNode(BaseIR):
     Dataclass model for Query node IR.
     """
 
-    query: str  # 用户query
+    query: str  # 用户query，可被上下文指代改写
     additional_files: list[str]  # 辅助文件
+    raw_user_query: str = ""  # 用户原始query，注册时等于原始输入，改写时不更新
 
 
 @dataclass
@@ -547,7 +548,7 @@ class IRManager:
             session_id (str): session id to which this node belongs
             run_id (int): run id to which this node belongs
             **kwargs: additional parameters to be passed to __init__() of various nodes:
-                - Query: ["query", "additional_files"]
+                - Query: ["query", "additional_files", "raw_user_query"]
                 - State: ["goal", "belief", "action_history", "current_status", "available_actions", "feedback",
                     "uncentainty", "content", "reasoning_content"]
                 - Action: ["action", "params", "output", "success"]
