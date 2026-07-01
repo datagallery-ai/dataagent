@@ -13,6 +13,7 @@
 """Assemble and run an A2A 1.0 server for a DataAgent."""
 
 from a2a.server.agent_execution import AgentExecutor
+from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.request_handlers.response_helpers import agent_card_to_dict
 from a2a.server.routes import (
@@ -20,13 +21,30 @@ from a2a.server.routes import (
     create_rest_routes,
 )
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types.a2a_pb2 import AgentCard
+from a2a.types.a2a_pb2 import AgentCard, SendMessageRequest
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+
+_A2A_STREAMING_METADATA_KEY = "dataagent_streaming"
+
+
+class _DataAgentRequestHandler(DefaultRequestHandler):
+    """Mark A2A message mode so DataAgentExecutor can choose chat or astream."""
+
+    async def on_message_send(self, params: SendMessageRequest, context: ServerCallContext):
+        """Handle non-streaming messages through DataAgent.chat()."""
+        params.metadata[_A2A_STREAMING_METADATA_KEY] = False
+        return await super().on_message_send(params, context)
+
+    async def on_message_send_stream(self, params: SendMessageRequest, context: ServerCallContext):
+        """Handle streaming messages through DataAgent.astream()."""
+        params.metadata[_A2A_STREAMING_METADATA_KEY] = True
+        async for event in super().on_message_send_stream(params, context):
+            yield event
 
 
 def _make_bearer_middleware(token: str, exclude_paths: tuple[str, ...]):
@@ -112,7 +130,7 @@ def create_a2a_server(
     """
     task_store = InMemoryTaskStore()
 
-    request_handler = DefaultRequestHandler(
+    request_handler = _DataAgentRequestHandler(
         agent_executor=executor,
         task_store=task_store,
         agent_card=agent_card,

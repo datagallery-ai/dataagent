@@ -547,7 +547,7 @@ def run_serve_a2a_mode(
         # Print service info
         console.print(Rule("[bold cyan]DataAgent A2A 1.0 Server[/bold cyan]"))
         console.print(f"[green]Server URL:[/green] http://{host}:{port}")
-        console.print(f"[green]AgentCard:[/green] http://{host}:{port}/.well-known/agent.json")
+        console.print(f"[green]AgentCard:[/green] http://{host}:{port}/.well-known/agent-card.json")
         console.print(f"[green]JSON-RPC:[/green] http://{host}:{port}{jsonrpc_path}")
         console.print(f"[green]REST:[/green] http://{host}:{port}{rest_path}")
         if auth_token:

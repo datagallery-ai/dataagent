@@ -28,12 +28,54 @@ class FakeAgent:
             yield chunk
 
 
+class RecordingAgent:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        self.kwargs = None
+
+    async def astream(self, **kwargs):
+        self.kwargs = kwargs
+        for chunk in self._chunks:
+            yield chunk
+
+
+class RecordingDualAgent:
+    def __init__(self, *, chunks=None, chat_result=None):
+        self._chunks = list(chunks or [])
+        self.chat_result = chat_result if chat_result is not None else {"final_answer": "chat ok"}
+        self.astream_kwargs = None
+        self.chat_kwargs = None
+        self.chat_message = None
+
+    async def chat(self, message, **kwargs):
+        self.chat_message = message
+        self.chat_kwargs = kwargs
+        return self.chat_result
+
+    async def astream(self, **kwargs):
+        self.astream_kwargs = kwargs
+        for chunk in self._chunks:
+            yield chunk
+
+
 class FakeEventQueue:
     def __init__(self):
         self.events = []
 
     async def enqueue_event(self, event):
         self.events.append(event)
+
+
+class FakeRequestContext:
+    def __init__(self, *, metadata):
+        self.task_id = "t1"
+        self.context_id = "c1"
+        self.current_task = None
+        self.message = None
+        self.metadata = metadata
+
+    def get_user_input(self):
+        return "show tables"
 
 
 @pytest.mark.asyncio
@@ -60,6 +102,76 @@ async def test_execute_agent_astream_accumulates_text_and_completes():
     assert status_events[-1].status.message.parts[0].text == "hello world"
     assert len(artifact_events) == 1
     assert artifact_events[0].__class__.__name__ == "TaskArtifactUpdateEvent"
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_astream_uses_dataagent_initial_state_contract():
+    """A2A should call DataAgent.astream through the SDK initial_state path."""
+    agent = RecordingAgent(chunks=[("values", {"messages": [SimpleNamespace(content="ok")]})])
+    executor = DataAgentExecutor(agent=agent)
+
+    queue = FakeEventQueue()
+    cancel_event = asyncio.Event()
+
+    await executor._execute_agent_astream(
+        user_text="show tables",
+        session_id="s1",
+        task_id="t1",
+        context_id="c1",
+        event_queue=queue,
+        cancel_event=cancel_event,
+    )
+
+    kwargs = agent.kwargs
+    assert isinstance(kwargs, dict)
+    assert "input" not in kwargs
+    assert kwargs.get("session_id") == "s1"
+    assert kwargs.get("stream_mode") == ["updates", "custom", "values"]
+
+    initial_state = kwargs.get("initial_state")
+    assert isinstance(initial_state, dict)
+    assert initial_state.get("session_id") == "s1"
+    assert initial_state.get("run_id") == 0
+    assert initial_state.get("user_query") == "show tables"
+
+
+@pytest.mark.asyncio
+async def test_execute_routes_streaming_request_to_astream():
+    """Streaming A2A requests should use DataAgent.astream."""
+    agent = RecordingDualAgent(chunks=[("values", {"messages": [SimpleNamespace(content="stream ok")]})])
+    executor = DataAgentExecutor(agent=agent)
+    queue = FakeEventQueue()
+    context = FakeRequestContext(metadata={"dataagent_streaming": True})
+
+    await executor.execute(context, queue)
+
+    assert agent.chat_kwargs is None
+    assert isinstance(agent.astream_kwargs, dict)
+    assert agent.astream_kwargs.get("stream_mode") == ["updates", "custom", "values"]
+
+    status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
+    assert status_events[-1].status.message.parts[0].text == "stream ok"
+
+
+@pytest.mark.asyncio
+async def test_execute_routes_non_streaming_request_to_chat():
+    """Non-streaming A2A requests should use DataAgent.chat."""
+    agent = RecordingDualAgent(chat_result={"final_answer": "chat ok"})
+    executor = DataAgentExecutor(agent=agent)
+    queue = FakeEventQueue()
+    context = FakeRequestContext(metadata={"dataagent_streaming": False})
+
+    await executor.execute(context, queue)
+
+    assert agent.astream_kwargs is None
+    assert agent.chat_message == "show tables"
+    assert isinstance(agent.chat_kwargs, dict)
+    assert agent.chat_kwargs.get("session_id") == "c1"
+
+    status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
+    assert status_events[-1].status.message.parts[0].text == "chat ok"
 
 
 @pytest.mark.asyncio
