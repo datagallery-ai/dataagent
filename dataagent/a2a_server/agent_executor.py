@@ -36,6 +36,8 @@ from loguru import logger
 
 from dataagent.interface.sdk.agent import DataAgent
 
+_A2A_STREAMING_METADATA_KEY = "dataagent_streaming"
+
 
 class DataAgentExecutor(AgentExecutor):
     """Bridges A2A 1.0 protocol requests to DataAgent execution."""
@@ -91,16 +93,24 @@ class DataAgentExecutor(AgentExecutor):
                     )
                 )
 
-                # Use streaming mode: agent.astream() with on_queue_send_stream
-                # to stream each chunk as a TaskStatusUpdateEvent
-                await self._execute_agent_astream(
-                    user_text=user_text,
-                    session_id=session_id,
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    event_queue=event_queue,
-                    cancel_event=cancel_event,
-                )
+                if _is_streaming_request(context):
+                    await self._execute_agent_astream(
+                        user_text=user_text,
+                        session_id=session_id,
+                        task_id=context.task_id,
+                        context_id=context.context_id,
+                        event_queue=event_queue,
+                        cancel_event=cancel_event,
+                    )
+                else:
+                    await self._execute_agent_chat(
+                        user_text=user_text,
+                        session_id=session_id,
+                        task_id=context.task_id,
+                        context_id=context.context_id,
+                        event_queue=event_queue,
+                        cancel_event=cancel_event,
+                    )
 
         except asyncio.CancelledError:
             await event_queue.enqueue_event(
@@ -138,6 +148,80 @@ class DataAgentExecutor(AgentExecutor):
             )
         )
 
+    async def _build_initial_state(self, session_id: str, user_text: str) -> dict[str, Any]:
+        """Build the per-turn DataAgent initial state and advance session run_id."""
+        async with self._run_lock:
+            run_id = self._run_counters.get(session_id, 0)
+            self._run_counters[session_id] = run_id + 1
+        return {
+            "session_id": session_id,
+            "run_id": run_id,
+            "user_query": user_text,
+        }
+
+    async def _emit_canceled(
+        self,
+        event_queue: EventQueue,
+        task_id: str,
+        context_id: str | None,
+    ) -> None:
+        """Emit a CANCELED status event."""
+        await event_queue.enqueue_event(
+            new_text_status_update_event(
+                task_id=task_id,
+                context_id=context_id,
+                state=TaskState.TASK_STATE_CANCELED,
+                text="Task was canceled.",
+            )
+        )
+
+    async def _emit_failed(
+        self,
+        event_queue: EventQueue,
+        task_id: str,
+        context_id: str | None,
+        text: str,
+    ) -> None:
+        """Emit a FAILED status event."""
+        await event_queue.enqueue_event(
+            new_text_status_update_event(
+                task_id=task_id,
+                context_id=context_id,
+                state=TaskState.TASK_STATE_FAILED,
+                text=text,
+            )
+        )
+
+    async def _emit_final_state(
+        self,
+        event_queue: EventQueue,
+        task_id: str,
+        context_id: str | None,
+        final_state: Any,
+        fallback_text: str = "",
+    ) -> None:
+        """Convert a DataAgent final state into A2A artifact and terminal status events."""
+        final_text = fallback_text.strip() if fallback_text else _extract_final_answer(final_state).strip()
+        if isinstance(final_state, dict) and self._has_error_final_state(final_state):
+            await self._emit_failed(event_queue, task_id, context_id, final_text or "Agent execution failed")
+            return
+
+        await event_queue.enqueue_event(
+            TaskArtifactUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                artifact=new_text_artifact(name="dataagent_result", text=final_text),
+            )
+        )
+        await event_queue.enqueue_event(
+            new_text_status_update_event(
+                task_id=task_id,
+                context_id=context_id,
+                state=TaskState.TASK_STATE_COMPLETED,
+                text=final_text,
+            )
+        )
+
     async def _execute_agent_astream(
         self,
         user_text: str,
@@ -161,24 +245,16 @@ class DataAgentExecutor(AgentExecutor):
             event_queue: The event queue for sending A2A events.
             cancel_event: Event to signal cancellation.
         """
-        async with self._run_lock:
-            run_id = self._run_counters.get(session_id, 0)
-            self._run_counters[session_id] = run_id + 1
-
-        initial_state = {
-            "session_id": session_id,
-            "run_id": run_id,
-            "user_query": user_text,
-        }
+        initial_state = await self._build_initial_state(session_id, user_text)
 
         try:
-            # Use agent's astream method for true streaming
-            # Explicitly specify stream_mode to ensure chunked output
+            # Use DataAgent's high-level astream path. Passing only initial_state keeps
+            # Flex and NL2SQL on their shared SDK contract instead of mixing it with
+            # LangGraph's native input=... path.
             stream_response = self._agent.astream(
-                input=initial_state,
                 session_id=session_id,
                 initial_state=initial_state,
-                stream_mode=["values", "custom"],  # Explicit stream modes for FlexAgent
+                stream_mode=["updates", "custom", "values"],
             )
 
             # Track incremental deltas separately from full state snapshots
@@ -194,14 +270,7 @@ class DataAgentExecutor(AgentExecutor):
                 )
 
                 if cancel_event.is_set():
-                    await event_queue.enqueue_event(
-                        new_text_status_update_event(
-                            task_id=task_id,
-                            context_id=context_id,
-                            state=TaskState.TASK_STATE_CANCELED,
-                            text="Task was canceled.",
-                        )
-                    )
+                    await self._emit_canceled(event_queue, task_id, context_id)
                     return
 
                 # Unpack the chunk to determine mode and data
@@ -234,57 +303,49 @@ class DataAgentExecutor(AgentExecutor):
 
             # Use the final state snapshot as primary text, fallback to stream_text
             final_text = latest_state_text or stream_text
-
-            # Check for errors using structured state, not natural language text
-            if self._has_error_final_state(final_state):
-                logger.error("Agent streaming completed with error in final state")
-                await event_queue.enqueue_event(
-                    new_text_status_update_event(
-                        task_id=task_id,
-                        context_id=context_id,
-                        state=TaskState.TASK_STATE_FAILED,
-                        text=final_text or "Agent execution failed",
-                    )
-                )
-                return
-
-            # Send final artifact and completion status
-            await event_queue.enqueue_event(
-                TaskArtifactUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    artifact=new_text_artifact(name="dataagent_result", text=final_text),
-                )
-            )
-            await event_queue.enqueue_event(
-                new_text_status_update_event(
-                    task_id=task_id,
-                    context_id=context_id,
-                    state=TaskState.TASK_STATE_COMPLETED,
-                    text=final_text,
-                )
-            )
+            await self._emit_final_state(event_queue, task_id, context_id, final_state, fallback_text=final_text)
 
         except asyncio.CancelledError:
-            await event_queue.enqueue_event(
-                new_text_status_update_event(
-                    task_id=task_id,
-                    context_id=context_id,
-                    state=TaskState.TASK_STATE_CANCELED,
-                    text="Task was canceled.",
-                )
-            )
+            await self._emit_canceled(event_queue, task_id, context_id)
             return
         except Exception as e:
             logger.error(f"Streaming execution failed: {e}")
-            await event_queue.enqueue_event(
-                new_text_status_update_event(
-                    task_id=task_id,
-                    context_id=context_id,
-                    state=TaskState.TASK_STATE_FAILED,
-                    text=f"Error: {str(e)}",
-                )
+            await self._emit_failed(event_queue, task_id, context_id, f"Error: {str(e)}")
+
+    async def _execute_agent_chat(
+        self,
+        user_text: str,
+        session_id: str,
+        task_id: str,
+        context_id: str | None,
+        event_queue: EventQueue,
+        cancel_event: asyncio.Event,
+    ) -> None:
+        """Execute agent with chat for A2A non-streaming requests."""
+        initial_state = await self._build_initial_state(session_id, user_text)
+
+        try:
+            if cancel_event.is_set():
+                await self._emit_canceled(event_queue, task_id, context_id)
+                return
+
+            final_state = await self._agent.chat(
+                user_text,
+                session_id=session_id,
+                initial_state=initial_state,
             )
+
+            if cancel_event.is_set():
+                await self._emit_canceled(event_queue, task_id, context_id)
+                return
+
+            await self._emit_final_state(event_queue, task_id, context_id, final_state)
+        except asyncio.CancelledError:
+            await self._emit_canceled(event_queue, task_id, context_id)
+            return
+        except Exception as e:
+            logger.error(f"Chat execution failed: {e}")
+            await self._emit_failed(event_queue, task_id, context_id, f"Error: {str(e)}")
 
     def _clean_chunk_text(self, text: str) -> str:
         """Clean up chunk text by removing common prefixes and formatting.
@@ -642,27 +703,6 @@ class DataAgentExecutor(AgentExecutor):
             )
         )
 
-    async def _execute_agent_chat(
-        self,
-        user_text: str,
-        session_id: str,
-        task_id: str,
-    ) -> Any:
-        """Acquire session lock, increment run counter, and execute agent chat."""
-        async with self._run_lock:
-            run_id = self._run_counters.get(session_id, 0)
-            self._run_counters[session_id] = run_id + 1
-        initial_state = {"session_id": session_id, "run_id": run_id}
-
-        response = await self._agent.chat(user_query=user_text, session_id=session_id, initial_state=initial_state)
-
-        logger.info(f"[DEBUG] _agent.chat() returned type: {type(response)}")
-        if isinstance(response, dict):
-            logger.info(f"[DEBUG] _agent.chat() response keys: {list(response.keys())}")
-            logger.info(f"[DEBUG] _agent.chat() response: {response}")
-
-        return response
-
     def _has_error_response(self, response: Any) -> bool:
         """Check if the response contains an error.
 
@@ -738,6 +778,17 @@ def _extract_text_from_context(context: RequestContext) -> str:
                 parts_text.append(str(part.data))
 
     return "".join(parts_text).strip()
+
+
+def _is_streaming_request(context: RequestContext) -> bool:
+    """Return whether this A2A request should use DataAgent.astream()."""
+    metadata = context.metadata
+    marker = metadata.get(_A2A_STREAMING_METADATA_KEY, True)
+    if isinstance(marker, bool):
+        return marker
+    if isinstance(marker, str):
+        return marker.strip().lower() not in {"0", "false", "no"}
+    return bool(marker)
 
 
 def _extract_final_answer(response: Any) -> str:
