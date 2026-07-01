@@ -17,13 +17,18 @@ from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
+from dataagent.utils.constants import DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT
 
 
 def _fmt(original: str, frontend: str, data: Any) -> dict:
     return {"original_msg": original, "frontend_msg": frontend, "data": data}
 
 
-def get_join_relations(table_names: list[str], *, _tool_context: ToolExecutionContext) -> dict:
+def get_join_relations(
+    table_names: list[str],
+    *,
+    _tool_context: ToolExecutionContext,
+) -> dict:
     """Find joinable relationships among a set of tables.
 
     Use this tool to discover foreign-key or joinable-column relationships
@@ -47,7 +52,7 @@ def get_join_relations(table_names: list[str], *, _tool_context: ToolExecutionCo
 
     try:
         client = SemanticServiceClient.from_config(_tool_context.config_manager)
-        raw = client.get_joinable_tables(names, limit=2000)
+        raw = client.get_joinable_tables(names, limit=DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT)
     except (requests.RequestException, ValueError) as e:
         logger.error(f"请求语义服务 joinable-tables 失败：{e}")
         return _fmt(f"请求失败：{e}", "查询 JOIN 关系失败。", {"joins": []})

@@ -36,8 +36,9 @@ DATABASE:
   engine: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
   config:
     path: ""  # replace with actual superhero.sqlite path
-METAVISOR:
-  metavisor_url: "http://8.92.9.219:40399"
-  username: "example"             # 示例值，实际部署请覆盖
-  password: "123456"              # 示例值，实际部署请覆盖
-  valuematch_url: "http://8.92.9.151:8000"
+SEMANTIC_LAYER:
+  base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                       # 未启用认证时保持 null；启用认证时填写
+  password: null                       # 未启用认证时保持 null；启用认证时填写
+  timeout: 30                           # 可按服务端表数量和响应耗时调整
+  verify_ssl: false                    # 测试/自签证书环境可关闭；生产环境建议开启

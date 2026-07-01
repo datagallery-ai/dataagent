@@ -19,7 +19,7 @@ hide:
 | Module | Description |
 |-|-|
 | **NL2SQL** | Dedicated capability for natural language to SQL execution. |
-| **Semantic Service** | MetaVisor enriched metadata configuration for NL2SQL at the current stage, prioritizing GaussVector-oriented semantic-layer enhancements for vector indexing, recall ranking, and schema perception across tables, columns, metric definitions, and business descriptions; Ontology service capabilities are under development. See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md). |
+| **Semantic Service** | NL2SQL-oriented enriched metadata REST capabilities at the current stage, prioritizing GaussVector-oriented semantic-layer enhancements for vector indexing, recall ranking, and schema perception across tables, columns, metric definitions, and business descriptions; Ontology service capabilities are under development. See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md). |
 | **openJiuwen** | openJiuwen integration and usage. See [openJiuwen User Guide](../openJiuwen/openJiuwen-user-guide.md). |
 | **Perceptor** | Retrieval and perception capabilities for organizing tool information, metadata, and knowledge. |
 | **Config Manager** | Configuration management, including configuration modification and loading. |

@@ -21,6 +21,12 @@ from urllib.parse import quote
 import requests
 from loguru import logger
 
+from dataagent.utils.constants import (
+    DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT,
+    DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT,
+    DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT,
+)
+
 
 class SemanticServiceError(requests.HTTPError):
     """HTTP error returned by semantic-service with parsed service error fields."""
@@ -72,45 +78,48 @@ class SemanticServiceClient:
 
     @classmethod
     def from_config(cls, config_manager: Any) -> SemanticServiceClient:
-        """Build a semantic-service client from SEMANTIC_LAYER, falling back to METAVISOR."""
-        raw_base_url = (
-            config_manager.get("SEMANTIC_LAYER.base_url")
-            or config_manager.get("SEMANTIC_LAYER.url")
-            or config_manager.get("METAVISOR.semantic_url")
-            or config_manager.get("METAVISOR.metavisor_url")
-            or config_manager.get("METAVISOR.url")
-        )
+        """Build a semantic-service client from SEMANTIC_LAYER."""
+        raw_base_url = config_manager.get("SEMANTIC_LAYER.base_url") or config_manager.get("SEMANTIC_LAYER.url")
         if not raw_base_url:
-            raise ValueError("SEMANTIC_LAYER.base_url or METAVISOR.metavisor_url must be configured")
+            raise ValueError("SEMANTIC_LAYER.base_url must be configured")
 
-        username = config_manager.get("SEMANTIC_LAYER.username") or config_manager.get("METAVISOR.username")
-        password = config_manager.get("SEMANTIC_LAYER.password") or config_manager.get("METAVISOR.password")
+        username = config_manager.get("SEMANTIC_LAYER.username")
+        password = config_manager.get("SEMANTIC_LAYER.password")
         auth = _build_auth(username, password)
 
         timeout = _as_float(
-            config_manager.get("SEMANTIC_LAYER.timeout", config_manager.get("METAVISOR.timeout", 30.0)),
+            config_manager.get("SEMANTIC_LAYER.timeout", 30.0),
             30.0,
         )
         verify = _as_bool(
-            config_manager.get("SEMANTIC_LAYER.verify_ssl", config_manager.get("METAVISOR.verify_ssl", True)),
+            config_manager.get("SEMANTIC_LAYER.verify_ssl", True),
             True,
         )
         return cls(str(raw_base_url), auth=auth, timeout=timeout, verify=verify)
 
-    def get_table_list(self, database_name: str) -> list:
+    def get_table_list(self, database_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT) -> list:
         """Get tables under a semantic database."""
-        return self.get("advanced-search/table-list", params={"databaseName": database_name})
+        return self.get("advanced-search/table-list", params={"databaseName": database_name, "limit": limit})
 
-    def get_table_columns_info(self, table_name: str, *, limit: int = 1000) -> dict:
+    def get_table_columns_info(
+        self, table_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT
+    ) -> dict:
         """Get column metadata for a table."""
         return self.get("advanced-search/table-columns-info", params={"tableName": table_name, "limit": limit})
 
-    def semantic_search_tables(self, query: str, top_k: int) -> dict:
+    def semantic_search_tables(self, query: str, top_k: int | None = None) -> dict:
         """Search tables by query."""
-        payload = {"query": query}
+        payload: dict[str, Any] = {"query": query}
+        if top_k is not None:
+            payload["topK"] = int(top_k)
         return self.post("semantic/retrieve", json=payload, headers={"Content-Type": "application/json"})
 
-    def semantic_search_columns(self, database_name: str, keywords: list[str], top_k: int) -> list:
+    def semantic_search_columns(
+        self,
+        database_name: str,
+        keywords: list[str],
+        top_k: int,
+    ) -> list:
         """Search columns by semantic keywords."""
         return self.get(
             "advanced-search/semantic-search-columns",
@@ -120,13 +129,38 @@ class SemanticServiceClient:
                 "topK": top_k,
                 "searchColumns": "true",
                 "searchValues": "false",
-                "limit": 1000,
             },
         )
 
-    def get_joinable_tables(self, table_names: list[str], *, limit: int = 2000) -> list:
+    def vector_search_table_desc(self, database_name: str, keywords: list[str], top_k: int) -> list:
+        """Search table descriptions by vector similarity."""
+        return self.get(
+            "advanced-search/vector-search-table-desc",
+            params={
+                "databaseName": database_name,
+                "keywords": keywords,
+                "topK": int(top_k),
+            },
+        )
+
+    def get_joinable_tables(
+        self, table_names: list[str], *, limit: int = DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT
+    ) -> list:
         """Get joinable table relationships."""
-        params: list[tuple[str, Any]] = [("dbTableNames", table_name) for table_name in table_names]
+        normalized: list[str] = []
+        dropped = 0
+        for table_name in table_names:
+            name = str(table_name or "").strip()
+            if name:
+                normalized.append(name)
+            else:
+                dropped += 1
+        if dropped:
+            logger.warning("joinable-tables: skipped {} empty table name(s)", dropped)
+        if not normalized:
+            return []
+
+        params: list[tuple[str, Any]] = [("dbTableNames", table_name) for table_name in normalized]
         params.append(("limit", limit))
         return self.get("advanced-search/joinable-tables", params=params)
 
@@ -229,7 +263,7 @@ class SemanticServiceClient:
 
 
 def normalize_semantic_base_url(raw_url: str) -> str:
-    """Normalize host or legacy MetaVisor URL to ``/api/semantic/v1``."""
+    """Normalize semantic-service host or API URL to ``/api/semantic/v1``."""
     base = str(raw_url).strip().rstrip("/")
     if not base:
         raise ValueError("semantic service base_url must not be empty")
@@ -244,11 +278,6 @@ def normalize_semantic_base_url(raw_url: str) -> str:
     if lower.endswith("/api"):
         return f"{base}/semantic/v1"
 
-    for marker in ("/api/metavisor/v3", "/api/metavisor"):
-        idx = lower.find(marker)
-        if idx >= 0:
-            return f"{base[:idx]}/api/semantic/v1"
-
     return f"{base}/api/semantic/v1"
 
 
@@ -257,7 +286,7 @@ def _build_auth(username: Any, password: Any) -> tuple[str, str] | None:
     if not username and not password:
         return None
     if not username or not password:
-        raise ValueError("SEMANTIC_LAYER.username/password or METAVISOR.username/password must be configured together")
+        raise ValueError("SEMANTIC_LAYER.username and SEMANTIC_LAYER.password must be configured together")
     return str(username), str(password)
 
 

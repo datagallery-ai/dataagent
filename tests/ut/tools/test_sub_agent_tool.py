@@ -780,8 +780,8 @@ def test_public_reconfigure_keeps_process_name(monkeypatch):
     assert captured["requested_process_name"] == "subagent"
 
 
-def test_nl2sql_sub_agent_tool_overrides_runtime_model_database_and_metavisor(monkeypatch, tmp_path):
-    """nl2sql_sub_agent_tool 应按主配置中的 llm_model 等，将运行时的 MODEL / DATABASE / METAVISOR
+def test_nl2sql_sub_agent_tool_overrides_runtime_model_database_and_semantic_layer(monkeypatch, tmp_path):
+    """nl2sql_sub_agent_tool 应按主配置中的 llm_model 等，将运行时的 MODEL / DATABASE / SEMANTIC_LAYER
     写入临时合并后的子 Agent YAML，再交给内部 sub_agent_tool；源 nl2sql 配置磁盘文件不被破坏；
     SQL/CSV 与 frontend_msg 符合预期。
     """
@@ -810,9 +810,10 @@ DATABASE:
   engine: "sqlite"
   config:
     path: "/tmp/default.sqlite"
-METAVISOR:
-  metavisor_url: "default-metavisor"
-  valuematch_url: "default-valuematch"
+SEMANTIC_LAYER:
+  base_url: "default-semantic"
+  timeout: 30
+  verify_ssl: false
 """.strip(),
         encoding="utf-8",
     )
@@ -842,9 +843,10 @@ TOOLS:
         "engine": "sqlite",
         "config": {"host": "127.0.0.1", "port": 5432},
     }
-    runtime_metavisor = {
-        "metavisor_url": "runtime-metavisor",
-        "valuematch_url": "runtime-valuematch",
+    runtime_semantic_layer = {
+        "base_url": "runtime-semantic",
+        "timeout": 30,
+        "verify_ssl": False,
     }
     runtime_model = {
         "model_type": "chat",
@@ -862,7 +864,7 @@ TOOLS:
     agent_cm = ConfigManager()
     agent_cm.config_path = main_config_path
     agent_cm.set("DATABASE", runtime_database)
-    agent_cm.set("METAVISOR", runtime_metavisor)
+    agent_cm.set("SEMANTIC_LAYER", runtime_semantic_layer)
     agent_cm.set("MODEL.deepseek", runtime_model)
     tool_ctx = ToolExecutionContext(
         config_manager=agent_cm,
@@ -910,7 +912,7 @@ TOOLS:
     assert captured["config_path"] != str(source_config_path)
     assert captured["config"]["MODEL"] == {"deepseek": runtime_model}
     assert captured["config"]["DATABASE"] == runtime_database
-    assert captured["config"]["METAVISOR"] == runtime_metavisor
+    assert captured["config"]["SEMANTIC_LAYER"] == runtime_semantic_layer
     assert yaml.safe_load(source_config_path.read_text(encoding="utf-8"))["MODEL"] == {
         "qwen3_coder": {
             "model_type": "chat",

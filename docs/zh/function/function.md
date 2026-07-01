@@ -19,7 +19,7 @@ hide:
 | 模块 | 功能描述 |
 |-|-|
 | **NL2SQL** | 自然语言 → SQL 执行的专用能力。 |
-| **Semantic Service** | 当前阶段提供面向 NL2SQL 的 MetaVisor 增强元数据配置，并优先围绕 GaussVector 做了语义层向量索引、召回排序和 schema 感知增强，支撑表、字段、指标口径和业务描述的候选 schema 召回；本体服务相关能力正在开发中。详见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。 |
+| **Semantic Service** | 当前阶段提供面向 NL2SQL 的增强元数据 REST 能力，并优先围绕 GaussVector 做了语义层向量索引、召回排序和 schema 感知增强，支撑表、字段、指标口径和业务描述的候选 schema 召回；本体服务相关能力正在开发中。详见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。 |
 | **openJiuwen** | openJiuwen 集成与使用。详见 [openJiuwen 使用指南](../openJiuwen/openJiuwen-user-guide.md)。 |
 | **Perceptor** | 检索与感知能力。组织工具信息、元数据与知识。 |
 | **Config Manager** | 配置管理。支持配置修改与加载。 |

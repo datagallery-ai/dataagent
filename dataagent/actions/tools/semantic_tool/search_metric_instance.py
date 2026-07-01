@@ -26,13 +26,21 @@ from dataagent.actions.tools.semantic_tool.get_join_relations import get_join_re
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.utils.constants import (
+    DEFAULT_SEMANTIC_SERVICE_METRIC_COARSE_RECALL_LIMIT,
+    DEFAULT_SEMANTIC_SERVICE_METRIC_TABLE_COLUMNS_LIMIT,
+)
 from dataagent.utils.info_utils import get_current_query
 
 
 # ============================================================
 # 工具主函数
 # ============================================================
-def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionContext) -> dict:
+def search_metric_instance(
+    keywords: list[str],
+    *,
+    _tool_context: ToolExecutionContext,
+) -> dict:
     """
     根据关键词搜索元数据指标相关的表列信息。
 
@@ -48,7 +56,11 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
 
     # Step 1: 根据 ”模型传入的 keywords”，粗召回筛选出与 keywords 相关的 “metric_instance、data_column、data_table”
-    result_json = _coarse_recall_metric_instances(keywords, client)
+    result_json = _coarse_recall_metric_instances(
+        keywords,
+        client,
+        limit=DEFAULT_SEMANTIC_SERVICE_METRIC_COARSE_RECALL_LIMIT,
+    )
 
     # Step 2: 根据 “粗召回的 typeName”，筛选出 “metric_instance、data_column、data_table 的 qualified_name”
     typed_recall_result = _filter_metric_instances_by_type(
@@ -161,9 +173,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
     return _fmt(
         original_msg,
         summary,
-        {
-            "output_metric_final": output_metric_final,
-        },
+        {"output_metric_final": output_metric_final},
     )
 
 
@@ -177,7 +187,7 @@ def search_metric_instance(keywords: list[str], *, _tool_context: ToolExecutionC
 # ----------------------------
 
 
-def _coarse_recall_metric_instances(keywords: list[str], client: SemanticServiceClient) -> dict:
+def _coarse_recall_metric_instances(keywords: list[str], client: SemanticServiceClient, *, limit: int) -> dict:
     """
     Step 1：根据关键词执行全文粗召回。
 
@@ -187,12 +197,13 @@ def _coarse_recall_metric_instances(keywords: list[str], client: SemanticService
     Args:
         keywords: 关键词列表
         client: 统一语义服务客户端
+        limit: 粗召回返回上限。
 
     Returns:
         dict: API返回的JSON结果
     """
     query_str = " ".join(keywords)
-    return client.search_fulltext(query_str, limit=100, offset=0, exclude_deleted=True)
+    return client.search_fulltext(query_str, limit=limit, offset=0, exclude_deleted=True)
 
 
 def _filter_metric_instances_by_type(
@@ -600,7 +611,9 @@ def _get_table_all_columns_details(table_names: list[str], client: SemanticServi
     tables_columns = {}
     for table_name in table_names:
         tables_columns[table_name] = []
-        all_columns = client.get_table_columns_info(table_name, limit=100)
+        all_columns = client.get_table_columns_info(
+            table_name, limit=DEFAULT_SEMANTIC_SERVICE_METRIC_TABLE_COLUMNS_LIMIT
+        )
 
         tables_columns[table_name] = [
             {

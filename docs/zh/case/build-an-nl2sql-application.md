@@ -26,26 +26,25 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
       │
       ├─ Perceptor：读取数据库 schema、字段语义、join 信息
       ├─ Generator：生成候选 SQL
-      ├─ Validator：做 SQL explain、关键词或值匹配校验
+      ├─ Validator：做 SQL explain、关键词或元数据校验
       ├─ Executor：执行 SQL，返回结果
       ├─ Reflector：必要时反思修正
       └─ Selector：选择最终 SQL 与结果
 ```
 
-其中 MetaVisor 提供表、字段、字段描述、join 关系和值匹配等增强元数据。部署和数据导入请参考（**NL2SQL 案例必需**）：
+其中 Semantic Service 提供表、字段、字段描述、join 关系和语义检索等增强元数据。部署和数据导入请参考（**NL2SQL 案例必需**）：
 
 - [快速开始 §8：可选接入数据库语义服务](../quick_start/quick_start.md#optional-semantic-service)
 - [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)
 - [场景数据导入](../installation_doc/database_install/scenario-data-import.md)
 - [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)
 
-完成部署后，你需要拿到三个关键信息：
+完成部署后，你需要拿到两个关键信息：
 
 | 信息 | 用途 |
 | --- | --- |
-| `DATABASE.db_id` | MetaVisor 中注册的数据库标识。 |
-| `METAVISOR.metavisor_url` | MetaVisor 元数据服务地址。 |
-| `METAVISOR.valuematch_url` | ValueMatch 服务地址，用于字面值匹配。 |
+| `DATABASE.db_id` | Semantic Service 中导入的数据库标识。 |
+| `SEMANTIC_LAYER.base_url` | Semantic Service REST 服务地址。 |
 
 ## 3. 准备工作
 
@@ -57,7 +56,7 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
    - [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)
    - [场景数据导入](../installation_doc/database_install/scenario-data-import.md)
 4. 已准备 demo SQLite 业务库，并在 Agent 配置中使用**绝对路径**（示例逻辑库 `demo_db`，文件由教程创建，非服务包自带）。
-5. 确认 `METAVISOR.metavisor_url` 可访问，且 `DATABASE.db_id` 与元数据 `databaseName` 一致。
+5. 确认 `SEMANTIC_LAYER.base_url` 可访问，且 `DATABASE.db_id` 与元数据 `databaseName` 一致。
 
 若你尚未部署 Semantic Service，请从 [快速开始 §8](../quick_start/quick_start.md#optional-semantic-service) 的可选路径开始。
 
@@ -70,11 +69,12 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 ```
 
 跑通后可尝试的验证问题：
@@ -82,7 +82,7 @@ METAVISOR:
 - 「各城市成交额排名」
 - 「每月订单量是多少」
 
-MetaVisor/Semantic Service 能力说明见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。
+Semantic Service 能力说明见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。
 
 ## 4. 编写 NL2SQL Agent 配置
 
@@ -100,7 +100,7 @@ dataagent/agents/nl2sql/nl2sql_agent.yaml
 | `MODEL` | 指定用于 SQL 生成和修正的 chat 模型。 |
 | `CORE` | 配置 NL2SQL 内部节点和阈值。 |
 | `DATABASE` | 指定数据库标识、数据库类型和连接参数。 |
-| `METAVISOR` | 指定增强元数据和值匹配服务地址。 |
+| `SEMANTIC_LAYER` | 指定 Semantic Service REST 服务地址、认证和超时配置。 |
 
 示例配置（结构与仓库 `dataagent/agents/nl2sql/nl2sql_agent.yaml` 一致；`demo_db` 与路径按场景教程替换）：
 
@@ -147,20 +147,21 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 ```
 
 配置时重点检查：
 
-- `DATABASE.db_id` 必须和 MetaVisor 中导入的数据库标识一致。
+- `DATABASE.db_id` 必须和 Semantic Service 中导入的数据库标识一致。
 - `DATABASE.engine` 要和实际数据库一致，例如 `sqlite`、`mysql`、`postgres`。
 - SQLite 的 `DATABASE.config.path` 建议使用绝对路径，避免从不同目录启动时找不到文件。
 - 模型的 `api_key` 不建议写入 YAML，优先放到 `.env` 中。
-- `METAVISOR.metavisor_url` 与 `METAVISOR.valuematch_url` 指向已部署的 Semantic Service；`username` / `password` 按实际部署填写。
+- `SEMANTIC_LAYER.base_url` 指向已部署的 Semantic Service；`username` / `password` 按实际部署填写，无认证环境可不配置。
 
 ## 5. 运行专用 Agent
 
@@ -220,9 +221,9 @@ uv run tests/e2e/test_nl2sql.py
 
 优先把 `DATABASE.config.path` 写成绝对路径。相对路径会跟随当前执行命令的工作目录变化。
 
-### 7.3 MetaVisor 连接失败
+### 7.3 Semantic Service 连接失败
 
-先用 `curl` 验证 `METAVISOR.metavisor_url` 是否可访问，再确认 `DATABASE.db_id` 是否已经导入 MetaVisor。完整部署、初始化和导入流程请参考 [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)。
+先用 `curl` 验证 `SEMANTIC_LAYER.base_url` 是否可访问，再确认 `DATABASE.db_id` 是否已经导入 Semantic Service。完整部署、初始化和导入流程请参考 [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)。
 
 ### 7.4 生成 SQL 和业务口径不一致
 
@@ -234,7 +235,7 @@ uv run tests/e2e/test_nl2sql.py
 
 1. `AGENT_CONFIG.type` 使用 `nl2sql`。
 2. `DATABASE` 指向真实业务库。
-3. `METAVISOR` 指向已完成元数据导入的 Semantic Service。
+3. `SEMANTIC_LAYER` 指向已完成元数据导入的 Semantic Service。
 4. 用户问题尽量明确业务对象、指标口径和查询条件。
 
 当你需要让一个主 Agent 同时处理任务规划、报告组织和按需查库时，不要把这些逻辑塞进专用 NL2SQL Agent，而应使用主 Agent 调用 NL2SQL 子 Agent 的模式。

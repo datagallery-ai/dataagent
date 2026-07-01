@@ -17,7 +17,9 @@ DATABASE:
   config:
     path: "/mnt/c/work/udf_project/ferry_react_combine/yunhe_shengchan.sqlite" # UEG: sqlite file, UDN: ip:port/query
 
-METAVISOR:
-    metavisor_url: "8.92.9.151:41000" #UEG useless
-    username: "example"             # 示例值，实际部署请覆盖
-    password: "123456"              # 示例值，实际部署请覆盖
+SEMANTIC_LAYER:
+  base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                       # 未启用认证时保持 null；启用认证时填写
+  password: null                       # 未启用认证时保持 null；启用认证时填写
+  timeout: 30                           # 可按服务端表数量和响应耗时调整
+  verify_ssl: false                    # 测试/自签证书环境可关闭；生产环境建议开启

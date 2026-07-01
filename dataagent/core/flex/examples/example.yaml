@@ -30,8 +30,7 @@ CROSS_SESSION_RECALL:
   top_k: 3
   max_chars_per_session: 1500
 
-# ── 遗留 / 工具专用顶层键（可选） ───────────────────────────────────────────
-# ONTOLOGY_SERVICE_URL: "http://127.0.0.1:32000"  # perceptor_atomic 等旧路径
+# ── 工具专用顶层键（可选） ───────────────────────────────────────────────────
 # TAVILY_API_KEY: $env{TAVILY_API_KEY}             # MCP 搜索工具 env 注入
 
 # ── 工作区（可选） ───────────────────────────────────────────────────────────
@@ -225,16 +224,16 @@ TOOLS:
           - dataagent.actions.tools.hooks.examples.example_hooks.post_hook1
           - dataagent.actions.tools.hooks.examples.example_hooks.post_hook2
 
-    # semantic-service 基础检索：语义层表清单
+    # semantic-service 工具示例：语义层表清单
     - module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
       function: "list_semantic_layer_tables"
       name: "list_semantic_layer_tables"
       category: "semantic"
 
-    # semantic-service 基础检索：语义层表 schema
-    - module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
-      function: "get_semantic_layer_table_schema"
-      name: "get_semantic_layer_table_schema"
+    # semantic-service 工具示例：NL2SQL 表/列语义召回
+    - module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "search_tables_and_columns"
+      name: "search_tables_and_columns"
       category: "semantic"
 
   mcp_servers:
@@ -356,26 +355,8 @@ CORE:
 
 # ── 企业语义引擎服务（semantic_tool，可选） ─────────────────────────────────
 SEMANTIC_LAYER:
-  base_url: "http://127.0.0.1:31000"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
   username: null                      # 未启用认证时保持 null；启用认证时填写
   password: null                      # 未启用认证时保持 null；启用认证时填写
-  timeout: 30
+  timeout: 30                           # 可按服务端表数量和响应耗时调整
   verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
-
-# ── 元数据增强（NL2SQL/旧链路，可选） ───────────────────────────────────────
-METAVISOR:
-  url: "127.0.0.1:31000"        # 格式 host:port
-  metavisor_url: "http://127.0.0.1:41000"  # NL2SQL perceptor 实际读取的 URL
-  username: "example"             # 示例值，实际部署请覆盖
-  password: "123456"             # 示例值，实际部署请覆盖
-  scene: "ecommerce_prod"
-  valuematch_enabled: false
-  valuematch_url: "http://127.0.0.1:8000"
-
-# ── 本体服务（可选） ─────────────────────────────────────────────────────────
-ONTOLOGY:
-  url: "127.0.0.1:32000"
-  api_url: "http://127.0.0.1:32000"  # 部分示例使用的别名
-  scene: "dataagent_ontology"        # OntologyEnv / 工具运行时 SCENE
-  api:                          # OntologyEnv / ManufacureEnv 实际读取
-    url: "http://127.0.0.1:32000"

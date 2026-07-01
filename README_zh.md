@@ -65,7 +65,7 @@ uv run mkdocs serve -f docs/mkdocs.yml -a 0.0.0.0:8000
 | 📖 [快速开始](docs/zh/quick_start/quick_start.md) | 分钟级跑通 DataAgent 端到端流程 |
 | 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 部署 Elasticsearch、PostgreSQL、MySQL；优先支持 GaussVector 接入，导入场景数据并接入 Semantic Service |
 | ⚙️ [功能特性](docs/zh/function/function.md) | 核心能力、模块划分、工具与模型支持 |
-| 🧩 [Semantic Service](docs/zh/semantic_service/semantic-service-user-guide.md) | 面向 NL2SQL 的 MetaVisor 增强元数据，优先围绕 GaussVector 提供语义层索引、候选表字段召回与 schema 感知增强 |
+| 🧩 [Semantic Service](docs/zh/semantic_service/semantic-service-user-guide.md) | 面向 NL2SQL 的语义服务增强元数据，优先围绕 GaussVector 提供语义层索引、候选表字段召回与 schema 感知增强 |
 | 🔗 [openJiuwen](docs/zh/openJiuwen/openJiuwen-user-guide.md) | openJiuwen 集成与使用说明 |
 | 🏗️ [架构文档](docs/zh/design_doc/design_doc.md) | 系统架构；context、规划引擎、action 等模块设计 |
 | 📡 [接口设计](docs/zh/api_doc/api_doc.md) | A2A 北向服务接口与 Python SDK |

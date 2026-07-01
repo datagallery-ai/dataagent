@@ -13,10 +13,10 @@
 from typing import Any
 
 
-def get_metavisor_auth(config_manager: Any) -> tuple[str, str]:
-    """Read MetaVisor Basic Auth credentials from agent configuration."""
-    username = config_manager.get("METAVISOR.username")
-    password = config_manager.get("METAVISOR.password")
+def get_semantic_layer_auth(config_manager: Any) -> tuple[str, str]:
+    """Read semantic-service Basic Auth credentials from agent configuration."""
+    username = config_manager.get("SEMANTIC_LAYER.username")
+    password = config_manager.get("SEMANTIC_LAYER.password")
     if not username or not password:
-        raise ValueError("METAVISOR.username and METAVISOR.password must both be configured")
+        raise ValueError("SEMANTIC_LAYER.username and SEMANTIC_LAYER.password must both be configured")
     return str(username), str(password)

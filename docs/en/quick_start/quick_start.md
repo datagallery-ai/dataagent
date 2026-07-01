@@ -160,7 +160,7 @@ Follow this order for the semantic-layer trial path (about 30–60 minutes inclu
 | --- | --- | --- |
 | 1 | [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) | Download the service package, start PostgreSQL/pgvector, configure and start the REST service |
 | 2 | [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md) | Create demo business DB, import metadata, verify search APIs |
-| 3 | [Build a Dedicated NL2SQL Agent](../case/build-an-nl2sql-application.md) | Configure `DATABASE` / `METAVISOR` and run NL2SQL |
+| 3 | [Build a Dedicated NL2SQL Agent](../case/build-an-nl2sql-application.md) | Configure `DATABASE` / `SEMANTIC_LAYER` and run NL2SQL |
 | 4 | [Build a Data Analysis Agent](../case/build-a-dataagent-from-scratch.md) | Main Agent calls NL2SQL sub-Agent on demand |
 
 !!! note "About the demo business database"

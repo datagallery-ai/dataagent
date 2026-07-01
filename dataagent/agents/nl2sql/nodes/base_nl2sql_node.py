@@ -28,7 +28,7 @@ class BaseNL2SQLNode(BaseNode):
 
         Args:
             name: Node name for prompts and routing.
-            config_manager: Per-Agent configuration; required for DATABASE/METAVISOR reads.
+            config_manager: Per-Agent configuration; required for DATABASE/SEMANTIC_LAYER reads.
             **kwargs: Remaining node-specific options (passed to :class:`BaseNode`).
         """
         super().__init__(name=name, **kwargs)

@@ -14,11 +14,10 @@ from __future__ import annotations
 
 __all__ = [
     "LLMOutputParseError",
-    "MetaVisorServiceError",
     "NL2SQLError",
+    "SemanticServiceCallError",
     "SQLServiceError",
     "ThirdPartyServiceError",
-    "ValueMatchServiceError",
 ]
 
 from typing import Any
@@ -63,7 +62,7 @@ class LLMOutputParseError(NL2SQLError):
 
 
 class ThirdPartyServiceError(NL2SQLError):
-    """Base error for third-party metadata or value-match service failures."""
+    """Base error for third-party service failures."""
 
     code = "NL2SQL-META-000"
     message = "三方服务调用失败"
@@ -72,20 +71,12 @@ class ThirdPartyServiceError(NL2SQLError):
     component = "third_party"
 
 
-class MetaVisorServiceError(ThirdPartyServiceError):
-    """Raised when the MetaVisor service call fails."""
+class SemanticServiceCallError(ThirdPartyServiceError):
+    """Raised when the semantic-service call fails."""
 
     code = "NL2SQL-META-001"
-    message = "MetaVisor 服务调用失败"
-    component = "metavisor"
-
-
-class ValueMatchServiceError(ThirdPartyServiceError):
-    """Raised when the ValueMatch service call fails."""
-
-    code = "NL2SQL-META-002"
-    message = "ValueMatch 服务调用失败"
-    component = "valuematch"
+    message = "语义服务调用失败"
+    component = "semantic_service"
 
 
 class SQLServiceError(NL2SQLError):

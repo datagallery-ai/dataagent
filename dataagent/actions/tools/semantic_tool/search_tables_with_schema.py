@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""MetaVisor table and column search functionality.
+"""Semantic-service table and column search functionality.
 
 Provides semantic search capabilities for discovering relevant database tables
 and columns based on business-oriented keywords.
@@ -27,6 +27,11 @@ from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
+from dataagent.utils.constants import (
+    DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT,
+    DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT,
+    DEFAULT_SEMANTIC_SERVICE_TYPENAME_SEARCH_TOP_K,
+)
 
 # ============================================================
 # 工具主函数
@@ -38,7 +43,7 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
 
     Use this tool when you need to discover which tables and columns are
     related to certain business concepts or field names. It performs a
-    semantic search against MetaVisor and returns matching tables (with
+    semantic search against semantic-service and returns matching tables (with
     descriptions) and columns (with descriptions, data types, and sample
     values).
 
@@ -71,13 +76,15 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
     for db in dbs:
         logger.info(f"[search_tables_and_columns] 正在处理数据库: {db}")
         table_meta: dict[str, dict] = {}
-        for item in client.get_table_list(db):
+        table_items = client.get_table_list(db, limit=DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT)
+        for item in table_items:
             table_meta.update(item)
         logger.info(f"[search_tables_and_columns] 数据库 {db} 的表列表获取完成，共 {len(table_meta)} 张表")
 
         hit_tables: dict[str, dict] = {}
         hit_columns: list[dict] = []
-        for item in client.semantic_search_columns(db, keywords, top_k):
+        column_search_items = client.semantic_search_columns(db, keywords, top_k)
+        for item in column_search_items:
             payload = next(iter(item.values()))
             for entry in payload.get("column_name_search", []):
                 dtc = next(iter(entry))
@@ -132,7 +139,7 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
     try:
         output_path, current_time = _get_workspace_path()
         logger.info(f"[search_tables_and_columns] 获取路径成功: output_path={output_path}, current_time={current_time}")
-        file_path = output_path / f"output_metavisor_tables_with_columns_{current_time}.json"
+        file_path = output_path / f"output_semantic_service_tables_with_columns_{current_time}.json"
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(tables_with_columns, f, ensure_ascii=False, indent=2)
         logger.info(f"[search_tables_and_columns] 已保存文件: {file_path}, 包含 {len(tables_with_columns)} 张表")
@@ -200,9 +207,9 @@ def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionCo
     Args:
         keywords（str）: 一个或多个关键字，多个关键字之间以空格分割。
     """
-    topk = 20
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
 
+    topk = DEFAULT_SEMANTIC_SERVICE_TYPENAME_SEARCH_TOP_K
     keyword_list = keywords.split()
     data_table_result = _fulltext_search_with_typename(keyword_list, "data_table", client, topk)
     data_column_result = _fulltext_search_with_typename(keyword_list, "data_column", client, topk)
@@ -269,8 +276,12 @@ def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionCo
     }
 
 
-def get_table_schema(table_name: str, *, _tool_context: ToolExecutionContext) -> dict:
-    """Get the full column schema of a specific table from MetaVisor.
+def get_table_schema(
+    table_name: str,
+    *,
+    _tool_context: ToolExecutionContext,
+) -> dict:
+    """Get the full column schema of a specific table from semantic-service.
 
     Use this tool when you already know the table name (in ``db.table``
     format) and need its complete column list with descriptions and types.
@@ -286,7 +297,7 @@ def get_table_schema(table_name: str, *, _tool_context: ToolExecutionContext) ->
         return _fmt("未提供表名。", "未提供表名。", {})
 
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
-    cols_raw = client.get_table_columns_info(table_name)
+    cols_raw = client.get_table_columns_info(table_name, limit=DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT)
 
     columns: list[dict] = []
     for dtc, meta in cols_raw.items():

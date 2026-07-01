@@ -280,17 +280,43 @@ DEFAULT_NL2SQL_PREVIEW_LIMIT: int = 5
 DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH: int = 500
 """NL2SQL 工具中单元格值的截断长度。"""
 
-DEFAULT_NL2SQL_METAVISOR_COLUMN_LIMIT: int = 1000
-"""Metavisor 列检索默认上限。"""
+DEFAULT_NL2SQL_SEMANTIC_TABLE_LIST_LIMIT: int = 1000
+"""NL2SQL 使用 semantic-service table-list 接口时的默认召回上限。"""
 
-DEFAULT_NL2SQL_VALUEMATCH_TOP_K: int = 3
-"""Metavisor ValueMatch 默认 Top-K。"""
+DEFAULT_NL2SQL_SEMANTIC_TABLE_COLUMNS_LIMIT: int = 1000
+"""NL2SQL 使用 semantic-service table-columns-info 接口时的默认召回上限。"""
+
+DEFAULT_NL2SQL_SEMANTIC_JOINABLE_TABLES_LIMIT: int = 1000
+"""NL2SQL 使用 semantic-service joinable-tables 接口时的默认召回上限。"""
 
 DEFAULT_NL2SQL_SQLITE_TIMEOUT: int = 30
 """NL2SQL SQLite 查询超时（秒）。"""
 
 DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL: int = 10000
 """SQLite 进度处理器回调间隔（虚拟机器指令数）。"""
+
+
+# ── Semantic Service ─────────────────────────────────────────────────────────
+# 当前定义位置: dataagent/actions/tools/semantic_tool/semantic_client.py
+# 默认值对齐 semantic-service 接口层 @DefaultValue
+
+DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT: int = 25
+"""semantic-service table-list 接口默认召回上限。"""
+
+DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT: int = 25
+"""semantic-service table-columns-info 接口默认召回上限。"""
+
+DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT: int = 2000
+"""semantic-service joinable-tables 接口默认召回上限。"""
+
+DEFAULT_SEMANTIC_SERVICE_METRIC_COARSE_RECALL_LIMIT: int = 100
+"""semantic-service 指标粗召回 fulltext search 默认召回上限。"""
+
+DEFAULT_SEMANTIC_SERVICE_TYPENAME_SEARCH_TOP_K: int = 20
+"""semantic-service typeName 全文检索默认召回上限。"""
+
+DEFAULT_SEMANTIC_SERVICE_METRIC_TABLE_COLUMNS_LIMIT: int = 100
+"""semantic-service 指标召回按表补充字段时的默认字段上限。"""
 
 
 # ── 内置工具注册 ─────────────────────────────────────────────────────────────

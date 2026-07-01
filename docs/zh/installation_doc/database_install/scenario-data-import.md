@@ -14,7 +14,7 @@
 
 ```bash
 export SEMANTIC_PORT="${SEMANTIC_PORT:-32000}"
-export BASE="http://localhost:${SEMANTIC_PORT}/api/metaVisor/v3"
+export BASE="http://localhost:${SEMANTIC_PORT}/api/semantic/v1"
 ```
 
 ## 1. 示例结构说明
@@ -538,11 +538,12 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 ```
 
 | DataAgent 配置 | 元数据字段 | 本文示例 |
