@@ -297,7 +297,7 @@ def get_table_schema(
         return _fmt("未提供表名。", "未提供表名。", {})
 
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
-    cols_raw = client.get_table_columns_info(table_name, limit=DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT)
+    cols_raw = client.get_table_columns_info(table_name, limit=1000)
 
     columns: list[dict] = []
     for dtc, meta in cols_raw.items():
