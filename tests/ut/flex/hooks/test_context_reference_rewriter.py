@@ -728,10 +728,10 @@ def test_builtin_hook_registry_resolves(hook_name: str) -> None:
     assert callable(fn)
 
 
-def test_default_yaml_registers_context_reference_rewriter_llm_config(
+def test_default_yaml_context_reference_rewriter_uses_planner_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """default YAML 合并 MODEL 后应注册 context_reference_rewriter 的 llm_configs。"""
+    """default YAML 中 context_reference_rewriter 不单独注册 llm_configs，复用 planner 模型。"""
     from dataagent.core.flex.flex_runtime_from_config import build_llm_configs_from_flex_config
 
     monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
@@ -751,13 +751,15 @@ def test_default_yaml_registers_context_reference_rewriter_llm_config(
         **default_config,
     }
     llm_configs = build_llm_configs_from_flex_config(config)
-    assert "context_reference_rewriter" in llm_configs
-    assert llm_configs["context_reference_rewriter"]["api_base"] == "https://from-env/v1"
-    assert llm_configs["context_reference_rewriter"]["model"] == "deepseek-v4-flash"
+    assert "context_reference_rewriter" not in llm_configs
+    assert "planner" in llm_configs
+    assert llm_configs["planner"]["api_base"] == "https://from-env/v1"
+    assert llm_configs["planner"]["model"] == "deepseek-v4-flash"
 
     hook_specs: list[str] = []
     agent_pre = config.get("HOOKS", {}).get("agent", {}).get("pre", [])
     for item in agent_pre:
         if isinstance(item, dict):
             hook_specs.append(str(item.get("name")))
+            assert item.get("model") is None
     assert "context_reference_rewriter" in hook_specs

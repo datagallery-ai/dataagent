@@ -520,6 +520,8 @@ def _build_llm_prompt(
 def _invoke_llm(runtime: Runtime, prompt: str) -> str:
     """同步调用 LLM 并返回文本内容。
 
+    复用 planner 节点模型，无需在 HOOKS 中单独配置 ``model``。
+
     Args:
         runtime: Flex 运行时。
         prompt: 用户 prompt。
@@ -530,7 +532,7 @@ def _invoke_llm(runtime: Runtime, prompt: str) -> str:
     Raises:
         Exception: LLM 调用失败时向上抛出。
     """
-    llm = runtime.llm("context_reference_rewriter")
+    llm = runtime.llm("planner")
     response = llm.invoke([HumanMessage(content=prompt)])
     content = getattr(response, "content", response)
     return str(content or "").strip()

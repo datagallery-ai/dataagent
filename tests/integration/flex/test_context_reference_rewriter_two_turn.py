@@ -143,7 +143,7 @@ def _build_flex_agent_stub(
 
         def _runtime_llm(name: str) -> _ControlledRewriterLLM:
             table_id = table_id_holder.get("id")
-            if name != "context_reference_rewriter":
+            if name != "planner":
                 raise AssertionError(f"unexpected runtime.llm name: {name}")
             if not table_id:
                 raise AssertionError("table_id not set before rewriter LLM call")
@@ -446,7 +446,7 @@ MODEL:
     fake_llm = _ControlledRewriterLLM(table_id)
 
     def _fake_runtime_llm(_self: Runtime, name: str) -> Any:
-        if name != "context_reference_rewriter":
+        if name != "planner":
             raise AssertionError(f"unexpected runtime.llm name: {name}")
         return fake_llm
 
