@@ -28,7 +28,6 @@ from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.utils.constants import (
-    DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT,
     DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT,
     DEFAULT_SEMANTIC_SERVICE_TYPENAME_SEARCH_TOP_K,
 )
