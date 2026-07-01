@@ -10,9 +10,9 @@ AGENT_CONFIG:
 MODEL:
   chat_model:
     model_type: "chat"
-    provider: "minimax"
+    provider: "deepseek"
     params:
-      model: "MiniMax-M2.7"
+      model: "deepseek-v4-pro"
       temperature: 0.0
       timeout: 60
 
@@ -20,7 +20,7 @@ DATABASE:
   db_id: "demo_db"                    # 转测时替换为 semantic-service 中真实 databaseName
 
 SEMANTIC_LAYER:
-  base_url: "http://127.0.0.1:31000"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
   username: null                      # 未启用认证时保持 null；启用认证时填写
   password: null                      # 未启用认证时保持 null；启用认证时填写
   timeout: 30

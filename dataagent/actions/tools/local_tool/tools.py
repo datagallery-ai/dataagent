@@ -2749,13 +2749,13 @@ def _build_nl2sql_sub_agent_config(
 ) -> dict[str, Any]:
     temp_config = copy.deepcopy(source_config)
 
-    # 用当前主 Agent 的 DATABASE 和 METAVISOR 配置做内存级覆盖
+    # 用当前主 Agent 的 DATABASE 和 SEMANTIC_LAYER 配置做内存级覆盖
     runtime_database = config_manager.get("DATABASE")
-    runtime_metavisor = config_manager.get("METAVISOR")
+    runtime_semantic_layer = config_manager.get("SEMANTIC_LAYER")
     if isinstance(runtime_database, dict) and runtime_database:
         temp_config["DATABASE"] = copy.deepcopy(runtime_database)
-    if isinstance(runtime_metavisor, dict) and runtime_metavisor:
-        temp_config["METAVISOR"] = copy.deepcopy(runtime_metavisor)
+    if isinstance(runtime_semantic_layer, dict) and runtime_semantic_layer:
+        temp_config["SEMANTIC_LAYER"] = copy.deepcopy(runtime_semantic_layer)
 
     bound_llm_model_name = _resolve_bound_llm_model_name(tool_config=tool_config)
     if bound_llm_model_name:

@@ -108,9 +108,7 @@ def search_udf_function_by_name_keyword(
     return _fmt(
         original_msg,
         summary,
-        {
-            "entities": entities,
-        },
+        {"entities": entities},
     )
 
 

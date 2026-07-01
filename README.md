@@ -65,7 +65,7 @@ uv run mkdocs serve -f docs/mkdocs.yml
 | 📖 [Quick Start](docs/en/quick_start/quick_start.md) | Run an end-to-end DataAgent workflow in minutes |
 | 🗄️ [Database Installation](docs/en/installation_doc/database_install/database_install.md) | Deploy Elasticsearch, PostgreSQL, MySQL; prioritize GaussVector integration, import scenario data, and connect Semantic Service |
 | ⚙️ [Features](docs/en/function/function.md) | Core capabilities, modules, tools, and model support |
-| 🧩 [Semantic Service](docs/en/semantic_service/semantic-service-user-guide.md) | MetaVisor enriched metadata for NL2SQL, prioritizing GaussVector-oriented semantic-layer indexing, candidate schema recall, and schema perception enhancement |
+| 🧩 [Semantic Service](docs/en/semantic_service/semantic-service-user-guide.md) | Semantic Service enriched metadata for NL2SQL, prioritizing GaussVector-oriented semantic-layer indexing, candidate schema recall, and schema perception enhancement |
 | 🔗 [openJiuwen](docs/en/openJiuwen/openJiuwen-user-guide.md) | openJiuwen integration and usage guide |
 | 🏗️ [Architecture](docs/en/design_doc/design_doc.md) | System architecture; context, planning engine, and action modules |
 | 📡 [API Design](docs/en/api_doc/api_doc.md) | A2A northbound interface and Python SDK |

@@ -35,14 +35,14 @@ FlexAgent（AGENT_CONFIG.type = react）
   │   nl2sql_sub_agent_tool
   │       │
   │       ├─ 读取内置 NL2SQL 配置
-  │       ├─ 用主 Agent 的 DATABASE / METAVISOR 覆盖子 Agent 配置
+  │       ├─ 用主 Agent 的 DATABASE / SEMANTIC_LAYER 覆盖子 Agent 配置
   │       ├─ 拉起 NL2SQLAgent 执行查询
   │       └─ 保存 SQL 文件和 CSV 结果文件
   │
   └─ 汇总最终回答
 ```
 
-The key point of this pattern: `DATABASE` and `METAVISOR` live in the main Agent YAML; at runtime the tool overlays them onto the temporary NL2SQL sub-Agent config. The same NL2SQL sub-Agent can therefore be reused by different business main Agents.
+The key point of this pattern: `DATABASE` and `SEMANTIC_LAYER` live in the main Agent YAML; at runtime the tool overlays them onto the temporary NL2SQL sub-Agent config. The same NL2SQL sub-Agent can therefore be reused by different business main Agents.
 
 ## 3. Prerequisites
 
@@ -76,7 +76,7 @@ A main Agent that calls an NL2SQL sub-Agent has four main configuration blocks.
 | `MODEL` | Configure at least the main Agent model and the model slot bound to the NL2SQL sub-Agent. |
 | `SCENARIO` | Tell the main Agent when to call NL2SQL and which parameters to pass. |
 | `TOOLS.local_functions` | Register `nl2sql_sub_agent_tool`. |
-| `DATABASE` / `METAVISOR` | The main Agent holds runtime database and Semantic Service settings and overlays them onto the sub-Agent. |
+| `DATABASE` / `SEMANTIC_LAYER` | The main Agent holds runtime database and Semantic Service settings and overlays them onto the sub-Agent. |
 
 Example configuration (same structure as repository `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml`; replace `demo_db` and paths for your scenario):
 
@@ -119,11 +119,12 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 
 SWARM:
   enable: false
@@ -133,7 +134,7 @@ Notes:
 
 - `TOOLS.local_functions[].function` must be `nl2sql_sub_agent_tool`.
 - `config.llm_model` must point to a section under main Agent `MODEL`; the repository example uses `chat_model`.
-- Put `DATABASE` and `METAVISOR` in the main Agent YAML; you do not need to edit the temporary sub-Agent config by hand.
+- Put `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML; you do not need to edit the temporary sub-Agent config by hand.
 - The tool requires `query`, `sql_filename`, and `csv_filename`; `workspace` comes from runtime `initial_state.workspace` (or `chat(workspace=...)`)—see §6.
 
 ## 5. Sub-Agent Configuration Overlay Logic
@@ -141,7 +142,7 @@ Notes:
 Inside `nl2sql_sub_agent_tool`, the following happens:
 
 1. Load the built-in NL2SQL config: `dataagent/agents/nl2sql/nl2sql_agent.yaml`.
-2. Read `DATABASE` and `METAVISOR` from the main Agent's current configuration.
+2. Read `DATABASE` and `SEMANTIC_LAYER` from the main Agent's current configuration.
 3. Overlay the main Agent settings onto the temporary NL2SQL sub-Agent YAML.
 4. If the tool defines `config.llm_model`, read `MODEL.<llm_model>` from the main Agent and write it into the sub-Agent.
 5. Invoke `sub_agent_tool` to launch the NL2SQL sub-Agent.
@@ -221,7 +222,7 @@ If the tool fails, check the message for:
 | --- | --- | --- |
 | `AGENT_CONFIG.type` | `nl2sql` | `react` |
 | Primary role | Convert natural language to SQL directly. | Main Agent plans the task and calls NL2SQL when needed. |
-| Config location | `DATABASE` / `METAVISOR` in the NL2SQL Agent config. | `DATABASE` / `METAVISOR` in the main Agent config, overlaid onto the sub-Agent. |
+| Config location | `DATABASE` / `SEMANTIC_LAYER` in the NL2SQL Agent config. | `DATABASE` / `SEMANTIC_LAYER` in the main Agent config, overlaid onto the sub-Agent. |
 | Output shape | Returns NL2SQL state and query results. | Main Agent summarizes the answer and can save SQL/CSV files. |
 | Best fit | Single database lookup questions. | Database query subtasks within multi-step workflows. |
 
@@ -237,11 +238,11 @@ Check that `SCENARIO.chat.instructions` tells the model to call `nl2sql_sub_agen
 
 ### 9.3 Sub-Agent database configuration is wrong
 
-Check `DATABASE` and `METAVISOR` in the main Agent YAML. The tool overlays these onto the sub-Agent, so issues usually come from the main Agent runtime config, not the temporary YAML.
+Check `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML. The tool overlays these onto the sub-Agent, so issues usually come from the main Agent runtime config, not the temporary YAML.
 
-### 9.4 MetaVisor connection failure
+### 9.4 Semantic Service connection failure
 
-Confirm `METAVISOR.metavisor_url` and `METAVISOR.valuematch_url` are reachable, and that metadata for `DATABASE.db_id` has been imported. See [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) for the full flow.
+Confirm `SEMANTIC_LAYER.base_url` is reachable, and that metadata for `DATABASE.db_id` has been imported. See [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) for the full flow.
 
 ## 10. Summary
 
@@ -249,6 +250,6 @@ The essentials for a main Agent calling an NL2SQL sub-Agent:
 
 1. Main Agent uses `AGENT_CONFIG.type: "react"`.
 2. Register `nl2sql_sub_agent_tool`.
-3. Configure `DATABASE` and `METAVISOR` in the main Agent YAML.
+3. Configure `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML.
 4. Define call boundaries and tool parameters in `SCENARIO`.
 5. Use `workspace` to save SQL and CSV results for answers, auditing, and reuse.

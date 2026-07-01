@@ -33,7 +33,6 @@ EXCLUDE_FILES = {
         "main.py",
         "memory.py",
         "workflow_openjiuwen.py",
-        "metavisor_client.py",
         "sub_agent_entry.py",  # subagent执行入口，强路径匹配，请勿打包
         "start_service.py",
     }

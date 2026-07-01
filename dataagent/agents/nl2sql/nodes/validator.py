@@ -15,7 +15,6 @@ import re
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.metavisor_client import ValueMatchClient
 from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, json_parser, metadata_parser
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
@@ -29,13 +28,6 @@ class ValidatorNode(BaseNL2SQLNode):
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.select_only = kwargs.pop("select_only", True)
-        self._value_match_client = None
-
-    @property
-    def value_match_client(self):
-        if self._value_match_client is None:
-            self._value_match_client = ValueMatchClient(self._get_agent_config("METAVISOR.valuematch_url"))
-        return self._value_match_client
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         semantic_res = self._validate_semantic(state)
@@ -127,18 +119,8 @@ class ValidatorNode(BaseNL2SQLNode):
         context = {"sqls": json.dumps([gr.sql for gr in gen_res])}
         raws = metadata_parser(self.execute_with_llm(context, "extract_columns_"))
         for raw in raws:
-            used = raw.keys() & valid
             invalid_cols = raw.keys() - valid
             issues = [f"Invalid columns: {', '.join(map(repr, invalid_cols))}"] if invalid_cols else []
-            for col in used:
-                for val in raw[col]:
-                    if self._check_value_in_column(col, val):
-                        continue
-                    suggested = ", ".join(repr(s) for s in self._suggested_column_values(col, val))
-                    if suggested:
-                        issues.append(f"Value {repr(val)} not in column {repr(col)}, do you mean {suggested}?")
-                    else:
-                        issues.append(f"Value {repr(val)} not in column {repr(col)}.")
             res.append({"score": 0 if issues else 1, "issues": issues})
         return res
 
@@ -158,16 +140,3 @@ class ValidatorNode(BaseNL2SQLNode):
             gs.score, gs.issues = score, all_issues
             result.append(gs)
         return result
-
-    def _check_value_in_column(self, col: str, val: str) -> bool:
-        resp = self.value_match_client.check_value_exist(self.db, val)
-        return col in {item["matched_column"].split(".", 1)[1] for item in resp["matches"]}
-
-    def _suggested_column_values(self, col: str, question: str) -> list[str]:
-        t, c = col.split(".", 1)
-        resp = self.value_match_client.check_value_match(self.db, t, c, question)
-        suggested = {}  # dict[value, score]
-        for d in resp["matches"]:
-            val = d["matched_value"]
-            suggested[val] = max(d["score"], suggested.get(val, 0))
-        return sorted(suggested.keys(), key=lambda x: -suggested[x])[:3]

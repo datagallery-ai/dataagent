@@ -35,14 +35,14 @@ FlexAgent（AGENT_CONFIG.type = react）
   │   nl2sql_sub_agent_tool
   │       │
   │       ├─ 读取内置 NL2SQL 配置
-  │       ├─ 用主 Agent 的 DATABASE / METAVISOR 覆盖子 Agent 配置
+  │       ├─ 用主 Agent 的 DATABASE / SEMANTIC_LAYER 覆盖子 Agent 配置
   │       ├─ 拉起 NL2SQLAgent 执行查询
   │       └─ 保存 SQL 文件和 CSV 结果文件
   │
   └─ 汇总最终回答
 ```
 
-这个模式的关键点是：`DATABASE` 和 `METAVISOR` 配在主 Agent YAML 中，工具运行时会把它们覆盖到临时 NL2SQL 子 Agent 配置里。因此，同一个 NL2SQL 子 Agent 能被不同业务主 Agent 复用。
+这个模式的关键点是：`DATABASE` 和 `SEMANTIC_LAYER` 配在主 Agent YAML 中，工具运行时会把它们覆盖到临时 NL2SQL 子 Agent 配置里。因此，同一个 NL2SQL 子 Agent 能被不同业务主 Agent 复用。
 
 ## 3. 准备工作
 
@@ -58,7 +58,7 @@ FlexAgent（AGENT_CONFIG.type = react）
 
 若尚未部署 Semantic Service，从 [快速开始 §8](../quick_start/quick_start.md#optional-semantic-service) 的可选路径开始。
 
-MetaVisor/Semantic Service 说明见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。
+Semantic Service 说明见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。
 
 ## 4. 编写主 Agent 配置
 
@@ -76,7 +76,7 @@ dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml
 | `MODEL` | 至少配置主 Agent 使用的模型，以及 NL2SQL 子 Agent 绑定的模型槽位。 |
 | `SCENARIO` | 告诉主 Agent 何时调用 NL2SQL，以及调用时要传哪些参数。 |
 | `TOOLS.local_functions` | 注册 `nl2sql_sub_agent_tool`。 |
-| `DATABASE` / `METAVISOR` | 主 Agent 持有运行时数据库和 Semantic Service 配置，并覆盖给子 Agent。 |
+| `DATABASE` / `SEMANTIC_LAYER` | 主 Agent 持有运行时数据库和 Semantic Service 配置，并覆盖给子 Agent。 |
 
 示例配置（结构与仓库 `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml` 一致；`demo_db` 与路径按场景教程替换）：
 
@@ -119,11 +119,12 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 
 SWARM:
   enable: false
@@ -133,7 +134,7 @@ SWARM:
 
 - `TOOLS.local_functions[].function` 必须是 `nl2sql_sub_agent_tool`。
 - `config.llm_model` 指向主 Agent `MODEL` 中的一个 section，与仓库示例一致为 `chat_model`。
-- `DATABASE` 和 `METAVISOR` 写在主 Agent YAML 中，不需要手工改临时子 Agent 配置。
+- `DATABASE` 和 `SEMANTIC_LAYER` 写在主 Agent YAML 中，不需要手工改临时子 Agent 配置。
 - 调用工具时需传入 `query`、`sql_filename`、`csv_filename`；`workspace` 由运行时 `initial_state.workspace`（或 `chat(workspace=...)`）提供，见 §6 示例。
 
 ## 5. 子 Agent 配置覆盖逻辑
@@ -141,7 +142,7 @@ SWARM:
 `nl2sql_sub_agent_tool` 内部会做以下事情：
 
 1. 读取内置 NL2SQL 配置：`dataagent/agents/nl2sql/nl2sql_agent.yaml`。
-2. 从主 Agent 当前配置中读取 `DATABASE` 和 `METAVISOR`。
+2. 从主 Agent 当前配置中读取 `DATABASE` 和 `SEMANTIC_LAYER`。
 3. 用主 Agent 的配置覆盖临时 NL2SQL 子 Agent YAML。
 4. 如果工具配置了 `config.llm_model`，从主 Agent 的 `MODEL.<llm_model>` 读取模型配置，并写入子 Agent。
 5. 调用 `sub_agent_tool` 拉起 NL2SQL 子 Agent。
@@ -221,7 +222,7 @@ ls -lh /tmp/dataagent-nl2sql-demo
 | --- | --- | --- |
 | `AGENT_CONFIG.type` | `nl2sql` | `react` |
 | 主要职责 | 直接完成自然语言转 SQL。 | 主 Agent 规划任务，必要时调用 NL2SQL。 |
-| 配置位置 | `DATABASE` / `METAVISOR` 写在 NL2SQL Agent 配置中。 | `DATABASE` / `METAVISOR` 写在主 Agent 配置中，再覆盖给子 Agent。 |
+| 配置位置 | `DATABASE` / `SEMANTIC_LAYER` 写在 NL2SQL Agent 配置中。 | `DATABASE` / `SEMANTIC_LAYER` 写在主 Agent 配置中，再覆盖给子 Agent。 |
 | 输出形态 | 返回 NL2SQL 状态和查询结果。 | 主 Agent 汇总回答，并可保存 SQL/CSV 文件。 |
 | 适合场景 | 单一查库问题。 | 多步骤任务中的数据库查询子任务。 |
 
@@ -237,11 +238,11 @@ ls -lh /tmp/dataagent-nl2sql-demo
 
 ### 9.3 子 Agent 数据库配置不对
 
-检查主 Agent YAML 中的 `DATABASE` 和 `METAVISOR`。工具会用主 Agent 的这两段配置覆盖子 Agent，因此问题通常不在临时 YAML，而在主 Agent 的运行时配置。
+检查主 Agent YAML 中的 `DATABASE` 和 `SEMANTIC_LAYER`。工具会用主 Agent 的这两段配置覆盖子 Agent，因此问题通常不在临时 YAML，而在主 Agent 的运行时配置。
 
-### 9.4 MetaVisor 连接失败
+### 9.4 Semantic Service 连接失败
 
-先确认 `METAVISOR.metavisor_url` 和 `METAVISOR.valuematch_url` 可访问，再确认 `DATABASE.db_id` 已完成元数据导入。完整流程请参考 [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)。
+先确认 `SEMANTIC_LAYER.base_url` 可访问，再确认 `DATABASE.db_id` 已完成元数据导入。完整流程请参考 [Semantic Service 部署指南](../installation_doc/database_install/semantic-service-deployment.md)。
 
 ## 10. 小结
 
@@ -249,6 +250,6 @@ ls -lh /tmp/dataagent-nl2sql-demo
 
 1. 主 Agent 使用 `AGENT_CONFIG.type: "react"`。
 2. 注册 `nl2sql_sub_agent_tool`。
-3. 在主 Agent YAML 中配置 `DATABASE` 和 `METAVISOR`。
+3. 在主 Agent YAML 中配置 `DATABASE` 和 `SEMANTIC_LAYER`。
 4. 在 `SCENARIO` 中明确调用边界和工具参数。
 5. 使用 `workspace` 保存 SQL 和 CSV 结果，方便后续回答、审计和复用。

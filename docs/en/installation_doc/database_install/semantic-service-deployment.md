@@ -31,7 +31,7 @@ Before continuing, export ( **example values**: `SEMANTIC_PORT=32000`, `PG_PORT=
 ```bash
 export SEMANTIC_PORT="${SEMANTIC_PORT:-32000}"
 export PG_PORT="${PG_PORT:-54321}"
-export BASE="http://localhost:${SEMANTIC_PORT}/api/metaVisor/v3"
+export BASE="http://localhost:${SEMANTIC_PORT}/api/semantic/v1"
 ```
 
 > `.properties` files **do not** expand shell variables; JDBC port literals must match `$PG_PORT` (example: `54321`).
@@ -348,11 +348,12 @@ DATABASE:
   config:
     path: "/absolute/path/to/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 ```
 
 | DataAgent | Semantic Service metadata |

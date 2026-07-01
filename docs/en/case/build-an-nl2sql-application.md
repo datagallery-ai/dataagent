@@ -26,26 +26,25 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
       │
       ├─ Perceptor：读取数据库 schema、字段语义、join 信息
       ├─ Generator：生成候选 SQL
-      ├─ Validator：做 SQL explain、关键词或值匹配校验
+      ├─ Validator：做 SQL explain、关键词或元数据校验
       ├─ Executor：执行 SQL，返回结果
       ├─ Reflector：必要时反思修正
       └─ Selector：选择最终 SQL 与结果
 ```
 
-MetaVisor supplies enriched metadata. Deployment and import (**required for NL2SQL cases**):
+Semantic Service supplies enriched metadata such as tables, columns, descriptions, join relationships, and semantic retrieval. Deployment and import (**required for NL2SQL cases**):
 
 - [Quick Start §8: optional semantic service](../quick_start/quick_start.md#optional-semantic-service)
 - [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
 - [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
 - [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md)
 
-After deployment, you need three key values:
+After deployment, you need two key values:
 
 | Item | Purpose |
 | --- | --- |
-| `DATABASE.db_id` | Database identifier registered in MetaVisor. |
-| `METAVISOR.metavisor_url` | MetaVisor metadata service URL. |
-| `METAVISOR.valuematch_url` | ValueMatch service URL for literal value matching. |
+| `DATABASE.db_id` | Database identifier imported into Semantic Service. |
+| `SEMANTIC_LAYER.base_url` | Semantic Service REST URL. |
 
 ## 3. Prerequisites
 
@@ -57,7 +56,7 @@ Before you start, confirm:
    - [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
    - [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
 4. Demo SQLite business database ready with an **absolute path** in Agent config (logical `demo_db`; file created by the tutorial, not bundled with the service package).
-5. `METAVISOR.metavisor_url` is reachable and `DATABASE.db_id` matches metadata `databaseName`.
+5. `SEMANTIC_LAYER.base_url` is reachable and `DATABASE.db_id` matches metadata `databaseName`.
 
 If Semantic Service is not deployed yet, start from [Quick Start §8](../quick_start/quick_start.md#optional-semantic-service).
 
@@ -70,11 +69,12 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 ```
 
 Sample verification questions:
@@ -82,7 +82,7 @@ Sample verification questions:
 - City-level GMV ranking (各城市成交额排名)
 - Monthly order count (每月订单量是多少)
 
-See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md) for MetaVisor capabilities.
+See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md) for Semantic Service capabilities.
 
 ## 4. Author the NL2SQL Agent Configuration
 
@@ -100,7 +100,7 @@ You can edit that file or copy it as your own business config. Core configuratio
 | `MODEL` | Chat model for SQL generation and revision. |
 | `CORE` | NL2SQL internal nodes and thresholds. |
 | `DATABASE` | Database id, engine, and connection parameters. |
-| `METAVISOR` | Enriched metadata and value-matching service URLs. |
+| `SEMANTIC_LAYER` | Semantic Service REST URL, authentication, and timeout settings. |
 
 Example configuration (same structure as repository `dataagent/agents/nl2sql/nl2sql_agent.yaml`; replace `demo_db` and paths for your scenario):
 
@@ -147,20 +147,21 @@ DATABASE:
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
-METAVISOR:
-  metavisor_url: "http://localhost:32000"
+SEMANTIC_LAYER:
+  base_url: "http://localhost:32000"
   username: "example"
   password: "123456"
-  valuematch_url: "http://localhost:8000"
+  timeout: 30
+  verify_ssl: false
 ```
 
 When configuring, verify:
 
-- `DATABASE.db_id` matches the database id imported into MetaVisor.
+- `DATABASE.db_id` matches the database id imported into Semantic Service.
 - `DATABASE.engine` matches the real database, for example `sqlite`, `mysql`, or `postgres`.
 - For SQLite, prefer an absolute path in `DATABASE.config.path` so the file is found regardless of the working directory.
 - Do not put `api_key` in YAML; use `.env` instead.
-- Point `METAVISOR.metavisor_url` and `METAVISOR.valuematch_url` at your deployed Semantic Service; set `username` / `password` for your deployment.
+- Point `SEMANTIC_LAYER.base_url` at your deployed Semantic Service; set `username` / `password` for your deployment, or omit them in environments without authentication.
 
 ## 5. Run the Dedicated Agent
 
@@ -220,9 +221,9 @@ Check that `.env` exists in the runtime directory and variable names match `prov
 
 Use an absolute path in `DATABASE.config.path`. Relative paths follow the current working directory when you run the command.
 
-### 7.3 MetaVisor connection failure
+### 7.3 Semantic Service connection failure
 
-Use `curl` to verify `METAVISOR.metavisor_url`, then confirm `DATABASE.db_id` metadata is imported into MetaVisor. See [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) for deployment, initialization, and import.
+Use `curl` to verify `SEMANTIC_LAYER.base_url`, then confirm `DATABASE.db_id` metadata is imported into Semantic Service. See [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) for deployment, initialization, and import.
 
 ### 7.4 Generated SQL does not match business definitions
 
@@ -234,7 +235,7 @@ Essentials for a dedicated NL2SQL Agent:
 
 1. Set `AGENT_CONFIG.type` to `nl2sql`.
 2. Point `DATABASE` at the real business database.
-3. Point `METAVISOR` at Semantic Service with metadata imported.
+3. Point `SEMANTIC_LAYER` at Semantic Service with metadata imported.
 4. Phrase user questions with clear business objects, metric definitions, and query conditions.
 
 When a main Agent must plan tasks, organize reports, and query the database on demand, do not fold that logic into a dedicated NL2SQL Agent—use the main Agent with an NL2SQL sub-Agent instead.
