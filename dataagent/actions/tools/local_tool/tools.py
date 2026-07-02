@@ -1270,22 +1270,8 @@ async def nl2sql_sub_agent_tool(
             "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
         }
 
-    trajectory_src = sub_state.get("_trajectory_path")
-    trajectory_dest = None
     uid = str(runtime.user_id or "anonymous")
     sid = str(runtime.session_id or "default_session")
-    if trajectory_src and Path(trajectory_src).is_file():
-        trajectory_src_path = Path(trajectory_src).resolve()
-        parent_memory = resolve_session_root(user_id=uid, session_id=sid) / ".memory"
-        parent_memory.mkdir(parents=True, exist_ok=True)
-        candidate_dest = (parent_memory / trajectory_src_path.name).resolve()
-        if trajectory_src_path != candidate_dest:
-            shutil.move(str(trajectory_src_path), str(candidate_dest))
-            trajectory_dest = candidate_dest
-            logger.info(f"NL2SQL trajectory moved to: {trajectory_dest}")
-        else:
-            trajectory_dest = trajectory_src_path
-
     sub_id_val = res.get("sub_id")
     if isinstance(sub_id_val, int):
         subagent_session_root = resolve_session_root(
@@ -1324,15 +1310,10 @@ async def nl2sql_sub_agent_tool(
         f"CSV 结果已保存到：`{str(csv_path)}`\n\n"
         f"生成的SQL语句如下:\n```sql\n{sql}\n```"
     )
-    trajectory_info = ""
-    if trajectory_dest:
-        trajectory_info = f"\n\n轨迹文件已保存到：`{str(trajectory_dest)}`"
     original_msg = f"SQL 执行完成，SQL 文件已保存到：{str(sql_path)}，查询结果已保存到：{str(csv_path)}"
-    if trajectory_dest:
-        original_msg += f"，轨迹文件已保存到：{str(trajectory_dest)}"
     return {
         "original_msg": original_msg,
-        "frontend_msg": frontend_msg_md + trajectory_info,
+        "frontend_msg": frontend_msg_md,
     }
 
 
