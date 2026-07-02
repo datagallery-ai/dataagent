@@ -138,6 +138,7 @@ class BaseNL2SQLNode(BaseNode):
         return content
 
     def _get_agent_config(self, key: str, default: Any = None) -> Any:
+        """Read configuration from the bound per-Agent ConfigManager."""
         if self._config_manager is None:
             raise RuntimeError(
                 f"NL2SQL node {self.name!r} has no config_manager; pass config_manager when constructing the node."
