@@ -116,25 +116,19 @@ class BaseNL2SQLNode(BaseNode):
 
     def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
         llm = llm_manager.get_default_llm()
-        node_system = PromptTemplate.from_package_relative(
+        system_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}system"
         ).content
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}user"
         ).apply_prompt_template(**context)
-
-        schema_str = context.get("schema", "")
-
         prompts = [
-            {"role": "system", "content": node_system},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        system_prompt = node_system
-        full_user = user_prompt
-
         response = llm.invoke(prompts)
         content = response.content
-        self._dump_llm_context(system_prompt, full_user, content, self.name, action)
+        self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
         return content
 
     def _get_agent_config(self, key: str, default: Any = None) -> Any:
