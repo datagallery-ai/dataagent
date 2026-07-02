@@ -1374,7 +1374,6 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
             parent_user_query=parent_user_query,
         )
         env = dict(os.environ)
-        env.setdefault("DATAAGENT_CONTEXT_DUMP", "1")
         sub_agent_session_id = f"subagent_{resolved_session_id}_{worker_sub_id}"
         sub_agent_log_path = (
             resolve_user_root(user_id=resolved_user_id) / "logs" / f"{sub_agent_session_id}_{worker_sub_id}.log"
