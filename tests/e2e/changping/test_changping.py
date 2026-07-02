@@ -1468,10 +1468,110 @@ function showRound(runIdx, roundIdx) {
     return html_path
 
 
+# ---------------------------------------------------------------------------
+# Tool mode — interactive CLI with mock services
+# ---------------------------------------------------------------------------
+def _create_test_workspace() -> Path:
+    """Create a temporary workspace directory and copy the sqlite DB into it."""
+    workspace_dir = Path(tempfile.mkdtemp(prefix="test_changping_ws_"))
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "changping02.sqlite")
+    logger.info(f"Test workspace created: {workspace_dir} (sqlite DB copied)")
+    return workspace_dir
+
+
+def _build_test_config(workspace_dir: Path) -> Path:
+    """Load config from YAML, resolve paths, override METAVISOR URL, write to temp file."""
+    import yaml
+
+    config_path = CONFIG_DIR / "main_config.yaml"
+    with open(config_path, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    config = _resolve_config_paths(config, workspace_dir)
+    config.setdefault("METAVISOR", {})["metavisor_url"] = f"http://localhost:{_MOCK_PORT}"
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", prefix="test_changping_", delete=False) as tmp:
+        yaml.safe_dump(config, tmp, allow_unicode=True, sort_keys=False)
+        tmp.flush()
+        return Path(tmp.name)
+
+
+def _cleanup_test_workspace(workspace_dir: Path, config_path: Path) -> None:
+    """Remove temporary workspace directory and config file."""
+    config_path.unlink(missing_ok=True)
+    if workspace_dir.exists():
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+        logger.info(f"Cleaned up test workspace: {workspace_dir}")
+
+
+async def run_tool_mode(
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
+    """Start mock services and enter interactive terminal chat mode."""
+    workspace_dir = _create_test_workspace()
+    config_path = _build_test_config(workspace_dir)
+    logger.info(f"Tool mode config written to: {config_path}")
+
+    from dataagent.interface.cli.main import run_terminal_mode
+    try:
+        await run_terminal_mode(
+            str(config_path),
+            user_id=user_id,
+            session_id=session_id,
+        )
+    finally:
+        _cleanup_test_workspace(workspace_dir, config_path)
+
+
+async def run_single_query(query: str) -> None:
+    """Run a single user query against the agent and print the response."""
+    workspace_dir = Path(tempfile.mkdtemp(prefix="changping_query_"))
+    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "changping02.sqlite")
+
+    config_path = _build_cache_test_config(workspace_dir, enable_human_feedback=False)
+    logger.info(f"Query mode config: {config_path}")
+
+    from dataagent.interface.sdk.agent import DataAgent
+    agent = DataAgent.from_config(str(config_path))
+    try:
+        response = await agent.chat(query, session_id=None)
+        final = response if isinstance(response, str) else getattr(response, "content", str(response))
+        print(f"\n{'='*60}")
+        print(f"问题: {query}")
+        print(f"{'='*60}")
+        print(f"回答: {final}")
+        print(f"{'='*60}\n")
+    finally:
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+        config_path.unlink(missing_ok=True)
+
+
 async def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Changping cache v3.0 e2e test")
+    parser = argparse.ArgumentParser(description="Changping cache v3.0 e2e test / interactive tool")
+    parser.add_argument(
+        "--tool_mode",
+        action="store_true",
+        help="Interactive mode: start mock services and enter free terminal chat",
+    )
+    parser.add_argument(
+        "--user",
+        "-u",
+        default=None,
+        metavar="USER_ID",
+        help="用户 ID（默认 anonymous，由 run_terminal_mode 兜底）",
+    )
+    parser.add_argument(
+        "--session",
+        "-s",
+        default=None,
+        metavar="SESSION_ID",
+        help="会话 ID：默认本进程内生成 时间戳_uuid；指定则固定该会话 ID",
+    )
     parser.add_argument("--skip_slow", action="store_true", help="Skip the slow 'create experiment' query")
     parser.add_argument("--quick", action="store_true", help="Run only 3 fast count queries (~5 min, CI smoke test)")
     parser.add_argument("--tc2_only", action="store_true", help="Run only TC2 (offline extraction) on existing session")
@@ -1486,6 +1586,13 @@ async def main():
         default=None,
         help="Override CACHE_TEST_SESSION_ID (mainly for --tc2_only re-extraction on a prior run). "
         "Default: timestamp-suffixed fresh ID per run.",
+    )
+    parser.add_argument(
+        "--query",
+        "-q",
+        default=None,
+        metavar="QUESTION",
+        help="单次问答模式：直接传入问题，启动 mock 服务并获取回答后退出",
     )
     parser.add_argument(
         "--viz_only",
@@ -1516,6 +1623,13 @@ async def main():
     _start_mock_metavisor()
     try:
         with mock_ontology_env():
+            if args.tool_mode:
+                await run_tool_mode(user_id=args.user, session_id=args.session)
+                return
+            if args.query:
+                await run_single_query(args.query)
+                return
+
             logger.info("Starting main Agent cache v3.0 tests...")
 
             if args.tc2_only:
