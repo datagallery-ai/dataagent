@@ -41,12 +41,18 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
 
@@ -61,15 +67,231 @@ os.environ.setdefault("DATAAGENT_CONTEXT_DUMP", "1")
 os.environ.setdefault("DATAAGENT_QWEN_CACHE_ANCHOR", "1")
 os.environ.setdefault("DATAAGENT_QWEN_CACHE_BREAKPOINT_ANNOTATION", "1")
 
-from test_changping import (
-    _MOCK_PORT,
-    _ORIGINAL_SQLITE_PATH,
-    _resolve_config_paths,
-    _start_mock_metavisor,
-    _stop_mock_metavisor,
-    auto_human_feedback,
-    mock_ontology_env,
-)
+# ---------------------------------------------------------------------------
+# Inline MetaVisor mock server (pre-cached offline responses)
+# ---------------------------------------------------------------------------
+_MOCK_PORT = 32000
+_mock_server: HTTPServer | None = None
+
+
+def _load_metavisor_cache() -> dict[str, Any]:
+    """Load pre-captured MetaVisor responses from the merged config JSON."""
+    cache_path = CONFIG_DIR / "metavisor_responses.json"
+    with open(cache_path, encoding="utf-8") as fh:
+        cache = json.load(fh)
+    return cache
+
+
+_MV_CACHE: dict[str, Any] | None = None
+
+
+def _get_metavisor_cache() -> dict[str, Any]:
+    global _MV_CACHE
+    if _MV_CACHE is None:
+        _MV_CACHE = _load_metavisor_cache()
+        logger.info(f"Loaded {_MV_CACHE.__len__()} MetaVisor response(s) from config")
+    return _MV_CACHE
+
+
+class _MockMVHandler(BaseHTTPRequestHandler):
+    """Serves pre-cached MetaVisor responses."""
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        qs = parse_qs(parsed.query)
+        cache = _get_metavisor_cache()
+
+        if path == "/api/metaVisor/v3/advanced-search/table-list":
+            self._json(cache.get("table-list") or {"error": "table-list not cached"})
+            return
+        if path == "/api/metaVisor/v3/advanced-search/table-columns-info":
+            tname = qs.get("tableName", [""])[0]
+            self._json(cache.get(f"columns:{tname}") or {"error": f"{tname} not cached"})
+            return
+        if path == "/api/metaVisor/v3/advanced-search/joinable-tables":
+            self._json(cache.get("joinable-tables") or {"error": "joinable-tables not cached"})
+            return
+        if path in (
+            "/api/metaVisor/v3/advanced-search/semantic-search-columns",
+            "/api/metaVisor/v3/advanced-search/vector-search-table-desc",
+            "/api/metaVisor/v3/advanced-search/semantic-search-tables",
+        ):
+            key = path.split("/")[-1]
+            self._json(cache.get(key, {}))
+            return
+        self._error(404, f"Unknown endpoint: {path}")
+
+    def _json(self, data: Any) -> None:
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _error(self, code: int, msg: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        body = json.dumps({"error": msg}).encode("utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        pass
+
+
+def _start_mock_metavisor() -> None:
+    """Start the inline MetaVisor mock HTTP server in a daemon thread."""
+    global _mock_server
+    _mock_server = HTTPServer(("127.0.0.1", _MOCK_PORT), _MockMVHandler)
+    t = threading.Thread(target=_mock_server.serve_forever, daemon=True)
+    t.start()
+    for _ in range(30):
+        try:
+            with socket.create_connection(("127.0.0.1", _MOCK_PORT), timeout=0.5):
+                logger.info(f"MetaVisor mock HTTP server listening on http://127.0.0.1:{_MOCK_PORT}")
+                return
+        except OSError:
+            time.sleep(0.2)
+    raise RuntimeError(f"Mock MetaVisor server failed to start on port {_MOCK_PORT}")
+
+
+def _stop_mock_metavisor() -> None:
+    """Stop the inline MetaVisor mock HTTP server."""
+    global _mock_server
+    if _mock_server:
+        _mock_server.shutdown()
+        _mock_server = None
+
+
+# ---------------------------------------------------------------------------
+# OntologyEnv mock
+# ---------------------------------------------------------------------------
+def _load_ontology_fixture() -> dict[str, str]:
+    """Return the formatted ontology description from changping02_ontology.json."""
+    spec_path = CONFIG_DIR / "changping02_ontology.json"
+    data = json.loads(spec_path.read_text(encoding="utf-8"))
+    ontology_data = data.get("changping02", data)
+    if isinstance(ontology_data, dict) and "changping02" in data:
+        ontology_data = data["changping02"]
+
+    entities = ontology_data.get("entities", [])
+    relations = ontology_data.get("relations", [])
+    object_types = [e.get("display_name", e.get("api_name", "")) for e in entities]
+    object_type_details = []
+    for e in entities:
+        name = e.get("display_name", e.get("api_name", ""))
+        props = [{"property_name": p.get("display_name"), "property_description": p.get("description")} for p in e.get("properties", [])]
+        object_type_details.append({"entity_name": name, "entity_description": e.get("description", ""), "properties": props})
+
+    relation_triplets = []
+    for r in relations:
+        relation_triplets.append({"source": r.get("source_entity_type"), "relation": r.get("display_name"),
+                                  "target": r.get("target_entity_type"), "cardinality": r.get("cardinality"),
+                                  "description": r.get("description", "")})
+
+    def _pretty(obj: list[dict]) -> str:
+        return json.dumps(obj, ensure_ascii=False, indent=2)
+
+    return {
+        "original_msg": f"\n对本体查询结果如下：\n本体目前包含以下几种类型实体：\n{_pretty(object_types)}\n\n每种实体的描述和属性定义如下:\n{_pretty(object_type_details)}\n\n实体之间有以下几种类型的关联，每种关联用(源实体-关系-目标实体)的三元组表示:\n{_pretty(relation_triplets)}\n\n可以根据以上信息理解实体间的关联关系，以及每个实体的属性含义，从而构造查询条件。\n",
+        "frontend_msg": f"已从本地spec文件加载本体描述信息，本体中共包括{len(object_types)}种实体，{len(relation_triplets)}种关系，它们的具体schema也已经被加载。",
+    }
+
+
+@contextmanager
+def mock_ontology_env():
+    """Patch OntologyEnv.get_ontology_description to return fixture data."""
+    result = _load_ontology_fixture()
+    logger.info("OntologyEnv.get_ontology_description() → mocked (config/changping02_ontology.json)")
+
+    with patch("dataagent.actions.gym.ontology_env.OntologyEnv.get_ontology_description", lambda self: result):
+        yield
+
+
+# ---------------------------------------------------------------------------
+# Config path resolver
+# ---------------------------------------------------------------------------
+def _resolve_path(value: str, base: Path) -> str:
+    """Resolve a relative path to absolute using *base* as root."""
+    p = Path(value)
+    if p.is_absolute():
+        return value
+    return str((base / p).resolve())
+
+
+def _resolve_config_paths(config: dict, workspace_dir: Path) -> dict:
+    """Resolve relative paths and placeholders in known config fields."""
+    resolved = config.copy()
+
+    workspace = resolved.get("WORKSPACE", {})
+    if isinstance(workspace, dict):
+        path_val = workspace.get("path", "")
+        if path_val == "__WORKSPACE_DIR__":
+            workspace["path"] = str(workspace_dir)
+        allow_path = workspace.get("allow_path", [])
+        if isinstance(allow_path, list):
+            workspace["allow_path"] = [
+                str(workspace_dir) if p == "__WORKSPACE_DIR__" else _resolve_path(p, CHANGPING_DIR)
+                for p in allow_path
+            ]
+
+    database = resolved.get("DATABASE", {})
+    if isinstance(database, dict):
+        db_config = database.get("config", {})
+        if isinstance(db_config, dict) and "path" in db_config:
+            path_val = db_config["path"]
+            if "__WORKSPACE_DIR__" in path_val:
+                db_config["path"] = path_val.replace("__WORKSPACE_DIR__", str(workspace_dir))
+
+    tools = resolved.get("TOOLS", {})
+    if isinstance(tools, dict):
+        skills = tools.get("skills", {})
+        if isinstance(skills, dict):
+            custom_dirs = skills.get("custom_dirs", [])
+            if isinstance(custom_dirs, list):
+                skills["custom_dirs"] = [_resolve_path(d, CHANGPING_DIR) for d in custom_dirs]
+
+    return resolved
+
+
+_ORIGINAL_SQLITE_PATH = CHANGPING_DIR / "data" / "changping02.sqlite"
+
+
+# ---------------------------------------------------------------------------
+# Automated human feedback with HITL assertion
+# ---------------------------------------------------------------------------
+_FEEDBACK_RESPONSES: list[str] = []
+_FEEDBACK_INDEX = 0
+_HITL_TRIGGERED = False
+
+
+def _auto_input(prompt: str) -> str:
+    """Mock input() that returns pre-configured feedback responses and records HITL trigger."""
+    global _FEEDBACK_INDEX, _HITL_TRIGGERED
+    _HITL_TRIGGERED = True
+    if _FEEDBACK_INDEX < len(_FEEDBACK_RESPONSES):
+        response = _FEEDBACK_RESPONSES[_FEEDBACK_INDEX]
+        _FEEDBACK_INDEX += 1
+        logger.info(f"[Auto HITL] Prompt: {prompt.strip()!r} → Response: {response!r}")
+        return response
+    logger.warning(f"[Auto HITL] No more configured responses, returning empty string. Prompt: {prompt.strip()!r}")
+    return ""
+
+
+@contextmanager
+def auto_human_feedback(responses: list[str]):
+    """Patch builtins.input to automatically provide human feedback responses."""
+    global _FEEDBACK_INDEX, _HITL_TRIGGERED, _FEEDBACK_RESPONSES
+    _FEEDBACK_RESPONSES = responses
+    _FEEDBACK_INDEX = 0
+    _HITL_TRIGGERED = False
+    logger.info(f"[Auto HITL] Configured {len(responses)} feedback response(s): {responses}")
+
+    with patch("builtins.input", _auto_input):
+        yield
 
 # Each test run gets a fresh, timestamped user_id / session_id directory under
 # dataagent_home(), so historical execution artifacts (logs, context dumps,
