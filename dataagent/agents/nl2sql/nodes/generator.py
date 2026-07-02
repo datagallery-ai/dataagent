@@ -69,8 +69,6 @@ class GeneratorNode(BaseNL2SQLNode):
         return fn(settings, context)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        schema_str = state.get("schema_str", "")
-        logger.debug(f"Generator received schema_str: len={len(schema_str)}, preview={schema_str[:80] if schema_str else 'EMPTY'}")
         settings = {"engine": self.engine}
         context = {
             "question": state["question"],
