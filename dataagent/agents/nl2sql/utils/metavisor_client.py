@@ -17,14 +17,11 @@ from typing import Any
 import requests
 
 from dataagent.agents.nl2sql.errors import MetaVisorServiceError, ValueMatchServiceError
-from dataagent.agents.nl2sql.utils.trajectory_recorder import NL2SQLTrajectoryRecorder
 from dataagent.utils.constants import DEFAULT_NL2SQL_METAVISOR_COLUMN_LIMIT, DEFAULT_NL2SQL_VALUEMATCH_TOP_K
 
 logger = logging.getLogger(__name__)
 
 _Params = dict[str, Any] | list[tuple[str, Any]]
-
-_METAVISOR_RESULT_PREVIEW_MAX = 8000
 
 _METAVISOR_TOOL_NAME_MAP = {
     "table-list": "metavisor_get_table_list",
@@ -35,45 +32,12 @@ _METAVISOR_TOOL_NAME_MAP = {
     "semantic-search-tables": "metavisor_semantic_search_tables",
 }
 
-_VALUEMATCH_TOOL_NAME_MAP = {
-    "bloom/check": "valuematch_check_value_exist",
-    "lsh/match": "valuematch_check_value_match",
-}
-
-
-def _serialize_params(params: _Params | None) -> dict[str, Any]:
-    if params is None:
-        return {}
-    if isinstance(params, dict):
-        serialized = {}
-        for k, v in params.items():
-            if isinstance(v, list):
-                serialized[k] = [str(i) if not isinstance(i, str) else i for i in v]
-            else:
-                serialized[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
-        return serialized
-    serialized: dict[str, Any] = {}
-    for k, v in params:
-        serialized.setdefault(k, [])
-        if isinstance(v, list):
-            serialized[k].extend([str(i) if not isinstance(i, str) else i for i in v])
-        else:
-            serialized[k].append(v if isinstance(v, (str, int, float, bool)) else str(v))
-    for k in list(serialized):
-        if isinstance(serialized[k], list) and len(serialized[k]) == 1:
-            serialized[k] = serialized[k][0]
-    return serialized
-
 
 class MetaVisorClient:
     def __init__(self, metavisor_url: str):
         self.base_url = f"{metavisor_url}/api/metaVisor/v3/advanced-search/"
         self.s = requests.Session()
         self.headers = {"Accept": "application/json"}
-        self._trajectory_recorder: NL2SQLTrajectoryRecorder | None = None
-
-    def set_trajectory_recorder(self, recorder: NL2SQLTrajectoryRecorder | None) -> None:
-        self._trajectory_recorder = recorder
 
     def get_table_list(self, db: str) -> list:
         purpose = f"Retrieve table list from MetaVisor to discover available tables in database {db}"
@@ -159,31 +123,12 @@ class MetaVisorClient:
             resp = self.s.get(url, headers=self.headers, params=params)
             resp.raise_for_status()
             result = resp.json()
-            if self._trajectory_recorder is not None and purpose:
-                tool_name = _METAVISOR_TOOL_NAME_MAP.get(path, f"metavisor_{path}")
-                args = _serialize_params(params)
-                tid = self._trajectory_recorder.record_tool_call(
-                    tool_name=tool_name, args=args, purpose=purpose,
-                )
-                content = json.dumps(result, ensure_ascii=False)
-                if len(content) > _METAVISOR_RESULT_PREVIEW_MAX:
-                    content = content[:_METAVISOR_RESULT_PREVIEW_MAX] + "\n... (truncated)"
-                self._trajectory_recorder.record_tool_result(content=content, tool_call_id=tid)
             if purpose:
                 tool_name = _METAVISOR_TOOL_NAME_MAP.get(path, f"metavisor_{path}")
                 result_preview = json.dumps(result, ensure_ascii=False)[:500]
                 logging.debug(f"[MetaVisor] {tool_name} purpose={purpose} result_preview={result_preview}")
             return result
         except Exception as exc:
-            if self._trajectory_recorder is not None and purpose:
-                tool_name = _METAVISOR_TOOL_NAME_MAP.get(path, f"metavisor_{path}")
-                args = _serialize_params(params)
-                tid = self._trajectory_recorder.record_tool_call(
-                    tool_name=tool_name, args=args, purpose=purpose,
-                )
-                self._trajectory_recorder.record_tool_result(
-                    content=f"Error: {exc}", tool_call_id=tid,
-                )
             raise MetaVisorServiceError(detail=str(exc)) from exc
 
 
@@ -192,10 +137,6 @@ class ValueMatchClient:
         self.base_url = f"http://{valuematch_url}/api/v1/"
         self.s = requests.Session()
         self.headers = {"Accept": "application/json"}
-        self._trajectory_recorder: NL2SQLTrajectoryRecorder | None = None
-
-    def set_trajectory_recorder(self, recorder: NL2SQLTrajectoryRecorder | None) -> None:
-        self._trajectory_recorder = recorder
 
     def check_value_exist(self, db: str, val: str) -> dict:
         purpose = f"Check if value '{val}' exists in database {db} via bloom filter"
@@ -217,25 +158,6 @@ class ValueMatchClient:
             resp = self.s.get(url, headers=self.headers, params=params)
             resp.raise_for_status()
             result = resp.json()
-            if self._trajectory_recorder is not None and purpose:
-                tool_name = _VALUEMATCH_TOOL_NAME_MAP.get(path, f"valuematch_{path}")
-                args = _serialize_params(params)
-                tid = self._trajectory_recorder.record_tool_call(
-                    tool_name=tool_name, args=args, purpose=purpose,
-                )
-                content = json.dumps(result, ensure_ascii=False)
-                if len(content) > _METAVISOR_RESULT_PREVIEW_MAX:
-                    content = content[:_METAVISOR_RESULT_PREVIEW_MAX] + "\n... (truncated)"
-                self._trajectory_recorder.record_tool_result(content=content, tool_call_id=tid)
             return result
         except Exception as exc:
-            if self._trajectory_recorder is not None and purpose:
-                tool_name = _VALUEMATCH_TOOL_NAME_MAP.get(path, f"valuematch_{path}")
-                args = _serialize_params(params)
-                tid = self._trajectory_recorder.record_tool_call(
-                    tool_name=tool_name, args=args, purpose=purpose,
-                )
-                self._trajectory_recorder.record_tool_result(
-                    content=f"Error: {exc}", tool_call_id=tid,
-                )
             raise ValueMatchServiceError(detail=str(exc)) from exc

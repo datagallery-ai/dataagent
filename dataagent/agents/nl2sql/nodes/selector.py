@@ -26,10 +26,6 @@ class SelectorNode(BaseNL2SQLNode):
         self.threshold = self.config.get("threshold", DEFAULT_NL2SQL_SELECTOR_THRESHOLD)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        self._trajectory_recorder.record_node_start(
-            node_name="selector",
-            purpose="Select the best SQL result based on confidence scoring",
-        )
         res = [
             {"id": r.id, "sql": r.sql, "cols": r.columns, "rows": r.rows_preview, "err": r.error}
             for r in state["execution_results"]

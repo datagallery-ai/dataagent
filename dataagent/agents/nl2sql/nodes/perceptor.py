@@ -159,10 +159,6 @@ class PerceptorNode(BaseNL2SQLNode):
             raise SemanticServiceCallError(detail=str(exc)) from exc
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        self._trajectory_recorder.record_node_start(
-            node_name="perceptor",
-            purpose=f"Build schema information for question: {state['question']}",
-        )
         for attr, key in [
             ("schema_str", self.user_schema),
             ("evidence", self.user_evidence),

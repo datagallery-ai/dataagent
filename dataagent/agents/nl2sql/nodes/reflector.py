@@ -26,10 +26,6 @@ class ReflectorNode(BaseNL2SQLNode):
         self.threshold = self.config.get("threshold", DEFAULT_NL2SQL_REFLECTOR_THRESHOLD)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        self._trajectory_recorder.record_node_start(
-            node_name="reflector",
-            purpose="Fix SQL issues and retry validation",
-        )
         best = max(state["validation_results"], key=lambda r: r.score)
         if (best.score >= self.threshold and not best.need_ref) or state["ref_retries"] <= 0:
             state["proceed"] = True

@@ -38,10 +38,6 @@ class ValidatorNode(BaseNL2SQLNode):
         return self._value_match_client
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        self._trajectory_recorder.record_node_start(
-            node_name="validator",
-            purpose="Validate SQL candidates with semantic, syntax, and metadata checks",
-        )
         semantic_res = self._validate_semantic(state)
         syntax_res = self._validate_syntax(state["generation_results"])
         if self.metadata_match:

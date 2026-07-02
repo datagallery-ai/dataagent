@@ -27,7 +27,6 @@ from dataagent.agents.nl2sql.nodes import (
     SelectorNode,
     ValidatorNode,
 )
-from dataagent.agents.nl2sql.utils.trajectory_recorder import NL2SQLTrajectoryRecorder
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, get_default_state
 from dataagent.core.cbb.base_agent import BaseAgent
@@ -86,11 +85,6 @@ class NL2SQLAgent(BaseAgent):
         router = NL2SQLRouter(enabled_nodes)
         return cls(backend="langgraph", nodes=node_instances, router=router, config=config)
 
-    def _distribute_trajectory_recorder(self, recorder: NL2SQLTrajectoryRecorder) -> None:
-        for node in self.nodes:
-            if hasattr(node, "set_trajectory_recorder"):
-                node.set_trajectory_recorder(recorder)
-
     def _distribute_context_dump_dir(
         self, init: dict[str, Any], *, session_id: str | None = None
     ) -> None:
@@ -134,7 +128,6 @@ class NL2SQLAgent(BaseAgent):
 
     async def chat(self, message: str, initial_state: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """Run one NL2SQL chat turn."""
-        recorder = NL2SQLTrajectoryRecorder()
         try:
             checkpoint_id: str | None = kwargs.pop("checkpoint_id", None)
             session_id: str | None = kwargs.pop("session_id", None)
@@ -146,8 +139,6 @@ class NL2SQLAgent(BaseAgent):
                 session_id = str(uuid.uuid4())
             init = initial_state or kwargs.pop("initial_state", None) or {}
             state = get_default_state(question=message, **init)
-            recorder.record_node_start(node_name="nl2sql_entry", purpose=f"NL2SQL query: {message}")
-            self._distribute_trajectory_recorder(recorder)
             self._distribute_context_dump_dir(init, session_id=session_id)
             latest, flush_provider = make_perf_state_holder(state)
             with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):

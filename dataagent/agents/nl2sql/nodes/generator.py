@@ -38,15 +38,12 @@ class GeneratorNode(BaseNL2SQLNode):
             f"{NL2SQL_PROMPT_PREFIX}/generator/{strategy}_user"
         ).apply_prompt_template(**context)
 
-        schema_str = context.get("schema", "")
-        llm = llm_manager.get_default_llm()
-
         prompts = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
-        content = llm.invoke(prompts).content
+        content = llm_manager.get_default_llm().invoke(prompts).content
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
         sqls = sql_parser(content)
         prompt_history = system_prompt + "\n\n" + user_prompt
@@ -72,10 +69,8 @@ class GeneratorNode(BaseNL2SQLNode):
         return fn(settings, context)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        self._trajectory_recorder.record_node_start(
-            node_name="generator",
-            purpose=f"Generate SQL candidates using strategies: {self.strategies}",
-        )
+        schema_str = state.get("schema_str", "")
+        logger.debug(f"Generator received schema_str: len={len(schema_str)}, preview={schema_str[:80] if schema_str else 'EMPTY'}")
         settings = {"engine": self.engine}
         context = {
             "question": state["question"],

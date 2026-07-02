@@ -19,7 +19,6 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from dataagent.agents.nl2sql.utils.trajectory_recorder import NL2SQLTrajectoryRecorder, _NullRecorder
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
@@ -27,16 +26,6 @@ from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, _TZ_CN
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import logger
-
-_NODE_PURPOSES = {
-    "coordinator": "Parse question into semantic question and keywords",
-    "perceptor": "Build schema information from MetaVisor or user-provided files",
-    "generator": "Generate SQL candidates from multiple strategies",
-    "validator": "Validate SQL candidates with semantic, syntax, and metadata checks",
-    "reflector": "Fix SQL issues and retry validation",
-    "executor": "Execute SQL candidates against the database",
-    "selector": "Select the best SQL result based on confidence scoring",
-}
 
 _TYPE_LABELS = {
     SystemMessage: "SYSTEM",
@@ -64,14 +53,10 @@ class BaseNL2SQLNode(BaseNode):
         """
         super().__init__(name=name, **kwargs)
         self._config_manager = config_manager
-        self._trajectory_recorder: NL2SQLTrajectoryRecorder | _NullRecorder = _NullRecorder()
         self._nl2sql_context_dump_dir: Path | None = None
         self._context_dump_seq: list[int] = [0]
         self._context_dump_enabled: bool = get_env_bool("DATAAGENT_CONTEXT_DUMP")
         self._common_system_cache: str | None = None
-
-    def set_trajectory_recorder(self, recorder: NL2SQLTrajectoryRecorder | _NullRecorder | None) -> None:
-        self._trajectory_recorder = recorder if recorder is not None else _NullRecorder()
 
     def set_context_dump_dir(self, dump_dir: Any | None) -> None:
         if dump_dir is not None:
@@ -147,32 +132,9 @@ class BaseNL2SQLNode(BaseNode):
         system_prompt = node_system
         full_user = user_prompt
 
-        prompt_summary = f"[system] {system_prompt[:500]}\n[user] {full_user[:500]}"
-        purpose = _NODE_PURPOSES.get(self.name, f"Execute LLM call in {self.name}")
-        if action:
-            purpose = f"{purpose} (action: {action})"
         response = llm.invoke(prompts)
         content = response.content
         self._dump_llm_context(system_prompt, full_user, content, self.name, action)
-        usage_metadata = None
-        um = getattr(response, "usage_metadata", None)
-        if isinstance(um, dict):
-            usage_metadata = {
-                "input_tokens": int(um.get("input_tokens") or 0),
-                "output_tokens": int(um.get("output_tokens") or 0),
-                "total_tokens": int(um.get("total_tokens") or 0),
-                "input_cache_read_tokens": int(um.get("input_cache_read_tokens") or 0),
-                "input_cache_creation_tokens": int(um.get("input_cache_creation_tokens") or 0),
-                "output_reasoning_tokens": int(um.get("output_reasoning_tokens") or 0),
-            }
-        self._trajectory_recorder.record_llm_call(
-                node_name=self.name,
-                action=action,
-                purpose=purpose,
-                prompt_summary=prompt_summary,
-                result_summary=content[:2000] if len(content) > 2000 else content,
-                usage_metadata=usage_metadata,
-            )
         return content
 
     def _get_agent_config(self, key: str, default: Any = None) -> Any:
