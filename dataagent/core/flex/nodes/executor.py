@@ -570,7 +570,7 @@ class Executor(BaseNode):
         user_id: str | None,
         session_id: str | None,
         sub_id: int | None,
-        run_id: int | None,
+        run_id: int | None = None,
         runtime: Any,
     ) -> NormalizedToolExecution:
         setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, run_id, runtime)
@@ -800,8 +800,8 @@ class Executor(BaseNode):
         user_id: str | None,
         session_id: str | None,
         sub_id: int | None,
-        run_id: int | None,
-        runtime: Any,
+        run_id: int | None = None,
+        runtime: Any = None,
     ) -> _ToolCallExecutionSetup:
         """Prepare progress emitter, metadata, sandbox guard, and subagent runtime context for one tool call.
 

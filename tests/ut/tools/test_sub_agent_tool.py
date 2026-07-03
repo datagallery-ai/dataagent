@@ -737,6 +737,10 @@ def test_run_agent_passes_identity_to_initial_state(monkeypatch, tmp_path):
         return _FakeAgent()
 
     monkeypatch.setattr("dataagent.actions.tools.local_tool.sub_agent_entry.DataAgent.from_config", _fake_from_config)
+    monkeypatch.setattr(
+        "dataagent.actions.tools.local_tool.sub_agent_entry.reconfigure",
+        lambda cfg: captured.__setitem__("log_path", Path(cfg.file_path).resolve()),
+    )
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
 
     result = asyncio.run(

@@ -1229,8 +1229,8 @@ async def nl2sql_sub_agent_tool(
         source_config,
         config_manager=_tool_context.config_manager,
         tool_config=_tool_context.tool_config,
-        user_id=str(runtime.user_id or ""),
-        session_id=str(runtime.session_id or ""),
+        user_id=str(getattr(runtime, "user_id", None) or ""),
+        session_id=str(getattr(runtime, "session_id", None) or ""),
     )
     guard = get_current_sandbox()
     temp_root = guard.workspace_root or Path.cwd().resolve()
@@ -1270,8 +1270,8 @@ async def nl2sql_sub_agent_tool(
             "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
         }
 
-    uid = str(runtime.user_id or "anonymous")
-    sid = str(runtime.session_id or "default_session")
+    uid = str(getattr(runtime, "user_id", None) or "anonymous")
+    sid = str(getattr(runtime, "session_id", None) or "default_session")
     sub_id_val = res.get("sub_id")
     if isinstance(sub_id_val, int):
         subagent_session_root = resolve_session_root(
