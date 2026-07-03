@@ -644,7 +644,8 @@ class ResultIRConverter:
             return []
 
         try:
-            filepath = write_result_to_workspace(text, tool_name, workspace)
+            config = getattr(getattr(context, "state", None), "config", None)
+            filepath = write_result_to_workspace(text, tool_name, workspace, config=config)
         except Exception as e:
             logger.warning(f"IR converter: failed to write result to workspace for {tool_name}: {e}")
             return []

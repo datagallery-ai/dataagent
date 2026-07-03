@@ -20,49 +20,138 @@
 
 读取时用 ``load_messages``，底层复用 ``dataagent.core.context.message_history`` 的清洗逻辑。
 
-产物路径：``~/.dataagent/{user_id}/{session_id}/.memory/messages.json``
+产物路径：``{workspace}/.memory/messages.json``（layout 可配）
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import BaseMessage
 
 from dataagent.core.context.message_history import read_messages_file, serialize_message, write_messages_file
-from dataagent.utils.runtime_paths import resolve_session_root
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
 
-def _history_path(user_id: str, session_id: str) -> Path:
-    """Resolve and ensure the Flex session ``messages.json`` path."""
-    mem_dir = resolve_session_root(user_id=user_id, session_id=session_id) / ".memory"
+def resolve_history_persistence_context(
+    state: Mapping[str, Any],
+    runtime: Any = None,
+) -> tuple[str | Path | None, Mapping[str, Any] | None]:
+    """Resolve workspace and merged config for session history persistence."""
+    workspace = state.get("workspace")
+    config: Mapping[str, Any] | None = None
+    if runtime is not None:
+        get_all_config = getattr(runtime, "get_all_config", None)
+        if callable(get_all_config):
+            merged = get_all_config()
+            if isinstance(merged, Mapping):
+                config = merged
+    return workspace, config
+
+
+def _resolve_session_memory_dir(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Resolve the Flex session memory directory without creating it."""
+    root = resolve_session_framework_workspace(
+        workspace=workspace,
+        config=config,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    return resolve_layout_dir(root, "session_memory_dir", config=config)
+
+
+def _session_memory_dir(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Resolve and ensure the Flex session memory directory."""
+    mem_dir = _resolve_session_memory_dir(
+        user_id,
+        session_id,
+        workspace=workspace,
+        config=config,
+    )
     mem_dir.mkdir(parents=True, exist_ok=True)
-    return mem_dir / "messages.json"
+    return mem_dir
 
 
-def save_messages(user_id: str, session_id: str, messages: list[BaseMessage]) -> None:
+def _history_path(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Resolve and ensure the Flex session ``messages.json`` path."""
+    return _session_memory_dir(user_id, session_id, workspace=workspace, config=config) / "messages.json"
+
+
+def save_messages(
+    user_id: str,
+    session_id: str,
+    messages: list[BaseMessage],
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> None:
     """全量覆写 session history（由 portraiter 在 session 结束时调用）。"""
     if not user_id or not session_id:
         return
-    path = _history_path(user_id, session_id)
+    path = _history_path(user_id, session_id, workspace=workspace, config=config)
     write_messages_file(path, messages)
 
 
-def load_messages(user_id: str, session_id: str) -> list[BaseMessage]:
+def load_messages(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> list[BaseMessage]:
     """加载并清洗 session history，过滤 SystemMessage 和孤儿 tool call 对。"""
-    path = _history_path(user_id, session_id)
+    path = (
+        _resolve_session_memory_dir(
+            user_id,
+            session_id,
+            workspace=workspace,
+            config=config,
+        )
+        / "messages.json"
+    )
     return read_messages_file(path)
 
 
-def _full_path(user_id: str, session_id: str) -> Path:
+def _full_path(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
     """Resolve and ensure the Flex session ``messages_full.json`` path."""
-    mem_dir = resolve_session_root(user_id=user_id, session_id=session_id) / ".memory"
-    mem_dir.mkdir(parents=True, exist_ok=True)
-    return mem_dir / "messages_full.json"
+    return _session_memory_dir(user_id, session_id, workspace=workspace, config=config) / "messages_full.json"
 
 
-def save_messages_full(user_id: str, session_id: str, messages: list[BaseMessage]) -> None:
+def save_messages_full(
+    user_id: str,
+    session_id: str,
+    messages: list[BaseMessage],
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> None:
     """增量追加 node 原始输出消息到 ``messages_full.json``。
 
     每次 node 执行后调用，读已有文件 → 尾部去重（跳过与已存尾部重叠的新消息前缀）
@@ -70,7 +159,7 @@ def save_messages_full(user_id: str, session_id: str, messages: list[BaseMessage
     """
     if not user_id or not session_id or not messages:
         return
-    path = _full_path(user_id, session_id)
+    path = _full_path(user_id, session_id, workspace=workspace, config=config)
     existing_records: list[dict] = []
     if path.exists():
         try:

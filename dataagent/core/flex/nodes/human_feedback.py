@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import ToolMessage
@@ -33,7 +34,7 @@ from dataagent.utils.cli.rich_renderer import (
     resume_active_renderer,
     suspend_active_renderer,
 )
-from dataagent.utils.runtime_paths import resolve_session_root
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -229,7 +230,16 @@ class HumanFeedbackNode(BaseNode):
         except Exception as e:
             logger.warning(f"[HITL] 通过 restore_previous_runs 恢复历史 Context 失败：{e}")
 
-    def _safe_load_context_meta(self, user_id: str, session_id: str, run_id: int, sub_id: int = 0) -> dict[str, Any]:
+    def _safe_load_context_meta(
+        self,
+        user_id: str,
+        session_id: str,
+        run_id: int,
+        sub_id: int = 0,
+        *,
+        workspace: str | None = None,
+        config: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         meta: dict[str, Any] = {}
         """_safe_load_context_meta"""
         try:
@@ -237,7 +247,15 @@ class HumanFeedbackNode(BaseNode):
             from dataagent.core.context.context import Context
 
             meta_val = (
-                Context.load_meta_from_json(user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id) or {}
+                Context.load_meta_from_json(
+                    user_id=user_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                    sub_id=sub_id,
+                    workspace=workspace,
+                    config=config,
+                )
+                or {}
             )
             if isinstance(meta_val, dict):
                 meta = meta_val
@@ -259,9 +277,14 @@ class HumanFeedbackNode(BaseNode):
             query_text = ""
             additional_files: list[str] = []
             if initial_pt:
+                workspace = resolve_session_framework_workspace(
+                    workspace=getattr(ctx.state, "workspace", None),
+                    config=getattr(ctx.state, "config", None),
+                    session_id=session_id,
+                    user_id=user_id,
+                )
                 store_path = (
-                    resolve_session_root(user_id=user_id, session_id=session_id)
-                    / ".context"
+                    resolve_layout_dir(workspace, "context_dir", config=getattr(ctx.state, "config", None))
                     / f"Run{run_id}_Sub{sub_id}.json"
                 )
                 with open(store_path, encoding="utf-8") as f:
@@ -292,9 +315,14 @@ class HumanFeedbackNode(BaseNode):
     ) -> None:
         """_safe_restore_trajectory_from_snapshot"""
         try:
+            workspace = resolve_session_framework_workspace(
+                workspace=getattr(ctx.state, "workspace", None),
+                config=getattr(ctx.state, "config", None),
+                session_id=session_id,
+                user_id=user_id,
+            )
             store_path = (
-                resolve_session_root(user_id=user_id, session_id=session_id)
-                / ".context"
+                resolve_layout_dir(workspace, "context_dir", config=getattr(ctx.state, "config", None))
                 / f"Run{run_id}_Sub{sub_id}.json"
             )
             with open(store_path, encoding="utf-8") as f:
@@ -359,7 +387,16 @@ class HumanFeedbackNode(BaseNode):
             )
 
             # === 2) 当前 run：从 JSON/meta 快照恢复 ===
-            meta = self._safe_load_context_meta(user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id)
+            workspace = state.get("workspace") or getattr(ctx.state, "workspace", None)
+            config = getattr(ctx.state, "config", None)
+            meta = self._safe_load_context_meta(
+                user_id=user_id,
+                session_id=session_id,
+                run_id=run_id,
+                sub_id=sub_id,
+                workspace=str(workspace or "") or None,
+                config=config,
+            )
             self._safe_initialize_initial_pt_from_meta(
                 ctx, meta=meta, user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id
             )

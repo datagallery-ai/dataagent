@@ -26,13 +26,16 @@ from dataagent.core.context.context import Context
 from dataagent.core.managers.prompt_manager.template import PromptTemplate
 from dataagent.utils.constants import DEFAULT_MAX_TOOL_RESULT_LENGTH
 from dataagent.utils.parsing_utils import extract_action_payloads, parse_action_payloads_to_tool_calls
+from dataagent.utils.runtime_paths import resolve_layout_dir
 
 MAX_TOOL_RESULT_LENGTH = DEFAULT_MAX_TOOL_RESULT_LENGTH
 
 
-def write_result_to_workspace(content: str, tool_name: str, workspace: Path) -> Path:
+def write_result_to_workspace(
+    content: str, tool_name: str, workspace: Path, config: dict[str, Any] | None = None
+) -> Path:
     """将工具结果写入 workspace 的持久化文件，返回文件路径。"""
-    output_dir = workspace / ".dataagent" / "tool_outputs"
+    output_dir = resolve_layout_dir(workspace, "tool_outputs_dir", config=config)
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     filename = f"{tool_name}_{timestamp}.txt"

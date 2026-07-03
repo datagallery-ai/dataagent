@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import BaseMessage
@@ -59,19 +61,48 @@ def strip_subagent_runtime_fields(state: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in dict(state or {}).items() if k not in SUBAGENT_DISK_STRIP_KEYS}
 
 
-def worker_has_persisted_assets(*, user_id: str, parent_session_id: str, sub_id: int) -> bool:
+def worker_has_persisted_assets(
+    *,
+    user_id: str,
+    parent_session_id: str,
+    sub_id: int,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> bool:
     """Return True when any reusable worker artifact exists on disk for ``sub_id``.
 
     Uses ``resolve_worker_root`` only (no ``mkdir``) so existence checks do not create
     empty ``workers/<sub_id>/.memory`` directories as a side effect.
     """
-    memory_dir = resolve_worker_root(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id) / ".memory"
+    memory_dir = (
+        resolve_worker_root(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            sub_id=sub_id,
+            parent_workspace=parent_workspace,
+            config=config,
+        )
+        / ".memory"
+    )
     return any((memory_dir / name).exists() for name in ("metadata.json", "messages.json", "subagent_state.json"))
 
 
-def load_worker_subagent_state(*, user_id: str, parent_session_id: str, sub_id: int) -> dict[str, Any]:
+def load_worker_subagent_state(
+    *,
+    user_id: str,
+    parent_session_id: str,
+    sub_id: int,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Load ``subagent_state.json`` for reuse, stripping runtime keys stored only in-memory."""
-    memory_dir = resolve_worker_memory_dir(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id)
+    memory_dir = resolve_worker_memory_dir(
+        user_id=user_id,
+        parent_session_id=parent_session_id,
+        sub_id=sub_id,
+        parent_workspace=parent_workspace,
+        config=config,
+    )
     path = memory_dir / "subagent_state.json"
     if not path.exists():
         return {}
@@ -84,14 +115,27 @@ def load_worker_subagent_state(*, user_id: str, parent_session_id: str, sub_id: 
     return strip_subagent_runtime_fields(payload)
 
 
-def load_worker_messages(user_id: str, parent_session_id: str, sub_id: int) -> list[BaseMessage] | None:
+def load_worker_messages(
+    user_id: str,
+    parent_session_id: str,
+    sub_id: int,
+    *,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> list[BaseMessage] | None:
     """Load worker conversation history from ``messages.json``.
 
     Returns ``None`` when the file is missing or empty. Full transcripts are stored
     by overwrite on each successful parent persistence pass; compression/truncation
     follows the same subgraph paths as the main agent rather than a worker-local FIFO.
     """
-    memory_dir = resolve_worker_memory_dir(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id)
+    memory_dir = resolve_worker_memory_dir(
+        user_id=user_id,
+        parent_session_id=parent_session_id,
+        sub_id=sub_id,
+        parent_workspace=parent_workspace,
+        config=config,
+    )
     messages_path = memory_dir / "messages.json"
     if not messages_path.exists():
         return None
@@ -107,9 +151,17 @@ def persist_worker_messages(
     parent_session_id: str,
     sub_id: int,
     messages: list[BaseMessage] | list[dict[str, Any]],
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> None:
     """Persist the full multi-turn worker transcript, replacing ``messages.json`` in full."""
-    memory_dir = resolve_worker_memory_dir(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id)
+    memory_dir = resolve_worker_memory_dir(
+        user_id=user_id,
+        parent_session_id=parent_session_id,
+        sub_id=sub_id,
+        parent_workspace=parent_workspace,
+        config=config,
+    )
     path = memory_dir / "messages.json"
     normalized = coerce_worker_messages(messages)
     write_messages_file(path, normalized)
@@ -121,13 +173,21 @@ def persist_worker_state(
     parent_session_id: str,
     sub_id: int,
     state: dict[str, Any],
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> None:
     """Write ``subagent_state.json`` with the child's serializable state minus ``messages``.
 
     Runtime identity keys are stripped so reuse never resurrects stale ``run_id`` /
     ``session_id`` values from disk.
     """
-    memory_dir = resolve_worker_memory_dir(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id)
+    memory_dir = resolve_worker_memory_dir(
+        user_id=user_id,
+        parent_session_id=parent_session_id,
+        sub_id=sub_id,
+        parent_workspace=parent_workspace,
+        config=config,
+    )
     cleaned = strip_subagent_runtime_fields(dict(state or {}))
     cleaned.pop("messages", None)
     atomic_write_json(memory_dir / "subagent_state.json", cleaned)

@@ -144,7 +144,7 @@ class Planner(BaseNode):
         if runtime.get_config("CONTEXT.enable_state_inference", False):
             current_state, unpacked_data_ir = await infer_state_and_unpack_ir(context, runtime=runtime)
         messages_to_process = self._prepare_messages_to_process(state, context, runtime, unpacked_data_ir)
-        _dump_context_prompt_if_enabled(messages_to_process, state)
+        _dump_context_prompt_if_enabled(messages_to_process, state, runtime)
         terminal_mode = bool(state.get("terminal_mode", False))
         streamed_content = False
         reasoning_emitted = False
@@ -221,7 +221,7 @@ class Planner(BaseNode):
 
         extra: dict[str, Any] = {}
         if state.get("enable_portrait"):
-            memory_str = _build_memory_str(state)
+            memory_str = _build_memory_str(state, runtime=runtime)
             if memory_str:
                 extra["memory"] = memory_str
 
@@ -425,23 +425,23 @@ class Planner(BaseNode):
         return any(tool_call.get("name") == "request_human_feedback" for tool_call in ai_message.tool_calls)
 
 
-def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState) -> None:
+def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, runtime: Any) -> None:
     """当 DATAAGENT_CONTEXT_DUMP 环境变量存在时，将当前轮 prompt 写入文件。"""
     if not get_env("DATAAGENT_CONTEXT_DUMP"):
         return
     try:
         from dataagent.utils.messages_utils import dump_prompt_to_file
-        from dataagent.utils.runtime_paths import resolve_session_root
+        from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
-        dump_dir = (
-            resolve_session_root(
-                user_id=str(state["user_id"]),
-                session_id=str(state["session_id"]),
-            )
-            / ".memory"
-            / "context_dump"
-            / f"run_{state['run_id']}"
+        config = runtime.get_all_config() if hasattr(runtime, "get_all_config") else None
+        workspace = resolve_session_framework_workspace(
+            workspace=state.get("workspace"),
+            config=config,
+            session_id=str(state["session_id"]),
+            user_id=str(state["user_id"]),
         )
+        mem_dir = resolve_layout_dir(workspace, "session_memory_dir", config=config)
+        dump_dir = mem_dir / "context_dump" / f"run_{state['run_id']}"
         dump_dir.mkdir(parents=True, exist_ok=True)
         curr_iter = int(state.get("curr_iter", 0))
         dump_file = dump_dir / f"round_{curr_iter}.txt"
@@ -451,16 +451,23 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState) 
         logger.warning(f"Failed to dump context prompt: {e}")
 
 
-def _build_memory_str(state: FlexState) -> str:
+def _build_memory_str(state: FlexState, *, runtime: Any = None) -> str:
     """读取 snapshot + profile + cross_session_memory，拼接为注入 prompt 的 memory 字符串。"""
     user_id = str(state.get("user_id") or "").strip()
     session_id = str(state.get("session_id") or "").strip()
     if not user_id or not session_id:
         return ""
     try:
+        from dataagent.core.flex.hooks.history_writer import resolve_history_persistence_context
         from dataagent.core.flex.hooks.portraiter import _load_profile, _load_snapshot
 
-        snapshot = _load_snapshot(user_id, session_id)
+        workspace, config = resolve_history_persistence_context(state, runtime)
+        snapshot = _load_snapshot(
+            user_id,
+            session_id,
+            workspace=workspace,
+            config=config,
+        )
         profile = _load_profile(user_id)
         parts: list[str] = []
         if any(v for v in snapshot.values()):

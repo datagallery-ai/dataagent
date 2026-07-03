@@ -850,6 +850,7 @@ class Executor(BaseNode):
             progress_callback=progress_cb,
             tool_call_id=tool_call_id,
             agent_config=agent_cfg,
+            parent_workspace=getattr(runtime, "workspace_dir", None),
         )
         return _ToolCallExecutionSetup(
             tool_name=tool_name,

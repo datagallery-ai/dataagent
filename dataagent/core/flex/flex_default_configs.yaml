@@ -59,3 +59,12 @@ HOOKS:
     executor:
       pre:
       post:
+
+WORKSPACE_POLICY:
+  layout:
+    session_memory_dir: ".memory"
+    context_dir: ".context"
+    performance_dir: ".performance"
+    workers_dir: "workers"
+    runtime_dump_dir: ".runtime"
+    tool_outputs_dir: ".dataagent/tool_outputs"

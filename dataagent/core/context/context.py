@@ -13,6 +13,7 @@
 import json
 import re
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ from dataagent.core.context.context_state import ContextState
 from dataagent.core.context.todolist_manager import TodoListManager
 from dataagent.core.context.trajectory_editor import TrajectoryEditor
 from dataagent.core.context.trajectory_navigator import TrajectoryNavigator
-from dataagent.utils.runtime_paths import resolve_session_root
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,9 +37,15 @@ class ContextInitOptions:
 
     pre_workflow: tuple[dict[str, Any], ...] = ()
     post_workflow: tuple[dict[str, Any], ...] = ()
+    workspace: str | Path | None = None
+    config: Mapping[str, Any] | None = None
 
 
-def build_context_init_options(config_manager: Any) -> ContextInitOptions:
+def build_context_init_options(
+    config_manager: Any,
+    *,
+    workspace: str | Path | None = None,
+) -> ContextInitOptions:
     """
     Build narrow Context init options from a per-Agent ConfigManager.
 
@@ -53,6 +60,8 @@ def build_context_init_options(config_manager: Any) -> ContextInitOptions:
     return ContextInitOptions(
         pre_workflow=tuple(config_manager.get("PRE_WORKFLOW", []) or []),
         post_workflow=tuple(config_manager.get("POST_WORKFLOW", []) or []),
+        workspace=workspace,
+        config=config_manager.get_all() if config_manager is not None else None,
     )
 
 
@@ -170,6 +179,9 @@ class Context:
         self.state = ContextState.build(
             user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id, node_types=node_types
         )
+        if init_opts.workspace is not None:
+            self.state.workspace = str(Path(init_opts.workspace).expanduser().resolve())
+        self.state.config = init_opts.config
         self._nav = TrajectoryNavigator(ctx=self)
         self._persistence = ContextPersistence(ctx=self)
         self._editor = TrajectoryEditor(ctx=self)
@@ -226,14 +238,26 @@ class Context:
         return self._nav
 
     @staticmethod
-    def load_meta_from_json(*, user_id: str, session_id: str, run_id: int, sub_id: int = 0) -> dict[str, Any]:
+    def load_meta_from_json(
+        *,
+        user_id: str,
+        session_id: str,
+        run_id: int,
+        sub_id: int = 0,
+        workspace: str | Path | None = None,
+        config: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Load metadata JSON for a given run (if exists).
         """
+        framework_workspace = resolve_session_framework_workspace(
+            workspace=workspace,
+            config=config,
+            session_id=session_id,
+            user_id=user_id,
+        )
         meta_path = (
-            resolve_session_root(user_id=user_id, session_id=session_id)
-            / ".context"
-            / f"Run{run_id}_Sub{sub_id}.meta.json"
+            resolve_layout_dir(framework_workspace, "context_dir", config=config) / f"Run{run_id}_Sub{sub_id}.meta.json"
         )
         try:
             with open(meta_path) as f:
@@ -467,9 +491,14 @@ class Context:
             return
 
         if output_html is None:
+            workspace = resolve_session_framework_workspace(
+                workspace=self.state.workspace,
+                config=self.state.config,
+                session_id=self.state.session_id,
+                user_id=self.state.user_id,
+            )
             output_path = (
-                resolve_session_root(user_id=self.state.user_id, session_id=self.state.session_id)
-                / ".context"
+                resolve_layout_dir(workspace, "context_dir", config=self.state.config)
                 / f"Run{self.state.run_id}_Sub{self.state.sub_id}.html"
             )
         else:

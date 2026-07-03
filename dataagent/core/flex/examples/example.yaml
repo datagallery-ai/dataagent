@@ -41,6 +41,18 @@ WORKSPACE:
   allow_path:                    # sub_agent_tool / SUBAGENT_CONFIGS 运行期可访问的额外绝对路径白名单
     - "$env{PWD}/dataagent/core/flex/examples"
 
+# ── Session 框架目录布局（可选）────────────────────────────────────────────
+# 与 WORKSPACE.path 配合：框架落盘根为 {workspace}，下列键为相对路径段名（禁止绝对路径 / ..）。
+# 未写出的键使用 flex_default_configs.yaml 默认值；仅覆盖需要改的键即可。
+WORKSPACE_POLICY:
+  layout:
+    session_memory_dir: ".memory"               # 会话级 memory：messages.json、snapshot.json、context_dump 等
+    context_dir: ".context"                     # Context 轨迹：Run*_Sub*.json/meta、HTML 可视化、backup、*_summary.md
+    performance_dir: ".performance"             # 性能采集 jsonl（需 DATAAGENT_PERFORMANCE_ENABLED=1）
+    workers_dir: "workers"                      # Swarm / sub_agent 持久化：{workspace}/workers/{sub_id}/
+    runtime_dump_dir: ".runtime"                # 合并配置 debug dump（dataagent_config_*.yaml）
+    tool_outputs_dir: ".dataagent/tool_outputs" # 工具超长结果落盘目录
+
 # SUBAGENT_CONFIGS: 非空时隐式注册 sub_agent_tool（勿在 TOOLS.local_functions 声明）
 # SUBAGENT_CONFIGS:
 #   - path: "/abs/path/to/subagent.yaml"

@@ -73,6 +73,41 @@ def test_worker_memory_uses_history_writer_public_format(monkeypatch, tmp_path):
     assert [msg.content for msg in loaded] == ["hello", "world"]
 
 
+def test_worker_metadata_uses_custom_workers_dir_with_parent_workspace(tmp_path):
+    parent_workspace = tmp_path / "parent-ws"
+    parent_workspace.mkdir()
+    config = {"WORKSPACE_POLICY": {"layout": {"workers_dir": "swarm"}}}
+
+    upsert_worker_metadata(
+        user_id="u",
+        parent_session_id="parent-s",
+        worker_session_id="subagent_parent-s_123456",
+        sub_id=123456,
+        config_path="/tmp/sub.yaml",
+        query="first",
+        worker_result={
+            "status": "success",
+            "final_answer": "first summary",
+            "artifacts": ["/tmp/a.csv"],
+            "error": None,
+        },
+        status="success",
+        last_run_id_executed=0,
+        parent_workspace=parent_workspace,
+        config=config,
+    )
+
+    meta_path = parent_workspace / "swarm" / "123456" / ".memory" / "metadata.json"
+    assert meta_path.is_file()
+    listed = list_worker_metadata(
+        user_id="u",
+        parent_session_id="parent-s",
+        parent_workspace=parent_workspace,
+        config=config,
+    )
+    assert len(listed) == 1
+
+
 def test_worker_metadata_upsert_and_context_scan(monkeypatch, tmp_path):
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
 

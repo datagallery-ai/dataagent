@@ -43,3 +43,15 @@ def test_dump_merged_config_writes_dataagent_config_file(tmp_path) -> None:
     content = target.read_text(encoding="utf-8")
     assert "AGENT_CONFIG:" in content
     assert "\n\nHOOKS:" in content
+
+
+def test_dump_merged_config_uses_custom_runtime_dump_dir(tmp_path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    settings = {
+        "AGENT_CONFIG": {"name": "x"},
+        "WORKSPACE_POLICY": {"layout": {"runtime_dump_dir": "debug/runtime"}},
+    }
+    target = dump_merged_config(settings, workspace=workspace)
+    assert target is not None
+    assert target.parent == workspace / "debug" / "runtime"

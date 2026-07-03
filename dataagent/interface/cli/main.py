@@ -316,8 +316,10 @@ async def _run_terminal_chat_loop(
                 "user_query": user_input,
                 "run_id": run_id,
                 "session_id": session_id_resolved,
-                "enable_portrait": bool(enable_portrait),
             }
+            # 仅 CLI 显式开启时写入；否则由 FlexAgent 从 AGENT_CONFIG.enable_portrait 注入
+            if enable_portrait:
+                initial_state["enable_portrait"] = True
             if uid is not None:
                 initial_state["user_id"] = uid
             response = await agent.chat(user_query=user_input, initial_state=initial_state)

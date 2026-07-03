@@ -205,10 +205,6 @@ async def test_two_turn_table_reference(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """两轮 FlexAgent.chat：第一轮产出 Table，第二轮指代消解并同步 Planner 输入。"""
-    monkeypatch.setattr(
-        "dataagent.core.context.context_persistence.resolve_session_root",
-        lambda **_: tmp_path,
-    )
     ContextFactory.clear_context()
 
     table_id_holder: dict[str, str | None] = {"id": None}
@@ -304,10 +300,6 @@ async def test_reused_chat_state_resets_raw_user_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """复用 initial_state 时，chat() 应把 raw_user_query 重置为本轮输入。"""
-    monkeypatch.setattr(
-        "dataagent.core.context.context_persistence.resolve_session_root",
-        lambda **_: tmp_path,
-    )
     ContextFactory.clear_context()
 
     table_id_holder: dict[str, str | None] = {"id": None}
@@ -347,10 +339,6 @@ async def test_astream_rewrites_query_before_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """astream 路径应注册 QueryNode、执行 hook，并把改写后的 state 传给 backend。"""
-    monkeypatch.setattr(
-        "dataagent.core.context.context_persistence.resolve_session_root",
-        lambda **_: tmp_path,
-    )
     ContextFactory.clear_context()
 
     table_id_holder: dict[str, str | None] = {"id": "Table(sales_agg)"}
@@ -409,10 +397,6 @@ async def test_dataagent_from_config_registers_default_rewriter_hook(
     """DataAgent.from_config 应通过 default YAML 挂载 context_reference_rewriter。"""
     monkeypatch.setenv("BAILIAN_BASE_URL", "http://127.0.0.1:9999")
     monkeypatch.setenv("BAILIAN_API_KEY", "test-key")
-    monkeypatch.setattr(
-        "dataagent.core.context.context_persistence.resolve_session_root",
-        lambda **_: tmp_path,
-    )
     ContextFactory.clear_context()
 
     cfg_path = tmp_path / "agent.yaml"

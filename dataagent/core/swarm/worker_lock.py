@@ -20,9 +20,11 @@ import os
 import shutil
 import socket
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from dataagent.utils.runtime_paths import resolve_worker_root
 
@@ -44,6 +46,8 @@ def acquire_worker_lock(
     sub_id: int,
     query: str,
     ttl_seconds: int,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> WorkerLock | None:
     """Acquire an atomic directory lock for one ``parent_session_id + sub_id``.
 
@@ -51,7 +55,16 @@ def acquire_worker_lock(
     first moved aside and removed so a crashed parent process does not block
     future reuse forever.
     """
-    lock_dir = resolve_worker_root(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id) / ".lock"
+    lock_dir = (
+        resolve_worker_root(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            sub_id=sub_id,
+            parent_workspace=parent_workspace,
+            config=config,
+        )
+        / ".lock"
+    )
     lock_dir.parent.mkdir(parents=True, exist_ok=True)
     _cleanup_stale_lock(lock_dir)
     token = str(uuid.uuid4())
