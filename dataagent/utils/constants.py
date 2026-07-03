@@ -293,6 +293,12 @@ DEFAULT_NL2SQL_SEMANTIC_TABLE_COLUMNS_LIMIT: int = 1000
 DEFAULT_NL2SQL_SEMANTIC_JOINABLE_TABLES_LIMIT: int = 1000
 """NL2SQL 使用 semantic-service joinable-tables 接口时的默认召回上限。"""
 
+DEFAULT_NL2SQL_METAVISOR_COLUMN_LIMIT: int = 1000
+"""NL2SQL 使用 MetaVisor column-search 接口时的默认召回上限。"""
+
+DEFAULT_NL2SQL_VALUEMATCH_TOP_K: int = 3
+"""NL2SQL 使用 ValueMatch 接口时的默认 Top-K。"""
+
 DEFAULT_NL2SQL_SQLITE_TIMEOUT: int = 30
 """NL2SQL SQLite 查询超时（秒）。"""
 
