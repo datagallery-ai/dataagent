@@ -29,6 +29,7 @@ from loguru import logger
 
 from dataagent.utils.compression_utils import direct_fold
 from dataagent.utils.converter.ir_message_consumer import DataNodeRenderSnapshot, render_data_node_snapshot
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -149,11 +150,16 @@ def get_summary_cache_path(context: Context, run_id: int, sub_id: int = 0) -> Pa
     if not user_id or not session_id:
         raise ValueError("Context is missing user_id/session_id required for summary cache path.")
     return (
-        Path.home()
-        / ".dataagent"
-        / str(user_id)
-        / str(session_id)
-        / ".context"
+        resolve_layout_dir(
+            resolve_session_framework_workspace(
+                workspace=context.state.workspace,
+                config=context.state.config,
+                session_id=session_id,
+                user_id=user_id,
+            ),
+            "context_dir",
+            config=context.state.config,
+        )
         / f"Run{run_id}_Sub{sub_id}{SUMMARY_FILE_SUFFIX}"
     )
 

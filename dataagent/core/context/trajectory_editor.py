@@ -115,6 +115,8 @@ class TrajectoryEditor:
             user_id=self._ctx.state.user_id,
             session_id=self._ctx.state.session_id,
             run_id=self._ctx.state.run_id,
+            workspace_root=self._ctx.state.workspace,
+            config=self._ctx.state.config,
             query=query,
             additional_files=additional_files,
             raw_user_query=query,
@@ -207,6 +209,8 @@ class TrajectoryEditor:
             user_id=self._ctx.state.user_id,
             session_id=self._ctx.state.session_id,
             run_id=self._ctx.state.run_id,
+            workspace_root=self._ctx.state.workspace,
+            config=self._ctx.state.config,
             **kwargs,
         )
         node_name = f"{node_type}({label})"

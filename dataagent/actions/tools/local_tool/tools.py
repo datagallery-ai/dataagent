@@ -95,6 +95,7 @@ def set_subagent_runtime_context(
     progress_callback: Any | None = None,  # Callable[[str, str], None]
     tool_call_id: str | None = None,
     agent_config: dict[str, Any] | None = None,
+    parent_workspace: str | Path | None = None,
 ) -> contextvars.Token:
     """Set per-tool-call runtime identity for sub-agent launching."""
     return _subagent_runtime_context.set(
@@ -106,6 +107,7 @@ def set_subagent_runtime_context(
             "progress_callback": progress_callback,
             "tool_call_id": tool_call_id,
             "agent_config": dict(agent_config) if isinstance(agent_config, dict) else {},
+            "parent_workspace": None if parent_workspace is None else str(parent_workspace),
         }
     )
 
@@ -1501,6 +1503,7 @@ async def sub_agent_tool(
         raise FileNotFoundError(f"子 Agent 配置文件不存在: {cfg_path}")
 
     resolved_user_id, resolved_session_id, subagent_context = _resolve_sub_agent_tool_identity()
+    worker_path_kwargs = _subagent_worker_path_kwargs()
 
     swarm_on = swarm_enabled(_subagent_agent_config())
     worker_sub_id = _resolve_worker_sub_id_for_call(
@@ -1513,6 +1516,7 @@ async def sub_agent_tool(
         user_id=resolved_user_id,
         parent_session_id=resolved_session_id,
         sub_id=worker_sub_id,
+        **worker_path_kwargs,
     )
     if swarm_on and sub_id is not None and not reuse_worker_state:
         logger.warning(
@@ -1532,6 +1536,7 @@ async def sub_agent_tool(
         sub_id=worker_sub_id,
         query=query,
         ttl_seconds=int(timeout) + WORKER_LOCK_TTL_GRACE_SECONDS,
+        **worker_path_kwargs,
     )
     if lock is None:
         return _sub_agent_tool_busy_payload(worker_sub_id=worker_sub_id, resolved_session_id=resolved_session_id)
@@ -1573,13 +1578,30 @@ async def sub_agent_tool(
         release_worker_lock(lock)
 
 
+def _subagent_worker_path_kwargs() -> dict[str, Any]:
+    """Return ``parent_workspace`` / ``config`` for swarm worker path helpers."""
+    ctx = get_subagent_runtime_context()
+    agent_cfg = _subagent_agent_config()
+    kwargs: dict[str, Any] = {"config": agent_cfg or None}
+    parent_workspace = ctx.get("parent_workspace") if isinstance(ctx, dict) else None
+    if parent_workspace:
+        kwargs["parent_workspace"] = parent_workspace
+    return kwargs
+
+
 def _allocate_unique_worker_sub_id(*, user_id: str, parent_session_id: str) -> int:
     """Return a random 6-digit worker id whose session folder does not yet exist."""
     from dataagent.utils.runtime_paths import resolve_worker_root
 
+    path_kwargs = _subagent_worker_path_kwargs()
     for _ in range(100):
         candidate = int.from_bytes(os.urandom(4), "big") % 900000 + 100000
-        if not resolve_worker_root(user_id=user_id, parent_session_id=parent_session_id, sub_id=candidate).exists():
+        if not resolve_worker_root(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            sub_id=candidate,
+            **path_kwargs,
+        ).exists():
             return candidate
     raise RuntimeError("Unable to generate a unique subagent id.")
 
@@ -1630,8 +1652,22 @@ def _prepare_worker_initial_state_file(
     base_state: dict[str, Any] = {}
     messages_payload: list[dict[str, Any]] = []
     if swarm_on and reuse_worker_state:
-        base_state = load_worker_subagent_state(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id)
-        messages = load_worker_messages(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id) or []
+        path_kwargs = _subagent_worker_path_kwargs()
+        base_state = load_worker_subagent_state(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            sub_id=sub_id,
+            **path_kwargs,
+        )
+        messages = (
+            load_worker_messages(
+                user_id=user_id,
+                parent_session_id=parent_session_id,
+                sub_id=sub_id,
+                **path_kwargs,
+            )
+            or []
+        )
         messages_payload = [serialize_message(message) for message in messages]
 
     worker_sess = compute_worker_session_id(parent_session_id, sub_id)
@@ -1679,6 +1715,7 @@ def _apply_worker_persistence(
     """
     if not swarm_enabled(_subagent_agent_config()):
         return
+    path_kwargs = _subagent_worker_path_kwargs()
     payload = worker_persistence if isinstance(worker_persistence, dict) else {}
     messages = payload.get("messages")
     if isinstance(messages, list):
@@ -1687,6 +1724,7 @@ def _apply_worker_persistence(
             parent_session_id=parent_session_id,
             sub_id=sub_id,
             messages=messages,
+            **path_kwargs,
         )
     state = payload.get("state")
     persist_worker_state(
@@ -1694,6 +1732,7 @@ def _apply_worker_persistence(
         parent_session_id=parent_session_id,
         sub_id=sub_id,
         state=state if isinstance(state, dict) else {},
+        **path_kwargs,
     )
     upsert_worker_metadata(
         user_id=user_id,
@@ -1706,6 +1745,7 @@ def _apply_worker_persistence(
         status=str(worker_result.get("status") or "failed"),
         error=worker_result.get("error"),
         last_run_id_executed=int(last_run_id_executed),
+        **path_kwargs,
     )
 
 

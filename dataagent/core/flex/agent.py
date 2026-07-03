@@ -13,7 +13,7 @@
 import json
 import os
 import traceback
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -398,7 +398,7 @@ class FlexAgent(BaseAgent):
         if str(message or "").strip():
             runtime.reset_flex_planner_user_sync()
         runtime.update_from_state(initial_state)
-        self.workflow_backend.set_runtime(runtime)
+        self._bind_workflow_runtime(runtime)
         self._refresh_workspace_runtime_context(initial_state, runtime)
         logger.trace(f"[FlexAgent] runtime updated: workspace={runtime.workspace_dir}, hierarchy={runtime.hierarchy}")
 
@@ -640,7 +640,7 @@ class FlexAgent(BaseAgent):
             initial_state = hook(initial_state, runtime)  # type: ignore[assignment]
         initial_state = dict(initial_state)  # normalize after hooks
 
-        self.workflow_backend.set_runtime(runtime)
+        self._bind_workflow_runtime(runtime)
         stream = self.workflow_backend.astream(initial_state, start_at=start_at, **kwargs)
         with self._performance_run(state=initial_state, backend=getattr(self, "backend", None)):
             async for item in self._stream_with_finalization(
@@ -659,6 +659,15 @@ class FlexAgent(BaseAgent):
         """
         return Runtime(self.env_config)
 
+    def _bind_workflow_runtime(self, runtime: Any) -> None:
+        """Publish per-call Runtime and merged config for node/router layout resolution."""
+        self.workflow_backend.set_runtime(runtime)
+        config_manager = getattr(self, "config_manager", None)
+        merged = config_manager.get_all() if config_manager is not None else (self.config or {})
+        router = getattr(self, "router", None)
+        if router is not None:
+            router.set_merged_config(merged if isinstance(merged, Mapping) else None)
+
     def _ensure_context_with_query(self, state: dict[str, Any], runtime: Any = None) -> None:
         """
         确保 Context 已初始化且包含首个 Query 节点。
@@ -672,7 +681,7 @@ class FlexAgent(BaseAgent):
         try:
             if runtime is not None:
                 runtime.update_from_state(state)
-                self.workflow_backend.set_runtime(runtime)
+                self._bind_workflow_runtime(runtime)
         except Exception as e:
             logger.debug(f"Runtime sync skipped in _ensure_context_with_query: {e}")
 
@@ -818,7 +827,11 @@ class FlexAgent(BaseAgent):
             runtime: Per-call Runtime; its ``config_manager`` is used when present.
         """
         config_manager = self._resolve_config_manager(runtime, agent_config_manager=self.config_manager)
-        options = build_context_init_options(config_manager) if config_manager is not None else None
+        options = (
+            build_context_init_options(config_manager, workspace=req.get("workspace"))
+            if config_manager is not None
+            else None
+        )
         uid = str(req.get("user_id", self.config.get("USER_ID", "anonymous")))
         sid = str(req.get("session_id", self.config.get("SESSION_ID", "default_session")))
         rid = int(req.get("run_id", self.config.get("RUN_ID", 0)))
@@ -872,7 +885,7 @@ class FlexAgent(BaseAgent):
 
             if runtime is not None:
                 runtime.update_from_state(input_val)
-                self.workflow_backend.set_runtime(runtime)
+                self._bind_workflow_runtime(runtime)
             self._refresh_workspace_runtime_context(input_val, runtime)
 
             call_context = self._get_or_init_context(input_val, runtime)

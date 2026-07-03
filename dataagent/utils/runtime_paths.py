@@ -21,7 +21,7 @@ Function groups and when to use them:
      ``dataagent_home -> user_root -> session_root``.
 
 2. Active workspace resolution
-   - ``resolve_effective_workspace_root()``
+   - ``resolve_effective_workspace_root()``, ``resolve_session_framework_workspace()``
    - Use during runtime state initialization to decide the final workspace for
      the current run.
    - Priority is:
@@ -29,17 +29,22 @@ Function groups and when to use them:
    - Optional YAML ``WORKSPACE.allow_path`` (list of absolute dirs) is loaded by the
      tool manager as extra **read-only** roots; same policy as skill package roots.
 
-3. Package resources
+3. Workspace layout segments
+   - ``resolve_workspace_layout()``, ``resolve_layout_dir()``, ``resolve_worker_root()``
+   - Use for session framework directories (``.memory``, ``.context``, ``workers``, etc.)
+     under the effective workspace root.
+
+4. Package resources
    - ``dataagent_package_root()``, ``dataagent_package_path()``
    - Use when reading built-in package assets such as shipped YAML files,
      builtin skills, or templates.
 
-4. Generic path normalization
+5. Generic path normalization
    - ``resolve_runtime_path()``
    - Use only for ordinary user-supplied path arguments.
    - This helper does not decide workspace priority or DataAgent runtime hierarchy.
 
-5. Runtime identity fallback
+6. Runtime identity fallback
    - ``resolve_runtime_user_id()``
    - Use when hierarchy helpers need a stable user id but the caller did not
      provide one explicitly.
@@ -52,11 +57,36 @@ Design notes:
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
 from dataagent.utils.env_utils import get_env
+
+LayoutSegment = Literal[
+    "session_memory_dir",
+    "context_dir",
+    "performance_dir",
+    "workers_dir",
+    "runtime_dump_dir",
+    "tool_outputs_dir",
+]
+
+_LAYOUT_SEGMENT_NAMES: frozenset[str] = frozenset(DEFAULT_WORKSPACE_LAYOUT.keys())
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceLayout:
+    """Resolved workspace directory segment names."""
+
+    session_memory_dir: str
+    context_dir: str
+    performance_dir: str
+    workers_dir: str
+    runtime_dump_dir: str
+    tool_outputs_dir: str
 
 
 def dataagent_home() -> Path:
@@ -95,15 +125,85 @@ def resolve_session_root(
     return (resolve_user_root(user_id=user_id, config=config) / session_value).resolve()
 
 
-def resolve_worker_root(*, user_id: str | None, parent_session_id: str | None, sub_id: int) -> Path:
-    """Return the fixed worker asset root under a parent session."""
-    session_root = resolve_session_root(user_id=user_id, session_id=parent_session_id)
-    return (session_root / "workers" / str(int(sub_id))).resolve()
+def resolve_workspace_layout(config: Mapping[str, Any] | None) -> WorkspaceLayout:
+    """Merge ``WORKSPACE_POLICY.layout`` from config with package defaults."""
+    merged = dict(DEFAULT_WORKSPACE_LAYOUT)
+    if isinstance(config, Mapping):
+        policy = config.get("WORKSPACE_POLICY")
+        if isinstance(policy, Mapping):
+            layout = policy.get("layout")
+            if isinstance(layout, Mapping):
+                for key, value in layout.items():
+                    if key in merged and value is not None:
+                        merged[key] = str(value)
+    return WorkspaceLayout(**merged)
 
 
-def resolve_worker_memory_dir(*, user_id: str | None, parent_session_id: str | None, sub_id: int) -> Path:
+def resolve_layout_dir(
+    workspace: Path | str,
+    segment: LayoutSegment,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Resolve ``{workspace}/{layout[segment]}`` for a known layout segment."""
+    if segment not in _LAYOUT_SEGMENT_NAMES:
+        raise ValueError(f"Unknown workspace layout segment: {segment!r}")
+    layout = resolve_workspace_layout(config)
+    rel = getattr(layout, segment)
+    return (Path(workspace) / rel).resolve()
+
+
+def resolve_session_framework_workspace(
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+    session_id: str | None,
+    user_id: str | None = None,
+) -> Path:
+    """Return the session framework root (explicit workspace or effective workspace)."""
+    if workspace is not None:
+        return Path(workspace).expanduser().resolve()
+    return resolve_effective_workspace_root(config=config, session_id=session_id, user_id=user_id)
+
+
+def resolve_worker_root(
+    *,
+    user_id: str | None,
+    parent_session_id: str | None,
+    sub_id: int,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Return the worker asset root under the parent session workspace."""
+    parent_root = resolve_session_framework_workspace(
+        workspace=parent_workspace,
+        config=config,
+        session_id=parent_session_id,
+        user_id=user_id,
+    )
+    layout = resolve_workspace_layout(config)
+    return (parent_root / layout.workers_dir / str(int(sub_id))).resolve()
+
+
+def resolve_worker_memory_dir(
+    *,
+    user_id: str | None,
+    parent_session_id: str | None,
+    sub_id: int,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
     """Return and create the worker ``.memory`` directory."""
-    mem_dir = resolve_worker_root(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id) / ".memory"
+    mem_dir = (
+        resolve_worker_root(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            sub_id=sub_id,
+            parent_workspace=parent_workspace,
+            config=config,
+        )
+        / ".memory"
+    )
     mem_dir.mkdir(parents=True, exist_ok=True)
     return mem_dir
 

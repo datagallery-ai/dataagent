@@ -21,6 +21,7 @@ from typing import Any
 
 import yaml
 
+from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
 from dataagent.utils.env_file_loader import load_env_file
 from dataagent.utils.log import logger
 
@@ -122,6 +123,32 @@ class ConfigManager:
                 raise ValueError(
                     f"WORKSPACE.allow_path entries must be absolute paths; relative path not allowed: {s!r}"
                 )
+
+    @staticmethod
+    def _validate_workspace_policy_layout(config: Mapping[str, Any]) -> None:
+        """Validate ``WORKSPACE_POLICY.layout`` segment paths after YAML load."""
+        policy = config.get("WORKSPACE_POLICY")
+        if not isinstance(policy, Mapping):
+            return
+        layout = policy.get("layout")
+        if not isinstance(layout, Mapping):
+            return
+        for key, value in layout.items():
+            if key not in DEFAULT_WORKSPACE_LAYOUT:
+                continue
+            if value is None:
+                raise ValueError(f"WORKSPACE_POLICY.layout.{key} must be a non-empty relative path segment.")
+            raw = str(value).strip()
+            if not raw:
+                raise ValueError(f"WORKSPACE_POLICY.layout.{key} must be a non-empty relative path segment.")
+            segment_path = Path(raw)
+            if segment_path.is_absolute():
+                raise ValueError(
+                    f"WORKSPACE_POLICY.layout.{key} must be a relative path segment; "
+                    f"absolute paths are not allowed: {raw!r}"
+                )
+            if ".." in segment_path.parts:
+                raise ValueError(f"WORKSPACE_POLICY.layout.{key} must not contain '..'; got: {raw!r}")
 
     @staticmethod
     def _validate_swarm_yaml_config(config: Mapping[str, Any]) -> None:
@@ -264,6 +291,7 @@ class ConfigManager:
             result.pop("SUITE", None)
 
             validate_merged_config(result, activated_suites=activated_meta)
+            self._validate_workspace_policy_layout(result)
 
             self.config_path = resolved_config_path
             self.settings = result

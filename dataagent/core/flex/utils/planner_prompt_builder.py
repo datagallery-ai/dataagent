@@ -97,7 +97,7 @@ def prepare_flex_planner_prompt(
     agent_cfg = _runtime_agent_config(runtime)
     worker_metadata_prompt = ""
     if swarm_enabled(agent_cfg):
-        worker_metadata_prompt = _build_subagent_worker_metadata_prompt_fragment(state)
+        worker_metadata_prompt = _build_subagent_worker_metadata_prompt_fragment(state, runtime=runtime)
     prompt_kwargs = {
         **_build_flex_skill_prompt_variables(
             state=state,
@@ -133,14 +133,24 @@ def prepare_flex_planner_prompt(
     return messages
 
 
-def _save_human_message_to_full(state: Any, user_message: HumanMessage) -> None:
+def _save_human_message_to_full(state: Any, user_message: HumanMessage, runtime: Runtime) -> None:
     """将用户 HumanMessage 增量追加到 messages_full.json。"""
     try:
-        from dataagent.core.flex.hooks.history_writer import save_messages_full
+        from dataagent.core.flex.hooks.history_writer import (
+            resolve_history_persistence_context,
+            save_messages_full,
+        )
 
         user_id = str(state.get("user_id") or "")
         session_id = str(state.get("session_id") or "")
-        save_messages_full(user_id, session_id, [user_message])
+        workspace, config = resolve_history_persistence_context(state, runtime)
+        save_messages_full(
+            user_id,
+            session_id,
+            [user_message],
+            workspace=workspace,
+            config=config,
+        )
     except Exception:
         logger.warning(f"写入用户 HumanMessage 到 messages_full.json 失败: {traceback.format_exc()}")
 
@@ -164,12 +174,12 @@ def sync_flex_planner_user_human_to_state(
         msgs.append(user_message)
         state["messages"] = msgs
         runtime.clear_flex_planner_user_sync_pending()
-        _save_human_message_to_full(state, user_message)
+        _save_human_message_to_full(state, user_message, runtime)
         return
     # openjiuwen：漏置 pending 或 messages 尚未初始化时，避免 Planner 仅有 SystemMessage
     if not state.get("messages"):
         state["messages"] = [user_message]
-        _save_human_message_to_full(state, user_message)
+        _save_human_message_to_full(state, user_message, runtime)
 
 
 def build_todo_message(context: Context) -> HumanMessage | None:
@@ -199,7 +209,11 @@ def _build_skill_entries_prompt(skills: list[dict[str, Any]], *, section_title: 
     return "\n".join(lines)
 
 
-def _build_subagent_worker_metadata_prompt_fragment(state: Any) -> str:
+def _build_subagent_worker_metadata_prompt_fragment(
+    state: Any,
+    *,
+    runtime: Any = None,
+) -> str:
     """Build the fenced JSON fragment for ``planner/system.md``'s ``worker_metadata_prompt`` slot.
 
     Injected during ``_build_planner_system_and_user_messages`` (not via a later
@@ -211,10 +225,28 @@ def _build_subagent_worker_metadata_prompt_fragment(state: Any) -> str:
     parent_session_id = str(state.get("session_id") or "").strip()
     if not user_id or not parent_session_id:
         return ""
+    config = None
+    if runtime is not None and hasattr(runtime, "get_all_config"):
+        config = runtime.get_all_config()
+    parent_workspace = state.get("workspace")
+    if parent_workspace is None and config:
+        from dataagent.utils.runtime_paths import resolve_effective_workspace_root
+
+        parent_workspace = resolve_effective_workspace_root(
+            config=config,
+            session_id=parent_session_id,
+            user_id=user_id,
+        )
     try:
         from dataagent.core.swarm.worker_metadata import build_worker_metadata_context
 
-        assets = build_worker_metadata_context(user_id=user_id, parent_session_id=parent_session_id, limit=10)
+        assets = build_worker_metadata_context(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            limit=10,
+            parent_workspace=parent_workspace,
+            config=config,
+        )
     except Exception as exc:
         logger.debug("skip worker_metadata_prompt fragment: {}", exc)
         return ""

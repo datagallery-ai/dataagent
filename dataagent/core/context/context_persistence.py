@@ -20,7 +20,7 @@ import networkx as nx
 from loguru import logger
 from networkx.classes.digraph import DiGraph
 
-from dataagent.utils.runtime_paths import resolve_session_root
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -34,6 +34,8 @@ _IR_KWARGS_SKIP_KEYS: frozenset[str] = frozenset(
         "session_id",
         "run_id",
         "created_at",
+        "workspace_root",
+        "config",
     }
 )
 
@@ -49,26 +51,6 @@ class ContextPersistence:
     def __init__(self, *, ctx: Context) -> None:
         self._ctx = ctx
 
-    @staticmethod
-    def _trajectory_json_path(*, user_id: str, session_id: str, run_id: int, sub_id: int) -> str:
-        return str(
-            resolve_session_root(user_id=user_id, session_id=session_id) / ".context" / f"Run{run_id}_Sub{sub_id}.json"
-        )
-
-    @staticmethod
-    def _load_trajectory_from_json(*, user_id: str, session_id: str, run_id: int, sub_id: int) -> DiGraph:
-        """Load one run's trajectory snapshot (node_link JSON) from disk."""
-        store_path = ContextPersistence._trajectory_json_path(
-            user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id
-        )
-        try:
-            with open(store_path, encoding="utf-8") as f:
-                trajectory_dict = json.load(f)
-            return nx.node_link_graph(data=trajectory_dict, edges="edges")
-        except Exception as e:
-            logger.warning(f"Failed to load context trajectory from JSON file {store_path}: {e}")
-            return DiGraph()
-
     def persist_to_json(self) -> str:
         """
         Persist current run's context (nodes + edges) to a single JSON file.
@@ -80,15 +62,13 @@ class ContextPersistence:
         Returns:
             str: Path to the trajectory snapshot JSON file.
         """
-        snapshot_path = ContextPersistence._trajectory_json_path(
+        snapshot_path = self._trajectory_json_path(
             user_id=self._ctx.state.user_id,
             session_id=self._ctx.state.session_id,
             run_id=self._ctx.state.run_id,
             sub_id=self._ctx.state.sub_id,
         )
-        context_dir = (
-            resolve_session_root(user_id=self._ctx.state.user_id, session_id=self._ctx.state.session_id) / ".context"
-        )
+        context_dir = self._context_dir()
         context_dir.mkdir(parents=True, exist_ok=True)
 
         current_run_trajectory = nx.DiGraph()
@@ -115,11 +95,7 @@ class ContextPersistence:
         Returns:
             str: Path to the JSON file
         """
-        savepath = (
-            resolve_session_root(user_id=self._ctx.state.user_id, session_id=self._ctx.state.session_id)
-            / ".context"
-            / f"Run{self._ctx.state.run_id}_Sub{self._ctx.state.sub_id}.meta.json"
-        )
+        savepath = self._context_dir() / f"Run{self._ctx.state.run_id}_Sub{self._ctx.state.sub_id}.meta.json"
         savepath.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {
             "initial_pt": self._ctx.state.initial_pt,
@@ -205,6 +181,8 @@ class ContextPersistence:
                     user_id=attrs.get("user_id", user_id),
                     session_id=attrs.get("session_id", session_id),
                     run_id=attrs.get("run_id", past_rid),
+                    workspace_root=self._ctx.state.workspace,
+                    config=self._ctx.state.config,
                     **ir_kwargs,
                 )
             except ValueError as e:
@@ -277,3 +255,44 @@ class ContextPersistence:
         roots = [n for n in run0.nodes if str(n).startswith("Query") and run0.in_degree(n) == 0]
         if roots:
             self._ctx.state.session_root_pt = roots[0]
+
+    def _framework_workspace(self):
+        """Resolve the session framework root from Context state."""
+        return resolve_session_framework_workspace(
+            workspace=self._ctx.state.workspace,
+            config=self._ctx.state.config,
+            session_id=self._ctx.state.session_id,
+            user_id=self._ctx.state.user_id,
+        )
+
+    def _context_dir(self):
+        """Resolve the configured context directory under the framework workspace."""
+        return resolve_layout_dir(
+            self._framework_workspace(),
+            "context_dir",
+            config=self._ctx.state.config,
+        )
+
+    def _trajectory_json_path(self, *, user_id: str, session_id: str, run_id: int, sub_id: int) -> str:
+        if user_id == self._ctx.state.user_id and session_id == self._ctx.state.session_id:
+            context_dir = self._context_dir()
+        else:
+            workspace = resolve_session_framework_workspace(
+                workspace=self._ctx.state.workspace,
+                config=self._ctx.state.config,
+                session_id=session_id,
+                user_id=user_id,
+            )
+            context_dir = resolve_layout_dir(workspace, "context_dir", config=self._ctx.state.config)
+        return str(context_dir / f"Run{run_id}_Sub{sub_id}.json")
+
+    def _load_trajectory_from_json(self, *, user_id: str, session_id: str, run_id: int, sub_id: int) -> DiGraph:
+        """Load one run's trajectory snapshot (node_link JSON) from disk."""
+        store_path = self._trajectory_json_path(user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id)
+        try:
+            with open(store_path, encoding="utf-8") as f:
+                trajectory_dict = json.load(f)
+            return nx.node_link_graph(data=trajectory_dict, edges="edges")
+        except Exception as e:
+            logger.warning(f"Failed to load context trajectory from JSON file {store_path}: {e}")
+            return DiGraph()

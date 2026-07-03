@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -53,6 +54,8 @@ class ContextState:
     profiled_nodes: set[str] = field(default_factory=set)
     messages: dict[Any, Any] = field(default_factory=dict)
     pending_tasks: dict[str, list[asyncio.Task[Any]]] = field(default_factory=lambda: defaultdict(list))
+    workspace: str | None = None
+    config: Mapping[str, Any] | None = None
 
     @staticmethod
     def build(

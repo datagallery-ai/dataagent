@@ -445,6 +445,22 @@ DEFAULT_MODE: str = "chat"
 """未指定时的默认运行模式。DataAgent 属性 setter 已可控制。"""
 
 
+# ── Workspace 框架目录布局 ─────────────────────────────────────────────────────
+# 当前定义位置: dataagent/utils/runtime_paths.py（resolve_workspace_layout / resolve_layout_dir）
+# 建议 YAML 路径: WORKSPACE_POLICY.layout.<segment>
+# 与 WORKSPACE.path 配合：段路径相对于 effective workspace 根；未配置 path 时根为 ~/.dataagent/{user}/{session}/
+
+DEFAULT_WORKSPACE_LAYOUT: dict[str, str] = {
+    "session_memory_dir": ".memory",
+    "context_dir": ".context",
+    "performance_dir": ".performance",
+    "workers_dir": "workers",
+    "runtime_dump_dir": ".runtime",
+    "tool_outputs_dir": ".dataagent/tool_outputs",
+}
+"""Session 框架落盘相对路径段默认值（与 flex_default_configs.yaml WORKSPACE_POLICY.layout 一致）。"""
+
+
 # ── 合并配置 YAML 展示顺序 ───────────────────────────────────────────────────
 # 当前使用位置: dataagent/core/suite/debug_dump.py（``format_settings_yaml``）
 # 仅影响 dryrun / ``.runtime`` dump 等序列化输出顺序，不影响 ``merge_layers`` / ``reload`` 语义。
@@ -453,6 +469,7 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "AGENT_CONFIG",
     "MODEL",
     "WORKSPACE",
+    "WORKSPACE_POLICY",
     "SCENARIO",
     "TOOLS",
     "HOOKS",

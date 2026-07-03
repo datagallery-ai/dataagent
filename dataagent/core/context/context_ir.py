@@ -14,7 +14,7 @@ import asyncio
 import re
 import shutil
 from collections import defaultdict
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,7 +28,7 @@ from dataagent.core.context.utils_context_filesystem import is_text_file, lineag
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.core.utils.performance import attribute_calls
-from dataagent.utils.runtime_paths import resolve_session_root
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
 
 @dataclass
@@ -42,6 +42,8 @@ class BaseIR:
     user_id: str  # 所属用户 id
     session_id: str  # 所属session id
     run_id: int  # 所属run id
+    workspace_root: str | None = field(default=None, kw_only=True, repr=False, compare=False)
+    config: Mapping[str, Any] | None = field(default=None, kw_only=True, repr=False, compare=False)
     created_at: datetime = field(init=False)  # 创建时间
     history: dict[int, dict[str, Any]] = field(default_factory=dict, kw_only=True)  # IR历史记录
 
@@ -198,9 +200,14 @@ class DataNode(BaseIR):
             p = Path(path).expanduser()
             if p.exists() and p.is_file():
                 node_type = self.__class__.__name__.replace("Node", "")
+                workspace = resolve_session_framework_workspace(
+                    workspace=self.workspace_root,
+                    config=self.config,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                )
                 backup_path = (
-                    resolve_session_root(user_id=self.user_id, session_id=self.session_id)
-                    / ".context"
+                    resolve_layout_dir(workspace, "context_dir", config=self.config)
                     / "backup"
                     / f"{node_type}({self.label}){p.suffix}"
                 )

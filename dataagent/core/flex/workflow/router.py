@@ -12,6 +12,7 @@
 # ============================================================================
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -20,34 +21,28 @@ from dataagent.core.cbb.base_router import BaseRouter
 from dataagent.core.flex.hooks.agent_turn import is_subagent
 
 
+def _resolve_agent_config_from_runtime() -> Mapping[str, Any] | None:
+    """Best-effort merged config from the active runtime ContextVar."""
+    try:
+        from dataagent.core.framework_adapters.runtime.context import get_current_runtime
+
+        runtime = get_current_runtime()
+        get_all_config = getattr(runtime, "get_all_config", None)
+        if callable(get_all_config):
+            config = get_all_config()
+            if isinstance(config, Mapping):
+                return config
+    except Exception as e:
+        logger.warning(f"[FlexRouter] 无法从 runtime 解析 merged config，将回退默认 layout: {e}")
+    return None
+
+
 class LimitReachedError(Exception):
     """迭代次数或 token 超限，携带当前 state 供 chat() 拼装返回。"""
 
     def __init__(self, message: str, state: dict[str, Any] | None = None):
         super().__init__(message)
         self.state = state or {}
-
-
-def _write_message_history(state: dict[str, Any]) -> None:
-    """对齐 galatea GalateaRouter.process 的 append_history_messages 行为。
-
-    在每个路由节点执行后将当前全量消息写入 session history，
-    确保崩溃时已完成轮次的上下文不丢失。
-    subagent 不写主 agent 的会话历史。
-    """
-    if is_subagent(state):
-        return
-    user_id = str(state.get("user_id") or "")
-    session_id = str(state.get("session_id") or "")
-    messages = state.get("messages") or []
-    if not user_id or not session_id or not messages:
-        return
-    try:
-        from dataagent.core.flex.hooks.history_writer import save_messages
-
-        save_messages(user_id, session_id, messages)
-    except Exception as e:
-        logger.warning(f"[FlexRouter] 消息历史写入失败，本轮上下文可能丢失: {e}")
 
 
 def _compute_total_tokens_from_messages(messages: list[Any]) -> int:
@@ -106,6 +101,7 @@ class FlexRouter(BaseRouter):
         post_nodes = post_nodes or []
         self._max_iter: int | None = None if max_iter is None else int(max_iter)
         self._token_limit = token_limit
+        self._merged_config: Mapping[str, Any] | None = None
         entry_point = pre_nodes[0] if pre_nodes else actor_nodes[0]
         super().__init__(entry_point)
 
@@ -120,7 +116,7 @@ class FlexRouter(BaseRouter):
 
             def _route_after_first_actor(state):
                 """第一个 actor 执行完后持久化消息，检查是否需要 HITL"""
-                _write_message_history(state)
+                self._write_message_history(state)
 
                 if state.get("complete", False):
                     logger.debug("[Router] 首个 actor 已结束，直接返回结束节点")
@@ -163,7 +159,7 @@ class FlexRouter(BaseRouter):
 
         # Add loop routing for actor workflow (最后一个 actor 节点)
         def _route_after_last_actor(state):
-            _write_message_history(state)
+            self._write_message_history(state)
 
             # Priority 1: Check completion
             if state.get("complete", False):
@@ -192,12 +188,49 @@ class FlexRouter(BaseRouter):
         # HITL node routing (hardcoded)
         def _route_after_hitl(state):
             """HITL 执行完后持久化消息，固定返回 Actor 第一个节点"""
-            _write_message_history(state)
+            self._write_message_history(state)
             hitl_count = state.get("hitl_count", 0)
             logger.info(f"[Router] HITL 处理完成 (共 {hitl_count} 次)，返回 {actor_nodes[0]} 重新决策")
             return actor_nodes[0]
 
         self.add_custom_rule("human_feedback", _route_after_hitl)
+
+    def set_merged_config(self, config: Mapping[str, Any] | None) -> None:
+        """Publish merged agent config for routing-time layout resolution."""
+        self._merged_config = config
+
+    def _resolve_agent_config(self) -> Mapping[str, Any] | None:
+        """Return merged config bound on the router, else from runtime ContextVar."""
+        if self._merged_config is not None:
+            return self._merged_config
+        return _resolve_agent_config_from_runtime()
+
+    def _write_message_history(self, state: dict[str, Any]) -> None:
+        """对齐 galatea GalateaRouter.process 的 append_history_messages 行为。
+
+        在每个路由节点执行后将当前全量消息写入 session history，
+        确保崩溃时已完成轮次的上下文不丢失。
+        subagent 不写主 agent 的会话历史。
+        """
+        if is_subagent(state):
+            return
+        user_id = str(state.get("user_id") or "")
+        session_id = str(state.get("session_id") or "")
+        messages = state.get("messages") or []
+        if not user_id or not session_id or not messages:
+            return
+        try:
+            from dataagent.core.flex.hooks.history_writer import save_messages
+
+            save_messages(
+                user_id,
+                session_id,
+                messages,
+                workspace=state.get("workspace"),
+                config=self._resolve_agent_config(),
+            )
+        except Exception as e:
+            logger.warning(f"[FlexRouter] 消息历史写入失败，本轮上下文可能丢失: {e}")
 
     def _check_token_limit(self, state: dict[str, Any]) -> str | None:
         """可选累计 token 上限；返回原因字符串，未超限返回 None。"""

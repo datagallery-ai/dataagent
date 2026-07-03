@@ -32,10 +32,8 @@ def is_subagent(state: Mapping[str, Any]) -> bool:
 def session_history_restore(state: dict[str, Any], runtime: Any) -> dict[str, Any]:
     """若 ``messages`` 为空且有 ``user_id``/``session_id``，从 ``messages.json`` 全量恢复。
 
-    ``runtime`` 未使用，保留签名与其它 hook 一致。
     subagent 不做历史恢复，避免污染主 agent 的会话上下文。
     """
-    _ = runtime
     if is_subagent(state) or state.get("messages"):
         return state
     user_id = str(state.get("user_id") or "").strip()
@@ -43,9 +41,18 @@ def session_history_restore(state: dict[str, Any], runtime: Any) -> dict[str, An
     if not user_id or not session_id:
         return state
     try:
-        from dataagent.core.flex.hooks.history_writer import load_messages
+        from dataagent.core.flex.hooks.history_writer import (
+            load_messages,
+            resolve_history_persistence_context,
+        )
 
-        messages = load_messages(user_id, session_id)
+        workspace, config = resolve_history_persistence_context(state, runtime)
+        messages = load_messages(
+            user_id,
+            session_id,
+            workspace=workspace,
+            config=config,
+        )
         if messages:
             state["messages"] = messages
             logger.debug(f"[session_history_restore] restored {len(messages)} messages ({session_id})")

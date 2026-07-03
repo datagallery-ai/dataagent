@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +23,11 @@ from typing import Any
 
 from dataagent.core.swarm.worker_io import atomic_write_json
 from dataagent.utils.constants import MAX_WORKER_METADATA_ARTIFACTS
-from dataagent.utils.runtime_paths import resolve_session_root, resolve_worker_memory_dir
+from dataagent.utils.runtime_paths import (
+    resolve_layout_dir,
+    resolve_session_framework_workspace,
+    resolve_worker_memory_dir,
+)
 
 
 @dataclass
@@ -59,10 +64,24 @@ class WorkerMetadata:
         return asdict(self)
 
 
-def load_worker_metadata(*, user_id: str, parent_session_id: str, sub_id: int) -> WorkerMetadata | None:
+def load_worker_metadata(
+    *,
+    user_id: str,
+    parent_session_id: str,
+    sub_id: int,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> WorkerMetadata | None:
     """Load a single worker's ``metadata.json`` if it exists and is valid."""
     path = (
-        resolve_worker_memory_dir(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id) / "metadata.json"
+        resolve_worker_memory_dir(
+            user_id=user_id,
+            parent_session_id=parent_session_id,
+            sub_id=sub_id,
+            parent_workspace=parent_workspace,
+            config=config,
+        )
+        / "metadata.json"
     )
     return _read_metadata_file(path)
 
@@ -100,6 +119,8 @@ def upsert_worker_metadata(
     status: str,
     last_run_id_executed: int,
     error: str | None = None,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> WorkerMetadata:
     """Create or update one worker metadata asset.
 
@@ -107,7 +128,13 @@ def upsert_worker_metadata(
     that actually started (busy skips metadata entirely). ``last_run_id_executed``
     must match the ``run_id`` injected into the child's initial state for that run.
     """
-    memory_dir = resolve_worker_memory_dir(user_id=user_id, parent_session_id=parent_session_id, sub_id=sub_id)
+    memory_dir = resolve_worker_memory_dir(
+        user_id=user_id,
+        parent_session_id=parent_session_id,
+        sub_id=sub_id,
+        parent_workspace=parent_workspace,
+        config=config,
+    )
     path = memory_dir / "metadata.json"
     now = _now()
     existing = _read_metadata_file(path)
@@ -135,9 +162,21 @@ def upsert_worker_metadata(
     return metadata
 
 
-def list_worker_metadata(*, user_id: str, parent_session_id: str) -> list[WorkerMetadata]:
+def list_worker_metadata(
+    *,
+    user_id: str,
+    parent_session_id: str,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> list[WorkerMetadata]:
     """Discover current-session workers by scanning ``workers/*/.memory/metadata.json``."""
-    workers_dir = resolve_session_root(user_id=user_id, session_id=parent_session_id) / "workers"
+    workspace = resolve_session_framework_workspace(
+        workspace=parent_workspace,
+        config=config,
+        session_id=parent_session_id,
+        user_id=user_id,
+    )
+    workers_dir = resolve_layout_dir(workspace, "workers_dir", config=config)
     if not workers_dir.exists():
         return []
     items: list[WorkerMetadata] = []
@@ -154,6 +193,8 @@ def build_worker_metadata_context(
     user_id: str,
     parent_session_id: str,
     limit: int = 10,
+    parent_workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build planner-safe metadata context for system prompt injection.
 
@@ -162,7 +203,12 @@ def build_worker_metadata_context(
     invocation and truncated by ``limit`` to avoid prompt growth.
     """
     records: list[dict[str, Any]] = []
-    for item in list_worker_metadata(user_id=user_id, parent_session_id=parent_session_id)[: int(limit)]:
+    for item in list_worker_metadata(
+        user_id=user_id,
+        parent_session_id=parent_session_id,
+        parent_workspace=parent_workspace,
+        config=config,
+    )[: int(limit)]:
         records.append(
             {
                 "sub_id": item.sub_id,

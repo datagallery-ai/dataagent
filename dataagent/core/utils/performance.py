@@ -158,14 +158,27 @@ def performance_enabled_from_env() -> bool:
     return get_env_bool(_ENV_SWITCH, default=False)
 
 
-def _resolve_jsonl_path(*, user_id: str, session_id: str, run_id: str) -> Path:
-    """单一路径契约：``{session_root}/.performance/{run_id}.{pid}.jsonl``。
+def _resolve_jsonl_path(
+    *,
+    user_id: str,
+    session_id: str,
+    run_id: str,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """单一路径契约：``{workspace}/.performance/{run_id}.{pid}.jsonl``。
 
     路径只在启用时由 collector 调用，失败直接抛出由上层捕获。
     """
-    from dataagent.utils.runtime_paths import resolve_session_root
+    from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
 
-    base = resolve_session_root(user_id=user_id, session_id=session_id) / ".performance"
+    root = resolve_session_framework_workspace(
+        workspace=workspace,
+        config=config,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    base = resolve_layout_dir(root, "performance_dir", config=config)
     return base / f"{run_id}.{os.getpid()}.jsonl"
 
 
@@ -183,6 +196,8 @@ class PerformanceCollector:
         session_id: str | None = None,
         run_id: str | int | None = None,
         backend: str | None = None,
+        workspace: str | Path | None = None,
+        config: Mapping[str, Any] | None = None,
     ) -> None:
         """初始化 collector，并在启用时打开当前进程的 jsonl 文件。"""
         self.enabled = bool(enabled)
@@ -200,7 +215,13 @@ class PerformanceCollector:
         if not self.enabled:
             return
         try:
-            self.jsonl_path = _resolve_jsonl_path(user_id=self.user_id, session_id=self.session_id, run_id=self.run_id)
+            self.jsonl_path = _resolve_jsonl_path(
+                user_id=self.user_id,
+                session_id=self.session_id,
+                run_id=self.run_id,
+                workspace=workspace,
+                config=config,
+            )
             self.jsonl_path.parent.mkdir(parents=True, exist_ok=True)
             self._jsonl_fh = open(self.jsonl_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
             logger.info(f"[perf] enabled, jsonl={self.jsonl_path}")
@@ -494,6 +515,8 @@ def create_collector(
     session_id: str | None = None,
     run_id: str | int | None = None,
     backend: str | None = None,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
 ) -> PerformanceCollector:
     """开关只看 :func:`performance_enabled_from_env`；路径由进程 PID + 会话信息派生。"""
     if not performance_enabled_from_env():
@@ -504,6 +527,8 @@ def create_collector(
         session_id=session_id,
         run_id=run_id,
         backend=backend,
+        workspace=workspace,
+        config=config,
     )
 
 
@@ -522,6 +547,7 @@ def bind_agent_performance(
         session_id=st.get("session_id"),
         run_id=st.get("run_id"),
         backend=backend,
+        workspace=st.get("workspace"),
     )
     token = set_current_collector(collector)
     try:

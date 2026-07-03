@@ -23,6 +23,7 @@ import yaml
 from loguru import logger
 
 from dataagent.utils.constants import MERGED_CONFIG_TOP_LEVEL_KEY_ORDER
+from dataagent.utils.runtime_paths import resolve_layout_dir
 
 
 def _iter_top_level_keys_for_display(settings: Mapping[str, Any]) -> list[str]:
@@ -98,7 +99,7 @@ def dump_merged_config(
         logger.warning("Skipping runtime config dump: invalid workspace: {}", exc)
         return None
 
-    runtime_dir = workspace_dir / ".runtime"
+    runtime_dir = resolve_layout_dir(workspace_dir, "runtime_dump_dir", config=settings)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     # Align with session workspace dir prefix (``DataAgent`` / CLI use UTC ``%Y%m%d_%H%M%S``).
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")

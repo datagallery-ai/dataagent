@@ -12,21 +12,20 @@
 # ============================================================================
 """Flex-specific portraiter hook.
 
-产物路径（基于 ~/.dataagent 体系）：
+产物路径：
 
-- user_profile（跨 session，用户级）：
+- user_profile（跨 session，用户级，固定在 home）：
   ``~/.dataagent/{user_id}/.memory/profile.json``
 
-- user_snapshot（session 级）：
-  ``~/.dataagent/{user_id}/{session_id}/.memory/snapshot.json``
-
-- messages 快照（session 级）：
-  ``~/.dataagent/{user_id}/{session_id}/.memory/messages.json``
+- user_snapshot / messages（session 级，随 ``WORKSPACE.path`` + layout）：
+  ``{workspace}/<session_memory_dir>/snapshot.json``
+  ``{workspace}/<session_memory_dir>/messages.json``
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +36,7 @@ from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.hooks.agent_turn import is_subagent
 from dataagent.core.flex.hooks.history_writer import save_messages
 from dataagent.core.flex.workflow.state import FlexState
-from dataagent.utils.runtime_paths import resolve_session_root, resolve_user_root
+from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace, resolve_user_root
 
 # ── 路径 ────────────────────────────────────────────────────────────────────
 
@@ -49,11 +48,39 @@ def _user_memory_dir(user_id: str) -> Path:
     return path
 
 
-def _session_memory_dir(user_id: str, session_id: str) -> Path:
-    """单次 session 的 memory 目录。"""
-    path = resolve_session_root(user_id=user_id, session_id=session_id) / ".memory"
+def _session_memory_dir(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Resolve and ensure the session memory directory for writes."""
+    path = _resolve_session_memory_dir(
+        user_id,
+        session_id,
+        workspace=workspace,
+        config=config,
+    )
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _resolve_session_memory_dir(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Resolve the session memory directory without creating it."""
+    root = resolve_session_framework_workspace(
+        workspace=workspace,
+        config=config,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    return resolve_layout_dir(root, "session_memory_dir", config=config)
 
 
 # ── JSON I/O ─────────────────────────────────────────────────────────────────
@@ -97,16 +124,40 @@ def _default_profile() -> dict[str, Any]:
 # ── 加载 / 保存 ────────────────────────────────────────────────────────────────
 
 
-def _load_snapshot(user_id: str, session_id: str) -> dict[str, Any]:
-    path = _session_memory_dir(user_id, session_id) / "snapshot.json"
+def _load_snapshot(
+    user_id: str,
+    session_id: str,
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    path = (
+        _resolve_session_memory_dir(
+            user_id,
+            session_id,
+            workspace=workspace,
+            config=config,
+        )
+        / "snapshot.json"
+    )
     payload = _read_json(path, {})
     # 兼容旧格式（外层有 user_snapshot）和新格式（直接是 snapshot 内容）
     snap = payload.get("user_snapshot") if "user_snapshot" in payload else payload
     return snap if isinstance(snap, dict) else _default_snapshot()
 
 
-def _save_snapshot(user_id: str, session_id: str, snapshot: dict[str, Any]) -> None:
-    _write_json(_session_memory_dir(user_id, session_id) / "snapshot.json", snapshot)
+def _save_snapshot(
+    user_id: str,
+    session_id: str,
+    snapshot: dict[str, Any],
+    *,
+    workspace: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+) -> None:
+    _write_json(
+        _session_memory_dir(user_id, session_id, workspace=workspace, config=config) / "snapshot.json",
+        snapshot,
+    )
 
 
 def _load_profile(user_id: str) -> dict[str, Any]:
@@ -288,10 +339,10 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
 def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
     """Agent 级别 post-hook：默认落盘 ``messages.json``；仅在 ``enable_portrait`` 时用 LLM 更新画像文件。
 
-    产物路径：
+    产物路径（session 级随 ``WORKSPACE.path`` + layout；用户级固定在 home）：
     - ``~/.dataagent/{user_id}/.memory/profile.json``
-    - ``~/.dataagent/{user_id}/{session_id}/.memory/snapshot.json``
-    - ``~/.dataagent/{user_id}/{session_id}/.memory/messages.json``
+    - ``{workspace}/<session_memory_dir>/snapshot.json``
+    - ``{workspace}/<session_memory_dir>/messages.json``
     """
     logger.debug("[portraiter] hook called")
     user_id = str(state.get("user_id") or "")
@@ -308,14 +359,17 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
         logger.debug("[portraiter] skipped: is subagent")
         return state
 
+    workspace = state.get("workspace")
+    config = runtime.get_all_config() if hasattr(runtime, "get_all_config") else None
+
     # 如果 state 中没有 messages，尝试从历史文件加载
     if not messages:
         from dataagent.core.flex.hooks.history_writer import load_messages
 
-        messages = load_messages(user_id, session_id)
+        messages = load_messages(user_id, session_id, workspace=workspace, config=config)
         logger.debug(f"[portraiter] loaded {len(messages)} messages from history file")
 
-    save_messages(user_id, session_id, messages)
+    save_messages(user_id, session_id, messages, workspace=workspace, config=config)
 
     if not state.get("enable_portrait"):
         logger.debug("[portraiter] skipped: enable_portrait is False")
@@ -323,13 +377,13 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
 
     logger.debug("[portraiter] proceeding with portrait update")
 
-    snapshot = _load_snapshot(user_id, session_id)
+    snapshot = _load_snapshot(user_id, session_id, workspace=workspace, config=config)
     profile = _load_profile(user_id)
     conversation = _messages_to_conversation(messages)
 
     # 独立更新 snapshot（session 级）
     updated_snapshot = _normalize_snapshot(_update_snapshot(snapshot, conversation, runtime))
-    _save_snapshot(user_id, session_id, updated_snapshot)
+    _save_snapshot(user_id, session_id, updated_snapshot, workspace=workspace, config=config)
 
     # 独立更新 profile（用户级）
     updated_profile = _normalize_profile(_update_profile(profile, conversation, runtime))
@@ -339,7 +393,7 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
     try:
         from dataagent.core.flex.hooks.memory_indexer import update_memory_index
 
-        update_memory_index(user_id, session_id)
+        update_memory_index(user_id, session_id, workspace=workspace, config=config)
     except Exception as e:
         logger.warning(f"[portraiter] failed to update memory index: {e}")
 
