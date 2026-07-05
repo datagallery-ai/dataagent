@@ -17,8 +17,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
@@ -26,21 +24,6 @@ from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, _TZ_CN
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import logger
-
-_TYPE_LABELS = {
-    SystemMessage: "SYSTEM",
-    HumanMessage: "HUMAN",
-    AIMessage: "AI",
-    ToolMessage: "TOOL",
-}
-
-_SCHEMA_NODES = {"generator", "validator", "selector"}
-
-_NL2SQL_COMMON_SYSTEM_KEY = f"{NL2SQL_PROMPT_PREFIX}/nl2sql_common_system"
-
-
-
-
 
 class BaseNL2SQLNode(BaseNode):
     def __init__(self, name: str, config_manager: Any | None = None, **kwargs: Any) -> None:
@@ -56,7 +39,6 @@ class BaseNL2SQLNode(BaseNode):
         self._nl2sql_context_dump_dir: Path | None = None
         self._context_dump_seq: list[int] = [0]
         self._context_dump_enabled: bool = get_env_bool("DATAAGENT_CONTEXT_DUMP")
-        self._common_system_cache: str | None = None
 
     def set_context_dump_dir(self, dump_dir: Any | None) -> None:
         if dump_dir is not None:
@@ -106,13 +88,6 @@ class BaseNL2SQLNode(BaseNode):
     def sql_service_engine(self) -> str:
         svc = self._get_agent_config("DATABASE.sql_service_engine")
         return svc if svc else self.engine
-
-    def _get_common_system(self) -> str:
-        if self._common_system_cache is None:
-            self._common_system_cache = PromptTemplate.from_package_relative(
-                _NL2SQL_COMMON_SYSTEM_KEY
-            ).content
-        return self._common_system_cache
 
     def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
         llm = llm_manager.get_default_llm()
