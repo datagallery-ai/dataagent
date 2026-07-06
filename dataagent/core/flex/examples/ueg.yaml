@@ -6,6 +6,9 @@ AGENT_CONFIG:
   type: "react"
   debug: true
 
+OVERRIDE_KEYS:
+  - ACTOR_LOOP
+
 MODEL:
   qwen3:
     model_type: "chat"
