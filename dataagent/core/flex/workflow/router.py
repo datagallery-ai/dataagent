@@ -18,7 +18,7 @@ from typing import Any
 from loguru import logger
 
 from dataagent.core.cbb.base_router import BaseRouter
-from dataagent.core.flex.hooks.agent_turn import is_subagent
+from dataagent.core.flex.hooks.agent_turn import should_skip_main_session_history
 
 
 def _resolve_agent_config_from_runtime() -> Mapping[str, Any] | None:
@@ -212,7 +212,7 @@ class FlexRouter(BaseRouter):
         确保崩溃时已完成轮次的上下文不丢失。
         subagent 不写主 agent 的会话历史。
         """
-        if is_subagent(state):
+        if should_skip_main_session_history(state):
             return
         user_id = str(state.get("user_id") or "")
         session_id = str(state.get("session_id") or "")

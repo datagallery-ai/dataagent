@@ -1530,16 +1530,18 @@ async def sub_agent_tool(
         sub_id=worker_sub_id,
         reuse_worker_state=reuse_worker_state,
     )
-    lock = acquire_worker_lock(
-        user_id=resolved_user_id,
-        parent_session_id=resolved_session_id,
-        sub_id=worker_sub_id,
-        query=query,
-        ttl_seconds=int(timeout) + WORKER_LOCK_TTL_GRACE_SECONDS,
-        **worker_path_kwargs,
-    )
-    if lock is None:
-        return _sub_agent_tool_busy_payload(worker_sub_id=worker_sub_id, resolved_session_id=resolved_session_id)
+    lock = None
+    if swarm_on:
+        lock = acquire_worker_lock(
+            user_id=resolved_user_id,
+            parent_session_id=resolved_session_id,
+            sub_id=worker_sub_id,
+            query=query,
+            ttl_seconds=int(timeout) + WORKER_LOCK_TTL_GRACE_SECONDS,
+            **worker_path_kwargs,
+        )
+        if lock is None:
+            return _sub_agent_tool_busy_payload(worker_sub_id=worker_sub_id, resolved_session_id=resolved_session_id)
 
     try:
         outcome = await _sub_agent_run_subprocess_and_collect_outcome(
@@ -1575,7 +1577,8 @@ async def sub_agent_tool(
             exc=e,
         )
     finally:
-        release_worker_lock(lock)
+        if lock is not None:
+            release_worker_lock(lock)
 
 
 def _subagent_worker_path_kwargs() -> dict[str, Any]:

@@ -28,7 +28,7 @@ from dataagent.core.context.context_state import ContextState
 from dataagent.core.context.todolist_manager import TodoListManager
 from dataagent.core.context.trajectory_editor import TrajectoryEditor
 from dataagent.core.context.trajectory_navigator import TrajectoryNavigator
-from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
+from dataagent.utils.runtime_paths import resolve_flex_context_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,14 +250,14 @@ class Context:
         """
         Load metadata JSON for a given run (if exists).
         """
-        framework_workspace = resolve_session_framework_workspace(
-            workspace=workspace,
-            config=config,
-            session_id=session_id,
-            user_id=user_id,
-        )
         meta_path = (
-            resolve_layout_dir(framework_workspace, "context_dir", config=config) / f"Run{run_id}_Sub{sub_id}.meta.json"
+            resolve_flex_context_dir(
+                user_id=user_id,
+                session_id=session_id,
+                workspace=workspace,
+                config=config,
+            )
+            / f"Run{run_id}_Sub{sub_id}.meta.json"
         )
         try:
             with open(meta_path) as f:
@@ -491,14 +491,13 @@ class Context:
             return
 
         if output_html is None:
-            workspace = resolve_session_framework_workspace(
-                workspace=self.state.workspace,
-                config=self.state.config,
-                session_id=self.state.session_id,
-                user_id=self.state.user_id,
-            )
             output_path = (
-                resolve_layout_dir(workspace, "context_dir", config=self.state.config)
+                resolve_flex_context_dir(
+                    user_id=self.state.user_id,
+                    session_id=self.state.session_id,
+                    workspace=self.state.workspace,
+                    config=self.state.config,
+                )
                 / f"Run{self.state.run_id}_Sub{self.state.sub_id}.html"
             )
         else:

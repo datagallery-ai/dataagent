@@ -33,10 +33,10 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from loguru import logger
 
 from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.flex.hooks.agent_turn import is_subagent
+from dataagent.core.flex.hooks.agent_turn import is_job_workspace_subagent, is_subagent
 from dataagent.core.flex.hooks.history_writer import save_messages
 from dataagent.core.flex.workflow.state import FlexState
-from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace, resolve_user_root
+from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir, resolve_user_root
 
 # ── 路径 ────────────────────────────────────────────────────────────────────
 
@@ -74,13 +74,12 @@ def _resolve_session_memory_dir(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Resolve the session memory directory without creating it."""
-    root = resolve_session_framework_workspace(
+    return resolve_flex_session_memory_dir(
+        user_id=user_id,
+        session_id=session_id,
         workspace=workspace,
         config=config,
-        session_id=session_id,
-        user_id=user_id,
     )
-    return resolve_layout_dir(root, "session_memory_dir", config=config)
 
 
 # ── JSON I/O ─────────────────────────────────────────────────────────────────
@@ -355,7 +354,7 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
         logger.debug("[portraiter] skipped: no user_id or session_id")
         return state
 
-    if is_subagent(state):
+    if is_subagent(state) and not is_job_workspace_subagent(state):
         logger.debug("[portraiter] skipped: is subagent")
         return state
 
@@ -370,6 +369,10 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
         logger.debug(f"[portraiter] loaded {len(messages)} messages from history file")
 
     save_messages(user_id, session_id, messages, workspace=workspace, config=config)
+
+    if is_subagent(state):
+        logger.debug("[portraiter] job subagent: messages persisted, skipping portrait update")
+        return state
 
     if not state.get("enable_portrait"):
         logger.debug("[portraiter] skipped: enable_portrait is False")

@@ -47,3 +47,5 @@ class ToolExecutionContext:
     tool_config: dict[str, Any] = field(default_factory=dict)
     # 当前调用的 per-invocation Runtime（workflow 内由 LocalToolWrapper 注入）
     runtime: Runtime | None = None
+    # Finalized submit-job envelope (internal; not exposed in LLM tool schema)
+    job_envelope: dict[str, Any] = field(default_factory=dict)

@@ -367,10 +367,61 @@ def test_sub_agent_tool_keeps_state_and_worker_result_contract(monkeypatch, tmp_
     assert out["frontend_msg"] == "done"
 
 
+def test_sub_agent_tool_swarm_disabled_does_not_create_workers_dir(monkeypatch, tmp_path):
+    """With SWARM off, ``sub_agent_tool`` must not acquire locks or create ``workers/`` folders."""
+    config_file = tmp_path / "sub_agent.yaml"
+    config_file.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
+    home = tmp_path / "dataagent-home"
+    monkeypatch.setenv("DATAAGENT_HOME", str(home))
+    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools.swarm_enabled", lambda _config=None: False)
+
+    async def _fake_run_subprocess_async(
+        cmd, *, timeout, cwd=None, env=None, progress_callback=None, tool_call_id=None
+    ):
+        sub_id = int(cmd[cmd.index("--sub-id") + 1])
+        return {
+            "stdout": json.dumps(
+                {
+                    "error": None,
+                    "worker_result": {
+                        "sub_id": sub_id,
+                        "parent_session_id": "main-session",
+                        "worker_session_id": f"subagent_main-session_{sub_id}",
+                        "status": "success",
+                        "final_answer": "done",
+                        "artifacts": [],
+                        "tool_calls_count": 0,
+                        "iteration_count": 1,
+                        "error": None,
+                        "resumed": False,
+                    },
+                    "worker_persistence": {},
+                    "assistant_reply": "done",
+                    "sub_id": sub_id,
+                },
+                ensure_ascii=False,
+            ),
+            "stderr": "",
+            "returncode": 0,
+        }
+
+    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools._run_subprocess_async", _fake_run_subprocess_async)
+    token = set_subagent_runtime_context(user_id="main-user", session_id="main-session", sub_id=0)
+    try:
+        out = asyncio.run(sub_agent_tool("查询测试", str(config_file), sub_id=123456, timeout=1))
+    finally:
+        reset_subagent_runtime_context(token)
+
+    assert out["original_msg"]["status"] == "success"
+    workers_root = home / "main-user" / "main-session" / "workers"
+    assert not workers_root.exists()
+
+
 def test_sub_agent_tool_returns_busy_without_updating_metadata(monkeypatch, tmp_path):
     config_file = tmp_path / "sub_agent.yaml"
     config_file.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
+    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools.swarm_enabled", lambda _config=None: True)
 
     from dataagent.core.swarm.worker_lock import acquire_worker_lock
 

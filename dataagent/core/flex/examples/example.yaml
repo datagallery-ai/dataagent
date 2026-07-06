@@ -50,6 +50,8 @@ WORKSPACE_POLICY:
     context_dir: ".context"                     # Context 轨迹：Run*_Sub*.json/meta、HTML 可视化、backup、*_summary.md
     performance_dir: ".performance"             # 性能采集 jsonl（需 DATAAGENT_PERFORMANCE_ENABLED=1）
     workers_dir: "workers"                      # Swarm / sub_agent 持久化：{workspace}/workers/{sub_id}/
+    subagents_dir: "subagents"                  # Job 异步 subagent：{workspace}/<subagents_dir>/{id}/
+    jobs_dir: "jobs"                            # Job 元数据：{workspace}/<jobs_dir>/{job_id}/
     runtime_dump_dir: ".runtime"                # 合并配置 debug dump（dataagent_config_*.yaml）
     tool_outputs_dir: ".dataagent/tool_outputs" # 工具超长结果落盘目录
 

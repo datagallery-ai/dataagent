@@ -33,7 +33,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 
 from dataagent.core.context.message_history import read_messages_file, serialize_message, write_messages_file
-from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
+from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir
 
 
 def resolve_history_persistence_context(
@@ -60,13 +60,12 @@ def _resolve_session_memory_dir(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Resolve the Flex session memory directory without creating it."""
-    root = resolve_session_framework_workspace(
+    return resolve_flex_session_memory_dir(
+        user_id=user_id,
+        session_id=session_id,
         workspace=workspace,
         config=config,
-        session_id=session_id,
-        user_id=user_id,
     )
-    return resolve_layout_dir(root, "session_memory_dir", config=config)
 
 
 def _session_memory_dir(
