@@ -18,6 +18,8 @@ import copy
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from dataagent.utils.constants import META_OVERRIDE_KEYS
+
 WORKFLOW_TOP_KEYS: frozenset[str] = frozenset({"ACTOR_LOOP", "PRE_WORKFLOW", "POST_WORKFLOW"})
 
 
@@ -66,6 +68,56 @@ def _extract_user_subtree(interpolated: Any, user_sub: Any) -> Any:
     if not isinstance(interpolated, Mapping):
         return copy.deepcopy(interpolated)
     return copy.deepcopy(user_sub)
+
+
+def parse_override_keys(user_config: Mapping[str, Any]) -> frozenset[str]:
+    """
+    Parse ``OVERRIDE_KEYS`` from user YAML.
+
+    Each entry names a top-level settings key whose user-layer value replaces the
+    merged result for that key (instead of append / workflow structural merge).
+
+    Args:
+        user_config: Raw or extracted user configuration mapping.
+
+    Returns:
+        Normalized top-level key names to override.
+
+    Raises:
+        ValueError: When ``OVERRIDE_KEYS`` is present but not a list of key names.
+    """
+    raw = user_config.get(META_OVERRIDE_KEYS)
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise ValueError(f"{META_OVERRIDE_KEYS} must be a list of top-level key names; got {type(raw).__name__}")
+    keys: list[str] = []
+    for item in raw:
+        key = str(item).strip()
+        if key:
+            keys.append(key)
+    return frozenset(keys)
+
+
+def apply_override_keys(
+    result: dict[str, Any],
+    user_layer: Mapping[str, Any],
+    override_keys: frozenset[str],
+) -> None:
+    """
+    Replace merged top-level sections with user-layer values for listed keys.
+
+    Only keys present in both ``override_keys`` and ``user_layer`` are replaced.
+    Typically called after ``merge_layers`` on the user layer (L∞).
+
+    Args:
+        result: Merged configuration dict; updated in place.
+        user_layer: User merge layer (must not contain ``OVERRIDE_KEYS`` itself).
+        override_keys: Top-level key names to replace entirely.
+    """
+    for key in override_keys:
+        if key in user_layer:
+            result[key] = copy.deepcopy(user_layer[key])
 
 
 def merge_layers(layers: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

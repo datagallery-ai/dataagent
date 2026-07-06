@@ -12,7 +12,12 @@
 # ============================================================================
 """Tests for ``merge_layers``."""
 
-from dataagent.core.suite.merge import extract_user_layer, merge_layers
+from dataagent.core.suite.merge import (
+    apply_override_keys,
+    extract_user_layer,
+    merge_layers,
+    parse_override_keys,
+)
 from dataagent.core.suite.validation import validate_strict_duplicates
 
 
@@ -150,3 +155,52 @@ def test_validate_strict_duplicates_tools() -> None:
         raised = True
         assert "Duplicate" in str(exc)
     assert raised
+
+
+def test_apply_override_keys_replaces_actor_loop() -> None:
+    """``OVERRIDE_KEYS`` replaces a top-level section instead of workflow structural merge."""
+    default = {
+        "ACTOR_LOOP": [
+            {"node": "planner", "module": "default.planner"},
+            {"node": "executor", "module": "default.executor", "max_tool_result_length": 8192},
+        ]
+    }
+    user_layer = {
+        "ACTOR_LOOP": [
+            {"node": "nl2sql_react", "module": "user.planner", "chat_model": {"name": "qwen3"}},
+            {"node": "executor", "module": "user.executor", "max_concurrency": 5},
+        ]
+    }
+    result = merge_layers([default, user_layer])
+    assert [item["node"] for item in result["ACTOR_LOOP"]] == ["planner", "executor", "nl2sql_react"]
+
+    apply_override_keys(result, user_layer, frozenset({"ACTOR_LOOP"}))
+    nodes = result["ACTOR_LOOP"]
+    assert [item["node"] for item in nodes] == ["nl2sql_react", "executor"]
+    assert nodes[1]["max_concurrency"] == 5
+    assert "max_tool_result_length" not in nodes[1]
+
+
+def test_parse_override_keys_rejects_non_list() -> None:
+    """Invalid ``OVERRIDE_KEYS`` shape raises before merge."""
+    try:
+        parse_override_keys({"OVERRIDE_KEYS": "ACTOR_LOOP"})
+        raised = False
+    except ValueError as exc:
+        raised = True
+        assert "OVERRIDE_KEYS" in str(exc)
+    assert raised
+
+
+def test_merge_configs_honors_override_keys() -> None:
+    """Two-layer ``merge_configs`` applies ``OVERRIDE_KEYS`` on the override mapping."""
+    from dataagent.config.config_manager import ConfigManager
+
+    default = {"ACTOR_LOOP": [{"node": "planner", "module": "a"}]}
+    override = {
+        "OVERRIDE_KEYS": ["ACTOR_LOOP"],
+        "ACTOR_LOOP": [{"node": "nl2sql_react", "module": "b"}],
+    }
+    result = ConfigManager.merge_configs(default, override)
+    assert [item["node"] for item in result["ACTOR_LOOP"]] == ["nl2sql_react"]
+    assert "OVERRIDE_KEYS" not in result

@@ -65,6 +65,9 @@ class ConfigManager:
         ``SUBAGENT_CONFIGS``, workflow lists, etc.) are **appended** with the override
         layer before the base layer. Dict/scalar keys in the override still win.
 
+        When ``override_config`` contains ``OVERRIDE_KEYS``, each listed top-level key
+        that is also written in ``override_config`` replaces the merged value entirely.
+
         Args:
             base_config: Lower-priority mapping (treated as the default layer).
             override_config: Higher-priority mapping (treated as the user layer).
@@ -72,9 +75,17 @@ class ConfigManager:
         Returns:
             Merged configuration dict.
         """
-        from dataagent.core.suite.merge import merge_layers
+        from dataagent.core.suite.merge import apply_override_keys, merge_layers, parse_override_keys
+        from dataagent.utils.constants import META_OVERRIDE_KEYS
 
-        return merge_layers([base_config or {}, override_config or {}])
+        override = override_config or {}
+        override_keys = parse_override_keys(override)
+        user_layer = copy.deepcopy(override)
+        user_layer.pop(META_OVERRIDE_KEYS, None)
+        result = merge_layers([base_config or {}, user_layer])
+        apply_override_keys(result, user_layer, override_keys)
+        result.pop(META_OVERRIDE_KEYS, None)
+        return result
 
     @staticmethod
     def _validate_workspace_path_no_config_refs(*configs: Mapping[str, Any]) -> None:
@@ -218,14 +229,20 @@ class ConfigManager:
         2. Merge into ``tmp``, interpolate, validate workspace/swarm settings.
         3. Extract the user merge layer from user-written paths only.
         4. Discover and activate suites when ``SUITE`` is present.
-        5. ``merge_layers([default, suite layers…, user layer])``, validate, assign ``settings``.
+        5. ``merge_layers([default, suite layers…, user layer])``, apply ``OVERRIDE_KEYS``, validate, assign settings.
         """
         with self._lock:
             from dataagent.core.suite.activation import activate_suites, order_suites_for_merge
             from dataagent.core.suite.discovery import discover_suite_index
-            from dataagent.core.suite.merge import extract_user_layer, merge_layers
+            from dataagent.core.suite.merge import (
+                apply_override_keys,
+                extract_user_layer,
+                merge_layers,
+                parse_override_keys,
+            )
             from dataagent.core.suite.suite_layer import build_suite_layers
             from dataagent.core.suite.validation import validate_merged_config
+            from dataagent.utils.constants import META_OVERRIDE_KEYS
 
             default_config: dict[str, Any] = {}
             if default_config_path:
@@ -262,7 +279,9 @@ class ConfigManager:
             self._validate_workspace_yaml_config(working)
             self._validate_swarm_yaml_config(working)
 
+            override_keys = parse_override_keys(user_config)
             user_layer = extract_user_layer(working, user_config)
+            user_layer.pop(META_OVERRIDE_KEYS, None)
             default_actor_nodes = {
                 str(item.get("node")).strip()
                 for item in default_config.get("ACTOR_LOOP", [])
@@ -289,6 +308,8 @@ class ConfigManager:
             layers = [default_config, *suite_layers, user_layer]
             result = merge_layers(layers)
             result.pop("SUITE", None)
+            apply_override_keys(result, user_layer, override_keys)
+            result.pop(META_OVERRIDE_KEYS, None)
 
             validate_merged_config(result, activated_suites=activated_meta)
             self._validate_workspace_policy_layout(result)

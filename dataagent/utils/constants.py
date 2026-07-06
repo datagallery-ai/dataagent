@@ -501,6 +501,9 @@ DEFAULT_WORKSPACE_LAYOUT: dict[str, str] = {
 # 当前使用位置: dataagent/core/suite/debug_dump.py（``format_settings_yaml``）
 # 仅影响 dryrun / ``.runtime`` dump 等序列化输出顺序，不影响 ``merge_layers`` / ``reload`` 语义。
 
+META_OVERRIDE_KEYS = "OVERRIDE_KEYS"
+"""User YAML meta key listing top-level sections to replace after ``merge_layers``."""
+
 MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "AGENT_CONFIG",
     "MODEL",

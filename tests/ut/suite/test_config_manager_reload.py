@@ -166,3 +166,39 @@ def test_reload_empty_hook_list_end_to_end(tmp_path: Path) -> None:
     cm = ConfigManager()
     cm.reload(str(user_path), str(DEFAULT_CONFIG))
     assert cm.settings["HOOKS"]["nodes"]["executor"]["post"] == []
+
+
+def test_reload_override_keys_replaces_actor_loop(tmp_path: Path) -> None:
+    """``OVERRIDE_KEYS: [ACTOR_LOOP]`` drops default planner when user renames the node."""
+    user_path = _write_yaml(
+        tmp_path / "override_actor_loop.yaml",
+        {
+            "AGENT_CONFIG": {"name": "nl2sql", "type": "react"},
+            "OVERRIDE_KEYS": ["ACTOR_LOOP"],
+            "MODEL": {
+                "qwen3": {
+                    "model_type": "chat",
+                    "provider": "openai",
+                    "params": {"model": "gpt-test"},
+                }
+            },
+            "ACTOR_LOOP": [
+                {
+                    "node": "nl2sql_react",
+                    "module": "dataagent.core.flex.nodes.planner.Planner",
+                    "chat_model": {"name": "qwen3"},
+                },
+                {
+                    "node": "executor",
+                    "module": "dataagent.core.flex.nodes.executor.Executor",
+                    "max_concurrency": 5,
+                },
+            ],
+        },
+    )
+    cm = ConfigManager()
+    cm.reload(str(user_path), str(DEFAULT_CONFIG))
+    nodes = [item["node"] for item in cm.settings["ACTOR_LOOP"]]
+    assert nodes == ["nl2sql_react", "executor"]
+    assert "planner" not in nodes
+    assert "OVERRIDE_KEYS" not in cm.settings
