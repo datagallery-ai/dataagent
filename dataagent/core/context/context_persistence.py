@@ -20,7 +20,7 @@ import networkx as nx
 from loguru import logger
 from networkx.classes.digraph import DiGraph
 
-from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
+from dataagent.utils.runtime_paths import resolve_flex_context_dir, resolve_session_framework_workspace
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -267,9 +267,10 @@ class ContextPersistence:
 
     def _context_dir(self):
         """Resolve the configured context directory under the framework workspace."""
-        return resolve_layout_dir(
-            self._framework_workspace(),
-            "context_dir",
+        return resolve_flex_context_dir(
+            user_id=self._ctx.state.user_id,
+            session_id=self._ctx.state.session_id,
+            workspace=self._ctx.state.workspace,
             config=self._ctx.state.config,
         )
 
@@ -277,13 +278,12 @@ class ContextPersistence:
         if user_id == self._ctx.state.user_id and session_id == self._ctx.state.session_id:
             context_dir = self._context_dir()
         else:
-            workspace = resolve_session_framework_workspace(
+            context_dir = resolve_flex_context_dir(
+                user_id=user_id,
+                session_id=session_id,
                 workspace=self._ctx.state.workspace,
                 config=self._ctx.state.config,
-                session_id=session_id,
-                user_id=user_id,
             )
-            context_dir = resolve_layout_dir(workspace, "context_dir", config=self._ctx.state.config)
         return str(context_dir / f"Run{run_id}_Sub{sub_id}.json")
 
     def _load_trajectory_from_json(self, *, user_id: str, session_id: str, run_id: int, sub_id: int) -> DiGraph:

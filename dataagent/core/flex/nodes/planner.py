@@ -431,16 +431,15 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, 
         return
     try:
         from dataagent.utils.messages_utils import dump_prompt_to_file
-        from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
+        from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir
 
         config = runtime.get_all_config() if hasattr(runtime, "get_all_config") else None
-        workspace = resolve_session_framework_workspace(
+        mem_dir = resolve_flex_session_memory_dir(
+            user_id=str(state["user_id"]),
+            session_id=str(state["session_id"]),
             workspace=state.get("workspace"),
             config=config,
-            session_id=str(state["session_id"]),
-            user_id=str(state["user_id"]),
         )
-        mem_dir = resolve_layout_dir(workspace, "session_memory_dir", config=config)
         dump_dir = mem_dir / "context_dump" / f"run_{state['run_id']}"
         dump_dir.mkdir(parents=True, exist_ok=True)
         curr_iter = int(state.get("curr_iter", 0))

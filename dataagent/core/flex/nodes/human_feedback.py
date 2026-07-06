@@ -34,7 +34,7 @@ from dataagent.utils.cli.rich_renderer import (
     resume_active_renderer,
     suspend_active_renderer,
 )
-from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
+from dataagent.utils.runtime_paths import resolve_flex_context_dir
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -277,14 +277,13 @@ class HumanFeedbackNode(BaseNode):
             query_text = ""
             additional_files: list[str] = []
             if initial_pt:
-                workspace = resolve_session_framework_workspace(
-                    workspace=getattr(ctx.state, "workspace", None),
-                    config=getattr(ctx.state, "config", None),
-                    session_id=session_id,
-                    user_id=user_id,
-                )
                 store_path = (
-                    resolve_layout_dir(workspace, "context_dir", config=getattr(ctx.state, "config", None))
+                    resolve_flex_context_dir(
+                        user_id=user_id,
+                        session_id=session_id,
+                        workspace=getattr(ctx.state, "workspace", None),
+                        config=getattr(ctx.state, "config", None),
+                    )
                     / f"Run{run_id}_Sub{sub_id}.json"
                 )
                 with open(store_path, encoding="utf-8") as f:
@@ -315,14 +314,13 @@ class HumanFeedbackNode(BaseNode):
     ) -> None:
         """_safe_restore_trajectory_from_snapshot"""
         try:
-            workspace = resolve_session_framework_workspace(
-                workspace=getattr(ctx.state, "workspace", None),
-                config=getattr(ctx.state, "config", None),
-                session_id=session_id,
-                user_id=user_id,
-            )
             store_path = (
-                resolve_layout_dir(workspace, "context_dir", config=getattr(ctx.state, "config", None))
+                resolve_flex_context_dir(
+                    user_id=user_id,
+                    session_id=session_id,
+                    workspace=getattr(ctx.state, "workspace", None),
+                    config=getattr(ctx.state, "config", None),
+                )
                 / f"Run{run_id}_Sub{sub_id}.json"
             )
             with open(store_path, encoding="utf-8") as f:

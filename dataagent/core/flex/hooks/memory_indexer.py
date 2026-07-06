@@ -25,7 +25,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace, resolve_user_root
+from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir, resolve_user_root
 
 
 def _get_memory_md_path(user_id: str) -> Path:
@@ -41,13 +41,15 @@ def _load_snapshot(
     config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """加载当前 session 的 snapshot。"""
-    root = resolve_session_framework_workspace(
-        workspace=workspace,
-        config=config,
-        session_id=session_id,
-        user_id=user_id,
+    snap_path = (
+        resolve_flex_session_memory_dir(
+            user_id=user_id,
+            session_id=session_id,
+            workspace=workspace,
+            config=config,
+        )
+        / "snapshot.json"
     )
-    snap_path = resolve_layout_dir(root, "session_memory_dir", config=config) / "snapshot.json"
     if not snap_path.exists():
         return {}
     try:

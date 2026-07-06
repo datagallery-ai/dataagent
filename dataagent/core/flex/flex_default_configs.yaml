@@ -66,5 +66,7 @@ WORKSPACE_POLICY:
     context_dir: ".context"
     performance_dir: ".performance"
     workers_dir: "workers"
+    subagents_dir: "subagents"
+    jobs_dir: "jobs"
     runtime_dump_dir: ".runtime"
     tool_outputs_dir: ".dataagent/tool_outputs"

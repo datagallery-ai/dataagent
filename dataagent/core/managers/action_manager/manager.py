@@ -26,6 +26,8 @@ from dataagent.utils.constants import (
     DEFAULT_BUILTIN_LOCAL_TOOLS,
     DEFAULT_BUILTIN_SKILL_NAMES,
     DEFAULT_MCP_DISCOVERY_TIMEOUT,
+    JOB_SUBAGENT_TOOL_CATALOG_HEADER,
+    JOB_SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS,
     SUBAGENT_TOOL_CATALOG_HEADER,
     SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS,
 )
@@ -266,34 +268,16 @@ class ToolManager:
     @staticmethod
     def resolve_subagent_config_path(raw_path: Any) -> Path:
         """Resolve and validate one ``SUBAGENT_CONFIGS`` entry path (absolute only)."""
-        if raw_path is None or not str(raw_path).strip():
-            raise ValueError("SUBAGENT_CONFIGS entry requires non-empty 'path'")
-        path = Path(str(raw_path).strip()).expanduser()
-        if not path.is_absolute():
-            raise ValueError(
-                f"SUBAGENT_CONFIGS path must be absolute (or ~/...); relative paths are not allowed: {raw_path!r}"
-            )
-        return path
+        from dataagent.core.agents.subagent_config import resolve_subagent_config_path as _resolve
+
+        return _resolve(raw_path)
 
     @staticmethod
     def load_subagent_catalog_metadata(path: Path) -> tuple[str, str]:
         """Load ``AGENT_CONFIG.name`` and ``description`` from a subagent yaml file."""
-        if not path.is_file():
-            raise FileNotFoundError(f"SUBAGENT_CONFIGS path does not exist or is not a file: {path}")
-        with open(path, encoding="utf-8") as handle:
-            payload = yaml.safe_load(handle) or {}
-        if not isinstance(payload, Mapping):
-            raise ValueError(f"SUBAGENT_CONFIGS yaml root must be a mapping: {path}")
-        agent_cfg = payload.get("AGENT_CONFIG")
-        if not isinstance(agent_cfg, Mapping):
-            raise ValueError(f"SUBAGENT_CONFIGS yaml must contain AGENT_CONFIG section: {path}")
-        name = str(agent_cfg.get("name") or "").strip()
-        description = str(agent_cfg.get("description") or "").strip()
-        if not name:
-            raise ValueError(f"SUBAGENT_CONFIGS yaml missing AGENT_CONFIG.name: {path}")
-        if not description:
-            raise ValueError(f"SUBAGENT_CONFIGS yaml missing AGENT_CONFIG.description: {path}")
-        return name, description
+        from dataagent.core.agents.subagent_config import load_subagent_catalog_metadata as _load
+
+        return _load(path)
 
     @staticmethod
     def _generate_schema(tool: BaseTool) -> ToolSchema:
@@ -444,6 +428,19 @@ class ToolManager:
 
         return load_tool_hooks_from_config(entry.get("hooks"))
 
+    @staticmethod
+    def _merge_job_tool_supplement_into_docstring(base_doc: str, supplement: str) -> str:
+        """Append job-tool catalog text before the Args section when present."""
+        doc = (base_doc or "").strip()
+        supplement = (supplement or "").strip()
+        if not supplement:
+            return doc
+        if "Args:" in doc:
+            head, tail = doc.split("Args:", 1)
+            merged = f"{head.rstrip()}\n\n{supplement}\n\nArgs:{tail}"
+            return merged.strip()
+        return f"{doc}\n\n{supplement}".strip() if doc else supplement
+
     @classmethod
     def _build_sub_agent_tool_yaml_supplement(cls, config: Mapping[str, Any]) -> str:
         """Build dynamic + static supplement for implicit ``sub_agent_tool`` registration."""
@@ -463,6 +460,34 @@ class ToolManager:
             blocks.extend(catalog_lines)
             blocks.append("")
         blocks.append(SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS.strip())
+        return "\n".join(blocks).strip()
+
+    @classmethod
+    def _build_job_subagent_tool_supplement(cls, config: Mapping[str, Any]) -> str:
+        """Build dynamic catalog supplement for implicit job lifecycle tools."""
+        from dataagent.core.agents.registry import resolve_agent_id_from_yaml
+
+        entries = config.get("SUBAGENT_CONFIGS") or []
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            raise ValueError("SUBAGENT_CONFIGS must be a list of mappings with 'path'")
+        catalog_lines: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise ValueError("SUBAGENT_CONFIGS items must be mappings with 'path'")
+            path = cls.resolve_subagent_config_path(entry.get("path"))
+            with open(path, encoding="utf-8") as handle:
+                payload = yaml.safe_load(handle) or {}
+            if not isinstance(payload, Mapping):
+                raise ValueError(f"SUBAGENT_CONFIGS yaml root must be a mapping: {path}")
+            agent_id = resolve_agent_id_from_yaml(path, payload)
+            _name, description = cls.load_subagent_catalog_metadata(path)
+            catalog_lines.append(f"- {agent_id}: {description}")
+        blocks = []
+        if catalog_lines:
+            blocks.append(JOB_SUBAGENT_TOOL_CATALOG_HEADER)
+            blocks.extend(catalog_lines)
+            blocks.append("")
+        blocks.append(JOB_SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS.strip())
         return "\n".join(blocks).strip()
 
     def enable_auto_discover(self):
@@ -597,7 +622,7 @@ class ToolManager:
             self._register_hitl_tool()
 
         self._register_builtin_local_tools(tools_config)
-        self._register_implicit_sub_agent_tool(config)
+        self._register_implicit_job_tools(config)
 
         if not tools_config:
             return
@@ -963,6 +988,36 @@ class ToolManager:
             logger.trace("✅ Implicit sub_agent_tool registered from SUBAGENT_CONFIGS.")
         except Exception as e:
             logger.warning("❌ Implicit sub_agent_tool registration failed: {}", e)
+
+    def _register_implicit_job_tools(self, config: Mapping[str, Any]) -> None:
+        """Register subagent job lifecycle tools when ``SUBAGENT_CONFIGS`` is non-empty."""
+        entries = config.get("SUBAGENT_CONFIGS") or []
+        if not entries:
+            return
+        from dataagent.actions.tools.local_tool.job_tools.cancel_subagent import cancel_subagent
+        from dataagent.actions.tools.local_tool.job_tools.collect_subagent import collect_subagent
+        from dataagent.actions.tools.local_tool.job_tools.poll_subagent import poll_subagent
+        from dataagent.actions.tools.local_tool.job_tools.submit_subagent import submit_subagent
+
+        supplement = self._build_job_subagent_tool_supplement(config)
+        tools = [
+            (submit_subagent, "submit_subagent"),
+            (poll_subagent, "poll_subagent"),
+            (collect_subagent, "collect_subagent"),
+            (cancel_subagent, "cancel_subagent"),
+        ]
+        for func, name in tools:
+            description = None
+            if name == "submit_subagent":
+                description = self._merge_job_tool_supplement_into_docstring(func.__doc__ or "", supplement)
+            try:
+                register_kwargs: dict[str, Any] = {"name": name, "category": "job"}
+                if description is not None:
+                    register_kwargs["description"] = description
+                self.register_local_tool(func, **register_kwargs)
+                logger.trace("✅ Implicit job tool '{}' registered from SUBAGENT_CONFIGS.", name)
+            except Exception as exc:
+                logger.warning("❌ Implicit job tool '{}' registration failed: {}", name, exc)
 
     def _register_mcp_servers_from_config(self, servers: list[dict[str, Any]]):
         """从配置注册MCP服务器"""

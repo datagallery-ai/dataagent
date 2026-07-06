@@ -170,15 +170,14 @@ def _resolve_jsonl_path(
 
     路径只在启用时由 collector 调用，失败直接抛出由上层捕获。
     """
-    from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_framework_workspace
+    from dataagent.utils.runtime_paths import resolve_flex_performance_dir
 
-    root = resolve_session_framework_workspace(
+    base = resolve_flex_performance_dir(
+        user_id=user_id,
+        session_id=session_id,
         workspace=workspace,
         config=config,
-        session_id=session_id,
-        user_id=user_id,
     )
-    base = resolve_layout_dir(root, "performance_dir", config=config)
     return base / f"{run_id}.{os.getpid()}.jsonl"
 
 

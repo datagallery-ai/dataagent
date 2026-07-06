@@ -101,6 +101,10 @@ class Runtime:
         self.sub_id: int = 0
         self.user_query: Optional[str] = None  # noqa: UP045
         self.parent_user_query: Optional[str] = None  # noqa: UP045
+        self._job_stack_workspace: Path | None = None
+        self._job_service: Any = None
+        self._agent_service: Any = None
+        self._agent_registry: Any = None
 
     @property
     def stream(self) -> StreamCursor:
@@ -170,6 +174,18 @@ class Runtime:
         return getattr(self.env, "tool_manager", None)
 
     @property
+    def job_service(self) -> Any:
+        """Return the workspace-scoped :class:`~dataagent.core.jobs.service.JobService`, if available."""
+        self.ensure_job_services()
+        return self._job_service
+
+    @property
+    def agent_service(self) -> Any:
+        """Return the workspace-scoped :class:`~dataagent.core.agents.service.AgentService`, if available."""
+        self.ensure_job_services()
+        return self._agent_service
+
+    @property
     def config_manager(self) -> ConfigManager:
         """Return the per-Agent :class:`~dataagent.config.config_manager.ConfigManager`.
 
@@ -183,6 +199,33 @@ class Runtime:
                 "Ensure build_agent_env_from_flex_config passes config_manager."
             )
         return cm
+
+    def ensure_job_services(self) -> Any:
+        """Bind Job/Agent services to the current ``workspace_dir``.
+
+        Returns:
+            :class:`~dataagent.core.agents.service.AgentService` when ``workspace_dir`` is set,
+            otherwise ``None``.
+        """
+        ws = self.workspace_dir
+        if ws is None:
+            self._job_service = None
+            self._agent_service = None
+            self._job_stack_workspace = None
+            return None
+        resolved = Path(ws).expanduser().resolve()
+        if self._job_stack_workspace == resolved and self._agent_service is not None:
+            return self._agent_service
+        from dataagent.core.agents.service import AgentService
+        from dataagent.core.jobs.file_store import FileJobStore
+        from dataagent.core.jobs.service import JobService
+
+        store = FileJobStore(resolved, config=self.get_all_config())
+        self._job_service = JobService(store)
+        registry = self._ensure_agent_registry()
+        self._agent_service = AgentService(registry=registry, job_service=self._job_service, runtime=self)
+        self._job_stack_workspace = resolved
+        return self._agent_service
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Read a value from the per-Agent ConfigManager.
@@ -336,3 +379,14 @@ class Runtime:
                 f"{commands}\n"
             )
         return prompt
+
+    def _ensure_agent_registry(self) -> Any:
+        """Build or return the cached :class:`~dataagent.core.agents.registry.AgentRegistry`."""
+        if self._agent_registry is not None:
+            return self._agent_registry
+        from dataagent.core.agents.registry import AgentRegistry
+
+        cm = self.config_manager
+        entries = cm.get("SUBAGENT_CONFIGS") or []
+        self._agent_registry = AgentRegistry.from_subagent_configs(entries)
+        return self._agent_registry

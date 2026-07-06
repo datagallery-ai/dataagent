@@ -130,19 +130,19 @@ async def test_register_local_tools_falls_back_to_docstring_without_yaml_descrip
 
 @pytest.mark.asyncio
 async def test_implicit_sub_agent_tool_appends_catalog_description(tmp_path):
-    """``SUBAGENT_CONFIGS`` implicitly registers ``sub_agent_tool`` with catalog text."""
+    """``SUBAGENT_CONFIGS`` implicitly registers job lifecycle tools with catalog text."""
     subagent_yaml = tmp_path / "worker.yaml"
     subagent_yaml.write_text(
         yaml.safe_dump({"AGENT_CONFIG": {"name": "arith", "description": "does math"}}),
         encoding="utf-8",
     )
     tm = ToolManager()
-    tm._register_implicit_sub_agent_tool({"SUBAGENT_CONFIGS": [{"path": str(subagent_yaml)}]})
-    desc = tm.get("sub_agent_tool").description
-    assert "Starts a sub Agent in a separate subprocess" in desc
+    tm._register_implicit_job_tools({"SUBAGENT_CONFIGS": [{"path": str(subagent_yaml)}]})
+    desc = tm.get("submit_subagent").description
     assert "does math" in desc
-    assert str(subagent_yaml) in desc
-    assert "Args:" in desc
+    assert "agent_id" in desc
+    assert tm.exists("poll_subagent")
+    assert not tm.exists("sub_agent_tool")
     await tm.cleanup()
 
 

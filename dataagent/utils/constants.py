@@ -103,6 +103,40 @@ SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
 """
 """``sub_agent_tool`` 固定调用说明（硬编码，不放入 ``SUBAGENT_CONFIGS``）。"""
 
+JOB_SUBAGENT_TOOL_CATALOG_HEADER: str = "可选的 agent_id 及用途："
+"""``submit_subagent`` 工具说明 catalog 段标题。"""
+
+JOB_SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
+调用时请在参数中显式传入 agent_id 为上述 id 之一，并严格遵循工具的参数要求，例如：
+- agent_id: "arithmetic_ref"
+- task: "What is 5 + 3 * 2"
+"""
+"""``submit_subagent`` 固定调用说明。"""
+
+DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC: int = 600
+"""``submit_subagent`` 默认 job 超时（秒）。"""
+
+DEFAULT_JOBS_SUBAGENTS_MAX: int = 4
+"""Job 路径 subagent 并发上限默认值（``JOBS.subagents.max``）。"""
+
+POLL_WATCH_DEFAULT_INTERVAL_SEC: float = 2.0
+"""``poll_subagent`` watch 模式默认轮询间隔（秒）。"""
+
+POLL_WATCH_MAX_WATCH_SEC: int = 120
+"""``poll_subagent`` watch 模式最长 watch 秒数。"""
+
+POLL_WATCH_MIN_INTERVAL_SEC: float = 0.5
+"""``poll_subagent`` watch 模式最小轮询间隔（秒）。"""
+
+POLL_WATCH_MAX_INTERVAL_SEC: float = 30.0
+"""``poll_subagent`` watch 模式最大轮询间隔（秒）。"""
+
+POLL_WATCH_DEFAULT_EVENT_LIMIT: int = 20
+"""``poll_subagent`` 单次 poll 默认 events 条数上限。"""
+
+POLL_WATCH_MAX_EVENT_LIMIT: int = 200
+"""``poll_subagent`` 单次 poll 最大 events 条数。"""
+
 HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX: str = (
     "请调用request_human_feedback工具，询问用户是否需要进一步的指导或是否同意操作。"
 )
@@ -455,6 +489,8 @@ DEFAULT_WORKSPACE_LAYOUT: dict[str, str] = {
     "context_dir": ".context",
     "performance_dir": ".performance",
     "workers_dir": "workers",
+    "subagents_dir": "subagents",
+    "jobs_dir": "jobs",
     "runtime_dump_dir": ".runtime",
     "tool_outputs_dir": ".dataagent/tool_outputs",
 }

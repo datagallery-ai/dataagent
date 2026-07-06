@@ -19,6 +19,8 @@ import pytest
 from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
 from dataagent.utils.runtime_paths import (
     resolve_effective_workspace_root,
+    resolve_job_subagents_root,
+    resolve_jobs_root,
     resolve_layout_dir,
     resolve_worker_root,
     resolve_workspace_layout,
@@ -46,6 +48,8 @@ def test_resolve_workspace_layout_merges_user_override() -> None:
         ("context_dir", ".context"),
         ("performance_dir", ".performance"),
         ("workers_dir", "workers"),
+        ("subagents_dir", "subagents"),
+        ("jobs_dir", "jobs"),
         ("runtime_dump_dir", ".runtime"),
         ("tool_outputs_dir", ".dataagent/tool_outputs"),
     ],
@@ -71,6 +75,18 @@ def test_resolve_worker_root_uses_layout_workers_dir(tmp_path: Path) -> None:
         config=config,
     )
     assert root == (tmp_path / "custom-ws" / "swarm" / "7").resolve()
+
+
+def test_resolve_job_subagents_root_uses_layout_subagents_dir(tmp_path: Path) -> None:
+    config = {"WORKSPACE_POLICY": {"layout": {"subagents_dir": ".dataagent/subagents"}}}
+    root = resolve_job_subagents_root(parent_workspace=tmp_path / "custom-ws", config=config)
+    assert root == (tmp_path / "custom-ws" / ".dataagent" / "subagents").resolve()
+
+
+def test_resolve_jobs_root_uses_layout_jobs_dir(tmp_path: Path) -> None:
+    config = {"WORKSPACE_POLICY": {"layout": {"jobs_dir": "state/jobs"}}}
+    root = resolve_jobs_root(parent_workspace=tmp_path / "custom-ws", config=config)
+    assert root == (tmp_path / "custom-ws" / "state" / "jobs").resolve()
 
 
 def test_resolve_worker_root_parent_workspace_over_home(monkeypatch, tmp_path: Path) -> None:
