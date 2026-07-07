@@ -112,11 +112,20 @@ def resolve_runtime_user_id(config: Mapping[str, Any] | None) -> str:
     return "anonymous"
 
 
+def validate_user_id(user_id: str) -> str:
+    """Normalize a user id and reject path traversal characters."""
+    resolved_user_id = str(user_id).strip()
+    if any(part in resolved_user_id for part in ("..", "/", "\\")):
+        raise ValueError("user_id must not contain '..', '/' or '\\'.")
+    return resolved_user_id
+
+
 def resolve_user_root(*, user_id: str | None = None, config: Mapping[str, Any] | None = None) -> Path:
     """Return the fixed per-user root under DataAgent home."""
     resolved_user_id = (
         str(user_id).strip() if user_id is not None and str(user_id).strip() else resolve_runtime_user_id(config)
     )
+    resolved_user_id = validate_user_id(resolved_user_id)
     return (dataagent_home() / resolved_user_id).resolve()
 
 
