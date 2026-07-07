@@ -11,6 +11,7 @@
 # limitations under the License.
 # ============================================================================
 import abc
+import ast
 import datetime as dt
 import re
 from typing import Any
@@ -18,7 +19,15 @@ from typing import Any
 import pandas as pd
 from elasticsearch import Elasticsearch
 from pandas._libs.tslibs.timestamps import Timestamp
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.dialects import postgresql
+
+_POSTGRES_IDENTIFIER_PREPARER = postgresql.dialect().identifier_preparer
+
+
+def _quote_postgres_identifier(value: str) -> str:
+    """Quote each part of a possibly schema-qualified PostgreSQL identifier."""
+    return ".".join(_POSTGRES_IDENTIFIER_PREPARER.quote(part) for part in value.split("."))
 
 
 class BaseStorageConnector(abc.ABC):
@@ -556,10 +565,10 @@ class StorageConnectorElasticSearch(BaseStorageConnector):
         self._es_major_version = major_version
         return major_version
 
-    def _build_vector_script_source(self, query_schema: str) -> str:
+    def _build_vector_script_source(self) -> str:
         if (self._get_es_major_version() or 0) >= 9:
-            return f"cosineSimilarity(params.query_vector, '{query_schema}') + 1.0"
-        return f"cosineSimilarity(params.query_vector, doc['{query_schema}']) + 1.0"
+            return "cosineSimilarity(params.query_vector, params.query_schema) + 1.0"
+        return "cosineSimilarity(params.query_vector, doc[params.query_schema]) + 1.0"
 
     def _build_script_score_query(
         self, query_schema: str, query_vector: list[float], topk: int, filters: list[dict[str, Any]] | None = None
@@ -572,8 +581,11 @@ class StorageConnectorElasticSearch(BaseStorageConnector):
                 "script_score": {
                     "query": {"bool": {"filter": filter_clauses}},
                     "script": {
-                        "source": self._build_vector_script_source(query_schema),
-                        "params": {"query_vector": query_vector},
+                        "source": self._build_vector_script_source(),
+                        "params": {
+                            "query_vector": query_vector,
+                            "query_schema": query_schema,
+                        },
                     },
                 }
             },
@@ -675,7 +687,9 @@ class MySQLReader:
         Returns:
             Pd.DataFrame, loaded pandas table.
         """
-        sql_command = f"select * from {table_name}"
+        identifier_preparer = self.engine.dialect.identifier_preparer
+        quoted_table = ".".join(identifier_preparer.quote(part) for part in table_name.split("."))
+        sql_command = text(f"SELECT * FROM {quoted_table}")
         df = pd.read_sql(sql_command, con=self.engine)
         return df
 
@@ -713,7 +727,7 @@ class StorageConnectorGaussVector(BaseStorageConnector):
 
     def create_table(self, table_name: str, mapping: dict) -> None:
         mapping = mapping["mappings"]["properties"]
-        data_type = {}
+        data_type: dict[str, str] = {}
         for k, v in mapping.items():
             if v["type"] == "keyword":
                 data_type[k] = "text"
@@ -722,11 +736,10 @@ class StorageConnectorGaussVector(BaseStorageConnector):
             elif v["type"] == "integer":
                 data_type[k] = "int"
 
-        table_datatype = ""
-        for k, v in data_type.items():
-            table_datatype += f"{k} {v},"
-        table_datatype = table_datatype[:-1]
-        self.gs.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({table_datatype})")
+        table_datatype = ", ".join(
+            f"{_POSTGRES_IDENTIFIER_PREPARER.quote(column)} {column_type}" for column, column_type in data_type.items()
+        )
+        self.gs.execute(f"CREATE TABLE IF NOT EXISTS {_quote_postgres_identifier(table_name)} ({table_datatype})")
 
     def drop_table(self, table_name: str) -> None:
         self.gs.execute(f"DROP TABLE IF EXISTS {table_name}")
@@ -753,29 +766,34 @@ class StorageConnectorGaussVector(BaseStorageConnector):
     def delete_data(
         self, table_name: str, query_schema_list: list[str], query_text_list: list[str | int], query_type: str
     ) -> None:
-        query_str = f"DELETE FROM {table_name} WHERE "
+        quoted_table = _quote_postgres_identifier(table_name)
+        quoted_schemas = [_quote_postgres_identifier(schema) for schema in query_schema_list]
         if query_type == "fulltext":
-            query_str += f"{query_schema_list[0]} LIKE '%{query_text_list[0]}%'"
-            self.gs.execute(query_str)
-        elif query_type == "AND":
-            for query_schema, query_text in zip(query_schema_list, query_text_list, strict=True):
-                query_str += f"{query_schema} = '{query_text}' {query_type} "
-            query_str = query_str[:-4]
-            self.gs.execute(query_str)
-        elif query_type == "OR":
-            for query_schema, query_text in zip(query_schema_list, query_text_list, strict=True):
-                query_str += f"{query_schema} = '{query_text}' {query_type} "
-            query_str = query_str[:-3]
-            self.gs.execute(query_str)
-        else:
+            self.gs.execute(
+                f"DELETE FROM {quoted_table} WHERE {quoted_schemas[0]} LIKE %s",
+                (f"%{query_text_list[0]}%",),
+            )
+            return
+        if query_type not in {"AND", "OR"}:
             raise ValueError(f"Unsupported query_type: {query_type}")
+
+        conditions = f" {query_type} ".join(f"{schema} = %s" for schema in quoted_schemas)
+        self.gs.execute(
+            f"DELETE FROM {quoted_table} WHERE {conditions}",
+            tuple(query_text_list),
+        )
 
     def query_relationship(self, table_name: str, exists_field: str) -> list[dict]:
         query_str = f"SELECT * FROM {table_name} WHERE {exists_field} IS NOT NULL AND {exists_field} != ''"
         return self.execute_sql_and_fetch_dict(query_str)
 
-    def execute_sql_and_fetch_dict(self, sql: str) -> list[dict[str, Any]]:
-        self.gs.execute(sql)
+    def execute_sql_and_fetch_dict(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Execute a query and return rows keyed by column name."""
+        self.gs.execute(sql, params) if params is not None else self.gs.execute(sql)
         if self.gs.description is not None:
             cur_columns = [desc[0] for desc in self.gs.description]
         else:
@@ -786,15 +804,18 @@ class StorageConnectorGaussVector(BaseStorageConnector):
             row_dict = {}
             for j, col in enumerate(cur_columns):
                 if isinstance(i[j], str) and i[j].startswith("[") and i[j].endswith("]"):
-                    row_dict[col] = eval(i[j])
+                    try:
+                        row_dict[col] = ast.literal_eval(i[j])
+                    except (SyntaxError, ValueError):
+                        row_dict[col] = i[j]
                 else:
                     row_dict[col] = i[j]
             out.append(row_dict)
         return out
 
     def query_fulltext(self, table_name: str, query_schema: str, query_text: str, topk: int) -> list[dict]:
-        query_str = f"SELECT * FROM {table_name} WHERE {query_schema} LIKE '%{query_text}%' LIMIT {topk}"
-        return self.execute_sql_and_fetch_dict(query_str)
+        query_str = f"SELECT * FROM {table_name} WHERE {query_schema} LIKE %s LIMIT %s"
+        return self.execute_sql_and_fetch_dict(query_str, (f"%{query_text}%", int(topk)))
 
     def query_vector(self, table_name: str, query_schema: str, query_vector: list[float], topk: int) -> list[dict]:
         str_vec = f"[{','.join(map(str, query_vector))}]"
@@ -809,19 +830,12 @@ class StorageConnectorGaussVector(BaseStorageConnector):
         query_type: str,
         topk: int,
     ) -> list[dict]:
-        query_str = f"SELECT * FROM {table_name} WHERE "
-        for query_schema, query_text in zip(query_schema_list, query_text_list, strict=True):
-            query_str += f"{query_schema} = '{query_text}' {query_type} "
-
-        if query_type == "AND":
-            query_str = query_str[:-4]
-        elif query_type == "OR":
-            query_str = query_str[:-3]
-        else:
+        if query_type not in {"AND", "OR"}:
             raise ValueError(f"Unsupported query_type: {query_type}")
 
-        query_str += f"LIMIT {topk}"
-        return self.execute_sql_and_fetch_dict(query_str)
+        conditions = f" {query_type} ".join(f"{schema} = %s" for schema in query_schema_list)
+        query_str = f"SELECT * FROM {table_name} WHERE {conditions} LIMIT %s"
+        return self.execute_sql_and_fetch_dict(query_str, (*query_text_list, int(topk)))
 
     def query_metadata_edge(self, table_name: str, edge_type: str) -> list[dict]:
         if edge_type == "relationship":
@@ -833,8 +847,8 @@ class StorageConnectorGaussVector(BaseStorageConnector):
         return self.execute_sql_and_fetch_dict(query_str)
 
     def query_metadata_columns_by_filepath(self, table_name: str, filepath: str) -> list[dict]:
-        query_str = f"SELECT * FROM {table_name} WHERE type = 'column' AND path LIKE '%{filepath}%'"
-        return self.execute_sql_and_fetch_dict(query_str)
+        query_str = f"SELECT * FROM {table_name} WHERE type = 'column' AND path LIKE %s"
+        return self.execute_sql_and_fetch_dict(query_str, (f"%{filepath}%",))
 
     def query_metadata_column_vector(
         self, table_name: str, query_schema: str, query_vector: list[float], query_type: str, topk: int
@@ -849,11 +863,8 @@ class StorageConnectorGaussVector(BaseStorageConnector):
     def query_metadata_column_fulltext(
         self, table_name: str, query_schema: str, query_text: str, query_type: str, topk: int
     ) -> list[dict]:
-        query_str = (
-            f"SELECT * FROM {table_name} WHERE type = '{query_type}' "
-            f"AND {query_schema} LIKE '%{query_text}%' LIMIT {topk}"
-        )
-        return self.execute_sql_and_fetch_dict(query_str)
+        query_str = f"SELECT * FROM {table_name} WHERE type = %s AND {query_schema} LIKE %s LIMIT %s"
+        return self.execute_sql_and_fetch_dict(query_str, (query_type, f"%{query_text}%", int(topk)))
 
     def query_all(self, table_name: str) -> list[dict]:
         query_str = f"SELECT * FROM {table_name}"
@@ -862,8 +873,10 @@ class StorageConnectorGaussVector(BaseStorageConnector):
     def update_value(
         self, table_name: str, pos_query: list[str], pos_text: list[str], update_field: str, update_value: str
     ) -> None:
-        query_str = f"UPDATE {table_name} SET {update_field} = '{update_value}' WHERE "
-        for query_schema, query_text in zip(pos_query, pos_text, strict=True):
-            query_str += f"{query_schema} = '{query_text}' AND "
-        query_str = query_str[:-4]
-        self.gs.execute(query_str)
+        quoted_table = _quote_postgres_identifier(table_name)
+        quoted_update_field = _quote_postgres_identifier(update_field)
+        conditions = " AND ".join(f"{_quote_postgres_identifier(schema)} = %s" for schema in pos_query)
+        self.gs.execute(
+            f"UPDATE {quoted_table} SET {quoted_update_field} = %s WHERE {conditions}",
+            (update_value, *pos_text),
+        )

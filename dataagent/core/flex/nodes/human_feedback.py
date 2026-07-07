@@ -157,7 +157,7 @@ class HumanFeedbackNode(BaseNode):
             updated_state = {}
 
         # === 阶段4：处理反馈 ===
-        logger.info(f"用户反馈：{user_feedback}")
+        logger.info("已收到用户反馈")
 
         writer({"type": "output_msg", "node_name": self.name, "content": f"✅ 已收到用户反馈：{user_feedback}"})
         writer({"type": "break"})
@@ -184,7 +184,7 @@ class HumanFeedbackNode(BaseNode):
         )
 
         logger.debug(f"[HITL] 返回 updated_state keys: {updated_state.keys()}")
-        logger.debug(f"[HITL] ToolMessage: id={tool_call_id}, content='{user_feedback}'")
+        logger.debug(f"[HITL] ToolMessage: id={tool_call_id}")
 
         return updated_state
 
