@@ -23,6 +23,17 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
+_ALLOWED_CALLABLE_MODULE_PREFIXES = (
+    "dataagent.actions.tools.hooks",
+    "dataagent.core.flex.hooks",
+)
+
+
+def _is_allowed_callable_module(module_name: str) -> bool:
+    return any(
+        module_name == prefix or module_name.startswith(f"{prefix}.") for prefix in _ALLOWED_CALLABLE_MODULE_PREFIXES
+    )
+
 
 def import_class(class_path: str) -> type[Any]:
     """
@@ -95,10 +106,10 @@ def import_class(class_path: str) -> type[Any]:
 
 def import_callable(callable_path: str):
     """
-    Import any callable (function, class, method) from a string path.
+    Import a framework hook callable from a string path.
 
     Args:
-        callable_path: Full path to callable (e.g., "os.path.join", "json.loads")
+        callable_path: Full path to callable under an allowed hook module prefix.
 
     Returns:
         The imported callable object
@@ -109,11 +120,7 @@ def import_callable(callable_path: str):
         AttributeError: If the callable doesn't exist
 
     Examples:
-        >>> json_loads = import_callable("json.loads")
-        >>> data = json_loads('{"key": "value"}')
-
-        >>> path_join = import_callable("os.path.join")
-        >>> path = path_join("/tmp", "file.txt")
+        >>> audit_pre = import_callable("dataagent.actions.tools.hooks.examples.example_hooks.audit_pre")
     """
     if not callable_path or not isinstance(callable_path, str):
         raise ValueError(f"Invalid callable path: {callable_path!r}")
@@ -125,6 +132,11 @@ def import_callable(callable_path: str):
         raise ValueError(f"Callable path must be in format 'module.path.callable', got: {callable_path!r}")
 
     module_name, callable_name = parts
+    if not module_name or not callable_name or callable_name.startswith("_"):
+        raise ValueError(f"Invalid callable path: {callable_path!r}")
+    if not _is_allowed_callable_module(module_name):
+        allowed = ", ".join(_ALLOWED_CALLABLE_MODULE_PREFIXES)
+        raise ValueError(f"Callable module '{module_name}' is not allowed. Allowed prefixes: {allowed}")
 
     try:
         module = importlib.import_module(module_name)

@@ -16,6 +16,7 @@ import pytest
 
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.flex.agent import FlexAgent
+from dataagent.core.flex.hooks.registry import resolve_builtin_hook
 from dataagent.utils.runtime_paths import dataagent_package_path
 
 EXAMPLE_SUITE_ROOT = dataagent_package_path("core", "suite", "builtin_suites", "example_suite")
@@ -126,6 +127,12 @@ def test_resolve_hook_callable_loads_framework_hook_from_suite_merge() -> None:
     agent.config_manager = type("_CM", (), {"activated_suites": []})()
     fn = agent._resolve_hook_callable(framework_hook, location="agent.post")
     BaseAgent._validate_hook(fn, "agent.post")
+
+
+def test_resolve_builtin_hook_rejects_disallowed_module() -> None:
+    """Framework hook fallback must not import arbitrary dotted paths."""
+    with pytest.raises(ValueError, match="not allowed"):
+        resolve_builtin_hook("os.system")
 
 
 def test_suite_hook_relative_import_fails(tmp_path) -> None:

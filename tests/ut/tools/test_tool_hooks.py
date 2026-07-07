@@ -213,6 +213,12 @@ def test_load_tool_hooks_from_config_requires_dot_path():
     assert lists.pre == [] and lists.post == []
 
 
+def test_load_tool_hooks_from_config_rejects_disallowed_module():
+    """Disallowed dotted paths are skipped before arbitrary module import."""
+    lists = load_tool_hooks_from_config({"pre": ["os.system"]})
+    assert lists.pre == [] and lists.post == []
+
+
 def test_readonly_tool_args_rejects_mutation():
     """Shallow read-only view blocks key assignment on tool_args."""
     view = readonly_tool_args({"a": 1})
