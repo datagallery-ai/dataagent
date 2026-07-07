@@ -20,6 +20,25 @@ from dataagent.utils.constants import DEFAULT_NL2SQL_SELECTOR_THRESHOLD
 from dataagent.utils.log import logger
 
 
+def _parse_selection_output(content: str, expected_count: int) -> list[dict[str, Any]] | None:
+    try:
+        parsed = json.loads(json_parser(content))
+    except Exception:
+        return None
+    if not isinstance(parsed, list) or len(parsed) != expected_count:
+        return None
+    selections: list[dict[str, Any]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            return None
+        score = item.get("score")
+        issues = item.get("issues", [])
+        if type(score) not in (int, float) or not isinstance(issues, list):
+            return None
+        selections.append({"score": float(score), "issues": issues})
+    return selections
+
+
 class SelectorNode(BaseNL2SQLNode):
     def __init__(self, **kwargs):
         super().__init__(name="selector", **kwargs)
@@ -37,8 +56,8 @@ class SelectorNode(BaseNL2SQLNode):
             "res": json.dumps(res, default=str),
         }
         for _ in range(3):
-            out = json.loads(json_parser(self.execute_with_llm(context)))
-            if len(out) == len(state["execution_results"]):
+            out = _parse_selection_output(self.execute_with_llm(context), len(state["execution_results"]))
+            if out is not None:
                 sel = out
                 for r in res:
                     del r["id"]

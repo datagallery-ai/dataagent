@@ -22,7 +22,7 @@ from loguru import logger
 
 from dataagent.actions.environment.env import Env
 
-BASE_URL = "http://10.30.234.202:8000"
+BASE_URL = os.getenv("ICBC_BASE_URL", "http://localhost:8000").rstrip("/")
 
 
 def _safe_literal_eval(value):
