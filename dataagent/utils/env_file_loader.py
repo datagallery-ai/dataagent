@@ -117,7 +117,7 @@ def _parse_binding_line(line: str) -> BindingParseResult:
 
     key_result = _parse_key(line, index)
     if not key_result.success:
-        logger.warning("Could not parse env file line: {}", line)
+        logger.warning("Could not parse env file key")
         return BindingParseResult(skipped=False, success=False, key="", value=None)
     index = key_result.next_index
     key_name = key_result.text
@@ -133,7 +133,7 @@ def _parse_binding_line(line: str) -> BindingParseResult:
 
     value = _parse_value(line, index)
     if value is None:
-        logger.warning("Could not parse env file line: {}", line)
+        logger.warning("Could not parse value for env key: {}", key_name)
         return BindingParseResult(skipped=False, success=False, key="", value=None)
     return BindingParseResult(skipped=False, success=True, key=key_name, value=value)
 

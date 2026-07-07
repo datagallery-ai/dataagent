@@ -63,7 +63,11 @@ class BaseNL2SQLEnv(Env):
         if self._conn is None:
             import duckdb
 
-            self._conn = duckdb.connect(self.db_path, read_only=True)
+            self._conn = duckdb.connect(
+                self.db_path,
+                read_only=True,
+                config={"enable_external_access": "false"},
+            )
         return self._conn
 
     @staticmethod
