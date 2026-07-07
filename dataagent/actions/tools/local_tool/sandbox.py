@@ -387,11 +387,16 @@ class Sandbox(ABC):
         if len(parts) >= 2 and parts[0] == "skill":
             skill_name = parts[1]
             if skill_name in self._skill_aliases:
-                return (
-                    self._skill_aliases[skill_name] / Path(*parts[2:])
-                    if len(parts) > 2
-                    else self._skill_aliases[skill_name]
-                )
+                skill_root = self._skill_aliases[skill_name]
+                resolved = (skill_root / Path(*parts[2:])).resolve()
+                if not self._is_subpath(resolved, skill_root):
+                    raise WorkspaceAccessError(
+                        raw_path=str(raw_path),
+                        resolved_path=str(resolved),
+                        allowed_roots=[str(skill_root)],
+                        operation="resolve skill alias",
+                    )
+                return resolved
         return None
 
     def authorize_read(
@@ -451,8 +456,6 @@ class Sandbox(ABC):
         base_dir: str | Path | None = None,
     ) -> Path:
         resolved = self.resolve_requested_path(path, base_dir)
-        if self._workspace_root is None and not self._skill_roots and not self._allow_read_roots:
-            return resolved
         if not self._is_under(resolved, roots):
             raise WorkspaceAccessError(
                 raw_path=str(path),

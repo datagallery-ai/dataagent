@@ -14,9 +14,8 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.config.config_manager import ConfigManager
 
 
@@ -47,7 +46,10 @@ def test_natural_language_to_sql_forwards_tool_context_to_load_table(tmp_path):
     with (
         patch("dataagent.actions.tools.local_tool.tools.llm_manager.get_default_llm", return_value=fake_llm),
         patch("dataagent.actions.tools.local_tool.tools.load_table", side_effect=_fake_load_table),
-        patch("dataagent.actions.tools.local_tool.tools._resolve_tool_file_path", side_effect=lambda p, _n: p),
+        patch(
+            "dataagent.actions.tools.local_tool.tools.get_current_sandbox",
+            return_value=NoopSandbox(workspace_root=tmp_path),
+        ),
     ):
         result = natural_language_to_sql(
             query="test",
