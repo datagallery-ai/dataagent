@@ -348,10 +348,10 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
     session_id = str(state.get("session_id") or "")
     messages: list[BaseMessage] = list(state.get("messages") or [])
 
-    logger.debug(f"[portraiter] user_id={user_id}, session_id={session_id}, messages_count={len(messages)}")
+    logger.debug("[portraiter] state loaded messages_count={}", len(messages))
 
     if not user_id or not session_id:
-        logger.debug("[portraiter] skipped: no user_id or session_id")
+        logger.debug("[portraiter] skipped: missing required identifiers")
         return state
 
     if is_subagent(state) and not is_job_workspace_subagent(state):
@@ -366,7 +366,7 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
         from dataagent.core.flex.hooks.history_writer import load_messages
 
         messages = load_messages(user_id, session_id, workspace=workspace, config=config)
-        logger.debug(f"[portraiter] loaded {len(messages)} messages from history file")
+        logger.debug("[portraiter] loaded messages from history file count={}", len(messages))
 
     save_messages(user_id, session_id, messages, workspace=workspace, config=config)
 
@@ -397,7 +397,7 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
         from dataagent.core.flex.hooks.memory_indexer import update_memory_index
 
         update_memory_index(user_id, session_id, workspace=workspace, config=config)
-    except Exception as e:
-        logger.warning(f"[portraiter] failed to update memory index: {e}")
+    except Exception:
+        logger.warning("[portraiter] failed to update memory index")
 
     return state

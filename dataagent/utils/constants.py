@@ -70,7 +70,6 @@ DEFAULT_LLM_RETRY_POLICY: dict[str, int] = {
 }
 """litellm 不可重试 4xx；429/Timeout 次数由 llm_client._normalize 按 max_attempts 注入。"""
 
-
 # ── Flex Pruner Hook ─────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/flex/hooks/pruner.py (复用 compression_utils 中值)
 # 建议 YAML 路径: AGENT_CONFIG.pruner_token_limit
@@ -227,7 +226,6 @@ DEFAULT_MCP_DISCOVERY_TIMEOUT: float = 60.0
 
 DEFAULT_MCP_CLEANUP_TIMEOUT: float = 5.0
 """MCP / A2A 注册表清理时 asyncio.wait_for 超时（秒）。"""
-
 
 # ── 沙箱默认值 ───────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/sandbox.py
