@@ -120,6 +120,16 @@ class DataAgent:
         if agent_config_manager.get("AGENT_CONFIG.type") is None:
             agent_config_manager.set("AGENT_CONFIG.type", "react")
 
+        # 出站 mTLS：把 certificate: 段（插值后）下发为进程环境变量，供深层出站点统一读取。
+        import os
+
+        from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING, apply_certificate_config
+
+        apply_certificate_config(
+            agent_config_manager.get("certificate"),
+            preserve_existing_on_missing=os.getenv(ENV_PRESERVE_ON_MISSING) == "1",
+        )
+
         return cls(config=agent_config_manager)
 
     def astream(self, *args, **kwargs):

@@ -391,3 +391,31 @@ SEMANTIC_LAYER:
   password: null                      # 未启用认证时保持 null；启用认证时填写
   timeout: 30                           # 可按服务端表数量和响应耗时调整
   verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
+
+# ===== 证书通信（mTLS）=====
+# 入站(REST API 服务端) 与出站 LLM 请求共用同一段 certificate:，
+# 统一写在 --config 指定的 YAML 文件里，示例：
+#   certificate:
+#     inbound_enabled: true         # 只驱动入站 REST TLS；关闭则入站回退 HTTP
+#     server_cert_file: /etc/dataagent/certs/server.crt   # 入站服务端证书
+#     server_key_file:  /etc/dataagent/certs/server.key
+#     ca_cert_file:     /etc/dataagent/certs/ca.crt       # 入站校验对方客户端证书的 CA；出站未单独配置时也会复用
+#     outbound_ca_cert_file: /etc/dataagent/certs/outbound-ca.crt  # 出站校验 LLM 服务端证书的 CA
+#     cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+#     certificate_mode: 3           # 入站/出站统一：0=不校验 1=可选(出站按单向) 2=单向 3=双向(mTLS)
+#     # 出站 mTLS 开关列表：当前仅 llm 生效；其它服务后续扩展时复用该列表
+#     outbound_ssl_services:
+#       - llm
+#     # client_cert_file: /etc/dataagent/certs/client.crt  # 出站 mTLS 客户端证书；certificate_mode=3 时必填
+#     # client_key_file:  /etc/dataagent/certs/client.key
+#
+# 迁移提示：入站 REST 使用 inbound_enabled；当前只有 LLM 出站请求会读取 outbound_ssl_services。
+# 如需 LLM mTLS，请显式把 llm 加入 outbound_ssl_services。
+#
+# 入站自测（对方需带客户端证书）：
+#   curl --cert client.crt --key client.key --cacert ca.crt https://HOST:PORT/health
+#
+# 出站：配置 certificate 时会自动下发为以下进程环境变量（一般无需手动设置；YAML 会覆盖旧值）：
+#   DATAAGENT_OUTBOUND_CA_FILE / DATAAGENT_OUTBOUND_CLIENT_CERT / DATAAGENT_OUTBOUND_CLIENT_KEY
+#   DATAAGENT_OUTBOUND_CIPHERS / DATAAGENT_OUTBOUND_MODE
+#   DATAAGENT_OUTBOUND_SSL_SERVICES
