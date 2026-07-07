@@ -764,21 +764,22 @@ class ICBCEnv(Env):
                 实际写入的 Markdown 文件的绝对路径。
         """
         # 计算默认保存路径：项目根目录下的 reports 目录
+        project_root = os.path.realpath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir))
+        reports_dir = os.path.join(project_root, "reports")
         if not file_path:
-            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir))
-            reports_dir = os.path.join(project_root, "reports")
-            os.makedirs(reports_dir, exist_ok=True)
-
             timestamp = (datetime.now(tz=UTC) + timedelta(hours=8)).strftime("%Y%m%d_%H%M%S")
             file_path = os.path.join(reports_dir, f"icbc_report_{timestamp}.md")
-        else:
-            # 如果传入的是相对路径，则基于项目根目录进行解析，避免依赖当前工作目录
-            if not os.path.isabs(file_path):
-                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir))
-                file_path = os.path.join(project_root, file_path)
+        elif not os.path.isabs(file_path):
+            file_path = os.path.join(project_root, file_path)
 
-            # 确保目标目录存在
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        # 解析相对路径和符号链接，避免通过 ../ 或软链接逃逸。
+        file_path = os.path.realpath(file_path)
+        reports_dir = os.path.realpath(reports_dir)
+        if os.path.commonpath([file_path, reports_dir]) != reports_dir:
+            raise ValueError(f"file_path must be under reports directory: {reports_dir}")
+        if not file_path.lower().endswith(".md"):
+            raise ValueError("file_path must use the .md extension.")
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         # 将内容写入 Markdown 文件，使用 UTF-8 编码，覆盖写入
         with open(file_path, "w", encoding="utf-8") as f:

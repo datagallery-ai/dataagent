@@ -39,7 +39,7 @@ from dataagent.actions.tools.local_tool.agent_status_handler import (
     extract_subagent_status,
     reset_subagent_status,
 )
-from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+from dataagent.actions.tools.local_tool.sandbox import WorkspaceAccessError, get_current_sandbox
 from dataagent.actions.tools.local_tool.sql_reader import load_table
 from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING
 from dataagent.core.context.message_history import serialize_message
@@ -443,7 +443,7 @@ def llm_analyzer(text: str = "", task: str = "", output_path: str = "", text_pat
     Returns:
         str: Saved analysis file path.
     """
-    output_path = _resolve_tool_file_path(output_path, "output_path")
+    output_path = str(_resolve_and_authorize(output_path, "output_path", operation="llm_analyzer", mode="write"))
     analysis_input = (
         _load_analysis_content(text_path, allow_empty=True, arg_name="text_path") if text_path else str(text)
     )
@@ -473,7 +473,7 @@ def file_saver(content: str, file_path: str) -> dict[str, str]:
         content (str): Text content to save.
         file_path (str): Absolute path under the workspace root where the file is saved.
     """
-    resolved_path = Path(_resolve_tool_file_path(file_path, "file_path"))
+    resolved_path = _resolve_and_authorize(file_path, "file_path", operation="file_saver", mode="write")
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_path.write_text(content, encoding="utf-8")
     return {"original_msg": "", "frontend_msg": f"File saved at {resolved_path}."}
@@ -679,7 +679,9 @@ def _load_analysis_content(path_value: str, allow_empty: bool = False, arg_name:
         if allow_empty:
             return ""
         raise ValueError(f"{arg_name} must not be empty.")
-    resolved_analysis_path = Path(_resolve_tool_file_path(normalized_path, arg_name))
+    resolved_analysis_path = _resolve_and_authorize(
+        normalized_path, arg_name, operation="load_analysis_content", mode="read"
+    )
     if not resolved_analysis_path.is_file():
         raise FileNotFoundError(f"{arg_name} does not exist: {resolved_analysis_path}")
     return resolved_analysis_path.read_text(encoding="utf-8")
@@ -742,13 +744,21 @@ def natural_language_to_plot(
     # Use resolved absolute path in prompt so generated code uses it and does not depend on cwd
     normalized_src = str(src_data_path or "").strip()
     if "\n" not in normalized_src and "\r" not in normalized_src:
-        src_path_for_prompt = str(Path(_resolve_tool_file_path(normalized_src, "src_data_path")).resolve())
+        src_path_for_prompt = str(
+            _resolve_and_authorize(normalized_src, "src_data_path", operation="natural_language_to_plot", mode="read")
+        )
     else:
         src_path_for_prompt = "(inline data)"
-    sql_command_path = _resolve_tool_file_path(sql_command_path, "sql_command_path")
-    script_path = _resolve_tool_file_path(script_path, "script_path")
-    image_path = _resolve_tool_file_path(image_path, "image_path")
-    json_path = _resolve_tool_file_path(json_path, "json_path")
+    sql_command_path = str(
+        _resolve_and_authorize(sql_command_path, "sql_command_path", operation="natural_language_to_plot", mode="read")
+    )
+    script_path = str(
+        _resolve_and_authorize(script_path, "script_path", operation="natural_language_to_plot", mode="write")
+    )
+    image_path = str(
+        _resolve_and_authorize(image_path, "image_path", operation="natural_language_to_plot", mode="write")
+    )
+    json_path = str(_resolve_and_authorize(json_path, "json_path", operation="natural_language_to_plot", mode="write"))
     with open(sql_command_path, encoding="utf-8") as f:
         sql_command = f.read()
     script_dir = os.path.dirname(script_path)
@@ -929,8 +939,12 @@ def natural_language_to_sql(
     Returns:
         str: First few lines of execution results.
     """
-    sql_save_path = _resolve_tool_file_path(sql_save_path, "sql_save_path")
-    csv_save_path = _resolve_tool_file_path(csv_save_path, "csv_save_path")
+    sql_save_path = str(
+        _resolve_and_authorize(sql_save_path, "sql_save_path", operation="natural_language_to_sql", mode="write")
+    )
+    csv_save_path = str(
+        _resolve_and_authorize(csv_save_path, "csv_save_path", operation="natural_language_to_sql", mode="write")
+    )
     sql_dir = os.path.dirname(sql_save_path)
     if sql_dir:
         os.makedirs(sql_dir, exist_ok=True)
@@ -1041,12 +1055,12 @@ def report_generator(
     Returns:
         str: Generated Markdown report.
     """
-    output_path = _resolve_tool_file_path(output_path, "output_path")
+    output_path = str(_resolve_and_authorize(output_path, "output_path", operation="report_generator", mode="write"))
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     if images_path:
-        images_path = _resolve_tool_file_path(images_path, "images_path")
+        images_path = str(_resolve_and_authorize(images_path, "images_path", operation="report_generator", mode="read"))
     images = load_images_as_json(images_path) if images_path else ""
     report_analysis = _load_analysis_content(analysis_path)
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2476,16 +2490,25 @@ def glob(
     if not base_path.is_dir():
         raise ValueError(f"target_directory must be a directory: {base}")
 
+    if ".." in pattern:
+        raise ValueError("'glob_pattern' must not contain path traversal ('..').")
+
     # Recursive search. Normalize patterns without **/ prefix for user convenience.
     effective_pattern = pattern if pattern.startswith("**/") or pattern.startswith("**\\") else f"**/{pattern}"
 
+    guard = get_current_sandbox()
     matches: list[Path] = []
     for p in base_path.glob(effective_pattern):
         # Skip files inside hidden/VCS directories.
         if any(part in DEFAULT_SKIP_DIRS for part in p.parts):
             continue
-        if p.is_file():
-            matches.append(p)
+        try:
+            resolved_match = guard.authorize_read(p.resolve(), operation="glob")
+            resolved_match.relative_to(base_path.resolve())
+        except (ValueError, WorkspaceAccessError):
+            continue
+        if resolved_match.is_file():
+            matches.append(resolved_match)
             if len(matches) >= int(max_results):
                 break
 
@@ -2496,10 +2519,7 @@ def glob(
     resolved_base = base_path.resolve()
     paths = []
     for p in matches:
-        try:
-            paths.append(str(p.resolve().relative_to(resolved_base)))
-        except ValueError:
-            paths.append(str(p.resolve()))
+        paths.append(str(p.relative_to(resolved_base)))
 
     truncated = len(matches) >= int(max_results)
     msg = "\n".join(paths) if paths else "(no matches)"

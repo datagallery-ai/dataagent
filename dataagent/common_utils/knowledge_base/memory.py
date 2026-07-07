@@ -14,6 +14,7 @@ import json
 import os
 import threading
 import traceback
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import networkx as nx
@@ -692,8 +693,15 @@ class Memory:
             Tuple[pd.DataFrame, list[str]], pandas dataframe of a table, and list of extracted pieces of knowledge.
         """
         if table_source_type == "localfile":
-            if table_path.endswith(".csv"):
-                df = pd.read_csv(table_path, keep_default_na=False)
+            local_path = Path(table_path).expanduser()
+            resolved_path = local_path.resolve()
+            allowed_root = Path(self.path_prefix).expanduser().resolve()
+            if not self.path_prefix or not resolved_path.is_relative_to(allowed_root):
+                raise ValueError("Local table path is outside allowed directory.")
+            if local_path.is_symlink():
+                raise ValueError("Local table path must not be a symbolic link.")
+            if resolved_path.suffix.lower() == ".csv":
+                df = pd.read_csv(resolved_path, keep_default_na=False)
                 unnamed_cols = [col for col in df.columns if str(col).startswith("Unnamed:")]
                 if unnamed_cols:
                     raise ValueError(f"csv contains unnamed columns: {unnamed_cols}, please check the file format.")
