@@ -131,7 +131,16 @@ class TestBashWhitelistInExecutor:
         assert tool_msgs[0].content == "ok"
 
     @pytest.mark.asyncio
-    async def test_disallowed_command_blocked(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("command", "error_text"),
+        [
+            ("rm -rf /tmp", "not in allowed list"),
+            ("echo $(rm -rf /tmp)", "nested command syntax"),
+            ("echo `rm -rf /tmp`", "nested command syntax"),
+            ("cat <(rm -rf /tmp)", "nested command syntax"),
+        ],
+    )
+    async def test_disallowed_command_blocked(self, monkeypatch, command, error_text):
         """A command not in the whitelist should be blocked with a validation error."""
         monkeypatch.setattr(executor_module, "record_message", lambda _ctx, _msg: None)
         monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(lambda **kwargs: []))
@@ -150,7 +159,7 @@ class TestBashWhitelistInExecutor:
         executor = Executor("executor", None)
         message = AIMessage(
             content="",
-            tool_calls=[{"id": "call-1", "name": "bash", "args": {"command": "rm -rf /tmp", "purpose": "cleanup"}}],
+            tool_calls=[{"id": "call-1", "name": "bash", "args": {"command": command, "purpose": "cleanup"}}],
             invalid_tool_calls=[],
         )
 
@@ -166,7 +175,8 @@ class TestBashWhitelistInExecutor:
         tool_msgs = [m for m in self._only_tool(result) if m.status == "error"]
         assert len(tool_msgs) == 1
         assert "validation" in tool_msgs[0].content.lower()
-        assert "rm" in tool_msgs[0].content
+        assert error_text in tool_msgs[0].content
+        assert command not in tool_msgs[0].content
         assert acall_count == 0  # tool should never be invoked
 
     @pytest.mark.asyncio

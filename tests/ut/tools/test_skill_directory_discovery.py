@@ -94,12 +94,44 @@ class TestBuiltinSkillDirectoryDiscovery:
     ) -> None:
         from dataagent.utils import runtime_paths
 
-        # This monkeypatch doesn't affect actions/skills (hardcoded in _discover_builtin_skills),
-        # so data_analysis_report is always discovered from the real package path.
         monkeypatch.setattr(runtime_paths, "dataagent_package_path", lambda *_: tmp_path)
 
         tm = ToolManager()
         skills = tm._discover_builtin_skills(config={"TOOLS": {"skills": {"custom_dirs": ["does_not_exist"]}}})
-        # NOTE: The hardcoded actions/skills scan is unaffected by the monkeypatch,
-        # so data_analysis_report always appears from the real package.
         assert [skill["name"] for skill in skills] == []
+
+
+class TestUserSkillDirectoryDiscovery:
+    @staticmethod
+    def _write_skill(root: Path, name: str) -> None:
+        skill_dir = root / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: user skill\n---\n\n# User Skill\n",
+            encoding="utf-8",
+        )
+
+    def test_refresh_user_skills_loads_from_user_directory(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        home = tmp_path / "dataagent-home"
+        self._write_skill(home / "alice" / "skills", "alice_skill")
+        monkeypatch.setenv("DATAAGENT_HOME", str(home))
+
+        skills = ToolManager().refresh_user_skills(user_id="alice")
+
+        assert [skill["name"] for skill in skills] == ["alice_skill"]
+
+    @pytest.mark.parametrize("user_id", ["../outside", "/tmp/outside", r"..\outside"])
+    def test_refresh_user_skills_rejects_path_traversal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        user_id: str,
+    ) -> None:
+        monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
+
+        with pytest.raises(ValueError, match="must not contain"):
+            ToolManager().refresh_user_skills(user_id=user_id)

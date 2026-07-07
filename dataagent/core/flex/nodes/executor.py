@@ -85,6 +85,8 @@ class _ToolCallExecutionSetup:
 
 
 _BASH_COMMAND_SEPARATORS = re.compile(r"[;&|\n]")
+# Allow arithmetic expansion ($((...))), but reject syntax that can execute nested commands.
+_NESTED_BASH_COMMAND = re.compile(r"\$\((?!\()|`|[<>]\(")
 _VARIABLE_ASSIGNMENT = re.compile(r"^[a-zA-Z_]\w*=")
 
 
@@ -952,6 +954,20 @@ class Executor(BaseNode):
         if not command_str.strip():
             return
 
+        if _NESTED_BASH_COMMAND.search(command_str):
+            allowed_hint = ", ".join(sorted(whitelist))
+            raise ParamsValueError(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                errors=[],
+                message=(
+                    "Bash command whitelist validation failed: "
+                    "nested command syntax is not allowed.\n"
+                    f"Allowed commands: [{allowed_hint}]\n"
+                    "Hint: Reconstruct the bash call without command or process substitution."
+                ),
+            )
+
         base_commands = _extract_base_commands(command_str)
         disallowed = [cmd for cmd in base_commands if cmd not in whitelist]
         if not disallowed:
@@ -965,7 +981,6 @@ class Executor(BaseNode):
             message=(
                 f"Bash command whitelist validation failed: "
                 f"command(s) {disallowed!r} not in allowed list.\n"
-                f"Full command: {command_str}\n"
                 f"Allowed commands: [{allowed_hint}]\n"
                 f"Hint: Reconstruct the bash call using only allowed commands."
             ),
