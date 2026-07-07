@@ -26,6 +26,7 @@ from dataagent.core.context.message_history import deserialize_message, serializ
 from dataagent.core.swarm.worker_memory import strip_subagent_runtime_fields
 from dataagent.core.swarm.worker_result import synthesize_worker_result
 from dataagent.interface.sdk.agent import DataAgent
+from dataagent.utils.runtime_paths import validate_user_id
 
 
 def main() -> int:
@@ -125,6 +126,7 @@ def _resolve_subagent_identity(
     *, user_id: str | None, session_id: str | None, sub_id: int | None
 ) -> tuple[str, str, int]:
     resolved_user_id = str(user_id).strip() if user_id is not None and str(user_id).strip() else "anonymous"
+    resolved_user_id = validate_user_id(resolved_user_id)
     parent_session_id = (
         str(session_id).strip() if session_id is not None and str(session_id).strip() else "default_session"
     )

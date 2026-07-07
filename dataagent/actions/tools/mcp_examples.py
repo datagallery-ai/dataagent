@@ -12,11 +12,20 @@
 # ============================================================================
 import asyncio
 import os
+from pathlib import Path
 
 from loguru import logger
 from mcp.server.fastmcp import FastMCP
 
 from dataagent.actions.tools.mcp import MCPToolRegistry
+
+
+def _resolve_directory_path(path: str, base_dir: str | Path) -> Path:
+    safe_root = Path(base_dir).resolve()
+    resolved_path = (safe_root / path).resolve()
+    if not resolved_path.is_relative_to(safe_root):
+        raise ValueError("Path is outside allowed directory")
+    return resolved_path
 
 
 # 示例1: 创建FastMCP服务器并托管 DataAgent 工具
@@ -25,6 +34,7 @@ def create_dataagent_mcp_server():
 
     # 创建FastMCP服务器实例
     server = FastMCP("DataAgent Tools Server")
+    safe_root = Path.cwd().resolve()
 
     # 定义一些示例工具函数
     @server.tool()
@@ -47,8 +57,9 @@ def create_dataagent_mcp_server():
     async def list_directory(path: str) -> list[str]:
         """列出目录内容"""
         try:
-            if os.path.isdir(path):
-                return os.listdir(path)
+            safe_path = _resolve_directory_path(path, safe_root)
+            if os.path.isdir(safe_path):
+                return os.listdir(safe_path)
             return [f"Not a directory: {path}"]
         except Exception as e:
             return [f"Error: {str(e)}"]
