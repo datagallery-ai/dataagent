@@ -41,6 +41,7 @@ from dataagent.actions.tools.local_tool.agent_status_handler import (
 )
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from dataagent.actions.tools.local_tool.sql_reader import load_table
+from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING
 from dataagent.core.context.message_history import serialize_message
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.swarm.swarm_config import swarm_enabled
@@ -1354,6 +1355,7 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
         ).resolve()
         env["DATAAGENT_LOG_FILE"] = str(sub_agent_log_path)
         env["DATAAGENT_LOG_PROCESS_NAME"] = "subagent"
+        env[ENV_PRESERVE_ON_MISSING] = "1"
         cmd = [
             sys.executable,
             "-m",

@@ -43,6 +43,7 @@ from dataagent.actions.tools.local_tool.tools import (
     set_subagent_runtime_context,
     sub_agent_tool,
 )
+from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING
 from dataagent.utils import log as dataagent_log
 from dataagent.utils.log import dataagent_logger
 
@@ -65,6 +66,7 @@ def test_sub_agent_tool_extracts_structured_json(monkeypatch, tmp_path):
         cmd, *, timeout, cwd=None, env=None, progress_callback=None, tool_call_id=None
     ):
         captured["cmd"] = cmd
+        captured["env"] = env
         captured["timeout"] = timeout
         captured["initial_state_file"] = cmd[cmd.index("--initial-state-file") + 1]
         sub_id = int(cmd[cmd.index("--sub-id") + 1])
@@ -115,6 +117,7 @@ def test_sub_agent_tool_extracts_structured_json(monkeypatch, tmp_path):
     assert cmd[cmd.index("--user-id") + 1] == "anonymous"
     assert cmd[cmd.index("--session-id") + 1] == "default_session"
     assert "--sub-id" in cmd
+    assert captured["env"][ENV_PRESERVE_ON_MISSING] == "1"
     initial_state_file = Path(captured["initial_state_file"])
     assert initial_state_file.is_relative_to(tmp_path)
     assert initial_state_file.parent.parent == tmp_path / ".dataagent_tmp" / "subagents"

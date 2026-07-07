@@ -221,6 +221,12 @@ class ConfigManager:
         new_config.activated_suites = list(self.activated_suites)
         return new_config
 
+    def interpolate_config(self, config: Mapping[str, Any]) -> dict[str, Any]:
+        """Return a deep-copied config mapping with variable interpolation applied."""
+        result = copy.deepcopy(dict(config))
+        self._process_interpolation(result)
+        return result
+
     def reload(self, config_path: str, default_config_path: str | None = None) -> None:
         """
         Reload configuration.

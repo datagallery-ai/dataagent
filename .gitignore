@@ -229,3 +229,11 @@ uv.lock
 
 # web
 server/web/node_modules/
+
+# TLS 证书与私钥（请勿提交到仓库）
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
+certs/
