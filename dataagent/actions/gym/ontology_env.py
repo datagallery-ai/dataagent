@@ -211,6 +211,8 @@ class OntologyEnv(Env):
         Returns:
             业务逻辑节点的属性信息描述
         """
+        if any("'" in str(k) or "\\" in str(k) or any(ord(c) < 32 for c in str(k)) for k in keywords):
+            raise ValueError("keywords must not contain quotes, backslashes, or control characters")
         title_str = "CONTAINS " + " OR CONTAINS ".join([f"'{k}'" for k in keywords])
         url = self._with_scene_name(f"{self.search_base_url}/property_filter")
         parameters = {
