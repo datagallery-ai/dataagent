@@ -1248,6 +1248,13 @@ class Executor(BaseNode):
                 "workspace": execution.metadata.get("workspace"),
                 "pre_existing_files": execution.metadata.get("pre_existing_files"),
             }
+            # 阈值检测只用模型实际可见的文本（即 _build_tool_message 成功分支的 content）：
+            # original_msg 优先，否则 output_text（已含 frontend_msg / 整个 raw_result 的回退）。
+            # 错误执行不落盘 File 节点 → 传空串使其必然低于阈值。
+            if execution.success:
+                convert_kwargs["visible_result"] = execution.original_msg or execution.output_text
+            else:
+                convert_kwargs["visible_result"] = ""
             if self._file_node_threshold is not None:
                 convert_kwargs["knowledge_min_length"] = self._file_node_threshold
             created_ir = ResultIRConverter.convert(**convert_kwargs)
