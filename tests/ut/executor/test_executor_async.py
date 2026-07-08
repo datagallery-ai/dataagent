@@ -668,3 +668,120 @@ async def test_executor_raw_result_preserved_for_ir(monkeypatch, tmp_path):
     assert len(convert_results) == 1
     # raw_result passed to IR converter should be the unwrapped payload, not truncated
     assert convert_results[0] == {"real": "payload"}
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_original_msg_as_ir_visible_result(monkeypatch, tmp_path):
+    """IR fallback threshold should use original_msg even when data/frontend_msg are large."""
+    convert_calls = []
+
+    def fake_convert(**kwargs):
+        convert_calls.append(
+            {
+                "result": kwargs.get("result"),
+                "visible_result": kwargs.get("visible_result"),
+            }
+        )
+        return []
+
+    monkeypatch.setattr(executor_module, "record_message", lambda _ctx, _msg: None)
+    monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(fake_convert))
+
+    async def tool_with_large_data():
+        return {
+            "original_msg": "short visible result",
+            "frontend_msg": "ui " * 300,
+            "data": {"payload": "data " * 300},
+        }
+
+    tools = {"tool_with_large_data": tool_with_large_data}
+    ws = str(tmp_path)
+    runtime = _make_runtime(call_tool=_wrap_tools_as_call_tool(tools), workspace=ws)
+
+    executor = Executor("executor")
+    message = AIMessage(
+        content="",
+        tool_calls=[{"id": "large-data-call", "name": "tool_with_large_data", "args": {}}],
+        invalid_tool_calls=[],
+    )
+
+    await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
+    assert convert_calls == [
+        {
+            "result": {"payload": "data " * 300},
+            "visible_result": "short visible result",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_executor_visible_result_falls_back_to_output_text_without_original_msg(monkeypatch, tmp_path):
+    """无 original_msg 时，visible_result 应回退到模型可见的 output_text（= frontend_msg），
+    而非 data 部分——否则 data 很大仍会错误触发长文本落盘。"""
+    convert_calls = []
+
+    def fake_convert(**kwargs):
+        convert_calls.append(
+            {
+                "result": kwargs.get("result"),
+                "visible_result": kwargs.get("visible_result"),
+            }
+        )
+        return []
+
+    monkeypatch.setattr(executor_module, "record_message", lambda _ctx, _msg: None)
+    monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(fake_convert))
+
+    async def tool_no_original_msg():
+        return {
+            "frontend_msg": "visible frontend text",
+            "data": {"payload": "data " * 300},
+        }
+
+    tools = {"tool_no_original_msg": tool_no_original_msg}
+    ws = str(tmp_path)
+    runtime = _make_runtime(call_tool=_wrap_tools_as_call_tool(tools), workspace=ws)
+
+    executor = Executor("executor")
+    message = AIMessage(
+        content="",
+        tool_calls=[{"id": "no-orig-call", "name": "tool_no_original_msg", "args": {}}],
+        invalid_tool_calls=[],
+    )
+
+    await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
+    assert convert_calls == [
+        {
+            "result": {"payload": "data " * 300},
+            "visible_result": "visible frontend text",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_executor_visible_result_plain_string(monkeypatch, tmp_path):
+    """非标准 dict 外壳（直接返回字符串）时，visible_result 即该字符串本身。"""
+    convert_calls = []
+
+    def fake_convert(**kwargs):
+        convert_calls.append(kwargs.get("visible_result"))
+
+    monkeypatch.setattr(executor_module, "record_message", lambda _ctx, _msg: None)
+    monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(fake_convert))
+
+    async def plain_tool():
+        return "plain tool output"
+
+    tools = {"plain_tool": plain_tool}
+    ws = str(tmp_path)
+    runtime = _make_runtime(call_tool=_wrap_tools_as_call_tool(tools), workspace=ws)
+
+    executor = Executor("executor")
+    message = AIMessage(
+        content="",
+        tool_calls=[{"id": "plain-call", "name": "plain_tool", "args": {}}],
+        invalid_tool_calls=[],
+    )
+
+    await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
+    assert convert_calls == ["plain tool output"]

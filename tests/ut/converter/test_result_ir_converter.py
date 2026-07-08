@@ -355,6 +355,82 @@ class TestKnowledgeFallback:
         )
         assert len(created) == 0
 
+    def test_fallback_ignores_frontend_and_data_when_original_msg_short(
+        self,
+        context: Context,
+        tmp_path: Path,
+    ):
+        """标准工具返回中只有 original_msg 参与长文本 File fallback 阈值检测。"""
+        result = {
+            "original_msg": "OK",
+            "frontend_msg": "frontend " * 100,
+            "data": {"payload": "data " * 100},
+        }
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="tool",
+            tool_call_id="test_action_001",
+            tool_args={},
+            result=result,
+            action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
+            knowledge_min_length=20,
+        )
+
+        assert _labels_of(created, "File") == []
+
+    def test_fallback_uses_visible_result_when_original_msg_absent(
+        self,
+        context: Context,
+        tmp_path: Path,
+    ):
+        """Executor 真实路径：result 已是 data 部分（无 original_msg 外壳），
+        但 visible_result（模型可见文本）短 → 不触发落盘，data 不参与阈值检测。"""
+        result = {"payload": "data " * 100}  # executor 传入的 data 部分
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="tool",
+            tool_call_id="test_action_001",
+            tool_args={},
+            result=result,
+            action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
+            knowledge_min_length=20,
+            visible_result="short visible",  # = original_msg or output_text
+        )
+
+        assert _labels_of(created, "File") == []
+
+    def test_fallback_serializes_original_msg_without_full_result(
+        self,
+        context: Context,
+        tmp_path: Path,
+    ):
+        """非字符串 original_msg 超过阈值时，只落盘 original_msg 内容。"""
+        result = {
+            "original_msg": {"summary": "x" * 40},
+            "frontend_msg": "frontend " * 100,
+            "data": {"payload": "data " * 100},
+        }
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="tool",
+            tool_call_id="test_action_001",
+            tool_args={},
+            result=result,
+            action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
+            knowledge_min_length=20,
+        )
+
+        file_labels = _labels_of(created, "File")
+        assert len(file_labels) == 1
+        node = cast(FileNode, context.get_IR_from_node(graph_node_label=file_labels[0]))
+        persisted = Path(node.path).read_text(encoding="utf-8")
+        assert "summary" in persisted
+        assert "frontend_msg" not in persisted
+        assert "payload" not in persisted
+
     def test_suppressed_when_file_pipeline_creates_ir(self, context: Context, tmp_path: Path):
         """文件Pipeline已创建 IR → 不建 KnowledgeNode（注意 knowledge 只在内容Pipeline无产出时触发）。"""
         pre = ResultIRConverter.snapshot_dir(str(tmp_path))

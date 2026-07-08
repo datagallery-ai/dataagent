@@ -74,6 +74,24 @@ def _result_to_text(result: Any) -> str:
     return str(result) if result is not None else ""
 
 
+_VISIBLE_RESULT_UNSET = object()
+
+
+def _visible_result_to_text(result: Any, visible_result: Any = _VISIBLE_RESULT_UNSET) -> str:
+    """返回模型实际可见的文本，用于长文本 File fallback 阈值检测。
+
+    优先级：
+    1. Executor 显式传入的 visible_result（= ToolMessage.content 成功分支，最权威）；
+    2. result 本身是标准工具返回 dict 时，取其 original_msg（兼容直接构造 result 的调用方）；
+    3. 退回 _result_to_text(result)。
+    """
+    if visible_result is not _VISIBLE_RESULT_UNSET:
+        return _result_to_text(visible_result)
+    if isinstance(result, dict) and "original_msg" in result:
+        return _result_to_text(result.get("original_msg"))
+    return _result_to_text(result)
+
+
 def _persist_dataframe(
     df: Any,
     tool_name: str,
@@ -227,6 +245,7 @@ class ResultIRConverter:
         workspace: str | Path | None = None,
         pre_existing_files: dict[str, float] | None = None,
         knowledge_min_length: int = DEFAULT_IR_KNOWLEDGE_MIN_LENGTH,
+        visible_result: Any = _VISIBLE_RESULT_UNSET,
     ) -> list[str]:
         """
         将工具执行结果转换为 IR 节点，挂载到 ActionNode 下游。
@@ -240,6 +259,10 @@ class ResultIRConverter:
             pre_existing_files: 工具执行前的 workspace 快照 {绝对路径: mtime}。
             knowledge_min_length: 文件落盘兜底的最小字符阈值，默认使用
                 DEFAULT_IR_KNOWLEDGE_MIN_LENGTH。
+            visible_result: 模型实际可见的工具返回文本（即 ToolMessage.content 的成功分支），
+                由 Executor 传入：original_msg 优先，否则 output_text。提供时长文本 File
+                fallback 只用该内容做阈值检测，不用 result / frontend_msg / data。
+                错误执行时 Executor 传空串以禁用落盘。
 
         Pipeline 1 产出的文件路径（如 DataFrame 持久化路径、结构化 IR 的 path 字段）
         传给Pipeline 2 跳过，避免重复建节点。
@@ -254,6 +277,7 @@ class ResultIRConverter:
             action_node_label,
             workspace_path,
             knowledge_min_length=knowledge_min_length,
+            visible_result=visible_result,
         )
 
         if content_paths:
@@ -293,6 +317,7 @@ class ResultIRConverter:
         action_node_label: str,
         workspace: Path | None,
         knowledge_min_length: int = DEFAULT_IR_KNOWLEDGE_MIN_LENGTH,
+        visible_result: Any = _VISIBLE_RESULT_UNSET,
     ) -> tuple[list[str], set[str]]:
         """内容Pipeline：从 result 和 tool_args 提取结构化内容，创建 IR 节点。
 
@@ -317,7 +342,13 @@ class ResultIRConverter:
 
         # 5) 文件落盘兜底 — 始终尝试，因为入参 IR（如 ScriptNode）和结果 IR（如 stdout）是正交的
         created += cls._create_file_fallback(
-            context, result, action_node_label, tool_name, workspace, knowledge_min_length=knowledge_min_length
+            context,
+            result,
+            action_node_label,
+            tool_name,
+            workspace,
+            knowledge_min_length=knowledge_min_length,
+            visible_result=visible_result,
         )
 
         return created, content_paths
@@ -625,17 +656,15 @@ class ResultIRConverter:
         tool_name: str,
         workspace: Path | None,
         knowledge_min_length: int = DEFAULT_IR_KNOWLEDGE_MIN_LENGTH,
+        visible_result: Any = _VISIBLE_RESULT_UNSET,
     ) -> list[str]:
         """长文本兜底：将工具结果落盘到 workspace 文件，创建 FileNode。
 
-        阈值检测与 _build_tool_message 一致：优先使用 result 中的 original_msg
-        （模型实际可见的文本），没有则回退到 _result_to_text(result)。
+        阈值检测只用模型实际可见的文本（ToolMessage.content 成功分支）：
+        Executor 传入的 visible_result 优先，否则按 _visible_result_to_text 回退。
+        不让 frontend_msg / data 参与阈值检测。
         """
-        text = _result_to_text(result)
-        if isinstance(result, dict):
-            original_msg = result.get("original_msg")
-            if isinstance(original_msg, str) and original_msg:
-                text = original_msg
+        text = _visible_result_to_text(result, visible_result)
         if len(text) < knowledge_min_length:
             return []
 
