@@ -95,6 +95,17 @@ class DataAgent:
         workspace_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Default workspace set to {workspace_dir}")
 
+    @staticmethod
+    def _touch_workspace_catalog(state: Mapping[str, Any]) -> None:
+        """Refresh workspace catalog session metadata after workspace materialize."""
+        from dataagent.core.workspace.catalog import safe_touch_catalog
+
+        workspace = str(state.get("workspace") or "").strip()
+        session_id = str(state.get("session_id") or "").strip()
+        if not workspace or not session_id:
+            return
+        safe_touch_catalog(workspace, session_id)
+
     @classmethod
     def from_config(cls, config: str | Path) -> "DataAgent":
         """从YAML配置文件创建Agent
@@ -144,6 +155,7 @@ class DataAgent:
             workspace,
         )
         self._ensure_workspace(initial_state)
+        self._touch_workspace_catalog(initial_state)
         self._dump_runtime_config(initial_state)
         kwargs["initial_state"] = initial_state
         if "workspace" in kwargs:
@@ -210,6 +222,7 @@ class DataAgent:
         logger.debug(f"当前 workspace：{initial_state['workspace']}")
         try:
             self._ensure_workspace(initial_state)
+            self._touch_workspace_catalog(initial_state)
             self._dump_runtime_config(initial_state)
             extra: dict[str, Any] = {}
             if checkpoint_id:
