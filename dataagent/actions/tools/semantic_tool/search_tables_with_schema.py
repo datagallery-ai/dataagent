@@ -19,7 +19,7 @@ and columns based on business-oriented keywords.
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -148,31 +148,32 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
     return _fmt(detail, msg, {"per_db": per_db, "tables_with_columns": tables_with_columns})
 
 
-def search_tables_with_semantic_retrieve(query: str, *, _tool_context: ToolExecutionContext):
-    """基于完整的原始用户query查找相关的表。
+def search_tables_with_semantic_retrieve(*, _tool_context: ToolExecutionContext) -> dict:
+    """基于当前运行上下文里的原始用户 query 查找相关的表。
 
-    函数会先检查传入的query是否是完整的原始用户query，如果不是，函数会舍弃传入的query参数，主动获取完整的原始用户query。
-    函数会理解用户query，使用多种检索方法检索与query相关的表，再将每种检索方法的查表结果进行合并。
-
-    Args:
-        query（str）: 完整的原始用户query。
+    这个工具不需要任何业务参数。函数会自动读取主 Agent 当前轮次的原始用户 query，
+    并将该 query 传给 semantic-service 的 ``semantic/retrieve`` 接口。
 
     Returns:
-        dict with ``data``，返回与原始用户query相关的表及其描述。
+        dict with ``data``，返回与原始用户 query 相关的表及其描述。
     """
 
     from dataagent.utils.info_utils import get_current_query
 
     # 手动替换成完整的原始用户 query
     query = get_current_query(_tool_context.runtime)
+    if query is None:
+        raise ValueError("original user query is required for semantic retrieve")
 
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
     result = client.semantic_search_tables(query)
+    _save_semantic_retrieve_diagnostic(result, query)
 
     recalled_tables = []
     res = f"匹配原始query的表如下：（query为 {query}）"
-    if "dataAccessPlan" in result:
-        tables = result["dataAccessPlan"].get("tables", [])
+    data_access_plan = result.get("dataAccessPlan", {}) if isinstance(result, dict) else {}
+    if isinstance(data_access_plan, dict):
+        tables = data_access_plan.get("tables", [])
         for table in tables:
             res += "\n"
             res += f"{table.get('db', '')}.{table.get('table', '')} 描述：{table.get('description', '')}"
@@ -188,7 +189,8 @@ def search_tables_with_semantic_retrieve(query: str, *, _tool_context: ToolExecu
 
     # 保存 summary 到 .metric_dir 目录
     out_path, current_time = _get_workspace_path()
-    with open(out_path / f"output_search_tables_with_retrieve_summary_{current_time}.txt", "w", encoding="utf-8") as f:
+    summary_path = out_path / f"output_search_tables_with_retrieve_summary_{current_time}.txt"
+    with open(summary_path, "w", encoding="utf-8") as f:
         f.write(res)
 
     return {
@@ -477,6 +479,42 @@ def _get_workspace_path() -> tuple[Path, str]:
     output_path.mkdir(parents=True, exist_ok=True)
     current_time = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     return output_path, current_time
+
+
+def _get_semantic_path() -> tuple[Path, str]:
+    """获取 .semantic 目录路径和时间戳。"""
+    guard = get_current_sandbox()
+    workspace_path = guard.workspace_root
+    if workspace_path is None:
+        raise ValueError("workspace_root is required to save semantic retrieve diagnostics")
+    output_path = workspace_path / ".semantic"
+    output_path.mkdir(parents=True, exist_ok=True)
+    current_time = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
+    return output_path, current_time
+
+
+def _save_semantic_retrieve_diagnostic(result: Any, query: str) -> Optional[Path]:  # noqa: UP045
+    """Save semantic retrieve diagnostic payload when the service returns it."""
+    if not isinstance(result, dict):
+        return None
+
+    diagnostic = result.get("diagnostic")
+    if diagnostic is None:
+        return None
+
+    output_path, current_time = _get_semantic_path()
+    file_path = output_path / f"semantic_retrieve_diagnostic_{current_time}.json"
+    payload = {
+        "tool": "search_tables_with_semantic_retrieve",
+        "endpoint": "semantic/retrieve",
+        "query": query,
+        "created_at": datetime.now(UTC).isoformat(),
+        "diagnostic": diagnostic,
+    }
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+    logger.info(f"[search_tables_with_semantic_retrieve] 已保存 diagnostic: {file_path}")
+    return file_path
 
 
 def _fulltext_search_with_typename(

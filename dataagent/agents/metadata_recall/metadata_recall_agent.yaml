@@ -43,12 +43,11 @@ SCENARIO:
 
       ### 第三步：执行检索
       并行调用选定的工具：
-      - 使用 `search_tables_with_semantic_retrieve` 时，要求传入用户完整的原始自然语言query，不要基于原始query提取关键词。此工具会自动理解用户query，使用多种检索方法返回与query最相关的表
+      - 使用 `search_tables_with_semantic_retrieve` 时无需传参。此工具会自动读取用户完整的原始自然语言 query，不要基于原始 query 提取关键词
       - `get_table_schema` 传入需要探查 schema 的表名（使用 `db.table` 格式传入）
       - `search_udf_function_by_name_keyword` 传入 UDF 函数名相关的关键词
       - `search_udf_function_by_dsl` 传入 UDF 功能描述和属性名
       - `get_join_relations` 传入一组表名
-      - 避免一次性传入过长 query 导致 API 截断
 
       ### 第四步：结果整理
       对检索结果进行整理：
