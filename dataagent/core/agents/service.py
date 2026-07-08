@@ -104,15 +104,71 @@ class AgentService:
 
     def poll(self, *, job_id: str, cursor: str | None = None, event_limit: int = 20) -> dict[str, Any]:
         """Poll one job and return a JSON-serializable snapshot."""
-        return self.job_service.poll(job_id, cursor=cursor, event_limit=event_limit).to_dict()
+        snapshot = self.job_service.poll(job_id, cursor=cursor, event_limit=event_limit)
+        payload = snapshot.to_dict()
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        self._maybe_refresh_workspace_catalog_artifacts(
+            status=str(payload.get("status") or ""),
+            subagent_session_id=str(metadata.get("subagent_session_id") or ""),
+        )
+        return payload
 
     def collect(self, *, job_id: str) -> dict[str, Any]:
         """Collect the terminal result for one job."""
-        return self.job_service.collect(job_id)
+        result = self.job_service.collect(job_id)
+        self._update_workspace_catalog_on_collect(result)
+        return result
+
+    def _update_workspace_catalog_on_submit(
+        self,
+        *,
+        session: SubagentWorkspaceSession,
+        envelope: dict[str, Any],
+        handle: dict[str, Any],
+        reused: bool,
+    ) -> None:
+        parent_ws = getattr(self.runtime, "workspace_dir", None)
+        if parent_ws is None:
+            return
+        from dataagent.core.workspace.catalog import safe_append_job, safe_register_environment
+
+        subagent_id = session.subagent_session_id
+        if not reused:
+            safe_register_environment(parent_ws, subagent_id)
+        safe_append_job(
+            parent_ws,
+            subagent_id,
+            job_id=str(handle.get("job_id") or ""),
+            agent_id=str(handle.get("agent_id") or ""),
+            task=str(envelope.get("task") or ""),
+        )
 
     def cancel(self, *, job_id: str) -> dict[str, Any]:
         """Cancel one running job."""
         return self.job_service.cancel(job_id).to_dict()
+
+    def _maybe_refresh_workspace_catalog_artifacts(
+        self,
+        *,
+        status: str,
+        subagent_session_id: str,
+    ) -> None:
+        """Refresh catalog ``artifacts`` when a job reaches ``completed``."""
+        if str(status or "").strip().lower() != "completed":
+            return
+        parent_ws = getattr(self.runtime, "workspace_dir", None)
+        subagent_id = str(subagent_session_id or "").strip()
+        if parent_ws is None or not subagent_id:
+            return
+        from dataagent.core.workspace.catalog import safe_refresh_artifacts
+
+        safe_refresh_artifacts(parent_ws, subagent_id, config=_runtime_config(self.runtime))
+
+    def _update_workspace_catalog_on_collect(self, result: dict[str, Any]) -> None:
+        self._maybe_refresh_workspace_catalog_artifacts(
+            status=str(result.get("status") or ""),
+            subagent_session_id=str(result.get("subagent_session_id") or ""),
+        )
 
     def _enqueue_subagent_job(
         self,
@@ -169,6 +225,12 @@ class AgentService:
             timeout_sec=resolved_timeout_sec,
             parent_tool_call_id=resolved_parent_tool_call_id,
             metadata=metadata,
+        )
+        self._update_workspace_catalog_on_submit(
+            session=session,
+            envelope=envelope,
+            handle=handle,
+            reused=reused,
         )
         message = (
             "Agent job queued on reused workspace. Use poll_subagent or collect_subagent with this job_id."

@@ -292,7 +292,7 @@ def test_job_service_lifecycle_writes_result(tmp_path):
 
 @pytest.mark.asyncio
 async def test_implicit_job_tools_registered_from_subagent_configs(tmp_path):
-    """``SUBAGENT_CONFIGS`` registers the four job lifecycle tools."""
+    """``SUBAGENT_CONFIGS`` registers job lifecycle and workspace catalog tools."""
     subagent_yaml = tmp_path / "worker.yaml"
     subagent_yaml.write_text(
         yaml.safe_dump({"AGENT_CONFIG": {"name": "arith", "description": "does math"}}),
@@ -300,7 +300,14 @@ async def test_implicit_job_tools_registered_from_subagent_configs(tmp_path):
     )
     tm = ToolManager()
     tm._register_implicit_job_tools({"SUBAGENT_CONFIGS": [{"path": str(subagent_yaml)}]})
-    for name in ("submit_subagent", "poll_subagent", "collect_subagent", "cancel_subagent"):
+    for name in (
+        "submit_subagent",
+        "poll_subagent",
+        "collect_subagent",
+        "cancel_subagent",
+        "search_workspaces",
+        "inspect_workspace",
+    ):
         assert tm.exists(name)
     assert not tm.exists("sub_agent_tool")
     desc = tm.get("submit_subagent").description

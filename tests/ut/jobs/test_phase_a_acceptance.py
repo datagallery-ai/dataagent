@@ -84,7 +84,14 @@ def test_ac03_empty_subagent_configs_skips_job_tools():
     """AC-03: empty SUBAGENT_CONFIGS must not register lifecycle tools."""
     tm = ToolManager()
     tm._register_implicit_job_tools({"SUBAGENT_CONFIGS": [], "RESOURCES": [{"id": "gpu"}]})
-    for name in ("submit_subagent", "poll_subagent", "collect_subagent", "cancel_subagent"):
+    for name in (
+        "submit_subagent",
+        "poll_subagent",
+        "collect_subagent",
+        "cancel_subagent",
+        "search_workspaces",
+        "inspect_workspace",
+    ):
         assert not tm.exists(name)
 
 

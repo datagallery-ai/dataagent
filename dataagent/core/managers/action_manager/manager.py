@@ -998,6 +998,7 @@ class ToolManager:
         from dataagent.actions.tools.local_tool.job_tools.collect_subagent import collect_subagent
         from dataagent.actions.tools.local_tool.job_tools.poll_subagent import poll_subagent
         from dataagent.actions.tools.local_tool.job_tools.submit_subagent import submit_subagent
+        from dataagent.actions.tools.local_tool.workspace_tool import inspect_workspace, search_workspaces
 
         supplement = self._build_job_subagent_tool_supplement(config)
         tools = [
@@ -1005,6 +1006,8 @@ class ToolManager:
             (poll_subagent, "poll_subagent"),
             (collect_subagent, "collect_subagent"),
             (cancel_subagent, "cancel_subagent"),
+            (search_workspaces, "search_workspaces"),
+            (inspect_workspace, "inspect_workspace"),
         ]
         for func, name in tools:
             description = None
