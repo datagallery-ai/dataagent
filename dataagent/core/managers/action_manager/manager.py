@@ -441,25 +441,31 @@ class ToolManager:
             return merged.strip()
         return f"{doc}\n\n{supplement}".strip() if doc else supplement
 
-    @classmethod
-    def _build_sub_agent_tool_yaml_supplement(cls, config: Mapping[str, Any]) -> str:
-        """Build dynamic + static supplement for implicit ``sub_agent_tool`` registration."""
-        entries = config.get("SUBAGENT_CONFIGS") or []
+    @staticmethod
+    def _build_job_resource_tool_supplement(config: Mapping[str, Any]) -> str:
+        """Build dynamic catalog supplement for implicit resource lifecycle tools."""
+        entries = config.get("RESOURCES") or []
         if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
-            raise ValueError("SUBAGENT_CONFIGS must be a list of mappings with 'path'")
+            raise ValueError("RESOURCES must be a list of resource definitions")
         catalog_lines: list[str] = []
         for entry in entries:
             if not isinstance(entry, Mapping):
-                raise ValueError("SUBAGENT_CONFIGS items must be mappings with 'path'")
-            path = cls.resolve_subagent_config_path(entry.get("path"))
-            _name, description = cls.load_subagent_catalog_metadata(path)
-            catalog_lines.append(f"- {path}: {description}")
-        blocks = []
+                raise ValueError("RESOURCES items must be mappings")
+            resource_id = str(entry.get("id") or "").strip()
+            if not resource_id:
+                raise ValueError("RESOURCES items require id")
+            name = str(entry.get("name") or resource_id).strip()
+            category = str(entry.get("category") or "").strip()
+            catalog_lines.append(f"- {resource_id} ({name}, {category})")
+        blocks: list[str] = []
         if catalog_lines:
-            blocks.append(SUBAGENT_TOOL_CATALOG_HEADER)
+            blocks.append("可选的 resource_id 及用途：")
             blocks.extend(catalog_lines)
             blocks.append("")
-        blocks.append(SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS.strip())
+        blocks.append(
+            "提交后使用 poll_job / collect_job / cancel_job 管理 resource job；"
+            "与 submit_subagent 工具分轨，勿混用 poll_subagent。"
+        )
         return "\n".join(blocks).strip()
 
     @classmethod
@@ -488,6 +494,27 @@ class ToolManager:
             blocks.extend(catalog_lines)
             blocks.append("")
         blocks.append(JOB_SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS.strip())
+        return "\n".join(blocks).strip()
+
+    @classmethod
+    def _build_sub_agent_tool_yaml_supplement(cls, config: Mapping[str, Any]) -> str:
+        """Build dynamic + static supplement for implicit ``sub_agent_tool`` registration."""
+        entries = config.get("SUBAGENT_CONFIGS") or []
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            raise ValueError("SUBAGENT_CONFIGS must be a list of mappings with 'path'")
+        catalog_lines: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise ValueError("SUBAGENT_CONFIGS items must be mappings with 'path'")
+            path = cls.resolve_subagent_config_path(entry.get("path"))
+            _name, description = cls.load_subagent_catalog_metadata(path)
+            catalog_lines.append(f"- {path}: {description}")
+        blocks = []
+        if catalog_lines:
+            blocks.append(SUBAGENT_TOOL_CATALOG_HEADER)
+            blocks.extend(catalog_lines)
+            blocks.append("")
+        blocks.append(SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS.strip())
         return "\n".join(blocks).strip()
 
     def enable_auto_discover(self):
@@ -990,37 +1017,72 @@ class ToolManager:
             logger.warning("❌ Implicit sub_agent_tool registration failed: {}", e)
 
     def _register_implicit_job_tools(self, config: Mapping[str, Any]) -> None:
-        """Register subagent job lifecycle tools when ``SUBAGENT_CONFIGS`` is non-empty."""
-        entries = config.get("SUBAGENT_CONFIGS") or []
-        if not entries:
-            return
-        from dataagent.actions.tools.local_tool.job_tools.cancel_subagent import cancel_subagent
-        from dataagent.actions.tools.local_tool.job_tools.collect_subagent import collect_subagent
-        from dataagent.actions.tools.local_tool.job_tools.poll_subagent import poll_subagent
-        from dataagent.actions.tools.local_tool.job_tools.submit_subagent import submit_subagent
-        from dataagent.actions.tools.local_tool.workspace_tool import inspect_workspace, search_workspaces
+        """Register subagent and resource job lifecycle tools from merged config."""
+        subagent_entries = config.get("SUBAGENT_CONFIGS") or []
+        if subagent_entries:
+            from dataagent.actions.tools.local_tool.job_tools import (
+                cancel_subagent,
+                collect_subagent,
+                poll_subagent,
+                submit_subagent,
+            )
+            from dataagent.actions.tools.local_tool.workspace_tool import (
+                inspect_workspace,
+                search_workspaces,
+            )
 
-        supplement = self._build_job_subagent_tool_supplement(config)
-        tools = [
-            (submit_subagent, "submit_subagent"),
-            (poll_subagent, "poll_subagent"),
-            (collect_subagent, "collect_subagent"),
-            (cancel_subagent, "cancel_subagent"),
-            (search_workspaces, "search_workspaces"),
-            (inspect_workspace, "inspect_workspace"),
-        ]
-        for func, name in tools:
-            description = None
-            if name == "submit_subagent":
-                description = self._merge_job_tool_supplement_into_docstring(func.__doc__ or "", supplement)
-            try:
-                register_kwargs: dict[str, Any] = {"name": name, "category": "job"}
-                if description is not None:
-                    register_kwargs["description"] = description
-                self.register_local_tool(func, **register_kwargs)
-                logger.trace("✅ Implicit job tool '{}' registered from SUBAGENT_CONFIGS.", name)
-            except Exception as exc:
-                logger.warning("❌ Implicit job tool '{}' registration failed: {}", name, exc)
+            supplement = self._build_job_subagent_tool_supplement(config)
+            tools = [
+                (submit_subagent, "submit_subagent"),
+                (poll_subagent, "poll_subagent"),
+                (collect_subagent, "collect_subagent"),
+                (cancel_subagent, "cancel_subagent"),
+                (search_workspaces, "search_workspaces"),
+                (inspect_workspace, "inspect_workspace"),
+            ]
+            for func, name in tools:
+                description = None
+                if name == "submit_subagent":
+                    description = self._merge_job_tool_supplement_into_docstring(func.__doc__ or "", supplement)
+                try:
+                    register_kwargs: dict[str, Any] = {"name": name, "category": "job"}
+                    if description is not None:
+                        register_kwargs["description"] = description
+                    self.register_local_tool(func, **register_kwargs)
+                    logger.trace("✅ Implicit job tool '{}' registered from SUBAGENT_CONFIGS.", name)
+                except Exception as exc:
+                    logger.warning("❌ Implicit job tool '{}' registration failed: {}", name, exc)
+
+        resource_entries = config.get("RESOURCES") or []
+        if resource_entries:
+            from dataagent.actions.tools.local_tool.job_tools import (
+                cancel_job,
+                collect_job,
+                list_resources,
+                poll_job,
+                submit_resource_job,
+            )
+
+            supplement = self._build_job_resource_tool_supplement(config)
+            tools = [
+                (submit_resource_job, "submit_resource_job"),
+                (poll_job, "poll_job"),
+                (collect_job, "collect_job"),
+                (cancel_job, "cancel_job"),
+                (list_resources, "list_resources"),
+            ]
+            for func, name in tools:
+                description = None
+                if name == "submit_resource_job":
+                    description = self._merge_job_tool_supplement_into_docstring(func.__doc__ or "", supplement)
+                try:
+                    register_kwargs: dict[str, Any] = {"name": name, "category": "job"}
+                    if description is not None:
+                        register_kwargs["description"] = description
+                    self.register_local_tool(func, **register_kwargs)
+                    logger.trace("✅ Implicit job tool '{}' registered from RESOURCES.", name)
+                except Exception as exc:
+                    logger.warning("❌ Implicit job tool '{}' registration failed: {}", name, exc)
 
     def _register_mcp_servers_from_config(self, servers: list[dict[str, Any]]):
         """从配置注册MCP服务器"""

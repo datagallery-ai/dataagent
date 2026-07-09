@@ -26,6 +26,18 @@ def agent_binding(*, pool: str = "local") -> dict[str, Any]:
     return {"agent": {"pool": str(pool or "").strip() or "local"}}
 
 
+def resource_binding(resource_id: str, *, task_type: str, amount: int, unit: str) -> dict[str, Any]:
+    """Build allocation metadata for a resource job."""
+    return {
+        "resource": {
+            "id": str(resource_id or "").strip(),
+            "task_type": str(task_type or "").strip(),
+            "amount": int(amount),
+            "unit": str(unit or "").strip(),
+        }
+    }
+
+
 @dataclass
 class JobSnapshot:
     """Point-in-time job status plus incremental events."""

@@ -105,6 +105,8 @@ class Runtime:
         self._job_service: Any = None
         self._agent_service: Any = None
         self._agent_registry: Any = None
+        self._resource_stack_workspace: Path | None = None
+        self._resource_service: Any = None
 
     @property
     def stream(self) -> StreamCursor:
@@ -176,14 +178,20 @@ class Runtime:
     @property
     def job_service(self) -> Any:
         """Return the workspace-scoped :class:`~dataagent.core.jobs.service.JobService`, if available."""
-        self.ensure_job_services()
+        _ = self.ensure_job_services()
         return self._job_service
 
     @property
     def agent_service(self) -> Any:
         """Return the workspace-scoped :class:`~dataagent.core.agents.service.AgentService`, if available."""
-        self.ensure_job_services()
+        _ = self.ensure_job_services()
         return self._agent_service
+
+    @property
+    def resource_service(self) -> Any:
+        """Return the workspace-scoped :class:`~dataagent.core.resources.service.ResourceService`, if available."""
+        self.ensure_resource_services()
+        return self._resource_service
 
     @property
     def config_manager(self) -> ConfigManager:
@@ -212,6 +220,8 @@ class Runtime:
             self._job_service = None
             self._agent_service = None
             self._job_stack_workspace = None
+            self._resource_service = None
+            self._resource_stack_workspace = None
             return None
         resolved = Path(ws).expanduser().resolve()
         if self._job_stack_workspace == resolved and self._agent_service is not None:
@@ -226,6 +236,50 @@ class Runtime:
         self._agent_service = AgentService(registry=registry, job_service=self._job_service, runtime=self)
         self._job_stack_workspace = resolved
         return self._agent_service
+
+    def ensure_resource_services(self) -> Any:
+        """Bind :class:`~dataagent.core.resources.service.ResourceService` to the current workspace.
+
+        Returns:
+            :class:`~dataagent.core.resources.service.ResourceService` when ``workspace_dir`` is set
+            and merged config contains non-empty ``RESOURCES``; otherwise ``None``.
+        """
+        ws = self.workspace_dir
+        if ws is None:
+            self._resource_service = None
+            self._resource_stack_workspace = None
+            return None
+        config = self.get_all_config()
+        resources = config.get("RESOURCES") or []
+        if not resources:
+            self._resource_service = None
+            self._resource_stack_workspace = None
+            return None
+        resolved = Path(ws).expanduser().resolve()
+        _ = self.ensure_job_services()
+        if self._job_service is None:
+            self._resource_service = None
+            self._resource_stack_workspace = None
+            return None
+        if self._resource_stack_workspace == resolved and self._resource_service is not None:
+            return self._resource_service
+        from dataagent.actions.resources.bootstrap import (
+            default_mcp_client_factory,
+            default_resource_operation_registry,
+        )
+        from dataagent.core.resources.registry import ResourceRegistry
+        from dataagent.core.resources.service import ResourceService
+
+        registry = ResourceRegistry.from_config(config)
+        self._resource_service = ResourceService(
+            registry=registry,
+            job_service=self._job_service,
+            runtime=self,
+            operation_registry=default_resource_operation_registry(),
+            mcp_client_factory=default_mcp_client_factory(),
+        )
+        self._resource_stack_workspace = resolved
+        return self._resource_service
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Read a value from the per-Agent ConfigManager.

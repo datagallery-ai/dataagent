@@ -24,8 +24,7 @@ import pytest
 import yaml
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.actions.tools.local_tool.job_tools.poll_subagent import poll_subagent
-from dataagent.actions.tools.local_tool.job_tools.submit_subagent import submit_subagent
+from dataagent.actions.tools.local_tool.job_tools import poll_subagent, submit_subagent
 from dataagent.core.agents.registry import AgentRegistry
 from dataagent.core.agents.service import AgentService
 from dataagent.core.agents.subagent_subprocess_runner import (

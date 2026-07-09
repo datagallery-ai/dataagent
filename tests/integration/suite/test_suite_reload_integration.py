@@ -23,6 +23,7 @@ import yaml
 
 from dataagent.config.config_manager import ConfigManager
 from dataagent.core.flex.flex_runtime_from_config import build_llm_configs_from_flex_config
+from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.suite.activation import activate_suites
 from dataagent.core.suite.discovery import discover_suite_index
 from dataagent.utils.runtime_paths import dataagent_package_path
@@ -269,6 +270,18 @@ def test_reload_merges_user_enabled_example_suite(tmp_path, monkeypatch) -> None
     assert any(path.endswith("echo_ref.yaml") for path in subagent_paths)
     assert EXAMPLE_ARITHMETIC_SUBAGENT_PATH.is_file()
     assert EXAMPLE_ECHO_SUBAGENT_PATH.is_file()
+
+    resources = cm.settings.get("RESOURCES", [])
+    assert isinstance(resources, list)
+    assert any(isinstance(item, dict) and item.get("id") == "local" for item in resources)
+    local_resource = next(item for item in resources if item.get("id") == "local")
+    assert local_resource.get("transport", {}).get("type") == "local"
+    assert local_resource.get("operations", {}).get("submit") == "sandbox.submit"
+
+    tm = ToolManager()
+    tm._register_implicit_job_tools(cm.settings)
+    for name in ("submit_resource_job", "poll_job", "collect_job", "cancel_job"):
+        assert tm.exists(name)
 
 
 def _install_minimal_suite(

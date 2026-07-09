@@ -20,6 +20,7 @@ from typing import Any
 
 import yaml
 
+from dataagent.core.resources.registry import validate_resources_list
 from dataagent.core.suite.types import SuiteRecord
 
 
@@ -86,6 +87,10 @@ def _build_one_suite_layer(
     subagent_layer = _load_subagents_layer(root)
     if subagent_layer:
         layer["SUBAGENT_CONFIGS"] = subagent_layer
+
+    resources_layer = _load_resources_layer(root, suite_name=suite.name)
+    if resources_layer:
+        layer["RESOURCES"] = resources_layer
 
     actor_patches, node_unknown = _load_node_configs_layer(root, default_actor_nodes=default_actor_nodes)
     unknown_nodes.update(node_unknown)
@@ -198,6 +203,69 @@ def _load_subagents_layer(root: Path) -> list[dict[str, str]]:
             continue
         entries.append({"path": str(item.resolve())})
     return entries
+
+
+def _load_resources_layer(root: Path, *, suite_name: str) -> list[dict[str, Any]]:
+    """Load ``resources/resources.yaml`` as a ``RESOURCES`` definition list.
+
+    Accepts either a root-level YAML list (legacy) or a mapping with a ``RESOURCES``
+    key (aligned with ``tools/tools.yaml`` → ``TOOLS``).
+    """
+    resources_yaml = root / "resources" / "resources.yaml"
+    rel_path = "resources/resources.yaml"
+    if not resources_yaml.is_file():
+        return []
+    with open(resources_yaml, encoding="utf-8") as handle:
+        doc = yaml.safe_load(handle)
+    return _parse_resources_entries(
+        doc,
+        suite_name=suite_name,
+        rel_path=rel_path,
+        resources_yaml=resources_yaml,
+    )
+
+
+def _parse_resources_entries(
+    doc: Any,
+    *,
+    suite_name: str,
+    rel_path: str,
+    resources_yaml: Path,
+) -> list[dict[str, Any]]:
+    """Normalize suite resources YAML into a validated resource definition list."""
+    if not doc:
+        return []
+    if isinstance(doc, list):
+        entries = doc
+    elif isinstance(doc, Mapping):
+        raw = doc.get("RESOURCES")
+        if raw is None:
+            raw = doc.get("resources")
+        if raw is None:
+            return []
+        if not isinstance(raw, list):
+            raise ValueError(
+                f"Suite {suite_name!r} resources invalid: RESOURCES must be a YAML list ({rel_path}: {resources_yaml})"
+            )
+        entries = raw
+    else:
+        raise ValueError(
+            f"Suite {suite_name!r} resources invalid: resources file must be a YAML list or "
+            f"mapping with RESOURCES key ({rel_path}: {resources_yaml})"
+        )
+    out: list[dict[str, Any]] = []
+    for index, item in enumerate(entries):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"Suite {suite_name!r} resources invalid: RESOURCES[{index}] must be an object "
+                f"({rel_path}: {resources_yaml})"
+            )
+        out.append(dict(item))
+    try:
+        validate_resources_list(out)
+    except ValueError as exc:
+        raise ValueError(f"Suite {suite_name!r} resources invalid: {exc} ({rel_path}: {resources_yaml})") from exc
+    return out
 
 
 def _load_node_configs_layer(

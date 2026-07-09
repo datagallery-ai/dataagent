@@ -77,7 +77,7 @@ def build_base_job_envelope(
     if name == SUBMIT_RESOURCE_JOB_TOOL:
         envelope = {
             "kind": "resource",
-            "type": str(args.get("type") or "resource").strip() or "resource",
+            "type": str(args.get("task_type") or "resource").strip() or "resource",
             "timeout_sec": _positive_int(args.get("timeout_sec"), DEFAULT_RESOURCE_JOB_TIMEOUT_SEC),
         }
         sandbox_request = _dict(args.get("sandbox_request"))

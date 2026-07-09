@@ -10,7 +10,7 @@
 #
 # 合并语义（与旧版 _deep_merge 的差异，启用 Suite 后全局生效）：
 #   - dict / 标量：高优先级层覆盖低层
-#   - list（TOOLS.*、HOOKS 槽位、SUBAGENT_CONFIGS、prompt_template.system/user 等）：
+#   - list（TOOLS.*、HOOKS 槽位、SUBAGENT_CONFIGS、RESOURCES、prompt_template.system/user 等）：
 #     跨层追加，高优在前；用户层不能通过写 list 清空下层已合并项
 #   - ACTOR_LOOP / PRE_WORKFLOW / POST_WORKFLOW：按 node 结构合并（用户可新增 node；Suite 不可）
 #   - OVERRIDE_KEYS：用户 YAML 顶层列表；列出的 top-level key 在 merge 后以用户值整段覆盖（不追加、不保留 default/Suite 同 key 内容）
@@ -419,3 +419,73 @@ SEMANTIC_LAYER:
 #   DATAAGENT_OUTBOUND_CA_FILE / DATAAGENT_OUTBOUND_CLIENT_CERT / DATAAGENT_OUTBOUND_CLIENT_KEY
 #   DATAAGENT_OUTBOUND_CIPHERS / DATAAGENT_OUTBOUND_MODE
 #   DATAAGENT_OUTBOUND_SSL_SERVICES
+
+
+# ── 计算资源 RESOURCES（可选，Resource Job ）────────────────────────
+# 非空时隐式注册 resource 五工具（与 subagent 四工具可并存，勿在 TOOLS.local_functions 声明）：
+#   list_resources
+#   submit_resource_job / poll_job / collect_job / cancel_job
+#
+# 与 SUBAGENT_CONFIGS 独立触发：可只配 RESOURCES、只配 SUBAGENT_CONFIGS、或两者同时非空。
+# 合并语义：与 SUBAGENT_CONFIGS 相同，Suite resources/resources.yaml 与用户 YAML list append，
+# 高优先级在前；合并后 resource id 全局唯一（重复 id → reload 报错）。
+#
+# LLM 典型用法：
+#   1. list_resources                          — 查看 id、capacity、used/available
+#   2. submit_resource_job(command, task_type, resource_id=...)  — 异步提交命令/脚本
+#   3. poll_job(job_id) → collect_job(job_id)  — 轮询与取结果
+#   4. cancel_job(job_id)                      — 取消长任务
+#
+# 字段说明（每条 list 项）：
+#   id / name / category     — 稳定标识；category: executable | non-executable（暂不支持 non-executable）
+#   transport                — executable 必填：type: local | mcp
+#   operations               — executable 必填：submit/poll/collect/cancel 映射（local 用 sandbox.*；mcp 用远端 tool 名）
+#   capacity / consumption   — 最多能同时跑几个任务；每种任务占几个名额
+#     consumption 的 key 就是 submit 时的 type；"*": 1 表示「其它没写明的 type 都按 1 个算」
+#
+# 注意：
+#   - 多条 resource 均支持同一 type 时，submit 必须显式传 resource_id
+#   - MCP pool 须先启动对应 MCP 服务；未启动时 submit 返回连接 ERROR，不崩溃
+#   - 本文件已 SUITE.include: example_suite 时，Suite 已贡献 RESOURCES（含 local / MCP 示例）；
+#     请勿再 uncomment 下面示例中的相同 id，否则会 id 冲突。独立 Agent（无 Suite）时可启用最小 local 示例。
+#   - 完整 MCP / ClickHouse 示例见：dataagent/core/suite/builtin_suites/example_suite/resources/resources.yaml
+#   - 设计文档：/data1/xzx/ferry_resource_loader_PRD.md
+#
+# RESOURCES:
+#   # ── 最小 local 示例（无 Suite 时取消注释即可用）────────────────────────────
+#   - id: local
+#     name: Local Sandbox
+#     category: executable
+#     transport:
+#       type: local
+#     operations:
+#       submit: sandbox.submit
+#       poll: sandbox.poll
+#       collect: sandbox.collect
+#       cancel: sandbox.cancel
+#     capacity:
+#       total: 8
+#       unit: slot
+#     consumption:
+#       "*": 1                      # 任何 type 的 submit，都占 1 个名额
+#
+#   # ── MCP 计算池示例（须外部 MCP + 可选 secret_ref，生产按环境改 url）────────
+#   - id: compute_pool
+#     name: Remote Compute Pool
+#     category: executable
+#     transport:
+#       type: mcp
+#       url: http://127.0.0.1:8765/mcp
+#       headers:
+#         Authorization:
+#           secret_ref: env:COMPUTE_TOKEN
+#     operations:
+#       submit: submit_job
+#       poll: poll_job
+#       collect: collect_job
+#       cancel: cancel_job
+#     capacity:
+#       total: 8
+#       unit: slot
+#     consumption:
+#       remote: 1                   # 任务类型名叫 remote 的，占 1 个名额（名字可自定义，和下面 key 一致即可）

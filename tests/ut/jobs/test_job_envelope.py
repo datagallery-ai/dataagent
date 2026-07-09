@@ -19,7 +19,7 @@ import inspect
 import pytest
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.actions.tools.local_tool.job_tools.submit_subagent import submit_subagent
+from dataagent.actions.tools.local_tool.job_tools import submit_subagent
 from dataagent.core.agents.service import AgentService
 from dataagent.core.jobs.envelope import (
     build_base_job_envelope,
@@ -69,7 +69,7 @@ def test_resource_envelope_omits_empty_execution_fields() -> None:
     """Resource baseline envelope keeps only populated execution fields."""
     envelope = build_base_job_envelope(
         "submit_resource_job",
-        {"type": "model_training", "timeout_sec": 120},
+        {"task_type": "model_training", "timeout_sec": 120},
     )
     assert envelope == {
         "kind": "resource",
@@ -103,7 +103,7 @@ def test_finalize_rejects_resource_type_overwrite() -> None:
     """Plugins cannot overwrite core-owned resource ``type``."""
     base = build_base_job_envelope(
         "submit_resource_job",
-        {"type": "resource", "timeout_sec": 120},
+        {"task_type": "resource", "timeout_sec": 120},
     )
     assert base is not None
     with pytest.raises(ValueError, match="cannot be overwritten"):
