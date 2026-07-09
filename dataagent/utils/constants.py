@@ -60,7 +60,7 @@ DEFAULT_COMPRESS_MAX_RETRIES: int = 3
 # 当前定义位置: dataagent/core/managers/llm_manager/llm_client.py
 # YAML 可选: MODEL[*].params.num_retries（覆盖重试次数 N）
 
-DEFAULT_LLM_MAX_RETRIES: int = 3
+DEFAULT_LLM_MAX_RETRIES: int = 5
 """429/Timeout（litellm retry_policy）与 5xx/连接（DataAgent 薄层）的重试次数上限。"""
 
 DEFAULT_LLM_RETRY_POLICY: dict[str, int] = {

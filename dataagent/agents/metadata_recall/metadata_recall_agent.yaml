@@ -146,5 +146,13 @@ ACTOR_LOOP:
 
   - node: "executor"
     module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 65536 # 工具结果截断长度默认 8192，数据工程场景改大
+
+CONTEXT:
+  # 除以下配置在数据工程场景单独修改外，其他与默认值保持一致
+  # ── 消息历史压缩（需 HOOKS.nodes.planner.pre 挂 pruner） ──
+  compress_token_limit: 100000 # 消息 token 超 1.2 倍时触发 LLM 折叠
+  # ── IR 转换 ──
+  file_node_threshold: 32768 # 工具输出超长时落盘为 FileNode，供 data_lineage / IR 解包
 
 POST_WORKFLOW: []
