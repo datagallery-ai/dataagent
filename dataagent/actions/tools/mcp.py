@@ -14,12 +14,14 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+import httpx
 from loguru import logger
 
 # 官方MCP库导入
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, ImageContent, TextContent
 from mcp.types import Tool as MCPTool
 
@@ -45,7 +47,7 @@ class MCPServerConfig:
     """MCP服务器配置 - 支持stdio和sse两种transport类型"""
 
     server_id: str
-    transport_type: Literal["stdio", "sse"] = "stdio"  # 传输协议类型
+    transport_type: Literal["stdio", "sse", "streamable_http"] = "stdio"  # 传输协议类型
     config: dict[str, Any] | None = None  # 传输协议配置
     category: str = "mcp"  # 服务器分类
     description: str = ""  # 服务器描述
@@ -98,10 +100,14 @@ class MCPServerConfig:
             if not (has_url or has_host_port):
                 raise ValueError("SSE transport requires either 'url' or both 'host' and 'port'")
 
+        elif self.transport_type == "streamable_http":
+            if not str(config.get("url") or "").strip():
+                raise ValueError("streamable_http transport requires 'url'")
+
         else:
             raise ValueError(
-                f"Unsupported transport type: {self.transport_type}.\
-                              Only 'stdio' and 'sse' are supported."
+                f"Unsupported transport type: {self.transport_type}. "
+                "Only 'stdio', 'sse', and 'streamable_http' are supported."
             )
 
 
@@ -264,6 +270,26 @@ class MCPClientWrapper:
                         await session.initialize()
                         return await operation(session)
 
+            if self.transport_type == "streamable_http":
+                params = cast(dict[str, Any], self._transport_params)
+                headers = params.get("headers") or {}
+                timeout = float(params.get("timeout", 30))
+                async with (
+                    httpx.AsyncClient(
+                        headers=headers,
+                        timeout=httpx.Timeout(timeout),
+                    ) as http_client,
+                    streamable_http_client(params["url"], http_client=http_client) as (
+                        read_stream,
+                        write_stream,
+                        _get_session_id,
+                    ),
+                ):
+                    del _get_session_id
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        return await operation(session)
+
             raise ValueError(f"Unsupported transport type: {self.transport_type}")
 
     async def _cleanup_on_error(self):
@@ -292,9 +318,11 @@ class MCPClientWrapper:
         if self.transport_type == "sse":
             # SSE transport参数
             return transport_config
+        if self.transport_type == "streamable_http":
+            return transport_config
         raise ValueError(
-            f"Unsupported transport type: {self.transport_type}.\
-                          Only 'stdio' and 'sse' are supported."
+            f"Unsupported transport type: {self.transport_type}. "
+            "Only 'stdio', 'sse', and 'streamable_http' are supported."
         )
 
 
@@ -439,12 +467,12 @@ class MCPToolRegistry:
             category: 服务器分类
             description: 服务器描述
         """
-        if transport_type not in {"stdio", "sse"}:
+        if transport_type not in {"stdio", "sse", "streamable_http"}:
             raise ToolError(f"Unsupported transport type: {transport_type}")
 
         server_config = MCPServerConfig(
             server_id=server_id,
-            transport_type=cast(Literal["stdio", "sse"], transport_type),
+            transport_type=cast(Literal["stdio", "sse", "streamable_http"], transport_type),
             config=config,
             category=category,
             description=description,

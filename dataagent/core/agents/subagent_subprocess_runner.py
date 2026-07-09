@@ -31,10 +31,10 @@ from dataagent.actions.tools.local_tool.tools import (
     _coerce_flex_state_dict_from_payload,
     _run_subprocess_async,
     _synthetic_worker_result_dict,
-    _terminate_process_tree_async,
 )
 from dataagent.core.context.message_history import read_messages_file, serialize_message
 from dataagent.core.swarm.worker_result import worker_result_from_payload
+from dataagent.core.utils.subprocess import terminate_process_tree_async
 from dataagent.utils.runtime_paths import FLEX_PERSISTENCE_ROOT_ENV, resolve_user_root
 
 _CANCEL_POLL_INTERVAL_SEC = 0.2
@@ -237,13 +237,13 @@ async def _run_cancellable_subprocess_async(
     try:
         while not communicate_task.done():
             if cancel_event.is_set():
-                await _terminate_process_tree_async(process)
+                await terminate_process_tree_async(process)
                 communicate_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await communicate_task
                 return {"stdout": "", "stderr": "subagent job cancelled", "returncode": -1}
             if time.monotonic() >= deadline:
-                await _terminate_process_tree_async(process)
+                await terminate_process_tree_async(process)
                 communicate_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await communicate_task
@@ -251,7 +251,7 @@ async def _run_cancellable_subprocess_async(
             await asyncio.sleep(_CANCEL_POLL_INTERVAL_SEC)
         stdout_bytes, stderr_bytes = communicate_task.result()
     except asyncio.CancelledError:
-        await _terminate_process_tree_async(process)
+        await terminate_process_tree_async(process)
         raise
     return {
         "stdout": stdout_bytes.decode("utf-8", errors="replace").strip(),

@@ -19,7 +19,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -62,6 +61,7 @@ from dataagent.core.swarm.worker_result import (
 from dataagent.core.swarm.worker_result import (
     worker_session_id as compute_worker_session_id,
 )
+from dataagent.core.utils.subprocess import terminate_process_tree_async
 from dataagent.utils.constants import (
     DEFAULT_BASH_TIMEOUT,
     DEFAULT_DIFF_MAX_CHARS,
@@ -514,14 +514,8 @@ def _build_shell_env() -> dict[str, str]:
 
 
 async def _terminate_process_tree_async(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is None:
-        try:
-            if os.name != "nt":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-        except ProcessLookupError:
-            logger.debug("Subprocess already exited before timeout cleanup: pid={}", process.pid)
+    """Backward-compatible alias for :func:`~dataagent.core.utils.subprocess.terminate_process_tree_async`."""
+    await terminate_process_tree_async(process)
 
 
 async def _wait_for_subprocess_async(

@@ -105,6 +105,13 @@ def validate_strict_duplicates(result: Mapping[str, Any]) -> None:
             key_fn=_subagent_name_key,
         )
 
+    resources = result.get("RESOURCES")
+    if isinstance(resources, Sequence) and not isinstance(resources, (str, bytes)):
+        _check_duplicate_list_keys(resources, label="RESOURCES.id", key_fn=_resource_id_key)
+        from dataagent.core.resources.registry import validate_resources_list
+
+        validate_resources_list(list(resources))
+
     for workflow_key in WORKFLOW_KEYS:
         nodes = result.get(workflow_key)
         if isinstance(nodes, Sequence) and not isinstance(nodes, (str, bytes)):
@@ -174,6 +181,12 @@ def _subagent_name_key(item: Any) -> str:
     path = ToolManager.resolve_subagent_config_path(raw)
     name, _ = ToolManager.load_subagent_catalog_metadata(path)
     return name
+
+
+def _resource_id_key(item: Any) -> str:
+    if not isinstance(item, Mapping):
+        return ""
+    return str(item.get("id") or "").strip()
 
 
 def _workflow_node_key(item: Any) -> str:

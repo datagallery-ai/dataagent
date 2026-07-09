@@ -1,0 +1,108 @@
+# =============================================================================
+# resources/resources.yaml — 贡献顶层 RESOURCES 段（本文件整体选填）
+# =============================================================================
+# 【这个文件是干什么的】
+#   声明本 Suite 向 Agent 提供的「计算资源池」。激活 example_suite 后，合并进
+#   Agent 顶层 RESOURCES；Runtime 据此注册 resource 工具（submit/poll/collect/cancel_job、
+#   list_resources），供 LLM 异步提交命令或脚本，而不是同步 bash。
+#
+# 【LLM 怎么用】
+#   - 查可用资源：list_resources
+#   - 提交任务：submit_resource_job(command=..., task_type=..., resource_id=...)
+#   - 轮询/取结果/取消：poll_job / collect_job / cancel_job
+#   type 决定占几个 slot（见各条目的 consumption）；多条 resource 支持同一 type 时
+#   必须写 resource_id（见 PRD §5.1.1.1）。
+#
+# 【字段速查】
+#   id          — 资源唯一标识；submit 时 resource_id 填这个
+#   category    — executable=可 submit；non-executable=仅 catalog 展示（本文件未示例）
+#   transport   — 执行后端：local=本机 sandbox；mcp=远端 MCP HTTP 服务
+#   operations  — 生命周期 operation id（local 用内置 sandbox.*；mcp 用远端 tool 名）
+#   capacity    — 同一 workspace 内该资源最多同时占用的 slot 数
+#   consumption — submit 的 type → 单次占用 slot 数；"*" 为默认 fallback
+#
+# 【格式与合并】
+#   与 tools/tools.yaml 一致，使用 RESOURCES: 键；也支持根节点为 YAML list（兼容）。
+#   合并：list append，高优 Suite 条目在前；合并后 resource id 全局唯一。
+#
+# 【本文件三条示例分别演示】
+#   local           — B1 主路径：本机 sandbox 跑 shell 命令（日常测试用这个）
+#   compute_pool    — B2：带鉴权的远端 MCP 计算池（mock 服务 + COMPUTE_TOKEN）
+#   clickhouse_pool — B2：ClickHouse 查询类 MCP 池（SQL 任务 task_type=sql_query）
+#
+# MCP 示例 pool 须先启动对应服务；未启动时 submit 返回连接 ERROR，不崩溃。详见 PRD §7.4。
+# =============================================================================
+
+RESOURCES:
+  # ---------------------------------------------------------------------------
+  # local — 本机 Sandbox（B1 默认演示资源）
+  # ---------------------------------------------------------------------------
+  # 用途：在父 workspace 的 sandbox 里异步执行 command（如 python scripts/run.py）。
+  # 调用示例：submit_resource_job(command="echo hello", task_type="sandbox", resource_id="local")
+  # 无需外部服务；example_suite 手动/E2E 测试首选此 id。
+  - id: local
+    name: Plugin Local Sandbox
+    category: executable
+    transport:
+      type: local                    # 本机执行，走内置 sandbox.submit driver
+    operations:
+      submit: sandbox.submit         # 宿主内置 operation id，非 LLM 工具名
+      poll: sandbox.poll
+      collect: sandbox.collect
+      cancel: sandbox.cancel
+    capacity:
+      total: 8                       # 本 workspace 内最多 8 个并发 local job
+      unit: slot
+    consumption:
+      sandbox: 1                     # task_type=sandbox 时占 1 slot
+      "*": 1                         # 其它 type 默认也占 1 slot
+
+  # ---------------------------------------------------------------------------
+  # compute_pool — 远端 MCP 计算池示例（B2 + secret_ref）
+  # ---------------------------------------------------------------------------
+  # 用途：演示把重计算提交到独立 MCP 服务（AutoML/批任务等场景的参考配置）。
+  # 调用示例：submit_resource_job(command="...", task_type="remote", resource_id="compute_pool")
+  # 前置：启动 mock MCP（默认 http://127.0.0.1:8765/mcp），并设置环境变量 COMPUTE_TOKEN。
+  - id: compute_pool
+    name: Remote Compute Pool (example)
+    category: executable
+    transport:
+      type: mcp
+      url: http://127.0.0.1:8765/mcp   # 远端 MCP HTTP 端点；本地 mock 可改此地址
+      headers:
+        Authorization:
+          secret_ref: env:COMPUTE_TOKEN  # 从进程环境变量读取，避免 token 写进 YAML
+    operations:
+      submit: submit_job               # 以下为远端 MCP 上的 tool 名，由 driver 内部调用
+      poll: poll_job
+      collect: collect_job
+      cancel: cancel_job
+    capacity:
+      total: 8
+      unit: slot
+    consumption:
+      remote: 1                        # task_type=remote 时占 1 slot（仍由本 workspace Job 记账）
+
+  # ---------------------------------------------------------------------------
+  # clickhouse_pool — ClickHouse 查询 MCP 池示例（B2 领域任务）
+  # ---------------------------------------------------------------------------
+  # 用途：演示 SQL/分析类任务走专用 MCP 后端（command 一般为查询脚本或 SQL 封装）。
+  # 调用示例：submit_resource_job(command="...", task_type="sql_query", resource_id="clickhouse_pool")
+  # 前置：启动 /data1/xzx/clickhouse 下的 ClickHouse 与 MCP 适配层（默认 :8766/mcp）。
+  - id: clickhouse_pool
+    name: ClickHouse Query Pool
+    category: executable
+    transport:
+      type: mcp
+      url: http://127.0.0.1:8766/mcp
+    operations:
+      submit: submit_job
+      poll: poll_job
+      collect: collect_job
+      cancel: cancel_job
+    capacity:
+      total: 4                         # 查询池并发上限（与 ClickHouse 侧能力无关，仅本层 slot）
+      unit: slot
+    consumption:
+      sql_query: 1                     # task_type=sql_query 占 1 slot
+      "*": 1
