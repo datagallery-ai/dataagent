@@ -136,21 +136,9 @@ def prepare_flex_planner_prompt(
 def _save_human_message_to_full(state: Any, user_message: HumanMessage, runtime: Runtime) -> None:
     """将用户 HumanMessage 增量追加到 messages_full.json。"""
     try:
-        from dataagent.core.flex.hooks.history_writer import (
-            resolve_history_persistence_context,
-            save_messages_full,
-        )
+        from dataagent.core.flex.hooks.history_writer import save_messages_full_for_state
 
-        user_id = str(state.get("user_id") or "")
-        session_id = str(state.get("session_id") or "")
-        workspace, config = resolve_history_persistence_context(state, runtime)
-        save_messages_full(
-            user_id,
-            session_id,
-            [user_message],
-            workspace=workspace,
-            config=config,
-        )
+        save_messages_full_for_state(state, [user_message], runtime=runtime)
     except Exception:
         logger.warning(f"写入用户 HumanMessage 到 messages_full.json 失败: {traceback.format_exc()}")
 

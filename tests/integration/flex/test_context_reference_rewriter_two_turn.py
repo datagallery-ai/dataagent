@@ -71,7 +71,7 @@ class _ControlledRewriterLLM:
             }
             return MagicMock(content=json.dumps(analyze_payload, ensure_ascii=False))
 
-        rewrite = f"用表 {self._table_id}，路径 /workspace/result.csv 继续分析"
+        rewrite = f"用表 {self._table_id}，路径 /workspace/result.csv继续分析"
         rewrite_payload = {
             "decision": "rewrite",
             "rewrite_query": rewrite,
@@ -243,7 +243,7 @@ async def test_two_turn_table_reference(
         "sub_id": 0,
         "workspace": str(tmp_path),
     }
-    expected_rewrite = f"用表 {table_id}，路径 /workspace/result.csv 继续分析"
+    expected_rewrite = "用表（路径 /workspace/result.csv）继续分析"
 
     with _capture_loguru_in_caplog(caplog, level=logging.DEBUG):
         turn2_out = await agent.chat(TURN2_RAW, initial_state=turn2_state)
@@ -252,7 +252,8 @@ async def test_two_turn_table_reference(
     workflow_state = workflow_capture["state"]
     assert workflow_state["raw_user_query"] == TURN2_RAW
     assert workflow_state["user_query"] == expected_rewrite
-    assert table_id in workflow_state["user_query"]
+    assert "Table(" not in workflow_state["user_query"]
+    assert "/workspace/result.csv" in workflow_state["user_query"]
 
     run1_ctx = ContextFactory.get_context(
         user_id=USER_ID,
@@ -380,7 +381,7 @@ async def test_astream_rewrites_query_before_backend(
     chunks = [item async for item in agent.astream(input=state)]
     assert chunks
 
-    expected_rewrite = "用表 Table(sales_agg)，路径 /workspace/result.csv 继续分析"
+    expected_rewrite = "用表（路径 /workspace/result.csv）继续分析"
     assert workflow_capture["state"]["user_query"] == expected_rewrite
     assert workflow_capture["state"]["raw_user_query"] == TURN2_RAW
     ir = context.state.ir.get_IR(label="query00000", node_type="Query")
@@ -479,4 +480,4 @@ MODEL:
     )
     assert out.get("complete") is True
     assert fake_llm.invoke_count == 2
-    assert workflow_capture["state"]["user_query"] == "用表 Table(sales_agg)，路径 /workspace/result.csv 继续分析"
+    assert workflow_capture["state"]["user_query"] == "用表（路径 /workspace/result.csv）继续分析"

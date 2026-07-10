@@ -28,10 +28,13 @@ from dataagent.core.context.context import Context, ContextFactory
 from dataagent.core.context.context_ir import QueryNode
 from dataagent.core.flex.hooks.context_reference_rewriter import (
     DEFAULT_MAX_CANDIDATES,
+    _apply_reference_expansions,
     _build_analyze_prompt,
+    _build_candidate_entry,
     _build_llm_prompt,
     _collect_candidates,
     _ensure_raw_user_query,
+    _format_node_expansion,
     _merge_analysis_filters,
     _parse_query_analysis,
     _validate_rewrite_plan,
@@ -39,6 +42,7 @@ from dataagent.core.flex.hooks.context_reference_rewriter import (
 )
 from dataagent.core.flex.utils.planner_prompt_builder import _build_planner_system_and_user_messages
 from dataagent.core.managers.prompt_manager import PromptTemplate
+from dataagent.core.workspace.catalog import is_framework_internal_artifact_path
 from dataagent.utils.runtime_paths import dataagent_package_path
 
 DEFAULT_CONFIG_PATH = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
@@ -207,6 +211,37 @@ def _setup_context_with_two_files(
     return file0, file1
 
 
+def _setup_context_with_internal_and_user_files(
+    user_id: str = "ut_internal",
+    session_id: str = "ut_internal_session",
+) -> tuple[str, str]:
+    """注册内部路径 File 与用户产物 File，返回 (internal_id, user_id_path)。"""
+    ContextFactory.clear_context()
+    context = ContextFactory.get_context(user_id=user_id, session_id=session_id, run_id=0, sub_id=0)
+    context.register_query(query="生成报告", additional_files=[])
+    workspace = "/tmp/.dataagent_home/anonymous/session_ws"
+    internal_id = context.register_node(
+        node_type="File",
+        label="file00000",
+        description="catalog",
+        path=f"{workspace}/.metadata/workspace_catalog.json",
+        source="read_file",
+        predecessor_node=["Query(query00000)"],
+        edge_type="produces",
+    )
+    user_file_id = context.register_node(
+        node_type="File",
+        label="file00001",
+        description="report",
+        path=f"{workspace}/report_v1.txt",
+        source="write_file",
+        predecessor_node=["Query(query00000)"],
+        edge_type="produces",
+        add_pt=True,
+    )
+    return internal_id, user_file_id
+
+
 class TestQueryNodeRawUserQuery:
     """register_query 应同时写入 query 与 raw_user_query。"""
 
@@ -233,6 +268,29 @@ class TestContextReferenceRewriterHelpers:
     def test_ensure_raw_user_query_no_override(self) -> None:
         state: dict[str, Any] = {"user_query": "new", "raw_user_query": "old"}
         assert _ensure_raw_user_query(state) == "old"
+
+    def test_collect_candidates_filters_internal_artifact_paths(self) -> None:
+        internal_id, user_file_id = _setup_context_with_internal_and_user_files()
+        context = ContextFactory.get_context(
+            user_id="ut_internal", session_id="ut_internal_session", run_id=0, sub_id=0
+        )
+        candidates = _collect_candidates(
+            context,
+            max_candidates=20,
+            target_types=frozenset({"File"}),
+            temporal_hint="earliest",
+        )
+        node_ids = [candidate["node_id"] for candidate in candidates]
+        assert internal_id not in node_ids
+        assert node_ids == [user_file_id]
+
+    def test_is_framework_internal_artifact_path(self) -> None:
+        workspace = "/tmp/.dataagent_home/anonymous/session_ws"
+        assert is_framework_internal_artifact_path(f"{workspace}/.metadata/workspace_catalog.json") is True
+        assert is_framework_internal_artifact_path(f"{workspace}/.memory/messages.json") is True
+        assert is_framework_internal_artifact_path(f"{workspace}/.dataagent/tool_outputs/bash_001.txt") is True
+        assert is_framework_internal_artifact_path(f"{workspace}/report_v1.txt") is False
+        assert is_framework_internal_artifact_path("/tmp/.dataagent/anonymous/session_ws/report_v1.txt") is False
 
     def test_collect_candidates_sorted_and_filtered(self) -> None:
         table_id = _setup_context_with_table()
@@ -330,7 +388,7 @@ class TestContextReferenceRewriterHelpers:
     def test_validate_rewrite_plan_success(self) -> None:
         parsed = {
             "decision": "rewrite",
-            "rewrite_query": "用表 Table(sales_agg)，路径 /workspace/result.csv 继续分析",
+            "rewrite_query": "占位，将由代码展开",
             "resolved_refs": [
                 {
                     "mention": "刚才那个表",
@@ -343,7 +401,157 @@ class TestContextReferenceRewriterHelpers:
         plan, skip = _validate_rewrite_plan(parsed, {"Table(sales_agg)"}, "用刚才那个表继续分析")
         assert skip == ""
         assert plan is not None
-        assert plan.rewrite_query.startswith("用表 Table")
+        assert plan.target_nodes == ["Table(sales_agg)"]
+
+    def test_validate_rewrite_plan_allows_rewrite_query_same_as_raw(self) -> None:
+        raw = "用刚才那个表继续分析"
+        parsed = {
+            "decision": "rewrite",
+            "rewrite_query": raw,
+            "resolved_refs": [
+                {"mention": "刚才那个表", "target_node": "Table(sales_agg)", "reason": "r"},
+            ],
+        }
+        plan, skip = _validate_rewrite_plan(parsed, {"Table(sales_agg)"}, raw)
+        assert skip == ""
+        assert plan is not None
+
+    def test_format_node_expansion_table_and_file(self) -> None:
+        table_text = _format_node_expansion(
+            {
+                "node_id": "Table(t01)",
+                "node_type": "Table",
+                "path": "/workspace/a.csv",
+                "description": "销售表",
+            }
+        )
+        assert table_text == "表（路径 /workspace/a.csv）"
+
+        file_text = _format_node_expansion(
+            {
+                "node_id": "File(f01)",
+                "node_type": "File",
+                "path": "/workspace/b.txt",
+            }
+        )
+        assert file_text == "文件（路径 /workspace/b.txt）"
+
+    def test_format_node_expansion_state_and_state_summary_priority(self) -> None:
+        """State 候选 summary 应优先 content / reasoning_content，而非 current_status。"""
+        trajectory = MagicMock()
+        attrs = {
+            "node_type": "State",
+            "content": "华北最低",
+            "reasoning_content": "推理过程",
+            "current_status": "",
+            "run_id": 0,
+        }
+        entry = _build_candidate_entry(trajectory, "State(s01)", attrs)
+        assert entry["summary"] == "华北最低"
+
+        text = _format_node_expansion(entry)
+        assert text == "分析状态：「华北最低」"
+        assert "State(" not in text
+
+        response_text = _format_node_expansion(
+            {
+                "node_id": "Response(r01)",
+                "node_type": "Response",
+                "summary": "销售额同比增长15%",
+            }
+        )
+        assert response_text == "回答：「销售额同比增长15%」"
+
+        state_text = _format_node_expansion(
+            {
+                "node_id": "State(s01)",
+                "node_type": "State",
+                "summary": "已完成区域筛选",
+            }
+        )
+        assert state_text == "分析状态：「已完成区域筛选」"
+
+    def test_format_node_expansion_action_tool_script(self) -> None:
+        action_text = _format_node_expansion(
+            {
+                "node_id": "Action(a01)",
+                "node_type": "Action",
+                "action_name": "python_repl",
+                "params_summary": '{"code": "df.head()"}',
+                "success": True,
+            }
+        )
+        assert "操作" in action_text
+        assert "Action(" not in action_text
+        assert "工具 python_repl" in action_text
+        assert "成功" in action_text
+
+        tool_text = _format_node_expansion(
+            {
+                "node_id": "Tool(t01)",
+                "node_type": "Tool",
+                "returns_summary": "rows=100",
+            }
+        )
+        assert tool_text == "工具结果，返回 rows=100"
+
+        script_text = _format_node_expansion(
+            {
+                "node_id": "Script(s01)",
+                "node_type": "Script",
+                "script_type": "python",
+                "path": "/workspace/a.py",
+                "summary": "import pandas",
+            }
+        )
+        assert script_text == "脚本，python，路径 /workspace/a.py，import pandas"
+
+    def test_apply_reference_expansions_single_mention(self) -> None:
+        raw = "用刚才那个表继续分析"
+        refs = [{"mention": "刚才那个表", "target_node": "Table(sales_agg)"}]
+        candidates = {
+            "Table(sales_agg)": {
+                "node_id": "Table(sales_agg)",
+                "node_type": "Table",
+                "path": "/workspace/result.csv",
+            }
+        }
+        expanded, skip = _apply_reference_expansions(raw, refs, candidates)
+        assert skip == ""
+        assert expanded == "用表（路径 /workspace/result.csv）继续分析"
+
+    def test_apply_reference_expansions_multiple_mentions_longest_first(self) -> None:
+        raw = "比较刚才那个表和刚才那个文件"
+        refs = [
+            {"mention": "刚才那个表", "target_node": "Table(t1)"},
+            {"mention": "刚才那个文件", "target_node": "File(f1)"},
+        ]
+        candidates = {
+            "Table(t1)": {"node_id": "Table(t1)", "node_type": "Table", "path": "/a.csv"},
+            "File(f1)": {"node_id": "File(f1)", "node_type": "File", "path": "/b.txt"},
+        }
+        expanded, skip = _apply_reference_expansions(raw, refs, candidates)
+        assert skip == ""
+        assert expanded == "比较表（路径 /a.csv）和文件（路径 /b.txt）"
+
+    def test_apply_reference_expansions_mention_not_in_raw_query(self) -> None:
+        expanded, skip = _apply_reference_expansions(
+            "用刚才那个表继续分析",
+            [{"mention": "不存在的指代", "target_node": "Table(t1)"}],
+            {"Table(t1)": {"node_id": "Table(t1)", "node_type": "Table", "path": "/a.csv"}},
+        )
+        assert expanded is None
+        assert skip == "mention_not_in_raw_query:不存在的指代"
+
+    def test_apply_reference_expansions_unchanged(self) -> None:
+        raw = "指向 上下文对象 结束"
+        expanded, skip = _apply_reference_expansions(
+            raw,
+            [{"mention": "上下文对象", "target_node": "X"}],
+            {"X": {"node_id": "X", "node_type": "", "description": ""}},
+        )
+        assert expanded is None
+        assert skip == "expansion_unchanged"
 
     def test_validate_rewrite_plan_target_not_in_candidates(self) -> None:
         parsed = {
@@ -399,19 +607,6 @@ class TestContextReferenceRewriterHelpers:
         plan, skip = _validate_rewrite_plan(parsed, {"Table(a)", "Table(b)"}, "用那个表分析")
         assert plan is None
         assert skip == "ambiguous_mention:那个表"
-
-    def test_validate_rewrite_plan_rewrite_same_as_raw(self) -> None:
-        raw = "用刚才那个表继续分析"
-        parsed = {
-            "decision": "rewrite",
-            "rewrite_query": raw,
-            "resolved_refs": [
-                {"mention": "刚才那个表", "target_node": "Table(sales_agg)", "reason": "r"},
-            ],
-        }
-        plan, skip = _validate_rewrite_plan(parsed, {"Table(sales_agg)"}, raw)
-        assert plan is None
-        assert skip == "rewrite_same_as_raw"
 
 
 class TestContextReferenceRewriterHook:
@@ -565,10 +760,50 @@ class TestContextReferenceRewriterHook:
         assert out["user_query"] == "用刚才那个表继续分析"
         assert out["raw_user_query"] == "用刚才那个表继续分析"
 
+    def test_successful_rewrite_uses_code_expansion_not_llm_rewrite_query(self) -> None:
+        """即使 LLM rewrite_query 与原文相同，代码展开仍应写回确定性 query。"""
+        raw = "用刚才那个表继续分析"
+        table_id = _setup_context_with_table(user_id="u3", session_id="s3", query=raw)
+        expected = "用表（路径 /workspace/result.csv）继续分析"
+        state: dict[str, Any] = {
+            "user_id": "u3",
+            "session_id": "s3",
+            "run_id": 0,
+            "sub_id": 0,
+            "user_query": raw,
+        }
+        runtime = _make_runtime(
+            _llm_json(
+                {
+                    "decision": "rewrite",
+                    "rewrite_query": raw,
+                    "resolved_refs": [
+                        {
+                            "mention": "刚才那个表",
+                            "target_node": table_id,
+                            "reason": "最近唯一 Table",
+                        }
+                    ],
+                    "skip_reason": "",
+                }
+            )
+        )
+        out = context_reference_rewriter(state, runtime)
+        assert out["user_query"] == expected
+        assert out["raw_user_query"] == raw
+
+        context = ContextFactory.get_context(user_id="u3", session_id="s3", run_id=0, sub_id=0)
+        ir = context.state.ir.get_IR(label="query00000", node_type="Query")
+        assert isinstance(ir, QueryNode)
+        assert ir.query == expected
+        assert ir.raw_user_query == raw
+        assert context.state.trajectory.nodes["Query(query00000)"]["query"] == expected
+        assert context.state.trajectory.nodes["Query(query00000)"]["raw_user_query"] == raw
+
     def test_successful_rewrite_updates_state_and_query_node(self) -> None:
         raw = "用刚才那个表继续分析"
         table_id = _setup_context_with_table(user_id="u3", session_id="s3", query=raw)
-        rewrite = f"用表 {table_id}，路径 /workspace/result.csv 继续分析"
+        rewrite = "用表（路径 /workspace/result.csv）继续分析"
         state: dict[str, Any] = {
             "user_id": "u3",
             "session_id": "s3",
@@ -607,7 +842,7 @@ class TestContextReferenceRewriterHook:
     def test_successful_rewrite_logs_raw_and_user_query(self, caplog: pytest.LogCaptureFixture) -> None:
         raw = "用刚才那个表继续分析"
         table_id = _setup_context_with_table(user_id="u_log", session_id="s_log", query=raw)
-        rewrite = f"用表 {table_id}，路径 /workspace/result.csv 继续分析"
+        rewrite = "用表（路径 /workspace/result.csv）继续分析"
         state: dict[str, Any] = {
             "user_id": "u_log",
             "session_id": "s_log",
@@ -676,7 +911,7 @@ class TestContextReferenceRewriterPlannerIntegration:
     def test_planner_user_prompt_uses_rewritten_query_after_hook(self) -> None:
         raw = "用刚才那个表继续分析"
         table_id = _setup_context_with_table(user_id="u_int", session_id="s_int", query=raw)
-        rewrite = f"用表 {table_id}，路径 /workspace/result.csv 继续分析"
+        rewrite = "用表（路径 /workspace/result.csv）继续分析"
         state: dict[str, Any] = {
             "user_id": "u_int",
             "session_id": "s_int",

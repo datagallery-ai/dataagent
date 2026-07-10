@@ -35,7 +35,7 @@ SCENARIO:
   chat:
     input: an arithmetic question
     task: answer user's question
-    instructions: 先等到30秒，然后再answer the question
+    instructions: answer the question
 
 # 【选填】前后置 workflow
 PRE_WORKFLOW: []

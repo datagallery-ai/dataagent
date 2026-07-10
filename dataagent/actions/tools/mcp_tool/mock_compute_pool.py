@@ -21,7 +21,7 @@ Exposes Galatea-compatible lifecycle tools:
 
 Run (streamable HTTP, default ``http://127.0.0.1:8765/mcp``)::
 
-    cd /data1/xzx/ferry
+    cd /data1/ferry
     .venv/bin/python -m dataagent.actions.tools.mcp_tool.mock_compute_pool
 
 Pair with Agent ``RESOURCES``::
