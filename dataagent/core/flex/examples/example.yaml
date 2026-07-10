@@ -449,7 +449,6 @@ SEMANTIC_LAYER:
 #   - 本文件已 SUITE.include: example_suite 时，Suite 已贡献 RESOURCES（含 local / MCP 示例）；
 #     请勿再 uncomment 下面示例中的相同 id，否则会 id 冲突。独立 Agent（无 Suite）时可启用最小 local 示例。
 #   - 完整 MCP / ClickHouse 示例见：dataagent/core/suite/builtin_suites/example_suite/resources/resources.yaml
-#   - 设计文档：/data1/xzx/ferry_resource_loader_PRD.md
 #
 # RESOURCES:
 #   # ── 最小 local 示例（无 Suite 时取消注释即可用）────────────────────────────

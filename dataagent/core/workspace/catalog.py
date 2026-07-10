@@ -23,11 +23,37 @@ from loguru import logger
 
 from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
 from dataagent.core.workspace.frontmatter import JobSummary, SubagentWorkspaceEntry, WorkspaceCatalogDoc
+from dataagent.utils.constants import INTERNAL_ARTIFACT_PATH_MARKERS
 from dataagent.utils.runtime_paths import resolve_job_subagents_root, resolve_jobs_root
 
 METADATA_DIR = ".metadata"
 WORKSPACE_CATALOG_FILE = "workspace_catalog.json"
-ARTIFACT_SKIP_DIRS = frozenset({".memory", ".context", ".runtime", ".dataagent"})
+ARTIFACT_SKIP_DIRS = frozenset({".memory", ".context", ".runtime", ".dataagent", METADATA_DIR})
+
+
+def is_framework_internal_artifact_path(path: str | Path) -> bool:
+    """判断路径是否位于 session 框架内部目录（非用户业务产物）。
+
+    用于指代候选过滤等场景：匹配 workspace 内已知的框架子目录标记，
+    而非路径任意段名（避免 ``DATAAGENT_HOME=~/.dataagent`` 下用户文件被误过滤）。
+
+    Args:
+        path: 待检查的绝对或相对路径。
+
+    Returns:
+        属于框架内部路径时返回 True；空路径返回 False。
+    """
+    raw = str(path or "").strip()
+    if not raw:
+        return False
+    try:
+        normalized = str(Path(raw).expanduser().resolve())
+    except (OSError, ValueError):
+        normalized = raw
+    normalized = normalized.replace("\\", "/")
+    if not normalized.endswith("/"):
+        normalized = f"{normalized}/"
+    return any(marker in normalized for marker in INTERNAL_ARTIFACT_PATH_MARKERS)
 
 
 def catalog_path(root: str | Path) -> Path:

@@ -129,21 +129,9 @@ class BaseNode:
             # 增量追加 node 原始输出到 messages_full.json
             if result_msgs:
                 try:
-                    from dataagent.core.flex.hooks.history_writer import (
-                        resolve_history_persistence_context,
-                        save_messages_full,
-                    )
+                    from dataagent.core.flex.hooks.history_writer import save_messages_full_for_state
 
-                    user_id = str(state.get("user_id") or "")
-                    session_id = str(state.get("session_id") or "")
-                    workspace, config = resolve_history_persistence_context(state, runtime)
-                    save_messages_full(
-                        user_id,
-                        session_id,
-                        result_msgs,
-                        workspace=workspace,
-                        config=config,
-                    )
+                    save_messages_full_for_state(state, result_msgs, runtime=runtime)
                 except Exception:
                     logger.warning(f"[{self.name}] 写入 messages_full.json 失败: {traceback.format_exc()}")
             # 仅构造 messages 合并后的结果；不复制 state 的其他字段，

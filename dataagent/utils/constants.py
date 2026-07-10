@@ -494,6 +494,16 @@ DEFAULT_WORKSPACE_LAYOUT: dict[str, str] = {
 }
 """Session 框架落盘相对路径段默认值（与 flex_default_configs.yaml WORKSPACE_POLICY.layout 一致）。"""
 
+# workspace 内框架产物子路径标记；用于指代候选过滤，避免将 DATAAGENT_HOME 目录名误判为内部路径。
+INTERNAL_ARTIFACT_PATH_MARKERS: tuple[str, ...] = (
+    "/.metadata/",
+    "/.memory/",
+    "/.context/",
+    "/.runtime/",
+    "/.dataagent/tool_outputs/",
+)
+"""Session workspace 内框架产物路径片段，用于 ``is_framework_internal_artifact_path`` 等过滤逻辑。"""
+
 
 # ── 合并配置 YAML 展示顺序 ───────────────────────────────────────────────────
 # 当前使用位置: dataagent/core/suite/debug_dump.py（``format_settings_yaml``）

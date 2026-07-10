@@ -88,7 +88,7 @@ RESOURCES:
   # ---------------------------------------------------------------------------
   # 用途：演示 SQL/分析类任务走专用 MCP 后端（command 一般为查询脚本或 SQL 封装）。
   # 调用示例：submit_resource_job(command="...", task_type="sql_query", resource_id="clickhouse_pool")
-  # 前置：启动 /data1/xzx/clickhouse 下的 ClickHouse 与 MCP 适配层（默认 :8766/mcp）。
+  # 前置：启动 MCP 适配层（默认 :8766/mcp）。
   - id: clickhouse_pool
     name: ClickHouse Query Pool
     category: executable

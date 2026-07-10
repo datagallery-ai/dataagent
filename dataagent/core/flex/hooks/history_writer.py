@@ -21,6 +21,10 @@
 读取时用 ``load_messages``，底层复用 ``dataagent.core.context.message_history`` 的清洗逻辑。
 
 产物路径：``{workspace}/.memory/messages.json``（layout 可配）
+
+``messages_full.json`` 为 node 级 audit 流水（write-only，不参与 session restore）。
+写入策略与 ``messages.json`` 对齐：wrapped subagent（非 Job 路径）跳过；Job subagent
+与主 agent 正常写入各自 workspace 下的 ``.memory/messages_full.json``。
 """
 
 from __future__ import annotations
@@ -143,6 +147,31 @@ def _full_path(
     return _session_memory_dir(user_id, session_id, workspace=workspace, config=config) / "messages_full.json"
 
 
+def save_messages_full_for_state(
+    state: Mapping[str, Any],
+    messages: list[BaseMessage],
+    *,
+    runtime: Any = None,
+) -> None:
+    """Resolve persistence context from ``state`` and append to ``messages_full.json``.
+
+    Wrapped subagents (non-Job path) skip persistence, matching ``messages.json`` policy
+    so parent session audit files are not polluted when tools share the parent workspace.
+    """
+    from dataagent.core.flex.hooks.agent_turn import should_skip_main_session_history
+
+    if should_skip_main_session_history(state):
+        return
+    workspace, config = resolve_history_persistence_context(state, runtime)
+    save_messages_full(
+        str(state.get("user_id") or ""),
+        str(state.get("session_id") or ""),
+        messages,
+        workspace=workspace,
+        config=config,
+    )
+
+
 def save_messages_full(
     user_id: str,
     session_id: str,
@@ -155,6 +184,8 @@ def save_messages_full(
 
     每次 node 执行后调用，读已有文件 → 尾部去重（跳过与已存尾部重叠的新消息前缀）
     → 原子写回。节点重放 / checkpoint replay 不会产生重复记录。
+
+    生产路径应优先调用 :func:`save_messages_full_for_state`，以便按 subagent 策略 skip。
     """
     if not user_id or not session_id or not messages:
         return
