@@ -111,3 +111,42 @@ def test_hooks_layer_skips_prefix_for_framework_specs(tmp_path: Path) -> None:
     assert post_hooks[0] == framework_hook
     assert post_hooks[1]["name"] == framework_hook
     assert post_hooks[1]["model"] == "chat_model"
+
+
+def test_governance_layer_prefixes_suite_local_addresses(tmp_path: Path) -> None:
+    """Suite-local GOVERNANCE addresses follow hooks.yaml prefix rules."""
+    suite_root = tmp_path / "governance_suite"
+    governance_dir = suite_root / "governance"
+    governance_dir.mkdir(parents=True)
+    (suite_root / "suite.yaml").write_text(yaml.safe_dump({"name": "governance_suite"}), encoding="utf-8")
+    (governance_dir / "governance.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "GOVERNANCE": {
+                    "policies": [
+                        {
+                            "id": "policy",
+                            "applies_to": ["submit_subagent"],
+                            "address": "governance.permission_guard.policy",
+                        }
+                    ],
+                    "argument_injectors": [
+                        {
+                            "id": "inject",
+                            "applies_to": ["submit_subagent"],
+                            "address": "governance.permission_guard.inject_runtime",
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    suite = SuiteRecord(name="governance_suite", root=suite_root, priority=0, enabled=True, meta={})
+    layers, _unknown = build_suite_layers([suite], default_actor_nodes={"planner", "executor"})
+
+    governance = layers[0]["GOVERNANCE"]
+    assert governance["policies"][0]["address"] == "governance_suite.governance.permission_guard.policy"
+    assert (
+        governance["argument_injectors"][0]["address"] == "governance_suite.governance.permission_guard.inject_runtime"
+    )

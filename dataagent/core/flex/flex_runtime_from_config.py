@@ -25,6 +25,7 @@ from typing import Any
 from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.utils.hitl_config import resolve_scenario_instructions
+from dataagent.governance import build_governance_config
 
 # YAML 合并阶段使用、不写入 env.llm_configs 值的键
 _LLM_YAML_ONLY_KEYS = frozenset({"name", "provider", "model_type", "section", "params"})
@@ -309,6 +310,10 @@ def build_agent_env_from_flex_config(
         compress_message_cnt=compress_message_cnt,
         file_node_threshold=file_node_threshold,
         environment_description=environment_description,
+        governance=build_governance_config(
+            config.get("GOVERNANCE"),
+            activated_suites=getattr(config_manager, "activated_suites", None),
+        ),
     )
 
 

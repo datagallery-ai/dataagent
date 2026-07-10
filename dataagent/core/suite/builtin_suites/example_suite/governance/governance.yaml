@@ -1,0 +1,41 @@
+# =============================================================================
+# governance/governance.yaml — 贡献顶层 GOVERNANCE 段（本文件整体选填）
+# =============================================================================
+# 条目形态：与用户 YAML 相同
+#   - invisibility：静态隐藏 LLM 可见工具
+#   - policies：工具执行前的放行检查；不放行时 hook 自行抛异常
+#   - argument_injectors：工具执行前注入 _xxx 内部隐藏参数
+#
+# address 写法与 hooks/hooks.yaml 保持一致：
+#   - suite-local：相对 <suite_root> 的 module.path.callable（合并后自动加 {suite_name}. 前缀）
+#   - framework：dataagent.* 全路径（合并后不加前缀）
+#
+# 禁止：applies_to 使用 "*"；必须写具体 tool name。
+# 实现：须在 governance/*.py 中提供可调用对象；不支持包内相对导入。
+# =============================================================================
+
+GOVERNANCE:
+  # 【选填】静态隐藏 LLM 可见工具；工具仍可被内部代码通过 runtime.get_tool 调用
+  invisibility:
+    - submit_subagent
+
+  # 【选填】工具执行前 policy hooks
+  policies:
+    - id: guard_plan_deletion
+      applies_to:
+        - delete_plan
+      address: governance.probe_hooks.guard_plan_deletion
+
+  # 【选填】工具执行前参数注入 hooks；只能注入 _xxx 内部参数。
+  #
+  # NOTE:
+  # 当前示例把 injector 挂在 create_plan 上，只是为了 smoke test：create_plan 是稳定
+  # 可触发的 builtin tool，且声明了 _tool_context 内部参数。argument_injectors 的真实
+  # 目标场景是 submit/job service 一类内部参数注入，例如注入 _job_envelope 来携带
+  # plugin-owned routing metadata、私有 URL 或密钥引用。该路径还需要 LocalToolWrapper
+  # 从 governance-injected tool_args 中消费 _job_envelope，并合入 ToolExecutionContext.job_envelope。
+  argument_injectors:
+    - id: inject_create_plan_context
+      applies_to:
+        - create_plan
+      address: governance.probe_hooks.inject_create_plan_context

@@ -62,3 +62,53 @@ def test_validate_accepts_example_suite_subagent_path_with_user_allow_path() -> 
         },
     }
     validate_merged_config(config)
+
+
+def test_validate_merged_config_accepts_governance_config() -> None:
+    validate_merged_config(
+        {
+            "GOVERNANCE": {
+                "invisibility": ["submit_subagent"],
+                "policies": [
+                    {
+                        "id": "data_analysis_orchestration",
+                        "applies_to": ["submit_subagent"],
+                        "priority": 45,
+                        "address": "tests.ut.tools.test_tool_hooks.governance_policy_allow",
+                    }
+                ],
+                "argument_injectors": [
+                    {
+                        "id": "inject_runtime_context",
+                        "applies_to": ["some_tool"],
+                        "priority": 50,
+                        "address": "tests.ut.tools.test_tool_hooks.governance_inject_hidden",
+                    }
+                ],
+            }
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("governance", "match"),
+    [
+        ([], "GOVERNANCE must be a mapping"),
+        ({"invisibility": "submit_subagent"}, "GOVERNANCE.invisibility must be a list"),
+        ({"invisibility": [1]}, "GOVERNANCE.invisibility entries must be non-empty strings"),
+        ({"policies": [{"id": "p", "applies_to": ["submit_subagent"]}]}, "address"),
+        ({"policies": [{"id": "p", "applies_to": ["*"], "address": "x.y"}]}, "does not allow '*'"),
+        (
+            {
+                "argument_injectors": [
+                    {"id": "inject", "applies_to": ["tool_a"], "address": "x.y"},
+                    {"id": "inject", "applies_to": ["tool_b"], "address": "x.z"},
+                ]
+            },
+            "Duplicate GOVERNANCE.argument_injectors id",
+        ),
+    ],
+)
+def test_validate_merged_config_rejects_invalid_governance_config(governance: object, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        validate_merged_config({"GOVERNANCE": governance})

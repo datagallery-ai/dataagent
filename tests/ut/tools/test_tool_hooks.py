@@ -25,12 +25,26 @@ from dataagent.actions.tools.hooks.base import (
     ToolHookInvocation,
     ToolHookRunner,
     ToolPreHookOutcome,
-    readonly_tool_args,
 )
 from dataagent.actions.tools.hooks.config import load_tool_hooks_from_config
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import ErrorType, ToolResult
+from dataagent.core.managers.action_manager.manager import ToolManager
+from dataagent.governance import attach_governance_hooks_to_tool, build_governance_config
+
+
+def governance_inject_hidden(inv) -> dict[str, str]:
+    inv.metadata.setdefault("events", []).append("injector")
+    return {"_secret": "governed"}
+
+
+def governance_inject_visible(inv) -> dict[str, str]:
+    return {"value": "not allowed"}
+
+
+def hidden_arg_tool(value: str, *, _secret: str = "") -> str:
+    return f"{value}:{_secret}"
 
 
 def _workspace_dir(tmp_path: Path) -> str:
@@ -40,10 +54,12 @@ def _workspace_dir(tmp_path: Path) -> str:
     return str(ws.resolve())
 
 
-def _make_runtime(*, call_tool, tool=None, workspace: str):
+def _make_runtime(*, call_tool, tool=None, workspace: str, governance=None, tool_manager=None):
     return SimpleNamespace(
         call_tool=call_tool,
         get_tool=lambda _name: tool,
+        tool_manager=tool_manager,
+        env=SimpleNamespace(governance=governance),
         sandbox=NoopSandbox(workspace_root=workspace),
         workspace_dir=workspace,
         bash_tool_whitelist=None,
@@ -219,8 +235,124 @@ def test_load_tool_hooks_from_config_rejects_disallowed_module():
     assert lists.pre == [] and lists.post == []
 
 
-def test_readonly_tool_args_rejects_mutation():
-    """Shallow read-only view blocks key assignment on tool_args."""
-    view = readonly_tool_args({"a": 1})
-    with pytest.raises(TypeError):
-        view["b"] = 2  # type: ignore[index]
+@pytest.mark.asyncio
+async def test_pre_hook_can_mutate_tool_args(tmp_path: Path):
+    """Pre-hooks may add internal args before tool invocation."""
+    seen: dict[str, object] = {}
+
+    async def call_tool(name: str, **kwargs):
+        seen.update(kwargs)
+        return ToolResult(success=True, data="ok")
+
+    async def inject_pre(inv: ToolHookInvocation) -> ToolPreHookOutcome:
+        inv.tool_args["_secret"] = "from-pre-hook"
+        return ToolPreHookOutcome()
+
+    workspace = _workspace_dir(tmp_path)
+    tool = SimpleNamespace(pre_hooks=[inject_pre], post_hooks=[])
+    runtime = _make_runtime(call_tool=call_tool, tool=tool, workspace=workspace)
+    executor = Executor("executor")
+
+    execution = await executor._execute_tool_call_impl(
+        tool_call={"name": "my_tool", "args": {"value": "visible"}, "id": "tc-mutable-pre"},
+        workspace=workspace,
+        user_id=None,
+        session_id=None,
+        sub_id=None,
+        runtime=runtime,
+    )
+
+    assert execution.success is True
+    assert seen == {"value": "visible", "_secret": "from-pre-hook"}
+    assert execution.tool_args == {"value": "visible", "_secret": "from-pre-hook"}
+
+
+def test_runtime_get_tools_for_llm_filters_governance_invisible_tools():
+    """Invisible tools are hidden from LLM binding but remain registered."""
+    tm = ToolManager()
+    tm.register_local_tool(lambda: "hidden", name="submit_subagent")
+    tm.register_local_tool(lambda: "visible", name="advance_data_analysis_workflow")
+    governance = build_governance_config({"invisibility": ["submit_subagent"]})
+    runtime = SimpleNamespace(tool_manager=tm, governance=governance)
+
+    from dataagent.core.cbb.runtime import Runtime
+
+    runtime_obj = Runtime(runtime)
+    assert [tool.name for tool in runtime_obj.get_tools_for_llm()] == ["advance_data_analysis_workflow"]
+    assert runtime_obj.get_tool("submit_subagent").name == "submit_subagent"
+
+
+@pytest.mark.asyncio
+async def test_tool_manager_loads_governance_hooks_from_config(tmp_path: Path):
+    """ToolManager distributes GOVERNANCE rules to tools by applies_to."""
+    workspace = _workspace_dir(tmp_path)
+    tm = ToolManager()
+    tm.init_from_config(
+        {
+            "TOOLS": {
+                "local_functions": [
+                    {
+                        "module": "tests.ut.tools.test_tool_hooks",
+                        "function": "hidden_arg_tool",
+                    }
+                ]
+            },
+            "GOVERNANCE": {
+                "argument_injectors": [
+                    {
+                        "id": "inject",
+                        "applies_to": ["hidden_arg_tool"],
+                        "address": "tests.ut.tools.test_tool_hooks.governance_inject_hidden",
+                    }
+                ]
+            },
+        }
+    )
+    runtime = _make_runtime(
+        call_tool=lambda name, **kwargs: tm.acall(name, **kwargs),
+        tool=tm.get("hidden_arg_tool"),
+        workspace=workspace,
+        tool_manager=tm,
+    )
+    executor = Executor("executor")
+
+    execution = await executor._execute_tool_call_impl(
+        tool_call={"name": "hidden_arg_tool", "args": {"value": "visible"}, "id": "tc-loader-inject"},
+        workspace=workspace,
+        user_id=None,
+        session_id=None,
+        sub_id=None,
+        runtime=runtime,
+    )
+
+    assert execution.success is True
+    assert execution.raw_result == "visible:governed"
+
+
+@pytest.mark.asyncio
+async def test_governance_injector_rejects_visible_args(tmp_path: Path):
+    """Injector may only add underscore-prefixed internal args."""
+
+    async def call_tool(name: str, **kwargs):
+        return ToolResult(success=True, data="ok")
+
+    workspace = _workspace_dir(tmp_path)
+    governance = build_governance_config(
+        {"argument_injectors": [{"id": "bad", "applies_to": ["my_tool"], "address": governance_inject_visible}]}
+    )
+    tool = SimpleNamespace(pre_hooks=[], post_hooks=[])
+    attach_governance_hooks_to_tool(governance, tool, "my_tool")
+    runtime = _make_runtime(call_tool=call_tool, tool=tool, workspace=workspace)
+    executor = Executor("executor")
+
+    execution = await executor._execute_tool_call_impl(
+        tool_call={"name": "my_tool", "args": {}, "id": "tc-bad-inject"},
+        workspace=workspace,
+        user_id=None,
+        session_id=None,
+        sub_id=None,
+        runtime=runtime,
+    )
+
+    assert execution.success is False
+    assert "underscore-prefixed" in execution.error_text

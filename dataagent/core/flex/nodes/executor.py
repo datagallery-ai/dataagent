@@ -23,7 +23,7 @@ from loguru import logger
 
 from dataagent.actions.tools.backfill import ToolArgBackfiller
 from dataagent.actions.tools.concurrency import ConcurrencyController
-from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolHookRunner, readonly_tool_args
+from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolHookRunner
 from dataagent.actions.tools.local_tool.sandbox import (
     reset_current_sandbox,
     set_current_sandbox,
@@ -596,6 +596,7 @@ class Executor(BaseNode):
             self._finalize_tool_progress_safe(setup.progress_finalize)
             self._reset_context(setup.context_token, setup.guard_token)
             return self._failed_execution_from_hook(setup, dict(hook_inv.tool_args), exc, phase="pre")
+        tool_args = dict(hook_inv.tool_args)
 
         execution: NormalizedToolExecution | None = None
         tool_result: ToolResult | None = None
@@ -655,7 +656,6 @@ class Executor(BaseNode):
 
         if execution is not None and post_hooks:
             hook_inv.phase = "post"
-            hook_inv.tool_args = readonly_tool_args(tool_args)
             hook_inv.tool_result = tool_result
             hook_inv.execution = execution
             try:
@@ -690,7 +690,7 @@ class Executor(BaseNode):
         return ToolHookInvocation(
             tool_name=setup.tool_name,
             tool_call_id=setup.tool_call_id,
-            tool_args=readonly_tool_args(tool_args),
+            tool_args=tool_args,
             runtime=runtime,
             metadata=dict(setup.metadata),
             phase=phase,  # type: ignore[arg-type]
