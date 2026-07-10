@@ -14,6 +14,8 @@
 # - TOOLS.local_functions 含 example_suite_file_saver
 # - HOOKS.nodes.planner.pre 含 example_suite.hooks.custom_hooks.suite_example_pre
 # - HOOKS.nodes.executor.post 含 suite_example_post / suite_example_with_model（model: chat_model）
+# - GOVERNANCE.invisibility 会从 LLM 可见工具中隐藏 submit_subagent
+# - GOVERNANCE.policies / argument_injectors 会挂到 builtin create_plan
 # - planner prompt_template.system 含 prompts/system/example_suite.md
 # - planner prompt_template.user 含 prompts/user/example_suite_user.md
 # - executor.max_tool_result_length = 8192

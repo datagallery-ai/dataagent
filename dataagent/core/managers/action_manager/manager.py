@@ -22,6 +22,7 @@ from loguru import logger
 from dataagent.core.managers.action_manager.base import BaseTool, ToolError, ToolResult, ToolType
 from dataagent.core.managers.action_manager.registry import ToolRegistry
 from dataagent.core.managers.action_manager.schemas import ToolSchema
+from dataagent.governance import attach_governance_hooks_to_tool, build_governance_config
 from dataagent.utils.constants import (
     DEFAULT_BUILTIN_LOCAL_TOOLS,
     DEFAULT_BUILTIN_SKILL_NAMES,
@@ -149,6 +150,8 @@ class ToolManager:
         # MCP server_id / A2A agent_id -> resolved hook callables (see load_tool_hooks_from_config)
         self._mcp_server_hooks: dict[str, Any] = {}
         self._a2a_agent_hooks: dict[str, Any] = {}
+        self._governance_config: Any | None = None
+        self._governance_attached_tool_ids: dict[str, int] = {}
 
     @property
     def mcp_registry(self):
@@ -603,6 +606,7 @@ class ToolManager:
                 from dataagent.actions.tools.hooks.config import attach_hooks_to_tool
 
                 attach_hooks_to_tool(tool, hook_lists)
+            self._attach_governance_hooks_to_tool(tool, tool.name)
             self._tool_instances[tool.name] = tool
             schema = tool.get_schema()
             self._tool_schemas[tool.name] = schema
@@ -618,6 +622,7 @@ class ToolManager:
                 from dataagent.actions.tools.hooks.config import attach_hooks_to_tool
 
                 attach_hooks_to_tool(tool, hook_lists)
+            self._attach_governance_hooks_to_tool(tool, tool.name)
             self._tool_instances[tool.name] = tool
             schema = tool.get_schema()
             self._tool_schemas[tool.name] = schema
@@ -635,6 +640,10 @@ class ToolManager:
         logger.trace("=== Initializing Tool Manager 🛠️ ===")
 
         tools_config = config.get("TOOLS", {})
+        self._governance_config = build_governance_config(
+            config.get("GOVERNANCE"),
+            activated_suites=getattr(self.config_manager, "activated_suites", None),
+        )
         self._builtin_skills = {skill["name"]: skill for skill in self._discover_builtin_skills(config)}
         self._user_skills = {}
 
@@ -652,6 +661,7 @@ class ToolManager:
         self._register_implicit_job_tools(config)
 
         if not tools_config:
+            self._attach_governance_hooks_to_registered_tools()
             return
         if "local_functions" in tools_config:
             self._register_local_tools(tools_config["local_functions"])
@@ -663,6 +673,7 @@ class ToolManager:
         # 对已注册的 MCP / A2A 做全量工具发现
         if self._registered_mcp_servers or self._registered_a2a_agents:
             self.enable_auto_discover()
+        self._attach_governance_hooks_to_registered_tools()
 
     def get(self, name: str) -> BaseTool:
         """获取工具实例（支持A2A和MCP懒加载）"""
@@ -904,6 +915,23 @@ class ToolManager:
 
         # 不清理全局 mcp_registry / a2a_registry — 它们是跨 Agent 共享的连接层
         logger.debug("   ✅ per-Agent 工具管理器资源清理完成")
+
+    def _attach_governance_hooks_to_registered_tools(self) -> None:
+        """Attach top-level GOVERNANCE pre-hooks to all currently registered tools."""
+        if self._governance_config is None:
+            return
+        for name, tool in self._tool_instances.items():
+            self._attach_governance_hooks_to_tool(tool, name)
+
+    def _attach_governance_hooks_to_tool(self, tool: Any, tool_name: str) -> None:
+        """Attach governance pre-hooks to one tool while preserving existing hooks."""
+        if self._governance_config is None:
+            return
+        tool_identity = id(tool)
+        if self._governance_attached_tool_ids.get(tool_name) == tool_identity:
+            return
+        attach_governance_hooks_to_tool(self._governance_config, tool, tool_name)
+        self._governance_attached_tool_ids[tool_name] = tool_identity
 
     def _build_tool_execution_context(self):
         """Build :class:`~dataagent.actions.tools.context.ToolExecutionContext` for local tool execution."""

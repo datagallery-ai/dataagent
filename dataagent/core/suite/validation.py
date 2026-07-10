@@ -24,6 +24,7 @@ from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
 from dataagent.core.suite.merge import WORKFLOW_TOP_KEYS
+from dataagent.governance import validate_governance_config
 from dataagent.utils.constants import DEFAULT_BUILTIN_SKILL_NAMES
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
@@ -50,6 +51,7 @@ def validate_merged_config(
         ValueError: Strict duplicate or forbidden configuration detected.
     """
     validate_strict_duplicates(result)
+    validate_governance_config(result.get("GOVERNANCE"))
     validate_unique_skill_names(result)
     _validate_no_explicit_sub_agent_tool(result)
     _validate_subagent_paths(

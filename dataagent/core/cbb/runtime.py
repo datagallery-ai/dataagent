@@ -384,7 +384,11 @@ class Runtime:
         tm = self.tool_manager
         if tm is None:
             return []
-        return [tool.to_langchain_tool() for tool in tm.get_all_tool_instances()]
+        governance = getattr(self.env, "governance", None)
+        tools = tm.get_all_tool_instances()
+        if governance is not None:
+            tools = [tool for tool in tools if not governance.is_tool_invisible(tool.name)]
+        return [tool.to_langchain_tool() for tool in tools]
 
     def list_builtin_skills(self) -> list[dict[str, Any]]:
         """List builtin skills from the per-Agent ToolManager."""

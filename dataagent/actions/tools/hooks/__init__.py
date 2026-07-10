@@ -17,7 +17,6 @@ from dataagent.actions.tools.hooks.base import (
     ToolHookRunner,
     ToolPostHookOutcome,
     ToolPreHookOutcome,
-    readonly_tool_args,
 )
 from dataagent.actions.tools.hooks.config import ToolHookLists, load_tool_hooks_from_config
 
@@ -30,5 +29,4 @@ __all__ = [
     "ToolPreHookOutcome",
     "ToolPostHookOutcome",
     "load_tool_hooks_from_config",
-    "readonly_tool_args",
 ]

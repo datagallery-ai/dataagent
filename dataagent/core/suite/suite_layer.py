@@ -80,6 +80,10 @@ def _build_one_suite_layer(
     if hooks_layer:
         layer["HOOKS"] = hooks_layer
 
+    governance_layer = _load_governance_layer(root, suite_name=suite.name)
+    if governance_layer:
+        layer["GOVERNANCE"] = governance_layer
+
     skills_layer = _load_skills_layer(root)
     if skills_layer:
         layer.setdefault("TOOLS", {}).setdefault("skills", {}).update(skills_layer)
@@ -175,6 +179,49 @@ def _prefix_hook_item(item: Any, *, suite_name: str) -> Any:
             patched["name"] = f"{suite_name}.{raw_name}"
         return patched
     return item
+
+
+def _load_governance_layer(root: Path, *, suite_name: str) -> dict[str, Any]:
+    """Load ``governance/governance.yaml`` and prefix suite-local hook addresses."""
+    governance_yaml = root / "governance" / "governance.yaml"
+    if not governance_yaml.is_file():
+        return {}
+    with open(governance_yaml, encoding="utf-8") as handle:
+        doc = yaml.safe_load(handle) or {}
+    if not isinstance(doc, Mapping):
+        return {}
+    governance = doc.get("GOVERNANCE")
+    if not isinstance(governance, Mapping):
+        return {}
+    return _prefix_governance_dict(governance, suite_name=suite_name)
+
+
+def _prefix_governance_dict(governance: Mapping[str, Any], *, suite_name: str) -> dict[str, Any]:
+    """Prefix suite-local governance ``address`` fields using the HOOKS convention."""
+    result = dict(governance)
+    for section in ("policies", "argument_injectors"):
+        raw_rules = result.get(section)
+        if not isinstance(raw_rules, list):
+            continue
+        patched_rules: list[Any] = []
+        for raw_rule in raw_rules:
+            if not isinstance(raw_rule, Mapping):
+                patched_rules.append(raw_rule)
+                continue
+            patched = dict(raw_rule)
+            raw_address = str(patched.get("address") or "").strip()
+            if raw_address:
+                patched["address"] = _prefix_governance_address(raw_address, suite_name=suite_name)
+            patched_rules.append(patched)
+        result[section] = patched_rules
+    return result
+
+
+def _prefix_governance_address(address: str, *, suite_name: str) -> str:
+    """Prefix suite-local governance addresses like suite-local HOOKS entries."""
+    if address.startswith(f"{suite_name}.") or _is_framework_hook_spec(address) or address.startswith("python:"):
+        return address
+    return f"{suite_name}.{address}"
 
 
 def _load_skills_layer(root: Path) -> dict[str, Any]:

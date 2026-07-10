@@ -15,9 +15,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
@@ -26,29 +24,17 @@ if TYPE_CHECKING:
     from dataagent.core.managers.action_manager.base import ToolResult
 
 
-def readonly_tool_args(tool_args: Mapping[str, Any] | dict[str, Any]) -> MappingProxyType[str, Any]:
-    """Return a shallow read-only view of tool call arguments for hooks.
-
-    Args:
-        tool_args: Validated/backfilled arguments passed to the tool.
-
-    Returns:
-        ``MappingProxyType``; in-place key assignment raises ``TypeError``.
-    """
-    return MappingProxyType(dict(tool_args))
-
-
 @dataclass
 class ToolHookInvocation:
     """Context passed to each pre/post hook for one tool call.
 
     ``hook_context`` is shared across all hooks in the same tool call (pre and post).
-    ``tool_args`` is a shallow read-only mapping; hooks must not mutate call arguments (v1).
+    ``tool_args`` is the mutable argument dict passed to tool invocation.
     """
 
     tool_name: str
     tool_call_id: str
-    tool_args: Mapping[str, Any]
+    tool_args: dict[str, Any]
     runtime: Runtime
     metadata: dict[str, Any]
     hook_context: dict[str, Any] = field(default_factory=dict)
@@ -84,7 +70,7 @@ class ToolHookRunner:
 
     @staticmethod
     async def run_pre_hooks(hooks: list[Any], inv: ToolHookInvocation) -> None:
-        """Run pre-hooks in order; hooks may mutate ``inv.hook_context`` only.
+        """Run pre-hooks in order; hooks may mutate ``inv.tool_args`` and ``inv.hook_context``.
 
         Args:
             hooks: Callables ``(inv) -> ToolPreHookOutcome`` (sync or async).
