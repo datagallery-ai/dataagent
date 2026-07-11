@@ -61,6 +61,7 @@ from dataagent.core.swarm.worker_result import (
 from dataagent.core.swarm.worker_result import (
     worker_session_id as compute_worker_session_id,
 )
+from dataagent.core.utils.performance import merge_subagent_llm_usage
 from dataagent.core.utils.subprocess import terminate_process_tree_async
 from dataagent.utils.constants import (
     DEFAULT_BASH_TIMEOUT,
@@ -271,6 +272,44 @@ def _subagent_completed_outcome_when_payload_error(
     return _SubagentCompletedOutcome(failed_result, None, msg, worker_sub_id)
 
 
+def _merge_subagent_perf_summary(
+    worker_result: Any,
+    *,
+    resolved_session_id: str,
+    last_run_id_executed: int,
+    query: str,
+) -> None:
+    """Idempotently merge a subagent ``perf_summary`` into the parent collector.
+
+    Aggregation failure SHALL NOT affect ``sub_agent_tool`` business return — only a
+    warning is logged. ``tool_call_id`` is read from the subagent runtime context (set
+    by ``set_subagent_runtime_context``); when missing, the dedup key falls back to a
+    query/run/session hash inside :meth:`PerformanceCollector.merge_subagent_llm_usage`.
+    """
+    perf_summary = getattr(worker_result, "perf_summary", None)
+    if not isinstance(perf_summary, dict):
+        return
+    ctx = _subagent_runtime_context.get()
+    tool_call_id = ""
+    if isinstance(ctx, dict):
+        raw_tid = ctx.get("tool_call_id")
+        if raw_tid:
+            tool_call_id = str(raw_tid)
+    identity = {
+        "parent_session_id": str(resolved_session_id),
+        "parent_run_id": str(last_run_id_executed),
+        "tool_call_id": tool_call_id,
+        "sub_id": str(getattr(worker_result, "sub_id", "") or ""),
+        "worker_session_id": str(getattr(worker_result, "worker_session_id", "") or ""),
+        "worker_run_id": str(perf_summary.get("worker_run_id") or ""),
+        "query": str(query),
+    }
+    try:
+        merge_subagent_llm_usage(perf_summary, identity)
+    except Exception as e:
+        logger.warning(f"[subagent] merge perf_summary failed (business unaffected): {e}")
+
+
 def _subagent_completed_outcome_from_worker_result_branch(
     *,
     parsed: dict[str, Any],
@@ -284,6 +323,12 @@ def _subagent_completed_outcome_from_worker_result_branch(
 ) -> _SubagentCompletedOutcome:
     """Return an outcome when the child included a structured ``worker_result`` object."""
     worker_result = worker_result_from_payload(worker_result_payload)
+    _merge_subagent_perf_summary(
+        worker_result,
+        resolved_session_id=resolved_session_id,
+        last_run_id_executed=last_run_id_executed,
+        query=query,
+    )
     flex_raw = parsed.get("subagent_final_state")
     if flex_raw is None:
         flex_raw = parsed.get("original_msg", "")
@@ -413,6 +458,33 @@ def _handle_subagent_completed(
     )
 
 
+def _strip_perf_summary_for_original_msg(worker_result_dict: Any) -> Any:
+    """Return a copy of ``worker_result`` with ``perf_summary`` replaced by a light ``perf_ref``.
+
+    Per spec §12.2, the parent ``messages.json`` ToolMessage / ``original_msg`` SHALL only
+    keep lightweight business results plus a ``perf_ref`` reference (source / schema_version /
+    worker_session_id / worker_run_id) — never the full subagent ``perf_summary`` (which is
+    aggregated into ``.performance`` instead, avoiding replay pollution and double-counting).
+    """
+    if not isinstance(worker_result_dict, dict):
+        return worker_result_dict
+    perf_summary = worker_result_dict.get("perf_summary")
+    if not isinstance(perf_summary, dict):
+        return worker_result_dict
+    stripped = {k: v for k, v in worker_result_dict.items() if k != "perf_summary"}
+    try:
+        schema_version = int(perf_summary.get("schema_version") or 0)
+    except (TypeError, ValueError):
+        schema_version = 0
+    stripped["perf_ref"] = {
+        "source": str(perf_summary.get("source") or "subagent"),
+        "schema_version": schema_version,
+        "worker_session_id": str(perf_summary.get("worker_session_id") or ""),
+        "worker_run_id": str(perf_summary.get("worker_run_id") or ""),
+    }
+    return stripped
+
+
 def _subagent_outcome_to_public_tool_dict(outcome: _SubagentCompletedOutcome) -> dict[str, Any]:
     """Map internal parse outcome to the Executor-facing ``sub_agent_tool`` return dict."""
     if outcome.raw_stdout_for_llm is not None:
@@ -423,7 +495,7 @@ def _subagent_outcome_to_public_tool_dict(outcome: _SubagentCompletedOutcome) ->
             "sub_id": outcome.sub_id,
         }
     return {
-        "original_msg": outcome.worker_result,
+        "original_msg": _strip_perf_summary_for_original_msg(outcome.worker_result),
         "frontend_msg": outcome.assistant_reply or str(outcome.worker_result.get("final_answer") or ""),
         "state": outcome.flex_state,
         "sub_id": outcome.sub_id,

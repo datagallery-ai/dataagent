@@ -136,10 +136,14 @@ This system prompt defines the complete behavior specification for the biomedica
 def qwen_client() -> LLMClient:
     if not _API_KEY:
         pytest.skip("QWEN_PLUS_API_KEY not set — skipping integration test")
+    # provider="bailian" marks the endpoint as explicit-cache-capable (DashScope/百炼),
+    # so _supports_explicit_cache_control injects bp0-bp4 for Qwen (per
+    # main-agent-cache-control spec: Qwen injects only on whitelisted endpoints).
     return LLMClient(
         model=_MODEL,
         api_base=_BASE_URL,
         api_key=_API_KEY,
+        provider="bailian",
     )
 
 

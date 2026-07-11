@@ -208,7 +208,7 @@ class TestComputeRoundSummaries:
             },
         ]
         summaries = _compute_round_summaries(records)
-        assert summaries[0]["cache_hit_rate"] == 75.0  # 150 / 200 * 100
+        assert summaries[0]["cache_hit_rate"] == 0.75  # 150 / 200 (0-1 decimal, shared cache_hit_rate)
 
     def test_cache_hit_rate_zero_when_no_input(self):
         records = [
@@ -216,7 +216,8 @@ class TestComputeRoundSummaries:
             {"type": "AIMessage", "usage_metadata": {"input_tokens": 0}},
         ]
         summaries = _compute_round_summaries(records)
-        assert summaries[0]["cache_hit_rate"] == 0.0
+        # input_tokens == 0 → cache_hit_rate returns None (per canonical cache_hit_rate)
+        assert summaries[0]["cache_hit_rate"] is None
 
     def test_elapsed_sec_from_timestamps(self):
         records = [

@@ -796,11 +796,13 @@ def test_run_agent_passes_identity_to_initial_state(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
 
-    result = asyncio.run(
+    result, perf_summary = asyncio.run(
         _run_agent("查询本体", "/tmp/sub_agent.yaml", user_id="main-user", session_id="main-session", sub_id=7)
     )
 
     assert result == {"ok": True}
+    # perf collection disabled (no DATAAGENT_PERFORMANCE_ENABLED) → perf_summary is None
+    assert perf_summary is None
     assert captured["query"] == "查询本体"
     assert captured["config_path"] == Path("/tmp/sub_agent.yaml")
     assert (

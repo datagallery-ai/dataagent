@@ -49,6 +49,7 @@ __all__ = [
     "make_perf_state_holder",
     "update_latest_state_from_stream_item",
     "summarize_llm_usage",
+    "merge_subagent_llm_usage",
     "measure_tool",
     "attribute_calls",
     "callable_perf_name",
@@ -73,6 +74,30 @@ from typing import Any, TypeVar
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import logger
 
+# Defer the shared usage-module import to break a circular import:
+# performance → llm_manager.usage → llm_manager/__init__ → adapters → performance.
+# These are resolved on first use (all callers below are runtime, not import-time).
+_summarize_usage_impl: Any = None
+_cache_hit_rate_impl: Any = None
+_TOKEN_FIELDS: tuple[str, ...] = ()
+
+
+def _resolve_usage_funcs() -> tuple[Any, Any, tuple[str, ...]]:
+    """Lazily import the shared usage module on first call to break the import cycle."""
+    global _summarize_usage_impl, _cache_hit_rate_impl, _TOKEN_FIELDS
+    if _summarize_usage_impl is None:
+        from dataagent.core.managers.llm_manager.usage import (
+            TOKEN_FIELDS,
+            cache_hit_rate,
+            summarize_usage,
+        )
+
+        _summarize_usage_impl = summarize_usage
+        _cache_hit_rate_impl = cache_hit_rate
+        _TOKEN_FIELDS = TOKEN_FIELDS
+    return _summarize_usage_impl, _cache_hit_rate_impl, _TOKEN_FIELDS
+
+
 T = TypeVar("T")
 
 PERFORMANCE_FLUSH_KIND: str = "_flush"
@@ -86,32 +111,12 @@ def _now_iso() -> str:
 
 
 def summarize_llm_usage(usage: Any) -> dict[str, int]:
-    """把 LLM usage 映射规整为 token 计数字典，含 cache/reasoning 子字段。"""
-    if not isinstance(usage, Mapping):
-        return {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "input_cache_read_tokens": 0,
-            "input_cache_creation_tokens": 0,
-            "output_reasoning_tokens": 0,
-        }
+    """把 LLM usage 映射规整为 canonical token 计数字典，含 cache/reasoning 子字段。
 
-    def _i(key: str) -> int:
-        """安全读取单个 token 字段。"""
-        try:
-            return int(usage.get(key) or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    return {
-        "input_tokens": _i("input_tokens"),
-        "output_tokens": _i("output_tokens"),
-        "total_tokens": _i("total_tokens"),
-        "input_cache_read_tokens": _i("input_cache_read_tokens"),
-        "input_cache_creation_tokens": _i("input_cache_creation_tokens"),
-        "output_reasoning_tokens": _i("output_reasoning_tokens"),
-    }
+    薄包装：委托共享 :mod:`usage` 模块的 :func:`summarize_usage`，保证全链路口径一致。
+    """
+    su_fn, _, _ = _resolve_usage_funcs()
+    return su_fn(usage)
 
 
 def build_state_summary(state: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -203,6 +208,16 @@ def _resolve_jsonl_path(
     return base / f"Run{run_id}_Sub{sub_id}.{os.getpid()}.jsonl"
 
 
+def _pick_cache_control_mode(modes: list[str]) -> str:
+    """从观测到的 mode 列表中挑出最有信息量的一个（explicit > implicit > none_or_unknown）。"""
+    if not modes:
+        return "none_or_unknown"
+    for preferred in ("explicit", "implicit", "none_or_unknown"):
+        if preferred in modes:
+            return preferred
+    return "none_or_unknown"
+
+
 class PerformanceCollector:
     """启用态由构造时决定；禁用态由模块级 ``_NOOP_COLLECTOR`` 单例承载。
 
@@ -231,6 +246,8 @@ class PerformanceCollector:
         self.started_at: str = _now_iso()
         self._lock = threading.Lock()
         self._events: list[dict[str, Any]] = []
+        self._subagent_llm_usages: list[dict[str, Any]] = []
+        self._seen_subagent_perf_keys: set[tuple[str, ...]] = set()
         self._jsonl_fh: Any = None
         self._created_perf: float = time.perf_counter()
         self.jsonl_path: Path | None = None
@@ -318,16 +335,126 @@ class PerformanceCollector:
                 ev["error_type"] = err_t
             self._append_event(ev)
 
+    def snapshot_summary(self, state: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """返回 ``build_summary`` 的只读快照（供子进程 ``summary_sink`` 回传）。"""
+        return self.build_summary(state)
+
+    def merge_subagent_llm_usage(self, perf_summary: Any, identity: Mapping[str, Any] | None) -> bool:
+        """幂等合并子进程回传的 ``perf_summary`` 到 ``_subagent_llm_usages``。
+
+        校验 schema、token 非负整数、identity 未重复后写入。父进程聚合失败
+        SHALL NOT 影响业务返回（调用方应捕获并记录 warning）。
+
+        Args:
+            perf_summary: 子进程 ``WorkerResult.perf_summary`` dict（含 ``schema_version`` /
+                ``source`` / identity / ``llms`` 顶层聚合）。
+            identity: 父进程侧 identity（``parent_session_id`` / ``parent_run_id`` /
+                ``tool_call_id`` / ``sub_id`` / ``worker_session_id`` / ``worker_run_id``）。
+
+        Returns:
+            ``True`` 表示已聚合；``False`` 表示跳过（重复 / 非法 schema / 负数 token）。
+        """
+        if not isinstance(perf_summary, Mapping) or not isinstance(identity, Mapping):
+            logger.warning("[perf] merge_subagent: perf_summary/identity not a mapping, skipped")
+            return False
+        llms = perf_summary.get("llms")
+        if not isinstance(llms, Mapping):
+            logger.warning("[perf] merge_subagent: missing llms aggregate, skipped")
+            return False
+        _, _, token_fields = _resolve_usage_funcs()
+        try:
+            schema_version = int(perf_summary.get("schema_version") or 0)
+        except (TypeError, ValueError):
+            schema_version = 0
+        if schema_version < 1:
+            logger.warning("[perf] merge_subagent: unsupported schema_version={schema_version}, skipped")
+            return False
+        tokens: dict[str, int] = {}
+        for field in token_fields:
+            try:
+                value = int(llms.get(field) or 0)
+            except (TypeError, ValueError):
+                value = -1
+            if value < 0:
+                logger.warning(f"[perf] merge_subagent: negative {field}={llms.get(field)}, skipped")
+                return False
+            tokens[field] = value
+        try:
+            call_count = int(llms.get("call_count") or 0)
+        except (TypeError, ValueError):
+            call_count = 0
+        tool_call_id = str(identity.get("tool_call_id") or "")
+        worker_session_id = str(identity.get("worker_session_id") or "")
+        worker_run_id = str(identity.get("worker_run_id") or "")
+        sub_id = str(identity.get("sub_id") or "")
+        parent_session_id = str(identity.get("parent_session_id") or "")
+        parent_run_id = str(identity.get("parent_run_id") or "")
+        query = str(identity.get("query") or "")
+        if tool_call_id:
+            dedup_key: tuple[str, ...] = (
+                parent_session_id,
+                parent_run_id,
+                tool_call_id,
+                sub_id,
+                worker_session_id,
+                worker_run_id,
+            )
+        else:
+            import hashlib
+
+            fallback = hashlib.sha256(f"{query}|{worker_run_id}|{worker_session_id}".encode()).hexdigest()
+            dedup_key = (
+                parent_session_id,
+                parent_run_id,
+                f"__hash__:{fallback}",
+                sub_id,
+                worker_session_id,
+                worker_run_id,
+            )
+            logger.debug(
+                f"[perf] merge_subagent: tool_call_id missing, used query/run/session hash fallback; "
+                f"sub_id={sub_id} worker_session={worker_session_id}"
+            )
+        with self._lock:
+            if dedup_key in self._seen_subagent_perf_keys:
+                logger.debug(f"[perf] merge_subagent: duplicate identity {dedup_key}, skipped")
+                return False
+            self._seen_subagent_perf_keys.add(dedup_key)
+            self._subagent_llm_usages.append(
+                {
+                    "schema_version": schema_version,
+                    "source": str(perf_summary.get("source") or "subagent"),
+                    "agent_type": str(perf_summary.get("agent_type") or ""),
+                    "sub_id": sub_id,
+                    "parent_session_id": parent_session_id,
+                    "parent_run_id": parent_run_id,
+                    "worker_session_id": worker_session_id,
+                    "worker_run_id": worker_run_id,
+                    "tool_call_id": tool_call_id,
+                    "provider": str(perf_summary.get("provider") or ""),
+                    "model": str(perf_summary.get("model") or ""),
+                    "cache_control_mode": str(perf_summary.get("cache_control_mode") or "none_or_unknown"),
+                    "status": str(perf_summary.get("status") or "success"),
+                    **tokens,
+                    "call_count": call_count,
+                }
+            )
+            return True
+
     def build_summary(self, state: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """按 kind 汇总事件：
+        """按 kind 汇总事件，输出 ``main_agent`` / ``subagents`` / ``overall`` 三视角。
 
         * 每个桶 entry 都带 ``count`` / ``elapsed_ms`` (总和) / ``min_ms`` / ``max_ms`` /
         * ``hook``：按 ``hook_scope:hook_phase:name`` 分桶，保留 agent/node/tool 的生命周期边界；
         * ``llm``：以 ``caller_kind:caller_name:llm_name`` 复合键分桶，
           同时按桶累计 input/output/total tokens；没有 caller（孤儿调用）
           时退化为只用 ``llm_name`` 作键。
-          顶层 input/output/total tokens 表示所有 LLM 事件的真实调用总量；
-          最终 ``state["messages"]`` 残留口径保存在 ``state_messages``。
+        * 顶层 ``input_tokens`` 等兼容字段语义升级为 ``overall``（主 Agent + 子 Agent）。
+        * ``llms.main_agent``：父进程自身 ``kind == "llm"`` 事件聚合。
+        * ``llms.subagents``：来自 ``_subagent_llm_usages``，``by_agent`` 可按
+          ``agent_type:sub_id:worker_session_id`` 下钻。
+        * ``llms.overall``：``main_agent + subagents`` 逐字段相加。
+        * 所有 ``cache_hit_rate`` 由共享 :func:`cache_hit_rate` 计算，0-1 小数。
         """
         base = build_state_summary(state)
         state_llms = dict(base["llms"])
@@ -348,6 +475,12 @@ class PerformanceCollector:
         }
         with self._lock:
             events = list(self._events)
+            subagent_usages = list(self._subagent_llm_usages)
+
+        _, cache_hit_rate_fn, token_fields = _resolve_usage_funcs()
+        main_tokens: dict[str, int] = dict.fromkeys(token_fields, 0)
+        main_call_count = 0
+        main_cache_modes: list[str] = []
 
         def accumulate(entry: dict[str, Any], ev: dict[str, Any]) -> None:
             """把单条事件累加到对应 summary 桶。"""
@@ -413,21 +546,79 @@ class PerformanceCollector:
                         entry["caller_name"] = str(cn)
                     summary["llms"][key] = entry
                 accumulate(entry, ev)
-                for k in (
-                    "input_tokens",
-                    "output_tokens",
-                    "total_tokens",
-                    "input_cache_read_tokens",
-                    "input_cache_creation_tokens",
-                    "output_reasoning_tokens",
-                ):
+                main_call_count += 1
+                ccm = str(extra.get("cache_control_mode") or "")
+                if ccm and ccm not in main_cache_modes:
+                    main_cache_modes.append(ccm)
+                for k in token_fields:
                     try:
                         inc = int(extra.get(k) or 0)
                     except (TypeError, ValueError):
                         inc = 0
                     if inc:
-                        summary["llms"][k] = summary["llms"].get(k, 0) + inc
+                        main_tokens[k] = main_tokens.get(k, 0) + inc
                         entry[k] = entry.get(k, 0) + inc
+
+        sub_tokens: dict[str, int] = dict.fromkeys(token_fields, 0)
+        sub_call_count = 0
+        sub_cache_modes: list[str] = []
+        by_agent: dict[str, dict[str, Any]] = {}
+        for usage in subagent_usages:
+            sub_call_count += int(usage.get("call_count") or 0) or 1
+            scm = str(usage.get("cache_control_mode") or "")
+            if scm and scm not in sub_cache_modes:
+                sub_cache_modes.append(scm)
+            for field in token_fields:
+                sub_tokens[field] += int(usage.get(field) or 0)
+            agent_type = str(usage.get("agent_type") or "unknown")
+            agent_key = f"{agent_type}:{usage.get('sub_id', '')}:{usage.get('worker_session_id', '')}"
+            bucket = by_agent.setdefault(
+                agent_key,
+                dict.fromkeys(token_fields, 0) | {"call_count": 0, "identity": {}},
+            )
+            bucket["call_count"] += int(usage.get("call_count") or 0) or 1
+            for field in token_fields:
+                bucket[field] += int(usage.get(field) or 0)
+            bucket["identity"].update(
+                {
+                    "agent_type": agent_type,
+                    "sub_id": str(usage.get("sub_id") or ""),
+                    "worker_session_id": str(usage.get("worker_session_id") or ""),
+                    "worker_run_id": str(usage.get("worker_run_id") or ""),
+                    "provider": str(usage.get("provider") or ""),
+                    "model": str(usage.get("model") or ""),
+                    "cache_control_mode": str(usage.get("cache_control_mode") or "none_or_unknown"),
+                    "status": str(usage.get("status") or "success"),
+                }
+            )
+
+        overall_tokens: dict[str, int] = {field: main_tokens[field] + sub_tokens[field] for field in token_fields}
+        for field in token_fields:
+            summary["llms"][field] = overall_tokens[field]
+        summary["llms"]["main_agent"] = {
+            **main_tokens,
+            "call_count": main_call_count,
+            "cache_hit_rate": cache_hit_rate_fn(main_tokens),
+            "cache_control_mode": _pick_cache_control_mode(main_cache_modes),
+        }
+        summary["llms"]["subagents"] = {
+            **sub_tokens,
+            "call_count": sub_call_count,
+            "cache_hit_rate": cache_hit_rate_fn(sub_tokens),
+            "cache_control_mode": _pick_cache_control_mode(sub_cache_modes),
+            "by_agent": by_agent,
+        }
+        summary["llms"]["overall"] = {
+            **overall_tokens,
+            "call_count": main_call_count + sub_call_count,
+            "cache_hit_rate": cache_hit_rate_fn(overall_tokens),
+            "cache_control_mode": _pick_cache_control_mode(main_cache_modes),
+        }
+        # 断言顶层兼容字段 == overall 对应字段
+        for field in token_fields:
+            assert summary["llms"][field] == summary["llms"]["overall"][field], (
+                f"top-level {field} != overall: {summary['llms'][field]} != {summary['llms']['overall'][field]}"
+            )
         return summary
 
     def flush(self, state: Mapping[str, Any] | None = None) -> Path | None:
@@ -601,8 +792,14 @@ def bind_agent_performance(
     state: Mapping[str, Any] | None = None,
     backend: str | None = None,
     flush_state_provider: Any = None,
+    summary_sink: Any = None,
 ) -> Iterator[PerformanceCollector]:
-    """绑定 collector；``user_id``/``session_id``/``run_id``/``sub_id`` 仅从 state 读取。"""
+    """绑定 collector；``user_id``/``session_id``/``run_id``/``sub_id`` 仅从 state 读取。
+
+    ``summary_sink``：可选 callable，在 ``finally`` 中先 snapshot 局部 summary 再回调，
+    最后继续 ``flush()`` 写 footer。子进程用它把本次请求的 summary 回传给调用方，
+    避免把 summary 写到长期存活的 Agent 实例字段（见设计文档 §7）。
+    """
     st = state if isinstance(state, Mapping) else {}
     collector = create_collector(
         user_id=st.get("user_id"),
@@ -623,8 +820,15 @@ def bind_agent_performance(
                 latest = flush_state_provider() or state
             except Exception as e:
                 logger.debug(f"[perf] state provider failed: {e}")
+        latest_mapping = latest if isinstance(latest, Mapping) else None
+        if callable(summary_sink):
+            try:
+                snapshot = collector.snapshot_summary(latest_mapping)
+                summary_sink(snapshot)
+            except Exception as e:
+                logger.debug(f"[perf] summary_sink failed: {e}")
         try:
-            collector.flush(latest if isinstance(latest, Mapping) else None)
+            collector.flush(latest_mapping)
         except Exception as e:
             logger.debug(f"[perf] flush failed: {e}")
         reset_current_collector(token)
@@ -644,6 +848,15 @@ def reset_current_collector(token: contextvars.Token[PerformanceCollector]) -> N
 def get_current_collector() -> PerformanceCollector:
     """获取当前 context 的 collector，缺省返回禁用态单例。"""
     return _current_collector.get() or _NOOP_COLLECTOR
+
+
+def merge_subagent_llm_usage(perf_summary: Any, identity: Mapping[str, Any] | None) -> bool:
+    """把子进程 ``perf_summary`` 幂等合并到当前 context 的 collector。
+
+    父进程聚合入口（``tools.py::_merge_subagent_perf_summary`` 的薄包装）。
+    聚合失败 SHALL NOT 影响业务返回——调用方应捕获异常并记录 warning。
+    """
+    return get_current_collector().merge_subagent_llm_usage(perf_summary, identity)
 
 
 @contextmanager

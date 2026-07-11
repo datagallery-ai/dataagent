@@ -46,6 +46,7 @@ from loguru import logger
 
 from dataagent.common_utils.outbound_tls import httpx_verify
 from dataagent.core.managers.llm_manager.llm_config import LLMConfig
+from dataagent.core.managers.llm_manager.usage import usage_to_metadata
 from dataagent.utils.constants import (
     DEFAULT_COMPRESS_MESSAGE_CNT,
     DEFAULT_COMPRESS_TOKEN_LIMIT,
@@ -128,22 +129,52 @@ _BAILIAN_EXPLICIT_CACHE_MODELS: frozenset[str] = frozenset(
     }
 )
 
+# 支持显式 cache_control 的 provider 标识白名单（DashScope/百炼/Qwen 官方兼容端点）。
+_EXPLICIT_CACHE_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "bailian",
+        "dashscope",
+        "qwen",
+        "anthropic",
+    }
+)
 
-def _supports_explicit_cache_control(model: str, provider: str | None = None) -> bool:
-    """Whether the model/provider accepts explicit cache_control markers.
+# 支持显式 cache_control 的 base_url 子串白名单（用于 provider 缺失或为 generic
+# openai 时的二次确认；命中即认为端点具备显式缓存能力）。
+_EXPLICIT_CACHE_BASEURL_HINTS: tuple[str, ...] = (
+    "aliyuncs.com",
+    "dashscope",
+    "anthropic.com",
+)
 
-    判断依据（来源：各厂商官方文档，见设计文档 §1.3.2）：
-    1. Qwen/QwQ — 按模型名匹配（任何 provider 下只要是 Qwen 模型就支持）
-    2. Anthropic Claude — 按 provider 或模型名匹配
-    3. 百炼平台上的非 Qwen 模型 — 按模型名精确匹配 _BAILIAN_EXPLICIT_CACHE_MODELS
+
+def _supports_explicit_cache_control(
+    model: str,
+    provider: str | None = None,
+    base_url: str | None = None,
+) -> bool:
+    """Whether the model/provider/base_url accepts explicit cache_control markers.
+
+    判断依据（来源：各厂商官方文档，见设计文档 §1.3.2 与
+    ``openspec/changes/add-subagent-token-cache-aggregation`` main-agent-cache-control spec）：
+    1. Anthropic Claude — provider 命中 ``anthropic`` 或模型名含 ``claude``，始终注入。
+    2. Qwen/QwQ — 仅当 provider/base_url 命中显式能力白名单
+       （DashScope/百炼/Qwen 官方兼容端点）时注入；generic OpenAI-compatible
+       端点上的 Qwen/QwQ **不**注入，且历史消息残留 cc 会被剥离。
+    3. 百炼平台非 Qwen 白名单模型 — 模型名精确匹配 ``_BAILIAN_EXPLICIT_CACHE_MODELS``
+       且 provider/base_url 命中百炼端点时注入。
+    4. DeepSeek 直连 / OpenAI GPT / 未知 OpenAI-compatible 模型 — 不注入（保守策略）。
     """
-    m = model.lower()
+    m = (model or "").lower()
     p = (provider or "").lower()
-    if "qwen" in m or "qwq" in m:
-        return True
+    b = (base_url or "").lower()
+    endpoint_explicit = p in _EXPLICIT_CACHE_PROVIDERS or any(hint in b for hint in _EXPLICIT_CACHE_BASEURL_HINTS)
     if "claude" in m or p == "anthropic":
         return True
-    return m in _BAILIAN_EXPLICIT_CACHE_MODELS
+    is_qwen = "qwen" in m or "qwq" in m
+    if is_qwen and endpoint_explicit:
+        return True
+    return bool(m in _BAILIAN_EXPLICIT_CACHE_MODELS and (p == "bailian" or "aliyuncs.com" in b))
 
 
 def _apply_cache_defaults(params: dict[str, Any]) -> None:
@@ -172,71 +203,29 @@ def _strip_cache_control(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
     return messages
 
 
-def _safe_int(val: Any) -> int:
-    """Coerce ``val`` to int, falling back to 0 on failure."""
-    try:
-        return int(val or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _safe_assign(obj: Any, attr: str, target: dict[str, Any], target_key: str) -> None:
-    """Safely read *attr* from *obj* and store the int in *target[target_key]*."""
-    target[target_key] = _safe_int(getattr(obj, attr, None))
-
-
 def _extract_detail_tokens(usage: Any, target: dict[str, Any]) -> None:
     """从 OpenAI/Anthropic/DeepSeek 的 usage 对象提取缓存与推理子 token 字段。
 
+    薄包装：委托共享 :mod:`usage` 模块的实现，保证全链路字段映射唯一。
     覆盖三种格式：
     1. OpenAI/DeepSeek: ``prompt_tokens_details.cached_tokens`` / ``cache_creation_tokens``
     2. Anthropic: ``cache_read_input_tokens`` / ``cache_creation_input_tokens`` (flat)
     3. DeepSeek fallback: ``prompt_cache_hit_tokens`` (顶层)
     """
-    prompt_details = getattr(usage, "prompt_tokens_details", None)
-    if prompt_details:
-        target["input_cache_read_tokens"] = _safe_int(getattr(prompt_details, "cached_tokens", None))
-        target["input_cache_creation_tokens"] = _safe_int(
-            getattr(prompt_details, "cache_creation_tokens", None)
-            or getattr(prompt_details, "cache_creation_input_tokens", None)
-        )
-    else:
-        _safe_assign(usage, "cache_read_input_tokens", target, "input_cache_read_tokens")
-        _safe_assign(usage, "cache_creation_input_tokens", target, "input_cache_creation_tokens")
+    from dataagent.core.managers.llm_manager import usage as _usage_mod
 
-    if not target.get("input_cache_read_tokens"):
-        target["input_cache_read_tokens"] = _safe_int(getattr(usage, "prompt_cache_hit_tokens", None))
-
-    completion_details = getattr(usage, "completion_tokens_details", None)
-    if completion_details:
-        target["output_reasoning_tokens"] = _safe_int(getattr(completion_details, "reasoning_tokens", None))
-    else:
-        _safe_assign(usage, "reasoning_tokens", target, "output_reasoning_tokens")
+    _usage_mod._extract_detail_tokens_from_obj(usage, target)
 
 
 def _extract_detail_tokens_from_dict(usage: dict, target: dict[str, Any]) -> None:
     """从 dict 形式的 usage 提取缓存与推理子 token 字段（流式 / httpx JSON 路径）。
 
+    薄包装：委托共享 :mod:`usage` 模块的实现。
     覆盖三种格式（同 :func:`_extract_detail_tokens`），但操作对象是 dict 而非 Pydantic 模型。
     """
-    prompt_details = usage.get("prompt_tokens_details")
-    if isinstance(prompt_details, dict):
-        target["input_cache_read_tokens"] = _safe_int(prompt_details.get("cached_tokens"))
-        target["input_cache_creation_tokens"] = _safe_int(
-            prompt_details.get("cache_creation_tokens") or prompt_details.get("cache_creation_input_tokens")
-        )
-    else:
-        target["input_cache_read_tokens"] = _safe_int(usage.get("cache_read_input_tokens"))
-        target["input_cache_creation_tokens"] = _safe_int(usage.get("cache_creation_input_tokens"))
+    from dataagent.core.managers.llm_manager import usage as _usage_mod
 
-    if not target.get("input_cache_read_tokens"):
-        target["input_cache_read_tokens"] = _safe_int(usage.get("prompt_cache_hit_tokens"))
-
-    completion_details = usage.get("completion_tokens_details")
-    if isinstance(completion_details, dict):
-        target["output_reasoning_tokens"] = _safe_int(completion_details.get("reasoning_tokens"))
-    else:
-        target["output_reasoning_tokens"] = _safe_int(usage.get("reasoning_tokens"))
+    _usage_mod._extract_detail_tokens_from_dict(usage, target)
 
 
 class LLMErrorCategory(StrEnum):
@@ -464,6 +453,7 @@ class LLMClientMessage:
     invalid_tool_calls: list[dict[str, Any]] = field(default_factory=list)
     thinking_blocks: list[dict[str, Any]] | None = None
     usage_metadata: dict[str, Any] = field(default_factory=dict)
+    cache_control_mode: str = "none_or_unknown"
     raw: Any = None
 
 
@@ -1293,18 +1283,13 @@ class LLMClient:
 
     @staticmethod
     def _usage_to_metadata(usage: Any) -> dict[str, Any]:
-        """将 OpenAI 兼容 usage dict 转为 6 字段 usage_metadata（含缓存/推理子字段）。
+        """将 OpenAI 兼容 usage dict 转为 canonical 6 字段 usage_metadata（含缓存/推理子字段）。
 
-        覆盖 OpenAI/Anthropic/DeepSeek 三种 cache 字段格式（见 _extract_detail_tokens_from_dict）。
+        薄包装：委托共享 :mod:`usage` 模块的 :func:`usage_to_metadata`，保证
+        Anthropic canonical ``input_tokens`` 补齐（``raw_input + cache_read + cache_creation``）
+        与全链路口径一致。
         """
-        usage = usage if isinstance(usage, dict) else {}
-        target: dict[str, Any] = {
-            "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
-            "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-            "total_tokens": int(usage.get("total_tokens") or 0),
-        }
-        _extract_detail_tokens_from_dict(usage, target)
-        return target
+        return usage_to_metadata(usage)
 
     @staticmethod
     def _astream_has_emitted_output(state: _AStreamState) -> bool:
@@ -1821,12 +1806,15 @@ class LLMClient:
         cache_control 处理（替代 litellm monkey-patch，见设计文档 §1.7）：
         - 支持显式缓存的模型（Qwen/Claude/百炼 deepseek-v3.2 等）：注入 bp0-bp4 断点
         - 不支持的模型：剥离消息中预置的 cache_control（来自 session restore 等），避免 API 报错
+
+        ``cache_control_mode`` 诊断字段由 :meth:`_resolve_cache_control_mode` 基于
+        :func:`_supports_explicit_cache_control` 与响应 usage 统一判定（同 _build_payload 决策）。
         """
         msgs: list[Any] = messages
         if msgs and not isinstance(msgs[0], dict):
             msgs = self._lc_messages_to_dicts(msgs)
 
-        if _supports_explicit_cache_control(self._model, self._provider):
+        if _supports_explicit_cache_control(self._model, self._provider, self._api_base):
             msgs = self._apply_cache_control_with_anchors(
                 msgs,
                 compress_token_limit=self._compress_token_limit,
@@ -1859,6 +1847,28 @@ class LLMClient:
             payload["stream"] = False
             payload.pop("stream_options", None)
         return payload
+
+    def _resolve_cache_control_mode(self, usage_metadata: Mapping[str, Any]) -> str:
+        """判定本次请求的 ``cache_control_mode`` 诊断字段。
+
+        - ``"explicit"``：``_supports_explicit_cache_control`` 命中（``_build_payload`` 注入了断点）。
+        - ``"implicit"``：未注入显式 cc 但响应 usage 含 cache_read/creation（如 DeepSeek 直连 / OpenAI GPT）。
+        - ``"none_or_unknown"``：未注入且无 cache usage。
+
+        与 :meth:`_build_payload` 共用 :func:`_supports_explicit_cache_control` 决策点，
+        保证主/子 Agent 同一口径；报告层只消费该字段，不二次判断 provider 能力。
+        """
+        explicit = _supports_explicit_cache_control(self._model, self._provider, self._api_base)
+        if explicit:
+            return "explicit"
+        cache_read = 0
+        cache_creation = 0
+        if isinstance(usage_metadata, Mapping):
+            cache_read = int(usage_metadata.get("input_cache_read_tokens") or 0)
+            cache_creation = int(usage_metadata.get("input_cache_creation_tokens") or 0)
+        if cache_read or cache_creation:
+            return "implicit"
+        return "none_or_unknown"
 
     def _resolve_timeout(self, kwargs: dict[str, Any]) -> httpx.Timeout | None:
         """Resolve the per-call httpx timeout, falling back to the client default."""
@@ -1995,12 +2005,14 @@ class LLMClient:
         if not isinstance(tool_calls, list):
             tool_calls = []
         thinking = msg.get("thinking_blocks")
+        usage_metadata = self._usage_to_metadata(resp.get("usage"))
         return LLMClientMessage(
             content=content,
             reasoning_content=str(rc) if rc else "",
             tool_calls=self._tool_calls_to_dicts(tool_calls),
             thinking_blocks=list(thinking) if isinstance(thinking, list) and thinking else None,
-            usage_metadata=self._usage_to_metadata(resp.get("usage")),
+            usage_metadata=usage_metadata,
+            cache_control_mode=self._resolve_cache_control_mode(usage_metadata),
             raw=resp,
         )
 
@@ -2008,8 +2020,14 @@ class LLMClient:
         """将流式 chunk dict 转为 LLMClientMessage，仅取文本与 usage。"""
         choices = chunk.get("choices") or []
         usage_dict = self._usage_to_metadata(chunk.get("usage"))
+        cache_control_mode = self._resolve_cache_control_mode(usage_dict) if usage_dict else "none_or_unknown"
         if not choices or not isinstance(choices[0], dict):
-            return LLMClientMessage(content="", usage_metadata=usage_dict, raw=chunk)
+            return LLMClientMessage(
+                content="",
+                usage_metadata=usage_dict,
+                cache_control_mode=cache_control_mode,
+                raw=chunk,
+            )
         delta = choices[0].get("delta") or {}
         if not isinstance(delta, dict):
             delta = {}
@@ -2019,6 +2037,7 @@ class LLMClient:
             content=str(content) if content else "",
             reasoning_content=str(rc) if rc else "",
             usage_metadata=usage_dict,
+            cache_control_mode=cache_control_mode,
             raw=chunk,
         )
 

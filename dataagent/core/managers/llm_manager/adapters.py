@@ -21,6 +21,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from dataagent.core.managers.llm_manager.usage import normalize_usage_metadata as _normalize_usage_metadata
 from dataagent.core.utils.performance import get_current_collector, summarize_llm_usage
 
 
@@ -52,6 +53,7 @@ class LLMResponse:
     reasoning_content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     invalid_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    cache_control_mode: str = "none_or_unknown"
     raw: Any = None
 
 
@@ -75,6 +77,7 @@ class _StreamAccum:
     usage_metadata: dict[str, Any] = field(default_factory=dict)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     invalid_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    cache_control_mode: str = "none_or_unknown"
     raw: Any = None
 
     def append_chunk(self, chunk_resp: LLMResponse) -> None:
@@ -87,6 +90,8 @@ class _StreamAccum:
             self.tool_calls = list(chunk_resp.tool_calls)
         if chunk_resp.invalid_tool_calls:
             self.invalid_tool_calls = list(chunk_resp.invalid_tool_calls)
+        if chunk_resp.cache_control_mode and chunk_resp.cache_control_mode != "none_or_unknown":
+            self.cache_control_mode = chunk_resp.cache_control_mode
         self.raw = chunk_resp.raw
 
     def to_llm_response(self) -> LLMResponse:
@@ -97,6 +102,7 @@ class _StreamAccum:
             reasoning_content="".join(self.reasoning_parts),
             tool_calls=list(self.tool_calls),
             invalid_tool_calls=list(self.invalid_tool_calls),
+            cache_control_mode=self.cache_control_mode,
             raw=self.raw,
         )
 
@@ -129,38 +135,17 @@ class ChatModel(Protocol):
         ...
 
 
-def _int_or_zero(val: Any) -> int:
-    """Coerce ``val`` to int, falling back to 0 on failure."""
-    try:
-        return int(val or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def normalize_usage_metadata(usage: Any) -> dict[str, Any]:
-    """补齐 langchain AIMessage 所需的 usage_metadata 必填字段，保留 cache/reasoning 子字段。
+    """补齐 canonical 6 字段 usage_metadata，保留 cache/reasoning 子字段。
 
+    薄包装：委托共享 :mod:`usage` 模块实现，保证与 ``usage_to_metadata`` 语义一致。
     Handles both:
     - OpenAI/DeepSeek: ``input_cache_read_tokens`` / ``input_cache_creation_tokens`` /
       ``output_reasoning_tokens`` at root (from ``_extract_detail_tokens``)
     - Anthropic fallback: ``cache_read_input_tokens`` / ``cache_creation_input_tokens`` /
       ``reasoning_tokens`` at root (when extraction did not rename them)
     """
-    usage_dict = cast(dict[str, Any], usage or {}) if isinstance(usage, dict) else {}
-    return {
-        "input_tokens": _int_or_zero(usage_dict.get("input_tokens")),
-        "output_tokens": _int_or_zero(usage_dict.get("output_tokens")),
-        "total_tokens": _int_or_zero(usage_dict.get("total_tokens")),
-        "input_cache_read_tokens": _int_or_zero(
-            usage_dict.get("input_cache_read_tokens") or usage_dict.get("cache_read_input_tokens")
-        ),
-        "input_cache_creation_tokens": _int_or_zero(
-            usage_dict.get("input_cache_creation_tokens") or usage_dict.get("cache_creation_input_tokens")
-        ),
-        "output_reasoning_tokens": _int_or_zero(
-            usage_dict.get("output_reasoning_tokens") or usage_dict.get("reasoning_tokens")
-        ),
-    }
+    return _normalize_usage_metadata(usage)
 
 
 def _usage_has_tokens(usage: dict[str, Any]) -> bool:
@@ -371,6 +356,7 @@ class LangChainChatModelAdapter:
             invalid_tool_call_count=len(resp.invalid_tool_calls or []),
             content_len=len(resp.content or ""),
             reasoning_len=len(resp.reasoning_content or ""),
+            cache_control_mode=resp.cache_control_mode,
         )
 
     @staticmethod
@@ -509,12 +495,14 @@ class LangChainChatModelAdapter:
             invalid_tool_calls = cast(list[dict[str, Any]], getattr(out, "invalid_tool_calls", None) or [])
         except Exception:
             invalid_tool_calls = []
+        cache_control_mode = str(getattr(out, "cache_control_mode", "none_or_unknown") or "none_or_unknown")
         return LLMResponse(
             content=content,
             usage_metadata=usage,
             reasoning_content=reasoning_content,
             tool_calls=tool_calls or [],
             invalid_tool_calls=invalid_tool_calls or [],
+            cache_control_mode=cache_control_mode,
             raw=out,
         )
 

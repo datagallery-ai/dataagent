@@ -27,6 +27,7 @@ from dataagent.core.context.message_history import deserialize_message, serializ
 from dataagent.core.swarm.worker_memory import strip_subagent_runtime_fields
 from dataagent.core.swarm.worker_result import synthesize_worker_result
 from dataagent.interface.sdk.agent import DataAgent
+from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import LoggerConfig, reconfigure
 from dataagent.utils.runtime_paths import SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root, validate_user_id
 
@@ -76,7 +77,7 @@ def main() -> int:
 
         # 子 agent 运行期间的 print/误写 stdout 全部走 stderr，stdout 仅用于最终协议 JSON。
         with redirect_stdout(sys.stderr):
-            result = asyncio.run(
+            result, perf_summary = asyncio.run(
                 _run_agent(
                     query,
                     config_path,
@@ -93,6 +94,7 @@ def main() -> int:
             sub_id=sub_id,
             parent_session_id=parent_session_id,
             resumed=resumed,
+            perf_summary=perf_summary,
         )
         jsonable_result = _to_jsonable(result)
 
@@ -146,8 +148,8 @@ async def _run_agent(
     session_id: str | None = None,
     sub_id: int | None = None,
     initial_state_file: str | None = None,
-) -> Any:
-    """Run a sub-agent process and return its final state."""
+) -> tuple[Any, dict[str, Any] | None]:
+    """Run a sub-agent process and return its final state plus optional perf_summary."""
     resolved_user_id, resolved_session_id, resolved_sub_id = _resolve_subagent_identity(
         user_id=user_id, session_id=session_id, sub_id=sub_id
     )
@@ -172,7 +174,117 @@ async def _run_agent(
     }
     for key, value in defaults.items():
         initial_state.setdefault(key, value)
-    return await agent.chat(query, initial_state=initial_state)
+    # 局部 holder 接收子进程本次请求 summary；sink 通过 initial_state 临时字段传递，
+    # BaseAgent._performance_run 读取后移除，避免进入业务 workflow state（设计 §7/D4）。
+    perf_holder: dict[str, Any] = {"summary": None}
+    initial_state["_performance_summary_sink"] = lambda s: perf_holder.__setitem__("summary", s)
+    result = await agent.chat(query, initial_state=initial_state)
+    parent_session_id = str(session_id or "default_session")
+    perf_summary = _build_perf_summary(
+        perf_holder["summary"],
+        result=result,
+        query=query,
+        config_path=config_path,
+        parent_session_id=parent_session_id,
+        worker_session_id=resolved_session_id,
+        sub_id=resolved_sub_id,
+    )
+    return result, perf_summary
+
+
+def _build_perf_summary(
+    summary: dict[str, Any] | None,
+    *,
+    result: Any,
+    query: str,
+    config_path: str,
+    parent_session_id: str,
+    worker_session_id: str,
+    sub_id: int,
+) -> dict[str, Any] | None:
+    """从子进程局部 summary 构造瘦身 ``perf_summary``（schema_version=1）。
+
+    性能采集关闭（``summary is None``）时返回 ``None``，业务结果仍正常返回。
+    只回传 ``llms`` 顶层聚合（canonical 6 字段 + call_count）与必要 identity；
+    不回传 nodes/tools 分桶。父进程只做 schema 校验和求和。
+    """
+    if not isinstance(summary, dict):
+        return None
+    if not get_env_bool("DATAAGENT_PERFORMANCE_ENABLED", default=False):
+        return None
+    llms_summary = summary.get("llms") if isinstance(summary.get("llms"), dict) else {}
+    overall = llms_summary.get("overall") if isinstance(llms_summary.get("overall"), dict) else {}
+    tokens: dict[str, int] = {}
+    for field in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "input_cache_read_tokens",
+        "input_cache_creation_tokens",
+        "output_reasoning_tokens",
+    ):
+        try:
+            tokens[field] = int(overall.get(field) or 0)
+        except (TypeError, ValueError):
+            tokens[field] = 0
+    try:
+        call_count = int(overall.get("call_count") or 0)
+    except (TypeError, ValueError):
+        call_count = 0
+    agent_type, provider, model = _read_subagent_identity_from_config(config_path)
+    worker_run_id = 0
+    if isinstance(result, dict):
+        try:
+            worker_run_id = int(result.get("run_id") or 0)
+        except (TypeError, ValueError):
+            worker_run_id = 0
+    cache_control_mode = str(overall.get("cache_control_mode") or "none_or_unknown")
+    status = "success"
+    if isinstance(result, dict) and isinstance(result.get("error"), str) and result.get("error"):
+        status = "failed"
+    perf_summary: dict[str, Any] = {
+        "schema_version": 1,
+        "source": "subagent",
+        "agent_type": agent_type,
+        "sub_id": int(sub_id),
+        "parent_session_id": parent_session_id,
+        "worker_session_id": worker_session_id,
+        "worker_run_id": worker_run_id,
+        "query": query,
+        "provider": provider,
+        "model": model,
+        "cache_control_mode": cache_control_mode,
+        "status": status,
+        "llms": {**tokens, "call_count": call_count},
+    }
+    return perf_summary
+
+
+def _read_subagent_identity_from_config(config_path: str) -> tuple[str, str, str]:
+    """从子 agent YAML 配置轻量读取 agent_type / provider / model（诊断展示用）。"""
+    agent_type = ""
+    provider = ""
+    model = ""
+    try:
+        import yaml
+
+        with open(config_path, encoding="utf-8") as fh:
+            cfg = yaml.safe_load(fh) or {}
+        if isinstance(cfg, dict):
+            agent_cfg = cfg.get("AGENT") or cfg.get("agent") or {}
+            if isinstance(agent_cfg, dict):
+                agent_type = str(agent_cfg.get("type") or agent_cfg.get("agent_type") or "")
+            model_cfg = cfg.get("MODEL") or {}
+            if isinstance(model_cfg, dict):
+                chat = model_cfg.get("chat_model") or {}
+                if isinstance(chat, dict):
+                    provider = str(chat.get("provider") or "")
+                    params = chat.get("params") or {}
+                    if isinstance(params, dict):
+                        model = str(params.get("model") or "")
+    except Exception:
+        pass
+    return agent_type, provider, model
 
 
 def _load_initial_state_file(initial_state_file: str | None) -> dict[str, Any]:

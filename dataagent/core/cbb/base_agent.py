@@ -190,6 +190,22 @@ class BaseAgent(ABC):
         state: Mapping[str, Any] | None = None,
         backend: str | None = None,
         flush_state_provider: Any = None,
+        summary_sink: Any = None,
     ):
-        """委托 :func:`~dataagent.core.utils.performance.bind_agent_performance`（实现不在本文件，避免 core 层膨胀）。"""
-        return bind_agent_performance(self, state=state, backend=backend, flush_state_provider=flush_state_provider)
+        """委托 :func:`~dataagent.core.utils.performance.bind_agent_performance`。
+
+        若 ``state`` 是可变 dict 且含 ``_performance_summary_sink`` 临时字段，则在此
+        读取并**移除**，避免进入业务 workflow state（见设计文档 §7/D4）。该字段由
+        子进程入口 ``sub_agent_entry._run_agent`` 注入，用于把局部 summary 回传给
+        调用方而不写入长期存活的 Agent 实例字段。
+        """
+        sink = summary_sink
+        if sink is None and isinstance(state, dict):
+            sink = state.pop("_performance_summary_sink", None)
+        return bind_agent_performance(
+            self,
+            state=state,
+            backend=backend,
+            flush_state_provider=flush_state_provider,
+            summary_sink=sink,
+        )

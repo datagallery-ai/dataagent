@@ -27,6 +27,12 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from dataagent.core.managers.llm_manager.usage import (
+    cache_hit_rate,
+    normalize_usage_metadata,
+    summarize_usage,
+)
+
 
 def _serialize(msg: BaseMessage) -> dict[str, Any]:
     """Convert one LangChain message to the ``messages.json`` record wire format."""
@@ -54,14 +60,7 @@ def _serialize(msg: BaseMessage) -> dict[str, Any]:
         payload["invalid_tool_calls"] = list(getattr(msg, "invalid_tool_calls", []) or [])
         usage = getattr(msg, "usage_metadata", None)
         if isinstance(usage, dict) and usage:
-            payload["usage_metadata"] = {
-                "input_tokens": int(usage.get("input_tokens") or 0),
-                "output_tokens": int(usage.get("output_tokens") or 0),
-                "total_tokens": int(usage.get("total_tokens") or 0),
-                "input_cache_read_tokens": int(usage.get("input_cache_read_tokens") or 0),
-                "input_cache_creation_tokens": int(usage.get("input_cache_creation_tokens") or 0),
-                "output_reasoning_tokens": int(usage.get("output_reasoning_tokens") or 0),
-            }
+            payload["usage_metadata"] = normalize_usage_metadata(usage)
     if isinstance(msg, ToolMessage):
         tool_call_id = getattr(msg, "tool_call_id", "")
         payload["tool_call_id"] = str(tool_call_id) if tool_call_id is not None else ""
@@ -86,14 +85,7 @@ def _deserialize(payload: dict[str, Any]) -> BaseMessage | None:
         if not tool_calls and isinstance(akw.get("tool_calls"), list):
             tool_calls = akw.get("tool_calls") or []
         raw_usage = payload.get("usage_metadata") or {}
-        usage_metadata = {
-            "input_tokens": int(raw_usage.get("input_tokens") or 0),
-            "output_tokens": int(raw_usage.get("output_tokens") or 0),
-            "total_tokens": int(raw_usage.get("total_tokens") or 0),
-            "input_cache_read_tokens": int(raw_usage.get("input_cache_read_tokens") or 0),
-            "input_cache_creation_tokens": int(raw_usage.get("input_cache_creation_tokens") or 0),
-            "output_reasoning_tokens": int(raw_usage.get("output_reasoning_tokens") or 0),
-        }
+        usage_metadata = normalize_usage_metadata(raw_usage)
         return AIMessage(
             content=content,
             additional_kwargs=akw,
@@ -196,7 +188,8 @@ def _compute_round_summaries(records: list[dict[str, Any]]) -> list[dict[str, An
     每轮 summary 额外包含：
     - ``elapsed_sec``：该轮首末消息的 ``_ts`` 时间戳之差（秒）。``_ts`` 由
       ``_serialize`` 在消息首次序列化时盖戳。旧记录无 ``_ts`` 时为 ``0.0``。
-    - ``cache_hit_rate``：``input_cache_read_tokens / input_tokens * 100``（%）。
+    - ``cache_hit_rate``：``input_cache_read_tokens / input_tokens``（0-1 小数），
+      ``input_tokens == 0`` 时为 ``None``；由共享 :func:`cache_hit_rate` 计算。
     """
     summaries: list[dict[str, Any]] = []
     round_idx = 0
@@ -231,15 +224,13 @@ def _compute_round_summaries(records: list[dict[str, Any]]) -> list[dict[str, An
 
     def _finalize(idx: int, usage: dict[str, int], start_ts: float | None, end_ts: float | None) -> dict[str, Any]:
         """Build the summary dict for one round from its accumulated usage and ts range."""
-        input_tokens = usage.get("input_tokens", 0)
-        cache_read = usage.get("input_cache_read_tokens", 0)
-        cache_hit_rate = round(cache_read / input_tokens * 100, 1) if input_tokens > 0 else 0.0
+        rate = cache_hit_rate(usage)
         elapsed_sec = round(end_ts - start_ts, 2) if start_ts is not None and end_ts is not None else 0.0
         return {
             "round": idx,
             **usage,
             "elapsed_sec": elapsed_sec,
-            "cache_hit_rate": cache_hit_rate,
+            "cache_hit_rate": rate,
         }
 
     def _update_ts(start_ts: float | None, end_ts: float | None, ts: float | None) -> tuple[float | None, float | None]:
@@ -272,7 +263,7 @@ def _compute_round_summaries(records: list[dict[str, Any]]) -> list[dict[str, An
                 round_start_ts, round_end_ts = _update_ts(round_start_ts, round_end_ts, ts)
         if t == "AIMessage" and round_usage is not None:
             round_has_ai = True
-            um = rec.get("usage_metadata") or {}
+            um = summarize_usage(rec.get("usage_metadata") or {})
             for k in round_usage:
                 round_usage[k] += int(um.get(k) or 0)
             round_start_ts, round_end_ts = _update_ts(round_start_ts, round_end_ts, ts)

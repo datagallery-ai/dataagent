@@ -4,7 +4,6 @@ import pytest
 
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 from dataagent.core.managers.llm_manager.llm_client import (
-    _CACHE_CONTROL_EPHEMERAL,
     _MAX_BREAKPOINTS,
     LLMClient,
     _supports_explicit_cache_control,
@@ -151,16 +150,23 @@ def _make_qwen_config(**params_overrides) -> LLMConfig:
 
 class TestSupportsExplicitCacheControl:
     def test_qwen_prefix(self):
-        assert _supports_explicit_cache_control("qwen-plus") is True
-        assert _supports_explicit_cache_control("Qwen3.6-Plus") is True
-        assert _supports_explicit_cache_control("QWEN-MAX") is True
+        # Qwen/QwQ inject only on explicit-capable endpoints (DashScope/百炼/Qwen 官方),
+        # NOT on generic OpenAI-compatible endpoints (spec: main-agent-cache-control).
+        assert _supports_explicit_cache_control("qwen-plus", provider="bailian") is True
+        assert _supports_explicit_cache_control("Qwen3.6-Plus", provider="dashscope") is True
+        assert _supports_explicit_cache_control("QWEN-MAX", base_url="https://dashscope.aliyuncs.com/v1") is True
+        assert _supports_explicit_cache_control("qwen-plus") is False
+        assert _supports_explicit_cache_control("Qwen3.6-Plus", provider="openai") is False
 
     def test_qwq_prefix(self):
-        assert _supports_explicit_cache_control("qwq-32b") is True
-        assert _supports_explicit_cache_control("QwQ-plus") is True
+        assert _supports_explicit_cache_control("qwq-32b", provider="bailian") is True
+        assert _supports_explicit_cache_control("QwQ-plus", base_url="https://dashscope.aliyuncs.com/v1") is True
+        assert _supports_explicit_cache_control("qwq-32b") is False
+        assert _supports_explicit_cache_control("QwQ-plus", provider="openai") is False
 
     def test_dashscope_prefix(self):
-        assert _supports_explicit_cache_control("dashscope/qwen-plus") is True
+        assert _supports_explicit_cache_control("dashscope/qwen-plus", provider="bailian") is True
+        assert _supports_explicit_cache_control("dashscope/qwen-plus", provider="openai") is False
 
     def test_claude(self):
         assert _supports_explicit_cache_control("claude-3-5-sonnet") is True
@@ -171,13 +177,16 @@ class TestSupportsExplicitCacheControl:
         assert _supports_explicit_cache_control("some-model", provider="anthropic") is True
 
     def test_bailian_non_qwen(self):
-        assert _supports_explicit_cache_control("deepseek-v3.2") is True
-        assert _supports_explicit_cache_control("kimi-k2.6") is True
-        assert _supports_explicit_cache_control("glm-5.1") is True
+        assert _supports_explicit_cache_control("deepseek-v3.2", provider="bailian") is True
+        assert _supports_explicit_cache_control("kimi-k2.6", provider="bailian") is True
+        assert _supports_explicit_cache_control("glm-5.1", provider="bailian") is True
+        # bailian whitelist models require the bailian endpoint (provider/base_url hint)
+        assert _supports_explicit_cache_control("deepseek-v3.2") is False
+        assert _supports_explicit_cache_control("deepseek-v3.2", provider="deepseek") is False
 
     def test_bailian_deepseek_v4_not_supported(self):
-        assert _supports_explicit_cache_control("deepseek-v4-flash") is False
-        assert _supports_explicit_cache_control("deepseek-v4-pro") is False
+        assert _supports_explicit_cache_control("deepseek-v4-flash", provider="bailian") is False
+        assert _supports_explicit_cache_control("deepseek-v4-pro", provider="bailian") is False
 
     def test_non_supported(self):
         assert _supports_explicit_cache_control("deepseek-chat") is False

@@ -39,6 +39,7 @@ class WorkerResult:
     iteration_count: int
     error: str | None
     resumed: bool
+    perf_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the dataclass to a JSON-serializable dictionary."""
@@ -52,6 +53,7 @@ def worker_session_id(parent_session_id: str, sub_id: int) -> str:
 
 def worker_result_from_payload(payload: dict[str, Any]) -> WorkerResult:
     """Parse a child-process ``worker_result`` payload into ``WorkerResult``."""
+    raw_perf_summary = payload.get("perf_summary")
     return WorkerResult(
         sub_id=int(payload.get("sub_id", 0) or 0),
         parent_session_id=str(payload.get("parent_session_id") or ""),
@@ -63,6 +65,7 @@ def worker_result_from_payload(payload: dict[str, Any]) -> WorkerResult:
         iteration_count=int(payload.get("iteration_count", 0) or 0),
         error=None if payload.get("error") is None else str(payload.get("error")),
         resumed=bool(payload.get("resumed", False)),
+        perf_summary=raw_perf_summary if isinstance(raw_perf_summary, dict) else None,
     )
 
 
@@ -74,6 +77,7 @@ def synthesize_worker_result(
     status: str = "success",
     error: str | None = None,
     resumed: bool = False,
+    perf_summary: dict[str, Any] | None = None,
 ) -> WorkerResult:
     """Synthesize ``WorkerResult`` from a subagent ``final_state``.
 
@@ -91,6 +95,10 @@ def synthesize_worker_result(
     ``iteration_count`` is planner completion steps: Flex ``curr_iter`` when that
     key is present, otherwise legacy ``iteration_count`` / ``iterations``. Swarm
     ``run_id`` is never used (it is the worker run ordinal, not planner depth).
+
+    ``perf_summary`` carries the child process's slim LLM usage summary
+    (``schema_version=1``) for parent-side idempotent aggregation; ``None``
+    when performance collection is disabled or unavailable.
     """
     state = final_state if isinstance(final_state, dict) else {}
     explicit_answer = _pick_text(state, "final_answer", "answer", "output", "result", "summary")
@@ -108,6 +116,7 @@ def synthesize_worker_result(
         iteration_count=_count_iterations(state),
         error=error,
         resumed=resumed,
+        perf_summary=perf_summary,
     )
 
 
