@@ -19,7 +19,6 @@ Planner / Skill Selector 业务直接耦合的逻辑（依赖 Context / state / 
 from __future__ import annotations
 
 import json
-import os
 import re
 import traceback
 from pathlib import Path
@@ -43,11 +42,6 @@ from dataagent.utils.parsing_utils import extract_json_block, normalize_newlines
 
 SKILL_SELECTION_CACHE_KEY = "planner_skill_selection"
 SKILL_SELECTOR_PROMPT_NAMESPACE = "skill_selector"
-
-# L2: 当无 plan + 已执行工具调用数达到此阈值时，todo 段升级为 PLAN REQUIRED 告警
-_DEFAULT_PLAN_REQUIRED_TOOL_THRESHOLD = 4
-# 匹配 skill/<name>/SKILL.md 路径，用于检测是否已读 SKILL.md
-_SKILL_MD_PATH_PATTERN = re.compile(r"skill/[^/]+/SKILL\.md", re.IGNORECASE)
 
 
 def _runtime_agent_config(runtime: Any) -> dict[str, Any]:
@@ -138,22 +132,7 @@ def prepare_flex_planner_prompt(
     )
     messages = [system_message] + ([] if has_current_user_message else [user_message]) + history_messages
 
-    # L3: 检测已读 SKILL.md 但仍无 plan，注入硬性提醒（system-voiced）
-    todo_plan_vars = _build_plan_prompt_variables(context=context, state=state)
-    if not todo_plan_vars["has_plan"] and todo_plan_vars["skill_md_read_without_plan"]:
-        messages.append(
-            HumanMessage(
-                content=(
-                    "[SYSTEM POLICY] A skill's SKILL.md has been read but no `create_plan` "
-                    "has been called. Per the Work Plan policy, multi-step skill workflows "
-                    "MUST be registered as a plan before substantive execution. "
-                    "Call `create_plan` now with the SKILL.md `## Workflow` steps as `todos`, "
-                    "then proceed with the first todo."
-                )
-            )
-        )
-
-    todo_message = build_todo_message(context=context, state=state)
+    todo_message = build_todo_message(context=context)
     if todo_message:
         messages.append(todo_message)
 
@@ -181,7 +160,7 @@ def sync_flex_planner_user_human_to_state(
     此处仅在 ``runtime.flex_planner_user_sync_pending`` 为 True 时追加一次，随后清除。
 
     openjiuwen 下 ``state`` 常为 ``GlobalStateProxy``：修改 ``messages`` 后须显式
-    ``state["messages"] = msgs`` 触发 ``update_global_state``，不能只依赖 list 地 append。
+    ``state["messages"] = msgs`` 触发 ``update_global_state``，不能只依赖 list 原地 append。
     """
     messages_to_append = [user_message]
 
@@ -201,13 +180,11 @@ def sync_flex_planner_user_human_to_state(
             _save_human_message_to_full(state, msg, runtime)
 
 
-def build_todo_message(context: Context, *, state: Any = None) -> HumanMessage | None:
+def build_todo_message(context: Context) -> HumanMessage | None:
     """构建包含待办指令的 HumanMessage。"""
     todo_template = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/todo")
     return build_human_message(
-        prompt_template=todo_template,
-        prompt_str="",
-        **_build_plan_prompt_variables(context=context, state=state),
+        prompt_template=todo_template, prompt_str="", **_build_plan_prompt_variables(context=context)
     )
 
 
@@ -890,64 +867,9 @@ def _allow_path_bullet_lines(config: dict[str, Any]) -> str:
     return "\n".join(f"- `{p}`" for p in paths)
 
 
-def _count_executed_tool_messages(state: Any) -> int:
-    """统计 ``state['messages']`` 中已执行的 ToolMessage 数。
-
-    用于 todo 段升级告警；不区分工具类型（含 HITL 的
-    ``request_human_feedback`` 也会留下 ToolMessage，但这种情况本就表明任务
-    复杂，纳入计数无害）。
-    """
-    count = 0
-    for m in state.get("messages") or []:
-        if (getattr(m, "type", "") or "").lower() == "tool":
-            count += 1
-    return count
-
-
-def _has_read_skill_md_without_plan(messages: list[Any]) -> bool:
-    """扫描 history，检测是否曾调用 ``read_file`` 读取 ``SKILL.md``。
-
-    匹配 ``AIMessage.tool_calls`` 中 ``name=='read_file'`` 且 ``args`` 含
-    ``skill/<name>/SKILL.md`` 路径的调用。
-    """
-    for m in messages:
-        for tc in getattr(m, "tool_calls", None) or []:
-            if not isinstance(tc, dict) or tc.get("name") != "read_file":
-                continue
-            raw_args = tc.get("args") or {}
-            if not isinstance(raw_args, dict):
-                continue
-            path = str(raw_args.get("path") or raw_args.get("file_path") or "")
-            if _SKILL_MD_PATH_PATTERN.search(path):
-                return True
-    return False
-
-
-def _plan_required_tool_threshold() -> int:
-    """读取 ``DATAAGENT_PLAN_REQUIRED_TOOL_THRESHOLD`` 环境变量，缺省 4。"""
-    raw = os.environ.get("DATAAGENT_PLAN_REQUIRED_TOOL_THRESHOLD", "")
-    if not raw.strip():
-        return _DEFAULT_PLAN_REQUIRED_TOOL_THRESHOLD
-    try:
-        v = int(raw.strip())
-        return v if v > 0 else _DEFAULT_PLAN_REQUIRED_TOOL_THRESHOLD
-    except ValueError:
-        return _DEFAULT_PLAN_REQUIRED_TOOL_THRESHOLD
-
-
-def _build_plan_prompt_variables(context: Context, *, state: Any = None) -> dict[str, Any]:
-    """从进程内全局 Plan 快照构建 planner 模板变量。
-
-    ``state`` 用于统计已执行工具调用数 / 检测是否已读 SKILL.md，从而触发
-    todo 段升级告警；缺省 ``None`` 时退化为只读 plan 快照（向后兼容）。
-    """
+def _build_plan_prompt_variables(context: Context) -> dict[str, Any]:
+    """从进程内全局 Plan 快照构建 planner 模板变量。"""
     plan = context.todolist_manager.todolist
-    tool_call_count = _count_executed_tool_messages(state) if state is not None else 0
-    # 只有 has_plan=False 时才检测 SKILL.md 已读；有 plan 时此标志恒为 False
-    skill_md_read_without_plan = (
-        _has_read_skill_md_without_plan(state.get("messages") or []) if state is not None and plan is None else False
-    )
-    plan_required_threshold = _plan_required_tool_threshold()
     if plan is None:
         return {
             "has_plan": False,
@@ -956,9 +878,6 @@ def _build_plan_prompt_variables(context: Context, *, state: Any = None) -> dict
             "plan_approach": "",
             "plan_current_todo": "",
             "plan_todos_overview": "",
-            "tool_call_count": tool_call_count,
-            "skill_md_read_without_plan": skill_md_read_without_plan,
-            "plan_required_threshold": plan_required_threshold,
         }
 
     incomplete = [t for t in plan.todos if not t.completed]
@@ -977,7 +896,4 @@ def _build_plan_prompt_variables(context: Context, *, state: Any = None) -> dict
         "plan_approach": plan.approach,
         "plan_current_todo": current_todo,
         "plan_todos_overview": "\n".join(overview_lines),
-        "tool_call_count": tool_call_count,
-        "skill_md_read_without_plan": False,
-        "plan_required_threshold": plan_required_threshold,
     }

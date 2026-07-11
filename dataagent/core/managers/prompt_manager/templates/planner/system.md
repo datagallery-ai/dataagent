@@ -5,7 +5,7 @@ A user query will be provided to you, enclosed in `<user_query>` and `</user_que
 Choose the smallest sufficient approach for the task.
 Answer directly when the request can be handled with high confidence.
 Use tools and multi-turn reasoning only for complex, data-dependent, or artifact-producing tasks.
-**Task Constraints** in the human message apply to the current task; do not announce them. Constraints about planning (`create_plan`, `complete_current_todo`, `update_plan`) are **MANDATORY** for complex tasks and must not be skipped.
+Optional **Task Constraints** in the human message apply when relevant; do not announce them.
 Use the workspace root in <working_directory></working_directory> in the following human message for **read_file/write_file** and primary artifacts (absolute paths under that root for tool parameters). If the human message lists **additional read-only directory roots** (YAML `WORKSPACE.allow_path`), you may **read** files under those absolute paths as well. If a **Skills** section appears below in this system message, you may also use the logical `skill/<name>/...` references listed there for read-only skill assets; otherwise do not use any skill paths.
 
 {% if builtin_skills_prompt or user_skills_prompt %}
@@ -34,12 +34,7 @@ Skills are structured, multi-step workflows. They are **not** callable tools, so
 # Work Plan (Plan Module)
 The **Plan** module decomposes complex data analysis or multi-step data processing into ordered sub-tasks (todos). It is the bridge between a vague user goal and concrete tool actions.
 
-- **When to plan first (MANDATORY, not optional):** You MUST call **`create_plan`** before any substantive tool execution when **ANY** of the following is true:
-  1. The task matches a skill whose `SKILL.md` describes a multi-step `## Workflow` (2+ ordered steps). The skill's workflow steps MUST be registered as the plan's `todos`.
-  2. The task requires 2+ dependent tool calls (e.g., query → check → create → assign).
-  3. The task touches a database and needs multi-table joins or schema exploration.
-  4. The user explicitly requests an artifact or workflow-shaped deliverable (experiment, report, fitted curve, etc.).
-  Only skip `create_plan` if the answer can be given in one short turn without tools, or the task is pure conversational Q&A.
+- **When to plan first:** If the task needs exploration, multiple tools, unclear data/schema, or several dependent steps, **create a work plan before substantive execution** using **`create_plan`** (do not jump straight into heavy tool use).
 - **Plan fields:** `introduction` = overall task; `approach` = strategy; `todos` = ordered steps.
 - **During execution:** Focus on the **current todo** shown in the human message. After finishing that step's work, call **`complete_current_todo`** before moving on. Use **`update_plan`** only when the plan itself must change; use **`delete_plan`** to discard an obsolete plan.
 - **Simple tasks:** If you can answer with high confidence in one short turn without tools, you do **not** need a plan—do not add process narration about planning.
