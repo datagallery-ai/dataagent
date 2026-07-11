@@ -45,6 +45,10 @@ class SelectorNode(BaseNL2SQLNode):
         self.threshold = self.config.get("threshold", DEFAULT_NL2SQL_SELECTOR_THRESHOLD)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        if not state["execution_results"]:
+            logger.warning("Selector: empty execution_results, accepting without selection.")
+            state["proceed"] = True
+            return state
         res = [
             {"id": r.id, "sql": r.sql, "cols": r.columns, "rows": r.rows_preview, "err": r.error}
             for r in state["execution_results"]
@@ -67,14 +71,18 @@ class SelectorNode(BaseNL2SQLNode):
             logger.warning("Selector failed.")
             sel = [{"score": 1, "issues": []}] * len(state["execution_results"])
         for e, s in zip(state["execution_results"], sel, strict=True):
-            e.confidence = s["score"]
-            e.issues = e.issues + s["issues"]
+            e.confidence = s.get("score", 0)
+            e.issues = e.issues + s.get("issues", [])
         p = "\n".join([f"Score: {e.confidence:.2f}, Issues: {e.issues}" for e in state["execution_results"]])
         message = f"=== Selector ===\n{p}"
         logger.info(message)
         state["stream_message"] = message
         best = max(state["execution_results"], key=lambda e: (e.confidence, e.score))
-        if best.confidence >= self.threshold or state["sel_retries"] <= 0:
+        # A valid empty result (no execution error) should NOT trigger reflector loops:
+        # SQL executed successfully but returned 0 rows is legitimate; reflector cannot
+        # fix "no data" by rewriting SQL. Restored from b576b53 (revert of b33ac71).
+        has_exec_error = any(e.error for e in state["execution_results"])
+        if best.confidence >= self.threshold or state["sel_retries"] <= 0 or not has_exec_error:
             state["sql"], state["confidence"] = best.sql, best.confidence
             state["columns"], state["rows"], state["rows_preview"] = best.columns, best.rows, best.rows_preview
             p = f"{state['sql']}\n{state['rows_preview']}"
@@ -84,8 +92,8 @@ class SelectorNode(BaseNL2SQLNode):
             logger.info(message)
             state["stream_message"] = message
             return state
-        state["ref_retries"] = 2
         state["sel_retries"] -= 1
+        state["ref_retries"] = min(state["ref_retries"], 1)
         for e in state["execution_results"]:
             e.need_ref = True
         state["proceed"], state["validation_results"] = False, list(state["execution_results"])

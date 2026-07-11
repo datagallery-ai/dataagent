@@ -216,3 +216,11 @@ class TestContext:
         assert flag_knowledge
         assert flag_table
         assert flag_column
+
+    def test_ir_summary_cache_initialized_as_empty_dict(self):
+        """P1: Context 初始化时 ir_summary_cache 为空 dict。"""
+        context = ContextFactory.get_context(
+            user_id="jiutian_applicationlayer", session_id="#00001", run_id=0, sub_id=0
+        )
+        assert isinstance(context.ir_summary_cache, dict)
+        assert len(context.ir_summary_cache) == 0

@@ -26,7 +26,8 @@ from dataagent.core.context.message_history import deserialize_message, serializ
 from dataagent.core.swarm.worker_memory import strip_subagent_runtime_fields
 from dataagent.core.swarm.worker_result import synthesize_worker_result
 from dataagent.interface.sdk.agent import DataAgent
-from dataagent.utils.runtime_paths import validate_user_id
+from dataagent.utils.log import LoggerConfig, reconfigure
+from dataagent.utils.runtime_paths import resolve_user_root, validate_user_id
 
 
 def main() -> int:
@@ -148,6 +149,8 @@ async def _run_agent(
     resolved_user_id, resolved_session_id, resolved_sub_id = _resolve_subagent_identity(
         user_id=user_id, session_id=session_id, sub_id=sub_id
     )
+    log_path = (resolve_user_root(user_id=resolved_user_id) / "logs" / f"{resolved_session_id}.log").resolve()
+    reconfigure(LoggerConfig(process_name="subagent", file_path=str(log_path), file_path_explicit=True))
     agent = DataAgent.from_config(Path(config_path))
     initial_state = _load_initial_state_file(initial_state_file)
     defaults = {

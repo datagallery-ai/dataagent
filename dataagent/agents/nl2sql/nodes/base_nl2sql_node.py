@@ -13,13 +13,26 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
-from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX
+from dataagent.utils.constants import _TZ_CN, NL2SQL_PROMPT_PREFIX
+from dataagent.utils.env_utils import get_env_bool
+from dataagent.utils.log import logger
+
+_TYPE_LABELS = {
+    SystemMessage: "SYSTEM",
+    HumanMessage: "HUMAN",
+    AIMessage: "AI",
+    ToolMessage: "TOOL",
+}
 
 
 class BaseNL2SQLNode(BaseNode):
@@ -33,6 +46,45 @@ class BaseNL2SQLNode(BaseNode):
         """
         super().__init__(name=name, **kwargs)
         self._config_manager = config_manager
+        self._nl2sql_context_dump_dir: Path | None = None
+        self._context_dump_seq: list[int] = [0]
+        self._context_dump_enabled: bool = get_env_bool("DATAAGENT_CONTEXT_DUMP")
+
+    def set_context_dump_dir(self, dump_dir: Any | None) -> None:
+        if dump_dir is not None:
+            self._nl2sql_context_dump_dir = Path(dump_dir)
+        else:
+            self._nl2sql_context_dump_dir = None
+
+    def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
+        if not self._context_dump_enabled:
+            return
+        if self._nl2sql_context_dump_dir is None:
+            return
+        try:
+            self._context_dump_seq[0] += 1
+            seq = self._context_dump_seq[0]
+            label = f"{node_name}_{action}" if action else node_name
+            dump_file = self._nl2sql_context_dump_dir / f"{seq:02d}_round_{label}.txt"
+            separator = "=" * 80
+            ts = datetime.now(tz=_TZ_CN).strftime("%Y-%m-%d %H:%M:%S")
+            with dump_file.open("w", encoding="utf-8") as f:
+                f.write(f"{separator}\n")
+                f.write(f"  NL2SQL Prompt Dump  |  {ts}  |  node: {label}\n")
+                f.write(f"{separator}\n\n")
+                f.write("--- [0] SYSTEM ---\n")
+                f.write(f"{system_prompt}\n\n")
+                f.write("--- [1] HUMAN ---\n")
+                f.write(f"{user_prompt}\n\n")
+                f.write("--- [2] AI ---\n")
+                f.write(f"{result}\n\n")
+                f.write(f"{separator}\n")
+                f.write("  END OF DUMP\n")
+                f.write(f"{separator}\n")
+            logger.info(f"NL2SQL context dump saved: {seq:02d}_round_{label}.txt")
+        except Exception as exc:
+            self._context_dump_seq[0] -= 1
+            logger.warning(f"Failed to dump NL2SQL context: {exc}")
 
     @property
     def db(self):
@@ -55,8 +107,14 @@ class BaseNL2SQLNode(BaseNode):
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}user"
         ).apply_prompt_template(**context)
-        prompts = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        return llm.invoke(prompts).content
+        prompts = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        response = llm.invoke(prompts)
+        content = response.content
+        self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
+        return content
 
     def _get_agent_config(self, key: str, default: Any = None) -> Any:
         """Read configuration from the bound per-Agent ConfigManager."""

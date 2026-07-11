@@ -1,5 +1,15 @@
 # Work Plan Status
 {% if not has_plan %}
+{% if skill_md_read_without_plan or (tool_call_count and tool_call_count >= plan_required_threshold) %}
+⚠️ **PLAN REQUIRED — {{ tool_call_count }} tool call(s) made without an active plan{% if skill_md_read_without_plan %}, and a skill's SKILL.md has been read{% endif %}**.
+
+This is a strong signal that the task is complex (multi-step / data-dependent / skill-driven). Continuing without a plan risks:
+- redoing already-completed steps (no `complete_current_todo` tracking)
+- losing state across rounds (no todo list to anchor attention)
+- triggering redundant HITL on already-confirmed actions
+
+**For this turn, call `create_plan` FIRST** (unless the answer can now be given in one short turn without further tools). If a skill's SKILL.md is in context, register its `## Workflow` steps as the plan's `todos`.
+{% else %}
 There is **no active work plan** for this session.
 
 Before substantive execution on a **complex** data analysis or multi-step processing task:
@@ -8,6 +18,7 @@ Before substantive execution on a **complex** data analysis or multi-step proces
 3. Then execute **only** what is needed for the first todo—or the exploration step itself if the plan's first todo is exploration.
 
 If the user query is simple and can be answered directly without tools, respond directly and do **not** create a plan.
+{% endif %}
 {% elif plan_all_todos_done %}
 
 **Overall task (introduction):** {{ plan_introduction }}

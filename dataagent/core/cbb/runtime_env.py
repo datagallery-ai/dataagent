@@ -551,16 +551,6 @@ def format_runtime_environment(env_data: dict[str, Any]) -> str:
     if exe:
         lines.append(f"- Python interpreter: {exe}")
 
-    # 资源
-    res = env_data.get("resources", {})
-    if res.get("available"):
-        cpu = res.get("cpu_usage_percent")
-        if cpu is not None:
-            lines.append(f"- CPU: {cpu}% ({res.get('cpu_count')} cores)")
-        mem_total = res.get("memory_total_gb")
-        if mem_total:
-            lines.append(f"- Memory: {res.get('memory_used_gb')}GB / {mem_total}GB ({res.get('memory_percent')}%)")
-
     # Database
     db = env_data.get("database")
     if db:

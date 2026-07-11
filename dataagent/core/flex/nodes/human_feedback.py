@@ -40,6 +40,22 @@ if TYPE_CHECKING:
     from dataagent.core.context.context import Context
 
 
+# 节点内对空反馈的最大重试次数。仅对 terminal_mode 路径生效；
+# session-resume 与 langgraph interrupt 路径因语义限制不做节点内重试，
+# 空反馈统一交由下方 sentinel 机制 + planner 层重试处理。
+MAX_EMPTY_FEEDBACK_RETRIES = 3
+
+# 用户连续未提供有效反馈时回灌给 planner 的 sentinel 文本。
+# 强约束 LLM 重新询问用户，禁止在未获得明确答复前自主决策或推进待确认操作。
+# 同时要求 planner 如实汇报对话历史中已完成的操作结果，避免"遗忘"已完成动作。
+_EMPTY_FEEDBACK_SENTINEL_TMPL = (
+    "[SYSTEM] 用户连续 {n} 次未提供有效反馈。"
+    "请先根据当前对话历史如实汇报已完成的操作结果（如有），"
+    "禁止基于本次空反馈发起新的自主决策或推进新的待确认操作；"
+    "如需继续，请重新询问用户原始问题以获取明确答复。"
+)
+
+
 class HumanFeedbackNode(BaseNode):
     """
     Human Feedback 节点（基于工具调用）
@@ -78,9 +94,10 @@ class HumanFeedbackNode(BaseNode):
         流程：
         1. 提取 request_human_feedback 的参数
         2. 构造提示
-        3. 收集反馈（三路分支）
-        4. 添加 ToolMessage
-        5. 清除标志，返回 Actor
+        3. 收集反馈（三路分支，terminal_mode 路径支持节点内空值重试）
+        4. 空反馈防御：超过重试上限后注入 sentinel，强制 planner 重新询问
+        5. 添加 ToolMessage
+        6. 清除标志，返回 Actor
         """
         state = cast(FlexState, state)
 
@@ -109,23 +126,36 @@ class HumanFeedbackNode(BaseNode):
 
         logger.info("中断等待用户输入...")
 
-        # === 阶段3：获取用户反馈（三路分支）===
+        # === 阶段3：获取用户反馈（三路分支 + 空值重试）===
         updated_state: dict[str, Any] = {}
+        user_feedback = ""
+        empty_attempts = 0
 
         if state.get("terminal_mode", False):
-            # 路径1：终端模式
+            # 路径1：终端模式 — 支持节点内重试
             # 在 debug 模式下，Rich Live spinner 会持续刷新终端，导致输入行被覆盖，表现为“打字不显示”。
             # 这里直接暂停 Live 更新，待输入完成后再恢复。
             suspend_active_renderer()
             try:
                 rendered_by_renderer = render_active_human_feedback_prompt(reason=reason, pending_action=pending_action)
-                prompt_text = "请提供您的意见： " if rendered_by_renderer else feedback_msg + "\n"
-                user_feedback = await asyncio.to_thread(input, prompt_text)
+                base_prompt = "请提供您的意见： " if rendered_by_renderer else feedback_msg + "\n"
+                for attempt in range(MAX_EMPTY_FEEDBACK_RETRIES):
+                    prompt_text = base_prompt
+                    if attempt > 0:
+                        prompt_text = (
+                            f"\n⚠️ 您已连续 {attempt} 次未提供有效输入，请重新提供反馈后回车。\n\n" + base_prompt
+                        )
+                    candidate = await asyncio.to_thread(input, prompt_text)
+                    if candidate and candidate.strip():
+                        user_feedback = candidate
+                        break
+                    empty_attempts += 1
+                    logger.warning(f"[HITL] 用户反馈为空 (attempt {empty_attempts}/{MAX_EMPTY_FEEDBACK_RETRIES})")
             finally:
                 resume_active_renderer()
 
         elif isinstance(state.get("__human_feedback_resume__"), str) and state.get("__human_feedback_resume__").strip():
-            # 路径2：工作流 session 恢复
+            # 路径2：工作流 session 恢复（一次性，无法在节点内重试）
             resume_feedback = state["__human_feedback_resume__"]
             user_feedback = resume_feedback.strip()
             updated_state = {"__human_feedback_resume__": ""}
@@ -139,8 +169,15 @@ class HumanFeedbackNode(BaseNode):
             except Exception as e:
                 logger.warning(f"[HITL] 恢复 Context 时出错：{e}")
 
+            if not user_feedback:
+                empty_attempts = 1
+                logger.warning("[HITL] session 恢复反馈为空，无法在节点内重试")
+
         else:
             # 路径3：正常模式（LangGraph / OpenJiuWen 中断）
+            # 注意：LangGraph 的 interrupt() 会通过 GraphInterrupt 挂起当前执行，
+            # 恢复时节点从头重新执行，无法在节点内维护 attempt 计数。
+            # 此处仅做一次采集；空反馈交由下方 sentinel + planner 层重试处理。
             # 这里只负责触发中断；Context 的快照/最终持久化统一在 Agent.astream 中处理。
             try:
                 ctx = get_context_for_flex_state(state, runtime, swallow_errors=True)
@@ -155,6 +192,18 @@ class HumanFeedbackNode(BaseNode):
             # - 恢复时：interrupt(Command.resume=...) 会直接返回用户输入字符串。
             user_feedback = interrupt(feedback_msg)
             updated_state = {}
+
+            if not (user_feedback and user_feedback.strip()):
+                empty_attempts = 1
+                logger.warning("[HITL] interrupt 返回的反馈为空")
+
+        # === 空反馈防御：超过重试上限后注入 sentinel，强制 planner 重新询问 ===
+        if not (user_feedback and user_feedback.strip()):
+            user_feedback = _EMPTY_FEEDBACK_SENTINEL_TMPL.format(n=empty_attempts or MAX_EMPTY_FEEDBACK_RETRIES)
+            logger.warning(
+                f"[HITL] 重试 {empty_attempts} 次后用户仍未提供有效反馈，"
+                f"注入 sentinel 引导 planner 重新询问: {user_feedback}"
+            )
 
         # === 阶段4：处理反馈 ===
         logger.info("已收到用户反馈")

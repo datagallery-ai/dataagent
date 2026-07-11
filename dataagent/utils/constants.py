@@ -32,6 +32,10 @@
 # 当前定义位置: dataagent/core/flex/hooks/cross_session_recall.py
 # 建议 YAML 路径: CROSS_SESSION_RECALL.enable / top_k / max_chars_per_session
 
+from datetime import timedelta, timezone
+
+_TZ_CN = timezone(timedelta(hours=8))
+
 DEFAULT_CROSS_SESSION_RECALL_TOP_K: int = 3
 """跨 Session 召回的历史 Session 数量上限。"""
 

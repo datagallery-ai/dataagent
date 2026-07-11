@@ -12,7 +12,7 @@
 # ============================================================================
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +21,7 @@ from dataagent.config import ConfigManager
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.suite.debug_dump import dump_merged_config
-from dataagent.utils.log import logger
+from dataagent.utils.log import logger, setup_session_log
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
 if TYPE_CHECKING:
@@ -42,6 +42,7 @@ class DataAgent:
         self.global_init(self.config)
 
         self._chat_agent_instance = None
+        self.session_id = None
 
         logger.trace(f"DataAgent initialized with {self.backend} backend")
 
@@ -157,6 +158,10 @@ class DataAgent:
         self._ensure_workspace(initial_state)
         self._touch_workspace_catalog(initial_state)
         self._dump_runtime_config(initial_state)
+        setup_session_log(
+            user_id=str(initial_state.get("user_id", "anonymous")),
+            session_id=str(initial_state.get("session_id", kwargs.get("session_id"))),
+        )
         kwargs["initial_state"] = initial_state
         if "workspace" in kwargs:
             kwargs["workspace"] = workspace
@@ -215,11 +220,19 @@ class DataAgent:
             if sid is not None and str(sid).strip():
                 session_id = str(sid).strip()
         if not session_id:
-            # 在外部未传入 session_id时，自动生成新的session_id并使用
-            session_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
+            # 仅在 self.session_id 为空时生成新 id（不回写外部传入值，避免并发覆盖）
+            if not self.session_id:
+                self.session_id = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_") + str(
+                    uuid.uuid4()
+                )
+            session_id = self.session_id
         workspace = self._validate_workspace(workspace)
         initial_state = self._initialize_state(initial_state, session_id, workspace)
         logger.debug(f"当前 workspace：{initial_state['workspace']}")
+        setup_session_log(
+            user_id=str(initial_state.get("user_id", "anonymous")),
+            session_id=str(initial_state.get("session_id", session_id)),
+        )
         try:
             self._ensure_workspace(initial_state)
             self._touch_workspace_catalog(initial_state)
@@ -307,7 +320,7 @@ class DataAgent:
             else:
                 initial_state.pop("workspace", None)
         if session_id is None:
-            session_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
+            session_id = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
         defaults = {
             "messages": [],
             "complete": False,

@@ -145,3 +145,57 @@ def test_resolve_llm_config_entry_missing_api_key(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ValueError, match="Missing API key"):
         resolve_llm_config_entry(model_section=_model_section(), entry={"name": "chat_model"})
+
+
+def _qwen_model_section() -> dict:
+    return {
+        "qwen_plus": {
+            "provider": "qwen_plus",
+            "model_type": "chat",
+            "params": {"model": "Qwen3.6-Plus"},
+        }
+    }
+
+
+class TestResolveQwenCacheDefaults:
+    """自实现客户端不再使用 litellm 的 custom_llm_provider 参数。
+
+    验证 resolve_llm_config_entry 不会在 flat 中残留 custom_llm_provider。
+    """
+
+    def test_qwen_model_no_custom_llm_provider(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("QWEN_PLUS_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        monkeypatch.setenv("QWEN_PLUS_API_KEY", "sk-test")
+
+        flat = resolve_llm_config_entry(
+            model_section=_qwen_model_section(),
+            entry={"name": "qwen_plus"},
+        )
+
+        assert flat["model"] == "Qwen3.6-Plus"
+        assert "custom_llm_provider" not in flat
+
+    def test_explicit_custom_llm_provider_stripped(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("QWEN_PLUS_BASE_URL", "https://example.invalid/v1")
+        monkeypatch.setenv("QWEN_PLUS_API_KEY", "sk-test")
+
+        ms = _qwen_model_section()
+        ms["qwen_plus"]["params"]["custom_llm_provider"] = "dashscope"
+
+        flat = resolve_llm_config_entry(
+            model_section=ms,
+            entry={"name": "qwen_plus"},
+        )
+
+        assert "custom_llm_provider" not in flat
+
+    def test_non_qwen_no_custom_llm_provider(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
+        monkeypatch.setenv("BAILIAN_API_KEY", "sk-env")
+
+        flat = resolve_llm_config_entry(
+            model_section=_model_section(),
+            entry={"name": "chat_model"},
+        )
+
+        assert "custom_llm_provider" not in flat

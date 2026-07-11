@@ -23,7 +23,6 @@ Return a json array enclosed in ```json``` block.
   {
     "id": <id>,
     "sql": <sql>
-    ]
   }
 ]
 ```

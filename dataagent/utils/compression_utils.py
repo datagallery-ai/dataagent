@@ -12,6 +12,7 @@
 # ============================================================================
 import json
 import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -71,13 +72,18 @@ def direct_fold(
     active_llm = llm if llm is not None else llm_manager.get_default_llm()
 
     def _build_result(response: Any) -> list[AnyMessage]:
+        # 折叠摘要是一段注入式上下文，不是真实的用户交互。盖 ``_folded`` 标记
+        # 让 ``_compute_round_summaries`` 跳过其 ``_ts``（首次序列化时间可能远
+        # 晚于该轮真实消息，否则会导致 elapsed_sec 出现负数）。
+        # ``_ts`` 在创建时盖戳仅为一致性，``_compute_round_summaries`` 会跳过。
+        folded_kw = {"_folded": True, "_ts": time.time()}
         content = getattr(response, "content", None)
         if content:
-            return [HumanMessage(content=str(content))]
+            return [HumanMessage(content=str(content), additional_kwargs=dict(folded_kw))]
         # fallback: 部分 reasoning 模型将实际输出放在 reasoning_content 中
         reasoning = getattr(response, "reasoning_content", None)
         if reasoning:
-            return [HumanMessage(content=str(reasoning))]
+            return [HumanMessage(content=str(reasoning), additional_kwargs=dict(folded_kw))]
         raise ValueError("No response from any LLM. Please check the LLM configuration.")
 
     if use_async:
@@ -153,7 +159,9 @@ def _find_head_count(tot_messages: list[AnyMessage]) -> int:
     如果首条是 SystemMessage，保留前 2 条（System + User）；
     否则只保留第 1 条（User 直接作为首条）。
     """
-    if tot_messages and isinstance(tot_messages[0], SystemMessage):
+    if not tot_messages:
+        return 1
+    if isinstance(tot_messages[0], SystemMessage):
         return 2
     return 1
 

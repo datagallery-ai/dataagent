@@ -1,0 +1,84 @@
+AGENT_CONFIG:
+  name: "DataAgent for Changping Lab"
+  version: "1.0"
+  description: "DataAgent for Changping Lab"
+  backend: "langgraph"
+  type: "react"
+  mode: "dev"
+  enable_human_feedback: true
+
+WORKSPACE:
+  path: "__WORKSPACE_DIR__"
+  allow_path:
+    - "__WORKSPACE_DIR__"
+
+CONTEXT:
+  # IR 替换保留轮数（turn 距离 ≥ 此值时替换）
+  recent_turns: 200
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "deepseek"
+    params:
+      model: "deepseek-v4-flash"
+      base_url: "$env{DEEPSEEK_BASE_URL}"
+      api_key: "$env{DEEPSEEK_API_KEY}"
+      temperature: 0
+
+SCENARIO:
+  personal: "You are an AI assistant in a biology research context."
+  chat:
+    instructions: >-
+      对于涉及数据库、数据分析或多步骤工作流的复杂任务，按以下顺序执行：
+      1. 先调用 get_ontology_description_tool 了解数据库 schema 与可用表；
+      2. 调用 create_plan 制定工作计划（含 introduction、approach、todos），再开始实质性执行；
+      3. 每完成一个 todo，调用 complete_current_todo 标记进度，避免重复执行已完成的步骤。
+      对于简单问答、闲聊或无需数据库的任务，可直接回答，无需调用上述工具。
+
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 32000
+
+POST_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "nl2sql_sub_agent_tool"
+      config:
+        llm_model: "chat_model"
+        core_config:
+          perceptor:
+            user_sql_rules: "sql_rules_changping"
+            user_few_shot_examples: null
+          generator:
+            strategies: ["prompt"]
+            num_samples: 1
+
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "get_ontology_description_tool"
+  skills:
+    custom_dirs:
+      - "skills"
+
+DATABASE:
+  db_id: "changping02"
+  engine: "sqlite"
+  config:
+    path: "__WORKSPACE_DIR__/changping02.sqlite"
+
+SEMANTIC_LAYER:
+  base_url: "http://localhost:31000"  # 客户端会统一补齐到 /api/semantic/v1
+  username: null
+  password: null
+  timeout: 30
+  verify_ssl: false
