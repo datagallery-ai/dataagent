@@ -32,6 +32,7 @@ from dataagent.actions.tools.local_tool.tools import (
     reset_subagent_runtime_context,
     set_file_inspect_workspace,
     set_subagent_runtime_context,
+    set_user_sqlite_path,
 )
 from dataagent.actions.tools.schema_validator import ParamsValueError, SchemaValidator
 from dataagent.core.cbb.base_node import BaseNode
@@ -345,6 +346,7 @@ class Executor(BaseNode):
                     user_id=str(state.get("user_id")) if state.get("user_id") is not None else None,
                     session_id=str(state.get("session_id")) if state.get("session_id") is not None else None,
                     sub_id=int(state.get("sub_id")) if state.get("sub_id") is not None else None,
+                    run_id=int(state.get("run_id")) if state.get("run_id") is not None else None,
                     runtime=runtime,
                 )
 
@@ -550,6 +552,7 @@ class Executor(BaseNode):
         user_id: str | None = None,
         session_id: str | None = None,
         sub_id: int | None = None,
+        run_id: int | None = None,
         runtime: Any = None,
     ) -> NormalizedToolExecution:
         return await self._execute_tool_call_impl(
@@ -558,6 +561,7 @@ class Executor(BaseNode):
             user_id=user_id,
             session_id=session_id,
             sub_id=sub_id,
+            run_id=run_id,
             runtime=runtime,
         )
 
@@ -569,9 +573,10 @@ class Executor(BaseNode):
         user_id: str | None,
         session_id: str | None,
         sub_id: int | None,
+        run_id: int | None = None,
         runtime: Any,
     ) -> NormalizedToolExecution:
-        setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, runtime)
+        setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, run_id, runtime)
         tool_args, backfill_changes = self._validate_and_backfill_args(
             tool_name=setup.tool_name,
             tool_args=setup.tool_args,
@@ -798,7 +803,8 @@ class Executor(BaseNode):
         user_id: str | None,
         session_id: str | None,
         sub_id: int | None,
-        runtime: Any,
+        run_id: int | None = None,
+        runtime: Any = None,
     ) -> _ToolCallExecutionSetup:
         """Prepare progress emitter, metadata, sandbox guard, and subagent runtime context for one tool call.
 
@@ -844,11 +850,24 @@ class Executor(BaseNode):
         agent_cfg: dict[str, Any] = {}
         if runtime is not None and hasattr(runtime, "get_all_config"):
             agent_cfg = runtime.get_all_config() or {}
+
+        # 把 DATABASE.config.path 透传给 bash 子进程的 USER_SQLITE_PATH，供 skill 脚本
+        # 直接 sqlite3.connect(os.environ['USER_SQLITE_PATH'])。仅 sqlite 引擎注入，
+        # 非 sqlite 或缺失时清空，避免上一轮调用的残值污染当前调用。
+        sqlite_path_for_shell: str | None = None
+        db_cfg = agent_cfg.get("DATABASE") if isinstance(agent_cfg, dict) else None
+        if isinstance(db_cfg, dict) and db_cfg.get("engine") == "sqlite":
+            db_path_val = (db_cfg.get("config") or {}).get("path") if isinstance(db_cfg.get("config"), dict) else None
+            if isinstance(db_path_val, str) and db_path_val.strip():
+                sqlite_path_for_shell = db_path_val.strip()
+        set_user_sqlite_path(sqlite_path_for_shell)
+
         context_token = set_subagent_runtime_context(
             user_id=user_id,
             session_id=session_id,
             sub_id=sub_id,
             parent_user_query=getattr(runtime, "parent_user_query", None) or getattr(runtime, "user_query", None),
+            run_id=run_id,
             progress_callback=progress_cb,
             tool_call_id=tool_call_id,
             agent_config=agent_cfg,

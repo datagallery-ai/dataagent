@@ -18,14 +18,14 @@ lives in ``dataagent.utils.log.dataagent_logger`` to avoid colliding with the co
 """
 
 __all__ = [
-    # 核心类
     "DataAgentLogger",
     "LoggerConfig",
-    # 全局实例和函数
     "init_logger",
     "get_logger",
     "reconfigure",
     "setup_subprocess_logging",
+    "setup_session_log",
+    "build_session_log_path",
 ]
 
 from dataagent.utils.env_utils import get_env
@@ -33,9 +33,11 @@ from dataagent.utils.env_utils import get_env
 from .dataagent_logger import (
     DataAgentLogger,
     LoggerConfig,
+    build_session_log_path,
     get_logger,
     init_logger,
     reconfigure,
+    setup_session_log,
     setup_subprocess_logging,
 )
 

@@ -191,6 +191,7 @@ class Context:
             pre_workflow=init_opts.pre_workflow,
             post_workflow=init_opts.post_workflow,
         )
+        self._ir_summary_cache: dict[str, str] = {}
 
     @property
     def initial_pt(self) -> str | None:
@@ -236,6 +237,16 @@ class Context:
     def nav(self) -> TrajectoryNavigator:
         """The navigator of the context."""
         return self._nav
+
+    @property
+    def ir_summary_cache(self) -> dict[str, str]:
+        """Per-run IR summary cache keyed by ``tool_call_id`` (P1 stable IR replacement).
+
+        First successful render of an IR summary for a given ``tool_call_id`` is
+        frozen here; subsequent ``try_replace_with_ir`` calls reuse the cached
+        content instead of re-rendering from the (growing) trajectory.
+        """
+        return self._ir_summary_cache
 
     @staticmethod
     def load_meta_from_json(

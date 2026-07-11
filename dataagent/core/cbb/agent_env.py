@@ -57,6 +57,10 @@ class Env:
     compress_token_limit: int | None = None
     compress_message_cnt: int | None = None
     file_node_threshold: int | None = None
+    # IR 替换的 recent_turns 阈值（YAML CONTEXT.recent_turns 可覆盖，None 表示用 DEFAULT_IR_RECENT_TURNS）
+    ir_recent_turns: int | None = None
+    # 工具结果截断长度（YAML 节点级 max_tool_result_length 可覆盖，None 表示用 DEFAULT_MAX_TOOL_RESULT_LENGTH）
+    max_tool_result_length: int | None = None
 
     tool_manager: ToolManager | None = None
     # Per-Agent YAML configuration (not server.backend.config).

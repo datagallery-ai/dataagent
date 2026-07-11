@@ -61,7 +61,13 @@ def pruner(state: FlexState, runtime: Runtime) -> FlexState:
 
     # 1. 先做 IR 替换（不写回 state），得到精简后的消息列表
     context = get_context_for_flex_state(state, runtime, swallow_errors=True)
-    ir_messages = build_messages(messages, context=context) if context else messages
+    _ir_rt = getattr(getattr(runtime, "env", None), "ir_recent_turns", None)
+    _max_tr_len = getattr(getattr(runtime, "env", None), "max_tool_result_length", None)
+    ir_messages = (
+        build_messages(messages, context=context, ir_recent_turns=_ir_rt, max_tool_result_length=_max_tr_len)
+        if context
+        else messages
+    )
 
     # 2. 基于 IR 替换后的消息判断是否需要压缩
     token_limit = runtime.env.compress_token_limit or DEFAULT_PRUNER_TOKEN_LIMIT

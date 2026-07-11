@@ -12,7 +12,7 @@ When the user query involves data retrieval, SQL generation, table analysis, or 
 {% if planning_instructions %}
 # Task Constraints
 
-Apply these constraints only when they are relevant to the current task.
+These constraints are **MANDATORY** for the current task. Follow them in order; do not skip planning steps they require.
 {{ planning_instructions }}
 {% endif %}
 {% if memory %}

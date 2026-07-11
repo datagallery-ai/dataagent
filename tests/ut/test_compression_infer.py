@@ -238,3 +238,39 @@ class TestInferStateAndUnpackIr:
         state_dict, unpacked = await infer_state_and_unpack_ir(context, runtime=_mock_runtime(enable_profiling=False))
         assert state_dict["goal_intent"] == "g1"
         assert unpacked == ""
+
+
+class TestDirectFoldFoldedMarker:
+    """direct_fold must stamp ``_folded=True`` on the produced HumanMessage so
+    that ``_compute_round_summaries`` can skip its (serialization-time) ``_ts``
+    and avoid negative ``elapsed_sec``."""
+
+    def test_folded_marker_present_on_content_response(self):
+        from dataagent.utils.compression_utils import direct_fold
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="## SESSION INTENT\nrest...")
+        result = direct_fold([], llm=mock_llm)
+        assert len(result) == 1
+        assert result[0].additional_kwargs.get("_folded") is True
+
+    def test_folded_marker_present_on_reasoning_fallback(self):
+        from dataagent.utils.compression_utils import direct_fold
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content=None, reasoning_content="## SESSION INTENT\nrest...")
+        result = direct_fold([], llm=mock_llm)
+        assert len(result) == 1
+        assert result[0].additional_kwargs.get("_folded") is True
+
+    def test_folded_marker_survives_serialize_deserialize(self):
+        from dataagent.core.context.message_history import _deserialize, _serialize
+        from dataagent.utils.compression_utils import direct_fold
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="## SESSION INTENT\nrest...")
+        result = direct_fold([], llm=mock_llm)
+        ser = _serialize(result[0])
+        assert ser["additional_kwargs"]["_folded"] is True
+        deser = _deserialize(ser)
+        assert deser.additional_kwargs.get("_folded") is True

@@ -79,7 +79,7 @@ _USER_READONLY_CANDIDATES: tuple[str, ...] = (
     ".gitconfig",
     ".config/git",
 )
-_USER_WRITABLE_CANDIDATES: tuple[str, ...] = (".cache", ".local/state")
+_USER_WRITABLE_CANDIDATES: tuple[str, ...] = (".cache", ".dataagent", ".local/state")
 
 
 def _is_under_path(child: Path, parent: Path) -> bool:

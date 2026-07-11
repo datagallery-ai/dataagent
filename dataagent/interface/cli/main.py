@@ -15,8 +15,10 @@ import asyncio
 import os
 import re
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -265,6 +267,25 @@ def _cli_optional_str(value: str | None) -> str | None:
     return stripped if stripped else None
 
 
+def _print_turn_summary(console: Any, response: dict[str, Any] | None, elapsed_sec: float) -> None:
+    in_tok = out_tok = total_tok = cache_read = cache_creation = reasoning = 0
+    if isinstance(response, dict):
+        for msg in response.get("messages") or []:
+            usage = getattr(msg, "usage_metadata", None)
+            if not isinstance(usage, dict):
+                continue
+            in_tok += int(usage.get("input_tokens") or 0)
+            out_tok += int(usage.get("output_tokens") or 0) + int(usage.get("output_reasoning_tokens") or 0)
+            total_tok += int(usage.get("total_tokens") or 0)
+            cache_read += int(usage.get("input_cache_read_tokens") or 0)
+            cache_creation += int(usage.get("input_cache_creation_tokens") or 0)
+            reasoning += int(usage.get("output_reasoning_tokens") or 0)
+    cache_ratio = f"{cache_read / in_tok * 100:.1f}%" if in_tok > 0 and cache_read > 0 else "-"
+    console.print(
+        f"[dim]⏱ 耗时: {elapsed_sec}s | tokens: in={in_tok} out={out_tok} total={total_tok} | cache_read={cache_read}({cache_ratio})[/dim]"
+    )
+
+
 async def _run_terminal_chat_loop(
     agent: DataAgent,
     get_user_input: Callable[[], Awaitable[str]],
@@ -285,7 +306,8 @@ async def _run_terminal_chat_loop(
     """
     import datetime
     import uuid
-    from datetime import UTC
+
+    from dataagent.utils.constants import _TZ_CN
 
     uid = _cli_optional_str(user_id)
     fixed_session = _cli_optional_str(session_id)
@@ -293,7 +315,7 @@ async def _run_terminal_chat_loop(
         session_id_resolved = fixed_session
     else:
         # 同一次 CLI 进程内所有轮次共享同一 session；格式对齐 DataAgent.chat()
-        session_id_resolved = datetime.datetime.now(UTC).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
+        session_id_resolved = datetime.datetime.now(tz=_TZ_CN).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
 
     run_id = 0
     stream_enabled = bool(getattr(getattr(agent, "_chat_agent", None), "debug", False))
@@ -322,7 +344,9 @@ async def _run_terminal_chat_loop(
                 initial_state["enable_portrait"] = True
             if uid is not None:
                 initial_state["user_id"] = uid
+            start_t = time.perf_counter()
             response = await agent.chat(user_query=user_input, initial_state=initial_state)
+            elapsed_sec = round(time.perf_counter() - start_t, 2)
             if isinstance(response, dict) and response.get("error"):
                 console.print(
                     Panel(
@@ -345,6 +369,7 @@ async def _run_terminal_chat_loop(
                         )
                     )
                     console.print()
+            _print_turn_summary(console, response, elapsed_sec)
             run_id += 1
 
         except KeyboardInterrupt:

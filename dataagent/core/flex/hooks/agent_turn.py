@@ -6,7 +6,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
@@ -63,7 +63,7 @@ def should_skip_main_session_history(state: Mapping[str, Any]) -> bool:
 
 
 def session_history_restore(state: dict[str, Any], runtime: Any) -> dict[str, Any]:
-    """若 ``messages`` 为空且有 ``user_id``/``session_id``，从 ``messages.json`` 全量恢复。
+    """若 ``messages`` 为空且有 ``user_id``/``session_id``，从 ``messages.json`` 加载全部历史消息。
 
     非 Job 路径 subagent 不做历史恢复，避免污染主 agent 的会话上下文。
     """
@@ -73,6 +73,7 @@ def session_history_restore(state: dict[str, Any], runtime: Any) -> dict[str, An
     session_id = str(state.get("session_id") or "").strip()
     if not user_id or not session_id:
         return state
+
     try:
         from dataagent.core.flex.hooks.history_writer import (
             load_messages,

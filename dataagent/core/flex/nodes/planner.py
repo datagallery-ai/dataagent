@@ -11,6 +11,7 @@
 # limitations under the License.
 # ============================================================================
 import json
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -27,7 +28,7 @@ from dataagent.core.managers.llm_manager.adapters import LLMResponse, normalize_
 from dataagent.core.managers.llm_manager.llm_client import LLMCallError
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.utils.compression_utils import infer_state_and_unpack_ir
-from dataagent.utils.env_utils import get_env
+from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.formatting_utils import format_tool_calls_for_display
 from dataagent.utils.messages_utils import parse_actions_to_ai_message, record_message
 
@@ -94,10 +95,14 @@ class Planner(BaseNode):
     @staticmethod
     def _to_ai_message(resp: Any) -> AIMessage:
         """将 LLM 返回值统一转为 AIMessage，保留 tool_calls / invalid_tool_calls。"""
+        ts = time.time()
         if isinstance(resp, AIMessage):
+            akw = getattr(resp, "additional_kwargs", None)
+            if isinstance(akw, dict) and "_ts" not in akw:
+                akw["_ts"] = ts
             return resp
         if isinstance(resp, LLMResponse):
-            additional_kwargs: dict[str, Any] = {}
+            additional_kwargs: dict[str, Any] = {"_ts": ts}
             if resp.reasoning_content:
                 additional_kwargs["reasoning_content"] = resp.reasoning_content
             return AIMessage(
@@ -111,6 +116,7 @@ class Planner(BaseNode):
             content=getattr(resp, "content", str(resp)),
             tool_calls=Planner._normalize_tool_calls_for_aimessage(getattr(resp, "tool_calls", [])),
             invalid_tool_calls=getattr(resp, "invalid_tool_calls", []),
+            additional_kwargs={"_ts": ts},
         )
 
     async def _aprocess(self, state: FlexState, runtime: Any = None) -> dict[str, Any] | FlexState:
@@ -126,7 +132,10 @@ class Planner(BaseNode):
         # 不依赖 BaseNode 全局短路，避免影响 pruner 的消息归并与后处理节点执行。
         if not state.get("intent_complete", True) and state.get("missing_slots"):
             return {
-                "messages": AIMessage(content=state.get("intent_missing_message", "缺少必要信息，无法完成请求。")),
+                "messages": AIMessage(
+                    content=state.get("intent_missing_message", "缺少必要信息，无法完成请求。"),
+                    additional_kwargs={"_ts": time.time()},
+                ),
                 "complete": True,
                 "intent_complete": False,
                 "intent_slots": state.get("intent_slots", {}),
@@ -425,9 +434,9 @@ class Planner(BaseNode):
         return any(tool_call.get("name") == "request_human_feedback" for tool_call in ai_message.tool_calls)
 
 
-def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, runtime: Any) -> None:
+def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, runtime: Any = None) -> None:
     """当 DATAAGENT_CONTEXT_DUMP 环境变量存在时，将当前轮 prompt 写入文件。"""
-    if not get_env("DATAAGENT_CONTEXT_DUMP"):
+    if not get_env_bool("DATAAGENT_CONTEXT_DUMP"):
         return
     try:
         from dataagent.utils.messages_utils import dump_prompt_to_file
@@ -443,9 +452,27 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, 
         dump_dir = mem_dir / "context_dump" / f"run_{state['run_id']}"
         dump_dir.mkdir(parents=True, exist_ok=True)
         curr_iter = int(state.get("curr_iter", 0))
-        dump_file = dump_dir / f"round_{curr_iter}.txt"
-        dump_prompt_to_file(messages_to_process, dump_file)
-        logger.debug(f"Context dump saved to {dump_file}")
+
+        # 从 runtime.env 取实际压缩阈值，使 dump 的 approaching_compress 判断
+        # 与 pruner / LLM 调用时的实际压缩阈值一致。
+        compress_token_limit = None
+        compress_message_cnt = None
+        if runtime is not None:
+            env = getattr(runtime, "env", None)
+            if env is not None:
+                compress_token_limit = getattr(env, "compress_token_limit", None)
+                compress_message_cnt = getattr(env, "compress_message_cnt", None)
+
+        annotate_bp = get_env_bool("DATAAGENT_CACHE_BREAKPOINT_ANNOTATION")
+        dump_prompt_to_file(
+            messages_to_process,
+            dump_dir / f"round_{curr_iter}.txt",
+            annotate_cache_breakpoints=annotate_bp,
+            compress_token_limit=compress_token_limit,
+            compress_message_cnt=compress_message_cnt,
+        )
+
+        logger.debug(f"Context dump saved to {dump_dir}")
     except Exception as e:
         logger.warning(f"Failed to dump context prompt: {e}")
 

@@ -357,7 +357,12 @@ class Runtime:
                 )
             from dataagent.core.managers.llm_manager.llm_client import llm_adapter_from_env_cfg
 
-            self._llms[name] = llm_adapter_from_env_cfg(llm_cfg, name)
+            self._llms[name] = llm_adapter_from_env_cfg(
+                llm_cfg,
+                name,
+                compress_token_limit=self.env.compress_token_limit,
+                compress_message_cnt=self.env.compress_message_cnt,
+            )
         return self._llms[name]
 
     def get_tool(self, name: str) -> BaseTool:

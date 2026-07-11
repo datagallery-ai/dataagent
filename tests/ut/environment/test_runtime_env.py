@@ -190,7 +190,7 @@ class TestRuntimeEnvironmentCollector:
         assert collector._check_db_readable(str(db_path)) is True
 
     def test_format_with_zero_cpu_usage(self):
-        """CPU 使用率为 0.0 时也应展示。"""
+        """D6 后不再格式化动态 CPU/Memory（bp1 字节稳定），resources 即使 available 也应被忽略。"""
         env_data = {
             "system": {"os_type": "Linux", "os_release": "5.15", "arch": "x86_64"},
             "runtime": {"python_version": "3.11", "env_type": "system"},
@@ -206,7 +206,9 @@ class TestRuntimeEnvironmentCollector:
 
         result = format_runtime_environment(env_data)
 
-        assert "CPU: 0.0% (8 cores)" in result
+        assert "CPU:" not in result
+        assert "Memory:" not in result
+        assert "OS: Linux 5.15 (x86_64)" in result
 
     # NOTE: runtime_env 目前只展示 DATABASE.config.path，不再支持 DATASOURCE 入口。
 
@@ -239,7 +241,7 @@ class TestFormatRuntimeEnvironment:
         assert "Python interpreter: /opt/venv/bin/python" in result
 
     def test_format_with_resources(self):
-        """包含资源信息的格式化。"""
+        """D6 后 resources 块不进入格式化输出（动态值破坏 cache bp1 稳定性）。"""
         env_data = {
             "system": {"os_type": "Linux", "os_release": "5.15", "arch": "x86_64"},
             "runtime": {"python_version": "3.11", "env_type": "system"},
@@ -255,8 +257,9 @@ class TestFormatRuntimeEnvironment:
 
         result = format_runtime_environment(env_data)
 
-        assert "CPU: 10.5% (8 cores)" in result
-        assert "Memory: 8.0GB / 16.0GB (50.0%)" in result
+        assert "CPU:" not in result
+        assert "Memory:" not in result
+        assert "Python: 3.11 (system)" in result
 
     def test_format_with_database(self):
         """包含数据库信息的格式化。"""

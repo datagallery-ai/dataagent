@@ -11,11 +11,14 @@
 # limitations under the License.
 # ============================================================================
 import os
+from typing import Any
 
-import litellm
+import httpx
 import numpy as np
 
 from dataagent.core.managers.llm_manager import LLMConfig, llm_manager
+
+EMBEDDING_DIMENSIONS = 1024
 
 
 def embedding(
@@ -23,7 +26,10 @@ def embedding(
     *,
     embedding_model: str,
 ) -> np.ndarray:
-    """Embed queries using LLM.
+    """Embed queries using an OpenAI-compatible ``/embeddings`` endpoint via httpx.
+
+    设计与 :mod:`dataagent.core.managers.llm_manager.llm_client` 对齐——零三方 SDK，
+    只用 ``httpx`` 直连 OpenAI 兼容协议，不再引入 litellm。
 
     Args:
         query: Text or list of texts to embed.
@@ -42,17 +48,23 @@ def embedding(
     if not api_key:
         raise RuntimeError("EMBEDDING_API_KEY is not set.")
 
-    litellm.ssl_verify = False
-    response = litellm.embedding(
-        model=model,
-        input=query,
-        api_base=base_url,
-        api_key=api_key,
-        dimensions=1024,
-        custom_llm_provider="openai",
-    )
-    data = response.data if hasattr(response, "data") else response["data"]
-    output = np.array([item.embedding if hasattr(item, "embedding") else item["embedding"] for item in data])
+    endpoint = f"{str(base_url).rstrip('/')}/embeddings"
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": query,
+        "dimensions": EMBEDDING_DIMENSIONS,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=60.0, verify=False) as client:
+        resp = client.post(endpoint, headers=headers, json=payload)
+        resp.raise_for_status()
+        body = resp.json()
+
+    data = body["data"]
+    output = np.array([item["embedding"] for item in data])
     if isinstance(query, str):
         output = output[0]
     return output

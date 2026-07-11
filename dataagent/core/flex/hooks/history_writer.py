@@ -109,11 +109,19 @@ def save_messages(
     workspace: str | Path | None = None,
     config: Mapping[str, Any] | None = None,
 ) -> None:
-    """全量覆写 session history（由 portraiter 在 session 结束时调用）。"""
+    """全量覆写 session history（由 portraiter 在 session 结束时调用）。
+
+    若目标文件已存在（如上一 run 的残留），直接覆写，不再生成带时间戳的归档文件。
+    跨进程重启时由 :func:`load_messages` 读取最终 ``messages.json`` 恢复历史。
+
+    写入时 ``sanitize=False``：保留完整的消息序列（包括 HITL 等孤儿
+    AIMessage），以便 ``round_summaries`` 的 token 统计不丢数据。
+    读取时 :func:`read_messages_file` 仍会做 replay-safe 清洗，不影响重放。
+    """
     if not user_id or not session_id:
         return
     path = _history_path(user_id, session_id, workspace=workspace, config=config)
-    write_messages_file(path, messages)
+    write_messages_file(path, messages, sanitize=False)
 
 
 def load_messages(
@@ -210,6 +218,12 @@ def save_messages_full(
     if not new_records:
         return
     all_records = existing_records + new_records
+    from dataagent.core.context.message_history import _compute_round_summaries
+
+    round_summaries = _compute_round_summaries(all_records)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"messages": all_records}, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(
+        json.dumps({"messages": all_records, "round_summaries": round_summaries}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     tmp.replace(path)

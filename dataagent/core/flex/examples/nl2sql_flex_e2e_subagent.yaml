@@ -26,6 +26,13 @@ TOOLS:
       function: "nl2sql_sub_agent_tool"
       config:
         llm_model: chat_model
+        core_config:
+          perceptor:
+            user_sql_rules: null
+            user_few_shot_examples: null
+          generator:
+            strategies: ["prompt"]
+            num_samples: 1
 
 PRE_WORKFLOW: []
 POST_WORKFLOW: []

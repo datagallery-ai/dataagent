@@ -384,7 +384,14 @@ def test_summary_top_level_llm_tokens_use_event_totals(tmp_path: Path) -> None:
     assert llms["input_tokens"] == 15
     assert llms["output_tokens"] == 27
     assert llms["total_tokens"] == 42
-    assert llms["state_messages"] == {"input_tokens": 100, "output_tokens": 1, "total_tokens": 101}
+    assert llms["state_messages"] == {
+        "input_tokens": 100,
+        "output_tokens": 1,
+        "total_tokens": 101,
+        "input_cache_read_tokens": 0,
+        "input_cache_creation_tokens": 0,
+        "output_reasoning_tokens": 0,
+    }
 
 
 def test_summary_records_min_max_ms_per_bucket(tmp_path: Path, perf_home: Path) -> None:

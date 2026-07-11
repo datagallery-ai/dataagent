@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from loguru import logger
 
 from dataagent.core.context.context import Context
 from dataagent.core.managers.prompt_manager.template import PromptTemplate
-from dataagent.utils.constants import DEFAULT_MAX_TOOL_RESULT_LENGTH
+from dataagent.utils.constants import _TZ_CN, DEFAULT_IR_RECENT_TURNS, DEFAULT_MAX_TOOL_RESULT_LENGTH
 from dataagent.utils.parsing_utils import extract_action_payloads, parse_action_payloads_to_tool_calls
 from dataagent.utils.runtime_paths import resolve_layout_dir
 
@@ -102,7 +103,10 @@ def build_human_message(
     """
     Build a human message from a prompt template and a prompt string.
     """
-    return HumanMessage(content=_message_base_build(prompt_template, prompt_str, **kwargs))
+    return HumanMessage(
+        content=_message_base_build(prompt_template, prompt_str, **kwargs),
+        additional_kwargs={"_ts": time.time()},
+    )
 
 
 def _message_base_build(
@@ -149,13 +153,27 @@ def add_result_tag(message: ToolMessage) -> ToolMessage:
     return message.model_copy(update={"content": wrapped})
 
 
-def build_messages(messages: list[AnyMessage], context: Context | None = None) -> list[AnyMessage]:
+def build_messages(
+    messages: list[AnyMessage],
+    context: Context | None = None,
+    *,
+    ir_recent_turns: int | None = None,
+    max_tool_result_length: int | None = None,
+) -> list[AnyMessage]:
     """
     Build a list of messages from a list of base messages.
 
     When *context* is provided, older ToolMessage contents are replaced with
     compact IR summaries produced by the Context trajectory, keeping only the
     most recent turns in full.
+
+    Args:
+        ir_recent_turns: IR 替换的 recent_turns 阈值，None 时使用 should_replace 默认值
+            (DEFAULT_IR_RECENT_TURNS=10)。由 runtime.env.ir_recent_turns 从 YAML
+            CONTEXT.recent_turns 注入。
+        max_tool_result_length: ToolMessage 兜底截断长度，None 时使用
+            DEFAULT_MAX_TOOL_RESULT_LENGTH(8192)。由 runtime.env.max_tool_result_length
+            从 YAML 节点级 max_tool_result_length 注入。
     """
     from dataagent.utils.converter.ir_message_consumer import (
         assign_turn_indices,
@@ -174,9 +192,16 @@ def build_messages(messages: list[AnyMessage], context: Context | None = None) -
         if isinstance(message, AIMessage):
             new_messages.append(message)
         if isinstance(message, ToolMessage):
-            if context is not None and should_replace(turn_indices[i], max_turn):
+            if context is not None and should_replace(
+                turn_indices[i],
+                max_turn,
+                recent_turns=DEFAULT_IR_RECENT_TURNS if ir_recent_turns is None else ir_recent_turns,
+            ):
                 message = try_replace_with_ir(message, context)
-            message = _truncate_tool_message_content(message)
+            message = _truncate_tool_message_content(
+                message,
+                max_length=MAX_TOOL_RESULT_LENGTH if max_tool_result_length is None else max_tool_result_length,
+            )
             new_messages.append(add_result_tag(message))
         if isinstance(message, HumanMessage):
             new_messages.append(message)
@@ -346,6 +371,9 @@ def dump_prompt_to_file(
     file_path: Path,
     *,
     append: bool = False,
+    annotate_cache_breakpoints: bool = False,
+    compress_token_limit: int | None = None,
+    compress_message_cnt: int | None = None,
 ) -> Path:
     """
     将 prepare_prompt 返回的消息列表以可读格式写入文件。
@@ -354,6 +382,11 @@ def dump_prompt_to_file(
         messages: prepare_prompt 返回的 list[BaseMessage]。
         file_path: 输出文件路径，默认 "prompt_dump.txt"。
         append: 为 True 时追加写入，否则覆盖。
+        annotate_cache_breakpoints: 为 True 时，在消息头标注 cache_control 位置和 breakpoint 信息。
+            断点分配通过运行 ``_apply_cache_control_with_anchors`` 得到最终结果
+            （含动态注入的 bp2/bp3/bp4），而非仅标注 LangChain 消息中预置的显式 cc。
+        compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
+        compress_message_cnt: 实际压缩消息数阈值（由 runtime.env 注入），影响 approaching_compress 判断。
 
     Returns:
         写入的文件路径。
@@ -366,27 +399,98 @@ def dump_prompt_to_file(
     }
     separator = "=" * 80
 
+    def _has_cache_control(content: Any) -> bool:
+        if not isinstance(content, list):
+            return False
+        return any(isinstance(p, dict) and "cache_control" in p for p in content)
+
+    # 运行 _apply_cache_control_with_anchors 得到最终断点分配
+    # （含动态注入的 bp2/bp3/bp4），使 dump 反映 LLM 调用时的真实 cache_control 布局，
+    # 而非仅标注消息构建阶段预置的显式 cc（仅有 bp1）。
+    # final_bp: idx -> cache_control 值
+    final_bp: dict[int, Any] = {}
+    if annotate_cache_breakpoints:
+        try:
+            from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
+            from dataagent.core.managers.llm_manager.llm_client import LLMClient
+
+            dict_msgs = LangChainChatModelAdapter.messages_to_openai_dicts(messages)
+            processed = LLMClient._apply_cache_control_with_anchors(
+                dict_msgs,
+                compress_token_limit=compress_token_limit,
+                compress_message_cnt=compress_message_cnt,
+            )
+            for i, m in enumerate(processed):
+                c = m.get("content")
+                if isinstance(c, list):
+                    for part in c:
+                        if isinstance(part, dict) and "cache_control" in part:
+                            final_bp[i] = part["cache_control"]
+                            break
+        except Exception as e:
+            logger.debug(f"dump_prompt_to_file: failed to compute final bp allocation: {e}")
+            # 回退：仅标注 LangChain 消息中预置的显式 cc
+            for i, msg in enumerate(messages):
+                if _has_cache_control(msg.content):
+                    for part in msg.content:
+                        if isinstance(part, dict) and "cache_control" in part:
+                            final_bp[i] = part["cache_control"]
+                            break
+
     mode = "a" if append else "w"
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
     with file_path.open(mode, encoding="utf-8") as f:
         f.write(f"{separator}\n")
-        f.write(f"  Prompt Dump  |  {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}  |  {len(messages)} messages\n")
+        f.write(
+            f"  Prompt Dump  |  {datetime.now(tz=_TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}  |  {len(messages)} messages\n"
+        )
+        if annotate_cache_breakpoints:
+            f.write(
+                "  Cache Breakpoint Annotation: ON  |  Strategy: bp0=System, bp1=history_summary, bp2=first-large-tool/tail2, bp3=tail_anchor, bp4=tail2\n"
+            )
         f.write(f"{separator}\n\n")
 
+        bp_count = 0
         for idx, msg in enumerate(messages):
             label = _MESSAGE_TYPE_LABELS.get(type(msg), type(msg).__name__.upper())
-            f.write(f"--- [{idx}] {label} ---\n")
+
+            is_bp = idx in final_bp
+            bp_tag = ""
+            if annotate_cache_breakpoints and is_bp:
+                bp_count += 1
+                bp_tag = f" [bp {bp_count} cc]"
+
+            f.write(f"--- [{idx}] {label}{bp_tag} ---\n")
 
             if isinstance(msg, ToolMessage):
                 f.write(f"  tool_call_id: {msg.tool_call_id}\n")
                 f.write(f"  status      : {getattr(msg, 'status', 'N/A')}\n")
 
             content = msg.content
+            has_explicit_cc = _has_cache_control(content)
             if isinstance(content, str):
                 f.write(f"{content}\n")
+            elif isinstance(content, list) and annotate_cache_breakpoints and has_explicit_cc:
+                for part in content:
+                    if isinstance(part, dict) and "cache_control" in part:
+                        cc_val = part["cache_control"]
+                        text_val = part.get("text", "")
+                        f.write(f"  {text_val}\n")
+                        f.write(f"  ⭐ cache_control: {json.dumps(cc_val)}\n")
+                    elif isinstance(part, dict):
+                        f.write(f"  {json.dumps(part, ensure_ascii=False)}\n")
+                    else:
+                        f.write(f"  {json.dumps(part, ensure_ascii=False)}\n")
+                f.write("\n")
             else:
                 f.write(f"{json.dumps(content, ensure_ascii=False, indent=2)}\n")
+
+            # 动态注入的断点（原 LangChain 消息无显式 cc，由 _apply_cache_control_with_anchors
+            # 在 dict 形态上添加）在此补充 ⭐ 标记，避免漏标 bp2/bp3/bp4。
+            if annotate_cache_breakpoints and is_bp and not has_explicit_cc:
+                cc_val = final_bp.get(idx, {"type": "ephemeral"})
+                f.write(f"  ⭐ cache_control (dynamic): {json.dumps(cc_val)}\n")
 
             if isinstance(msg, AIMessage) and msg.tool_calls:
                 f.write(f"\n  tool_calls ({len(msg.tool_calls)}):\n")
@@ -405,6 +509,13 @@ def dump_prompt_to_file(
             f.write("\n")
 
         f.write(f"{separator}\n")
+        if annotate_cache_breakpoints:
+            f.write(
+                f"  Breakpoint summary: {bp_count} breakpoints (final allocation via _apply_cache_control_with_anchors)\n"
+            )
+            f.write(
+                "  NOTE: bp0/bp1/bp2/bp3/bp4 are dynamically injected at LLM call time; no pre-existing cc marks come from the message builder.\n"
+            )
         f.write("  END OF DUMP\n")
         f.write(f"{separator}\n")
 

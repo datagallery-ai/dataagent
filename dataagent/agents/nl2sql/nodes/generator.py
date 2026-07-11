@@ -37,12 +37,14 @@ class GeneratorNode(BaseNL2SQLNode):
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/generator/{strategy}_user"
         ).apply_prompt_template(**context)
+
         prompts = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        llm = llm_manager.get_default_llm()
-        content = llm.invoke(prompts).content
+
+        content = llm_manager.get_default_llm().invoke(prompts).content
+        self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
         sqls = sql_parser(content)
         prompt_history = system_prompt + "\n\n" + user_prompt
         return [(sql, prompt_history, strategy) for sql in sqls]
@@ -76,16 +78,30 @@ class GeneratorNode(BaseNL2SQLNode):
             "few_shot_examples": state["few_shot_examples"],
         }
         results = []
-        with ThreadPoolExecutor(max_workers=self.num_workers * len(self.strategies)) as executor:
-            futures = []
-            for strategy in self.strategies:
-                for _ in range(self.num_workers):
-                    futures.append(submit_in_perf_context(executor, self.run_strategy, strategy, settings, context))
-            for future in as_completed(futures):
-                res = future.result()
-                results.extend(res)
+        if self.strategies:
+            with ThreadPoolExecutor(max_workers=self.num_workers * len(self.strategies)) as executor:
+                futures = []
+                for strategy in self.strategies:
+                    for _ in range(self.num_workers):
+                        futures.append(submit_in_perf_context(executor, self.run_strategy, strategy, settings, context))
+                for future in as_completed(futures):
+                    try:
+                        res = future.result()
+                    except Exception as exc:
+                        logger.warning(f"Generator strategy future failed: {exc}")
+                        continue
+                    if res:
+                        results.extend(res)
         for i, (sql, prompt, strategy) in enumerate(results):
             state["generation_results"].append(Result(id=i, sql=sql, prompt=prompt, strategy=strategy))
+        if not state["generation_results"]:
+            logger.warning("Generator: no SQL parsed from any strategy; skipping.")
+            state["sql"] = ""
+            state["proceed"] = False
+            p = "=== Generator ===\n(no SQL generated)"
+            logger.info(p)
+            state["stream_message"] = p
+            return state
         state["sql"] = state["generation_results"][0].sql
         p = "\n".join([f"[{s.strategy}]\n{s.sql}" for s in state["generation_results"]])
         message = f"=== Generator ===\n{p}"

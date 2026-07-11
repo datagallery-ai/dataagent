@@ -195,10 +195,27 @@ def should_replace(turn_index: int, max_turn: int, recent_turns: int = DEFAULT_I
 
 
 def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
-    """尝试用 IR 摘要替换 ToolMessage 内容。失败时返回原始消息。"""
+    """尝试用 IR 摘要替换 ToolMessage 内容。失败时返回原始消息。
+
+    P1 (stable IR replacement): 首次成功渲染的 IR 摘要按 ``tool_call_id``
+    缓存在 ``context.ir_summary_cache`` 上，后续调用直接复用缓存内容，
+    避免 trajectory 增长导致中段消息内容变化而截断 DeepSeek 前缀缓存。
+    仅当 ``context`` 暴露了真实 ``dict`` 类型的缓存时启用；MagicMock 等
+    无此属性的对象自动退化为原始无缓存行为。
+    """
     tool_call_id = getattr(msg, "tool_call_id", None)
     if not tool_call_id:
         return msg
+
+    ir_cache = getattr(context, "ir_summary_cache", None)
+    if isinstance(ir_cache, dict):
+        cached = ir_cache.get(tool_call_id)
+        if cached is not None:
+            return ToolMessage(
+                content=cached,
+                tool_call_id=tool_call_id,
+                name=getattr(msg, "name", None) or "unknown",
+            )
 
     tool_name = getattr(msg, "name", None) or "unknown"
     action_label = f"Action({tool_call_id})"
@@ -213,6 +230,10 @@ def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
         return msg
 
     summary = render_ir_summary(data_nodes, tool_name)
+
+    if isinstance(ir_cache, dict):
+        ir_cache[tool_call_id] = summary
+
     return ToolMessage(
         content=summary,
         tool_call_id=tool_call_id,

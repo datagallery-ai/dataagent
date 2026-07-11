@@ -791,6 +791,10 @@ def test_run_agent_passes_identity_to_initial_state(monkeypatch, tmp_path):
         return _FakeAgent()
 
     monkeypatch.setattr("dataagent.actions.tools.local_tool.sub_agent_entry.DataAgent.from_config", _fake_from_config)
+    monkeypatch.setattr(
+        "dataagent.actions.tools.local_tool.sub_agent_entry.reconfigure",
+        lambda cfg: captured.__setitem__("log_path", Path(cfg.file_path).resolve()),
+    )
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
 
     result = asyncio.run(
@@ -800,9 +804,93 @@ def test_run_agent_passes_identity_to_initial_state(monkeypatch, tmp_path):
     assert result == {"ok": True}
     assert captured["query"] == "查询本体"
     assert captured["config_path"] == Path("/tmp/sub_agent.yaml")
+    assert (
+        captured["log_path"]
+        == (tmp_path / "dataagent-home" / "main-user" / "logs" / "subagent_main-session_7.log").resolve()
+    )
     assert captured["initial_state"]["user_id"] == "main-user"
     assert captured["initial_state"]["session_id"] == "subagent_main-session_7"
     assert captured["initial_state"]["sub_id"] == 7
+
+
+def test_sub_agent_tool_env_log_path_no_redundant_sub_id(monkeypatch, tmp_path):
+    """``DATAAGENT_LOG_FILE`` env var 路径中 sub_id 不应重复拼接，须与 reconfigure 路径一致。
+
+    回归测试：``tools.py`` 曾在 ``f"{sub_agent_session_id}_{worker_sub_id}.log"`` 中多拼了一次
+    ``worker_sub_id``（``sub_agent_session_id`` 已含 sub_id），导致每个 subagent 产生 2 个日志文件
+    （1 个 500B 废弃文件 + 1 个正式文件）。
+    """
+    config_file = tmp_path / "sub_agent.yaml"
+    config_file.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    async def _fake_run_subprocess_async(
+        cmd, *, timeout, cwd=None, env=None, progress_callback=None, tool_call_id=None
+    ):
+        captured["cmd"] = cmd
+        captured["env"] = dict(env) if env else {}
+        sub_id = int(cmd[cmd.index("--sub-id") + 1])
+        captured["sub_id"] = sub_id
+        return {
+            "stdout": json.dumps(
+                {
+                    "error": None,
+                    "worker_result": {
+                        "sub_id": sub_id,
+                        "parent_session_id": "main-session",
+                        "worker_session_id": f"subagent_main-session_{sub_id}",
+                        "status": "success",
+                        "final_answer": "ok",
+                        "artifacts": [],
+                        "tool_calls_count": 0,
+                        "iteration_count": 0,
+                        "error": None,
+                        "resumed": False,
+                    },
+                    "worker_persistence": {},
+                    "assistant_reply": "ok",
+                    "sub_id": sub_id,
+                },
+                ensure_ascii=False,
+            ),
+            "stderr": "",
+            "returncode": 0,
+        }
+
+    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools._run_subprocess_async", _fake_run_subprocess_async)
+    monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
+
+    token = set_subagent_runtime_context(
+        user_id="main-user",
+        session_id="main-session",
+        sub_id=7,
+    )
+    try:
+        asyncio.run(
+            sub_agent_tool(
+                query="查询本体",
+                config_path=str(config_file),
+                timeout=1,
+            )
+        )
+    finally:
+        reset_subagent_runtime_context(token)
+
+    log_file_env = captured["env"].get("DATAAGENT_LOG_FILE")
+    assert log_file_env is not None, "DATAAGENT_LOG_FILE env var must be set for subagent subprocess"
+
+    sub_id = captured["sub_id"]
+    expected_filename = f"subagent_main-session_{sub_id}.log"
+    redundant_filename = f"subagent_main-session_{sub_id}_{sub_id}.log"
+
+    actual_filename = Path(log_file_env).name
+    assert actual_filename == expected_filename, (
+        f"env var log filename must be {expected_filename} (sub_id once), got {actual_filename}"
+    )
+    assert actual_filename != redundant_filename, f"redundant sub_id suffix detected: {actual_filename}"
+
+    expected_path = (tmp_path / "dataagent-home" / "main-user" / "logs" / expected_filename).resolve()
+    assert Path(log_file_env).resolve() == expected_path
 
 
 def test_public_reconfigure_keeps_process_name(monkeypatch):

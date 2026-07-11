@@ -86,9 +86,16 @@ def _now_iso() -> str:
 
 
 def summarize_llm_usage(usage: Any) -> dict[str, int]:
-    """把 LLM usage 映射规整为 token 计数字典。"""
+    """把 LLM usage 映射规整为 token 计数字典，含 cache/reasoning 子字段。"""
     if not isinstance(usage, Mapping):
-        return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cache_read_tokens": 0,
+            "input_cache_creation_tokens": 0,
+            "output_reasoning_tokens": 0,
+        }
 
     def _i(key: str) -> int:
         """安全读取单个 token 字段。"""
@@ -101,14 +108,18 @@ def summarize_llm_usage(usage: Any) -> dict[str, int]:
         "input_tokens": _i("input_tokens"),
         "output_tokens": _i("output_tokens"),
         "total_tokens": _i("total_tokens"),
+        "input_cache_read_tokens": _i("input_cache_read_tokens"),
+        "input_cache_creation_tokens": _i("input_cache_creation_tokens"),
+        "output_reasoning_tokens": _i("output_reasoning_tokens"),
     }
 
 
 def build_state_summary(state: Mapping[str, Any] | None) -> dict[str, Any]:
-    """从 agent state 中提取基础轮次、token 与工具调用统计。"""
+    """从 agent state 中提取基础轮次、token 与工具调用统计，含 cache/reasoning 字段。"""
     if not isinstance(state, Mapping):
         state = {}
     input_tokens = output_tokens = total_tokens = 0
+    cache_read = cache_creation = reasoning = 0
     for msg in state.get("messages") or []:
         usage = getattr(msg, "usage_metadata", None)
         if not isinstance(usage, Mapping):
@@ -117,11 +128,21 @@ def build_state_summary(state: Mapping[str, Any] | None) -> dict[str, Any]:
             input_tokens += int(usage.get("input_tokens") or 0)
             output_tokens += int(usage.get("output_tokens") or 0)
             total_tokens += int(usage.get("total_tokens") or 0)
+            cache_read += int(usage.get("input_cache_read_tokens") or 0)
+            cache_creation += int(usage.get("input_cache_creation_tokens") or 0)
+            reasoning += int(usage.get("output_reasoning_tokens") or 0)
         except (TypeError, ValueError):
             continue
     return {
         "agent": {"num_turns": int(state.get("num_turns") or 0)},
-        "llms": {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens},
+        "llms": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "input_cache_read_tokens": cache_read,
+            "input_cache_creation_tokens": cache_creation,
+            "output_reasoning_tokens": reasoning,
+        },
         "tools": {
             "num_valid_tool_calls": int(state.get("num_valid_tool_calls") or 0),
             "num_invalid_tool_calls": int(state.get("num_invalid_tool_calls") or 0),
@@ -309,6 +330,9 @@ class PerformanceCollector:
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
+                "input_cache_read_tokens": 0,
+                "input_cache_creation_tokens": 0,
+                "output_reasoning_tokens": 0,
                 "state_messages": state_llms,
             },
             "tools": dict(base["tools"]),
@@ -352,6 +376,9 @@ class PerformanceCollector:
                         "input_tokens": 0,
                         "output_tokens": 0,
                         "total_tokens": 0,
+                        "input_cache_read_tokens": 0,
+                        "input_cache_creation_tokens": 0,
+                        "output_reasoning_tokens": 0,
                         "llm_name": name,
                     }
                     if ck:
@@ -360,7 +387,14 @@ class PerformanceCollector:
                         entry["caller_name"] = str(cn)
                     summary["llms"][key] = entry
                 accumulate(entry, ev)
-                for k in ("input_tokens", "output_tokens", "total_tokens"):
+                for k in (
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                    "input_cache_read_tokens",
+                    "input_cache_creation_tokens",
+                    "output_reasoning_tokens",
+                ):
                     try:
                         inc = int(extra.get(k) or 0)
                     except (TypeError, ValueError):

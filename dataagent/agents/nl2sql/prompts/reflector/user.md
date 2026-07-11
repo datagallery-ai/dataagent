@@ -1,3 +1,7 @@
+<schema>
+{{ schema }}
+</schema>
+
 <cases>
 {{ cases }}
 </cases>

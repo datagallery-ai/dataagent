@@ -432,6 +432,230 @@ class TestBuildIRAwareMessages:
         assert result[0].content == "hello"
 
 
+# ── P1: per-session IR summary cache ──────────────────────────────
+
+
+def _make_cache_context(ir_map: dict[str, list] | None = None) -> Any:
+    """Create a context-like object with a real dict IR summary cache.
+
+    Unlike ``_make_mock_context`` (MagicMock), this exposes a real ``dict``
+    at ``ir_summary_cache`` so P1 caching logic activates.
+    """
+    if ir_map is None:
+        ir_map = {}
+
+    class _FakeContext:
+        def __init__(self) -> None:
+            self.ir_summary_cache: dict[str, str] = {}
+
+        def get_next_data_node(self, *, action_node_label: str) -> list:
+            if action_node_label in ir_map:
+                return ir_map[action_node_label]
+            raise ValueError(f"Action node '{action_node_label}' not found")
+
+    return _FakeContext()
+
+
+class TestP1IRSummaryCache:
+    """P1: 首次渲染的 IR 摘要按 tool_call_id 冻结，后续不再重新渲染。"""
+
+    @pytest.fixture(autouse=True)
+    def _import_ir_classes(self):
+        from dataagent.core.context.context_ir import KnowledgeNode
+
+        self.KnowledgeNode = KnowledgeNode
+
+    def test_first_call_renders_and_caches(self):
+        """首次调用渲染摘要并写入缓存。"""
+        knowledge = self.KnowledgeNode(
+            label="k1",
+            description="first render",
+            user_id="user",
+            session_id="s",
+            run_id=0,
+            knowledge_type="tool_output",
+            knowledge_content="content v1",
+        )
+        ctx = _make_cache_context({"Action(tc_freeze)": [knowledge]})
+
+        msg = ToolMessage(content="original long output", tool_call_id="tc_freeze", name="tool1")
+        result1 = try_replace_with_ir(msg, ctx)
+
+        assert "[IR Summary]" in result1.content
+        assert "first render" in result1.content
+        assert "tc_freeze" in ctx.ir_summary_cache
+
+    def test_second_call_returns_cached_not_re_rendered(self):
+        """第二次调用返回缓存，即使 trajectory 已变化（IR 节点不同）。"""
+        knowledge_v1 = self.KnowledgeNode(
+            label="k_v1",
+            description="version 1",
+            user_id="user",
+            session_id="s",
+            run_id=0,
+            knowledge_type="tool_output",
+            knowledge_content="v1 content",
+        )
+        knowledge_v2 = self.KnowledgeNode(
+            label="k_v2",
+            description="version 2 — trajectory grew",
+            user_id="user",
+            session_id="s",
+            run_id=0,
+            knowledge_type="tool_output",
+            knowledge_content="v2 content",
+        )
+
+        # ctx returns v1 on first call, then v2 on second call (simulating trajectory growth)
+        call_count = [0]
+        ir_map_sequence = [
+            [knowledge_v1],
+            [knowledge_v2, knowledge_v1],
+        ]
+
+        class _GrowingContext:
+            def __init__(self) -> None:
+                self.ir_summary_cache: dict[str, str] = {}
+
+            def get_next_data_node(self, *, action_node_label: str) -> list:
+                idx = min(call_count[0], len(ir_map_sequence) - 1)
+                call_count[0] += 1
+                return ir_map_sequence[idx]
+
+        ctx = _GrowingContext()
+
+        msg = ToolMessage(content="original output", tool_call_id="tc_grow", name="t")
+        result1 = try_replace_with_ir(msg, ctx)
+        result2 = try_replace_with_ir(msg, ctx)
+
+        assert "version 1" in result1.content
+        # P1: second call must return cached v1, NOT re-rendered v2
+        assert result2.content == result1.content
+        assert "version 2" not in result2.content
+
+    def test_cache_skipped_when_ir_nodes_absent(self):
+        """首次 IR 节点不存在时不缓存，后续节点出现后可正常渲染。"""
+        ir_map: dict[str, list] = {}
+
+        class _DeferredContext:
+            def __init__(self) -> None:
+                self.ir_summary_cache: dict[str, str] = {}
+
+            def get_next_data_node(self, *, action_node_label: str) -> list:
+                if action_node_label in ir_map:
+                    return ir_map[action_node_label]
+                raise ValueError("not found yet")
+
+        ctx = _DeferredContext()
+        msg = ToolMessage(content="original output", tool_call_id="tc_defer", name="t")
+
+        # First call: IR not found → return original, no cache write
+        result1 = try_replace_with_ir(msg, ctx)
+        assert result1 is msg
+        assert "tc_defer" not in ctx.ir_summary_cache
+
+        # Now IR appears
+        knowledge = self.KnowledgeNode(
+            label="k_deferred",
+            description="deferred render",
+            user_id="user",
+            session_id="s",
+            run_id=0,
+            knowledge_type="tool_output",
+            knowledge_content="deferred content",
+        )
+        ir_map["Action(tc_defer)"] = [knowledge]
+
+        # Second call: IR found → render and cache
+        result2 = try_replace_with_ir(msg, ctx)
+        assert "[IR Summary]" in result2.content
+        assert "deferred render" in result2.content
+        assert "tc_defer" in ctx.ir_summary_cache
+
+    def test_cache_skipped_when_data_nodes_empty(self):
+        """Action 节点存在但 data_nodes 为空时不缓存。"""
+        ctx = _make_cache_context({"Action(tc_empty)": []})
+        msg = ToolMessage(content="original output", tool_call_id="tc_empty", name="t")
+
+        result = try_replace_with_ir(msg, ctx)
+        assert result is msg
+        assert "tc_empty" not in ctx.ir_summary_cache
+
+    def test_backward_compat_magic_mock_context(self):
+        """MagicMock context（无真实 dict 缓存）退化为原始无缓存行为。"""
+        ctx = _make_mock_context(
+            {
+                "Action(tc_mock)": [
+                    self.KnowledgeNode(
+                        label="k_mock",
+                        description="mock render",
+                        user_id="user",
+                        session_id="s",
+                        run_id=0,
+                        knowledge_type="tool_output",
+                        knowledge_content="mock content",
+                    )
+                ]
+            }
+        )
+        msg = ToolMessage(content="original output", tool_call_id="tc_mock", name="t")
+
+        # Should render normally (no cache), return IR summary
+        result = try_replace_with_ir(msg, ctx)
+        assert "[IR Summary]" in result.content
+        assert "mock render" in result.content
+
+    def test_no_tool_call_id_skips_cache(self):
+        """无 tool_call_id 的消息不触发缓存逻辑。"""
+        ctx = _make_cache_context()
+        msg = ToolMessage(content="no id", tool_call_id="", name="t")
+
+        result = try_replace_with_ir(msg, ctx)
+        assert result is msg
+        assert len(ctx.ir_summary_cache) == 0
+
+    def test_build_messages_uses_cache_across_calls(self):
+        """build_messages 多次调用共享缓存，中段消息内容字节稳定。"""
+        knowledge_v1 = self.KnowledgeNode(
+            label="k_build_v1",
+            description="build v1",
+            user_id="user",
+            session_id="s",
+            run_id=0,
+            knowledge_type="tool_output",
+            knowledge_content="v1",
+        )
+
+        call_count = [0]
+
+        class _BuildContext:
+            def __init__(self) -> None:
+                self.ir_summary_cache: dict[str, str] = {}
+
+            def get_next_data_node(self, *, action_node_label: str) -> list:
+                call_count[0] += 1
+                return [knowledge_v1]
+
+        ctx = _BuildContext()
+
+        messages = [
+            AIMessage(content="old_turn", tool_calls=[{"id": "tc_build", "name": "t", "args": {}}]),
+            ToolMessage(content="long original " * 100, tool_call_id="tc_build", name="t"),
+            AIMessage(content="new_turn", tool_calls=[{"id": "tc_new", "name": "t2", "args": {}}]),
+            ToolMessage(content="new result", tool_call_id="tc_new", name="t2"),
+        ]
+
+        result1 = _build_messages_with_ir(messages, ctx, recent_turns=1)
+        result2 = _build_messages_with_ir(messages, ctx, recent_turns=1)
+
+        assert "[IR Summary]" in result1[1].content
+        assert result1[1].content == result2[1].content
+        # P1: second call should hit cache, not re-render
+        # First call: 1 render for tc_build; tc_new is recent (not replaced)
+        # Second call: cache hit for tc_build
+        assert call_count[0] == 1
+
+
 @pytest.fixture(autouse=True)
 def _clear_context_factory_for_lineage():
     ContextFactory.clear_context()

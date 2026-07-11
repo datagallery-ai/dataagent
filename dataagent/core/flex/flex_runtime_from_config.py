@@ -24,7 +24,9 @@ from typing import Any
 
 from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
+from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
 from dataagent.core.flex.utils.hitl_config import resolve_scenario_instructions
+from dataagent.core.managers.llm_manager.llm_client import _apply_cache_defaults
 from dataagent.governance import build_governance_config
 
 # YAML 合并阶段使用、不写入 env.llm_configs 值的键
@@ -97,7 +99,7 @@ def resolve_llm_config_entry(
         if k in _LLM_YAML_ONLY_KEYS or k in flat:
             continue
         flat[k] = v
-    flat.setdefault("custom_llm_provider", "openai")
+    _apply_cache_defaults(flat)
     return flat
 
 
@@ -255,6 +257,7 @@ def build_agent_env_from_flex_config(
     # max_concurrency: 从节点配置读取
     all_nodes = config.get("ACTOR_LOOP", []) + config.get("PRE_WORKFLOW", []) + config.get("POST_WORKFLOW", [])
     max_concurrency = _get_node_config_int(all_nodes, "executor", "max_concurrency")
+    max_tool_result_length = _get_node_config_int(all_nodes, "executor", "max_tool_result_length")
 
     instructions = resolve_scenario_instructions(config, mode=mode)
 
@@ -283,6 +286,7 @@ def build_agent_env_from_flex_config(
     compress_token_limit = _optional_int_key(context_cfg, "compress_token_limit")
     compress_message_cnt = _optional_int_key(context_cfg, "compress_message_cnt")
     file_node_threshold = _optional_int_key(context_cfg, "file_node_threshold")
+    ir_recent_turns = _optional_int_key(context_cfg, "recent_turns")
 
     environment_description = ""
     if gym_env is not None:
@@ -309,6 +313,8 @@ def build_agent_env_from_flex_config(
         compress_token_limit=compress_token_limit,
         compress_message_cnt=compress_message_cnt,
         file_node_threshold=file_node_threshold,
+        ir_recent_turns=ir_recent_turns,
+        max_tool_result_length=max_tool_result_length,
         environment_description=environment_description,
         governance=build_governance_config(
             config.get("GOVERNANCE"),

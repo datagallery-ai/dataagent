@@ -289,7 +289,14 @@ def test_submit_in_perf_context_propagates_collector(perf_home: Path) -> None:
 
 def test_summarize_llm_usage_normalizes_ints() -> None:
     usage = summarize_llm_usage({"input_tokens": "10", "output_tokens": None, "total_tokens": 12})
-    assert usage == {"input_tokens": 10, "output_tokens": 0, "total_tokens": 12}
+    assert usage == {
+        "input_tokens": 10,
+        "output_tokens": 0,
+        "total_tokens": 12,
+        "input_cache_read_tokens": 0,
+        "input_cache_creation_tokens": 0,
+        "output_reasoning_tokens": 0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +321,14 @@ def test_build_state_summary_aggregates_tokens() -> None:
     }
     summary = build_state_summary(state)
     assert summary["agent"]["num_turns"] == 3
-    assert summary["llms"] == {"input_tokens": 30, "output_tokens": 9, "total_tokens": 39}
+    assert summary["llms"] == {
+        "input_tokens": 30,
+        "output_tokens": 9,
+        "total_tokens": 39,
+        "input_cache_read_tokens": 0,
+        "input_cache_creation_tokens": 0,
+        "output_reasoning_tokens": 0,
+    }
     assert summary["tools"]["num_valid_tool_calls"] == 4
     assert summary["tools"]["num_invalid_tool_calls"] == 1
 

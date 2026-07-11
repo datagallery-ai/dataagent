@@ -24,7 +24,7 @@ import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -78,7 +78,7 @@ from dataagent.utils.constants import (
 )
 from dataagent.utils.fix_md_image_path import fix_markdown_image_paths, load_images_as_json
 from dataagent.utils.formatting_utils import get_available_chinese_font
-from dataagent.utils.runtime_paths import dataagent_package_root, resolve_user_root
+from dataagent.utils.runtime_paths import dataagent_package_root, resolve_session_root, resolve_user_root
 
 _subagent_runtime_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "subagent_runtime_context",
@@ -93,6 +93,7 @@ def set_subagent_runtime_context(
     session_id: str | None,
     sub_id: int | None,
     parent_user_query: str | None = None,
+    run_id: int | None = None,
     progress_callback: Any | None = None,  # Callable[[str, str], None]
     tool_call_id: str | None = None,
     agent_config: dict[str, Any] | None = None,
@@ -105,6 +106,7 @@ def set_subagent_runtime_context(
             "session_id": None if session_id is None else str(session_id).strip(),
             "sub_id": sub_id,
             "parent_user_query": None if parent_user_query is None else str(parent_user_query),
+            "run_id": run_id,
             "progress_callback": progress_callback,
             "tool_call_id": tool_call_id,
             "agent_config": dict(agent_config) if isinstance(agent_config, dict) else {},
@@ -348,6 +350,15 @@ def _handle_subagent_completed(
     rc = int(completed.get("returncode") or 0)
     stripped = stdout.strip()
 
+    # Log captured sub-agent stderr to main agent's logger for visibility
+    if stderr.strip():
+        logger.debug(f"[subagent:{worker_sub_id}] stderr captured ({len(stderr)} chars)")
+        for line in stderr.strip().splitlines()[:30]:
+            logger.debug(f"[subagent:{worker_sub_id}] {line}")
+        truncated = stderr.strip().splitlines()
+        if len(truncated) > 30:
+            logger.debug(f"[subagent:{worker_sub_id}] ... ({len(truncated) - 30} more lines omitted)")
+
     parsed: Any = None
     if stripped:
         try:
@@ -510,7 +521,15 @@ def _resolve_and_authorize(
 
 
 def _build_shell_env() -> dict[str, str]:
-    return dict(os.environ)
+    env = dict(os.environ)
+    sqlite_path = _user_sqlite_path.get()
+    if sqlite_path:
+        # 覆盖而非 setdefault：仓库根 .env 文件会把 USER_SQLITE_PATH 静态地设成
+        # /tmp/agent/web_backend/changping02.sqlite（部署默认值），在测试或分场景
+        # 运行时该路径不存在，导致 skill 脚本 sqlite3.connect 报 OperationalError。
+        # executor 注入的 DATABASE.config.path 是会话级权威值，必须覆盖 .env 默认。
+        env["USER_SQLITE_PATH"] = sqlite_path
+    return env
 
 
 async def _terminate_process_tree_async(process: asyncio.subprocess.Process) -> None:
@@ -1057,7 +1076,7 @@ def report_generator(
         images_path = str(_resolve_and_authorize(images_path, "images_path", operation="report_generator", mode="read"))
     images = load_images_as_json(images_path) if images_path else ""
     report_analysis = _load_analysis_content(analysis_path)
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_time = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
     llm = llm_manager.get_default_llm()
     system_prompt = f"""You are a professional MD report generation assistant. Follow these rules:
 1. Generate well-structured MD documents based only on the provided analysis inputs and \
@@ -1227,6 +1246,8 @@ async def nl2sql_sub_agent_tool(
         source_config,
         config_manager=_tool_context.config_manager,
         tool_config=_tool_context.tool_config,
+        user_id=str(getattr(runtime, "user_id", None) or ""),
+        session_id=str(getattr(runtime, "session_id", None) or ""),
     )
     guard = get_current_sandbox()
     temp_root = guard.workspace_root or Path.cwd().resolve()
@@ -1265,6 +1286,18 @@ async def nl2sql_sub_agent_tool(
             "original_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
             "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
         }
+
+    uid = str(getattr(runtime, "user_id", None) or "anonymous")
+    sid = str(getattr(runtime, "session_id", None) or "default_session")
+    sub_id_val = res.get("sub_id")
+    if isinstance(sub_id_val, int):
+        subagent_session_root = resolve_session_root(
+            user_id=uid,
+            session_id=f"subagent_{sid}_{sub_id_val}",
+        )
+        if subagent_session_root.is_dir():
+            shutil.rmtree(subagent_session_root, ignore_errors=True)
+
     sql = sub_state.get("sql", "")
     try:
         import sqlglot
@@ -1294,8 +1327,9 @@ async def nl2sql_sub_agent_tool(
         f"CSV 结果已保存到：`{str(csv_path)}`\n\n"
         f"生成的SQL语句如下:\n```sql\n{sql}\n```"
     )
+    original_msg = f"SQL 执行完成，SQL 文件已保存到：{str(sql_path)}，查询结果已保存到：{str(csv_path)}"
     return {
-        "original_msg": f"SQL 执行完成，SQL 文件已保存到：{str(sql_path)}，查询结果已保存到：{str(csv_path)}",
+        "original_msg": original_msg,
         "frontend_msg": frontend_msg_md,
     }
 
@@ -1359,7 +1393,7 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
         env = dict(os.environ)
         sub_agent_session_id = f"subagent_{resolved_session_id}_{worker_sub_id}"
         sub_agent_log_path = (
-            resolve_user_root(user_id=resolved_user_id) / "logs" / f"{sub_agent_session_id}_{worker_sub_id}.log"
+            resolve_user_root(user_id=resolved_user_id) / "logs" / f"{sub_agent_session_id}.log"
         ).resolve()
         env["DATAAGENT_LOG_FILE"] = str(sub_agent_log_path)
         env["DATAAGENT_LOG_PROCESS_NAME"] = "subagent"
@@ -1540,6 +1574,9 @@ async def sub_agent_tool(
         sub_id=worker_sub_id,
         reuse_worker_state=reuse_worker_state,
     )
+    parent_run_id = subagent_context.get("run_id")
+    if parent_run_id is not None and not swarm_on:
+        next_run_id = int(parent_run_id)
     lock = None
     if swarm_on:
         lock = acquire_worker_lock(
@@ -1694,6 +1731,8 @@ def _prepare_worker_initial_state_file(
         "run_id": int(next_run_id),
         "sub_id": int(sub_id),
         "parent_user_query": str(parent_user_query or ""),
+        "_parent_session_id": parent_session_id,
+        "_parent_run_id": int(next_run_id),
     }
     workspace_root = get_current_sandbox().workspace_root
     if workspace_root is not None:
@@ -2751,6 +2790,25 @@ def set_file_inspect_workspace(workspace: str) -> None:
     _file_inspect_workspace.set(workspace)
 
 
+# ── bash 子进程 USER_SQLITE_PATH 注入 ─────────────────────────────────────────
+# executor 在每次工具调用前通过 set_user_sqlite_path 注入 DATABASE.config.path，
+# _build_shell_env 据此把 sqlite DB 路径透传给 skill 脚本，避免脚本因 env 缺失而
+# 在 sqlite3.connect 时报 OperationalError: unable to open database file。
+
+_user_sqlite_path: contextvars.ContextVar[str] = contextvars.ContextVar("user_sqlite_path", default="")
+
+
+def set_user_sqlite_path(path: str | None) -> None:
+    """由 executor 在每次工具调用前注入 DATABASE.config.path。
+
+    当 YAML 配置 ``DATABASE.engine == "sqlite"`` 时，把 ``config.path`` 透传给 bash
+    子进程的 ``USER_SQLITE_PATH`` 环境变量，供 skill 脚本（约定从该 env 取 DB 路径）
+    直接 ``sqlite3.connect(...)`` 成功。传入 ``None`` 或空串则清空，避免上一轮调用的
+    残值污染当前调用。
+    """
+    _user_sqlite_path.set(path or "")
+
+
 def _lookup_file_lineage(abs_path: str) -> dict[str, Any] | None:
     """在 file_metadata.json 中查找文件的溯源记录。"""
     workspace = _file_inspect_workspace.get()
@@ -2800,11 +2858,21 @@ def _resolve_bound_llm_model_name(*, tool_config: dict[str, Any] | None = None) 
     return bound or None
 
 
+def _deep_merge_dict(target: dict, source: dict) -> None:
+    for key, value in source.items():
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+            _deep_merge_dict(target[key], value)
+        else:
+            target[key] = value
+
+
 def _build_nl2sql_sub_agent_config(
     source_config: dict[str, Any],
     *,
     config_manager: Any,
     tool_config: dict[str, Any] | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     temp_config = copy.deepcopy(source_config)
 
@@ -2829,12 +2897,21 @@ def _build_nl2sql_sub_agent_config(
             }
     agent_tools = [i.get("function", "") for i in config_manager.get("TOOLS", {}).get("local_functions", {})]
     if "search_metric_instance" in agent_tools or "search_tables_with_typename" in agent_tools:
-        temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_schema"] = "schema_schemair"
     if "search_udf_function_by_name_keyword" in agent_tools:
-        temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_evidence"] = "schema_udf_basic"
     if "metadata_recall" in agent_tools:
-        temp_config["CORE"]["perceptor"]["user_schema"] = "schema_schemair"
-        temp_config["CORE"]["perceptor"]["user_evidence"] = "schema_udf_basic"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_schema"] = "schema_schemair"
+        temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_evidence"] = "schema_udf_basic"
+
+    core_overrides = tool_config.get("core_config") if tool_config else None
+    if isinstance(core_overrides, dict) and core_overrides:
+        _deep_merge_dict(temp_config.setdefault("CORE", {}), core_overrides)
+
+    if user_id:
+        temp_config["USER_ID"] = str(user_id).strip()
+    if session_id:
+        temp_config["SESSION_ID"] = str(session_id).strip()
 
     return temp_config
 
