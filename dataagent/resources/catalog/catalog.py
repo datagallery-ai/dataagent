@@ -10,47 +10,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""ResourceRegistry: parse and query merged ``RESOURCES`` configuration."""
+"""ResourceCatalog: parse and query merged ``RESOURCES`` configuration."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from dataagent.core.resources.models import Resource
+from dataagent.resources.catalog.models import Resource
+from dataagent.resources.drivers.bindings import TRANSPORT_TYPES
 
 RESOURCE_CATEGORIES = frozenset({"executable", "non-executable"})
 RESOURCE_FIELDS = frozenset({"id", "name", "category", "transport", "operations", "capacity", "consumption"})
 RESOURCE_OPERATIONS = frozenset({"submit", "poll", "collect", "cancel"})
-TRANSPORT_TYPES = frozenset({"local", "mcp"})
 
 
-class ResourceRegistry:
+class ResourceCatalog:
     """In-memory catalog built from merged ``RESOURCES`` list entries."""
 
     def __init__(self, *, resources: list[Resource] | None = None) -> None:
-        """Create a registry from parsed resource definitions."""
-        self.catalog: dict[str, Resource] = {item.id: item for item in resources or []}
+        """Create a catalog from parsed resource definitions."""
+        self._catalog: dict[str, Resource] = {item.id: item for item in resources or []}
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any]) -> ResourceRegistry:
-        """Build a registry from a merged Agent configuration mapping."""
+    def from_config(cls, config: Mapping[str, Any]) -> ResourceCatalog:
+        """Build a catalog from a merged Agent configuration mapping."""
         raw = config.get("RESOURCES") or []
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
             raise ValueError("RESOURCES must be a list of resource definitions")
         return cls(resources=resources_from_list(list(raw)))
 
-    def resources(self) -> list[Resource]:
+    def list(self) -> list[Resource]:
         """Return all resources sorted by id."""
-        return [self.catalog[key] for key in sorted(self.catalog)]
+        return [self._catalog[key] for key in sorted(self._catalog)]
 
     def executable_resources(self) -> list[Resource]:
         """Return executable resources sorted by id."""
-        return [resource for resource in self.resources() if resource.executable]
+        return [resource for resource in self.list() if resource.executable]
 
-    def resource(self, resource_id: str) -> Resource | None:
+    def get(self, resource_id: str) -> Resource | None:
         """Look up one resource by id."""
-        return self.catalog.get(str(resource_id or "").strip())
+        return self._catalog.get(str(resource_id or "").strip())
 
     def select_executable(self, *, resource_id: str = "", task_type: str) -> tuple[Resource | None, str]:
         """Select one executable resource for a task type.
@@ -64,7 +64,7 @@ class ResourceRegistry:
         """
         normalized_id = str(resource_id or "").strip()
         if normalized_id:
-            resource = self.resource(normalized_id)
+            resource = self.get(normalized_id)
             if resource is None:
                 return None, f"resource not found: {normalized_id}"
             if not resource.executable:
@@ -82,26 +82,6 @@ class ResourceRegistry:
             ids = ", ".join(resource.id for resource in candidates)
             return None, f"multiple resources support task type {task_type}; specify resource_id: {ids}"
         return candidates[0], ""
-
-    def with_usage(self, *, resource_usage: dict[str, int] | None = None) -> ResourceRegistry:
-        """Return a copy with runtime ``used`` counts applied."""
-        resource_usage = resource_usage or {}
-        resources = [
-            Resource(
-                id=resource.id,
-                name=resource.name,
-                category=resource.category,
-                capacity=resource.capacity,
-                unit=resource.unit,
-                used=int(resource_usage.get(resource.id, resource.used) or 0),
-                consumption=dict(resource.consumption),
-                operations=dict(resource.operations),
-                transport=dict(resource.transport),
-                metadata=dict(resource.metadata),
-            )
-            for resource in self.resources()
-        ]
-        return ResourceRegistry(resources=resources)
 
 
 def validate_resources_list(items: list[Any]) -> None:

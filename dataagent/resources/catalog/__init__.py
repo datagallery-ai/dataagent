@@ -10,15 +10,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""ResourceLoader: registry, operations, and job-backed resource execution (Phase B)."""
-
-from dataagent.core.resources.models import Resource
-from dataagent.core.resources.registry import ResourceRegistry, validate_resources_list
-from dataagent.core.resources.service import ResourceService
-
-__all__ = [
-    "Resource",
-    "ResourceRegistry",
-    "ResourceService",
-    "validate_resources_list",
-]
+"""Resource catalog models and validation."""

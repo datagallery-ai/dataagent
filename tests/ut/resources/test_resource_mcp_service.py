@@ -19,15 +19,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from dataagent.actions.resources.bootstrap import (
-    default_mcp_client_factory,
-    default_resource_operation_registry,
-)
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.service import JobService
-from dataagent.core.resources.registry import ResourceRegistry
-from dataagent.core.resources.service import ResourceService
+from dataagent.core.resource_runtime import (
+    ResourceJobCoordinator,
+    build_default_operation_registry,
+    default_mcp_client_factory,
+)
+from dataagent.resources import ResourceCapacity, ResourceCatalog, ResourceResolve
 
 
 def _mcp_resources_config() -> dict[str, Any]:
@@ -61,8 +61,8 @@ def _mcp_resources_config() -> dict[str, Any]:
     }
 
 
-def _build_mcp_service(tmp_path: Path) -> ResourceService:
-    """Create ResourceService with MCP and catalog resources."""
+def _build_mcp_service(tmp_path: Path) -> ResourceJobCoordinator:
+    """Create ResourceJobCoordinator with MCP and catalog resources."""
     parent_ws = tmp_path / "parent_session"
     parent_ws.mkdir(parents=True, exist_ok=True)
     store = FileJobStore(parent_ws)
@@ -71,12 +71,16 @@ def _build_mcp_service(tmp_path: Path) -> ResourceService:
         workspace_dir=parent_ws,
         sandbox=NoopSandbox(workspace_root=parent_ws),
     )
-    registry = ResourceRegistry.from_config(_mcp_resources_config())
-    return ResourceService(
-        registry=registry,
+    catalog = ResourceCatalog.from_config(_mcp_resources_config())
+    capacity = ResourceCapacity(catalog)
+    resolve = ResourceResolve(catalog)
+    return ResourceJobCoordinator(
+        catalog=catalog,
+        capacity=capacity,
+        resolve=resolve,
         job_service=job_service,
         runtime=runtime,
-        operation_registry=default_resource_operation_registry(),
+        operation_registry=build_default_operation_registry(),
         mcp_client_factory=default_mcp_client_factory(),
     )
 
@@ -128,8 +132,8 @@ def test_mcp_resource_submit_poll_collect_with_mocked_driver(tmp_path, monkeypat
 
     monkeypatch.setattr(
         service,
-        "_get_mcp_client",
-        lambda _resource: FakeMcpClient(),
+        "get_mcp_client",
+        lambda _resource_id, _driver: FakeMcpClient(),
     )
 
     handle = service.submit_job(command="python run.py", task_type="resource", resource_id="compute_pool")
@@ -177,8 +181,8 @@ def test_mcp_resource_failed_poll_collects_error_details(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         service,
-        "_get_mcp_client",
-        lambda _resource: FakeMcpClient(),
+        "get_mcp_client",
+        lambda _resource_id, _driver: FakeMcpClient(),
     )
 
     handle = service.submit_job(command="SELECT sleep(10)", task_type="resource", resource_id="compute_pool")

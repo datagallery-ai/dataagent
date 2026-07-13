@@ -27,16 +27,10 @@ class Resource:
     category: str
     capacity: int = 1
     unit: str = "slot"
-    used: int = 0
     consumption: dict[str, int] = field(default_factory=dict)
     operations: dict[str, str] = field(default_factory=dict)
     transport: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def available(self) -> int:
-        """Return remaining capacity slots for this resource."""
-        return max(0, int(self.capacity) - int(self.used))
 
     @property
     def executable(self) -> bool:
@@ -50,14 +44,12 @@ class Resource:
         return int(raw) if raw is not None else None
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the resource for diagnostics and future catalog APIs."""
+        """Serialize the resource for diagnostics and catalog APIs."""
         return {
             "id": self.id,
             "name": self.name,
             "category": self.category,
             "capacity": {"total": int(self.capacity), "unit": self.unit},
-            "used": int(self.used),
-            "available": self.available,
             "consumption": dict(self.consumption),
             "operations": dict(self.operations),
             "transport": _transport_summary(self.transport),

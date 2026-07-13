@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Unit and integration tests for ResourceService."""
+"""Unit and integration tests for ResourceJobCoordinator."""
 
 from __future__ import annotations
 
@@ -23,17 +23,17 @@ from typing import Any
 
 import pytest
 
-from dataagent.actions.resources.bootstrap import (
-    default_mcp_client_factory,
-    default_resource_operation_registry,
-)
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
-from dataagent.core.resources.operations import ResourceOperationRegistry
-from dataagent.core.resources.registry import ResourceRegistry
-from dataagent.core.resources.service import ResourceService
+from dataagent.core.resource_runtime import (
+    ResourceJobCoordinator,
+    build_default_operation_registry,
+    default_mcp_client_factory,
+)
+from dataagent.core.resource_runtime.operations.operations import ResourceOperationRegistry
+from dataagent.resources import ResourceCapacity, ResourceCatalog, ResourceResolve
 
 
 def _resources_config(*, total: int = 2) -> dict[str, Any]:
@@ -57,8 +57,8 @@ def _resources_config(*, total: int = 2) -> dict[str, Any]:
     }
 
 
-def _build_resource_service(tmp_path: Path, *, total: int = 2) -> tuple[ResourceService, SimpleNamespace]:
-    """Create ResourceService bound to a parent workspace."""
+def _build_resource_coordinator(tmp_path: Path, *, total: int = 2) -> tuple[ResourceJobCoordinator, SimpleNamespace]:
+    """Create ResourceJobCoordinator bound to a parent workspace."""
     parent_ws = tmp_path / "parent_session"
     parent_ws.mkdir(parents=True, exist_ok=True)
     store = FileJobStore(parent_ws)
@@ -67,15 +67,24 @@ def _build_resource_service(tmp_path: Path, *, total: int = 2) -> tuple[Resource
         workspace_dir=parent_ws,
         sandbox=NoopSandbox(workspace_root=parent_ws),
     )
-    registry = ResourceRegistry.from_config(_resources_config(total=total))
-    service = ResourceService(
-        registry=registry,
+    catalog = ResourceCatalog.from_config(_resources_config(total=total))
+    capacity = ResourceCapacity(catalog)
+    resolve = ResourceResolve(catalog)
+    coordinator = ResourceJobCoordinator(
+        catalog=catalog,
+        capacity=capacity,
+        resolve=resolve,
         job_service=job_service,
         runtime=runtime,
-        operation_registry=default_resource_operation_registry(),
+        operation_registry=build_default_operation_registry(),
         mcp_client_factory=default_mcp_client_factory(),
     )
-    return service, runtime
+    return coordinator, runtime
+
+
+def _build_resource_service(tmp_path: Path, *, total: int = 2) -> tuple[ResourceJobCoordinator, SimpleNamespace]:
+    """Backward-compatible alias used by tests in this module."""
+    return _build_resource_coordinator(tmp_path, total=total)
 
 
 def _wait_until_terminal(service: JobService, job_id: str, *, timeout_sec: float = 5.0) -> str:
@@ -112,29 +121,15 @@ def test_submit_job_registers_runner_and_metadata(tmp_path):
 
 
 def test_capacity_exhausted_returns_error(tmp_path):
-    """Active jobs occupying all slots block further submits."""
+    """Active reserved slots block further submits."""
     service, _runtime = _build_resource_service(tmp_path, total=2)
-
-    block = Event()
-
-    def slow_runner(job_id: str, cancel_event: Event) -> JobResult:
-        block.wait(timeout=2.0)
-        return JobResult(job_id=job_id, agent_id="resource:local", status="completed", summary="ok")
-
-    for _ in range(2):
-        handle = service.job_service.start(
-            agent_id="resource:local",
-            task="block",
-            runner=slow_runner,
-            allocation={"resource": {"id": "local", "task_type": "resource", "amount": 1, "unit": "slot"}},
-            metadata={"job_kind": "resource"},
-        )
-        assert handle["status"] == "queued"
-
+    first = service.submit_job(command="sleep 5", task_type="resource", resource_id="local")
+    second = service.submit_job(command="sleep 5", task_type="resource", resource_id="local")
+    assert first["status"] == "queued"
+    assert second["status"] == "queued"
     denied = service.submit_job(command="echo blocked", task_type="resource", resource_id="local")
     assert denied["status"] == "ERROR"
     assert "capacity exhausted" in denied["message"]
-    block.set()
 
 
 def test_submit_job_rejects_when_capacity_full(tmp_path):

@@ -17,13 +17,17 @@ from __future__ import annotations
 import pytest
 from mcp.types import CallToolResult, TextContent
 
-from dataagent.actions.resources.mcp_adapter import (
+from dataagent.core.resource_runtime.mcp import (
     format_mcp_call_exception,
+    mcp_server_config_from_binding,
     normalize_mcp_call_tool_result,
+)
+from dataagent.resources.drivers.mcp_resource import (
+    resolve_mcp_transport,
     resolve_secret_ref,
     resolve_transport_headers,
-    resource_transport_to_server_config,
 )
+from dataagent.resources.resolve.prepare import DriverBinding
 
 
 def test_resolve_secret_ref_reads_env(monkeypatch):
@@ -51,9 +55,9 @@ def test_resolve_transport_headers_plain_and_secret(monkeypatch):
     assert resolved == {"X-Plain": "plain", "Authorization": "abc"}
 
 
-def test_resource_transport_to_server_config_builds_streamable_http():
-    """Resource MCP transport maps to streamable_http MCP client config."""
-    config = resource_transport_to_server_config(
+def test_resolve_mcp_transport_builds_plain_connection_fields():
+    """Resource MCP transport resolves to plain url/headers fields."""
+    resolved = resolve_mcp_transport(
         "compute_pool",
         {
             "type": "mcp",
@@ -61,6 +65,19 @@ def test_resource_transport_to_server_config_builds_streamable_http():
             "headers": {"Authorization": "token"},
             "timeout_sec": 45,
         },
+    )
+    assert resolved["url"] == "https://compute.example.com/mcp"
+    assert resolved["headers"]["Authorization"] == "token"
+    assert resolved["timeout_sec"] == 45
+    config = mcp_server_config_from_binding(
+        "compute_pool",
+        DriverBinding(
+            transport_type="mcp",
+            operation_ids={},
+            mcp_url=resolved["url"],
+            mcp_headers=resolved["headers"],
+            mcp_timeout_sec=resolved["timeout_sec"],
+        ),
     )
     assert config.server_id == "resource:compute_pool"
     assert config.transport_type == "streamable_http"

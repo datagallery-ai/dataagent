@@ -24,15 +24,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from dataagent.actions.resources.bootstrap import (
-    default_mcp_client_factory,
-    default_resource_operation_registry,
-)
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.service import JobService
-from dataagent.core.resources.registry import ResourceRegistry
-from dataagent.core.resources.service import ResourceService
+from dataagent.core.resource_runtime import (
+    ResourceJobCoordinator,
+    build_default_operation_registry,
+    default_mcp_client_factory,
+)
+from dataagent.resources import ResourceCapacity, ResourceCatalog, ResourceResolve
 
 
 def _resources_config(*, mcp_url: str) -> dict:
@@ -88,12 +88,16 @@ def main() -> int:
     store = FileJobStore(workspace)
     job_service = JobService(store)
     runtime = SimpleNamespace(workspace_dir=workspace, sandbox=NoopSandbox(workspace_root=workspace))
-    registry = ResourceRegistry.from_config(_resources_config(mcp_url=args.mcp_url))
-    service = ResourceService(
-        registry=registry,
+    catalog = ResourceCatalog.from_config(_resources_config(mcp_url=args.mcp_url))
+    capacity = ResourceCapacity(catalog)
+    resolve = ResourceResolve(catalog)
+    service = ResourceJobCoordinator(
+        catalog=catalog,
+        capacity=capacity,
+        resolve=resolve,
         job_service=job_service,
         runtime=runtime,
-        operation_registry=default_resource_operation_registry(),
+        operation_registry=build_default_operation_registry(),
         mcp_client_factory=default_mcp_client_factory(),
     )
 

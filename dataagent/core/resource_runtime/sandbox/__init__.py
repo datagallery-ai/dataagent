@@ -10,4 +10,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Resource driver implementations injected into :class:`~dataagent.core.resources.service.ResourceService`."""
+"""Local sandbox execution for resource jobs."""
