@@ -14,12 +14,12 @@
 
 * **开关**：是否启用仅由环境变量 ``DATAAGENT_PERFORMANCE_ENABLED`` 决定；``1`` 视为开启，其它一律视为关闭。
 * **进程隔离**：启用后落盘路径固定为
-  ``{session_root}/.performance/{run_id}.{pid}.jsonl``，
-  其中 ``session_root`` 由 ``dataagent.utils.runtime_paths.resolve_session_root``
-  根据 ``user_id``/``session_id`` 决定。不同进程天然写入不同文件，
+  ``{workspace}/.performance/Run{run_id}_Sub{sub_id}.{pid}.jsonl``，
+  其中 ``workspace`` 由 ``dataagent.utils.runtime_paths.resolve_flex_performance_dir``
+  根据运行时 workspace 或 ``user_id``/``session_id`` 决定。不同进程天然写入不同文件，
   避免共享句柄/行错乱。
 * **单一路径契约**：调用方不再传入任何路径参数；路径只能通过 ``user_id``/
-  ``session_id``/``run_id``（+ 进程 PID）派生，没有别名、没有降级。
+  ``session_id``/``run_id``/``sub_id``/workspace（+ 进程 PID）派生，没有别名、没有降级。
 
 写入策略：行缓冲 NDJSON，运行中逐行追加事件，``flush()`` 追加最后一行
 ``kind="_flush"``（含 metadata + summary）。禁用时零 IO。
@@ -184,10 +184,11 @@ def _resolve_jsonl_path(
     user_id: str,
     session_id: str,
     run_id: str,
+    sub_id: str,
     workspace: str | Path | None = None,
     config: Mapping[str, Any] | None = None,
 ) -> Path:
-    """单一路径契约：``{workspace}/.performance/{run_id}.{pid}.jsonl``。
+    """单一路径契约：``{workspace}/.performance/Run{run_id}_Sub{sub_id}.{pid}.jsonl``。
 
     路径只在启用时由 collector 调用，失败直接抛出由上层捕获。
     """
@@ -199,7 +200,7 @@ def _resolve_jsonl_path(
         workspace=workspace,
         config=config,
     )
-    return base / f"{run_id}.{os.getpid()}.jsonl"
+    return base / f"Run{run_id}_Sub{sub_id}.{os.getpid()}.jsonl"
 
 
 class PerformanceCollector:
@@ -215,6 +216,7 @@ class PerformanceCollector:
         user_id: str | None = None,
         session_id: str | None = None,
         run_id: str | int | None = None,
+        sub_id: str | int | None = None,
         backend: str | None = None,
         workspace: str | Path | None = None,
         config: Mapping[str, Any] | None = None,
@@ -224,6 +226,7 @@ class PerformanceCollector:
         self.user_id: str = str(user_id or "anonymous")
         self.session_id: str = str(session_id or "default_session")
         self.run_id: str = str(run_id) if run_id is not None and str(run_id) else uuid.uuid4().hex
+        self.sub_id: str = str(sub_id) if sub_id is not None and str(sub_id) else "0"
         self.backend: str = str(backend or "")
         self.started_at: str = _now_iso()
         self._lock = threading.Lock()
@@ -239,6 +242,7 @@ class PerformanceCollector:
                 user_id=self.user_id,
                 session_id=self.session_id,
                 run_id=self.run_id,
+                sub_id=self.sub_id,
                 workspace=workspace,
                 config=config,
             )
@@ -301,6 +305,9 @@ class PerformanceCollector:
             ev: dict[str, Any] = {
                 "kind": kind,
                 "name": str(name),
+                "run_id": self.run_id,
+                "sub_id": self.sub_id,
+                "pid": os.getpid(),
                 "elapsed_ms": elapsed_ms,
                 "success": success,
                 "started_at": started_iso,
@@ -420,6 +427,7 @@ class PerformanceCollector:
                 "user_id": self.user_id,
                 "session_id": self.session_id,
                 "run_id": self.run_id,
+                "sub_id": self.sub_id,
                 "pid": os.getpid(),
                 "backend": self.backend,
                 "started_at": self.started_at,
@@ -547,6 +555,7 @@ def create_collector(
     user_id: str | None = None,
     session_id: str | None = None,
     run_id: str | int | None = None,
+    sub_id: str | int | None = None,
     backend: str | None = None,
     workspace: str | Path | None = None,
     config: Mapping[str, Any] | None = None,
@@ -559,6 +568,7 @@ def create_collector(
         user_id=user_id,
         session_id=session_id,
         run_id=run_id,
+        sub_id=sub_id,
         backend=backend,
         workspace=workspace,
         config=config,
@@ -573,12 +583,13 @@ def bind_agent_performance(
     backend: str | None = None,
     flush_state_provider: Any = None,
 ) -> Iterator[PerformanceCollector]:
-    """绑定当前请求的 collector：``user_id``/``session_id``/``run_id`` 仅从 ``state`` 读取。"""
+    """绑定 collector；``user_id``/``session_id``/``run_id``/``sub_id`` 仅从 state 读取。"""
     st = state if isinstance(state, Mapping) else {}
     collector = create_collector(
         user_id=st.get("user_id"),
         session_id=st.get("session_id"),
         run_id=st.get("run_id"),
+        sub_id=st.get("sub_id", 0),
         backend=backend,
         workspace=st.get("workspace"),
     )
