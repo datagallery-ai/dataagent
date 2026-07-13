@@ -16,8 +16,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from dataagent.actions.resources.sandbox_runner import run_local_sandbox_command
-from dataagent.core.resources.operations import ResourceOperationContext, ResourceOperationRegistration
+from dataagent.core.resource_runtime.operations.operations import (
+    ResourceOperationContext,
+    ResourceOperationRegistration,
+)
+from dataagent.core.resource_runtime.sandbox.sandbox_runner import run_local_sandbox_command
 
 
 def builtin_sandbox_resource_operations() -> tuple[ResourceOperationRegistration, ...]:

@@ -10,16 +10,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Protocols for resource driver injection into :class:`~dataagent.core.resources.service.ResourceService`."""
-
-from __future__ import annotations
-
-from typing import Any, Protocol
-
-
-class McpResourceClient(Protocol):
-    """Minimal MCP client surface used by :class:`~dataagent.core.resources.service.ResourceService`."""
-
-    def call_tool_sync(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Invoke one remote MCP tool synchronously from a resource job runner thread."""
-        ...
+"""Resource operation registry types used by the coordinator."""

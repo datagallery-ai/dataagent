@@ -110,7 +110,7 @@ def validate_strict_duplicates(result: Mapping[str, Any]) -> None:
     resources = result.get("RESOURCES")
     if isinstance(resources, Sequence) and not isinstance(resources, (str, bytes)):
         _check_duplicate_list_keys(resources, label="RESOURCES.id", key_fn=_resource_id_key)
-        from dataagent.core.resources.registry import validate_resources_list
+        from dataagent.resources import validate_resources_list
 
         validate_resources_list(list(resources))
 

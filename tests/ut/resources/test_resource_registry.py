@@ -10,14 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Unit tests for ResourceRegistry parsing and selection."""
+"""Unit tests for ResourceCatalog parsing and selection."""
 
 from __future__ import annotations
 
 import pytest
 
-from dataagent.core.resources.models import Resource
-from dataagent.core.resources.registry import ResourceRegistry, validate_resources_list
+from dataagent.resources import Resource, ResourceCapacity, ResourceCatalog, validate_resources_list
 
 
 def _local_resource_config(**overrides: object) -> dict[str, object]:
@@ -57,8 +56,8 @@ def test_validate_resources_list_rejects_executable_without_operations():
 
 def test_select_executable_by_resource_id():
     """Explicit resource_id selection succeeds when consumption matches."""
-    registry = ResourceRegistry.from_config({"RESOURCES": [_local_resource_config()]})
-    resource, error = registry.select_executable(resource_id="local", task_type="batch")
+    catalog = ResourceCatalog.from_config({"RESOURCES": [_local_resource_config()]})
+    resource, error = catalog.select_executable(resource_id="local", task_type="batch")
     assert error == ""
     assert resource is not None
     assert resource.id == "local"
@@ -66,7 +65,7 @@ def test_select_executable_by_resource_id():
 
 def test_select_executable_ambiguous_task_type():
     """Multiple resources supporting the same task type require resource_id."""
-    registry = ResourceRegistry.from_config(
+    catalog = ResourceCatalog.from_config(
         {
             "RESOURCES": [
                 _local_resource_config(id="a"),
@@ -74,17 +73,19 @@ def test_select_executable_ambiguous_task_type():
             ]
         }
     )
-    resource, error = registry.select_executable(task_type="batch")
+    resource, error = catalog.select_executable(task_type="batch")
     assert resource is None
     assert "multiple resources support task type" in error
 
 
-def test_with_usage_applies_runtime_counts():
-    """with_usage returns a copy with updated used counts."""
-    registry = ResourceRegistry(resources=[Resource(id="local", name="local", category="executable", capacity=4)])
-    updated = registry.with_usage(resource_usage={"local": 2})
-    assert updated.resource("local").used == 2
-    assert registry.resource("local").used == 0
+def test_capacity_snapshot_reflects_reserved_usage():
+    """Capacity snapshot reports used counts from the ledger."""
+    catalog = ResourceCatalog(resources=[Resource(id="local", name="local", category="executable", capacity=4)])
+    capacity = ResourceCapacity(catalog)
+    assert capacity.try_reserve(resource_id="local", task_type="resource", job_id="job-1", amount=2).ok
+    snapshot = {view.id: view for view in capacity.snapshot()}
+    assert snapshot["local"].used == 2
+    assert snapshot["local"].available == 2
 
 
 def test_validate_resources_list_accepts_non_executable_catalog_entry():
@@ -97,8 +98,8 @@ def test_validate_resources_list_accepts_non_executable_catalog_entry():
         "consumption": {"*": 1},
     }
     validate_resources_list([item])
-    registry = ResourceRegistry.from_config({"RESOURCES": [item]})
-    resource, error = registry.select_executable(resource_id="catalog-only", task_type="resource")
+    catalog = ResourceCatalog.from_config({"RESOURCES": [item]})
+    resource, error = catalog.select_executable(resource_id="catalog-only", task_type="resource")
     assert resource is None
     assert "not executable" in error.lower()
 

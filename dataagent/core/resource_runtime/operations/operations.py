@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from threading import Event
 from typing import Any
 
-from dataagent.core.resources.models import Resource
+from dataagent.resources.catalog.models import Resource
 
 ResourceOperation = Callable[[dict[str, Any], "ResourceOperationContext"], Any]
 

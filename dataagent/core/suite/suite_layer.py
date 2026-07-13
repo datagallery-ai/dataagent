@@ -20,8 +20,8 @@ from typing import Any
 
 import yaml
 
-from dataagent.core.resources.registry import validate_resources_list
 from dataagent.core.suite.types import SuiteRecord
+from dataagent.resources import validate_resources_list
 
 
 def build_suite_layers(

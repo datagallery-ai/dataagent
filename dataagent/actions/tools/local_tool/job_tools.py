@@ -80,11 +80,11 @@ def _resolve_job_service(runtime: Any) -> JobService | None:
     agent_service = runtime.ensure_job_services()
     if agent_service is not None and hasattr(agent_service, "job_service"):
         return agent_service.job_service
-    ensure_resource_services = getattr(runtime, "ensure_resource_services", None)
-    if callable(ensure_resource_services):
-        resource_service = ensure_resource_services()
-        if resource_service is not None and hasattr(resource_service, "job_service"):
-            return resource_service.job_service
+    ensure_resource_coordinator = getattr(runtime, "ensure_resource_coordinator", None)
+    if callable(ensure_resource_coordinator):
+        coordinator = ensure_resource_coordinator()
+        if coordinator is not None and hasattr(coordinator, "job_service"):
+            return coordinator.job_service
     return None
 
 
@@ -202,7 +202,7 @@ def _enrich_resource_collect_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Map resource job collect fields into ``original_msg`` / ``frontend_msg``.
 
     Args:
-        payload: Raw collect payload from :class:`~dataagent.core.resources.service.ResourceService`.
+        payload: Raw collect payload from :class:`ResourceJobCoordinator`.
 
     Returns:
         The same payload with LLM/frontend-friendly message fields when missing.
@@ -478,10 +478,10 @@ def submit_resource_job(
     runtime = _tool_context.runtime
     if runtime is None:
         return {"status": "ERROR", "message": "submit_resource_job requires a mounted runtime."}
-    resource_service = runtime.ensure_resource_services()
-    if resource_service is None:
+    coordinator = runtime.ensure_resource_coordinator()
+    if coordinator is None:
         return {"status": "ERROR", "message": "submit_resource_job requires RESOURCES configuration."}
-    return resource_service.submit_job(
+    return coordinator.submit_job(
         resource_id=str(resource_id or "").strip(),
         command=str(command or ""),
         task_type=str(task_type or "resource").strip() or "resource",
@@ -519,8 +519,8 @@ def poll_job(
     runtime = _tool_context.runtime
     if runtime is None:
         return {"status": "ERROR", "message": "poll_job requires a mounted runtime."}
-    resource_service = runtime.ensure_resource_services()
-    if resource_service is None:
+    coordinator = runtime.ensure_resource_coordinator()
+    if coordinator is None:
         return {"status": "ERROR", "message": "poll_job requires RESOURCES configuration."}
     normalized_job_id = str(job_id or "").strip()
     kind_error = _require_job_kind(
@@ -540,7 +540,7 @@ def poll_job(
         interval_sec=interval_sec,
         stop_on_terminal=stop_on_terminal,
         runtime=runtime,
-        poll=resource_service.poll,
+        poll=coordinator.poll,
     )
 
 
@@ -557,8 +557,8 @@ def collect_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str
     runtime = _tool_context.runtime
     if runtime is None:
         return {"status": "ERROR", "message": "collect_job requires a mounted runtime."}
-    resource_service = runtime.ensure_resource_services()
-    if resource_service is None:
+    coordinator = runtime.ensure_resource_coordinator()
+    if coordinator is None:
         return {"status": "ERROR", "message": "collect_job requires RESOURCES configuration."}
     kind_error = _require_job_kind(
         runtime=runtime,
@@ -569,7 +569,7 @@ def collect_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str
     )
     if kind_error is not None:
         return kind_error
-    return _enrich_resource_collect_payload(resource_service.collect(job_id=normalized_job_id))
+    return _enrich_resource_collect_payload(coordinator.collect(job_id=normalized_job_id))
 
 
 def cancel_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str, Any]:
@@ -585,8 +585,8 @@ def cancel_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str,
     runtime = _tool_context.runtime
     if runtime is None:
         return {"status": "ERROR", "message": "cancel_job requires a mounted runtime."}
-    resource_service = runtime.ensure_resource_services()
-    if resource_service is None:
+    coordinator = runtime.ensure_resource_coordinator()
+    if coordinator is None:
         return {"status": "ERROR", "message": "cancel_job requires RESOURCES configuration."}
     kind_error = _require_job_kind(
         runtime=runtime,
@@ -597,7 +597,7 @@ def cancel_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str,
     )
     if kind_error is not None:
         return kind_error
-    return resource_service.cancel(job_id=normalized_job_id)
+    return coordinator.cancel(job_id=normalized_job_id)
 
 
 def list_resources(*, _tool_context: ToolExecutionContext) -> dict[str, Any]:
@@ -613,7 +613,7 @@ def list_resources(*, _tool_context: ToolExecutionContext) -> dict[str, Any]:
     runtime = _tool_context.runtime
     if runtime is None:
         return {"status": "ERROR", "message": "list_resources requires a mounted runtime."}
-    resource_service = runtime.ensure_resource_services()
-    if resource_service is None:
+    coordinator = runtime.ensure_resource_coordinator()
+    if coordinator is None:
         return {"status": "ERROR", "message": "list_resources requires RESOURCES configuration."}
-    return resource_service.list_resources()
+    return coordinator.list_resources()

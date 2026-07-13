@@ -21,10 +21,6 @@ from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
-from dataagent.actions.resources.bootstrap import (
-    default_mcp_client_factory,
-    default_resource_operation_registry,
-)
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.job_tools import (
     cancel_job,
@@ -39,8 +35,12 @@ from dataagent.core.agents.service import AgentService
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
-from dataagent.core.resources.registry import ResourceRegistry
-from dataagent.core.resources.service import ResourceService
+from dataagent.core.resource_runtime import (
+    ResourceJobCoordinator,
+    build_default_operation_registry,
+    default_mcp_client_factory,
+)
+from dataagent.resources import ResourceCapacity, ResourceCatalog, ResourceResolve
 
 
 def _resources_config() -> dict[str, Any]:
@@ -65,7 +65,7 @@ def _resources_config() -> dict[str, Any]:
 
 
 def _build_tool_context(tmp_path: Path) -> ToolExecutionContext:
-    """Bind resource lifecycle tools to a workspace-scoped ResourceService."""
+    """Bind resource lifecycle tools to a workspace-scoped ResourceJobCoordinator."""
     parent_ws = tmp_path / "parent_session"
     parent_ws.mkdir(parents=True, exist_ok=True)
     store = FileJobStore(parent_ws)
@@ -75,16 +75,20 @@ def _build_tool_context(tmp_path: Path) -> ToolExecutionContext:
         sandbox=NoopSandbox(workspace_root=parent_ws),
         ensure_not_cancelled=lambda: None,
     )
-    registry = ResourceRegistry.from_config(_resources_config())
-    resource_service = ResourceService(
-        registry=registry,
+    catalog = ResourceCatalog.from_config(_resources_config())
+    capacity = ResourceCapacity(catalog)
+    resolve = ResourceResolve(catalog)
+    coordinator = ResourceJobCoordinator(
+        catalog=catalog,
+        capacity=capacity,
+        resolve=resolve,
         job_service=job_service,
         runtime=runtime,
-        operation_registry=default_resource_operation_registry(),
+        operation_registry=build_default_operation_registry(),
         mcp_client_factory=default_mcp_client_factory(),
     )
     agent_service = AgentService(registry=AgentRegistry(), job_service=job_service, runtime=runtime)
-    runtime.ensure_resource_services = lambda: resource_service
+    runtime.ensure_resource_coordinator = lambda: coordinator
     runtime.ensure_job_services = lambda: agent_service
     return ToolExecutionContext(runtime=runtime)
 
@@ -137,7 +141,7 @@ def test_poll_job_rejects_subagent_job_id(tmp_path: Path) -> None:
     """poll_job must not operate on subagent-track jobs."""
     ctx = _build_tool_context(tmp_path)
     runtime = ctx.runtime
-    job_service = runtime.ensure_resource_services().job_service
+    job_service = runtime.ensure_resource_coordinator().job_service
     handle = job_service.start(
         agent_id="echo_ref",
         task="hello",
@@ -168,7 +172,7 @@ def test_cancel_job_tool_terminates_running_resource_job(tmp_path: Path) -> None
     """cancel_job stops a long-running resource job."""
     ctx = _build_tool_context(tmp_path)
     runtime = ctx.runtime
-    resource_service = runtime.ensure_resource_services()
+    coordinator = runtime.ensure_resource_coordinator()
     started = Event()
 
     def slow_runner(job_id: str, cancel_event: Event) -> JobResult:
@@ -182,7 +186,7 @@ def test_cancel_job_tool_terminates_running_resource_job(tmp_path: Path) -> None
             summary="Resource job cancelled.",
         )
 
-    handle = resource_service.job_service.start(
+    handle = coordinator.job_service.start(
         agent_id="resource:local",
         task="block",
         runner=slow_runner,
@@ -193,4 +197,4 @@ def test_cancel_job_tool_terminates_running_resource_job(tmp_path: Path) -> None
     assert started.wait(timeout=2.0)
     cancel_payload = cancel_job(job_id=job_id, _tool_context=ctx)
     assert cancel_payload["status"] == "cancelled"
-    assert _wait_until_terminal(resource_service.job_service, job_id) == "cancelled"
+    assert _wait_until_terminal(coordinator.job_service, job_id) == "cancelled"
