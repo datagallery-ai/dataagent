@@ -539,12 +539,15 @@ class OpenJiuWenWorkflow:
             self._ojw_try_ensure_context_query(state_proxy, runtime_for_node)
             self._ojw_try_ensure_planner_user_message(state_proxy, runtime_for_node, node.name)
             if isinstance(inputs, dict):
+                # Log only field lengths to keep user input out of logs.
+                query = inputs.get("query", None)
+                user_query = inputs.get("user_query", None)
                 logger.info(
-                    "[workflow_openjiuwen] node={} input_keys={} query={} user_query={} messages_type={}",
+                    "[workflow_openjiuwen] node={} input_keys={} query_len={} user_query_len={} messages_type={}",
                     node.name,
                     sorted(inputs.keys()),
-                    repr(inputs.get("query", None))[:200],
-                    repr(inputs.get("user_query", None))[:200],
+                    len(str(query)) if query is not None else 0,
+                    len(str(user_query)) if user_query is not None else 0,
                     type(inputs.get("messages", None)).__name__,
                 )
             node_name = node.name

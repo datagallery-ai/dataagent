@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import suppress
 from pathlib import Path
@@ -20,6 +21,16 @@ from typing import Any
 from uuid import uuid4
 
 from dataagent.core.framework_adapters.checkpoints.types import CheckpointRecord
+
+# SQL table names are interpolated, so allow safe identifiers only.
+_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_table_name(table_name: str) -> str:
+    name = str(table_name)
+    if not _TABLE_NAME_RE.fullmatch(name):
+        raise ValueError("Invalid checkpoint table name")
+    return name
 
 
 class SqliteCheckpointStore:
@@ -33,7 +44,7 @@ class SqliteCheckpointStore:
 
     def __init__(self, sqlite_path: str, *, table_name: str = "dataagent_checkpoints"):
         self._path = str(sqlite_path)
-        self._table = str(table_name)
+        self._table = _validate_table_name(table_name)
         self._ensure_parent_dir()
         self._ensure_table()
 
