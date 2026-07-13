@@ -25,6 +25,7 @@ import pytest
 
 from dataagent.core.utils.performance import (
     PerformanceCollector,
+    bind_agent_performance,
     bind_current_collector,
     build_state_summary,
     create_collector,
@@ -46,8 +47,10 @@ def perf_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _active_collector(user_id: str = "u", session_id: str = "s", run_id: str = "r-1") -> PerformanceCollector:
-    return PerformanceCollector(enabled=True, user_id=user_id, session_id=session_id, run_id=run_id)
+def _active_collector(
+    user_id: str = "u", session_id: str = "s", run_id: str = "r-1", sub_id: int = 0
+) -> PerformanceCollector:
+    return PerformanceCollector(enabled=True, user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id)
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +85,21 @@ def test_performance_enabled_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_path_is_process_isolated(perf_home: Path) -> None:
     """同 run_id 在不同进程下应天然落到不同文件（路径含 PID）。"""
-    collector = _active_collector(run_id="shared")
+    collector = _active_collector(run_id="shared", sub_id=7)
     assert collector.jsonl_path is not None
-    assert collector.jsonl_path.name == f"shared.{os.getpid()}.jsonl"
+    assert collector.jsonl_path.name == f"Runshared_Sub7.{os.getpid()}.jsonl"
     assert ".performance" in collector.jsonl_path.parts
+
+
+def test_bind_agent_performance_reads_sub_id_from_state(perf_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Agent binding must preserve the trajectory sub id in the collector identity."""
+    monkeypatch.setenv("DATAAGENT_PERFORMANCE_ENABLED", "1")
+    state = {"user_id": "u", "session_id": "s", "run_id": 3, "sub_id": 42}
+
+    with bind_agent_performance(object(), state=state) as collector:
+        assert collector.sub_id == "42"
+        assert collector.jsonl_path is not None
+        assert collector.jsonl_path.name == f"Run3_Sub42.{os.getpid()}.jsonl"
 
 
 def test_disabled_does_not_write_files() -> None:
@@ -113,6 +127,9 @@ def test_records_success_event(perf_home: Path) -> None:
     assert ev["kind"] == "node"
     assert ev["name"] == "planner"
     assert ev["success"] is True
+    assert ev.get("run_id") == "r-1"
+    assert ev.get("sub_id") == "0"
+    assert ev.get("pid") == os.getpid()
     assert "error_type" not in ev
     assert ev["elapsed_ms"] >= 0.0
     assert ev["extra"]["node_kind"] == "planner"
@@ -168,6 +185,9 @@ def test_jsonl_is_written_in_real_time(perf_home: Path) -> None:
     parsed = [json.loads(line) for line in lines]
     assert parsed[0]["kind"] == "node"
     assert parsed[1]["kind"] == "tool"
+    assert all(record.get("run_id") == "r-1" for record in parsed)
+    assert all(record.get("sub_id") == "0" for record in parsed)
+    assert all(record.get("pid") == os.getpid() for record in parsed)
 
 
 def test_flush_appends_footer_to_jsonl(perf_home: Path) -> None:
@@ -183,8 +203,10 @@ def test_flush_appends_footer_to_jsonl(perf_home: Path) -> None:
     assert node_ev["kind"] == "node"
     footer = json.loads(lines[1])
     assert footer["kind"] == "_flush"
-    assert footer["metadata"]["run_id"] == "r-1"
-    assert footer["metadata"]["pid"] == os.getpid()
+    metadata = footer.get("metadata", {})
+    assert metadata.get("run_id") == "r-1"
+    assert metadata.get("sub_id") == "0"
+    assert metadata.get("pid") == os.getpid()
     assert footer["summary"]["nodes"]["planner"]["count"] == 1
 
 
