@@ -23,12 +23,6 @@ from dataagent.core.managers.action_manager.base import BaseTool, ErrorType, Too
 from dataagent.core.managers.action_manager.schemas import ToolSchema
 
 
-def _classify_exception(exc: Exception) -> ErrorType:
-    """根据异常类型分类错误（保持向后兼容，内部委托给统一函数）"""
-    err_type, _ = classify_exception(exc)
-    return err_type
-
-
 class LocalToolWrapper(BaseTool):
     """本地函数工具包装器"""
 
@@ -94,12 +88,14 @@ class LocalToolWrapper(BaseTool):
             )
 
         except Exception as e:
-            error_type = _classify_exception(e)
+            error_type, policy = classify_exception(e)
             return ToolResult(
                 success=False,
                 error=str(e),
                 metadata={"tool_type": "local_function", "error_type": type(e).__name__},
                 error_type=error_type,
+                retriable=policy.retriable,
+                max_retries=policy.max_retries,
             )
 
     async def acall(self, **kwargs) -> ToolResult:
@@ -126,12 +122,14 @@ class LocalToolWrapper(BaseTool):
                 success=True, data=result, metadata={"tool_type": "local_function", "function_name": self.func.__name__}
             )
         except Exception as e:
-            error_type = _classify_exception(e)
+            error_type, policy = classify_exception(e)
             return ToolResult(
                 success=False,
                 error=str(e),
                 metadata={"tool_type": "local_function", "error_type": type(e).__name__},
                 error_type=error_type,
+                retriable=policy.retriable,
+                max_retries=policy.max_retries,
             )
 
     def _tool_per_call_config(self) -> dict:

@@ -21,6 +21,7 @@ from urllib.parse import quote
 import requests
 from loguru import logger
 
+from dataagent.actions.tools.semantic_tool.auth import get_semantic_layer_auth
 from dataagent.utils.constants import (
     DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT,
     DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT,
@@ -48,12 +49,9 @@ class SemanticServiceError(requests.HTTPError):
         self.error_code = error_code
         self.error_message = error_message
 
-        parts = [f"Semantic service {method} failed", f"path={path}", f"status_code={status_code}"]
-        if error_code:
-            parts.append(f"error_code={error_code}")
-        if error_message:
-            parts.append(f"error_message={error_message}")
-        super().__init__(", ".join(parts), response=response)
+        self.classification_hint = "internal semantic service error"
+
+        super().__init__(f"{self.classification_hint}: Semantic service {method} failed", response=response)
 
 
 class SemanticServiceClient:
@@ -81,11 +79,9 @@ class SemanticServiceClient:
         """Build a semantic-service client from SEMANTIC_LAYER."""
         raw_base_url = config_manager.get("SEMANTIC_LAYER.base_url") or config_manager.get("SEMANTIC_LAYER.url")
         if not raw_base_url:
-            raise ValueError("SEMANTIC_LAYER.base_url must be configured")
+            raise ValueError("validation error: SEMANTIC_LAYER.base_url must be configured")
 
-        username = config_manager.get("SEMANTIC_LAYER.username")
-        password = config_manager.get("SEMANTIC_LAYER.password")
-        auth = _build_auth(username, password)
+        auth = get_semantic_layer_auth(config_manager)
 
         timeout = _as_float(
             config_manager.get("SEMANTIC_LAYER.timeout", 30.0),
@@ -221,14 +217,22 @@ class SemanticServiceClient:
                 verify=self.verify,
             )
             response.raise_for_status()
-            return response.json()
+            try:
+                return response.json()
+            except ValueError as err:
+                raise ValueError("internal semantic service JSON response error: method=GET") from err
         except requests.HTTPError as err:
             service_err = _build_service_error(err, method="GET", path=path)
             logger.error(str(service_err))
             raise service_err from err
+        except requests.Timeout as err:
+            wrapped = requests.RequestException("internal semantic service request failed: method=GET")
+            logger.error(str(wrapped))
+            raise wrapped from err
         except requests.RequestException as err:
-            logger.error(f"Semantic service GET failed: path={path}, error={err}")
-            raise
+            wrapped = requests.RequestException("internal semantic service request failed: method=GET")
+            logger.error(str(wrapped))
+            raise wrapped from err
 
     def post(
         self,
@@ -248,14 +252,22 @@ class SemanticServiceClient:
                 verify=self.verify,
             )
             response.raise_for_status()
-            return response.json()
+            try:
+                return response.json()
+            except ValueError as err:
+                raise ValueError("internal semantic service JSON response error: method=POST") from err
         except requests.HTTPError as err:
             service_err = _build_service_error(err, method="POST", path=path)
             logger.error(str(service_err))
             raise service_err from err
+        except requests.Timeout as err:
+            wrapped = requests.RequestException("internal semantic service request failed: method=POST")
+            logger.error(str(wrapped))
+            raise wrapped from err
         except requests.RequestException as err:
-            logger.error(f"Semantic service POST failed: path={path}, error={err}")
-            raise
+            wrapped = requests.RequestException("internal semantic service request failed: method=POST")
+            logger.error(str(wrapped))
+            raise wrapped from err
 
     def _url(self, path: str) -> str:
         """Build an absolute URL from a relative API path."""
@@ -266,7 +278,7 @@ def normalize_semantic_base_url(raw_url: str) -> str:
     """Normalize semantic-service host or API URL to ``/api/semantic/v1``."""
     base = str(raw_url).strip().rstrip("/")
     if not base:
-        raise ValueError("semantic service base_url must not be empty")
+        raise ValueError("validation error: semantic service base_url must not be empty")
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", base):
         base = f"http://{base}"
 
@@ -279,15 +291,6 @@ def normalize_semantic_base_url(raw_url: str) -> str:
         return f"{base}/semantic/v1"
 
     return f"{base}/api/semantic/v1"
-
-
-def _build_auth(username: Any, password: Any) -> tuple[str, str] | None:
-    """Build optional basic-auth credentials."""
-    if not username and not password:
-        return None
-    if not username or not password:
-        raise ValueError("SEMANTIC_LAYER.username and SEMANTIC_LAYER.password must be configured together")
-    return str(username), str(password)
 
 
 def _build_service_error(err: requests.HTTPError, *, method: str, path: str) -> SemanticServiceError:
