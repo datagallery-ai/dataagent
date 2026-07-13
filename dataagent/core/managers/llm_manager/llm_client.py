@@ -507,7 +507,7 @@ def _detect_ngram_repetition(
     window: int = DEFAULT_REPETITION_NGRAM_WINDOW,
     max_repeat: int = DEFAULT_REPETITION_NGRAM_MAX_REPEAT,
 ) -> tuple[bool, str | None]:
-    """检测 token n-gram 级别的重复：统计所有 n-gram 频次，任一超过阈值即触发。"""
+    """检测 token n-gram 级别的重复，忽略完全由等号组成的 n-gram。"""
     tokens = _tokenize_simple(text)
     if len(tokens) < window:
         return False, None
@@ -516,6 +516,8 @@ def _detect_ngram_repetition(
 
     for i in range(len(tokens) - window + 1):
         ngram = tuple(tokens[i : i + window])
+        if all(token == "=" for token in ngram):
+            continue
         count = freq.get(ngram, 0) + 1
         freq[ngram] = count
         if count > max_repeat:
