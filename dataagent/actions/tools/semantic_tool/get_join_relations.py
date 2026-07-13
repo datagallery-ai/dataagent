@@ -55,7 +55,7 @@ def get_join_relations(
         raw = client.get_joinable_tables(names, limit=DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT)
     except (requests.RequestException, ValueError) as e:
         logger.error(f"请求语义服务 joinable-tables 失败：{e}")
-        return _fmt(f"请求失败：{e}", "查询 JOIN 关系失败。", {"joins": []})
+        raise
 
     joins: list[dict[str, Any]] = []
     for item in raw:

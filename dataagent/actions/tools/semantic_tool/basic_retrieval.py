@@ -41,7 +41,7 @@ def list_semantic_layer_tables(*, _tool_context: ToolExecutionContext) -> dict:
         raw = client.list_retrieval_tables()
     except (requests.RequestException, ValueError) as err:
         logger.error(f"查询语义层表清单失败：{err}")
-        return _fmt(f"请求失败：{err}", "查询语义层表清单失败。", {"tables": [], "count": 0})
+        raise
 
     tables = raw.get("tables", []) if isinstance(raw, dict) else []
     count = raw.get("count", len(tables)) if isinstance(raw, dict) else len(tables)
@@ -77,11 +77,7 @@ def get_semantic_layer_table_schema(table: str, *, _tool_context: ToolExecutionC
         raw = client.get_retrieval_table_schema(normalized_table)
     except (requests.RequestException, ValueError) as err:
         logger.error(f"查询语义层表 schema 失败：{err}")
-        return _fmt(
-            f"请求失败：{err}",
-            f"查询语义层表 {normalized_table} 的 schema 失败。",
-            {"table": normalized_table},
-        )
+        raise
 
     parsed_schema = _parse_schema(raw.get("schema") if isinstance(raw, dict) else None)
     columns = parsed_schema.get("columns", []) if isinstance(parsed_schema, dict) else []

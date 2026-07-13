@@ -13,10 +13,14 @@
 from typing import Any
 
 
-def get_semantic_layer_auth(config_manager: Any) -> tuple[str, str]:
-    """Read semantic-service Basic Auth credentials from agent configuration."""
+def get_semantic_layer_auth(config_manager: Any) -> tuple[str, str] | None:
+    """Read optional semantic-service Basic Auth credentials from agent configuration."""
     username = config_manager.get("SEMANTIC_LAYER.username")
     password = config_manager.get("SEMANTIC_LAYER.password")
+    if not username and not password:
+        return None
     if not username or not password:
-        raise ValueError("SEMANTIC_LAYER.username and SEMANTIC_LAYER.password must both be configured")
+        raise ValueError(
+            "validation error: SEMANTIC_LAYER.username and SEMANTIC_LAYER.password must both be configured"
+        )
     return str(username), str(password)
