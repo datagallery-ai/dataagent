@@ -13,10 +13,21 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
 from dataagent.core.framework_adapters.checkpoints.types import CheckpointRecord
+
+# SQL table names are interpolated, so allow safe identifiers only.
+_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_table_name(table_name: str) -> str:
+    name = str(table_name)
+    if not _TABLE_NAME_RE.fullmatch(name):
+        raise ValueError("Invalid checkpoint table name")
+    return name
 
 
 class PostgresCheckpointStore:
@@ -30,7 +41,7 @@ class PostgresCheckpointStore:
 
     def __init__(self, dsn: str, *, table_name: str = "dataagent_checkpoints"):
         self._dsn = str(dsn)
-        self._table = str(table_name)
+        self._table = _validate_table_name(table_name)
         self._ensure_table()
 
     def load(self, checkpoint_id: str) -> CheckpointRecord:
