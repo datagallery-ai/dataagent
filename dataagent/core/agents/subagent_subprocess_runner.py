@@ -292,9 +292,15 @@ def _prepare_job_initial_state_file(
     tmp_dir = resolved_workspace / ".runtime" / "job_state"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     path = tmp_dir / f"initial_state_{uuid.uuid4().hex}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        path.chmod(0o600)
+    # Initial job state may contain user data, so create it owner-only.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2))
+    finally:
+        if fd >= 0:
+            os.close(fd)
     return path
 
 
