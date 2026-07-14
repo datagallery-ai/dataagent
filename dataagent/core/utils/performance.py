@@ -280,7 +280,7 @@ class PerformanceCollector:
 
     @contextmanager
     def measure(self, kind: str, name: str, **base_extra: Any) -> Iterator[dict[str, Any]]:
-        """kind ∈ agent | node | llm | tool；yield 可变 dict，事件结束时并入 extra。"""
+        """kind ∈ agent | node | hook | llm | tool；yield 可变 dict，事件结束时并入 extra。"""
         if not self.enabled:
             h: dict[str, Any] = dict(base_extra)
             yield h
@@ -336,6 +336,7 @@ class PerformanceCollector:
         """按 kind 汇总事件：
 
         * 每个桶 entry 都带 ``count`` / ``elapsed_ms`` (总和) / ``min_ms`` / ``max_ms`` /
+        * ``hook``：按 ``hook_scope:hook_phase:name`` 分桶，保留 agent/node/tool 的生命周期边界；
         * ``llm``：以 ``caller_kind:caller_name:llm_name`` 复合键分桶，
           同时按桶累计 input/output/total tokens；没有 caller（孤儿调用）
           时退化为只用 ``llm_name`` 作键。
@@ -347,6 +348,7 @@ class PerformanceCollector:
         summary: dict[str, Any] = {
             "agent": dict(base["agent"]),
             "nodes": {},
+            "hooks": {},
             "llms": {
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -381,6 +383,23 @@ class PerformanceCollector:
             if kind in ("node", "tool"):
                 bucket = summary["nodes" if kind == "node" else "tools"]
                 entry = bucket.setdefault(ev["name"], {"count": 0, "elapsed_ms": 0.0, "error_count": 0})
+                accumulate(entry, ev)
+                continue
+            if kind == "hook":
+                extra = ev.get("extra") or {}
+                scope = str(extra.get("hook_scope") or "unknown")
+                phase = str(extra.get("hook_phase") or "unknown")
+                key = f"{scope}:{phase}:{ev['name']}"
+                entry = summary["hooks"].setdefault(
+                    key,
+                    {
+                        "count": 0,
+                        "elapsed_ms": 0.0,
+                        "error_count": 0,
+                        "hook_scope": scope,
+                        "hook_phase": phase,
+                    },
+                )
                 accumulate(entry, ev)
                 continue
             if kind == "llm":

@@ -88,11 +88,11 @@ class BaseNode:
         collector = get_current_collector()
         with collector.measure("node", self.name):
             for hook in self.pre_hooks:
-                with collector.measure("hook", callable_perf_name(hook)):
+                with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="pre"):
                     state = hook(state, runtime)
             state = self._process(state, runtime)
             for hook in self.post_hooks:
-                with collector.measure("hook", callable_perf_name(hook)):
+                with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="post"):
                     state = hook(state, runtime)
             return state
 
@@ -115,13 +115,13 @@ class BaseNode:
         collector = get_current_collector()
         with collector.measure("node", self.name):
             for hook in self.pre_hooks:
-                with collector.measure("hook", callable_perf_name(hook)):
+                with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="pre"):
                     state = hook(state, runtime)
             if bool(state.get("complete", False)):
                 return dict(state)
             result = await self._aprocess(state, runtime)
             for hook in self.post_hooks:
-                with collector.measure("hook", callable_perf_name(hook)):
+                with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="post"):
                     result = hook(result, runtime)
             result_msgs = result.get("messages", [])
             if result_msgs and not isinstance(result_msgs, list):
