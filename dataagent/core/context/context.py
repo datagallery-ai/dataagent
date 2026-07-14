@@ -28,7 +28,7 @@ from dataagent.core.context.context_state import ContextState
 from dataagent.core.context.todolist_manager import TodoListManager
 from dataagent.core.context.trajectory_editor import TrajectoryEditor
 from dataagent.core.context.trajectory_navigator import TrajectoryNavigator
-from dataagent.utils.runtime_paths import resolve_effective_workspace_root, resolve_flex_context_dir
+from dataagent.utils.runtime_paths import resolve_flex_context_dir, resolve_runtime_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +53,8 @@ def build_context_init_options(
 
     Args:
         config_manager: Per-Agent :class:`~dataagent.config.config_manager.ConfigManager`.
+        workspace: Optional workspace to validate and attach (YAML-configured or
+            framework-derived session directory; never end-user input).
 
     Returns:
         Frozen options for :meth:`ContextFactory.get_context`.
@@ -74,23 +76,40 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     return True
 
 
+def _configured_workspace_cage(config: Mapping[str, Any] | None) -> Path | None:
+    """Return YAML ``WORKSPACE.path`` when set; otherwise ``None`` (no cage)."""
+    if not isinstance(config, Mapping):
+        return None
+    workspace = config.get("WORKSPACE")
+    if not isinstance(workspace, Mapping):
+        return None
+    raw = str(workspace.get("path") or "").strip()
+    if not raw:
+        return None
+    return resolve_runtime_path(raw)
+
+
 def _resolve_context_workspace_override(
     *,
     workspace: str | Path | None,
     config: Mapping[str, Any] | None,
 ) -> Path | None:
+    """Normalize workspace; enforce the cage only when YAML ``WORKSPACE.path`` is set.
+
+    Workspace values are trusted inputs (YAML config or framework-derived session
+    directories). When ``WORKSPACE.path`` is configured it is the single writable
+    root, so any workspace outside it indicates a wiring bug and is rejected.
+    Without it the framework derives per-session directories whose names (dynamic
+    REST/CLI session ids) are unknown to static config, so only normalization applies.
+    """
     if workspace is None or not str(workspace).strip():
         return None
-    user_id = str(config.get("USER_ID") or "") if isinstance(config, Mapping) else ""
-    session_id = str(config.get("SESSION_ID") or "") if isinstance(config, Mapping) else ""
-    allowed_root = resolve_effective_workspace_root(
-        config=config,
-        session_id=session_id or None,
-        user_id=user_id or None,
-    ).resolve()
     candidate = Path(workspace).expanduser().resolve()
-    # Context workspaces must stay under the configured workspace root.
-    if not _is_relative_to(candidate, allowed_root):
+    cage = _configured_workspace_cage(config)
+    if cage is None:
+        return candidate
+    allowed_root = cage.resolve()
+    if candidate != allowed_root and not _is_relative_to(candidate, allowed_root):
         raise ValueError("workspace must be inside the configured workspace root")
     return candidate
 
@@ -237,8 +256,15 @@ class Context:
         self.state = ContextState.build(
             user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id, node_types=node_types
         )
+        # Final workspace gate: every Context creation path (including direct
+        # ContextInitOptions) passes the WORKSPACE.path cage check here.
         if init_opts.workspace is not None:
-            self.state.workspace = str(Path(init_opts.workspace).expanduser().resolve())
+            self.state.workspace = str(
+                _resolve_context_workspace_override(
+                    workspace=init_opts.workspace,
+                    config=init_opts.config,
+                )
+            )
         self.state.config = init_opts.config
         self._nav = TrajectoryNavigator(ctx=self)
         self._persistence = ContextPersistence(ctx=self)

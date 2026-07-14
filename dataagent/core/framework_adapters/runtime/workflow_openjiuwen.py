@@ -242,7 +242,7 @@ class OpenJiuWenWorkflow:
             options = None
             config_manager = getattr(runtime, "config_manager", None)
             if config_manager is not None:
-                options = build_context_init_options(config_manager)
+                options = build_context_init_options(config_manager, workspace=state.get("workspace"))
             call_context = ContextFactory.get_context(
                 user_id=user_id,
                 session_id=session_id,
