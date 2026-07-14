@@ -291,12 +291,22 @@ class ResultIRConverter:
 
     @classmethod
     def snapshot_dir(cls, directory: str | Path | None) -> dict[str, float]:
-        """递归拍摄目录文件快照，返回 {绝对路径: mtime} 映射。"""
+        """递归拍摄目录文件快照，返回 {绝对路径: mtime} 映射。
+
+        仅跳过相对 ``directory`` 根路径中以 ``.`` 开头的路径段
+        （如 ``.context`` / ``.dataagent/tool_outputs``），避免把
+        ``DATAAGENT_HOME=~/.dataagent`` 这类 home 前缀误判为隐藏目录。
+        """
         if not directory or not Path(directory).is_dir():
             return {}
+        root = Path(directory).resolve()
         snapshot: dict[str, float] = {}
-        for f in Path(directory).rglob("*"):
-            if any(part.startswith(".") for part in f.parts):
+        for f in root.rglob("*"):
+            try:
+                rel_parts = f.relative_to(root).parts
+            except ValueError:
+                continue
+            if any(part.startswith(".") for part in rel_parts):
                 continue
             if f.is_file():
                 try:
@@ -404,12 +414,27 @@ class ResultIRConverter:
                     created.append(label)
                     known_paths.add(fpath)
 
-        # Step B: 参数引用文件补录（例如 read_file 的 path）
+        # Step B: 参数引用文件补录（例如 write_file / file_saver 的 path）
+        # 按扩展名分流，与 Step A / read_file 一致，避免 .csv 被误建成 FileNode。
         arg_paths = _extract_file_paths_from_args(tool_args, workspace)
         for fpath in sorted(arg_paths):
             if fpath in known_paths:
                 continue
-            label = cls._register_file_node(context, action_node_label, tool_name, path=fpath)
+            p = Path(fpath)
+            ext = p.suffix.lower()
+            if ext in TABLE_FILE_EXTS:
+                label = cls._register_table_node(context, action_node_label, tool_name, fpath)
+            elif ext in EXT_SCRIPT_TYPE_MAP:
+                label = cls._register_script_node(
+                    context,
+                    action_node_label,
+                    tool_name,
+                    script_content=_safe_read_file(p),
+                    script_type=EXT_SCRIPT_TYPE_MAP[ext],
+                    path=fpath,
+                )
+            else:
+                label = cls._register_file_node(context, action_node_label, tool_name, path=fpath)
             if label:
                 created.append(label)
                 known_paths.add(fpath)
