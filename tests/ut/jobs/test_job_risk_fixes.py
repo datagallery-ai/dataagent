@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import stat
 import sys
 import time
 from pathlib import Path
@@ -113,6 +114,7 @@ def test_prepare_job_initial_state_file_hydrates_prior_messages(tmp_path):
     assert payload["messages"][0]["content"] == "prior turn"
     assert payload["user_query"] == "follow-up task"
     assert payload["run_id"] >= 1
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
 
 def test_load_job_workspace_hydrate_state_increments_run_id_from_snapshot(tmp_path):
