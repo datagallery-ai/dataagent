@@ -609,6 +609,75 @@ class TestUtilityMethods:
         assert ResultIRConverter.snapshot_dir(None) == {}
         assert ResultIRConverter.snapshot_dir("/nonexistent/path") == {}
 
+    def test_snapshot_dir_includes_files_under_dot_home_prefix(self, tmp_path: Path):
+        """绝对路径含 .dataagent_home 时，仍应快照到 workspace 内用户文件。"""
+        workspace = tmp_path / ".dataagent_home" / "anonymous" / "session"
+        workspace.mkdir(parents=True)
+        csv_path = workspace / "sample.csv"
+        csv_path.write_text("a,b\n1,2\n", encoding="utf-8")
+
+        snap = ResultIRConverter.snapshot_dir(str(workspace))
+        assert str(csv_path.resolve()) in snap
+
+    def test_snapshot_dir_skips_workspace_internal_hidden_dirs(self, tmp_path: Path):
+        """workspace 内 .context / .dataagent 等隐藏目录仍应跳过。"""
+        workspace = tmp_path / ".dataagent_home" / "sess"
+        workspace.mkdir(parents=True)
+        (workspace / "keep.txt").write_text("ok", encoding="utf-8")
+        context_dir = workspace / ".context"
+        context_dir.mkdir()
+        (context_dir / "Run0.json").write_text("{}", encoding="utf-8")
+        tool_out = workspace / ".dataagent" / "tool_outputs"
+        tool_out.mkdir(parents=True)
+        (tool_out / "out.txt").write_text("skip", encoding="utf-8")
+
+        snap = ResultIRConverter.snapshot_dir(str(workspace))
+        assert str((workspace / "keep.txt").resolve()) in snap
+        assert not any(".context" in p for p in snap)
+        assert not any("tool_outputs" in p for p in snap)
+
+    def test_new_csv_under_dot_home_workspace_creates_table(self, context: Context, tmp_path: Path):
+        """默认 DATAAGENT_HOME 风格路径下新增 .csv → TableNode（非 FileNode）。"""
+        workspace = tmp_path / ".dataagent_home" / "anonymous" / "session"
+        workspace.mkdir(parents=True)
+        pre = ResultIRConverter.snapshot_dir(str(workspace))
+        csv_path = workspace / "sample.csv"
+        csv_path.write_text("name,age\nAlice,28\n", encoding="utf-8")
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="write_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": str(csv_path.resolve()), "content": "name,age\nAlice,28\n"},
+            result={"status": "ok"},
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+            pre_existing_files=pre,
+        )
+        assert len(_labels_of(created, "Table")) == 1
+        assert _labels_of(created, "File") == []
+
+    def test_write_file_arg_path_csv_creates_table_without_snapshot(self, context: Context, tmp_path: Path):
+        """无快照差集时，write_file 参数中的 .csv 路径仍应按扩展名建成 TableNode。"""
+        csv_path = tmp_path / "demo.csv"
+        csv_path.write_text("a,b\n1,2\n", encoding="utf-8")
+        resolved = str(csv_path.resolve())
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="write_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": resolved, "content": "a,b\n1,2\n"},
+            result={"status": "ok"},
+            action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
+            pre_existing_files=None,
+        )
+        assert len(_labels_of(created, "Table")) == 1
+        assert _labels_of(created, "File") == []
+        ir = cast(TableNode, context.get_IR_from_node(graph_node_label=_labels_of(created, "Table")[0]))
+        assert ir.path == resolved
+
 
 class TestCombinedScenarios:
     """测试多Pipeline交叉的真实场景。"""
