@@ -1353,6 +1353,7 @@ class LLMClient:
             with httpx.Client(timeout=timeout, verify=httpx_verify()) as client:
                 resp = client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
+                self._ensure_non_stream_response(resp)
                 msg = self._wrap_response(resp.json())
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
@@ -1370,6 +1371,7 @@ class LLMClient:
             async with httpx.AsyncClient(timeout=timeout, verify=httpx_verify()) as client:
                 resp = await client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
+                self._ensure_non_stream_response(resp)
                 msg = self._wrap_response(resp.json())
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
@@ -1691,6 +1693,12 @@ class LLMClient:
             stream_options = dict(payload.get("stream_options") or {})
             stream_options.setdefault("include_usage", True)
             payload["stream_options"] = stream_options
+        else:
+            # extra_body 可能透传进 stream/stream_options（如配置从 litellm 迁移而来）。
+            # 必须显式 stream=False：部分网关（如华为 aigateway）缺省字段时默认开流式，
+            # 仅 pop 掉仍会收到 SSE，导致 resp.json() 失败。
+            payload["stream"] = False
+            payload.pop("stream_options", None)
         return payload
 
     def _resolve_timeout(self, kwargs: dict[str, Any]) -> httpx.Timeout | None:
@@ -1700,6 +1708,26 @@ class LLMClient:
     def _resolve_max_attempts(self, kwargs: dict[str, Any]) -> int:
         num_retries = kwargs.get("num_retries", self._num_retries)
         return int(num_retries) if num_retries is not None else DEFAULT_LLM_MAX_RETRIES
+
+    def _ensure_non_stream_response(self, resp: httpx.Response) -> None:
+        """非流式调用防御：识别服务端误返回的 SSE 流式响应，抛出可诊断的错误。
+
+        若配置（extra_body）或网关默认将请求置为流式，服务端会以
+        ``text/event-stream``（``data: {...chat.completion.chunk...}``）回复，
+        直接 ``resp.json()`` 只会抛出难以定位的 ``JSONDecodeError``。
+        """
+        content_type = resp.headers.get("content-type", "")
+        # SSE 流可以以 data: / event: / 注释行（: keep-alive）开头，均不可能是合法 JSON 起始
+        head = resp.content[:256].lstrip()
+        if "text/event-stream" in content_type or head.startswith((b"data:", b"event:", b":")):
+            raise LLMCallError(
+                LLMErrorCategory.RESPONSE_INVALID,
+                "Server returned SSE stream for non-stream request; "
+                "check 'stream' in llm config (extra_body) or gateway default",
+                model=self._model,
+                request_url=self._endpoint(),
+                status_code=resp.status_code,
+            )
 
     def _with_transient_retry(self, operation, *, max_attempts: int) -> Any:
         for attempt in range(max_attempts + 1):

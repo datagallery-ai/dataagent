@@ -139,6 +139,8 @@ class TestAinvokeRetryBehavior:
 
         mock_resp_ok = MagicMock()
         mock_resp_ok.is_error = False
+        mock_resp_ok.headers = {"content-type": "application/json"}
+        mock_resp_ok.content = json.dumps(ok_json).encode()
         mock_resp_ok.json.return_value = ok_json
         mock_resp_ok.raise_for_status = MagicMock()
 
@@ -169,6 +171,8 @@ class TestAinvokeRetryBehavior:
 
         mock_resp_ok = MagicMock()
         mock_resp_ok.is_error = False
+        mock_resp_ok.headers = {"content-type": "application/json"}
+        mock_resp_ok.content = json.dumps(ok_json).encode()
         mock_resp_ok.json.return_value = ok_json
         mock_resp_ok.raise_for_status = MagicMock()
 
@@ -202,6 +206,8 @@ class TestAinvokeRetryBehavior:
 
         mock_resp = MagicMock()
         mock_resp.is_error = False
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.content = json.dumps(ok_json).encode()
         mock_resp.json.return_value = ok_json
         mock_resp.raise_for_status = MagicMock()
 
@@ -234,6 +240,8 @@ class TestAinvokeRetryBehavior:
 
         mock_resp = MagicMock()
         mock_resp.is_error = False
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.content = json.dumps(ok_json).encode()
         mock_resp.json.return_value = ok_json
         mock_resp.raise_for_status = MagicMock()
 
@@ -247,3 +255,125 @@ class TestAinvokeRetryBehavior:
             out = await client.ainvoke([{"role": "user", "content": "hi"}])
 
         assert out.usage_metadata["input_cache_read_tokens"] == 150
+
+
+class TestNonStreamPayloadStripsStream:
+    """_build_payload(stream=False)：覆盖 extra_body 透传的 stream，并显式写 stream=False。"""
+
+    def test_extra_body_stream_true_overridden_for_non_stream(self):
+        client = LLMClient(
+            model="m",
+            api_base="http://t",
+            api_key="k",
+            extra_body={"stream": True, "stream_options": {"include_usage": True}, "temperature": 0.1},
+        )
+        payload = client._build_payload([{"role": "user", "content": "hi"}], {}, stream=False)
+        assert payload["stream"] is False
+        assert "stream_options" not in payload
+        assert payload["temperature"] == 0.1
+
+    def test_per_call_stream_kwarg_overridden_for_non_stream(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        payload = client._build_payload([{"role": "user", "content": "hi"}], {"stream": True}, stream=False)
+        assert payload["stream"] is False
+
+    def test_stream_true_kept_for_stream(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", extra_body={"stream": True})
+        payload = client._build_payload([{"role": "user", "content": "hi"}], {}, stream=True)
+        assert payload["stream"] is True
+        assert payload["stream_options"]["include_usage"] is True
+
+
+class TestNonStreamSSEDetection:
+    """invoke/ainvoke 收到 SSE 流式响应时抛出 RESPONSE_INVALID 而非裸 JSONDecodeError。"""
+
+    @staticmethod
+    def _sse_response(content_type="text/event-stream"):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": content_type}
+        resp.content = b'data: {"id":"chatcmpl-x","object":"chat.completion.chunk"}\n\n'
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", "data:", 0)
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_sse_content_type_raises_response_invalid(self):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=self._sse_response())
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "SSE" in ei.value.message
+        # RESPONSE_INVALID 不可重试：重试无法修复配置问题
+        assert mock_client.post.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_sse_body_without_content_type_raises(self):
+        """有些网关不回 text/event-stream 头，靠响应体前缀 data: 识别。"""
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=self._sse_response(content_type="application/octet-stream"))
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_sse_comment_line_prefix_raises(self):
+        """SSE 流以注释行（: keep-alive）开头时也应识别。"""
+        resp = self._sse_response(content_type="application/octet-stream")
+        resp.content = b': keep-alive\n\ndata: {"id":"chatcmpl-x"}\n\n'
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_normal_json_response_not_misjudged(self):
+        """真实 headers/content 的正常 JSON 响应不应被 SSE 检测误判。"""
+        ok_json = _ok_response_json("plain-ok")
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = json.dumps(ok_json).encode()
+        resp.json.return_value = ok_json
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            out = await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert out.content == "plain-ok"
+
+    def test_invoke_sse_raises_response_invalid(self):
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=self._sse_response())
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
