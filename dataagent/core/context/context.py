@@ -65,6 +65,42 @@ def build_context_init_options(
     )
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_show_output_path(
+    *,
+    output_html: str | None,
+    user_id: str,
+    session_id: str,
+    run_id: int,
+    sub_id: int,
+    workspace: str | Path | None,
+    config: Mapping[str, Any] | None,
+) -> Path:
+    context_dir = resolve_flex_context_dir(
+        user_id=user_id,
+        session_id=session_id,
+        workspace=workspace,
+        config=config,
+    )
+    allowed_root = Path(workspace).expanduser().resolve() if workspace else context_dir.parent.resolve()
+    if output_html is None:
+        output_path = (context_dir / f"Run{run_id}_Sub{sub_id}.html").resolve()
+    else:
+        requested = Path(output_html).expanduser()
+        output_path = (requested if requested.is_absolute() else allowed_root / requested).resolve()
+    # Rendered context HTML must stay inside the current workspace.
+    if not _is_relative_to(output_path, allowed_root):
+        raise ValueError("output_html must be inside the current workspace")
+    return output_path
+
+
 class ContextFactory:
     """
     Factory class to manage Context instances for different agent (sub-)runs.
@@ -501,18 +537,15 @@ class Context:
             )
             return
 
-        if output_html is None:
-            output_path = (
-                resolve_flex_context_dir(
-                    user_id=self.state.user_id,
-                    session_id=self.state.session_id,
-                    workspace=self.state.workspace,
-                    config=self.state.config,
-                )
-                / f"Run{self.state.run_id}_Sub{self.state.sub_id}.html"
-            )
-        else:
-            output_path = Path(output_html)
+        output_path = _resolve_show_output_path(
+            output_html=output_html,
+            user_id=self.state.user_id,
+            session_id=self.state.session_id,
+            run_id=self.state.run_id,
+            sub_id=self.state.sub_id,
+            workspace=self.state.workspace,
+            config=self.state.config,
+        )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         trajectory = self._nav.subgraph_from_initial_pt() if current_run_only else self.state.trajectory

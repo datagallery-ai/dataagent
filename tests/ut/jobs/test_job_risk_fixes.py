@@ -152,6 +152,35 @@ def test_job_service_running_ids_are_instance_scoped(tmp_path):
     service_a.cancel(handle["job_id"])
 
 
+def test_file_job_store_rejects_traversal_job_id_for_events(tmp_path):
+    """External job_id values must not escape the jobs root."""
+    store = FileJobStore(tmp_path / "ws")
+    outside = store.jobs_root().parent / "outside"
+    outside.mkdir(parents=True)
+    (outside / "events.jsonl").write_text(json.dumps({"type": "leaked"}) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid job_id"):
+        store.read_events("../outside")
+
+
+def test_job_service_poll_does_not_read_traversal_status(tmp_path):
+    """Polling an invalid job_id returns a safe not_found snapshot."""
+    store = FileJobStore(tmp_path / "ws")
+    outside = store.jobs_root().parent / "outside"
+    outside.mkdir(parents=True)
+    (outside / "job.json").write_text(
+        json.dumps({"job_id": "leaked", "agent_id": "secret", "status": "completed"}),
+        encoding="utf-8",
+    )
+    (outside / "events.jsonl").write_text(json.dumps({"type": "leaked"}) + "\n", encoding="utf-8")
+
+    snapshot = JobService(store).poll("../outside")
+
+    assert snapshot.status == "not_found"
+    assert snapshot.agent_id == ""
+    assert snapshot.events == []
+
+
 def test_completed_collect_includes_required_business_keys(tmp_path):
     """Completed jobs must always expose AC-07 business keys in collect output."""
     store = FileJobStore(tmp_path)

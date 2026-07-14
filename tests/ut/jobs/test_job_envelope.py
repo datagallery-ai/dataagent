@@ -78,6 +78,25 @@ def test_resource_envelope_omits_empty_execution_fields() -> None:
     }
 
 
+def test_resource_envelope_keeps_sandbox_baseline_fields() -> None:
+    """Caller-provided sandbox_request cannot disable core sandbox defaults."""
+    envelope = build_base_job_envelope(
+        "submit_resource_job",
+        {
+            "task_type": "model_training",
+            "timeout_sec": 120,
+            "sandbox_request": {"enabled": False, "backend": "unsafe", "profile": "cpu"},
+        },
+    )
+
+    assert envelope is not None
+    assert envelope["sandbox_request"] == {
+        "enabled": True,
+        "backend": "best-effort",
+        "profile": "cpu",
+    }
+
+
 def test_plugin_can_enrich_non_core_fields() -> None:
     """Injectors may add non-protected envelope fields."""
     base = {
