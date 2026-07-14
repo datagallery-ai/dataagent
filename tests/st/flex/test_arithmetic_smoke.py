@@ -120,15 +120,13 @@ def test_st_arithmetic_yaml_with_mock_llm(
     # 用 DataAgent.from_config 走一遍 global_init，确保 prompt_manager / tool_manager 初始化完成
     agent = DataAgent.from_config(cfg_path)
     agent.config.set("AGENT_CONFIG.backend", backend)
-    workspace = tmp_path.resolve()
-    agent.config.set("WORKSPACE.path", str(workspace))
 
     async def _run() -> dict[str, Any]:
         # FlexAgent.chat 需要 initial_state（至少 workspace/run_id/sub_id）。
         state = {
             "run_id": 0,
             "sub_id": 0,
-            "workspace": str(workspace),
+            "workspace": str(tmp_path),
         }
         out = await agent.chat("What is 5 + 3 * 2", initial_state=state)
         assert isinstance(out, dict)
