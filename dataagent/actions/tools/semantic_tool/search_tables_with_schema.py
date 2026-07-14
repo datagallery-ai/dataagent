@@ -18,6 +18,7 @@ and columns based on business-oriented keywords.
 
 import json
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Optional
 
@@ -149,10 +150,10 @@ def search_tables_and_columns(keywords: list[str], top_k: int, *, _tool_context:
 
 
 def search_tables_with_semantic_retrieve(*, _tool_context: ToolExecutionContext) -> dict:
-    """基于当前运行上下文里的原始用户 query 查找相关的表。
+    """读取当前轮次的原始用户 query，生成语义召回上下文并落盘。
 
-    这个工具不需要任何业务参数。函数会自动读取主 Agent 当前轮次的原始用户 query，
-    并将该 query 传给 semantic-service 的 ``semantic/retrieve`` 接口。
+    函数优先读取当前原始 query 的 workspace ``.semantic`` 缓存；没有命中时再调用
+    semantic-service 的 ``semantic/retrieve`` 接口，生成 ``<semantic_retrieve_context>`` 表清单文本。
 
     Returns:
         dict with ``data``，返回与原始用户 query 相关的表及其描述。
@@ -165,39 +166,133 @@ def search_tables_with_semantic_retrieve(*, _tool_context: ToolExecutionContext)
     if query is None:
         raise ValueError("original user query is required for semantic retrieve")
 
+    guard = get_current_sandbox()
+    workspace_root = guard.workspace_root
+    if workspace_root is None:
+        raise ValueError("workspace_root is required to save semantic retrieve results")
+
+    run_id = getattr(_tool_context.runtime, "run_id", None)
+    sub_id = getattr(_tool_context.runtime, "sub_id", None)
+    cached = read_semantic_retrieve_context_cache(query, workspace_root=workspace_root)
+    if cached is not None:
+        _save_semantic_retrieve_metric_outputs(cached, workspace_root)
+        res = cached.get("context_text", "")
+        return {
+            "original_msg": res,
+            "frontend_msg": res,
+            "data": res,
+        }
+
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
-    result = client.semantic_search_tables(query)
-    _save_semantic_retrieve_diagnostic(result, query)
-
-    recalled_tables = []
-    res = f"匹配原始query的表如下：（query为 {query}）"
-    data_access_plan = result.get("dataAccessPlan", {}) if isinstance(result, dict) else {}
-    if isinstance(data_access_plan, dict):
-        tables = data_access_plan.get("tables", [])
-        for table in tables:
-            res += "\n"
-            res += f"{table.get('db', '')}.{table.get('table', '')} 描述：{table.get('description', '')}"
-            recalled_tables.append(f"{table.get('db', '')}.{table.get('table', '')}")
-
-    # 保存召回的 tables 到 .metric_dir 目录
-    tables_columns = {table: [] for table in recalled_tables}
-    tables_with_columns = _attach_table_descriptions(tables_columns, client)
-    output_path, current_time = _get_workspace_path()
-    _save_tables_with_columns_to_json(
-        tables_with_columns, "output_search_tables_with_semantic_retrieve", output_path, current_time
+    retrieve_result = get_semantic_retrieve_context(
+        query,
+        client=client,
+        workspace_root=workspace_root,
+        run_id=run_id,
+        sub_id=sub_id,
+        source="search_tables_with_semantic_retrieve",
     )
-
-    # 保存 summary 到 .metric_dir 目录
-    out_path, current_time = _get_workspace_path()
-    summary_path = out_path / f"output_search_tables_with_retrieve_summary_{current_time}.txt"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(res)
+    res = retrieve_result.get("context_text", "")
 
     return {
         "original_msg": res,
         "frontend_msg": res,
         "data": res,
     }
+
+
+def read_semantic_retrieve_context_cache(
+    query: str,
+    *,
+    workspace_root: Optional[Path],  # noqa: UP045
+) -> Optional[dict[str, Any]]:  # noqa: UP045
+    """Read semantic retrieve context cache for the query without calling semantic-service."""
+    query_text = str(query or "").strip()
+    if workspace_root is None or not query_text:
+        return None
+    file_path = _semantic_retrieve_cache_path(Path(workspace_root), query_text)
+    if not file_path.is_file():
+        return None
+    try:
+        payload = json.loads(file_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.debug(f"[semantic_retrieve] cache read failed: {exc}")
+        return None
+    if not isinstance(payload, dict) or payload.get("query") != query_text:
+        return None
+    payload["cache_path"] = str(file_path)
+    return payload
+
+
+def get_semantic_retrieve_context(
+    query: str,
+    *,
+    client: SemanticServiceClient,
+    workspace_root: Optional[Path] = None,  # noqa: UP045
+    run_id: Any = None,
+    sub_id: Any = None,
+    source: str = "semantic_retrieve_context_loader",
+) -> dict[str, Any]:
+    """Return cached semantic retrieve context, or call semantic-service and save it under workspace ``.semantic``."""
+    query_text = str(query or "").strip()
+    if not query_text:
+        raise ValueError("original user query is required for semantic retrieve")
+
+    cached = read_semantic_retrieve_context_cache(
+        query_text,
+        workspace_root=workspace_root,
+    )
+    if cached is not None:
+        _save_semantic_retrieve_metric_outputs(cached, workspace_root)
+        return cached
+
+    result = client.semantic_search_tables(query_text)
+
+    recalled_tables: list[str] = []
+    context_text = f"匹配原始query的表如下：（query为 {query_text}）"
+    data_access_plan = result.get("dataAccessPlan", {}) if isinstance(result, dict) else {}
+    if isinstance(data_access_plan, dict):
+        tables = data_access_plan.get("tables", [])
+        for table in tables:
+            if not isinstance(table, dict):
+                continue
+            db_name = str(table.get("db", "") or "")
+            table_name = str(table.get("table", "") or "")
+            full_table_name = f"{db_name}.{table_name}"
+            context_text += "\n"
+            context_text += f"{full_table_name} 描述：{table.get('description', '')}"
+            recalled_tables.append(full_table_name)
+
+    diagnostic_path = _save_semantic_retrieve_diagnostic(
+        result,
+        query_text,
+        workspace_root=workspace_root,
+        source=source,
+        run_id=run_id,
+        sub_id=sub_id,
+    )
+    payload = {
+        "source": source,
+        "endpoint": "semantic/retrieve",
+        "query": query_text,
+        "created_at": datetime.now(UTC).isoformat(),
+        "run_id": run_id,
+        "sub_id": sub_id,
+        "tables": recalled_tables,
+        "tables_with_columns": _attach_table_descriptions({table: [] for table in recalled_tables}, client),
+        "context_text": context_text,
+        "raw_response": result,
+        "diagnostic": result.get("diagnostic") if isinstance(result, dict) else None,
+        "diagnostic_path": str(diagnostic_path) if diagnostic_path is not None else None,
+    }
+    cache_path = _save_semantic_retrieve_cache(
+        payload,
+        workspace_root=workspace_root,
+    )
+    if cache_path is not None:
+        payload["cache_path"] = str(cache_path)
+    _save_semantic_retrieve_metric_outputs(payload, workspace_root)
+    return payload
 
 
 def search_tables_with_typename(keywords: str, *, _tool_context: ToolExecutionContext):
@@ -464,36 +559,46 @@ def _convert_to_tables_with_columns(per_db: dict[str, dict]) -> dict[str, dict]:
     return tables_with_columns
 
 
-def _get_workspace_path() -> tuple[Path, str]:
+def _get_workspace_path(workspace_root: Path | None = None) -> tuple[Path, str]:
     """获取 .metric_dir 目录路径和时间戳。
 
     Returns:
         tuple: (output_path, current_time) - metric_dir 路径和时间戳
     """
-    guard = get_current_sandbox()
-    workspace_path = guard.workspace_root
-    if workspace_path is None:
+    if workspace_root is None:
+        guard = get_current_sandbox()
+        workspace_root = guard.workspace_root
+    if workspace_root is None:
         raise ValueError("workspace_root is required to save metric search results")
-    output_path = workspace_path / ".metric_dir"
+    output_path = Path(workspace_root) / ".metric_dir"
     # 确保目录存在
     output_path.mkdir(parents=True, exist_ok=True)
     current_time = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     return output_path, current_time
 
 
-def _get_semantic_path() -> tuple[Path, str]:
+def _get_semantic_path(workspace_root: Optional[Path] = None) -> tuple[Path, str]:  # noqa: UP045
     """获取 .semantic 目录路径和时间戳。"""
-    guard = get_current_sandbox()
-    workspace_path = guard.workspace_root
-    if workspace_path is None:
-        raise ValueError("workspace_root is required to save semantic retrieve diagnostics")
-    output_path = workspace_path / ".semantic"
+    if workspace_root is None:
+        guard = get_current_sandbox()
+        workspace_root = guard.workspace_root
+    if workspace_root is None:
+        raise ValueError("workspace_root is required to save semantic retrieve results")
+    output_path = Path(workspace_root) / ".semantic"
     output_path.mkdir(parents=True, exist_ok=True)
     current_time = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     return output_path, current_time
 
 
-def _save_semantic_retrieve_diagnostic(result: Any, query: str) -> Optional[Path]:  # noqa: UP045
+def _save_semantic_retrieve_diagnostic(
+    result: Any,
+    query: str,
+    *,
+    workspace_root: Optional[Path] = None,  # noqa: UP045
+    source: str = "search_tables_with_semantic_retrieve",
+    run_id: Any = None,
+    sub_id: Any = None,
+) -> Optional[Path]:  # noqa: UP045
     """Save semantic retrieve diagnostic payload when the service returns it."""
     if not isinstance(result, dict):
         return None
@@ -502,19 +607,75 @@ def _save_semantic_retrieve_diagnostic(result: Any, query: str) -> Optional[Path
     if diagnostic is None:
         return None
 
-    output_path, current_time = _get_semantic_path()
+    output_path, current_time = _get_semantic_path(workspace_root)
     file_path = output_path / f"semantic_retrieve_diagnostic_{current_time}.json"
     payload = {
-        "tool": "search_tables_with_semantic_retrieve",
+        "tool": source,
         "endpoint": "semantic/retrieve",
         "query": query,
         "created_at": datetime.now(UTC).isoformat(),
+        "run_id": run_id,
+        "sub_id": sub_id,
         "diagnostic": diagnostic,
     }
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
-    logger.info(f"[search_tables_with_semantic_retrieve] 已保存 diagnostic: {file_path}")
+    logger.info(f"[semantic_retrieve] 已保存 diagnostic: {file_path}")
     return file_path
+
+
+def _semantic_retrieve_cache_filename(query: str) -> str:
+    """Build the deterministic cache filename for an original user query."""
+    query_hash = sha256(query.encode("utf-8")).hexdigest()
+    return f"semantic_retrieve_context_{query_hash}.json"
+
+
+def _semantic_retrieve_cache_path(workspace_root: Path, query: str) -> Path:
+    """Build the deterministic semantic retrieve cache path."""
+    return Path(workspace_root) / ".semantic" / _semantic_retrieve_cache_filename(query)
+
+
+def _save_semantic_retrieve_cache(
+    payload: dict[str, Any],
+    *,
+    workspace_root: Optional[Path],  # noqa: UP045
+) -> Optional[Path]:  # noqa: UP045
+    """Persist semantic retrieve context under workspace .semantic for later reuse."""
+    if workspace_root is None:
+        return None
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return None
+    file_path = _semantic_retrieve_cache_path(workspace_root, query)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(payload)
+    payload["cache_path"] = str(file_path)
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+    logger.info(f"[semantic_retrieve] 已保存 context cache: {file_path}")
+    return file_path
+
+
+def _save_semantic_retrieve_metric_outputs(payload: dict[str, Any], workspace_root: Path | None) -> None:
+    """Preserve semantic retrieve JSON and summary outputs in ``.metric_dir``."""
+    if workspace_root is None:
+        return
+
+    tables_with_columns = payload.get("tables_with_columns")
+    context_text = str(payload.get("context_text") or "")
+    if not isinstance(tables_with_columns, dict) or not context_text:
+        return
+
+    output_path, current_time = _get_workspace_path(workspace_root)
+    _save_tables_with_columns_to_json(
+        tables_with_columns,
+        "output_search_tables_with_semantic_retrieve",
+        output_path,
+        current_time,
+    )
+    output_path, current_time = _get_workspace_path(workspace_root)
+    summary_path = output_path / f"output_search_tables_with_retrieve_summary_{current_time}.txt"
+    summary_path.write_text(context_text, encoding="utf-8")
 
 
 def _fulltext_search_with_typename(

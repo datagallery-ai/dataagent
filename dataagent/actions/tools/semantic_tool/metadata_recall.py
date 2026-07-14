@@ -49,9 +49,8 @@ async def metadata_recall(
     - 如果只是局部检索/召回确定名称的表/列/UDF/检索 Join 关系时，只需要在 query 参数中描述检索需求，add_user_query 不需要填写
 
     工作方式：
-    1. 启动专用 subagent（带 search_tables_with_typename、get_table_schema、
-       search_udf_function_by_name_keyword、search_udf_function_by_dsl、
-       get_join_relations 工具）
+    1. 启动专用 subagent（带 get_table_schema、search_udf_function_by_name_keyword、
+       search_udf_function_by_dsl、get_join_relations 工具）
     2. Subagent 根据 query 语义调用合适的元数据 API
     3. 返回结构化的召回结果
 
