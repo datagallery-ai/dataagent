@@ -72,6 +72,18 @@ _BUILTIN_LOCAL_TOOL_CATALOG: dict[str, dict[str, str]] = {
 }
 
 
+_ALLOWED_LOCAL_TOOL_MODULE_PREFIXES: tuple[str, ...] = (
+    "dataagent.actions.",
+    "dataagent.agents.",
+    "dataagent.core.suite.builtin_suites.",
+)
+
+
+def _is_allowed_local_tool_module(module_path: str) -> bool:
+    """Return whether a YAML local tool module belongs to trusted DataAgent namespaces."""
+    return module_path.startswith(_ALLOWED_LOCAL_TOOL_MODULE_PREFIXES)
+
+
 def _builtin_local_tool_specs_from_constants() -> list[dict[str, Any]]:
     """Resolve DEFAULT_BUILTIN_LOCAL_TOOLS against the catalog (intersection by tool name)."""
     specs: list[dict[str, Any]] = []
@@ -1005,6 +1017,10 @@ class ToolManager:
                 config = {}
             if not module_path or not name:
                 continue
+            module_path = str(module_path)
+            # YAML local tools may import only trusted DataAgent tool namespaces.
+            if not _is_allowed_local_tool_module(module_path):
+                raise ValueError(f"Local tool module is not allowed: {module_path}")
             try:
                 import importlib
 

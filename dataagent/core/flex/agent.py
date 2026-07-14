@@ -45,6 +45,21 @@ from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.import_utils import import_class
 
 
+def _config_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return default
+    return bool(value)
+
+
 class FlexAgent(BaseAgent):
     """
     ReAct-like Agent with customizable workflow stages.
@@ -916,7 +931,9 @@ class FlexAgent(BaseAgent):
         resolved_workspace = Path(str(workspace)).expanduser().resolve()
 
         # 默认开启：若系统未安装 bwrap，则 create_sandbox 会自动回退为 NoopSandbox 并打印 warning。
-        sandbox_enabled = get_env_bool("DATAAGENT_SANDBOX_ENABLED", default=True)
+        # Sandbox disablement must come from agent config, not process-wide env.
+        agent_config = self.config.get("AGENT_CONFIG", {}) if isinstance(self.config, Mapping) else {}
+        sandbox_enabled = _config_bool(agent_config.get("sandbox_enabled", True), default=True)
         readonly_binds, writable_binds = build_workspace_mount_lists(
             resolved_workspace=resolved_workspace,
             allow_read_roots=allow_read_roots,

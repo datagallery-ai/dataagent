@@ -77,7 +77,7 @@ def test_refresh_workspace_runtime_context_rebuilds_sandbox_from_current_user_an
     assert sb.allow_read_roots == [allow_root]
 
 
-def test_refresh_workspace_runtime_context_sandbox_disabled_env_forces_noop(
+def test_refresh_workspace_runtime_context_sandbox_disabled_config_forces_noop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     flex_agent_module = _load_module("flex_agent_runtime_refresh_disabled_env_test", FLEX_AGENT_PATH)
@@ -91,7 +91,7 @@ def test_refresh_workspace_runtime_context_sandbox_disabled_env_forces_noop(
         set_sandbox=lambda sb: setattr(runtime, "sandbox", sb),
     )
     agent = object.__new__(flex_agent_module.FlexAgent)
-    agent.config = {"WORKSPACE": {"allow_path": [str(allow_root)]}}
+    agent.config = {"WORKSPACE": {"allow_path": [str(allow_root)]}, "AGENT_CONFIG": {"sandbox_enabled": False}}
 
     class _ToolManagerStub:
         @staticmethod
@@ -108,11 +108,46 @@ def test_refresh_workspace_runtime_context_sandbox_disabled_env_forces_noop(
 
     agent.env_config = SimpleNamespace(tool_manager=_ToolManagerStub())
     monkeypatch.delenv("DATAAGENT_SANDBOX_ENABLED", raising=False)
-    monkeypatch.setenv("DATAAGENT_SANDBOX_ENABLED", "false")
     with patch("dataagent.actions.tools.local_tool.sandbox.shutil.which", return_value="/usr/bin/bwrap"):
         agent._refresh_workspace_runtime_context({"user_id": "user-123", "workspace": str(workspace)}, runtime)
 
     assert isinstance(runtime.sandbox, NoopSandbox)
+
+
+def test_refresh_workspace_runtime_context_ignores_global_sandbox_env_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    flex_agent_module = _load_module("flex_agent_runtime_refresh_ignore_env_false_test", FLEX_AGENT_PATH)
+
+    workspace = (tmp_path / "workspace-current").resolve()
+
+    runtime = SimpleNamespace(
+        workspace_dir=workspace,
+        sandbox=NoopSandbox(workspace_root=workspace),
+        set_sandbox=lambda sb: setattr(runtime, "sandbox", sb),
+    )
+    agent = object.__new__(flex_agent_module.FlexAgent)
+    agent.config = {"WORKSPACE": {"allow_path": []}}
+
+    class _ToolManagerStub:
+        @staticmethod
+        def refresh_user_skills(*, user_id: str | None = None):
+            return None
+
+        @staticmethod
+        def list_skills():
+            return []
+
+        @staticmethod
+        def workspace_allow_path_list(config):
+            return []
+
+    agent.env_config = SimpleNamespace(tool_manager=_ToolManagerStub())
+    monkeypatch.setenv("DATAAGENT_SANDBOX_ENABLED", "false")
+    with patch("dataagent.actions.tools.local_tool.sandbox.is_bwrap_sandbox_usable", return_value=True):
+        agent._refresh_workspace_runtime_context({"user_id": "user-123", "workspace": str(workspace)}, runtime)
+
+    assert isinstance(runtime.sandbox, BubblewrapSandbox)
 
 
 def test_refresh_workspace_runtime_context_sandbox_enabled_env_uses_bwrap_when_available(

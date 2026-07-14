@@ -100,14 +100,14 @@ async def test_register_local_tools_ignores_yaml_description_for_non_sub_agent_t
     tm._register_local_tools(
         [
             {
-                "module": "tests.ut.tools.test_local_tools",
-                "function": "add_numbers",
+                "module": "dataagent.actions.tools.local_tool.tools",
+                "function": "read_file",
                 "description": "YAML override description",
             }
         ]
     )
-    desc = tm.get("add_numbers").description
-    assert "计算两个数的和" in desc
+    desc = tm.get("read_file").description
+    assert "Read a file from the local filesystem." in desc
     assert "YAML override description" not in desc
     await tm.cleanup()
 
@@ -119,12 +119,12 @@ async def test_register_local_tools_falls_back_to_docstring_without_yaml_descrip
     tm._register_local_tools(
         [
             {
-                "module": "tests.ut.tools.test_local_tools",
-                "function": "add_numbers",
+                "module": "dataagent.actions.tools.local_tool.tools",
+                "function": "read_file",
             }
         ]
     )
-    assert "计算两个数的和" in tm.get("add_numbers").description
+    assert "Read a file from the local filesystem." in tm.get("read_file").description
     await tm.cleanup()
 
 
@@ -159,6 +159,31 @@ async def test_register_local_tools_rejects_explicit_sub_agent_tool():
                 }
             ]
         )
+    await tm.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_register_local_tools_allows_trusted_dataagent_tool_namespace():
+    """YAML local tool modules may use trusted DataAgent tool namespaces."""
+    tm = ToolManager()
+    tm._register_local_tools(
+        [
+            {
+                "module": "dataagent.actions.tools.hooks.examples.example_hooks",
+                "function": "noop_probe_tool",
+            }
+        ]
+    )
+    assert tm.get("noop_probe_tool").name == "noop_probe_tool"
+    await tm.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_register_local_tools_rejects_untrusted_module_namespace():
+    """YAML local tool modules must stay inside trusted DataAgent tool namespaces."""
+    tm = ToolManager()
+    with pytest.raises(ValueError, match="not allowed"):
+        tm._register_local_tools([{"module": "os", "function": "system"}])
     await tm.cleanup()
 
 
