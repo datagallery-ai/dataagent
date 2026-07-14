@@ -36,6 +36,24 @@ class RunningJob:
     timed_out_event: Event
 
 
+def _not_found_snapshot(job_id: str, *, cursor: str | None) -> JobSnapshot:
+    # Invalid or missing job IDs should not reveal filesystem details.
+    try:
+        next_cursor = str(max(0, int(cursor or 0)))
+    except (TypeError, ValueError):
+        next_cursor = "0"
+    return JobSnapshot(
+        job_id=str(job_id or ""),
+        agent_id="",
+        status="not_found",
+        cursor=next_cursor,
+        events=[],
+        metadata={},
+        request={},
+        allocation={},
+    )
+
+
 class JobService:
     """Manage asynchronous jobs backed by :class:`FileJobStore`."""
 
@@ -213,8 +231,11 @@ class JobService:
 
     def poll(self, job_id: str, *, cursor: str | None = None, event_limit: int = 20) -> JobSnapshot:
         """Return current status and incremental events."""
-        status = self.store.read_status(job_id)
-        events, next_cursor = self.store.read_events(job_id, cursor=cursor, limit=event_limit)
+        try:
+            status = self.store.read_status(job_id)
+            events, next_cursor = self.store.read_events(job_id, cursor=cursor, limit=event_limit)
+        except ValueError:
+            return _not_found_snapshot(job_id, cursor=cursor)
         return JobSnapshot(
             job_id=str(status.get("job_id") or job_id),
             agent_id=str(status.get("agent_id") or ""),
@@ -228,8 +249,11 @@ class JobService:
 
     def collect(self, job_id: str) -> dict[str, Any]:
         """Read the persisted terminal result when available."""
-        status = self.store.read_status(job_id)
-        result = self.store.read_result(job_id)
+        try:
+            status = self.store.read_status(job_id)
+            result = self.store.read_result(job_id)
+        except ValueError:
+            return {"job_id": str(job_id or ""), "agent_id": "", "status": "not_found", "message": "Job not found."}
         terminal = str(status.get("status") or "").strip().lower()
         if result is None:
             return {
@@ -249,7 +273,10 @@ class JobService:
         """Cancel a running job and persist a terminal cancelled result."""
         with self._lock:
             running = self._running.get(job_id)
-        status = self.store.read_status(job_id)
+        try:
+            status = self.store.read_status(job_id)
+        except ValueError:
+            return _not_found_snapshot(job_id, cursor=None)
         if str(status.get("status") or "") in TERMINAL_STATUSES:
             return self.poll(job_id)
         if running is not None:

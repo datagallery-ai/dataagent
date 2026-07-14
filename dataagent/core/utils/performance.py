@@ -61,6 +61,7 @@ import contextvars
 import functools
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -77,6 +78,8 @@ T = TypeVar("T")
 
 PERFORMANCE_FLUSH_KIND: str = "_flush"
 _ENV_SWITCH: str = "DATAAGENT_PERFORMANCE_ENABLED"
+_RUN_ID_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
+_MAX_RUN_ID_CHARS = 128
 
 
 def _now_iso() -> str:
@@ -179,6 +182,17 @@ def performance_enabled_from_env() -> bool:
     return get_env_bool(_ENV_SWITCH, default=False)
 
 
+def _safe_run_id(value: str | int | None) -> str:
+    # run_id is part of the jsonl filename, so strip path separators.
+    raw = str(value).strip() if value is not None and str(value).strip() else ""
+    if not raw:
+        return uuid.uuid4().hex
+    safe = _RUN_ID_UNSAFE_CHARS.sub("_", raw).strip("._-")
+    if not safe:
+        return uuid.uuid4().hex
+    return safe[:_MAX_RUN_ID_CHARS]
+
+
 def _resolve_jsonl_path(
     *,
     user_id: str,
@@ -225,7 +239,7 @@ class PerformanceCollector:
         self.enabled = bool(enabled)
         self.user_id: str = str(user_id or "anonymous")
         self.session_id: str = str(session_id or "default_session")
-        self.run_id: str = str(run_id) if run_id is not None and str(run_id) else uuid.uuid4().hex
+        self.run_id: str = _safe_run_id(run_id)
         self.sub_id: str = str(sub_id) if sub_id is not None and str(sub_id) else "0"
         self.backend: str = str(backend or "")
         self.started_at: str = _now_iso()

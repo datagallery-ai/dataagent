@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -23,6 +24,8 @@ from typing import Any
 from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
 from dataagent.core.jobs.models import JobResult
 from dataagent.utils.runtime_paths import resolve_jobs_root
+
+_SAFE_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def now_ms() -> int:
@@ -33,6 +36,14 @@ def now_ms() -> int:
 def _child_dir_sort_key(path: Path) -> str:
     """Return the sort key for one child directory name under the jobs root."""
     return path.name
+
+
+def _validate_job_id(job_id: str) -> str:
+    # Job IDs are used as directory names under jobs_root.
+    value = str(job_id or "").strip()
+    if not _SAFE_JOB_ID_RE.fullmatch(value):
+        raise ValueError("Invalid job_id")
+    return value
 
 
 class FileJobStore:
@@ -54,7 +65,7 @@ class FileJobStore:
 
     def job_dir(self, job_id: str) -> Path:
         """Return ``{parent_ws}/<jobs_dir>/{job_id}``."""
-        return self.jobs_root() / str(job_id)
+        return self.jobs_root() / _validate_job_id(job_id)
 
     def job_json_path(self, job_id: str) -> Path:
         """Return the ``job.json`` path for one job."""
@@ -77,7 +88,11 @@ class FileJobStore:
         for child in sorted(root.iterdir(), key=_child_dir_sort_key):
             if not child.is_dir():
                 continue
-            payload = self.read_status(child.name)
+            try:
+                payload = self.read_status(child.name)
+            except ValueError:
+                # Ignore unexpected directories that are not valid job IDs.
+                continue
             if payload:
                 out.append(payload)
         return out
