@@ -1738,6 +1738,7 @@ class LLMClient:
             tool_calls=[],
             invalid_tool_calls=[],
             usage_metadata=wrapped.usage_metadata,
+            cache_control_mode=wrapped.cache_control_mode,
             raw=wrapped.raw,
         )
 
