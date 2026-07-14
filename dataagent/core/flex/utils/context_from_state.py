@@ -53,7 +53,7 @@ def get_context_for_flex_state(
         if runtime is not None:
             cm = runtime.config_manager
             if cm is not None:
-                options = build_context_init_options(cm)
+                options = build_context_init_options(cm, workspace=state.get("workspace"))
         return ContextFactory.get_context(
             user_id=user_id,
             session_id=session_id,
