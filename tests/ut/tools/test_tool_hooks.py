@@ -31,6 +31,7 @@ from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import ErrorType, ToolResult
 from dataagent.core.managers.action_manager.manager import ToolManager
+from dataagent.core.utils.performance import PerformanceCollector, bind_current_collector
 from dataagent.governance import attach_governance_hooks_to_tool, build_governance_config
 
 
@@ -92,6 +93,39 @@ async def test_run_pre_hooks_shared_hook_context():
     )
     await ToolHookRunner.run_pre_hooks([hook_a, hook_b], inv)
     assert seen == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_tool_hooks_emit_individual_performance_events(tmp_path: Path):
+    """Tool pre/post hooks must retain phase-specific performance events."""
+    collector = PerformanceCollector(
+        enabled=True,
+        user_id="u",
+        session_id="s",
+        run_id="r",
+        workspace=tmp_path,
+    )
+
+    async def hook(inv: ToolHookInvocation) -> ToolPreHookOutcome:
+        inv.hook_context[inv.phase] = True
+        return ToolPreHookOutcome()
+
+    inv = ToolHookInvocation(
+        tool_name="t",
+        tool_call_id="c1",
+        tool_args={},
+        runtime=SimpleNamespace(),
+        metadata={},
+    )
+    with bind_current_collector(collector):
+        await ToolHookRunner.run_pre_hooks([hook], inv)
+        await ToolHookRunner.run_post_hooks([hook], inv)
+
+    hook_events = [ev for ev in collector.events if ev["kind"] == "hook"]
+    assert [ev["extra"] for ev in hook_events] == [
+        {"hook_scope": "tool", "hook_phase": "pre"},
+        {"hook_scope": "tool", "hook_phase": "post"},
+    ]
 
 
 @pytest.mark.asyncio

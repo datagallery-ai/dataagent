@@ -33,6 +33,7 @@ from typing import Any
 import pytest
 
 from dataagent.core.cbb.base_node import BaseNode
+from dataagent.core.flex.agent import FlexAgent
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 from dataagent.core.utils.performance import (
@@ -313,6 +314,8 @@ def test_basenode_wraps_pre_hooks_in_measure(tmp_path: Path, perf_home: Path) ->
 
     hook_events = [ev for ev in collector.events if ev["kind"] == "hook"]
     assert {ev["name"] for ev in hook_events} == {"_named_hook", "_hook_with_llm"}
+    assert {ev["extra"]["hook_scope"] for ev in hook_events} == {"node"}
+    assert {ev["extra"]["hook_phase"] for ev in hook_events} == {"pre"}
 
     llm_event = next(ev for ev in collector.events if ev["kind"] == "llm")
     assert llm_event["extra"]["caller_kind"] == "hook"
@@ -332,6 +335,80 @@ def test_basenode_aprocess_wraps_hooks_in_measure(tmp_path: Path, perf_home: Pat
 
     hook_events = [ev for ev in collector.events if ev["kind"] == "hook"]
     assert [ev["name"] for ev in hook_events] == ["_named_hook"]
+    assert hook_events[0]["extra"] == {"hook_scope": "node", "hook_phase": "post"}
+
+
+def test_flex_agent_records_builtin_and_configured_hook_events(tmp_path: Path, perf_home: Path) -> None:
+    """Agent pre/post hooks must emit individual events in the bound collector."""
+    collector = _make_collector(tmp_path)
+    agent = object.__new__(FlexAgent)
+
+    def builtin_hook(state: dict[str, Any], _runtime: Any) -> dict[str, Any]:
+        state["builtin"] = True
+        return state
+
+    def configured_pre_hook(state: dict[str, Any], _runtime: Any) -> dict[str, Any]:
+        state["configured_pre"] = True
+        return state
+
+    def configured_post_hook(state: dict[str, Any], _runtime: Any) -> dict[str, Any]:
+        state["configured_post"] = True
+        return state
+
+    agent._builtin_agent_pre_hooks = [builtin_hook]
+    agent._pre_hooks = [configured_pre_hook]
+    agent._post_hooks = [configured_post_hook]
+
+    with bind_current_collector(collector):
+        state = agent._run_agent_pre_hooks({}, runtime=None)
+        state = agent._run_agent_post_hooks(state, runtime=None)
+
+    assert state == {"builtin": True, "configured_pre": True, "configured_post": True}
+    hook_events = [ev for ev in collector.events if ev["kind"] == "hook"]
+    assert [(ev["name"], ev["extra"]) for ev in hook_events] == [
+        ("builtin_hook", {"hook_scope": "agent", "hook_phase": "pre"}),
+        (
+            "configured_pre_hook",
+            {"hook_scope": "agent", "hook_phase": "pre"},
+        ),
+        (
+            "configured_post_hook",
+            {"hook_scope": "agent", "hook_phase": "post"},
+        ),
+    ]
+    assert set(collector.build_summary()["hooks"]) == {
+        "agent:pre:builtin_hook",
+        "agent:pre:configured_pre_hook",
+        "agent:post:configured_post_hook",
+    }
+
+
+@pytest.mark.asyncio
+async def test_flex_stream_finalization_updates_performance_state() -> None:
+    """Flex stream finalization must replace the flush state with the graph terminal state."""
+    agent = object.__new__(FlexAgent)
+
+    async def read_final_state(**_kwargs: Any) -> dict[str, Any]:
+        return {"num_turns": 2}
+
+    async def finalize_context(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def stream() -> Any:
+        yield ("values", {"num_turns": 1})
+
+    agent._read_langgraph_final_state_after_stream = read_final_state
+    agent._finalize_context_after_stream = finalize_context
+    latest: dict[str, Any] = {"state": {"num_turns": 0}}
+
+    async for _ in agent._stream_with_finalization(
+        stream(),
+        initial_state_for_persist={},
+        latest_state=latest,
+    ):
+        pass
+
+    assert latest["state"] == {"num_turns": 2}
 
 
 def test_summary_differentiates_llm_by_caller(tmp_path: Path, perf_home: Path) -> None:

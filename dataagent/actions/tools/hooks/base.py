@@ -18,6 +18,8 @@ import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from dataagent.core.utils.performance import callable_perf_name, get_current_collector
+
 if TYPE_CHECKING:
     from dataagent.core.cbb.runtime import Runtime
     from dataagent.core.flex.nodes.executor import NormalizedToolExecution
@@ -101,9 +103,16 @@ class ToolHookRunner:
     @staticmethod
     async def _invoke_hook(hook: Any, inv: ToolHookInvocation) -> None:
         """Invoke one hook and discard its return value."""
-        if inspect.iscoroutinefunction(hook):
-            await hook(inv)
-        else:
-            result = hook(inv)
-            if inspect.isawaitable(result):
-                await result
+        collector = get_current_collector()
+        with collector.measure(
+            "hook",
+            callable_perf_name(hook),
+            hook_scope="tool",
+            hook_phase=inv.phase,
+        ):
+            if inspect.iscoroutinefunction(hook):
+                await hook(inv)
+            else:
+                result = hook(inv)
+                if inspect.isawaitable(result):
+                    await result

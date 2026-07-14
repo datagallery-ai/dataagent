@@ -40,6 +40,7 @@ from dataagent.core.flex.workflow.router import FlexRouter, LimitReachedError
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
 from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
+from dataagent.core.utils.performance import callable_perf_name, get_current_collector, make_perf_state_holder
 from dataagent.utils.cli.rich_renderer import RICH_AVAILABLE, StreamRenderer, reset_active_renderer, set_active_renderer
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.import_utils import import_class
@@ -426,18 +427,14 @@ class FlexAgent(BaseAgent):
             except Exception as e:
                 logger.debug(f"Context registration skipped: {e}")
 
-        initial_state = self._run_builtin_agent_pre_hooks(initial_state, runtime)
-
-        # agent 级别 pre-hooks（YAML HOOKS.agent.pre）：在内置 pre 之后执行
-        for hook in self._pre_hooks:
-            initial_state = hook(initial_state, runtime)  # type: ignore[assignment]
-
         latest: dict[str, Any] = {"state": initial_state}
         with self._performance_run(
             state=initial_state,
             backend=getattr(self, "backend", None),
             flush_state_provider=lambda: latest["state"],
         ):
+            initial_state = self._run_agent_pre_hooks(initial_state, runtime)
+            latest["state"] = initial_state
             final_state: dict[str, Any] = {}
             try:
                 if self.debug and RICH_AVAILABLE:
@@ -571,26 +568,23 @@ class FlexAgent(BaseAgent):
             if str(context_state.get("user_query") or "").strip():
                 runtime.reset_flex_planner_user_sync()
 
-        if isinstance(context_state, dict):
-            context_state = self._run_builtin_agent_pre_hooks(context_state, runtime)
-
-        # agent 级别 pre-hooks（YAML）
-        for hook in self._pre_hooks:
-            context_state = hook(context_state, runtime)  # type: ignore[assignment]
-        if isinstance(input_val, dict):
-            kw["input"] = context_state
-        else:
-            initial_state_arg = dict(context_state)  # normalize after hooks
-
         langgraph_config = kw.get("config") if isinstance(kw.get("config"), dict) else None
         langgraph_checkpointer = kw.get("checkpointer")
         langgraph_store = kw.get("store")
-
-        stream = self.workflow_backend.astream(initial_state_arg, **kw)
+        latest, flush_state_provider = make_perf_state_holder(context_state)
         with self._performance_run(
             state=context_state if isinstance(context_state, dict) else None,
             backend=getattr(self, "backend", None),
+            flush_state_provider=flush_state_provider,
         ):
+            context_state = self._run_agent_pre_hooks(context_state, runtime)
+            initial_state_for_persist = context_state
+            latest["state"] = context_state
+            if isinstance(input_val, dict):
+                kw["input"] = context_state
+            else:
+                initial_state_arg = dict(context_state)
+            stream = self.workflow_backend.astream(initial_state_arg, **kw)
             async for item in self._stream_with_finalization(
                 stream,
                 initial_state_for_persist=initial_state_for_persist,
@@ -599,6 +593,7 @@ class FlexAgent(BaseAgent):
                 langgraph_config=langgraph_config,
                 langgraph_checkpointer=langgraph_checkpointer,
                 langgraph_store=langgraph_store,
+                latest_state=latest,
             ):
                 yield item
 
@@ -626,12 +621,18 @@ class FlexAgent(BaseAgent):
                 session_id=None,
                 **kwargs,
             )
-            with self._performance_run(state=initial_state, backend=getattr(self, "backend", None)):
+            latest, flush_state_provider = make_perf_state_holder(initial_state)
+            with self._performance_run(
+                state=initial_state,
+                backend=getattr(self, "backend", None),
+                flush_state_provider=flush_state_provider,
+            ):
                 async for item in self._stream_with_finalization(
                     stream,
                     initial_state_for_persist=initial_state_for_persist,
                     runtime=runtime,
                     log_parse_error=True,
+                    latest_state=latest,
                 ):
                     yield item
             return
@@ -648,21 +649,24 @@ class FlexAgent(BaseAgent):
             if str(initial_state.get("user_query") or "").strip():
                 runtime.reset_flex_planner_user_sync()
 
-        initial_state = self._run_builtin_agent_pre_hooks(initial_state, runtime)
-
-        # agent 级别 pre-hooks（YAML）
-        for hook in self._pre_hooks:
-            initial_state = hook(initial_state, runtime)  # type: ignore[assignment]
-        initial_state = dict(initial_state)  # normalize after hooks
-
-        self._bind_workflow_runtime(runtime)
-        stream = self.workflow_backend.astream(initial_state, start_at=start_at, **kwargs)
-        with self._performance_run(state=initial_state, backend=getattr(self, "backend", None)):
+        latest, flush_state_provider = make_perf_state_holder(initial_state)
+        with self._performance_run(
+            state=initial_state,
+            backend=getattr(self, "backend", None),
+            flush_state_provider=flush_state_provider,
+        ):
+            initial_state = self._run_agent_pre_hooks(initial_state, runtime)
+            initial_state = dict(initial_state)
+            initial_state_for_persist = initial_state
+            latest["state"] = initial_state
+            self._bind_workflow_runtime(runtime)
+            stream = self.workflow_backend.astream(initial_state, start_at=start_at, **kwargs)
             async for item in self._stream_with_finalization(
                 stream,
                 initial_state_for_persist=initial_state_for_persist,
                 runtime=runtime,
                 log_parse_error=True,
+                latest_state=latest,
             ):
                 yield item
 
@@ -726,11 +730,32 @@ class FlexAgent(BaseAgent):
         except Exception as e:  # pragma: no cover - 仅兜底日志
             logger.debug(f"register_query failed in _ensure_context_with_query: {e}")
 
+    def _run_agent_pre_hooks(self, state: dict[str, Any], runtime: Any) -> dict[str, Any]:
+        """运行内置及配置的 agent pre-hooks，并记录各 hook 的性能事件。"""
+        current_state = self._run_builtin_agent_pre_hooks(state, runtime)
+        collector = get_current_collector()
+        for hook in self._pre_hooks:
+            with collector.measure(
+                "hook",
+                callable_perf_name(hook),
+                hook_scope="agent",
+                hook_phase="pre",
+            ):
+                current_state = hook(current_state, runtime)  # type: ignore[assignment]
+        return current_state
+
     def _run_agent_post_hooks(self, state: dict[str, Any], runtime: Any) -> dict[str, Any]:
         """执行 agent 级 post-hooks，与 ``chat()`` 收尾一致。"""
         final_state = dict(state)
+        collector = get_current_collector()
         for hook in self._post_hooks:
-            final_state = hook(final_state, runtime)  # type: ignore[assignment]
+            with collector.measure(
+                "hook",
+                callable_perf_name(hook),
+                hook_scope="agent",
+                hook_phase="post",
+            ):
+                final_state = hook(final_state, runtime)  # type: ignore[assignment]
         return dict(final_state)
 
     async def _read_langgraph_final_state_after_stream(
@@ -1110,8 +1135,15 @@ class FlexAgent(BaseAgent):
         实现见 :mod:`dataagent.core.flex.hooks.agent_turn`；单测可替换 ``self._builtin_agent_pre_hooks``。
         """
         s = state
+        collector = get_current_collector()
         for hook in self._builtin_agent_pre_hooks:
-            out = hook(s, runtime)
+            with collector.measure(
+                "hook",
+                callable_perf_name(hook),
+                hook_scope="agent",
+                hook_phase="pre",
+            ):
+                out = hook(s, runtime)
             if isinstance(out, dict):
                 s = out
         return s
@@ -1126,6 +1158,7 @@ class FlexAgent(BaseAgent):
         langgraph_config: dict[str, Any] | None = None,
         langgraph_checkpointer: Any = None,
         langgraph_store: Any = None,
+        latest_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[Any, None]:
         """消费 workflow stream，结束后读取图终态并触发 Context / post-hook 收尾。"""
         interrupted = False
@@ -1155,6 +1188,8 @@ class FlexAgent(BaseAgent):
                     langgraph_checkpointer=langgraph_checkpointer,
                     langgraph_store=langgraph_store,
                 )
+            if latest_state is not None:
+                latest_state["state"] = resolved_final_state or stream_final_state
             await self._finalize_context_after_stream(
                 initial_state_for_persist,
                 interrupted,
