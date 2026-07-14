@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -63,6 +64,14 @@ class _L1ProbeRouter(BaseRouter):
         self.add_custom_rule("probe", lambda _state: "__end__")
 
 
+class _FakeWorkflow:
+    def set_runtime(self, runtime: Any) -> None:
+        self.runtime = runtime
+
+    async def ainvoke(self, state: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "state": state}
+
+
 @pytest.mark.asyncio
 async def test_l1_chat_passes_runtime_config_to_node() -> None:
     """BaseDataAgent.chat must bind self._config_manager on Runtime for nodes to read."""
@@ -78,6 +87,26 @@ async def test_l1_chat_passes_runtime_config_to_node() -> None:
     )
     result = await agent.chat("hello")
     assert result.get("seen_db_id") == "l1_ut_db"
+
+
+def test_l1_chat_logs_query_length_not_raw_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    records: list[str] = []
+    monkeypatch.setattr(
+        base_data_agent_module.logger,
+        "debug",
+        lambda message, *args: records.append(str(message).format(*args)),
+    )
+    agent = object.__new__(BaseDataAgent)
+    agent._workflow = _FakeWorkflow()
+    agent._build = lambda: None
+    agent._build_l1_runtime = lambda: object()
+
+    asyncio.run(BaseDataAgent.chat(agent, "password=secret api_key=sk-test"))
+
+    log_output = "\n".join(records)
+    assert "query_length=" in log_output
+    assert "password=secret" not in log_output
+    assert "sk-test" not in log_output
 
 
 def test_register_configs_does_not_log_config_values(monkeypatch: pytest.MonkeyPatch) -> None:
