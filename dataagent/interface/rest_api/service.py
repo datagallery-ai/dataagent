@@ -16,9 +16,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from dataagent.interface.sdk.agent import DataAgent
 
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.DOTALL | re.IGNORECASE)
+_PUBLIC_INTERNAL_ERROR_MESSAGE = "Agent failed due to an internal error."
 _PUBLIC_ERROR_FIELD_TYPES = {
     "code": str,
     "http_status": int,
@@ -90,7 +93,7 @@ class DataAgentService:
                 return self._format_error("DataAgent service is not initialized.")
             return self._format_result(await self._agent.chat(query))
         except Exception as exc:
-            return self._format_error(str(exc))
+            return self._format_exception(exc)
 
     async def stream_query(self, query: str):
         """Stream one DataAgent query as message/result events."""
@@ -148,7 +151,7 @@ class DataAgentService:
             else:
                 yield {"event": "result", "data": self._format_error("Agent returned an empty stream result")}
         except Exception as exc:
-            yield {"event": "result", "data": self._format_error(str(exc))}
+            yield {"event": "result", "data": self._format_exception(exc)}
 
     def _format_result(self, state: Any) -> dict[str, Any]:
         """Format final agent state for the REST API."""
@@ -222,6 +225,11 @@ class DataAgentService:
             }
         }
 
+    def _format_exception(self, exc: Exception) -> dict[str, Any]:
+        """Format an unexpected exception without exposing internal details."""
+        logger.exception("DataAgent REST request failed with {}", type(exc).__name__)
+        return self._format_error(_PUBLIC_INTERNAL_ERROR_MESSAGE)
+
     def _normalize_error_payload(self, error: Any) -> dict[str, Any]:
         """Normalize agent stream error payloads."""
         if isinstance(error, dict):
@@ -232,7 +240,7 @@ class DataAgentService:
                 if isinstance(value, expected_type) and not (expected_type is int and isinstance(value, bool)):
                     payload["result"][field] = value
             return payload
-        return self._format_error(str(error))
+        return self._format_error("Agent failed")
 
     def _agent_error_code(self) -> str:
         """Return the fallback agent error code."""

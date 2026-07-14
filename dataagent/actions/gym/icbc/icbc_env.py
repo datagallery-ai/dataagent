@@ -21,6 +21,7 @@ import requests
 from loguru import logger
 
 from dataagent.actions.environment.env import Env
+from dataagent.actions.skills.ontology_service.scripts.ontology_client import normalize_filter_dict
 
 BASE_URL = os.getenv("ICBC_BASE_URL", "http://localhost:8000").rstrip("/")
 
@@ -202,6 +203,7 @@ class ICBCEnv(Env):
         """
         url = f"{BASE_URL}/property_filter"
         parsed_filter = _safe_literal_eval(filter_dict)
+        parsed_filter = normalize_filter_dict(parsed_filter)
 
         parameters = {"element_class": element_class, "element_type": element_type, "filter_dict": parsed_filter}
 

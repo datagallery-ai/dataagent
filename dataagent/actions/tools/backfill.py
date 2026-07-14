@@ -96,7 +96,12 @@ class ToolArgBackfiller:
 
         schema_params = {p.name: p for p in schema.parameters}
 
-        logger.debug(f"[Backfiller] Processing '{tool_name}' with args: {tool_args}")
+        logger.debug(
+            "[Backfiller] Processing '{}' with {} arg(s): {}",
+            tool_name,
+            len(tool_args),
+            sorted(str(key) for key in tool_args),
+        )
 
         # Default value backfill
         if self.enable_default_backfill:

@@ -17,10 +17,14 @@ import inspect
 from dataclasses import replace
 from typing import get_type_hints
 
+from loguru import logger
+
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.core.jobs.envelope import SUBMIT_JOB_TOOLS, build_base_job_envelope, finalize_job_envelope
 from dataagent.core.managers.action_manager.base import BaseTool, ErrorType, ToolResult, ToolType, classify_exception
 from dataagent.core.managers.action_manager.schemas import ToolSchema
+
+_PUBLIC_TOOL_ERROR = "Tool execution failed."
 
 
 class LocalToolWrapper(BaseTool):
@@ -89,9 +93,10 @@ class LocalToolWrapper(BaseTool):
 
         except Exception as e:
             error_type, policy = classify_exception(e)
+            logger.exception("Local tool '{}' failed with {}", self.name, type(e).__name__)
             return ToolResult(
                 success=False,
-                error=str(e),
+                error=_PUBLIC_TOOL_ERROR,
                 metadata={"tool_type": "local_function", "error_type": type(e).__name__},
                 error_type=error_type,
                 retriable=policy.retriable,
@@ -123,9 +128,10 @@ class LocalToolWrapper(BaseTool):
             )
         except Exception as e:
             error_type, policy = classify_exception(e)
+            logger.exception("Local tool '{}' failed with {}", self.name, type(e).__name__)
             return ToolResult(
                 success=False,
-                error=str(e),
+                error=_PUBLIC_TOOL_ERROR,
                 metadata={"tool_type": "local_function", "error_type": type(e).__name__},
                 error_type=error_type,
                 retriable=policy.retriable,
@@ -180,9 +186,10 @@ class LocalToolWrapper(BaseTool):
                 metadata={"tool_type": "local_function", "function_name": self.func.__name__},
             )
         except Exception as exc:
+            logger.exception("Local tool context injection failed for '{}' with {}", self.name, type(exc).__name__)
             return ToolResult(
                 success=False,
-                error=str(exc),
+                error="Tool context injection failed.",
                 metadata={"tool_type": "local_function", "function_name": self.func.__name__},
             )
         kwargs["_tool_context"] = injected_context

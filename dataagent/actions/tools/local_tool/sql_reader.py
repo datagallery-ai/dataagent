@@ -10,10 +10,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import re
+
 import pandas as pd
 from sqlalchemy import create_engine, text
 
 from dataagent.actions.tools.context import ToolExecutionContext
+
+_FORBIDDEN_SQL_RE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|MERGE|GRANT|REVOKE|CALL|EXEC|EXECUTE|SET|USE)\b",
+    re.IGNORECASE,
+)
+
+
+def _validate_readonly_sql(sql_command: str) -> str:
+    sql = str(sql_command or "").strip()
+    if not sql:
+        raise ValueError("sql_command must not be empty.")
+    if ";" in sql:
+        raise ValueError("sql_command must contain a single read-only statement without semicolons.")
+    if "--" in sql or "/*" in sql or "*/" in sql:
+        raise ValueError("sql_command must not contain SQL comments.")
+    first_token = sql.split(None, 1)[0].upper()
+    if first_token not in {"SELECT", "WITH"}:
+        raise ValueError("Only read-only SELECT queries are allowed.")
+    if _FORBIDDEN_SQL_RE.search(sql):
+        raise ValueError("Only read-only SELECT queries are allowed.")
+    return sql
 
 
 def load_table(sql_command: str, *, _tool_context: ToolExecutionContext) -> pd.DataFrame:
@@ -32,5 +55,6 @@ def load_table(sql_command: str, *, _tool_context: ToolExecutionContext) -> pd.D
         raise ValueError("DATASOURCE.database_table_name is not set, please set in the config file")
     url = f"{sql_address}/{table_name}"
     engine = create_engine(url)
+    sql_command = _validate_readonly_sql(sql_command)
     df = pd.read_sql(text(sql_command), con=engine)
     return df  # 返回DataFrame格式的数据,可保存为csv等格式
