@@ -143,14 +143,12 @@ def test_st_ecommerce_yaml_with_mock_llm_and_tools(
     cfg_path = dataagent_package_path("core", "flex", "examples", "ecommerce_agent.yaml")
     agent = DataAgent.from_config(cfg_path)
     agent.config.set("AGENT_CONFIG.backend", backend)
-    workspace = tmp_path.resolve()
-    agent.config.set("WORKSPACE.path", str(workspace))
 
     async def _run() -> dict[str, Any]:
         state = {
             "run_id": 0,
             "sub_id": 0,
-            "workspace": str(workspace),
+            "workspace": str(tmp_path),
         }
         out = await agent.chat("请基于订单数据生成分析报告（ST stub）", initial_state=state)
         assert isinstance(out, dict)

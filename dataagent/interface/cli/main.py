@@ -523,8 +523,7 @@ def print_help():
 
 def run_serve_a2a_mode(
     config_path: str | Path,
-    # Default to loopback so A2A is not exposed publicly by accident.
-    host: str = "127.0.0.1",
+    host: str = "",
     port: int = 9999,
     jsonrpc_path: str = "/a2a/jsonrpc",
     rest_path: str = "/a2a/rest",
@@ -628,8 +627,7 @@ def main():
     # serve-a2a子命令
     serve_a2a_parser = subparsers.add_parser("serve-a2a", help="启动A2A 1.0协议服务模式")
     serve_a2a_parser.add_argument("--config", "-c", required=True, help="配置文件路径")
-    # CLI default also stays loopback unless the caller opts into exposure.
-    serve_a2a_parser.add_argument("--host", default="127.0.0.1", help="服务主机地址")
+    serve_a2a_parser.add_argument("--host", default="0.0.0.0", help="服务主机地址")
     serve_a2a_parser.add_argument("--port", "-p", type=int, default=9999, help="服务端口 (默认: 9999)")
     serve_a2a_parser.add_argument("--jsonrpc-path", default="/a2a/jsonrpc", help="JSON-RPC路由路径")
     serve_a2a_parser.add_argument("--rest-path", default="/a2a/rest", help="REST路由路径")

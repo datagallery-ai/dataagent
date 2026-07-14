@@ -83,9 +83,7 @@ class BaseDataAgent:
             raise RuntimeError("Workflow 未成功构建")
 
         # 调用 LangGraphWorkflow 的流式接口
-        query = init_state.get("user_query")
-        # Log only query length to avoid persisting sensitive user input.
-        logger.debug("💬 开始流式对话: query_length={}", len(str(query)) if query is not None else 0)
+        logger.debug(f"💬 开始流式对话: {init_state.get('user_query', 'N/A')}")
         runtime = self._build_l1_runtime()
         self._workflow.set_runtime(runtime)
         async for event in self._workflow.astream(init_state):
@@ -124,8 +122,7 @@ class BaseDataAgent:
             state = {"user_query": user_query}
 
         # 调用 LangGraphWorkflow 的异步方法
-        # Log only query length to avoid persisting sensitive user input.
-        logger.debug("💬 开始对话: query_length={}", len(str(user_query)))
+        logger.debug(f"💬 开始对话: {user_query}")
         runtime = self._build_l1_runtime()
         self._workflow.set_runtime(runtime)
         result = await self._workflow.ainvoke(state)

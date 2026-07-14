@@ -80,18 +80,9 @@ class DataAgent:
             logger.trace(f"检测到传入路径为相对路径，实际将被使用的路径为：{normalized_path}")
 
         if normalized_path.exists() and not normalized_path.is_dir():
-            # Avoid echoing absolute local paths back to SDK callers.
-            raise ValueError("`workspace` 必须是目录路径，当前路径不是目录")
+            raise ValueError(f"`workspace` 必须是目录路径，当前为文件: {normalized_path}")
 
         return normalized_path
-
-    @staticmethod
-    def _path_is_relative_to(path: Path, root: Path) -> bool:
-        try:
-            path.resolve().relative_to(root.resolve())
-            return True
-        except (OSError, RuntimeError, ValueError):
-            return False
 
     @staticmethod
     def _ensure_workspace(state: Mapping[str, Any]) -> None:
@@ -257,9 +248,8 @@ class DataAgent:
             )
             return response
         except Exception as e:
-            # Return a generic user-facing error; keep details in server logs.
-            logger.error("Chat failed: {}", type(e).__name__)
-            return {"error": "Chat failed", "final_answer": "抱歉，处理您的请求时出现错误。"}
+            logger.error(f"Chat failed: {e}")
+            return {"error": str(e), "final_answer": f"抱歉，处理您的请求时出现错误：{str(e)}"}
 
     def build_agent_graph(self, mode: str = "chat") -> BaseAgent:
         """Pre-build the agent workflow graph (only ``chat`` is supported)."""
@@ -313,20 +303,6 @@ class DataAgent:
         else:
             raise ValueError(f"Node '{node_name}' not found")
 
-    def _effective_workspace_base(self, initial_state: Mapping[str, Any]) -> Path:
-        settings = self.config.get_all()
-        return resolve_effective_workspace_root(
-            config=settings,
-            user_id=str(initial_state.get("user_id")),
-            session_id=str(initial_state.get("session_id")),
-            workspace_override=None,
-        )
-
-    def _validate_workspace_within_base(self, workspace: Path, base: Path) -> None:
-        # Explicit workspaces must stay within the configured workspace root.
-        if not self._path_is_relative_to(workspace, base):
-            raise ValueError("`workspace` 必须位于已配置的 workspace 根目录内")
-
     def _initialize_state(
         self,
         initial_state: dict[str, Any] | None = None,
@@ -334,16 +310,13 @@ class DataAgent:
         workspace: Path | str | None = None,
     ) -> dict[str, Any]:
         """初始化initial_state"""
-        explicit_workspace = self._validate_workspace(workspace)
-        # Normalize any user-provided workspace before resolving runtime paths.
         if initial_state is None:
             initial_state = {}
         else:
             state_workspace = initial_state.get("workspace")
             normalized_state_workspace = self._validate_workspace(state_workspace)
             if normalized_state_workspace is not None:
-                explicit_workspace = explicit_workspace or normalized_state_workspace
-                initial_state.pop("workspace", None)
+                initial_state["workspace"] = normalized_state_workspace
             else:
                 initial_state.pop("workspace", None)
         if session_id is None:
@@ -364,11 +337,10 @@ class DataAgent:
             config=self.config.get_all(),
             user_id=str(initial_state.get("user_id")),
             session_id=str(initial_state.get("session_id")),
-            workspace_override=explicit_workspace,
+            workspace_override=workspace,
         )
-        if explicit_workspace is not None:
-            self._validate_workspace_within_base(resolved_workspace, self._effective_workspace_base(initial_state))
-        initial_state["workspace"] = resolved_workspace
+        if workspace is not None or "workspace" not in initial_state:
+            initial_state["workspace"] = resolved_workspace
 
         return initial_state
 
