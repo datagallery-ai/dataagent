@@ -761,6 +761,45 @@ class TestReadFilePipeline:
         ir = cast(FileNode, context.get_IR_from_node(graph_node_label=file_labels[0]))
         assert ir.path == resolved
 
+    def test_argument_file_path_outside_workspace_is_ignored(self, context: Context, tmp_path: Path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside.txt"
+        outside.write_text("external secret", encoding="utf-8")
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="some_tool",
+            tool_call_id="test_action_001",
+            tool_args={"path": str(outside.resolve())},
+            result="ok",
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+            pre_existing_files={},
+        )
+
+        assert _labels_of(created, "File") == []
+
+    def test_read_file_outside_workspace_is_ignored(self, context: Context, tmp_path: Path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        outside = tmp_path / "outside.py"
+        outside.write_text("TOKEN = 'external-secret'", encoding="utf-8")
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": str(outside.resolve())},
+            result="TOKEN = 'external-secret'",
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+            pre_existing_files={},
+        )
+
+        assert _labels_of(created, "File") == []
+        assert _labels_of(created, "Script") == []
+
     def test_read_file_existing_file_adds_refers_to_only(self, context: Context, tmp_path: Path):
         """再次 read_file 同一文件（MD5 不变）→ 仅 refers_to，不新建节点。"""
         f = tmp_path / "notes.txt"
