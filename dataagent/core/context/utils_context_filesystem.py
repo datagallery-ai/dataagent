@@ -12,6 +12,7 @@
 # ============================================================================
 import hashlib
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
@@ -25,7 +26,42 @@ PATH_LIKE = re.compile(r'(?P<path>(?:/|~)[^\s\'"]+?\.[\w-]+)(?::\d+(?:-\d+)?)?')
 WINDOWS_PATH_LIKE = re.compile(r'(?P<path>[A-Za-z]:(?:\\|/)[^\s\'"]+?\.[\w-]+)(?::\d+(?:-\d+)?)?')
 
 
-def extract_file_paths_from_query(*, query: str) -> dict[str, list[str]]:
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _normalize_allowed_roots(allowed_roots: Iterable[str | Path] | None) -> list[Path]:
+    if allowed_roots is None:
+        return []
+    roots: list[Path] = []
+    for root in allowed_roots:
+        if root is None or not str(root).strip():
+            continue
+        roots.append(Path(root).expanduser().resolve())
+    return roots
+
+
+def resolve_allowed_file_path(*, filepath: str | Path, allowed_roots: Iterable[str | Path] | None) -> Path:
+    """Resolve a file path and reject it when it leaves allowed roots."""
+    # File reads must stay within explicit allowed roots when provided.
+    candidate = Path(filepath).expanduser().resolve()
+    if allowed_roots is None:
+        return candidate
+    roots = _normalize_allowed_roots(allowed_roots)
+    if not roots or not any(_is_relative_to(candidate, root) for root in roots):
+        raise ValueError(f"File path is outside allowed roots: {filepath}")
+    return candidate
+
+
+def extract_file_paths_from_query(
+    *,
+    query: str,
+    allowed_roots: Iterable[str | Path] | None = None,
+) -> dict[str, list[str]]:
     """
     Extract file paths from query.
 
@@ -45,8 +81,12 @@ def extract_file_paths_from_query(*, query: str) -> dict[str, list[str]]:
 
     out_table_paths = []
     out_file_paths = []
+    roots = _normalize_allowed_roots(allowed_roots) or [Path.cwd().resolve()]
     for c in candidates:
-        p = Path(c).expanduser()
+        try:
+            p = resolve_allowed_file_path(filepath=c, allowed_roots=roots)
+        except ValueError:
+            continue
         if p.suffix and p.exists() and p.is_file():  # keep only file-like candidates
             if p.suffix.lower() in TABLE_FILE_EXTS:
                 out_table_paths.append(str(p))
@@ -109,7 +149,12 @@ def is_text_file(*, filepath: str, sample_size: int = 8192) -> bool:
         return False
 
 
-def load_file(*, filepath: str, max_lines: int = -1) -> str:
+def load_file(
+    *,
+    filepath: str,
+    max_lines: int = -1,
+    allowed_roots: Iterable[str | Path] | None = None,
+) -> str:
     """
     Load file from path.
 
@@ -120,8 +165,9 @@ def load_file(*, filepath: str, max_lines: int = -1) -> str:
     Returns:
         str, loaded file content
     """
-    if is_text_file(filepath=filepath):
-        with open(filepath, encoding="utf-8") as f:
+    safe_path = resolve_allowed_file_path(filepath=filepath, allowed_roots=allowed_roots)
+    if is_text_file(filepath=str(safe_path)):
+        with open(safe_path, encoding="utf-8") as f:
             lines = []
             for i, line in enumerate(f):
                 if max_lines >= 0 and i >= max_lines:

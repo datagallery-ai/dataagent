@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +26,41 @@ from loguru import logger
 
 from dataagent.utils.constants import MERGED_CONFIG_TOP_LEVEL_KEY_ORDER
 from dataagent.utils.runtime_paths import resolve_layout_dir
+
+_SENSITIVE_KEY_RE = re.compile(
+    r"(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|credential)",
+    re.IGNORECASE,
+)
+_REDACTED = "<redacted>"
+
+
+def _redact_sensitive_values(value: Any, *, key: str = "") -> Any:
+    # Runtime dumps must not persist secrets from merged config.
+    if key and _SENSITIVE_KEY_RE.search(key):
+        return _REDACTED
+    if isinstance(value, Mapping):
+        return {
+            str(child_key): _redact_sensitive_values(child_value, key=str(child_key))
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive_values(item) for item in value)
+    return value
+
+
+def _write_private_text(target: Path, text: str) -> None:
+    # Debug config dumps are written owner-only by default.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    os.chmod(target, 0o600)
 
 
 def _iter_top_level_keys_for_display(settings: Mapping[str, Any]) -> list[str]:
@@ -61,10 +98,11 @@ def format_settings_yaml(settings: Mapping[str, Any]) -> str:
     Returns:
         YAML text suitable for writing to ``dataagent_config_*.yaml``.
     """
+    safe_settings = _redact_sensitive_values(settings)
     parts: list[str] = []
-    for key in _iter_top_level_keys_for_display(settings):
+    for key in _iter_top_level_keys_for_display(safe_settings):
         chunk = yaml.safe_dump(
-            {key: settings[key]},
+            {key: safe_settings[key]},
             allow_unicode=True,
             sort_keys=False,
             default_flow_style=False,
@@ -104,8 +142,7 @@ def dump_merged_config(
     # Align with session workspace dir prefix (``DataAgent`` / CLI use UTC ``%Y%m%d_%H%M%S``).
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     target = runtime_dir / f"dataagent_config_{ts}.yaml"
-    with open(target, "w", encoding="utf-8") as handle:
-        handle.write(format_settings_yaml(settings))
+    _write_private_text(target, format_settings_yaml(settings))
     logger.debug("Wrote runtime configuration dump to {}", target)
     return target
 
@@ -135,6 +172,5 @@ def write_merged_config_to_dir(
     directory.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     target = directory / f"dataagent_config_{ts}.yaml"
-    with open(target, "w", encoding="utf-8") as handle:
-        handle.write(format_settings_yaml(settings))
+    _write_private_text(target, format_settings_yaml(settings))
     return target

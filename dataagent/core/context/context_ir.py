@@ -17,14 +17,19 @@ from collections import defaultdict
 from collections.abc import Generator, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import networkx as nx
 import yaml
 from loguru import logger
 
-from dataagent.core.context.utils_context_filesystem import is_text_file, lineage_path_key, load_file, load_table
+from dataagent.core.context.utils_context_filesystem import (
+    is_text_file,
+    lineage_path_key,
+    load_file,
+    load_table,
+    resolve_allowed_file_path,
+)
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.core.utils.performance import attribute_calls
@@ -197,7 +202,13 @@ class DataNode(BaseIR):
         super().__post_init__()
         path = getattr(self, "path", None)
         if hasattr(self, "path_backup") and isinstance(path, str) and path and not self.path_backup:
-            p = Path(path).expanduser()
+            if not self.workspace_root:
+                return
+            try:
+                # Only back up files that are inside the node workspace.
+                p = resolve_allowed_file_path(filepath=path, allowed_roots=[self.workspace_root])
+            except ValueError:
+                return
             if p.exists() and p.is_file():
                 node_type = self.__class__.__name__.replace("Node", "")
                 backup_path = (
@@ -374,7 +385,11 @@ class FileNode(DataNode):
             str, inferred description
         """
         try:
-            data_preview = load_file(filepath=self.path, max_lines=50)
+            data_preview = load_file(
+                filepath=self.path,
+                max_lines=50,
+                allowed_roots=[self.workspace_root] if self.workspace_root else [],
+            )
         except Exception:
             data_preview = "No preview available."
 
@@ -395,10 +410,16 @@ class FileNode(DataNode):
     def get_full_data(self, *, from_backup: bool = False) -> str:
         try:
             if from_backup and self.path_backup:
-                return load_file(filepath=self.path_backup)
-            return load_file(filepath=self.path)
+                return load_file(
+                    filepath=self.path_backup,
+                    allowed_roots=[self.workspace_root] if self.workspace_root else [],
+                )
+            return load_file(
+                filepath=self.path,
+                allowed_roots=[self.workspace_root] if self.workspace_root else [],
+            )
         except Exception:
-            return f"Binary file detected: {self.path}. Cannot read the content."
+            return f"Cannot read file: {self.path}."
 
 
 @dataclass
@@ -437,9 +458,15 @@ class ScriptNode(DataNode):
 
     def get_full_data(self, *, from_backup: bool = False) -> str:
         if from_backup and self.path_backup:
-            return load_file(filepath=self.path_backup)
+            return load_file(
+                filepath=self.path_backup,
+                allowed_roots=[self.workspace_root] if self.workspace_root else [],
+            )
         if self.path:
-            return load_file(filepath=self.path)
+            return load_file(
+                filepath=self.path,
+                allowed_roots=[self.workspace_root] if self.workspace_root else [],
+            )
         if self.script_content:
             return self.script_content
         return "No data preview available."

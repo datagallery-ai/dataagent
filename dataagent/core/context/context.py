@@ -28,7 +28,7 @@ from dataagent.core.context.context_state import ContextState
 from dataagent.core.context.todolist_manager import TodoListManager
 from dataagent.core.context.trajectory_editor import TrajectoryEditor
 from dataagent.core.context.trajectory_navigator import TrajectoryNavigator
-from dataagent.utils.runtime_paths import resolve_flex_context_dir
+from dataagent.utils.runtime_paths import resolve_effective_workspace_root, resolve_flex_context_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,11 +57,12 @@ def build_context_init_options(
     Returns:
         Frozen options for :meth:`ContextFactory.get_context`.
     """
+    config = config_manager.get_all() if config_manager is not None else None
     return ContextInitOptions(
         pre_workflow=tuple(config_manager.get("PRE_WORKFLOW", []) or []),
         post_workflow=tuple(config_manager.get("POST_WORKFLOW", []) or []),
-        workspace=workspace,
-        config=config_manager.get_all() if config_manager is not None else None,
+        workspace=_resolve_context_workspace_override(workspace=workspace, config=config),
+        config=config,
     )
 
 
@@ -71,6 +72,27 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _resolve_context_workspace_override(
+    *,
+    workspace: str | Path | None,
+    config: Mapping[str, Any] | None,
+) -> Path | None:
+    if workspace is None or not str(workspace).strip():
+        return None
+    user_id = str(config.get("USER_ID") or "") if isinstance(config, Mapping) else ""
+    session_id = str(config.get("SESSION_ID") or "") if isinstance(config, Mapping) else ""
+    allowed_root = resolve_effective_workspace_root(
+        config=config,
+        session_id=session_id or None,
+        user_id=user_id or None,
+    ).resolve()
+    candidate = Path(workspace).expanduser().resolve()
+    # Context workspaces must stay under the configured workspace root.
+    if not _is_relative_to(candidate, allowed_root):
+        raise ValueError("workspace must be inside the configured workspace root")
+    return candidate
 
 
 def _resolve_show_output_path(
