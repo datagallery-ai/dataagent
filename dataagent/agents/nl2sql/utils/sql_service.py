@@ -183,12 +183,8 @@ def _resolve_sqlite_path(path: str) -> Path:
     if not raw_path:
         raise ValueError("SQLite database path is required.")
 
-    requested = Path(raw_path).expanduser()
-    if requested.is_absolute():
-        return requested.resolve()
-
     base_dir = Path.cwd().resolve()
-    resolved = (base_dir / requested).resolve()
+    resolved = Path(raw_path).expanduser().resolve()
     try:
         resolved.relative_to(base_dir)
     except ValueError as exc:
@@ -388,7 +384,7 @@ class UDNService(SqlService):
             rows = [tuple(row.get(col) for col in columns) for row in rows_data]
             return columns, rows, None
         except Exception as e:
-            raise SQLServiceError(detail=str(e)) from e
+            raise SQLServiceError() from e
 
 
 class SparkService(SqlService):

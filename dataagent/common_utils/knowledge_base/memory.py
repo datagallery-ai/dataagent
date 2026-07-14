@@ -405,6 +405,7 @@ class Memory:
                 hostaddress=long_term_url,
                 storage_type=long_term_backend,
                 embedding_model=embed_model,
+                allowed_root=path_prefix,
             )
             self.metadata = MetadataManagement(
                 index=f"{index_prefix}_meta",
