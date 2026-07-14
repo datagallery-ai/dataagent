@@ -17,6 +17,7 @@ BUILTIN_HOOK_REGISTRY: dict[str, str] = {
     "context_reference_rewriter": "dataagent.core.flex.hooks.context_reference_rewriter.context_reference_rewriter",
     "organize_workspace": "dataagent.core.flex.hooks.organize_workspace.organize_workspace",
     "intent_understanding": "dataagent.core.flex.hooks.intent_understanding.intent_understanding",
+    "semantic_retrieve_context_loader": "dataagent.core.flex.hooks.semantic_retrieve.semantic_retrieve_context_loader",
 }
 
 

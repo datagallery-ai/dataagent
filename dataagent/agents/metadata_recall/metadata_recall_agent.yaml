@@ -36,14 +36,16 @@ SCENARIO:
 
       ### 第二步：制定检索策略
       根据查询类型选择工具组合：
-      - 当你需要检索元数据实体证据（任务相关指标、表列信息等内容）时，你要使用 `search_tables_with_semantic_retrieve` 、`get_table_schema` 工具
+      - 用户 query 末尾已经预置 `<semantic_retrieve_context>` 块；你必须先使用其中的召回表信息
+      - `<semantic_retrieve_context>` 内的表清单格式为：`db.table 描述：表描述`
+      - 当你需要补充表字段证据时，你要使用 `get_table_schema` 工具
       - 当你需要检索 UDF 函数信息时，你要使用 `search_udf_function_by_name_keyword` 或 `search_udf_function_by_dsl` 工具
       - JOIN：多表关联必须用 `get_join_relations` 工具或 schema/主键证据说明 JOIN key、JOIN 类型、左右粒度；不能证明唯一的一侧必须先去重或预聚合
       - 可以复合查询，并行调用多个工具以加快检索速度
 
       ### 第三步：执行检索
       并行调用选定的工具：
-      - 使用 `search_tables_with_semantic_retrieve` 时无需传参。此工具会自动读取用户完整的原始自然语言 query，不要基于原始 query 提取关键词
+      - 从 `<semantic_retrieve_context>` 选择候选表，再按需要调用 schema、UDF、Join 关系工具补充证据
       - `get_table_schema` 传入需要探查 schema 的表名（使用 `db.table` 格式传入）
       - `search_udf_function_by_name_keyword` 传入 UDF 函数名相关的关键词
       - `search_udf_function_by_dsl` 传入 UDF 功能描述和属性名
@@ -52,10 +54,10 @@ SCENARIO:
       ### 第四步：结果整理
       对检索结果进行整理：
       - 过滤明显不相关的结果
-      - 关注 `search_tables_with_semantic_retrieve`、`get_table_schema` 返回结果中包含的表和列
+      - 关注 `<semantic_retrieve_context>`、`get_table_schema` 返回结果中包含的表和列
       - 关注 UDF 函数的 prototype、args、function_description
       - 关注表之间可连接的列 Join 关系
-      - 涉及已有指标、口径、统计周期、主体/维度/场景的逻辑均已用 `search_tables_with_semantic_retrieve`、`get_table_schema` 等工具检索表列信息
+      - 涉及已有指标、口径、统计周期、主体/维度/场景的逻辑均已用预置语义召回上下文、`get_table_schema` 等工具检索表列信息
       - 去重（相同表/字段只保留一条）
 
       ### 第五步：返回结果
@@ -69,9 +71,9 @@ SCENARIO:
       1. **如果某个 API 调用失败，记录错误并尝试其他检索路径**
 
       2. **尽可能并行调用全下述三类工具（元数据指标与表列检索工具、UDF 函数检索工具、JOIN 关系检索工具）**:
-        - 避免一直只调用元数据指标与表列检索工具（`search_tables_with_semantic_retrieve`、`get_table_schema`）检索表和列 schema
+        - 避免一直只调用元数据指标与表列检索工具（`get_table_schema`）检索表和列 schema
         - 也要尽可能调用 UDF 函数检索工具（`search_udf_function_by_name_keyword` 或 `search_udf_function_by_dsl`）
-        - 还要必须在合适时调用 Join 关系检索工具（`get_join_relations`），入参是用户query或元数据指标与表列检索工具（`search_tables_with_semantic_retrieve`、`get_table_schema`）检索到的一组表名
+        - 还要必须在合适时调用 Join 关系检索工具（`get_join_relations`），入参是用户query或预置语义召回上下文、`get_table_schema` 检索到的一组表名
       
       3. **UDF 手册中有 `IsEmpty`、`isDeviceIdLegal`、`ConcatWithRank` 等线索；实际函数名、大小写、参数必须通过 `search_udf_function_by_name_keyword` 或 `search_udf_function_by_dsl` 确认**
 
@@ -94,6 +96,11 @@ SCENARIO:
         - 字符串字段使用 UDF 函数 `!bicoredata.IsEmpty(field)` 判断；不要只写 `field IS NOT NULL`，因为空字符串也应视为空
         - 对 JOIN key，必须在 JOIN 前过滤或归一化空值，避免空 key 造成数据倾斜、错误匹配或无效输出
 
+HOOKS:
+  agent:
+    pre:
+      - semantic_retrieve_context_loader
+
 TOOLS:
   local_functions:
     # 基于 fulltext 粗召回 “metric 指标 + data_column 与 data_table 候补” 的表列检索（思路1）
@@ -104,9 +111,6 @@ TOOLS:
     # - name: "search_tables_with_typename"
     #   module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
     #   function: "search_tables_with_typename"
-    - name: "search_tables_with_semantic_retrieve"
-      module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
-      function: "search_tables_with_semantic_retrieve"
     # 检索表的完整 schema（表的所有列信息）（思路2）
     - name: "get_table_schema"
       module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
