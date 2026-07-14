@@ -104,6 +104,7 @@ class TestInferStateAndUnpackIr:
 
     @pytest.mark.asyncio
     async def test_extracts_ir_tokens_when_literal_eval_fails(self, context, monkeypatch, tmp_path):
+        context.state.workspace = str(tmp_path.resolve())
         f = tmp_path / "notes.txt"
         f.write_text("hello", encoding="utf-8")
         resolved = str(f.resolve())

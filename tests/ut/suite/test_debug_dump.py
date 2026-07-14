@@ -12,6 +12,8 @@
 # ============================================================================
 """Tests for runtime configuration debug dump."""
 
+import stat
+
 from dataagent.core.suite.debug_dump import dump_merged_config, format_settings_yaml
 
 
@@ -55,3 +57,24 @@ def test_dump_merged_config_uses_custom_runtime_dump_dir(tmp_path) -> None:
     target = dump_merged_config(settings, workspace=workspace)
     assert target is not None
     assert target.parent == workspace / "debug" / "runtime"
+
+
+def test_dump_merged_config_redacts_sensitive_values_and_uses_owner_only_mode(tmp_path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    settings = {
+        "AGENT_CONFIG": {
+            "name": "x",
+            "api_key": "secret-key",
+            "nested": {"password": "secret-password"},
+        }
+    }
+
+    target = dump_merged_config(settings, workspace=workspace)
+
+    assert target is not None
+    content = target.read_text(encoding="utf-8")
+    assert "secret-key" not in content
+    assert "secret-password" not in content
+    assert "<redacted>" in content
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600

@@ -810,6 +810,7 @@ class TestReadFilePipeline:
         f = tmp_path / "notes.txt"
         f.write_text("version one", encoding="utf-8")
         resolved = str(f.resolve())
+        context.state.workspace = str(tmp_path.resolve())
 
         ResultIRConverter.convert(
             context=context,
