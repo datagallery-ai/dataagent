@@ -18,6 +18,7 @@ import difflib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -646,13 +647,13 @@ async def _run_subprocess_async(
 
 
 def _expand_skill_aliases_in_shell_command(command: str) -> str:
-    pattern = re.compile(r"(?<![\w.-])(skill/[A-Za-z0-9_.-]+(?:/[^\s;&|<>\"']*)?)")
+    pattern = re.compile(r"(?<![\w.\\-\"'])(skill/[A-Za-z0-9_.-]+(?:/[^\s;&|<>\"']*)?)")
 
     def _replace(match: re.Match[str]) -> str:
         token = match.group(1)
         sandbox = get_current_sandbox()
         resolved = sandbox.resolve_prompt_path_alias(token)
-        return str(resolved) if resolved is not None else token
+        return shlex.quote(str(resolved)) if resolved is not None else token
 
     return pattern.sub(_replace, command)
 
