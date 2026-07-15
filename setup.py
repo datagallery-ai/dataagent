@@ -42,6 +42,7 @@ EXCLUDE_DIRS = {
         # relative to repo root
         "dataagent/actions/skills",
         "dataagent/actions/tools/mcp_tool",
+        "dataagent/core/suite/builtin_suites",
     }
 }
 BUILD_TMP_DIR = "build_cython"
