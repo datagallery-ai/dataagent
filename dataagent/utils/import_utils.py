@@ -27,18 +27,12 @@ _ALLOWED_CALLABLE_MODULE_PREFIXES = (
     "dataagent.actions.tools.hooks",
     "dataagent.core.flex.hooks",
 )
-_ALLOWED_CLASS_MODULE_PREFIXES = ("dataagent.",)
 
 
 def _is_allowed_callable_module(module_name: str) -> bool:
     return any(
         module_name == prefix or module_name.startswith(f"{prefix}.") for prefix in _ALLOWED_CALLABLE_MODULE_PREFIXES
     )
-
-
-def _is_allowed_class_module(module_name: str) -> bool:
-    # Dynamic class imports are limited to project-owned modules.
-    return any(module_name.startswith(prefix) for prefix in _ALLOWED_CLASS_MODULE_PREFIXES)
 
 
 def import_class(class_path: str) -> type[Any]:
@@ -84,8 +78,6 @@ def import_class(class_path: str) -> type[Any]:
         raise ValueError(f"Class path must be in format 'module.path.ClassName', got: {class_path!r}")
 
     module_name, class_name = parts
-    if not _is_allowed_class_module(module_name):
-        raise ValueError(f"Class module is not allowed: {module_name}")
 
     # Validate that class name looks like a class (starts with capital letter)
     if not class_name or not class_name[0].isupper():

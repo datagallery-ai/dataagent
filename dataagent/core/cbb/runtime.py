@@ -342,22 +342,10 @@ class Runtime:
         """
         if name not in self._llms:
             llm_cfg = self.env.llm_configs.get(name)
-            config_path = f"env.llm_configs[{name!r}]"
-            if not isinstance(llm_cfg, dict):
-                # Do not include raw LLM config values; they may contain credentials.
+            if not isinstance(llm_cfg, dict) or not llm_cfg.get("api_base"):
                 raise RuntimeError(
-                    f"runtime.llm({name!r}) requires {config_path} to be a mapping with model/api_base/api_key "
-                    "(resolved at agent init)."
-                )
-            missing_fields = []
-            for required_field in ("model", "api_base", "api_key"):
-                if not llm_cfg.get(required_field):
-                    missing_fields.append(f"{config_path}.{required_field}")
-            if missing_fields:
-                # Report field paths only; never echo configured values such as api_key.
-                raise RuntimeError(
-                    f"runtime.llm({name!r}) has incomplete LLM endpoint configuration: "
-                    f"missing or empty {', '.join(missing_fields)} (resolved at agent init)."
+                    f"runtime.llm({name!r}) requires env.llm_configs[{name!r}] with api_base/api_key "
+                    f"(resolved at agent init). Missing or incomplete entry: {llm_cfg!r}"
                 )
             from dataagent.core.managers.llm_manager.llm_client import llm_adapter_from_env_cfg
 

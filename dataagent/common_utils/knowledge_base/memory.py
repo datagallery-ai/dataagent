@@ -20,7 +20,6 @@ from typing import Any, NamedTuple
 import networkx as nx
 import pandas as pd
 from loguru import logger
-from sqlalchemy.engine import make_url
 
 from dataagent.common_utils.knowledge_base.knowledge_base import KnowledgeBase
 from dataagent.common_utils.knowledge_base.metadata_management import MetadataManagement
@@ -29,11 +28,6 @@ from dataagent.common_utils.knowledge_base.utils_common import MySQLReader
 from dataagent.common_utils.knowledge_base.utils_inference import model_inference
 from dataagent.common_utils.knowledge_base.utils_memory import graph_to_html, html_config
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
-
-_MYSQL_ALLOWED_HOST_KEYS = (
-    "allowed_mysql_hosts",
-    "mysql_allowed_hosts",
-)
 
 
 class NullTool:
@@ -249,45 +243,6 @@ def _memory_instance_cache_key(rag_id: str, path_prefix: str, cm: Any) -> Memory
     )
 
 
-def _string_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [part.strip() for part in value.replace(";", ",").split(",") if part.strip()]
-    if isinstance(value, (list, tuple, set)):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value).strip()] if str(value).strip() else []
-
-
-def _host_from_url_or_host(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    if "://" in text:
-        try:
-            return str(make_url(text).host or "").strip().lower().rstrip(".")
-        except Exception:
-            return ""
-    text = text.rsplit("@", 1)[-1].split("/", 1)[0].strip()
-    if text.startswith("[") and "]" in text:
-        closing_bracket = text.index("]")
-        return text[1:closing_bracket].strip().lower().rstrip(".")
-    return text.split(":", 1)[0].strip().lower().rstrip(".")
-
-
-def _allowed_mysql_hosts(config_manager: Any) -> set[str]:
-    mem_cfg = config_manager.get("MEMORY", {}) or {}
-    datasource_cfg = config_manager.get("DATASOURCE", {}) or {}
-    raw_values: list[Any] = []
-    for key in _MYSQL_ALLOWED_HOST_KEYS:
-        raw_values.extend(_string_list(mem_cfg.get(key)))
-    raw_values.extend(_string_list(datasource_cfg.get("allowed_hosts")))
-    database_address = datasource_cfg.get("database_address")
-    if database_address:
-        raw_values.append(database_address)
-    return {host for host in (_host_from_url_or_host(value) for value in raw_values) if host}
-
-
 def is_memory_enabled(config_manager: Any | None = None) -> bool:
     """
     判断当前配置下是否启用基于 Memory/ES 的能力。
@@ -450,7 +405,6 @@ class Memory:
                 hostaddress=long_term_url,
                 storage_type=long_term_backend,
                 embedding_model=embed_model,
-                allowed_root=path_prefix,
             )
             self.metadata = MetadataManagement(
                 index=f"{index_prefix}_meta",
@@ -687,11 +641,6 @@ class Memory:
                 if not json_path:
                     logger.error("json path is None")
                     return False
-                try:
-                    json_path = str(self._resolve_path_prefix_file(json_path, suffix=".json"))
-                except Exception as e:
-                    logger.error(f"invalid json file path: {e}")
-                    return False
 
                 if not os.path.exists(json_path):
                     logger.error(f"json file does not exist: {json_path}")
@@ -759,7 +708,7 @@ class Memory:
             else:
                 raise ValueError("Only support .csv format in registering local files.")
         elif table_source_type == "MySQL":
-            url, table_name = self._validate_mysql_table_source(table_path)
+            url, table_name = table_path.rpartition("/")[0], table_path.rpartition("/")[-1]
             mysql = MySQLReader(url=url)
             df = mysql.load_table(table_name=table_name)
         else:
@@ -1094,9 +1043,7 @@ class Memory:
         Returns:
             bool: True if registration was successful, False otherwise.
         """
-        resolved_json_path = self._resolve_path_prefix_file(json_path, suffix=".json")
-        json_path = str(resolved_json_path)
-        with resolved_json_path.open(encoding="utf-8") as f:
+        with open(json_path, encoding="utf-8") as f:
             json_data = json.load(f)
 
         if "nodes" not in json_data or len(json_data.get("nodes", [])) == 0:
@@ -1397,36 +1344,3 @@ class Memory:
             nodes_info.append(node_info)
 
         return nodes_info
-
-    def _resolve_path_prefix_file(self, raw_path: str, *, suffix: str | None = None) -> Path:
-        if not self.path_prefix:
-            raise ValueError("MEMORY.path_prefix must be configured for file registration.")
-        root = Path(self.path_prefix).expanduser().resolve()
-        resolved = Path(raw_path).expanduser().resolve(strict=True)
-        if resolved.is_symlink():
-            raise ValueError("Registered file path must not be a symbolic link.")
-        if not resolved.is_file():
-            raise ValueError("Registered file path must be a regular file.")
-        if not (resolved == root or resolved.is_relative_to(root)):
-            raise ValueError("Registered file path is outside MEMORY.path_prefix.")
-        if suffix and resolved.suffix.lower() != suffix.lower():
-            raise ValueError(f"Registered file path must end with {suffix}.")
-        return resolved
-
-    def _validate_mysql_table_source(self, table_path: str) -> tuple[str, str]:
-        url, _, table_name = str(table_path or "").rpartition("/")
-        if not url or not table_name:
-            raise ValueError("MySQL table_path must include a database URL and table name.")
-        try:
-            url_obj = make_url(url)
-        except Exception as exc:
-            raise ValueError("Invalid MySQL table URL.") from exc
-        if not str(url_obj.drivername or "").lower().startswith("mysql"):
-            raise ValueError("Only MySQL URLs are allowed for MySQL table registration.")
-        host = str(url_obj.host or "").strip().lower().rstrip(".")
-        allowed_hosts = _allowed_mysql_hosts(self._config_manager)
-        if not allowed_hosts:
-            raise ValueError("MySQL table registration requires configured allowed hosts.")
-        if host not in allowed_hosts:
-            raise ValueError("MySQL table host is not allowed.")
-        return url_obj.render_as_string(hide_password=False), table_name

@@ -13,7 +13,6 @@
 
 import copy
 import glob
-import hashlib
 import json
 import os
 from datetime import UTC, datetime
@@ -76,6 +75,8 @@ def search_metric_instance(
 
     # Step 3-8: 根据 Step2 粗召回返回的 “metric_instance 的 qualified_name”，独立扩充召回结果
     metric_instance_recall_result = _recall_from_metric_instances(metric_instance_list, client)
+    metric_instance_column_list = metric_instance_recall_result["metric_instance_column_list"]
+    metric_instance_table_list = metric_instance_recall_result["metric_instance_table_list"]
     tables_from_metric_instance_column_list = metric_instance_recall_result["tables_from_metric_instance_column_list"]
     columns_from_metric_instance_column_tables = metric_instance_recall_result[
         "columns_from_metric_instance_column_tables"
@@ -105,36 +106,74 @@ def search_metric_instance(
         },
         client,
     )
+    tables_from_metric_instance_column_list = described_tables["tables_from_metric_instance_column_list"]
+    columns_from_metric_instance_column_tables = described_tables["columns_from_metric_instance_column_tables"]
+    columns_from_metric_instance_table_list = described_tables["columns_from_metric_instance_table_list"]
+    tables_from_data_column_list = described_tables["tables_from_data_column_list"]
+    columns_from_data_table_list = described_tables["columns_from_data_table_list"]
+    tables_with_columns = described_tables["tables_with_columns"]
 
     # Step 14: 对扩充召回结果做 LLM 精筛，并整合到最终结果
     query_str = get_current_query(_tool_context.runtime)
-    query_fingerprint = hashlib.sha256(query_str.encode("utf-8", errors="replace")).hexdigest()[:12]
-    logger.warning("==== original_query fingerprint={} length={}", query_fingerprint, len(query_str))
+    logger.warning(f"==== original_query_str: {query_str}")
 
     output_metric_final = _build_llm_filtered_output_metric_final(
         query_str,
-        described_tables["tables_from_metric_instance_column_list"],
+        tables_from_metric_instance_column_list,
         {
-            "columns_from_metric_instance_column_tables": described_tables[
-                "columns_from_metric_instance_column_tables"
-            ],
-            "columns_from_metric_instance_table_list": described_tables["columns_from_metric_instance_table_list"],
-            "tables_from_data_column_list": described_tables["tables_from_data_column_list"],
-            "columns_from_data_table_list": described_tables["columns_from_data_table_list"],
+            "columns_from_metric_instance_column_tables": columns_from_metric_instance_column_tables,
+            "columns_from_metric_instance_table_list": columns_from_metric_instance_table_list,
+            "tables_from_data_column_list": tables_from_data_column_list,
+            "columns_from_data_table_list": columns_from_data_table_list,
         },
     )
 
-    return _finalize_metric_search(
-        keywords=keywords,
-        query_str=query_str,
-        result_json=result_json,
-        typed_recall_result=typed_recall_result,
-        metric_instance_list=metric_instance_list,
-        metric_instance_recall_result=metric_instance_recall_result,
-        described_tables=described_tables,
-        output_metric_final=output_metric_final,
-        client=client,
-        tool_context=_tool_context,
+    # Step 15: 生成 summary 并 保存结果
+    summary, workspace_path, output_path = _generate_summary_and_save_results(
+        keywords,
+        query_str,
+        result_json,
+        metric_instance_list,
+        output_metric_final,
+        {
+            "1_output_metric_coarse_recall": result_json,
+            "2_1_output_fulltext_metric_instance_list": metric_instance_fulltext_list,
+            "2_2_output_fulltext_data_column_list": data_column_fulltext_list,
+            "2_3_output_fulltext_data_table_list": data_table_fulltext_list,
+            "3_1_output_metric_instance_column_list": metric_instance_column_list,
+            "3_2_output_metric_instance_table_list": metric_instance_table_list,
+            "4_output_tables_from_metric_instance_column_list": tables_from_metric_instance_column_list,
+            "5_output_columns_from_metric_instance_column_tables": columns_from_metric_instance_column_tables,
+            "6_output_columns_from_metric_instance_table_list": columns_from_metric_instance_table_list,
+            "9_output_tables_from_data_column_list": tables_from_data_column_list,
+            "11_output_columns_from_data_table_list": columns_from_data_table_list,
+            "output_tables_with_columns": tables_with_columns,
+            "output_metric_final": output_metric_final,
+        },
+    )
+
+    # Step 16: 生成 schema 中间表示并保存到当前工作空间
+    _build_schema_ir_for_nl2sql(
+        workspace_path=str(workspace_path),
+        output_path=str(output_path),
+        base_url=client.base_url,
+        save_file=True,
+        _tool_context=_tool_context,
+    )
+
+    # Step 17: 返回结果
+    original_msg = json.dumps(
+        {
+            "output_metric_final": output_metric_final,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    return _fmt(
+        original_msg,
+        summary,
+        {"output_metric_final": output_metric_final},
     )
 
 
@@ -310,60 +349,6 @@ def _recall_from_data_tables(
         "columns_from_data_table_list": columns_from_data_table_list,
         "tables_with_columns": tables_with_columns,
     }
-
-
-def _finalize_metric_search(
-    *,
-    keywords: list[str],
-    query_str: str,
-    result_json: dict,
-    typed_recall_result: dict[str, list[dict[str, str]]],
-    metric_instance_list: list[str],
-    metric_instance_recall_result: dict[str, Any],
-    described_tables: dict[str, Any],
-    output_metric_final: dict[str, dict],
-    client: SemanticServiceClient,
-    tool_context: ToolExecutionContext,
-) -> dict:
-    summary, workspace_path, output_path = _generate_summary_and_save_results(
-        keywords,
-        query_str,
-        result_json,
-        metric_instance_list,
-        described_tables["tables_with_columns"],
-        {
-            "1_output_metric_coarse_recall": result_json,
-            "2_1_output_fulltext_metric_instance_list": typed_recall_result["metric_instance"],
-            "2_2_output_fulltext_data_column_list": typed_recall_result["data_column"],
-            "2_3_output_fulltext_data_table_list": typed_recall_result["data_table"],
-            "3_1_output_metric_instance_column_list": metric_instance_recall_result["metric_instance_column_list"],
-            "3_2_output_metric_instance_table_list": metric_instance_recall_result["metric_instance_table_list"],
-            "4_output_tables_from_metric_instance_column_list": described_tables[
-                "tables_from_metric_instance_column_list"
-            ],
-            "5_output_columns_from_metric_instance_column_tables": described_tables[
-                "columns_from_metric_instance_column_tables"
-            ],
-            "6_output_columns_from_metric_instance_table_list": described_tables[
-                "columns_from_metric_instance_table_list"
-            ],
-            "9_output_tables_from_data_column_list": described_tables["tables_from_data_column_list"],
-            "11_output_columns_from_data_table_list": described_tables["columns_from_data_table_list"],
-            "output_tables_with_columns": described_tables["tables_with_columns"],
-            "output_metric_final": output_metric_final,
-        },
-    )
-
-    _build_schema_ir_for_nl2sql(
-        workspace_path=str(workspace_path),
-        output_path=str(output_path),
-        base_url=client.base_url,
-        save_file=True,
-        _tool_context=tool_context,
-    )
-
-    original_msg = json.dumps({"output_metric_final": output_metric_final}, ensure_ascii=False, indent=2)
-    return _fmt(original_msg, summary, {"output_metric_final": output_metric_final})
 
 
 def _generate_summary_and_save_results(

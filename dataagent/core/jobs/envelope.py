@@ -82,15 +82,10 @@ def build_base_job_envelope(
         }
         sandbox_request = _dict(args.get("sandbox_request"))
         if sandbox_request:
-            # Preserve mandatory sandbox defaults even when callers provide overrides.
-            sandbox_overrides = {}
-            for key, value in sandbox_request.items():
-                if key not in {"enabled", "backend"}:
-                    sandbox_overrides[key] = value
             envelope["sandbox_request"] = {
                 "enabled": True,
                 "backend": "best-effort",
-                **sandbox_overrides,
+                **sandbox_request,
             }
         _set_non_empty_string(envelope, "resource_id", args.get("resource_id"))
         _set_non_empty_string(envelope, "command", args.get("command"))

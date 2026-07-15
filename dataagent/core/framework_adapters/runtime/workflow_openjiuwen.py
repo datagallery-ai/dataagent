@@ -242,7 +242,7 @@ class OpenJiuWenWorkflow:
             options = None
             config_manager = getattr(runtime, "config_manager", None)
             if config_manager is not None:
-                options = build_context_init_options(config_manager, workspace=state.get("workspace"))
+                options = build_context_init_options(config_manager)
             call_context = ContextFactory.get_context(
                 user_id=user_id,
                 session_id=session_id,
@@ -539,15 +539,12 @@ class OpenJiuWenWorkflow:
             self._ojw_try_ensure_context_query(state_proxy, runtime_for_node)
             self._ojw_try_ensure_planner_user_message(state_proxy, runtime_for_node, node.name)
             if isinstance(inputs, dict):
-                # Log only field lengths to keep user input out of logs.
-                query = inputs.get("query", None)
-                user_query = inputs.get("user_query", None)
                 logger.info(
-                    "[workflow_openjiuwen] node={} input_keys={} query_len={} user_query_len={} messages_type={}",
+                    "[workflow_openjiuwen] node={} input_keys={} query={} user_query={} messages_type={}",
                     node.name,
                     sorted(inputs.keys()),
-                    len(str(query)) if query is not None else 0,
-                    len(str(user_query)) if user_query is not None else 0,
+                    repr(inputs.get("query", None))[:200],
+                    repr(inputs.get("user_query", None))[:200],
                     type(inputs.get("messages", None)).__name__,
                 )
             node_name = node.name

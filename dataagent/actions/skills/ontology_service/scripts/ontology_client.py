@@ -15,25 +15,12 @@ from __future__ import annotations
 import ast
 import json
 import os
-import re
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 
 DEFAULT_TIMEOUT = 120
-_FILTER_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
-_SAFE_TEXT_RE = re.compile(r"^[^'\"\\\x00-\x1f\x7f]{0,512}$")
-_NUMERIC_RE = re.compile(r"^-?(?:\d+|\d+\.\d+)$")
-_COMPARISON_RE = re.compile(r"^(?:=|!=)\s*'(?:[^'\"\\\x00-\x1f\x7f]{0,512})'$")
-_NUMERIC_COMPARISON_RE = re.compile(r"^(?:=|!=|<=|>=|<|>)\s*-?(?:\d+|\d+\.\d+)$")
-_TEXT_PREDICATE_RE = re.compile(r"^(?:CONTAINS|STARTS WITH|ENDS WITH)\s*'(?:[^'\"\\\x00-\x1f\x7f]{0,512})'$", re.I)
-_NULL_PREDICATE_RE = re.compile(r"^IS\s+(?:NOT\s+)?NULL$", re.I)
-_IN_PREDICATE_RE = re.compile(
-    r"^IN\s*\[\s*(?:(?:'(?:[^'\"\\\x00-\x1f\x7f]{0,512})'|-?(?:\d+|\d+\.\d+))"
-    r"\s*(?:,\s*(?:'(?:[^'\"\\\x00-\x1f\x7f]{0,512})'|-?(?:\d+|\d+\.\d+))\s*)*)?\]$",
-    re.I,
-)
 
 
 def parse_maybe_structured(value: Any) -> Any:
@@ -64,65 +51,6 @@ def _safe_literal_eval(value: Any) -> Any:
 
 
 OPERATORS = ["IS NOT NULL", "IS NULL", "<=", ">=", "=", "<", ">", "CONTAINS", "STARTS WITH", "ENDS WITH", "IN"]
-
-
-def _validate_filter_key(prop: Any) -> str:
-    key = str(prop or "").strip()
-    if not _FILTER_KEY_RE.fullmatch(key):
-        raise ValueError("Invalid filter property name.")
-    return key
-
-
-def _safe_text_literal(value: Any) -> str:
-    text = str(value).strip()
-    if not _SAFE_TEXT_RE.fullmatch(text):
-        raise ValueError("Invalid filter literal.")
-    return f"'{text}'"
-
-
-def _format_value_literal(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return str(value)
-    text = str(value).strip()
-    if _NUMERIC_RE.fullmatch(text):
-        return text
-    return _safe_text_literal(text)
-
-
-def _format_numeric_literal(value: Any) -> str:
-    if isinstance(value, bool):
-        raise ValueError("Numeric filter value must be a number.")
-    if isinstance(value, int | float):
-        return str(value)
-    text = str(value).strip()
-    if not _NUMERIC_RE.fullmatch(text):
-        raise ValueError("Numeric filter value must be a number.")
-    return text
-
-
-def _normalize_filter_expression(value: str) -> str:
-    expr = str(value or "").strip()
-    if not expr:
-        raise ValueError("Filter expression must not be empty.")
-    parts = re.split(r"\s+OR\s+", expr, flags=re.I)
-    normalized_parts: list[str] = []
-    for part in parts:
-        condition = part.strip()
-        if not condition:
-            raise ValueError("Invalid filter expression.")
-        if (
-            _COMPARISON_RE.fullmatch(condition)
-            or _NUMERIC_COMPARISON_RE.fullmatch(condition)
-            or _TEXT_PREDICATE_RE.fullmatch(condition)
-            or _NULL_PREDICATE_RE.fullmatch(condition)
-            or _IN_PREDICATE_RE.fullmatch(condition)
-        ):
-            normalized_parts.append(condition)
-            continue
-        raise ValueError("Invalid filter expression.")
-    return " OR ".join(normalized_parts)
 
 
 def build_filter_dict(
@@ -162,25 +90,24 @@ def build_filter_dict(
 
     def add_condition(conditions: dict[str, Any], op: str) -> None:
         for prop, val in conditions.items():
-            key = _validate_filter_key(prop)
             if op == "=":
-                result[key] = f"= {_format_value_literal(val)}"
+                result[prop] = f"= '{val}'"
             elif op == "!=":
-                result[key] = f"!= {_format_value_literal(val)}"
+                result[prop] = f"!= '{val}'"
             elif op == "CONTAINS":
-                result[key] = f"CONTAINS {_safe_text_literal(val)}"
+                result[prop] = f"CONTAINS '{val}'"
             elif op == "STARTS WITH":
-                result[key] = f"STARTS WITH {_safe_text_literal(val)}"
+                result[prop] = f"STARTS WITH '{val}'"
             elif op == "ENDS WITH":
-                result[key] = f"ENDS WITH {_safe_text_literal(val)}"
+                result[prop] = f"ENDS WITH '{val}'"
             elif op == ">":
-                result[key] = f"> {_format_numeric_literal(val)}"
+                result[prop] = f"> {val}"
             elif op == ">=":
-                result[key] = f">= {_format_numeric_literal(val)}"
+                result[prop] = f">= {val}"
             elif op == "<":
-                result[key] = f"< {_format_numeric_literal(val)}"
+                result[prop] = f"< {val}"
             elif op == "<=":
-                result[key] = f"<= {_format_numeric_literal(val)}"
+                result[prop] = f"<= {val}"
 
     if equal:
         add_condition(equal, "=")
@@ -203,17 +130,16 @@ def build_filter_dict(
 
     if is_null:
         for prop in is_null:
-            result[_validate_filter_key(prop)] = "IS NULL"
+            result[prop] = "IS NULL"
 
     if is_not_null:
         for prop in is_not_null:
-            result[_validate_filter_key(prop)] = "IS NOT NULL"
+            result[prop] = "IS NOT NULL"
 
     if in_list:
         for prop, vals in in_list.items():
-            key = _validate_filter_key(prop)
-            items = ", ".join(_format_value_literal(v) for v in vals)
-            result[key] = f"IN [{items}]"
+            items = ", ".join(f"'{v}'" for v in vals)
+            result[prop] = f"IN [{items}]"
 
     return result
 
@@ -232,15 +158,14 @@ def normalize_filter_dict(filter_dict: Any) -> dict[str, Any]:
         return {}
     normalized = {}
     for key, value in parsed.items():
-        prop = _validate_filter_key(key)
         if isinstance(value, str):
             val = value.strip()
             if val and not _has_operator(val):
-                normalized[prop] = f"= {_safe_text_literal(val)}"
+                normalized[key] = f"= '{val}'"
             else:
-                normalized[prop] = _normalize_filter_expression(val)
+                normalized[key] = value
         else:
-            normalized[prop] = value
+            normalized[key] = value
     return normalized
 
 
@@ -363,7 +288,7 @@ class OntologyClient:
         payload: dict[str, Any] = {
             "element_class": element_class,
             "element_type": element_type,
-            "filter_dict": normalize_filter_dict(filter_dict),
+            "filter_dict": parse_maybe_structured(filter_dict) or {},
         }
         if get_all_properties is not None:
             payload["get_all_properties"] = get_all_properties
@@ -465,7 +390,7 @@ class OntologyClient:
         payload = {
             "element_class": element_class,
             "element_type": element_type,
-            "filter_dict": normalize_filter_dict(filter_dict),
+            "filter_dict": parse_maybe_structured(filter_dict) or {},
         }
         return self.search_post("count_search", payload).get("result")
 
@@ -483,7 +408,7 @@ class OntologyClient:
             "element_type": element_type,
             "target_property": target_property,
             "agg": agg,
-            "filter_dict": normalize_filter_dict(filter_dict),
+            "filter_dict": parse_maybe_structured(filter_dict) or {},
         }
         return self.search_post("aggregate_search", payload).get("result")
 
@@ -502,7 +427,7 @@ class OntologyClient:
         payload = {
             "element_class": element_class,
             "element_type": element_type,
-            "filter_dict": normalize_filter_dict(filter_dict),
+            "filter_dict": parse_maybe_structured(filter_dict) or {},
             "return_properties": parse_maybe_structured(return_properties),
             "sort_by": sort_by,
             "ascending": ascending,

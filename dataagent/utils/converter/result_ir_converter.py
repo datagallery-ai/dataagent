@@ -51,19 +51,8 @@ from dataagent.utils.converter.ir_converter_constants import (
 from dataagent.utils.messages_utils import write_result_to_workspace
 
 
-def _path_is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except (OSError, RuntimeError, ValueError):
-        return False
-
-
-def _safe_read_file(path: Path, max_chars: int = DEFAULT_IR_MAX_FILE_CHARS, workspace: Path | None = None) -> str:
+def _safe_read_file(path: Path, max_chars: int = DEFAULT_IR_MAX_FILE_CHARS) -> str:
     """安全读取文件内容，限制最大字符数。"""
-    # Result IR file previews must not read outside the workspace.
-    if workspace is not None and not _path_is_relative_to(path, workspace):
-        return f"[unable to read file: {path}]"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
         if len(text) > max_chars:
@@ -166,23 +155,13 @@ def _to_existing_file_path(raw_path: str, workspace: Path | None) -> str | None:
         return None
 
     base = Path(text).expanduser()
-    workspace_root: Path | None = None
-    if workspace:
-        try:
-            # Resolve all tool-provided file paths against the workspace root.
-            workspace_root = workspace.expanduser().resolve()
-        except (OSError, RuntimeError, ValueError):
-            return None
-
     candidates = [base]
-    if workspace_root:
-        candidates = [base] if base.is_absolute() else [workspace_root / base]
+    if workspace and not base.is_absolute():
+        candidates.insert(0, workspace / base)
 
     for cand in candidates:
         try:
             resolved = cand.resolve()
-            if workspace_root is not None and not _path_is_relative_to(resolved, workspace_root):
-                continue
             if resolved.is_file():
                 return str(resolved)
         except (OSError, RuntimeError, ValueError):
@@ -217,7 +196,6 @@ def _extract_file_paths_from_args(tool_args: dict[str, Any], workspace: Path | N
 
 
 _KNOWN_PATHS_KEY = "_ir_known_data_paths"
-_READ_FILE_RECORDS_KEY = "_ir_read_file_records"
 _PATH_BEARING_NODE_TYPES = {"File", "Table", "Script", "Skill"}
 
 
@@ -250,16 +228,6 @@ def _get_known_data_paths(context: Context) -> set[str]:
 
     context.state.messages[_KNOWN_PATHS_KEY] = used
     return used
-
-
-def _get_read_file_records(context: Context) -> dict[str, tuple[str, str]]:
-    # Cache read_file lineage separately so content changes can create new nodes.
-    existing = context.state.messages.get(_READ_FILE_RECORDS_KEY)
-    if isinstance(existing, dict):
-        return existing
-    records = dict(context.get_recorded_files())
-    context.state.messages[_READ_FILE_RECORDS_KEY] = records
-    return records
 
 
 class ResultIRConverter:
@@ -299,7 +267,7 @@ class ResultIRConverter:
         Pipeline 1 产出的文件路径（如 DataFrame 持久化路径、结构化 IR 的 path 字段）
         传给Pipeline 2 跳过，避免重复建节点。
         """
-        workspace_path = Path(workspace).expanduser().resolve() if workspace else None
+        workspace_path = Path(workspace) if workspace else None
 
         content_created, content_paths = cls._content_pipeline(
             context,
@@ -318,7 +286,7 @@ class ResultIRConverter:
         file_created = cls._file_pipeline(
             context, tool_name, tool_args, action_node_label, workspace_path, pre_existing_files, content_paths
         )
-        file_newly_read = cls._read_file_pipeline(context, tool_name, tool_args, action_node_label, workspace_path)
+        file_newly_read = cls._read_file_pipeline(context, tool_name, tool_args, action_node_label)
         return content_created + file_created + file_newly_read
 
     @classmethod
@@ -380,7 +348,7 @@ class ResultIRConverter:
         created += cls._create_script_from_args(context, tool_args, action_node_label, tool_name)
 
         # 4) 结构化 IR 条目 (table/column/tool)
-        created += cls._create_structured_ir(context, result, action_node_label, tool_name, content_paths, workspace)
+        created += cls._create_structured_ir(context, result, action_node_label, tool_name, content_paths)
 
         # 5) 文件落盘兜底 — 始终尝试，因为入参 IR（如 ScriptNode）和结果 IR（如 stdout）是正交的
         created += cls._create_file_fallback(
@@ -435,7 +403,7 @@ class ResultIRConverter:
                         context,
                         action_node_label,
                         tool_name,
-                        script_content=_safe_read_file(p, workspace=workspace),
+                        script_content=_safe_read_file(p),
                         script_type=EXT_SCRIPT_TYPE_MAP[ext],
                         path=fpath,
                     )
@@ -448,8 +416,6 @@ class ResultIRConverter:
 
         # Step B: 参数引用文件补录（例如 write_file / file_saver 的 path）
         # 按扩展名分流，与 Step A / read_file 一致，避免 .csv 被误建成 FileNode。
-        if tool_name == "read_file":
-            return created
         arg_paths = _extract_file_paths_from_args(tool_args, workspace)
         for fpath in sorted(arg_paths):
             if fpath in known_paths:
@@ -463,7 +429,7 @@ class ResultIRConverter:
                     context,
                     action_node_label,
                     tool_name,
-                    script_content=_safe_read_file(p, workspace=workspace),
+                    script_content=_safe_read_file(p),
                     script_type=EXT_SCRIPT_TYPE_MAP[ext],
                     path=fpath,
                 )
@@ -484,7 +450,6 @@ class ResultIRConverter:
         tool_name: str,
         tool_args: dict[str, Any],
         action_node_label: str,
-        workspace: Path | None,
     ) -> list[str]:
         """read_file校验：校验read file工具读取的文件是否存在context中"""
         if tool_name != "read_file":
@@ -494,15 +459,13 @@ class ResultIRConverter:
         if not path:
             return []
 
-        resolved_path = _to_existing_file_path(path, workspace)
-        if not resolved_path:
+        p = Path(path).expanduser()
+        if not p.exists() or not p.is_file():
             return []
-        p = Path(resolved_path)
 
-        context_recorded_files = _get_read_file_records(context)
+        context_recorded_files = context.get_recorded_files()
         path_key = lineage_path_key(p=str(p))
-        current_md5 = md5_file(p=str(p))
-        if path_key in context_recorded_files and current_md5 == context_recorded_files[path_key][1]:
+        if path_key in context_recorded_files and md5_file(p=str(p)) == context_recorded_files[path_key][1]:
             context.add_edge_manually(
                 from_node=action_node_label, to_node=context_recorded_files[path_key][0], edge_type="refers_to"
             )
@@ -516,15 +479,14 @@ class ResultIRConverter:
                 context,
                 action_node_label,
                 tool_name,
-                script_content=_safe_read_file(p, workspace=workspace),
+                script_content=_safe_read_file(p),
                 script_type=EXT_SCRIPT_TYPE_MAP[ext],
                 path=str(p),
             )
         else:
-            label = cls._register_file_node(context, action_node_label, tool_name, path=str(p))
+            label = cls._register_file_node(context, action_node_label, tool_name, path=path)
 
         if label:
-            context_recorded_files[path_key] = (label, current_md5)
             return [label]
         else:
             return []
@@ -612,7 +574,6 @@ class ResultIRConverter:
         action_node_label: str,
         tool_name: str,
         content_paths: set[str],
-        workspace: Path | None,
     ) -> list[str]:
         """从 result 中提取结构化 IR 条目 (table/column/tool)，创建对应节点。
 
@@ -638,8 +599,6 @@ class ResultIRConverter:
             if not isinstance(entry, dict) or "label" not in entry:
                 continue
             path_val = entry.get("path", entry["label"])
-            if workspace and str(path_val) != str(entry["label"]):
-                path_val = _to_existing_file_path(str(path_val), workspace) or entry["label"]
             try:
                 tbl_label = context.register_node(
                     node_type="Table",

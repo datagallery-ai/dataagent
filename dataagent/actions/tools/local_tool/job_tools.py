@@ -104,8 +104,7 @@ def _read_job_kind(runtime: Any, job_id: str) -> tuple[str | None, dict[str, Any
         return None, None
     try:
         status = job_service.store.read_status(job_id)
-    # Invalid job_id values are treated like unreadable job status.
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         logger.warning("Failed to read job status for {}: {}", job_id, exc)
         return None, None
     if not isinstance(status, dict) or not str(status.get("job_id") or job_id).strip():

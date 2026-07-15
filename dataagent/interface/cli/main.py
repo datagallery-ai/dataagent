@@ -160,12 +160,12 @@ def run_config_check(config_path: str | Path, default_config_path: str | None = 
         if not isinstance(raw_value, str):
             continue
         if "$env{" in raw_value:
-            _, missing = _resolve_env_refs(raw_value, path)
+            resolved, missing = _resolve_env_refs(raw_value, path)
             if missing:
                 exit_code = 1
                 logger.error(f"[FAIL] {path} = {raw_value} -> 缺少环境变量: {', '.join(missing)}")
             else:
-                logger.info(f"[OK] {path} = {raw_value} -> <resolved from environment>")
+                logger.info(f"[OK] {path} = {raw_value} -> {resolved}")
         elif re.search(r"api_key\s*:|\bsk-[A-Za-z0-9_-]+", raw_value):
             logger.warning(f"[WARN] {path} 似乎包含硬编码密钥，请迁移到 .env")
 

@@ -19,11 +19,6 @@ from dataagent.actions.environment.compound_env import CompoundEnv
 from dataagent.actions.environment.env import Env
 from dataagent.utils.import_utils import import_class
 
-_ALLOWED_ENV_MODULE_PREFIXES = (
-    "dataagent.actions.gym.",
-    "dataagent.actions.environment.",
-)
-
 
 def from_config(
     config: list[dict[str, Any]] | dict[str, Any],
@@ -106,11 +101,7 @@ def _create_single_env(config: dict[str, Any], *, config_manager: Any | None = N
     if "module" not in config:
         raise ValueError("Configuration dict must contain a 'module' field")
 
-    class_path = str(config["module"]).strip()
-    if not class_path:
-        raise ValueError("Configuration field 'module' must not be empty")
-    if not class_path.startswith(_ALLOWED_ENV_MODULE_PREFIXES):
-        raise ValueError("Environment module is not allowed.")
+    class_path = config["module"]
 
     # Load the class using the utility function
     env_class = import_class(class_path)

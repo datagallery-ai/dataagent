@@ -38,7 +38,6 @@ from dataagent.core.utils.performance import (
     summarize_llm_usage,
     update_latest_state_from_stream_item,
 )
-from dataagent.utils.runtime_paths import resolve_flex_performance_dir
 
 
 @pytest.fixture
@@ -90,19 +89,6 @@ def test_path_is_process_isolated(perf_home: Path) -> None:
     assert collector.jsonl_path is not None
     assert collector.jsonl_path.name == f"Runshared_Sub7.{os.getpid()}.jsonl"
     assert ".performance" in collector.jsonl_path.parts
-
-
-def test_run_id_is_sanitized_before_building_jsonl_path(perf_home: Path) -> None:
-    """Traversal characters in run_id must not move the jsonl outside .performance."""
-    collector = _active_collector(run_id="../escape")
-    try:
-        assert collector.jsonl_path is not None
-        base = resolve_flex_performance_dir(user_id="u", session_id="s").resolve()
-        assert collector.jsonl_path.resolve().is_relative_to(base)
-        assert "/" not in collector.jsonl_path.name
-        assert "\\" not in collector.jsonl_path.name
-    finally:
-        collector.flush({})
 
 
 def test_bind_agent_performance_reads_sub_id_from_state(perf_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

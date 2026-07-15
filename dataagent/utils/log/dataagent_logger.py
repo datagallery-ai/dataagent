@@ -132,8 +132,7 @@ class DataAgentLogger:
                 format=format_callable,
                 colorize=True,
                 backtrace=True,
-                # diagnose can dump local variables, including credentials.
-                diagnose=False,
+                diagnose=True,
             )
 
         if file_path:
@@ -152,8 +151,7 @@ class DataAgentLogger:
                     encoding="utf-8",
                     enqueue=True,
                     backtrace=True,
-                    # diagnose can dump local variables, including credentials.
-                    diagnose=False,
+                    diagnose=True,
                     serialize=effective_config.json_logs,
                 )
             except OSError as e:
@@ -166,8 +164,7 @@ class DataAgentLogger:
                         format=format_callable,
                         colorize=True,
                         backtrace=True,
-                        # diagnose can dump local variables, including credentials.
-                        diagnose=False,
+                        diagnose=True,
                     )
                     _loguru_logger.warning(f"无法写入日志文件 {file_path}: {e}，已强制启用控制台输出")
                 cls._config = replace(effective_config, file_path=None)

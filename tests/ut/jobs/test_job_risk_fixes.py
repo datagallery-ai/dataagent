@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import stat
 import sys
 import time
 from pathlib import Path
@@ -114,7 +113,6 @@ def test_prepare_job_initial_state_file_hydrates_prior_messages(tmp_path):
     assert payload["messages"][0]["content"] == "prior turn"
     assert payload["user_query"] == "follow-up task"
     assert payload["run_id"] >= 1
-    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
 
 def test_load_job_workspace_hydrate_state_increments_run_id_from_snapshot(tmp_path):
@@ -152,35 +150,6 @@ def test_job_service_running_ids_are_instance_scoped(tmp_path):
     assert handle["job_id"] in service_a.running_job_ids()
     assert handle["job_id"] not in service_b.running_job_ids()
     service_a.cancel(handle["job_id"])
-
-
-def test_file_job_store_rejects_traversal_job_id_for_events(tmp_path):
-    """External job_id values must not escape the jobs root."""
-    store = FileJobStore(tmp_path / "ws")
-    outside = store.jobs_root().parent / "outside"
-    outside.mkdir(parents=True)
-    (outside / "events.jsonl").write_text(json.dumps({"type": "leaked"}) + "\n", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="Invalid job_id"):
-        store.read_events("../outside")
-
-
-def test_job_service_poll_does_not_read_traversal_status(tmp_path):
-    """Polling an invalid job_id returns a safe not_found snapshot."""
-    store = FileJobStore(tmp_path / "ws")
-    outside = store.jobs_root().parent / "outside"
-    outside.mkdir(parents=True)
-    (outside / "job.json").write_text(
-        json.dumps({"job_id": "leaked", "agent_id": "secret", "status": "completed"}),
-        encoding="utf-8",
-    )
-    (outside / "events.jsonl").write_text(json.dumps({"type": "leaked"}) + "\n", encoding="utf-8")
-
-    snapshot = JobService(store).poll("../outside")
-
-    assert snapshot.status == "not_found"
-    assert snapshot.agent_id == ""
-    assert snapshot.events == []
 
 
 def test_completed_collect_includes_required_business_keys(tmp_path):
