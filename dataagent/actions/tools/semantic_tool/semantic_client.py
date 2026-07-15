@@ -77,7 +77,7 @@ class SemanticServiceClient:
     @classmethod
     def from_config(cls, config_manager: Any) -> SemanticServiceClient:
         """Build a semantic-service client from SEMANTIC_LAYER."""
-        raw_base_url = config_manager.get("SEMANTIC_LAYER.base_url") or config_manager.get("SEMANTIC_LAYER.url")
+        raw_base_url = config_manager.get("SEMANTIC_LAYER.base_url")
         if not raw_base_url:
             raise ValueError("validation error: SEMANTIC_LAYER.base_url must be configured")
 

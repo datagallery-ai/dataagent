@@ -1812,10 +1812,9 @@ def get_ontology_description_tool(*, _tool_context: ToolExecutionContext) -> dic
     Returns:
         A dict containing ontology metadata — entity types, attributes, and relations.
     """
-    from dataagent.actions.gym.ontology_env import OntologyEnv
+    from dataagent.actions.tools.semantic_tool.ontology_query import get_ontology_description
 
-    env = OntologyEnv(config_manager=_tool_context.config_manager)
-    return env.get_ontology_description()
+    return get_ontology_description(_tool_context=_tool_context)
 
 
 def get_business_procedure_tool(keywords: list[str], *, _tool_context: ToolExecutionContext) -> dict[str, Any]:

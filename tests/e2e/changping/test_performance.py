@@ -136,6 +136,12 @@ _disable_proxy_env()
 # Inline MetaVisor mock server (pre-cached offline responses)
 # ---------------------------------------------------------------------------
 _MOCK_PORT = 0  # 0 = auto-resolve (random or --mock_port); set before _start_mock_metavisor
+# Semantic-service base URL. Ontology (get_ontology_description) and NL2SQL
+# perceptor both go through SemanticServiceClient reading SEMANTIC_LAYER.base_url.
+# Defaults to the inline mock server (offline-reproducible); set the
+# SEMANTIC_SERVICE_URL env var to opt into a real semantic-service instance.
+_SEMANTIC_SERVICE_URL = os.getenv("SEMANTIC_SERVICE_URL", "")
+_CHANGPING_SCENE = os.getenv("CHANGPING_SCENE", "changping02")
 _mock_server: HTTPServer | None = None
 
 
@@ -255,7 +261,12 @@ atexit.register(_stop_mock_metavisor)
 # OntologyEnv mock
 # ---------------------------------------------------------------------------
 def _load_ontology_fixture() -> dict[str, str]:
-    """Return the formatted ontology description from changping02_ontology.json."""
+    """Return the formatted ontology description from changping02_ontology.json.
+
+    Kept as an offline reference for the legacy fixture-based rendering; the
+    live path now goes through ``ontology_query.get_ontology_description``
+    (real semantic-service via the basic retrieval REST APIs).
+    """
     spec_path = CONFIG_DIR / "changping02_ontology.json"
     data = json.loads(spec_path.read_text(encoding="utf-8"))
     ontology_data = data.get("changping02", data)
@@ -295,16 +306,6 @@ def _load_ontology_fixture() -> dict[str, str]:
         "original_msg": f"\n对本体查询结果如下：\n本体目前包含以下几种类型实体：\n{_pretty(object_types)}\n\n每种实体的描述和属性定义如下:\n{_pretty(object_type_details)}\n\n实体之间有以下几种类型的关联，每种关联用(源实体-关系-目标实体)的三元组表示:\n{_pretty(relation_triplets)}\n\n可以根据以上信息理解实体间的关联关系，以及每个实体的属性含义，从而构造查询条件。\n",
         "frontend_msg": f"已从本地spec文件加载本体描述信息，本体中共包括{len(object_types)}种实体，{len(relation_triplets)}种关系，它们的具体schema也已经被加载。",
     }
-
-
-@contextmanager
-def mock_ontology_env():
-    """Patch OntologyEnv.get_ontology_description to return fixture data."""
-    result = _load_ontology_fixture()
-    logger.info("OntologyEnv.get_ontology_description() → mocked (config/changping02_ontology.json)")
-
-    with patch("dataagent.actions.gym.ontology_env.OntologyEnv.get_ontology_description", lambda self: result):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +480,20 @@ def _build_cache_test_config(
         config = yaml.safe_load(f)
 
     config = _resolve_config_paths(config, workspace_dir)
-    config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
+    # Ontology (get_ontology_description) and NL2SQL perceptor both go through
+    # SemanticServiceClient reading SEMANTIC_LAYER.base_url. 默认走内联 mock
+    # server（离线可复现，三个基础检索 REST 端点齐全）；仅当显式提供
+    # SEMANTIC_SERVICE_URL 时才 opt-in 到真实 semantic-service。
+    if _SEMANTIC_SERVICE_URL:
+        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = _SEMANTIC_SERVICE_URL
+        # 真实服务可能是自签 https，跳过证书校验。
+        config.setdefault("SEMANTIC_LAYER", {})["verify_ssl"] = False
+    else:
+        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
+    # get_ontology_description_tool 走 SemanticServiceClient 的基础检索 REST 接口
+    # (advanced-search/table-list | table-columns-info | joinable-tables),
+    # 场景（databaseName）与其它 semantic 工具统一取自 DATABASE.db_id。
+    config.setdefault("DATABASE", {})["db_id"] = _CHANGPING_SCENE
 
     context_cfg = config.setdefault("CONTEXT", {})
     context_cfg["compress_message_cnt"] = compress_message_cnt
@@ -2061,7 +2075,14 @@ def _build_test_config(workspace_dir: Path) -> Path:
         config = yaml.safe_load(f)
 
     config = _resolve_config_paths(config, workspace_dir)
-    config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
+    # 默认走内联 mock server（离线可复现）；仅当显式提供 SEMANTIC_SERVICE_URL
+    # 时才 opt-in 到真实 semantic-service（可能是自签 https，跳过证书校验）。
+    if _SEMANTIC_SERVICE_URL:
+        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = _SEMANTIC_SERVICE_URL
+        config.setdefault("SEMANTIC_LAYER", {})["verify_ssl"] = False
+    else:
+        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
+    config.setdefault("DATABASE", {})["db_id"] = _CHANGPING_SCENE
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", prefix="test_changping_", delete=False) as tmp:
         yaml.safe_dump(config, tmp, allow_unicode=True, sort_keys=False)
@@ -2247,35 +2268,34 @@ async def main():
 
     _start_mock_metavisor()
     try:
-        with mock_ontology_env():
-            if args.tool_mode:
-                await run_tool_mode(user_id=args.user, session_id=args.session)
-                return
-            if args.query:
-                await run_single_query(args.query)
-                return
+        if args.tool_mode:
+            await run_tool_mode(user_id=args.user, session_id=args.session)
+            return
+        if args.query:
+            await run_single_query(args.query)
+            return
 
-            logger.info("Starting main Agent cache v3.0 tests...")
+        logger.info("Starting main Agent cache v3.0 tests...")
 
-            if args.tc2_only:
-                session_root = _resolve_session_root()
-                await test_v3_offline_extraction(session_root)
-            else:
-                tc1_result = await test_v3_session_replay(
-                    skip_slow=args.skip_slow,
-                    quick=args.quick,
-                    model_choice=args.model,
-                    compress_message_cnt=args.compress_message_cnt,
-                    recent_turns=args.recent_turns,
-                )
-                logger.info("")
-                await test_v3_offline_extraction(tc1_result["session_root"])
-
-            logger.info("All cache v3.0 tests finished.")
-
+        if args.tc2_only:
             session_root = _resolve_session_root()
-            html_path = generate_cache_visualization(session_root)
-            logger.info(f"Cache visualization: {html_path}")
+            await test_v3_offline_extraction(session_root)
+        else:
+            tc1_result = await test_v3_session_replay(
+                skip_slow=args.skip_slow,
+                quick=args.quick,
+                model_choice=args.model,
+                compress_message_cnt=args.compress_message_cnt,
+                recent_turns=args.recent_turns,
+            )
+            logger.info("")
+            await test_v3_offline_extraction(tc1_result["session_root"])
+
+        logger.info("All cache v3.0 tests finished.")
+
+        session_root = _resolve_session_root()
+        html_path = generate_cache_visualization(session_root)
+        logger.info(f"Cache visualization: {html_path}")
     finally:
         _stop_mock_metavisor()
 
