@@ -42,7 +42,6 @@ class DataAgent:
         self.global_init(self.config)
 
         self._chat_agent_instance = None
-        self.session_id = None
 
         logger.trace(f"DataAgent initialized with {self.backend} backend")
 
@@ -214,18 +213,14 @@ class DataAgent:
         checkpoint_id: str | None = None,
     ) -> dict[str, Any]:
         """单轮对话"""
-        # 显式参数 session_id > initial_state 中的 session_id（如 CLI 只传 initial_state）> 已有 self.session_id > 新生成
+        # 显式参数 session_id > initial_state 中的 session_id（如 CLI 只传 initial_state）>  新生成
         if not session_id and isinstance(initial_state, dict):
             sid = initial_state.get("session_id")
             if sid is not None and str(sid).strip():
                 session_id = str(sid).strip()
         if not session_id:
-            # 仅在 self.session_id 为空时生成新 id（不回写外部传入值，避免并发覆盖）
-            if not self.session_id:
-                self.session_id = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_") + str(
-                    uuid.uuid4()
-                )
-            session_id = self.session_id
+            # 在外部未传入 session_id 时，生成一个新的 session_id并使用
+            session_id = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
         workspace = self._validate_workspace(workspace)
         initial_state = self._initialize_state(initial_state, session_id, workspace)
         logger.debug(f"当前 workspace：{initial_state['workspace']}")
