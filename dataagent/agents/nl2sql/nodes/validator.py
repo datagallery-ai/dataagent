@@ -27,7 +27,7 @@ class ValidatorNode(BaseNL2SQLNode):
         self.db_explain = kwargs.pop("db_explain", False)
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
-        self.select_only = kwargs.pop("select_only", True)
+        self.read_only = kwargs.pop("read_only", True)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         semantic_res = self._validate_semantic(state)
@@ -102,13 +102,16 @@ class ValidatorNode(BaseNL2SQLNode):
     def _validate_with_sqlglot(self, sql: str) -> list[str]:
         try:
             import sqlglot
+            from sqlglot import exp
         except ImportError:
             logger.debug("Skip SQLGlot validation because sqlglot is not installed.")
             return []
         try:
             parsed = sqlglot.parse_one(sql, read=self.engine, error_level=sqlglot.errors.ErrorLevel.RAISE)
-            if self.select_only and not isinstance(parsed, sqlglot.exp.Select):
-                return ["Only SELECT statement is allowed."]
+            ALLOWED = (exp.Select, exp.Union, exp.Except, exp.Intersect)
+            FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Merge)
+            if self.read_only and (not isinstance(parsed, ALLOWED) or parsed.find(*FORBIDDEN)):
+                return ["Only read-only statements are allowed. Write operations are forbidden."]
             return []
         except Exception as e:
             return [str(e)]

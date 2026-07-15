@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from dataagent.core.cbb.base_state import BaseState
+from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SEL_RETRIES
 
 
 @dataclass
@@ -42,11 +43,8 @@ class NL2SQLState(BaseState):
     rows: list[tuple[Any, ...]] | None
     rows_preview: list[tuple[str, ...]] | None
 
-    # coordinator
-    semantic_question: str
-    keywords: list[str]
-
     # perceptor
+    keywords: list[str]
     schema: dict
     joins: list[tuple[str, str]]
     schema_str: str  # backdoor for schema injection
@@ -55,7 +53,6 @@ class NL2SQLState(BaseState):
     evidence: str
 
     # generator
-
     generation_results: list[Result]
 
     # validator
@@ -84,7 +81,6 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "columns": None,
         "rows": None,
         "rows_preview": None,
-        "semantic_question": "",
         "keywords": [],
         "schema": {},
         "joins": [],
@@ -94,10 +90,10 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "sql_rules": "",
         "generation_results": [],
         "validation_results": [],
-        "ref_retries": 2,
+        "ref_retries": DEFAULT_NL2SQL_REF_RETRIES,
         "proceed": True,
         "execution_results": [],
-        "sel_retries": 1,
+        "sel_retries": DEFAULT_NL2SQL_SEL_RETRIES,
         "stream_message": "",
     }
     default_state.update(override)

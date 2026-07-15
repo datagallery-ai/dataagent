@@ -12,122 +12,13 @@
 # ============================================================================
 import contextlib
 import json
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.utils.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, DEFAULT_NL2SQL_SQLITE_TIMEOUT
-
-
-def _strip_sql_comments_and_literals(sql: str) -> str:
-    out: list[str] = []
-    i = 0
-    quote_char: str | None = None
-    while i < len(sql):
-        ch = sql[i]
-        nxt = sql[i + 1] if i + 1 < len(sql) else ""
-        if quote_char:
-            if ch == quote_char:
-                if nxt == quote_char:
-                    i += 2
-                    continue
-                quote_char = None
-            i += 1
-            continue
-        if ch in {"'", '"', "`"}:
-            quote_char = ch
-            out.append(" ")
-            i += 1
-            continue
-        if ch == "-" and nxt == "-":
-            i = sql.find("\n", i + 2)
-            if i == -1:
-                break
-            out.append(" ")
-            continue
-        if ch == "/" and nxt == "*":
-            end = sql.find("*/", i + 2)
-            if end == -1:
-                break
-            out.append(" ")
-            i = end + 2
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def _fallback_readonly_select_error(sql: str) -> str | None:
-    cleaned = _strip_sql_comments_and_literals(sql)
-    statements = [part.strip() for part in cleaned.split(";") if part.strip()]
-    if len(statements) != 1:
-        return "Only a single SQL statement is allowed."
-
-    normalized = re.sub(r"\s+", " ", statements[0]).strip().lower()
-    tokens = re.findall(r"\b[a-z_]+\b", normalized)
-    if not tokens or tokens[0] not in {"select", "with"}:
-        return "Only read-only SELECT statements are allowed."
-    if "select" not in tokens or "into" in tokens:
-        return "Only read-only SELECT statements are allowed."
-    if re.search(
-        r"\b(?:alter|attach|call|copy|create|delete|detach|drop|execute|grant|insert|load|merge|pragma|replace|"
-        r"revoke|set|truncate|unload|update|use|vacuum)\b",
-        normalized,
-    ):
-        return "Only read-only SELECT statements are allowed."
-    return None
-
-
-def _sqlglot_expr_classes(exp: Any, *names: str) -> tuple[type, ...]:
-    return tuple(cls for cls in (getattr(exp, name, None) for name in names) if isinstance(cls, type))
-
-
-def _readonly_select_sql_error(sql: str) -> str | None:
-    if not isinstance(sql, str) or not sql.strip():
-        return "SQL statement is required."
-    if "\x00" in sql:
-        return "Invalid SQL statement."
-
-    try:
-        import sqlglot
-        from sqlglot import exp
-    except ImportError:
-        return _fallback_readonly_select_error(sql)
-
-    try:
-        statements = sqlglot.parse(sql, error_level=sqlglot.errors.ErrorLevel.RAISE)
-    except Exception:
-        return "Invalid SQL statement."
-    if len(statements) != 1:
-        return "Only a single SQL statement is allowed."
-    statement = statements[0]
-    read_classes = _sqlglot_expr_classes(exp, "Select", "Union", "Except", "Intersect")
-    write_classes = _sqlglot_expr_classes(
-        exp,
-        "Alter",
-        "Create",
-        "Delete",
-        "Drop",
-        "Insert",
-        "Merge",
-        "Truncate",
-        "Update",
-    )
-    find = getattr(statement, "find", None)
-    args = getattr(statement, "args", {})
-    has_write = bool(write_classes and callable(find) and find(*write_classes))
-    into_classes = _sqlglot_expr_classes(exp, "Into")
-    has_into = bool(
-        (into_classes and callable(find) and find(*into_classes)) or (isinstance(args, dict) and args.get("into"))
-    )
-    if not isinstance(statement, read_classes) or has_write or has_into:
-        return "Only read-only SELECT statements are allowed."
-    return None
 
 
 @dataclass
@@ -178,47 +69,13 @@ class SparkConfig:
         return self.__dict__.copy()
 
 
-def _resolve_sqlite_path(path: str) -> Path:
-    raw_path = str(path or "").strip()
-    if not raw_path:
-        raise ValueError("SQLite database path is required.")
-
-    requested = Path(raw_path).expanduser()
-    if requested.is_absolute():
-        return requested.resolve()
-
-    base_dir = Path.cwd().resolve()
-    resolved = (base_dir / requested).resolve()
-    try:
-        resolved.relative_to(base_dir)
-    except ValueError as exc:
-        raise ValueError("SQLite database path must stay within the current working directory.") from exc
-    return resolved
-
-
-def _sqlite_readonly_uri(path: Path) -> str:
-    return f"file:{quote(str(path), safe='/')}?mode=ro"
-
-
 class SqlService(ABC):
-    def explain(self, sql: str) -> str | None:
-        error = _readonly_select_sql_error(sql)
-        if error:
-            return error
-        return self._explain(sql)
-
-    def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
-        error = _readonly_select_sql_error(sql)
-        if error:
-            return None, None, error
-        return self._execute(sql)
-
     @abstractmethod
-    def _explain(self, sql: str) -> str | None:
+    def explain(self, sql: str) -> str | None:
         pass
 
     @abstractmethod
-    def _execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+    def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         pass
 
 
@@ -236,12 +93,12 @@ class BaseService(SqlService, ABC):
             self._conn = None
         return False
 
-    def _explain(self, sql: str) -> str | None:
+    def explain(self, sql: str) -> str | None:
         try:
             conn = self._get_conn()
             cursor = conn.cursor()
         except Exception as e:
-            raise SQLServiceError() from e
+            raise SQLServiceError(detail=str(e)) from e
         try:
             cursor.execute(f"EXPLAIN {sql}")
             cursor.fetchall()
@@ -250,9 +107,9 @@ class BaseService(SqlService, ABC):
             try:
                 return self._handle_explain_error(e)
             except Exception as exc:
-                raise SQLServiceError() from exc
+                raise SQLServiceError(detail=str(exc)) from exc
 
-    def _execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+    def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         try:
             conn = self._get_conn()
             self._before_execute(conn)
@@ -325,8 +182,7 @@ class SQLiteService(BaseService):
 
         if self._conn:
             return self._conn
-        db_path = _resolve_sqlite_path(self.config.path)
-        self._conn = sqlite3.connect(_sqlite_readonly_uri(db_path), uri=True, check_same_thread=False)
+        self._conn = sqlite3.connect(f"file:{self.config.path}?mode=ro", uri=True, check_same_thread=False)
         return self._conn
 
     def _before_execute(self, conn):
@@ -361,7 +217,7 @@ class UDNService(SqlService):
     def __exit__(self, *_):
         return False
 
-    def _explain(self, sql: str) -> str | None:
+    def explain(self, sql: str) -> str | None:
         try:
             data = json.dumps({"sql": sql}).encode()
             req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
@@ -371,9 +227,9 @@ class UDNService(SqlService):
                 return None
             return result.get("message", "Unknown error")
         except Exception as e:
-            raise SQLServiceError() from e
+            raise SQLServiceError(detail=str(e)) from e
 
-    def _execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+    def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         try:
             data = json.dumps({"sql": sql}).encode()
             req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
@@ -406,16 +262,16 @@ class SparkService(SqlService):
             self._spark = None
         return False
 
-    def _explain(self, sql: str) -> str | None:
+    def explain(self, sql: str) -> str | None:
         try:
             spark = self._get_spark()
             explain_df = spark.sql(f"EXPLAIN {sql}")
             explain_df.collect()
             return None
-        except Exception:
-            return "SQL explain failed."
+        except Exception as e:
+            return str(e)
 
-    def _execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+    def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         try:
             spark = self._get_spark()
             df = spark.sql(sql)
@@ -437,8 +293,7 @@ class SparkService(SqlService):
         return self._spark
 
 
-def build_sql_service(engine: str, config: dict[str, Any]) -> SqlService:
-    """Build a SQL service implementation for the configured database engine."""
+def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | UDNService:
     try:
         if engine == "presto":
             return PrestoService(PrestoConfig(**config))

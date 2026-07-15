@@ -10,12 +10,10 @@ MODEL:
       model: "qwen3-30b-a3b"
       temperature: 0.0
 CORE:
-  coordinator: {}
   perceptor:
     user_sql_rules: "sql_rules_udn"
   generator:
     strategies: ["prompt"]
-    num_samples: 1
 DATABASE:
   db_id: "udn"
   engine: "postgres"
@@ -23,7 +21,7 @@ DATABASE:
   config:
     path: ""
 SEMANTIC_LAYER:
-  base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
   username: null                       # 未启用认证时保持 null；启用认证时填写
   password: null                       # 未启用认证时保持 null；启用认证时填写
   timeout: 30                           # 可按服务端表数量和响应耗时调整

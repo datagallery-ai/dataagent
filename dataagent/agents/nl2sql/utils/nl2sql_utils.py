@@ -35,35 +35,6 @@ def iter_semantic_column_payloads(raw: Any) -> list[dict]:
     return out
 
 
-def select_semantic_columns(raw: Any, catalog: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    by_tail = {k.split(".")[-1]: k for k in catalog}
-    selected: dict[str, dict[str, Any]] = {}
-    for payload in iter_semantic_column_payloads(raw):
-        for entry in payload.get("column_name_search") or []:
-            sid = next(iter(entry.keys()))
-            src_key = sid if sid in catalog else by_tail.get(sid.split(".")[-1])
-            if src_key and sid not in selected:
-                selected[sid] = dict(catalog[src_key])
-    return selected
-
-
-def format_udn_evidence(columns: dict[str, dict[str, Any]], semantic: bool = False) -> str:
-    if not columns:
-        return ""
-    lines = ["## Semantic top-k metrics\n" if semantic else "## Full metric catalog\n"]
-    for col in columns:
-        meta = columns[col]
-        lines.append(f"### {col.split('.')[-1]}")
-        lines.append(f"- qualified_id: {col}")
-        text = meta.get("column_short_description")
-        if text:
-            lines.append(f"- description: {text}")
-        profile = meta.get("column_value_profile")
-        lines.append(f"- formula: {profile}" if profile is not None and str(profile).strip() else "- formula: ")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def quote_sql_placeholders(sql: str) -> str:
     """Wrap unquoted $ / ${} template placeholders in single quotes."""
     sql = _PLACEHOLDER_BRACE.sub(lambda m: f"'{m.group(0)}'", sql)

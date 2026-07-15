@@ -7,10 +7,8 @@ Try to diversify the candidate SQL queries. If the question can be interpreted i
 
 # Important Rules
 1. Use ONLY tables and columns from the schema.
-2. Include EXACT AND ONLY the information asked in the question in the SELECT clause.
-3. Include EXACT AND ONLY the conditions and operations stated in the question.
-4. If a metric or formula is defined in the question or evidence, follow the definition exactly.
-5. Any table or column name that contains spaces or matches a SQL reserved keyword MUST be enclosed in backticks (`).
+2. If a metric is defined in the question, follow it exactly.
+3. Any table or column name that contains spaces or matches a SQL reserved keyword MUST be enclosed in backticks (`).
 
 # Output
 Before generation, please think through the steps of how to write.

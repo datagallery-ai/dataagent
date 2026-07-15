@@ -20,11 +20,9 @@ from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServic
 from dataagent.agents.nl2sql.errors import SemanticServiceCallError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import (
-    format_udn_evidence,
     iter_semantic_column_payloads,
     json_parser,
     schema_to_ddl,
-    select_semantic_columns,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.core.managers.prompt_manager import PromptTemplate
@@ -47,36 +45,15 @@ class PerceptorNode(BaseNL2SQLNode):
         self.user_evidence = kwargs.pop("user_evidence", None)
         self.user_sql_rules = kwargs.pop("user_sql_rules", None)
         self.user_few_shot_examples = kwargs.pop("user_few_shot_examples", None)
-        # UDN specific configuration
-        udn_cfg: dict = self._get_agent_config("SEMANTIC_LAYER.udn", {}) or {}
-        table_cfg: dict = udn_cfg.get("table_selection", {})
-        self.table_llm_topk = table_cfg.get("llm_topk", 4)
-        self.table_vector_topk = table_cfg.get("vector_topk", 20)
-        evidence_cfg: dict = udn_cfg.get("evidence_selection", {})
-        self.evidence_mode = evidence_cfg.get("mode", "keywords")
-        self.evidence_topk = evidence_cfg.get("topk", 5)
 
     @property
     def semantic_client(self) -> SemanticServiceClient:
-        """Return the lazily initialized semantic-service client."""
         if self._semantic_client is None:
             try:
                 self._semantic_client = SemanticServiceClient.from_config(self._config_manager)
             except (AttributeError, ValueError) as exc:
                 raise SemanticServiceCallError(detail=str(exc)) from exc
         return self._semantic_client
-
-    def build_evidence_str(self, keywords: list[str] | None) -> str:
-        catalog = self._udn_column_metadata()
-        if self.evidence_mode == "keywords":
-            selected = self._semantic_udn_columns(keywords, self.evidence_topk, catalog)
-            return format_udn_evidence(selected, semantic=True) if selected else ""
-        return format_udn_evidence(catalog, semantic=False)
-
-    def udn_schema_linking(self, question: str, keywords: list[str] | None):
-        candidates = self._vector_table_candidates(keywords)
-        tables = self._select_udn_tables(question, candidates)
-        return self.full_schema(allow_tables=tables)
 
     def schema_linking(self, keywords: list[str] | None):
         """
@@ -156,6 +133,7 @@ class PerceptorNode(BaseNL2SQLNode):
                 schema[t]["columns"][c] = {
                     "description": meta.get("column_short_description", ""),
                     "value_type": meta.get("value_type", ""),
+                    "example_values": meta.get("value_description", ""),
                 }
         for j in self._get_joinable_tables(list(dt_desc.keys())):
             try:
@@ -171,7 +149,7 @@ class PerceptorNode(BaseNL2SQLNode):
         try:
             return func(*args, **kwargs)
         except SemanticServiceError as exc:
-            raise SemanticServiceCallError(detail=_semantic_service_error_detail(exc)) from exc
+            raise SemanticServiceCallError(detail=self._semantic_service_error_detail(exc)) from exc
         except requests.RequestException as exc:
             raise SemanticServiceCallError(detail=str(exc)) from exc
         except ValueError as exc:
@@ -186,63 +164,12 @@ class PerceptorNode(BaseNL2SQLNode):
         ]:
             state[attr] = self._load_prompt(key)
         if not state["schema_str"]:
-            if self.sql_service_engine == "udn":
-                state["schema"], state["joins"] = self.udn_schema_linking(state["question"], state["keywords"])
-            else:
-                state["schema"], state["joins"] = self.full_schema()
+            state["schema"], state["joins"] = self.full_schema()
             state["schema_str"] = schema_to_ddl(state["schema"], state["joins"])
-        if not state["evidence"] and self.sql_service_engine == "udn":
-            state["evidence"] = self.build_evidence_str(state["keywords"])
         message = f"=== Perceptor ===\n{state['schema_str']}"
         logger.info(message)
         state["stream_message"] = message
         return state
-
-    def _udn_column_metadata(self) -> dict[str, dict[str, Any]]:
-        out: dict[str, dict[str, Any]] = {}
-        for col_key, meta in self._get_table_columns_info("udn.derived_metrics").items():
-            if isinstance(meta, dict):
-                out[str(col_key)] = dict(meta)
-        return out
-
-    def _semantic_udn_columns(
-        self, keywords: list[str] | None, top_k: int, catalog: dict[str, dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
-        raw = self._call_semantic_service(self.semantic_client.semantic_search_columns, self.db, keywords, top_k)
-        return select_semantic_columns(raw, catalog)
-
-    def _vector_table_candidates(self, keywords: list[str] | None) -> list[dict[str, Any]]:
-        if not keywords:
-            return []
-        best: dict[str, dict[str, Any]] = {}
-        raw = self._call_semantic_service(
-            self.semantic_client.vector_search_table_desc, self.db, keywords, self.table_vector_topk
-        )
-        for item in raw:
-            if not isinstance(item, dict) or not item:
-                continue
-            hits = next(iter(item.values()))
-            if not isinstance(hits, list):
-                continue
-            for hit in hits:
-                if not isinstance(hit, dict):
-                    continue
-                name = str(hit.get("table_name") or "").strip()
-                if not name:
-                    continue
-                score = _as_score(hit.get("score"))
-                if name not in best or score > best[name]["score"]:
-                    best[name] = {
-                        "table_name": name,
-                        "table_description": str(hit.get("table_description") or "").strip(),
-                        "score": score,
-                    }
-        return sorted(best.values(), key=lambda x: x["score"], reverse=True)
-
-    def _select_udn_tables(self, question: str, candidates: list[dict[str, Any]]) -> list[str]:
-        tables = [{"table_name": c["table_name"], "table_description": c["table_description"]} for c in candidates]
-        context = {"top_n": self.table_llm_topk, "question": question, "tables": json.dumps(tables, ensure_ascii=False)}
-        return json.loads(json_parser(self.execute_with_llm(context, action="filter_udn_table_")))
 
     def _load_prompt(self, name: str | None) -> str:
         if not name:
@@ -274,18 +201,15 @@ class PerceptorNode(BaseNL2SQLNode):
             limit=DEFAULT_NL2SQL_SEMANTIC_JOINABLE_TABLES_LIMIT,
         )
 
+    def _keyword_extraction(self, question: str) -> list[str]:
+        context = {"question": question}
+        res = json.loads(json_parser(self.execute_with_llm(context, action="keyword_extraction_")))
+        return res["keywords"]
 
-def _semantic_service_error_detail(exc: SemanticServiceError) -> str:
-    parts = [f"method={exc.method}", f"path={exc.path}", f"status_code={exc.status_code}"]
-    if exc.error_code:
-        parts.append(f"error_code={exc.error_code}")
-    if exc.error_message:
-        parts.append(f"error_message={exc.error_message}")
-    return ", ".join(parts)
-
-
-def _as_score(value: Any) -> float:
-    try:
-        return float(value or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+    def _semantic_service_error_detail(self, exc: SemanticServiceError) -> str:
+        parts = [f"method={exc.method}", f"path={exc.path}", f"status_code={exc.status_code}"]
+        if exc.error_code:
+            parts.append(f"error_code={exc.error_code}")
+        if exc.error_message:
+            parts.append(f"error_message={exc.error_message}")
+        return ", ".join(parts)

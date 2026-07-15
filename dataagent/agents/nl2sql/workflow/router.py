@@ -20,9 +20,6 @@ class NL2SQLRouter(BaseRouter):
         super().__init__(entry_point=enabled_nodes[0])
         self._setup_default_rules()
 
-    def route_from_coordinator(self, state: NL2SQLState) -> str:
-        return self._next("coordinator")
-
     def route_from_perceptor(self, state: NL2SQLState) -> str:
         return self._next("perceptor")
 
@@ -53,7 +50,6 @@ class NL2SQLRouter(BaseRouter):
 
     def _setup_default_rules(self):
         self._routing_rules = {
-            "coordinator": self.route_from_coordinator,
             "perceptor": self.route_from_perceptor,
             "generator": self.route_from_generator,
             "validator": self.route_from_validator,

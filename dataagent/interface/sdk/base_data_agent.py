@@ -285,7 +285,6 @@ class BaseDataAgent:
         self,
         enable: bool,
         metavisor_url: str | None = None,
-        valuematch_url: str | None = None,
         url: str | None = None,  # 保留兼容性
         scene: str | None = None,  # 保留兼容性
     ) -> "BaseDataAgent":
@@ -296,7 +295,6 @@ class BaseDataAgent:
         Args:
             enable: 是否启用增强元数据服务
             metavisor_url: Metavisor 服务地址
-            valuematch_url: ValueMatch 服务地址
             url: 部署地址（向后兼容）
             scene: 场景（向后兼容）
 
@@ -310,8 +308,6 @@ class BaseDataAgent:
         cfg: dict[str, Any] = {"enable": True}
         if metavisor_url:
             cfg["metavisor_url"] = metavisor_url
-        if valuematch_url:
-            cfg["valuematch_url"] = valuematch_url
         if url:
             cfg["url"] = url
         if scene:

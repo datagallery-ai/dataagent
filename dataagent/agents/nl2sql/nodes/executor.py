@@ -49,6 +49,6 @@ class ExecutorNode(BaseNL2SQLNode):
         state["validation_results"].clear()
         result_preview = "\n".join(p)
         message = f"=== Executor ===\n{result_preview}"
-        logger.info("=== Executor === result_count={}", len(state["execution_results"]))
+        logger.info(message)
         state["stream_message"] = message
         return state
