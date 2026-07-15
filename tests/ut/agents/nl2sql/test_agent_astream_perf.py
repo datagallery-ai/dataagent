@@ -26,6 +26,7 @@ def _make_agent() -> NL2SQLAgent:
     agent = object.__new__(NL2SQLAgent)
     agent.backend = "langgraph"
     agent.workflow_backend = MagicMock()
+    agent.state_defaults = {}
     return agent
 
 

@@ -19,12 +19,12 @@ from typing import Any
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes import (
     BaseNL2SQLNode,
-    CoordinatorNode,
     ExecutorNode,
     GeneratorNode,
     PerceptorNode,
     ReflectorNode,
     SelectorNode,
+    UDNPerceptorNode,
     ValidatorNode,
 )
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
@@ -32,11 +32,20 @@ from dataagent.agents.nl2sql.workflow.state import NL2SQLState, get_default_stat
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
 from dataagent.core.utils.performance import make_perf_state_holder, update_latest_state_from_stream_item
+from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SEL_RETRIES
 from dataagent.utils.log import logger
 
 
 class NL2SQLAgent(BaseAgent):
-    def __init__(self, *, backend: str, nodes: list[BaseNL2SQLNode], router: NL2SQLRouter, config: Any):
+    def __init__(
+        self,
+        *,
+        backend: str,
+        nodes: list[BaseNL2SQLNode],
+        router: NL2SQLRouter,
+        config: Any,
+        state_defaults: dict[str, Any] | None = None,
+    ):
         self._config_obj = config
         cfg_dict = {}
         try:
@@ -57,33 +66,40 @@ class NL2SQLAgent(BaseAgent):
             state_class=NL2SQLState,
             config=self._config_obj,
         )
+        self.state_defaults = state_defaults or {}
 
     @classmethod
     def from_config(cls, config: Any, config_manager: Any | None = None) -> NL2SQLAgent:
         core_cfg = config.get("CORE", {})
+        db_cfg = config.get("DATABASE", {})
+        perceptor_cls = UDNPerceptorNode if db_cfg.get("sql_service_engine") == "udn" else PerceptorNode
         node_chain = [
-            ("coordinator", CoordinatorNode),
-            ("perceptor", PerceptorNode),
-            ("generator", GeneratorNode),
-            ("validator", ValidatorNode),
-            ("reflector", ReflectorNode),
-            ("executor", ExecutorNode),
-            ("selector", SelectorNode),
+            ("perceptor", perceptor_cls, {}),
+            ("generator", GeneratorNode, {}),
+            ("validator", ValidatorNode, {}),
+            ("reflector", ReflectorNode, {"ref_retries": DEFAULT_NL2SQL_REF_RETRIES}),
+            ("executor", ExecutorNode, {}),
+            ("selector", SelectorNode, {"sel_retries": DEFAULT_NL2SQL_SEL_RETRIES}),
         ]
         enabled_nodes: list[str] = []
         node_instances: list[BaseNL2SQLNode] = []
-        for name, node_cls in node_chain:
+        state_defaults: dict[str, Any] = {}
+        for name, node_cls, default_state in node_chain:
             if name not in core_cfg:
                 break
             enabled_nodes.append(name)
-            node_kwargs = dict(core_cfg.get(name, {}) or {})
+            node_cfg = dict(core_cfg.get(name, {}) or {})
+            for state_key, state_value in default_state.items():
+                state_defaults[state_key] = node_cfg.get(state_key, state_value)
             if config_manager is not None:
-                node_kwargs["config_manager"] = config_manager
-            node_instances.append(node_cls(**node_kwargs))
+                node_cfg["config_manager"] = config_manager
+            node_instances.append(node_cls(**node_cfg))
         if "generator" not in enabled_nodes:
-            raise ValueError("Coordinator, Perceptor, and Generator are required in the yaml.")
+            raise ValueError("Perceptor and Generator are required in the yaml.")
         router = NL2SQLRouter(enabled_nodes)
-        return cls(backend="langgraph", nodes=node_instances, router=router, config=config)
+        return cls(
+            backend="langgraph", nodes=node_instances, router=router, config=config, state_defaults=state_defaults
+        )
 
     def _distribute_context_dump_dir(self, init: dict[str, Any], *, session_id: str | None = None) -> None:
         from dataagent.utils.env_utils import get_env_bool
@@ -145,7 +161,7 @@ class NL2SQLAgent(BaseAgent):
             if not session_id:
                 session_id = str(uuid.uuid4())
             init = initial_state or kwargs.pop("initial_state", None) or {}
-            state = get_default_state(question=message, **init)
+            state = get_default_state(question=message, **{**self.state_defaults, **(init or {})})
             self._distribute_context_dump_dir(init, session_id=session_id)
             latest, flush_provider = make_perf_state_holder(state)
             with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
@@ -205,7 +221,7 @@ class NL2SQLAgent(BaseAgent):
 
                 question = str(message or initial_state.pop("question", None) or initial_state.pop("user_query", ""))
                 initial_state.setdefault("session_id", session_id)
-                state = get_default_state(question=question, **initial_state)
+                state = get_default_state(question=question, **{**self.state_defaults, **(initial_state or {})})
                 async for item in self._yield_perf_stream(
                     state,
                     self.workflow_backend.astream(state, start_at=start_at, stream_mode=stream_mode, **kw),

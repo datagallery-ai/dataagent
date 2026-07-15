@@ -254,8 +254,6 @@ class AgentBuilder:
         self,
         *,
         url: str = "",
-        valuematch_enabled: bool = False,
-        valuematch_url: str = "",
         **kwargs: Any,
     ) -> "AgentBuilder":
         """
@@ -263,8 +261,6 @@ class AgentBuilder:
 
         可选字段:
             - url：元数据服务地址（格式 x.x.x.x:port）
-            - valuematch_enabled：是否启用值匹配
-            - valuematch_url：值匹配服务地址
         """
         metavisor = self._global_config.get("METAVISOR")
         if not isinstance(metavisor, dict):
@@ -272,10 +268,6 @@ class AgentBuilder:
 
         if url:
             metavisor["url"] = url
-        if valuematch_enabled:
-            metavisor["valuematch_enabled"] = valuematch_enabled
-        if valuematch_url:
-            metavisor["valuematch_url"] = valuematch_url
         for key, value in kwargs.items():
             metavisor[key] = value
 

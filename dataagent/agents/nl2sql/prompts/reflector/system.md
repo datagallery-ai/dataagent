@@ -3,8 +3,8 @@ You are a data science expert.
 Your task is to minimally fix each given SQL queries strictly based on its provided issues.
 
 # Input
-- <cases>: Original SQLs and issues.
-- <prev_prompt>: Previous generation prompt.
+- <cases>: SQLs and issues.
+- <prev_prompt>: Previous generation prompt, with schema, query, and rules as reference.
 
 # Instructions
 - Modify each SQL to resolve its corresponding issues.
