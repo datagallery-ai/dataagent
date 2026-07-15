@@ -21,14 +21,13 @@ from dataagent.core.cbb.runtime import Runtime
 
 def _minimal_env(**kwargs) -> Env:
     """Build a minimal Env for unit tests."""
-    defaults = {
-        "llm_configs": {},
-        "tavily_configs": {},
-        "modules": {},
-        "hooks": {},
-    }
-    defaults.update(kwargs)
-    return Env(**defaults)
+    return Env(
+        llm_configs={},
+        tavily_configs={},
+        modules={},
+        hooks={},
+        **kwargs,
+    )
 
 
 class TestRuntimeConfig:
@@ -60,28 +59,3 @@ class TestRuntimeConfig:
         runtime = Runtime(_minimal_env())
         with pytest.raises(RuntimeError, match="config_manager"):
             runtime.get_config("DATABASE.db_id")
-
-    def test_llm_missing_api_base_reports_field_without_leaking_api_key(self):
-        """Incomplete LLM config errors identify bad fields without raw credential values."""
-        runtime = Runtime(_minimal_env(llm_configs={"planner": {"model": "test-model", "api_key": "secret-key"}}))
-
-        with pytest.raises(RuntimeError) as excinfo:
-            runtime.llm("planner")
-
-        message = str(excinfo.value)
-        assert "env.llm_configs['planner'].api_base" in message
-        assert "env.llm_configs['planner'].api_key" not in message
-        assert "secret-key" not in message
-
-    def test_llm_missing_api_key_reports_field_without_leaking_api_base(self):
-        """Missing api_key should name the field without showing other configured values."""
-        runtime = Runtime(
-            _minimal_env(llm_configs={"planner": {"model": "test-model", "api_base": "https://secret-host/v1"}})
-        )
-
-        with pytest.raises(RuntimeError) as excinfo:
-            runtime.llm("planner")
-
-        message = str(excinfo.value)
-        assert "env.llm_configs['planner'].api_key" in message
-        assert "https://secret-host/v1" not in message

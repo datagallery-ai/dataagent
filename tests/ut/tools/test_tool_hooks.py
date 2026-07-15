@@ -321,15 +321,22 @@ async def test_tool_manager_loads_governance_hooks_from_config(tmp_path: Path):
     """ToolManager distributes GOVERNANCE rules to tools by applies_to."""
     workspace = _workspace_dir(tmp_path)
     tm = ToolManager()
-    tm.register_local_tool(hidden_arg_tool, name="hidden_arg_tool", category="test")
     tm.init_from_config(
         {
+            "TOOLS": {
+                "local_functions": [
+                    {
+                        "module": "tests.ut.tools.test_tool_hooks",
+                        "function": "hidden_arg_tool",
+                    }
+                ]
+            },
             "GOVERNANCE": {
                 "argument_injectors": [
                     {
                         "id": "inject",
                         "applies_to": ["hidden_arg_tool"],
-                        "address": governance_inject_hidden,
+                        "address": "tests.ut.tools.test_tool_hooks.governance_inject_hidden",
                     }
                 ]
             },

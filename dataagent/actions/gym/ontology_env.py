@@ -27,8 +27,6 @@ from loguru import logger
 from dataagent.actions.environment.env import Env
 from dataagent.actions.perceptor.perceptor_utils import execute_with_llm
 
-_MAX_BUSINESS_KEYWORD_LEN = 128
-
 
 def _safe_literal_eval(value):
     """
@@ -70,20 +68,6 @@ def _pretty_json_for_display(x) -> str:
             return str(obj)
         except Exception:
             return s
-
-
-def _normalize_business_keywords(keywords: list[str]) -> list[str]:
-    if not isinstance(keywords, list) or not keywords:
-        raise ValueError("keywords must be a non-empty list.")
-    normalized: list[str] = []
-    for keyword in keywords:
-        text = str(keyword).strip()
-        if not text or len(text) > _MAX_BUSINESS_KEYWORD_LEN:
-            raise ValueError("keywords contain an invalid item.")
-        if "'" in text or '"' in text or "\\" in text or any(ord(c) < 32 for c in text):
-            raise ValueError("keywords must not contain quotes, backslashes, or control characters.")
-        normalized.append(text)
-    return normalized
 
 
 def _parse_output(text: str):
@@ -227,7 +211,8 @@ class OntologyEnv(Env):
         Returns:
             业务逻辑节点的属性信息描述
         """
-        keywords = _normalize_business_keywords(keywords)
+        if any("'" in str(k) or "\\" in str(k) or any(ord(c) < 32 for c in str(k)) for k in keywords):
+            raise ValueError("keywords must not contain quotes, backslashes, or control characters")
         title_str = "CONTAINS " + " OR CONTAINS ".join([f"'{k}'" for k in keywords])
         url = self._with_scene_name(f"{self.search_base_url}/property_filter")
         parameters = {
@@ -239,9 +224,33 @@ class OntologyEnv(Env):
         result = resp.json().get("result", None)
         result_all = []
         if not result:
+            parameters = {
+                "element_class": "BusinessProcedure",
+                "element_type": "NODE",
+                "filter_dict": {},
+            }
+            resp = requests.post(url, json=parameters)
+            result = resp.json().get("result", None)
+            for cur_info in result:
+                cur_uuid = cur_info["n.uuid"]
+                parameters = {
+                    "element_class": "BusinessProcedure",
+                    "element_type": "NODE",
+                    "element_uuid": cur_uuid,
+                }
+                url = self._with_scene_name(f"{self.search_base_url}/property_info_search")
+                resp = requests.post(url, json=parameters)
+                cur_result = resp.json().get("result", None)
+                cur_info = cur_result[0]
+                return_info = {
+                    "title": cur_info["properties"]["title"],
+                    "procedureContent": cur_info["properties"]["procedureContent"],
+                }
+                result_all.append(return_info)
             return {
-                "original": "未查到与关键词相关的业务逻辑。",
-                "frontend_msg": "未查到相关业务逻辑。",
+                "original": "关键词查询到业务逻辑为空，已返回所有业务逻辑，可以自行判断选择哪条业务逻辑，"
+                "所有业务逻辑如下\n" + _pretty_json_for_display(result_all),
+                "frontend_msg": "未查到相关业务逻辑,已返回全部业务逻辑。",
             }
 
         property_info_search_url = self._with_scene_name(f"{self.search_base_url}/property_filter")
@@ -262,7 +271,7 @@ class OntologyEnv(Env):
                         "procedureContent": cur_info["properties"]["procedureContent"],
                     }
                 )
-        logger.info("BusinessProcedure query returned {} result(s)", len(result_all))
+        logger.info(result_all)
 
         return {
             "original": "查询到相关业务逻辑如下：\n" + _pretty_json_for_display(result_all),

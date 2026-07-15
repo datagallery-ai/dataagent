@@ -15,7 +15,7 @@ DATABASE:
   engine: "postgres" # UEG useless
   sql_service_engine: "udn" # UEG useless
   config:
-    path: ""  # replace with actual sqlite path
+    path: "/mnt/c/work/udf_project/ferry_react_combine/yunhe_shengchan.sqlite" # UEG: sqlite file, UDN: ip:port/query
 
 SEMANTIC_LAYER:
   base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1

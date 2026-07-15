@@ -521,15 +521,13 @@ class StreamRenderer:
     def _add_args_tree(self, branch: Tree, value: Any, key: str | None = None) -> None:
         """Render nested args structure as a tree without JSON braces."""
         if isinstance(value, dict):
-            # Treat user-controlled keys as plain text, not rich markup.
-            target = branch.add(Text(str(key), style="dim")) if key is not None else branch
+            target = branch.add(f"[dim]{key}[/dim]") if key is not None else branch
             for child_key, child_value in value.items():
                 self._add_args_tree(target, child_value, str(child_key))
             return
 
         if isinstance(value, list):
-            # Treat user-controlled keys as plain text, not rich markup.
-            target = branch.add(Text(str(key), style="dim")) if key is not None else branch
+            target = branch.add(f"[dim]{key}[/dim]") if key is not None else branch
             for idx, item in enumerate(value):
                 self._add_args_tree(target, item, f"[{idx}]")
             return

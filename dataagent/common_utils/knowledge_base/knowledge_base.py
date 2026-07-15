@@ -11,8 +11,6 @@
 # limitations under the License.
 # ============================================================================
 
-from pathlib import Path
-
 import pandas as pd
 
 from dataagent.common_utils.knowledge_base.utils_common import (
@@ -133,7 +131,6 @@ class KnowledgeBase:
         mapping_report: dict | None = None,
         mapping_unified_semantics: dict | None = None,
         embedding_model: str | None = None,
-        allowed_root: str | Path | None = None,
     ) -> None:
         """
         Initialize KnowledgeBase class and touch storage service.
@@ -148,11 +145,8 @@ class KnowledgeBase:
             mapping_report (dict): Schema of knowledge graph reports (Default: None).
             mapping_unified_semantics (dict): Schema of unified semantics relationship (Default: None).
             embedding_model: MEMORY.embedding_model from per-Agent config (Agent runtime paths).
-            allowed_root: Root directory under which readable files must reside.
         """
         self._embedding_model = embedding_model
-        # Prefer an explicit root (e.g. Memory.path_prefix); cwd is a compatible default only.
-        self._allowed_root = Path(allowed_root).expanduser().resolve() if allowed_root else Path.cwd().resolve()
         mapping_text = mapping_text or MAPPING_TEXTS
         mapping_node = mapping_node or MAPPING_GRAPH_NODES
         mapping_edge = mapping_edge or MAPPING_GRAPH_EDGES
@@ -313,17 +307,11 @@ class KnowledgeBase:
             overlap (int): Number of characters in the overlap (Default: `100`).
         """
         sep = sep or ["####", "##"]
-        resolved_markdown_path = self._resolve_allowed_file_path(markdown_path, require_markdown=True)
-        markdown_chunks = chunk_markdown(
-            filepath=str(resolved_markdown_path),
-            sep=sep,
-            max_length=max_length,
-            overlap=overlap,
-        )
+        markdown_chunks = chunk_markdown(filepath=markdown_path, sep=sep, max_length=max_length, overlap=overlap)
         for chunk in markdown_chunks:
             self.storage.insert_data(
                 table_name=self.index_texts,
-                data={"info": chunk, "info_embedding": self._embed(chunk), "path": str(resolved_markdown_path)},
+                data={"info": chunk, "info_embedding": self._embed(chunk), "path": markdown_path},
             )
 
     def process_user_query(self, user_prompt: str, filepath: str) -> None:
@@ -334,9 +322,7 @@ class KnowledgeBase:
             user_prompt (str): User-provided instruction about how to extract knowledge.
             filepath (str): User-provided file path from which knowledge will be extracted.
         """
-        resolved = self._resolve_allowed_file_path(filepath)
-
-        with open(resolved, encoding="utf-8") as file:
+        with open(filepath, encoding="utf-8") as file:
             file_content = file.read()
 
         state = {"user_prompt": user_prompt, "file_content": file_content}
@@ -344,7 +330,7 @@ class KnowledgeBase:
             f"{PROMPT_MD_PREFIX}/knowledge_base/user_guide_kb"
         ).apply_prompt_template(**state)
         output = model_inference(message)
-        self.insert_document(document={"info": output, "info_embedding": self._embed(output), "path": str(resolved)})
+        self.insert_document(document={"info": output, "info_embedding": self._embed(output), "path": filepath})
 
     def query_document(
         self,
@@ -413,20 +399,6 @@ class KnowledgeBase:
             topk=1,
         )
         return [{"mapping_id": self.index_unified_semantics, "mapping_content": i} for i in out]
-
-    def _resolve_allowed_file_path(self, filepath: str, *, require_markdown: bool = False) -> Path:
-        """Resolve a user file path and reject escapes outside ``allowed_root``."""
-        candidate = Path(filepath).expanduser()
-        if candidate.is_symlink():
-            raise ValueError("filepath must not be a symbolic link.")
-        path = candidate.resolve()
-        if not path.is_file():
-            raise FileNotFoundError(f"filepath does not exist: {path}")
-        if require_markdown and path.suffix.lower() not in {".md", ".markdown"}:
-            raise ValueError("filepath must point to a markdown file.")
-        if not path.is_relative_to(self._allowed_root):
-            raise ValueError("filepath is outside the allowed root.")
-        return path
 
     def _embed(self, query: str | list[str]):
         """Embed text using per-Agent embedding model when configured."""

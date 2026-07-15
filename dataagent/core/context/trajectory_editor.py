@@ -133,11 +133,7 @@ class TrajectoryEditor:
         self._ctx.state.node_counts["Query"] += 1
         self._ctx.state.initial_pt = query_node
         self._ctx.state.current_pt.add(query_node)
-        # Query-mentioned files are accepted only from the current workspace.
-        file_paths = extract_file_paths_from_query(
-            query=query,
-            allowed_roots=[self._ctx.state.workspace] if self._ctx.state.workspace else None,
-        )
+        file_paths = extract_file_paths_from_query(query=query)
         node_labels: list[str] = []
         for file_path in file_paths.get("File", []):
             node_label = self.register_node(

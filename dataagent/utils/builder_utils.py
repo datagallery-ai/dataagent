@@ -10,7 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import re
 import shutil
 from contextlib import suppress
 from pathlib import Path
@@ -23,17 +22,6 @@ from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
 _AGENT_PRESET_PATHS = {
     "deep_analyze": ("core", "flex", "examples", "deep_analyze.yaml"),
 }
-
-_SENSITIVE_OUTPUT_YAML_KEY_RE = re.compile(
-    r"(api[_-]?key|apikey|password|passwd|pwd|secret|token|authorization|credential|"
-    r"private[_-]?key|access[_-]?key)",
-    re.IGNORECASE,
-)
-
-
-def _is_sensitive_output_yaml_key(key: Any) -> bool:
-    # Mask common credential-like keys in generated YAML outputs.
-    return isinstance(key, str) and bool(_SENSITIVE_OUTPUT_YAML_KEY_RE.search(key))
 
 
 def _require_supported_agent_type(agent_type: Any, *, source: str | Path) -> str:
@@ -218,7 +206,7 @@ def remove_sensitive_info_of_output_yamls(*, output_dir: Path) -> None:
         if isinstance(data, dict):
             masked_data: dict[Any, Any] = {}
             for key, value in data.items():
-                if _is_sensitive_output_yaml_key(key):
+                if key in {"base_url", "api_key"}:
                     if isinstance(value, str):
                         if value:
                             masked_data[key] = "*" * len(value)

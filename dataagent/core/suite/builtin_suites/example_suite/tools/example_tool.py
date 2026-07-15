@@ -46,13 +46,8 @@ def read_suite_doc(
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
 
-    doc_root = (suite_root / subdir).resolve()
-    doc_path = (doc_root / filename).resolve()
-    try:
-        # filename must not escape the suite custom document directory.
-        doc_path.relative_to(doc_root)
-    except ValueError as exc:
-        raise ValueError("filename must stay inside the suite custom directory") from exc
+    doc_path = (suite_root / subdir / filename).resolve()
+    doc_path.relative_to(suite_root)
     return {
         "path": str(doc_path),
         "content": doc_path.read_text(encoding="utf-8"),

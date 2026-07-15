@@ -391,8 +391,6 @@ def wrap_print(text: str, width: int = 80, indent: str = "") -> None:
     if not text:
         print()
         return
-    # Avoid textwrap errors when callers pass very narrow widths.
-    width = max(1, width)
 
     lines = text.split("\n")
     wrapped_lines = []
@@ -415,15 +413,10 @@ def wrap_print(text: str, width: int = 80, indent: str = "") -> None:
                     if content_start != -1:
                         prefix = line[:content_start]
                         content = line[content_start:]
-                        content_width = width - len(prefix)
-                        if content_width <= 0:
-                            # Keep tree lines intact when their prefix is wider than the target width.
-                            wrapped_lines.append(line)
-                            continue
 
                         # Wrap the content part
                         wrapped_content = textwrap.fill(
-                            content, width=content_width, initial_indent="", subsequent_indent=""
+                            content, width=width - len(prefix), initial_indent="", subsequent_indent=" " * len(prefix)
                         )
 
                         # Split wrapped content and add prefix to each line
@@ -512,22 +505,21 @@ def save_user_query_to_file(file_save_path: str, user_query: str) -> None:
 
 def mask_sensitive_connection_info(text: str) -> str:
     """
-    Mask usernames and passwords in connection strings while keeping URL endpoints visible.
+    Mask usernames, passwords, hosts and ports in connection strings.
 
     Example:
         mysql+pymysql://<username>:<password>@<host>:3306/db
         ->
-        mysql+pymysql://***:***@<host>:3306/db
+        mysql+pymysql://***:***@***:***/db
     """
 
     def _replace(match: re.Match) -> str:
         scheme = match.group("scheme")
         credentials = match.group("credentials")
-        host = match.group("host")
-        port = match.group("port")
         has_password = ":" in credentials
         masked_credentials = "***:***" if has_password else "***"
-        visible_port = f":{port}" if port else ""
-        return f"{scheme}{masked_credentials}@{host}{visible_port}"
+        masked_host = "***"
+        masked_port = ":***" if match.group("port") else ""
+        return f"{scheme}{masked_credentials}@{masked_host}{masked_port}"
 
     return SENSITIVE_URI_PATTERN.sub(_replace, text)

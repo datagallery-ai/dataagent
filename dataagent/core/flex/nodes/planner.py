@@ -411,8 +411,7 @@ class Planner(BaseNode):
             logger.error("❌ 推理执行错误: {}", error)
         else:
             logger.exception("❌ 推理执行错误: {}", error)
-        # Hide internal error details from frontend responses.
-        error_msg = "推理执行错误: 内部处理异常，请稍后重试"
+        error_msg = f"推理执行错误: {error}"
         if terminal_mode:
             self._emit_planner_error_event(writer, error_msg)
         else:

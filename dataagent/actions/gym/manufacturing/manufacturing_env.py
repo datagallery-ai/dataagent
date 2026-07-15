@@ -22,8 +22,6 @@ import requests
 
 from dataagent.actions.environment.env import Env
 
-_MAX_BUSINESS_KEYWORD_LEN = 128
-
 
 def _pretty_json_for_display(x) -> str:
     """
@@ -47,20 +45,6 @@ def _pretty_json_for_display(x) -> str:
             return str(obj)
         except Exception:
             return s
-
-
-def _normalize_business_keywords(keywords: list[str]) -> list[str]:
-    if not isinstance(keywords, list) or not keywords:
-        raise ValueError("keywords must be a non-empty list.")
-    normalized: list[str] = []
-    for keyword in keywords:
-        text = str(keyword).strip()
-        if not text or len(text) > _MAX_BUSINESS_KEYWORD_LEN:
-            raise ValueError("keywords contain an invalid item.")
-        if "'" in text or '"' in text or "\\" in text or any(ord(c) < 32 for c in text):
-            raise ValueError("keywords must not contain quotes, backslashes, or control characters.")
-        normalized.append(text)
-    return normalized
 
 
 class ManufacureEnv(Env):
@@ -144,7 +128,6 @@ class ManufacureEnv(Env):
         Returns:
             业务逻辑节点的属性信息描述
         """
-        keywords = _normalize_business_keywords(keywords)
         title_str = "CONTAINS " + " OR CONTAINS ".join([f"'{k}'" for k in keywords])
         url = f"{self.base_url}/property_filter"
         parameters = {
@@ -157,9 +140,33 @@ class ManufacureEnv(Env):
         result_all = []
 
         if not result:
+            parameters = {
+                "element_class": "BusinessProcedure",
+                "element_type": "NODE",
+                "filter_dict": {},
+            }
+            resp = requests.post(url, json=parameters)
+            result = resp.json().get("result", None)
+            for cur_info in result:
+                cur_uuid = cur_info["n.uuid"]
+                parameters = {
+                    "element_class": "BusinessProcedure",
+                    "element_type": "NODE",
+                    "element_uuid": cur_uuid,
+                }
+                url = f"{self.base_url}/property_info_search"
+                resp = requests.post(url, json=parameters)
+                cur_result = resp.json().get("result", None)
+                cur_info = cur_result[0]
+                return_info = {
+                    "title": cur_info["properties"]["title"],
+                    "procedureContent": cur_info["properties"]["procedureContent"],
+                }
+                result_all.append(return_info)
             return {
-                "original": "未查到与关键词相关的业务逻辑。",
-                "frontend_msg": "未查到相关业务逻辑。",
+                "original": "关键词查询到业务逻辑为空，已返回所有业务逻辑，可以自行判断选择哪条业务逻辑，"
+                "所有业务逻辑如下\n" + _pretty_json_for_display(result_all),
+                "frontend_msg": "未查到相关业务逻辑,已返回全部业务逻辑。",
             }
 
         property_info_search_url = f"{self.base_url}/property_info_search"
