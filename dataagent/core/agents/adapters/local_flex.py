@@ -27,7 +27,13 @@ from dataagent.core.agents.subagent_subprocess_runner import (
     derive_job_sub_id,
 )
 from dataagent.core.jobs.models import JobResult
+from dataagent.core.workspace.publish import (
+    ensure_subagent_output_root,
+    list_published_artifacts,
+    publish_subagent_artifacts,
+)
 from dataagent.utils.constants import DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC
+from dataagent.utils.runtime_paths import is_subagent_output_sharing_enabled
 
 
 class LocalFlexAdapter:
@@ -78,6 +84,14 @@ class LocalFlexAdapter:
 
         user_id = str(getattr(runtime, "user_id", "") or "anonymous")
         parent_session_id = str(getattr(runtime, "session_id", "") or "default_session")
+        parent_workspace_dir = Path(getattr(runtime, "workspace_dir", "")).expanduser().resolve()
+        runtime_config = runtime.get_all_config() if callable(getattr(runtime, "get_all_config", None)) else None
+        output_sharing_enabled = is_subagent_output_sharing_enabled(runtime_config)
+        subagent_output_dir = (
+            ensure_subagent_output_root(parent_workspace=parent_workspace_dir, config=runtime_config)
+            if output_sharing_enabled
+            else None
+        )
         timeout = max(1, int(timeout_sec or DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC))
         sub_id = derive_job_sub_id(subagent_session_id)
         progress_callback = getattr(runtime, "on_subagent_progress", None)
@@ -89,6 +103,7 @@ class LocalFlexAdapter:
                     query=task,
                     config_path=spec.config_path,
                     workspace_dir=Path(workspace_dir),
+                    subagent_output_dir=subagent_output_dir,
                     subagent_session_id=subagent_session_id,
                     user_id=user_id,
                     parent_session_id=parent_session_id,
@@ -119,6 +134,32 @@ class LocalFlexAdapter:
             status = outcome.status if outcome.status in {"failed", "cancelled", "timed_out"} else "completed"
             summary = outcome.frontend_msg or ("Agent job cancelled." if status == "cancelled" else "")
 
+        published_path = ""
+        published_artifacts: list[str] = []
+        if status == "completed" and output_sharing_enabled:
+            try:
+                published = publish_subagent_artifacts(
+                    source_workspace=workspace_dir,
+                    parent_workspace=parent_workspace_dir,
+                    subagent_session_id=subagent_session_id,
+                    agent_id=spec.id,
+                    task=task,
+                    job_id=job_id,
+                    config=runtime_config,
+                )
+                published_path = str(published)
+                published_artifacts = list_published_artifacts(published)
+            except Exception as exc:
+                status = "failed"
+                summary = f"Subagent artifact publish failed: {exc}"
+                outcome = outcome.__class__(
+                    original_msg=outcome.original_msg,
+                    frontend_msg=outcome.frontend_msg,
+                    state=outcome.state,
+                    status="failed",
+                    error=str(exc),
+                )
+
         emit_event(
             {
                 "type": "agent_step",
@@ -139,5 +180,7 @@ class LocalFlexAdapter:
             state=outcome.state,
             subagent_session_id=subagent_session_id,
             workspace_rel_path=workspace_rel_path,
+            published_path=published_path,
+            published_artifacts=published_artifacts,
             metrics={"duration_ms": int((time.monotonic() - started_at) * 1000)},
         )

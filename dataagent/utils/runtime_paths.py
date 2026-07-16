@@ -66,6 +66,7 @@ from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
 from dataagent.utils.env_utils import get_env
 
 FLEX_PERSISTENCE_ROOT_ENV = "DATAAGENT_FLEX_PERSISTENCE_ROOT"
+SUBAGENT_OUTPUT_DIR_ENV = "DATAAGENT_SUBAGENT_OUTPUT_DIR"
 
 LayoutSegment = Literal[
     "session_memory_dir",
@@ -73,6 +74,7 @@ LayoutSegment = Literal[
     "performance_dir",
     "workers_dir",
     "subagents_dir",
+    "subagent_output_dir",
     "jobs_dir",
     "runtime_dump_dir",
     "tool_outputs_dir",
@@ -90,6 +92,7 @@ class WorkspaceLayout:
     performance_dir: str
     workers_dir: str
     subagents_dir: str
+    subagent_output_dir: str
     jobs_dir: str
     runtime_dump_dir: str
     tool_outputs_dir: str
@@ -163,6 +166,31 @@ def resolve_job_subagents_root(
     parent_root = Path(parent_workspace).expanduser().resolve()
     layout = resolve_workspace_layout(config)
     return (parent_root / layout.subagents_dir).resolve()
+
+
+def resolve_subagent_output_root(
+    *,
+    parent_workspace: str | Path,
+    config: Mapping[str, Any] | None = None,
+) -> Path:
+    """Return the shared, read-only subagent output root under a parent workspace."""
+    parent_root = Path(parent_workspace).expanduser().resolve()
+    layout = resolve_workspace_layout(config)
+    return (parent_root / layout.subagent_output_dir).resolve()
+
+
+def is_subagent_output_sharing_enabled(config: Mapping[str, Any] | None) -> bool:
+    """Return whether this parent Agent enables Job subagent output sharing.
+
+    The feature is deliberately opt-in so existing Agent YAML files preserve
+    their current Job and workspace behavior.
+    """
+    if not isinstance(config, Mapping):
+        return False
+    agent_config = config.get("AGENT_CONFIG")
+    if not isinstance(agent_config, Mapping):
+        return False
+    return agent_config.get("subagent_output_sharing") is True
 
 
 def resolve_jobs_root(

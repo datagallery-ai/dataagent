@@ -27,6 +27,8 @@ AGENT_CONFIG:
   name: "Example Suite Test"
   type: "react"
   debug: true
+  # 生产入口可显式开启 Job 子 Agent 的只读产物发布区；未配置时默认关闭。
+  subagent_output_sharing: true
 
 SUITE:
   include:
