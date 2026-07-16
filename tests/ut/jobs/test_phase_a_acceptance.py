@@ -360,6 +360,7 @@ async def test_ac14_subprocess_uses_parent_session_id_in_cmd(monkeypatch, tmp_pa
 
     async def fake_run_with_cancel(self, *, cmd, **_kwargs):
         captured["cmd"] = list(cmd)
+        captured["env"] = dict(_kwargs["env"])
         return {
             "returncode": 0,
             "stdout": '{"assistant_reply":"ok","original_msg":{"final_answer":"1"},"subagent_final_state":{"k":"v"}}',
@@ -376,6 +377,7 @@ async def test_ac14_subprocess_uses_parent_session_id_in_cmd(monkeypatch, tmp_pa
         query="q",
         config_path=config_path,
         workspace_dir=workspace,
+        subagent_output_dir=tmp_path / "subagent_output",
         subagent_session_id="subagent_uuid",
         user_id="u1",
         parent_session_id="parent_sess_xyz",
@@ -387,6 +389,7 @@ async def test_ac14_subprocess_uses_parent_session_id_in_cmd(monkeypatch, tmp_pa
     session_idx = cmd.index("--session-id")
     assert cmd[session_idx + 1] == "parent_sess_xyz"
     assert "job-" not in cmd[session_idx + 1]
+    assert captured["env"]["DATAAGENT_SUBAGENT_OUTPUT_DIR"] == str((tmp_path / "subagent_output").resolve())
 
 
 def test_ac15_stdout_parser_matches_collect_contract():

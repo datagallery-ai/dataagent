@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -27,7 +28,7 @@ from dataagent.core.swarm.worker_memory import strip_subagent_runtime_fields
 from dataagent.core.swarm.worker_result import synthesize_worker_result
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.utils.log import LoggerConfig, reconfigure
-from dataagent.utils.runtime_paths import resolve_user_root, validate_user_id
+from dataagent.utils.runtime_paths import SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root, validate_user_id
 
 
 def main() -> int:
@@ -152,6 +153,13 @@ async def _run_agent(
     log_path = (resolve_user_root(user_id=resolved_user_id) / "logs" / f"{resolved_session_id}.log").resolve()
     reconfigure(LoggerConfig(process_name="subagent", file_path=str(log_path), file_path_explicit=True))
     agent = DataAgent.from_config(Path(config_path))
+    shared_output_dir = os.getenv(SUBAGENT_OUTPUT_DIR_ENV, "").strip()
+    if shared_output_dir:
+        allow_paths = agent.config.get("WORKSPACE.allow_path", [])
+        allow_paths = list(allow_paths) if isinstance(allow_paths, list) else []
+        if shared_output_dir not in allow_paths:
+            allow_paths.append(shared_output_dir)
+        agent.config.set("WORKSPACE.allow_path", allow_paths)
     initial_state = _load_initial_state_file(initial_state_file)
     defaults = {
         "user_query": query,

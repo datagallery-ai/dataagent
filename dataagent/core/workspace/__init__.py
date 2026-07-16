@@ -29,6 +29,12 @@ from dataagent.core.workspace.catalog import (
     touch_catalog,
 )
 from dataagent.core.workspace.frontmatter import JobSummary, SubagentWorkspaceEntry, WorkspaceCatalogDoc
+from dataagent.core.workspace.publish import (
+    ensure_subagent_output_root,
+    list_published_artifacts,
+    load_publish_manifest,
+    publish_subagent_artifacts,
+)
 
 __all__ = [
     "JobSummary",
@@ -48,4 +54,8 @@ __all__ = [
     "save_catalog",
     "scan_artifacts",
     "touch_catalog",
+    "ensure_subagent_output_root",
+    "list_published_artifacts",
+    "load_publish_manifest",
+    "publish_subagent_artifacts",
 ]

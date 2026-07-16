@@ -35,7 +35,7 @@ from dataagent.actions.tools.local_tool.tools import (
 from dataagent.core.context.message_history import read_messages_file, serialize_message
 from dataagent.core.swarm.worker_result import worker_result_from_payload
 from dataagent.core.utils.subprocess import terminate_process_tree_async
-from dataagent.utils.runtime_paths import FLEX_PERSISTENCE_ROOT_ENV, resolve_user_root
+from dataagent.utils.runtime_paths import FLEX_PERSISTENCE_ROOT_ENV, SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root
 
 _CANCEL_POLL_INTERVAL_SEC = 0.2
 
@@ -60,6 +60,7 @@ class SubagentSubprocessRunner:
         query: str,
         config_path: Path,
         workspace_dir: Path,
+        subagent_output_dir: Path | None,
         subagent_session_id: str,
         user_id: str,
         parent_session_id: str,
@@ -77,6 +78,7 @@ class SubagentSubprocessRunner:
             query: Task/query forwarded to the child agent.
             config_path: Absolute path to the subagent yaml config.
             workspace_dir: Subagent workspace root under ``subagents/{id}/``.
+            subagent_output_dir: Optional shared read-only output root prepared by the parent process.
             subagent_session_id: Opaque workspace id allocated for this job.
             user_id: Parent user id.
             parent_session_id: Parent session id passed via CLI ``--session-id``.
@@ -106,6 +108,8 @@ class SubagentSubprocessRunner:
             )
             env = dict(os.environ)
             env[FLEX_PERSISTENCE_ROOT_ENV] = str(resolved_workspace)
+            if subagent_output_dir is not None:
+                env[SUBAGENT_OUTPUT_DIR_ENV] = str(Path(subagent_output_dir).expanduser().resolve())
             sub_agent_session_id = f"subagent_{parent_session_id}_{sub_id}"
             sub_agent_log_path = (
                 resolve_user_root(user_id=user_id) / "logs" / f"{sub_agent_session_id}_{sub_id}.log"

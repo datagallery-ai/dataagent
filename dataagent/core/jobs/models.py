@@ -79,6 +79,8 @@ class JobResult:
     state: dict[str, Any] | None = None
     subagent_session_id: str = ""
     workspace_rel_path: str = ""
+    published_path: str = ""
+    published_artifacts: list[str] = field(default_factory=list)
     outputs: list[dict[str, Any]] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
 
@@ -92,6 +94,8 @@ class JobResult:
             "error": self.error,
             "outputs": self.outputs,
             "metrics": self.metrics,
+            "published_path": self.published_path,
+            "published_artifacts": self.published_artifacts,
         }
         if str(self.status or "").strip().lower() == "completed":
             payload["original_msg"] = self.original_msg

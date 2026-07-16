@@ -492,6 +492,7 @@ DEFAULT_WORKSPACE_LAYOUT: dict[str, str] = {
     "performance_dir": ".performance",
     "workers_dir": "workers",
     "subagents_dir": "subagents",
+    "subagent_output_dir": "subagent_output",
     "jobs_dir": "jobs",
     "runtime_dump_dir": ".runtime",
     "tool_outputs_dir": ".dataagent/tool_outputs",
