@@ -14,12 +14,19 @@ CORE:
     user_sql_rules: "sql_rules_udn"
   generator:
     strategies: ["prompt"]
+  validator:
+    db_explain: true
+    keyword_match: false
+    metadata_match: false
+  reflector:
+    threshold: 0.9
 DATABASE:
   db_id: "udn"
   engine: "postgres"
   sql_service_engine: "udn"
   config:
     path: ""
+    explain_url: "http://"
 SEMANTIC_LAYER:
   base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
   username: null                       # 未启用认证时保持 null；启用认证时填写
@@ -28,8 +35,5 @@ SEMANTIC_LAYER:
   verify_ssl: false                    # 测试/自签证书环境可关闭；生产环境建议开启
   udn:
     table_selection:
+      mode: "business_family"
       llm_topk: 4
-      vector_topk: 20
-    evidence_selection:
-      mode: "keywords"
-      topk: 5

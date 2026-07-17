@@ -176,7 +176,58 @@ def format_col(col_name: str):
     return f"`{col_name}`"
 
 
-def schema_to_ddl(schema_ir, joins=None):
+_FORMULA_COLUMN = re.compile(
+    r"(?:\b(?:avg|count|max|min|sum)\s*\(\s*|^\s*)([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+def _formula_column_names(formula: str) -> list[str]:
+    """Return concrete column identifiers in formula order."""
+    return list(dict.fromkeys(_FORMULA_COLUMN.findall(formula)))
+
+
+def _assign_relation_formulas(schema_ir, relation_catalog) -> dict[tuple[str, str], list[str]]:
+    """Assign each unique derived formula to one referenced schema column."""
+    if not relation_catalog:
+        return {}
+
+    table_columns = {table_name: set(table_info["columns"]) for table_name, table_info in schema_ir.items()}
+
+    assignments: dict[tuple[str, str], list[str]] = {}
+    seen_formulas: set[str] = set()
+    for metric_id, metadata in relation_catalog.items():
+        if not isinstance(metadata, dict):
+            continue
+        formula = str(metadata.get("column_value_profile") or "").strip()
+        if not formula or formula in seen_formulas:
+            continue
+        seen_formulas.add(formula)
+
+        identifiers = _formula_column_names(formula)
+        required_columns = set(identifiers)
+        eligible_tables = [
+            table_name
+            for table_name, columns in table_columns.items()
+            if required_columns and required_columns.issubset(columns)
+        ]
+        candidates: list[tuple[str, str]] = []
+        for identifier in identifiers:
+            for table_name in eligible_tables:
+                candidates.append((table_name, identifier))
+        if not candidates:
+            continue
+
+        target = min(candidates, key=lambda location: len(assignments.get(location, [])))
+        metric_name = str(metadata.get("column_short_description") or "").strip()
+        if not metric_name:
+            metric_name = str(metric_id).rsplit(".", 1)[-1]
+        assignments.setdefault(target, []).append(f"{metric_name} = {formula}")
+    return assignments
+
+
+def schema_to_ddl(schema_ir, joins=None, relation_catalog=None):
+    relation_formulas = _assign_relation_formulas(schema_ir, relation_catalog)
     fk_map = {}
     if joins:
         for left, right in joins:
@@ -197,6 +248,8 @@ def schema_to_ddl(schema_ir, joins=None):
             vals = col_info.get("example_values")
             if vals:
                 comments.append(f"example: {vals}")
+            for formula in relation_formulas.get((table_name, col_name), []):
+                comments.append(f"relation_formula: {formula}")
             if comments:
                 line += f", -- {'; '.join(comments)}"
             else:
