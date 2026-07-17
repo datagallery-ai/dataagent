@@ -11,8 +11,10 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
+import threading
 from dataclasses import dataclass
 from typing import Any, Literal, cast
+from weakref import WeakKeyDictionary
 
 import httpx
 from loguru import logger
@@ -121,7 +123,9 @@ class MCPClientWrapper:
         self._client_context = None
         self._read_stream = None
         self._write_stream = None
-        self._connection_lock = asyncio.Lock()
+        # Per running event loop: asyncio.Lock cannot be shared across loops/threads.
+        self._connection_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
+        self._connection_locks_guard = threading.Lock()
         self._last_used = None
         self._connection_timeout = 300  # 5分钟连接超时
 
@@ -247,9 +251,26 @@ class MCPClientWrapper:
                     continue
                 raise e
 
+    def _get_connection_lock(self) -> asyncio.Lock:
+        """Return an ``asyncio.Lock`` bound to the currently running event loop.
+
+        Resource jobs and sync MCP tool calls often invoke this client via
+        ``asyncio.run`` from worker threads. A single process-wide
+        ``asyncio.Lock`` becomes bound to the first loop that acquires it and
+        then raises ``RuntimeError`` when reused from another loop. Keep one
+        lock per running loop instead.
+        """
+        loop = asyncio.get_running_loop()
+        with self._connection_locks_guard:
+            lock = self._connection_locks.get(loop)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._connection_locks[loop] = lock
+            return lock
+
     async def _execute_with_connection(self, operation):
         """使用连接执行操作的通用方法"""
-        async with self._connection_lock:
+        async with self._get_connection_lock():
             if self.transport_type == "stdio":
                 async with stdio_client(cast(StdioServerParameters, self._transport_params)) as (  # noqa: SIM117
                     read_stream,

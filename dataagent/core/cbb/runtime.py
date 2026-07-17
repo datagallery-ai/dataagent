@@ -32,6 +32,10 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from dataagent.actions.tools.local_tool.sandbox import Sandbox
 from dataagent.core.cbb.agent_env import Env
+from dataagent.utils.constants import (
+    DEFAULT_WORKFLOW_RECURSION_LIMIT,
+    MAX_ITER_TO_RECURSION_FACTOR,
+)
 
 if TYPE_CHECKING:
     from dataagent.config.config_manager import ConfigManager
@@ -207,6 +211,21 @@ class Runtime:
                 "Ensure build_agent_env_from_flex_config passes config_manager."
             )
         return cm
+
+    @staticmethod
+    def resolve_recursion_limit_from_max_iter(max_iter: int | None) -> int:
+        """Derive LangGraph/openjiuwen recursion_limit from ``max_iter``.
+
+        - ``max_iter is None``: ``DEFAULT_WORKFLOW_RECURSION_LIMIT``
+        - otherwise: ``max(DEFAULT, max_iter * MAX_ITER_TO_RECURSION_FACTOR)``
+        """
+        if max_iter is None:
+            return DEFAULT_WORKFLOW_RECURSION_LIMIT
+        return max(DEFAULT_WORKFLOW_RECURSION_LIMIT, int(max_iter) * MAX_ITER_TO_RECURSION_FACTOR)
+
+    def resolve_workflow_recursion_limit(self) -> int:
+        """Derive graph engine recursion_limit from this Runtime's ``max_iter``."""
+        return self.resolve_recursion_limit_from_max_iter(self.max_iter)
 
     def ensure_job_services(self) -> Any:
         """Bind Job/Agent services to the current ``workspace_dir``.

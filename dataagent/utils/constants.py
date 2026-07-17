@@ -453,6 +453,18 @@ DEFAULT_CPU_SAMPLE_SECONDS: float = 0.5
 """CPU 使用率采样间隔（秒）。"""
 
 
+# ── Workflow 图引擎步数上限 ──────────────────────────────────────────────────
+# 当前定义位置: dataagent/core/cbb/runtime.py
+#   Runtime.resolve_recursion_limit_from_max_iter / resolve_workflow_recursion_limit
+# 由 AGENT_CONFIG.max_iter 推导；未配置 max_iter 时用默认值
+
+DEFAULT_WORKFLOW_RECURSION_LIMIT: int = 200
+"""LangGraph/openjiuwen ``recursion_limit`` 默认值（``max_iter`` 为 None 时）。"""
+
+MAX_ITER_TO_RECURSION_FACTOR: int = 10
+"""``max_iter`` 换算 ``recursion_limit`` 的倍数：``max(DEFAULT, max_iter * FACTOR)``。"""
+
+
 # ============================================================================
 # 环境默认值与内置注册
 # ============================================================================

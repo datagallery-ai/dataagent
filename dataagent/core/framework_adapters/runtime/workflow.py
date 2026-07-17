@@ -23,6 +23,7 @@ from loguru import logger
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_router import BaseRouter
 from dataagent.core.cbb.base_state import BaseState
+from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.framework_adapters.runtime.context import (
     clear_current_runtime,
     set_current_runtime,
@@ -50,6 +51,22 @@ class LangGraphWorkflow:
         """在每次 ainvoke/astream 前更新 runtime，供 _wrap_process 传递给节点。"""
         self.runtime = runtime
 
+    def resolve_recursion_limit(self) -> int:
+        """从 Runtime.max_iter 推导图引擎步数上限；未注入 runtime 时用默认常量。"""
+        rt = self.runtime
+        if rt is not None:
+            resolve_fn = getattr(rt, "resolve_workflow_recursion_limit", None)
+            if callable(resolve_fn):
+                return int(resolve_fn())
+            return Runtime.resolve_recursion_limit_from_max_iter(getattr(rt, "max_iter", None))
+        return Runtime.resolve_recursion_limit_from_max_iter(None)
+
+    def merge_run_config(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
+        """合并调用方 config，并写入 recursion_limit（调用方已显式设置时不覆盖）。"""
+        run_config = dict(config) if isinstance(config, dict) else {}
+        run_config.setdefault("recursion_limit", self.resolve_recursion_limit())
+        return run_config
+
     def invoke(self, initial_state: dict[str, Any], store=None) -> dict[str, Any]:
         """
         Invoke the workflow with a given initial state.
@@ -69,7 +86,7 @@ class LangGraphWorkflow:
                 self._build_graph()
             self.compiled_graph = self.graph.compile(store=store)
         try:
-            result = self.compiled_graph.invoke(initial_state)
+            result = self.compiled_graph.invoke(initial_state, config=self.merge_run_config())
             return result
         except Exception as e:
             logger.error(f"LangGraph workflow execution failed: {e}\n Traceback: {traceback.format_exc()}")
@@ -93,7 +110,7 @@ class LangGraphWorkflow:
             if self.graph is None:
                 self._build_graph()
             self.compiled_graph = self.graph.compile(store=store)
-        result = await self.compiled_graph.ainvoke(initial_state, config={"recursion_limit": 200})
+        result = await self.compiled_graph.ainvoke(initial_state, config=self.merge_run_config())
         return result
 
     def astream(
@@ -118,7 +135,8 @@ class LangGraphWorkflow:
             if self.graph is None:
                 self._build_graph()
             self.compiled_graph = self.graph.compile(store=store)
-        result = self.compiled_graph.astream(initial_state, config={"recursion_limit": 200}, **kwargs)
+        run_config = self.merge_run_config(kwargs.pop("config", None))
+        result = self.compiled_graph.astream(initial_state, config=run_config, **kwargs)
         return result
 
     def get_graph_info(self) -> dict[str, Any]:

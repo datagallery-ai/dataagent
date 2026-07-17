@@ -17,6 +17,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
 
+from dataagent.core.cbb.runtime import Runtime
+
 
 @runtime_checkable
 class WorkflowBackend(Protocol):
@@ -119,7 +121,8 @@ class LangGraphWorkflowBackend:
         if getattr(self._wf, "graph", None) is None:
             self._wf.ensure_graph_built()  # type: ignore[attr-defined]
         compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
-        return await compiled.ainvoke(Command(resume=message), config=config)
+        run_config = self._merge_langgraph_config(config)
+        return await compiled.ainvoke(Command(resume=message), config=run_config)
 
     def astream_resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> AsyncIterator[Any]:
         """LangGraph 流式恢复（需要 checkpointer，输入使用 Command(resume=message)）。"""
@@ -133,7 +136,8 @@ class LangGraphWorkflowBackend:
         if getattr(self._wf, "graph", None) is None:
             self._wf.ensure_graph_built()  # type: ignore[attr-defined]
         compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
-        return compiled.astream(input=Command(resume=message), config=config, **kwargs)
+        run_config = self._merge_langgraph_config(config)
+        return compiled.astream(input=Command(resume=message), config=run_config, **kwargs)
 
     async def aget_graph_state(
         self,
@@ -165,10 +169,24 @@ class LangGraphWorkflowBackend:
             if getattr(self._wf, "graph", None) is None:
                 self._wf.ensure_graph_built()  # type: ignore[attr-defined]
             compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
+            kwargs["config"] = self._merge_langgraph_config(kwargs.get("config"))
             return compiled.astream(**kwargs)
 
         input_state = kwargs.pop("input", {})
         return self._wf.astream(input_state, store=store, **kwargs)
+
+    def _merge_langgraph_config(self, config: Any) -> dict[str, Any]:
+        """合并 LangGraph run config，写入由 max_iter 推导的 recursion_limit。"""
+        merge_fn = getattr(self._wf, "merge_run_config", None)
+        if callable(merge_fn):
+            return merge_fn(config if isinstance(config, dict) else None)
+        run_config = dict(config) if isinstance(config, dict) else {}
+        resolve_fn = getattr(self._wf, "resolve_recursion_limit", None)
+        if callable(resolve_fn):
+            run_config.setdefault("recursion_limit", resolve_fn())
+        else:
+            run_config.setdefault("recursion_limit", Runtime.resolve_recursion_limit_from_max_iter(None))
+        return run_config
 
 
 class OpenJiuWenWorkflowBackend:

@@ -28,6 +28,7 @@ from sqlalchemy.engine.url import make_url
 from dataagent.common_utils.storer_utils import deserialize_state_from_store, serialize_state_for_store
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_router import BaseRouter
+from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.context.context import ContextFactory, build_context_init_options
 from dataagent.core.framework_adapters.checkpoints.sqlite_store import SqliteCheckpointStore
 from dataagent.core.framework_adapters.runtime.context import (
@@ -361,9 +362,8 @@ class OpenJiuWenWorkflow:
         runtime: Any | None = None,
         *,
         start_at: str | None = None,
-        # openjiuwen 的 recursion_limit 是“硬上限”，flex 的工具链/LLM 往往需要较多 step 才能 complete；
-        # 这里给一个更宽松的默认值，并允许上层显式覆盖。
-        recursion_limit: int | None = 200,
+        # None：从 Agent Runtime.max_iter 换算；显式传入时优先生效。
+        recursion_limit: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """异步执行工作流，处理状态初始化、执行循环及中断检查点保存。"""
@@ -374,12 +374,14 @@ class OpenJiuWenWorkflow:
         start_node = start_at or self.router.entry_point
         compiled_graph = self._ensure_compiled(rt, start_at=start_node)
 
+        resolved_limit = self._resolve_recursion_limit(recursion_limit)
+
         # 构建 openjiuwen config（字典操作，不会抛异常）
         # openjiuwen 的 Pregel 引擎默认 recursion_limit 很小（常见为 1），
         # 对于 flex 这种“actor-loop”会导致还没 complete 就被提前截停。
-        # 这里默认提高到与 langgraph 一致的 50，并允许上层覆盖。
+        # 默认 DEFAULT_WORKFLOW_RECURSION_LIMIT；若配置了 max_iter 则按常量倍数换算。
         ojw_cfg: dict[str, Any] | None = None
-        if recursion_limit is not None:
+        if resolved_limit is not None:
             # 注意：openjiuwen 在 graph.after_step 里会读取 loop.config['ns'] 做日志；
             # 如果我们传入一个“只有 recursion_limit”的 config，会覆盖掉其默认 config，
             # 导致 KeyError: 'ns'。
@@ -408,7 +410,7 @@ class OpenJiuWenWorkflow:
             )
             base_cfg.setdefault("session_id", str(sid))
             base_cfg.setdefault("ns", f"{sid}:{start_node}:1")
-            base_cfg["recursion_limit"] = int(recursion_limit)
+            base_cfg["recursion_limit"] = int(resolved_limit)
 
             # 允许调用方额外透传 openjiuwen config（若有）
             extra_cfg = kwargs.pop("config", None)
@@ -558,6 +560,18 @@ class OpenJiuWenWorkflow:
             clear_current_backend_runtime()
             clear_current_runtime()
             clear_current_stream_queue()
+
+    def _resolve_recursion_limit(self, override: int | None = None) -> int:
+        """解析图引擎步数上限：显式参数 > Runtime.max_iter 换算 > 默认常量。"""
+        if override is not None:
+            return max(1, int(override))
+        agent_rt = self._agent_runtime
+        if agent_rt is not None:
+            resolve_fn = getattr(agent_rt, "resolve_workflow_recursion_limit", None)
+            if callable(resolve_fn):
+                return int(resolve_fn())
+            return Runtime.resolve_recursion_limit_from_max_iter(getattr(agent_rt, "max_iter", None))
+        return Runtime.resolve_recursion_limit_from_max_iter(None)
 
     def _ojw_try_set_stream_queue(self) -> None:
         try:
