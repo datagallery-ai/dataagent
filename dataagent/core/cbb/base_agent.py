@@ -18,6 +18,7 @@ This module provides the abstract base class that all DataAgent agents should in
 defining the common interface and shared functionality.
 """
 
+import functools
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Mapping
@@ -46,17 +47,69 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _validate_hook(hook: object, location: str) -> BaseHook:
-        """Validate that hook has the correct signature: (state) or (state, runtime)."""
+        """Validate that hook has the correct signature: (state) or (state, runtime).
+
+        Additional **keyword-only** parameters with defaults are permitted; they are
+        bound by the framework via ``functools.partial`` from HOOKS YAML config fields
+        (see :meth:`FlexAgent._resolve_hook_item`). Positional parameters beyond
+        ``state`` / ``runtime`` are rejected.
+
+        Allowed forms:
+        - ``def hook(state)``
+        - ``def hook(state, runtime)``
+        - ``def hook(state, runtime, *, config=None)``
+        - ``def hook(state, *, config=None)``  ← no ``runtime``, only keyword-only
+        """
         if not callable(hook):
             raise TypeError(f"Invalid hook at {location}: expected callable, got {type(hook).__name__}")
         params = list(inspect.signature(hook).parameters.values())
         if not params or params[0].name != "state":
             raise TypeError(f"Invalid hook at {location}: first parameter must be named 'state'")
-        if len(params) >= 2 and params[1].name != "runtime":
-            raise TypeError(f"Invalid hook at {location}: second parameter must be named 'runtime'")
-        if len(params) > 2:
-            raise TypeError(f"Invalid hook at {location}: only (state) or (state, runtime) are allowed")
+        # second param: if positional, must be "runtime"; if keyword-only, it's a config param
+        if len(params) >= 2:
+            second = params[1]
+            if (
+                second.kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+                and second.name != "runtime"
+            ):
+                raise TypeError(f"Invalid hook at {location}: second positional parameter must be named 'runtime'")
+        for param in params[2:]:
+            kind = param.kind
+            if kind == inspect.Parameter.VAR_KEYWORD:
+                continue
+            if kind != inspect.Parameter.KEYWORD_ONLY or param.default is inspect.Parameter.empty:
+                raise TypeError(
+                    f"Invalid hook at {location}: only (state) or (state, runtime) "
+                    "are allowed; extra parameters must be keyword-only with defaults"
+                )
         return hook  # type: ignore[return-value]
+
+    @staticmethod
+    def _bind_hook_config(fn: Any, item: Mapping[str, Any], *, location: str) -> Any:
+        """Bind HOOKS YAML config fields (except name/model/import) to the hook via ``functools.partial``.
+
+        Only keyword params actually declared by the hook are bound; unknown fields
+        raise ``TypeError`` so misconfigured hooks surface immediately. Returns ``fn``
+        unchanged when no config fields are present.
+        """
+        reserved = {"name", "model", "import"}
+        config_fields = {k: v for k, v in item.items() if k not in reserved}
+        if not config_fields:
+            return fn
+        sig_params = inspect.signature(fn).parameters
+        bindable: dict[str, Any] = {}
+        for key, value in config_fields.items():
+            if key not in sig_params:
+                raise TypeError(
+                    f"{location}: hook config field {key!r} is not accepted by hook "
+                    f"{getattr(fn, '__name__', fn)!r}; declared params: {list(sig_params)}"
+                )
+            bindable[key] = value
+        return functools.partial(fn, **bindable)
 
     @classmethod
     @abstractmethod

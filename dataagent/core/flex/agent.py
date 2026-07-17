@@ -1040,7 +1040,18 @@ class FlexAgent(BaseAgent):
                 node.add_post_hook(self._resolve_hook_item(hook_item, f"nodes.{node_name}.post"))
 
     def _resolve_hook_item(self, item: Any, location: str) -> Any:
-        """解析单个 hook 项；字符串项不经过 ``_merge_hook_llm_configs``，依赖 LLM 的 hook 须用字典 + ``model`` 或 MODEL 同名槽。"""
+        """解析单个 hook 项；字符串项不经过 ``_merge_hook_llm_configs``，依赖 LLM 的 hook 须用字典 + ``model`` 或 MODEL 同名槽。
+
+        **配置字段绑定**：字典项中除 ``name`` / ``model`` / ``import`` 外的字段视为 hook
+        配置，经 ``functools.partial`` 绑定为 keyword-only 参数（hook 须以带默认值的
+        keyword-only 形参接收，见 :meth:`BaseAgent._validate_hook`）。例如::
+
+            - name: plan_enforcer
+              require_plan_skills:
+                - create-neutralization-experiment
+
+        会将 ``require_plan_skills`` 绑定到 hook 的同名 kwarg。
+        """
         hook_llm_key: str | None = None
         if isinstance(item, dict):
             hook_name = str(item.get("name") or "").strip()
@@ -1063,6 +1074,7 @@ class FlexAgent(BaseAgent):
             if has_model:
                 hook_llm_key = hook_name
             fn = self._resolve_hook_callable(hook_name, location=location)
+            fn = self._bind_hook_config(fn, item, location=location)
             BaseAgent._validate_hook(fn, location)
             return self._maybe_warn_hook_llm_missing(fn, hook_llm_key, location)
         if isinstance(item, str):
@@ -1126,7 +1138,9 @@ class FlexAgent(BaseAgent):
                 hook_scope="agent",
                 hook_phase="pre",
             ):
-                out = hook(s, runtime)
+                from dataagent.core.cbb.base_hook import invoke_hook
+
+                out = invoke_hook(hook, s, runtime)
             if isinstance(out, dict):
                 s = out
         return s

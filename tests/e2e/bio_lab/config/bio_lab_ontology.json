@@ -1,5 +1,5 @@
 {
-        "changping02": {
+        "bio_lab": {
             "data_sources_info": {
                 "data_source_info1": {
                     "data_source_type": "sqlite",
@@ -10,11 +10,11 @@
                 {
                     "api_name": "ProteinSamples",
                     "display_name": "protein_samples",
-                    "description": "Direct mapping entity for table changping02.protein_samples",
+                    "description": "Direct mapping entity for table bio_lab.protein_samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.protein_samples",
+                            "full_table_name": "bio_lab.protein_samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -71,11 +71,11 @@
                 {
                     "api_name": "Experiments",
                     "display_name": "experiments",
-                    "description": "Direct mapping entity for table changping02.experiments",
+                    "description": "Direct mapping entity for table bio_lab.experiments",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.experiments",
+                            "full_table_name": "bio_lab.experiments",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -148,11 +148,11 @@
                 {
                     "api_name": "NeutralizationIc50FitData",
                     "display_name": "neutralization_ic50_fit_data",
-                    "description": "Direct mapping entity for table changping02.neutralization_ic50_fit_data",
+                    "description": "Direct mapping entity for table bio_lab.neutralization_ic50_fit_data",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.neutralization_ic50_fit_data",
+                            "full_table_name": "bio_lab.neutralization_ic50_fit_data",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -201,11 +201,11 @@
                 {
                     "api_name": "PseudovirusSamples",
                     "display_name": "pseudovirus_samples",
-                    "description": "Direct mapping entity for table changping02.pseudovirus_samples",
+                    "description": "Direct mapping entity for table bio_lab.pseudovirus_samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.pseudovirus_samples",
+                            "full_table_name": "bio_lab.pseudovirus_samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -262,11 +262,11 @@
                 {
                     "api_name": "DataSamples",
                     "display_name": "data_samples",
-                    "description": "Direct mapping entity for table changping02.data_samples",
+                    "description": "Direct mapping entity for table bio_lab.data_samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.data_samples",
+                            "full_table_name": "bio_lab.data_samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -291,11 +291,11 @@
                 {
                     "api_name": "NeutralizationExperiments",
                     "display_name": "neutralization_experiments",
-                    "description": "Direct mapping entity for table changping02.neutralization_experiments",
+                    "description": "Direct mapping entity for table bio_lab.neutralization_experiments",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.neutralization_experiments",
+                            "full_table_name": "bio_lab.neutralization_experiments",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -368,11 +368,11 @@
                 {
                     "api_name": "Users",
                     "display_name": "users",
-                    "description": "Direct mapping entity for table changping02.users",
+                    "description": "Direct mapping entity for table bio_lab.users",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.users",
+                            "full_table_name": "bio_lab.users",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -421,11 +421,11 @@
                 {
                     "api_name": "NeutralizationData",
                     "display_name": "neutralization_data",
-                    "description": "Direct mapping entity for table changping02.neutralization_data",
+                    "description": "Direct mapping entity for table bio_lab.neutralization_data",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.neutralization_data",
+                            "full_table_name": "bio_lab.neutralization_data",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -474,11 +474,11 @@
                 {
                     "api_name": "Samples",
                     "display_name": "samples",
-                    "description": "Direct mapping entity for table changping02.samples",
+                    "description": "Direct mapping entity for table bio_lab.samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.samples",
+                            "full_table_name": "bio_lab.samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -519,11 +519,11 @@
                 {
                     "api_name": "WetSamples",
                     "display_name": "wet_samples",
-                    "description": "Direct mapping entity for table changping02.wet_samples",
+                    "description": "Direct mapping entity for table bio_lab.wet_samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.wet_samples",
+                            "full_table_name": "bio_lab.wet_samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -580,11 +580,11 @@
                 {
                     "api_name": "CellSamples",
                     "display_name": "cell_samples",
-                    "description": "Direct mapping entity for table changping02.cell_samples",
+                    "description": "Direct mapping entity for table bio_lab.cell_samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.cell_samples",
+                            "full_table_name": "bio_lab.cell_samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -633,11 +633,11 @@
                 {
                     "api_name": "ProteinChains",
                     "display_name": "protein_chains",
-                    "description": "Direct mapping entity for table changping02.protein_chains",
+                    "description": "Direct mapping entity for table bio_lab.protein_chains",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.protein_chains",
+                            "full_table_name": "bio_lab.protein_chains",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -678,11 +678,11 @@
                 {
                     "api_name": "Cells",
                     "display_name": "cells",
-                    "description": "Direct mapping entity for table changping02.cells",
+                    "description": "Direct mapping entity for table bio_lab.cells",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.cells",
+                            "full_table_name": "bio_lab.cells",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -731,11 +731,11 @@
                 {
                     "api_name": "Proteins",
                     "display_name": "proteins",
-                    "description": "Direct mapping entity for table changping02.proteins",
+                    "description": "Direct mapping entity for table bio_lab.proteins",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.proteins",
+                            "full_table_name": "bio_lab.proteins",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -792,11 +792,11 @@
                 {
                     "api_name": "Antibodies",
                     "display_name": "antibodies",
-                    "description": "Direct mapping entity for table changping02.antibodies",
+                    "description": "Direct mapping entity for table bio_lab.antibodies",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.antibodies",
+                            "full_table_name": "bio_lab.antibodies",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -917,11 +917,11 @@
                 {
                     "api_name": "AntibodySamples",
                     "display_name": "antibody_samples",
-                    "description": "Direct mapping entity for table changping02.antibody_samples",
+                    "description": "Direct mapping entity for table bio_lab.antibody_samples",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.antibody_samples",
+                            "full_table_name": "bio_lab.antibody_samples",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -978,11 +978,11 @@
                 {
                     "api_name": "NeutralizationIc50Fits",
                     "display_name": "neutralization_ic50_fits",
-                    "description": "Direct mapping entity for table changping02.neutralization_ic50_fits",
+                    "description": "Direct mapping entity for table bio_lab.neutralization_ic50_fits",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.neutralization_ic50_fits",
+                            "full_table_name": "bio_lab.neutralization_ic50_fits",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -1031,11 +1031,11 @@
                 {
                     "api_name": "Pseudoviruses",
                     "display_name": "pseudoviruses",
-                    "description": "Direct mapping entity for table changping02.pseudoviruses",
+                    "description": "Direct mapping entity for table bio_lab.pseudoviruses",
                     "data_sources": {
                         "table1": {
                             "data_source_name": "data_source_info1",
-                            "full_table_name": "changping02.pseudoviruses",
+                            "full_table_name": "bio_lab.pseudoviruses",
                             "condition": "",
                             "primary_key_columns": [
                                 "id"
@@ -1113,7 +1113,7 @@
                         ]
                     },
                     "display_name": "Proteins关联到Antibodies",
-                    "description": "changping02.antibodies.id = changping02.proteins.id"
+                    "description": "bio_lab.antibodies.id = bio_lab.proteins.id"
                 },
                 {
                     "api_name": "RelatesToAntibodySamples",
@@ -1129,7 +1129,7 @@
                         ]
                     },
                     "display_name": "WetSamples关联到AntibodySamples",
-                    "description": "changping02.antibody_samples.id = changping02.wet_samples.id"
+                    "description": "bio_lab.antibody_samples.id = bio_lab.wet_samples.id"
                 },
                 {
                     "api_name": "RelatesToAntibodySamples_2",
@@ -1145,7 +1145,7 @@
                         ]
                     },
                     "display_name": "Antibodies关联到AntibodySamples",
-                    "description": "changping02.antibody_samples.antibody_id = changping02.antibodies.id"
+                    "description": "bio_lab.antibody_samples.antibody_id = bio_lab.antibodies.id"
                 },
                 {
                     "api_name": "RelatesToCellSamples",
@@ -1161,7 +1161,7 @@
                         ]
                     },
                     "display_name": "WetSamples关联到CellSamples",
-                    "description": "changping02.cell_samples.id = changping02.wet_samples.id"
+                    "description": "bio_lab.cell_samples.id = bio_lab.wet_samples.id"
                 },
                 {
                     "api_name": "RelatesToCellSamples_2",
@@ -1177,7 +1177,7 @@
                         ]
                     },
                     "display_name": "Cells关联到CellSamples",
-                    "description": "changping02.cell_samples.cell_id = changping02.cells.id"
+                    "description": "bio_lab.cell_samples.cell_id = bio_lab.cells.id"
                 },
                 {
                     "api_name": "RelatesToDataSamples",
@@ -1193,7 +1193,7 @@
                         ]
                     },
                     "display_name": "Samples关联到DataSamples",
-                    "description": "changping02.data_samples.id = changping02.samples.id"
+                    "description": "bio_lab.data_samples.id = bio_lab.samples.id"
                 },
                 {
                     "api_name": "RelatesToExperiments",
@@ -1211,7 +1211,7 @@
                         ]
                     },
                     "display_name": "Users关联到Experiments",
-                    "description": "changping02.experiments.submitter = changping02.users.id"
+                    "description": "bio_lab.experiments.submitter = bio_lab.users.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationData",
@@ -1227,7 +1227,7 @@
                         ]
                     },
                     "display_name": "DataSamples关联到NeutralizationData",
-                    "description": "changping02.neutralization_data.id = changping02.data_samples.id"
+                    "description": "bio_lab.neutralization_data.id = bio_lab.data_samples.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationExperiments",
@@ -1243,7 +1243,7 @@
                         ]
                     },
                     "display_name": "Experiments关联到NeutralizationExperiments",
-                    "description": "changping02.neutralization_experiments.id = changping02.experiments.id"
+                    "description": "bio_lab.neutralization_experiments.id = bio_lab.experiments.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationExperiments_2",
@@ -1259,7 +1259,7 @@
                         ]
                     },
                     "display_name": "CellSamples关联到NeutralizationExperiments",
-                    "description": "changping02.neutralization_experiments.cell_sample_id = changping02.cell_samples.id"
+                    "description": "bio_lab.neutralization_experiments.cell_sample_id = bio_lab.cell_samples.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationExperiments_3",
@@ -1275,7 +1275,7 @@
                         ]
                     },
                     "display_name": "WetSamples关联到NeutralizationExperiments",
-                    "description": "changping02.neutralization_experiments.inhibitor_sample_id = changping02.wet_samples.id"
+                    "description": "bio_lab.neutralization_experiments.inhibitor_sample_id = bio_lab.wet_samples.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationExperiments_4",
@@ -1291,7 +1291,7 @@
                         ]
                     },
                     "display_name": "PseudovirusSamples关联到NeutralizationExperiments",
-                    "description": "changping02.neutralization_experiments.pseudovirus_sample_id = changping02.pseudovirus_samples.id"
+                    "description": "bio_lab.neutralization_experiments.pseudovirus_sample_id = bio_lab.pseudovirus_samples.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationExperiments_5",
@@ -1307,7 +1307,7 @@
                         ]
                     },
                     "display_name": "NeutralizationData关联到NeutralizationExperiments",
-                    "description": "changping02.neutralization_experiments.result_id = changping02.neutralization_data.id"
+                    "description": "bio_lab.neutralization_experiments.result_id = bio_lab.neutralization_data.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationIc50FitData",
@@ -1323,7 +1323,7 @@
                         ]
                     },
                     "display_name": "DataSamples关联到NeutralizationIc50FitData",
-                    "description": "changping02.neutralization_ic50_fit_data.id = changping02.data_samples.id"
+                    "description": "bio_lab.neutralization_ic50_fit_data.id = bio_lab.data_samples.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationIc50Fits",
@@ -1339,7 +1339,7 @@
                         ]
                     },
                     "display_name": "Experiments关联到NeutralizationIc50Fits",
-                    "description": "changping02.neutralization_ic50_fits.id = changping02.experiments.id"
+                    "description": "bio_lab.neutralization_ic50_fits.id = bio_lab.experiments.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationIc50Fits_2",
@@ -1355,7 +1355,7 @@
                         ]
                     },
                     "display_name": "NeutralizationData关联到NeutralizationIc50Fits",
-                    "description": "changping02.neutralization_ic50_fits.input_data_id = changping02.neutralization_data.id"
+                    "description": "bio_lab.neutralization_ic50_fits.input_data_id = bio_lab.neutralization_data.id"
                 },
                 {
                     "api_name": "RelatesToNeutralizationIc50Fits_3",
@@ -1371,7 +1371,7 @@
                         ]
                     },
                     "display_name": "NeutralizationIc50FitData关联到NeutralizationIc50Fits",
-                    "description": "changping02.neutralization_ic50_fits.output_data_id = changping02.neutralization_ic50_fit_data.id"
+                    "description": "bio_lab.neutralization_ic50_fits.output_data_id = bio_lab.neutralization_ic50_fit_data.id"
                 },
                 {
                     "api_name": "RelatesToProteinSamples",
@@ -1387,7 +1387,7 @@
                         ]
                     },
                     "display_name": "WetSamples关联到ProteinSamples",
-                    "description": "changping02.protein_samples.id = changping02.wet_samples.id"
+                    "description": "bio_lab.protein_samples.id = bio_lab.wet_samples.id"
                 },
                 {
                     "api_name": "RelatesToProteinSamples_2",
@@ -1403,7 +1403,7 @@
                         ]
                     },
                     "display_name": "Proteins关联到ProteinSamples",
-                    "description": "changping02.protein_samples.protein_id = changping02.proteins.id"
+                    "description": "bio_lab.protein_samples.protein_id = bio_lab.proteins.id"
                 },
                 {
                     "api_name": "RelatesToPseudovirusSamples",
@@ -1419,7 +1419,7 @@
                         ]
                     },
                     "display_name": "WetSamples关联到PseudovirusSamples",
-                    "description": "changping02.pseudovirus_samples.id = changping02.wet_samples.id"
+                    "description": "bio_lab.pseudovirus_samples.id = bio_lab.wet_samples.id"
                 },
                 {
                     "api_name": "RelatesToPseudovirusSamples_2",
@@ -1435,7 +1435,7 @@
                         ]
                     },
                     "display_name": "Pseudoviruses关联到PseudovirusSamples",
-                    "description": "changping02.pseudovirus_samples.pseudovirus_id = changping02.pseudoviruses.id"
+                    "description": "bio_lab.pseudovirus_samples.pseudovirus_id = bio_lab.pseudoviruses.id"
                 },
                 {
                     "api_name": "RelatesToSamples",
@@ -1451,7 +1451,7 @@
                         ]
                     },
                     "display_name": "Experiments关联到Samples",
-                    "description": "changping02.samples.source = changping02.experiments.id"
+                    "description": "bio_lab.samples.source = bio_lab.experiments.id"
                 },
                 {
                     "api_name": "RelatesToWetSamples",
@@ -1467,7 +1467,7 @@
                         ]
                     },
                     "display_name": "Samples关联到WetSamples",
-                    "description": "changping02.wet_samples.id = changping02.samples.id"
+                    "description": "bio_lab.wet_samples.id = bio_lab.samples.id"
                 }
             ],
             "actions": []

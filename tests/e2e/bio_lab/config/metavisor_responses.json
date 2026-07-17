@@ -1,6 +1,6 @@
 {
-  "columns:changping02.antibodies": {
-    "changping02.antibodies.heavy_v_shm_nt_count": {
+  "columns:bio_lab.antibodies": {
+    "bio_lab.antibodies.heavy_v_shm_nt_count": {
       "column_description": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
       "column_short_description": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
       "column_medium_description": "",
@@ -10,7 +10,7 @@
       "value_description": "",
       "value_type": "bigint"
     },
-    "changping02.antibodies.id": {
+    "bio_lab.antibodies.id": {
       "column_description": "抽象的抗体，属于一种protein",
       "column_short_description": "抽象的抗体，属于一种protein",
       "column_medium_description": "",
@@ -20,7 +20,7 @@
       "value_description": "900500:|900501:|900502:|11397:|900500:|900501:|900502:|11397:|11397:|900500:|900501:|900502:",
       "value_type": "str"
     },
-    "changping02.antibodies.j_gene_heavy": {
+    "bio_lab.antibodies.j_gene_heavy": {
       "column_description": "重链的J基因",
       "column_short_description": "重链的J基因",
       "column_medium_description": "",
@@ -30,7 +30,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.antibodies.j_gene_light": {
+    "bio_lab.antibodies.j_gene_light": {
       "column_description": "轻链的J基因",
       "column_short_description": "轻链的J基因",
       "column_medium_description": "",
@@ -40,7 +40,7 @@
       "value_description": "",
       "value_type": "int"
     },
-    "changping02.antibodies.light_v_shm_aa_count": {
+    "bio_lab.antibodies.light_v_shm_aa_count": {
       "column_description": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
       "column_short_description": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
       "column_medium_description": "",
@@ -50,7 +50,7 @@
       "value_description": "",
       "value_type": "int"
     },
-    "changping02.antibodies.light_v_shm_nt_count": {
+    "bio_lab.antibodies.light_v_shm_nt_count": {
       "column_description": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
       "column_short_description": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
       "column_medium_description": "",
@@ -60,7 +60,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.antibodies.original_heavy_nt_seq": {
+    "bio_lab.antibodies.original_heavy_nt_seq": {
       "column_description": "原始来源的重链可变区DNA序列",
       "column_short_description": "原始来源的重链可变区DNA序列",
       "column_medium_description": "",
@@ -70,7 +70,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.antibodies.original_isotype": {
+    "bio_lab.antibodies.original_isotype": {
       "column_description": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
       "column_short_description": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
       "column_medium_description": "",
@@ -80,7 +80,7 @@
       "value_description": "IgG1:|IgG1:|IgG1:",
       "value_type": "str"
     },
-    "changping02.antibodies.original_light_nt_seq": {
+    "bio_lab.antibodies.original_light_nt_seq": {
       "column_description": "原始来源的轻链可变区DNA序列",
       "column_short_description": "原始来源的轻链可变区DNA序列",
       "column_medium_description": "",
@@ -90,7 +90,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.antibodies.v_gene_heavy": {
+    "bio_lab.antibodies.v_gene_heavy": {
       "column_description": "重链的V基因，例如IGHV3-53*01",
       "column_short_description": "重链的V基因，例如IGHV3-53*01",
       "column_medium_description": "",
@@ -100,7 +100,7 @@
       "value_description": "IGHV3-53:|IGHV1-69:|IGHV3-30:|IGHV1-58:|IGHV3-53:|IGHV1-69:|IGHV3-30:|IGHV1-58:|IGHV3-53:|IGHV1-69:|IGHV3-30:|IGHV1-58:",
       "value_type": "str"
     },
-    "changping02.antibodies.v_gene_light": {
+    "bio_lab.antibodies.v_gene_light": {
       "column_description": "轻链的V基因",
       "column_short_description": "轻链的V基因",
       "column_medium_description": "",
@@ -110,7 +110,7 @@
       "value_description": "",
       "value_type": "bigint"
     },
-    "changping02.antibodies.d_gene_heavy": {
+    "bio_lab.antibodies.d_gene_heavy": {
       "column_description": "重链的D基因",
       "column_short_description": "重链的D基因",
       "column_medium_description": "",
@@ -120,7 +120,7 @@
       "value_description": "",
       "value_type": "int"
     },
-    "changping02.antibodies.heavy_v_shm_aa_count": {
+    "bio_lab.antibodies.heavy_v_shm_aa_count": {
       "column_description": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
       "column_short_description": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
       "column_medium_description": "",
@@ -131,8 +131,8 @@
       "value_type": "int"
     }
   },
-  "columns:changping02.antibody_samples": {
-    "changping02.antibody_samples.antibody_id": {
+  "columns:bio_lab.antibody_samples": {
+    "bio_lab.antibody_samples.antibody_id": {
       "column_description": "指向一个抽象的抗体，其中包含所需的科研相关信息",
       "column_short_description": "指向一个抽象的抗体，其中包含所需的科研相关信息",
       "column_medium_description": "",
@@ -142,7 +142,7 @@
       "value_description": "11397:|900500:|900501:|900502:|11397:|900500:|900501:|11397:|900500:|900501:|900502:|900502:",
       "value_type": "float"
     },
-    "changping02.antibody_samples.id": {
+    "bio_lab.antibody_samples.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -152,7 +152,7 @@
       "value_description": "11396:|900510:|900511:|900512:|11396:|900510:|900511:|900512:|11396:|900510:|900511:|900512:",
       "value_type": "float"
     },
-    "changping02.antibody_samples.volume": {
+    "bio_lab.antibody_samples.volume": {
       "column_description": "样本体积，单位为ul",
       "column_short_description": "样本体积，单位为ul",
       "column_medium_description": "",
@@ -162,7 +162,7 @@
       "value_description": "0.2:|500.0:|0.2:|500.0:|0.2:|500.0:",
       "value_type": "int"
     },
-    "changping02.antibody_samples.concentration": {
+    "bio_lab.antibody_samples.concentration": {
       "column_description": "浓度，单位为ng/ul",
       "column_short_description": "浓度，单位为ng/ul",
       "column_medium_description": "",
@@ -172,7 +172,7 @@
       "value_description": "1.0:|1.5:|1.0:|1.5:|1.0:|1.5:",
       "value_type": "str"
     },
-    "changping02.antibody_samples.description": {
+    "bio_lab.antibody_samples.description": {
       "column_description": "一段额外的文字描述，可能包含样本的特殊构造形式等",
       "column_short_description": "一段额外的文字描述，可能包含样本的特殊构造形式等",
       "column_medium_description": "",
@@ -183,8 +183,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.cell_samples": {
-    "changping02.cell_samples.cell_count": {
+  "columns:bio_lab.cell_samples": {
+    "bio_lab.cell_samples.cell_count": {
       "column_description": "细胞样本数量",
       "column_short_description": "细胞样本数量",
       "column_medium_description": "",
@@ -194,7 +194,7 @@
       "value_description": "20000:|1314:|20000:|1314:|20000:|1314:",
       "value_type": "bigint"
     },
-    "changping02.cell_samples.cell_id": {
+    "bio_lab.cell_samples.cell_id": {
       "column_description": "指向一个抽象的细胞，其中包含所需的科研相关信息",
       "column_short_description": "指向一个抽象的细胞，其中包含所需的科研相关信息",
       "column_medium_description": "",
@@ -204,7 +204,7 @@
       "value_description": "800002:|900300:|800002:|900300:|800002:|900300:",
       "value_type": "str"
     },
-    "changping02.cell_samples.cell_type": {
+    "bio_lab.cell_samples.cell_type": {
       "column_description": "细胞类型，即细胞系的名称",
       "column_short_description": "细胞类型，即细胞系的名称",
       "column_medium_description": "",
@@ -214,7 +214,7 @@
       "value_description": "HEK293T-ACE2:|huh-7:|HEK293T-ACE2:|huh-7:|HEK293T-ACE2:|huh-7:",
       "value_type": "bigint"
     },
-    "changping02.cell_samples.id": {
+    "bio_lab.cell_samples.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -225,8 +225,8 @@
       "value_type": "List[str]"
     }
   },
-  "columns:changping02.cells": {
-    "changping02.cells.aliases": {
+  "columns:bio_lab.cells": {
+    "bio_lab.cells.aliases": {
       "column_description": "别名列表。细胞的别名也可以用于检索。",
       "column_short_description": "别名列表。细胞的别名也可以用于检索。",
       "column_medium_description": "",
@@ -236,7 +236,7 @@
       "value_description": "[\"293T-ACE2\"]:|[\"293T-ACE2\"]:|[\"293T-ACE2\"]:",
       "value_type": "str"
     },
-    "changping02.cells.description": {
+    "bio_lab.cells.description": {
       "column_description": "细胞描述",
       "column_short_description": "细胞描述",
       "column_medium_description": "",
@@ -246,7 +246,7 @@
       "value_description": "Demo cell line for neutralization assay:|Demo cell line for neutralization assay:|Demo cell line for neutralization assay:",
       "value_type": "bigint"
     },
-    "changping02.cells.id": {
+    "bio_lab.cells.id": {
       "column_description": "细胞唯一编号",
       "column_short_description": "细胞唯一编号",
       "column_medium_description": "",
@@ -256,7 +256,7 @@
       "value_description": "800002:|900300:|800002:|900300:|800002:|900300:",
       "value_type": "str"
     },
-    "changping02.cells.name": {
+    "bio_lab.cells.name": {
       "column_description": "细胞名称",
       "column_short_description": "细胞名称",
       "column_medium_description": "",
@@ -267,8 +267,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.data_samples": {
-    "changping02.data_samples.id": {
+  "columns:bio_lab.data_samples": {
+    "bio_lab.data_samples.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -279,8 +279,8 @@
       "value_type": "date"
     }
   },
-  "columns:changping02.experiments": {
-    "changping02.experiments.end_date": {
+  "columns:bio_lab.experiments": {
+    "bio_lab.experiments.end_date": {
       "column_description": "结束日期",
       "column_short_description": "结束日期",
       "column_medium_description": "",
@@ -290,7 +290,7 @@
       "value_description": "",
       "value_type": "bigint"
     },
-    "changping02.experiments.id": {
+    "bio_lab.experiments.id": {
       "column_description": "实验具有一个唯一编号，与LIMS中的编号对应",
       "column_short_description": "实验具有一个唯一编号，与LIMS中的编号对应",
       "column_medium_description": "",
@@ -300,7 +300,7 @@
       "value_description": "900100:|900110:|900120:|900200:|900100:|900110:|900120:|900200:|900100:|900110:|900120:|900200:",
       "value_type": "bigint"
     },
-    "changping02.experiments.operator": {
+    "bio_lab.experiments.operator": {
       "column_description": "操作人",
       "column_short_description": "操作人",
       "column_medium_description": "",
@@ -310,7 +310,7 @@
       "value_description": "900001:|900001:|900001:",
       "value_type": "date"
     },
-    "changping02.experiments.start_date": {
+    "bio_lab.experiments.start_date": {
       "column_description": "开始日期",
       "column_short_description": "开始日期",
       "column_medium_description": "",
@@ -320,7 +320,7 @@
       "value_description": "2026-01-15:|2026-01-22:|2026-01-21:|2026-01-20:|2026-01-15:|2026-01-22:|2026-01-21:|2026-01-20:|2026-01-15:|2026-01-22:|2026-01-21:|2026-01-20:",
       "value_type": "ExperimentStatus"
     },
-    "changping02.experiments.submitter": {
+    "bio_lab.experiments.submitter": {
       "column_description": "提出人",
       "column_short_description": "提出人",
       "column_medium_description": "",
@@ -330,7 +330,7 @@
       "value_description": "900001:|900001:|900001:",
       "value_type": "str"
     },
-    "changping02.experiments.type": {
+    "bio_lab.experiments.type": {
       "column_description": "实验类型，区分不同的实验子类",
       "column_short_description": "实验类型，区分不同的实验子类",
       "column_medium_description": "",
@@ -340,7 +340,7 @@
       "value_description": "neutralization:|ic50_fit:|neutralization:|ic50_fit:|neutralization:|ic50_fit:",
       "value_type": "List[float]"
     },
-    "changping02.experiments.status": {
+    "bio_lab.experiments.status": {
       "column_description": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
       "column_short_description": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
       "column_medium_description": "",
@@ -351,8 +351,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.neutralization_data": {
-    "changping02.neutralization_data.id": {
+  "columns:bio_lab.neutralization_data": {
+    "bio_lab.neutralization_data.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -362,7 +362,7 @@
       "value_description": "900600:|900610:|900620:|905000:|900610:|900620:|905000:|900600:|900610:|900620:|905000:|900600:",
       "value_type": "List[float]"
     },
-    "changping02.neutralization_data.concentrations": {
+    "bio_lab.neutralization_data.concentrations": {
       "column_description": "浓度点",
       "column_short_description": "浓度点",
       "column_medium_description": "",
@@ -372,7 +372,7 @@
       "value_description": "[1, 0.2, 0.04, 0.008, 0.0016]:|[1, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125]:|[1, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125]:|[1, 0.2, 0.04, 0.008, 0.0016]:|[1, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125]:|[1, 0.2, 0.04, 0.008, 0.0016]:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_data.vc_readings": {
+    "bio_lab.neutralization_data.vc_readings": {
       "column_description": "空参考，有多个点",
       "column_short_description": "空参考，有多个点",
       "column_medium_description": "",
@@ -382,7 +382,7 @@
       "value_description": "[1, 1, 1, 1, 1, 1, 1, 1]:|[1, 1, 1, 1, 1]:|[1, 1, 1, 1, 1, 1, 1, 1]:|[1, 1, 1, 1, 1]:|[1, 1, 1, 1, 1]:|[1, 1, 1, 1, 1, 1, 1, 1]:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_data.raw_readings": {
+    "bio_lab.neutralization_data.raw_readings": {
       "column_description": "原始读数点，和浓度点一一对应",
       "column_short_description": "原始读数点，和浓度点一一对应",
       "column_medium_description": "",
@@ -393,8 +393,8 @@
       "value_type": "List[float]"
     }
   },
-  "columns:changping02.neutralization_experiments": {
-    "changping02.neutralization_experiments.cell_sample_id": {
+  "columns:bio_lab.neutralization_experiments": {
+    "bio_lab.neutralization_experiments.cell_sample_id": {
       "column_description": "输入的细胞样本，细胞类型、细胞余量需符合要求",
       "column_short_description": "输入的细胞样本，细胞类型、细胞余量需符合要求",
       "column_medium_description": "",
@@ -404,7 +404,7 @@
       "value_description": "900310:|900311:|900312:|900311:|900312:|900310:|900310:|900311:|900312:",
       "value_type": "List[int]"
     },
-    "changping02.neutralization_experiments.dilution_factors": {
+    "bio_lab.neutralization_experiments.dilution_factors": {
       "column_description": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
       "column_short_description": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
       "column_medium_description": "",
@@ -414,7 +414,7 @@
       "value_description": "[5, 5, 5, 5]:|[2, 2, 2, 2, 2, 2, 2]:|[5, 5, 5, 5]:|[2, 2, 2, 2, 2, 2, 2]:|[5, 5, 5, 5]:|[2, 2, 2, 2, 2, 2, 2]:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_experiments.id": {
+    "bio_lab.neutralization_experiments.id": {
       "column_description": "实验的唯一编号，与父类实验表的id一致",
       "column_short_description": "实验的唯一编号，与父类实验表的id一致",
       "column_medium_description": "",
@@ -424,7 +424,7 @@
       "value_description": "900100:|901000:|900120:|900110:|900100:|900110:|900120:|901000:|900100:|900110:|900120:|901000:",
       "value_type": "float"
     },
-    "changping02.neutralization_experiments.inhibitor_concentration": {
+    "bio_lab.neutralization_experiments.inhibitor_concentration": {
       "column_description": "inhibitor的起始浓度，单位为ng/ul",
       "column_short_description": "inhibitor的起始浓度，单位为ng/ul",
       "column_medium_description": "",
@@ -434,7 +434,7 @@
       "value_description": "1.0:|1.0:|1.0:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_experiments.pseudovirus_sample_id": {
+    "bio_lab.neutralization_experiments.pseudovirus_sample_id": {
       "column_description": "输入的假病毒样本，样本体积具有一定要求",
       "column_short_description": "输入的假病毒样本，样本体积具有一定要求",
       "column_medium_description": "",
@@ -444,7 +444,7 @@
       "value_description": "900410:|900411:|900412:|904000:|900410:|900411:|900412:|904000:|900410:|900411:|900412:|904000:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_experiments.result_id": {
+    "bio_lab.neutralization_experiments.result_id": {
       "column_description": "实验输出一个对应该实验的结果对象",
       "column_short_description": "实验输出一个对应该实验的结果对象",
       "column_medium_description": "",
@@ -454,7 +454,7 @@
       "value_description": "900600:|900610:|900620:|905000:|900620:|905000:|900600:|900610:|900600:|900610:|900620:|905000:",
       "value_type": "dict"
     },
-    "changping02.neutralization_experiments.inhibitor_sample_id": {
+    "bio_lab.neutralization_experiments.inhibitor_sample_id": {
       "column_description": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
       "column_short_description": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
       "column_medium_description": "",
@@ -465,8 +465,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.neutralization_ic50_fit_data": {
-    "changping02.neutralization_ic50_fit_data.fit_info": {
+  "columns:bio_lab.neutralization_ic50_fit_data": {
+    "bio_lab.neutralization_ic50_fit_data.fit_info": {
       "column_description": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
       "column_short_description": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
       "column_medium_description": "",
@@ -476,7 +476,7 @@
       "value_description": "{\"note\": \"demo failed fit\", \"reason\": \"no convergence\"}:|{\"r2\": 0.98, \"note\": \"demo success fit\"}:|{\"ab\": \"COV2-2196\", \"pv\": \"XBB.1\", \"seed\": \"viz\"}:|{\"ab\": \"S2E12\", \"pv\": \"EG.5\", \"seed\": \"viz\"}:|{\"r2\": 0.98, \"note\": \"demo success fit\"}:|{\"ab\": \"COV2-2196\", \"pv\": \"XBB.1\", \"seed\": \"viz\"}:|{\"ab\": \"S2E12\", \"pv\": \"EG.5\", \"seed\": \"viz\"}:|{\"ab\": \"COV2-2196\", \"pv\": \"XBB.1\", \"seed\": \"viz\"}:|{\"ab\": \"S2E12\", \"pv\": \"EG.5\", \"seed\": \"viz\"}:|{\"r2\": 0.98, \"note\": \"demo success fit\"}:|{\"note\": \"demo failed fit\", \"reason\": \"no convergence\"}:|{\"note\": \"demo failed fit\", \"reason\": \"no convergence\"}:",
       "value_type": "bool"
     },
-    "changping02.neutralization_ic50_fit_data.fit_success": {
+    "bio_lab.neutralization_ic50_fit_data.fit_success": {
       "column_description": "是否成功拟合半数抑制浓度（IC50）的标记",
       "column_short_description": "是否成功拟合半数抑制浓度（IC50）的标记",
       "column_medium_description": "",
@@ -486,7 +486,7 @@
       "value_description": "1:|0:|1:|0:|1:|0:",
       "value_type": "float"
     },
-    "changping02.neutralization_ic50_fit_data.ic50": {
+    "bio_lab.neutralization_ic50_fit_data.ic50": {
       "column_description": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
       "column_short_description": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
       "column_medium_description": "",
@@ -496,7 +496,7 @@
       "value_description": "0.22352:|0.5:|0.05:|0.735332:|0.05:|0.22352:|0.735332:|0.5:|0.05:|0.22352:|0.735332:|0.5:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_ic50_fit_data.id": {
+    "bio_lab.neutralization_ic50_fit_data.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -507,8 +507,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.neutralization_ic50_fits": {
-    "changping02.neutralization_ic50_fits.input_data_id": {
+  "columns:bio_lab.neutralization_ic50_fits": {
+    "bio_lab.neutralization_ic50_fits.input_data_id": {
       "column_description": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
       "column_short_description": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
       "column_medium_description": "",
@@ -518,7 +518,7 @@
       "value_description": "900600:|900610:|905000:|905001:|900610:|905000:|905001:|900600:|900600:|900610:|905000:|905001:",
       "value_type": "str"
     },
-    "changping02.neutralization_ic50_fits.output_data_id": {
+    "bio_lab.neutralization_ic50_fits.output_data_id": {
       "column_description": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
       "column_short_description": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
       "column_medium_description": "",
@@ -528,7 +528,7 @@
       "value_description": "900700:|900710:|906001:|906000:|900700:|900710:|906000:|906001:|900700:|900710:|906000:|906001:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_ic50_fits.id": {
+    "bio_lab.neutralization_ic50_fits.id": {
       "column_description": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
       "column_short_description": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
       "column_medium_description": "",
@@ -538,7 +538,7 @@
       "value_description": "900200:|900210:|902000:|902001:|900200:|900210:|902000:|902001:|900200:|900210:|902000:|902001:",
       "value_type": "bigint"
     },
-    "changping02.neutralization_ic50_fits.model_type": {
+    "bio_lab.neutralization_ic50_fits.model_type": {
       "column_description": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
       "column_short_description": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
       "column_medium_description": "",
@@ -549,8 +549,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.protein_chains": {
-    "changping02.protein_chains.name": {
+  "columns:bio_lab.protein_chains": {
+    "bio_lab.protein_chains.name": {
       "column_description": "蛋白质链名称",
       "column_short_description": "蛋白质链名称",
       "column_medium_description": "",
@@ -560,7 +560,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.protein_chains.id": {
+    "bio_lab.protein_chains.id": {
       "column_description": "自增ID",
       "column_short_description": "自增ID",
       "column_medium_description": "",
@@ -570,7 +570,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.protein_chains.sequence": {
+    "bio_lab.protein_chains.sequence": {
       "column_description": "氨基酸序列",
       "column_short_description": "氨基酸序列",
       "column_medium_description": "",
@@ -581,8 +581,8 @@
       "value_type": "float"
     }
   },
-  "columns:changping02.protein_samples": {
-    "changping02.protein_samples.concentration": {
+  "columns:bio_lab.protein_samples": {
+    "bio_lab.protein_samples.concentration": {
       "column_description": "浓度，单位为ng/ul",
       "column_short_description": "浓度，单位为ng/ul",
       "column_medium_description": "",
@@ -592,7 +592,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.protein_samples.description": {
+    "bio_lab.protein_samples.description": {
       "column_description": "一段额外的文字描述，可能包含样本的特殊构造形式等",
       "column_short_description": "一段额外的文字描述，可能包含样本的特殊构造形式等",
       "column_medium_description": "",
@@ -602,7 +602,7 @@
       "value_description": "",
       "value_type": "bigint"
     },
-    "changping02.protein_samples.id": {
+    "bio_lab.protein_samples.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -612,7 +612,7 @@
       "value_description": "",
       "value_type": "bigint"
     },
-    "changping02.protein_samples.protein_id": {
+    "bio_lab.protein_samples.protein_id": {
       "column_description": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
       "column_short_description": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
       "column_medium_description": "",
@@ -622,7 +622,7 @@
       "value_description": "",
       "value_type": "float"
     },
-    "changping02.protein_samples.volume": {
+    "bio_lab.protein_samples.volume": {
       "column_description": "样本体积，单位为ul",
       "column_short_description": "样本体积，单位为ul",
       "column_medium_description": "",
@@ -633,8 +633,8 @@
       "value_type": "List[str]"
     }
   },
-  "columns:changping02.proteins": {
-    "changping02.proteins.type": {
+  "columns:bio_lab.proteins": {
+    "bio_lab.proteins.type": {
       "column_description": "子类类型",
       "column_short_description": "子类类型",
       "column_medium_description": "",
@@ -644,7 +644,7 @@
       "value_description": "antibody:|antibody:|antibody:",
       "value_type": "List[int]"
     },
-    "changping02.proteins.name": {
+    "bio_lab.proteins.name": {
       "column_description": "蛋白质名称",
       "column_short_description": "蛋白质名称",
       "column_medium_description": "",
@@ -654,7 +654,7 @@
       "value_description": "BD-368:|SA55:|SA58:|BD-368:|SA55:|P2-1B:|SA58:|BD-368:|SA55:|P2-1B:|SA58:|P2-1B:",
       "value_type": "str"
     },
-    "changping02.proteins.aliases": {
+    "bio_lab.proteins.aliases": {
       "column_description": "别名列表。蛋白质的别名也可以用于检索。",
       "column_short_description": "别名列表。蛋白质的别名也可以用于检索。",
       "column_medium_description": "",
@@ -664,7 +664,7 @@
       "value_description": "[\"BD368\"]:|[\"SA-55\"]:|[\"P2_1B\"]:|[\"SA58\"]:|[\"BD368\"]:|[\"SA-55\"]:|[\"P2_1B\"]:|[\"SA58\"]:|[\"BD368\"]:|[\"SA-55\"]:|[\"P2_1B\"]:|[\"SA58\"]:",
       "value_type": "List[int]"
     },
-    "changping02.proteins.chains": {
+    "bio_lab.proteins.chains": {
       "column_description": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
       "column_short_description": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
       "column_medium_description": "",
@@ -674,7 +674,7 @@
       "value_description": "",
       "value_type": "bigint"
     },
-    "changping02.proteins.id": {
+    "bio_lab.proteins.id": {
       "column_description": "自增ID",
       "column_short_description": "自增ID",
       "column_medium_description": "",
@@ -685,8 +685,8 @@
       "value_type": "str"
     }
   },
-  "columns:changping02.pseudovirus_samples": {
-    "changping02.pseudovirus_samples.antigens": {
+  "columns:bio_lab.pseudovirus_samples": {
+    "bio_lab.pseudovirus_samples.antigens": {
       "column_description": "病毒关键抗原，与一个或多个Protein的id连接",
       "column_short_description": "病毒关键抗原，与一个或多个Protein的id连接",
       "column_medium_description": "",
@@ -696,7 +696,7 @@
       "value_description": "[\"Spike\"]:|[\"Spike36\"]:|[\"Spike36\"]:|[\"Spike\"]:|[\"Spike\"]:|[\"Spike36\"]:",
       "value_type": "bigint"
     },
-    "changping02.pseudovirus_samples.pseudovirus_id": {
+    "bio_lab.pseudovirus_samples.pseudovirus_id": {
       "column_description": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
       "column_short_description": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
       "column_medium_description": "",
@@ -706,7 +706,7 @@
       "value_description": "900400:|900401:|901401:|901402:|900400:|900401:|901401:|901402:|900401:|901401:|901402:|900400:",
       "value_type": "str"
     },
-    "changping02.pseudovirus_samples.volume": {
+    "bio_lab.pseudovirus_samples.volume": {
       "column_description": "样本体积，单位为ul",
       "column_short_description": "样本体积，单位为ul",
       "column_medium_description": "",
@@ -716,7 +716,7 @@
       "value_description": "1.0:|36.0:|1.0:|36.0:|1.0:|36.0:",
       "value_type": "List[str]"
     },
-    "changping02.pseudovirus_samples.id": {
+    "bio_lab.pseudovirus_samples.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -726,7 +726,7 @@
       "value_description": "900410:|900411:|900412:|904000:|900410:|900411:|900412:|904000:|900410:|900411:|900412:|904000:",
       "value_type": "bigint"
     },
-    "changping02.pseudovirus_samples.virus_type": {
+    "bio_lab.pseudovirus_samples.virus_type": {
       "column_description": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
       "column_short_description": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
       "column_medium_description": "",
@@ -737,8 +737,8 @@
       "value_type": "float"
     }
   },
-  "columns:changping02.pseudoviruses": {
-    "changping02.pseudoviruses.aliases": {
+  "columns:bio_lab.pseudoviruses": {
+    "bio_lab.pseudoviruses.aliases": {
       "column_description": "别名列表。病毒的别名也可以用于检索。",
       "column_short_description": "别名列表。病毒的别名也可以用于检索。",
       "column_medium_description": "",
@@ -748,7 +748,7 @@
       "value_description": "[\"Omicron BA.2.86\"]:|[\"Omicron XBB.1.5\"]:|[\"Omicron XBB.1\"]:|[\"JN.1\"]:|[\"Omicron BA.2.86\"]:|[\"Omicron BA.2.86\"]:|[\"Omicron XBB.1.5\"]:|[\"JN.1\"]:|[\"Omicron XBB.1\"]:|[\"Omicron XBB.1.5\"]:|[\"JN.1\"]:|[\"Omicron XBB.1\"]:",
       "value_type": "List[int]"
     },
-    "changping02.pseudoviruses.virus_type": {
+    "bio_lab.pseudoviruses.virus_type": {
       "column_description": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
       "column_short_description": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
       "column_medium_description": "",
@@ -758,7 +758,7 @@
       "value_description": "VSV:|VSV:|VSV:",
       "value_type": "bigint"
     },
-    "changping02.pseudoviruses.id": {
+    "bio_lab.pseudoviruses.id": {
       "column_description": "自增ID",
       "column_short_description": "自增ID",
       "column_medium_description": "",
@@ -768,7 +768,7 @@
       "value_description": "900400:|900401:|901401:|901402:|900400:|900401:|901401:|901402:|900400:|900401:|901401:|901402:",
       "value_type": "str"
     },
-    "changping02.pseudoviruses.antigens": {
+    "bio_lab.pseudoviruses.antigens": {
       "column_description": "病毒关键抗原，与一个或多个Protein的id连接",
       "column_short_description": "病毒关键抗原，与一个或多个Protein的id连接",
       "column_medium_description": "",
@@ -778,7 +778,7 @@
       "value_description": "[\"Spike\"]:|[\"Spike\"]:|[\"Spike\"]:",
       "value_type": "bigint"
     },
-    "changping02.pseudoviruses.pseudovirus_id": {
+    "bio_lab.pseudoviruses.pseudovirus_id": {
       "column_description": "假病毒编号",
       "column_short_description": "假病毒编号",
       "column_medium_description": "",
@@ -788,7 +788,7 @@
       "value_description": "",
       "value_type": "str"
     },
-    "changping02.pseudoviruses.name": {
+    "bio_lab.pseudoviruses.name": {
       "column_description": "病毒名称",
       "column_short_description": "病毒名称",
       "column_medium_description": "",
@@ -799,8 +799,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.samples": {
-    "changping02.samples.id": {
+  "columns:bio_lab.samples": {
+    "bio_lab.samples.id": {
       "column_description": "样本的唯一编号",
       "column_short_description": "样本的唯一编号",
       "column_medium_description": "",
@@ -810,7 +810,7 @@
       "value_description": "900310:|11396:|800001:|900310:|900311:|800001:|11396:|900311:|11396:|800001:|900310:|900311:",
       "value_type": "bigint"
     },
-    "changping02.samples.type": {
+    "bio_lab.samples.type": {
       "column_description": "样本类型，区分不同的样本子类",
       "column_short_description": "样本类型，区分不同的样本子类",
       "column_medium_description": "",
@@ -820,7 +820,7 @@
       "value_description": "wet:|data:|wet:|data:|wet:|data:",
       "value_type": "str"
     },
-    "changping02.samples.source": {
+    "bio_lab.samples.source": {
       "column_description": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
       "column_short_description": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
       "column_medium_description": "",
@@ -831,8 +831,8 @@
       "value_type": "str"
     }
   },
-  "columns:changping02.users": {
-    "changping02.users.id": {
+  "columns:bio_lab.users": {
+    "bio_lab.users.id": {
       "column_description": "用户唯一ID，自增",
       "column_short_description": "用户唯一ID，自增",
       "column_medium_description": "",
@@ -842,7 +842,7 @@
       "value_description": "900001:|900002:|900001:|900002:|900001:|900002:",
       "value_type": "str"
     },
-    "changping02.users.name": {
+    "bio_lab.users.name": {
       "column_description": "用户姓名",
       "column_short_description": "用户姓名",
       "column_medium_description": "",
@@ -852,7 +852,7 @@
       "value_description": "Seeder:|Mary:|Seeder:|Mary:|Seeder:|Mary:",
       "value_type": "str"
     },
-    "changping02.users.status": {
+    "bio_lab.users.status": {
       "column_description": "用户状态（忙碌/空闲）",
       "column_short_description": "用户状态（忙碌/空闲）",
       "column_medium_description": "",
@@ -862,7 +862,7 @@
       "value_description": "忙碌:|空闲:|忙碌:|忙碌:|空闲:|空闲:",
       "value_type": "datetime.datetime"
     },
-    "changping02.users.email": {
+    "bio_lab.users.email": {
       "column_description": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
       "column_short_description": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
       "column_medium_description": "",
@@ -873,8 +873,8 @@
       "value_type": "bigint"
     }
   },
-  "columns:changping02.wet_samples": {
-    "changping02.wet_samples.freeze_count": {
+  "columns:bio_lab.wet_samples": {
+    "bio_lab.wet_samples.freeze_count": {
       "column_description": "冻融次数，次数越多，样本则越不可靠",
       "column_short_description": "冻融次数，次数越多，样本则越不可靠",
       "column_medium_description": "",
@@ -884,7 +884,7 @@
       "value_description": "0:|0:|0:",
       "value_type": "bigint"
     },
-    "changping02.wet_samples.status": {
+    "bio_lab.wet_samples.status": {
       "column_description": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
       "column_short_description": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
       "column_medium_description": "",
@@ -894,7 +894,7 @@
       "value_description": "STORED:|STORED:|STORED:",
       "value_type": "text"
     },
-    "changping02.wet_samples.create_time": {
+    "bio_lab.wet_samples.create_time": {
       "column_description": "建立时间",
       "column_short_description": "建立时间",
       "column_medium_description": "",
@@ -904,7 +904,7 @@
       "value_description": "2026-01-10 10:00:00:|2026-01-10 10:05:00:|2026-01-10 10:10:00:|2026-01-10 11:00:00:|2026-01-10 11:00:00:|2026-01-10 10:00:00:|2026-01-10 10:05:00:|2026-01-10 10:10:00:|2026-01-10 10:00:00:|2026-01-10 10:05:00:|2026-01-10 10:10:00:|2026-01-10 11:00:00:",
       "value_type": "int"
     },
-    "changping02.wet_samples.id": {
+    "bio_lab.wet_samples.id": {
       "column_description": "样本的唯一编号，与父类样本表的id一致",
       "column_short_description": "样本的唯一编号，与父类样本表的id一致",
       "column_medium_description": "",
@@ -914,7 +914,7 @@
       "value_description": "11396:|800001:|900310:|900311:|11396:|800001:|900310:|900311:|11396:|800001:|900310:|900311:",
       "value_type": "str"
     },
-    "changping02.wet_samples.sample_id": {
+    "bio_lab.wet_samples.sample_id": {
       "column_description": "样本在样本库中的唯一编号",
       "column_short_description": "样本在样本库中的唯一编号",
       "column_medium_description": "",
@@ -927,650 +927,650 @@
   },
   "joinable-tables": [
     {
-      "src": "changping02.proteins.id",
+      "src": "bio_lab.proteins.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibodies.id = changping02.proteins.id",
+      "expression": "bio_lab.antibodies.id = bio_lab.proteins.id",
       "target_column": [
-        "changping02.antibodies.id"
+        "bio_lab.antibodies.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibody_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.antibody_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.antibody_samples.id"
+        "bio_lab.antibody_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.antibodies.id",
+      "src": "bio_lab.antibodies.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibody_samples.antibody_id = changping02.antibodies.id",
+      "expression": "bio_lab.antibody_samples.antibody_id = bio_lab.antibodies.id",
       "target_column": [
-        "changping02.antibody_samples.antibody_id"
+        "bio_lab.antibody_samples.antibody_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.cell_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.cell_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.cell_samples.id"
+        "bio_lab.cell_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.cells.id",
+      "src": "bio_lab.cells.id",
       "rel_type": "JOIN",
-      "expression": "changping02.cell_samples.cell_id = changping02.cells.id",
+      "expression": "bio_lab.cell_samples.cell_id = bio_lab.cells.id",
       "target_column": [
-        "changping02.cell_samples.cell_id"
+        "bio_lab.cell_samples.cell_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.samples.id",
+      "src": "bio_lab.samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.data_samples.id = changping02.samples.id",
+      "expression": "bio_lab.data_samples.id = bio_lab.samples.id",
       "target_column": [
-        "changping02.data_samples.id"
+        "bio_lab.data_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.users.id",
+      "src": "bio_lab.users.id",
       "rel_type": "JOIN",
-      "expression": "changping02.experiments.submitter = changping02.users.id",
+      "expression": "bio_lab.experiments.submitter = bio_lab.users.id",
       "target_column": [
-        "changping02.experiments.submitter"
+        "bio_lab.experiments.submitter"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.users.id",
+      "src": "bio_lab.users.id",
       "rel_type": "JOIN",
-      "expression": "changping02.experiments.operator = changping02.users.id",
+      "expression": "bio_lab.experiments.operator = bio_lab.users.id",
       "target_column": [
-        "changping02.experiments.operator"
+        "bio_lab.experiments.operator"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.data_samples.id",
+      "src": "bio_lab.data_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_data.id = changping02.data_samples.id",
+      "expression": "bio_lab.neutralization_data.id = bio_lab.data_samples.id",
       "target_column": [
-        "changping02.neutralization_data.id"
+        "bio_lab.neutralization_data.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.id = changping02.experiments.id",
+      "expression": "bio_lab.neutralization_experiments.id = bio_lab.experiments.id",
       "target_column": [
-        "changping02.neutralization_experiments.id"
+        "bio_lab.neutralization_experiments.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.cell_samples.id",
+      "src": "bio_lab.cell_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.cell_sample_id = changping02.cell_samples.id",
+      "expression": "bio_lab.neutralization_experiments.cell_sample_id = bio_lab.cell_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.cell_sample_id"
+        "bio_lab.neutralization_experiments.cell_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.inhibitor_sample_id = changping02.wet_samples.id",
+      "expression": "bio_lab.neutralization_experiments.inhibitor_sample_id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.inhibitor_sample_id"
+        "bio_lab.neutralization_experiments.inhibitor_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.pseudovirus_samples.id",
+      "src": "bio_lab.pseudovirus_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.pseudovirus_sample_id = changping02.pseudovirus_samples.id",
+      "expression": "bio_lab.neutralization_experiments.pseudovirus_sample_id = bio_lab.pseudovirus_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.pseudovirus_sample_id"
+        "bio_lab.neutralization_experiments.pseudovirus_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_data.id",
+      "src": "bio_lab.neutralization_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.result_id = changping02.neutralization_data.id",
+      "expression": "bio_lab.neutralization_experiments.result_id = bio_lab.neutralization_data.id",
       "target_column": [
-        "changping02.neutralization_experiments.result_id"
+        "bio_lab.neutralization_experiments.result_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.data_samples.id",
+      "src": "bio_lab.data_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fit_data.id = changping02.data_samples.id",
+      "expression": "bio_lab.neutralization_ic50_fit_data.id = bio_lab.data_samples.id",
       "target_column": [
-        "changping02.neutralization_ic50_fit_data.id"
+        "bio_lab.neutralization_ic50_fit_data.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.id = changping02.experiments.id",
+      "expression": "bio_lab.neutralization_ic50_fits.id = bio_lab.experiments.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.id"
+        "bio_lab.neutralization_ic50_fits.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_data.id",
+      "src": "bio_lab.neutralization_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.input_data_id = changping02.neutralization_data.id",
+      "expression": "bio_lab.neutralization_ic50_fits.input_data_id = bio_lab.neutralization_data.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.input_data_id"
+        "bio_lab.neutralization_ic50_fits.input_data_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_ic50_fit_data.id",
+      "src": "bio_lab.neutralization_ic50_fit_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.output_data_id = changping02.neutralization_ic50_fit_data.id",
+      "expression": "bio_lab.neutralization_ic50_fits.output_data_id = bio_lab.neutralization_ic50_fit_data.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.output_data_id"
+        "bio_lab.neutralization_ic50_fits.output_data_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.protein_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.protein_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.protein_samples.id"
+        "bio_lab.protein_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.proteins.id",
+      "src": "bio_lab.proteins.id",
       "rel_type": "JOIN",
-      "expression": "changping02.protein_samples.protein_id = changping02.proteins.id",
+      "expression": "bio_lab.protein_samples.protein_id = bio_lab.proteins.id",
       "target_column": [
-        "changping02.protein_samples.protein_id"
+        "bio_lab.protein_samples.protein_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.pseudovirus_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.pseudovirus_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.pseudovirus_samples.id"
+        "bio_lab.pseudovirus_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.pseudoviruses.id",
+      "src": "bio_lab.pseudoviruses.id",
       "rel_type": "JOIN",
-      "expression": "changping02.pseudovirus_samples.pseudovirus_id = changping02.pseudoviruses.id",
+      "expression": "bio_lab.pseudovirus_samples.pseudovirus_id = bio_lab.pseudoviruses.id",
       "target_column": [
-        "changping02.pseudovirus_samples.pseudovirus_id"
+        "bio_lab.pseudovirus_samples.pseudovirus_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.samples.source = changping02.experiments.id",
+      "expression": "bio_lab.samples.source = bio_lab.experiments.id",
       "target_column": [
-        "changping02.samples.source"
+        "bio_lab.samples.source"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.samples.id",
+      "src": "bio_lab.samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.wet_samples.id = changping02.samples.id",
+      "expression": "bio_lab.wet_samples.id = bio_lab.samples.id",
       "target_column": [
-        "changping02.wet_samples.id"
+        "bio_lab.wet_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.proteins.id",
+      "src": "bio_lab.proteins.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibodies.id = changping02.proteins.id",
+      "expression": "bio_lab.antibodies.id = bio_lab.proteins.id",
       "target_column": [
-        "changping02.antibodies.id"
+        "bio_lab.antibodies.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibody_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.antibody_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.antibody_samples.id"
+        "bio_lab.antibody_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.antibodies.id",
+      "src": "bio_lab.antibodies.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibody_samples.antibody_id = changping02.antibodies.id",
+      "expression": "bio_lab.antibody_samples.antibody_id = bio_lab.antibodies.id",
       "target_column": [
-        "changping02.antibody_samples.antibody_id"
+        "bio_lab.antibody_samples.antibody_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.cell_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.cell_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.cell_samples.id"
+        "bio_lab.cell_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.cells.id",
+      "src": "bio_lab.cells.id",
       "rel_type": "JOIN",
-      "expression": "changping02.cell_samples.cell_id = changping02.cells.id",
+      "expression": "bio_lab.cell_samples.cell_id = bio_lab.cells.id",
       "target_column": [
-        "changping02.cell_samples.cell_id"
+        "bio_lab.cell_samples.cell_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.samples.id",
+      "src": "bio_lab.samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.data_samples.id = changping02.samples.id",
+      "expression": "bio_lab.data_samples.id = bio_lab.samples.id",
       "target_column": [
-        "changping02.data_samples.id"
+        "bio_lab.data_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.users.id",
+      "src": "bio_lab.users.id",
       "rel_type": "JOIN",
-      "expression": "changping02.experiments.submitter = changping02.users.id",
+      "expression": "bio_lab.experiments.submitter = bio_lab.users.id",
       "target_column": [
-        "changping02.experiments.submitter"
+        "bio_lab.experiments.submitter"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.users.id",
+      "src": "bio_lab.users.id",
       "rel_type": "JOIN",
-      "expression": "changping02.experiments.operator = changping02.users.id",
+      "expression": "bio_lab.experiments.operator = bio_lab.users.id",
       "target_column": [
-        "changping02.experiments.operator"
+        "bio_lab.experiments.operator"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.data_samples.id",
+      "src": "bio_lab.data_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_data.id = changping02.data_samples.id",
+      "expression": "bio_lab.neutralization_data.id = bio_lab.data_samples.id",
       "target_column": [
-        "changping02.neutralization_data.id"
+        "bio_lab.neutralization_data.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.id = changping02.experiments.id",
+      "expression": "bio_lab.neutralization_experiments.id = bio_lab.experiments.id",
       "target_column": [
-        "changping02.neutralization_experiments.id"
+        "bio_lab.neutralization_experiments.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.cell_samples.id",
+      "src": "bio_lab.cell_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.cell_sample_id = changping02.cell_samples.id",
+      "expression": "bio_lab.neutralization_experiments.cell_sample_id = bio_lab.cell_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.cell_sample_id"
+        "bio_lab.neutralization_experiments.cell_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.inhibitor_sample_id = changping02.wet_samples.id",
+      "expression": "bio_lab.neutralization_experiments.inhibitor_sample_id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.inhibitor_sample_id"
+        "bio_lab.neutralization_experiments.inhibitor_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.pseudovirus_samples.id",
+      "src": "bio_lab.pseudovirus_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.pseudovirus_sample_id = changping02.pseudovirus_samples.id",
+      "expression": "bio_lab.neutralization_experiments.pseudovirus_sample_id = bio_lab.pseudovirus_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.pseudovirus_sample_id"
+        "bio_lab.neutralization_experiments.pseudovirus_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_data.id",
+      "src": "bio_lab.neutralization_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.result_id = changping02.neutralization_data.id",
+      "expression": "bio_lab.neutralization_experiments.result_id = bio_lab.neutralization_data.id",
       "target_column": [
-        "changping02.neutralization_experiments.result_id"
+        "bio_lab.neutralization_experiments.result_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.data_samples.id",
+      "src": "bio_lab.data_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fit_data.id = changping02.data_samples.id",
+      "expression": "bio_lab.neutralization_ic50_fit_data.id = bio_lab.data_samples.id",
       "target_column": [
-        "changping02.neutralization_ic50_fit_data.id"
+        "bio_lab.neutralization_ic50_fit_data.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.id = changping02.experiments.id",
+      "expression": "bio_lab.neutralization_ic50_fits.id = bio_lab.experiments.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.id"
+        "bio_lab.neutralization_ic50_fits.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_data.id",
+      "src": "bio_lab.neutralization_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.input_data_id = changping02.neutralization_data.id",
+      "expression": "bio_lab.neutralization_ic50_fits.input_data_id = bio_lab.neutralization_data.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.input_data_id"
+        "bio_lab.neutralization_ic50_fits.input_data_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_ic50_fit_data.id",
+      "src": "bio_lab.neutralization_ic50_fit_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.output_data_id = changping02.neutralization_ic50_fit_data.id",
+      "expression": "bio_lab.neutralization_ic50_fits.output_data_id = bio_lab.neutralization_ic50_fit_data.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.output_data_id"
+        "bio_lab.neutralization_ic50_fits.output_data_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.protein_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.protein_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.protein_samples.id"
+        "bio_lab.protein_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.proteins.id",
+      "src": "bio_lab.proteins.id",
       "rel_type": "JOIN",
-      "expression": "changping02.protein_samples.protein_id = changping02.proteins.id",
+      "expression": "bio_lab.protein_samples.protein_id = bio_lab.proteins.id",
       "target_column": [
-        "changping02.protein_samples.protein_id"
+        "bio_lab.protein_samples.protein_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.pseudovirus_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.pseudovirus_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.pseudovirus_samples.id"
+        "bio_lab.pseudovirus_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.pseudoviruses.id",
+      "src": "bio_lab.pseudoviruses.id",
       "rel_type": "JOIN",
-      "expression": "changping02.pseudovirus_samples.pseudovirus_id = changping02.pseudoviruses.id",
+      "expression": "bio_lab.pseudovirus_samples.pseudovirus_id = bio_lab.pseudoviruses.id",
       "target_column": [
-        "changping02.pseudovirus_samples.pseudovirus_id"
+        "bio_lab.pseudovirus_samples.pseudovirus_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.samples.source = changping02.experiments.id",
+      "expression": "bio_lab.samples.source = bio_lab.experiments.id",
       "target_column": [
-        "changping02.samples.source"
+        "bio_lab.samples.source"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.samples.id",
+      "src": "bio_lab.samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.wet_samples.id = changping02.samples.id",
+      "expression": "bio_lab.wet_samples.id = bio_lab.samples.id",
       "target_column": [
-        "changping02.wet_samples.id"
+        "bio_lab.wet_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.proteins.id",
+      "src": "bio_lab.proteins.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibodies.id = changping02.proteins.id",
+      "expression": "bio_lab.antibodies.id = bio_lab.proteins.id",
       "target_column": [
-        "changping02.antibodies.id"
+        "bio_lab.antibodies.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibody_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.antibody_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.antibody_samples.id"
+        "bio_lab.antibody_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.antibodies.id",
+      "src": "bio_lab.antibodies.id",
       "rel_type": "JOIN",
-      "expression": "changping02.antibody_samples.antibody_id = changping02.antibodies.id",
+      "expression": "bio_lab.antibody_samples.antibody_id = bio_lab.antibodies.id",
       "target_column": [
-        "changping02.antibody_samples.antibody_id"
+        "bio_lab.antibody_samples.antibody_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.cell_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.cell_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.cell_samples.id"
+        "bio_lab.cell_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.cells.id",
+      "src": "bio_lab.cells.id",
       "rel_type": "JOIN",
-      "expression": "changping02.cell_samples.cell_id = changping02.cells.id",
+      "expression": "bio_lab.cell_samples.cell_id = bio_lab.cells.id",
       "target_column": [
-        "changping02.cell_samples.cell_id"
+        "bio_lab.cell_samples.cell_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.samples.id",
+      "src": "bio_lab.samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.data_samples.id = changping02.samples.id",
+      "expression": "bio_lab.data_samples.id = bio_lab.samples.id",
       "target_column": [
-        "changping02.data_samples.id"
+        "bio_lab.data_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.users.id",
+      "src": "bio_lab.users.id",
       "rel_type": "JOIN",
-      "expression": "changping02.experiments.submitter = changping02.users.id",
+      "expression": "bio_lab.experiments.submitter = bio_lab.users.id",
       "target_column": [
-        "changping02.experiments.submitter"
+        "bio_lab.experiments.submitter"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.users.id",
+      "src": "bio_lab.users.id",
       "rel_type": "JOIN",
-      "expression": "changping02.experiments.operator = changping02.users.id",
+      "expression": "bio_lab.experiments.operator = bio_lab.users.id",
       "target_column": [
-        "changping02.experiments.operator"
+        "bio_lab.experiments.operator"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.data_samples.id",
+      "src": "bio_lab.data_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_data.id = changping02.data_samples.id",
+      "expression": "bio_lab.neutralization_data.id = bio_lab.data_samples.id",
       "target_column": [
-        "changping02.neutralization_data.id"
+        "bio_lab.neutralization_data.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.id = changping02.experiments.id",
+      "expression": "bio_lab.neutralization_experiments.id = bio_lab.experiments.id",
       "target_column": [
-        "changping02.neutralization_experiments.id"
+        "bio_lab.neutralization_experiments.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.cell_samples.id",
+      "src": "bio_lab.cell_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.cell_sample_id = changping02.cell_samples.id",
+      "expression": "bio_lab.neutralization_experiments.cell_sample_id = bio_lab.cell_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.cell_sample_id"
+        "bio_lab.neutralization_experiments.cell_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.inhibitor_sample_id = changping02.wet_samples.id",
+      "expression": "bio_lab.neutralization_experiments.inhibitor_sample_id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.inhibitor_sample_id"
+        "bio_lab.neutralization_experiments.inhibitor_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.pseudovirus_samples.id",
+      "src": "bio_lab.pseudovirus_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.pseudovirus_sample_id = changping02.pseudovirus_samples.id",
+      "expression": "bio_lab.neutralization_experiments.pseudovirus_sample_id = bio_lab.pseudovirus_samples.id",
       "target_column": [
-        "changping02.neutralization_experiments.pseudovirus_sample_id"
+        "bio_lab.neutralization_experiments.pseudovirus_sample_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_data.id",
+      "src": "bio_lab.neutralization_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_experiments.result_id = changping02.neutralization_data.id",
+      "expression": "bio_lab.neutralization_experiments.result_id = bio_lab.neutralization_data.id",
       "target_column": [
-        "changping02.neutralization_experiments.result_id"
+        "bio_lab.neutralization_experiments.result_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.data_samples.id",
+      "src": "bio_lab.data_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fit_data.id = changping02.data_samples.id",
+      "expression": "bio_lab.neutralization_ic50_fit_data.id = bio_lab.data_samples.id",
       "target_column": [
-        "changping02.neutralization_ic50_fit_data.id"
+        "bio_lab.neutralization_ic50_fit_data.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.id = changping02.experiments.id",
+      "expression": "bio_lab.neutralization_ic50_fits.id = bio_lab.experiments.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.id"
+        "bio_lab.neutralization_ic50_fits.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_data.id",
+      "src": "bio_lab.neutralization_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.input_data_id = changping02.neutralization_data.id",
+      "expression": "bio_lab.neutralization_ic50_fits.input_data_id = bio_lab.neutralization_data.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.input_data_id"
+        "bio_lab.neutralization_ic50_fits.input_data_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.neutralization_ic50_fit_data.id",
+      "src": "bio_lab.neutralization_ic50_fit_data.id",
       "rel_type": "JOIN",
-      "expression": "changping02.neutralization_ic50_fits.output_data_id = changping02.neutralization_ic50_fit_data.id",
+      "expression": "bio_lab.neutralization_ic50_fits.output_data_id = bio_lab.neutralization_ic50_fit_data.id",
       "target_column": [
-        "changping02.neutralization_ic50_fits.output_data_id"
+        "bio_lab.neutralization_ic50_fits.output_data_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.protein_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.protein_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.protein_samples.id"
+        "bio_lab.protein_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.proteins.id",
+      "src": "bio_lab.proteins.id",
       "rel_type": "JOIN",
-      "expression": "changping02.protein_samples.protein_id = changping02.proteins.id",
+      "expression": "bio_lab.protein_samples.protein_id = bio_lab.proteins.id",
       "target_column": [
-        "changping02.protein_samples.protein_id"
+        "bio_lab.protein_samples.protein_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.wet_samples.id",
+      "src": "bio_lab.wet_samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.pseudovirus_samples.id = changping02.wet_samples.id",
+      "expression": "bio_lab.pseudovirus_samples.id = bio_lab.wet_samples.id",
       "target_column": [
-        "changping02.pseudovirus_samples.id"
+        "bio_lab.pseudovirus_samples.id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.pseudoviruses.id",
+      "src": "bio_lab.pseudoviruses.id",
       "rel_type": "JOIN",
-      "expression": "changping02.pseudovirus_samples.pseudovirus_id = changping02.pseudoviruses.id",
+      "expression": "bio_lab.pseudovirus_samples.pseudovirus_id = bio_lab.pseudoviruses.id",
       "target_column": [
-        "changping02.pseudovirus_samples.pseudovirus_id"
+        "bio_lab.pseudovirus_samples.pseudovirus_id"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.experiments.id",
+      "src": "bio_lab.experiments.id",
       "rel_type": "JOIN",
-      "expression": "changping02.samples.source = changping02.experiments.id",
+      "expression": "bio_lab.samples.source = bio_lab.experiments.id",
       "target_column": [
-        "changping02.samples.source"
+        "bio_lab.samples.source"
       ],
       "rel_evidence": ""
     },
     {
-      "src": "changping02.samples.id",
+      "src": "bio_lab.samples.id",
       "rel_type": "JOIN",
-      "expression": "changping02.wet_samples.id = changping02.samples.id",
+      "expression": "bio_lab.wet_samples.id = bio_lab.samples.id",
       "target_column": [
-        "changping02.wet_samples.id"
+        "bio_lab.wet_samples.id"
       ],
       "rel_evidence": ""
     }
@@ -1580,7 +1580,7 @@
       "test": {
         "column_name_search": [
           {
-            "changping02.neutralization_experiments.result_id": {
+            "bio_lab.neutralization_experiments.result_id": {
               "name": "实验输出一个对应该实验的结果对象",
               "desc_short": "实验输出一个对应该实验的结果对象",
               "desc": "实验输出一个对应该实验的结果对象",
@@ -1588,7 +1588,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.result_id": {
+            "bio_lab.neutralization_experiments.result_id": {
               "name": "实验输出一个对应该实验的结果对象",
               "desc_short": "实验输出一个对应该实验的结果对象",
               "desc": "实验输出一个对应该实验的结果对象",
@@ -1596,7 +1596,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.result_id": {
+            "bio_lab.neutralization_experiments.result_id": {
               "name": "实验输出一个对应该实验的结果对象",
               "desc_short": "实验输出一个对应该实验的结果对象",
               "desc": "实验输出一个对应该实验的结果对象",
@@ -1604,7 +1604,7 @@
             }
           },
           {
-            "changping02.neutralization_data.vc_readings": {
+            "bio_lab.neutralization_data.vc_readings": {
               "name": "空参考，有多个点",
               "desc_short": "空参考，有多个点",
               "desc": "空参考，有多个点",
@@ -1612,7 +1612,7 @@
             }
           },
           {
-            "changping02.neutralization_data.vc_readings": {
+            "bio_lab.neutralization_data.vc_readings": {
               "name": "空参考，有多个点",
               "desc_short": "空参考，有多个点",
               "desc": "空参考，有多个点",
@@ -1620,7 +1620,7 @@
             }
           },
           {
-            "changping02.neutralization_data.vc_readings": {
+            "bio_lab.neutralization_data.vc_readings": {
               "name": "空参考，有多个点",
               "desc_short": "空参考，有多个点",
               "desc": "空参考，有多个点",
@@ -1628,7 +1628,7 @@
             }
           },
           {
-            "changping02.experiments.status": {
+            "bio_lab.experiments.status": {
               "name": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
               "desc_short": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
               "desc": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
@@ -1636,7 +1636,7 @@
             }
           },
           {
-            "changping02.experiments.status": {
+            "bio_lab.experiments.status": {
               "name": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
               "desc_short": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
               "desc": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
@@ -1644,7 +1644,7 @@
             }
           },
           {
-            "changping02.experiments.status": {
+            "bio_lab.experiments.status": {
               "name": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
               "desc_short": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
               "desc": "实验状态，实验在其生命周期中的不同状态 枚举值：[{'value': 'NEW', 'description': '新实验：刚被创建，未被处理'}, {'value': 'PROCESSING', 'description': '处理中：实验正在被处理中'}, {'value': 'COMPLETED', 'description': '已完成：实验处理完成，准备被使用'}, {'value': 'ABORTED', 'description': '中止：实验被用户中止，不再继续处理'}, {'value': 'FAILED', 'description': '失败：实验处理过程中发生错误，无法完成'}]",
@@ -1652,7 +1652,7 @@
             }
           },
           {
-            "changping02.experiments.type": {
+            "bio_lab.experiments.type": {
               "name": "实验类型，区分不同的实验子类",
               "desc_short": "实验类型，区分不同的实验子类",
               "desc": "实验类型，区分不同的实验子类",
@@ -1660,7 +1660,7 @@
             }
           },
           {
-            "changping02.experiments.type": {
+            "bio_lab.experiments.type": {
               "name": "实验类型，区分不同的实验子类",
               "desc_short": "实验类型，区分不同的实验子类",
               "desc": "实验类型，区分不同的实验子类",
@@ -1668,7 +1668,7 @@
             }
           },
           {
-            "changping02.experiments.type": {
+            "bio_lab.experiments.type": {
               "name": "实验类型，区分不同的实验子类",
               "desc_short": "实验类型，区分不同的实验子类",
               "desc": "实验类型，区分不同的实验子类",
@@ -1676,7 +1676,7 @@
             }
           },
           {
-            "changping02.protein_chains.id": {
+            "bio_lab.protein_chains.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1684,7 +1684,7 @@
             }
           },
           {
-            "changping02.protein_chains.id": {
+            "bio_lab.protein_chains.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1692,7 +1692,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.id": {
+            "bio_lab.pseudoviruses.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1700,7 +1700,7 @@
             }
           },
           {
-            "changping02.proteins.id": {
+            "bio_lab.proteins.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1708,7 +1708,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.id": {
+            "bio_lab.pseudoviruses.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1716,7 +1716,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.id": {
+            "bio_lab.pseudoviruses.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1724,7 +1724,7 @@
             }
           },
           {
-            "changping02.protein_chains.id": {
+            "bio_lab.protein_chains.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1732,7 +1732,7 @@
             }
           },
           {
-            "changping02.proteins.id": {
+            "bio_lab.proteins.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1740,7 +1740,7 @@
             }
           },
           {
-            "changping02.proteins.id": {
+            "bio_lab.proteins.id": {
               "name": "自增ID",
               "desc_short": "自增ID",
               "desc": "自增ID",
@@ -1748,7 +1748,7 @@
             }
           },
           {
-            "changping02.wet_samples.status": {
+            "bio_lab.wet_samples.status": {
               "name": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
               "desc_short": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
               "desc": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
@@ -1756,7 +1756,7 @@
             }
           },
           {
-            "changping02.wet_samples.status": {
+            "bio_lab.wet_samples.status": {
               "name": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
               "desc_short": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
               "desc": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
@@ -1764,7 +1764,7 @@
             }
           },
           {
-            "changping02.wet_samples.status": {
+            "bio_lab.wet_samples.status": {
               "name": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
               "desc_short": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
               "desc": "湿实验样本状态，样本在其生命周期中的不同状态 枚举值：[{'value': 'STORED', 'description': '已存储，可用状态'}, {'value': 'OUT', 'description': '出库使用中'}, {'value': 'ARCHIVED', 'description': '已归档，不再可用'}]",
@@ -1772,7 +1772,7 @@
             }
           },
           {
-            "changping02.neutralization_data.raw_readings": {
+            "bio_lab.neutralization_data.raw_readings": {
               "name": "原始读数点，和浓度点一一对应",
               "desc_short": "原始读数点，和浓度点一一对应",
               "desc": "原始读数点，和浓度点一一对应",
@@ -1780,7 +1780,7 @@
             }
           },
           {
-            "changping02.neutralization_data.raw_readings": {
+            "bio_lab.neutralization_data.raw_readings": {
               "name": "原始读数点，和浓度点一一对应",
               "desc_short": "原始读数点，和浓度点一一对应",
               "desc": "原始读数点，和浓度点一一对应",
@@ -1788,7 +1788,7 @@
             }
           },
           {
-            "changping02.neutralization_data.raw_readings": {
+            "bio_lab.neutralization_data.raw_readings": {
               "name": "原始读数点，和浓度点一一对应",
               "desc_short": "原始读数点，和浓度点一一对应",
               "desc": "原始读数点，和浓度点一一对应",
@@ -1796,7 +1796,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.fit_info": {
+            "bio_lab.neutralization_ic50_fit_data.fit_info": {
               "name": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
               "desc_short": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
               "desc": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
@@ -1804,7 +1804,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.fit_info": {
+            "bio_lab.neutralization_ic50_fit_data.fit_info": {
               "name": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
               "desc_short": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
               "desc": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
@@ -1812,7 +1812,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.fit_info": {
+            "bio_lab.neutralization_ic50_fit_data.fit_info": {
               "name": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
               "desc_short": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
               "desc": "拟合中的其他信息，例如其他参数、指标等，采用JSON dict存储",
@@ -1820,7 +1820,7 @@
             }
           },
           {
-            "changping02.neutralization_data.concentrations": {
+            "bio_lab.neutralization_data.concentrations": {
               "name": "浓度点",
               "desc_short": "浓度点",
               "desc": "浓度点",
@@ -1828,7 +1828,7 @@
             }
           },
           {
-            "changping02.neutralization_data.concentrations": {
+            "bio_lab.neutralization_data.concentrations": {
               "name": "浓度点",
               "desc_short": "浓度点",
               "desc": "浓度点",
@@ -1836,7 +1836,7 @@
             }
           },
           {
-            "changping02.neutralization_data.concentrations": {
+            "bio_lab.neutralization_data.concentrations": {
               "name": "浓度点",
               "desc_short": "浓度点",
               "desc": "浓度点",
@@ -1844,7 +1844,7 @@
             }
           },
           {
-            "changping02.experiments.id": {
+            "bio_lab.experiments.id": {
               "name": "实验具有一个唯一编号，与LIMS中的编号对应",
               "desc_short": "实验具有一个唯一编号，与LIMS中的编号对应",
               "desc": "实验具有一个唯一编号，与LIMS中的编号对应",
@@ -1852,7 +1852,7 @@
             }
           },
           {
-            "changping02.experiments.id": {
+            "bio_lab.experiments.id": {
               "name": "实验具有一个唯一编号，与LIMS中的编号对应",
               "desc_short": "实验具有一个唯一编号，与LIMS中的编号对应",
               "desc": "实验具有一个唯一编号，与LIMS中的编号对应",
@@ -1860,7 +1860,7 @@
             }
           },
           {
-            "changping02.experiments.id": {
+            "bio_lab.experiments.id": {
               "name": "实验具有一个唯一编号，与LIMS中的编号对应",
               "desc_short": "实验具有一个唯一编号，与LIMS中的编号对应",
               "desc": "实验具有一个唯一编号，与LIMS中的编号对应",
@@ -1868,7 +1868,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.inhibitor_sample_id": {
+            "bio_lab.neutralization_experiments.inhibitor_sample_id": {
               "name": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
               "desc_short": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
               "desc": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
@@ -1876,7 +1876,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.inhibitor_sample_id": {
+            "bio_lab.neutralization_experiments.inhibitor_sample_id": {
               "name": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
               "desc_short": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
               "desc": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
@@ -1884,7 +1884,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.inhibitor_sample_id": {
+            "bio_lab.neutralization_experiments.inhibitor_sample_id": {
               "name": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
               "desc_short": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
               "desc": "输入的inhibitor样本，一般是抗体。样本体积具有一定要求",
@@ -1892,7 +1892,7 @@
             }
           },
           {
-            "changping02.experiments.operator": {
+            "bio_lab.experiments.operator": {
               "name": "操作人",
               "desc_short": "操作人",
               "desc": "操作人",
@@ -1900,7 +1900,7 @@
             }
           },
           {
-            "changping02.experiments.operator": {
+            "bio_lab.experiments.operator": {
               "name": "操作人",
               "desc_short": "操作人",
               "desc": "操作人",
@@ -1908,7 +1908,7 @@
             }
           },
           {
-            "changping02.experiments.operator": {
+            "bio_lab.experiments.operator": {
               "name": "操作人",
               "desc_short": "操作人",
               "desc": "操作人",
@@ -1916,7 +1916,7 @@
             }
           },
           {
-            "changping02.users.id": {
+            "bio_lab.users.id": {
               "name": "用户唯一ID，自增",
               "desc_short": "用户唯一ID，自增",
               "desc": "用户唯一ID，自增",
@@ -1924,7 +1924,7 @@
             }
           },
           {
-            "changping02.users.id": {
+            "bio_lab.users.id": {
               "name": "用户唯一ID，自增",
               "desc_short": "用户唯一ID，自增",
               "desc": "用户唯一ID，自增",
@@ -1932,7 +1932,7 @@
             }
           },
           {
-            "changping02.users.id": {
+            "bio_lab.users.id": {
               "name": "用户唯一ID，自增",
               "desc_short": "用户唯一ID，自增",
               "desc": "用户唯一ID，自增",
@@ -1940,7 +1940,7 @@
             }
           },
           {
-            "changping02.users.status": {
+            "bio_lab.users.status": {
               "name": "用户状态（忙碌/空闲）",
               "desc_short": "用户状态（忙碌/空闲）",
               "desc": "用户状态（忙碌/空闲）",
@@ -1948,7 +1948,7 @@
             }
           },
           {
-            "changping02.users.status": {
+            "bio_lab.users.status": {
               "name": "用户状态（忙碌/空闲）",
               "desc_short": "用户状态（忙碌/空闲）",
               "desc": "用户状态（忙碌/空闲）",
@@ -1956,7 +1956,7 @@
             }
           },
           {
-            "changping02.users.status": {
+            "bio_lab.users.status": {
               "name": "用户状态（忙碌/空闲）",
               "desc_short": "用户状态（忙碌/空闲）",
               "desc": "用户状态（忙碌/空闲）",
@@ -1964,7 +1964,7 @@
             }
           },
           {
-            "changping02.experiments.submitter": {
+            "bio_lab.experiments.submitter": {
               "name": "提出人",
               "desc_short": "提出人",
               "desc": "提出人",
@@ -1972,7 +1972,7 @@
             }
           },
           {
-            "changping02.experiments.submitter": {
+            "bio_lab.experiments.submitter": {
               "name": "提出人",
               "desc_short": "提出人",
               "desc": "提出人",
@@ -1980,7 +1980,7 @@
             }
           },
           {
-            "changping02.experiments.submitter": {
+            "bio_lab.experiments.submitter": {
               "name": "提出人",
               "desc_short": "提出人",
               "desc": "提出人",
@@ -1988,7 +1988,7 @@
             }
           },
           {
-            "changping02.samples.source": {
+            "bio_lab.samples.source": {
               "name": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
               "desc_short": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
               "desc": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
@@ -1996,7 +1996,7 @@
             }
           },
           {
-            "changping02.samples.source": {
+            "bio_lab.samples.source": {
               "name": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
               "desc_short": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
               "desc": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
@@ -2004,7 +2004,7 @@
             }
           },
           {
-            "changping02.samples.source": {
+            "bio_lab.samples.source": {
               "name": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
               "desc_short": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
               "desc": "样本的来源，存储一个实验编号。每个样本必须来源于一个实验",
@@ -2012,7 +2012,7 @@
             }
           },
           {
-            "changping02.wet_samples.create_time": {
+            "bio_lab.wet_samples.create_time": {
               "name": "建立时间",
               "desc_short": "建立时间",
               "desc": "建立时间",
@@ -2020,7 +2020,7 @@
             }
           },
           {
-            "changping02.wet_samples.create_time": {
+            "bio_lab.wet_samples.create_time": {
               "name": "建立时间",
               "desc_short": "建立时间",
               "desc": "建立时间",
@@ -2028,7 +2028,7 @@
             }
           },
           {
-            "changping02.wet_samples.create_time": {
+            "bio_lab.wet_samples.create_time": {
               "name": "建立时间",
               "desc_short": "建立时间",
               "desc": "建立时间",
@@ -2036,7 +2036,7 @@
             }
           },
           {
-            "changping02.antibodies.id": {
+            "bio_lab.antibodies.id": {
               "name": "抽象的抗体，属于一种protein",
               "desc_short": "抽象的抗体，属于一种protein",
               "desc": "抽象的抗体，属于一种protein",
@@ -2044,7 +2044,7 @@
             }
           },
           {
-            "changping02.antibodies.id": {
+            "bio_lab.antibodies.id": {
               "name": "抽象的抗体，属于一种protein",
               "desc_short": "抽象的抗体，属于一种protein",
               "desc": "抽象的抗体，属于一种protein",
@@ -2052,7 +2052,7 @@
             }
           },
           {
-            "changping02.antibodies.id": {
+            "bio_lab.antibodies.id": {
               "name": "抽象的抗体，属于一种protein",
               "desc_short": "抽象的抗体，属于一种protein",
               "desc": "抽象的抗体，属于一种protein",
@@ -2060,7 +2060,7 @@
             }
           },
           {
-            "changping02.protein_samples.volume": {
+            "bio_lab.protein_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2068,7 +2068,7 @@
             }
           },
           {
-            "changping02.antibody_samples.volume": {
+            "bio_lab.antibody_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2076,7 +2076,7 @@
             }
           },
           {
-            "changping02.protein_samples.volume": {
+            "bio_lab.protein_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2084,7 +2084,7 @@
             }
           },
           {
-            "changping02.antibody_samples.volume": {
+            "bio_lab.antibody_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2092,7 +2092,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.volume": {
+            "bio_lab.pseudovirus_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2100,7 +2100,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.volume": {
+            "bio_lab.pseudovirus_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2108,7 +2108,7 @@
             }
           },
           {
-            "changping02.antibody_samples.volume": {
+            "bio_lab.antibody_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2116,7 +2116,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.volume": {
+            "bio_lab.pseudovirus_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2124,7 +2124,7 @@
             }
           },
           {
-            "changping02.protein_samples.volume": {
+            "bio_lab.protein_samples.volume": {
               "name": "样本体积，单位为ul",
               "desc_short": "样本体积，单位为ul",
               "desc": "样本体积，单位为ul",
@@ -2132,7 +2132,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.id": {
+            "bio_lab.neutralization_experiments.id": {
               "name": "实验的唯一编号，与父类实验表的id一致",
               "desc_short": "实验的唯一编号，与父类实验表的id一致",
               "desc": "实验的唯一编号，与父类实验表的id一致",
@@ -2140,7 +2140,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.id": {
+            "bio_lab.neutralization_experiments.id": {
               "name": "实验的唯一编号，与父类实验表的id一致",
               "desc_short": "实验的唯一编号，与父类实验表的id一致",
               "desc": "实验的唯一编号，与父类实验表的id一致",
@@ -2148,7 +2148,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.id": {
+            "bio_lab.neutralization_experiments.id": {
               "name": "实验的唯一编号，与父类实验表的id一致",
               "desc_short": "实验的唯一编号，与父类实验表的id一致",
               "desc": "实验的唯一编号，与父类实验表的id一致",
@@ -2156,7 +2156,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.dilution_factors": {
+            "bio_lab.neutralization_experiments.dilution_factors": {
               "name": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
               "desc_short": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
               "desc": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
@@ -2164,7 +2164,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.dilution_factors": {
+            "bio_lab.neutralization_experiments.dilution_factors": {
               "name": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
               "desc_short": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
               "desc": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
@@ -2172,7 +2172,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.dilution_factors": {
+            "bio_lab.neutralization_experiments.dilution_factors": {
               "name": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
               "desc_short": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
               "desc": "inhibitor的稀释倍数，是一个整数数组，其长度代表选取的浓度点数目",
@@ -2180,7 +2180,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.cell_sample_id": {
+            "bio_lab.neutralization_experiments.cell_sample_id": {
               "name": "输入的细胞样本，细胞类型、细胞余量需符合要求",
               "desc_short": "输入的细胞样本，细胞类型、细胞余量需符合要求",
               "desc": "输入的细胞样本，细胞类型、细胞余量需符合要求",
@@ -2188,7 +2188,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.cell_sample_id": {
+            "bio_lab.neutralization_experiments.cell_sample_id": {
               "name": "输入的细胞样本，细胞类型、细胞余量需符合要求",
               "desc_short": "输入的细胞样本，细胞类型、细胞余量需符合要求",
               "desc": "输入的细胞样本，细胞类型、细胞余量需符合要求",
@@ -2196,7 +2196,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.cell_sample_id": {
+            "bio_lab.neutralization_experiments.cell_sample_id": {
               "name": "输入的细胞样本，细胞类型、细胞余量需符合要求",
               "desc_short": "输入的细胞样本，细胞类型、细胞余量需符合要求",
               "desc": "输入的细胞样本，细胞类型、细胞余量需符合要求",
@@ -2204,7 +2204,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.virus_type": {
+            "bio_lab.pseudovirus_samples.virus_type": {
               "name": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc_short": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
@@ -2212,7 +2212,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.virus_type": {
+            "bio_lab.pseudovirus_samples.virus_type": {
               "name": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc_short": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
@@ -2220,7 +2220,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.virus_type": {
+            "bio_lab.pseudovirus_samples.virus_type": {
               "name": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc_short": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc": "病毒骨架类型，属于VSV还是lentivirus系统 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
@@ -2228,7 +2228,7 @@
             }
           },
           {
-            "changping02.experiments.start_date": {
+            "bio_lab.experiments.start_date": {
               "name": "开始日期",
               "desc_short": "开始日期",
               "desc": "开始日期",
@@ -2236,7 +2236,7 @@
             }
           },
           {
-            "changping02.experiments.start_date": {
+            "bio_lab.experiments.start_date": {
               "name": "开始日期",
               "desc_short": "开始日期",
               "desc": "开始日期",
@@ -2244,7 +2244,7 @@
             }
           },
           {
-            "changping02.experiments.start_date": {
+            "bio_lab.experiments.start_date": {
               "name": "开始日期",
               "desc_short": "开始日期",
               "desc": "开始日期",
@@ -2252,7 +2252,7 @@
             }
           },
           {
-            "changping02.samples.type": {
+            "bio_lab.samples.type": {
               "name": "样本类型，区分不同的样本子类",
               "desc_short": "样本类型，区分不同的样本子类",
               "desc": "样本类型，区分不同的样本子类",
@@ -2260,7 +2260,7 @@
             }
           },
           {
-            "changping02.samples.type": {
+            "bio_lab.samples.type": {
               "name": "样本类型，区分不同的样本子类",
               "desc_short": "样本类型，区分不同的样本子类",
               "desc": "样本类型，区分不同的样本子类",
@@ -2268,7 +2268,7 @@
             }
           },
           {
-            "changping02.samples.type": {
+            "bio_lab.samples.type": {
               "name": "样本类型，区分不同的样本子类",
               "desc_short": "样本类型，区分不同的样本子类",
               "desc": "样本类型，区分不同的样本子类",
@@ -2276,7 +2276,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.input_data_id": {
+            "bio_lab.neutralization_ic50_fits.input_data_id": {
               "name": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
               "desc_short": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
               "desc": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
@@ -2284,7 +2284,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.input_data_id": {
+            "bio_lab.neutralization_ic50_fits.input_data_id": {
               "name": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
               "desc_short": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
               "desc": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
@@ -2292,7 +2292,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.input_data_id": {
+            "bio_lab.neutralization_ic50_fits.input_data_id": {
               "name": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
               "desc_short": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
               "desc": "输入的中和实验数据样本，需要是一个 NeutralizationData 样本",
@@ -2300,7 +2300,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.model_type": {
+            "bio_lab.neutralization_ic50_fits.model_type": {
               "name": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
               "desc_short": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
               "desc": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
@@ -2308,7 +2308,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.model_type": {
+            "bio_lab.neutralization_ic50_fits.model_type": {
               "name": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
               "desc_short": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
               "desc": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
@@ -2316,7 +2316,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.model_type": {
+            "bio_lab.neutralization_ic50_fits.model_type": {
               "name": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
               "desc_short": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
               "desc": "拟合采用的模型，是3-param/2-param logistic模型 枚举值：[{'value': '3-param logistic', 'description': '3参数logistic模型'}, {'value': '2-param logistic', 'description': '2参数logistic模型'}]",
@@ -2324,7 +2324,7 @@
             }
           },
           {
-            "changping02.antibody_samples.antibody_id": {
+            "bio_lab.antibody_samples.antibody_id": {
               "name": "指向一个抽象的抗体，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的抗体，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的抗体，其中包含所需的科研相关信息",
@@ -2332,7 +2332,7 @@
             }
           },
           {
-            "changping02.antibody_samples.antibody_id": {
+            "bio_lab.antibody_samples.antibody_id": {
               "name": "指向一个抽象的抗体，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的抗体，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的抗体，其中包含所需的科研相关信息",
@@ -2340,7 +2340,7 @@
             }
           },
           {
-            "changping02.antibody_samples.antibody_id": {
+            "bio_lab.antibody_samples.antibody_id": {
               "name": "指向一个抽象的抗体，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的抗体，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的抗体，其中包含所需的科研相关信息",
@@ -2348,7 +2348,7 @@
             }
           },
           {
-            "changping02.antibodies.original_isotype": {
+            "bio_lab.antibodies.original_isotype": {
               "name": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
               "desc_short": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
               "desc": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
@@ -2356,7 +2356,7 @@
             }
           },
           {
-            "changping02.antibodies.original_isotype": {
+            "bio_lab.antibodies.original_isotype": {
               "name": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
               "desc_short": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
               "desc": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
@@ -2364,7 +2364,7 @@
             }
           },
           {
-            "changping02.antibodies.original_isotype": {
+            "bio_lab.antibodies.original_isotype": {
               "name": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
               "desc_short": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
               "desc": "原始来源的抗体种型，例如IgA1，IgG1等，这不代表具体样本实际构建的种型",
@@ -2372,7 +2372,7 @@
             }
           },
           {
-            "changping02.wet_samples.freeze_count": {
+            "bio_lab.wet_samples.freeze_count": {
               "name": "冻融次数，次数越多，样本则越不可靠",
               "desc_short": "冻融次数，次数越多，样本则越不可靠",
               "desc": "冻融次数，次数越多，样本则越不可靠",
@@ -2380,7 +2380,7 @@
             }
           },
           {
-            "changping02.wet_samples.freeze_count": {
+            "bio_lab.wet_samples.freeze_count": {
               "name": "冻融次数，次数越多，样本则越不可靠",
               "desc_short": "冻融次数，次数越多，样本则越不可靠",
               "desc": "冻融次数，次数越多，样本则越不可靠",
@@ -2388,7 +2388,7 @@
             }
           },
           {
-            "changping02.wet_samples.freeze_count": {
+            "bio_lab.wet_samples.freeze_count": {
               "name": "冻融次数，次数越多，样本则越不可靠",
               "desc_short": "冻融次数，次数越多，样本则越不可靠",
               "desc": "冻融次数，次数越多，样本则越不可靠",
@@ -2396,7 +2396,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.fit_success": {
+            "bio_lab.neutralization_ic50_fit_data.fit_success": {
               "name": "是否成功拟合半数抑制浓度（IC50）的标记",
               "desc_short": "是否成功拟合半数抑制浓度（IC50）的标记",
               "desc": "是否成功拟合半数抑制浓度（IC50）的标记",
@@ -2404,7 +2404,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.fit_success": {
+            "bio_lab.neutralization_ic50_fit_data.fit_success": {
               "name": "是否成功拟合半数抑制浓度（IC50）的标记",
               "desc_short": "是否成功拟合半数抑制浓度（IC50）的标记",
               "desc": "是否成功拟合半数抑制浓度（IC50）的标记",
@@ -2412,7 +2412,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.fit_success": {
+            "bio_lab.neutralization_ic50_fit_data.fit_success": {
               "name": "是否成功拟合半数抑制浓度（IC50）的标记",
               "desc_short": "是否成功拟合半数抑制浓度（IC50）的标记",
               "desc": "是否成功拟合半数抑制浓度（IC50）的标记",
@@ -2420,7 +2420,7 @@
             }
           },
           {
-            "changping02.samples.id": {
+            "bio_lab.samples.id": {
               "name": "样本的唯一编号",
               "desc_short": "样本的唯一编号",
               "desc": "样本的唯一编号",
@@ -2428,7 +2428,7 @@
             }
           },
           {
-            "changping02.samples.id": {
+            "bio_lab.samples.id": {
               "name": "样本的唯一编号",
               "desc_short": "样本的唯一编号",
               "desc": "样本的唯一编号",
@@ -2436,7 +2436,7 @@
             }
           },
           {
-            "changping02.samples.id": {
+            "bio_lab.samples.id": {
               "name": "样本的唯一编号",
               "desc_short": "样本的唯一编号",
               "desc": "样本的唯一编号",
@@ -2444,7 +2444,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.virus_type": {
+            "bio_lab.pseudoviruses.virus_type": {
               "name": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc_short": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
@@ -2452,7 +2452,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.virus_type": {
+            "bio_lab.pseudoviruses.virus_type": {
               "name": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc_short": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
@@ -2460,7 +2460,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.virus_type": {
+            "bio_lab.pseudoviruses.virus_type": {
               "name": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc_short": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
               "desc": "病毒类型 枚举值：[{'value': 'VSV', 'description': 'VSV系统'}, {'value': 'lentivirus', 'description': 'lentivirus系统'}]",
@@ -2468,7 +2468,7 @@
             }
           },
           {
-            "changping02.users.name": {
+            "bio_lab.users.name": {
               "name": "用户姓名",
               "desc_short": "用户姓名",
               "desc": "用户姓名",
@@ -2476,7 +2476,7 @@
             }
           },
           {
-            "changping02.users.name": {
+            "bio_lab.users.name": {
               "name": "用户姓名",
               "desc_short": "用户姓名",
               "desc": "用户姓名",
@@ -2484,7 +2484,7 @@
             }
           },
           {
-            "changping02.users.name": {
+            "bio_lab.users.name": {
               "name": "用户姓名",
               "desc_short": "用户姓名",
               "desc": "用户姓名",
@@ -2492,7 +2492,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.pseudovirus_sample_id": {
+            "bio_lab.neutralization_experiments.pseudovirus_sample_id": {
               "name": "输入的假病毒样本，样本体积具有一定要求",
               "desc_short": "输入的假病毒样本，样本体积具有一定要求",
               "desc": "输入的假病毒样本，样本体积具有一定要求",
@@ -2500,7 +2500,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.pseudovirus_sample_id": {
+            "bio_lab.neutralization_experiments.pseudovirus_sample_id": {
               "name": "输入的假病毒样本，样本体积具有一定要求",
               "desc_short": "输入的假病毒样本，样本体积具有一定要求",
               "desc": "输入的假病毒样本，样本体积具有一定要求",
@@ -2508,7 +2508,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.pseudovirus_sample_id": {
+            "bio_lab.neutralization_experiments.pseudovirus_sample_id": {
               "name": "输入的假病毒样本，样本体积具有一定要求",
               "desc_short": "输入的假病毒样本，样本体积具有一定要求",
               "desc": "输入的假病毒样本，样本体积具有一定要求",
@@ -2516,7 +2516,7 @@
             }
           },
           {
-            "changping02.users.email": {
+            "bio_lab.users.email": {
               "name": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
               "desc_short": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
               "desc": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
@@ -2524,7 +2524,7 @@
             }
           },
           {
-            "changping02.users.email": {
+            "bio_lab.users.email": {
               "name": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
               "desc_short": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
               "desc": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
@@ -2532,7 +2532,7 @@
             }
           },
           {
-            "changping02.users.email": {
+            "bio_lab.users.email": {
               "name": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
               "desc_short": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
               "desc": "用户邮箱，如有需要可以通过发送邮件的MCP通知用户",
@@ -2540,7 +2540,7 @@
             }
           },
           {
-            "changping02.experiments.end_date": {
+            "bio_lab.experiments.end_date": {
               "name": "结束日期",
               "desc_short": "结束日期",
               "desc": "结束日期",
@@ -2548,7 +2548,7 @@
             }
           },
           {
-            "changping02.experiments.end_date": {
+            "bio_lab.experiments.end_date": {
               "name": "结束日期",
               "desc_short": "结束日期",
               "desc": "结束日期",
@@ -2556,7 +2556,7 @@
             }
           },
           {
-            "changping02.experiments.end_date": {
+            "bio_lab.experiments.end_date": {
               "name": "结束日期",
               "desc_short": "结束日期",
               "desc": "结束日期",
@@ -2564,7 +2564,7 @@
             }
           },
           {
-            "changping02.proteins.chains": {
+            "bio_lab.proteins.chains": {
               "name": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
               "desc_short": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
               "desc": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
@@ -2572,7 +2572,7 @@
             }
           },
           {
-            "changping02.proteins.chains": {
+            "bio_lab.proteins.chains": {
               "name": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
               "desc_short": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
               "desc": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
@@ -2580,7 +2580,7 @@
             }
           },
           {
-            "changping02.proteins.chains": {
+            "bio_lab.proteins.chains": {
               "name": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
               "desc_short": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
               "desc": "蛋白质可以有关联的链ID列表，连接到protein_chains表",
@@ -2588,7 +2588,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.ic50": {
+            "bio_lab.neutralization_ic50_fit_data.ic50": {
               "name": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
               "desc_short": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
               "desc": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
@@ -2596,7 +2596,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.ic50": {
+            "bio_lab.neutralization_ic50_fit_data.ic50": {
               "name": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
               "desc_short": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
               "desc": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
@@ -2604,7 +2604,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.ic50": {
+            "bio_lab.neutralization_ic50_fit_data.ic50": {
               "name": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
               "desc_short": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
               "desc": "拟合得到的IC50值，单位为μg/ml。IC50数值越低，说明抑制效果越好",
@@ -2612,7 +2612,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.id": {
+            "bio_lab.neutralization_ic50_fits.id": {
               "name": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
               "desc_short": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
               "desc": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
@@ -2620,7 +2620,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.id": {
+            "bio_lab.neutralization_ic50_fits.id": {
               "name": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
               "desc_short": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
               "desc": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
@@ -2628,7 +2628,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.id": {
+            "bio_lab.neutralization_ic50_fits.id": {
               "name": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
               "desc_short": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
               "desc": "实验的唯一编号，与父类实验表的id一致，不同于neutralization_experiment.id。需要通过neutralization_data表才能同neutralization_experiment建立JOIN。",
@@ -2636,7 +2636,7 @@
             }
           },
           {
-            "changping02.protein_samples.protein_id": {
+            "bio_lab.protein_samples.protein_id": {
               "name": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
@@ -2644,7 +2644,7 @@
             }
           },
           {
-            "changping02.protein_samples.protein_id": {
+            "bio_lab.protein_samples.protein_id": {
               "name": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
@@ -2652,7 +2652,7 @@
             }
           },
           {
-            "changping02.protein_samples.protein_id": {
+            "bio_lab.protein_samples.protein_id": {
               "name": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的蛋白质，其中包含所需的科研相关信息",
@@ -2660,7 +2660,7 @@
             }
           },
           {
-            "changping02.antibody_samples.description": {
+            "bio_lab.antibody_samples.description": {
               "name": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc_short": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc": "一段额外的文字描述，可能包含样本的特殊构造形式等",
@@ -2668,7 +2668,7 @@
             }
           },
           {
-            "changping02.protein_samples.description": {
+            "bio_lab.protein_samples.description": {
               "name": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc_short": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc": "一段额外的文字描述，可能包含样本的特殊构造形式等",
@@ -2676,7 +2676,7 @@
             }
           },
           {
-            "changping02.antibody_samples.description": {
+            "bio_lab.antibody_samples.description": {
               "name": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc_short": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc": "一段额外的文字描述，可能包含样本的特殊构造形式等",
@@ -2684,7 +2684,7 @@
             }
           },
           {
-            "changping02.antibody_samples.description": {
+            "bio_lab.antibody_samples.description": {
               "name": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc_short": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc": "一段额外的文字描述，可能包含样本的特殊构造形式等",
@@ -2692,7 +2692,7 @@
             }
           },
           {
-            "changping02.protein_samples.description": {
+            "bio_lab.protein_samples.description": {
               "name": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc_short": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc": "一段额外的文字描述，可能包含样本的特殊构造形式等",
@@ -2700,7 +2700,7 @@
             }
           },
           {
-            "changping02.protein_samples.description": {
+            "bio_lab.protein_samples.description": {
               "name": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc_short": "一段额外的文字描述，可能包含样本的特殊构造形式等",
               "desc": "一段额外的文字描述，可能包含样本的特殊构造形式等",
@@ -2708,7 +2708,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.pseudovirus_id": {
+            "bio_lab.pseudoviruses.pseudovirus_id": {
               "name": "假病毒编号",
               "desc_short": "假病毒编号",
               "desc": "假病毒编号",
@@ -2716,7 +2716,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.pseudovirus_id": {
+            "bio_lab.pseudoviruses.pseudovirus_id": {
               "name": "假病毒编号",
               "desc_short": "假病毒编号",
               "desc": "假病毒编号",
@@ -2724,7 +2724,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.pseudovirus_id": {
+            "bio_lab.pseudoviruses.pseudovirus_id": {
               "name": "假病毒编号",
               "desc_short": "假病毒编号",
               "desc": "假病毒编号",
@@ -2732,7 +2732,7 @@
             }
           },
           {
-            "changping02.protein_chains.sequence": {
+            "bio_lab.protein_chains.sequence": {
               "name": "氨基酸序列",
               "desc_short": "氨基酸序列",
               "desc": "氨基酸序列",
@@ -2740,7 +2740,7 @@
             }
           },
           {
-            "changping02.protein_chains.sequence": {
+            "bio_lab.protein_chains.sequence": {
               "name": "氨基酸序列",
               "desc_short": "氨基酸序列",
               "desc": "氨基酸序列",
@@ -2748,7 +2748,7 @@
             }
           },
           {
-            "changping02.protein_chains.sequence": {
+            "bio_lab.protein_chains.sequence": {
               "name": "氨基酸序列",
               "desc_short": "氨基酸序列",
               "desc": "氨基酸序列",
@@ -2756,7 +2756,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.output_data_id": {
+            "bio_lab.neutralization_ic50_fits.output_data_id": {
               "name": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
               "desc_short": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
               "desc": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
@@ -2764,7 +2764,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.output_data_id": {
+            "bio_lab.neutralization_ic50_fits.output_data_id": {
               "name": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
               "desc_short": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
               "desc": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
@@ -2772,7 +2772,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fits.output_data_id": {
+            "bio_lab.neutralization_ic50_fits.output_data_id": {
               "name": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
               "desc_short": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
               "desc": "输出的IC50拟合数据样本，需要是一个 NeutralizationIc50FitData 样本",
@@ -2780,7 +2780,7 @@
             }
           },
           {
-            "changping02.antibody_samples.concentration": {
+            "bio_lab.antibody_samples.concentration": {
               "name": "浓度，单位为ng/ul",
               "desc_short": "浓度，单位为ng/ul",
               "desc": "浓度，单位为ng/ul",
@@ -2788,7 +2788,7 @@
             }
           },
           {
-            "changping02.protein_samples.concentration": {
+            "bio_lab.protein_samples.concentration": {
               "name": "浓度，单位为ng/ul",
               "desc_short": "浓度，单位为ng/ul",
               "desc": "浓度，单位为ng/ul",
@@ -2796,7 +2796,7 @@
             }
           },
           {
-            "changping02.protein_samples.concentration": {
+            "bio_lab.protein_samples.concentration": {
               "name": "浓度，单位为ng/ul",
               "desc_short": "浓度，单位为ng/ul",
               "desc": "浓度，单位为ng/ul",
@@ -2804,7 +2804,7 @@
             }
           },
           {
-            "changping02.antibody_samples.concentration": {
+            "bio_lab.antibody_samples.concentration": {
               "name": "浓度，单位为ng/ul",
               "desc_short": "浓度，单位为ng/ul",
               "desc": "浓度，单位为ng/ul",
@@ -2812,7 +2812,7 @@
             }
           },
           {
-            "changping02.protein_samples.concentration": {
+            "bio_lab.protein_samples.concentration": {
               "name": "浓度，单位为ng/ul",
               "desc_short": "浓度，单位为ng/ul",
               "desc": "浓度，单位为ng/ul",
@@ -2820,7 +2820,7 @@
             }
           },
           {
-            "changping02.antibody_samples.concentration": {
+            "bio_lab.antibody_samples.concentration": {
               "name": "浓度，单位为ng/ul",
               "desc_short": "浓度，单位为ng/ul",
               "desc": "浓度，单位为ng/ul",
@@ -2828,7 +2828,7 @@
             }
           },
           {
-            "changping02.antibodies.j_gene_light": {
+            "bio_lab.antibodies.j_gene_light": {
               "name": "轻链的J基因",
               "desc_short": "轻链的J基因",
               "desc": "轻链的J基因",
@@ -2836,7 +2836,7 @@
             }
           },
           {
-            "changping02.antibodies.j_gene_light": {
+            "bio_lab.antibodies.j_gene_light": {
               "name": "轻链的J基因",
               "desc_short": "轻链的J基因",
               "desc": "轻链的J基因",
@@ -2844,7 +2844,7 @@
             }
           },
           {
-            "changping02.antibodies.j_gene_light": {
+            "bio_lab.antibodies.j_gene_light": {
               "name": "轻链的J基因",
               "desc_short": "轻链的J基因",
               "desc": "轻链的J基因",
@@ -2852,7 +2852,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.inhibitor_concentration": {
+            "bio_lab.neutralization_experiments.inhibitor_concentration": {
               "name": "inhibitor的起始浓度，单位为ng/ul",
               "desc_short": "inhibitor的起始浓度，单位为ng/ul",
               "desc": "inhibitor的起始浓度，单位为ng/ul",
@@ -2860,7 +2860,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.inhibitor_concentration": {
+            "bio_lab.neutralization_experiments.inhibitor_concentration": {
               "name": "inhibitor的起始浓度，单位为ng/ul",
               "desc_short": "inhibitor的起始浓度，单位为ng/ul",
               "desc": "inhibitor的起始浓度，单位为ng/ul",
@@ -2868,7 +2868,7 @@
             }
           },
           {
-            "changping02.neutralization_experiments.inhibitor_concentration": {
+            "bio_lab.neutralization_experiments.inhibitor_concentration": {
               "name": "inhibitor的起始浓度，单位为ng/ul",
               "desc_short": "inhibitor的起始浓度，单位为ng/ul",
               "desc": "inhibitor的起始浓度，单位为ng/ul",
@@ -2876,7 +2876,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_id": {
+            "bio_lab.cell_samples.cell_id": {
               "name": "指向一个抽象的细胞，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的细胞，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的细胞，其中包含所需的科研相关信息",
@@ -2884,7 +2884,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_id": {
+            "bio_lab.cell_samples.cell_id": {
               "name": "指向一个抽象的细胞，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的细胞，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的细胞，其中包含所需的科研相关信息",
@@ -2892,7 +2892,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_id": {
+            "bio_lab.cell_samples.cell_id": {
               "name": "指向一个抽象的细胞，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的细胞，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的细胞，其中包含所需的科研相关信息",
@@ -2900,7 +2900,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.pseudovirus_id": {
+            "bio_lab.pseudovirus_samples.pseudovirus_id": {
               "name": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
@@ -2908,7 +2908,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.pseudovirus_id": {
+            "bio_lab.pseudovirus_samples.pseudovirus_id": {
               "name": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
@@ -2916,7 +2916,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.pseudovirus_id": {
+            "bio_lab.pseudovirus_samples.pseudovirus_id": {
               "name": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
               "desc_short": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
               "desc": "指向一个抽象的假病毒，其中包含所需的科研相关信息",
@@ -2924,7 +2924,7 @@
             }
           },
           {
-            "changping02.wet_samples.sample_id": {
+            "bio_lab.wet_samples.sample_id": {
               "name": "样本在样本库中的唯一编号",
               "desc_short": "样本在样本库中的唯一编号",
               "desc": "样本在样本库中的唯一编号",
@@ -2932,7 +2932,7 @@
             }
           },
           {
-            "changping02.wet_samples.sample_id": {
+            "bio_lab.wet_samples.sample_id": {
               "name": "样本在样本库中的唯一编号",
               "desc_short": "样本在样本库中的唯一编号",
               "desc": "样本在样本库中的唯一编号",
@@ -2940,7 +2940,7 @@
             }
           },
           {
-            "changping02.wet_samples.sample_id": {
+            "bio_lab.wet_samples.sample_id": {
               "name": "样本在样本库中的唯一编号",
               "desc_short": "样本在样本库中的唯一编号",
               "desc": "样本在样本库中的唯一编号",
@@ -2948,7 +2948,7 @@
             }
           },
           {
-            "changping02.proteins.aliases": {
+            "bio_lab.proteins.aliases": {
               "name": "别名列表。蛋白质的别名也可以用于检索。",
               "desc_short": "别名列表。蛋白质的别名也可以用于检索。",
               "desc": "别名列表。蛋白质的别名也可以用于检索。",
@@ -2956,7 +2956,7 @@
             }
           },
           {
-            "changping02.proteins.aliases": {
+            "bio_lab.proteins.aliases": {
               "name": "别名列表。蛋白质的别名也可以用于检索。",
               "desc_short": "别名列表。蛋白质的别名也可以用于检索。",
               "desc": "别名列表。蛋白质的别名也可以用于检索。",
@@ -2964,7 +2964,7 @@
             }
           },
           {
-            "changping02.proteins.aliases": {
+            "bio_lab.proteins.aliases": {
               "name": "别名列表。蛋白质的别名也可以用于检索。",
               "desc_short": "别名列表。蛋白质的别名也可以用于检索。",
               "desc": "别名列表。蛋白质的别名也可以用于检索。",
@@ -2972,7 +2972,7 @@
             }
           },
           {
-            "changping02.antibodies.d_gene_heavy": {
+            "bio_lab.antibodies.d_gene_heavy": {
               "name": "重链的D基因",
               "desc_short": "重链的D基因",
               "desc": "重链的D基因",
@@ -2980,7 +2980,7 @@
             }
           },
           {
-            "changping02.antibodies.d_gene_heavy": {
+            "bio_lab.antibodies.d_gene_heavy": {
               "name": "重链的D基因",
               "desc_short": "重链的D基因",
               "desc": "重链的D基因",
@@ -2988,7 +2988,7 @@
             }
           },
           {
-            "changping02.antibodies.d_gene_heavy": {
+            "bio_lab.antibodies.d_gene_heavy": {
               "name": "重链的D基因",
               "desc_short": "重链的D基因",
               "desc": "重链的D基因",
@@ -2996,7 +2996,7 @@
             }
           },
           {
-            "changping02.antibodies.j_gene_heavy": {
+            "bio_lab.antibodies.j_gene_heavy": {
               "name": "重链的J基因",
               "desc_short": "重链的J基因",
               "desc": "重链的J基因",
@@ -3004,7 +3004,7 @@
             }
           },
           {
-            "changping02.antibodies.j_gene_heavy": {
+            "bio_lab.antibodies.j_gene_heavy": {
               "name": "重链的J基因",
               "desc_short": "重链的J基因",
               "desc": "重链的J基因",
@@ -3012,7 +3012,7 @@
             }
           },
           {
-            "changping02.antibodies.j_gene_heavy": {
+            "bio_lab.antibodies.j_gene_heavy": {
               "name": "重链的J基因",
               "desc_short": "重链的J基因",
               "desc": "重链的J基因",
@@ -3020,7 +3020,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.aliases": {
+            "bio_lab.pseudoviruses.aliases": {
               "name": "别名列表。病毒的别名也可以用于检索。",
               "desc_short": "别名列表。病毒的别名也可以用于检索。",
               "desc": "别名列表。病毒的别名也可以用于检索。",
@@ -3028,7 +3028,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.aliases": {
+            "bio_lab.pseudoviruses.aliases": {
               "name": "别名列表。病毒的别名也可以用于检索。",
               "desc_short": "别名列表。病毒的别名也可以用于检索。",
               "desc": "别名列表。病毒的别名也可以用于检索。",
@@ -3036,7 +3036,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.aliases": {
+            "bio_lab.pseudoviruses.aliases": {
               "name": "别名列表。病毒的别名也可以用于检索。",
               "desc_short": "别名列表。病毒的别名也可以用于检索。",
               "desc": "别名列表。病毒的别名也可以用于检索。",
@@ -3044,7 +3044,7 @@
             }
           },
           {
-            "changping02.antibodies.original_light_nt_seq": {
+            "bio_lab.antibodies.original_light_nt_seq": {
               "name": "原始来源的轻链可变区DNA序列",
               "desc_short": "原始来源的轻链可变区DNA序列",
               "desc": "原始来源的轻链可变区DNA序列",
@@ -3052,7 +3052,7 @@
             }
           },
           {
-            "changping02.antibodies.original_light_nt_seq": {
+            "bio_lab.antibodies.original_light_nt_seq": {
               "name": "原始来源的轻链可变区DNA序列",
               "desc_short": "原始来源的轻链可变区DNA序列",
               "desc": "原始来源的轻链可变区DNA序列",
@@ -3060,7 +3060,7 @@
             }
           },
           {
-            "changping02.antibodies.original_light_nt_seq": {
+            "bio_lab.antibodies.original_light_nt_seq": {
               "name": "原始来源的轻链可变区DNA序列",
               "desc_short": "原始来源的轻链可变区DNA序列",
               "desc": "原始来源的轻链可变区DNA序列",
@@ -3068,7 +3068,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_count": {
+            "bio_lab.cell_samples.cell_count": {
               "name": "细胞样本数量",
               "desc_short": "细胞样本数量",
               "desc": "细胞样本数量",
@@ -3076,7 +3076,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_count": {
+            "bio_lab.cell_samples.cell_count": {
               "name": "细胞样本数量",
               "desc_short": "细胞样本数量",
               "desc": "细胞样本数量",
@@ -3084,7 +3084,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_count": {
+            "bio_lab.cell_samples.cell_count": {
               "name": "细胞样本数量",
               "desc_short": "细胞样本数量",
               "desc": "细胞样本数量",
@@ -3092,7 +3092,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.name": {
+            "bio_lab.pseudoviruses.name": {
               "name": "病毒名称",
               "desc_short": "病毒名称",
               "desc": "病毒名称",
@@ -3100,7 +3100,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.name": {
+            "bio_lab.pseudoviruses.name": {
               "name": "病毒名称",
               "desc_short": "病毒名称",
               "desc": "病毒名称",
@@ -3108,7 +3108,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.name": {
+            "bio_lab.pseudoviruses.name": {
               "name": "病毒名称",
               "desc_short": "病毒名称",
               "desc": "病毒名称",
@@ -3116,7 +3116,7 @@
             }
           },
           {
-            "changping02.antibodies.v_gene_heavy": {
+            "bio_lab.antibodies.v_gene_heavy": {
               "name": "重链的V基因，例如IGHV3-53*01",
               "desc_short": "重链的V基因，例如IGHV3-53*01",
               "desc": "重链的V基因，例如IGHV3-53*01",
@@ -3124,7 +3124,7 @@
             }
           },
           {
-            "changping02.antibodies.v_gene_heavy": {
+            "bio_lab.antibodies.v_gene_heavy": {
               "name": "重链的V基因，例如IGHV3-53*01",
               "desc_short": "重链的V基因，例如IGHV3-53*01",
               "desc": "重链的V基因，例如IGHV3-53*01",
@@ -3132,7 +3132,7 @@
             }
           },
           {
-            "changping02.antibodies.v_gene_heavy": {
+            "bio_lab.antibodies.v_gene_heavy": {
               "name": "重链的V基因，例如IGHV3-53*01",
               "desc_short": "重链的V基因，例如IGHV3-53*01",
               "desc": "重链的V基因，例如IGHV3-53*01",
@@ -3140,7 +3140,7 @@
             }
           },
           {
-            "changping02.cells.description": {
+            "bio_lab.cells.description": {
               "name": "细胞描述",
               "desc_short": "细胞描述",
               "desc": "细胞描述",
@@ -3148,7 +3148,7 @@
             }
           },
           {
-            "changping02.cells.description": {
+            "bio_lab.cells.description": {
               "name": "细胞描述",
               "desc_short": "细胞描述",
               "desc": "细胞描述",
@@ -3156,7 +3156,7 @@
             }
           },
           {
-            "changping02.cells.description": {
+            "bio_lab.cells.description": {
               "name": "细胞描述",
               "desc_short": "细胞描述",
               "desc": "细胞描述",
@@ -3164,7 +3164,7 @@
             }
           },
           {
-            "changping02.antibodies.v_gene_light": {
+            "bio_lab.antibodies.v_gene_light": {
               "name": "轻链的V基因",
               "desc_short": "轻链的V基因",
               "desc": "轻链的V基因",
@@ -3172,7 +3172,7 @@
             }
           },
           {
-            "changping02.antibodies.v_gene_light": {
+            "bio_lab.antibodies.v_gene_light": {
               "name": "轻链的V基因",
               "desc_short": "轻链的V基因",
               "desc": "轻链的V基因",
@@ -3180,7 +3180,7 @@
             }
           },
           {
-            "changping02.antibodies.v_gene_light": {
+            "bio_lab.antibodies.v_gene_light": {
               "name": "轻链的V基因",
               "desc_short": "轻链的V基因",
               "desc": "轻链的V基因",
@@ -3188,7 +3188,7 @@
             }
           },
           {
-            "changping02.antibody_samples.id": {
+            "bio_lab.antibody_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3196,7 +3196,7 @@
             }
           },
           {
-            "changping02.cell_samples.id": {
+            "bio_lab.cell_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3204,7 +3204,7 @@
             }
           },
           {
-            "changping02.data_samples.id": {
+            "bio_lab.data_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3212,7 +3212,7 @@
             }
           },
           {
-            "changping02.neutralization_data.id": {
+            "bio_lab.neutralization_data.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3220,7 +3220,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.id": {
+            "bio_lab.neutralization_ic50_fit_data.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3228,7 +3228,7 @@
             }
           },
           {
-            "changping02.protein_samples.id": {
+            "bio_lab.protein_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3236,7 +3236,7 @@
             }
           },
           {
-            "changping02.wet_samples.id": {
+            "bio_lab.wet_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3244,7 +3244,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.id": {
+            "bio_lab.pseudovirus_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3252,7 +3252,7 @@
             }
           },
           {
-            "changping02.wet_samples.id": {
+            "bio_lab.wet_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3260,7 +3260,7 @@
             }
           },
           {
-            "changping02.antibody_samples.id": {
+            "bio_lab.antibody_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3268,7 +3268,7 @@
             }
           },
           {
-            "changping02.cell_samples.id": {
+            "bio_lab.cell_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3276,7 +3276,7 @@
             }
           },
           {
-            "changping02.data_samples.id": {
+            "bio_lab.data_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3284,7 +3284,7 @@
             }
           },
           {
-            "changping02.protein_samples.id": {
+            "bio_lab.protein_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3292,7 +3292,7 @@
             }
           },
           {
-            "changping02.neutralization_data.id": {
+            "bio_lab.neutralization_data.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3300,7 +3300,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.id": {
+            "bio_lab.neutralization_ic50_fit_data.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3308,7 +3308,7 @@
             }
           },
           {
-            "changping02.protein_samples.id": {
+            "bio_lab.protein_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3316,7 +3316,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.id": {
+            "bio_lab.pseudovirus_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3324,7 +3324,7 @@
             }
           },
           {
-            "changping02.neutralization_data.id": {
+            "bio_lab.neutralization_data.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3332,7 +3332,7 @@
             }
           },
           {
-            "changping02.data_samples.id": {
+            "bio_lab.data_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3340,7 +3340,7 @@
             }
           },
           {
-            "changping02.wet_samples.id": {
+            "bio_lab.wet_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3348,7 +3348,7 @@
             }
           },
           {
-            "changping02.cell_samples.id": {
+            "bio_lab.cell_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3356,7 +3356,7 @@
             }
           },
           {
-            "changping02.antibody_samples.id": {
+            "bio_lab.antibody_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3364,7 +3364,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.id": {
+            "bio_lab.pseudovirus_samples.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3372,7 +3372,7 @@
             }
           },
           {
-            "changping02.neutralization_ic50_fit_data.id": {
+            "bio_lab.neutralization_ic50_fit_data.id": {
               "name": "样本的唯一编号，与父类样本表的id一致",
               "desc_short": "样本的唯一编号，与父类样本表的id一致",
               "desc": "样本的唯一编号，与父类样本表的id一致",
@@ -3380,7 +3380,7 @@
             }
           },
           {
-            "changping02.proteins.name": {
+            "bio_lab.proteins.name": {
               "name": "蛋白质名称",
               "desc_short": "蛋白质名称",
               "desc": "蛋白质名称",
@@ -3388,7 +3388,7 @@
             }
           },
           {
-            "changping02.proteins.name": {
+            "bio_lab.proteins.name": {
               "name": "蛋白质名称",
               "desc_short": "蛋白质名称",
               "desc": "蛋白质名称",
@@ -3396,7 +3396,7 @@
             }
           },
           {
-            "changping02.proteins.name": {
+            "bio_lab.proteins.name": {
               "name": "蛋白质名称",
               "desc_short": "蛋白质名称",
               "desc": "蛋白质名称",
@@ -3404,7 +3404,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.antigens": {
+            "bio_lab.pseudoviruses.antigens": {
               "name": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc_short": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc": "病毒关键抗原，与一个或多个Protein的id连接",
@@ -3412,7 +3412,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.antigens": {
+            "bio_lab.pseudovirus_samples.antigens": {
               "name": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc_short": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc": "病毒关键抗原，与一个或多个Protein的id连接",
@@ -3420,7 +3420,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.antigens": {
+            "bio_lab.pseudovirus_samples.antigens": {
               "name": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc_short": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc": "病毒关键抗原，与一个或多个Protein的id连接",
@@ -3428,7 +3428,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.antigens": {
+            "bio_lab.pseudoviruses.antigens": {
               "name": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc_short": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc": "病毒关键抗原，与一个或多个Protein的id连接",
@@ -3436,7 +3436,7 @@
             }
           },
           {
-            "changping02.pseudoviruses.antigens": {
+            "bio_lab.pseudoviruses.antigens": {
               "name": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc_short": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc": "病毒关键抗原，与一个或多个Protein的id连接",
@@ -3444,7 +3444,7 @@
             }
           },
           {
-            "changping02.pseudovirus_samples.antigens": {
+            "bio_lab.pseudovirus_samples.antigens": {
               "name": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc_short": "病毒关键抗原，与一个或多个Protein的id连接",
               "desc": "病毒关键抗原，与一个或多个Protein的id连接",
@@ -3452,7 +3452,7 @@
             }
           },
           {
-            "changping02.cells.aliases": {
+            "bio_lab.cells.aliases": {
               "name": "别名列表。细胞的别名也可以用于检索。",
               "desc_short": "别名列表。细胞的别名也可以用于检索。",
               "desc": "别名列表。细胞的别名也可以用于检索。",
@@ -3460,7 +3460,7 @@
             }
           },
           {
-            "changping02.cells.aliases": {
+            "bio_lab.cells.aliases": {
               "name": "别名列表。细胞的别名也可以用于检索。",
               "desc_short": "别名列表。细胞的别名也可以用于检索。",
               "desc": "别名列表。细胞的别名也可以用于检索。",
@@ -3468,7 +3468,7 @@
             }
           },
           {
-            "changping02.cells.aliases": {
+            "bio_lab.cells.aliases": {
               "name": "别名列表。细胞的别名也可以用于检索。",
               "desc_short": "别名列表。细胞的别名也可以用于检索。",
               "desc": "别名列表。细胞的别名也可以用于检索。",
@@ -3476,7 +3476,7 @@
             }
           },
           {
-            "changping02.antibodies.original_heavy_nt_seq": {
+            "bio_lab.antibodies.original_heavy_nt_seq": {
               "name": "原始来源的重链可变区DNA序列",
               "desc_short": "原始来源的重链可变区DNA序列",
               "desc": "原始来源的重链可变区DNA序列",
@@ -3484,7 +3484,7 @@
             }
           },
           {
-            "changping02.antibodies.original_heavy_nt_seq": {
+            "bio_lab.antibodies.original_heavy_nt_seq": {
               "name": "原始来源的重链可变区DNA序列",
               "desc_short": "原始来源的重链可变区DNA序列",
               "desc": "原始来源的重链可变区DNA序列",
@@ -3492,7 +3492,7 @@
             }
           },
           {
-            "changping02.antibodies.original_heavy_nt_seq": {
+            "bio_lab.antibodies.original_heavy_nt_seq": {
               "name": "原始来源的重链可变区DNA序列",
               "desc_short": "原始来源的重链可变区DNA序列",
               "desc": "原始来源的重链可变区DNA序列",
@@ -3500,7 +3500,7 @@
             }
           },
           {
-            "changping02.proteins.type": {
+            "bio_lab.proteins.type": {
               "name": "子类类型",
               "desc_short": "子类类型",
               "desc": "子类类型",
@@ -3508,7 +3508,7 @@
             }
           },
           {
-            "changping02.proteins.type": {
+            "bio_lab.proteins.type": {
               "name": "子类类型",
               "desc_short": "子类类型",
               "desc": "子类类型",
@@ -3516,7 +3516,7 @@
             }
           },
           {
-            "changping02.proteins.type": {
+            "bio_lab.proteins.type": {
               "name": "子类类型",
               "desc_short": "子类类型",
               "desc": "子类类型",
@@ -3524,7 +3524,7 @@
             }
           },
           {
-            "changping02.antibodies.light_v_shm_nt_count": {
+            "bio_lab.antibodies.light_v_shm_nt_count": {
               "name": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
               "desc_short": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
               "desc": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
@@ -3532,7 +3532,7 @@
             }
           },
           {
-            "changping02.antibodies.light_v_shm_nt_count": {
+            "bio_lab.antibodies.light_v_shm_nt_count": {
               "name": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
               "desc_short": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
               "desc": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
@@ -3540,7 +3540,7 @@
             }
           },
           {
-            "changping02.antibodies.light_v_shm_nt_count": {
+            "bio_lab.antibodies.light_v_shm_nt_count": {
               "name": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
               "desc_short": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
               "desc": "根据DNA序列计算的轻链体细胞超频突变（SHM）数目",
@@ -3548,7 +3548,7 @@
             }
           },
           {
-            "changping02.cells.id": {
+            "bio_lab.cells.id": {
               "name": "细胞唯一编号",
               "desc_short": "细胞唯一编号",
               "desc": "细胞唯一编号",
@@ -3556,7 +3556,7 @@
             }
           },
           {
-            "changping02.cells.id": {
+            "bio_lab.cells.id": {
               "name": "细胞唯一编号",
               "desc_short": "细胞唯一编号",
               "desc": "细胞唯一编号",
@@ -3564,7 +3564,7 @@
             }
           },
           {
-            "changping02.cells.id": {
+            "bio_lab.cells.id": {
               "name": "细胞唯一编号",
               "desc_short": "细胞唯一编号",
               "desc": "细胞唯一编号",
@@ -3572,7 +3572,7 @@
             }
           },
           {
-            "changping02.antibodies.light_v_shm_aa_count": {
+            "bio_lab.antibodies.light_v_shm_aa_count": {
               "name": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
               "desc_short": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
               "desc": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
@@ -3580,7 +3580,7 @@
             }
           },
           {
-            "changping02.antibodies.light_v_shm_aa_count": {
+            "bio_lab.antibodies.light_v_shm_aa_count": {
               "name": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
               "desc_short": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
               "desc": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
@@ -3588,7 +3588,7 @@
             }
           },
           {
-            "changping02.antibodies.light_v_shm_aa_count": {
+            "bio_lab.antibodies.light_v_shm_aa_count": {
               "name": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
               "desc_short": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
               "desc": "根据氨基酸序列计算的轻链体细胞超频突变（SHM）数目",
@@ -3596,7 +3596,7 @@
             }
           },
           {
-            "changping02.protein_chains.name": {
+            "bio_lab.protein_chains.name": {
               "name": "蛋白质链名称",
               "desc_short": "蛋白质链名称",
               "desc": "蛋白质链名称",
@@ -3604,7 +3604,7 @@
             }
           },
           {
-            "changping02.protein_chains.name": {
+            "bio_lab.protein_chains.name": {
               "name": "蛋白质链名称",
               "desc_short": "蛋白质链名称",
               "desc": "蛋白质链名称",
@@ -3612,7 +3612,7 @@
             }
           },
           {
-            "changping02.protein_chains.name": {
+            "bio_lab.protein_chains.name": {
               "name": "蛋白质链名称",
               "desc_short": "蛋白质链名称",
               "desc": "蛋白质链名称",
@@ -3620,7 +3620,7 @@
             }
           },
           {
-            "changping02.antibodies.heavy_v_shm_nt_count": {
+            "bio_lab.antibodies.heavy_v_shm_nt_count": {
               "name": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
               "desc_short": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
               "desc": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
@@ -3628,7 +3628,7 @@
             }
           },
           {
-            "changping02.antibodies.heavy_v_shm_nt_count": {
+            "bio_lab.antibodies.heavy_v_shm_nt_count": {
               "name": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
               "desc_short": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
               "desc": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
@@ -3636,7 +3636,7 @@
             }
           },
           {
-            "changping02.antibodies.heavy_v_shm_nt_count": {
+            "bio_lab.antibodies.heavy_v_shm_nt_count": {
               "name": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
               "desc_short": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
               "desc": "根据DNA序列计算的重链体细胞超频突变（SHM）数目",
@@ -3644,7 +3644,7 @@
             }
           },
           {
-            "changping02.cells.name": {
+            "bio_lab.cells.name": {
               "name": "细胞名称",
               "desc_short": "细胞名称",
               "desc": "细胞名称",
@@ -3652,7 +3652,7 @@
             }
           },
           {
-            "changping02.cells.name": {
+            "bio_lab.cells.name": {
               "name": "细胞名称",
               "desc_short": "细胞名称",
               "desc": "细胞名称",
@@ -3660,7 +3660,7 @@
             }
           },
           {
-            "changping02.cells.name": {
+            "bio_lab.cells.name": {
               "name": "细胞名称",
               "desc_short": "细胞名称",
               "desc": "细胞名称",
@@ -3668,7 +3668,7 @@
             }
           },
           {
-            "changping02.antibodies.heavy_v_shm_aa_count": {
+            "bio_lab.antibodies.heavy_v_shm_aa_count": {
               "name": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
               "desc_short": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
               "desc": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
@@ -3676,7 +3676,7 @@
             }
           },
           {
-            "changping02.antibodies.heavy_v_shm_aa_count": {
+            "bio_lab.antibodies.heavy_v_shm_aa_count": {
               "name": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
               "desc_short": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
               "desc": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
@@ -3684,7 +3684,7 @@
             }
           },
           {
-            "changping02.antibodies.heavy_v_shm_aa_count": {
+            "bio_lab.antibodies.heavy_v_shm_aa_count": {
               "name": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
               "desc_short": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
               "desc": "根据氨基酸序列计算的重链体细胞超频突变（SHM）数目",
@@ -3692,7 +3692,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_type": {
+            "bio_lab.cell_samples.cell_type": {
               "name": "细胞类型，即细胞系的名称",
               "desc_short": "细胞类型，即细胞系的名称",
               "desc": "细胞类型，即细胞系的名称",
@@ -3700,7 +3700,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_type": {
+            "bio_lab.cell_samples.cell_type": {
               "name": "细胞类型，即细胞系的名称",
               "desc_short": "细胞类型，即细胞系的名称",
               "desc": "细胞类型，即细胞系的名称",
@@ -3708,7 +3708,7 @@
             }
           },
           {
-            "changping02.cell_samples.cell_type": {
+            "bio_lab.cell_samples.cell_type": {
               "name": "细胞类型，即细胞系的名称",
               "desc_short": "细胞类型，即细胞系的名称",
               "desc": "细胞类型，即细胞系的名称",
@@ -3722,109 +3722,109 @@
   "semantic-search-tables": {},
   "table-list": [
     {
-      "changping02.data_samples": {
+      "bio_lab.data_samples": {
         "table_description": "",
         "table_description_enhanced": "数据样本基类表：实验/分析产生的数据样本统一入口（用于多态扩展）"
       }
     },
     {
-      "changping02.antibodies": {
+      "bio_lab.antibodies": {
         "table_description": "",
         "table_description_enhanced": "抽象抗体表：抗体科研实体（heavy/light链相关信息与可选基因/SHM等字段})"
       }
     },
     {
-      "changping02.cell_samples": {
+      "bio_lab.cell_samples": {
         "table_description": "",
         "table_description_enhanced": "细胞样本表：真实细胞样本（细胞数、细胞系/类型等）"
       }
     },
     {
-      "changping02.antibody_samples": {
+      "bio_lab.antibody_samples": {
         "table_description": "",
         "table_description_enhanced": "抗体样本表：抗体实体样本（体积、浓度、关联抽象抗体信息等）"
       }
     },
     {
-      "changping02.neutralization_data": {
+      "bio_lab.neutralization_data": {
         "table_description": "",
         "table_description_enhanced": "中和实验数据表：存储中和实验原始数据（浓度点、读数、空对照读数等）"
       }
     },
     {
-      "changping02.cells": {
+      "bio_lab.cells": {
         "table_description": "",
         "table_description_enhanced": "细胞库表：细胞实体条目（名称、别名、描述等；可用于复用与检索）"
       }
     },
     {
-      "changping02.neutralization_ic50_fit_data": {
+      "bio_lab.neutralization_ic50_fit_data": {
         "table_description": "",
         "table_description_enhanced": "IC50拟合数据表：存储拟合结果（是否成功、IC50值、拟合参数与指标等）"
       }
     },
     {
-      "changping02.experiments": {
+      "bio_lab.experiments": {
         "table_description": "",
         "table_description_enhanced": "实验基类表：所有实验的统一入口与公共字段（时间、人员、状态、类型等）"
       }
     },
     {
-      "changping02.protein_chains": {
+      "bio_lab.protein_chains": {
         "table_description": "",
         "table_description_enhanced": "蛋白质链表：存储单条蛋白链的名称与氨基酸序列"
       }
     },
     {
-      "changping02.neutralization_experiments": {
+      "bio_lab.neutralization_experiments": {
         "table_description": "",
         "table_description_enhanced": "中和实验表：定义中和实验的输入样本、实验参数与输出结果关联"
       }
     },
     {
-      "changping02.neutralization_ic50_fits": {
+      "bio_lab.neutralization_ic50_fits": {
         "table_description": "",
         "table_description_enhanced": "IC50拟合实验表：对中和数据做归一化与曲线拟合并产出IC50拟合数据"
       }
     },
     {
-      "changping02.protein_samples": {
+      "bio_lab.protein_samples": {
         "table_description": "",
         "table_description_enhanced": "蛋白质样本表：蛋白实体样本（体积、浓度、关联抽象蛋白信息等）"
       }
     },
     {
-      "changping02.samples": {
+      "bio_lab.samples": {
         "table_description": "",
         "table_description_enhanced": "样本基类表：所有样本的统一入口与公共字段（来源实验、样本类型等）"
       }
     },
     {
-      "changping02.proteins": {
+      "bio_lab.proteins": {
         "table_description": "",
         "table_description_enhanced": "抽象蛋白表：抽象科研实体蛋白（名称、别名、关联序列链、多态类型等）"
       }
     },
     {
-      "changping02.pseudovirus_samples": {
+      "bio_lab.pseudovirus_samples": {
         "table_description": "",
         "table_description_enhanced": "假病毒样本表：假病毒实体样本（体积、系统类型、关键抗原、关联抽象假病毒信息等）"
       }
     },
     {
-      "changping02.users": {
+      "bio_lab.users": {
         "table_description": "",
         "table_description_enhanced": "用户表：存储系统用户的基础信息（姓名、邮箱等）"
       }
     },
     {
-      "changping02.pseudoviruses": {
+      "bio_lab.pseudoviruses": {
         "table_description": "",
         "table_description_enhanced": "假病毒库表：假病毒实体条目（名称、类型、关键抗原等；可用于复用与检索）"
       }
     },
     {
-      "changping02.wet_samples": {
+      "bio_lab.wet_samples": {
         "table_description": "",
         "table_description_enhanced": "湿实验样本表：样本库中真实存在的实体样本（库存状态、冻融次数等）"
       }
@@ -3834,27 +3834,27 @@
     {
       "test": [
         {
-          "table_name": "changping02.neutralization_ic50_fits",
+          "table_name": "bio_lab.neutralization_ic50_fits",
           "table_description": "IC50拟合实验表：对中和数据做归一化与曲线拟合并产出IC50拟合数据",
           "score": 0.4880045645239699
         },
         {
-          "table_name": "changping02.neutralization_ic50_fit_data",
+          "table_name": "bio_lab.neutralization_ic50_fit_data",
           "table_description": "IC50拟合数据表：存储拟合结果（是否成功、IC50值、拟合参数与指标等）",
           "score": 0.4690558873481616
         },
         {
-          "table_name": "changping02.neutralization_data",
+          "table_name": "bio_lab.neutralization_data",
           "table_description": "中和实验数据表：存储中和实验原始数据（浓度点、读数、空对照读数等）",
           "score": 0.44411942029711216
         },
         {
-          "table_name": "changping02.wet_samples",
+          "table_name": "bio_lab.wet_samples",
           "table_description": "湿实验样本表：样本库中真实存在的实体样本（库存状态、冻融次数等）",
           "score": 0.401777619229414
         },
         {
-          "table_name": "changping02.antibodies",
+          "table_name": "bio_lab.antibodies",
           "table_description": "抽象抗体表：抗体科研实体（heavy/light链相关信息与可选基因/SHM等字段})",
           "score": 0.39024847745895663
         }

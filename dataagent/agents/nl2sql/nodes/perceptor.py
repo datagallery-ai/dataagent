@@ -172,14 +172,32 @@ class PerceptorNode(BaseNL2SQLNode):
         return state
 
     def _load_prompt(self, name: str | None) -> str:
+        """Load a user-supplied prompt file by name.
+
+        Resolution order:
+        1. If ``name`` is an existing file path → read it directly.
+        2. If ``WORKSPACE.path`` is configured → look for ``<workspace>/<name>``;
+           if found, read it.
+        3. Fall back to the package-bundled prompt at
+           ``nl2sql/prompts/user/<name>`` (via :class:`PromptTemplate`).
+
+        This fallback prevents ``FileNotFoundError`` when the referenced prompt
+        file exists in the package but has not been copied to the workspace.
+        """
         if not name:
             return ""
-        workspace = self._get_agent_config("WORKSPACE.path")
         name = name if name.endswith(".md") else f"{name}.md"
-        if workspace:
-            prompt_path = Path(name) if Path(name).is_file() else Path(workspace) / name
-            logger.info(f"nl2sql get prompt_path: {prompt_path}")
+        prompt_path = Path(name) if Path(name).is_file() else None
+        if prompt_path is not None:
+            logger.info(f"nl2sql load prompt (absolute): {prompt_path}")
             return prompt_path.read_text(encoding="utf-8")
+        workspace = self._get_agent_config("WORKSPACE.path")
+        if workspace:
+            ws_path = Path(workspace) / name
+            if ws_path.is_file():
+                logger.info(f"nl2sql load prompt (workspace): {ws_path}")
+                return ws_path.read_text(encoding="utf-8")
+        logger.info(f"nl2sql load prompt (package fallback): {name}")
         return PromptTemplate.from_package_relative(f"{NL2SQL_PROMPT_PREFIX}/user/{name}").content
 
     def _get_table_list(self) -> list:

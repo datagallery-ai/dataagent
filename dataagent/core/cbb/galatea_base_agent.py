@@ -97,15 +97,17 @@ class BaseAgent:
 
     def invoke(self, state: BaseState, env: Env) -> BaseState:
         """Invoke the agent."""
+        from dataagent.core.cbb.base_hook import invoke_hook
+
         runtime = Runtime(env)
 
         for hook in self._pre_hooks:
-            state = hook(state, runtime)
+            state = invoke_hook(hook, state, runtime)
 
         state = self._invoke(state, runtime)
 
         for hook in self._post_hooks:
-            state = hook(state, runtime)
+            state = invoke_hook(hook, state, runtime)
 
         return state
 

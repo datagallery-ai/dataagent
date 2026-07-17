@@ -1,7 +1,7 @@
 AGENT_CONFIG:
-  name: "DataAgent for Changping Lab"
+  name: "DataAgent for Bio Lab"
   version: "1.0"
-  description: "DataAgent for Changping Lab"
+  description: "DataAgent for Bio Lab"
   backend: "langgraph"
   type: "react"
   mode: "dev"
@@ -38,6 +38,17 @@ SCENARIO:
 
 PRE_WORKFLOW: []
 
+# 按需加载 plan_enforcer：双触发——skill 读取（require_plan_skills）与
+# tool-call 阈值（tool_call_threshold）。合并后 planner.pre = [plan_enforcer, pruner]
+HOOKS:
+  nodes:
+    planner:
+      pre:
+        - name: plan_enforcer
+          require_plan_skills:
+            - create-neutralization-experiment
+          tool_call_threshold: 4
+
 ACTOR_LOOP:
   - node: "planner"
     module: "dataagent.core.flex.nodes.planner.Planner"
@@ -58,7 +69,7 @@ TOOLS:
         llm_model: "chat_model"
         core_config:
           perceptor:
-            user_sql_rules: "sql_rules_changping"
+            user_sql_rules: "sql_rules_bio_lab"
             user_few_shot_examples: null
           generator:
             strategies: ["prompt"]
@@ -71,10 +82,10 @@ TOOLS:
       - "skills"
 
 DATABASE:
-  db_id: "changping02"
+  db_id: "bio_lab"
   engine: "sqlite"
   config:
-    path: "__WORKSPACE_DIR__/changping02.sqlite"
+    path: "__WORKSPACE_DIR__/bio_lab.sqlite"
 
 SEMANTIC_LAYER:
   base_url: "http://localhost:31000"  # 客户端会统一补齐到 /api/semantic/v1

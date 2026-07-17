@@ -43,6 +43,12 @@ from dataagent.utils.parsing_utils import extract_json_block, normalize_newlines
 SKILL_SELECTION_CACHE_KEY = "planner_skill_selection"
 SKILL_SELECTOR_PROMPT_NAMESPACE = "skill_selector"
 
+# state 标志键：由 planner pre-hook（如 plan_enforcer）写入，
+# 本模块只读取，不再自算 SKILL.md 读取检测与 tool-call 阈值。
+SKILL_MD_READ_WITHOUT_PLAN_KEY = "skill_md_read_without_plan"
+TOOL_CALL_COUNT_KEY = "tool_call_count"
+PLAN_REQUIRED_THRESHOLD_KEY = "plan_required_threshold"
+
 
 def _runtime_agent_config(runtime: Any) -> dict[str, Any]:
     """
@@ -132,7 +138,14 @@ def prepare_flex_planner_prompt(
     )
     messages = [system_message] + ([] if has_current_user_message else [user_message]) + history_messages
 
-    todo_message = build_todo_message(context=context)
+    # L3: planner pre-hook（plan_enforcer）置位后，注入硬性提醒（system-voiced）。
+    # 两条触发独立：skill-md-read（更具体）优先；否则 tool-call 阈值。
+    todo_plan_vars = _build_plan_prompt_variables(context=context, state=state)
+    enforcement_message = _build_plan_enforcement_message(todo_plan_vars)
+    if enforcement_message is not None:
+        messages.append(enforcement_message)
+
+    todo_message = build_todo_message(context=context, state=state)
     if todo_message:
         messages.append(todo_message)
 
@@ -180,12 +193,52 @@ def sync_flex_planner_user_human_to_state(
             _save_human_message_to_full(state, msg, runtime)
 
 
-def build_todo_message(context: Context) -> HumanMessage | None:
+def build_todo_message(context: Context, *, state: Any = None) -> HumanMessage | None:
     """构建包含待办指令的 HumanMessage。"""
     todo_template = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/todo")
     return build_human_message(
-        prompt_template=todo_template, prompt_str="", **_build_plan_prompt_variables(context=context)
+        prompt_template=todo_template, prompt_str="", **_build_plan_prompt_variables(context=context, state=state)
     )
+
+
+def _build_plan_enforcement_message(todo_plan_vars: dict[str, Any]) -> HumanMessage | None:
+    """根据 plan 状态标志构建 ``[SYSTEM POLICY]`` 强制建 plan 提醒消息。
+
+    由 planner pre-hook（``plan_enforcer``）写入的 ``todo_plan_vars`` 标志决定触发哪条
+    提醒（两条触发独立、互斥）：
+
+    - **skill 触发**（``skill_md_read_without_plan``）：读过声明需要 plan 的 skill 的
+      ``SKILL.md`` 且无 plan → 返回 skill 措辞提醒（注册 SKILL.md ``## Workflow`` 为 todos）。
+    - **tool-call 触发**（``tool_call_count >= plan_required_threshold``）：当前轮次
+      ToolMessage 数达阈值且无 plan → 返回 tool-call 措辞提醒。
+
+    有 plan、无触发或标志缺失时返回 ``None``。skill 触发优先于 tool-call（更具体）。
+    """
+    if todo_plan_vars.get("has_plan"):
+        return None
+    if todo_plan_vars.get("skill_md_read_without_plan"):
+        return HumanMessage(
+            content=(
+                "[SYSTEM POLICY] A skill's SKILL.md has been read but no `create_plan` "
+                "has been called. Per the Work Plan policy, multi-step skill workflows "
+                "MUST be registered as a plan before substantive execution. "
+                "Call `create_plan` now with the SKILL.md `## Workflow` steps as `todos`, "
+                "then proceed with the first todo."
+            )
+        )
+    tool_call_count = int(todo_plan_vars.get("tool_call_count", 0) or 0)
+    plan_required_threshold = int(todo_plan_vars.get("plan_required_threshold", 0) or 0)
+    if tool_call_count and tool_call_count >= plan_required_threshold:
+        return HumanMessage(
+            content=(
+                f"[SYSTEM POLICY] {tool_call_count} tool call(s) have been "
+                "made without an active `create_plan`. Per the Work Plan policy, complex "
+                "multi-step tasks MUST be registered as a plan before further substantive "
+                "execution. Call `create_plan` now with an `introduction`, `approach`, "
+                "and ordered `todos`, then proceed with the first todo."
+            )
+        )
+    return None
 
 
 def _build_skill_entries_prompt(skills: list[dict[str, Any]], *, section_title: str) -> str:
@@ -867,9 +920,23 @@ def _allow_path_bullet_lines(config: dict[str, Any]) -> str:
     return "\n".join(f"- `{p}`" for p in paths)
 
 
-def _build_plan_prompt_variables(context: Context) -> dict[str, Any]:
-    """从进程内全局 Plan 快照构建 planner 模板变量。"""
+def _build_plan_prompt_variables(context: Context, *, state: Any = None) -> dict[str, Any]:
+    """从进程内全局 Plan 快照构建 planner 模板变量。
+
+    ``skill_md_read_without_plan`` / ``tool_call_count`` / ``plan_required_threshold``
+    均由 planner pre-hook（``plan_enforcer``）写入 state；本模块只读取，不再自算
+    SKILL.md 读取检测与 tool-call 阈值。缺省 ``None`` 时退化为只读 plan 快照
+    （向后兼容，无 enforcement）。
+    """
     plan = context.todolist_manager.todolist
+    if state is not None and plan is None:
+        tool_call_count = int(state.get(TOOL_CALL_COUNT_KEY, 0) or 0)
+        skill_md_read_without_plan = bool(state.get(SKILL_MD_READ_WITHOUT_PLAN_KEY, False))
+        plan_required_threshold = int(state.get(PLAN_REQUIRED_THRESHOLD_KEY, 0) or 0)
+    else:
+        tool_call_count = 0
+        skill_md_read_without_plan = False
+        plan_required_threshold = 0
     if plan is None:
         return {
             "has_plan": False,
@@ -878,6 +945,9 @@ def _build_plan_prompt_variables(context: Context) -> dict[str, Any]:
             "plan_approach": "",
             "plan_current_todo": "",
             "plan_todos_overview": "",
+            "tool_call_count": tool_call_count,
+            "skill_md_read_without_plan": skill_md_read_without_plan,
+            "plan_required_threshold": plan_required_threshold,
         }
 
     incomplete = [t for t in plan.todos if not t.completed]
@@ -896,4 +966,7 @@ def _build_plan_prompt_variables(context: Context) -> dict[str, Any]:
         "plan_approach": plan.approach,
         "plan_current_todo": current_todo,
         "plan_todos_overview": "\n".join(overview_lines),
+        "tool_call_count": tool_call_count,
+        "skill_md_read_without_plan": skill_md_read_without_plan,
+        "plan_required_threshold": plan_required_threshold,
     }

@@ -237,3 +237,8 @@ server/web/node_modules/
 *.p12
 *.pfx
 certs/
+
+# OpenSpec & OpenCode Config
+.opencode/
+openspec/
+opencode.jsonc

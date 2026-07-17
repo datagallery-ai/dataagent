@@ -11,7 +11,7 @@
 # limitations under the License.
 # ============================================================================
 
-"""E2E test for changping: main Agent cache hit rate optimization v3.0.
+"""E2E test for bio_lab: main Agent cache hit rate optimization v3.0.
 
 This test verifies the v3.0 cache optimization (D6: move runtime_environment
 out of SystemMessage into VariableUser) by replaying the user's real
@@ -42,18 +42,18 @@ Usage::
     export DATAAGENT_CACHE_ANCHOR=1
     export DATAAGENT_CONTEXT_DUMP=1
     export DATAAGENT_CACHE_BREAKPOINT_ANNOTATION=1
-    python tests/e2e/changping/test_changping_cache_v3.py
-    python tests/e2e/changping/test_changping_cache_v3.py --skip_slow
+    python tests/e2e/bio_lab/test_performance.py
+    python tests/e2e/bio_lab/test_performance.py --skip_slow
 
     # Switch model preset (default: deepseek). bailian enables cache_control.
-    python tests/e2e/changping/test_changping_cache_v3.py --model bailian
+    python tests/e2e/bio_lab/test_performance.py --model bailian
 
     # Override pruner / IR thresholds.
-    python tests/e2e/changping/test_changping_cache_v3.py \\
+    python tests/e2e/bio_lab/test_performance.py \\
         --compress_message_cnt 100 --recent_turns 50
 
     # Re-extract from a prior run.
-    python tests/e2e/changping/test_changping_cache_v3.py --tc2_only \\
+    python tests/e2e/bio_lab/test_performance.py --tc2_only \\
         --user_id cache_test_user_v3_20260622_141023_ab12 \\
         --session_id cache_test_session_v3_20260622_141023_ab12
 
@@ -96,8 +96,8 @@ from loguru import logger
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_DIR))
 
-CHANGPING_DIR = Path(__file__).resolve().parent
-CONFIG_DIR = CHANGPING_DIR / "config"
+BIO_LAB_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = BIO_LAB_DIR / "config"
 
 os.environ.setdefault("DATAAGENT_LOG_LEVEL", "INFO")
 os.environ.setdefault("DATAAGENT_CONTEXT_DUMP", "1")
@@ -141,7 +141,7 @@ _MOCK_PORT = 0  # 0 = auto-resolve (random or --mock_port); set before _start_mo
 # Defaults to the inline mock server (offline-reproducible); set the
 # SEMANTIC_SERVICE_URL env var to opt into a real semantic-service instance.
 _SEMANTIC_SERVICE_URL = os.getenv("SEMANTIC_SERVICE_URL", "")
-_CHANGPING_SCENE = os.getenv("CHANGPING_SCENE", "changping02")
+_CHANGPING_SCENE = os.getenv("CHANGPING_SCENE", "bio_lab")
 _mock_server: HTTPServer | None = None
 
 
@@ -261,17 +261,12 @@ atexit.register(_stop_mock_metavisor)
 # OntologyEnv mock
 # ---------------------------------------------------------------------------
 def _load_ontology_fixture() -> dict[str, str]:
-    """Return the formatted ontology description from changping02_ontology.json.
-
-    Kept as an offline reference for the legacy fixture-based rendering; the
-    live path now goes through ``ontology_query.get_ontology_description``
-    (real semantic-service via the basic retrieval REST APIs).
-    """
-    spec_path = CONFIG_DIR / "changping02_ontology.json"
+    """Return the formatted ontology description from bio_lab_ontology.json."""
+    spec_path = CONFIG_DIR / "bio_lab_ontology.json"
     data = json.loads(spec_path.read_text(encoding="utf-8"))
-    ontology_data = data.get("changping02", data)
-    if isinstance(ontology_data, dict) and "changping02" in data:
-        ontology_data = data["changping02"]
+    ontology_data = data.get("bio_lab", data)
+    if isinstance(ontology_data, dict) and "bio_lab" in data:
+        ontology_data = data["bio_lab"]
 
     entities = ontology_data.get("entities", [])
     relations = ontology_data.get("relations", [])
@@ -308,6 +303,16 @@ def _load_ontology_fixture() -> dict[str, str]:
     }
 
 
+@contextmanager
+def mock_ontology_env():
+    """Patch OntologyEnv.get_ontology_description to return fixture data."""
+    result = _load_ontology_fixture()
+    logger.info("OntologyEnv.get_ontology_description() → mocked (config/bio_lab_ontology.json)")
+
+    with patch("dataagent.actions.gym.ontology_env.OntologyEnv.get_ontology_description", lambda self: result):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Config path resolver
 # ---------------------------------------------------------------------------
@@ -331,7 +336,7 @@ def _resolve_config_paths(config: dict, workspace_dir: Path) -> dict:
         allow_path = workspace.get("allow_path", [])
         if isinstance(allow_path, list):
             workspace["allow_path"] = [
-                str(workspace_dir) if p == "__WORKSPACE_DIR__" else _resolve_path(p, CHANGPING_DIR) for p in allow_path
+                str(workspace_dir) if p == "__WORKSPACE_DIR__" else _resolve_path(p, BIO_LAB_DIR) for p in allow_path
             ]
 
     database = resolved.get("DATABASE", {})
@@ -348,12 +353,12 @@ def _resolve_config_paths(config: dict, workspace_dir: Path) -> dict:
         if isinstance(skills, dict):
             custom_dirs = skills.get("custom_dirs", [])
             if isinstance(custom_dirs, list):
-                skills["custom_dirs"] = [_resolve_path(d, CHANGPING_DIR) for d in custom_dirs]
+                skills["custom_dirs"] = [_resolve_path(d, BIO_LAB_DIR) for d in custom_dirs]
 
     return resolved
 
 
-_ORIGINAL_SQLITE_PATH = CHANGPING_DIR / "data" / "changping02.sqlite"
+_ORIGINAL_SQLITE_PATH = BIO_LAB_DIR / "data" / "bio_lab.sqlite"
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +578,7 @@ def _extract_final_assistant_text(messages: list[Any]) -> str:
 
 
 def _find_created_experiment_id(db_path: Path, today: str) -> int | None:
-    """Query the changping02.sqlite DB for the experiment created by Q1.
+    """Query the bio_lab.sqlite DB for the experiment created by Q1.
 
     A "valid Q1 creation" is a row in ``neutralization_experiments`` joined
     with ``experiments`` that satisfies ALL of:
@@ -901,7 +906,7 @@ PROCESS_1_KEYS = [
 # catch functional regressions (e.g. NL2SQL generating wrong SQL that prevents
 # the experiment from being created).
 #
-# Values are verified directly against tests/e2e/changping/data/changping02.sqlite
+# Values are verified directly against tests/e2e/bio_lab/data/bio_lab.sqlite
 # and cross-checked against a known-good deepseek run
 # (cache_test_user_v3_20260630_163422_9a55, which created experiment 902036).
 #
@@ -1025,7 +1030,7 @@ async def test_v3_session_replay(
 
     workspace_dir = session_root / "workspace"
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "changping02.sqlite")
+    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "bio_lab.sqlite")
 
     config_path = _build_cache_test_config(
         workspace_dir,
@@ -1090,13 +1095,36 @@ async def test_v3_session_replay(
             from dataagent.interface.sdk.agent import DataAgent
 
             process_agents[process_idx] = DataAgent.from_config(config_path)
-            logger.info(f"  [Process {process_idx}] New DataAgent instance created")
             if process_idx > 0:
                 # Only process 1+ is a true "restart" — it resumes an existing
                 # session from disk. Process 0 is a cold start (new session,
                 # no prior cache), so it is NOT counted as a restart.
                 restart_query_indices.append(i)
-                logger.info(f"  [Process {process_idx}] Session resumed from disk (restart)")
+                # session_history_restore loads prior queries' messages from
+                # messages.json into state["messages"] inside chat(). Those
+                # restored messages carry STALE usage_metadata (from their
+                # original generation in a prior process). To avoid
+                # double-counting them in per-query stats, initialize
+                # prev_msgs_len to the persisted message count so the slice
+                # only captures NEW messages produced by this chat() call.
+                _messages_file = session_root / "workspace" / ".memory" / "messages.json"
+                if _messages_file.exists():
+                    try:
+                        from dataagent.core.context.message_history import read_messages_file
+
+                        _restored_count = len(read_messages_file(_messages_file))
+                        prev_msgs_len_by_proc[process_idx] = _restored_count
+                        logger.info(
+                            f"  [Process {process_idx}] Session resumed from disk (restart); "
+                            f"{_restored_count} restored messages excluded from per-query usage"
+                        )
+                    except Exception as e:
+                        logger.warning(f"  [Process {process_idx}] Failed to read messages.json baseline: {e}")
+                        logger.info(f"  [Process {process_idx}] Session resumed from disk (restart)")
+                else:
+                    logger.info(f"  [Process {process_idx}] Session resumed from disk (restart)")
+            else:
+                logger.info(f"  [Process {process_idx}] New DataAgent instance created")
 
         agent = process_agents[process_idx]
 
@@ -1418,7 +1446,7 @@ async def test_v3_session_replay(
     # any skipped keys).
     response_by_key: dict[str, dict[str, Any]] = {r["query_key"]: r for r in per_query_responses}
 
-    db_path = workspace_dir / "changping02.sqlite"
+    db_path = workspace_dir / "bio_lab.sqlite"
     today_str = datetime.now().strftime("%Y-%m-%d")
     functional_results: dict[str, dict[str, Any]] = {}
 
@@ -2059,9 +2087,9 @@ function showRound(runIdx, roundIdx) {
 # ---------------------------------------------------------------------------
 def _create_test_workspace() -> Path:
     """Create a temporary workspace directory and copy the sqlite DB into it."""
-    workspace_dir = Path(tempfile.mkdtemp(prefix="test_changping_ws_"))
+    workspace_dir = Path(tempfile.mkdtemp(prefix="test_bio_lab_ws_"))
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "changping02.sqlite")
+    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "bio_lab.sqlite")
     logger.info(f"Test workspace created: {workspace_dir} (sqlite DB copied)")
     return workspace_dir
 
@@ -2084,7 +2112,7 @@ def _build_test_config(workspace_dir: Path) -> Path:
         config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
     config.setdefault("DATABASE", {})["db_id"] = _CHANGPING_SCENE
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", prefix="test_changping_", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", prefix="test_bio_lab_", delete=False) as tmp:
         yaml.safe_dump(config, tmp, allow_unicode=True, sort_keys=False)
         tmp.flush()
         return Path(tmp.name)
@@ -2122,8 +2150,8 @@ async def run_tool_mode(
 
 async def run_single_query(query: str) -> None:
     """Run a single user query against the agent and print the response."""
-    workspace_dir = Path(tempfile.mkdtemp(prefix="changping_query_"))
-    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "changping02.sqlite")
+    workspace_dir = Path(tempfile.mkdtemp(prefix="bio_lab_query_"))
+    shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "bio_lab.sqlite")
 
     config_path = _build_cache_test_config(workspace_dir, enable_human_feedback=False)
     logger.info(f"Query mode config: {config_path}")
@@ -2151,7 +2179,7 @@ async def main():
 
     _disable_proxy_env()
 
-    parser = argparse.ArgumentParser(description="Changping cache v3.0 e2e test / interactive tool")
+    parser = argparse.ArgumentParser(description="Bio_lab cache v3.0 e2e test / interactive tool")
     parser.add_argument(
         "--tool_mode",
         action="store_true",
@@ -2249,7 +2277,7 @@ async def main():
     CACHE_THRESHOLD_PROFILE = args.cache_threshold_profile
 
     logger.info("=" * 60)
-    logger.info("Changping cache v3.0 e2e test starting")
+    logger.info("Bio_lab cache v3.0 e2e test starting")
     logger.info(f"  user_id   : {CACHE_TEST_USER_ID}")
     logger.info(f"  session_id : {CACHE_TEST_SESSION_ID}")
     logger.info(f"  session_root: {_resolve_session_root()}")

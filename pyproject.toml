@@ -122,14 +122,14 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-# changping e2e tests are script-style (run via `python tests/e2e/changping/...`),
+# bio_lab e2e tests are script-style (run via `python tests/e2e/bio_lab/...`),
 # not pytest-collectable: they require LLM API keys, fixture DBs, and mock
 # servers. Excluding them from default collection avoids:
 #   1. RuntimeWarning: coroutine ... was never awaited (async tests missing
 #      @pytest.mark.asyncio in strict mode)
 #   2. Long-running real LLM calls during `pytest tests/`
-# Run them explicitly as scripts: `uv run tests/e2e/changping/test_performance.py`
-addopts = "--verbose --color=yes --ignore=tests/e2e/changping"
+# Run them explicitly as scripts: `uv run tests/e2e/bio_lab/test_performance.py`
+addopts = "--verbose --color=yes --ignore=tests/e2e/bio_lab"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.coverage.run]

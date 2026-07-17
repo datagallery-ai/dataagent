@@ -85,15 +85,17 @@ class BaseNode:
 
     def process(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
         """Main entry of node (sync, galatea-style)."""
+        from dataagent.core.cbb.base_hook import invoke_hook
+
         collector = get_current_collector()
         with collector.measure("node", self.name):
             for hook in self.pre_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="pre"):
-                    state = hook(state, runtime)
+                    state = invoke_hook(hook, state, runtime)
             state = self._process(state, runtime)
             for hook in self.post_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="post"):
-                    state = hook(state, runtime)
+                    state = invoke_hook(hook, state, runtime)
             return state
 
     async def aprocess(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
@@ -112,17 +114,19 @@ class BaseNode:
         - 仅返回 _aprocess 显式提供的键（messages 做合并），避免把 state 中已有的
           reducer 管理字段（如 num_turns）一并返回导致重复累加
         """
+        from dataagent.core.cbb.base_hook import invoke_hook
+
         collector = get_current_collector()
         with collector.measure("node", self.name):
             for hook in self.pre_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="pre"):
-                    state = hook(state, runtime)
+                    state = invoke_hook(hook, state, runtime)
             if bool(state.get("complete", False)):
                 return dict(state)
             result = await self._aprocess(state, runtime)
             for hook in self.post_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="post"):
-                    result = hook(result, runtime)
+                    result = invoke_hook(hook, result, runtime)
             result_msgs = result.get("messages", [])
             if result_msgs and not isinstance(result_msgs, list):
                 result_msgs = [result_msgs]
