@@ -303,7 +303,7 @@ if not target.get("input_cache_read_tokens"):
 - `input_cache_creation_tokens` — 缓存创建 token 数
 
 下游 `dataagent/core/utils/performance.py:summarize_llm_usage` 和
-`tests/e2e/changping/test_performance.py:_collect_usage_from_state` 都读这两个统一
+`tests/e2e/bio_lab/test_performance.py:_collect_usage_from_state` 都读这两个统一
 字段计算命中率。
 
 #### 1.6.3 各厂商字段语义差异
@@ -324,7 +324,7 @@ if not target.get("input_cache_read_tokens"):
 #### 1.6.4 命中率计算（已知限制）
 
 `dataagent/core/context/message_history.py:233` 与
-`tests/e2e/changping/test_performance.py:_compute_cache_hit_rate` 用统一公式：
+`tests/e2e/bio_lab/test_performance.py:_compute_cache_hit_rate` 用统一公式：
 
 ```python
 cache_hit_rate = input_cache_read_tokens / input_tokens * 100
@@ -710,7 +710,7 @@ bp0 测试：`test_bp0_system_always_gets_cc`、`test_bp0_survives_compression_s
 
 ### 7.2 e2e 测试
 
-文件：`tests/e2e/changping/test_performance.py`
+文件：`tests/e2e/bio_lab/test_performance.py`
 
 | 指标 | 阈值 | 说明 |
 |------|------|------|
@@ -759,7 +759,7 @@ bp0 测试：`test_bp0_system_always_gets_cc`、`test_bp0_survives_compression_s
 
 ### 10.1 验证设置
 
-使用 `scripts/run_perf.sh --runs 3` 在两个分支上跑同一组 7-query changping e2e 序列，3 次运行取中位数消除单次抖动。2 模型 × 2 scenario = 4 组对比：
+使用 `scripts/run_perf.sh --runs 3` 在两个分支上跑同一组 7-query bio_lab e2e 序列，3 次运行取中位数消除单次抖动。2 模型 × 2 scenario = 4 组对比：
 
 | 分支 | 含义 |
 |------|------|

@@ -1205,7 +1205,9 @@ async def nl2sql_sub_agent_tool(
     *,
     _tool_context: ToolExecutionContext,
 ):
-    """Convert natural language query to SQL. One SQL query at a time.
+    """Convert natural language query to SQL. You MUST use this tool for ALL SQL
+    queries against the database. Do NOT use `python -c` with `import sqlite3`
+    or `sqlite3` CLI to write SQL directly. One SQL query at a time.
     SQL and CSV files are saved under the current Agent session workspace (set when
     the run starts)
 

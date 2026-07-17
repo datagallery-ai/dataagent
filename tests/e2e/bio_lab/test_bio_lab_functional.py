@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Functional guard test for changping HITL sentinel behavior.
+"""Functional guard test for bio_lab HITL sentinel behavior.
 
 This test verifies that when the XBB.1.5 pseudovirus sample (id=904036) is
 **missing** from ``wet_samples`` (simulating the data inconsistency from
@@ -40,10 +40,10 @@ Together they guard both the happy path and the HITL-blocked path.
 Usage::
 
     # Run as a script (like test_performance.py)
-    uv run tests/e2e/changping/test_changping_functional.py --model openai
+    uv run tests/e2e/bio_lab/test_bio_lab_functional.py --model openai
 
     # Run via pytest
-    uv run pytest tests/e2e/changping/test_changping_functional.py -v
+    uv run pytest tests/e2e/bio_lab/test_bio_lab_functional.py -v
 """
 
 from __future__ import annotations
@@ -55,7 +55,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import pytest
+try:
+    import pytest
+except ImportError:  # script-mode execution without pytest installed
+
+    class _PytestNoop:
+        """No-op fallback when pytest is not installed (script-mode execution)."""
+
+        class mark:
+            @staticmethod
+            def asyncio(func):  # type: ignore[no-untyped-def]
+                return func
+
+    pytest = _PytestNoop()  # type: ignore[assignment,unused-ignore]
 from loguru import logger
 
 # Ensure project root is on sys.path (same pattern as test_performance.py)
@@ -65,14 +77,14 @@ if str(PROJECT_DIR) not in sys.path:
 
 import os  # noqa: E402
 
-# Override mock port before importing changping_common (which reads _MOCK_PORT
+# Override mock port before importing bio_lab_common (which reads _MOCK_PORT
 # at import time). Using 32001 allows concurrent execution with
 # test_performance.py (which uses 32000).
 import test_performance as _tp  # noqa: E402
 
 _tp._MOCK_PORT = 32002
 
-from changping_common import (  # noqa: E402
+from bio_lab_common import (  # noqa: E402
     EXPECTED_BD55_1111_ANTIBODY_SAMPLE_ID,
     EXPECTED_HUH7_CELL_SAMPLE_ID,
     EXPECTED_XBB15_PSEUDOVIRUS_SAMPLE_ID,
@@ -86,6 +98,7 @@ from changping_common import (  # noqa: E402
     delete_wet_samples_row,
     disable_proxy_env,
     extract_final_assistant_text,
+    mock_ontology_env,
     start_mock_metavisor,
     stop_mock_metavisor,
 )
@@ -145,7 +158,7 @@ async def _run_hitl_scenario() -> dict[str, Any]:
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy the source SQLite DB (which now HAS the wet_samples row for 904036)
-    db_path = workspace_dir / "changping02.sqlite"
+    db_path = workspace_dir / "bio_lab.sqlite"
     shutil.copy2(ORIGINAL_SQLITE_PATH, db_path)
 
     # --- Delete the XBB.1.5 sample to trigger HITL "which pseudovirus?" ---
@@ -182,10 +195,16 @@ async def _run_hitl_scenario() -> dict[str, Any]:
     logger.info(f"Query: {CREATE_EXPERIMENT_QUERY!r}")
     logger.info(f"Auto HITL responses: {AUTO_FEEDBACK_RESPONSES}")
 
-    with auto_human_feedback(AUTO_FEEDBACK_RESPONSES):
+    with auto_human_feedback(AUTO_FEEDBACK_RESPONSES), mock_ontology_env():
         response = await agent.chat(
             CREATE_EXPERIMENT_QUERY,
             session_id=session_id,
+            initial_state={
+                "user_id": user_id,
+                "session_id": session_id,
+                "run_id": 0,
+                "sub_id": 0,
+            },
         )
 
     messages = response.get("messages", []) or []
@@ -282,7 +301,7 @@ async def _run_hitl_scenario() -> dict[str, Any]:
 async def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Changping functional guard test: HITL sentinel behavior")
+    parser = argparse.ArgumentParser(description="Bio_lab functional guard test: HITL sentinel behavior")
     parser.add_argument(
         "--model",
         choices=list(MODEL_PRESETS.keys()),
@@ -294,7 +313,7 @@ async def main() -> None:
     os.environ["FUNCTIONAL_TEST_MODEL"] = args.model
 
     logger.info("=" * 60)
-    logger.info("Changping functional guard test starting")
+    logger.info("Bio_lab functional guard test starting")
     logger.info(f"  Model: {args.model}")
     logger.info(
         f"  Scenario: delete wet_samples id={DELETED_WET_SAMPLES_ID}, verify HITL sentinel blocks experiment creation"

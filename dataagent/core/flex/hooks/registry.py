@@ -1,5 +1,14 @@
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # ============================================================================
 """Flex hook 解析：内置短名注册表 + ``module.path.callable`` 字符串（与 tool hook 相同）。"""
 
@@ -7,7 +16,6 @@ from __future__ import annotations
 
 from typing import Any
 
-# 键与 YAML HOOKS ``name`` 一致；值与 :func:`dataagent.utils.import_utils.import_callable_from_spec` 一致
 BUILTIN_HOOK_REGISTRY: dict[str, str] = {
     "pre_metadata_tracker": "dataagent.core.flex.hooks.metadata_tracker.pre_metadata_tracker",
     "post_metadata_tracker": "dataagent.core.flex.hooks.metadata_tracker.post_metadata_tracker",
@@ -18,6 +26,7 @@ BUILTIN_HOOK_REGISTRY: dict[str, str] = {
     "organize_workspace": "dataagent.core.flex.hooks.organize_workspace.organize_workspace",
     "intent_understanding": "dataagent.core.flex.hooks.intent_understanding.intent_understanding",
     "semantic_retrieve_context_loader": "dataagent.core.flex.hooks.semantic_retrieve.semantic_retrieve_context_loader",
+    "plan_enforcer": "dataagent.core.flex.hooks.plan_enforcer.plan_enforcer",
 }
 
 

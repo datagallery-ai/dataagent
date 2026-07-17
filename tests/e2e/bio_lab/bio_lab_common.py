@@ -10,13 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Shared utilities for changping e2e tests.
+"""Shared utilities for bio_lab e2e tests.
 
 This module re-exports key utilities from ``test_performance.py`` and adds
 functional-guard-specific helpers (DB manipulation, sentinel detection,
 experiment-not-created assertions).
 
-Both ``test_performance.py`` and ``test_changping_functional.py`` import
+Both ``test_performance.py`` and ``test_bio_lab_functional.py`` import
 from this module. The re-exports avoid circular dependencies while keeping
 a single source of truth for setup logic.
 """
@@ -32,7 +32,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 import test_performance as _tc  # noqa: F401
 
-CHANGPING_DIR: Path = _tc.CHANGPING_DIR
+BIO_LAB_DIR: Path = _tc.BIO_LAB_DIR
 CONFIG_DIR: Path = _tc.CONFIG_DIR
 ORIGINAL_SQLITE_PATH: Path = _tc._ORIGINAL_SQLITE_PATH
 MOCK_PORT: int = _tc._MOCK_PORT
@@ -43,6 +43,7 @@ stop_mock_metavisor = _tc._stop_mock_metavisor
 build_cache_test_config = _tc._build_cache_test_config
 resolve_session_root = _tc._resolve_session_root
 auto_human_feedback = _tc.auto_human_feedback
+mock_ontology_env = _tc.mock_ontology_env
 extract_final_assistant_text = _tc._extract_final_assistant_text
 find_created_experiment_id = _tc._find_created_experiment_id
 
