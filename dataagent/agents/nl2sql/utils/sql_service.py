@@ -56,6 +56,7 @@ class SQLiteConfig:
 @dataclass
 class UDNConfig:
     path: str
+    explain_url: str | None = None
 
     def to_conn_kwargs(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -219,7 +220,26 @@ class UDNService(SqlService):
 
     def explain(self, sql: str) -> str | None:
         try:
-            data = json.dumps({"sql": sql}).encode()
+            if self.config.explain_url:
+                import requests
+
+                response = requests.post(
+                    self.config.explain_url,
+                    params={
+                        "auto_repair": "true",
+                        "format_sql": "false",
+                    },
+                    data=sql.encode("utf-8"),
+                    headers={
+                        "Content-Type": "text/plain; charset=utf-8",
+                    },
+                    timeout=(10, 1800),
+                )
+                response.raise_for_status()
+                error = response.json().get("error")
+                return str(error) if error else None
+
+            data = json.dumps({"sql": sql}).encode("utf-8")
             req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
             with urlopen(req) as resp:
                 result = json.loads(resp.read())
