@@ -90,7 +90,10 @@ AGENT_CONFIG:
   enable_human_feedback: false  # HITL：启用 HITL 功能， 触发条件见 SCENARIO.chat.human_feedback_conditions
   terminal_mode: true           # chat() 下终端交互模式，默认 true
   enable_portrait: false        # 启用 portraiter hook 的 LLM 用户画像
-  max_iter: null                # 最大迭代轮次；null/省略 = 不限制
+  # Actor 最大轮次（curr_iter）；null/省略 = 业务不限制。
+  # 图引擎 recursion_limit：未配 max_iter 时默认 DEFAULT_WORKFLOW_RECURSION_LIMIT(200)；
+  # 配了则取 max(200, max_iter*MAX_ITER_TO_RECURSION_FACTOR(10))，见 dataagent.utils.constants。
+  max_iter: null
   token_limit: null             # token 上限；null/省略 = 不限制
   hierarchy: "MAIN"             # 运行时层级标识（如子 Agent 为 SUB）
   relevant_skills_limit: null   # planner skill 选择上限；0 = 禁用 LLM 选 skill

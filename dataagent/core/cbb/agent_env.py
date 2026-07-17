@@ -38,7 +38,9 @@ class Env:
     tavily_configs: dict[str, Any]
     modules: dict[str, list[str]]
     hooks: dict[str, Any]
-    # None：不限制 Actor 循环；仅在 YAML 中显式给出 AGENT_CONFIG.max_iter 数值时生效
+    # None：不限制 Actor 循环；仅在 YAML 中显式给出 AGENT_CONFIG.max_iter 数值时生效。
+    # 同时用于推导图引擎 recursion_limit：None→DEFAULT_WORKFLOW_RECURSION_LIMIT，
+    # 有值→max(DEFAULT, max_iter*MAX_ITER_TO_RECURSION_FACTOR)（见 dataagent.utils.constants）
     max_iter: int | None = None
     # 可选：累计 usage token 上限（YAML AGENT_CONFIG.token_limit）
     token_limit: int | None = None
