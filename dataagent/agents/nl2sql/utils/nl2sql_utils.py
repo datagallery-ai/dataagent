@@ -87,49 +87,6 @@ def metadata_parser(text: str) -> list[dict[str, set[str]]]:
     return out
 
 
-def schema_to_xml(schema: dict[str, Any], joins: list[tuple[str, str]] | None = None) -> str:
-    lines = []
-    # tables & columns
-    for tbl_name, tbl_meta in schema.items():
-        lines.extend(
-            [
-                "<tbl>",
-                f"  <tbl_name>{tbl_name}</tbl_name>",
-                f"  <tbl_desc>{tbl_meta['description']}</tbl_desc>",
-                "  <cols>",
-            ]
-        )
-        for col_name, col_meta in tbl_meta["columns"].items():
-            lines.extend(
-                [
-                    f"    <col id ='{tbl_name}.{col_name}'>",
-                    f"      <col_name>{col_name}</col_name>",
-                    f"      <col_desc>{col_meta['description']}</col_desc>",
-                    f"      <col_type>{col_meta['value_type']}</col_type>",
-                    "    </col>",
-                ]
-            )
-        lines.extend(["  </cols>", "</tbl>"])
-    # joins
-    if joins:
-        lines.append("<joins>")
-        for src, tgt in joins:
-            src_tbl, src_col = src.split(".", 1)
-            tgt_tbl, tgt_col = tgt.split(".", 1)
-            lines.extend(
-                [
-                    "<join>",
-                    f"  <src_tbl>{src_tbl}</src_tbl>",
-                    f"  <src_col>{src_col}</src_col>",
-                    f"  <tgt_tbl>{tgt_tbl}</tgt_tbl>",
-                    f"  <tgt_col>{tgt_col}</tgt_col>",
-                    "</join>",
-                ]
-            )
-        lines.append("</joins>")
-    return "\n".join(lines)
-
-
 def flatten_schema(schema: dict) -> set[str]:
     res = set()
     for t, t_meta in schema.items():

@@ -40,7 +40,8 @@ class GeneratorNode(BaseNL2SQLNode):
         prompts = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         content = llm_manager.get_default_llm().invoke(prompts).content
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
-        sqls = sql_parser(content)
+        expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
+        sqls = sql_parser(content)[-expected_num_sql:]
         if self.engine == "postgres":
             sqls = [sql.replace("`", "") for sql in sqls]
         prompt_history = system_prompt + "\n\n" + user_prompt
