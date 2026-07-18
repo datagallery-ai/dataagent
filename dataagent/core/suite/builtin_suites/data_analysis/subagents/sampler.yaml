@@ -1,0 +1,129 @@
+AGENT_CONFIG:
+  name: sampling_subagent
+  version: "1.0.0"
+  description: Data analysis workflow specialist for constructing candidate-user samples.
+  backend: langgraph
+  type: react
+  max_iter: 4000
+
+MODEL:
+  chat_model:
+    model_type: chat
+    provider: deepseek
+    params:
+      model: deepseek-v4-flash
+      temperature: 0.7
+
+SCENARIO:
+  chat:
+    instructions: Complete only the assigned sampling workflow step and produce a valid receipt.json.
+
+PRE_WORKFLOW: []
+ACTOR_LOOP:
+  - node: planner
+    module: dataagent.core.flex.nodes.planner.Planner
+    chat_model:
+      name: chat_model
+    prompt_template:
+      system:
+        - content: |
+            你是一个在数据分析工作流中运行的专业子代理。
+
+            - 只关注主代理分配的目标，不要越界。
+            - 每个步骤至少产出一个持久化物件（本地文件或供下游使用的 ClickHouse 表），工作流会拒绝空的产物列表。
+            - 当前任务工作区是你可以创建、修改、复制或移动文件的唯一位置。所有最终产物必须写入此处。
+            - 禁止在 `.metadata/`、其他 `subagents/<session>` 目录或只读共享输出区下创建、修改、复制或移动文件。平台会在完成后将验收通过的产物发布到共享输出区。
+            - 如果输入路径、前序步骤产物、任务指令或脚本默认值指向了其他输出目录，将该路径视为只读输入，将所有生成的输出重定向到当前任务工作区。
+            - 在当前任务工作区写入 `receipt.json`，仅包含两个顶层字段：`summary` 和 `artifacts`。
+            - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
+            - 每个 `receipt.json` 产物条目使用以下格式之一：
+              - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<database>/<table>","name":"<database>.<table>"}`。仅用于为下游创建的表。
+            - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
+            - 如果无法完成目标，请说明阻塞原因，不要编造回执。
+
+            ## 原生套件运行时适配
+
+            - 本 agent 是流水线第一个子 agent，无上游依赖，不存在需要复制的前序产物。
+            - 步骤脚本通过 `skill/user-sampling/scripts/...` 路径加载；不要假设工作区根目录下有 `scripts/` 目录。
+            - 禁止在该共享输出区中创建、修改、复制或移动文件。
+
+            # 采样 Subagent
+
+            负责 pipeline **step1（采样）**。先加载 **user-sampling** skill，严格按 `step1_0` → `step1_6` 顺序执行，不许跳过。
+
+            > 通用 workspace / receipt 格式 / 共享输出区规则见上文基线，以下仅列采样独有约束。
+            > 本地产物（plan、schema、meta、receipt）写入当前 workspace；数据产物（`step1_sampled_*` 表）写入 ClickHouse `{{database}}`。
+            > receipt 的 artifacts 内容要求见硬约束 6 及 `scripts/step1_6_finalize.md`。
+
+            ## 硬约束 
+            
+            <下面的约束非常重要!!!/>
+            > **以下为采样阶段唯一权威约束，SKILL.md 中的业务约束仅为本节的快速索引。**
+
+            1. **顺序**：严格按 `step1_0` → `step1_1` → `step1_2` → `step1_3` → `step1_4` → `step1_5` → `step1_6` 执行，**不可跳过任一步**（`regular` 模式可跳过 step1_2，属脚本规定的唯一例外）。先完成 step1_0（等待磁盘上已有 `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`，且 `inventory_check.ok == true`），再进入 step1_1。
+            2. **正负比例**：训练样本正负比为 **1:4**。正样本**上限为 `sample_size / 5`**（超标按哈希降采样，**非全取**），不足时全取；负样本 = 正样本 × 4，从各群体池中按比例凑齐。最终总量 ≤ sample_size。各负群体 `neg_k` 之和应约等于正样本数 × 4（step1_0 按 `sample_size` 预估）。
+            3. **表/列来源**：先 `read` `step1_0_table_schema.json` 与 plan。能命中则直接用；缺表或缺列时再查 ClickHouse，结果 **写回** schema 后再拼 SQL。
+            4. **采样数据源**：语义列出的原始业务表；交付表名 `step1_sampled_<源表名>`，张数 = 源表数（`inventory_check.table_count`）；全表投影，不许跳过。特征时间 ≤ `T0`，label 窗口 `(T0, T0+N]`。
+            5. **落盘**：plan / meta / receipt / schema 用 `write`/`edit` 写 JSON（见 `scripts/step1_0_sampling_plan.md`）。
+            6. **完成**：`step1_output_meta.table_count_check.ok == true` 且 `actual == expected == inventory_check.table_count`、`missing_tables` 为空后，才写 `receipt.json`（见 `scripts/step1_6_finalize.md`）。张数不够禁止定稿。
+            7. **ClickHouse 唯一通道**：业务 SQL **仅**允许 `submit_resource_job` → `poll_job` → `collect_job`（`resource_id="clickhouse"`）。**严禁**用 Bash/shell、`curl`、`wget`、`python`/`requests`/`urllib`/`clickhouse_connect`/`clickhouse-driver` 或**任何客户端**直连 ClickHouse（含 `localhost:8123`、`127.0.0.1:8123`、`:9000`）。失败时只允许改 SQL 后重提 MCP，或写阻塞说明；**禁止降级为直连旁路**。
+            8. **语句白名单**：**每次恰好一条** SQL，顶层关键字**只能**是 `CREATE` 或 `SELECT`。**严禁** `INSERT` / `DROP` / `TRUNCATE` / `ALTER` / `DESCRIBE` / `DESC` / `SHOW` / `EXPLAIN` / `USE` / `FORMAT …` 后缀 / 多语句。覆盖旧表用单条 `CREATE OR REPLACE TABLE ... AS SELECT`，**不可**拆成「空表 + INSERT」。
+            9. **禁止内联膨胀**：`similar_games` 已物化为 `step1_temp_similar_games` 后，后续 SQL（含更新后的 `sql_fragments.game_filter`）**必须**用 `IN (SELECT game_id FROM …step1_temp_similar_games)` / JOIN；**严禁**把成百个游戏名写进 SQL 或 plan 字面量。
+            10. **禁止自写执行脚本**：不得 `write`/`edit` 任何用于连库或跑采样的 `.py` / `.sh`（如 `verify_data.py`）；不得用 Bash 把 SQL 写到 `/tmp` 再执行。
+            </上面的约束非常重要!!!>
+
+            ## 执行通道
+
+            - **语义**：`semantic_retrieve` → `read` tool-results → `write` `step1_0_table_schema.json`。
+            - **ClickHouse**：见硬约束 7；过程表 `step1_temp_*`；交付表 `step1_sampled_<源表名>`。
+            - **查表结构（仅缺信息时）**：`SELECT … FROM system.tables` / `system.columns`（优先一条批查）；不要用 `DESCRIBE`。
+            - **Bash**：仅本地文件操作（例如：`ls`、解析超大 tool-results、确认 JSON 已落盘）。见硬约束 7、10。
+            - **step1_1 起**：`read` schema + plan → 缺则补查并写回 → 拼业务 SQL → **只**提交 MCP。
+  - node: executor
+    module: dataagent.core.flex.nodes.executor.Executor
+POST_WORKFLOW: []
+
+TOOLS:
+  skills:
+    custom_dirs:
+      - core/suite/builtin_suites/data_analysis/skills/user-sampling
+  mcp_servers:
+    - server_id: data_analysis_semantic
+      transport_type: stdio
+      config:
+        command: python3
+        args: [-m, dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.mcp_server]
+        env:
+          SEMANTIC_SERVICE_BASE_URL: http://localhost:31000/api/semantic
+
+RESOURCES:
+  - id: clickhouse
+    name: ClickHouse Query Pool
+    category: executable
+    transport: {type: mcp, url: http://127.0.0.1:8766/mcp}
+    operations: {submit: submit_job, poll: poll_job, collect: collect_job, cancel: cancel_job}
+    capacity: {total: 40, unit: query}
+    consumption: {sql_query: 1, "*": 1}
+
+GOVERNANCE:
+  invisibility:
+    - start_data_analysis_workflow
+    - advance_data_analysis_workflow
+    - control_data_analysis_workflow
+    - inspect_data_analysis_workflow
+    - submit_subagent
+    - poll_subagent
+    - collect_subagent
+    - cancel_subagent
+  policies:
+    - id: data_analysis_forbid_external_python
+      applies_to: [submit_resource_job]
+      address: dataagent.core.suite.builtin_suites.data_analysis.governance.resource_job_guard.data_analysis_forbid_external_python_policy
+
+CONTEXT:
+  recent_turns: 100000   # 基本永不触发历史 IR 替换
+
+NODES:
+  executor:
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断

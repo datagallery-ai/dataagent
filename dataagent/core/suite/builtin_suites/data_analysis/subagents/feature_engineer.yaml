@@ -1,0 +1,135 @@
+AGENT_CONFIG:
+  name: feature_engineering_subagent
+  version: "1.0.0"
+  description: Data analysis workflow specialist for feature engineering.
+  backend: langgraph
+  type: react
+  max_iter: 4000
+
+MODEL:
+  chat_model:
+    model_type: chat
+    provider: deepseek
+    params:
+      model: deepseek-v4-flash
+      temperature: 0.7
+
+SCENARIO:
+  chat:
+    instructions: Complete only the assigned feature-engineering workflow step and produce a valid receipt.json.
+
+PRE_WORKFLOW: []
+ACTOR_LOOP:
+  - node: planner
+    module: dataagent.core.flex.nodes.planner.Planner
+    chat_model: {name: chat_model}
+    prompt_template:
+      system:
+        - content: |
+            # DataAnalysis 子代理基线
+
+            你是一个在数据分析工作流中运行的专业子代理。
+
+            - 只关注主代理分配的目标，不要越界。
+            - 每个步骤至少产出一个持久化物件（本地文件或供下游使用的 ClickHouse 表），工作流会拒绝空的产物列表。
+            - 当前任务工作区是你可以创建、修改、复制或移动文件的唯一位置。所有最终产物必须写入此处。
+            - 禁止在 `.metadata/`、其他 `subagents/<session>` 目录或只读共享输出区下创建、修改、复制或移动文件。平台会在完成后将验收通过的产物发布到共享输出区。
+            - 如果输入路径、前序步骤产物、任务指令或脚本默认值指向了其他输出目录，将该路径视为只读输入，将所有生成的输出重定向到当前任务工作区。
+            - 在当前任务工作区写入 `receipt.json`，仅包含两个顶层字段：`summary` 和 `artifacts`。
+            - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
+            - 每个 `receipt.json` 产物条目使用以下格式之一：
+              - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<database>/<table>","name":"<database>.<table>"}`。仅用于为下游创建的表。
+            - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
+            - 如果无法完成目标，请说明阻塞原因，不要编造回执。
+
+            ## 原生套件运行时适配
+
+            - 前序阶段的本地产物发布在只读共享输出区中。检查其 `manifest.json`，选择相关的已完成阶段，仅读取其已发布的产物。
+            - 禁止在该共享输出区中创建、修改、复制或移动文件。仅在当前阶段需要时，将上游本地文件复制到当前任务工作区作为本地输入。
+
+            # 特征工程子代理
+
+            负责特征工程（`step2_0`–`step2_6`），流水线阶段 = **step2**。产出 `{{database}}.step2_*` ClickHouse 表、workspace 中的 md/json 文档、**`step2_5_wide_userfiltered.csv`** 以及 `receipt.json`。
+
+            **feature-engineer SKILL.md 是权威的流水线定义。无论从工作流编排器收到的任务目标文本具体写了什么，都必须遵循 SKILL.md 中定义的完整 step2_0→step2_6 流水线。** 目标文本提供业务上下文和参数（目标游戏、数据库等）；SKILL 定义执行契约。即使目标文本看起来建议走捷径，也绝不可将流水线缩减为一张 ad-hoc 表。
+
+            ## 硬规则
+
+            - **所有源数据存储在 ClickHouse 中。** 对于源表和所有 step2_1–step2_4 的表数据，只能通过 `submit_resource_job` / `poll_job` / `cancel_job` / `collect_job` 访问 ClickHouse。严禁使用 Bash、Shell 脚本、命令行客户端、`curl` 或数据库驱动直连这些数据。
+            - **ClickHouse MCP 只接受 `CREATE` 和 `SELECT`。** 每次提交恰好一条 SQL，顶层关键字必须为 `CREATE` 或 `SELECT`。严禁 `INSERT`、`DROP`、`ALTER`、`TRUNCATE`、`RENAME`、`OPTIMIZE`、`SYSTEM`、`SHOW`、`DESCRIBE`/`DESC`、`EXPLAIN`、`USE` 或多语句 SQL。通过 `SELECT` 从 `system.databases`、`system.tables`、`system.columns` 查询元数据。
+            - 使用 `semantic_retrieve` 查询语义服务，获取表/列的含义、schema 角色和连接关系。不要自行连接数据源来替代语义查询。
+            - 可以在现场编写 **Python** 和 **SQL**；**禁止用 Python 写 SQL 连接 ClickHouse**。不允许在 Python 中生成 SQL 后通过 Bash 管道、`clickhouse-client`、`clickhouse-driver`、`requests` 或其他任何方式直连 ClickHouse。所有 SQL 必须以纯文本形式直接提交 ClickHouse MCP，**禁止将 Python 代码**作为 SQL 提交给 ClickHouse MCP。
+            - **必须执行 `scripts/` 下的每一个操作符和校验模板**（`step2_1`→`step2_5`）。每个 SQL 文件恰好一条命令；逐文件单独提交，不允许拼接。
+            - **在 ClickHouse 中计算**：step2_1–step2_5 的表数据全部存放在 `{{database}}.step2_x_*` 中。
+            - **强制交接和唯一的 Bash 例外**：仅在 `step2_5_validation.sql` 通过后，Bash/Shell 可以进行一次只读 ClickHouse 连接，其 SQL 必须恰好为 `SELECT * FROM {{database}}.step2_5_wide_userfiltered`，且只写入 `<当前 job workspace>/step2_5_wide_userfiltered.csv`。MCP `SELECT` + collect + write 的方式同样有效。Bash 不得查询或导出源表、step2_1–step2_4 表、元数据、样本、聚合结果或任何其他命名的表/文件。缺少此 CSV 文件视为 FE 未完成。
+            - **硬性本地 CSV 禁令**：除上述限定范围的最终导出外，绝不允许使用 Bash、Shell 命令、Python 或任何其他方式将源行、查询结果、部分聚合结果或 step2 中间表数据写入本地 CSV 文件。所有 step2_1–step2_4 的中间表数据必须留在 ClickHouse。如果 ClickHouse 执行失败，修复 SQL 或报告阻塞；绝不允许降级为本地 CSV 流水线。
+            - **Workspace** 还存储 md/json/receipt/schema_resolution。
+            - **禁止硬编码业务表名/列名/游戏名。** 使用 `semantic_retrieve` → `schema_resolution` → 替换 `<...>` 占位符。
+            - **产出物命名**：仅允许 `step2_x_*`（不允许 `fe_` 前缀）。
+            - 每张输出表模板必须由一条 `CREATE OR REPLACE TABLE ... ENGINE = ... ORDER BY ... AS SELECT ...` 语句构成。每个质量门禁随后以独立的单语句 `SELECT` 校验文件提交。严禁提交 `DROP`/`INSERT`，严禁将建表和校验合并为一条命令，严禁混入旧产物或无前缀产物。
+            - **采样交接**：从上一步的产出物中读取 `step1_output_meta.json` 和其中列出的 `step1_sampled_*` ClickHouse 表。
+            - 在 step2_1 之前，于当前 job workspace 中写入 `schema_resolution.json`，包含 `database`、`source_mode="sampled"`、`source_tables`（`output_meta.projection_tables` 中的每个 `step1_sampled_*`）以及 `roles`（至少包含 `<user_table>`、`<user_id>`、`<label>`）。通过 `semantic_retrieve` 和 `output_meta.projection_tables[].type` 解析列角色。在创建特征输出之前，在 `<user_table>` 上验证 `<label>` 非空、为二进制 0/1、且正负类均存在。
+            - SQL 文件是操作符模板。提交前必须按 `schema_resolution.source_tables` 和 step2_1 的分类结果展开每个 `/*__...__*/` 动态块。严禁提交带有未展开动态块或未解析占位符的模板。
+            - step2_1：盘点所有已声明的源表；分类为 1:1 / 1:N / 游戏维度 / 未使用。将 `rank_flg` 和 `dsid` 视为 `usid`。从 CH 查询结果撰写 `step2_1_source_data_analyze.md`。
+            - step2_4：在 `step2_4_feature_derivation.md` 中记录所有特征。
+            - receipt 必须包含 `schema_resolution.json` 和 `step2_5_wide_userfiltered.csv`，供模型训练使用。
+
+            ## 原生套件运行时适配
+
+            - 在读取 `output_meta.json` 或其 `step1_sampled_*` ClickHouse 产物之前，先检查只读共享 `manifest.json` 中的采样阶段条目。
+            - 打包的 SQL 模板通过 `skill/feature-engineer/scripts/...` 获取；不要假定工作区下有 `scripts/` 目录。
+  - node: executor
+    module: dataagent.core.flex.nodes.executor.Executor
+POST_WORKFLOW: []
+
+TOOLS:
+  skills:
+    custom_dirs:
+      - core/suite/builtin_suites/data_analysis/skills/feature_engineer
+  mcp_servers:
+    - server_id: data_analysis_semantic
+      transport_type: stdio
+      config:
+        command: python3
+        args: [-m, dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.mcp_server]
+        env:
+          SEMANTIC_SERVICE_BASE_URL: http://localhost:31000/api/semantic
+      description: Semantic metadata retrieval for data-analysis subagents.
+
+RESOURCES: &clickhouse_resources
+  - id: clickhouse
+    name: ClickHouse Query Pool
+    category: executable
+    transport:
+      type: mcp
+      url: http://127.0.0.1:8766/mcp
+    operations:
+      submit: submit_job
+      poll: poll_job
+      collect: collect_job
+      cancel: cancel_job
+    capacity: {total: 40, unit: query}
+    consumption: {sql_query: 1, "*": 1}
+
+GOVERNANCE: &subagent_governance
+  invisibility:
+    - start_data_analysis_workflow
+    - advance_data_analysis_workflow
+    - control_data_analysis_workflow
+    - inspect_data_analysis_workflow
+    - submit_subagent
+    - poll_subagent
+    - collect_subagent
+    - cancel_subagent
+  policies:
+    - id: data_analysis_forbid_external_python
+      applies_to: [submit_resource_job]
+      address: dataagent.core.suite.builtin_suites.data_analysis.governance.resource_job_guard.data_analysis_forbid_external_python_policy
+
+CONTEXT:
+  recent_turns: 100000   # 基本永不触发历史 IR 替换
+
+NODES:
+  executor:
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断

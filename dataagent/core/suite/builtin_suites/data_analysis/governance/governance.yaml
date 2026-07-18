@@ -1,0 +1,9 @@
+GOVERNANCE:
+  policies:
+    - id: data_analysis_orchestration
+      applies_to:
+        - submit_subagent
+        - write_file
+        - edit_file
+        - bash
+      address: governance.permission_guard.data_analysis_orchestration_policy

@@ -1,0 +1,24 @@
+id: target_audience_selection
+name: Target Audience Selection
+description: Select target users for product targeting or marketing campaigns.
+steps:
+  - id: sampling
+    owner_id: sampling_subagent
+    target_template: Sample candidate users from the provided data according to the analysis objective.
+  - id: feature_engineering
+    owner_id: feature_engineering_subagent
+    target_template: >
+      Execute the standard feature engineering pipeline defined in the feature-engineer skill.
+      Step order: step2_0 (schema_resolution.json) → step2_1 (source data & column profiling) →
+      step2_2 (1:1 merge into wide table) → step2_3 (feature cleaning with audit report) →
+      step2_4 (aggregation, derivation, high-cardinality handling) → step2_5 (user filtering,
+      export step2_5_wide_userfiltered.csv) → step2_6 (write receipt.json with just
+      schema_resolution.json + step2_5_wide_userfiltered.csv). Read sampling handoff
+      (output_meta.json + step1_sampled_* tables) from the previous step.
+      SKILL.md is the authoritative pipeline specification.
+  - id: model_training
+    owner_id: model_training_subagent
+    target_template: Train or define a scoring model/rule to rank target users.
+  - id: nl2sql
+    owner_id: nl2sql_subagent
+    target_template: Generate SQL for querying the final selected users.

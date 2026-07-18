@@ -1,0 +1,7 @@
+name: data_analysis
+version: "1.0.0"
+description: Native Suite for durable, scenario-driven data analysis workflows.
+priority: 50
+enabled: true
+requires: []
+conflicts: []

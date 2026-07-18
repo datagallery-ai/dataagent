@@ -1,0 +1,36 @@
+# Data Analysis Suite 的生产入口。
+#
+# 启动：
+#   uv run -m dataagent --config dataagent/core/flex/examples/test_example_suite.yaml
+#
+# 启用后注册 Data Analysis workflow tools、四个 Job 子 Agent、Skills 与 Governance。
+
+AGENT_CONFIG:
+  name: "Data Analysis Agent"
+  type: "react"
+  debug: true
+  max_iter: 4000
+  # 生产入口可显式开启 Job 子 Agent 的只读产物发布区；未配置时默认关闭。
+  subagent_output_sharing: true
+
+SUITE:
+  include:
+    - data_analysis
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "deepseek"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+
+SCENARIO:
+  chat:
+    input: |
+      Analyze the supplied data and identify the target user audience.
+    task: "执行多阶段数据分析工作流"
+    instructions: "Use the Data Analysis Suite workflow tools to coordinate the analysis."
+
+PRE_WORKFLOW: []
+POST_WORKFLOW: []
