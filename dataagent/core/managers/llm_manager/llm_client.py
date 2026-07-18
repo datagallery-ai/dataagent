@@ -63,6 +63,9 @@ DEFAULT_LLM_RETRY_BACKOFF_MAX: float = 300.0
 DEFAULT_REPETITION_DETECTION_ENABLED: bool = True
 """是否启用 LLM 输出重复检测。"""
 
+DEFAULT_REPETITION_LENIENCY: float = 1.0
+"""重复检测宽松系数（YAML ``AGENT_CONFIG.repetition_leniency`` 可覆盖）。越大越松。"""
+
 DEFAULT_REPETITION_NGRAM_WINDOW: int = 20
 """n-gram 重复检测的窗口大小（token 数）。"""
 
@@ -80,6 +83,29 @@ DEFAULT_REPETITION_TOOL_CALL_MAX_REPEAT: int = 2
 
 DEFAULT_REPETITION_TOOL_CALL_MIN_TEXT_LEN: int = 100
 """tool call 参数文本达到该长度后才启用复杂重复检测，降低短参数误报。"""
+
+
+def _repetition_thresholds(leniency: float | None = None) -> dict[str, Any]:
+    """按宽松系数缩放重复检测阈值。
+
+    越大越松的参数乘以系数；越小越松的参数（如字符多样性阈值）除以系数。
+    ``leniency`` 缺省时使用 :data:`DEFAULT_REPETITION_LENIENCY`。
+    """
+    raw = DEFAULT_REPETITION_LENIENCY if leniency is None else leniency
+    try:
+        scale = float(raw)
+    except (TypeError, ValueError):
+        scale = DEFAULT_REPETITION_LENIENCY
+    scale = max(scale, 0.1)
+    return {
+        "leniency": scale,
+        "ngram_window": DEFAULT_REPETITION_NGRAM_WINDOW,
+        "ngram_max_repeat": max(1, int(round(DEFAULT_REPETITION_NGRAM_MAX_REPEAT * scale))),
+        "char_cycle_min": max(1, int(round(DEFAULT_REPETITION_CHAR_CYCLE_MIN * scale))),
+        "char_diversity_min": max(1e-6, DEFAULT_REPETITION_CHAR_DIVERSITY_MIN / scale),
+        "tool_call_max_repeat": max(1, int(round(DEFAULT_REPETITION_TOOL_CALL_MAX_REPEAT * scale))),
+        "tool_call_min_text_len": max(1, int(round(DEFAULT_REPETITION_TOOL_CALL_MIN_TEXT_LEN * scale))),
+    }
 
 
 # ── cache_control 断点策略常量 ──────────────────────────────────────────────────
@@ -620,14 +646,24 @@ def _detect_repetition(
     *,
     previous_content: str = "",
     enabled: bool = DEFAULT_REPETITION_DETECTION_ENABLED,
+    leniency: float | None = None,
 ) -> tuple[bool, str | None]:
-    """组合检测：n-gram 重复 + 周期性 + 字符循环 + 消息重复。"""
+    """组合检测：n-gram 重复 + 周期性 + 字符循环 + 消息重复。
+
+    ``leniency`` 会缩放 n-gram / char_cycle 阈值（越大越松）；periodicity 与
+    duplicate_message 暂不参与缩放。
+    """
     if not enabled or not content:
         return False, None
     if len(content) < 20:
         return False, None
 
-    is_rep, detail = _detect_ngram_repetition(content)
+    th = _repetition_thresholds(leniency)
+    is_rep, detail = _detect_ngram_repetition(
+        content,
+        window=th["ngram_window"],
+        max_repeat=th["ngram_max_repeat"],
+    )
     if is_rep:
         return True, detail
 
@@ -635,7 +671,11 @@ def _detect_repetition(
     if is_rep:
         return True, detail
 
-    is_rep, detail = _detect_char_cycle(content)
+    is_rep, detail = _detect_char_cycle(
+        content,
+        cycle_min=th["char_cycle_min"],
+        diversity_min=th["char_diversity_min"],
+    )
     if is_rep:
         return True, detail
 
@@ -684,6 +724,7 @@ class LLMClient:
         provider: str | None = None,
         compress_token_limit: int | None = None,
         compress_message_cnt: int | None = None,
+        repetition_leniency: float | None = None,
     ) -> None:
         """初始化 LLMClient 实例。
 
@@ -698,6 +739,7 @@ class LLMClient:
             provider: 模型供应商标识，用于判断是否支持显式 cache_control。
             compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
             compress_message_cnt: 实际压缩消息数阈值（由 runtime.env 注入），影响 approaching_compress 判断。
+            repetition_leniency: 重复检测宽松系数（由 runtime.env / YAML 注入）；``None`` 用默认值。
         """
         self._model = model
         self._api_base = api_base
@@ -709,6 +751,9 @@ class LLMClient:
         self._provider = provider
         self._compress_token_limit = compress_token_limit
         self._compress_message_cnt = compress_message_cnt
+        self._repetition_leniency = (
+            DEFAULT_REPETITION_LENIENCY if repetition_leniency is None else float(repetition_leniency)
+        )
 
     @staticmethod
     def _extract_previous_assistant_content(messages: list[Any]) -> str:
@@ -775,8 +820,13 @@ class LLMClient:
         return "\n".join(parts)
 
     @staticmethod
-    def _detect_repeated_tool_call_items(tool_calls: list[dict[str, Any]]) -> tuple[bool, str | None]:
+    def _detect_repeated_tool_call_items(
+        tool_calls: list[dict[str, Any]],
+        *,
+        leniency: float | None = None,
+    ) -> tuple[bool, str | None]:
         """检测同一 tool call 是否在单次响应中重复过多。"""
+        max_repeat = _repetition_thresholds(leniency)["tool_call_max_repeat"]
         freq: dict[str, int] = {}
         for tool_call in tool_calls:
             normalized = LLMClient._normalize_tool_call_for_repetition(tool_call)
@@ -784,20 +834,25 @@ class LLMClient:
                 continue
             count = freq.get(normalized, 0) + 1
             freq[normalized] = count
-            if count > DEFAULT_REPETITION_TOOL_CALL_MAX_REPEAT:
+            if count > max_repeat:
                 return True, f"duplicate_tool_call: repeat={count} snippet={normalized[:200]}"
         return False, None
 
     @staticmethod
-    def _detect_tool_call_repetition(tool_calls: list[dict[str, Any]]) -> tuple[bool, str | None, str]:
+    def _detect_tool_call_repetition(
+        tool_calls: list[dict[str, Any]],
+        *,
+        leniency: float | None = None,
+    ) -> tuple[bool, str | None, str]:
         """检测单次响应内部的 tool call repetition，并返回归一化片段。"""
+        th = _repetition_thresholds(leniency)
         snippet = LLMClient._normalize_tool_calls_for_repetition(tool_calls)
-        is_rep, detail = LLMClient._detect_repeated_tool_call_items(tool_calls)
+        is_rep, detail = LLMClient._detect_repeated_tool_call_items(tool_calls, leniency=leniency)
         if is_rep:
             return True, detail, snippet
-        if len(snippet) < DEFAULT_REPETITION_TOOL_CALL_MIN_TEXT_LEN:
+        if len(snippet) < th["tool_call_min_text_len"]:
             return False, None, snippet
-        is_rep, detail = _detect_repetition(snippet, previous_content="")
+        is_rep, detail = _detect_repetition(snippet, previous_content="", leniency=leniency)
         return is_rep, detail, snippet
 
     @staticmethod
@@ -1249,6 +1304,7 @@ class LLMClient:
         *,
         compress_token_limit: int | None = None,
         compress_message_cnt: int | None = None,
+        repetition_leniency: float | None = None,
     ) -> LLMClient:
         """由 :class:`LLMConfig` 构造（YAML ``MODEL.<name>.params``）。"""
         params = dict(config.client_params() or {})
@@ -1282,6 +1338,7 @@ class LLMClient:
             provider=config.provider,
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
+            repetition_leniency=repetition_leniency,
         )
 
     @classmethod
@@ -1291,6 +1348,7 @@ class LLMClient:
         *,
         compress_token_limit: int | None = None,
         compress_message_cnt: int | None = None,
+        repetition_leniency: float | None = None,
     ) -> LLMClient:
         """由 ``env.llm_configs`` 扁平项构造（Flex 输出 ``api_base``，此处对齐为 ``base_url``）。"""
         params = dict(cfg)
@@ -1319,6 +1377,7 @@ class LLMClient:
             provider=provider,
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
+            repetition_leniency=repetition_leniency,
         )
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LLMClient:
@@ -1340,6 +1399,7 @@ class LLMClient:
             provider=self._provider,
             compress_token_limit=self._compress_token_limit,
             compress_message_cnt=self._compress_message_cnt,
+            repetition_leniency=self._repetition_leniency,
         )
 
     def invoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
@@ -1868,7 +1928,11 @@ class LLMClient:
     ) -> None:
         """检测到重复输出时抛出 ``LLMRepetitionError``（调用方在重试循环中捕获）。"""
         previous = self._extract_previous_assistant_content(messages)
-        is_rep, detail = _detect_repetition(content, previous_content=previous)
+        is_rep, detail = _detect_repetition(
+            content,
+            previous_content=previous,
+            leniency=self._repetition_leniency,
+        )
         if is_rep:
             raise LLMRepetitionError(
                 detection_type="repetition",
@@ -1878,7 +1942,10 @@ class LLMClient:
             )
 
         tool_calls = tool_calls or []
-        is_tool_rep, tool_detail, tool_call_text = self._detect_tool_call_repetition(tool_calls)
+        is_tool_rep, tool_detail, tool_call_text = self._detect_tool_call_repetition(
+            tool_calls,
+            leniency=self._repetition_leniency,
+        )
         if is_tool_rep:
             raise LLMRepetitionError(
                 detection_type="tool_call_repetition",
@@ -1894,12 +1961,15 @@ def llm_adapter_from_env_cfg(
     *,
     compress_token_limit: int | None = None,
     compress_message_cnt: int | None = None,
+    repetition_leniency: float | None = None,
 ) -> Any:
     """``env.llm_configs[logical_name]`` → ``LangChainChatModelAdapter``（供 ``Runtime.llm`` 懒加载缓存）。
 
     ``compress_token_limit`` / ``compress_message_cnt`` 来自 ``runtime.env`` 的 CONTEXT
     压缩参数，透传给 :class:`LLMClient`，使 cache_control 断点策略与 pruner 实际压缩
     阈值保持一致。
+
+    ``repetition_leniency`` 来自 ``runtime.env``（YAML ``AGENT_CONFIG.repetition_leniency``）。
     """
     from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 
@@ -1908,6 +1978,7 @@ def llm_adapter_from_env_cfg(
             cfg,
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
+            repetition_leniency=repetition_leniency,
         ),
         _llm_config_for_adapter(cfg, logical_name),
     )

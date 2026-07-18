@@ -28,6 +28,12 @@ POST_WORKFLOW: []
 #   compress_message_cnt: 200
 #   file_node_threshold: 500
 
+# ── LLM 输出重复检测（AGENT_CONFIG） ──
+# repetition_leniency: 宽松系数，越大越松；省略则用代码默认 1.0
+# 示例：
+# AGENT_CONFIG:
+#   repetition_leniency: 3.0
+
 # Bash 工具命令白名单（可选）
 # 配置后仅允许 bash 工具执行列表中声明的命令，未配置则不限制。
 # 示例：

@@ -97,6 +97,9 @@ AGENT_CONFIG:
   token_limit: null             # token 上限；null/省略 = 不限制
   hierarchy: "MAIN"             # 运行时层级标识（如子 Agent 为 SUB）
   relevant_skills_limit: null   # planner skill 选择上限；0 = 禁用 LLM 选 skill
+  # repetition_leniency: LLM/tool 输出重复检测宽松系数（越大越松；省略=1.0）
+  # 次数类阈值 × 系数，多样性阈值 ÷ 系数。长 JSON tool args 误报时可调到 3.0
+  repetition_leniency: 1.0
 
 # 与 AGENT_CONFIG.enable_human_feedback 等效，ToolManager 也会读顶层键
 # enable_human_feedback: false

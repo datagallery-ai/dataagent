@@ -373,6 +373,7 @@ class Runtime:
                 name,
                 compress_token_limit=self.env.compress_token_limit,
                 compress_message_cnt=self.env.compress_message_cnt,
+                repetition_leniency=self.env.repetition_leniency,
             )
         return self._llms[name]
 

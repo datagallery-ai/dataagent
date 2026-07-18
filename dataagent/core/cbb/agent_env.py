@@ -63,6 +63,8 @@ class Env:
     ir_recent_turns: int | None = None
     # 工具结果截断长度（YAML 节点级 max_tool_result_length 可覆盖，None 表示用 DEFAULT_MAX_TOOL_RESULT_LENGTH）
     max_tool_result_length: int | None = None
+    # LLM 输出重复检测宽松系数（YAML AGENT_CONFIG.repetition_leniency；None 用 llm_client 默认值）
+    repetition_leniency: float | None = None
 
     tool_manager: ToolManager | None = None
     # Per-Agent YAML configuration (not server.backend.config).
