@@ -4,23 +4,25 @@ Step 3_5: 白盒打分模型
 生成可解释的打分卡，在验证集上评估 Top-K 效果
 """
 
-import pandas as pd
-import numpy as np
-import os
-from pathlib import Path
 import json
+import os
 import pickle
 import warnings
-warnings.filterwarnings('ignore')
+from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from scipy.stats import spearmanr
-from sklearn.tree import DecisionTreeRegressor, export_text
-from sklearn.preprocessing import LabelEncoder, KBinsDiscretizer
 from sklearn.metrics import roc_auc_score
+from sklearn.preprocessing import KBinsDiscretizer, LabelEncoder
+from sklearn.tree import DecisionTreeRegressor, export_text
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", ".")).resolve()
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", DATA_DIR / "output")).resolve()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+warnings.filterwarnings('ignore')
+
 
 def _require_schema_cols():
     user_id_col = os.environ.get("USER_ID_COL", "").strip()
@@ -121,11 +123,14 @@ print(f"  白盒 AUC: {valid_auc:.4f}, LGBM AUC: {lgb_auc:.4f}, 差距: {auc_gap
 print("\n[3_5_5] 提取打分规则...")
 tree_rules_text = export_text(tree_model, feature_names=top_features, max_depth=6)
 
+
 def extract_rules_from_tree(tree, feature_names):
+    """Walk a fitted decision tree and collect leaf path conditions with scores."""
     tree_ = tree.tree_
     rules = []
 
     def recurse(node_id, path_conditions):
+        """Recursively traverse tree nodes and append leaf rules to ``rules``."""
         if tree_.children_left[node_id] == -1 and tree_.children_right[node_id] == -1:
             score = float(tree_.value[node_id][0][0])
             rules.append((list(path_conditions), score))
@@ -214,7 +219,10 @@ for pct in k_percentiles:
         'coverage': f'{coverage:.4f}'
     })
 
-    print(f"\n  Top {int(pct*100)}% (K={k}): precision={precision_at_k:.4f}, recall={recall_at_k:.4f}, lift={lift_at_k:.4f}")
+    print(
+        f"\n  Top {int(pct*100)}% (K={k}): precision={precision_at_k:.4f}, "
+        f"recall={recall_at_k:.4f}, lift={lift_at_k:.4f}"
+    )
 
 results_df = pd.DataFrame(results)
 results_df.to_csv(OUTPUT_DIR / "step3_5_topk_evaluation.csv", index=False, encoding='utf-8-sig')

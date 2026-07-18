@@ -15,10 +15,19 @@ disable-model-invocation: true
 
 | 步骤 | ClickHouse 访问方式 | 本地文件 |
 |------|-------------------|---------|
-| **step2_0 ~ step2_4** | 仅 `submit_resource_job` / `poll_job` / `cancel_job` / `collect_job`<br>**严禁 Bash 连接 ClickHouse**<br>**严禁导出中间 CSV**（所有表数据必须留在 CH） | 仅 `.md`、`.json` 分析产物 |
+| **step2_0 ~ step2_4** | 仅 `submit_resource_job` / `poll_job` / `cancel_job` / `collect_job`<br>**严禁 Bash 连接 ClickHouse**<br>**严禁导出中间 CSV**（所有表数据必须留在 CH）<br>长 SQL 用 `command_file` 提交，禁止直接传 `command` | 仅 `.md`、`.json` 分析产物 |
 | **step2_5** | 同上执行 SQL 建表和校验<br>**校验通过后**允许 Bash 连接 CH 导出最终宽表 | `.json` + **`step2_5_wide_userfiltered.csv`** |
 
 **语义查询**：通过 `semantic_retrieve` MCP 获取表结构、字段含义和 schema 角色，禁止自行连接数据源做语义解析。
+
+## 工具使用规则
+
+- `submit_resource_job` 通过 `command` 或 `command_file` 传递 SQL：
+  - `command` 适合短语句（约 2000 字符以内），直接传入 SQL 文本。
+  - **长 SQL（如展开超过 2000 字符的 `/*__...__*/` 动态块）必须先 `write_file` 写入 workspace**，
+    再通过 `command_file="your_file.sql"` 提交。禁止直接将超长 SQL 作为 `command` 参数传入，
+    也禁止将 SQL 拆分多次提交（会导致建表不完整）。
+  - `command` 和 `command_file` 互斥，只能选其一。
 
 ---
 
@@ -122,6 +131,9 @@ step2_6 → scripts/step2_6_finalize.md → receipt.json
 ## step2_3：原始特征清洗
 
 执行 `step2_3_cleaning_report.sql` → `step2_3_feature_cleaning.sql` → `step2_3_validation.sql`。
+
+- **`step2_3_cleaning_report.sql` 的 `/*__COLUMN_PROFILE_SELECTS__*/` 需展开为多条 UNION ALL SELECT，展开后 SQL 很长。** 必须先将完整展开后的 SQL 通过 bash/Python `write_file` 写入 workspace 文件，再以 `submit_resource_job(command_file="step2_3_cleaning_report.sql")` 一次性提交。
+
 依据 step2_1 画像逐字段决策：
 
 | 条件 | 动作 |

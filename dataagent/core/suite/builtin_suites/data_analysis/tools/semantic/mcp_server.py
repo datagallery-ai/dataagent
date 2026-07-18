@@ -99,6 +99,7 @@ def _write_message(payload: dict[str, Any]) -> None:
 
 
 def run_stdio_server() -> None:
+    """Run the MCP JSON-RPC server, reading requests from stdin and writing responses to stdout."""
     for line in sys.stdin:
         text = line.strip()
         if not text:
@@ -115,6 +116,7 @@ def run_stdio_server() -> None:
 
 
 def main() -> None:
+    """CLI entry point for the data-analysis semantic MCP stdio server."""
     run_stdio_server()
 
 

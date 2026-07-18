@@ -12,6 +12,7 @@ from dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.status imp
 def runtime_controller(
     tool_context: ToolExecutionContext,
 ) -> tuple[Any | None, DataAnalysisWorkflowController | None, dict[str, Any] | None]:
+    """Resolve the runtime and workflow controller from a tool execution context."""
     runtime = tool_context.runtime
     if runtime is None:
         return None, None, {"status": "ERROR", "message": "data analysis workflow tools require a mounted runtime."}
@@ -22,10 +23,12 @@ def runtime_controller(
 
 
 def success(**payload: Any) -> dict[str, Any]:
+    """Build a SUCCESS tool response dictionary."""
     return {"status": "SUCCESS", **payload}
 
 
 def error(exc: Exception) -> dict[str, Any]:
+    """Build an ERROR tool response dictionary from an exception."""
     return {"status": "ERROR", "message": str(exc)}
 
 
@@ -36,6 +39,7 @@ def submit_agent_job(
     task: str,
     timeout_sec: int,
 ) -> dict[str, Any]:
+    """Submit a subagent job through the runtime agent service."""
     agent_service = runtime.ensure_job_services()
     if agent_service is None:
         return {"status": "ERROR", "message": "runtime agent service is unavailable."}

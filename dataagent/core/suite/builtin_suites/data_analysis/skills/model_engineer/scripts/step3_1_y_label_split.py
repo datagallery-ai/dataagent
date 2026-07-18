@@ -17,6 +17,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", ".")).resolve()
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", DATA_DIR / "output")).resolve()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+
 def _require_schema_cols():
     user_id_col = os.environ.get("USER_ID_COL", "").strip()
     label_col = os.environ.get("LABEL_COL", "").strip()

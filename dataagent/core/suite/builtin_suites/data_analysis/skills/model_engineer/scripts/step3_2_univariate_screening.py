@@ -25,6 +25,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", ".")).resolve()
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", DATA_DIR / "output")).resolve()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+
 def _require_schema_cols():
     user_id_col = os.environ.get("USER_ID_COL", "").strip()
     label_col = os.environ.get("LABEL_COL", "").strip()
@@ -69,8 +70,16 @@ def compute_psi(train_series: pd.Series, valid_series: pd.Series, bins: int = PS
             except:
                 return np.nan
 
-            train_counts = pd.Series(train_bins).value_counts(normalize=True, sort=False).reindex(range(bins), fill_value=0.001)
-            valid_counts = pd.Series(valid_bins).value_counts(normalize=True, sort=False).reindex(range(bins), fill_value=0.001)
+            train_counts = (
+                pd.Series(train_bins)
+                .value_counts(normalize=True, sort=False)
+                .reindex(range(bins), fill_value=0.001)
+            )
+            valid_counts = (
+                pd.Series(valid_bins)
+                .value_counts(normalize=True, sort=False)
+                .reindex(range(bins), fill_value=0.001)
+            )
             train_pct = train_counts
             valid_pct = valid_counts
 

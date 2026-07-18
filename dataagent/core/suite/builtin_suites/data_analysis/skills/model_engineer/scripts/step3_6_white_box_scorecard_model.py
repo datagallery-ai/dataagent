@@ -3,14 +3,13 @@ Step 3_6: 白盒评分卡模型（SQL友好兜底方案）
 基于特征重要性分层加权 + 单变量 WoE 评分，输出可落库的评分规则
 """
 
-import pandas as pd
-import numpy as np
-import os
-from pathlib import Path
 import json
+import os
 import warnings
-warnings.filterwarnings('ignore')
+from pathlib import Path
 
+import numpy as np
+import pandas as pd
 from scipy.stats import spearmanr
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import KBinsDiscretizer
@@ -18,6 +17,9 @@ from sklearn.preprocessing import KBinsDiscretizer
 DATA_DIR = Path(os.environ.get("DATA_DIR", ".")).resolve()
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", DATA_DIR / "output")).resolve()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+warnings.filterwarnings('ignore')
+
 
 def _require_schema_cols():
     user_id_col = os.environ.get("USER_ID_COL", "").strip()
@@ -66,7 +68,9 @@ thresh_5 = int(np.ceil(total_features * 0.05))
 thresh_10 = int(np.ceil(total_features * 0.10))
 thresh_15 = int(np.ceil(total_features * 0.15))
 
+
 def get_weight(rank):
+    """Map a feature importance rank to a tiered scorecard weight."""
     if rank <= thresh_5:
         return 1.0
     elif rank <= thresh_10:
@@ -79,7 +83,12 @@ def get_weight(rank):
 top_feats['feature_weight'] = top_feats['rank'].apply(get_weight)
 print(f"  总特征数: {total_features}, Top20% = {N_TOP}")
 print(f"  阈值: Top5%<=rank{thresh_5} 权重1.0, 5-10% 权重0.8, 10-15% 权重0.6, 15-20% 权重0.4")
-print(f"  权重分布: 1.0→{(top_feats['rank']<=thresh_5).sum()}, 0.8→{(top_feats['rank'].between(thresh_5+1, thresh_10)).sum()}, 0.6→{(top_feats['rank'].between(thresh_10+1, thresh_15)).sum()}, 0.4→{(top_feats['rank']>thresh_15).sum()}")
+print(
+    f"  权重分布: 1.0→{(top_feats['rank']<=thresh_5).sum()}, "
+    f"0.8→{(top_feats['rank'].between(thresh_5+1, thresh_10)).sum()}, "
+    f"0.6→{(top_feats['rank'].between(thresh_10+1, thresh_15)).sum()}, "
+    f"0.4→{(top_feats['rank']>thresh_15).sum()}"
+)
 
 print("\n[3_6_3] 单变量分箱与 WoE 评分计算...")
 rule_rows = []
@@ -95,7 +104,11 @@ for _, feat_row in top_feats.iterrows():
     X_col = valid_df[feature].copy()
     y_col = pd.Series(y_valid_label, index=X_col.index)
 
-    is_string_or_obj = X_col.dtype == 'object' or str(X_col.dtype).startswith('string') or str(X_col.dtype).startswith('String')
+    is_string_or_obj = (
+        X_col.dtype == 'object'
+        or str(X_col.dtype).startswith('string')
+        or str(X_col.dtype).startswith('String')
+    )
     n_unique = X_col.nunique(dropna=True)
 
     vals_numeric = pd.to_numeric(X_col, errors='coerce')
@@ -279,7 +292,10 @@ for pct in k_percentiles:
         'cumulative_gain': round(cumulative_gain, 4),
         'coverage': round(coverage, 4)
     })
-    print(f"  Top {int(pct*100)}% (K={k}): precision={precision_at_k:.4f}, recall={recall_at_k:.4f}, lift={lift_at_k:.4f}")
+    print(
+        f"  Top {int(pct*100)}% (K={k}): precision={precision_at_k:.4f}, "
+        f"recall={recall_at_k:.4f}, lift={lift_at_k:.4f}"
+    )
 
 topk_df = pd.DataFrame(topk_results)
 

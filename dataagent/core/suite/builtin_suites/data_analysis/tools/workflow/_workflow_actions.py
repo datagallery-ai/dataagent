@@ -37,6 +37,7 @@ def start_workflow(
     step_targets_json: str,
     tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
+    """Create a new data analysis workflow from a scenario and staged input references."""
     runtime, controller, err = runtime_controller(tool_context)
     if err is not None:
         return err
@@ -66,6 +67,7 @@ def start_workflow(
 
 
 def inspect_workflow_status(tool_context: ToolExecutionContext) -> dict[str, Any]:
+    """Return the active running data analysis workflow status, if any."""
     _, controller, err = runtime_controller(tool_context)
     if err is not None:
         return err
@@ -99,6 +101,7 @@ def advance_workflow(
     timeout_sec: int = 600,
     tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
+    """Submit, complete, or retry the current step of the active data analysis workflow."""
     runtime, controller, err = runtime_controller(tool_context)
     if err is not None:
         return err
@@ -226,7 +229,10 @@ def _retry_current_step_action(
             workflow_status=workflow,
             workflow=workflow,
             next_action="advance_data_analysis_workflow",
-            message="Current workflow step failed. Call advance_data_analysis_workflow with action=retry_current_step and retry_reason.",
+            message=(
+                "Current workflow step failed. Call advance_data_analysis_workflow "
+                "with action=retry_current_step and retry_reason."
+            ),
         )
     try:
         updated = controller.retry_current_step(reason=retry_reason)
@@ -250,6 +256,7 @@ def control_workflow(
     *,
     tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
+    """Update a step target or silence the active data analysis workflow."""
     _, controller, err = runtime_controller(tool_context)
     if err is not None:
         return err
@@ -417,7 +424,10 @@ def _recover_legacy_in_progress_step(
                 workflow_status=workflow,
                 workflow=workflow,
                 next_action="advance_data_analysis_workflow",
-                message="Current subagent job completed with a valid receipt. Call advance_data_analysis_workflow with action=complete_current_step.",
+                message=(
+                    "Current subagent job completed with a valid receipt. "
+                    "Call advance_data_analysis_workflow with action=complete_current_step."
+                ),
             )
     else:
         return success(

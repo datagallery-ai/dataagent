@@ -3,14 +3,17 @@ Step 3_4: 模型训练
 包含输入校验、特征分层 CONSIDER_DROP 验证、两阶段 A/B 对比、LightGBM 训练与评估
 """
 
-import pandas as pd
-import numpy as np
-import os
-from pathlib import Path
 import json
+import os
 import pickle
 import warnings
-warnings.filterwarnings('ignore')
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import auc as pr_auc, precision_recall_curve, roc_auc_score, roc_curve
+from sklearn.preprocessing import LabelEncoder
 
 try:
     import lightgbm as lgb
@@ -19,13 +22,12 @@ except ImportError:
     HAS_LGB = False
     print("LightGBM 未安装")
 
-from sklearn.preprocessing import LabelEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve, auc as pr_auc
+warnings.filterwarnings('ignore')
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", ".")).resolve()
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", DATA_DIR / "output")).resolve()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _require_schema_cols():
     user_id_col = os.environ.get("USER_ID_COL", "").strip()
@@ -43,16 +45,19 @@ RANDOM_STATE = 42
 
 
 def compute_ks(y_true, y_score):
+    """Compute the Kolmogorov-Smirnov statistic from binary labels and predicted scores."""
     fpr, tpr, _ = roc_curve(y_true, y_score)
     return float(np.max(np.abs(tpr - fpr)))
 
 
 def compute_pr_auc(y_true, y_score):
+    """Compute the area under the precision-recall curve."""
     precision, recall, _ = precision_recall_curve(y_true, y_score)
     return float(pr_auc(recall, precision))
 
 
 def precision_at_k(y_true, y_score, k_pct=0.1):
+    """Return the positive rate among the top ``k_pct`` fraction of scores."""
     df = pd.DataFrame({'y': y_true, 'score': y_score}).sort_values('score', ascending=False)
     k = max(1, int(len(df) * k_pct))
     return float(df.head(k)['y'].mean())
@@ -79,7 +84,10 @@ print(f"  user_id 无交集: {len(id_overlap) == 0} (重叠={len(id_overlap)})")
 train_pos_rate = train_df[LABEL_COL].mean()
 valid_pos_rate = valid_df[LABEL_COL].mean()
 pos_rate_diff = abs(train_pos_rate - valid_pos_rate)
-print(f"  正负样本比例一致: {pos_rate_diff < 0.01} (train={train_pos_rate:.4f}, valid={valid_pos_rate:.4f}, diff={pos_rate_diff:.4f})")
+print(
+    f"  正负样本比例一致: {pos_rate_diff < 0.01} "
+    f"(train={train_pos_rate:.4f}, valid={valid_pos_rate:.4f}, diff={pos_rate_diff:.4f})"
+)
 
 exclude_cols = [USER_ID_COL, LABEL_COL]
 train_feat_cols = [c for c in train_df.columns if c not in exclude_cols]
@@ -165,7 +173,9 @@ else:
 
 print("\n[3_4_5] 阶段二：A/B 对比...")
 
+
 def train_and_evaluate(features, name):
+    """Train LightGBM on ``features`` and return the model, validation predictions, and AUC."""
     X_tr = X_train[features].copy()
     X_va = X_valid[features].copy()
     dt = lgb.Dataset(X_tr, label=y_train)
@@ -245,7 +255,10 @@ for k_pct in [0.01, 0.05, 0.10, 0.20, 0.30, 0.50]:
         'cumulative_gain': round(cumulative_gain, 4),
         'coverage': round(coverage, 4)
     })
-    print(f"  Top {int(k_pct*100)}% (K={k}): precision={precision:.4f}, recall={recall:.4f}, lift={lift:.4f}, hit={hit_count}")
+    print(
+        f"  Top {int(k_pct*100)}% (K={k}): precision={precision:.4f}, "
+        f"recall={recall:.4f}, lift={lift:.4f}, hit={hit_count}"
+    )
 
 topk_df = pd.DataFrame(topk_results)
 topk_df.to_csv(OUTPUT_DIR / "step3_4_topk_evaluation.csv", index=False, encoding='utf-8-sig')

@@ -66,6 +66,7 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def data_analysis_orchestration_active(runtime: Any) -> bool:
+    """Return whether the workspace has an active running data analysis workflow."""
     workspace_dir = getattr(runtime, "workspace_dir", None)
     if workspace_dir is None:
         return False

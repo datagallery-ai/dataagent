@@ -27,18 +27,22 @@ MAX_STEP_RETRIES = 3
 
 
 def active_workflow_path(workspace_dir: Path) -> Path:
+    """Return the path to the active workflow pointer file in a workspace."""
     return Path(workspace_dir) / ".metadata" / "active_workflow.json"
 
 
 def workflow_status_path(workspace_dir: Path, run_id: str) -> Path:
+    """Return the path to a workflow run's ``workflow_status.json`` file."""
     return workflow_dir(workspace_dir, run_id) / "workflow_status.json"
 
 
 def workflow_events_path(workspace_dir: Path, run_id: str) -> Path:
+    """Return the path to a workflow run's ``events.jsonl`` audit log."""
     return workflow_dir(workspace_dir, run_id) / "events.jsonl"
 
 
 def workflow_dir(workspace_dir: Path, run_id: str) -> Path:
+    """Return the metadata directory for a specific workflow run."""
     return Path(workspace_dir) / ".metadata" / "workflows" / str(run_id)
 
 
@@ -55,6 +59,7 @@ class DataAnalysisWorkflowController:
         run_id: str = "",
         shared_input_publication_id: str = "",
     ) -> dict[str, Any]:
+        """Initialize, persist, and activate a new data analysis workflow."""
         clean_steps = _validate_steps(steps)
         clean_input_refs = _validate_input_refs(input_refs)
         workflow_run_id = str(run_id or f"data_analysis_{uuid.uuid4().hex[:12]}").strip()
@@ -109,6 +114,7 @@ class DataAnalysisWorkflowController:
         return deepcopy(status)
 
     def load_active_running_workflow(self) -> dict[str, Any] | None:
+        """Load the currently active running data analysis workflow, if one exists."""
         pointer = _read_json(active_workflow_path(self.workspace_dir))
         if not isinstance(pointer, dict):
             return None
@@ -123,6 +129,7 @@ class DataAnalysisWorkflowController:
         return status
 
     def load_workflow(self, run_id: str) -> dict[str, Any] | None:
+        """Load workflow status for ``run_id``, or return ``None`` if missing or invalid."""
         payload = _read_json(workflow_status_path(self.workspace_dir, run_id))
         if not isinstance(payload, dict):
             return None
@@ -131,6 +138,7 @@ class DataAnalysisWorkflowController:
         return self._with_runtime_defaults(payload)
 
     def mark_current_step_submitted(self, job_id: str) -> dict[str, Any]:
+        """Mark the current ready step as in progress with the given subagent job id."""
         clean_job_id = str(job_id or "").strip()
         if not clean_job_id:
             raise ValueError("job_id is required")
@@ -156,6 +164,7 @@ class DataAnalysisWorkflowController:
         phase: str,
         reason: str,
     ) -> dict[str, Any]:
+        """Record a failure for the current in-progress step and optionally silence the workflow."""
         clean_job_id = str(job_id or "").strip()
         clean_phase = str(phase or "").strip()
         clean_reason = str(reason or "").strip()
@@ -212,6 +221,7 @@ class DataAnalysisWorkflowController:
         job_id: str,
         receipt: dict[str, Any],
     ) -> dict[str, Any]:
+        """Complete the current step with a receipt and advance to the next step or finish."""
         clean_job_id = str(job_id or "").strip()
         if not clean_job_id:
             raise ValueError("job_id is required")
@@ -253,6 +263,7 @@ class DataAnalysisWorkflowController:
         return deepcopy(status)
 
     def update_step_target(self, step_id: str, target: str, reason: str) -> dict[str, Any]:
+        """Update a step's target before it starts or after a non-terminal failure."""
         clean_step_id = str(step_id or "").strip()
         clean_target = str(target or "").strip()
         clean_reason = str(reason or "").strip()
@@ -281,6 +292,7 @@ class DataAnalysisWorkflowController:
         return deepcopy(status)
 
     def retry_current_step(self, reason: str) -> dict[str, Any]:
+        """Reset a failed current step to ready so it can be resubmitted."""
         clean_reason = str(reason or "").strip()
         if not clean_reason:
             raise ValueError("reason is required")
@@ -319,6 +331,7 @@ class DataAnalysisWorkflowController:
         return deepcopy(status)
 
     def silence_workflow(self, reason: str) -> dict[str, Any]:
+        """Manually silence the active workflow and clear the active pointer."""
         clean_reason = str(reason or "").strip()
         if not clean_reason:
             raise ValueError("reason is required")
@@ -452,6 +465,7 @@ def _empty_receipt() -> dict[str, Any]:
 
 
 def validate_receipt(value: Any) -> dict[str, Any]:
+    """Validate and normalize a step completion receipt with summary and artifacts."""
     if not isinstance(value, dict):
         raise ValueError("receipt must be a dict")
     summary = value.get("summary")

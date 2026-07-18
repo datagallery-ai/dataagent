@@ -34,6 +34,7 @@ FORBIDDEN_SQL_PATTERNS = [
 
 
 def load_schema_resolution() -> dict:
+    """Load the logical-role to physical-column mapping from schema_resolution.json."""
     path = Path(
         os.environ.get("SCHEMA_RESOLUTION_PATH", str(OUTPUT_DIR / "schema_resolution.json"))
     ).resolve()
@@ -50,6 +51,7 @@ def load_schema_resolution() -> dict:
 
 
 def apply_schema(sql: str, roles: dict) -> str:
+    """Replace logical role placeholders in ``sql`` with physical column or table names."""
     out = sql
     for key in sorted(roles.keys(), key=len, reverse=True):
         out = out.replace(key, roles[key])
@@ -62,12 +64,14 @@ def apply_schema(sql: str, roles: dict) -> str:
 
 
 def assert_sql_constraints(sql: str, name: str) -> None:
+    """Raise ``SystemExit`` if ``sql`` contains forbidden SQL constructs."""
     for pat, label in FORBIDDEN_SQL_PATTERNS:
         if pat.search(sql):
             raise SystemExit(f"{name}: forbidden construct {label} found in generated SQL")
 
 
 def parse_tree_condition(condition_str: str) -> str:
+    """Convert a decision-tree rule condition string into a SQL ``AND`` expression."""
     conditions = condition_str.split(" AND ")
     sql_conditions = []
     for cond in conditions:
@@ -130,6 +134,7 @@ def generate_feature_derivation_sql() -> str:
 
 
 def generate_decision_tree_sql() -> str:
+    """Build deployable SQL from the step3_5 decision-tree rule card."""
     rules_df = pd.read_csv(OUTPUT_DIR / "step3_5_rule_card.csv", encoding="utf-8-sig")
     rules_df = rules_df.drop_duplicates(subset=["rule_id"])
 
@@ -168,6 +173,7 @@ def generate_decision_tree_sql() -> str:
 
 
 def generate_scorecard_sql() -> str:
+    """Build deployable SQL from the step3_6 scorecard rules."""
     rules_df = pd.read_csv(OUTPUT_DIR / "step3_6_score_rule.csv", encoding="utf-8-sig")
 
     case_exprs = []
@@ -235,6 +241,7 @@ def generate_scorecard_sql() -> str:
 
 
 def generate_lgb_score_approx_sql() -> str:
+    """Build a LightGBM approximate scoring SQL skeleton from step3_4 artifacts."""
     return "\n".join(
         [
             "-- ============================================",
