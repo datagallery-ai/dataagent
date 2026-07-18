@@ -29,6 +29,7 @@ disable-model-invocation: true
     也禁止将 SQL 拆分多次提交（会导致建表不完整）。
   - `command` 和 `command_file` 互斥，只能选其一。
 
+**脚本路径映射**：本文档中所有 `scripts/` 前缀指向 SKILL 包内的 `skill/feature-engineer/scripts/` 目录，不要假定工作区根目录下存在 `scripts/` 目录。
 ---
 
 ## Pipeline 总览
@@ -81,9 +82,15 @@ step2_6 → scripts/step2_6_finalize.md → receipt.json
    - 其余角色（`<city>`、`<age>`、`<gender>`、`<game_id>` 等）由语义层 + 列画像确认
 
 门禁：
+
+以下验证须通过 ClickHouse MCP `submit_resource_job` 提交临时 `SELECT` 查询完成（不走 Bash），结果写入 `schema_resolution.json` 的 `key_validation` 字段：
+
 - 候选键须检查空值率、唯一性、重复倍数，不可仅凭字段名声明主键
+  - 输出字段：`column`、`null_rate`、`uniqueness`、`max_duplication_factor`、`validated`
 - `source_tables` 与 `output_meta.projection_tables` 逐一核对，禁止混入原始源表或 `step1_temp_*`
+  - 输出字段：`source_tables_matched`
 - 在 `<user_table>` 上验证 `<label>` 非空、仅含 0/1、正负类均存在
+  - 输出字段：`label_validated`、`label_null_count`、`label_values`、`label_positive_count`、`label_negative_count`
 
 ---
 
@@ -102,6 +109,8 @@ step2_6 → scripts/step2_6_finalize.md → receipt.json
 | **未使用** | 无可关联键或与目标无关 | 记录原因 |
 
 分类完成后检查是否有遗漏的源表，确认总数 = `source_tables` 数量。
+
+**键映射规则**：`rank_flg`、`dsid` 均视为 `<user_id>` 的等价映射键。在分类时，这些列与实际 `<user_id>` 列同等对待，均作为关联键使用。
 
 ### 字段画像
 
@@ -172,6 +181,17 @@ step2_6 → scripts/step2_6_finalize.md → receipt.json
 
 收尾门禁：除 `<user_id>` 等标识列外，不得残留 `n_unique > 100` 字段。所有特征名英文 snake_case。
 
+高基数门禁通过后，写入 **`step2_4_high_cardinality_check.json`**，每个被检查的字段含：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `feature` | string | 特征名 |
+| `n_unique_before` | int | 处理前唯一值数 |
+| `n_unique_after` | int | 处理后唯一值数 |
+| `method` | string | 处理方式（`binning` / `city_tier_mapping` / `binary_encoding` / `top_and_other` / `none`） |
+| `status` | string | `passed`（门禁通过） / `dropped`（已删除） |
+| `reason` | string | 处理原因说明 |
+
 ### 特征文档
 
 `step2_4_feature_derivation.md` 覆盖**所有**特征（最终保留 + 删除 + 新衍生）。每个记录：
@@ -199,6 +219,27 @@ step2_6 → scripts/step2_6_finalize.md → receipt.json
 - 删除年龄或性别为空的用户（年龄 `0` 或非法值依据 step2_1 语义判断）
 - 门禁验证：`<user_id>` 唯一、`<label>` 仍为 0/1
 - 记录过滤前后用户数、正负样本数及比例变化
+
+写入 **`step2_5_user_filter_report.json`**，格式如下：
+
+```json
+{
+  "before": {
+    "total_users": <int>,
+    "positive_count": <int>,
+    "negative_count": <int>,
+    "positive_ratio": <float>
+  },
+  "after": {
+    "total_users": <int>,
+    "positive_count": <int>,
+    "negative_count": <int>,
+    "positive_ratio": <float>
+  },
+  "filter_reasons": ["<string>"]
+}
+```
+
 - 门禁通过后导出 `step2_5_wide_userfiltered.csv`
 
 ---
