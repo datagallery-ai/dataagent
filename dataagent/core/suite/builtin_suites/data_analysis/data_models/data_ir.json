@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "artifact_type": "data_access_profile",
+  "description": "Side-channel profile emitted when workflow agents access data resources.",
+  "access_log_name": "data_access_log.jsonl",
+  "profiler_version": 1,
+  "submit_resource_job_tool": "submit_resource_job",
+  "required_fields": [
+    "schema_version",
+    "profiler_version",
+    "profiled_at",
+    "source"
+  ],
+  "record_fields": {
+    "source": {
+      "kind": "string",
+      "retrieved_at": "iso_datetime",
+      "ref": "object"
+    },
+    "num_rows": "integer",
+    "num_columns": "integer",
+    "columns": [
+      {
+        "name": "string",
+        "inferred_type": "string",
+        "non_null_count": "integer"
+      }
+    ],
+    "numeric_stats": "object",
+    "error": "string"
+  }
+}

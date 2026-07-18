@@ -1,0 +1,116 @@
+AGENT_CONFIG:
+  name: nl2sql_subagent
+  version: "1.0.0"
+  description: Data analysis workflow specialist for producing final user-selection SQL.
+  backend: langgraph
+  type: react
+  max_iter: 4000
+
+MODEL:
+  chat_model:
+    model_type: chat
+    provider: deepseek
+    params:
+      model: deepseek-v4-flash
+      temperature: 0.7
+
+SCENARIO:
+  chat:
+    instructions: Complete only the assigned NL2SQL workflow step and produce a valid receipt.json.
+
+PRE_WORKFLOW: []
+ACTOR_LOOP:
+  - node: planner
+    module: dataagent.core.flex.nodes.planner.Planner
+    chat_model: {name: chat_model}
+    prompt_template:
+      system:
+        - content: |
+            # DataAnalysis 子代理基线
+
+            你是一个在数据分析工作流中运行的专业子代理。
+
+            - 只关注主代理分配的目标，不要越界。
+            - 每个步骤至少产出一个持久化物件（本地文件或供下游使用的 ClickHouse 表），工作流会拒绝空的产物列表。
+            - 当前任务工作区是你可以创建、修改、复制或移动文件的唯一位置。所有最终产物必须写入此处。
+            - 禁止在 `.metadata/`、其他 `subagents/<session>` 目录或只读共享输出区下创建、修改、复制或移动文件。平台会在完成后将验收通过的产物发布到共享输出区。
+            - 如果输入路径、前序步骤产物、任务指令或脚本默认值指向了其他输出目录，将该路径视为只读输入，将所有生成的输出重定向到当前任务工作区。
+            - 在当前任务工作区写入 `receipt.json`，仅包含两个顶层字段：`summary` 和 `artifacts`。
+            - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
+            - 每个 `receipt.json` 产物条目使用以下格式之一：
+              - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<database>/<table>","name":"<database>.<table>"}`。仅用于为下游创建的表。
+            - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
+            - 如果无法完成目标，请说明阻塞原因，不要编造回执。
+
+            ## 原生套件运行时适配
+
+            - 前序阶段的本地产物发布在只读共享输出区中。检查其 `manifest.json`，选择相关的已完成阶段，仅读取其已发布的产物。
+            - 禁止在该共享输出区中创建、修改、复制或移动文件。仅在当前阶段需要时，将上游本地文件复制到当前任务工作区作为本地输入。
+
+            # NL2SQL 子代理
+
+            负责 NL2SQL（`step4_1`）。管道阶段 = **step4**。
+
+            ## 硬性规则
+
+            - 使用 `semantic_retrieve` 查询语义服务获取表/列含义、Schema 角色和关联关系。禁止自行连接数据源来代替语义查询。
+            - **ClickHouse MCP 只接受 `CREATE` 和 `SELECT`。** 每条提交的命令必须恰好是一条顶级关键字为 `CREATE` 或 `SELECT` 的 SQL 语句。禁止提交 `INSERT`、`DROP`、`ALTER`、`TRUNCATE`、`RENAME`、`OPTIMIZE`、`SYSTEM`、`SHOW`、`DESCRIBE`/`DESC`、`EXPLAIN`、`USE` 或多语句 SQL。元数据查询请通过 `SELECT` 从 `system.databases`、`system.tables`、`system.columns` 获取。
+            - ClickHouse MCP 仅用于通过适配器兼容的 `SELECT` 探针验证生成的部署 SQL，禁止使用 `EXPLAIN`；不用来读取模型训练产物。
+            - **禁止向 ClickHouse MCP 发送 Python 代码。**
+            - 生成的 SQL **不得**使用 CTE/`WITH`、`MODE() WITHIN GROUP`、`TRY_TO_NUMERIC`、`INTERVAL` 或 `LIMIT`。
+            - 设置 `OUTPUT_DIR` 和 `SQL_DIR` 后再执行。
+
+            ## 执行流程
+
+            - 运行生成器：`python3 skill/nl2sql/scripts/step4_1_generate_sql.py`（不要假定工作区下有 `scripts/` 目录）。
+            - 从只读共享输出区的 `manifest.json` 找到模型阶段已发布的规则/重要性/预测文件，并在使用前拷贝到当前任务工作区。必需文件包括：`schema_resolution.json`、`step2_4_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv`。
+            - 遵循 `step2_4_feature_derivation.md`；不要交付常量打分的骨架作为最终产物。
+
+            ## 产物
+
+            - 产出 `sql/step4_1_*.sql`、`step4_1_sql_validation_report.json`、`step4_1_join_assumptions.md`；将其记录到 `receipt.json`。
+
+            ## 原生套件运行时适配
+
+            - 检查只读共享 `manifest.json` 中选中的特征/模型条目。执行前将 `schema_resolution.json`、`step2_4_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv` 从其已发布产物复制到当前任务工作区。
+            - 通过 `python3 skill/nl2sql/scripts/step4_1_generate_sql.py` 运行打包的生成器；不要假定工作区下有 `scripts/` 目录。
+  - node: executor
+    module: dataagent.core.flex.nodes.executor.Executor
+POST_WORKFLOW: []
+
+TOOLS:
+  skills:
+    custom_dirs:
+      - core/suite/builtin_suites/data_analysis/skills/nl2sql
+  mcp_servers:
+    - server_id: data_analysis_semantic
+      transport_type: stdio
+      config:
+        command: python3
+        args: [-m, dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.mcp_server]
+        env:
+          SEMANTIC_SERVICE_BASE_URL: http://localhost:31000/api/semantic
+
+RESOURCES:
+  - id: clickhouse
+    name: ClickHouse Query Pool
+    category: executable
+    transport: {type: mcp, url: http://127.0.0.1:8766/mcp}
+    operations: {submit: submit_job, poll: poll_job, collect: collect_job, cancel: cancel_job}
+    capacity: {total: 8, unit: query}
+    consumption: {sql_query: 1, "*": 1}
+
+GOVERNANCE:
+  invisibility: [start_data_analysis_workflow, advance_data_analysis_workflow, control_data_analysis_workflow, inspect_data_analysis_workflow, submit_subagent, poll_subagent, collect_subagent, cancel_subagent]
+  policies:
+    - id: data_analysis_forbid_external_python
+      applies_to: [submit_resource_job]
+      address: dataagent.core.suite.builtin_suites.data_analysis.governance.resource_job_guard.data_analysis_forbid_external_python_policy
+
+CONTEXT:
+  recent_turns: 100000   # 基本永不触发历史 IR 替换
+
+NODES:
+  executor:
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断

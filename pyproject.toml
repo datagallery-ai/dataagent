@@ -41,9 +41,18 @@ namespaces = true
 all = [
     "dataagent[server]",
     "dataagent[nl2sql]",
+    "dataagent[data-analysis]",
     "dataagent[a2a-server]",
     "dataagent[trajectory_graph]",
     "dataagent[tool]",
+]
+
+data-analysis = [
+    "numpy>=2.0.0",
+    "scipy>=1.14.0",
+    "scikit-learn>=1.5.0",
+    "lightgbm>=4.5.0",
+    "requests>=2.32.0",
 ]
 
 server = [
@@ -98,6 +107,9 @@ wps = [
 "*" = [
     "*.md",
     "*.yaml",
+    "*.json",
+    "*.sql",
+    "*.sh",
     "*.ttf",
     "*.otf",
 ]

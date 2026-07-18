@@ -1,0 +1,10 @@
+TOOLS:
+  local_functions:
+    - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.start_data_analysis_workflow
+      function: start_data_analysis_workflow
+    - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.advance_data_analysis_workflow
+      function: advance_data_analysis_workflow
+    - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.control_data_analysis_workflow
+      function: control_data_analysis_workflow
+    - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.inspect_data_analysis_workflow
+      function: inspect_data_analysis_workflow
