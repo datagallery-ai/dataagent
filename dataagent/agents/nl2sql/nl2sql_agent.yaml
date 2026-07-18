@@ -9,30 +9,34 @@ MODEL:
     params:
       model: "deepseek-v4-flash"
       temperature: 0.0
+      extra_body: # for bailian/glm, extra_body={"enable_thinking":False}
+        thinking:
+          type: "disabled"
 CORE:
   perceptor:
     user_schema: null  # name of .md file under templates/nl2sql/user/
     user_evidence: null
     user_sql_rules: "sql_rules_bird"
     user_few_shot_examples: null
-  generator:
+  generator:  # total number of candidate SQLs = num_workers * (num_samples * prompt + icl + skeleton + dc)
     strategies: ["prompt"]  # "prompt", "icl", "skeleton", "dc"
-    num_workers: 1  # parallelization for each strategy
+    num_workers: 1  # parallelization for each strategy, **VERY EXPENSIVE**
     num_samples: 1  # number of SQLs to generate in "prompt" strategy
   validator:
     read_only: true  # allow only read-only queries
-    db_explain: true
-    keyword_match: false
-    metadata_match: false
+    db_explain: true  # use `EXPLAIN` to validate SQL schema and syntax
+    keyword_match: false  # ban SQL that contains certain keywords
+    metadata_match: false  # validate SQL schema, fallback option of db_explain
   reflector:
-    threshold: 0.9
-    ref_retries: 2
+    threshold: 0.9  # reflector confidence threshold, 0.0 - 1.0
+    ref_retries: 2  # retry generator-validator-reflector
   executor:
-    limit: -1  # all
-    preview_limit: 5
+    limit: -1  # -1: all; >0: save only the first N rows
+    preview_limit: 5  # -1: all; >0: preview only the first N rows
   selector:
-    threshold: 0.9
-    sel_retries: 1
+    shortcut: -1  # -1: disabled; >0: select the most popular result if votes reaches N
+    threshold: 0.9  # selector confidence threshold, 0.0 - 1.0
+    sel_retries: 1  # retry generator-...-selector
 DATABASE:
   db_id: ""
   engine: "sqlite"  # "sqlite", "mysql", "hive", "postgres"

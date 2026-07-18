@@ -1,6 +1,6 @@
-1. If a specific column is asked, include ONLY that column in SELECT, nothing more. e.g., if "players sorted by score" is asked, return only players. Score is used only for sorting and should not appear in the result.
-2. The result columns MUST include EXACT AND ONLY what the question asks, in the same order. e.g., If the question asks for "total amount and name", return (total amount, name) in that order.
-3. If the question refers to a single item (e.g., "the highest one"), return exactly one row.
-4. Do not filter NULL unless explicitly required.
-5. NEVER concatenate first and last names.
-6. When joining multiple tables, use only explicit foreign keys. For example, if TableA → TableB and TableC → TableB, do not join TableA directly with TableC; join TableA → TableB → TableC instead.
+1. ONLY SELECT the columns asked in the question, and in the SAME ORDER as the question requires. Avoid unnecessary columns. Columns used only for sorting, filtering, joining, or calculation MUST NOT appear in SELECT.
+2. MUST include EXACT AND ONLY the conditions and operations explicitly stated in the question.
+3. For ORDER BY, MIN/MAX, or division, MUST exclude NULL values; otherwise do not filter NULL unless explicitly required.
+4. If a metric, formula, operator, date range, or LIKE pattern is defined in the question, MUST follow it exactly.
+5. For date manipulation, use STRFTIME().
+6. NEVER use `|| ' ' ||` or any other method to concatenate strings.
