@@ -5,6 +5,7 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
+  repetition_leniency: 5.0
 
 MODEL:
   chat_model:
@@ -97,7 +98,7 @@ TOOLS:
           SEMANTIC_SERVICE_BASE_URL: http://localhost:31000/api/semantic
       description: Semantic metadata retrieval for data-analysis subagents.
 
-RESOURCES: &clickhouse_resources
+RESOURCES:
   - id: clickhouse
     name: ClickHouse Query Pool
     category: executable
@@ -112,7 +113,7 @@ RESOURCES: &clickhouse_resources
     capacity: {total: 40, unit: query}
     consumption: {sql_query: 1, "*": 1}
 
-GOVERNANCE: &subagent_governance
+GOVERNANCE:
   invisibility:
     - start_data_analysis_workflow
     - advance_data_analysis_workflow

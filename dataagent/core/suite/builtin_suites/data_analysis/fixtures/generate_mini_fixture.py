@@ -39,6 +39,7 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, object]])
 
 
 def build_user_info(usids: list[str]) -> list[dict[str, object]]:
+    """Build synthetic user profile rows for the mini fixture dataset."""
     rows: list[dict[str, object]] = []
     for index, usid in enumerate(usids):
         age = "" if index < 3 else RNG.randint(18, 55)
@@ -59,10 +60,12 @@ def build_user_info(usids: list[str]) -> list[dict[str, object]]:
 
 
 def build_pace_life(usids: list[str]) -> list[dict[str, object]]:
+    """Build pace-of-life frequency rows (workday and weekend) for each user."""
     return [{"usid": usid, "workday_freq": RNG.randint(0, 4), "weekend_freq": RNG.randint(0, 7)} for usid in usids]
 
 
 def build_list_detail(usids: list[str]) -> list[dict[str, object]]:
+    """Build app preference list detail rows for each user."""
     return [
         {
             "usid": usid,
@@ -74,6 +77,7 @@ def build_list_detail(usids: list[str]) -> list[dict[str, object]]:
 
 
 def build_dev_info(usids: list[str]) -> list[dict[str, object]]:
+    """Build device metadata rows for each user."""
     return [
         {
             "usid": usid,
@@ -86,6 +90,7 @@ def build_dev_info(usids: list[str]) -> list[dict[str, object]]:
 
 
 def build_push(usids: list[str]) -> list[dict[str, object]]:
+    """Build push notification exposure and click rows per user."""
     rows: list[dict[str, object]] = []
     for usid in usids:
         for _ in range(RNG.randint(1, 3)):
@@ -100,6 +105,7 @@ def build_push(usids: list[str]) -> list[dict[str, object]]:
 
 
 def build_booking(usids: list[str]) -> list[dict[str, object]]:
+    """Build game booking and payment rows per user."""
     rows: list[dict[str, object]] = []
     for usid in usids:
         for game in RNG.sample(GAMES, k=RNG.randint(1, 2)):
@@ -115,6 +121,7 @@ def build_booking(usids: list[str]) -> list[dict[str, object]]:
 
 
 def build_detail(usids: list[str]) -> list[dict[str, object]]:
+    """Build game detail interaction rows per user."""
     rows: list[dict[str, object]] = []
     for usid in usids:
         for _ in range(RNG.randint(1, 2)):
@@ -130,12 +137,14 @@ def build_detail(usids: list[str]) -> list[dict[str, object]]:
 
 
 def build_game_dim(filename: str) -> list[dict[str, object]]:
+    """Build dimension table rows for a game metadata CSV filename."""
     prefix = filename.replace("游戏本体数据_", "").replace(".csv", "")
     score_col = f"{prefix}_score"
     return [{"game_name": game, score_col: score} for game, score in zip(GAMES, [0.1, 0.5, 0.9], strict=True)]
 
 
 def generate_fixture(target_dir: Path) -> None:
+    """Write all mini fixture CSV tables into ``target_dir``."""
     target_dir.mkdir(parents=True, exist_ok=True)
     usids = _usids(N_USERS)
 
@@ -170,6 +179,7 @@ def generate_fixture(target_dir: Path) -> None:
 
 
 def main() -> None:
+    """CLI entry point for generating the mini feature-engineer fixture."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--out",

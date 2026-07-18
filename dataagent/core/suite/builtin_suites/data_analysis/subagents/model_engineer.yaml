@@ -5,6 +5,7 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
+  repetition_leniency: 5.0
 
 MODEL:
   chat_model:

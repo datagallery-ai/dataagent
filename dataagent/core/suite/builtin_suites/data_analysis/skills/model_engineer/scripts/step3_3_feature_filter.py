@@ -3,13 +3,15 @@ Step 3_3: 特征过滤
 基于 step3_2 单变量筛选结果，删除 DROP 特征，保留 KEEP + CONSIDER_DROP
 """
 
-import pandas as pd
 import os
 from pathlib import Path
+
+import pandas as pd
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", ".")).resolve()
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", DATA_DIR / "output")).resolve()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def _require_schema_cols():
     user_id_col = os.environ.get("USER_ID_COL", "").strip()

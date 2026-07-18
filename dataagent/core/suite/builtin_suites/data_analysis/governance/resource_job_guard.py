@@ -166,7 +166,9 @@ def _looks_like_python_command(command: str) -> bool:
     leading = command.lstrip()
     return bool(
         re.match(
-            r"(?i)^(?:(?:env|command)\s+)*(?:[./\w-]+/)?(?:python(?:\d+(?:\.\d+)*)?|pypy(?:\d+(?:\.\d+)*)?)(?:\.exe)?(?:\s|$)",
+            r"(?i)^(?:(?:env|command)\s+)*"
+            r"(?:[./\w-]+/)?"
+            r"(?:python(?:\d+(?:\.\d+)*)?|pypy(?:\d+(?:\.\d+)*)?)(?:\.exe)?(?:\s|$)",
             leading,
         )
         or re.match(r"(?i)^(?:\.?/?[^\s]+\.py)(?:\s|$)", leading)

@@ -11,6 +11,7 @@ SCENARIOS_ROOT = SUITE_DIR / "resources"
 
 
 def load_scenario_steps(scenario_id: str, step_targets_json: str = "") -> list[dict[str, str]]:
+    """Load scenario steps and apply optional per-step target overrides from JSON."""
     scenario = _load_scenario(scenario_id)
     overrides = _parse_step_target_overrides(step_targets_json)
     steps = scenario.get("steps")

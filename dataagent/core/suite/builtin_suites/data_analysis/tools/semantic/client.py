@@ -10,10 +10,12 @@ DEFAULT_TIMEOUT_SEC = 180.0
 
 
 def resolve_base_url() -> str:
+    """Resolve the semantic service base URL from environment or the default."""
     return str(os.environ.get("SEMANTIC_SERVICE_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
 
 
 def resolve_timeout_sec() -> float:
+    """Resolve the semantic service HTTP timeout in seconds from environment or the default."""
     raw = str(os.environ.get("SEMANTIC_SERVICE_TIMEOUT_SEC") or "").strip()
     if not raw:
         return DEFAULT_TIMEOUT_SEC
