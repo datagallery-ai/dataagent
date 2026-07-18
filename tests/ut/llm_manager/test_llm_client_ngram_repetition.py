@@ -12,7 +12,11 @@
 # ============================================================================
 """Tests for LLM n-gram repetition detection."""
 
-from dataagent.core.managers.llm_manager.llm_client import _detect_ngram_repetition
+from dataagent.core.managers.llm_manager.llm_client import (
+    _detect_ngram_repetition,
+    _detect_repetition,
+    _repetition_thresholds,
+)
 
 
 def test_equals_only_ngrams_are_ignored():
@@ -31,3 +35,25 @@ def test_repeated_content_around_equals_is_still_detected():
 
     assert is_repetition
     assert detail is not None
+
+
+def test_repetition_leniency_scales_thresholds():
+    """leniency 越大：次数类阈值升高，多样性阈值降低。"""
+    tight = _repetition_thresholds(1.0)
+    loose = _repetition_thresholds(3.0)
+
+    assert loose["ngram_max_repeat"] == tight["ngram_max_repeat"] * 3
+    assert loose["char_cycle_min"] == tight["char_cycle_min"] * 3
+    assert loose["tool_call_max_repeat"] == tight["tool_call_max_repeat"] * 3
+    assert abs(loose["char_diversity_min"] - tight["char_diversity_min"] / 3) < 1e-9
+
+
+def test_detect_repetition_respects_leniency():
+    """同一结构化 JSON 片段在默认系数下可能误报，提高 leniency 后应放过。"""
+    item = '{"feature":"x","value":1},'
+    # 构造足够长、且 n-gram 会反复命中分隔符的文本
+    content = "[" + item * 80 + "]"
+    is_rep_tight, _ = _detect_repetition(content, leniency=1.0)
+    is_rep_loose, _ = _detect_repetition(content, leniency=5.0)
+    assert is_rep_tight
+    assert not is_rep_loose

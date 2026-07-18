@@ -223,6 +223,16 @@ def _optional_int_key(cfg: dict[str, Any], key: str) -> int | None:
     return int(raw)
 
 
+def _optional_float_key(cfg: dict[str, Any], key: str) -> float | None:
+    """AGENT_CONFIG 可选浮点；缺省或显式 null 则为 None。"""
+    if key not in cfg:
+        return None
+    raw = cfg.get(key)
+    if raw is None or raw == "":
+        return None
+    return float(raw)
+
+
 def _get_node_config_int(nodes: list[dict[str, Any]], node_name: str, key: str) -> int | None:
     """从节点配置中读取可选整型值。"""
     for node in nodes:
@@ -253,6 +263,7 @@ def build_agent_env_from_flex_config(
     max_iter = _optional_int_key(agent_cfg, "max_iter")
     hierarchy = str(agent_cfg.get("hierarchy", "MAIN") or "MAIN")
     token_limit = _optional_int_key(agent_cfg, "token_limit")
+    repetition_leniency = _optional_float_key(agent_cfg, "repetition_leniency")
 
     # max_concurrency: 从节点配置读取
     all_nodes = config.get("ACTOR_LOOP", []) + config.get("PRE_WORKFLOW", []) + config.get("POST_WORKFLOW", [])
@@ -315,6 +326,7 @@ def build_agent_env_from_flex_config(
         file_node_threshold=file_node_threshold,
         ir_recent_turns=ir_recent_turns,
         max_tool_result_length=max_tool_result_length,
+        repetition_leniency=repetition_leniency,
         environment_description=environment_description,
         governance=build_governance_config(
             config.get("GOVERNANCE"),

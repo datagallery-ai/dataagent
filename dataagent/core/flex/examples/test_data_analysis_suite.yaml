@@ -12,6 +12,8 @@ AGENT_CONFIG:
   max_iter: 4000
   # 生产入口可显式开启 Job 子 Agent 的只读产物发布区；未配置时默认关闭。
   subagent_output_sharing: true
+  repetition_leniency: 5.0
+  
 
 SUITE:
   include:
@@ -31,6 +33,23 @@ SCENARIO:
       Analyze the supplied data and identify the target user audience.
     task: "执行多阶段数据分析工作流"
     instructions: "Use the Data Analysis Suite workflow tools to coordinate the analysis."
+
+OVERRIDE_KEYS:
+  - HOOKS
+
+HOOKS:
+  agent:
+    pre:
+      - name: context_reference_rewriter
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - dataagent.core.flex.hooks.pruner_v2.pruner
+    executor:
+      pre:
+      post:
 
 PRE_WORKFLOW: []
 POST_WORKFLOW: []

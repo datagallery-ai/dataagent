@@ -29,6 +29,7 @@ __all__ = [
 import json
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -292,6 +293,32 @@ def _poll_with_watch(
     return latest
 
 
+def _resolve_workspace_file(file_path: str, workspace_dir: Path) -> Path | None:
+    """Resolve a workspace-relative (or absolute) file path inside the workspace.
+
+    Args:
+        file_path: A raw path string from the tool argument.
+        workspace_dir: Absolute workspace root directory.
+
+    Returns:
+        Resolved absolute :class:`Path` to an existing file, or ``None`` when
+        the path is outside the workspace or does not point to a regular file.
+    """
+    raw_path = str(file_path or "").strip()
+    if not raw_path:
+        return None
+    workspace = workspace_dir.expanduser().resolve()
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(workspace)
+    except ValueError:
+        return None
+    return resolved if resolved.is_file() else None
+
+
 # ---------------------------------------------------------------------------
 # Subagent job tools
 # ---------------------------------------------------------------------------
@@ -447,6 +474,7 @@ def cancel_subagent(job_id: str, *, _tool_context: ToolExecutionContext) -> dict
 
 def submit_resource_job(
     command: str = "",
+    command_file: str = "",
     task_type: str = "resource",
     resource_id: str = "",
     timeout_sec: int = DEFAULT_RESOURCE_JOB_TIMEOUT_SEC,
@@ -463,8 +491,17 @@ def submit_resource_job(
     Use this tool to run bounded shell work on a configured compute resource.
     Poll with ``poll_job`` and collect the final payload with ``collect_job``.
 
+    For long commands (for example complex SQL statements) that may exceed LLM
+    tool-call argument limits, write the command content to a file in the
+    workspace first with ``write_file``, then pass its workspace-relative path as
+    ``command_file``.  ``command`` and ``command_file`` are mutually exclusive.
+
     Args:
         command: Shell command executed in the workspace sandbox.
+        command_file: Workspace-relative path to a file whose content is used
+            as the shell command. Provide EITHER ``command`` OR ``command_file``,
+            not both. Prefer ``command_file`` when the command is very long (for
+            example a multi-table SQL statement).
         task_type: Task type used for consumption lookup (for example ``resource`` or ``batch_task``).
         resource_id: Optional explicit resource id from ``RESOURCES``.
         timeout_sec: Job timeout in seconds.
@@ -475,15 +512,45 @@ def submit_resource_job(
         out_kind: Optional output kind hint.
         _tool_context: Injected runtime context (not visible to the LLM).
     """
+    # ── resolve command_file → command_str ───────────────────────────────
+    command_str = str(command or "").strip()
+    command_file_str = str(command_file or "").strip()
+    if command_str and command_file_str:
+        return {
+            "status": "ERROR",
+            "message": "submit_resource_job: command and command_file are mutually exclusive. Provide one or the other.",
+        }
+
     runtime = _tool_context.runtime
     if runtime is None:
         return {"status": "ERROR", "message": "submit_resource_job requires a mounted runtime."}
+
+    if command_file_str:
+        workspace_dir = getattr(runtime, "workspace_dir", None)
+        if not workspace_dir:
+            return {"status": "ERROR", "message": "submit_resource_job cannot resolve workspace_dir for command_file."}
+        resolved_path = _resolve_workspace_file(command_file_str, Path(str(workspace_dir)))
+        if resolved_path is None:
+            return {
+                "status": "ERROR",
+                "message": f"command_file must point to a file inside the workspace: {command_file_str}",
+            }
+        try:
+            command_str = resolved_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            return {"status": "ERROR", "message": f"Failed to read command_file: {exc}"}
+        if not command_str:
+            return {"status": "ERROR", "message": "command_file is empty; write the command content to the file first."}
+
+    if not command_str:
+        return {"status": "ERROR", "message": "submit_resource_job requires command or command_file."}
+
     coordinator = runtime.ensure_resource_coordinator()
     if coordinator is None:
         return {"status": "ERROR", "message": "submit_resource_job requires RESOURCES configuration."}
     return coordinator.submit_job(
         resource_id=str(resource_id or "").strip(),
-        command=str(command or ""),
+        command=command_str,
         task_type=str(task_type or "resource").strip() or "resource",
         timeout_sec=int(timeout_sec or DEFAULT_RESOURCE_JOB_TIMEOUT_SEC),
         script_artifact=script_artifact,
