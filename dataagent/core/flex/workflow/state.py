@@ -39,6 +39,7 @@ class FlexState(BaseState):
     # Internal control fields
     __hitl_in_current_turn__: bool = False  # Prevent re-entry in same turn
     __human_feedback_resume__: str = ""  # OpenJiuWen resume mechanism
+    __final_human_feedback_guard_triggered__: bool = False  # Final delivery HITL guard has fired once
 
     # Cross-session memory: Retrieved historical session summaries for context
     cross_session_memory: str = ""

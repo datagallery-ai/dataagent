@@ -24,6 +24,7 @@ BUILTIN_HOOK_REGISTRY: dict[str, str] = {
     "cross_session_recall": "dataagent.core.flex.hooks.cross_session_recall.cross_session_recall",
     "context_reference_rewriter": "dataagent.core.flex.hooks.context_reference_rewriter.context_reference_rewriter",
     "organize_workspace": "dataagent.core.flex.hooks.organize_workspace.organize_workspace",
+    "human_feedback_guard": "dataagent.core.flex.hooks.human_feedback_guard.human_feedback_guard",
     "intent_understanding": "dataagent.core.flex.hooks.intent_understanding.intent_understanding",
     "semantic_retrieve_context_loader": "dataagent.core.flex.hooks.semantic_retrieve.semantic_retrieve_context_loader",
     "plan_enforcer": "dataagent.core.flex.hooks.plan_enforcer.plan_enforcer",
