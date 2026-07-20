@@ -19,6 +19,24 @@ SCENARIO:
   chat:
     instructions: Complete only the assigned sampling workflow step and produce a valid receipt.json.
 
+OVERRIDE_KEYS:
+  - ACTOR_LOOP
+  - HOOKS
+
+HOOKS:
+  agent:
+    pre:
+      - name: context_reference_rewriter
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - dataagent.core.flex.hooks.pruner_v2.pruner
+    executor:
+      pre:
+      post:
+
 PRE_WORKFLOW: []
 ACTOR_LOOP:
   - node: planner
@@ -83,9 +101,23 @@ ACTOR_LOOP:
             - **step1_1 起**：`read` schema + plan → 缺则补查并写回 → 拼业务 SQL → **只**提交 MCP。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
 POST_WORKFLOW: []
 
 TOOLS:
+  local_functions:
+    - module: dataagent.actions.tools.local_tool.tools
+      function: bash
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: submit_resource_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
   skills:
     custom_dirs:
       - core/suite/builtin_suites/data_analysis/skills/user-sampling
@@ -124,7 +156,3 @@ GOVERNANCE:
 
 CONTEXT:
   recent_turns: 100000   # 基本永不触发历史 IR 替换
-
-NODES:
-  executor:
-    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断

@@ -1019,6 +1019,9 @@ class ToolManager:
                 )
                 if resolved_description is not None:
                     register_kwargs["description"] = resolved_description
+                # 允许 local_functions 覆盖已注册的同名 builtin/job 工具，以便重新挂 hooks
+                if name in self._tool_instances:
+                    self.tool_registry.unregister(name)
                 self.register_local_tool(func, **register_kwargs)
                 hook_lists = self._load_hooks_from_tool_config(tool_config)
                 if hook_lists.pre or hook_lists.post:

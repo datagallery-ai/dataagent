@@ -1,5 +1,17 @@
 TOOLS:
   local_functions:
+    - module: dataagent.actions.tools.local_tool.tools
+      function: bash
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: submit_resource_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
     - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.start_data_analysis_workflow
       function: start_data_analysis_workflow
     - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.advance_data_analysis_workflow
