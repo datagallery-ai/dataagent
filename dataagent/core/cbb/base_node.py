@@ -92,10 +92,16 @@ class BaseNode:
             for hook in self.pre_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="pre"):
                     state = invoke_hook(hook, state, runtime)
+            original_state = state
             state = self._process(state, runtime)
             for hook in self.post_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="post"):
-                    state = invoke_hook(hook, state, runtime)
+                    state = invoke_hook(
+                        hook,
+                        state,
+                        runtime,
+                        extra_kwargs={"original_state": original_state},
+                    )
             return state
 
     async def aprocess(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
@@ -123,10 +129,16 @@ class BaseNode:
                     state = invoke_hook(hook, state, runtime)
             if bool(state.get("complete", False)):
                 return dict(state)
+            original_state = state
             result = await self._aprocess(state, runtime)
             for hook in self.post_hooks:
                 with collector.measure("hook", callable_perf_name(hook), hook_scope="node", hook_phase="post"):
-                    result = invoke_hook(hook, result, runtime)
+                    result = invoke_hook(
+                        hook,
+                        result,
+                        runtime,
+                        extra_kwargs={"original_state": original_state},
+                    )
             result_msgs = result.get("messages", [])
             if result_msgs and not isinstance(result_msgs, list):
                 result_msgs = [result_msgs]
