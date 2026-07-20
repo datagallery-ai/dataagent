@@ -15,6 +15,8 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
+from langchain_core.messages import AIMessage, ToolMessage
+
 import dataagent.core.flex.utils.planner_prompt_builder as planner_prompt_builder
 import dataagent.utils.messages_utils as messages_utils
 from dataagent.core.managers.llm_manager.adapters import ChatModel, LLMResponse
@@ -1011,3 +1013,78 @@ def test_prepare_flex_planner_prompt_skips_worker_metadata_when_swarm_disabled(m
     )
 
     assert "# Subagent Running History" not in str(messages[0].content)
+
+
+def test_prepare_flex_planner_prompt_does_not_apply_rolling_ir(monkeypatch, tmp_path):
+    """普通 Planner Prompt 构建不得按 turn 年龄改写历史 ToolMessage。"""
+    from dataagent.core.context.context import ContextFactory
+    from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+
+    ContextFactory.clear_context()
+    monkeypatch.setattr(planner_prompt_builder.llm_manager, "get_default_llm", lambda: None)
+
+    context = ContextFactory.get_context(user_id="u", session_id="s", run_id=1, sub_id=0)
+    context.register_query("继续分析", [])
+    context.ir_summary_cache["tc_old"] = "[IR Summary] old"
+
+    class _Runtime:
+        instructions = ""
+        flex_planner_user_sync_pending = True
+        env = SimpleNamespace(
+            environment_description="",
+            ir_recent_turns=2,
+            max_tool_result_length=8192,
+        )
+
+        def __init__(self) -> None:
+            self._cache = {}
+
+        def get_cache(self, key, default=None):
+            return self._cache.get(key, default)
+
+        def set_cache(self, key, value):
+            self._cache[key] = value
+
+        def get_all_config(self) -> dict:
+            return {"SWARM": {"enable": False}}
+
+        def get_runtime_env_prompt(self) -> str:
+            return ""
+
+        def list_builtin_skills(self):
+            return []
+
+        def list_user_skills(self):
+            return []
+
+        def clear_flex_planner_user_sync_pending(self) -> None:
+            self.flex_planner_user_sync_pending = False
+
+    state = {
+        "user_id": "u",
+        "session_id": "s",
+        "run_id": 1,
+        "sub_id": 0,
+        "user_query": "继续分析",
+        "messages": [
+            AIMessage(content="turn0", tool_calls=[{"id": "tc_old", "name": "t", "args": {}}]),
+            ToolMessage(content="old raw", tool_call_id="tc_old", name="t"),
+            AIMessage(content="turn1"),
+            AIMessage(content="turn2"),
+        ],
+        "planner_user_sync_pending": True,
+    }
+
+    messages = prepare_flex_planner_prompt(
+        context,
+        state,
+        system_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/system"),
+        user_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/user"),
+        runtime=_Runtime(),
+        workspace=str(tmp_path),
+    )
+
+    tool_messages = [message for message in messages if isinstance(message, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert "old raw" in str(tool_messages[0].content)
+    assert "[IR Summary]" not in str(tool_messages[0].content)

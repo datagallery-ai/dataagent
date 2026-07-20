@@ -53,6 +53,9 @@ DEFAULT_COMPRESS_TOKEN_LIMIT: int = 32768
 DEFAULT_COMPRESS_MESSAGE_CNT: int = 200
 """压缩触发消息数量阈值。消息数超过此值时触发压缩。"""
 
+DEFAULT_COMPRESS_LOW_WATER_RATIO: float = 0.6
+"""分层压缩的统一目标水位；IR candidate 和 Fold 都以触发阈值的 60% 为目标。"""
+
 DEFAULT_COMPRESS_FOLD_TEMPERATURE: float = 0.7
 """语义折叠压缩时 LLM 调用温度，平衡确定性归纳与语义保留。"""
 
