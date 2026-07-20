@@ -105,6 +105,8 @@ def _repetition_thresholds(leniency: float | None = None) -> dict[str, Any]:
         "char_diversity_min": max(1e-6, DEFAULT_REPETITION_CHAR_DIVERSITY_MIN / scale),
         "tool_call_max_repeat": max(1, int(round(DEFAULT_REPETITION_TOOL_CALL_MAX_REPEAT * scale))),
         "tool_call_min_text_len": max(1, int(round(DEFAULT_REPETITION_TOOL_CALL_MIN_TEXT_LEN * scale))),
+        "periodicity_min_repeats": max(1, int(round(4 * scale))),
+        "periodicity_min_coverage": 0.7 + 0.005 * scale,
     }
 
 
@@ -650,7 +652,7 @@ def _detect_repetition(
 ) -> tuple[bool, str | None]:
     """组合检测：n-gram 重复 + 周期性 + 字符循环 + 消息重复。
 
-    ``leniency`` 会缩放 n-gram / char_cycle 阈值（越大越松）；periodicity 与
+    ``leniency`` 会缩放 n-gram / periodicity / char_cycle 阈值（越大越松）；
     duplicate_message 暂不参与缩放。
     """
     if not enabled or not content:
@@ -667,7 +669,11 @@ def _detect_repetition(
     if is_rep:
         return True, detail
 
-    is_rep, detail = _detect_periodicity(content)
+    is_rep, detail = _detect_periodicity(
+        content,
+        min_repeats=th["periodicity_min_repeats"],
+        min_coverage=th["periodicity_min_coverage"],
+    )
     if is_rep:
         return True, detail
 

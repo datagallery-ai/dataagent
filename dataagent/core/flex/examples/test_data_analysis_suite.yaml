@@ -37,6 +37,10 @@ SCENARIO:
 OVERRIDE_KEYS:
   - HOOKS
 
+ACTOR_LOOP:
+  - node: executor
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断，由 truncator hook 接管
+
 HOOKS:
   agent:
     pre:
