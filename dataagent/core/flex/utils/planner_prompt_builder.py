@@ -126,10 +126,10 @@ def prepare_flex_planner_prompt(
         **prompt_kwargs,
     )
     sync_flex_planner_user_human_to_state(runtime, state, user_message)
-    _ir_rt = getattr(getattr(runtime, "env", None), "ir_recent_turns", None)
     _max_tr_len = getattr(getattr(runtime, "env", None), "max_tool_result_length", None)
     history_messages = build_messages(
-        list(state.get("messages") or []), context=context, ir_recent_turns=_ir_rt, max_tool_result_length=_max_tr_len
+        list(state.get("messages") or []),
+        max_tool_result_length=_max_tr_len,
     )
     has_current_user_message = any(
         getattr(message, "type", None) == getattr(user_message, "type", None)

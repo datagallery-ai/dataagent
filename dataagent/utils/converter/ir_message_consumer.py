@@ -194,6 +194,41 @@ def should_replace(turn_index: int, max_turn: int, recent_turns: int = DEFAULT_I
     return (max_turn - turn_index) >= recent_turns
 
 
+def build_ir_candidate(
+    messages: list[AnyMessage],
+    context: Context,
+    *,
+    ir_recent_turns: int = DEFAULT_IR_RECENT_TURNS,
+) -> list[AnyMessage]:
+    """构建批量 IR candidate，不修改输入消息或历史 state。
+
+    ``ir_recent_turns`` 只决定 ToolMessage 是否具备 IR 替换资格。候选列表与
+    输入列表等长，非 ToolMessage、recent turn 和缺少 IR 的消息保持原样。
+    """
+    if not messages:
+        return []
+
+    turn_indices = assign_turn_indices(messages)
+    max_turn = max(turn_indices) if turn_indices else 0
+    candidate: list[AnyMessage] = []
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, ToolMessage):
+            candidate.append(message)
+            continue
+        if not should_replace(turn_indices[index], max_turn, recent_turns=ir_recent_turns):
+            candidate.append(message)
+            continue
+
+        replaced = try_replace_with_ir(message, context)
+        if replaced is message:
+            candidate.append(message)
+            continue
+        candidate.append(message.model_copy(update={"content": replaced.content}))
+
+    return candidate
+
+
 def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
     """尝试用 IR 摘要替换 ToolMessage 内容。失败时返回原始消息。
 

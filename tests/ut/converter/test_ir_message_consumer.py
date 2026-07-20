@@ -31,6 +31,7 @@ from dataagent.core.context.context import ContextFactory
 from dataagent.core.context.utils_context_filesystem import lineage_path_key
 from dataagent.utils.converter.ir_message_consumer import (
     assign_turn_indices,
+    build_ir_candidate,
     format_data_lineage,
     get_recent_read_files,
     render_ir_summary,
@@ -221,6 +222,34 @@ class TestShouldReplace:
 
     def test_large_recent_turns(self):
         assert not should_replace(turn_index=0, max_turn=4, recent_turns=100)
+
+
+class TestBuildIRCandidate:
+    def test_only_replaces_eligible_old_tool_messages(self):
+        class _CachedContext:
+            def __init__(self) -> None:
+                self.ir_summary_cache = {
+                    "tc_old": "[IR Summary] old",
+                    "tc_middle": "[IR Summary] middle",
+                    "tc_recent": "[IR Summary] recent",
+                }
+
+        messages = [
+            AIMessage(content="turn0", tool_calls=[{"id": "tc_old", "name": "t", "args": {}}]),
+            ToolMessage(content="old raw", tool_call_id="tc_old", name="t"),
+            AIMessage(content="turn1", tool_calls=[{"id": "tc_middle", "name": "t", "args": {}}]),
+            ToolMessage(content="middle raw", tool_call_id="tc_middle", name="t"),
+            AIMessage(content="turn2", tool_calls=[{"id": "tc_recent", "name": "t", "args": {}}]),
+            ToolMessage(content="recent raw", tool_call_id="tc_recent", name="t"),
+        ]
+
+        candidate = build_ir_candidate(messages, _CachedContext(), ir_recent_turns=2)
+
+        assert len(candidate) == len(messages)
+        assert candidate[1].content == "[IR Summary] old"
+        assert candidate[3].content == "middle raw"
+        assert candidate[5].content == "recent raw"
+        assert messages[1].content == "old raw"
 
 
 # ── Test render_ir_summary (with real IR node classes) ───────────
