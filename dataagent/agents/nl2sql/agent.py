@@ -101,54 +101,6 @@ class NL2SQLAgent(BaseAgent):
             backend="langgraph", nodes=node_instances, router=router, config=config, state_defaults=state_defaults
         )
 
-    def _distribute_context_dump_dir(self, init: dict[str, Any], *, session_id: str | None = None) -> None:
-        from dataagent.utils.env_utils import get_env_bool
-
-        if not get_env_bool("DATAAGENT_CONTEXT_DUMP"):
-            return
-        try:
-            from dataagent.utils.runtime_paths import resolve_session_root
-
-            user_id = str(init.get("user_id") or "anonymous")
-            cfg = self._config_obj
-            cfg_session_id = cfg.get("SESSION_ID") if isinstance(cfg, dict) else None
-            parent_session_id = init.get("_parent_session_id")
-            if cfg_session_id:
-                effective_session_id = str(cfg_session_id)
-            elif parent_session_id:
-                effective_session_id = str(parent_session_id)
-            elif session_id:
-                effective_session_id = str(session_id)
-            else:
-                effective_session_id = str(init.get("session_id") or "default_session")
-            run_id = init.get("_parent_run_id", init.get("run_id", 0))
-            base_dir = (
-                resolve_session_root(user_id=user_id, session_id=effective_session_id)
-                / "workspace"
-                / ".memory"
-                / "context_dump"
-                / f"run_{run_id}"
-            )
-            existing = (
-                [d.name for d in base_dir.iterdir() if d.is_dir() and d.name.startswith("nl2sql_")]
-                if base_dir.is_dir()
-                else []
-            )
-            next_idx = len(existing) + 1
-            dump_dir = base_dir / f"nl2sql_{next_idx:02d}"
-            logger.info(
-                f"[_distribute_context_dump_dir] session_id={effective_session_id}, user_id={user_id}, run_id={run_id}, dump_dir={dump_dir}"
-            )
-            dump_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:
-            logger.warning(f"Failed to init NL2SQL context dump dir: {exc}")
-            return
-        shared_seq: list[int] = [0]
-        for node in self.nodes:
-            node.set_context_dump_dir(dump_dir)
-            node._context_dump_seq = shared_seq
-        logger.info(f"[_distribute_context_dump_dir] distributed dump_dir to {len(self.nodes)} nodes")
-
     async def chat(self, message: str, initial_state: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """Run one NL2SQL chat turn."""
         try:
@@ -233,6 +185,56 @@ class NL2SQLAgent(BaseAgent):
                 yield {"error": {"message": str(exc), "type": exc.__class__.__name__}}
 
         return _gen()
+
+    def _distribute_context_dump_dir(self, init: dict[str, Any], *, session_id: str | None = None) -> None:
+        """Resolve and distribute the per-run NL2SQL context-dump dir to all nodes."""
+        from dataagent.utils.env_utils import get_env_bool
+
+        if not get_env_bool("DATAAGENT_CONTEXT_DUMP"):
+            return
+        try:
+            from dataagent.utils.runtime_paths import resolve_session_root
+
+            user_id = str(init.get("user_id") or "anonymous")
+            cfg = self._config_obj
+            cfg_session_id = cfg.get("SESSION_ID") if isinstance(cfg, dict) else None
+            parent_session_id = init.get("_parent_session_id")
+            if cfg_session_id:
+                effective_session_id = str(cfg_session_id)
+            elif parent_session_id:
+                effective_session_id = str(parent_session_id)
+            elif session_id:
+                effective_session_id = str(session_id)
+            else:
+                effective_session_id = str(init.get("session_id") or "default_session")
+            run_id = init.get("_parent_run_id", init.get("run_id", 0))
+            base_dir = (
+                resolve_session_root(user_id=user_id, session_id=effective_session_id)
+                / "workspace"
+                / ".memory"
+                / "context_dump"
+                / f"run_{run_id}"
+            )
+            existing = (
+                [d.name for d in base_dir.iterdir() if d.is_dir() and d.name.startswith("nl2sql_")]
+                if base_dir.is_dir()
+                else []
+            )
+            next_idx = len(existing) + 1
+            dump_dir = base_dir / f"nl2sql_{next_idx:02d}"
+            logger.info(
+                f"[_distribute_context_dump_dir] session_id={effective_session_id}, "
+                f"user_id={user_id}, run_id={run_id}, dump_dir={dump_dir}"
+            )
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning(f"Failed to init NL2SQL context dump dir: {exc}")
+            return
+        shared_seq: list[int] = [0]
+        for node in self.nodes:
+            node.set_context_dump_dir(dump_dir)
+            node._context_dump_seq = shared_seq
+        logger.info(f"[_distribute_context_dump_dir] distributed dump_dir to {len(self.nodes)} nodes")
 
     async def _yield_perf_stream(
         self,

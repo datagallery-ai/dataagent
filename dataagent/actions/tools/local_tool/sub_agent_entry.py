@@ -147,6 +147,7 @@ async def _run_agent(
     sub_id: int | None = None,
     initial_state_file: str | None = None,
 ) -> Any:
+    """Run a sub-agent process and return its final state."""
     resolved_user_id, resolved_session_id, resolved_sub_id = _resolve_subagent_identity(
         user_id=user_id, session_id=session_id, sub_id=sub_id
     )

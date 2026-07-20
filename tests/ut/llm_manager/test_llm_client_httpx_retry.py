@@ -257,6 +257,39 @@ class TestAinvokeRetryBehavior:
         assert out.usage_metadata["input_cache_read_tokens"] == 150
 
 
+class TestAstreamRepetitionRetry:
+    """astream 捕获 LLMRepetitionError 后用 ``e.category`` 进入退避重试(回归 guard)。
+
+    回归: 加 docstring 时曾误删 ``LLMRepetitionError.__init__`` 中的
+    ``self.category = LLMErrorCategory.REPETITION_DETECTED``，使 astream 重试链路
+    ``_astream_retry_with_backoff(category=e.category, ...)`` 抛 AttributeError 而非重试。
+    """
+
+    @pytest.mark.asyncio
+    async def test_astream_repetition_error_uses_category_for_retry(self):
+        err = LLMRepetitionError("ngram", "repeat detected", content_snippet="abc", model="m")
+        calls = {"n": 0}
+
+        async def _fake_iter(self, **kwargs):  # noqa: ANN001
+            # async generator that always raises LLMRepetitionError on first advance
+            calls["n"] += 1
+            raise err
+            yield  # pragma: no cover  force async generator
+
+        with (
+            patch.object(LLMClient, "_astream_iter", _fake_iter),
+            patch("dataagent.core.managers.llm_manager.llm_client.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=1)
+            # num_retries=1 → max_attempts=1: attempt 0 重试(access e.category),
+            # attempt 1 重试次数耗尽 → 重新抛出 LLMRepetitionError(非 AttributeError)
+            with pytest.raises(LLMRepetitionError):
+                async for _ in client.astream([{"role": "user", "content": "hi"}]):
+                    pass
+        # 两次 attempt: 第一次进入重试(用到 e.category), 第二次耗尽重抛
+        assert calls["n"] == 2
+
+
 class TestNonStreamPayloadStripsStream:
     """_build_payload(stream=False)：覆盖 extra_body 透传的 stream，并显式写 stream=False。"""
 

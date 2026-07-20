@@ -268,6 +268,7 @@ def _cli_optional_str(value: str | None) -> str | None:
 
 
 def _print_turn_summary(console: Any, response: dict[str, Any] | None, elapsed_sec: float) -> None:
+    """Print per-turn token usage and elapsed time to the console."""
     in_tok = out_tok = total_tok = cache_read = cache_creation = reasoning = 0
     if isinstance(response, dict):
         for msg in response.get("messages") or []:
@@ -282,7 +283,8 @@ def _print_turn_summary(console: Any, response: dict[str, Any] | None, elapsed_s
             reasoning += int(usage.get("output_reasoning_tokens") or 0)
     cache_ratio = f"{cache_read / in_tok * 100:.1f}%" if in_tok > 0 and cache_read > 0 else "-"
     console.print(
-        f"[dim]⏱ 耗时: {elapsed_sec}s | tokens: in={in_tok} out={out_tok} total={total_tok} | cache_read={cache_read}({cache_ratio})[/dim]"
+        f"[dim]⏱ 耗时: {elapsed_sec}s | tokens: in={in_tok} out={out_tok} "
+        f"total={total_tok} | cache_read={cache_read}({cache_ratio})[/dim]"
     )
 
 
@@ -307,7 +309,7 @@ async def _run_terminal_chat_loop(
     import datetime
     import uuid
 
-    from dataagent.utils.constants import _TZ_CN
+    from dataagent.utils.constants import TZ_CN
 
     uid = _cli_optional_str(user_id)
     fixed_session = _cli_optional_str(session_id)
@@ -315,7 +317,7 @@ async def _run_terminal_chat_loop(
         session_id_resolved = fixed_session
     else:
         # 同一次 CLI 进程内所有轮次共享同一 session；格式对齐 DataAgent.chat()
-        session_id_resolved = datetime.datetime.now(tz=_TZ_CN).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
+        session_id_resolved = datetime.datetime.now(tz=TZ_CN).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
 
     run_id = 0
     stream_enabled = bool(getattr(getattr(agent, "_chat_agent", None), "debug", False))

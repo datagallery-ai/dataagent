@@ -83,6 +83,7 @@ def direct_fold(
     active_llm = llm if llm is not None else llm_manager.get_default_llm()
 
     def _build_result(response: Any) -> list[AnyMessage]:
+        """Build the folded HumanMessage list from an LLM response, stamping _folded/_ts markers."""
         # 折叠摘要是一段注入式上下文，不是真实的用户交互。盖 ``_folded`` 标记
         # 让 ``_compute_round_summaries`` 跳过其 ``_ts``（首次序列化时间可能远
         # 晚于该轮真实消息，否则会导致 elapsed_sec 出现负数）。

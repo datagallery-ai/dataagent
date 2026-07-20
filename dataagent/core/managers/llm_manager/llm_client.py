@@ -173,6 +173,7 @@ def _strip_cache_control(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _safe_int(val: Any) -> int:
+    """Coerce ``val`` to int, falling back to 0 on failure."""
     try:
         return int(val or 0)
     except (TypeError, ValueError):
@@ -307,6 +308,7 @@ class LLMRepetitionError(Exception):
         content_snippet: str = "",
         model: str | None = None,
     ) -> None:
+        """Initialize a repetition-detection error with category, snippet and model context."""
         super().__init__(detail)
         self.category = LLMErrorCategory.REPETITION_DETECTED
         self.detection_type = detection_type
@@ -316,6 +318,7 @@ class LLMRepetitionError(Exception):
         self.app_recoverable = True
 
     def __str__(self) -> str:
+        """Return a concise ``[category detection_type] detail`` representation."""
         return f"[{self.category} {self.detection_type}] {self.detail}"
 
 
@@ -358,6 +361,7 @@ def _retry_backoff_seconds(attempt: int) -> float:
 
 
 def _category_for_status(status_code: int) -> LLMErrorCategory:
+    """Map an HTTP status code to its :class:`LLMErrorCategory`."""
     if status_code in _STATUS_CATEGORY:
         return _STATUS_CATEGORY[status_code]
     if 500 <= status_code < 600:
@@ -368,6 +372,7 @@ def _category_for_status(status_code: int) -> LLMErrorCategory:
 
 
 def _is_httpcore_read_error(exc: BaseException) -> bool:
+    """Whether *exc* is an httpcore ``ReadError`` (module imported lazily)."""
     return exc.__class__.__name__ == "ReadError" and exc.__class__.__module__.split(".", 1)[0] == "httpcore"
 
 
@@ -705,6 +710,7 @@ class _AStreamState:
     )
 
     def __init__(self) -> None:
+        """Initialize the per-astream-call mutable accumulator (tool calls, content, state)."""
         self.by_index: dict[int, dict[str, str]] = {}
         self.finish_reason: str = ""
         self.received_meaningful: bool = False
@@ -1081,12 +1087,79 @@ class LLMClient:
           bp4 — tail2 = Todo前第3条 (optional, skipped when approaching_compress)
         """
         use_tail_cc = os.getenv("DATAAGENT_CACHE_ANCHOR", "1") != "0"
+        system_idx, history_summary_idx, tool_indices, todo_idx = LLMClient._scan_messages_for_anchors(messages)
 
+        system_chars = LLMClient._content_chars(messages[system_idx].get("content")) if system_idx is not None else 0
+
+        eff_token_limit = compress_token_limit or DEFAULT_COMPRESS_TOKEN_LIMIT
+        eff_message_cnt = compress_message_cnt or DEFAULT_COMPRESS_MESSAGE_CNT
+        total_chars = sum(LLMClient._content_chars(msg.get("content")) for msg in messages)
+        estimated_tokens = total_chars // 4
+        approaching_compress = (
+            len(messages) >= _CACHE_COMPRESS_APPROACH_RATIO * eff_message_cnt
+            or estimated_tokens >= _CACHE_COMPRESS_APPROACH_RATIO * eff_token_limit
+        )
+
+        bp0_idx: int | None = system_idx
+        bp1_idx: int | None = history_summary_idx
+        bp3_idx: int | None = None
+        bp2_idx: int | None = None
+        bp4_idx: int | None = None
+        if use_tail_cc and todo_idx is not None and todo_idx > (system_idx or 0):
+            bp3_idx = todo_idx - 1
+            if not approaching_compress:
+                bp2_idx, bp4_idx = LLMClient._assign_bp2_bp4(
+                    messages=messages,
+                    todo_idx=todo_idx,
+                    system_idx=system_idx,
+                    bp1_idx=bp1_idx,
+                    bp3_idx=bp3_idx,
+                    tool_indices=tool_indices,
+                    system_chars=system_chars,
+                )
+
+        priority = [bp0_idx, bp1_idx, bp3_idx, bp2_idx, bp4_idx]
+        selected = list(dict.fromkeys(bp for bp in priority if bp is not None))[:_MAX_BREAKPOINTS]
+        return LLMClient._apply_breakpoints(messages, selected)
+
+    @staticmethod
+    def _content_chars(content: Any) -> int:
+        """Count characters in a message content (str or list-of-parts)."""
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            return sum(len(p.get("text", "")) for p in content if isinstance(p, dict))
+        return 0
+
+    @staticmethod
+    def _has_explicit_cc(content: Any) -> bool:
+        """Whether the content already carries an explicit cache_control marker."""
+        if not isinstance(content, list):
+            return False
+        return any(isinstance(p, dict) and "cache_control" in p for p in content)
+
+    @staticmethod
+    def _add_cc(msg: dict[str, Any]) -> None:
+        """Attach ephemeral cache_control to the last part of msg.content (in place)."""
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            msg["content"] = [{"type": "text", "text": content, "cache_control": _CACHE_CONTROL_EPHEMERAL}]
+        elif isinstance(content, list) and content:
+            new_content = list(content)
+            last = new_content[-1]
+            if isinstance(last, dict) and "cache_control" not in last:
+                new_content[-1] = {**last, "cache_control": _CACHE_CONTROL_EPHEMERAL}
+            msg["content"] = new_content
+
+    @staticmethod
+    def _scan_messages_for_anchors(
+        messages: list[dict[str, Any]],
+    ) -> tuple[int | None, int | None, list[int], int | None]:
+        """Locate system / history_summary / tool / Todo anchor indices in messages."""
         system_idx = None
         history_summary_idx = None
         tool_indices: list[int] = []
         todo_idx = None
-
         for i, msg in enumerate(messages):
             role = msg.get("role")
             if role == "system" and system_idx is None:
@@ -1106,91 +1179,84 @@ class LLMClient:
                         history_summary_idx = i
             elif role == "tool":
                 tool_indices.append(i)
+        return system_idx, history_summary_idx, tool_indices, todo_idx
 
-        def _content_chars(content: Any) -> int:
-            if isinstance(content, str):
-                return len(content)
-            if isinstance(content, list):
-                return sum(len(p.get("text", "")) for p in content if isinstance(p, dict))
-            return 0
+    @staticmethod
+    def _find_bp2_first_large_tool(
+        messages: list[dict[str, Any]],
+        tool_indices: list[int],
+        system_chars: int,
+    ) -> int | None:
+        """Find the first tool message meeting spacing and content-size thresholds for bp2."""
+        cumulative = 0
+        for i, msg in enumerate(messages):
+            cumulative += LLMClient._content_chars(msg.get("content"))
+            if i in tool_indices:
+                spacing = cumulative - system_chars
+                tool_chars = LLMClient._content_chars(msg.get("content"))
+                if spacing >= _MIN_SPACING_CHARS and tool_chars >= _MIN_TOOL_CONTENT_CHARS:
+                    return i
+        return None
 
-        def _has_explicit_cc(content: Any) -> bool:
-            if not isinstance(content, list):
-                return False
-            return any(isinstance(p, dict) and "cache_control" in p for p in content)
-
-        def _add_cc(msg: dict[str, Any]) -> None:
-            content = msg.get("content")
-            if isinstance(content, str) and content.strip():
-                msg["content"] = [{"type": "text", "text": content, "cache_control": _CACHE_CONTROL_EPHEMERAL}]
-            elif isinstance(content, list) and content:
-                new_content = list(content)
-                last = new_content[-1]
-                if isinstance(last, dict) and "cache_control" not in last:
-                    new_content[-1] = {**last, "cache_control": _CACHE_CONTROL_EPHEMERAL}
-                msg["content"] = new_content
-
-        system_chars = 0
-        if system_idx is not None:
-            system_chars += _content_chars(messages[system_idx].get("content"))
-
-        eff_token_limit = compress_token_limit or DEFAULT_COMPRESS_TOKEN_LIMIT
-        eff_message_cnt = compress_message_cnt or DEFAULT_COMPRESS_MESSAGE_CNT
-
-        total_chars = sum(_content_chars(msg.get("content")) for msg in messages)
-        estimated_tokens = total_chars // 4
-        approaching_compress = (
-            len(messages) >= _CACHE_COMPRESS_APPROACH_RATIO * eff_message_cnt
-            or estimated_tokens >= _CACHE_COMPRESS_APPROACH_RATIO * eff_token_limit
+    @staticmethod
+    def _should_set_bp4(
+        bp2_idx: int | None,
+        tail2_idx: int,
+        system_idx: int | None,
+        bp3_idx: int | None,
+        bp1_idx: int | None,
+    ) -> bool:
+        """Whether tail2 should be assigned as bp4 (no collision with existing breakpoints)."""
+        return (
+            bp2_idx is not None
+            and bp2_idx != tail2_idx
+            and tail2_idx > (system_idx or 0)
+            and tail2_idx != bp3_idx
+            and bp2_idx != bp1_idx
         )
 
-        bp0_idx: int | None = system_idx
-        bp1_idx: int | None = None
+    @staticmethod
+    def _should_fallback_bp2_to_tail2(
+        bp1_idx: int | None,
+        bp2_idx: int | None,
+        tail2_idx: int,
+        system_idx: int | None,
+    ) -> bool:
+        """Whether bp2 should fall back to tail2 position when no other bp2 was found."""
+        return bp1_idx is None and bp2_idx is None and tail2_idx is not None and tail2_idx > (system_idx or 0)
+
+    @staticmethod
+    def _assign_bp2_bp4(
+        *,
+        messages: list[dict[str, Any]],
+        todo_idx: int,
+        system_idx: int | None,
+        bp1_idx: int | None,
+        bp3_idx: int,
+        tool_indices: list[int],
+        system_chars: int,
+    ) -> tuple[int | None, int | None]:
+        """Compute bp2 (first large tool or tail2 fallback) and bp4 (tail2 anchor)."""
         bp2_idx: int | None = None
-        bp3_idx: int | None = None
-        bp4_idx: int | None = None
+        if bp1_idx is None:
+            bp2_idx = LLMClient._find_bp2_first_large_tool(messages, tool_indices, system_chars)
+        tail2_idx = todo_idx - 3
+        bp4_idx: int | None = (
+            tail2_idx if LLMClient._should_set_bp4(bp2_idx, tail2_idx, system_idx, bp3_idx, bp1_idx) else None
+        )
+        if LLMClient._should_fallback_bp2_to_tail2(bp1_idx, bp2_idx, tail2_idx, system_idx):
+            bp2_idx = tail2_idx
+        return bp2_idx, bp4_idx
 
-        if history_summary_idx is not None:
-            bp1_idx = history_summary_idx
-
-        if use_tail_cc and todo_idx is not None and todo_idx > (system_idx or 0):
-            bp3_idx = todo_idx - 1
-
-            if not approaching_compress:
-                if bp1_idx is None:
-                    cumulative = 0
-                    for i, msg in enumerate(messages):
-                        cumulative += _content_chars(msg.get("content"))
-                        if i in tool_indices:
-                            spacing = cumulative - system_chars
-                            tool_chars = _content_chars(msg.get("content"))
-                            if spacing >= _MIN_SPACING_CHARS and tool_chars >= _MIN_TOOL_CONTENT_CHARS:
-                                bp2_idx = i
-                                break
-
-                tail2_idx = todo_idx - 3
-                if (
-                    bp2_idx is not None
-                    and bp2_idx != tail2_idx
-                    and tail2_idx > (system_idx or 0)
-                    and tail2_idx != bp3_idx
-                    and bp2_idx != history_summary_idx
-                ):
-                    bp4_idx = tail2_idx
-
-                if bp1_idx is None and bp2_idx is None and tail2_idx is not None and tail2_idx > (system_idx or 0):
-                    bp2_idx = tail2_idx
-
-        priority = [bp0_idx, bp1_idx, bp3_idx, bp2_idx, bp4_idx]
-        selected = list(dict.fromkeys(bp for bp in priority if bp is not None))[:_MAX_BREAKPOINTS]
-
+    @staticmethod
+    def _apply_breakpoints(messages: list[dict[str, Any]], selected: list[int]) -> list[dict[str, Any]]:
+        """Shallow-copy messages and inject cache_control at the selected indices."""
         result = [dict(msg) for msg in messages]
         for idx in selected:
             if idx < len(result):
                 msg = result[idx]
-                if not _has_explicit_cc(msg.get("content")):
-                    _add_cc(msg)
-
+                if not LLMClient._has_explicit_cc(msg.get("content")):
+                    LLMClient._add_cc(msg)
         return result
 
     @staticmethod
@@ -1242,7 +1308,53 @@ class LLMClient:
 
     @staticmethod
     def _astream_has_emitted_output(state: _AStreamState) -> bool:
+        """Whether the stream has already emitted content/reasoning/tool-call output."""
         return bool(state.content_parts or state.reasoning_parts or state.by_index)
+
+    @staticmethod
+    def _apply_delta_tool_call_deltas(
+        raw_delta_tool_calls: list[Any],
+        by_index: dict[int, dict[str, str]],
+    ) -> None:
+        """Merge incremental ``delta.tool_calls`` fragments into ``by_index`` (arguments appended)."""
+        for tc in raw_delta_tool_calls:
+            if not isinstance(tc, dict):
+                logger.warning("stream.tool_call.delta_non_dict raw={}", tc)
+                continue
+            idx = int(tc.get("index", 0))
+            if idx not in by_index:
+                by_index[idx] = {"id": "", "name": "", "arguments": ""}
+            tid = tc.get("id")
+            if tid:
+                by_index[idx]["id"] = str(tid)
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                if fn.get("name"):
+                    by_index[idx]["name"] = str(fn["name"])
+                if fn.get("arguments"):
+                    by_index[idx]["arguments"] += str(fn["arguments"])
+
+    @staticmethod
+    def _apply_final_message_tool_calls(
+        mtc: list[Any],
+        by_index: dict[int, dict[str, str]],
+    ) -> None:
+        """Merge final ``message.tool_calls`` into ``by_index`` (arguments overwrite)."""
+        for i, tc in enumerate(mtc):
+            if not isinstance(tc, dict):
+                logger.warning("stream.tool_call.message_non_dict raw={}", tc)
+                continue
+            idx = int(tc.get("index", i))
+            if idx not in by_index:
+                by_index[idx] = {"id": "", "name": "", "arguments": ""}
+            if tc.get("id"):
+                by_index[idx]["id"] = str(tc["id"])
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                if fn.get("name"):
+                    by_index[idx]["name"] = str(fn["name"])
+                if fn.get("arguments"):
+                    by_index[idx]["arguments"] = str(fn["arguments"])
 
     @staticmethod
     def _feed_stream_tool_call_deltas(
@@ -1266,41 +1378,12 @@ class LLMClient:
             raw_delta_tool_calls = []
         if finish_reason:
             logger.debug("stream.finish_reason index={} reason={}", choice_idx, finish_reason)
-        for tc in raw_delta_tool_calls:
-            if not isinstance(tc, dict):
-                logger.warning("stream.tool_call.delta_non_dict raw={}", tc)
-                continue
-            idx = int(tc.get("index", 0))
-            if idx not in by_index:
-                by_index[idx] = {"id": "", "name": "", "arguments": ""}
-            tid = tc.get("id")
-            if tid:
-                by_index[idx]["id"] = str(tid)
-            fn = tc.get("function")
-            if isinstance(fn, dict):
-                if fn.get("name"):
-                    by_index[idx]["name"] = str(fn["name"])
-                if fn.get("arguments"):
-                    by_index[idx]["arguments"] += str(fn["arguments"])
+        LLMClient._apply_delta_tool_call_deltas(raw_delta_tool_calls, by_index)
         msg = c0.get("message")
         if isinstance(msg, dict):
             mtc = msg.get("tool_calls")
             if isinstance(mtc, list):
-                for i, tc in enumerate(mtc):
-                    if not isinstance(tc, dict):
-                        logger.warning("stream.tool_call.message_non_dict raw={}", tc)
-                        continue
-                    idx = int(tc.get("index", i))
-                    if idx not in by_index:
-                        by_index[idx] = {"id": "", "name": "", "arguments": ""}
-                    if tc.get("id"):
-                        by_index[idx]["id"] = str(tc["id"])
-                    fn = tc.get("function")
-                    if isinstance(fn, dict):
-                        if fn.get("name"):
-                            by_index[idx]["name"] = str(fn["name"])
-                        if fn.get("arguments"):
-                            by_index[idx]["arguments"] = str(fn["arguments"])
+                LLMClient._apply_final_message_tool_calls(mtc, by_index)
         return str(finish_reason or "")
 
     @classmethod
@@ -1524,6 +1607,7 @@ class LLMClient:
         attempt: int,
         max_attempts: int,
     ) -> bool:
+        """Whether a stream error may be retried (false once output has been emitted)."""
         if self._astream_has_emitted_output(state):
             logger.warning(
                 "astream.retry.skip_after_output category={} status_code={} detail={} finish_reason={} "
@@ -1540,6 +1624,7 @@ class LLMClient:
         return _should_retry_stream_error(mapped, attempt=attempt, max_attempts=max_attempts)
 
     def _astream_finish_error(self, state: _AStreamState) -> LLMCallError | None:
+        """Return an :class:`LLMCallError` if the stream ended interrupted/truncated, else None."""
         if state.has_interrupted:
             return LLMCallError(
                 LLMErrorCategory.STREAM_INTERRUPTED,
@@ -1569,6 +1654,7 @@ class LLMClient:
         snippet: str = "",
         status_code: int | None = None,
     ) -> None:
+        """Log the stream retry reason and sleep for the exponential backoff delay."""
         delay = _retry_backoff_seconds(attempt)
         logger.warning(
             "astream.retry attempt={}/{} model={} category={} status_code={} detail={} snippet={} backoff={:.3f}s",
@@ -1588,6 +1674,7 @@ class LLMClient:
         state: _AStreamState,
         messages: list[Any],
     ) -> AsyncIterator[LLMClientMessage]:
+        """Finalize accumulated tool-call fragments into a trailing LLMClientMessage."""
         final_tc, final_invalid = self._finalize_stream_tool_calls_for_lc(
             state.by_index,
             state.finish_reason,
@@ -1611,6 +1698,7 @@ class LLMClient:
         messages: list[Any],
         state: _AStreamState,
     ) -> AsyncIterator[LLMClientMessage]:
+        """Open the SSE stream and yield parsed chunk messages, raising on HTTP errors."""
         client = httpx.AsyncClient(timeout=timeout, verify=httpx_verify())
         try:
             req = client.build_request("POST", request_url, headers=self._headers(), json=payload)
@@ -1634,6 +1722,7 @@ class LLMClient:
         messages: list[Any],
         state: _AStreamState,
     ) -> LLMClientMessage | None:
+        """Parse one SSE line into a chunk message, updating stream state."""
         chunk = self._parse_sse_line(line)
         if chunk is None:
             return None
@@ -1673,6 +1762,7 @@ class LLMClient:
         attempt: int,
         max_attempts: int,
     ) -> bool:
+        """Whether a repetition error should be retried (false when attempts exhausted)."""
         if attempt >= max_attempts:
             logger.error(
                 "astream.repetition_exhausted model={} detection={} detail={} snippet={}",
@@ -1690,6 +1780,7 @@ class LLMClient:
         state: _AStreamState,
         finish_reason: str,
     ) -> bool:
+        """Drop short ``length``-finish chunks that produced no usable output."""
         output_len = len(wrapped.content or "") + len(wrapped.reasoning_content or "")
         if (
             finish_reason == "length"
@@ -1708,9 +1799,11 @@ class LLMClient:
         return False
 
     def _endpoint(self) -> str:
+        """Build the ``/chat/completions`` endpoint URL from the configured api_base."""
         return f"{self._api_base.rstrip('/')}/chat/completions"
 
     def _headers(self) -> dict[str, str]:
+        """Build the Authorization + Content-Type request headers."""
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -1768,10 +1861,12 @@ class LLMClient:
         return payload
 
     def _resolve_timeout(self, kwargs: dict[str, Any]) -> httpx.Timeout | None:
+        """Resolve the per-call httpx timeout, falling back to the client default."""
         timeout = kwargs.get("timeout", self._timeout)
         return httpx.Timeout(timeout) if timeout is not None else None
 
     def _resolve_max_attempts(self, kwargs: dict[str, Any]) -> int:
+        """Resolve the per-call retry attempt count, falling back to the default."""
         num_retries = kwargs.get("num_retries", self._num_retries)
         return int(num_retries) if num_retries is not None else DEFAULT_LLM_MAX_RETRIES
 
@@ -1796,6 +1891,7 @@ class LLMClient:
             )
 
     def _with_transient_retry(self, operation, *, max_attempts: int) -> Any:
+        """Run a sync operation with 5xx/conn/429/timeout/repetition retry + backoff."""
         for attempt in range(max_attempts + 1):
             try:
                 return operation()
@@ -1841,6 +1937,7 @@ class LLMClient:
         raise RuntimeError("Unexpected error in transient retry loop")  # pragma: no cover
 
     async def _awith_transient_retry(self, operation, *, max_attempts: int) -> Any:
+        """Run an async operation with 5xx/conn/429/timeout/repetition retry + backoff."""
         for attempt in range(max_attempts + 1):
             try:
                 return await operation()

@@ -206,6 +206,7 @@ def _compute_round_summaries(records: list[dict[str, Any]]) -> list[dict[str, An
     round_end_ts: float | None = None
 
     def _extract_ts(rec: dict[str, Any]) -> float | None:
+        """Extract ``_ts`` from a record's additional_kwargs, skipping folded summaries."""
         akw = rec.get("additional_kwargs") or {}
         if not isinstance(akw, dict):
             return None
@@ -218,6 +219,7 @@ def _compute_round_summaries(records: list[dict[str, Any]]) -> list[dict[str, An
         return float(ts) if ts is not None else None
 
     def _new_usage() -> dict[str, int]:
+        """Return a fresh zeroed token-usage accumulator dict."""
         return {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -228,6 +230,7 @@ def _compute_round_summaries(records: list[dict[str, Any]]) -> list[dict[str, An
         }
 
     def _finalize(idx: int, usage: dict[str, int], start_ts: float | None, end_ts: float | None) -> dict[str, Any]:
+        """Build the summary dict for one round from its accumulated usage and ts range."""
         input_tokens = usage.get("input_tokens", 0)
         cache_read = usage.get("input_cache_read_tokens", 0)
         cache_hit_rate = round(cache_read / input_tokens * 100, 1) if input_tokens > 0 else 0.0

@@ -24,7 +24,6 @@ from typing import Any
 
 from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
 from dataagent.core.flex.utils.hitl_config import resolve_scenario_instructions
 from dataagent.core.managers.llm_manager.llm_client import _apply_cache_defaults
 from dataagent.governance import build_governance_config
