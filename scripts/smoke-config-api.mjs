@@ -1299,6 +1299,43 @@ try {
     user_input: "config smoke",
     status: "completed"
   });
+  metadataStore.contextPackageSnapshots.create({
+    user_id: "dev-user",
+    session_id: "session-smoke",
+    run_id: "run-smoke",
+    package_id: "context-smoke",
+    revision: 0,
+    payload: {}
+  });
+  metadataStore.protocolStates.compareAndSetWithEvents({
+    user_id: "dev-user",
+    run_id: "run-smoke",
+    segment_id: "segment-smoke",
+    expected_revision: -1,
+    state: {
+      protocolId: "general-task",
+      protocolVersion: "1",
+      runId: "run-smoke",
+      segmentId: "segment-smoke",
+      revision: 0,
+      phase: "work",
+      status: "completed",
+      contextPackageRef: { packageId: "context-smoke", revision: 0 },
+      actions: [],
+      completionRejections: 0,
+      domain: {}
+    }
+  }, [{
+    eventId: "protocol-event-smoke",
+    type: "protocol.run.completed",
+    runId: "run-smoke",
+    segmentId: "segment-smoke",
+    revision: 0
+  }]);
+  assert.equal(metadataStore.protocolStates.pendingEvents({
+    user_id: "dev-user",
+    run_id: "run-smoke"
+  }).length, 1);
   const artifact = metadataStore.artifacts.create({
     id: "artifact-smoke",
     user_id: "dev-user",
@@ -1312,6 +1349,23 @@ try {
   const download = await fetch(`${baseUrl}/api/v1/artifacts/artifact-smoke/download`);
   assert.equal(download.headers.get("content-type"), "text/csv; charset=utf-8");
   assert.equal((await download.text()).includes("revenue,42"), true);
+
+  const deletedSession = await requestJson("/api/v1/sessions/session-smoke", { method: "DELETE" });
+  assert.equal(deletedSession.response.status, 200, JSON.stringify(deletedSession.body));
+  assert.deepEqual(deletedSession.body.data, {
+    sessionId: "session-smoke",
+    deleted: true,
+    deletedSessionIds: ["session-smoke"]
+  });
+  assert.equal(metadataStore.protocolStates.find({
+    user_id: "dev-user",
+    run_id: "run-smoke",
+    segment_id: "segment-smoke"
+  }), undefined);
+  assert.deepEqual(metadataStore.protocolStates.pendingEvents({
+    user_id: "dev-user",
+    run_id: "run-smoke"
+  }), []);
 
   const builtinDelete = await requestJson("/api/v1/datasources/dtc-growth-demo", { method: "DELETE" });
   assert.equal(builtinDelete.response.status, 200);
@@ -1336,7 +1390,7 @@ try {
 
   console.log(
     "Config API smoke OK: secrets, datasource/types/policies, chat upload, datasource upload, conversation, revision, "
-      + "KB, MCP, model profile, skill binding, defaults, artifact, tombstone"
+      + "KB, MCP, model profile, skill binding, defaults, artifact, session delete, tombstone"
   );
 } finally {
   await closeHttpServer(server);

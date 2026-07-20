@@ -1324,6 +1324,12 @@ export class SessionRepository {
     try {
       const placeholders = sessionIds.map(() => "?").join(", ");
       const scope = [input.user_id, ...sessionIds];
+      const runIds = this.db.prepare(`
+        SELECT id FROM runs WHERE user_id = ? AND session_id IN (${placeholders})
+      `).all(...scope)
+        .map((row) => (isRecord(row) && typeof row.id === "string" ? row.id : null))
+        .filter((id): id is string => Boolean(id));
+      const runPlaceholders = runIds.map(() => "?").join(", ");
 
       this.db.prepare(`
         DELETE FROM session_branches
@@ -1361,6 +1367,17 @@ export class SessionRepository {
         DELETE FROM trace_sections WHERE user_id = ? AND session_id IN (${placeholders})
       `).run(...scope);
 
+      if (runIds.length > 0) {
+        this.db.prepare(`
+          DELETE FROM protocol_state_snapshots
+          WHERE user_id = ? AND run_id IN (${runPlaceholders})
+        `).run(input.user_id, ...runIds);
+        this.db.prepare(`
+          DELETE FROM protocol_event_journal
+          WHERE user_id = ? AND run_id IN (${runPlaceholders})
+        `).run(input.user_id, ...runIds);
+      }
+
       this.db.prepare(`
         DELETE FROM context_package_snapshots WHERE user_id = ? AND session_id IN (${placeholders})
       `).run(...scope);
@@ -1389,14 +1406,7 @@ export class SessionRepository {
         DELETE FROM run_events WHERE user_id = ? AND session_id IN (${placeholders})
       `).run(...scope);
 
-      const runIds = this.db.prepare(`
-        SELECT id FROM runs WHERE user_id = ? AND session_id IN (${placeholders})
-      `).all(...scope)
-        .map((row) => (isRecord(row) && typeof row.id === "string" ? row.id : null))
-        .filter((id): id is string => Boolean(id));
-
       if (runIds.length > 0) {
-        const runPlaceholders = runIds.map(() => "?").join(", ");
         this.db.prepare(`
           DELETE FROM sql_audit_logs
           WHERE user_id = ? AND run_id IN (${runPlaceholders})
