@@ -19,19 +19,20 @@ may be generated in the same package directory.
 
 import sys
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from typing import Any
 
 from loguru import logger as _loguru_logger
 
-from dataagent.utils.constants import _TZ_CN
+from dataagent.utils.constants import TZ_CN
 from dataagent.utils.runtime_paths import dataagent_home, resolve_user_root
 
 
 def _cn_format(record: dict) -> str:
-    record["time"] = record["time"].astimezone(_TZ_CN)
+    """Shift loguru record time to UTC+8 in place, returning the original format string."""
+    record["time"] = record["time"].astimezone(TZ_CN)
     return record["format"]
 
 
@@ -39,7 +40,8 @@ def _make_format(fmt_string: str) -> Any:
     """Create a format callable that converts loguru time to UTC+8 before formatting."""
 
     def formatter(record: dict) -> str:
-        record["time"] = record["time"].astimezone(_TZ_CN)
+        """Loguru patcher: shift record time to UTC+8 before formatting."""
+        record["time"] = record["time"].astimezone(TZ_CN)
         return fmt_string
 
     return formatter
@@ -268,7 +270,7 @@ class DataAgentLogger:
     @classmethod
     def _build_default_log_file_path(cls, *, process_name: str = "main") -> str:
         """Build the default log path under ``<dataagent_home>/logs`` using a timestamped file name."""
-        stamp = datetime.now(tz=_TZ_CN).strftime("%Y%m%d_%H%M%S_%f")
+        stamp = datetime.now(tz=TZ_CN).strftime("%Y%m%d_%H%M%S_%f")
         prefix = f"{process_name}_" if process_name and process_name != "main" else "main_"
         return str(((dataagent_home() / "logs") / f"{prefix}{stamp}.log").resolve())
 

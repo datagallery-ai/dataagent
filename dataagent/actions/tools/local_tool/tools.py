@@ -521,6 +521,7 @@ def _resolve_and_authorize(
 
 
 def _build_shell_env() -> dict[str, str]:
+    """Build the subprocess env, injecting USER_SQLITE_PATH from contextvar when set."""
     env = dict(os.environ)
     sqlite_path = _user_sqlite_path.get()
     if sqlite_path:
@@ -2860,6 +2861,7 @@ def _resolve_bound_llm_model_name(*, tool_config: dict[str, Any] | None = None) 
 
 
 def _deep_merge_dict(target: dict, source: dict) -> None:
+    """Recursively merge ``source`` into ``target`` in place."""
     for key, value in source.items():
         if key in target and isinstance(target[key], dict) and isinstance(value, dict):
             _deep_merge_dict(target[key], value)
@@ -2875,6 +2877,7 @@ def _build_nl2sql_sub_agent_config(
     user_id: str | None = None,
     session_id: str | None = None,
 ) -> dict[str, Any]:
+    """Build the NL2SQL sub-agent runtime config by deep-merging runtime DATABASE/semantic overrides."""
     temp_config = copy.deepcopy(source_config)
 
     # 用当前主 Agent 的 DATABASE 和 SEMANTIC_LAYER 配置做内存级覆盖

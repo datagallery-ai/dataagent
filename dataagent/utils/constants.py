@@ -34,7 +34,8 @@
 
 from datetime import timedelta, timezone
 
-_TZ_CN = timezone(timedelta(hours=8))
+TZ_CN = timezone(timedelta(hours=8))
+"""中国标准时区（UTC+8），供日志时间戳/会话 ID 生成等跨模块使用。"""
 
 DEFAULT_CROSS_SESSION_RECALL_TOP_K: int = 3
 """跨 Session 召回的历史 Session 数量上限。"""

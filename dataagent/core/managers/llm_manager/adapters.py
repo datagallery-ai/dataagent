@@ -130,6 +130,7 @@ class ChatModel(Protocol):
 
 
 def _int_or_zero(val: Any) -> int:
+    """Coerce ``val`` to int, falling back to 0 on failure."""
     try:
         return int(val or 0)
     except (TypeError, ValueError):
@@ -372,6 +373,29 @@ class LangChainChatModelAdapter:
             reasoning_len=len(resp.reasoning_content or ""),
         )
 
+    @staticmethod
+    def _infer_role(*, msg_type: Any, cls_name: str) -> str:
+        """Infer OpenAI role from a langchain message's type/cls_name (default user)."""
+        if msg_type in {"human", "user"} or cls_name == "HumanMessage":
+            return "user"
+        if msg_type in {"ai", "assistant"} or cls_name == "AIMessage":
+            return "assistant"
+        if msg_type == "system" or cls_name == "SystemMessage":
+            return "system"
+        if msg_type == "tool" or cls_name == "ToolMessage":
+            return "tool"
+        return "user"
+
+    @staticmethod
+    def _maybe_add_tool_fields(m: dict[str, Any], msg: Any) -> None:
+        """Copy tool_call_id / name from a langchain ToolMessage into the dict form."""
+        tool_call_id = getattr(msg, "tool_call_id", None)
+        name = getattr(msg, "name", None)
+        if tool_call_id is not None:
+            m["tool_call_id"] = tool_call_id
+        if name is not None:
+            m["name"] = name
+
     @classmethod
     def messages_to_openai_dicts(cls, chat_input: Any) -> Any:
         """非 langchain 后端：LangChain Message / dict 列表 → OpenAI dict messages。"""
@@ -387,88 +411,67 @@ class LangChainChatModelAdapter:
         if not isinstance(chat_input, list) or not chat_input:
             return chat_input
 
-        def _infer_role(*, msg_type: Any, cls_name: str) -> str:
-            if msg_type in {"human", "user"} or cls_name == "HumanMessage":
-                return "user"
-            if msg_type in {"ai", "assistant"} or cls_name == "AIMessage":
-                return "assistant"
-            if msg_type == "system" or cls_name == "SystemMessage":
-                return "system"
-            if msg_type == "tool" or cls_name == "ToolMessage":
-                return "tool"
-            # 未识别：按 user 兜底
-            return "user"
-
-        def _maybe_add_tool_fields(m: dict[str, Any], msg: Any) -> None:
-            tool_call_id = getattr(msg, "tool_call_id", None)
-            name = getattr(msg, "name", None)
-            if tool_call_id is not None:
-                m["tool_call_id"] = tool_call_id
-            if name is not None:
-                m["name"] = name
-
-        def _maybe_add_assistant_tool_calls(m: dict[str, Any], msg: Any) -> None:
-            tc = getattr(msg, "tool_calls", None)
-            if not tc:
-                return
-            if isinstance(tc, list):
-                converted_tc: list[dict[str, Any]] = []
-                for one in tc:
-                    conv = cls._to_openai_tool_call(one)
-                    if conv is not None:
-                        converted_tc.append(conv)
-                if converted_tc:
-                    m["tool_calls"] = converted_tc
-                return
-            if isinstance(tc, dict):
-                conv = cls._to_openai_tool_call(tc)
-                if conv is not None:
-                    m["tool_calls"] = [conv]
-
-        def _ensure_reasoning_for_assistant_tool_calls(m: dict[str, Any], lc_msg: Any | None) -> None:
-            """DashScope 等 Thinking 模式：带 tool_calls 的 assistant 必须带 reasoning_content 字段。"""
-            if m.get("role") != "assistant" or not m.get("tool_calls"):
-                return
-            if lc_msg is not None:
-                rc = cls._extract_reasoning_content(lc_msg)
-                m["reasoning_content"] = rc if rc else ""
-                return
-            if m.get("reasoning_content") is not None:
-                return
-            m["reasoning_content"] = str(m.get("reasoning") or "")
-
         converted_msgs: list[dict[str, Any]] = []
         for msg in chat_input:
-            # 已经是 dict 的直接透传
             if isinstance(msg, dict):
                 m2 = dict(msg)
-                _ensure_reasoning_for_assistant_tool_calls(m2, None)
+                cls._ensure_reasoning_for_assistant_tool_calls(m2, None)
                 converted_msgs.append(m2)
                 continue
-
-            cls_name = getattr(getattr(msg, "__class__", None), "__name__", "") or ""
-            msg_type = getattr(msg, "type", None)  # langchain 常见：human/ai/system/tool
-            content = getattr(msg, "content", "")
-
-            role = _infer_role(msg_type=msg_type, cls_name=cls_name)
-
-            if isinstance(content, list):
-                m: dict[str, Any] = {"role": role, "content": content}
-            else:
-                m: dict[str, Any] = {"role": role, "content": str(content or "")}
-
-            # tool message 补充字段
-            if role == "tool":
-                _maybe_add_tool_fields(m, msg)
-
-            # assistant message 若包含 tool_calls，尽量透传（并转换为 OpenAI 兼容格式）
-            if role == "assistant":
-                _maybe_add_assistant_tool_calls(m, msg)
-                _ensure_reasoning_for_assistant_tool_calls(m, msg)
-
-            converted_msgs.append(m)
+            converted_msgs.append(cls._normalize_single_lc_message(msg))
 
         return converted_msgs if converted_msgs else chat_input
+
+    @classmethod
+    def _maybe_add_assistant_tool_calls(cls, m: dict[str, Any], msg: Any) -> None:
+        """Convert and attach langchain tool_calls (list or single dict) to OpenAI form."""
+        tc = getattr(msg, "tool_calls", None)
+        if not tc:
+            return
+        if isinstance(tc, list):
+            converted_tc: list[dict[str, Any]] = []
+            for one in tc:
+                conv = cls._to_openai_tool_call(one)
+                if conv is not None:
+                    converted_tc.append(conv)
+            if converted_tc:
+                m["tool_calls"] = converted_tc
+            return
+        if isinstance(tc, dict):
+            conv = cls._to_openai_tool_call(tc)
+            if conv is not None:
+                m["tool_calls"] = [conv]
+
+    @classmethod
+    def _ensure_reasoning_for_assistant_tool_calls(cls, m: dict[str, Any], lc_msg: Any | None) -> None:
+        """DashScope 等 Thinking 模式：带 tool_calls 的 assistant 必须带 reasoning_content 字段。"""
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            return
+        if lc_msg is not None:
+            rc = cls._extract_reasoning_content(lc_msg)
+            m["reasoning_content"] = rc if rc else ""
+            return
+        if m.get("reasoning_content") is not None:
+            return
+        m["reasoning_content"] = str(m.get("reasoning") or "")
+
+    @classmethod
+    def _normalize_single_lc_message(cls, msg: Any) -> dict[str, Any]:
+        """Normalize one langchain Message object into an OpenAI dict message."""
+        cls_name = getattr(getattr(msg, "__class__", None), "__name__", "") or ""
+        msg_type = getattr(msg, "type", None)
+        content = getattr(msg, "content", "")
+        role = cls._infer_role(msg_type=msg_type, cls_name=cls_name)
+        if isinstance(content, list):
+            m: dict[str, Any] = {"role": role, "content": content}
+        else:
+            m: dict[str, Any] = {"role": role, "content": str(content or "")}
+        if role == "tool":
+            cls._maybe_add_tool_fields(m, msg)
+        if role == "assistant":
+            cls._maybe_add_assistant_tool_calls(m, msg)
+            cls._ensure_reasoning_for_assistant_tool_calls(m, msg)
+        return m
 
     @classmethod
     def _wrap_output(cls, out: Any) -> LLMResponse:

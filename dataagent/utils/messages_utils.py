@@ -25,7 +25,7 @@ from loguru import logger
 
 from dataagent.core.context.context import Context
 from dataagent.core.managers.prompt_manager.template import PromptTemplate
-from dataagent.utils.constants import _TZ_CN, DEFAULT_IR_RECENT_TURNS, DEFAULT_MAX_TOOL_RESULT_LENGTH
+from dataagent.utils.constants import DEFAULT_IR_RECENT_TURNS, DEFAULT_MAX_TOOL_RESULT_LENGTH, TZ_CN
 from dataagent.utils.parsing_utils import extract_action_payloads, parse_action_payloads_to_tool_calls
 from dataagent.utils.runtime_paths import resolve_layout_dir
 
@@ -366,6 +366,132 @@ def _last_node_name(context: Context) -> list[str]:
     return concurrent_actions
 
 
+def _has_cache_control(content: Any) -> bool:
+    """Return True if content is a list of parts containing a cache_control key."""
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(p, dict) and "cache_control" in p for p in content)
+
+
+def _compute_final_breakpoints(
+    messages: list[BaseMessage],
+    compress_token_limit: int | None,
+    compress_message_cnt: int | None,
+) -> dict[int, Any]:
+    """Compute final cache_control breakpoint allocation via _apply_cache_control_with_anchors."""
+    # 运行 _apply_cache_control_with_anchors 得到最终断点分配
+    # （含动态注入的 bp2/bp3/bp4），使 dump 反映 LLM 调用时的真实 cache_control 布局，
+    # 而非仅标注消息构建阶段预置的显式 cc（仅有 bp1）。
+    # final_bp: idx -> cache_control 值
+    final_bp: dict[int, Any] = {}
+    try:
+        from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
+        from dataagent.core.managers.llm_manager.llm_client import LLMClient
+
+        dict_msgs = LangChainChatModelAdapter.messages_to_openai_dicts(messages)
+        processed = LLMClient._apply_cache_control_with_anchors(
+            dict_msgs,
+            compress_token_limit=compress_token_limit,
+            compress_message_cnt=compress_message_cnt,
+        )
+        for i, m in enumerate(processed):
+            c = m.get("content")
+            if isinstance(c, list):
+                for part in c:
+                    if isinstance(part, dict) and "cache_control" in part:
+                        final_bp[i] = part["cache_control"]
+                        break
+    except Exception as e:  # noqa: BLE001  cache-bp computation over heterogeneous messages; best-effort
+        logger.debug(f"dump_prompt_to_file: failed to compute final bp allocation: {e}")
+        # 回退：仅标注 LangChain 消息中预置的显式 cc
+        for i, msg in enumerate(messages):
+            if _has_cache_control(msg.content):
+                for part in msg.content:
+                    if isinstance(part, dict) and "cache_control" in part:
+                        final_bp[i] = part["cache_control"]
+                        break
+    return final_bp
+
+
+def _write_message_content(
+    f: Any,
+    content: Any,
+    idx: int,
+    is_bp: bool,
+    annotate_cache_breakpoints: bool,
+    final_bp: dict[int, Any],
+) -> None:
+    """Write the content block of a single message to the dump file."""
+    has_explicit_cc = _has_cache_control(content)
+    if isinstance(content, str):
+        f.write(f"{content}\n")
+    elif isinstance(content, list) and annotate_cache_breakpoints and has_explicit_cc:
+        for part in content:
+            if isinstance(part, dict) and "cache_control" in part:
+                cc_val = part["cache_control"]
+                text_val = part.get("text", "")
+                f.write(f"  {text_val}\n")
+                f.write(f"  ⭐ cache_control: {json.dumps(cc_val)}\n")
+            elif isinstance(part, dict):
+                f.write(f"  {json.dumps(part, ensure_ascii=False)}\n")
+            else:
+                f.write(f"  {json.dumps(part, ensure_ascii=False)}\n")
+        f.write("\n")
+    else:
+        f.write(f"{json.dumps(content, ensure_ascii=False, indent=2)}\n")
+
+    # 动态注入的断点（原 LangChain 消息无显式 cc，由 _apply_cache_control_with_anchors
+    # 在 dict 形态上添加）在此补充 ⭐ 标记，避免漏标 bp2/bp3/bp4。
+    if annotate_cache_breakpoints and is_bp and not has_explicit_cc:
+        cc_val = final_bp.get(idx, {"type": "ephemeral"})
+        f.write(f"  ⭐ cache_control (dynamic): {json.dumps(cc_val)}\n")
+
+
+def _write_tool_call_details(f: Any, msg: BaseMessage) -> None:
+    """Write tool_calls and invalid_tool_calls details for an AIMessage."""
+    if isinstance(msg, AIMessage) and msg.tool_calls:
+        f.write(f"\n  tool_calls ({len(msg.tool_calls)}):\n")
+        for tc in msg.tool_calls:
+            f.write(f"    - id  : {tc['id']}\n")
+            f.write(f"      name: {tc['name']}\n")
+            f.write(f"      args: {json.dumps(tc['args'], ensure_ascii=False, indent=8)}\n")
+
+    if isinstance(msg, AIMessage) and msg.invalid_tool_calls:
+        f.write(f"\n  invalid_tool_calls ({len(msg.invalid_tool_calls)}):\n")
+        for itc in msg.invalid_tool_calls:
+            f.write(f"    - id   : {itc.get('id')}\n")
+            f.write(f"      name : {itc.get('name')}\n")
+            f.write(f"      error: {itc.get('error')}\n")
+
+
+def _write_message_block(
+    f: Any,
+    msg: BaseMessage,
+    idx: int,
+    label: str,
+    is_bp: bool,
+    bp_count: int,
+    annotate_cache_breakpoints: bool,
+    final_bp: dict[int, Any],
+) -> int:
+    """Write a single message block to the dump file; return updated bp_count."""
+    bp_tag = ""
+    if annotate_cache_breakpoints and is_bp:
+        bp_count += 1
+        bp_tag = f" [bp {bp_count} cc]"
+
+    f.write(f"--- [{idx}] {label}{bp_tag} ---\n")
+
+    if isinstance(msg, ToolMessage):
+        f.write(f"  tool_call_id: {msg.tool_call_id}\n")
+        f.write(f"  status      : {getattr(msg, 'status', 'N/A')}\n")
+
+    _write_message_content(f, msg.content, idx, is_bp, annotate_cache_breakpoints, final_bp)
+    _write_tool_call_details(f, msg)
+    f.write("\n")
+    return bp_count
+
+
 def dump_prompt_to_file(
     messages: list[BaseMessage],
     file_path: Path,
@@ -399,43 +525,11 @@ def dump_prompt_to_file(
     }
     separator = "=" * 80
 
-    def _has_cache_control(content: Any) -> bool:
-        if not isinstance(content, list):
-            return False
-        return any(isinstance(p, dict) and "cache_control" in p for p in content)
-
-    # 运行 _apply_cache_control_with_anchors 得到最终断点分配
-    # （含动态注入的 bp2/bp3/bp4），使 dump 反映 LLM 调用时的真实 cache_control 布局，
-    # 而非仅标注消息构建阶段预置的显式 cc（仅有 bp1）。
-    # final_bp: idx -> cache_control 值
-    final_bp: dict[int, Any] = {}
-    if annotate_cache_breakpoints:
-        try:
-            from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
-            from dataagent.core.managers.llm_manager.llm_client import LLMClient
-
-            dict_msgs = LangChainChatModelAdapter.messages_to_openai_dicts(messages)
-            processed = LLMClient._apply_cache_control_with_anchors(
-                dict_msgs,
-                compress_token_limit=compress_token_limit,
-                compress_message_cnt=compress_message_cnt,
-            )
-            for i, m in enumerate(processed):
-                c = m.get("content")
-                if isinstance(c, list):
-                    for part in c:
-                        if isinstance(part, dict) and "cache_control" in part:
-                            final_bp[i] = part["cache_control"]
-                            break
-        except Exception as e:
-            logger.debug(f"dump_prompt_to_file: failed to compute final bp allocation: {e}")
-            # 回退：仅标注 LangChain 消息中预置的显式 cc
-            for i, msg in enumerate(messages):
-                if _has_cache_control(msg.content):
-                    for part in msg.content:
-                        if isinstance(part, dict) and "cache_control" in part:
-                            final_bp[i] = part["cache_control"]
-                            break
+    final_bp = (
+        _compute_final_breakpoints(messages, compress_token_limit, compress_message_cnt)
+        if annotate_cache_breakpoints
+        else {}
+    )
 
     mode = "a" if append else "w"
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -443,78 +537,31 @@ def dump_prompt_to_file(
     with file_path.open(mode, encoding="utf-8") as f:
         f.write(f"{separator}\n")
         f.write(
-            f"  Prompt Dump  |  {datetime.now(tz=_TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}  |  {len(messages)} messages\n"
+            f"  Prompt Dump  |  {datetime.now(tz=TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}  |  {len(messages)} messages\n"
         )
         if annotate_cache_breakpoints:
             f.write(
-                "  Cache Breakpoint Annotation: ON  |  Strategy: bp0=System, bp1=history_summary, bp2=first-large-tool/tail2, bp3=tail_anchor, bp4=tail2\n"
+                "  Cache Breakpoint Annotation: ON  |  Strategy: "
+                "bp0=System, bp1=history_summary, bp2=first-large-tool/tail2, "
+                "bp3=tail_anchor, bp4=tail2\n"
             )
         f.write(f"{separator}\n\n")
 
         bp_count = 0
         for idx, msg in enumerate(messages):
             label = _MESSAGE_TYPE_LABELS.get(type(msg), type(msg).__name__.upper())
-
             is_bp = idx in final_bp
-            bp_tag = ""
-            if annotate_cache_breakpoints and is_bp:
-                bp_count += 1
-                bp_tag = f" [bp {bp_count} cc]"
-
-            f.write(f"--- [{idx}] {label}{bp_tag} ---\n")
-
-            if isinstance(msg, ToolMessage):
-                f.write(f"  tool_call_id: {msg.tool_call_id}\n")
-                f.write(f"  status      : {getattr(msg, 'status', 'N/A')}\n")
-
-            content = msg.content
-            has_explicit_cc = _has_cache_control(content)
-            if isinstance(content, str):
-                f.write(f"{content}\n")
-            elif isinstance(content, list) and annotate_cache_breakpoints and has_explicit_cc:
-                for part in content:
-                    if isinstance(part, dict) and "cache_control" in part:
-                        cc_val = part["cache_control"]
-                        text_val = part.get("text", "")
-                        f.write(f"  {text_val}\n")
-                        f.write(f"  ⭐ cache_control: {json.dumps(cc_val)}\n")
-                    elif isinstance(part, dict):
-                        f.write(f"  {json.dumps(part, ensure_ascii=False)}\n")
-                    else:
-                        f.write(f"  {json.dumps(part, ensure_ascii=False)}\n")
-                f.write("\n")
-            else:
-                f.write(f"{json.dumps(content, ensure_ascii=False, indent=2)}\n")
-
-            # 动态注入的断点（原 LangChain 消息无显式 cc，由 _apply_cache_control_with_anchors
-            # 在 dict 形态上添加）在此补充 ⭐ 标记，避免漏标 bp2/bp3/bp4。
-            if annotate_cache_breakpoints and is_bp and not has_explicit_cc:
-                cc_val = final_bp.get(idx, {"type": "ephemeral"})
-                f.write(f"  ⭐ cache_control (dynamic): {json.dumps(cc_val)}\n")
-
-            if isinstance(msg, AIMessage) and msg.tool_calls:
-                f.write(f"\n  tool_calls ({len(msg.tool_calls)}):\n")
-                for tc in msg.tool_calls:
-                    f.write(f"    - id  : {tc['id']}\n")
-                    f.write(f"      name: {tc['name']}\n")
-                    f.write(f"      args: {json.dumps(tc['args'], ensure_ascii=False, indent=8)}\n")
-
-            if isinstance(msg, AIMessage) and msg.invalid_tool_calls:
-                f.write(f"\n  invalid_tool_calls ({len(msg.invalid_tool_calls)}):\n")
-                for itc in msg.invalid_tool_calls:
-                    f.write(f"    - id   : {itc.get('id')}\n")
-                    f.write(f"      name : {itc.get('name')}\n")
-                    f.write(f"      error: {itc.get('error')}\n")
-
-            f.write("\n")
+            bp_count = _write_message_block(f, msg, idx, label, is_bp, bp_count, annotate_cache_breakpoints, final_bp)
 
         f.write(f"{separator}\n")
         if annotate_cache_breakpoints:
             f.write(
-                f"  Breakpoint summary: {bp_count} breakpoints (final allocation via _apply_cache_control_with_anchors)\n"
+                f"  Breakpoint summary: {bp_count} breakpoints "
+                "(final allocation via _apply_cache_control_with_anchors)\n"
             )
             f.write(
-                "  NOTE: bp0/bp1/bp2/bp3/bp4 are dynamically injected at LLM call time; no pre-existing cc marks come from the message builder.\n"
+                "  NOTE: bp0/bp1/bp2/bp3/bp4 are dynamically injected at LLM call time; "
+                "no pre-existing cc marks come from the message builder.\n"
             )
         f.write("  END OF DUMP\n")
         f.write(f"{separator}\n")

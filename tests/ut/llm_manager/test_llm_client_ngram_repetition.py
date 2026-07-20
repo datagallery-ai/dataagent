@@ -13,10 +13,32 @@
 """Tests for LLM n-gram repetition detection."""
 
 from dataagent.core.managers.llm_manager.llm_client import (
+    LLMErrorCategory,
+    LLMRepetitionError,
     _detect_ngram_repetition,
     _detect_repetition,
     _repetition_thresholds,
 )
+
+
+def test_repetition_error_carries_category_and_str():
+    """LLMRepetitionError 必须携带 category=REPETITION_DETECTED 供重试链路与 __str__ 使用。
+
+    回归 guard: 加 docstring 时曾误删 ``self.category = LLMErrorCategory.REPETITION_DETECTED``，
+    导致 ``e.category`` 访问抛 AttributeError、``str(err)`` 失败。
+    """
+    err = LLMRepetitionError("ngram", "repeat detected", content_snippet="abc" * 100, model="qwen-test")
+    assert err.category == LLMErrorCategory.REPETITION_DETECTED
+    assert err.detection_type == "ngram"
+    assert err.detail == "repeat detected"
+    assert err.content_snippet == ("abc" * 100)[:500]
+    assert err.model == "qwen-test"
+    assert err.app_recoverable is True
+    # __str__ 访问 self.category, 不应 AttributeError
+    text = str(err)
+    assert "repetition_detected" in text
+    assert "ngram" in text
+    assert "repeat detected" in text
 
 
 def test_equals_only_ngrams_are_ignored():
