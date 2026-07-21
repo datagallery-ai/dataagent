@@ -69,7 +69,7 @@ ACTOR_LOOP:
 
             # 采样 Subagent
 
-            负责 pipeline **step1（采样）**。先加载 **user-sampling** skill。step1_0 后先判 `mode`：若用户表已有可用 `label`（`mode=="prelabeled"`），跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支；否则严格按 `step1_0` → `step1_1` → ... → `step1_6` 执行，不许跳过。
+            负责 pipeline **step1（采样）**。先加载 **user-sampling** skill，严格按 `step1_0` → `step1_1` → ... → `step1_6` 执行（step1_0 内模式判定后：`prelabeled` 跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支），不许跳过。
 
             > 通用 workspace / receipt 格式 / 共享输出区规则见上文基线，以下仅列采样独有约束。
             > 本地产物（plan、schema、meta、receipt）写入当前 workspace；数据产物（`step1_sampled_*` 表）写入 ClickHouse `{{database}}`。

@@ -2,63 +2,83 @@
 
 **目的**：先落盘语义结果为 `step1_0_table_schema.json`，再落盘采样计划 `step1_0_sampling_plan.json`。
 
-**全表投影**：`projections[]` 里的内容与源表一一对应；step1_4 为每张源表建 `step1_sampled_<表名>`，全表投影，不能跳过。
+**全表投影**：<必须>`projections[]` 与源表一一对应，一张都不能少</必须>；step1_4 为每张源表建 `step1_sampled_<表名>`，全表投影。
 
 ---
 
-## 模式判定（先判，再执行 §1~§4）
 
-| 条件 | mode | 后续影响 |
-|---|---|---|
-| 用户表**已有**可用 `label` 列 | `"prelabeled"` | 跳过 step1_1 / step1_2；step1_3 走 prelabeled 分支；plan 只需预标注相关字段（见 §3 prelabeled 小节） |
-| 否则 | `"regular"` 或 `"cold_start"` | 完整主路径 |
-
-**无论哪种模式，语义检索（§1①+②）都不跳过**（prelabeled 与主路径都需要完整的表结构与角色定位）。prelabeled 唯一不同是 §3 写 plan 时的字段取舍。
-
-**判定实施**（§1② 确认用户表和键列后执行，§3 写 plan 前完成）：根据 schema 确认的 `user_table`、`user_key_default`、label 列名，提交一条 ClickHouse：
-
-```sql
-SELECT
-  uniqExactIf(<sql_fragments.user_key_expr>, <label_column> = 1) AS pos_users,
-  uniqExactIf(<sql_fragments.user_key_expr>, <label_column> = 0) AS neg_users
-FROM <database>.<user_table>
-WHERE <sql_fragments.valid_user>
-```
-
-- `pos_users > 0` 且 `neg_users > 0` → `mode="prelabeled"` → §3 写 plan 时走 §3.pre
-- 否则 → 主路径 `mode="regular"`（或 step1_1 因正样本少而改写 `cold_start`）
-- String 列用 `= '1'` / `'0'`，**禁止加 LIMIT 1**
-
----
-
-## 本步做什么（做完再执行 step1_1 或 step1_3）
+## 本步做什么
 
 1. 用语义服务查出目标库全部业务表的结构，写入 `step1_0_table_schema.json`。
 2. 用 ClickHouse 查 `system.tables`，核对表清单是否和上一步一致；缺表则补查并写回 schema。
-3. 用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`，并据此填写 plan 的 `sampling_sources` / `keys`。
-4. 根据 schema 和任务参数，写出 `step1_0_sampling_plan.json`。
-5. 检查无误后（表清单齐、plan 字段齐），再进入下一步。
-
+3. 用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`。
+4. 根据 schema、任务参数和 mode，写出 `step1_0_sampling_plan.json`。
+5. <重要>检查无误后：`mode=="prelabeled"` → step1_3；否则 → step1_1</重要>。
 ---
 
 ## plan 字段
 
-| 字段 | 说明 | prelabeled |
-|---|---|---|
-| 运行参数 | `database`、`run_id`、`T0`、`label_window_days`、`lookback_days`、`sample_size`（必填，人数）、`cold_start_threshold`（默认 500） | 同主路径 |
-| `mode` | `"regular"` / `"cold_start"` / `"prelabeled"`；**prelabeled 由 §模式判定写入，step1_1 不再更新** | `"prelabeled"`（在 step1_0 即写入） |
-| `game_scope` | `{ target, similar_games }`；`similar_games` 由 step1_2 填写 | `similar_games: []`（跳过 step1_2） |
-| `y_label` | `{ family, task_type, event_table }`；`family` 对应 `labels.md` 中的家族名 | 必填 `family` + `task_type("binary_classification")`；`event_table` 写 `null` |
-| `sampling_sources` | 逻辑角色 → 表名：`user_table`、`label_event`、`activity_event`、`conversion_event`、`game_dim` | **只须 `user_table`**；其余 role 写 `null` |
-| `keys` | 共享列名：`user_key_default`、`user_key_behavior`、`game_key_default`、`event_time`、`similar_dim`（游戏维表中用于匹配相似游戏的维度列，如 game_type） | 额外必填 `label_column`（用户表已有 label 的列名）；`event_time` 可写 `null` |
-| `sql_fragments` | 共享 SQL 片段：`user_key_expr`、`valid_user`、`game_key_expr`、`game_filter`、`label_window`、`positive_label`、`pre_t0_lookback`、`through_t0` | **只须填** `user_key_expr`、`valid_user`、`game_filter`（有 `game_keyed` 投影时）；其余片段写 `null`；禁止对事件表发起 MCP 枚举画像 |
-| `negative_populations` | 数组，每项 `{ code, neg_k, description }` | `[]` |
-| `source_table_inventory` | `{ tables: [...] }`，全部源业务表名 | 同主路径 |
-| `inventory_check` | `{ ok, table_count }`；`table_count` 等于源表数 | 同主路径 |
-| `projections[]` | 与源表一一对应，每项 `{ table, type, user_key? }`；`type` 为 `user_table` / `user_keyed` / `game_keyed` | 同主路径；用户键列确认见 §3 prelabeled 小节 |
+> `database`/`run_id`/`T0`/`label_window_days`/`lookback_days`/`sample_size` 来自任务参数；`cold_start_threshold` 默认 500。  
+> `mode`：`"regular"` / `"cold_start"` / `"prelabeled"`。  
+> `game_scope`：`target` 目标游戏名，`similar_games` 由 step1_2 填写。  
+> `y_label`：`family` 对应 `labels.md` 家族名，`task_type` 固定 `"binary_classification"`。  
+> `sampling_sources`：语义服务确认的角色→表名，`game_dim` 是游戏维度表。  
+> `keys`：`similar_dim` 是游戏维表中匹配相似游戏的维度列（如 game_type）。  
+> `sql_fragments`：键表达式固定规则见 §3.1；时间/正样本片段仅 regular 路径填写。  
+> `negative_populations`：`neg_k` 仅作参考，实际负样本量由 `pos × 4` 计算。  
+> `projections[]`：与源表一一对应，`type` 为 `user_table` / `user_keyed` / `game_keyed`。
 
-- 如果某张表的用户键与 `keys.user_key_default` 不同，在 `projections[].user_key` 中写明（例如 `game_behavior_*` 系列用 `rank_flg`）。
-- 每个字段的数据类型不必在 plan 里重复写，直接查 `step1_0_table_schema.json`。
+```json
+{
+  "database": "<string>",
+  "run_id": "<string>",
+  "T0": "<ISO日期>",
+  "label_window_days": "<number>",
+  "lookback_days": "<number>",
+  "sample_size": "<number>",
+  "cold_start_threshold": 500,
+  "mode": "regular",
+  "game_scope": { "target": "<string>", "similar_games": [] },
+  "y_label": { "family": "<string>", "task_type": "binary_classification", "event_table": "<string>" },
+  "sampling_sources": {
+    "user_table": "<string>",
+    "label_event": "<string>",
+    "activity_event": "<string>",
+    "conversion_event": "<string>",
+    "game_dim": "<string>"
+  },
+  "keys": {
+    "user_key_default": "<string>",
+    "user_key_behavior": "<string>",
+    "game_key_default": "<string>",
+    "event_time": "<string>",
+    "similar_dim": "<string>",
+    "label_column": null
+  },
+  "sql_fragments": {
+    "user_key_expr": "<string>",
+    "valid_user": "<string>",
+    "game_key_expr": "<string>",
+    "game_filter": "<string>",
+    "label_window": "<string>",
+    "positive_label": "<string>",
+    "pre_t0_lookback": "<string>",
+    "through_t0": "<string>"
+  },
+  "negative_populations": [{ "code": "<string>", "neg_k": 0, "description": "<string>" }],
+  "source_table_inventory": { "tables": ["<table1>", "<table2>"] },
+  "inventory_check": { "ok": true, "table_count": "<number>" },
+  "projections": [
+    { "table": "<string>", "type": "user_table", "user_key": "<string>" },
+    { "table": "<string>", "type": "user_keyed", "user_key": "<string>" },
+    { "table": "<string>", "type": "game_keyed" }
+  ]
+}
+```
+
+**prelabeled 填法**：`mode` 写 `"prelabeled"`；`y_label.event_table` / `sampling_sources.label_event` / `sampling_sources.activity_event` / `sampling_sources.conversion_event` / `sql_fragments`（除 `user_key_expr`、`valid_user`、`game_filter` 外）写 `null`；`negative_populations` 写 `[]`；`keys.label_column` 必填（用户表实列名）。`sql_fragments.game_filter` 仅当 `projections[]` 有 `game_keyed` 时才构造。
+
+<注意>`projections[].user_key` 与 `keys.user_key_default` 不同时显式写出</注意>
 
 
 ---
@@ -75,7 +95,7 @@ WHERE <sql_fragments.valid_user>
 
 `read` tool-results 后用 **`write`** 写出 **`step1_0_table_schema.json`**（`tables[]` = 该库完整源表清单）。
 
-**② 角色定位（必做，schema 齐备后）**：用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`，并据此填写 plan 的 `sampling_sources` / `keys`。query 例如：
+**② 角色定位（必做，schema 齐备后）**：用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`（为 §3 写 plan 准备 `sampling_sources` / `keys`）。query 例如：
 
 ```text
 在数据库 <database> 已列出的业务表中，分别指出用户表、付费/label 事件表、活跃行为表、游戏维度表，以及用户键、游戏键、事件时间列。目标游戏：<target_game>。
@@ -123,7 +143,7 @@ WHERE database = '<database>' AND name NOT LIKE 'step1_%'
 ORDER BY name
 ```
 
-- 集合一致 → §3。
+- 集合一致 → 继续。
 - 库多出的表 → 补语义或一条 `system.columns` 批查，**写回** schema。
 - 语义有而库无 → 阻塞。
 
@@ -131,9 +151,46 @@ ORDER BY name
 
 ---
 
-### y-label 家族映射
+## 模式判定（§1② 语义确认用户表和键列后，§3 写 plan 前执行）
 
-根据 objective 选择对应的 label 家族：
+根据 schema 确认的 `user_table`、`user_key_default` 及 label 列名，提交 ClickHouse：
+
+```sql
+SELECT
+  uniqExactIf(<sql_fragments.user_key_expr>, <label_column> = 1) AS pos_users,
+  uniqExactIf(<sql_fragments.user_key_expr>, <label_column> = 0) AS neg_users
+FROM <database>.<user_table>
+WHERE <sql_fragments.valid_user>
+```
+
+- `pos_users > 0` 且 `neg_users > 0` → `mode="prelabeled"`：<必须>仅跳过 step1_1 / step1_2，其余步骤与主路径完全相同</必须>；写 plan 时走下面 §3.A 路径
+- 否则 → 主路径，`mode="regular"`（step1_1 正样本 &lt; 500 则降级 `"cold_start"`）
+- String 列用 `= '1'` / `'0'`，**禁止加 LIMIT 1**
+
+## 3. 填写 plan
+
+在 schema 与库表集合一致后：`read` schema + 任务参数 → 按 mode 选择对应路径，`write`/`edit` `step1_0_sampling_plan.json`。
+
+**以下路径二选一：**
+
+---
+
+### 3.A prelabeled 路径（`mode=="prelabeled"` 时走这里）
+
+按上方 plan JSON 的 <必须>prelabeled 填法</必须> 逐字段填写。补充约束：
+
+- <必须>`keys` 额外必填 `label_column`</必须>（用户表已有 label 的列名，以 schema 实列为准）
+- <必须>仅当 `projections[]` 中有 `game_keyed` 时才构造 `sql_fragments.game_filter`</必须>（规则见 §3.1 键表达式）
+- <禁止>对事件表发起 MCP `SELECT` 枚举画像</禁止>
+- <禁止>把事件表写入 `sampling_sources`</禁止>
+
+`user_key_expr` / `valid_user` / `game_filter` 构造规则见 §3.1 键表达式。
+
+---
+
+### 3.B regular 路径（`mode!="prelabeled"` 时走这里）
+
+**y-label 家族映射**：根据 objective 选择对应的 label 家族：
 
 | 家族 | 关键词 |
 |---|---|
@@ -146,17 +203,7 @@ ORDER BY name
 
 负样本默认：付费 **N4**；CTR **N2**；安装/留存/时长 **N3+N2**；至少一 hard + **N5**。
 
----
-
-## 3. 填写 plan
-
-在 schema 与库表集合一致后：`read` schema + 任务参数 → `write`/`edit` `step1_0_sampling_plan.json`。
-
-**若 `mode=="prelabeled"`**：先跳到 [§3.pre 预标注模式填写](#3pre-预标注模式填写-modespan-classequalsprelabeledtrueprelabeledspan-时必读)，填完后直接去 §4 示例和 §5 完成检查，**跳过 y-label 家族映射 和 §3.1 positive_label 画像**。`user_key_expr` / `valid_user` / `game_filter` 的构造规则仍然参考 §3.1 键表达式和时间片段。
-
-**否则（主路径）**：按以下 y-label 家族映射选取 family，再按 §3.1 逐片段构造。
-
-顺序：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
+**填写顺序**：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
 
 `sampling_sources` / `keys` / `sql_fragments` 依据 schema 的 `tables` / `role_candidates` / `join_hints`。
 
@@ -166,7 +213,7 @@ ORDER BY name
 
 每个片段必须写成**可直接拼入 ClickHouse WHERE / SELECT 的表达式**，不能留占位符或概念性描述。列名与类型取自 `step1_0_table_schema.json`。
 
-#### 键表达式
+<注意>键表达式：两种模式都需要</注意>
 
 | 片段 | 规则 | 示例 |
 |---|---|---|
@@ -175,7 +222,7 @@ ORDER BY name
 | `game_key_expr` | 同上，针对游戏键列 | `assumeNotNull(<game_key_default>)` |
 | `game_filter` | 把目标游戏定位到一行或多行的条件。`game_scope.target` 是游戏名/ID，用键列匹配 | `<game_key_default> = '<game_scope.target>'` |
 
-#### 时间片段
+#### 时间片段（仅 regular 路径）
 
 时间列的处理取决于 schema 中该列的 `valueType`：
 
@@ -192,19 +239,7 @@ ORDER BY name
 
 上述表达式中 `<time_col>` = `keys.event_time`，按上表的类型规则包裹。`T0`、`label_window_days`、`lookback_days` 来自任务参数。
 
-**示例**（schema 中 `event_time` 列为 STRING 类型，`label_window_days = N`，`lookback_days = L`）：
-
-```
-label_window:    parseDateTimeBestEffortOrNull(<event_time>) >  parseDateTimeBestEffortOrNull('<T0>')
-             AND parseDateTimeBestEffortOrNull(<event_time>) <= parseDateTimeBestEffortOrNull('<T0+N>')
-
-pre_t0_lookback: parseDateTimeBestEffortOrNull(<event_time>) >  parseDateTimeBestEffortOrNull('<T0-L>')
-             AND parseDateTimeBestEffortOrNull(<event_time>) <= parseDateTimeBestEffortOrNull('<T0>')
-
-through_t0:      parseDateTimeBestEffortOrNull(<event_time>) <= parseDateTimeBestEffortOrNull('<T0>')
-```
-
-若 schema 中列为 Date/DateTime 类型，去掉 `parseDateTimeBestEffortOrNull()`，直接用列名比较。
+**示例**：`label_window` = `<event_time>` 在 T0 到 T0+N 间；`pre_t0_lookback` = T0-L 到 T0；`through_t0` = ≤ T0。若列类型为 String 则包 `parseDateTimeBestEffortOrNull()`，若 Date/DateTime 则直接比较。
 
 #### positive_label
 
@@ -227,61 +262,9 @@ LIMIT 20
 
 ---
 
-### 3.pre 预标注模式填写（`mode=="prelabeled"` 时必读，读完跳至 §4）
+## 4. 完成检查
 
-**按上方 plan 字段表的 prelabeled 列逐字段填写**。字段表中已明确每项取值（`mode` 写 `"prelabeled"`、`negative_populations` 写 `[]`、大部分 `sql_fragments` 写 `null` 等），不再重复列。
-
-额外注意：
-
-- `keys` 额外必填 `label_column`（用户表已有 label 的列名，以 schema 实列为准）
-- `sql_fragments.game_filter` 仅当 `projections[]` 中有 `game_keyed` 时才构造（按 §3.1 键表达式规则）
-
-**禁止的**：
-- <禁止>对事件表发起 MCP `SELECT` 枚举画像（不需要 `positive_label`）</禁止>
-- <禁止>把事件表写入 `sampling_sources`（`label_event` / `activity_event` / `conversion_event` 写 `null`）</禁止>
-- <禁止>跳过语义检索 §1①+②</禁止>
-- <禁止>从 §3.1 positive_label 画像段取值</禁止>
-
-填写后直接去 §4 示例和 §5 完成检查。
-
----
-
-## 4. 示例
-
-```json
-{
-  "database": "<来自任务>",
-  "T0": "<来自任务>",
-  "game_scope": { "target": "<目标游戏>", "similar_games": [] },
-  "y_label": { "family": "付费/收入", "task_type": "binary_classification", "event_table": "<语义确认>" },
-  "sampling_sources": { "user_table": "...", "label_event": "...", "activity_event": "...", ... },
-  "keys": { "user_key_default": "<语义确认>", "user_key_behavior": "<语义确认>", "game_key_default": "<语义确认>", "event_time": "<语义确认>", "similar_dim": "<语义确认>" },
-  "sql_fragments": {
-    "user_key_expr": "assumeNotNull(<user_key_default>)",
-    "valid_user": "<user_key_default> IS NOT NULL AND <user_key_default> != ''",
-    "game_key_expr": "assumeNotNull(<game_key_default>)",
-    "game_filter": "<game_key_default> = '<game_scope.target>'",
-    "label_window": "parseDateTimeBestEffortOrNull(<event_time>) > parseDateTimeBestEffortOrNull('<T0>') AND parseDateTimeBestEffortOrNull(<event_time>) <= parseDateTimeBestEffortOrNull('<T0+N>')",
-    "positive_label": "<枚举列> = '<画像取值>'",
-    "pre_t0_lookback": "parseDateTimeBestEffortOrNull(<event_time>) > parseDateTimeBestEffortOrNull('<T0-L>') AND parseDateTimeBestEffortOrNull(<event_time>) <= parseDateTimeBestEffortOrNull('<T0>')",
-    "through_t0": "parseDateTimeBestEffortOrNull(<event_time>) <= parseDateTimeBestEffortOrNull('<T0>')"
-  },
-  "negative_populations": [ { "code": "N1", "neg_k": 0 }, ... ],
-  "source_table_inventory": { "tables": ["<源表1>", "<源表2>", "..."] },
-  "inventory_check": { "ok": true, "table_count": "<len(source_table_inventory.tables)>" },
-  "projections": [
-    { "table": "<源表>", "type": "user_table", "user_key": "..." },
-    { "table": "<源表>", "type": "user_keyed", "user_key": "..." },
-    { "table": "<源表>", "type": "game_keyed" }
-  ]
-}
-```
-
----
-
-## 5. 完成检查
-
-- [ ] `step1_0_table_schema.json` 已写；`tables[].name` 与 `system.tables`（源表排除 `step1_%`）一致
-- [ ] `step1_0_sampling_plan.json` 已写；`source_table_inventory` / `projections` 1:1 且来自 schema
-- [ ] `inventory_check.ok == true` 且 `table_count == len(source_table_inventory.tables) == len(projections)`
-- [ ] `y_label`、`sampling_sources`、`keys`、`sql_fragments` 已填；每张投影 `type` 仅为 user_table / user_keyed / game_keyed
+<必须>step1_0_table_schema.json</必须> 已写；`tables[].name` 与 `system.tables` 一致（排除 `step1_%`）。  
+<必须>step1_0_sampling_plan.json</必须> 已写；`source_table_inventory` / `projections` 1:1。  
+<必须>`inventory_check.ok == true`</必须> 且 `table_count == len(projections)`。  
+<必须>`projections[]` 每项 `type` 仅为 `user_table` / `user_keyed` / `game_keyed`</必须>。

@@ -1,10 +1,10 @@
 # step1_2: similar_games（仅 cold_start）
 
+<入口规则>仅当 `mode=="cold_start"` 时执行；`regular` 和 `prelabeled` 跳过本步</入口规则>
+
 **目的**：从游戏维表中找出与目标游戏同维度的其他游戏，写入 `game_scope.similar_games`，并更新 `sql_fragments.game_filter` 为引用临时表的写法。
 
 ## 前置
-
-仅当 step1_1 判定 `mode = cold_start` 时执行；`regular` 和 `prelabeled` 跳过本步。
 
 `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。
 

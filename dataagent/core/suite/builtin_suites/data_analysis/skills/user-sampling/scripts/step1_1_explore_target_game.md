@@ -1,5 +1,7 @@
 # step1_1: explore_target_game
 
+<入口规则>仅当 `mode!="prelabeled"` 时执行；`mode=="prelabeled"` 跳过本步</入口规则>
+
 **目的**：数一下**目标游戏**在 label 窗口 `(T0, T0+N]` 里有多少**正样本用户**，据此写入 plan 的 `mode`（`regular` 或 `cold_start`）。
 
 ## 前置
