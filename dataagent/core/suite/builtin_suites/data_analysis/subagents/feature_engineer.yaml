@@ -5,14 +5,14 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
-  repetition_leniency: 5.0
+  repetition_leniency: 50.0
 
 MODEL:
   chat_model:
     model_type: chat
-    provider: deepseek
+    provider: aigateway
     params:
-      model: deepseek-v4-flash
+      model: MiniMax-M2.7
       temperature: 0.7
 
 SCENARIO:
@@ -97,7 +97,7 @@ ACTOR_LOOP:
             ## 原生套件运行时适配
 
             - 在读取 `output_meta.json` 或其 `step1_sampled_*` ClickHouse 产物之前，先检查只读共享 `manifest.json` 中的采样阶段条目。
-            - 打包的 SQL 模板通过 `skill/feature-engineer/scripts/...` 获取；不要假定工作区下有 `scripts/` 目录。
+            - 打包的 SQL 模板通过 `skills/feature-engineer/scripts/...` 获取；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
