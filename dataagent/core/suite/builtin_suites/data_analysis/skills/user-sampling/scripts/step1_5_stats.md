@@ -117,7 +117,7 @@ FROM <database>.step1_sampled_<table>;
 }
 ```
 
-必填字段：`run_id`、`database`、`target_game`、`T0`、`label_window_days`、`sample_size`、`actual_sample_size`、`mode`、`table_count_check`、`label_stats`、`projection_tables`。`mode` 为 `regular` 或 `cold_start`。`table` 以 `step1_sampled_` 开头；`type: user_table` 须带 `has_label: true`。
+必填字段：`run_id`、`database`、`target_game`、`T0`、`label_window_days`、`sample_size`、`actual_sample_size`、`mode`、`table_count_check`、`label_stats`、`projection_tables`。`mode` 为 `regular`、`cold_start` 或 `prelabeled`。`table` 以 `step1_sampled_` 开头；`type: user_table` 须带 `has_label: true`。
 
 ---
 

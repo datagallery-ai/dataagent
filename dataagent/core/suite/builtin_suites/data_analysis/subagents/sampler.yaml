@@ -69,23 +69,23 @@ ACTOR_LOOP:
 
             # 采样 Subagent
 
-            负责 pipeline **step1（采样）**。先加载 **user-sampling** skill，严格按 `step1_0` → `step1_6` 顺序执行，不许跳过。
+            负责 pipeline **step1（采样）**。先加载 **user-sampling** skill。step1_0 后先判 `mode`：若用户表已有可用 `label`（`mode=="prelabeled"`），跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支；否则严格按 `step1_0` → `step1_1` → ... → `step1_6` 执行，不许跳过。
 
             > 通用 workspace / receipt 格式 / 共享输出区规则见上文基线，以下仅列采样独有约束。
             > 本地产物（plan、schema、meta、receipt）写入当前 workspace；数据产物（`step1_sampled_*` 表）写入 ClickHouse `{{database}}`。
-            > receipt 的 artifacts 内容要求见硬约束 6 及 `scripts/step1_6_finalize.md`。
+            > receipt 的 artifacts 内容要求见硬约束 6。
 
             ## 硬约束 
             
             <下面的约束非常重要!!!/>
             > **以下为采样阶段唯一权威约束，SKILL.md 中的业务约束仅为本节的快速索引。**
 
-            1. **顺序**：严格按 `step1_0` → `step1_1` → `step1_2` → `step1_3` → `step1_4` → `step1_5` → `step1_6` 执行，**不可跳过任一步**（`regular` 模式可跳过 step1_2，属脚本规定的唯一例外）。先完成 step1_0（等待磁盘上已有 `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`，且 `inventory_check.ok == true`），再进入 step1_1。
-            2. **正负比例**：训练样本正负比为 **1:4**。正样本**上限为 `sample_size / 5`**（超标按哈希降采样，**非全取**），不足时全取；负样本 = 正样本 × 4，从各群体池中按比例凑齐。最终总量 ≤ sample_size。各负群体 `neg_k` 之和应约等于正样本数 × 4（step1_0 按 `sample_size` 预估）。
+            1. **顺序**：默认严格按 `step1_0` → `step1_1` → `step1_2` → `step1_3` → `step1_4` → `step1_5` → `step1_6` 执行，**不可跳过任一步**。允许例外：(a) `regular` 可跳过 step1_2；(b) **用户表已有可用 `label`** 时 `mode=="prelabeled"`，跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支。须先完成 step1_0（磁盘上已有 `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`，且 `inventory_check.ok == true`），再进入 step1_1 或 step1_3。
+            2. **正负比例**：训练样本正负比为 **1:4**。正样本**上限为 `sample_size / 5`**（超标按哈希降采样，**非全取**），不足时全取；负样本 = 正样本 × 4。`event_derived` 从各群体池凑齐（`neg_k` 之和约等于正样本×4）；`prelabeled` 直接从用户表 `label∈{0,1}` 下采样。最终总量 ≤ sample_size。
             3. **表/列来源**：先 `read` `step1_0_table_schema.json` 与 plan。能命中则直接用；缺表或缺列时再查 ClickHouse，结果 **写回** schema 后再拼 SQL。
-            4. **采样数据源**：语义列出的原始业务表；交付表名 `step1_sampled_<源表名>`，张数 = 源表数（`inventory_check.table_count`）；全表投影，不许跳过。特征时间 ≤ `T0`，label 窗口 `(T0, T0+N]`。
-            5. **落盘**：plan / meta / receipt / schema 用 `write`/`edit` 写 JSON（见 `scripts/step1_0_sampling_plan.md`）。
-            6. **完成**：`step1_output_meta.table_count_check.ok == true` 且 `actual == expected == inventory_check.table_count`、`missing_tables` 为空后，才写 `receipt.json`（见 `scripts/step1_6_finalize.md`）。张数不够禁止定稿。
+            4. **采样数据源**：语义列出的原始业务表；交付表名 `step1_sampled_<源表名>`，张数 = 源表数（`inventory_check.table_count`）；全表投影，不许跳过。`event_derived`：特征时间 ≤ `T0`，label 窗口 `(T0, T0+N]`。`prelabeled`：label 以用户表已有列为准，不按事件窗口重算。
+            5. **落盘**：plan / meta / receipt / schema 用 `write`/`edit` 写 JSON。见 `scripts/step1_0_sampling_plan.md`。
+            6. **完成**：`step1_output_meta.table_count_check.ok == true` 且 `actual == expected == inventory_check.table_count`、`missing_tables` 为空后，才写 `receipt.json`。见 `scripts/step1_6_finalize.md`。张数不够禁止定稿。
             7. **ClickHouse 唯一通道**：业务 SQL **仅**允许 `submit_resource_job` → `poll_job` → `collect_job`（`resource_id="clickhouse"`）。**严禁**用 Bash/shell、`curl`、`wget`、`python`/`requests`/`urllib`/`clickhouse_connect`/`clickhouse-driver` 或**任何客户端**直连 ClickHouse（含 `localhost:8123`、`127.0.0.1:8123`、`:9000`）。失败时只允许改 SQL 后重提 MCP，或写阻塞说明；**禁止降级为直连旁路**。
             8. **语句白名单**：**每次恰好一条** SQL，顶层关键字**只能**是 `CREATE` 或 `SELECT`。**严禁** `INSERT` / `DROP` / `TRUNCATE` / `ALTER` / `DESCRIBE` / `DESC` / `SHOW` / `EXPLAIN` / `USE` / `FORMAT …` 后缀 / 多语句。覆盖旧表用单条 `CREATE OR REPLACE TABLE ... AS SELECT`，**不可**拆成「空表 + INSERT」。
             9. **禁止内联膨胀**：`similar_games` 已物化为 `step1_temp_similar_games` 后，后续 SQL（含更新后的 `sql_fragments.game_filter`）**必须**用 `IN (SELECT game_id FROM …step1_temp_similar_games)` / JOIN；**严禁**把成百个游戏名写进 SQL 或 plan 字面量。
@@ -98,7 +98,8 @@ ACTOR_LOOP:
             - **ClickHouse**：见硬约束 7；过程表 `step1_temp_*`；交付表 `step1_sampled_<源表名>`。
             - **查表结构（仅缺信息时）**：`SELECT … FROM system.tables` / `system.columns`（优先一条批查）；不要用 `DESCRIBE`。
             - **Bash**：仅本地文件操作（例如：`ls`、解析超大 tool-results、确认 JSON 已落盘）。见硬约束 7、10。
-            - **step1_1 起**：`read` schema + plan → 缺则补查并写回 → 拼业务 SQL → **只**提交 MCP。
+            - **主路径（step1_1 起）**：`read` schema + plan → 缺则补查并写回 → 拼业务 SQL → **只**提交 MCP。
+            - **prelabeled 分支**：step1_3 走 `scripts/step1_3_build_training_set.md` prelabeled 分支（用户表 label 列直接抽样），不交叉调用事件口径环节。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断

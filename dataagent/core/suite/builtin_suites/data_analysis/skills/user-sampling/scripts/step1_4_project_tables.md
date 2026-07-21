@@ -1,12 +1,12 @@
 # step1_4: project_tables（全表投影）
 
-**目的**：在源表所在的 `<database>` 内，为 `projections[]` 中的每一张源表建 `step1_sampled_` 前缀交付表。列集与源表一致，行数缩到采样用户范围；用户表追加 `label` 列。
+**目的**：在源表所在的 `<database>` 内，为 `projections[]` 中的每一张源表建 `step1_sampled_` 前缀交付表。列集与源表一致，行数缩到采样用户范围；用户表含 `label` 列（主路径追加 / prelabeled 保留源列）。
 
 **硬约束**：建成的 `step1_sampled_*` 表张数 = `projections[]` 项数 = `inventory_check.table_count`；少一张交付表就不能算完成，也禁止进入 step1_5。`step1_temp_*` 不参与计数。
 
 ## 前置
 
-- step1_3 已完成，`step1_temp_sampled_users(user_key, label)` 可查。label 已在 step1_3 中计算为 0（负样本）或 1（正样本），由本步的 `user_table` 类型模板通过 JOIN 直接带到采样表。
+- step1_3 已完成，`step1_temp_sampled_users(user_key, label)` 可查。主路径下 label 由 step1_3 事件口径计算；prelabeled 下 label 来自源表已有列。
 - `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json` 已读
 - `projections[]` 每项有 `table`、`type`、`user_key`（缺省用 `keys.user_key_default`）。
 
@@ -71,6 +71,10 @@ b. **`step1_0_sampling_plan.json`**：
 
 ### 2.1 user_table（带 label）
 
+**模式分支**：`read` plan 的 `mode` 字段，选对应模板。
+
+#### 主路径（mode ≠ prelabeled）
+
 用户表 JOIN `step1_temp_sampled_users`，追加 `label` 列。
 
 ```sql
@@ -83,6 +87,23 @@ FROM <database>.<table> AS src
 INNER JOIN <database>.step1_temp_sampled_users AS s
   ON src.<user_key_column> = s.user_key
 WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != '';
+```
+
+#### prelabeled 分支
+
+源表已有 `label` 列，**只裁行不追加列**。<禁止>禁止 `SELECT src.*, s.label`</禁止>（会重名列）。<必须>`AND src.<keys.label_column> IN (0, 1)`</必须>确保只保留 label=0 或 1 的行，排除同一用户该列非 0/1 的其他行。`<keys.label_column>` 类型决定写法：数值列用 `IN (0, 1)`，String 列用 `IN ('0', '1')`。
+
+```sql
+CREATE OR REPLACE TABLE <database>.step1_sampled_<table>
+ENGINE = MergeTree()
+ORDER BY tuple()
+AS
+SELECT src.*
+FROM <database>.<table> AS src
+INNER JOIN <database>.step1_temp_sampled_users AS s
+  ON src.<user_key_column> = s.user_key
+WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != ''
+  AND src.<keys.label_column> IN (0, 1);
 ```
 
 ### 2.2 user_keyed
@@ -165,6 +186,6 @@ SELECT
 
 | 表名 | 说明 |
 |---|---|
-| `<database>.step1_sampled_<源表名>` | 列集 = 源表列集，行数缩到采样范围；`user_table` 多一列 `label` |
+| `<database>.step1_sampled_<源表名>` | 列集 = 源表列集（主路径 user_table 型多一列 `label`），行数缩到采样范围 |
 
 不产出本地文件。全部表建齐后进入 step1_5。

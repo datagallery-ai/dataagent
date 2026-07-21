@@ -1,8 +1,8 @@
 # step1_3: build_training_set
 
-**目的**：候选池 ⊗ label → 多群体正负样本 → 确定性下采样 → 中间表 **`step1_temp_sampled_users(user_key, label)`**。
+**目的**：产出一张中间表 **`step1_temp_sampled_users(user_key, label)`**，供 step1_4 裁剪所有源表。
 
-**硬约束：正负比 1:4**。正样本取 `min(正样本池总量, sample_size / 5)`，负样本 = 正样本 × 4；正样本超标时按哈希随机降采样，不足时全取；负样本从各群体池中按比例凑齐。
+**硬约束：正负比 1:4**。正样本取 `min(正样本池总量, sample_size / 5)`，负样本 = 正样本 × 4；正样本超标时按哈希随机降采样，不足时全取；最终总量 ≤ sample_size。
 
 > 本步只产出中间表；全部 `step1_sampled_*` 交付表在 step1_4 生成。
 
@@ -10,11 +10,84 @@
 
 `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。
 
-需要的 plan 字段：`sampling_sources`、`keys`、`sql_fragments`、`y_label`、`negative_populations`、`sample_size`、`game_scope`。
+需要判定的 plan 字段：`mode`（决定走下面哪条分支）、`sampling_sources`、`keys`、`sql_fragments`、`y_label`、`negative_populations`、`sample_size`。
 
 ---
 
-## 模板
+## 分支判定
+
+| `plan.mode` | 执行 |
+|---|---|
+| `"prelabeled"` | 走 [§prelabeled 分支](#prelabeled-分支)（用户表已有 label，跳过事件口径，直接从 label 列抽样） |
+| 其它（`regular` / `cold_start` / …） | 走 [§主分支](#主分支)（事件口径：候选池 ⊗ label → 多群体正负样本 → 确定性下采样） |
+
+---
+
+### prelabeled 分支
+
+<必须>正样本上限 `sample_size / 5`，负样本 = 正 × 4，总量 ≤ `sample_size`。</必须>
+
+对应的 plan 字段：`sampling_sources.user_table`、`keys.user_key_default`、`keys.label_column`、`sql_fragments.user_key_expr`、`sql_fragments.valid_user`、`sample_size`。
+
+先预检（`LIMIT 1` 确认语句可执行），再建正式表。
+
+```sql
+CREATE OR REPLACE TABLE <database>.step1_temp_sampled_users
+ENGINE = MergeTree()
+ORDER BY tuple()
+AS
+WITH
+  pos AS (
+    SELECT DISTINCT <sql_fragments.user_key_expr> AS user_key
+    FROM <database>.<sampling_sources.user_table>
+    WHERE <sql_fragments.valid_user>
+      AND <keys.label_column> = 1
+  ),
+  pos_limited AS (
+    SELECT user_key
+    FROM pos
+    ORDER BY cityHash64(user_key)
+    LIMIT CAST(<sample_size> / 5 AS UInt64)
+  ),
+  neg_pool AS (
+    SELECT DISTINCT <sql_fragments.user_key_expr> AS user_key
+    FROM <database>.<sampling_sources.user_table>
+    WHERE <sql_fragments.valid_user>
+      AND <keys.label_column> = 0
+  ),
+  neg_sampled AS (
+    SELECT user_key
+    FROM neg_pool
+    ORDER BY cityHash64(user_key)
+    LIMIT (SELECT count() * 4 FROM pos_limited)
+  ),
+  combined AS (
+    SELECT user_key, toUInt8(1) AS label FROM pos_limited
+    UNION ALL
+    SELECT user_key, toUInt8(0) AS label FROM neg_sampled
+  ),
+  deduped AS (
+    SELECT user_key, max(label) AS label
+    FROM combined
+    GROUP BY user_key
+  )
+SELECT user_key, label
+FROM deduped
+ORDER BY cityHash64(user_key);
+```
+
+| 占位符 | plan 路径 | 说明 |
+|---|---|---|
+| `<database>` | `database` | |
+| `<sql_fragments.user_key_expr>` | `sql_fragments.user_key_expr` | |
+| `<sql_fragments.valid_user>` | `sql_fragments.valid_user` | |
+| `<sampling_sources.user_table>` | `sampling_sources.user_table` | |
+| `<keys.label_column>` | `keys.label_column` | String 列用 `= '1'` / `'0'` |
+| `<sample_size>` | `sample_size` | |
+
+---
+
+### 主分支
 
 模板结构固定：`WITH` 子句中计算 pos → pos_limited(上限截断) → 各 neg_* 群体池 → 合并负池 → 按 pos_limited × 4 截断 → 合并 → 去重 → 安全兜底输出。只替换占位符。
 
@@ -94,7 +167,7 @@ WITH
       ON <sql_fragments.user_key_expr> = pos_ex.user_key
     WHERE <sql_fragments.valid_user>
   ),
-  -- ⑧ 合并负池（仅 UNION  plan 的 negative_populations 中实际启用的群体）
+  -- ⑧ 合并负池（仅 UNION  plan 的 negative_populations 中实际启用的群体；模板默认 N1/N4/N5，按 family 调整：付费侧重 N4，CTR 主用 N2，安装/留存/时长 主用 N3+N2。N2/N3 CTE 不在模板内，需按 resources/negative_samples.md 自行编写）
   neg_pool AS (
     SELECT user_key FROM neg_N1_pool
     UNION ALL

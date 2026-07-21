@@ -4,7 +4,7 @@
 
 ## 前置
 
-仅当 step1_1 判定 `mode = cold_start` 时执行；`regular` 跳过本步。
+仅当 step1_1 判定 `mode = cold_start` 时执行；`regular` 和 `prelabeled` 跳过本步。
 
 `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。
 
