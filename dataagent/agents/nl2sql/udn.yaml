@@ -15,7 +15,7 @@ CORE:
   generator:
     strategies: ["prompt"]
   validator:
-    db_explain: true
+    db_explain: false
     keyword_match: false
     metadata_match: false
   reflector:
