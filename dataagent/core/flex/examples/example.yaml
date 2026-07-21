@@ -307,7 +307,6 @@ TOOLS:
 # module 必填；其余字段传给 Env.__init__。
 ENV:
   - module: "dataagent.actions.gym.ArithmeticEnv"
-  # - module: "dataagent.actions.gym.OntologyEnv"
   # - module: "dataagent.actions.gym.SQLiteEnv"
   #   db_path: "/abs/path/to/db.sqlite"
 

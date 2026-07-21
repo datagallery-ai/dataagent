@@ -131,7 +131,7 @@ By default, if no fixed `user_schema` is provided, the NL2SQL Perceptor fetches 
 
 The Ontology service targets business knowledge graphs. Unlike enriched metadata REST capabilities, ontology is not for SQL table/column context—it expresses business objects, relationships, attribute constraints, path rules, metric definitions, and server-side actions.
 
-Ontology is an under-development Semantic Service capability. Service implementation, `ontology_service` Skill, CLI scripts, and query examples will be added when the capability stabilizes; this document describes goals and integration boundaries for now.
+Ontology is an under-development Semantic Service capability. This document describes goals and integration boundaries for now; concrete integration details should follow the stabilized capability.
 
 Planned Ontology capabilities include:
 
@@ -181,7 +181,7 @@ Full walkthrough tutorials:
 - Put Semantic Service config under `SEMANTIC_LAYER` on the runtime Agent; for sub-agent scenarios, put it in the main Agent YAML.
 - `DATABASE.db_id` must match the database name imported into Semantic Service.
 - `SEMANTIC_LAYER.base_url` should be `http://host:port`; the client normalizes it to `/api/semantic/v1`.
-- Ontology/knowledge-graph query capabilities are under development; configure `ontology_service`, `ONTOLOGY_URL`, or `SCENE` after integration stabilizes.
+- Ontology/knowledge-graph query capabilities are under development; configure them according to the documentation after integration stabilizes.
 
 ## 7. Related Code and Examples
 

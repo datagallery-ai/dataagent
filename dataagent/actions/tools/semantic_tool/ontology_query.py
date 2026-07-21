@@ -12,9 +12,7 @@
 # ============================================================================
 """Ontology 工具(新版 SemanticService API 适配)。
 
-替代 ``dataagent.actions.gym.ontology_env.OntologyEnv.get_ontology_description``
-中调用老版 ``/api/v1/search/*`` 的逻辑,改为通过 :class:`SemanticServiceClient`
-调用新版语义服务的**基础检索 REST 接口**查询本体数据(不再手写 SQL):
+通过 :class:`SemanticServiceClient` 调用语义服务的**基础检索 REST 接口**查询本体数据:
 
 - 实体:``get_table_list``(``advanced-search/table-list``);
 - 属性:``get_table_columns_info``(``advanced-search/table-columns-info``);
@@ -50,7 +48,7 @@ def _resolve_databases(ctx: ToolExecutionContext) -> list[str]:
 
     The ontology scene is the semantic-service ``databaseName``. It is read from
     the same ``DATABASE.db_id`` config the other semantic tools use (single
-    string or list); there is no legacy ``ONTOLOGY.scene`` / ``SCENE`` fallback.
+    string or list).
     """
     raw = ctx.config_manager.get("DATABASE.db_id", "")
     if isinstance(raw, list):

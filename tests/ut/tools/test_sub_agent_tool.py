@@ -38,7 +38,6 @@ from dataagent.actions.tools.local_tool.sub_agent_entry import (
 from dataagent.actions.tools.local_tool.tools import (
     _run_subprocess_async,
     nl2sql_sub_agent_tool,
-    ontology_sub_agent_query_tool,
     reset_subagent_runtime_context,
     set_subagent_runtime_context,
     sub_agent_tool,
@@ -1193,48 +1192,3 @@ def test_nl2sql_sub_agent_tool_ignores_none_error_field(monkeypatch, tmp_path):
     assert "SQL 文件已保存到" in result["frontend_msg"]
     assert "SELECT 1" in sql_path.read_text(encoding="utf-8")
     assert "value" in csv_path.read_text(encoding="utf-8")
-
-
-def test_ontology_sub_agent_query_tool_passes_internal_subagent_context(monkeypatch):
-    """Mock sub_agent_tool 后，在 runtime context 下调用 ontology_sub_agent_query_tool：
-    校验 query、config 路径传入及返回中的 original_msg / frontend_msg 解析。
-    """
-    captured: dict[str, Any] = {}
-
-    async def _fake_sub_agent_tool(query: str, config_path: str, **kwargs):
-        captured["query"] = query
-        captured["config_path"] = config_path
-        return {
-            "original_msg": {
-                "sub_id": 100004,
-                "parent_session_id": "default_session",
-                "worker_session_id": "subagent_default_session_100004",
-                "status": "success",
-                "final_answer": "ok",
-                "artifacts": [],
-                "tool_calls_count": 0,
-                "iteration_count": 0,
-                "error": None,
-                "resumed": False,
-            },
-            "frontend_msg": "ok",
-            "state": {"messages": ["done"]},
-            "sub_id": 100004,
-        }
-
-    from dataagent.actions.tools.context import ToolExecutionContext
-    from dataagent.config.config_manager import ConfigManager
-
-    tool_ctx = ToolExecutionContext(config_manager=ConfigManager())
-
-    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools.sub_agent_tool", _fake_sub_agent_tool)
-    token = set_subagent_runtime_context(user_id="main-user", session_id="main-session", sub_id=9)
-
-    try:
-        result = asyncio.run(ontology_sub_agent_query_tool(query="本体查询", _tool_context=tool_ctx))
-    finally:
-        reset_subagent_runtime_context(token)
-
-    assert captured["query"] == "本体查询"
-    assert result["original_msg"] == "done"
-    assert result["frontend_msg"] == "done"

@@ -1820,69 +1820,6 @@ def get_ontology_description_tool(*, _tool_context: ToolExecutionContext) -> dic
     return get_ontology_description(_tool_context=_tool_context)
 
 
-def get_business_procedure_tool(keywords: list[str], *, _tool_context: ToolExecutionContext) -> dict[str, Any]:
-    """
-    Fetch the entity and relation structure description for the current scene directly.
-    Call this tool AT MOST ONCE and FIRST.
-
-    Use when:
-    - You need to understand the overall ontology structure, entity types, or relation definitions.
-    Args:
-    keywords: list[str],可以输入多个关键词（短词）, 其中有一个匹配到对应的业务逻辑则会返回
-    Returns:
-        A dict containing ontology metadata — entity types, attributes, and relations.
-    """
-    from dataagent.actions.gym.ontology_env import OntologyEnv
-
-    env = OntologyEnv(config_manager=_tool_context.config_manager)
-    return env.get_business_procedure(keywords)
-
-
-async def ontology_sub_agent_query_tool(
-    query: str,
-    *,
-    _tool_context: ToolExecutionContext,
-) -> dict[str, Any]:
-    """Ontology 子代理统一入口工具。
-
-    功能说明：
-    - 将自然语言查询委托给 ontology sub-agent，并返回结构化 JSON 结果。
-    - 只传 `query`，子代理 `config_path` 由工具内部固定。
-    - 自动继承主 Agent 的 `ONTOLOGY.scene`（通过 `SCENE` 环境透传）。
-
-    使用约束：
-    - 仅用于本体/图谱查询任务。
-    - 该函数本身只负责单次子查询。
-    - 尽可能同时下发多个本工具的调用。
-
-    Args:
-        query: 单个自然语言查询字符串。
-
-    Returns:
-        dict[str, Any]: 标准工具返回，`original_msg` 优先为结构化结果，`frontend_msg` 为展示文本。
-    """
-    fixed_config_path = (dataagent_package_root() / "core" / "flex" / "examples" / "ontology_sub_agent.yaml").resolve()
-
-    previous_scene = os.environ.get("SCENE")
-    configured_scene = _tool_context.config_manager.get("ONTOLOGY.scene")
-    if configured_scene:
-        os.environ["SCENE"] = str(configured_scene)
-    try:
-        res = await sub_agent_tool(query=query, config_path=fixed_config_path)
-        state = res.get("state")
-        if isinstance(state, dict):
-            messages = state.get("messages", [])
-            if isinstance(messages, list) and messages:
-                return {"original_msg": messages[-1], "frontend_msg": messages[-1]}
-        # 无法解析为预期格式，原样返回 sub_agent_tool 的结果
-        return res
-    finally:
-        if previous_scene is None:
-            os.environ.pop("SCENE", None)
-        else:
-            os.environ["SCENE"] = previous_scene
-
-
 async def bash(command: str, purpose: str | None = None, timeout: int = DEFAULT_BASH_TIMEOUT) -> dict[str, Any]:
     """Executes a given bash command and returns its output.
 

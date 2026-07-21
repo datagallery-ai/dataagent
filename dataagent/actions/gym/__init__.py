@@ -11,15 +11,12 @@
 # limitations under the License.
 # ============================================================================
 
-__all__ = ["ArithmeticEnv", "ICBCEnv", "ManufacureEnv", "OntologyEnv", "SQLiteEnv"]
+__all__ = ["ArithmeticEnv", "SQLiteEnv"]
 
 import importlib
 
 _ENV_REGISTRY = {
     "ArithmeticEnv": "dataagent.actions.gym.arithmetic.arithmetic",
-    "ICBCEnv": "dataagent.actions.gym.icbc.icbc_env",
-    "ManufacureEnv": "dataagent.actions.gym.manufacturing.manufacturing_env",
-    "OntologyEnv": "dataagent.actions.gym.ontology_env",
     "SQLiteEnv": "dataagent.actions.gym.nl2sql.sqlite_env",
 }
 

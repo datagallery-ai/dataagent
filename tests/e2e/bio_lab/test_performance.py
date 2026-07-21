@@ -258,58 +258,51 @@ atexit.register(_stop_mock_metavisor)
 
 
 # ---------------------------------------------------------------------------
-# OntologyEnv mock
+# Ontology description mock
 # ---------------------------------------------------------------------------
 def _load_ontology_fixture() -> dict[str, str]:
-    """Return the formatted ontology description from bio_lab_ontology.json."""
-    spec_path = CONFIG_DIR / "bio_lab_ontology.json"
-    data = json.loads(spec_path.read_text(encoding="utf-8"))
-    ontology_data = data.get("bio_lab", data)
-    if isinstance(ontology_data, dict) and "bio_lab" in data:
-        ontology_data = data["bio_lab"]
+    """Return ontology description rendered from the semantic-service mock cache."""
+    from dataagent.actions.tools.semantic_tool.ontology_query import (
+        _fetch_columns,
+        _fetch_entities,
+        _fetch_relations,
+        _render_ontology_description,
+    )
 
-    entities = ontology_data.get("entities", [])
-    relations = ontology_data.get("relations", [])
-    object_types = [e.get("display_name", e.get("api_name", "")) for e in entities]
-    object_type_details = []
-    for e in entities:
-        name = e.get("display_name", e.get("api_name", ""))
-        props = [
-            {"property_name": p.get("display_name"), "property_description": p.get("description")}
-            for p in e.get("properties", [])
-        ]
-        object_type_details.append(
-            {"entity_name": name, "entity_description": e.get("description", ""), "properties": props}
-        )
+    class _FixtureSemanticClient:
+        def __init__(self, cache: dict[str, Any]):
+            self.cache = cache
 
-    relation_triplets = []
-    for r in relations:
-        relation_triplets.append(
-            {
-                "source": r.get("source_entity_type"),
-                "relation": r.get("display_name"),
-                "target": r.get("target_entity_type"),
-                "cardinality": r.get("cardinality"),
-                "description": r.get("description", ""),
-            }
-        )
+        def get_table_list(self, database_name: str, *, limit: int) -> list:
+            return list(self.cache.get("table-list") or [])[:limit]
 
-    def _pretty(obj: list[dict]) -> str:
-        return json.dumps(obj, ensure_ascii=False, indent=2)
+        def get_table_columns_info(self, table_name: str, *, limit: int) -> dict:
+            columns = self.cache.get(f"columns:{table_name}") or {}
+            return dict(list(columns.items())[:limit])
 
-    return {
-        "original_msg": f"\n对本体查询结果如下：\n本体目前包含以下几种类型实体：\n{_pretty(object_types)}\n\n每种实体的描述和属性定义如下:\n{_pretty(object_type_details)}\n\n实体之间有以下几种类型的关联，每种关联用(源实体-关系-目标实体)的三元组表示:\n{_pretty(relation_triplets)}\n\n可以根据以上信息理解实体间的关联关系，以及每个实体的属性含义，从而构造查询条件。\n",
-        "frontend_msg": f"已从本地spec文件加载本体描述信息，本体中共包括{len(object_types)}种实体，{len(relation_triplets)}种关系，它们的具体schema也已经被加载。",
+        def get_joinable_tables(self, table_names: list[str], *, limit: int) -> list:
+            del table_names
+            return list(self.cache.get("joinable-tables") or [])[:limit]
+
+    database = _CHANGPING_SCENE
+    client = _FixtureSemanticClient(_get_metavisor_cache())
+    entities = _fetch_entities(client, database)
+    columns_by_table = {
+        e["table_name"]: _fetch_columns(client, e["table_name"]) for e in entities if e.get("table_name")
     }
+    relations = _fetch_relations(client, [e["table_name"] for e in entities if e.get("table_name")])
+    return _render_ontology_description(entities, columns_by_table, relations, database, [database])
 
 
 @contextmanager
-def mock_ontology_env():
-    """Patch OntologyEnv.get_ontology_description to return fixture data."""
+def mock_ontology_description():
+    """Patch semantic ontology description retrieval to return fixture data."""
     result = _load_ontology_fixture()
-    logger.info("OntologyEnv.get_ontology_description() → mocked (config/bio_lab_ontology.json)")
+    logger.info("semantic ontology get_ontology_description() → mocked (config/metavisor_responses.json)")
 
-    with patch("dataagent.actions.gym.ontology_env.OntologyEnv.get_ontology_description", lambda self: result):
+    with patch(
+        "dataagent.actions.tools.semantic_tool.ontology_query.get_ontology_description", lambda *, _tool_context: result
+    ):
         yield
 
 

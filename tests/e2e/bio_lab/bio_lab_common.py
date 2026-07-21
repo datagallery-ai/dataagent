@@ -43,7 +43,7 @@ stop_mock_metavisor = _tc._stop_mock_metavisor
 build_cache_test_config = _tc._build_cache_test_config
 resolve_session_root = _tc._resolve_session_root
 auto_human_feedback = _tc.auto_human_feedback
-mock_ontology_env = _tc.mock_ontology_env
+mock_ontology_description = _tc.mock_ontology_description
 extract_final_assistant_text = _tc._extract_final_assistant_text
 find_created_experiment_id = _tc._find_created_experiment_id
 
