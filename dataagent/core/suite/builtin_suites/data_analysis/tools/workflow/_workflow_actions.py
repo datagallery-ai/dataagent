@@ -595,11 +595,13 @@ def _stage_local_input_refs(*, runtime: Any, input_refs: list[str], config: dict
         candidate = candidate.resolve() if candidate.is_absolute() else (workspace_dir / candidate).resolve()
         try:
             candidate.relative_to(workspace_dir)
-        except ValueError as exc:
-            raise ValueError(f"local data reference is outside active workspace: {ref}") from exc
-        if not candidate.is_file():
-            raise ValueError(f"local data reference is not a file: {ref}")
-        local_sources.append(candidate)
+        except ValueError:
+            # data_refs is an opaque input-reference field.  Paths outside the
+            # workspace cannot be published, but must not prevent a workflow
+            # from starting: they may be remote-source identifiers.
+            continue
+        if candidate.is_file():
+            local_sources.append(candidate)
     if not local_sources:
         return ""
 

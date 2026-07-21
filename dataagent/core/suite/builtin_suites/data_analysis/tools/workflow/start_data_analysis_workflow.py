@@ -23,7 +23,9 @@ def start_data_analysis_workflow(
 
     Args:
         user_query: The user's analysis objective and expected final output.
-        data_refs: Comma or newline separated input paths in the active workspace.
+        data_refs: Comma or newline separated data-source references. Existing
+            files in the active workspace are published for subagents; other
+            non-empty references are passed through unchanged.
         scenario_id: Scenario YAML id under this Suite's resources directory.
         step_targets_json: Optional JSON object keyed by scenario step id to
             override default step targets.
