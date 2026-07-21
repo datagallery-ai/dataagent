@@ -2,7 +2,7 @@
 
 <入口规则>两种模式均执行本步</入口规则>
 
-**目的**：为 `projections[]` 中每张源表建 `step1_sampled_` 前缀交付表。列集与源表一致，行数缩到采样用户范围；用户表含 `label` 列（主路径 JOIN 追加 / prelabeled 保留源列）。
+**目的**：为 `projections[]` 中每张源表建 `step1_sampled_` 前缀交付表。列集与源表一致，唯一用户数 = `sampled_n`；用户表含 `label` 列（主路径 JOIN 追加 / prelabeled 保留源列）。
 
 <必须>表数 = `projections[]` 项数 = `inventory_check.table_count`，少一张不得进入 step1_5</必须>。`step1_temp_*` 不参与计数。
 
@@ -44,28 +44,28 @@ ORDER BY name
 
 <必须>按 `mode` 选择对应模板：</必须>
 
-**`mode != "prelabeled"`**：JOIN `step1_temp_sampled_users` 追加 `label` 列。
+**`mode != "prelabeled"`**：JOIN `step1_temp_sampled_users` 追加 `label` 列。<必须>`SELECT DISTINCT src.*, s.label` 去重，防止源表 user_key 重复导致交付表膨胀。</必须>
 
 ```sql
 CREATE OR REPLACE TABLE <database>.step1_sampled_<table>
 ENGINE = MergeTree()
 ORDER BY tuple()
 AS
-SELECT src.*, s.label
+SELECT DISTINCT src.*, s.label
 FROM <database>.<table> AS src
 INNER JOIN <database>.step1_temp_sampled_users AS s
   ON src.<user_key_column> = s.user_key
 WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != '';
 ```
 
-**`mode == "prelabeled"`**：<禁止>禁止 `SELECT src.*, s.label`（会重名列）</禁止>。<必须>`AND src.<keys.label_column> IN (0, 1)`</必须>只保留 label=0/1 的行。`<keys.label_column>` 类型：数值列 `IN (0, 1)`，String 列 `IN ('0', '1')`。
+**`mode == "prelabeled"`**：<禁止>禁止 `SELECT src.*, s.label`（会重名列）</禁止>。<必须>`SELECT DISTINCT src.*` + `AND src.<keys.label_column> IN (0, 1)`</必须>。`<keys.label_column>` 类型：数值列 `IN (0, 1)`，String 列 `IN ('0', '1')`。<必须>`DISTINCT` 必须保留，防止源表 user_key 重复导致交付表膨胀。</必须>
 
 ```sql
 CREATE OR REPLACE TABLE <database>.step1_sampled_<table>
 ENGINE = MergeTree()
 ORDER BY tuple()
 AS
-SELECT src.*
+SELECT DISTINCT src.*
 FROM <database>.<table> AS src
 INNER JOIN <database>.step1_temp_sampled_users AS s
   ON src.<user_key_column> = s.user_key

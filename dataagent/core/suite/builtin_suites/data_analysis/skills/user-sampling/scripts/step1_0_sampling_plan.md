@@ -9,7 +9,7 @@
 
 ## 本步做什么
 
-1. 用语义服务查出目标库全部业务表的结构，写入 `step1_0_table_schema.json`。
+1. <重要>用语义服务查出目标库全部业务表的结构，写入 `step1_0_table_schema.json`。</重要>
 2. 用 ClickHouse 查 `system.tables`，核对表清单是否和上一步一致；缺表则补查并写回 schema。
 3. 用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`。
 4. 根据 schema、任务参数和 mode，写出 `step1_0_sampling_plan.json`。

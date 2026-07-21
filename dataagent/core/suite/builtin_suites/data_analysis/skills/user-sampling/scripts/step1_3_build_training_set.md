@@ -25,11 +25,9 @@
 
 ### prelabeled 分支
 
-<必须>正样本上限 `sample_size / 5`，负样本 = 正 × 4，总量 ≤ `sample_size`。</必须>
+<必须>正样本上限 `sample_size / 5`，负样本 = 正 × 4，总量 ≤ `sample_size`。只替换占位符，不改语句形状。</必须>
 
-对应的 plan 字段：`sampling_sources.user_table`、`keys.user_key_default`、`keys.label_column`、`sql_fragments.user_key_expr`、`sql_fragments.valid_user`、`sample_size`。
-
-先预检（`LIMIT 1` 确认语句可执行），再建正式表。
+先预检（`LIMIT 1` 确认语句可执行），再建正式表。<必须>两条 LIMIT 不可改：正样本 = `CAST(<sample_size> / 5 AS UInt64)`，负样本 = `(SELECT count() * 4 FROM pos_limited)`，禁止直接写成 `<sample_size>` 字面量。</必须>
 
 ```sql
 CREATE OR REPLACE TABLE <database>.step1_temp_sampled_users
@@ -89,7 +87,7 @@ ORDER BY cityHash64(user_key);
 
 ### 主分支
 
-只替换占位符，不改语句形状。先预检再建正式表。
+只替换占位符，不改语句形状。先预检再建正式表。<必须>两条 LIMIT 不可改：正样本 = `CAST(<sample_size> / 5 AS UInt64)`，负样本 = `(SELECT count() * 4 FROM pos_limited)`，禁止直接写成 `<sample_size>` 字面量。</必须>
 
 ```sql
 CREATE OR REPLACE TABLE <database>.step1_temp_sampled_users

@@ -5,7 +5,7 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
-  repetition_leniency: 50.0
+  repetition_leniency: 5.0
 
 MODEL:
   chat_model:
@@ -115,7 +115,7 @@ TOOLS:
 
   skills:
     custom_dirs:
-      - core/suite/builtin_suites/data_analysis/skills/nl2sql
+      - core/suite/builtin_suites/data_analysis/skills
   mcp_servers:
     - server_id: data_analysis_semantic
       transport_type: stdio
