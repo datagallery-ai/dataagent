@@ -5,14 +5,14 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
-  repetition_leniency: 5.0
+  repetition_leniency: 50.0
 
 MODEL:
   chat_model:
     model_type: chat
-    provider: deepseek
+    provider: aigateway
     params:
-      model: deepseek-v4-flash
+      model: MiniMax-M2.7
       temperature: 0.7
 
 SCENARIO:
@@ -64,7 +64,7 @@ ACTOR_LOOP:
             ## 原生套件运行时适配
 
             - 本 agent 是流水线第一个子 agent，无上游依赖，不存在需要复制的前序产物。
-            - 步骤脚本通过 `skill/user-sampling/scripts/...` 路径加载；不要假设工作区根目录下有 `scripts/` 目录。
+            - 步骤脚本通过 `skills/user-sampling/scripts/...` 路径加载；不要假设工作区根目录下有 `scripts/` 目录。
             - 禁止在该共享输出区中创建、修改、复制或移动文件。
 
             # 采样 Subagent
