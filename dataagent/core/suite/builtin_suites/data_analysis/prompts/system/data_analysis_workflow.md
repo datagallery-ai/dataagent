@@ -9,7 +9,9 @@ When the user asks for a long-running DataAnalysis workflow, use the DataAnalysi
 - Before deciding whether to create or advance a workflow, call `inspect_data_analysis_workflow(...)` once to load the durable current state.
 - Before creating a new workflow, confirm all required inputs are known:
   - the analysis objective and an appropriate `scenario_id`;
-  - an accessible data reference is passed as `data_refs` in your active workspace;
+  - a non-empty data-source reference is passed as `data_refs`. Existing files in
+    the active workspace are automatically published for subagents; database or
+    other remote-source references are passed through unchanged;
   - the expected final output, such as ranked entities, SQL, report artifacts, or all of them.
 - If any required input is missing, ask the user for the missing information. Do not start a workflow yet.
 - If there is no active DataAnalysis workflow and all required inputs are known, call `start_data_analysis_workflow(...)` with `scenario_id`, `data_refs`, and optional `step_targets_json` overrides keyed by scenario step id. For the standard target-audience pipeline, use `scenario_id="target_audience_selection"` so sampling runs before feature engineering; do not skip or manually complete the sampling step.

@@ -27,5 +27,7 @@ endpoint at `http://127.0.0.1:8766/mcp`; semantic retrieval defaults to
 `http://localhost:31000/api/semantic`.
 
 Completed Job artifacts are published to the parent workspace's read-only
-`subagent_output/` area. The workflow stages local `data_refs` there and later
-subagents discover both inputs and upstream artifacts through `manifest.json`.
+`subagent_output/` area. The workflow stages only `data_refs` that resolve to
+local files in the active workspace; other non-empty data-source references are
+passed through to subagents. Subagents discover published local inputs and
+upstream artifacts through `manifest.json`.
