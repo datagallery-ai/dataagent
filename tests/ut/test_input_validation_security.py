@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from dataagent.actions.gym.nl2sql.base_env import BaseNL2SQLEnv
-from dataagent.actions.gym.ontology_env import OntologyEnv
 from dataagent.utils import env_file_loader
 
 
@@ -47,14 +46,6 @@ def test_sql_validation_relies_on_database_external_access_policy():
 
     assert result["original_msg"] == "OK"
     execute.assert_called_once_with("EXPLAIN SELECT * FROM read_text('/tmp/secret')")
-
-
-@pytest.mark.parametrize("keyword", ["' OR 1=1 OR '", r"foo\bar", "foo\nbar"])
-def test_get_business_procedure_rejects_query_control_characters(keyword):
-    env = object.__new__(OntologyEnv)
-
-    with pytest.raises(ValueError, match="keywords"):
-        env.get_business_procedure([keyword])
 
 
 @pytest.mark.parametrize(

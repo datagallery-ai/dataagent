@@ -98,7 +98,7 @@ from bio_lab_common import (  # noqa: E402
     delete_wet_samples_row,
     disable_proxy_env,
     extract_final_assistant_text,
-    mock_ontology_env,
+    mock_ontology_description,
     start_mock_metavisor,
     stop_mock_metavisor,
 )
@@ -195,7 +195,7 @@ async def _run_hitl_scenario() -> dict[str, Any]:
     logger.info(f"Query: {CREATE_EXPERIMENT_QUERY!r}")
     logger.info(f"Auto HITL responses: {AUTO_FEEDBACK_RESPONSES}")
 
-    with auto_human_feedback(AUTO_FEEDBACK_RESPONSES), mock_ontology_env():
+    with auto_human_feedback(AUTO_FEEDBACK_RESPONSES), mock_ontology_description():
         response = await agent.chat(
             CREATE_EXPERIMENT_QUERY,
             session_id=session_id,

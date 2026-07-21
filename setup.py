@@ -23,7 +23,6 @@ SOURCE_DIRS = ["dataagent"]
 EXCLUDE_FILES = {
     "dataagent": {
         "__init__.py",
-        "icbc_env.py",
         "__main__.py",
         "schemas.py",
         "server.py",
