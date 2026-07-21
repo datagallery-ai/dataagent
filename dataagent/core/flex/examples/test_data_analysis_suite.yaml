@@ -32,7 +32,7 @@ SCENARIO:
     input: |
       Analyze the supplied data and identify the target user audience.
     task: "执行多阶段数据分析工作流"
-    instructions: "Use the Data Analysis Suite workflow tools to coordinate the analysis."
+    instructions: "Use the Data Analysis Suite workflow tools to coordinate the analysis. 当某个 subagent 运行失败你想要重试的时候，请调用 search_workspace 和 inspect_workspace 工具，复用原先 subagent 的工作目录。"
 
 OVERRIDE_KEYS:
   - HOOKS
