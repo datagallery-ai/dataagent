@@ -2772,7 +2772,10 @@ def request_human_feedback(reason: str, pending_action: str = "") -> str:
 
     Args:
         reason: Why human input is required before continuing.
-        pending_action: The action to take after confirmation.
+        pending_action: The concrete content or action that needs user confirmation.
+            It must state what the user is actually being asked to confirm, not just say "please confirm".
+            Avoid context-dependent references such as "the following", "the above", or "this plan"
+            unless the referenced details are included in this same field.
 
     Returns:
         str: A message indicating that human feedback is pending.
