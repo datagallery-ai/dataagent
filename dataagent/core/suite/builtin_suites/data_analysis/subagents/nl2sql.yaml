@@ -5,14 +5,14 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
-  repetition_leniency: 5.0
+  repetition_leniency: 50.0
 
 MODEL:
   chat_model:
     model_type: chat
-    provider: deepseek
+    provider: aigateway
     params:
-      model: deepseek-v4-flash
+      model: MiniMax-M2.7
       temperature: 0.7
 
 SCENARIO:
@@ -82,7 +82,7 @@ ACTOR_LOOP:
 
             ## 执行流程
 
-            - 运行生成器：`python3 skill/nl2sql/scripts/step4_1_generate_sql.py`（不要假定工作区下有 `scripts/` 目录）。
+            - 运行生成器：`python3 skills/nl2sql/scripts/step4_1_generate_sql.py`（不要假定工作区下有 `scripts/` 目录）。
             - 从只读共享输出区的 `manifest.json` 找到模型阶段已发布的规则/重要性/预测文件，并在使用前拷贝到当前任务工作区。必需文件包括：`schema_resolution.json`、`step2_4_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv`。
             - 遵循 `step2_4_feature_derivation.md`；不要交付常量打分的骨架作为最终产物。
 
@@ -93,7 +93,7 @@ ACTOR_LOOP:
             ## 原生套件运行时适配
 
             - 检查只读共享 `manifest.json` 中选中的特征/模型条目。执行前将 `schema_resolution.json`、`step2_4_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv` 从其已发布产物复制到当前任务工作区。
-            - 通过 `python3 skill/nl2sql/scripts/step4_1_generate_sql.py` 运行打包的生成器；不要假定工作区下有 `scripts/` 目录。
+            - 通过 `python3 skills/nl2sql/scripts/step4_1_generate_sql.py` 运行打包的生成器；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断

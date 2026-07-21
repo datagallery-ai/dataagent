@@ -12,7 +12,7 @@ AGENT_CONFIG:
   max_iter: 4000
   # 生产入口可显式开启 Job 子 Agent 的只读产物发布区；未配置时默认关闭。
   subagent_output_sharing: true
-  repetition_leniency: 5.0
+  repetition_leniency: 5000.0
   
 
 SUITE:
@@ -22,9 +22,9 @@ SUITE:
 MODEL:
   chat_model:
     model_type: "chat"
-    provider: "deepseek"
+    provider: "aigateway"
     params:
-      model: "deepseek-v4-flash"
+      model: "MiniMax-M2.7"
       temperature: 0.0
 
 SCENARIO:

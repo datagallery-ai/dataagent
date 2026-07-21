@@ -5,14 +5,14 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
-  repetition_leniency: 5.0
+  repetition_leniency: 50.0
 
 MODEL:
   chat_model:
     model_type: chat
-    provider: deepseek
+    provider: aigateway
     params:
-      model: deepseek-v4-flash
+      model: MiniMax-M2.7
       temperature: 0.7
 
 SCENARIO:
@@ -73,7 +73,7 @@ ACTOR_LOOP:
 
             ## 硬规则
 
-            - 仅通过 `bash skill/model-engineer/scripts/run_step3_pipeline.sh` 运行；Bash 调用六个固定的 `step3_*.py` 算子。
+            - 仅通过 `bash skills/model-engineer/scripts/run_step3_pipeline.sh` 运行；Bash 调用六个固定的 `step3_*.py` 算子。
             - **运行时 Python 不可变**：job 执行期间禁止创建/生成/编辑 `.py` 文件；禁止 `python -c` / heredoc Python。
             - 仅通过 Bash 环境变量调整：`OUTPUT_DIR`、`USER_ID_COL`、`LABEL_COL`、`PYTHON_BIN`、`STEP_START`、`STEP_END`。
             - **特征工程交接**：从只读共享产物区的 `manifest.json` 中定位上一步已发布产物，将 `schema_resolution.json` 和 `step2_5_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
@@ -92,7 +92,7 @@ ACTOR_LOOP:
             ## 原生套件运行时适配
 
             - 检查只读共享 `manifest.json` 中的特征工程条目，将其已发布产物中的 `schema_resolution.json` 和 `step2_5_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
-            - 通过 `bash skill/model-engineer/scripts/run_step3_pipeline.sh` 运行打包的流水线；不要假定工作区下有 `scripts/` 目录。
+            - 通过 `bash skills/model-engineer/scripts/run_step3_pipeline.sh` 运行打包的流水线；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
