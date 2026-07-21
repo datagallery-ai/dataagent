@@ -2,7 +2,7 @@
 
 **目的**：按 SKILL §5 构造语义区分的多群体负样本，而非将候选池内全部非正样本混合为单一群体。
 
-**公共约束**：所有群体排除正样本；每群体用 `cityHash64(<user_id>)` 确定性下采样到 `{{neg_k_*}}`。
+**公共约束**：所有群体排除正样本；每群体输出**不限量**（`ORDER BY cityHash64` 后不加 LIMIT），负样本总量由 `step1_3` 中 `neg_sampled` 的全局 `LIMIT (SELECT count() * 4 FROM pos_limited)` 统一控制。`neg_k` 为各群体预估配额，仅作参考，不可写成 LIMIT。
 
 **ClickHouse 方言**：
 排除集合统一用：
@@ -40,8 +40,6 @@ neg_N1 AS (
   FROM pool AS p
   LEFT ANTI JOIN pos AS pos_ex
     ON p.user_key = pos_ex.user_key
-  ORDER BY cityHash64(p.user_key)
-  LIMIT {{neg_k_N1}}
 )
 ```
 
@@ -57,8 +55,6 @@ neg_N2 AS (
     AND <game_filter_predicate_exposure>
     AND <negative_exposure_window_predicate>
     AND <exposure_not_converted_predicate>
-  ORDER BY cityHash64(user_key)
-  LIMIT {{neg_k_N2}}
 )
 ```
 
@@ -94,8 +90,6 @@ neg_N3 AS (
       GROUP BY <canonical_user_key_activity>
     ) AS q
   )
-  ORDER BY cityHash64(h.user_key)
-  LIMIT {{neg_k_N3}}
 )
 ```
 
@@ -122,8 +116,6 @@ neg_N4 AS (
       AND <label_window_predicate_pay>
   ) AS paid_target
     ON p.user_key = paid_target.user_key
-  ORDER BY cityHash64(p.user_key)
-  LIMIT {{neg_k_N4}}
 )
 ```
 
@@ -136,8 +128,6 @@ neg_N5 AS (
   LEFT ANTI JOIN pos AS pos_ex
     ON <canonical_background_user_key> = pos_ex.user_key
   WHERE <valid_background_user_key_predicate>
-  ORDER BY cityHash64(user_key)
-  LIMIT {{neg_k_N5}}
 )
 ```
 
@@ -153,8 +143,6 @@ neg_N6 AS (
     ON <canonical_background_user_key> = pos_ex.user_key
   WHERE <valid_background_user_key_predicate>
     AND <interest_mismatch_predicate>
-  ORDER BY cityHash64(user_key)
-  LIMIT {{neg_k_N6}}
 )
 ```
 
