@@ -1,5 +1,7 @@
 # step1_5: stats
 
+<入口规则>两种模式均执行本步</入口规则>
+
 **目的**：统计同库 `step1_sampled_*` 投影表，写出 **`step1_output_meta.json`**（当前 job workspace）。
 
 ## 前置

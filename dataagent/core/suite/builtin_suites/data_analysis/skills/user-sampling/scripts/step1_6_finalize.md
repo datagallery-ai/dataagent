@@ -1,5 +1,7 @@
 # step1_6: finalize（定稿）
 
+<入口规则>两种模式均执行本步</入口规则>
+
 **目的**：验收前面所有步骤的产出无误后，写 **`receipt.json`** 交给 workflow。本步不写 ClickHouse SQL、不生成 `.py`、不发起 Bash 连库。
 
 ## 前置

@@ -1,10 +1,10 @@
 # step1_3: build_training_set
 
+<入口规则>两种模式均执行本步，按 plan 的 `mode` 走对应分支</入口规则>
+
 **目的**：产出一张中间表 **`step1_temp_sampled_users(user_key, label)`**，供 step1_4 裁剪所有源表。
 
-**硬约束：正负比 1:4**。正样本取 `min(正样本池总量, sample_size / 5)`，负样本 = 正样本 × 4；正样本超标时按哈希随机降采样，不足时全取；最终总量 ≤ sample_size。
-
-> 本步只产出中间表；全部 `step1_sampled_*` 交付表在 step1_4 生成。
+**硬约束：正负比 1:4**。正样本取 `min(正样本池总量, sample_size / 5)`，负样本 = 正样本 × 4；最终总量 ≤ sample_size。
 
 ## 前置
 
@@ -18,8 +18,8 @@
 
 | `plan.mode` | 执行 |
 |---|---|
-| `"prelabeled"` | 走 [§prelabeled 分支](#prelabeled-分支)（用户表已有 label，跳过事件口径，直接从 label 列抽样） |
-| 其它（`regular` / `cold_start` / …） | 走 [§主分支](#主分支)（事件口径：候选池 ⊗ label → 多群体正负样本 → 确定性下采样） |
+| `"prelabeled"` | 走下面 prelabeled 分支（用户表已有 label，直接从 label 列抽样） |
+| 其它（`regular` / `cold_start`） | 走下面主分支（事件口径：候选池 ⊗ label → 正负样本 → 下采样） |
 
 ---
 
@@ -89,9 +89,7 @@ ORDER BY cityHash64(user_key);
 
 ### 主分支
 
-模板结构固定：`WITH` 子句中计算 pos → pos_limited(上限截断) → 各 neg_* 群体池 → 合并负池 → 按 pos_limited × 4 截断 → 合并 → 去重 → 安全兜底输出。只替换占位符。
-
-先预检（`LIMIT 1` 确认语句可执行），再建正式表。
+只替换占位符，不改语句形状。先预检再建正式表。
 
 ```sql
 CREATE OR REPLACE TABLE <database>.step1_temp_sampled_users
@@ -239,9 +237,3 @@ SQL 执行后生成 ClickHouse 中间表：
 | `<database>.step1_temp_sampled_users` | `user_key` (用户键)、`label` (0/1) | 训练用户集，step1_4 用此表裁剪所有源表 |
 
 不产出本地文件；表在目标 database 内。
-
----
-
-## 要点
-
-- 中间表输出 canonical `user_key`；step1_4 按各源表 key 关联。
