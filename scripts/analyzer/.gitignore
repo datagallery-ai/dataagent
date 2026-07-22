@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.DS_Store
+/report.html
+/report-data.json
+/report.zip
+/subagent_reports/
