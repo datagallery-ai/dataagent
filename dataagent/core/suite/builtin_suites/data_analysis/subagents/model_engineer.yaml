@@ -5,14 +5,14 @@ AGENT_CONFIG:
   backend: langgraph
   type: react
   max_iter: 4000
-  repetition_leniency: 5.0
+  repetition_leniency: 100.0
 
 MODEL:
   chat_model:
     model_type: chat
-    provider: aigateway
+    provider: deepseek
     params:
-      model: MiniMax-M2.7
+      model: deepseek-v4-flash
       temperature: 0.7
 
 SCENARIO:
@@ -106,8 +106,20 @@ TOOLS:
         post:
           - dataagent.actions.tools.hooks.truncator.truncator
 
+    - module: dataagent.actions.tools.local_tool.tools
+      function: read_file
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
     - module: dataagent.actions.tools.local_tool.job_tools
       function: submit_resource_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: collect_job
       hooks:
         post:
           - dataagent.actions.tools.hooks.truncator.truncator

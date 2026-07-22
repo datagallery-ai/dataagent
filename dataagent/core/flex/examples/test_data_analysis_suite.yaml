@@ -22,9 +22,9 @@ SUITE:
 MODEL:
   chat_model:
     model_type: "chat"
-    provider: "aigateway"
+    provider: "deepseek"
     params:
-      model: "MiniMax-M2.7"
+      model: "deepseek-v4-flash"
       temperature: 0.0
 
 SCENARIO:
