@@ -87,7 +87,7 @@ ACTOR_LOOP:
             - **禁止硬编码业务表名/列名/游戏名。** 使用 `step1_output_meta.json` → `schema_resolution` → 替换 `<...>` 占位符。
             - **产出物命名**：仅允许 `step2_x_*`（不允许 `fe_` 前缀）。
             - 每张输出表模板必须由一条 `CREATE OR REPLACE TABLE ... ENGINE = ... ORDER BY ... AS SELECT ...` 语句构成。每个质量门禁随后以独立的单语句 `SELECT` 校验文件提交。严禁提交 `DROP`/`INSERT`，严禁将建表和校验合并为一条命令，严禁混入旧产物或无前缀产物。
-            - **采样交接**：从上一步的产出物中读取 `step1_output_meta.json` 和其中列出的 `step1_sampled_*` ClickHouse 表。
+            - **采样交接**：从上一步的产出物中读取 `step1_output_meta.json` 和 receipt 中列出的交付表（output_database 内与源表同名）。
             - step2_0 分三阶段执行：
               - 阶段1：从 `output_meta.projection_tables[].type` 直接确定 `<user_table>`、`<user_id>`（`rank_flg`/`dsid` 为等价映射键）、`<label>`，构建 `schema_resolution.json` 骨架，完成候选键验证（写入 `key_validation`）。
               - 阶段2：用骨架角色替换画像 SQL 占位符后执行 `step2_0_source_data_analyze.sql` → `step2_0_column_profile.sql` → `step2_0_validation.sql`。validation.sql 的 label 验证结果写回 `key_validation.label_verified`。
@@ -99,7 +99,7 @@ ACTOR_LOOP:
 
             ## 原生套件运行时适配
 
-            - 在读取 `output_meta.json` 或其 `step1_sampled_*` ClickHouse 产物之前，先检查只读共享 `manifest.json` 中的采样阶段条目。
+            - 在读取 `output_meta.json` 或其交付表列表之前，先检查只读共享 `manifest.json` 中的采样阶段条目。
             - 打包的 SQL 模板通过 `skill/feature-engineer/scripts/...` 获取；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor

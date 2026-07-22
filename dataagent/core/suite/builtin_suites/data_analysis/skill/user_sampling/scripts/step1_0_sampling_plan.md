@@ -2,23 +2,24 @@
 
 **目的**：先落盘语义结果为 `step1_0_table_schema.json`，再落盘采样计划 `step1_0_sampling_plan.json`。
 
-**全表投影**：<必须>`projections[]` 与源表一一对应，一张都不能少</必须>；step1_4 为每张源表建 `step1_sampled_<表名>`，全表投影。
+**全表投影**：<必须>`projections[]` 与源表一一对应，一张都不能少</必须>；step1_4 为每张源表在 output_database 建同名表，全表投影。
 
 ---
 
 
 ## 本步做什么
 
-1. <重要>用语义服务查出目标库全部业务表的结构，写入 `step1_0_table_schema.json`。</重要>
-2. 用 ClickHouse 查 `system.tables`，核对表清单是否和上一步一致；缺表则补查并写回 schema。
+1. <重要>用语义服务查出目标库全部业务表的结构（表名、列名、类型、描述、主键），写入 `step1_0_table_schema.json`。</重要>
+2. 用语义服务查出表间 JOIN 关系，写入 schema 的 `join_hints`。
 3. 用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`。
-4. 根据 schema、任务参数和 mode，写出 `step1_0_sampling_plan.json`。
-5. <重要>检查无误后：`mode=="prelabeled"` → step1_3；否则 → step1_1</重要>。
+4. 用 ClickHouse 查 `system.tables`，核对表清单；缺表则补查并写回 schema。
+5. 根据 schema、任务参数和 mode，写出 `step1_0_sampling_plan.json`。
+6. <重要>检查无误后：`mode=="prelabeled"` → step1_3；否则 → step1_1</重要>。
 ---
 
 ## plan 字段
 
-> `database`/`run_id`/`T0`/`label_window_days`/`lookback_days`/`sample_size` 来自任务参数；`cold_start_threshold` 默认 500。  
+> `run_id`/`T0`/`label_window_days`/`lookback_days`/`sample_size` 来自任务参数；`cold_start_threshold` 默认 500。  
 > `source_database` 存放原始业务表（只读），`output_database` 存放 step1 产物表。  
 > `mode`：`"regular"` / `"cold_start"` / `"prelabeled"`。  
 > `game_scope`：`target` 目标游戏名，`similar_games` 由 step1_2 填写。  
@@ -87,23 +88,43 @@
 
 ## 1. 数据schema落盘
 
-分两次查：
+分三次查，逐步补全 schema：
 
-**① 全库 schema（必做，只问清单与结构）**，query 固定为：
-
-```text
-列出数据库 <source_database> 中每一张业务表的完整结构：表名、全部列名与类型、主键、外键、表间 join 关系。要求覆盖该库全部业务表，逐表返回。
-```
-
-`read` tool-results 后用 **`write`** 写出 **`step1_0_table_schema.json`**（`tables[]` = 该库完整源表清单）。
-
-**② 角色定位（必做，schema 齐备后）**：用语义服务确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`（为 §3 写 plan 准备 `sampling_sources` / `keys`）。query 例如：
+**① 全库表+列结构（必做）**，query 固定为：
 
 ```text
-在数据库 <source_database> 已列出的业务表中，分别指出用户表、付费/label 事件表、活跃行为表、游戏维度表，以及用户键、游戏键、事件时间列。目标游戏：<target_game>。
+数据库 <source_database> 中每一张业务表，逐表列出：
+- 表名
+- 表用途描述
+- 全部列名
+- 每列的数据类型（String/Int64/Float64/Date/DateTime 等）
+- 每列的业务含义描述
+- 哪些列是主键
+要求覆盖该库全部业务表，每张表的每一列都必须列出，不可省略。
 ```
 
-表不全时：按缺表再查语义，或 **一条** `SELECT ... FROM system.columns WHERE database = '...' AND table IN (...)` 批查后合并写回。本步结束后，下游只 `read` 该落盘文件取列信息。
+**② 表间 JOIN 关系（必做，① 完成后）**，query 固定为：
+
+```text
+数据库 <source_database> 中所有业务表之间的 JOIN 关系，逐对列出：
+- 左表.列 → 右表.列
+- JOIN 的业务含义（如"通过 user_id 关联用户信息"）
+要求覆盖该库所有可能的表间关联。
+```
+
+**③ 角色定位（必做，①② 完成后）**：确认用户表、事件表、游戏维表及键列，写入 schema 的 `role_candidates`。query 固定为：
+
+```text
+在数据库 <source_database> 已列出的业务表中，分别指出：
+- 用户信息表（含用户画像/属性）
+- 付费/label 转化事件表
+- 活跃行为事件表
+- 游戏维度表
+并指出每张表中的用户键列、游戏键列、事件时间列。
+目标游戏：<target_game>。
+```
+
+`read` 三次 tool-results 后，合并写出 **`step1_0_table_schema.json`**（`tables` 来自 ①，`join_hints` 来自 ②，`role_candidates` 来自 ③）。
 
 ### `step1_0_table_schema.json`
 
@@ -114,14 +135,14 @@
   "tables": [
     {
       "name": "<表名>",
-      "description": "<可选>",
+      "description": "<表用途描述>",
       "columns": [
-        { "name": "<列名>", "valueType": "<STRING|FLOAT|...>", "isPrimaryKey": false }
+        { "name": "<列名>", "valueType": "<STRING|Int64|Float64|Date|DateTime|...>", "description": "<列的业务含义>", "isPrimaryKey": false }
       ]
     }
   ],
   "join_hints": [
-    { "left": "<表.列>", "right": "<表.列>", "note": "<可选>" }
+    { "left": "<表.列>", "right": "<表.列>", "note": "<JOIN 业务含义>" }
   ],
   "role_candidates": {
     "user_table": ["<候选表>"],
@@ -141,7 +162,7 @@
 
 ```sql
 SELECT name FROM system.tables
-WHERE database = '{{source_database}}' AND name NOT LIKE 'step1_%'
+WHERE database = '{{source_database}}'
 ORDER BY name
 ```
 
@@ -153,7 +174,7 @@ ORDER BY name
 
 ---
 
-## 模式判定（§1② 语义确认用户表和键列后，§3 写 plan 前执行）
+## 模式判定（schema 就绪后，根据表和列描述确认用户表以及 label 列名，§3 写 plan 前执行）
 
 根据 schema 确认的 `user_table`、`user_key_default` 及 label 列名，提交 ClickHouse：
 
@@ -207,7 +228,7 @@ WHERE <sql_fragments.valid_user>
 
 **填写顺序**：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
 
-`sampling_sources` / `keys` / `sql_fragments` 依据 schema 的 `tables` / `role_candidates` / `join_hints`。
+`sampling_sources` / `keys` / `sql_fragments` 依据 schema 的 `role_candidates` / `join_hints`。
 
 ---
 
@@ -266,7 +287,7 @@ LIMIT 20
 
 ## 4. 完成检查
 
-<必须>step1_0_table_schema.json</必须> 已写；`tables[].name` 与 `system.tables` 一致（排除 `step1_%`）。  
+<必须>step1_0_table_schema.json</必须> 已写；`tables[].name` 与 `system.tables` 一致。  
 <必须>step1_0_sampling_plan.json</必须> 已写；`source_table_inventory` / `projections` 1:1。  
 <必须>`inventory_check.ok == true`</必须> 且 `table_count == len(projections)`。  
 <必须>`projections[]` 每项 `type` 仅为 `user_table` / `user_keyed` / `game_keyed`</必须>。
