@@ -260,7 +260,7 @@ def test_reload_merges_user_enabled_example_suite(tmp_path, monkeypatch) -> None
 
     skills = cm.settings.get("TOOLS", {}).get("skills", {})
     assert "builtin" not in skills or not skills.get("builtin")
-    assert any(str(p).endswith("example_suite/skills") for p in skills.get("custom_dirs", []))
+    assert any(str(p).endswith("example_suite/skill") for p in skills.get("custom_dirs", []))
 
     subagents = cm.settings.get("SUBAGENT_CONFIGS", [])
     subagent_paths = [

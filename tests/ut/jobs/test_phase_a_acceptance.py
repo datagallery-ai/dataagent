@@ -158,6 +158,16 @@ def test_ac06b_poll_watch_collects_snapshots_without_auto_collect(monkeypatch):
             calls.append("poll")
             if len(calls) == 1:
                 return {"job_id": job_id, "status": "running", "cursor": "c1", "events": []}
+            if len(calls) == 2:
+                return {
+                    "job_id": job_id,
+                    "status": "running",
+                    "cursor": "c1",
+                    "events": [],
+                    "metadata": {"job_envelope": {"task": "x" * 500}},
+                    "request": {"task": "x" * 500},
+                    "allocation": {"agent": {"pool": "local"}},
+                }
             return {"job_id": job_id, "status": "completed", "cursor": "c2", "events": []}
 
         def collect(self, *, job_id: str) -> dict[str, Any]:
@@ -178,7 +188,11 @@ def test_ac06b_poll_watch_collects_snapshots_without_auto_collect(monkeypatch):
     )
     assert payload["status"] == "completed"
     assert payload["watch"]["enabled"] is True
-    assert len(payload["watch"]["snapshots"]) >= 2
+    assert "snapshots" not in payload["watch"]
+    assert payload["watch"]["poll_count"] >= 2
+    assert payload["watch"]["stopped_reason"] == "terminal"
+    assert "request" not in payload
+    assert "allocation" not in payload
     assert calls.count("poll") >= 2
     assert "collect" not in calls
 

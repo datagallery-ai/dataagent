@@ -5,4 +5,4 @@ description: Demo skill bundled with the example_suite reference Suite.
 
 # Demo Skill
 
-Placeholder skill for Suite ``skills/`` directory scanning.
+Placeholder skill for Suite ``skill/`` directory scanning.

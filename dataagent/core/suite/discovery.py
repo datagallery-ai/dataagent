@@ -209,11 +209,11 @@ def _validate_suite_directory(root: Path, *, suite_name: str) -> None:
                     continue
                 env.parse(template.read_text(encoding="utf-8"))
 
-    skills_dir = root / "skills"
-    if skills_dir.is_dir():
-        for skill_dir in skills_dir.iterdir():
+    skill_root_dir = root / "skill"
+    if skill_root_dir.is_dir():
+        for skill_dir in skill_root_dir.iterdir():
             if skill_dir.is_dir() and not (skill_dir / "SKILL.md").is_file():
-                raise ValueError(f"skills/{skill_dir.name}/ must contain SKILL.md")
+                raise ValueError(f"skill/{skill_dir.name}/ must contain SKILL.md")
 
     subagents_dir = root / "subagents"
     if subagents_dir.is_dir():

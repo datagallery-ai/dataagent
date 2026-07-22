@@ -19,10 +19,10 @@ description: >
   内置参考 Suite 模板（core/suite/builtin_suites/example_suite）。
   目录约定（除 suite.yaml 外均可选）：
   suite.yaml【必填】| models.yaml | tools/tools.yaml | hooks/hooks.yaml+hooks/*.py |
-  prompts/system/* + prompts/user/* | skills/<name>/SKILL.md | subagents/*.yaml |
+  prompts/system/* + prompts/user/* | skill/<name>/SKILL.md | subagents/*.yaml |
   resources/resources.yaml | node_configs.yaml。
   resources/ 含 local + MCP 示例 pool（compute_pool、clickhouse_pool）；MCP 示例须外部服务，见 PRD §7.4。
-  skills/ 合并为 TOOLS.skills.custom_dirs；合并后 skill name 全局唯一校验。
+  skill/ 合并为 TOOLS.skills.custom_dirs；合并后 skill name 全局唯一校验。
   先初始化 agent ，调用chat 或 astream 后，即可在以下路径找到合并后的配置，每轮对话存储一次：<workspace>/.runtime/dataagent_config_*.yaml。
 
 # 【选填】合并优先级，数值越大越优先（默认 0）；同 priority 按 name 字母序决定 list 顺序
