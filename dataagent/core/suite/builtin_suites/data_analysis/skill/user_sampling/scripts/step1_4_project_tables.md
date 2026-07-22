@@ -23,7 +23,7 @@ ORDER BY name
 ```
 
 - 差集为空 → 直接建表
-- 漏表 → 语义补查结构与角色，更新 `step1_0_table_schema.json`（`tables[]` + `columns[]` + `join_hints` + `role_candidates`）和 plan（`source_table_inventory.tables` + `projections[]` + `inventory_check.table_count`）
+- 漏表 → 语义补查结构与角色，更新 `step1_0_table_schema.json`（`tables[]`（及每表内的 `columns[]`）+ `join_hints` + `role_candidates`）和 plan（`source_table_inventory.tables` + `projections[]` + `inventory_check.table_count`）
 - 语义有而库无 → 阻塞
 
 ---
@@ -59,7 +59,7 @@ WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != ''
 LIMIT 1 BY src.<user_key_column>;
 ```
 
-**`mode == "prelabeled"`**：<禁止>禁止 `SELECT src.*, s.label`（会重名列）</禁止>。<必须>`LIMIT 1 BY src.<user_key_column>` + `AND src.<keys.label_column> IN (0, 1)`</必须>。`<keys.label_column>` 类型：数值列 `IN (0, 1)`，String 列 `IN ('0', '1')`。<必须>`LIMIT 1 BY` 保证每用户只保留一行，防止源表同一用户多行导致交付表膨胀。</必须>
+**`mode == "prelabeled"`**：<禁止>禁止 `SELECT src.*, s.label`（会重名列）</禁止>。<必须>`LIMIT 1 BY src.<user_key_column>` + `AND src.<keys.label_column> IN (<label_both_vals>)`</必须>。`<label_both_vals>`：`keys.label_column` 在 schema 中 valueType 为 Int* 时填 `0, 1`，为 String 时填 `'0', '1'`。<必须>`LIMIT 1 BY` 保证每用户只保留一行，防止源表同一用户多行导致交付表膨胀。</必须>
 
 ```sql
 CREATE OR REPLACE TABLE {{output_database}}.<table>
@@ -71,7 +71,7 @@ FROM {{source_database}}.<table> AS src
 INNER JOIN {{output_database}}.step1_temp_sampled_users AS s
   ON src.<user_key_column> = s.user_key
 WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != ''
-  AND src.<keys.label_column> IN (0, 1)
+  AND src.<keys.label_column> IN (<label_both_vals>)
 LIMIT 1 BY src.<user_key_column>;
 ```
 

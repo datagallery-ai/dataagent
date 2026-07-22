@@ -39,20 +39,20 @@ FROM {{source_database}}.<game_dim> AS g
 INNER JOIN (
   SELECT <similar_dim>
   FROM {{source_database}}.<game_dim>
-  WHERE <game_key_default> = '<game_scope.target>'
+  WHERE <game_key_default> = <game_scope.target>
   LIMIT 1
 ) AS t ON g.<similar_dim> = t.<similar_dim>
 WHERE <game_key_default> IS NOT NULL
-  AND <game_key_default> != '<game_scope.target>';
+  AND <game_key_default> != <game_scope.target>;
 ```
 
-| 占位符 | plan 路径 |
-|---|---|
-| `<game_key_expr>` | `sql_fragments.game_key_expr` |
-| `<game_dim>` | `sampling_sources.game_dim` |
-| `<similar_dim>` | `keys.similar_dim` |
-| `<game_key_default>` | `keys.game_key_default` |
-| `<game_scope.target>` | `game_scope.target` |
+| 占位符 | plan 路径 | 说明 |
+|---|---|---|
+| `<game_key_expr>` | `sql_fragments.game_key_expr` | |
+| `<game_dim>` | `sampling_sources.game_dim` | |
+| `<similar_dim>` | `keys.similar_dim` | |
+| `<game_key_default>` | `keys.game_key_default` | |
+| `<game_scope.target>` | `game_scope.target` | `game_key_default` 在 schema 中为 String 列时包单引号：`'<值>'`；为 Int* 时不包引号：`<值>` |
 
 ---
 

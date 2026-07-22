@@ -39,7 +39,7 @@ WITH
     SELECT DISTINCT <sql_fragments.user_key_expr> AS user_key
     FROM {{source_database}}.<sampling_sources.user_table>
     WHERE <sql_fragments.valid_user>
-      AND <keys.label_column> = 1
+      AND <keys.label_column> = <label_pos_val>
   ),
   pos_limited AS (
     SELECT user_key
@@ -51,7 +51,7 @@ WITH
     SELECT DISTINCT <sql_fragments.user_key_expr> AS user_key
     FROM {{source_database}}.<sampling_sources.user_table>
     WHERE <sql_fragments.valid_user>
-      AND <keys.label_column> = 0
+      AND <keys.label_column> = <label_neg_val>
   ),
   neg_sampled AS (
     SELECT user_key
@@ -80,7 +80,9 @@ ORDER BY cityHash64(user_key);
 | `<sql_fragments.user_key_expr>` | `sql_fragments.user_key_expr` | |
 | `<sql_fragments.valid_user>` | `sql_fragments.valid_user` | |
 | `<sampling_sources.user_table>` | `sampling_sources.user_table` | |
-| `<keys.label_column>` | `keys.label_column` | String 列用 `= '1'` / `'0'` |
+| `<keys.label_column>` | `keys.label_column` | 列名 |
+| `<label_pos_val>` | 同上 | `keys.label_column` 在 schema 中 valueType 为 Int* 时填 `1`，为 String 时填 `'1'` |
+| `<label_neg_val>` | 同上 | Int* → `0`，String → `'0'` |
 | `<sample_size>` | `sample_size` | |
 
 ---
