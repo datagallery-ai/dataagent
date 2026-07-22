@@ -15,6 +15,7 @@ disable-model-invocation: true
 
 上游来自模型工程的已发布 manifest entry（非 ClickHouse 训练宽表）：
 
+- `step1_0_table_schema.json`（采样阶段：表结构、字段含义、Schema 角色）
 - `schema_resolution.json`
 - `step2_3_feature_derivation.md`
 - `step3_4_feature_importance.csv`
