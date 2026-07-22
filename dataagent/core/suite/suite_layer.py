@@ -226,15 +226,15 @@ def _prefix_governance_address(address: str, *, suite_name: str) -> str:
 
 def _load_skills_layer(root: Path) -> dict[str, Any]:
     """
-    Append Suite ``skills/`` to ``TOOLS.skills.custom_dirs`` (skills 目录并入 custom_dirs).
+    Append Suite ``skill/`` to ``TOOLS.skills.custom_dirs`` (skill 目录并入 custom_dirs).
 
     Suite 不向 ``TOOLS.skills.builtin`` 写入 skill 名；合并后由 ``validate_unique_skill_names``
     校验将生效的 skill ``name`` 全局唯一。
     """
-    skills_dir = root / "skills"
-    if not skills_dir.is_dir():
+    skill_dir = root / "skill"
+    if not skill_dir.is_dir():
         return {}
-    return {"custom_dirs": [str(skills_dir.resolve())]}
+    return {"custom_dirs": [str(skill_dir.resolve())]}
 
 
 def _load_subagents_layer(root: Path) -> list[dict[str, str]]:

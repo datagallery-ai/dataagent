@@ -219,6 +219,101 @@ def _enrich_resource_collect_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return enriched
 
 
+_SLIM_POLL_METADATA_KEYS = (
+    "subagent_session_id",
+    "workspace_rel_path",
+    "parent_session_id",
+    "resource_id",
+    "reused_workspace",
+)
+
+
+def _slim_poll_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Keep only LLM-useful metadata keys and drop bulky envelope copies.
+
+    Args:
+        metadata: Raw ``metadata`` dict from a :class:`~dataagent.core.jobs.models.JobSnapshot`.
+
+    Returns:
+        Slim metadata dict (may be empty).
+    """
+    return {key: metadata[key] for key in _SLIM_POLL_METADATA_KEYS if key in metadata}
+
+
+def _slim_poll_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Build a compact poll tool response for LLM / message history consumers.
+
+    Args:
+        snapshot: Raw poll snapshot from :class:`~dataagent.core.jobs.service.JobService`.
+
+    Returns:
+        Slim dict without ``request``, ``allocation``, or nested watch snapshots.
+    """
+    if str(snapshot.get("status") or "").strip().upper() == "ERROR":
+        return dict(snapshot)
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    slim: dict[str, Any] = {
+        "job_id": snapshot.get("job_id", ""),
+        "agent_id": snapshot.get("agent_id", ""),
+        "status": snapshot.get("status", ""),
+        "cursor": snapshot.get("cursor", ""),
+        "events": list(snapshot.get("events") or []),
+    }
+    slim_metadata = _slim_poll_metadata(metadata)
+    if slim_metadata:
+        slim["metadata"] = slim_metadata
+    return slim
+
+
+def _is_redundant_empty_poll(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Return True when ``current`` adds no new status, cursor, or events over ``previous``.
+
+    Args:
+        previous: Last accepted poll snapshot in a watch loop (may be empty on first poll).
+        current: Snapshot returned by the latest poll call.
+
+    Returns:
+        ``True`` if ``current`` is a no-op relative to ``previous``.
+    """
+    if not previous:
+        return False
+    if current.get("events"):
+        return False
+    if str(previous.get("status") or "") != str(current.get("status") or ""):
+        return False
+    return str(previous.get("cursor") or "") == str(current.get("cursor") or "")
+
+
+def _build_watch_meta(
+    *,
+    watch_sec: int,
+    interval_sec: float,
+    poll_count: int,
+    elapsed_sec: float,
+    stopped_reason: str,
+) -> dict[str, Any]:
+    """Build the slim ``watch`` block returned after a watch-mode poll loop.
+
+    Args:
+        watch_sec: Normalized watch duration configured for the tool call.
+        interval_sec: Normalized polling interval between watch iterations.
+        poll_count: Total poll attempts performed (including redundant empty polls).
+        elapsed_sec: Wall-clock seconds spent in the watch loop.
+        stopped_reason: ``terminal`` when a terminal status ended the loop, else ``timeout``.
+
+    Returns:
+        Watch summary dict without embedded snapshot history.
+    """
+    return {
+        "enabled": True,
+        "watch_sec": watch_sec,
+        "interval_sec": interval_sec,
+        "poll_count": poll_count,
+        "elapsed_sec": round(elapsed_sec, 3),
+        "stopped_reason": stopped_reason,
+    }
+
+
 def _poll_with_watch(
     *,
     job_id: str,
@@ -243,7 +338,7 @@ def _poll_with_watch(
         poll: Bound ``poll(job_id=..., cursor=..., event_limit=...)`` callable.
 
     Returns:
-        Latest poll snapshot, optionally including a ``watch`` block.
+        Slim latest poll snapshot; watch mode adds summary stats under ``watch`` (no snapshots).
     """
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
@@ -256,26 +351,34 @@ def _poll_with_watch(
         min(POLL_WATCH_MAX_INTERVAL_SEC, float(interval_sec or POLL_WATCH_DEFAULT_INTERVAL_SEC)),
     )
     if normalized_watch <= 0:
-        return poll(
-            job_id=normalized_job_id,
-            cursor=str(cursor or "") or None,
-            event_limit=normalized_limit,
+        return _slim_poll_payload(
+            poll(
+                job_id=normalized_job_id,
+                cursor=str(cursor or "") or None,
+                event_limit=normalized_limit,
+            )
         )
 
-    deadline = time.monotonic() + normalized_watch
+    started = time.monotonic()
+    deadline = started + normalized_watch
     next_cursor = str(cursor or "") or None
-    snapshots: list[dict[str, Any]] = []
     latest: dict[str, Any] = {}
+    poll_count = 0
+    stopped_reason = "timeout"
+    last_snap: dict[str, Any] = {}
     while True:
-        latest = poll(
+        poll_count += 1
+        last_snap = poll(
             job_id=normalized_job_id,
             cursor=next_cursor,
             event_limit=normalized_limit,
         )
-        snapshots.append(latest)
-        next_cursor = str(latest.get("cursor") or next_cursor or "")
-        status = str(latest.get("status") or "").strip().lower()
+        if not _is_redundant_empty_poll(latest, last_snap):
+            latest = last_snap
+        next_cursor = str(last_snap.get("cursor") or next_cursor or "")
+        status = str(last_snap.get("status") or "").strip().lower()
         if bool(stop_on_terminal) and status in TERMINAL_STATUSES:
+            stopped_reason = "terminal"
             break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -283,14 +386,17 @@ def _poll_with_watch(
         runtime.ensure_not_cancelled()
         time.sleep(min(normalized_interval, remaining))
 
-    latest = dict(latest)
-    latest["watch"] = {
-        "enabled": True,
-        "watch_sec": normalized_watch,
-        "interval_sec": normalized_interval,
-        "snapshots": snapshots,
-    }
-    return latest
+    if not latest:
+        latest = last_snap
+    result = _slim_poll_payload(latest)
+    result["watch"] = _build_watch_meta(
+        watch_sec=normalized_watch,
+        interval_sec=normalized_interval,
+        poll_count=poll_count,
+        elapsed_sec=time.monotonic() - started,
+        stopped_reason=stopped_reason,
+    )
+    return result
 
 
 def _resolve_workspace_file(file_path: str, workspace_dir: Path) -> Path | None:

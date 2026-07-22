@@ -66,8 +66,8 @@ def test_validate_unique_skill_names_rejects_duplicate_across_custom_dirs(tmp_pa
 
 
 def test_example_suite_skills_dir_passes_uniqueness_check() -> None:
-    """Builtin example_suite ``skills/`` has unique names and validates after merge shape."""
-    skills_root = dataagent_package_path("core", "suite", "builtin_suites", "example_suite", "skills")
+    """Builtin example_suite ``skill/`` has unique names and validates after merge shape."""
+    skills_root = dataagent_package_path("core", "suite", "builtin_suites", "example_suite", "skill")
     config = {
         "TOOLS": {
             "skills": {

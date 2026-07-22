@@ -20,7 +20,7 @@
 # - planner prompt_template.user 含 prompts/user/example_suite_user.md
 # - executor.max_tool_result_length = 8192
 # - SUBAGENT_CONFIGS 含 arithmetic_ref、echo_ref
-# - TOOLS.skills.custom_dirs 含 example_suite/skills（目录内 skill 运行期全扫描）
+# - TOOLS.skills.custom_dirs 含 example_suite/skill（目录内 skill 运行期全扫描）
 # - subagent 路径无 allow_path warning（suite root 自动注入）
 
 AGENT_CONFIG:
