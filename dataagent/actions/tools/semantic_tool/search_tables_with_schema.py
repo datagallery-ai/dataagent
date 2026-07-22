@@ -260,7 +260,10 @@ def get_semantic_retrieve_context(
             table_name = str(table.get("table", "") or "")
             full_table_name = f"{db_name}.{table_name}"
             context_text += "\n"
-            context_text += f"{full_table_name} 描述：{table.get('description', '')}"
+            context_text += (
+                f"{full_table_name} 描述：{table.get('description', '')}，"
+                f"数据留存期（天）：{table.get('dataRetentionPeriodDays', '')}"
+            )
             recalled_tables.append(full_table_name)
 
     diagnostic_path = _save_semantic_retrieve_diagnostic(
@@ -404,11 +407,15 @@ def get_table_schema(
                 "full_name": dtc,
                 "description": meta.get("column_short_description", ""),
                 "value_type": meta.get("value_type", ""),
+                "column_properties": meta.get("column_properties", None),
             }
         )
 
     summary = f"表 {table_name} 共 {len(columns)} 个字段。"
-    lines = [f"  - {col['name']} ({col['value_type']}): {col['description']}" for col in columns]
+    lines = [
+        f"  - {col['name']} ({col['value_type']}): {col['description']}，"
+        f"属性：{json.dumps(col['column_properties'])}" 
+        for col in columns]
     detail = summary + "\n" + "\n".join(lines)
 
     preview_lines: list[str] = [summary]
