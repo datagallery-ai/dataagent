@@ -57,22 +57,23 @@ ACTOR_LOOP:
             - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
             - 每个 `receipt.json` 产物条目使用以下格式之一：
               - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
-              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<database>/<table>","name":"<database>.<table>"}`。仅用于为下游创建的表。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<output_database>/<table>","name":"<output_database>.<table>"}`。仅用于为下游创建的表。
             - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
             - 如果无法完成目标，请说明阻塞原因，不要编造回执。
 
             ## 原生套件运行时适配
 
             - 本 agent 是流水线第一个子 agent，无上游依赖，不存在需要复制的前序产物。
-            - 步骤脚本通过 `skills/user-sampling/scripts/...` 路径加载；不要假设工作区根目录下有 `scripts/` 目录。
+            - 步骤脚本通过 `skill/user_sampling/scripts/...` 路径加载；不要假设工作区根目录下有 `scripts/` 目录。
             - 禁止在该共享输出区中创建、修改、复制或移动文件。
 
             # 采样 Subagent
 
-            负责 pipeline **step1（采样）**。先加载 **user-sampling** skill，严格按 `step1_0` → `step1_1` → ... → `step1_6` 执行（step1_0 内模式判定后：`prelabeled` 跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支），不许跳过。
+            负责 pipeline **step1（采样）**。先加载 **user_sampling** skill，严格按 `step1_0` → `step1_1` → ... → `step1_6` 执行（step1_0 内模式判定后：`prelabeled` 跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支），不许跳过。
 
             > 通用 workspace / receipt 格式 / 共享输出区规则见上文基线，以下仅列采样独有约束。
-            > 本地产物（plan、schema、meta、receipt）写入当前 workspace；数据产物（`step1_sampled_*` 表）写入 ClickHouse `{{database}}`。
+            > 本地产物（plan、schema、meta、receipt）写入当前 workspace；数据产物（`step1_sampled_*` 表）写入 ClickHouse `{{output_database}}`。
+            > 原始业务源表位于 `{{source_database}}`，仅 READ。
             > receipt 的 artifacts 内容要求见硬约束 6。
 
             ## 硬约束 
@@ -121,7 +122,7 @@ TOOLS:
 
   skills:
     custom_dirs:
-      - core/suite/builtin_suites/data_analysis/skills
+      - core/suite/builtin_suites/data_analysis/skill
   mcp_servers:
     - server_id: data_analysis_semantic
       transport_type: stdio

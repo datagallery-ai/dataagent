@@ -58,7 +58,7 @@ ACTOR_LOOP:
             - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
             - 每个 `receipt.json` 产物条目使用以下格式之一：
               - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
-              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<database>/<table>","name":"<database>.<table>"}`。仅用于为下游创建的表。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<output_database>/<table>","name":"<output_database>.<table>"}`。仅用于为下游创建的表。
             - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
             - 如果无法完成目标，请说明阻塞原因，不要编造回执。
 
@@ -82,9 +82,9 @@ ACTOR_LOOP:
 
             ## 执行流程
 
-            - 运行生成器：`python3 skills/nl2sql/scripts/step4_1_generate_sql.py`（不要假定工作区下有 `scripts/` 目录）。
-            - 从只读共享输出区的 `manifest.json` 找到模型阶段已发布的规则/重要性/预测文件，并在使用前拷贝到当前任务工作区。必需文件包括：`schema_resolution.json`、`step2_4_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv`。
-            - 遵循 `step2_4_feature_derivation.md`；不要交付常量打分的骨架作为最终产物。
+            - 运行生成器：`python3 skill/nl2sql/scripts/step4_1_generate_sql.py`（不要假定工作区下有 `scripts/` 目录）。
+            - 从只读共享输出区的 `manifest.json` 找到模型阶段已发布的规则/重要性/预测文件，并在使用前拷贝到当前任务工作区。必需文件包括：`schema_resolution.json`、`step2_3_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv`。
+            - 遵循 `step2_3_feature_derivation.md`；不要交付常量打分的骨架作为最终产物。
 
             ## 产物
 
@@ -92,8 +92,8 @@ ACTOR_LOOP:
 
             ## 原生套件运行时适配
 
-            - 检查只读共享 `manifest.json` 中选中的特征/模型条目。执行前将 `schema_resolution.json`、`step2_4_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv` 从其已发布产物复制到当前任务工作区。
-            - 通过 `python3 skills/nl2sql/scripts/step4_1_generate_sql.py` 运行打包的生成器；不要假定工作区下有 `scripts/` 目录。
+            - 检查只读共享 `manifest.json` 中选中的特征/模型条目。执行前将 `schema_resolution.json`、`step2_3_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv` 从其已发布产物复制到当前任务工作区。
+            - 通过 `python3 skill/nl2sql/scripts/step4_1_generate_sql.py` 运行打包的生成器；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
@@ -115,7 +115,7 @@ TOOLS:
 
   skills:
     custom_dirs:
-      - core/suite/builtin_suites/data_analysis/skills
+      - core/suite/builtin_suites/data_analysis/skill
   mcp_servers:
     - server_id: data_analysis_semantic
       transport_type: stdio

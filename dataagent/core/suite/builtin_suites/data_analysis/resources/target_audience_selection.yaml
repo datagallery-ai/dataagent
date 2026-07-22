@@ -12,8 +12,8 @@ steps:
       Step order: step2_0 (schema_resolution.json) → step2_1 (source data & column profiling) →
       step2_2 (1:1 merge into wide table) → step2_3 (feature cleaning with audit report) →
       step2_4 (aggregation, derivation, high-cardinality handling) → step2_5 (user filtering,
-      export step2_5_wide_userfiltered.csv) → step2_6 (write receipt.json with just
-      schema_resolution.json + step2_5_wide_userfiltered.csv). Read sampling handoff
+      export step2_4_wide_userfiltered.csv) → step2_5 (write receipt.json with just
+      schema_resolution.json + step2_4_wide_userfiltered.csv). Read sampling handoff
       (output_meta.json + step1_sampled_* tables) from the previous step.
       SKILL.md is the authoritative pipeline specification.
   - id: model_training

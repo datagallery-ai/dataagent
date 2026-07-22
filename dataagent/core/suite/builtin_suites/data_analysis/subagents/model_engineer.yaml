@@ -58,7 +58,7 @@ ACTOR_LOOP:
             - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
             - 每个 `receipt.json` 产物条目使用以下格式之一：
               - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
-              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<database>/<table>","name":"<database>.<table>"}`。仅用于为下游创建的表。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<output_database>/<table>","name":"<output_database>.<table>"}`。仅用于为下游创建的表。
             - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
             - 如果无法完成目标，请说明阻塞原因，不要编造回执。
 
@@ -76,8 +76,8 @@ ACTOR_LOOP:
             - 仅通过 `bash skills/model-engineer/scripts/run_step3_pipeline.sh` 运行；Bash 调用六个固定的 `step3_*.py` 算子。
             - **运行时 Python 不可变**：job 执行期间禁止创建/生成/编辑 `.py` 文件；禁止 `python -c` / heredoc Python。
             - 仅通过 Bash 环境变量调整：`OUTPUT_DIR`、`USER_ID_COL`、`LABEL_COL`、`PYTHON_BIN`、`STEP_START`、`STEP_END`。
-            - **特征工程交接**：从只读共享产物区的 `manifest.json` 中定位上一步已发布产物，将 `schema_resolution.json` 和 `step2_5_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
-            - 从 `schema_resolution.json` 设置 `USER_ID_COL` 和 `LABEL_COL`，然后从 `OUTPUT_DIR/step2_5_wide_userfiltered.csv` 训练。
+            - **特征工程交接**：从只读共享产物区的 `manifest.json` 中定位上一步已发布产物，将 `schema_resolution.json` 和 `step2_4_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
+            - 从 `schema_resolution.json` 设置 `USER_ID_COL` 和 `LABEL_COL`，然后从 `OUTPUT_DIR/step2_4_wide_userfiltered.csv` 训练。
             - **纯本地数据平面**：模型工程不得以任何方式连接 ClickHouse。禁止使用 ClickHouse MCP、Bash/Shell 客户端、`curl`、数据库驱动或共享 ClickHouse I/O 辅助工具。禁止创建、执行或提交 SQL 脚本及 SQL 语句。
             - 直接用本地 Python（`pandas.read_csv`）读取最终 FE CSV。所有生成的产出物只写入当前 job workspace（`OUTPUT_DIR`）；禁止写入其他 workspace 或数据库。
             - 所有 step3 表格式输出写入 `OUTPUT_DIR` 下的本地 `step3_x_*.csv`；json/md/pkl 同样写入该目录。
@@ -91,8 +91,8 @@ ACTOR_LOOP:
 
             ## 原生套件运行时适配
 
-            - 检查只读共享 `manifest.json` 中的特征工程条目，将其已发布产物中的 `schema_resolution.json` 和 `step2_5_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
-            - 通过 `bash skills/model-engineer/scripts/run_step3_pipeline.sh` 运行打包的流水线；不要假定工作区下有 `scripts/` 目录。
+            - 检查只读共享 `manifest.json` 中的特征工程条目，将其已发布产物中的 `schema_resolution.json` 和 `step2_4_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
+            - 通过 `bash skill/model-engineer/scripts/run_step3_pipeline.sh` 运行打包的流水线；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
@@ -114,7 +114,7 @@ TOOLS:
 
   skills:
     custom_dirs:
-      - core/suite/builtin_suites/data_analysis/skills
+      - core/suite/builtin_suites/data_analysis/skill
 
 GOVERNANCE:
   invisibility: [start_data_analysis_workflow, advance_data_analysis_workflow, control_data_analysis_workflow, inspect_data_analysis_workflow, submit_subagent, poll_subagent, collect_subagent, cancel_subagent]
