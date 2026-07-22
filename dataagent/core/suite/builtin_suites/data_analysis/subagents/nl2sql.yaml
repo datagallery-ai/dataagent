@@ -73,7 +73,7 @@ ACTOR_LOOP:
 
             ## 硬性规则
 
-            - 使用 `semantic_retrieve` 查询语义服务获取表/列含义、Schema 角色和关联关系。禁止自行连接数据源来代替语义查询。
+            - 表名、列含义、Schema 角色和关联关系统一从采样产出的 `step1_0_table_schema.json` 获取。禁止自行连接数据源来代替语义查询。
             - **ClickHouse MCP 只接受 `CREATE` 和 `SELECT`。** 每条提交的命令必须恰好是一条顶级关键字为 `CREATE` 或 `SELECT` 的 SQL 语句。禁止提交 `INSERT`、`DROP`、`ALTER`、`TRUNCATE`、`RENAME`、`OPTIMIZE`、`SYSTEM`、`SHOW`、`DESCRIBE`/`DESC`、`EXPLAIN`、`USE` 或多语句 SQL。元数据查询请通过 `SELECT` 从 `system.databases`、`system.tables`、`system.columns` 获取。
             - ClickHouse MCP 仅用于通过适配器兼容的 `SELECT` 探针验证生成的部署 SQL，禁止使用 `EXPLAIN`；不用来读取模型训练产物。
             - **禁止向 ClickHouse MCP 发送 Python 代码。**
@@ -83,7 +83,7 @@ ACTOR_LOOP:
             ## 执行流程
 
             - 运行生成器：`python3 skill/nl2sql/scripts/step4_1_generate_sql.py`（不要假定工作区下有 `scripts/` 目录）。
-            - 从只读共享输出区的 `manifest.json` 找到模型阶段已发布的规则/重要性/预测文件，并在使用前拷贝到当前任务工作区。必需文件包括：`schema_resolution.json`、`step2_3_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv`。
+            - 从只读共享输出区的 `manifest.json` 找到采样、特征、模型阶段已发布的文件，并在使用前拷贝到当前任务工作区。必需文件包括：采样阶段的 `step1_0_table_schema.json`、特征阶段的 `schema_resolution.json` + `step2_3_feature_derivation.md`、模型阶段的 `step3_4_feature_importance.csv` + `step3_4_lgb_model.pkl` + `step3_4_model_report.json` + `step3_5_rule_card.csv` + `step3_6_score_rule.csv`。
             - 遵循 `step2_3_feature_derivation.md`；不要交付常量打分的骨架作为最终产物。
 
             ## 产物
@@ -92,7 +92,7 @@ ACTOR_LOOP:
 
             ## 原生套件运行时适配
 
-            - 检查只读共享 `manifest.json` 中选中的特征/模型条目。执行前将 `schema_resolution.json`、`step2_3_feature_derivation.md`、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv` 从其已发布产物复制到当前任务工作区。
+            - 检查只读共享 `manifest.json` 中选中的采样/特征/模型条目。执行前将 `step1_0_table_schema.json`（采样）、`schema_resolution.json`（特征）、`step2_3_feature_derivation.md`（特征）、`step3_4_feature_importance.csv`、`step3_4_lgb_model.pkl`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_6_score_rule.csv`（模型）从其已发布产物复制到当前任务工作区。
             - 通过 `python3 skill/nl2sql/scripts/step4_1_generate_sql.py` 运行打包的生成器；不要假定工作区下有 `scripts/` 目录。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
@@ -116,14 +116,6 @@ TOOLS:
   skills:
     custom_dirs:
       - core/suite/builtin_suites/data_analysis/skill
-  mcp_servers:
-    - server_id: data_analysis_semantic
-      transport_type: stdio
-      config:
-        command: python3
-        args: [-m, dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.mcp_server]
-        env:
-          SEMANTIC_SERVICE_BASE_URL: http://localhost:31000/api/semantic
 
 RESOURCES:
   - id: clickhouse

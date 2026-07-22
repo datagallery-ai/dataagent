@@ -73,7 +73,7 @@ ACTOR_LOOP:
 
             ## 硬规则
 
-            - 仅通过 `bash skills/model-engineer/scripts/run_step3_pipeline.sh` 运行；Bash 调用六个固定的 `step3_*.py` 算子。
+            - 仅通过 `bash skill/model-engineer/scripts/run_step3_pipeline.sh` 运行；Bash 调用六个固定的 `step3_*.py` 算子。
             - **运行时 Python 不可变**：job 执行期间禁止创建/生成/编辑 `.py` 文件；禁止 `python -c` / heredoc Python。
             - 仅通过 Bash 环境变量调整：`OUTPUT_DIR`、`USER_ID_COL`、`LABEL_COL`、`PYTHON_BIN`、`STEP_START`、`STEP_END`。
             - **特征工程交接**：从只读共享产物区的 `manifest.json` 中定位上一步已发布产物，将 `schema_resolution.json` 和 `step2_4_wide_userfiltered.csv` 复制到 `OUTPUT_DIR`。
