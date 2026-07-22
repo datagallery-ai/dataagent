@@ -2,11 +2,11 @@
 
 <入口规则>两种模式均执行本步</入口规则>
 
-**目的**：统计同库 `step1_sampled_*` 投影表，写出 **`step1_output_meta.json`**（当前 job workspace）。
+**目的**：统计 `output_database` 内与源表同名的投影表，写出 **`step1_output_meta.json`**（当前 job workspace）。
 
 ## 前置
 
-- step1_4 已完成，全部 `step1_sampled_*` 表在库中
+- step1_4 已完成，全部交付表（output_database 内与投影源表一一对应）在库中
 - `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`（含 `projections`）
 
 ---
@@ -26,7 +26,7 @@ SELECT
   countIf(label = 1) AS pos_cnt,
   countIf(label = 0) AS neg_cnt,
   pos_cnt * 1.0 / nullIf(neg_cnt, 0) AS pos_neg_ratio
-FROM {{output_database}}.step1_sampled_<user_table>;
+FROM {{output_database}}.<user_table>;
 ```
 
 `<user_key_column>` = `projections[].user_key`（缺省用 `keys.user_key_default`）。校验：
@@ -43,7 +43,7 @@ FROM {{output_database}}.step1_sampled_<user_table>;
 SELECT count() AS cnt
 FROM system.tables
 WHERE database = '{{output_database}}'
-  AND name LIKE 'step1_sampled_%';
+  AND name NOT LIKE 'step1_%';
 ```
 
 - `expected` = `inventory_check.table_count`
@@ -64,7 +64,7 @@ ENGINE = MergeTree()
 ORDER BY tuple()
 AS
 SELECT count() AS rows
-FROM {{output_database}}.step1_sampled_<table>;
+FROM {{output_database}}.<table>;
 ```
 
 写入 `projection_tables[]` 时：`table` 填完整表名，`type` 取自 `projections[].type`，`type == user_table` 时带 `has_label: true`。
@@ -113,14 +113,14 @@ FROM {{output_database}}.step1_sampled_<table>;
     "pos_neg_ratio": "<§1 pos_neg_ratio>"
   },
   "projection_tables": [
-    { "table": "step1_sampled_<源表名>", "type": "user_table", "rows": "<§3>", "has_label": true },
-    { "table": "step1_sampled_<源表名>", "type": "user_keyed", "rows": "<§3>" },
-    { "table": "step1_sampled_<源表名>", "type": "game_keyed", "rows": "<§3>" }
+    { "table": "<源表名>", "type": "user_table", "rows": "<§3>", "has_label": true },
+    { "table": "<源表名>", "type": "user_keyed", "rows": "<§3>" },
+    { "table": "<源表名>", "type": "game_keyed", "rows": "<§3>" }
   ]
 }
 ```
 
-必填字段：`run_id`、`source_database`、`output_database`、`target_game`、`T0`、`label_window_days`、`sample_size`、`actual_sample_size`、`mode`、`table_count_check`、`label_stats`、`projection_tables`。`mode` 为 `regular`、`cold_start` 或 `prelabeled`。`table` 以 `step1_sampled_` 开头；`type: user_table` 须带 `has_label: true`。
+必填字段：`run_id`、`source_database`、`output_database`、`target_game`、`T0`、`label_window_days`、`sample_size`、`actual_sample_size`、`mode`、`table_count_check`、`label_stats`、`projection_tables`。`mode` 为 `regular`、`cold_start` 或 `prelabeled`。`table` 为源表原名（output_database 内与源表同名）；`type: user_table` 须带 `has_label: true`。
 
 ---
 

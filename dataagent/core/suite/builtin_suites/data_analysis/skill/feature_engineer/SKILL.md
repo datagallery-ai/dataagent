@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # Feature Engineering Pipeline（step2_0 → step2_5）
 
-输入：采样阶段传来的 `step1_output_meta.json` + 全部 `step1_sampled_*` ClickHouse 表。
+输入：采样阶段传来的 `step1_output_meta.json` + 全部交付表（output_database 内与源表同名）。
 输出：`step2_4_wide_userfiltered.csv`（模型唯一训练数据） + `receipt.json`。
 
 ## 数据操作规则

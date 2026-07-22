@@ -14,7 +14,7 @@ steps:
       step2_4 (aggregation, derivation, high-cardinality handling) → step2_5 (user filtering,
       export step2_4_wide_userfiltered.csv) → step2_5 (write receipt.json with just
       schema_resolution.json + step2_4_wide_userfiltered.csv). Read sampling handoff
-      (output_meta.json + step1_sampled_* tables) from the previous step.
+      (output_meta.json + delivery tables) from the previous step.
       SKILL.md is the authoritative pipeline specification.
   - id: model_training
     owner_id: model_training_subagent

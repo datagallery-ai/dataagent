@@ -28,7 +28,7 @@
 
 ```json
 {
-  "summary": "特征工程完成：基于 25 张 step1_sampled_* 表，产出 9316 行 107 列宽表。正 1894 : 负 7576 = 1:4，库 game_mock_syw",
+  "summary": "特征工程完成：基于 25 张交付表，产出 9316 行 107 列宽表。正 1894 : 负 7576 = 1:4，库 game_mock_syw",
   "artifacts": [
     {"kind": "file", "path": "schema_resolution.json", "type": "json"},
     {"kind": "file", "path": "step2_4_wide_userfiltered.csv", "type": "csv"}
