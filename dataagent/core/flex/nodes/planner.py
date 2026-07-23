@@ -457,11 +457,17 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, 
         # 与 pruner / LLM 调用时的实际压缩阈值一致。
         compress_token_limit = None
         compress_message_cnt = None
+        enable_cache_control = None
         if runtime is not None:
             env = getattr(runtime, "env", None)
             if env is not None:
                 compress_token_limit = getattr(env, "compress_token_limit", None)
                 compress_message_cnt = getattr(env, "compress_message_cnt", None)
+                # 从 planner 节点的 LLM 配置取 enable_cache_control（per-LLM 值），
+                # 使 dump 的 bp 标注与实际 LLM 请求的 cache_control 行为一致。
+                llm_cfgs = getattr(env, "llm_configs", None) or {}
+                planner_cfg = llm_cfgs.get("planner") or {}
+                enable_cache_control = planner_cfg.get("enable_cache_control")
 
         annotate_bp = get_env_bool("DATAAGENT_CACHE_BREAKPOINT_ANNOTATION")
         dump_prompt_to_file(
@@ -470,6 +476,7 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, 
             annotate_cache_breakpoints=annotate_bp,
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
+            enable_cache_control=enable_cache_control,
         )
 
         logger.debug(f"Context dump saved to {dump_dir}")

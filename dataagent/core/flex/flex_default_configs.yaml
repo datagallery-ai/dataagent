@@ -34,6 +34,23 @@ POST_WORKFLOW: []
 # AGENT_CONFIG:
 #   repetition_leniency: 3.0
 
+# ── cache_control 显式缓存开关（MODEL.<name>.params） ──
+# enable_cache_control: 控制 _add_cc 是否将 string content 转为 list-of-dicts
+# （多模态格式）以注入 cache_control 断点。自部署端点（vLLM-served Qwen 30B 等）
+# 不支持 list content，需设为 false。
+# - 省略（None）：自动探测（Qwen/Claude/百炼 deepseek-v3.2 等开，其余关）
+# - true：强制启用（即使模型不在支持列表）
+# - false：强制禁用（避免 list content 转换）
+# 环境变量 DATAAGENT_CACHE_CONTROL=0 可全局禁用（优先级最高，运维逃生用）
+# 示例：
+# MODEL:
+#   qwen30b_local:
+#     provider: OPENAI
+#     params:
+#       model: qwen30b
+#       enable_cache_control: false
+# 详见 docs/main_agent_cache_optimization_design.md §2.5.1
+
 # Bash 工具命令白名单（可选）
 # 配置后仅允许 bash 工具执行列表中声明的命令，未配置则不限制。
 # 示例：

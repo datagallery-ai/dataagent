@@ -25,6 +25,7 @@ MODEL:
       base_url: "$env{DEEPSEEK_BASE_URL}"
       api_key: "$env{DEEPSEEK_API_KEY}"
       temperature: 0
+      enable_cache_control: true
 
 SCENARIO:
   personal: "You are an AI assistant in a biology research context."
@@ -35,6 +36,7 @@ SCENARIO:
       2. 调用 create_plan 制定工作计划（含 introduction、approach、todos），再开始实质性执行；
       3. 每完成一个 todo，调用 complete_current_todo 标记进度，避免重复执行已完成的步骤。
       对于简单问答、闲聊或无需数据库的任务，可直接回答，无需调用上述工具。
+      4. 当需要向用户确认时,必须调用`request_human_feedback`工具, 而不是发送一条文本消息进行确认。
 
 PRE_WORKFLOW: []
 

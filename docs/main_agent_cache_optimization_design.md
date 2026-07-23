@@ -140,10 +140,15 @@ KV-Cache，跳过该前缀的 attention 计算，降低 `input_tokens` 的计费
 当前设计覆盖**支持显式 cache_control 的全部模型**：
 
 ```python
-# llm_client.py:832
-if _supports_explicit_cache_control(self._model, self._provider):
+# llm_client.py: _build_payload
+if self._should_inject_cache_control():
     msgs = self._apply_cache_control_with_anchors(msgs, ...)
 ```
+
+> **注**：`_should_inject_cache_control()` 是三层决策（见 §2.5.1）：
+> 1. 环境变量 `DATAAGENT_CACHE_CONTROL=0` → 全局禁用
+> 2. YAML `MODEL.<name>.params.enable_cache_control` → per-LLM 覆盖
+> 3. `_supports_explicit_cache_control(model, provider)` → 自动探测（默认）
 
 | 场景 | provider | model | _supports_explicit_cc | 应注入？ | 实际注入？ |
 |------|---------|-------|----------------|---------|-----------|
@@ -518,7 +523,7 @@ for idx in selected:
 
 **结论：当前最多使用 3 个断点，有 1 个空闲配额。**
 
-### 2.5 环境变量开关
+### 2.5 环境变量开关与 enable_cache_control 配置
 
 `DATAAGENT_CACHE_ANCHOR=0` 可禁用 bp2/bp3/bp4（`use_tail_cc=False`），
 仅保留 bp0（System）和 bp1（history_summary）。用于 A/B 对比测试。
@@ -526,8 +531,70 @@ for idx in selected:
 `DATAAGENT_CACHE_BREAKPOINT_ANNOTATION=1`（默认开）让 dump_prompt_to_file 在每条
 消息上标注 `[bp N cc]` 标记，便于调试断点分配。
 
+`DATAAGENT_CACHE_CONTROL=0` 可**全局禁用** cache_control 注入（优先级最高），
+跳过所有 `_add_cc` 转换，string content 不被转为 list-of-dicts。用于自部署端点
+（如 vLLM-served Qwen 30B）不支持 list content 格式的场景。
+
 > **注意**：上述环境变量名当前内联在 `llm_client.py:875` 与 `planner.py:458`，
 > 未在 `constants.py` 集中声明。详见 issue #28。
+
+#### 2.5.1 enable_cache_control 三层控制
+
+`_add_cc` 注入 `cache_control` 时将 string content 转为 list-of-dicts（多模态格式），
+这是 DashScope/Anthropic API 协议要求，但自部署端点（如 vLLM-served Qwen 30B）
+不支持该格式。`enable_cache_control` 提供三层控制：
+
+| 层级 | 机制 | 作用范围 | 优先级 | 适用场景 |
+|------|------|---------|--------|---------|
+| L1 | 环境变量 `DATAAGENT_CACHE_CONTROL=0` | 全局所有 LLM | 最高 | 运维快速逃生 |
+| L2 | YAML `MODEL.<name>.params.enable_cache_control: false` | 单个 LLM | 中 | 自部署 Qwen 30b 等 |
+| L3 | 自动探测 `_supports_explicit_cache_control`（§1.4.1） | 按模型名 | 最低（默认） | 默认行为 |
+
+默认 `None`（不配置）→ 走 L3 自动探测，完全向后兼容。决策由
+`LLMClient._should_inject_cache_control()` 实现：
+
+```python
+def _should_inject_cache_control(self) -> bool:
+    if os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0":
+        return False  # L1
+    if self._enable_cache_control is not None:
+        return self._enable_cache_control  # L2
+    return _supports_explicit_cache_control(self._model, self._provider)  # L3
+```
+
+配置语义：
+
+| `enable_cache_control` 值 | 环境变量 | 行为 |
+|---------------------------|---------|------|
+| `None`（未配置） | 未设 | 自动探测（向后兼容） |
+| `None` | `=0` | 禁用（环境变量优先） |
+| `True` | 未设 | 强制启用（即使模型不在支持列表） |
+| `True` | `=0` | 禁用（环境变量优先） |
+| `False` | 任意 | 禁用 |
+
+#### 2.5.2 使用示例
+
+YAML per-LLM 禁用：
+
+```yaml
+MODEL:
+  qwen30b_local:
+    provider: OPENAI
+    params:
+      model: qwen30b
+      base_url: http://my-vllm-server:8000/v1
+      api_key: xxx
+      enable_cache_control: false
+```
+
+环境变量全局逃生：
+
+```bash
+export DATAAGENT_CACHE_CONTROL=0
+```
+
+默认（向后兼容，不改配置）：百炼 Qwen3.7-Plus / DeepSeek-v3.2 等支持显式缓存的
+模型，不配置 `enable_cache_control`，行为与改动前完全一致。
 
 ## 3. 压缩机制
 
@@ -745,6 +812,7 @@ bp0 测试：`test_bp0_system_always_gets_cc`、`test_bp0_survives_compression_s
 | 命中率分母未区分 Anthropic vs OpenAI/DeepSeek 语义 | Anthropic 命中率虚高 | （未单独建 issue，§1.6.4 已警示） |
 | `executor._max_tool_result_length` 双源配置 | reconfig 后不同步 | [#36](https://gitcode.com/datagallery/dataagent/issues/36) |
 | DeepSeek `prompt_cache_hit_tokens` 路径无单测 | 回归风险 | （建议补测，§7.1） |
+| ~~自部署端点不支持 list content 格式~~ | ~~vLLM-served Qwen 30B 等将 list content 路由到 VL 模型导致失败~~ | ✅ 已修（`enable_cache_control` 开关 + `DATAAGENT_CACHE_CONTROL=0`，见 §2.5.1） |
 
 ## 9. 回退策略
 
