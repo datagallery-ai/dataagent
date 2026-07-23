@@ -737,6 +737,7 @@ class LLMClient:
         compress_token_limit: int | None = None,
         compress_message_cnt: int | None = None,
         repetition_leniency: float | None = None,
+        enable_cache_control: bool | None = None,
     ) -> None:
         """初始化 LLMClient 实例。
 
@@ -752,6 +753,10 @@ class LLMClient:
             compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
             compress_message_cnt: 实际压缩消息数阈值（由 runtime.env 注入），影响 approaching_compress 判断。
             repetition_leniency: 重复检测宽松系数（由 runtime.env / YAML 注入）；``None`` 用默认值。
+            enable_cache_control: 是否注入显式 cache_control 标记。``None`` 走自动探测
+                （``_supports_explicit_cache_control``，向后兼容）；``True`` 强制启用；
+                ``False`` 强制禁用（用于自部署端点不支持 list content 格式的场景）。
+                环境变量 ``DATAAGENT_CACHE_CONTROL=0`` 优先级最高，全局禁用。
         """
         self._model = model
         self._api_base = api_base
@@ -766,6 +771,7 @@ class LLMClient:
         self._repetition_leniency = (
             DEFAULT_REPETITION_LENIENCY if repetition_leniency is None else float(repetition_leniency)
         )
+        self._enable_cache_control = enable_cache_control
 
     @staticmethod
     def _extract_previous_assistant_content(messages: list[Any]) -> str:
@@ -1414,6 +1420,7 @@ class LLMClient:
         timeout = params.pop("timeout", None)
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
+        enable_cache_control = params.pop("enable_cache_control", None)
         extra_body = {**dict(params.pop("extra_body", None) or {}), **params}
         extra_body.pop("custom_llm_provider", None)
 
@@ -1428,6 +1435,7 @@ class LLMClient:
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
             repetition_leniency=repetition_leniency,
+            enable_cache_control=enable_cache_control,
         )
 
     @classmethod
@@ -1454,6 +1462,7 @@ class LLMClient:
         timeout = params.pop("timeout", None)
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
+        enable_cache_control = params.pop("enable_cache_control", None)
         extra_body = {**dict(params.pop("extra_body", None) or {}), **params}
         extra_body.pop("custom_llm_provider", None)
         return cls(
@@ -1467,6 +1476,7 @@ class LLMClient:
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
             repetition_leniency=repetition_leniency,
+            enable_cache_control=enable_cache_control,
         )
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LLMClient:
@@ -1489,6 +1499,7 @@ class LLMClient:
             compress_token_limit=self._compress_token_limit,
             compress_message_cnt=self._compress_message_cnt,
             repetition_leniency=self._repetition_leniency,
+            enable_cache_control=self._enable_cache_control,
         )
 
     def invoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
@@ -1809,6 +1820,22 @@ class LLMClient:
             "Content-Type": "application/json",
         }
 
+    def _should_inject_cache_control(self) -> bool:
+        """Decide whether to inject cache_control breakpoints.
+
+        Three-layer priority (see docs/main_agent_cache_optimization_design.md §2.5.1):
+        1. ``DATAAGENT_CACHE_CONTROL=0`` env var → global disable (escape hatch)
+        2. ``self._enable_cache_control`` YAML per-LLM flag → explicit override
+        3. ``_supports_explicit_cache_control(model, provider)`` → auto-detect (default)
+
+        Returns ``True`` if cache_control should be injected, ``False`` otherwise.
+        """
+        if os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0":
+            return False
+        if self._enable_cache_control is not None:
+            return self._enable_cache_control
+        return _supports_explicit_cache_control(self._model, self._provider)
+
     def _build_payload(
         self,
         messages: list[Any],
@@ -1826,7 +1853,7 @@ class LLMClient:
         if msgs and not isinstance(msgs[0], dict):
             msgs = self._lc_messages_to_dicts(msgs)
 
-        if _supports_explicit_cache_control(self._model, self._provider):
+        if self._should_inject_cache_control():
             msgs = self._apply_cache_control_with_anchors(
                 msgs,
                 compress_token_limit=self._compress_token_limit,
@@ -2073,6 +2100,10 @@ def llm_adapter_from_env_cfg(
     阈值保持一致。
 
     ``repetition_leniency`` 来自 ``runtime.env``（YAML ``AGENT_CONFIG.repetition_leniency``）。
+
+    ``enable_cache_control`` 作为 per-LLM 配置，已在 ``cfg`` 扁平 dict 中（来自 YAML
+    ``MODEL.<name>.params.enable_cache_control``），由 :meth:`LLMClient.from_env_cfg`
+    自行 pop，无需此函数透传。
     """
     from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 

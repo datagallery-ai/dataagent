@@ -377,8 +377,28 @@ def _compute_final_breakpoints(
     messages: list[BaseMessage],
     compress_token_limit: int | None,
     compress_message_cnt: int | None,
+    enable_cache_control: bool | None = None,
 ) -> dict[int, Any]:
-    """Compute final cache_control breakpoint allocation via _apply_cache_control_with_anchors."""
+    """Compute final cache_control breakpoint allocation via _apply_cache_control_with_anchors.
+
+    遵循与 ``LLMClient._should_inject_cache_control`` 相同的三层决策（§2.5.1）：
+    1. ``DATAAGENT_CACHE_CONTROL=0`` 环境变量 → 全局禁用，返回空 dict
+    2. ``enable_cache_control`` 参数（per-LLM YAML 值）→ 显式覆盖
+    3. 默认 ``None`` → 计算 bp（与改动前行为一致，向后兼容）
+
+    这样 dump 文件标注的断点与实际 LLM 请求一致：当 cache_control 被禁用时，
+    dump 不标注任何 bp，避免误导调试者以为 cache_control 生效。
+    """
+    import os
+
+    # L1: 环境变量全局逃生
+    if os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0":
+        return {}
+    # L2: per-LLM YAML 显式禁用
+    if enable_cache_control is False:
+        return {}
+
+    # L3: 默认 None 或 True → 计算断点
     # 运行 _apply_cache_control_with_anchors 得到最终断点分配
     # （含动态注入的 bp2/bp3/bp4），使 dump 反映 LLM 调用时的真实 cache_control 布局，
     # 而非仅标注消息构建阶段预置的显式 cc（仅有 bp1）。
@@ -500,6 +520,7 @@ def dump_prompt_to_file(
     annotate_cache_breakpoints: bool = False,
     compress_token_limit: int | None = None,
     compress_message_cnt: int | None = None,
+    enable_cache_control: bool | None = None,
 ) -> Path:
     """
     将 prepare_prompt 返回的消息列表以可读格式写入文件。
@@ -513,6 +534,10 @@ def dump_prompt_to_file(
             （含动态注入的 bp2/bp3/bp4），而非仅标注 LangChain 消息中预置的显式 cc。
         compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
         compress_message_cnt: 实际压缩消息数阈值（由 runtime.env 注入），影响 approaching_compress 判断。
+        enable_cache_control: per-LLM 的 cache_control 开关（来自 YAML
+            ``MODEL.<name>.params.enable_cache_control``）。与 ``DATAAGENT_CACHE_CONTROL``
+            环境变量共同决定 dump 是否标注断点：任一禁用则不标注，避免 dump 显示
+            实际 LLM 请求中不存在的断点（见 §2.5.1）。
 
     Returns:
         写入的文件路径。
@@ -525,9 +550,19 @@ def dump_prompt_to_file(
     }
     separator = "=" * 80
 
+    import os
+
+    # 检测 cache_control 是否被显式禁用（用于 dump header 显示）
+    cc_disabled = os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0" or enable_cache_control is False
+
     final_bp = (
-        _compute_final_breakpoints(messages, compress_token_limit, compress_message_cnt)
-        if annotate_cache_breakpoints
+        _compute_final_breakpoints(
+            messages,
+            compress_token_limit,
+            compress_message_cnt,
+            enable_cache_control=enable_cache_control,
+        )
+        if annotate_cache_breakpoints and not cc_disabled
         else {}
     )
 
@@ -540,11 +575,17 @@ def dump_prompt_to_file(
             f"  Prompt Dump  |  {datetime.now(tz=TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}  |  {len(messages)} messages\n"
         )
         if annotate_cache_breakpoints:
-            f.write(
-                "  Cache Breakpoint Annotation: ON  |  Strategy: "
-                "bp0=System, bp1=history_summary, bp2=first-large-tool/tail2, "
-                "bp3=tail_anchor, bp4=tail2\n"
-            )
+            if cc_disabled:
+                f.write(
+                    "  Cache Breakpoint Annotation: OFF  |  cache_control disabled "
+                    "(DATAAGENT_CACHE_CONTROL=0 or enable_cache_control=false)\n"
+                )
+            else:
+                f.write(
+                    "  Cache Breakpoint Annotation: ON  |  Strategy: "
+                    "bp0=System, bp1=history_summary, bp2=first-large-tool/tail2, "
+                    "bp3=tail_anchor, bp4=tail2\n"
+                )
         f.write(f"{separator}\n\n")
 
         bp_count = 0

@@ -4,7 +4,6 @@ import pytest
 
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 from dataagent.core.managers.llm_manager.llm_client import (
-    _CACHE_CONTROL_EPHEMERAL,
     _MAX_BREAKPOINTS,
     LLMClient,
     _supports_explicit_cache_control,
@@ -540,3 +539,129 @@ class TestDumpPromptAnnotatesAllBreakpoints:
         )
         bp_tags = [line for line in text.splitlines() if "[bp " in line and "---" in line]
         assert len(bp_tags) == expected_bp
+
+
+class TestEnableCacheControlSwitch:
+    """验证 ``enable_cache_control`` 三层控制（env var > YAML per-LLM > auto-detect）。
+
+    见 ``docs/main_agent_cache_optimization_design.md`` §2.5.1。
+    """
+
+    @staticmethod
+    def _make_client(
+        model: str = "Qwen3.7-Plus",
+        *,
+        enable_cache_control: bool | None = None,
+        provider: str | None = None,
+    ) -> LLMClient:
+        """构造测试用 LLMClient（绕过 from_env_cfg 的 pop 逻辑，直接传 kwarg）。"""
+        return LLMClient(
+            model=model,
+            api_base="https://example.invalid/v1",
+            api_key="sk-test",
+            provider=provider,
+            enable_cache_control=enable_cache_control,
+        )
+
+    def test_env_var_disables_cc(self, monkeypatch: pytest.MonkeyPatch):
+        """L1: DATAAGENT_CACHE_CONTROL=0 全局禁用，即使 Qwen 模型也不注入 cc。"""
+        monkeypatch.setenv("DATAAGENT_CACHE_CONTROL", "0")
+        client = self._make_client(model="Qwen3.7-Plus")  # auto-detect 会返回 True
+        assert client._should_inject_cache_control() is False
+
+    def test_yaml_explicit_false_disables_cc(self, monkeypatch: pytest.MonkeyPatch):
+        """L2: enable_cache_control=False 强制禁用，即使 Qwen 模型也不注入 cc。"""
+        monkeypatch.delenv("DATAAGENT_CACHE_CONTROL", raising=False)
+        client = self._make_client(model="Qwen3.7-Plus", enable_cache_control=False)
+        assert client._should_inject_cache_control() is False
+
+    def test_yaml_none_uses_auto_detect(self, monkeypatch: pytest.MonkeyPatch):
+        """L3: enable_cache_control=None 走自动探测（向后兼容）。"""
+        monkeypatch.delenv("DATAAGENT_CACHE_CONTROL", raising=False)
+        client_qwen = self._make_client(model="Qwen3.7-Plus", enable_cache_control=None)
+        assert client_qwen._should_inject_cache_control() is True  # Qwen supports cc
+
+        client_deepseek = self._make_client(model="deepseek-v4-flash", enable_cache_control=None)
+        assert client_deepseek._should_inject_cache_control() is False  # not in support list
+
+    def test_yaml_explicit_true_forces_enable(self, monkeypatch: pytest.MonkeyPatch):
+        """L2: enable_cache_control=True 强制启用，即使模型不在支持列表。"""
+        monkeypatch.delenv("DATAAGENT_CACHE_CONTROL", raising=False)
+        # deepseek-v4-flash 不支持显式缓存（auto-detect=False），但 True 强制开
+        client = self._make_client(model="deepseek-v4-flash", enable_cache_control=True)
+        assert client._should_inject_cache_control() is True
+
+    def test_env_var_overrides_yaml_true(self, monkeypatch: pytest.MonkeyPatch):
+        """L1 优先级 > L2: env=0 时，即使 YAML enable_cache_control=True 也禁用。"""
+        monkeypatch.setenv("DATAAGENT_CACHE_CONTROL", "0")
+        client = self._make_client(model="Qwen3.7-Plus", enable_cache_control=True)
+        assert client._should_inject_cache_control() is False
+
+    def test_from_env_cfg_pops_enable_cc(self):
+        """from_env_cfg 不把 enable_cache_control 泄漏到 extra_body。"""
+        cfg = {
+            "model": "Qwen3.7-Plus",
+            "api_base": "https://example.invalid/v1",
+            "api_key": "sk-test",
+            "enable_cache_control": False,
+        }
+        client = LLMClient.from_env_cfg(cfg)
+        assert client._enable_cache_control is False
+        assert "enable_cache_control" not in client._extra_body
+
+    def test_from_llm_config_pops_enable_cc(self, monkeypatch: pytest.MonkeyPatch):
+        """from_llm_config 不把 enable_cache_control 泄漏到 extra_body。"""
+        monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
+        monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-test")
+        config = _make_config(enable_cache_control=False)
+        client = LLMClient.from_llm_config(config)
+        assert client._enable_cache_control is False
+        assert "enable_cache_control" not in client._extra_body
+
+    def test_bind_tools_preserves_enable_cache_control(self):
+        """bind_tools 透传 enable_cache_control 到新实例。"""
+        client = self._make_client(model="Qwen3.7-Plus", enable_cache_control=False)
+        bound = client.bind_tools([])
+        assert bound._enable_cache_control is False
+        assert bound._should_inject_cache_control() is False
+
+    def test_dump_no_bp_when_enable_cache_control_false(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
+        """enable_cache_control=False 时 dump 不标注断点，header 显示 OFF。"""
+        monkeypatch.delenv("DATAAGENT_CACHE_CONTROL", raising=False)
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from dataagent.utils.messages_utils import dump_prompt_to_file
+
+        msgs = [
+            SystemMessage(content="System prompt"),
+            HumanMessage(content="User query"),
+            HumanMessage(content="# Work Plan Status\nDone"),
+        ]
+        out = tmp_path / "round_test.txt"
+        dump_prompt_to_file(
+            msgs,
+            out,
+            annotate_cache_breakpoints=True,
+            enable_cache_control=False,
+        )
+        text = out.read_text(encoding="utf-8")
+        assert "Cache Breakpoint Annotation: OFF" in text, "dump header should show OFF when enable_cache_control=False"
+        assert "[bp " not in text, "no bp tags should appear when cache_control disabled"
+
+    def test_dump_no_bp_when_env_var_disables(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
+        """DATAAGENT_CACHE_CONTROL=0 时 dump 不标注断点。"""
+        monkeypatch.setenv("DATAAGENT_CACHE_CONTROL", "0")
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from dataagent.utils.messages_utils import dump_prompt_to_file
+
+        msgs = [
+            SystemMessage(content="System prompt"),
+            HumanMessage(content="User query"),
+            HumanMessage(content="# Work Plan Status\nDone"),
+        ]
+        out = tmp_path / "round_test.txt"
+        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True)
+        text = out.read_text(encoding="utf-8")
+        assert "Cache Breakpoint Annotation: OFF" in text
+        assert "[bp " not in text
