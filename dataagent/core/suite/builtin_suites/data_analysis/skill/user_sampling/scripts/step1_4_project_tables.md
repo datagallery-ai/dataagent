@@ -4,6 +4,8 @@
 
 **目的**：为 `projections[]` 中每张源表在 `output_database` 建<必须>同名</必须>交付表。列集与源表一致，唯一用户数 = `sampled_n`；用户表含 `label` 列（主路径 JOIN 追加 / prelabeled 保留源列）。
 
+<必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
+
 <必须>表数 = `projections[]` 项数 = `inventory_check.table_count`，少一张不得进入 step1_5</必须>。`step1_temp_*` 不参与计数。
 
 ## 前置

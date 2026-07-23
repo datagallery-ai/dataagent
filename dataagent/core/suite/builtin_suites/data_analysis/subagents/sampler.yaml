@@ -81,6 +81,7 @@ ACTOR_LOOP:
             <下面的约束非常重要!!!/>
             > **以下为采样阶段唯一权威约束，SKILL.md 中的业务约束仅为本节的快速索引。**
 
+            0. **必须确认 output_database**：<必须>`output_database` 和 `source_database` 由上游 workflow 在任务参数中显式传入。执行 step1_0 前先检查这两个参数是否存在：缺失任一项时**立即停止**，在 receipt 中写阻塞原因（如 `"output_database not specified in task params"`），**严禁**从 ClickHouse 数据库列表中自行挑选空库代替。</必须>
             1. **顺序**：默认严格按 `step1_0` → `step1_1` → `step1_2` → `step1_3` → `step1_4` → `step1_5` → `step1_6` 执行，**不可跳过任一步**。允许例外：(a) `regular` 可跳过 step1_2；(b) **用户表已有可用 `label`** 时 `mode=="prelabeled"`，跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支。须先完成 step1_0（磁盘上已有 `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`，且 `inventory_check.ok == true`），再进入 step1_1 或 step1_3。
             2. **正负比例**：训练样本正负比为 **1:4**。正样本**上限为 `sample_size / 5`**（超标按哈希降采样，**非全取**），不足时全取；负样本 = 正样本 × 4。`event_derived` 从各群体池凑齐（`neg_k` 之和约等于正样本×4）；`prelabeled` 直接从用户表 `label∈{0,1}` 下采样。最终总量 ≤ sample_size。
             3. **表/列来源**：先 `read` `step1_0_table_schema.json` 与 plan。能命中则直接用；缺表或缺列时再查 ClickHouse，结果 **写回** schema 后再拼 SQL。

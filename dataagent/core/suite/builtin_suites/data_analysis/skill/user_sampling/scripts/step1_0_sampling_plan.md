@@ -1,22 +1,19 @@
 # step1_0: 采样计划
 
-**目的**：先落盘语义结果为 `step1_0_table_schema.json`，再落盘采样计划 `step1_0_sampling_plan.json`。
+**目的**：先落盘 `step1_0_table_schema.json`，再落盘 `step1_0_sampling_plan.json`。
 
 **全表投影**：<必须>`projections[]` 与源表一一对应，一张都不能少</必须>；step1_4 为每张源表在 output_database 建同名表，全表投影。
 
 ---
 
-
 ## 本步做什么
 
-1. **ClickHouse 取全局表名列表**：`SELECT name FROM system.tables WHERE database = '{{source_database}}'`，得到 `source_table_inventory.tables`（<必须>这是唯一权威的完整表清单</必须>）。
-2. **三步语义查库**（①②③，每次 query 后与 ClickHouse 全局列表做差集，遗漏表逐批补查，直到全覆盖）：
-   - ① 全库表+列结构（表名、列名、类型、描述、主键）
-   - ② 表间 JOIN 关系
-   - ③ 角色定位（用户表、事件表、游戏维表及键列）
-3. <必须>step1_0_table_schema.json 中 `tables[].name` 与 ClickHouse 全局表名列表 1:1 一致后，方可落地</必须>。
-4. 根据 schema、任务参数和 mode，写出 `step1_0_sampling_plan.json`。
-5. <重要>检查无误后：`mode=="prelabeled"` → step1_3；否则 → step1_1</重要>。
+1. **ClickHouse 取全局表名列表**（最先做，唯一权威清单）→ `source_table_inventory.tables`。
+2. **① 全库表+列结构**（可附带 join；禁止探索性预查）→ 列覆盖门禁通过（§覆盖定义）→ 必要时 `system.columns` 批查。
+3. **② 角色定位** → 写 `role_candidates` → 落盘完整 schema。
+4. 判定 mode，写出 `step1_0_sampling_plan.json`。
+5. <重要>`mode=="prelabeled"` → step1_3；否则 → step1_1</重要>。
+
 ---
 
 ## plan 字段
@@ -26,7 +23,7 @@
 > `mode`：`"regular"` / `"cold_start"` / `"prelabeled"`。  
 > `game_scope`：`target` 目标游戏名，`similar_games` 由 step1_2 填写。  
 > `y_label`：`family` 对应 `labels.md` 家族名，`task_type` 固定 `"binary_classification"`。  
-> `sampling_sources`：语义服务确认的角色→表名，`game_dim` 是游戏维度表。  
+> `sampling_sources`：角色→表名，`game_dim` 是游戏维度表。  
 > `keys`：`similar_dim` 是游戏维表中匹配相似游戏的维度列（如 game_type）。  
 > `sql_fragments`：键表达式固定规则见 §3.1；时间/正样本片段仅 regular 路径填写。  
 > `negative_populations`：`neg_k` 仅作参考，实际负样本量由 `pos × 4` 计算。  
@@ -83,14 +80,11 @@
 
 **prelabeled 填法**：`mode` 写 `"prelabeled"`；`y_label.event_table` / `sampling_sources.label_event` / `sampling_sources.activity_event` / `sampling_sources.conversion_event` / `sql_fragments`（除 `user_key_expr`、`valid_user`、`game_filter` 外）写 `null`；`negative_populations` 写 `[]`；`keys.label_column` 必填（用户表实列名）。`sql_fragments.game_filter` 仅当 `projections[]` 有 `game_keyed` 时才构造。
 
-
 ---
 
-## 1. 数据schema落盘
+## 1. 数据 schema 落盘
 
-### 0. 全局表名列表（最先做，唯一基准）
-
-先用 ClickHouse 查出 `source_database` 里所有业务表名，写入 `source_table_inventory.tables`：
+### 0. 全局表名列表（最先做）
 
 ```sql
 SELECT name FROM system.tables
@@ -98,47 +92,76 @@ WHERE database = '{{source_database}}'
 ORDER BY name
 ```
 
-`source_table_inventory.tables` 就是后续三步语义补全时需要匹配的全集。`inventory_check.table_count` = 该列表长度。
+写入 `source_table_inventory.tables`。`inventory_check.table_count` = 该列表长度。
+<必须>CH 表名清单是后续语义查询的**唯一表名来源**；禁止在未获取此清单前发起 `semantic_retrieve`，也禁止发自由关键词式语义查询（如 "数据库 <source_database> 有哪些表"），必须以 CH 清单中的具体表名逐张注入 query。</必须>
 
 ---
 
-### 三道语义查询 + 逐批补查（统一规则）
+### 覆盖定义（硬门禁）
 
-<必须>每道语义 query 返回后立即取 `table_names` 与 ClickHouse 全局表名列表做差集</必须>：语义未覆盖的表需补查，直至全覆盖才进入下一道。
+表名出现 ≠ 结构齐备。<必须>仅当下列全部成立，才可宣称「① 列结构覆盖完成」并进入 ②</必须>；写 plan 前还须完成 ② 与 schema 落盘：
+
+1. **`missing_names` 为空**：`CH清单 \ 已合并结果中的表名`
+2. **`missing_columns` 为空**：已出现但 `columns` 为空数组、或任一条目缺 `name` 的表
+3. 每张表 `columns.length >= 1`；每列至少有 `name`（`valueType` 缺失则必须已用 CH 兜底补齐）
+
+<禁止>
+- 用 `answerGuidance`、diagnostic / toolTrace、或「behavior_1~7」等概括语充数
+- 仅因表名与 CH 清单对齐就写「25 已齐 / 全覆盖」
+- 在 `missing_columns` 非空时进入 ②、判定 mode 或写 plan
+- CH 清单之前或 ①② 之外的探索性 `semantic_retrieve`
+- 单独再开「全库 JOIN」语义轮
+- 发自由关键词式语义查询（如 "数据库 xxx 有哪些表"）；语义 query 中必须注入 CH 实表名
+</禁止>
 
 ---
 
-**① 全库表+列结构**
+### ① 全库表 + 列结构（含可选 join）
 
-query 固定为：
+<必须>语义服务每次最多返回 10 张表，必须分批查询，每批 ≤10 张且不重复</必须>。
 
-```text
-数据库 <source_database> 中每一张业务表，逐表列出：
-- 表名
-- 表用途描述
-- 全部列名
-- 每列的数据类型（String/Int64/Float64/Date/DateTime 等）
-- 每列的业务含义描述
-- 哪些列是主键
-要求覆盖该库全部业务表，每张表的每一列都必须列出，不可省略。
-```
-
-`read` → 差集 → 补查 → 循环，直到全局列表中每张表都出现在返回结果里。写入 schema 的 `tables[]`。
-
-**② 表间 JOIN 关系**
-
-query 固定为：
+query 固定为（每批注入对应表名）：
 
 ```text
-数据库 <source_database> 中所有业务表之间的 JOIN 关系，逐对列出：
-- 左表.列 → 右表.列
-- JOIN 的业务含义（如"通过 user_id 关联用户信息"）
-要求覆盖该库所有可能的表间关联。
+数据库 <source_database> 中的下表，逐表列出：
+- 表名、表用途描述
+- 全部列名、每列数据类型（String/Int64/Float64/Date/DateTime 等）、业务含义
+- 主键
+若能确认表间关联，可附带 JOIN 线索；无法确认时省略，不要猜测。
+表：<t1>, <t2>, …
 ```
 
-`read` → 差集（join_hints 中未出现过的表） → 补查，直到全局列表中每张表都参与至少一条 JOIN 关系（或确认该表确实无关联）。写入 schema 的 `join_hints[]`。
+流程：
 
-**③ 角色定位**
+1. 从 `source_table_inventory.tables` 取完整表名列表，按 ≤10 张拆分为多批
+2. 各批**并行**发出 `semantic_retrieve`，合并进工作副本
+3. 合并后重算 `missing_names` / `missing_columns`；若仍有 → 立刻走 CH 批查（禁止再开语义轮补查）
+4. 两层差集皆空 → 结束 ①
+
+有可靠关联则写入 `join_hints[]`，否则 `[]`（不要求覆盖全部表，不阻塞）。
+
+#### 列缺口 CH 批查（① 唯一兜底）
+
+对 `missing_columns`（如有 `missing_names` 一并包含）**一次**提交：
+
+```sql
+SELECT table, name, type
+FROM system.columns
+WHERE database = '{{source_database}}'
+  AND table IN (/* 缺口表名 */)
+ORDER BY table, position
+```
+
+将结果写回对应 `tables[].columns`（`name`←`name`，`valueType`←`type`；`description`/`isPrimaryKey` 可空）。
+
+<禁止>使用 `is_in_primary_key`、`ordinal_position` 等可能不存在的元数据列</禁止>。单表备选：`DESCRIBE TABLE {{source_database}}.<table>`。  
+语义侧的表用途描述可保留；**列清单以 CH 为准**。
+
+---
+
+### ② 角色定位
+
+<必须>仅在 ① 覆盖门禁通过后执行</必须>。
 
 query 固定为：
 
@@ -152,21 +175,21 @@ query 固定为：
 目标游戏：<target_game>。
 ```
 
-`read` → 差集（role_candidates 所有角色中均未出现的表） → 补查，直到全局列表中每张表都被分配到一个角色（无法归入五类的，允许在 role_candidates 中留空或不出现，但必须显式确认过）。写入 schema 的 `role_candidates`。
+写入 `role_candidates`（键必须齐全）：
 
-#### 兜底补查（①②③ 通用）
+| 角色 | 要求 |
+|---|---|
+| `user_table` | <必须>非空 |
+| `game_dim` | <必须>非空 |
+| `label_event` / `activity_event` / `conversion_event` | regular 尽量填；prelabeled 可为 `[]` |
 
-每轮语义查询返回后，提取返回结果中出现的表名，与 ClickHouse 全局列表（`source_table_inventory.tables`）做集合减：`未覆盖表 = 全局列表 \ 返回表`。未覆盖的表补查时在原 query 末尾显式列出遗漏表名，例如："以下表还未获取信息，请补充：`table_a`、`table_b`…"。补查仍无效时，允许用 ClickHouse 的 `DESCRIBE TABLE` 作为列结构的兜底。JOIN 和角色无法兜底时记为"未覆盖"，不阻塞流程。
+<禁止>要求全局每张表都分到上述五类</禁止>。其余表只进入 `tables[]`，后续在 `projections[].type` 标 `user_keyed` / `game_keyed`。角色无法从语义确认时，用已落盘的列名约定推断并写入，不阻塞。
 
 ---
 
 ### 落盘
 
-三道全部补完后，合并写出 **`step1_0_table_schema.json`**（`tables` 来自 ①，`join_hints` 来自 ②，`role_candidates` 来自 ③）。
-
-<必须>`table_names` 与 `source_table_inventory.tables` 1:1 一致后方可落盘</必须>。
-
-### `step1_0_table_schema.json`
+写出 **`step1_0_table_schema.json`**：
 
 ```json
 {
@@ -190,26 +213,28 @@ query 固定为：
     "activity_event": ["<候选表>"],
     "conversion_event": ["<候选表>"],
     "game_dim": ["<候选表>"]
+  },
+  "column_aliases": {
+    "user_id_columns": ["usid", "rank_flg", "dsid"]
   }
 }
 ```
 
+<必须>`table_names` 与 `source_table_inventory.tables` 1:1，且每张表 `columns.length >= 1`</必须>。  
+<必须>存在 `join_hints`（可为 `[]`）与 `role_candidates`（五键齐全）与 `column_aliases`（`user_id_columns` 非空）</必须>。
+
 ---
 
-### 键表达式预构造（模式判定前，仅从 schema 构造）
+### 键表达式预构造（模式判定前）
 
-从 schema 中提取用户键列的列名和类型，按 §3.1 规则构造 `user_key_expr` 和 `valid_user` 两条片段供模式判定 SQL 使用。（`game_key_expr` 和 `game_filter` 此时暂不需要。）
+从 schema 提取用户键列名与类型，按 §3.1 构造 `user_key_expr`、`valid_user`（此时不需要 `game_key_expr` / `game_filter`）。
 
 ## 2. 判定 mode：查用户表是否已有 label
 
-在写 plan 之前，先判定是 `prelabeled` 还是 `regular`：
+- **prelabeled**：用户表已有 label 列且 0/1 两侧都有数据 → 跳过 step1_1/step1_2
+- **regular**：否则走事件口径（step1_1 正样本 < 500 时降级 `cold_start`）
 
-- **prelabeled**：用户表里已经自带 label 列（0/1 两侧都有数据），跳过 step1_1/step1_2
-- **regular**：用户表没有 label 列，需要走事件口径判定正负样本
-
-**前置条件**：schema 已就绪，`user_key_expr` 和 `valid_user` 已预构造。
-
-执行下方 SQL（`<label_pos_val>`/`<label_neg_val>` 按 label 列类型填：Int* → `1`/`0`，String → `'1'`/`'0'`）：
+**前置**：schema 已落盘且覆盖门禁通过；`user_key_expr` / `valid_user` 已预构造。
 
 ```sql
 SELECT
@@ -219,36 +244,24 @@ FROM {{source_database}}.<user_table>
 WHERE <valid_user>
 ```
 
-结果判定：
-- `pos_users > 0` 且 `neg_users > 0` → `mode="prelabeled"`，按下方 §3.A 写 plan
-- 否则 → `mode="regular"`，按下方 §3.B 写 plan（step1_1 正样本 < 500 时降级为 `cold_start`）
-
+`<label_pos_val>`/`<label_neg_val>`：Int* → `1`/`0`，String → `'1'`/`'0'`。  
+`pos_users > 0` 且 `neg_users > 0` → `mode="prelabeled"`（§3.A）；否则 `mode="regular"`（§3.B）。  
 **禁止加 LIMIT 1**。
 
 ## 3. 填写 plan
 
-在 schema 与库表集合一致后：`read` schema + 任务参数 → 按 mode 选择对应路径，`write`/`edit` `step1_0_sampling_plan.json`。
+`read` schema + 任务参数 → 按 mode 二选一 → `write`/`edit` `step1_0_sampling_plan.json`。
 
-**以下路径二选一：**
+### 3.A prelabeled（`mode=="prelabeled"`）
 
----
+按上方 plan JSON 的 <必须>prelabeled 填法</必须> 逐字段填写：
 
-### 3.A prelabeled 路径（`mode=="prelabeled"` 时走这里）
-
-按上方 plan JSON 的 <必须>prelabeled 填法</必须> 逐字段填写。补充约束：
-
-- <必须>`keys` 额外必填 `label_column`</必须>（用户表已有 label 的列名，以 schema 实列为准）
-- <必须>仅当 `projections[]` 中有 `game_keyed` 时才构造 `sql_fragments.game_filter`</必须>（规则见 §3.1 键表达式）
-- <禁止>对事件表发起 MCP `SELECT` 枚举画像</禁止>
+- <必须>`keys.label_column` 必填</必须>（以 schema 实列为准）
+- <必须>仅当 `projections[]` 有 `game_keyed` 时才构造 `sql_fragments.game_filter`</必须>
+- <禁止>对事件表 MCP `SELECT` 枚举画像</禁止>
 - <禁止>把事件表写入 `sampling_sources`</禁止>
 
-`user_key_expr` / `valid_user` / `game_filter` 构造规则见 §3.1 键表达式。
-
----
-
-### 3.B regular 路径（`mode!="prelabeled"` 时走这里）
-
-**y-label 家族映射**：根据 objective 选择对应的 label 家族：
+### 3.B regular（`mode!="prelabeled"`）
 
 | 家族 | 关键词 |
 |---|---|
@@ -261,38 +274,34 @@ WHERE <valid_user>
 
 负样本默认：付费 **N4**；CTR **N2**；安装/留存/时长 **N3+N2**；至少一 hard + **N5**。
 
-**填写顺序**：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
+填写顺序：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
 
-`sampling_sources` / `keys` / `sql_fragments` 依据 schema 的 `role_candidates` / `join_hints`。
-
----
+`sampling_sources` / `keys` / `sql_fragments` 依据 `role_candidates` / `join_hints` / `tables`。
 
 ### 3.1 sql_fragments 构造规则
 
-每个片段必须写成**可直接拼入 ClickHouse WHERE / SELECT 的表达式**，不能留占位符或概念性描述。列名与类型取自 `step1_0_table_schema.json`。
+每个片段必须是可直接拼入 ClickHouse WHERE / SELECT 的表达式。列名与类型取自 `step1_0_table_schema.json`。
 
 | 片段 | 规则 | 示例 |
 |---|---|---|
-| `user_key_expr` | 用户键非 NULL：String 列 `assumeNotNull(<col>)`，Int/数值列直接用 `<col>` | `assumeNotNull(user_id)` |
-| `valid_user` | 过滤用户键为 NULL（String 列加 `!= ''`） | `user_id IS NOT NULL AND user_id != ''` |
-| `game_key_expr` | 同上，针对游戏键列 | `assumeNotNull(game_id)` |
-| `game_filter` | 定位目标游戏。String 键列 → `= '<game_scope.target>'`，Int* → `= <game_scope.target>` | `game_id = 'genshin'` |
+| `user_key_expr` | String：`assumeNotNull(<col>)`；数值：`<col>` | `assumeNotNull(user_id)` |
+| `valid_user` | 滤 NULL（String 加 `!= ''`） | `user_id IS NOT NULL AND user_id != ''` |
+| `game_key_expr` | 同用户键规则 | `assumeNotNull(game_id)` |
+| `game_filter` | String：`= '<target>'`；Int*：`= <target>` | `game_id = 'genshin'` |
 
-#### 时间片段（仅 regular 路径）
+#### 时间片段（仅 regular）
 
-| 片段 | 窗口 | 写法（`<tc>` 为 `keys.event_time`，String 列包 `parseDateTimeBestEffortOrNull(<tc>)`，Date/DateTime 直接写） |
+| 片段 | 窗口 | 写法（`<tc>`=`keys.event_time`；String 包 `parseDateTimeBestEffortOrNull(<tc>)`） |
 |---|---|---|
 | `label_window` | `(T0, T0+N]` | `<tc> > <T0> AND <tc> <= <T0 + N>` |
 | `pre_t0_lookback` | `(T0 - L, T0]` | `<tc> > <T0 - L> AND <tc> <= <T0>` |
 | `through_t0` | `≤ T0` | `<tc> <= <T0>` |
 
-式中 `<T0>` = `T0`、`<N>` = `label_window_days`、`<L>` = `lookback_days`。
+`<T0>`/`<N>`/`<L>` = `T0` / `label_window_days` / `lookback_days`。
 
-#### positive_label
+#### positive_label（仅 regular）
 
-`positive_label` 是标定正样本的 WHERE 条件（不含时间窗），用于 step1_1 probe 和 step1_3 的 `pos` CTE。
-
-**取值画像（必做，写 plan 前）**：对 `y_label.event_table` 提一条 MCP `SELECT`，查看正样本相关的枚举列取值：
+标定正样本的 WHERE（不含时间窗）。写 plan 前对 `y_label.event_table`：
 
 ```sql
 SELECT <enum_col>, count() AS cnt
@@ -303,15 +312,15 @@ ORDER BY cnt DESC
 LIMIT 20
 ```
 
-常见枚举列为 `entity_flag`、`status` 等（依据 `labels.md` 中该 family 的说明）。从结果中选取语义明确的取值写入 `positive_label`。**禁止**写库中未出现的取值。
-
-示例：`<enum_col> = '<从画像结果中选取的取值>'`
+从结果选取取值写入；**禁止**写库中未出现的取值。常见枚举列见 `labels.md`。
 
 ---
 
 ## 4. 完成检查
 
-<必须>step1_0_table_schema.json</必须> 已写；`table_names` 与 `source_table_inventory.tables` 1:1 一致。  
-<必须>step1_0_sampling_plan.json</必须> 已写；`source_table_inventory` / `projections` 1:1。  
-<必须>`inventory_check.ok == true`</必须> 且 `table_count == len(projections)`。  
-<必须>`projections[]` 每项 `type` 仅为 `user_table` / `user_keyed` / `game_keyed`</必须>。
+- [ ] `step1_0_table_schema.json` 已写；`table_names` 与 CH 清单 1:1
+- [ ] <必须>每张表 `columns.length >= 1`</必须>（表名齐 ≠ 结构齐）
+- [ ] <必须>`join_hints` 字段存在（可为 `[]`）；`role_candidates` 五键齐全；`column_aliases.user_id_columns` 非空</必须>
+- [ ] `step1_0_sampling_plan.json` 已写；`source_table_inventory` / `projections` 1:1
+- [ ] `inventory_check.ok == true` 且 `table_count == len(projections)`
+- [ ] `projections[]` 每项 `type` 仅为 `user_table` / `user_keyed` / `game_keyed`

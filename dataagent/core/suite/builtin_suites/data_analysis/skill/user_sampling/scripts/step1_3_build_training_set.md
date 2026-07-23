@@ -4,6 +4,8 @@
 
 **目的**：产出一张中间表 **`step1_temp_sampled_users(user_key, label)`**，供 step1_4 裁剪所有源表。
 
+<必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
+
 **硬约束：正负比 1:4**。正样本取 `min(正样本池总量, sample_size / 5)`，负样本 = 正样本 × 4；最终总量 ≤ sample_size。
 
 ## 前置

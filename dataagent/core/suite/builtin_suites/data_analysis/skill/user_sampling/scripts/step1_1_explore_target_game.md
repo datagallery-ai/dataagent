@@ -4,6 +4,8 @@
 
 **目的**：数一下**目标游戏**在 label 窗口 `(T0, T0+N]` 里有多少**正样本用户**，据此写入 plan 的 `mode`（`regular` 或 `cold_start`）。
 
+<必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
+
 ## 前置
 
 step1_0 已完成，`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。缺字段回 step1_0。
