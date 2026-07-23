@@ -1,8 +1,89 @@
 # Quick start
 
-This guide is for first-time DataFoundry deployers. After reading it, you can start the Web workbench in the **formal** stack (`build` + `start`, `password` auth), configure a model service, and run a data analysis task against the built-in DTC Growth Review data source.
+This guide is for first-time DataFoundry deployers. Formal mode has two paths; **both** start the Web workbench with `password` auth (do **not** run `npm run dev`):
 
-Formal mode has two environments. **Startup commands are the same**; the main differences are email delivery and the public base URL:
+| Path | Hosts | Entry |
+| --- | --- | --- |
+| **Recommended: one-click** | Ubuntu / Debian | `./deploy.sh` (config, dependencies, build including TUI, detached Web/API start, and health checks in one flow) |
+| **Manual npm** | Windows, macOS, other Linux, or hand-edited env files | `npm install` → configure `.env` → `npm run build` / `build:web` → `npm run start` |
+
+After deploy, configure a model in the Web UI and run an analysis against the built-in DTC Growth Review data source. Docker / Compose is **not** shipped in this release.
+
+## Requirements
+
+- **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent)
+- **Manual npm**: Linux, macOS, or Windows; Node.js >= 22 and npm
+- Optional external [Data Link](https://github.com/datagallery-lab/datalink): run it as a separate process if you want semantic graph features (not required for deploy)
+
+Install and run the project in the same environment. On Windows, do not share `node_modules` between Windows and WSL.
+
+## Recommended: Ubuntu / Debian one-click deploy
+
+`./deploy.sh` does **not** support native Windows / macOS (use manual npm below).
+
+```bash
+git clone https://github.com/datagallery-lab/datafoundry.git
+cd datafoundry
+./deploy.sh
+```
+
+On success Web + API keep running in the background (detached process group). Closing the terminal or pressing `Ctrl+C` in `./deploy.sh logs` does **not** stop DataFoundry — use `./deploy.sh stop`. One-click deploy also builds the TUI, but the TUI does **not** stay running with the stack; start it in another terminal when needed (see “Start the TUI” below).
+
+Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the port differs), register and sign in, create/test/enable an OpenAI-compatible model profile, then go to `/data-tasks`.
+
+### Configuration rules
+
+- First run: the script generates `.env` and `apps/web/.env.local`, then confirms ports / public URL. No model key is required at deploy time.
+- Later interactive `./deploy.sh` / `./deploy.sh deploy`: if a complete `.env` already exists, configuration questions are skipped.
+- To change ports or the public URL again (existing secrets are kept; `.env` is backed up first):
+
+```bash
+./deploy.sh deploy --reconfigure
+```
+
+- Unattended / CI defaults (no prompts; fails immediately on port conflicts or install that needs a sudo password):
+
+```bash
+./deploy.sh deploy --non-interactive
+```
+
+`--reconfigure` and `--non-interactive` are mutually exclusive and only valid with `deploy`.
+
+### Lifecycle commands
+
+```bash
+./deploy.sh status    # process + API / Web health
+./deploy.sh start     # start an existing build (no install/build)
+./deploy.sh stop      # stop only the managed process group
+./deploy.sh restart   # stop then start (no install/build)
+./deploy.sh logs      # follow runtime logs; Ctrl+C does not stop the stack
+./deploy.sh doctor    # read-only dependency / config / port / disk / health checks
+./deploy.sh tui       # optional: foreground TUI client (API must be healthy; not a managed service)
+./deploy.sh help
+```
+
+`LLM_*` is not required during deploy. Set `AUTH_PUBLIC_BASE_URL` for remote hosts. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
+
+### External Data Link (optional)
+
+One-click deploy starts **only** Web + API. It does **not** install, start, or health-check Data Link.
+
+To use semantic features, run [Data Link](https://github.com/datagallery-lab/datalink) as a separate service (typically MCP on `:8080` and REST on `:8081`), then in the Web workbench MCP settings add an external server, for example:
+
+| Field | Example |
+| --- | --- |
+| `serverUrl` | `http://127.0.0.1:8080/mcp` |
+| `apiUrl` | `http://127.0.0.1:8081` |
+| `transport` | `streamable-http` |
+| `toolManifest` | `[{ "name": "datalink_explore" }]` |
+
+Use a name/id containing `datalink` (or `datagraph`) so the Data Link panel can recognize it.
+
+## Windows / macOS / other: manual npm deploy
+
+`./deploy.sh` targets **Ubuntu / Debian only** and does not support native Windows / macOS. On Windows, macOS, or other distros, install, configure, and start with npm as below. Use the same path for hand-edited env files or split processes. Do **not** run `npm run dev` in formal environments. Contributor hot-reload is in the appendix.
+
+Formal environments:
 
 | Environment | Use for | `AUTH_EMAIL_DELIVERY` | `AUTH_PUBLIC_BASE_URL` |
 | --- | --- | --- | --- |
@@ -11,18 +92,7 @@ Formal mode has two environments. **Startup commands are the same**; the main di
 
 Do **not** run `npm run dev` / `dev:api` / `dev:web` in either formal environment. Contributor hot-reload is in the appendix.
 
-You do not need a business database for the first run. You only need Node.js, npm, and a model API key compatible with the OpenAI `/chat/completions` interface.
-
-## Requirements
-
-- Node.js >= 22
-- npm
-- Linux, macOS, or Windows
-- A model API key—for example Qwen, DeepSeek, or another OpenAI-compatible service
-
-On Windows, install and run the project in the same environment. Do not share `node_modules` between Windows and WSL.
-
-## 1. Install dependencies
+### 1. Install dependencies
 
 From the repository root:
 
@@ -33,18 +103,16 @@ npm install
 
 `node -v` must report 22 or higher. The first install generates the local DTC Growth Review SQLite fixture and compiles workspace dependencies; time depends on your machine and network.
 
-## 2. Configure environment variables
-
-Copy the environment templates:
+### 2. Configure environment variables
 
 ```bash
 cp .env.example .env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-### 2.1 Model (required for both formal environments)
+#### 2.1 Model (optional server defaults)
 
-Edit the root `.env` and set model configuration:
+Edit the root `.env` for optional server-default models (you can also configure models only in the Web UI):
 
 ```bash
 LLM_PROVIDER=openai-compatible
@@ -106,7 +174,7 @@ AUTH_SMTP_PASSWORD=
 
 Keep the frontend on `password`, empty public API URLs, and `API_PROXY_TARGET`. Put a reverse proxy in front; see [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE.
 
-## 3. Build and start (same for formal test and real production)
+### 3. Build and start (same for formal test and real production)
 
 ```bash
 npm run build
@@ -126,7 +194,7 @@ Open [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login) (or your public 
 
 After changing any `NEXT_PUBLIC_*` value in `apps/web/.env.local`, run `npm run build:web` again.
 
-## 4. Run your first question
+## Run your first question
 
 On `/data-tasks`:
 
@@ -149,12 +217,19 @@ Compare GMV, gross margin, ad spend, and refunds by channel. Explain which chann
 
 When you see schema inspection, SQL execution, and result output, the path is working.
 
-## 5. Start the TUI
+## Start the TUI
 
-With the backend running:
+One-click deploy builds the TUI during the build stage, but does **not** auto-start it and does **not** treat it as a managed background service. With the API running, start the foreground client in another terminal:
 
 ```bash
-npm run start:tui
+./deploy.sh tui
+# or: npm run start:tui
+```
+
+Optionally point at the deployed API URL (defaults to `API_PORT` from `.env`):
+
+```bash
+./deploy.sh tui --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
 Demo mode without a backend:
@@ -171,7 +246,17 @@ npm run start:tui -- --resume
 
 More commands: [TUI guide](guides/tui.md).
 
-## 6. Troubleshooting
+## Troubleshooting
+
+For one-click deploy, start with:
+
+```bash
+./deploy.sh status
+./deploy.sh doctor
+./deploy.sh logs
+```
+
+On the manual npm path, confirm `npm run start` is still running and check that terminal's output.
 
 ### Wrong Node version
 
@@ -181,9 +266,11 @@ Fix:
 
 ```bash
 node -v
+# one-click:
+./deploy.sh doctor
 ```
 
-Upgrade to Node.js 22 or higher, then run `npm install` again.
+Upgrade to Node.js 22 or higher, then retry. One-click deploy can also install Node after consent; on the manual path, re-run `npm install`.
 
 ### Page does not load
 
@@ -191,9 +278,9 @@ Symptom: Browser cannot open the workbench URL.
 
 Fix:
 
-- Confirm `npm run start:web` is still running (do not use `dev` in formal mode).
-- Check whether port 3000 is in use.
-- If 3000 is taken, use the frontend port shown in terminal output.
+- Run `./deploy.sh status` (or confirm `npm run start` is still running on the manual path). Do not use `dev` in formal mode.
+- Check whether port 3000 is in use; if the deploy script chose another port, use the URL it printed.
+- If the process is stopped: `./deploy.sh start`.
 
 ### Backend not running
 
@@ -202,6 +289,7 @@ Symptom: Page loads but questions get no response, or the resource panel fails t
 Fix:
 
 ```bash
+./deploy.sh status
 curl http://127.0.0.1:8787/healthz
 curl http://127.0.0.1:8787/ready
 ```
@@ -209,7 +297,8 @@ curl http://127.0.0.1:8787/ready
 If the health check fails:
 
 ```bash
-npm run start:api
+./deploy.sh start
+# manual path: npm run start
 ```
 
 ### No verification email
