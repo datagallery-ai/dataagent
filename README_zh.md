@@ -71,14 +71,40 @@ DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追�
 
 ## 🚀 正式态跑通
 
-默认按**正式态**部署：`password` 认证 + `build` / `start`（不要跑 `npm run dev`）。不需要准备业务数据库，包含 DTC 增长经营复盘在内的内置 demo 数据源开箱即用。
+正式态有两条路径（都不要跑 `npm run dev`）。本版本不提供 Docker / Compose。
 
-正式态分两种环境，**启动命令相同**：
+### 推荐：Ubuntu / Debian 一键部署
 
-| 环境 | 用途 | 邮箱 | 公网地址 |
-| --- | --- | --- | --- |
-| **正式测试** | 本机 / 内网验收 | `AUTH_EMAIL_DELIVERY=test`（链接打控制台） | `http://127.0.0.1:3000` |
-| **真实生产** | 对外服务 | `AUTH_EMAIL_DELIVERY=smtp` | 公网 HTTPS + 反代 |
+`./deploy.sh` 自动生成配置、安装依赖、构建（含 Web、API 与 TUI），并以 detached 后台进程启动 Web + API——关闭终端一般不会停止服务。TUI 会在部署时构建就绪，但它是前台交互客户端：请另开终端执行 `./deploy.sh tui`（或 `npm run start:tui`），**不会**随 stack 后台常驻。语义 Data Link 为**外置**组件（deploy 不会安装或启动）——如需使用，稍后在 Web 的 MCP 配置中连接外部服务即可。部署时不要求填写模型 Key——登录后在 Web 中创建并启用模型即可。**不支持**原生 Windows / macOS。
+
+```bash
+git clone https://github.com/datagallery-lab/datafoundry.git
+cd datafoundry
+./deploy.sh
+```
+
+若已有完整 `.env`，交互部署会跳过配置问答。要改端口或公开访问地址时（会保留密钥并先备份 `.env`）：
+
+```bash
+./deploy.sh deploy --reconfigure
+```
+
+常用管理命令：
+
+```bash
+./deploy.sh status
+./deploy.sh start
+./deploy.sh stop
+./deploy.sh logs
+./deploy.sh doctor
+./deploy.sh tui      # 可选：前台启动 TUI（需 API 已在运行）
+```
+
+打开 `http://127.0.0.1:3000/login` 注册登录，在模型配置中创建 OpenAI-compatible Profile，然后进入 `/data-tasks`。远程部署请设置 `AUTH_PUBLIC_BASE_URL`；重复执行 `./deploy.sh deploy` 会进入维护窗口（先停止旧进程再安装/构建）。
+
+### Windows / macOS / 其他：手动 npm
+
+原生 Windows、macOS 或其他非 Ubuntu/Debian 环境请用手动 npm。请在同一环境内安装和运行；Windows 用户不要在 Windows 和 WSL 之间共用 `node_modules`。
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -116,8 +142,7 @@ API_PROXY_TARGET=http://127.0.0.1:8787
 ```bash
 npm run build
 npm run build:web
-npm run start:api    # :8787  — /healthz 存活，/ready 就绪
-npm run start:web    # :3000  — password 模式走同源 BFF
+npm run start        # Web :3000 + API :8787
 ```
 
 打开 `http://127.0.0.1:3000/login` 注册登录后进入 `/data-tasks`，提问：

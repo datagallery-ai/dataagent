@@ -97,6 +97,37 @@ jobs:
       - name: Run built-in DTC Growth regression
         run: node --test scripts/test-builtin-dtc-growth-datasource.mjs
 
+  native-deploy-smoke:
+    name: Native Deploy Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deployment unit tests
+        run: npm run test:deploy
+
+      - name: Run native deployment smoke
+        run: npm run smoke:native-deploy
+
+      - name: Upload redacted deployment logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-deploy-logs
+          path: storage/logs/
+          if-no-files-found: ignore
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
