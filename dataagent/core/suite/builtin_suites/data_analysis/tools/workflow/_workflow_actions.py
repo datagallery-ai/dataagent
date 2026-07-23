@@ -533,6 +533,10 @@ def _dispatch_task(
 ) -> str:
     base = override_task or str(current_step.get("target") or "").strip()
     lines = [base]
+    if _is_initial_step(status, current_step):
+        input_refs = [str(item).strip() for item in status.get("input_refs", []) if str(item).strip()]
+        if input_refs:
+            lines.extend(["", "Data-source references for this initial stage:", *[f"- {item}" for item in input_refs]])
     input_publication_id = str(status.get("shared_input_publication_id") or "").strip()
     if input_publication_id:
         lines.extend(
@@ -577,6 +581,16 @@ def _dispatch_task(
                 "Read listed ClickHouse tables through the ClickHouse resource; do not treat their URIs as local files."
             )
     return "\n".join(lines).strip()
+
+
+def _is_initial_step(status: dict[str, Any], current_step: dict[str, Any]) -> bool:
+    steps = status.get("steps")
+    return bool(
+        isinstance(steps, list)
+        and steps
+        and isinstance(steps[0], dict)
+        and steps[0].get("id") == current_step.get("id")
+    )
 
 
 def _runtime_config(runtime: Any) -> dict[str, Any] | None:
