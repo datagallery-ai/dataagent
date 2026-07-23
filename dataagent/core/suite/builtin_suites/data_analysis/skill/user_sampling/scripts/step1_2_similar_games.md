@@ -4,6 +4,8 @@
 
 **目的**：从游戏维表中找出与目标游戏同维度的其他游戏，写入 `game_scope.similar_games`，并更新 `sql_fragments.game_filter` 为引用临时表的写法。
 
+<必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
+
 ## 前置
 
 `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。

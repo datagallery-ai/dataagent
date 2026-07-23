@@ -4,6 +4,8 @@
 
 **目的**：统计 `output_database` 内与源表同名的投影表，写出 **`step1_output_meta.json`**（当前 job workspace）。
 
+<必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
+
 ## 前置
 
 - step1_4 已完成，全部交付表（output_database 内与投影源表一一对应）在库中
