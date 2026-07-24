@@ -481,6 +481,7 @@ export type SessionTitle = z.infer<typeof SessionTitleSchema>;
 export interface ConfigClientConfig {
   baseUrl: string;
   timeout?: number | undefined;
+  fetchImpl?: typeof fetch | undefined;
   onError?: ((error: ConfigClientError) => void) | undefined;
 }
 
@@ -508,11 +509,13 @@ export class ConfigClientError extends Error {
 export class ConfigClient {
   private baseUrl: string;
   private timeout: number;
+  private fetchImpl: typeof fetch;
   private onError?: ((error: ConfigClientError) => void) | undefined;
 
   constructor(config: ConfigClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.timeout = config.timeout ?? 30000;
+    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.onError = config.onError;
   }
 
@@ -553,7 +556,7 @@ export class ConfigClient {
         fetchOptions.body = JSON.stringify(options.body);
       }
 
-      const response = await fetch(url.toString(), fetchOptions).finally(() => clearTimeout(timeoutId));
+      const response = await this.fetchImpl(url.toString(), fetchOptions).finally(() => clearTimeout(timeoutId));
 
       if (!response.ok) {
         throw await this.errorFromResponse(response);
@@ -642,7 +645,7 @@ export class ConfigClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(url.toString(), {
+      const response = await this.fetchImpl(url.toString(), {
         method,
         headers: {
           Accept: "text/plain, text/markdown, text/*, */*",
@@ -919,7 +922,7 @@ export class ConfigClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(url, {
+      const response = await this.fetchImpl(url, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -975,7 +978,7 @@ export class ConfigClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(url, {
+      const response = await this.fetchImpl(url, {
         method: "GET",
         signal: controller.signal,
       }).finally(() => clearTimeout(timeoutId));
@@ -1010,7 +1013,7 @@ export class ConfigClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(url, {
+      const response = await this.fetchImpl(url, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -1161,7 +1164,7 @@ export class ConfigClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(url, {
+      const response = await this.fetchImpl(url, {
         method: "POST",
         body: formData,
         signal: controller.signal,

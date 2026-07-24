@@ -14,7 +14,7 @@
     "dev": "tsc --watch",
     "prestart": "npm run build",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test dist/ui/components/EnhancedInputBox.test.js",
+    "test": "npm run build && node --test dist/auth/cookie-jar.test.js dist/auth/session-store.test.js dist/auth/authenticated-transport.test.js dist/auth/auth-client.test.js dist/auth/bootstrap.test.js dist/auth/browser-opener.test.js dist/auth/interactive-login.test.js dist/config/config-client.test.js dist/protocol/copilotkit-client-auth.test.js dist/startup-preflight.test.js dist/runtime-url.test.js dist/index-auth-wiring.test.js dist/commands/logout-command.test.js dist/no-bare-fetch.guard.test.js dist/ui/components/EnhancedInputBox.test.js",
     "clean": "rm -rf dist"
   },
   "keywords": [

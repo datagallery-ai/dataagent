@@ -94,7 +94,7 @@ The TUI suits remote servers and terminal workflows:
 - `/datasource` to select a data source.
 - `/skill` to select a Skill.
 - `/resume` to restore server session history.
-- `--demo` for local simulated event streams.
+- Password sign-in with a local session cache (requires a running API).
 - `Tab` completion, input history, and Chat view scrolling.
 
 Registered commands are defined in [TUI guide](guides/tui.md).

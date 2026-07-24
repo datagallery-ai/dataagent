@@ -43,6 +43,9 @@ jobs:
       - name: Run Web tests
         run: npm run test:web
 
+      - name: Run TUI unit tests
+        run: npm --workspace @datafoundry/tui test
+
       - name: Build Web application
         run: npm run build:web
 
@@ -83,6 +86,9 @@ jobs:
 
       - name: Run authentication regression
         run: node scripts/smoke-auth.mjs
+
+      - name: Run TUI/Web auth sharing regression
+        run: npm run smoke:tui-auth-sharing
 
       - name: Run conversation memory regression
         run: node scripts/smoke-conversation-memory.mjs

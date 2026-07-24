@@ -85,6 +85,7 @@
     "smoke:metadata": "npm run build && node scripts/smoke-metadata.mjs",
     "test:auth-foundation": "npm run build && node --test scripts/lib/authenticated-test-client.test.mjs scripts/auth-foundation.test.mjs",
     "smoke:auth": "npm run build && node scripts/smoke-auth.mjs",
+    "smoke:tui-auth-sharing": "npm run build && npm --workspace @datafoundry/tui run build && node scripts/smoke-tui-auth-sharing.mjs",
     "smoke:files": "npm run build && node scripts/smoke-files.mjs",
     "smoke:skills": "npm run build && node scripts/smoke-skills.mjs",
     "smoke:run-identity": "npm run build && node scripts/smoke-run-identity.mjs",

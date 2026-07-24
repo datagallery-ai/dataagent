@@ -30,6 +30,7 @@ const FORMAL_HTTP_AUTH_TARGETS = [
   "smoke-agent-protocol-deepseek.mjs",
   "smoke-ask-user-interrupt.mjs",
   "smoke-auth.mjs",
+  "smoke-tui-auth-sharing.mjs",
   "smoke-config-api.mjs",
   "smoke-copilotkit-run.mjs",
   "smoke-copilotkit.mjs",

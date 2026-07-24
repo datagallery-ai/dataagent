@@ -232,10 +232,10 @@ Optionally point at the deployed API URL (defaults to `API_PORT` from `.env`):
 ./deploy.sh tui --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
-Demo mode without a backend:
+Sign-in needs a running API and a password account (offline demo mode was removed):
 
 ```bash
-npm run start:tui -- --demo
+npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
 Resume the latest server session:
