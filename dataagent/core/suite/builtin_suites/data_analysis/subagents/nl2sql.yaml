@@ -76,33 +76,41 @@ ACTOR_LOOP:
             - 本阶段只生成一条面向全量 `source_database` 的最终 SQL，不连接或执行全量数据库。
             - LightGBM 只作为教师模型参照。最终策略只能是决策树、评分卡或两者融合。
             - 禁止读取 `step3_4_lgb_model.pkl`，禁止生成 LightGBM 或近似 LightGBM SQL。
-            - 禁止修改任何上游文件、打包生成器或生成后的 SQL；禁止复制生成器创建临时 fixed 版本。
+            - 共享输出区中的上游原件只读；打包的预处理重建脚本和 SQL 生成器是职责独立的初始模板，禁止直接修改。必须复制到当前 workspace 后按顺序运行，允许按任务需要修改发生问题的对应工作副本。
             - 禁止手写策略选择报告、特征血缘报告、SQL 验证报告和 receipt。
-            - 只通过固定生成器生成本阶段全部产物；不得创建 Python 脚本、使用 `python -c` 或 Python here-doc 重写逻辑。
+            - 允许在当前 workspace 创建并执行本地 Python 脚本，也允许使用 `python -c` 或 Python here-doc，限于输入检查、格式归一化、特征血缘整理和静态验证。
+            - 本地 Python 不得连接数据库或其他外部资源，不得通过 `submit_resource_job` 或其他资源通道提交、执行 Python 代码；该限制同时由 governance 强制执行。
+            - 需要归一化上游输入时，保留共享区原件或其原始副本，在当前 workspace 生成供固定生成器读取的工作副本，并记录归一化依据。
+            - 不得使用本地 Python 改写模型规则、验证标签、预测分数或策略指标，也不得使用生成器工作副本以外的脚本直接生成或覆盖最终 SQL、策略报告、特征血缘报告、SQL 验证报告或 receipt。
             - 最终 SQL 不得引用采样 `output_database`、训练宽表或 `label`。
             - 最终 SQL 不得使用 CTE/`WITH`、`MODE() WITHIN GROUP`、`TRY_TO_NUMERIC`、`INTERVAL` 或 `LIMIT`。
-            - 设置 `OUTPUT_DIR` 和 `SQL_DIR` 后再执行固定生成器。
+            - 设置 `OUTPUT_DIR` 和 `SQL_DIR` 后，先执行 step4_0 预处理重建，再执行 step4_1 SQL 生成。
 
             ## 执行流程
 
             - 检查只读共享 `manifest.json` 的全部已完成阶段，不只依赖上一步 receipt 摘要。
             - 从 Sampling 条目复制 `step1_0_table_schema.json`、`step1_output_meta.json`。
             - 从 Feature Engineering 条目复制 `schema_resolution.json`、`step2_3_feature_derivation.md`、`step2_3_high_cardinality_check.json`。
-            - 从 Model Engineering 条目复制 `step3_4_valid_predictions.csv`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_5_white_box_scores.csv`、`step3_5_model_report.json`、`step3_6_score_rule.csv`、`step3_6_white_box_scores.csv`、`step3_6_model_report.json`。
-            - 所有输入仅复制到当前 job workspace；不要修改共享输出区或复制后的上游文件。
-            - 运行 `python3 skill/nl2sql/scripts/step4_1_generate_sql.py`；不要假定工作区下有 `scripts/` 目录。
-            - 固定生成器会在当前 workspace 生成 `step2_3_feature_derivation.json`，重算策略指标、尝试融合并生成唯一 final SQL。
+            - 如果 Feature Engineering 已发布 `step2_3_feature_aggregation.sql`，同时复制它，作为 Markdown 信息不足时的血缘核对依据。
+            - 从 Model Engineering 条目复制 `step3_3_wide_table_train.csv`、`step3_3_wide_table_valid.csv`、`step3_3_univariate_analysis.csv`、`step3_4_feature_importance.csv`、`step3_4_valid_predictions.csv`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_5_white_box_scores.csv`、`step3_5_model_report.json`、`step3_6_score_rule.csv`、`step3_6_white_box_scores.csv`、`step3_6_model_report.json`。
+            - 所有输入仅复制到当前 workspace；不要修改共享输出区。需要修复结构或格式时，不覆盖原始副本，另行生成工作副本。
+            - Markdown 血缘不足时，只能依据已发布的特征聚合 SQL、Schema 和高基数检查结果补全，不得根据常识补造表、字段或表达式。
+            - step4_0 使用 `skill/nl2sql/scripts/step4_0_reconstruct_tree_preprocessing.py`。将其复制为 `scripts/step4_0_reconstruct_tree_preprocessing.py`，设置 `NL2SQL_PREPROCESS_TEMPLATE_PATH` 指向打包模板后运行。该脚本必须从训练宽表重建数值 quantile 分箱边界，从训练+验证宽表重建类别编码映射，并用树规则回放验证分数，产出 `step3_5_preprocessing_reconstructed.json`；不得重新训练模型。
+            - step4_1 使用 `skill/nl2sql/scripts/step4_1_generate_sql.py`。step4_0 完成后，将其复制为 `scripts/step4_1_generate_sql.py`，设置 `NL2SQL_TEMPLATE_PATH` 指向打包模板后运行。该脚本读取重建预处理产物，生成树编码特征 SQL，重算策略指标、尝试可部署策略并生成唯一 final SQL。
+            - 某一步初始运行失败或结果不满足本 prompt 的输入、预处理回放、策略、血缘或 SQL 静态校验要求时，只修改发生问题的对应工作副本并从该步重跑；不得修改打包模板或直接手改生成产物。
+            - 修改 step4_0 工作副本前设置 `NL2SQL_PREPROCESS_CHANGE_REASON`；修改 step4_1 工作副本前设置 `NL2SQL_GENERATOR_CHANGE_REASON`，说明模板不适配的具体原因。两个脚本都必须记录模板与工作副本 SHA-256、修改状态和原因。
+            - 只有 `step3_5_preprocessing_reconstructed.json` 验证通过且覆盖全部树规则特征时，决策树才是可部署候选。否则继续选择可部署评分卡，不得因模型质量门槛停止流程。
 
             ## 产物
 
-            - 只产出 `step2_3_feature_derivation.json`、`sql/step4_1_final.sql`、`step4_1_strategy_selection.json`、`step4_1_feature_lineage_report.json`、`step4_1_sql_validation_report.json` 和 `receipt.json`。
+            - 只产出 `step2_3_feature_derivation.json`、`step3_5_preprocessing_reconstructed.json`、`sql/step4_1_final.sql`、`step4_1_strategy_selection.json`、`step4_1_feature_lineage_report.json`、`step4_1_sql_validation_report.json`、`scripts/step4_0_reconstruct_tree_preprocessing.py`、`scripts/step4_1_generate_sql.py` 和 `receipt.json`。
             - 不产出决策树、评分卡或 LightGBM 候选 SQL，不产出 `step4_1_join_assumptions.md`。
             - 报告必须明确 `full_database_execution_performed=false`。
 
             ## 原生套件运行时适配
 
-            - 只读共享区中的文件必须先复制到当前 job workspace，再由固定生成器读取。
-            - 生成器完成后直接检查规定产物存在，并提交其生成的 `receipt.json`；不要二次编辑。
+            - 只读共享区中的文件必须先复制到当前 workspace，再由生成器工作副本读取。
+            - 两步脚本完成后直接检查规定产物存在，并提交 step4_1 生成的 `receipt.json`；不要二次编辑。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
