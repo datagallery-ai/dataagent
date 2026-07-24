@@ -72,9 +72,9 @@ ACTOR_LOOP:
             负责 pipeline **step1（采样）**。先加载 **user_sampling** skill，严格按 `step1_0` → `step1_1` → ... → `step1_6` 执行（step1_0 内模式判定后：`prelabeled` 跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支），不许跳过。
 
             > 通用 workspace / receipt 格式 / 共享输出区规则见上文基线，以下仅列采样独有约束。
-            > 本地产物（plan、schema、meta、receipt）写入当前 workspace；数据产物（交付表）写入 ClickHouse `{{output_database}}`，<必须>表名与源表同名</必须>。
+            > 本地产物（plan、schema、sample_stats、output_meta、receipt）写入当前 workspace；数据产物（交付表）写入 ClickHouse `{{output_database}}`，<必须>表名与源表同名</必须>。
             > 原始业务源表位于 `{{source_database}}`，仅 READ。
-            > receipt 的 artifacts 内容要求见硬约束 6。
+            > receipt 的 artifacts 内容要求见硬约束 5 与 `scripts/step1_6_finalize.md`（须含 `step1_output_meta.json` + `step1_sample_stats.json` + 全部交付表）。
 
             ## 硬约束 
             
@@ -86,8 +86,8 @@ ACTOR_LOOP:
             2. **正负比例**：训练样本正负比为 **1:4**。正样本**上限为 `sample_size / 5`**（超标按哈希降采样，**非全取**），不足时全取；负样本 = 正样本 × 4。`event_derived` 从各群体池凑齐（`neg_k` 之和约等于正样本×4）；`prelabeled` 直接从用户表 `label∈{0,1}` 下采样。最终总量 ≤ sample_size。
             3. **表/列来源**：先 `read` `step1_0_table_schema.json` 与 plan。能命中则直接用；缺表或缺列时再查 ClickHouse，结果 **写回** schema 后再拼 SQL。
             4. **采样数据源**：语义列出的原始业务表；交付表名与源表同名，张数 = 源表数（`inventory_check.table_count`）；全表投影，不许跳过。`event_derived`：特征时间 ≤ `T0`，label 窗口 `(T0, T0+N]`。`prelabeled`：label 以用户表已有列为准，不按事件窗口重算。
-            5. **落盘**：plan / meta / receipt / schema 用 `write`/`edit` 写 JSON。见 `scripts/step1_0_sampling_plan.md`。
-            6. **完成**：`step1_output_meta.table_count_check.ok == true` 且 `actual == expected == inventory_check.table_count`、`missing_tables` 为空后，才写 `receipt.json`。见 `scripts/step1_6_finalize.md`。张数不够禁止定稿。
+            5. **落盘**：plan / sample_stats / output_meta / receipt / schema 用 `write`/`edit` 写 JSON。见 `scripts/step1_0_sampling_plan.md`。step1_5 写 `step1_sample_stats.json`；step1_6 将 `step1_0_table_schema.json` **原样复制**为 `step1_output_meta.json`（同构语义交接），再写 receipt；receipt 须登记这两个文件 + 全部交付表。
+            6. **完成**：`step1_sample_stats.table_count_check.ok == true` 且 `actual == expected == inventory_check.table_count`、`missing_tables` 为空后，才写 `step1_output_meta.json` 与 `receipt.json`。见 `scripts/step1_6_finalize.md`。张数不够禁止定稿。
             7. **ClickHouse 唯一通道**：业务 SQL **仅**允许 `submit_resource_job` → `poll_job` → `collect_job`（`resource_id="clickhouse"`）。**严禁**用 Bash/shell、`curl`、`wget`、`python`/`requests`/`urllib`/`clickhouse_connect`/`clickhouse-driver` 或**任何客户端**直连 ClickHouse（含 `localhost:8123`、`127.0.0.1:8123`、`:9000`）。失败时只允许改 SQL 后重提 MCP，或写阻塞说明；**禁止降级为直连旁路**。
             8. **语句白名单**：**每次恰好一条** SQL，顶层关键字**只能**是 `CREATE` 或 `SELECT`。**严禁** `INSERT` / `DROP` / `TRUNCATE` / `ALTER` / `DESCRIBE` / `DESC` / `SHOW` / `EXPLAIN` / `USE` / `FORMAT …` 后缀 / 多语句。覆盖旧表用单条 `CREATE OR REPLACE TABLE ... AS SELECT`，**不可**拆成「空表 + INSERT」。
             9. **禁止内联膨胀**：`similar_games` 已物化为 `step1_temp_similar_games` 后，后续 SQL（含更新后的 `sql_fragments.game_filter`）**必须**用 `IN (SELECT game_id FROM …step1_temp_similar_games)` / JOIN；**严禁**把成百个游戏名写进 SQL 或 plan 字面量。
