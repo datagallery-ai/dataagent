@@ -13,7 +13,6 @@
 
 - **一键部署**：Ubuntu 或 Debian（x86_64 / aarch64）；Node.js 22（缺失时脚本可在确认后协助安装）
 - **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22 与 npm
-- 可选 DataLink：Python >= 3.10 与 [uv](https://docs.astral.sh/uv/)
 
 请在同一环境内安装和运行项目。Windows 用户不要在 Windows 和 WSL 之间共用 `node_modules`。
 
@@ -33,7 +32,7 @@ cd datafoundry
 
 ### 交互与配置规则
 
-- 首次部署：脚本生成 `.env` 与 `apps/web/.env.local`，询问是否启用 DataLink（默认关闭），并确认端口 / 公开访问地址。部署阶段不要求填写模型 Key。
+- 首次部署：脚本生成 `.env` 与 `apps/web/.env.local`，确认端口 / 公开访问地址。部署阶段不要求填写模型 Key。
 - 之后再执行交互式 `./deploy.sh` / `./deploy.sh deploy`：若已有完整 `.env`，会跳过配置问答。
 - 需要重新配置端口、DataLink 或公开访问地址时（保留现有密钥，并先备份 `.env`）：
 
@@ -52,7 +51,7 @@ cd datafoundry
 ### 生命周期命令
 
 ```bash
-./deploy.sh status    # 进程与 API / Web / DataLink 健康状态
+./deploy.sh status    # 进程与 API / Web 健康状态
 ./deploy.sh start     # 用已有构建启动（不安装、不构建）
 ./deploy.sh stop      # 只停止受管进程组
 ./deploy.sh restart   # 停止后启动（不安装、不构建）
@@ -62,11 +61,8 @@ cd datafoundry
 ./deploy.sh help
 ```
 
-默认关闭 DataLink，也不要求在部署时填写 `LLM_*`。远程主机请设置 `AUTH_PUBLIC_BASE_URL`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm ci` 与构建。
+部署时不要求填写 `LLM_*`。远程主机请设置 `AUTH_PUBLIC_BASE_URL`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm ci` 与构建。
 
-### DataLink（可选）
-
-交互部署时可选启用 DataLink。它会根据表结构和数据画像建立语义关系图，帮助 Agent 理解字段含义、发现 JOIN 路径，并减少选错表。DataLink 进程可在没有模型时启动，但模型辅助构图仍需 `DATALINK_LLM_*` 或兼容的服务端 `LLM_*`；它不会自动复用 Web 中创建的模型 Profile。详见 [DataLink 指南](guides/datalink.md)。
 
 ## Windows / macOS / 其他：手动 npm 部署
 
@@ -119,21 +115,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=你的_API_Key
 ```
 
-#### 2.2 DataLink 语义服务（可选）
-
-```bash
-npm run install:datalink
-```
-
-然后在根目录 `.env` 中设置：
-
-```bash
-DATALINK_ENABLED=true
-```
-
-默认复用 `LLM_*` 与 `EMBEDDING_*`；如需独立配置，可使用 `.env.example` 中的 `DATALINK_LLM_*`、`DATALINK_EMBEDDING_*`、主机、端口、配置路径和图数据库路径。保持 `false` 时，原有 Web/API 部署不依赖 Python 或 uv。进程关系见 [DataLink 指南](guides/datalink.md)。
-
-#### 2.3 正式测试（推荐首次验收）
+#### 2.2 正式测试（推荐首次验收）
 
 根目录 `.env`：
 
@@ -158,7 +140,7 @@ API_PROXY_TARGET=http://127.0.0.1:8787
 
 注册/重置密码时，验证链接会打印在 **API 进程控制台**，复制到浏览器即可。
 
-#### 2.4 真实生产
+#### 2.3 真实生产
 
 在正式测试配置基础上改为：
 
@@ -182,7 +164,8 @@ AUTH_SMTP_PASSWORD=
 ```bash
 npm run build
 npm run build:web
-npm run start        # Web :3000 + API :8787；启用时含 DataLink :8080/:8081
+npm run start:api    # :8787
+npm run start:web    # :3000
 ```
 
 检查：
@@ -190,11 +173,7 @@ npm run start        # Web :3000 + API :8787；启用时含 DataLink :8080/:8081
 ```bash
 curl http://127.0.0.1:8787/healthz   # 进程存活
 curl http://127.0.0.1:8787/ready     # Mastra / builtin 就绪（含 startup_ms）
-# DATALINK_ENABLED=true 时：
-curl http://127.0.0.1:8081/healthz
 ```
-
-使用进程守护或拆分主机时，可继续分别运行 `start:api`、`start:web`、`start:datalink:mcp` 与 `start:datalink:api`；四个命令读取同一份 `.env`。
 
 打开 [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login)（真实生产则打开你的公网域名）注册或登录后进入 `/data-tasks`。
 
@@ -309,7 +288,7 @@ curl http://127.0.0.1:8787/ready
 
 ### 注册收不到邮件
 
-- **正式测试**（`AUTH_EMAIL_DELIVERY=test`）：到运行 `npm run start` 的终端里找验证链接。
+- **正式测试**（`AUTH_EMAIL_DELIVERY=test`）：到运行 `start:api` 的终端里找验证链接。
 - **真实生产**（`smtp`）：检查 `AUTH_SMTP_*` 与发信账号；确认 `AUTH_PUBLIC_BASE_URL` 与对外域名一致。
 
 ### 模型不可用
@@ -357,12 +336,9 @@ npm run dev
 # 或：npm run dev:api && npm run dev:web
 ```
 
-设置 `DATALINK_ENABLED=true` 后建议使用统一的 `npm run dev`；拆分启动时还需要运行 `dev:datalink:mcp` 与 `dev:datalink:api`。
-
 ## 下一步
 
 - 使用 Web 界面：[Web 工作台指南](guides/web-workbench.md)
 - 使用终端界面：[TUI 指南](guides/tui.md)
 - 连接自己的数据：[数据源指南](guides/data-sources.md)
-- 启用语义增强：[DataLink 指南](guides/datalink.md)
 - 查看能力边界：[能力全览](capabilities.md)

@@ -63,7 +63,7 @@ DataFoundry 0.2 turns the first usable workbench into a more complete, stateful 
 
 - **Branchable, concurrent analysis** — Keep multiple sessions running, queue follow-up prompts, restore completed work, and branch from an earlier question or checkpoint without overwriting the original path.
 - **Evidence-first follow-ups** — Reference a complete output or a selected table/text region in the next question; resolved evidence is carried into the governed run context with diagnostics.
-- **Semantic trace and built-in DataLink** — Inspect checkpoint-backed run structure in a semantic Trace DAG. The first-party DataLink service now ships in `services/datalink`, connecting tables and columns to business concepts, entities, joinable paths, and confidence-scored relationships for stronger agent grounding.
+- **Semantic trace and first-party Data Link** — Inspect checkpoint-backed run structure in a semantic Trace DAG. With our newly open-sourced [Data Link](https://github.com/datagallery-lab/datalink), connect tables and columns to business concepts, entities, joinable paths, and confidence-scored relationships for stronger agent grounding.
 - **Reusable outputs and workspace assets** — Preview and export tables, charts, reports, SQL, and files; upload files into an active session, then promote supported files for reuse across sessions.
 - **Production-facing Web foundation** — Built-in password authentication, same-origin API proxying, bilingual UI, model connection tests, onboarding, and an auto-provisioned DTC growth analysis case.
 
@@ -75,7 +75,7 @@ Formal mode has two paths (do **not** run `npm run dev`). Docker / Compose is no
 
 ### Recommended: Ubuntu / Debian one-click
 
-`./deploy.sh` generates configuration, installs dependencies, builds (Web, API, and TUI), and starts Web + API as a detached background process — closing the terminal does not stop the stack. The TUI is built and ready but is a foreground client: start it in another terminal with `./deploy.sh tui` (or `npm run start:tui`); it does **not** stay running with the stack. DataLink stays off by default, and no model key is required during deploy — create and enable a model profile in the Web UI after login. Does **not** support native Windows / macOS.
+`./deploy.sh` generates configuration, installs dependencies, builds (Web, API, and TUI), and starts Web + API as a detached background process — closing the terminal does not stop the stack. The TUI is built and ready but is a foreground client: start it in another terminal with `./deploy.sh tui` (or `npm run start:tui`); it does **not** stay running with the stack. No model key is required during deploy — create and enable a model profile in the Web UI after login. Does **not** support native Windows / macOS.
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -83,7 +83,7 @@ cd datafoundry
 ./deploy.sh
 ```
 
-If a complete `.env` already exists, interactive deploy skips the configuration questions. To change ports, DataLink, or the public URL (secrets are preserved; `.env` is backed up first):
+If a complete `.env` already exists, interactive deploy skips the configuration questions. To change ports or the public URL (secrets are preserved; `.env` is backed up first):
 
 ```bash
 ./deploy.sh deploy --reconfigure
@@ -118,7 +118,7 @@ npm run build:web
 npm run start        # Web :3000 + API :8787
 ```
 
-> Full steps, the two-environment matrix, and optional DataLink notes: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
+> Full steps, the two-environment matrix,: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
 
 ## 🆚 How It Differs From Coding Agents And SQL Chatbots
 

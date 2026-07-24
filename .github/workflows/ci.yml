@@ -88,12 +88,6 @@ jobs:
       - name: Run configuration API regression
         run: node scripts/smoke-config-api.mjs
 
-      - name: Run built-in DataLink lifecycle regression
-        run: node scripts/smoke-builtin-datalink.mjs
-
-      - name: Run DataLink stack configuration tests
-        run: npm run test:datalink-stack
-
       - name: Run file and workspace regression
         run: node scripts/smoke-files.mjs
 
@@ -111,59 +105,6 @@ jobs:
 
       - name: Run built-in DTC Growth regression
         run: node --test scripts/test-builtin-dtc-growth-datasource.mjs
-
-  datalink:
-    name: DataLink Service
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Install DataLink dependencies
-        run: uv sync --project services/datalink --locked
-
-      - name: Lint DataLink
-        run: npm run lint:datalink
-
-      - name: Test DataLink
-        run: npm run test:datalink
-
-      - name: Build DataLink package
-        run: npm run build:datalink
-
-      - name: Smoke DataLink REST and MCP
-        shell: bash
-        run: |
-          set -euo pipefail
-          export DATALINK_CONFIG_PATH="$RUNNER_TEMP/datalink_config.json"
-          export DATALINK_GRAPH_DB_PATH="$RUNNER_TEMP/datalink.db"
-          uv run --project services/datalink datalink api --host 127.0.0.1 --port 8081 &
-          rest_pid=$!
-          uv run --project services/datalink datalink serve --host 127.0.0.1 --port 8080 --transport streamable-http --db "$DATALINK_GRAPH_DB_PATH" &
-          mcp_pid=$!
-          trap 'kill "$rest_pid" "$mcp_pid" 2>/dev/null || true' EXIT
-          for _ in $(seq 1 30); do
-            curl --fail --silent http://127.0.0.1:8081/healthz && break
-            sleep 1
-          done
-          curl --fail --silent http://127.0.0.1:8081/healthz
-          for _ in $(seq 1 30); do
-            status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/mcp || true)
-            if [ "$status" != "000" ]; then break; fi
-            sleep 1
-          done
-          test "$status" != "000"
 
   native-deploy-smoke:
     name: Native Deploy Smoke

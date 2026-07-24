@@ -8,7 +8,8 @@ Default path is the **formal** stack (`password` + `build` / `start`). Formal te
 
 ```bash
 npm run build && npm run build:web
-npm run start
+npm run start:api
+npm run start:web
 ```
 
 Open:

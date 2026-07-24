@@ -13,7 +13,6 @@ After deploy, configure a model in the Web UI and run an analysis against the bu
 
 - **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent)
 - **Manual npm**: Linux, macOS, or Windows; Node.js >= 22 and npm
-- Optional for DataLink: Python >= 3.10 and [uv](https://docs.astral.sh/uv/)
 
 Install and run the project in the same environment. On Windows, do not share `node_modules` between Windows and WSL.
 
@@ -33,9 +32,9 @@ Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the 
 
 ### Configuration rules
 
-- First run: the script generates `.env` and `apps/web/.env.local`, asks about DataLink (default off), and confirms ports / public URL. No model key is required at deploy time.
+- First run: the script generates `.env` and `apps/web/.env.local`, confirms ports / public URL. No model key is required at deploy time.
 - Later interactive `./deploy.sh` / `./deploy.sh deploy`: if a complete `.env` already exists, configuration questions are skipped.
-- To change ports, DataLink, or the public URL again (existing secrets are kept; `.env` is backed up first):
+- To change ports or the public URL again (existing secrets are kept; `.env` is backed up first):
 
 ```bash
 ./deploy.sh deploy --reconfigure
@@ -52,7 +51,7 @@ Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the 
 ### Lifecycle commands
 
 ```bash
-./deploy.sh status    # process + API / Web / DataLink health
+./deploy.sh status    # process + API / Web health
 ./deploy.sh start     # start an existing build (no install/build)
 ./deploy.sh stop      # stop only the managed process group
 ./deploy.sh restart   # stop then start (no install/build)
@@ -62,11 +61,8 @@ Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the 
 ./deploy.sh help
 ```
 
-DataLink is off by default, and `LLM_*` is not required during deploy. Set `AUTH_PUBLIC_BASE_URL` for remote hosts. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
+`LLM_*` is not required during deploy. Set `AUTH_PUBLIC_BASE_URL` for remote hosts. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
 
-### DataLink (optional)
-
-Interactive deploy can enable DataLink. It builds a semantic graph from table structure and profiles so the Agent can understand field meaning, discover JOIN paths, and avoid wrong tables. DataLink processes can start without a model, but model-assisted graph building still needs `DATALINK_LLM_*` or compatible server-side `LLM_*`; it does not automatically reuse a Web model Profile. See the [DataLink guide](guides/datalink.md).
 
 ## Windows / macOS / other: manual npm deploy
 
@@ -119,21 +115,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=your-api-key
 ```
 
-#### 2.2 DataLink semantic service (optional)
-
-```bash
-npm run install:datalink
-```
-
-Then set in the root `.env`:
-
-```bash
-DATALINK_ENABLED=true
-```
-
-It reuses `LLM_*` and `EMBEDDING_*` by default. `DATALINK_LLM_*`, `DATALINK_EMBEDDING_*`, host, port, config-path, and graph-path variables in `.env.example` provide explicit overrides. Keep `false` to run the existing Web/API stack without Python or uv. See [DataLink](guides/datalink.md) for process topology.
-
-#### 2.3 Formal test (recommended for first acceptance)
+#### 2.2 Formal test (recommended for first acceptance)
 
 Root `.env`:
 
@@ -158,7 +140,7 @@ API_PROXY_TARGET=http://127.0.0.1:8787
 
 On register / password reset, copy the verification link from the **API process console**.
 
-#### 2.4 Real production
+##### 2.3 Real production
 
 Start from the formal-test settings, then change to:
 
@@ -182,7 +164,8 @@ Keep the frontend on `password`, empty public API URLs, and `API_PROXY_TARGET`. 
 ```bash
 npm run build
 npm run build:web
-npm run start        # Web :3000 + API :8787; DataLink :8080/:8081 when enabled
+npm run start:api    # :8787
+npm run start:web    # :3000
 ```
 
 Checks:
@@ -190,11 +173,7 @@ Checks:
 ```bash
 curl http://127.0.0.1:8787/healthz   # process up
 curl http://127.0.0.1:8787/ready     # Mastra / builtins ready (includes startup_ms)
-# When DATALINK_ENABLED=true:
-curl http://127.0.0.1:8081/healthz
 ```
-
-For a process supervisor or separate hosts, keep using `start:api` and `start:web`, plus `start:datalink:mcp` and `start:datalink:api`. The same `.env` controls all four commands.
 
 Open [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login) (or your public origin in real production), register or sign in, then go to `/data-tasks`.
 
@@ -309,7 +288,7 @@ If the health check fails:
 
 ### No verification email
 
-- **Formal test** (`AUTH_EMAIL_DELIVERY=test`): copy the link from the `npm run start` terminal.
+- **Formal test** (`AUTH_EMAIL_DELIVERY=test`): copy the link from the `start:api` terminal.
 - **Real production** (`smtp`): check `AUTH_SMTP_*` and that `AUTH_PUBLIC_BASE_URL` matches the public origin.
 
 ### Model unavailable
@@ -357,12 +336,9 @@ npm run dev
 # or: npm run dev:api && npm run dev:web
 ```
 
-With `DATALINK_ENABLED=true`, prefer the combined `npm run dev`; the split form also requires `dev:datalink:mcp` and `dev:datalink:api`.
-
 ## Next steps
 
 - Use the Web UI: [Web workbench guide](guides/web-workbench.md)
 - Use the terminal UI: [TUI guide](guides/tui.md)
 - Connect your own data: [Data sources guide](guides/data-sources.md)
-- Enable semantic grounding: [DataLink guide](guides/datalink.md)
 - Review capability boundaries: [Capabilities](capabilities.md)

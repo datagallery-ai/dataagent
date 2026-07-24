@@ -101,7 +101,7 @@ AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 
 密码模式提供 `/api/v1/auth/*` 接口，用于注册、登录、邮箱验证、密码重置、退出登录、会话列表和修改密码。非安全方法请求需要携带来自 `df_csrf` Cookie 的 `X-CSRF-Token`。会话 Cookie 名为 `df_session`。
 
-前端请同步设置 `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password`，并留空 `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL`，让浏览器走同源 Next BFF；上游 API 用 `API_PROXY_TARGET`（写在 `apps/web/.env.local`）。先执行 `npm run build && npm run build:web`，再运行 `npm run start`。真实生产反代样例见 `deploy/nginx.datafoundry.conf.example`。
+前端请同步设置 `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password`，并留空 `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL`，让浏览器走同源 Next BFF；上游 API 用 `API_PROXY_TARGET`（写在 `apps/web/.env.local`）。启动命令：`npm run build && npm run build:web && npm run start:api && npm run start:web`。真实生产反代样例见 `deploy/nginx.datafoundry.conf.example`。
 
 真实生产部署还需要 Secret 管理、审计导出、访问控制和运维监控。
 

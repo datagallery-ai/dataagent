@@ -19,7 +19,12 @@ export async function runStack({ mode, args = [] }) {
   const webOnly = args.includes("--web");
   const startApi = !webOnly || apiOnly;
   const startWeb = !apiOnly || webOnly;
-  const startDatalink = startApi && datalinkEnabled();
+  if (datalinkEnabled()) {
+    throw new Error(
+      "DATALINK_ENABLED=true is no longer supported: the bundled DataLink service was removed. Set DATALINK_ENABLED=false (or unset it).",
+    );
+  }
+  const startDatalink = false;
   const runtimeConfig = resolveStackRuntimeConfig();
   const datalinkEnv = runtimeConfig;
 

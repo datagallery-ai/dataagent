@@ -8,7 +8,8 @@
 
 ```bash
 npm run build && npm run build:web
-npm run start
+npm run start:api
+npm run start:web
 ```
 
 打开：

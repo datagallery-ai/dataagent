@@ -63,7 +63,7 @@ DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追�
 
 - **可分支的并发分析** — 多个会话可同时运行，运行中可排队后续问题；恢复历史后，可从早期问题或 checkpoint 创建新分支，不覆盖原分析路径。
 - **证据驱动的追问** — 可将完整产出，或选中的表格区域、文本片段引用到下一个问题；证据解析结果和诊断信息会进入受控 run context。
-- **语义 Trace 与内置 DataLink** — 通过基于 checkpoint 的语义 Trace DAG 复盘执行结构；自研 DataLink 服务现已随仓库内置于 `services/datalink`，把表和字段连接到业务概念、实体、可 JOIN 路径和带置信度的关系，为 Agent 提供更强语义支撑。
+- **语义 Trace 与自研 Data Link** — 通过基于 checkpoint 的语义 Trace DAG 复盘执行结构；结合我们新近开源的 [Data Link](https://github.com/datagallery-lab/datalink)，把表和字段连接到业务概念、实体、可 JOIN 路径和带置信度的关系，为 Agent 提供更强语义支撑。
 - **可复用的产出与工作区资产** — 统一预览和导出表格、图表、报告、SQL 和文件；文件可先上传到当前会话，再提升为跨会话复用的工作区资产。
 - **面向正式部署的 Web 基础** — 内置密码认证、同源 API 代理、中英双语界面、模型连接测试、首次引导，并自动准备 DTC 增长分析案例。
 
@@ -75,7 +75,7 @@ DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追�
 
 ### 推荐：Ubuntu / Debian 一键部署
 
-`./deploy.sh` 自动生成配置、安装依赖、构建（含 Web、API 与 TUI），并以 detached 后台进程启动 Web + API——关闭终端一般不会停止服务。TUI 会在部署时构建就绪，但它是前台交互客户端：请另开终端执行 `./deploy.sh tui`（或 `npm run start:tui`），**不会**随 stack 后台常驻。默认关闭 DataLink，部署时不要求填写模型 Key——登录后在 Web 中创建并启用模型即可。**不支持**原生 Windows / macOS。
+`./deploy.sh` 自动生成配置、安装依赖、构建（含 Web、API 与 TUI），并以 detached 后台进程启动 Web + API——关闭终端一般不会停止服务。TUI 会在部署时构建就绪，但它是前台交互客户端：请另开终端执行 `./deploy.sh tui`（或 `npm run start:tui`），**不会**随 stack 后台常驻。部署时不要求填写模型 Key——登录后在 Web 中创建并启用模型即可。**不支持**原生 Windows / macOS。
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -83,7 +83,7 @@ cd datafoundry
 ./deploy.sh
 ```
 
-若已有完整 `.env`，交互部署会跳过配置问答。要改端口、DataLink 或公开访问地址时（会保留密钥并先备份 `.env`）：
+若已有完整 `.env`，交互部署会跳过配置问答。要改端口或公开访问地址时（会保留密钥并先备份 `.env`）：
 
 ```bash
 ./deploy.sh deploy --reconfigure
@@ -118,7 +118,7 @@ npm run build:web
 npm run start        # Web :3000 + API :8787
 ```
 
-> 完整步骤、两种环境对照与 DataLink 可选说明见 [快速开始](docs/zh/quick-start.md)。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
+> 完整步骤与两种环境对照见 [快速开始](docs/zh/quick-start.md)。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
 
 ## 🆚 和 Coding Agent、SQL Chatbot 有什么不同
 

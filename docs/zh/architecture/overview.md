@@ -116,7 +116,7 @@ npm run build && npm run build:web
 npm run start
 ```
 
-`npm run start` 仍以原有本地进程方式管理 Web 与 API。设置 `DATALINK_ENABLED=true` 后，会额外启动仓库内置的 Python DataLink REST 与 MCP 进程；默认 `false` 时保持原来的双进程拓扑。已有进程守护系统仍可使用拆分的 `start:*` 命令。
+`npm run start` 仍以原有本地进程方式管理 Web 与 API。已有进程守护系统仍可使用拆分的 `start:*` 命令。
 
 | 环境 | 邮箱 | 公网地址 |
 | --- | --- | --- |

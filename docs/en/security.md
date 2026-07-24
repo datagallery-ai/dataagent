@@ -101,7 +101,7 @@ Two formal environments share the same start commands:
 
 Password mode adds `/api/v1/auth/*` endpoints for registration, login, email verification, password reset, logout, session listing, and password change. Unsafe requests require `X-CSRF-Token` from the `df_csrf` cookie. The session cookie is `df_session`.
 
-Also set `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password` and leave `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL` empty so the browser uses the same-origin Next BFF; point the upstream API with `API_PROXY_TARGET` in `apps/web/.env.local`. Build with `npm run build && npm run build:web`, then run `npm run start`. Real-production reverse-proxy sample: `deploy/nginx.datafoundry.conf.example`.
+Also set `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password` and leave `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL` empty so the browser uses the same-origin Next BFF; point the upstream API with `API_PROXY_TARGET` in `apps/web/.env.local`. Start with `npm run build && npm run build:web && npm run start:api && npm run start:web`. Real-production reverse-proxy sample: `deploy/nginx.datafoundry.conf.example`.
 
 Real production also needs secret management, audit export, access control, and operations monitoring.
 
