@@ -40,10 +40,10 @@ npm run start:tui -- --resume
 npm run start:tui -- --resume thread-001
 ```
 
-演示模式不连接后端，适合查看布局、命令系统和模拟事件流：
+TUI 需要连接正在运行的 API，并用密码账户登录（离线演示模式已移除）：
 
 ```bash
-npm run start:tui -- --demo
+npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
 查看 CLI 参数：
@@ -111,7 +111,7 @@ TUI 默认停留在 Chat。使用 `/outputs` 可以像 `/resume` 一样打开独
 
 `/resume` 依赖 `/api/v1/sessions` 和 `/api/v1/sessions/:id/conversation`。后端不可用或服务端不支持会话接口时，TUI 会在命令提示区显示错误。
 
-演示模式使用本地模拟事件和内置 demo 状态。它不会调用真实后端，也不能恢复服务端会话。
+离线演示模式已移除。TUI 始终需要可用的 API 与密码账户登录。
 
 ## 典型流程
 

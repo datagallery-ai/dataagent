@@ -40,10 +40,10 @@ Resume a specific thread/session:
 npm run start:tui -- --resume thread-001
 ```
 
-Demo mode does not connect to the backend—useful for layout, commands, and simulated event streams:
+The TUI requires a running API and password sign-in (offline demo mode was removed):
 
 ```bash
-npm run start:tui -- --demo
+npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
 View CLI flags:
@@ -111,7 +111,7 @@ When connected to a real backend, the TUI sends natural-language input to `/api/
 
 `/resume` depends on `/api/v1/sessions` and `/api/v1/sessions/:id/conversation`. If the backend is unavailable or sessions are unsupported, the TUI shows an error in the command hint area.
 
-Demo mode uses local simulated events and built-in demo state. It does not call a real backend and cannot restore server sessions.
+Offline demo mode has been removed. The TUI always requires a running API and password sign-in.
 
 ## Typical flow
 
@@ -144,7 +144,7 @@ Use the Web workbench for full visual demos. Use the TUI to verify agent runtime
 - Cannot connect: confirm `npm run dev` or `npm run dev:api` is running.
 - Backend URL changed: pass full `/api/copilotkit` URL with `--runtime-url`.
 - Model not responding: check `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
-- Session restore fails: confirm `/api/v1/sessions` is reachable and start without `--demo`.
+- Session restore fails: confirm `/api/v1/sessions` is reachable and that you are signed in against the same `--runtime-url`.
 - Command has no effect: run `/help` and check errors in the command hint area.
 
 Continue with [Web workbench guide](web-workbench.md).

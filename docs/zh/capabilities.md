@@ -94,7 +94,7 @@ TUI 适合远程服务器和终端工作流：
 - 支持 `/datasource` 选择数据源。
 - 支持 `/skill` 选择 Skill。
 - 支持 `/resume` 恢复服务端历史会话。
-- 支持 `--demo` 查看本地模拟事件流。
+- 支持密码登录与本地 Session 缓存（需连接运行中的 API）。
 - 支持 `Tab` 命令补全、输入历史和 Chat 视图滚动。
 
 当前注册命令以 [TUI 指南](guides/tui.md) 为准。

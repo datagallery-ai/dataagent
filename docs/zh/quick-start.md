@@ -232,10 +232,10 @@ curl http://127.0.0.1:8787/ready     # Mastra / builtin 就绪（含 startup_ms�
 ./deploy.sh tui --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
-演示模式不需要后端：
+登录需要可用的 API 与密码账户（离线演示模式已移除）：
 
 ```bash
-npm run start:tui -- --demo
+npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
 恢复最近的服务端会话：

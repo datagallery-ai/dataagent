@@ -11,5 +11,5 @@ From the repository root:
 npm install
 npm run start:tui
 npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
-npm run start:tui -- --demo
+npm run start:tui -- --no-auto-login
 ```

@@ -15,6 +15,7 @@ import {
 export interface CopilotKitClientConfig {
   runtimeUrl: string;
   agent: string;
+  fetchImpl?: typeof fetch | undefined;
   maxRetries?: number | undefined;
   retryBaseDelay?: number | undefined;
   connectionCheckInterval?: number | undefined;
@@ -43,6 +44,7 @@ type SingleRouteEnvelope = {
 export class CopilotKitClient {
   private runtimeUrl: string;
   private agent: string;
+  private fetchImpl: typeof fetch;
   private maxRetries: number;
   private retryBaseDelay: number;
   private connectionCheckInterval: number;
@@ -54,6 +56,7 @@ export class CopilotKitClient {
   constructor(config: CopilotKitClientConfig) {
     this.runtimeUrl = config.runtimeUrl;
     this.agent = config.agent;
+    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.maxRetries = config.maxRetries ?? 3;
     this.retryBaseDelay = config.retryBaseDelay ?? 1000;
     this.connectionCheckInterval = config.connectionCheckInterval ?? 30000;
@@ -91,7 +94,7 @@ export class CopilotKitClient {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-      const response = await fetch(this.runtimeUrl.replace(/\/api\/.*$/, '/healthz'), {
+      const response = await this.fetchImpl(this.runtimeUrl.replace(/\/api\/.*$/, '/healthz'), {
         method: 'GET',
         signal: controller.signal,
       }).finally(() => clearTimeout(timeoutId));
@@ -228,7 +231,7 @@ export class CopilotKitClient {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
 
-      response = await fetch(this.runtimeUrl, {
+      response = await this.fetchImpl(this.runtimeUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
