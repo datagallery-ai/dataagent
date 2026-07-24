@@ -2,7 +2,7 @@
 
 <入口规则>两种模式均执行本步</入口规则>
 
-**目的**：统计 `output_database` 内与源表同名的投影表，写出 **`step1_output_meta.json`**（当前 job workspace）。
+**目的**：统计 `output_database` 内与源表同名的投影表，写出 **`step1_sample_stats.json`**（当前 job workspace）。
 
 <必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
 
@@ -35,7 +35,7 @@ FROM {{output_database}}.<user_table>;
 - `unique_users == total_users`（无重复用户）
 - `pos_neg_ratio` 应接近 0.25（即 1:4 的硬约束）；远端偏离时自查原因
 
-结果写入 `step1_output_meta.json` 的 `label_stats`。
+结果写入 `step1_sample_stats.json` 的 `label_stats`。
 
 ---
 
@@ -75,7 +75,7 @@ FROM {{output_database}}.<table>;
 
 ## 4. 自查
 
-写 `step1_output_meta.json` 前自行核对；异常则回对应步骤修复。检查项**不必**写入 `step1_output_meta.json`。
+写 `step1_sample_stats.json` 前自行核对；异常则回对应步骤修复。检查项**不必**写入 `step1_sample_stats.json`。
 
 | 自查项 | 异常条件 |
 |---|---|
@@ -87,7 +87,7 @@ FROM {{output_database}}.<table>;
 
 ---
 
-## 5. step1_output_meta.json 结构
+## 5. step1_sample_stats.json 结构
 
 值来自 plan 与 §1～§3：
 
@@ -128,4 +128,6 @@ FROM {{output_database}}.<table>;
 
 ## 产出
 
-`step1_output_meta.json`（本地文件，写在当前 job workspace）。
+`step1_sample_stats.json`（本地文件，写在当前 job workspace）。
+
+> 语义交接文件 `step1_output_meta.json`（与 `step1_0_table_schema.json` 同构）在 **step1_6** 定稿时写出，本步不写。

@@ -43,8 +43,8 @@ step1_0 产出的 schema 每表 `columns` 非空（表名齐 ≠ 结构齐），
 | **step1_2** | `scripts/step1_2_similar_games.md` | `step1_temp_similar_games`，更新 `game_scope.similar_games` | `mode=="prelabeled"` 或 `mode=="regular"` |
 | **step1_3** | `scripts/step1_3_build_training_set.md` | `step1_temp_sampled_users` | <必须>不跳过（prelabeled 走内置分支） |
 | **step1_4** | `scripts/step1_4_project_tables.md` | `<源表名>`（output_database 内，与源表同名） | <必须>不跳过 |
-| **step1_5** | `scripts/step1_5_stats.md` | `step1_output_meta.json` | <必须>不跳过 |
-| **step1_6** | `scripts/step1_6_finalize.md` | `receipt.json` | <必须>不跳过 |
+| **step1_5** | `scripts/step1_5_stats.md` | `step1_sample_stats.json` | <必须>不跳过 |
+| **step1_6** | `scripts/step1_6_finalize.md` | `step1_output_meta.json`（= schema 同构副本）→ `receipt.json` | <必须>不跳过 |
 
 **cold_start**：step1_1 正样本 < 500 → step1_2；`similar_games` 为空时在 plan 内记 fallback。
 
@@ -66,11 +66,12 @@ step1_0 产出的 schema 每表 `columns` 非空（表名齐 ≠ 结构齐），
 
 | 类型 | 命名 | 说明 |
 |---|---|---|
-| 表结构文件 | `step1_0_table_schema.json` | 含 `tables`（每表 columns 非空）+ `join_hints` + `role_candidates` + `column_aliases` |
+| 表结构文件（过程） | `step1_0_table_schema.json` | step1_0 创建；含 `tables`（每表 columns 非空）+ `join_hints` + `role_candidates` + `column_aliases`；采样各步读写 |
 | 采样计划 | `step1_0_sampling_plan.json` | step1_0 创建，后续各步读取 |
 | 交付投影表 | `<源表名>`（output_database 内，与源表同名） | 与源表一对一，用户表含 `label` |
-| 统计元信息 | `step1_output_meta.json` | 用户数、label 分布、表数核对 |
-| 定稿凭证 | `receipt.json` | `artifacts` 登记 `step1_output_meta.json`（file）+ 全部交付表（clickhouse_table） |
+| 语义交接 meta | `step1_output_meta.json` | step1_6 定稿：与 `step1_0_table_schema.json` **同构原样副本**，供下游读列/类型/join |
+| 采样统计 | `step1_sample_stats.json` | step1_5：用户数、label 分布、表数核对、各表行数 |
+| 定稿凭证 | `receipt.json` | `artifacts` 登记 `step1_output_meta.json` + `step1_sample_stats.json`（file）+ 全部交付表（clickhouse_table） |
 | 过程临时表 | `step1_temp_*` | 不计入交付，用完可删 |
 
 ## 输入 JSON（参考）
