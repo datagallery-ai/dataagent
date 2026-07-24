@@ -140,6 +140,65 @@ describe("GovernedToolFactory protocol boundary", () => {
     });
   });
 
+  it("bypasses ActionRouter for externally resolved HITL tools so suspend can propagate", async () => {
+    let actionRouterCalled = false;
+    let suspendedPayload: unknown;
+    const runScope = { modelName: "test", resourceId: "user-1", runId: "run-1", sessionId: "session-1" };
+    const boundary = createToolObservationBoundary({ identity: runScope });
+    const dispatcher = new ToolObservationDispatcher(boundary.packager, runScope);
+    const factory = new GovernedToolFactory(dispatcher, undefined, undefined, {
+      actionRouter: {
+        execute: async () => {
+          actionRouterCalled = true;
+          return {
+            rawResult: { shouldNotRun: true },
+            observation: { shouldNotRun: true },
+            contextPackageRef: { packageId: "context-1", revision: 1 },
+            contextPackage: {
+              version: 2 as const,
+              packageId: "context-1",
+              revision: 1,
+              items: [],
+              groups: [],
+              sourceSnapshots: [],
+              artifactRefs: [],
+              auditRefs: [],
+              truncation: []
+            }
+          };
+        }
+      },
+      externallyResolvedToolNames: new Set(["ask_user"]),
+      runId: "run-1",
+      segmentId: "segment-1"
+    });
+    const tool = factory.governTool("ask_user", {
+      execute: async (_input: unknown, options?: unknown) => {
+        const agent = (options as { agent?: {
+          suspend?: (payload: unknown) => Promise<void>;
+        } } | undefined)?.agent;
+        await agent?.suspend?.({ question: "Which datasource?" });
+        return undefined;
+      }
+    });
+
+    const result = await tool.execute?.(
+      { question: "Which datasource?" },
+      {
+        agent: {
+          toolCallId: "call-ask",
+          suspend: async (payload: unknown) => {
+            suspendedPayload = payload;
+          }
+        }
+      }
+    );
+
+    expect(actionRouterCalled).toBe(false);
+    expect(result).toBeUndefined();
+    expect(suspendedPayload).toEqual({ question: "Which datasource?" });
+  });
+
   it("warns the model not to repeat an external action whose state commit failed", async () => {
     const emitted: unknown[] = [];
     const runScope = { modelName: "test", resourceId: "user-1", runId: "run-1", sessionId: "session-1" };

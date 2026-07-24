@@ -66,7 +66,7 @@ import { resolveRunIdentity } from "./run-identity-orchestrator.js";
 import { createRunMemoryAssembly } from "./run-memory-assembly.js";
 import { extractLastUserText } from "./run-input.js";
 import {
-  buildHitlToolCallStartEvent,
+  buildHitlSuspendBridgeEvents,
   extractInteractionResume,
   InteractionRuntimeAdapter
 } from "./interaction-runtime-adapter.js";
@@ -278,7 +278,12 @@ export const createServer = async (options: CreateServerOptions = {}): Promise<S
         } catch {
           identity = undefined;
         }
-        if (await handleAuthApiRequest(request, response, requestUrl.pathname, { authService, ...(identity ? { identity } : {}) })) {
+        if (await handleAuthApiRequest(request, response, requestUrl.pathname, {
+          authService,
+          cookiePath: authConfig.cookiePath,
+          cookieSecure: authConfig.cookieSecure,
+          ...(identity ? { identity } : {})
+        })) {
           return;
         }
       }
@@ -719,8 +724,9 @@ class DataFoundryAgUiAgent extends AbstractAgent {
         let terminalStarted = false;
         let sessionTitleStarted = false;
         let lastAssistantMessageId: string | undefined;
-        /** toolCallIds that already persisted TOOL_CALL_START in this run (HITL atomic contract). */
+        /** toolCallIds that already emitted TOOL_CALL_START / END in this run (HITL bridge). */
         const startedToolCallIds = new Set<string>();
+        const endedToolCallIds = new Set<string>();
         const clearRunTimeout = (): void => {
           if (runTimeout) {
             clearTimeout(runTimeout);
@@ -798,17 +804,23 @@ class DataFoundryAgUiAgent extends AbstractAgent {
               clearRunTimeout();
               unregisterCancel();
               suspended = true;
-              // R-018: persist TOOL_CALL_START with the interactions row when the stream
-              // never emitted one (common for Mastra on_interrupt before tool-start).
-              if (!startedToolCallIds.has(interactionRequested.interrupt.toolCallId)) {
-                emit(buildHitlToolCallStartEvent(interactionRequested.interrupt));
-                startedToolCallIds.add(interactionRequested.interrupt.toolCallId);
-              }
-              emit(interactionRequested.event);
-              finalizer.suspend();
-              // CopilotKit useInterrupt listens for the native Mastra interrupt event.
-              if (event.type === EventType.CUSTOM && event.name === "on_interrupt") {
-                emit(event);
+              // R-018 / AG-UI verifyEvents: close the tool-call span before transport RUN_FINISHED
+              // whether upstream already emitted START or Mastra skipped start/end entirely.
+              const bridgeEvents = buildHitlSuspendBridgeEvents({
+                interrupt: interactionRequested.interrupt,
+                interactionEvent: interactionRequested.event,
+                ...(event.type === EventType.CUSTOM && event.name === "on_interrupt"
+                  ? { passthroughInterruptEvent: event }
+                  : {}),
+                state: { startedToolCallIds, endedToolCallIds }
+              });
+              for (const bridgeEvent of bridgeEvents) {
+                if (bridgeEvent === interactionRequested.event) {
+                  emit(bridgeEvent);
+                  finalizer.suspend();
+                  continue;
+                }
+                emit(bridgeEvent);
               }
               // Stream must finalize so CopilotKit can surface the interrupt UI via onRunFinalized.
               // This synthetic terminal event is transport-only; suspended runs must not replay as finished.
@@ -865,6 +877,13 @@ class DataFoundryAgUiAgent extends AbstractAgent {
               && event.toolCallId.length > 0
             ) {
               startedToolCallIds.add(event.toolCallId);
+            }
+            if (
+              event.type === EventType.TOOL_CALL_END
+              && typeof event.toolCallId === "string"
+              && event.toolCallId.length > 0
+            ) {
+              endedToolCallIds.add(event.toolCallId);
             }
             emit(event);
 

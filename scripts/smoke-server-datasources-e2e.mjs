@@ -7,8 +7,14 @@ import { createServer as createApiServer } from "../apps/api/dist/server.js";
 import { createTaskStateRuntime } from "../packages/agent-runtime/dist/index.js";
 import { LocalDataGateway } from "../packages/data-gateway/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "open-data-foundry-server-datasources-e2e-"));
+process.env.DATAFOUNDRY_AUTH_MODE = "password";
+process.env.AUTH_SESSION_SECRET = "server-datasources-e2e-session-secret-32b!";
+process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
+process.env.AUTH_EMAIL_DELIVERY = "test";
+process.env.AUTH_REGISTRATION_MODE = "open";
 process.env.STORAGE_ROOT_DIR = root;
 process.env.MASTRA_STORAGE_PATH = join(root, "mastra.sqlite");
 process.env.EMBEDDING_API_KEY = "";
@@ -45,6 +51,9 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 assert(address && typeof address === "object");
 const baseUrl = `http://127.0.0.1:${address.port}`;
+const client = createAuthenticatedTestClient({ baseUrl });
+const identity = await client.registerAndLogin({ displayName: "Server Datasources E2E" });
+const { userId, workspaceId } = identity;
 
 try {
   for (const target of targets) {
@@ -84,11 +93,12 @@ async function verifyTarget(target) {
   assert.equal(schemaResponse.response.status, 200, JSON.stringify(schemaResponse.body));
   assert(Array.isArray(schemaResponse.body.data.tables), `${target.type} schema tables missing`);
 
-  const schema = await dataGateway.inspectSchema({ user_id: "dev-user", datasource_id: datasourceId });
+  const schema = await dataGateway.inspectSchema({ user_id: userId, workspace_id: workspaceId, datasource_id: datasourceId });
   assert(Array.isArray(schema.tables), `${target.type} inspectSchema failed`);
 
   const result = await dataGateway.runSqlReadonly({
-    user_id: "dev-user",
+    user_id: userId,
+    workspace_id: workspaceId,
     datasource_id: datasourceId,
     sql: target.sql,
     limit: 10
@@ -123,7 +133,7 @@ function serverTarget(type, prefix, overrides = {}) {
 }
 
 async function requestJson(path, init = {}) {
-  const response = await fetch(`${baseUrl}${path}`, init);
+  const response = await client.fetch(path, init);
   const body = await response.json();
   return { body, response };
 }

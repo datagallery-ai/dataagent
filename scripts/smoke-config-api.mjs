@@ -14,6 +14,7 @@ import { resolveEffectiveRunConfig } from "../apps/api/dist/run-input.js";
 import { createTaskStateRuntime } from "../packages/agent-runtime/dist/index.js";
 import { LocalDataGateway } from "../packages/data-gateway/dist/index.js";
 import { RunEventWriter, createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "open-data-foundry-config-smoke-"));
 const datasourcePath = join(root, "source.sqlite");
@@ -26,6 +27,11 @@ source.exec(`
 `);
 source.close();
 
+process.env.DATAFOUNDRY_AUTH_MODE = "password";
+process.env.AUTH_SESSION_SECRET = "config-smoke-session-secret-32bytes!!";
+process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
+process.env.AUTH_EMAIL_DELIVERY = "test";
+process.env.AUTH_REGISTRATION_MODE = "open";
 process.env.EMBEDDING_API_KEY = "";
 process.env.MASTRA_STORAGE_PATH = join(root, "mastra.sqlite");
 process.env.STORAGE_ROOT_DIR = root;
@@ -131,20 +137,21 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 assert(address && typeof address === "object");
 const baseUrl = `http://127.0.0.1:${address.port}`;
-metadataStore.users.upsertDevUser({
-  id: "tenant-user",
-  email: "tenant@example.com",
-  display_name: "Tenant User",
-  dev_token: "tenant-token"
-});
 
-const requestJson = async (path, init = {}) => {
-  const response = await fetch(`${baseUrl}${path}`, init);
+const client = createAuthenticatedTestClient({ baseUrl });
+const identity = await client.registerAndLogin({ displayName: "Config Smoke User" });
+const { userId, workspaceId } = identity;
+
+const tenantClient = createAuthenticatedTestClient({ baseUrl });
+const tenantIdentity = await tenantClient.registerAndLogin({ displayName: "Tenant User" });
+
+const requestJson = async (path, init = {}, authClient = client) => {
+  const response = await authClient.fetch(path, init);
   const body = await response.json();
   return { body, response };
 };
 
-const requestRaw = async (path, init = {}) => fetch(`${baseUrl}${path}`, init);
+const requestRaw = async (path, init = {}, authClient = client) => authClient.fetch(path, init);
 
 const closeHttpServer = async (httpServer) => {
   await new Promise((resolve, reject) => {
@@ -207,78 +214,55 @@ try {
     );
   }
 
-  const invalidToken = await requestJson("/api/v1/workspace-config", {
-    headers: { "Authorization": "Bearer invalid-token" }
-  });
-  assert.equal(invalidToken.response.status, 401);
-  assert.equal(invalidToken.body.error.code, "UNAUTHORIZED");
+  const anonymousClient = createAuthenticatedTestClient({ baseUrl });
+  const unauthenticated = await requestJson("/api/v1/workspace-config", {}, anonymousClient);
+  assert.equal(unauthenticated.response.status, 401);
+  assert.equal(unauthenticated.body.error.code, "UNAUTHORIZED");
 
   const defaultMe = await requestJson("/api/v1/me");
   assert.equal(defaultMe.response.status, 200);
-  assert.equal(defaultMe.body.data.user.id, "dev-user");
-  assert.equal(defaultMe.body.data.workspace.id, "default");
+  assert.equal(defaultMe.body.data.user.id, userId);
+  assert.equal(defaultMe.body.data.workspace.id, workspaceId);
 
-  const identitiesBeforeCreate = await requestJson("/api/v1/dev/identities");
-  assert.equal(identitiesBeforeCreate.response.status, 200);
-  assert(identitiesBeforeCreate.body.data.users.some((user) => user.id === "dev-user"));
-
-  const createdDevUser = await requestJson("/api/v1/dev/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: "analyst-user",
-      email: "analyst@example.com",
-      displayName: "Analyst User"
-    })
+  const analystClient = createAuthenticatedTestClient({ baseUrl });
+  const analystIdentity = await analystClient.registerAndLogin({
+    email: `analyst-${Date.now()}@example.test`,
+    displayName: "Analyst User"
   });
-  assert.equal(createdDevUser.response.status, 201, JSON.stringify(createdDevUser.body));
-  assert.equal(createdDevUser.body.data.user.id, "analyst-user");
-  assert.equal(createdDevUser.body.data.user.devToken, "dev-token-analyst-user");
-  const analystMe = await requestJson("/api/v1/me", {
-    headers: { "Authorization": "Bearer dev-token-analyst-user" }
-  });
+  const analystMe = await requestJson("/api/v1/me", {}, analystClient);
   assert.equal(analystMe.response.status, 200);
-  assert.equal(analystMe.body.data.user.id, "analyst-user");
-  assert.equal(analystMe.body.data.workspace.id, "default");
+  assert.equal(analystMe.body.data.user.id, analystIdentity.userId);
+  assert.equal(analystMe.body.data.workspace.id, analystIdentity.workspaceId);
+  assert.notEqual(analystIdentity.userId, userId);
 
-  const tenantHeaders = {
-    "Authorization": "Bearer tenant-token",
-    "Content-Type": "application/json",
-    "X-Workspace-Id": "tenant-workspace"
-  };
   const tenantDatasource = await requestJson("/api/v1/datasources", {
     method: "POST",
-    headers: tenantHeaders,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       id: "local-sqlite",
       name: "Tenant SQLite",
       type: "sqlite",
       settings: { filePath: datasourcePath }
     })
-  });
+  }, tenantClient);
   assert.equal(tenantDatasource.response.status, 201, JSON.stringify(tenantDatasource.body));
   const devDatasourceListBeforeTenant = await requestJson("/api/v1/datasources");
   assert.equal(devDatasourceListBeforeTenant.body.data.some((item) => item.id === "local-sqlite"), false);
   const tenantKnowledge = await requestJson("/api/v1/knowledge-bases", {
     method: "POST",
-    headers: tenantHeaders,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       id: "tenant-docs",
       name: "Tenant Docs",
       defaultEnabled: true,
       retrievalTopK: 2
     })
-  });
+  }, tenantClient);
   assert.equal(tenantKnowledge.response.status, 201);
   const devTenantKnowledge = await requestJson("/api/v1/knowledge-bases/tenant-docs");
   assert.equal(devTenantKnowledge.response.status, 404);
-  const tenantOtherWorkspaceKnowledge = await requestJson("/api/v1/knowledge-bases/tenant-docs", {
-    headers: {
-      "Authorization": "Bearer tenant-token",
-      "X-Workspace-Id": "other-workspace"
-    }
-  });
-  assert.equal(tenantOtherWorkspaceKnowledge.response.status, 404);
+  const tenantVisibleKnowledge = await requestJson("/api/v1/knowledge-bases/tenant-docs", {}, tenantClient);
+  assert.equal(tenantVisibleKnowledge.response.status, 200);
 
   const uploadForm = new FormData();
   uploadForm.append("sessionId", "session-smoke-upload");
@@ -324,9 +308,9 @@ try {
 
   const conversationSessionId = "conversation-api-session";
   const conversationRunId = "conversation-api-run";
-  metadataStore.sessions.create({ user_id: "dev-user", id: conversationSessionId, title: "conversation API" });
+  metadataStore.sessions.create({ user_id: userId, id: conversationSessionId, title: "conversation API" });
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: conversationRunId,
     session_id: conversationSessionId,
     request_fingerprint: "conversation-api-fingerprint",
@@ -334,7 +318,7 @@ try {
     status: "completed"
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: conversationRunId,
     id: `${conversationRunId}:user`,
@@ -345,7 +329,7 @@ try {
     content: { text: "inspect orders" }
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: conversationRunId,
     id: `${conversationRunId}:assistant`,
@@ -356,7 +340,7 @@ try {
     content: { text: "orders has 2 columns" }
   });
   metadataStore.conversationSummaries.create({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     id: `summary:${conversationSessionId}:1-1`,
     source_run_id: conversationRunId,
@@ -366,19 +350,19 @@ try {
   });
   const conversationWriter = new RunEventWriter(metadataStore.runEvents);
   conversationWriter.write({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: conversationRunId,
     session_id: conversationSessionId,
     event: { type: "TOOL_CALL_START", toolCallId: "call_schema", toolCallName: "inspect_schema" }
   });
   conversationWriter.write({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: conversationRunId,
     session_id: conversationSessionId,
     event: { type: "TOOL_CALL_END", toolCallId: "call_schema", toolCallName: "inspect_schema" }
   });
   conversationWriter.write({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: conversationRunId,
     session_id: conversationSessionId,
     event: {
@@ -442,7 +426,7 @@ try {
   // R-018: pending HITL without TOOL_CALL_START still synthesizes toolCalls + checkpoint.
   const hitlOnlyRunId = "conversation-hitl-only-run";
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: hitlOnlyRunId,
     session_id: conversationSessionId,
     user_input: "ask the user",
@@ -450,7 +434,7 @@ try {
   });
   metadataStore.interactions.request({
     id: "interaction-hitl-only",
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: hitlOnlyRunId,
     tool_call_id: "call_ask_missing_start",
@@ -487,14 +471,14 @@ try {
   const branchOriginalRunId = "conversation-branch-original-run";
   const branchPendingRunId = "conversation-branch-pending-run";
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: branchBaseRunId,
     session_id: conversationSessionId,
     user_input: "summarize orders",
     status: "completed"
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: branchBaseRunId,
     id: `${branchBaseRunId}:user`,
@@ -505,7 +489,7 @@ try {
     content: { text: "summarize orders" }
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: branchBaseRunId,
     id: `${branchBaseRunId}:assistant`,
@@ -516,14 +500,14 @@ try {
     content: { text: "orders summary" }
   });
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: branchOriginalRunId,
     session_id: conversationSessionId,
     user_input: "make a chart",
     status: "completed"
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: branchOriginalRunId,
     id: `${branchOriginalRunId}:user`,
@@ -534,7 +518,7 @@ try {
     content: { text: "make a chart" }
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: conversationSessionId,
     run_id: branchOriginalRunId,
     id: `${branchOriginalRunId}:assistant`,
@@ -545,7 +529,7 @@ try {
     content: { text: "original chart answer" }
   });
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: branchPendingRunId,
     session_id: conversationSessionId,
     user_input: "still running",
@@ -573,7 +557,7 @@ try {
 
   const branchRunId = "conversation-branch-child-run";
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: branchRunId,
     session_id: branchSessionId,
     parent_run_id: branchOriginalRunId,
@@ -581,7 +565,7 @@ try {
     status: "completed"
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: branchSessionId,
     run_id: branchRunId,
     id: `${branchRunId}:user`,
@@ -592,7 +576,7 @@ try {
     content: { text: "make a table instead" }
   });
   metadataStore.conversationMessages.append({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: branchSessionId,
     run_id: branchRunId,
     id: `${branchRunId}:assistant`,
@@ -711,12 +695,18 @@ try {
   const policyGateway = new LocalDataGateway(metadataStore, {
     defaultLimit: 100,
     maxLimit: 1000,
-    timeoutMs: 10000
+    timeoutMs: 10000,
+    workspaceId
   });
-  const policySchema = await policyGateway.inspectSchema({ user_id: "dev-user", datasource_id: "local-sqlite" });
+  const policySchema = await policyGateway.inspectSchema({
+    user_id: userId,
+    workspace_id: workspaceId,
+    datasource_id: "local-sqlite"
+  });
   assert.deepEqual(policySchema.tables.map((table) => table.name), ["metrics"]);
   const preview = await policyGateway.previewTable({
-    user_id: "dev-user",
+    user_id: userId,
+    workspace_id: workspaceId,
     datasource_id: "local-sqlite",
     table: "metrics",
     limit: 10
@@ -724,7 +714,8 @@ try {
   assert.equal(preview.row_count, 1, "samplePolicy.maxSampleRows should cap preview rows");
   assert.equal(preview.rows[0]?.[preview.columns.indexOf("secret")], "[MASKED]");
   const maskedSql = await policyGateway.runSqlReadonly({
-    user_id: "dev-user",
+    user_id: userId,
+    workspace_id: workspaceId,
     datasource_id: "local-sqlite",
     sql: "SELECT name, secret FROM metrics",
     limit: 10
@@ -732,7 +723,8 @@ try {
   assert.equal(maskedSql.rows[0]?.[maskedSql.columns.indexOf("secret")], "[MASKED]");
   await assert.rejects(
     () => policyGateway.previewTable({
-      user_id: "dev-user",
+      user_id: userId,
+      workspace_id: workspaceId,
       datasource_id: "local-sqlite",
       table: "private_metrics",
       limit: 1
@@ -741,7 +733,8 @@ try {
   );
   await assert.rejects(
     () => policyGateway.runSqlReadonly({
-      user_id: "dev-user",
+      user_id: userId,
+      workspace_id: workspaceId,
       datasource_id: "local-sqlite",
       sql: "SELECT * FROM private_metrics",
       limit: 1
@@ -759,7 +752,8 @@ try {
   assert.equal(sampleDisabledPatch.response.status, 200);
   await assert.rejects(
     () => policyGateway.previewTable({
-      user_id: "dev-user",
+      user_id: userId,
+      workspace_id: workspaceId,
       datasource_id: "local-sqlite",
       table: "metrics",
       limit: 1
@@ -880,7 +874,7 @@ try {
   // Light upload → promote → list(scope=workspace) path for workspace assets.
   const workspaceSessionId = "config-smoke-workspace-promote";
   metadataStore.sessions.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: workspaceSessionId,
     title: "config smoke workspace promote"
   });
@@ -1106,9 +1100,9 @@ try {
         }
       }
     },
-    userId: "dev-user",
+    userId: userId,
     userInput: "inspect metrics",
-    workspaceId: "default"
+    workspaceId
   });
   assert.equal(resolvedModelRun.modelSettings?.topP, 0.75);
   assert.equal(resolvedModelRun.modelSettings?.frequencyPenalty, 0.25);
@@ -1138,9 +1132,9 @@ try {
         }
       }
     },
-    userId: "dev-user",
+    userId: userId,
     userInput: "use smoke skill to inspect schema",
-    workspaceId: "default"
+    workspaceId
   });
   assert.equal(skillBoundRun.effectiveRunConfig.activeDatasourceId, "local-sqlite");
   assert.equal(skillBoundRun.effectiveRunConfig.activeLlmProfileId, "smoke-openai-compatible");
@@ -1152,20 +1146,20 @@ try {
   assert.deepEqual(skillBoundRun.mcpRuntime.servers[0]?.toolAllowlist, ["echo"]);
   const currentMetricsDocsResource = metadataStore.configResources.get({
     id: "metrics-docs",
-    workspace_id: "default",
-    user_id: "dev-user",
+    workspace_id: workspaceId,
+    user_id: userId,
     kind: "knowledge-base"
   });
   const currentMcpResource = metadataStore.configResources.get({
     id: "smoke-mcp",
-    workspace_id: "default",
-    user_id: "dev-user",
+    workspace_id: workspaceId,
+    user_id: userId,
     kind: "mcp-server"
   });
   const currentModelProfileResource = metadataStore.configResources.get({
     id: "smoke-openai-compatible",
-    workspace_id: "default",
-    user_id: "dev-user",
+    workspace_id: workspaceId,
+    user_id: userId,
     kind: "model-profile"
   });
   assert.equal(
@@ -1203,9 +1197,9 @@ try {
         }
       }
     },
-    userId: "dev-user",
+    userId: userId,
     userInput: "use smoke skill to inspect schema",
-    workspaceId: "default"
+    workspaceId
   });
   assert.equal(explicitResourceRun.effectiveRunConfig.activeDatasourceId, "dtc-growth-demo");
   assert(explicitResourceRun.effectiveRunConfig.enabledDatasourceIds.includes("local-sqlite"));
@@ -1269,7 +1263,7 @@ try {
     }],
     state: {},
     forwardedProps: {}
-  }, metadataStore, "dev-user", "dtc-growth-demo");
+  }, metadataStore, userId, "dtc-growth-demo", workspaceId);
   assert.equal(effective.activeSkillId, undefined);
   assert.equal(effective.resourceRevisions["datasource:local-sqlite"], sampleDisabledPatch.body.data.revision);
   assert.equal(effective.resourceRevisions["model-profile:server-default"] > 0, true);
@@ -1290,9 +1284,9 @@ try {
   const defaults = await requestJson("/api/v1/run-defaults");
   assert.equal(defaults.body.data.enabledKnowledgeIds.includes("metrics-docs"), false);
 
-  metadataStore.sessions.create({ user_id: "dev-user", id: "session-smoke", title: "config smoke" });
+  metadataStore.sessions.create({ user_id: userId, id: "session-smoke", title: "config smoke" });
   metadataStore.runs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: "run-smoke",
     session_id: "session-smoke",
     request_fingerprint: "config-smoke",
@@ -1300,7 +1294,7 @@ try {
     status: "completed"
   });
   metadataStore.contextPackageSnapshots.create({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: "session-smoke",
     run_id: "run-smoke",
     package_id: "context-smoke",
@@ -1308,7 +1302,7 @@ try {
     payload: {}
   });
   metadataStore.protocolStates.compareAndSetWithEvents({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: "run-smoke",
     segment_id: "segment-smoke",
     expected_revision: -1,
@@ -1333,12 +1327,12 @@ try {
     revision: 0
   }]);
   assert.equal(metadataStore.protocolStates.pendingEvents({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: "run-smoke"
   }).length, 1);
   const artifact = metadataStore.artifacts.create({
     id: "artifact-smoke",
-    user_id: "dev-user",
+    user_id: userId,
     session_id: "session-smoke",
     run_id: "run-smoke",
     type: "table",
@@ -1346,7 +1340,7 @@ try {
     preview_json: { columns: ["name", "value"], rows: [{ name: "revenue", value: 42 }] }
   });
   assert.equal(artifact.id, "artifact-smoke");
-  const download = await fetch(`${baseUrl}/api/v1/artifacts/artifact-smoke/download`);
+  const download = await client.fetch("/api/v1/artifacts/artifact-smoke/download");
   assert.equal(download.headers.get("content-type"), "text/csv; charset=utf-8");
   assert.equal((await download.text()).includes("revenue,42"), true);
 
@@ -1358,12 +1352,12 @@ try {
     deletedSessionIds: ["session-smoke"]
   });
   assert.equal(metadataStore.protocolStates.find({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: "run-smoke",
     segment_id: "segment-smoke"
   }), undefined);
   assert.deepEqual(metadataStore.protocolStates.pendingEvents({
-    user_id: "dev-user",
+    user_id: userId,
     run_id: "run-smoke"
   }), []);
 
@@ -1372,7 +1366,7 @@ try {
   assert.equal(builtinDelete.body.data.deleted, true);
 
   metadataStore.sqlAuditLogs.create({
-    user_id: "dev-user",
+    user_id: userId,
     id: "audit-before-delete",
     datasource_id: "local-sqlite",
     sql_text: "SELECT 1",
@@ -1384,8 +1378,8 @@ try {
   assert.equal(datasourceList.body.data.some((item) => item.id === "local-sqlite"), false);
   assert.throws(() => metadataStore.secrets.get({
     ref: createdDatasource.body.data.secretRef,
-    workspace_id: "default",
-    user_id: "dev-user"
+    workspace_id: workspaceId,
+    user_id: userId
   }), /SECRET_NOT_FOUND/u);
 
   console.log(

@@ -49,6 +49,12 @@ jobs:
     name: Core Smoke Tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      DATAFOUNDRY_AUTH_MODE: password
+      AUTH_PUBLIC_BASE_URL: http://127.0.0.1:3000
+      AUTH_REGISTRATION_MODE: open
+      AUTH_EMAIL_DELIVERY: test
+      AUTH_SESSION_SECRET: ci-auth-session-secret-with-32-bytes!!
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -64,6 +70,9 @@ jobs:
 
       - name: Build TypeScript workspaces
         run: npm run build
+
+      - name: Run formal auth foundation tests
+        run: npm run test:auth-foundation
 
       - name: Generate built-in demo fixture
         env:

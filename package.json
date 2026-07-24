@@ -93,6 +93,7 @@
     "smoke:long-term-memory": "npm run build && node scripts/smoke-long-term-memory.mjs",
     "smoke:memory-recall-shadow": "npm run build && node scripts/smoke-memory-recall-shadow.mjs",
     "smoke:metadata": "npm run build && node scripts/smoke-metadata.mjs",
+    "test:auth-foundation": "npm run build && node --test scripts/lib/authenticated-test-client.test.mjs scripts/auth-foundation.test.mjs",
     "smoke:auth": "npm run build && node scripts/smoke-auth.mjs",
     "smoke:files": "npm run build && node scripts/smoke-files.mjs",
     "smoke:skills": "npm run build && node scripts/smoke-skills.mjs",

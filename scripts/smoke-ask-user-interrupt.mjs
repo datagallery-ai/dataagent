@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const envPath = join(process.cwd(), ".env");
 try {
@@ -26,6 +27,8 @@ if (!process.env.LLM_API_KEY) {
 }
 
 const apiBase = `http://127.0.0.1:${process.env.API_PORT ?? "8787"}`;
+const client = createAuthenticatedTestClient({ baseUrl: apiBase });
+await client.registerAndLogin({ displayName: "Ask User Smoke" });
 const threadId = `thread-ask-smoke-${Date.now()}`;
 const runId = randomUUID();
 
@@ -50,7 +53,7 @@ const payload = {
   },
 };
 
-const response = await fetch(`${apiBase}/api/copilotkit`, {
+const response = await client.fetch("/api/copilotkit", {
   method: "POST",
   headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
   body: JSON.stringify(payload),

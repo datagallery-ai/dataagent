@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturesRoot = resolve(repoRoot, "storage/fixtures");
@@ -62,8 +63,18 @@ const datasources = [
   },
 ];
 
+const client = createAuthenticatedTestClient({ baseUrl: apiBase });
+let authenticated = false;
+async function ensureAuth() {
+  if (!authenticated) {
+    await client.registerAndLogin({ displayName: "Seed Local Fixtures" });
+    authenticated = true;
+  }
+}
+
 async function requestJson(path, init = {}) {
-  const response = await fetch(`${apiBase}${path}`, init);
+  await ensureAuth();
+  const response = await client.fetch(path, init);
   const body = await response.json();
   return { body, response };
 }
@@ -130,7 +141,7 @@ async function verifyDatasource(id) {
 }
 
 try {
-  const health = await fetch(`${apiBase}/healthz`);
+  const health = await fetch(`${apiBase}/healthz`); // public
   if (!health.ok) {
     throw new Error(`API not reachable at ${apiBase} — start with: npm run dev:api`);
   }

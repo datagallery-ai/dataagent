@@ -7,6 +7,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturesRoot = resolve(repoRoot, "storage/fixtures");
@@ -217,8 +218,18 @@ function insertRows(database, table, rows) {
   }
 }
 
+const client = createAuthenticatedTestClient({ baseUrl: apiBase });
+let authenticated = false;
+async function ensureAuth() {
+  if (!authenticated) {
+    await client.registerAndLogin({ displayName: "Seed DTC Growth" });
+    authenticated = true;
+  }
+}
+
 async function requestJson(path, init = {}) {
-  const response = await fetch(`${apiBase}${path}`, init);
+  await ensureAuth();
+  const response = await client.fetch(path, init);
   const body = await response.json().catch(() => ({}));
   return { body, response };
 }
