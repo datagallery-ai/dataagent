@@ -549,7 +549,7 @@ def _detect_ngram_repetition(
 
     for i in range(len(tokens) - window + 1):
         ngram = tuple(tokens[i : i + window])
-        if all(token == "=" for token in ngram):
+        if all(token in {"=", "-", "–", "—", "−"} for token in ngram):
             continue
         count = freq.get(ngram, 0) + 1
         freq[ngram] = count
