@@ -413,9 +413,9 @@ def get_table_schema(
 
     summary = f"表 {table_name} 共 {len(columns)} 个字段。"
     lines = [
-        f"  - {col['name']} ({col['value_type']}): {col['description']}，"
-        f"属性：{json.dumps(col['column_properties'])}" 
-        for col in columns]
+        f"  - {col['name']} ({col['value_type']}): {col['description']}，属性：{json.dumps(col['column_properties'])}"
+        for col in columns
+    ]
     detail = summary + "\n" + "\n".join(lines)
 
     preview_lines: list[str] = [summary]
