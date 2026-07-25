@@ -119,10 +119,10 @@ def classify_exception(exc: Exception) -> tuple[ErrorType, ErrorPolicy]:
         or "unreachable" in exc_msg
     ):
         return (ErrorType.NETWORK_ERROR, ERROR_POLICIES[ErrorType.NETWORK_ERROR])
-    if "validation" in exc_msg or "invalid" in exc_msg or "schema" in exc_msg or "param" in exc_msg:
-        return (ErrorType.VALIDATION_ERROR, ERROR_POLICIES[ErrorType.VALIDATION_ERROR])
     if "internal" in exc_msg or "unexpected" in exc_msg or "assertion" in exc_msg or "panic" in exc_msg:
         return (ErrorType.INTERNAL_ERROR, ERROR_POLICIES[ErrorType.INTERNAL_ERROR])
+    if "validation" in exc_msg or "invalid" in exc_msg or "schema" in exc_msg or "param" in exc_msg:
+        return (ErrorType.VALIDATION_ERROR, ERROR_POLICIES[ErrorType.VALIDATION_ERROR])
 
     return (ErrorType.UNKNOWN, DEFAULT_RETRY_POLICY)
 

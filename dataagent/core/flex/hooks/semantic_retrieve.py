@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from langchain_core.messages import AIMessage
 from loguru import logger
 
 from dataagent.actions.tools.semantic_tool.search_tables_with_schema import (
@@ -20,6 +21,10 @@ from dataagent.utils.info_utils import get_current_query
 
 _SEMANTIC_RETRIEVE_CONTEXT_OPEN = "<semantic_retrieve_context>"
 _SEMANTIC_RETRIEVE_CONTEXT_CLOSE = "</semantic_retrieve_context>"
+
+
+class _SemanticRetrieveNoResultError(RuntimeError):
+    """Raised when semantic retrieval returns no usable table candidates."""
 
 
 def semantic_retrieve_context_loader(state: dict[str, Any], runtime: Any) -> dict[str, Any]:
@@ -42,27 +47,34 @@ def semantic_retrieve_context_loader(state: dict[str, Any], runtime: Any) -> dic
         query,
         workspace_root=workspace_root,
     )
-    if cached is not None:
-        return _inject_semantic_retrieve_context(state, runtime, cached, query)
 
     config_manager = getattr(runtime, "config_manager", None)
-    if config_manager is None:
+    if cached is None and config_manager is None:
         logger.debug("[semantic_retrieve_context_loader] skipped: config_manager is unavailable")
         return state
 
     try:
-        client = SemanticServiceClient.from_config(config_manager)
-        result = get_semantic_retrieve_context(
-            query,
-            client=client,
-            workspace_root=workspace_root,
-            run_id=run_id,
-            sub_id=sub_id,
-            source="semantic_retrieve_context_loader",
-        )
+        if cached is None:
+            client = SemanticServiceClient.from_config(config_manager)
+            result = get_semantic_retrieve_context(
+                query,
+                client=client,
+                workspace_root=workspace_root,
+                run_id=run_id,
+                sub_id=sub_id,
+                source="semantic_retrieve_context_loader",
+            )
+        else:
+            result = cached
+
+        if not _has_recalled_tables(result):
+            raise _SemanticRetrieveNoResultError("semantic retrieve returned no usable table candidates")
     except Exception as exc:
-        logger.warning(f"[semantic_retrieve_context_loader] semantic retrieve failed: {exc}")
-        return state
+        error_detail = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "[semantic_retrieve_context_loader] ending agent after semantic retrieve failure: {}", error_detail
+        )
+        return _end_agent_after_semantic_retrieve_failure(state, error_detail)
 
     return _inject_semantic_retrieve_context(state, runtime, result, query)
 
@@ -92,6 +104,38 @@ def _resolve_workspace_root(state: dict[str, Any], runtime: Any) -> Optional[Pat
     if not workspace:
         return None
     return Path(str(workspace)).expanduser().resolve()
+
+
+def _has_recalled_tables(payload: dict[str, Any]) -> bool:
+    """Return whether semantic retrieval produced at least one table candidate."""
+    tables = payload.get("tables")
+    if isinstance(tables, list):
+        return bool(tables)
+
+    raw_response = payload.get("raw_response")
+    data_access_plan = raw_response.get("dataAccessPlan") if isinstance(raw_response, dict) else None
+    raw_tables = data_access_plan.get("tables") if isinstance(data_access_plan, dict) else None
+    return isinstance(raw_tables, list) and bool(raw_tables)
+
+
+def _end_agent_after_semantic_retrieve_failure(
+    state: dict[str, Any],
+    error_detail: str,
+) -> dict[str, Any]:
+    """Append a failure notice and final semantic-retrieve error, then stop the owning agent."""
+    messages = state.get("messages")
+    final_messages = list(messages) if isinstance(messages, list) else []
+    final_messages.append(
+        AIMessage(
+            content=(
+                "Semantic metadata retrieval did not return usable tables; this metadata recall agent was stopped.\n\n"
+                f"{error_detail}"
+            )
+        )
+    )
+    state["messages"] = final_messages
+    state["complete"] = True
+    return state
 
 
 def _inject_semantic_retrieve_context(

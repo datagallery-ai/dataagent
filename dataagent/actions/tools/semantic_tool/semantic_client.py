@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import quote
 
 import requests
@@ -52,6 +52,35 @@ class SemanticServiceError(requests.HTTPError):
         self.classification_hint = "internal semantic service error"
 
         super().__init__(f"{self.classification_hint}: Semantic service {method} failed", response=response)
+
+    def __str__(self) -> str:
+        """Return semantic-service error details suitable for diagnostic logs."""
+        parts = [
+            self.classification_hint,
+            f"method={self.method}",
+            f"path={self.path}",
+            f"status_code={self.status_code}",
+        ]
+        if self.error_code:
+            parts.append(f"error_code={self.error_code}")
+        if self.error_message:
+            parts.append(f"error_message={self.error_message}")
+
+        response = self.response
+        if response is not None:
+            response_url = _optional_str(getattr(response, "url", None))
+            response_reason = _optional_str(getattr(response, "reason", None))
+            response_headers = _response_headers(response)
+            response_body = _response_body(response)
+            if response_url:
+                parts.append(f"response_url={response_url!r}")
+            if response_reason:
+                parts.append(f"response_reason={response_reason!r}")
+            if response_headers:
+                parts.append(f"response_headers={response_headers!r}")
+            parts.append(f"response_body={response_body!r}")
+
+        return ", ".join(parts)
 
 
 class SemanticServiceClient:
@@ -223,7 +252,7 @@ class SemanticServiceClient:
                 raise ValueError("internal semantic service JSON response error: method=GET") from err
         except requests.HTTPError as err:
             service_err = _build_service_error(err, method="GET", path=path)
-            logger.error(str(service_err))
+            logger.opt(exception=err).error("{}", service_err)
             raise service_err from err
         except requests.Timeout as err:
             wrapped = requests.RequestException("internal semantic service request failed: method=GET")
@@ -258,7 +287,7 @@ class SemanticServiceClient:
                 raise ValueError("internal semantic service JSON response error: method=POST") from err
         except requests.HTTPError as err:
             service_err = _build_service_error(err, method="POST", path=path)
-            logger.error(str(service_err))
+            logger.opt(exception=err).error("{}", service_err)
             raise service_err from err
         except requests.Timeout as err:
             wrapped = requests.RequestException("internal semantic service request failed: method=POST")
@@ -326,6 +355,27 @@ def _response_json(response: requests.Response) -> Any:
         return response.json()
     except ValueError:
         return None
+
+
+def _response_headers(response: requests.Response) -> dict[str, str]:
+    """Return response headers with credential-bearing values redacted."""
+    raw_headers = getattr(response, "headers", None)
+    if raw_headers is None:
+        return {}
+
+    sensitive_headers = {"authorization", "cookie", "proxy-authorization", "set-cookie", "x-api-key"}
+    return {
+        str(key): "***REDACTED***" if str(key).lower() in sensitive_headers else str(value)
+        for key, value in raw_headers.items()
+    }
+
+
+def _response_body(response: requests.Response) -> Optional[str]:  # noqa: UP045
+    """Return a bounded response body for diagnostics."""
+    response_text = getattr(response, "text", None)
+    if response_text is None:
+        return None
+    return _truncate(str(response_text), 4_000)
 
 
 def _optional_str(value: Any) -> str | None:
