@@ -197,7 +197,8 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   let configBaseUrl = configBaseUrlFromRuntime(runtimeUrl);
   const explicitDatasourceId = getOptionalArg(args, "--datasource-id");
   const agent = getArg(args, "--agent", "dataFoundry");
-  const noAutoLogin = args.includes("--no-auto-login");
+  const cliNoAutoLogin = args.includes("--no-auto-login");
+  let forceInteractiveLogin = cliNoAutoLogin;
   const initialResume = resolveResumeRequest(args);
 
   const stdout = options.stdout ?? process.stdout;
@@ -208,7 +209,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     try {
       bootstrap = await bootstrapTuiAuth({
         apiBaseUrl: configBaseUrl,
-        noAutoLogin,
+        noAutoLogin: forceInteractiveLogin,
         fetchImpl,
         ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
       });
@@ -344,7 +345,8 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
       if (exitReason === "auth-required") {
         console.log("Session expired or revoked. Please sign in again.");
       }
-      // Re-enter auth menu; force interactive login for account switching clarity.
+      // Re-enter auth menu; never silently restore a possibly-stale disk session.
+      forceInteractiveLogin = true;
       continue;
     }
     return 0;

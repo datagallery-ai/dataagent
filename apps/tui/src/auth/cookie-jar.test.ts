@@ -59,4 +59,29 @@ describe("TuiCookieJar", () => {
     assert.equal(jar.headerValue(), undefined);
     assert.equal(jar.csrfToken(), undefined);
   });
+
+  it("deletes cookies when Set-Cookie uses Max-Age=0 (logout/clear)", () => {
+    const jar = new TuiCookieJar();
+    jar.replace({ df_session: "live", df_csrf: "csrf-live", keep: "yes" });
+    const headers = new Headers();
+    headers.append("set-cookie", "df_session=; Path=/; HttpOnly; Max-Age=0");
+    headers.append("set-cookie", "df_csrf=; Path=/; Max-Age=0");
+    jar.absorbSetCookie(headers);
+
+    assert.deepEqual(jar.snapshot(), { keep: "yes" });
+    assert.equal(jar.csrfToken(), undefined);
+    assert.equal(jar.headerValue(), "keep=yes");
+  });
+
+  it("deletes cookies when Expires is in the past", () => {
+    const jar = new TuiCookieJar();
+    jar.replace({ df_session: "live" });
+    const headers = new Headers();
+    headers.append(
+      "set-cookie",
+      "df_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    );
+    jar.absorbSetCookie(headers);
+    assert.deepEqual(jar.snapshot(), {});
+  });
 });

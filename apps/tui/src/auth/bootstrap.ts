@@ -194,7 +194,12 @@ export function createTransport(options: {
     refreshCsrf: () => options.authClient.refreshCsrf(),
     onSessionInvalid: async () => {
       options.cookieJar.clear();
-      await options.sessionStore.remove(apiBaseUrl);
+      try {
+        await options.sessionStore.remove(apiBaseUrl);
+      } catch {
+        // Prefer clearing the in-memory jar and surfacing auth-required over crashing
+        // the transport when the on-disk store is locked or unwritable.
+      }
     },
   });
 }

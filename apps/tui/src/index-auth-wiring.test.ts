@@ -372,6 +372,94 @@ describe("runTui auth wiring", () => {
     assert.equal(appStarts, 2);
   });
 
+  it("forces interactive login after auth-required even if a disk session remains", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tui-force-login-"));
+    const sessionStore = new TuiSessionStore({ filePath: join(dir, "auth.json") });
+    await sessionStore.save({
+      apiBaseUrl: "http://127.0.0.1:8787",
+      cookies: { df_session: "stale", df_csrf: "stale-csrf" },
+      user: { id: "u0", email: "stale@example.com" },
+      workspace: { id: "w0" },
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    });
+
+    const answers = ["1", "fresh@example.com", "pw"];
+    let idx = 0;
+    let meCalls = 0;
+    let loginCalls = 0;
+    let appStarts = 0;
+
+    const code = await runTui({
+      argv: ["--runtime-url", "http://127.0.0.1:8787/api/copilotkit"],
+      sessionStore,
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.includes("/api/v1/auth/status")) {
+          return json(200, {
+            success: true,
+            data: { publicBaseUrl: "http://127.0.0.1:3000", registrationEnabled: false },
+          });
+        }
+        if (url.includes("/api/v1/me")) {
+          meCalls += 1;
+          return json(200, {
+            success: true,
+            data: {
+              user: { id: "u0", email: "stale@example.com" },
+              workspace: { id: "w0" },
+            },
+          });
+        }
+        if (url.includes("/api/v1/auth/login")) {
+          loginCalls += 1;
+          return json(
+            200,
+            {
+              success: true,
+              data: {
+                user: { id: "u1", email: "fresh@example.com" },
+                workspace: { id: "w1" },
+                session: { expiresAt: "2099-01-01T00:00:00.000Z" },
+              },
+            },
+            ["df_session=fresh; Path=/", "df_csrf=fresh-csrf; Path=/"],
+          );
+        }
+        if (url.includes("/healthz")) {
+          return new Response("ok", { status: 200 });
+        }
+        if (url.includes("/api/v1/run-defaults")) {
+          return json(200, { success: true, data: {} });
+        }
+        return json(404, { success: false, error: { code: "NOT_FOUND", message: "x" } });
+      },
+      prompt: {
+        question: async () => answers[idx++] ?? "3",
+        password: async () => answers[idx++] ?? "",
+        close: () => {},
+      },
+      stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+      renderApp: async () => {
+        appStarts += 1;
+        // Simulate cleanup failing to delete the on-disk session before re-entry.
+        await sessionStore.save({
+          apiBaseUrl: "http://127.0.0.1:8787",
+          cookies: { df_session: "stale", df_csrf: "stale-csrf" },
+          user: { id: "u0", email: "stale@example.com" },
+          workspace: { id: "w0" },
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        });
+        return appStarts === 1 ? "auth-required" : "exit";
+      },
+    });
+
+    assert.equal(code, 0);
+    assert.equal(appStarts, 2);
+    assert.equal(loginCalls, 1, "must prompt interactive login instead of restoring disk session");
+    // First bootstrap may call /me once; re-entry after auth-required must not silently restore.
+    assert.ok(meCalls <= 1);
+  });
+
   it("rejects removed offline demo mode", async () => {
     const code = await runTui({ argv: [`--${"demo"}`] });
     assert.equal(code, 1);
