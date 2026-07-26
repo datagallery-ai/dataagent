@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  describePortOwner,
   parsePort,
   selectDeploymentPort,
   verifySelectedPorts
 } from "./ports.mjs";
-
 test("parsePort accepts valid integers", () => {
   assert.equal(parsePort("3000", "Web"), 3000);
   assert.equal(parsePort(8787, "API"), 8787);
@@ -107,13 +107,13 @@ test("verifySelectedPorts fails when a port becomes occupied", async () => {
       [{ label: "Web", port: 3000 }],
       {
         managedPorts: new Set(),
+        retries: 0,
         probe: async () => ({ available: false, owner: "nginx pid=7" })
       }
     ),
     /Web port 3000 is already in use/
   );
 });
-
 test("verifySelectedPorts skips ports still held by the managed stack", async () => {
   let probed = false;
   await verifySelectedPorts(
@@ -133,4 +133,40 @@ test("verifySelectedPorts skips ports still held by the managed stack", async ()
     }
   );
   assert.equal(probed, false);
+});
+
+test("verifySelectedPorts retries briefly for transient TIME_WAIT occupancy", async () => {
+  let attempts = 0;
+  await verifySelectedPorts(
+    [{ label: "Web", port: 3000 }],
+    {
+      managedPorts: new Set(),
+      retries: 3,
+      retryDelayMs: 1,
+      probe: async () => {
+        attempts += 1;
+        if (attempts < 3) return { available: false, owner: "unknown process" };
+        return { available: true, owner: null };
+      }
+    }
+  );
+  assert.equal(attempts, 3);
+});
+
+test("describePortOwner matches exact port and not :30001 for :3000", async () => {
+  const owner = await describePortOwner(3000, {
+    runSs: async () =>
+      [
+        "State Recv-Q Send-Q Local Address:Port Peer Address:Port Process",
+        'LISTEN 0 511 0.0.0.0:30001 0.0.0.0:* users:(("other",pid=9,fd=3))',
+        'LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=42,fd=3))'
+      ].join("\n")
+  });
+  assert.equal(owner, "node pid=42");
+
+  const noMatch = await describePortOwner(3000, {
+    runSs: async () =>
+      'LISTEN 0 511 0.0.0.0:30001 0.0.0.0:* users:(("other",pid=9,fd=3))\n'
+  });
+  assert.equal(noMatch, "unknown process");
 });

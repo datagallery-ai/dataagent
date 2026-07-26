@@ -93,7 +93,11 @@ test("start and stop managed stack are idempotent and refuse foreign pids", asyn
     startedAt: new Date().toISOString(),
     ports: { web: 3000, api: 8787 }
   });
-  await assert.rejects(() => stopManagedStack(foreignRoot), /does not identify DataFoundry|launch marker/i);
+  const staleStop = await stopManagedStack(foreignRoot);
+  assert.equal(staleStop.stopped, false);
+  assert.match(String(staleStop.reason), /stale/i);
+  assert.equal(await readDeploymentState(foreignRoot), null);
+  assert.equal(isProcessAlive(process.pid), true);
 
   await stopManagedStack(root);
   assert.equal(isProcessAlive(started.pid), false);
@@ -102,6 +106,72 @@ test("start and stop managed stack are idempotent and refuse foreign pids", asyn
   await stopManagedStack(root);
 });
 
+test("launchId mismatch is treated as stale: clear state, never signal, allow restart", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("proc launchId verification is Linux-only");
+    return;
+  }
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-stale-launch-"));
+  await mkdir(path.join(root, "storage"), { recursive: true });
+
+  // Reuse this test process as a "foreign" live pid with mismatched launchId.
+  await writeDeploymentState(root, {
+    pid: process.pid,
+    launchId: "stale-or-reused-launch-id",
+    status: "healthy",
+    startedAt: new Date().toISOString(),
+    ports: { web: 3000, api: 8787 }
+  });
+
+  const healed = await stopManagedStack(root);
+  assert.equal(healed.stopped, false);
+  assert.match(String(healed.reason), /stale/i);
+  assert.equal(await readDeploymentState(root), null);
+  assert.equal(isProcessAlive(process.pid), true);
+
+  const started = await startManagedStack(root, {
+    command: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"],
+    env: { ...process.env },
+    ports: { web: 3000, api: 8787 }
+  });
+  assert.equal(isProcessAlive(started.pid), true);
+  assert.notEqual(started.pid, process.pid);
+
+  await stopManagedStack(root);
+  assert.equal(isProcessAlive(started.pid), false);
+  assert.equal(await readDeploymentState(root), null);
+});
+test("startManagedStack self-heals stale launchId without signaling the foreign pid", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("proc launchId verification is Linux-only");
+    return;
+  }
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-heal-"));
+  await mkdir(path.join(root, "storage"), { recursive: true });
+  await writeDeploymentState(root, {
+    pid: process.pid,
+    launchId: "not-our-launch",
+    status: "healthy",
+    startedAt: new Date().toISOString(),
+    ports: { web: 3000, api: 8787 }
+  });
+
+  const started = await startManagedStack(root, {
+    command: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"],
+    env: { ...process.env },
+    ports: { web: 3310, api: 8877 }
+  });
+  assert.equal(isProcessAlive(process.pid), true);
+  assert.equal(isProcessAlive(started.pid), true);
+  assert.notEqual(started.pid, process.pid);
+  assert.equal((await readDeploymentState(root)).pid, started.pid);
+
+  await stopManagedStack(root);
+});
 test("verifyManagedProcessForStop refuses stop when launch id is unreadable", async (t) => {
   if (process.platform !== "linux") {
     t.skip("proc verification is Linux-only");

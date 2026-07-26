@@ -164,17 +164,22 @@ export async function writeDeploymentConfiguration(root, rootText, webText, opti
   const envPath = path.join(root, ".env");
   const webPath = path.join(root, "apps/web/.env.local");
   let backupPath;
+  const { readFile } = await import("node:fs/promises");
 
-  if (options.backup) {
+  let existing = "";
+  try {
+    existing = await readFile(envPath, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const existingEnv = parseDeploymentEnvironment(existing);
+  const hasExistingSecrets = SECRET_KEYS.some((key) => !isPlaceholderSecret(existingEnv[key]));
+  const shouldBackup = Boolean(options.backup) || Boolean(options.backupExistingSecrets && hasExistingSecrets);
+
+  if (shouldBackup) {
     const stamp = options.timestamp ?? new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
     backupPath = path.join(root, `.env.backup-${stamp}`);
-    const { readFile } = await import("node:fs/promises");
-    let existing = "";
-    try {
-      existing = await readFile(envPath, "utf8");
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
     await writeAtomic(backupPath, existing, 0o600);
   }
 
@@ -182,7 +187,6 @@ export async function writeDeploymentConfiguration(root, rootText, webText, opti
   await writeAtomic(webPath, webText, 0o600);
   return { envPath, webPath, backupPath };
 }
-
 export function redactSensitiveText(text) {
   let result = String(text ?? "");
 
@@ -205,10 +209,9 @@ export function redactSensitiveText(text) {
   );
 
   result = result.replace(
-    /(https?:\/\/)([^/\s:@]+):([^/\s@]+)@/gi,
+    /([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi,
     (_, protocol) => `${protocol}****:****@`
   );
-
   result = result.replace(
     /\b((?:sk|rk|pk|tok)-[A-Za-z0-9_-]{8,}|(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g,
     (value) => maskSecret(value)
