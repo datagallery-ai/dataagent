@@ -179,15 +179,87 @@ test("reconfigure creates backup and keeps secrets", async () => {
   );
 });
 
-test("collectManagedPorts gathers env and deployment state ports", () => {
-  const ports = collectManagedPorts(
+test("collectManagedPorts ignores bare .env ports without a verified running state", async () => {
+  const bare = await collectManagedPorts(
     { WEB_PORT: "3310", API_PORT: "8877" },
-    { ports: { web: 3310, api: 8877 } }
+    null
   );
-  assert.deepEqual([...ports].sort((a, b) => a - b), [3310, 8877]);
+  assert.deepEqual([...bare], []);
+
+  const deadPid = await collectManagedPorts(
+    { WEB_PORT: "3310", API_PORT: "8877" },
+    {
+      pid: 99999999,
+      launchId: "launch-1",
+      ports: { web: 3310, api: 8877 }
+    }
+  );
+  assert.deepEqual([...deadPid], []);
 });
 
-test("reconfigure reuses managed listening ports during update preflight", async () => {
+test("collectManagedPorts marks state ports only when pid is alive and launchId verifies", async () => {
+  const unmanaged = await collectManagedPorts(
+    { WEB_PORT: "3310", API_PORT: "8877" },
+    {
+      pid: process.pid,
+      launchId: "expected-launch",
+      ports: { web: 3310, api: 8877 }
+    },
+    {
+      readLaunchId: async () => "other-launch",
+      forceLaunchIdCheck: true
+    }
+  );
+  assert.deepEqual([...unmanaged], []);
+
+  const managed = await collectManagedPorts(
+    { WEB_PORT: "3000", API_PORT: "8787" },
+    {
+      pid: process.pid,
+      launchId: "launch-1",
+      ports: { web: 3310, api: 8877 }
+    },
+    {
+      readLaunchId: async () => "launch-1",
+      forceLaunchIdCheck: true
+    }
+  );
+  assert.deepEqual([...managed].sort((a, b) => a - b), [3310, 8877]);
+});
+
+test("non-interactive fails when ports are occupied without a running managed state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-occupied-"));
+  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  const source = [
+    "WEB_PORT=3310",
+    "API_PORT=8877",
+    "AUTH_SESSION_SECRET=existing-session-secret-value",
+    "SECRET_MASTER_KEY=existing-master-secret-value",
+    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
+    "DATAFOUNDRY_AUTH_MODE=password",
+    "AUTH_EMAIL_DELIVERY=test",
+    "WEB_HOST=0.0.0.0",
+    "API_HOST=127.0.0.1",
+    "STORAGE_ROOT_DIR=storage",
+    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
+  ].join("\n");
+
+  await assert.rejects(
+    () =>
+      configureDeploymentInteractively({
+        root,
+        sourceText: source,
+        reconfigure: false,
+        nonInteractive: true,
+        ask: async () => assert.fail("must not prompt"),
+        print: () => {},
+        probe: async () => ({ available: false, owner: "nginx pid=42" })
+      }),
+    /already in use/i
+  );
+});
+
+test("reconfigure reuses managed listening ports only for a verified running stack", async () => {
   const probes = [];
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
@@ -208,8 +280,8 @@ test("reconfigure reuses managed listening ports during update preflight", async
   await writeFile(
     path.join(root, "storage/run/deployment.json"),
     `${JSON.stringify({
-      pid: 99999,
-      launchId: "launch-1",
+      pid: process.pid,
+      launchId: "launch-managed",
       status: "healthy",
       startedAt: "2026-07-22T00:00:00.000Z",
       ports: { web: 3310, api: 8877 }
@@ -224,7 +296,11 @@ test("reconfigure reuses managed listening ports during update preflight", async
     print: () => {},
     probe: async (port) => {
       probes.push(port);
-      return { available: false, owner: "datafoundry pid=99999" };
+      return { available: false, owner: `datafoundry pid=${process.pid}` };
+    },
+    collectManagedPortsOptions: {
+      readLaunchId: async () => "launch-managed",
+      forceLaunchIdCheck: true
     }
   });
   assert.equal(result.env.WEB_PORT, "3310");
@@ -233,6 +309,55 @@ test("reconfigure reuses managed listening ports during update preflight", async
   assert.ok(probes.includes(8877));
 });
 
+test("process env does not silently overwrite existing non-empty secrets", async () => {
+  const { overlayProcessEnv } = await import("./cli.mjs");
+  const source = [
+    "WEB_PORT=3000",
+    "API_PORT=8787",
+    "AUTH_SESSION_SECRET=disk-session-secret-value-32chars",
+    "SECRET_MASTER_KEY=disk-master-secret-value-32charsxx",
+    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000"
+  ].join("\n");
+
+  const overlaid = overlayProcessEnv(source, {
+    WEB_PORT: "3310",
+    AUTH_SESSION_SECRET: "process-session-secret-should-not-win",
+    SECRET_MASTER_KEY: "process-master-secret-should-not-win"
+  });
+  const env = (await import("./config.mjs")).parseDeploymentEnvironment(overlaid);
+  assert.equal(env.WEB_PORT, "3310");
+  assert.equal(env.AUTH_SESSION_SECRET, "disk-session-secret-value-32chars");
+  assert.equal(env.SECRET_MASTER_KEY, "disk-master-secret-value-32charsxx");
+});
+
+test("process env may inject secrets only when disk is empty/placeholder or explicitly allowed", async () => {
+  const { overlayProcessEnv } = await import("./cli.mjs");
+  const { parseDeploymentEnvironment } = await import("./config.mjs");
+
+  const fromPlaceholder = overlayProcessEnv(
+    "AUTH_SESSION_SECRET=change-me\nSECRET_MASTER_KEY=\n",
+    {
+      AUTH_SESSION_SECRET: "ci-session-secret-value-at-least-32",
+      SECRET_MASTER_KEY: "ci-master-secret-value-at-least-32x"
+    }
+  );
+  const placeholderEnv = parseDeploymentEnvironment(fromPlaceholder);
+  assert.equal(placeholderEnv.AUTH_SESSION_SECRET, "ci-session-secret-value-at-least-32");
+  assert.equal(placeholderEnv.SECRET_MASTER_KEY, "ci-master-secret-value-at-least-32x");
+
+  const explicit = overlayProcessEnv(
+    "AUTH_SESSION_SECRET=disk-session-secret-value-32chars\nSECRET_MASTER_KEY=disk-master-secret-value-32charsxx\n",
+    {
+      AUTH_SESSION_SECRET: "ci-session-secret-value-at-least-32",
+      SECRET_MASTER_KEY: "ci-master-secret-value-at-least-32x",
+      DATAFOUNDRY_ALLOW_PROCESS_SECRET_OVERLAY: "1"
+    },
+    { allowProcessSecretOverlay: true }
+  );
+  const explicitEnv = parseDeploymentEnvironment(explicit);
+  assert.equal(explicitEnv.AUTH_SESSION_SECRET, "ci-session-secret-value-at-least-32");
+  assert.equal(explicitEnv.SECRET_MASTER_KEY, "ci-master-secret-value-at-least-32x");
+});
 test("resolveAuthPublicBaseUrl preserves HTTPS proxy URLs without explicit port", () => {
   assert.equal(
     resolveAuthPublicBaseUrl("https://prod.example.com", "3000", "3001"),
@@ -360,6 +485,51 @@ test("inspectWritablePath checks access without creating files", async () => {
   assert.equal(existsSync(path.join(root, "storage")), false);
 });
 
+test("runDeploymentDoctor reports actionable fix for stale launchId state", async (t) => {
+  if (process.platform !== "linux") {
+    t.skip("proc launchId verification is Linux-only");
+    return;
+  }
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-stale-"));
+  await mkdir(path.join(root, "storage/run"), { recursive: true });
+  await writeFile(
+    path.join(root, ".env"),
+    [
+      "WEB_PORT=3000",
+      "API_PORT=8787",
+      "AUTH_SESSION_SECRET=existing-session-secret-value",
+      "SECRET_MASTER_KEY=existing-master-secret-value",
+      "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000"
+    ].join("\n")
+  );
+  await writeFile(
+    path.join(root, "storage/run/deployment.json"),
+    `${JSON.stringify({
+      pid: process.pid,
+      launchId: "not-this-process",
+      status: "healthy",
+      startedAt: "2026-07-26T00:00:00.000Z",
+      ports: { web: 3000, api: 8787 }
+    })}\n`
+  );
+
+  const lines = [];
+  await runDeploymentDoctor(root, {
+    print: (line) => lines.push(line),
+    run: async (command, args = []) => {
+      const key = [command, ...args].join(" ");
+      if (key === "node --version") return { stdout: "v22.14.0\n" };
+      if (key === "npm --version") return { stdout: "10.9.0\n" };
+      throw new Error(`missing mock for ${key}`);
+    },
+    probe: async () => ({ available: true, owner: null })
+  });
+  const joined = lines.join("\n");
+  assert.match(joined, /stale/i);
+  assert.match(joined, /\.\/deploy\.sh stop/);
+  assert.match(joined, /permissions \.env: present mode=/);
+});
 test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
   assert.equal(
     resolveTuiRuntimeUrl({ API_PORT: "8877" }),

@@ -12,16 +12,27 @@ export function parsePort(value, label) {
   return parsed;
 }
 
-export async function describePortOwner(port) {
-  if (process.platform !== "linux") return "unknown process";
+function lineOwnsPort(line, port) {
+  // Match ":3000" but not ":30001" — require a non-digit boundary after the port.
+  const pattern = new RegExp(`:${Number(port)}(?!\\d)`, "u");
+  return pattern.test(line);
+}
+
+export async function describePortOwner(port, options = {}) {
+  if (process.platform !== "linux" && !options.runSs) return "unknown process";
   try {
-    const { stdout } = await execFileAsync("ss", ["-ltnp"], {
-      encoding: "utf8",
-      maxBuffer: 2 * 1024 * 1024
-    });
-    const needle = `:${port}`;
-    for (const line of stdout.split(/\r?\n/u)) {
-      if (!line.includes(needle) || !/\bLISTEN\b/u.test(line)) continue;
+    const runSs =
+      options.runSs ??
+      (async () => {
+        const { stdout } = await execFileAsync("ss", ["-ltnp"], {
+          encoding: "utf8",
+          maxBuffer: 2 * 1024 * 1024
+        });
+        return stdout;
+      });
+    const stdout = await runSs();
+    for (const line of String(stdout ?? "").split(/\r?\n/u)) {
+      if (!/\bLISTEN\b/u.test(line) || !lineOwnsPort(line, port)) continue;
       const users = /users:\(\("([^"]+)",pid=(\d+)/u.exec(line);
       if (users) return `${users[1]} pid=${users[2]}`;
       return "unknown process";
@@ -31,7 +42,6 @@ export async function describePortOwner(port) {
   }
   return "unknown process";
 }
-
 export async function probePort(host, port, options = {}) {
   const describe = options.describeOwner ?? describePortOwner;
   const available = await new Promise((resolve) => {
@@ -110,17 +120,29 @@ export async function selectDeploymentPort(options) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function verifySelectedPorts(services, options = {}) {
   const {
     managedPorts = new Set(),
-    probe = (port) => probePort("0.0.0.0", port)
+    probe = (port) => probePort("0.0.0.0", port),
+    retries = 5,
+    retryDelayMs = 200
   } = options;
 
   for (const service of services) {
     const port = parsePort(service.port, service.label);
     if (managedPorts.has(port)) continue;
-    const result = await probe(port);
-    if (!result.available) {
+
+    let lastResult = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      lastResult = await probe(port);
+      if (lastResult.available) break;
+      if (attempt < retries) await sleep(retryDelayMs);
+    }
+    if (!lastResult?.available) {
       throw new Error(`${service.label} port ${port} is already in use`);
     }
   }

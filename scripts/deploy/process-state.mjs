@@ -100,7 +100,7 @@ async function readLaunchIdFromProcAsync(pid) {
 }
 
 export async function verifyManagedProcessForStop(pid, expectedLaunchId, options = {}) {
-  if (process.platform !== "linux") {
+  if (process.platform !== "linux" && !options.forceLaunchIdCheck) {
     return { allowed: true };
   }
 
@@ -126,10 +126,56 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function clearDeploymentState(root) {
+  const paths = deploymentPaths(root);
+  await rm(paths.deploymentJson, { force: true });
+  await rm(paths.pidFile, { force: true });
+}
+
+/**
+ * Returns whether the recorded deployment process is a verified managed stack.
+ * Alive pid + failed launchId verification is treated as stale (not running).
+ */
+export async function inspectManagedRuntime(root, options = {}) {
+  const state = await readDeploymentState(root);
+  if (!state?.pid) {
+    return { state: null, running: false, stale: false, reason: "not-running" };
+  }
+  if (!isProcessAlive(state.pid)) {
+    return { state, running: false, stale: true, reason: "dead-pid" };
+  }
+
+  if (process.platform === "linux" || options.forceLaunchIdCheck) {
+    const verification = await verifyManagedProcessForStop(state.pid, state.launchId, options);
+    if (!verification.allowed) {
+      return {
+        state,
+        running: false,
+        stale: true,
+        reason: verification.reason ?? "stale-launch-id"
+      };
+    }
+  }
+
+  return { state, running: true, stale: false, reason: "running" };
+}
+
+export async function healStaleDeploymentState(root, options = {}) {
+  const inspection = await inspectManagedRuntime(root, options);
+  if (!inspection.stale) return inspection;
+  await clearDeploymentState(root);
+  return { ...inspection, state: null, healed: true };
+}
+
 export async function startManagedStack(root, options = {}) {
   const existing = await readDeploymentState(root);
   if (existing?.pid && isProcessAlive(existing.pid)) {
-    throw new Error(`DataFoundry is already running with pid ${existing.pid}`);
+    const healed = await healStaleDeploymentState(root, options);
+    if (!healed.stale) {
+      throw new Error(`DataFoundry is already running with pid ${existing.pid}`);
+    }
+  } else if (existing?.pid && !isProcessAlive(existing.pid)) {
+    await clearDeploymentState(root);
   }
 
   const paths = deploymentPaths(root);
@@ -181,12 +227,16 @@ export async function stopManagedStack(root, options = {}) {
     return { stopped: false, reason: "stale" };
   }
 
-  if (process.platform === "linux") {
-    const verification = await verifyManagedProcessForStop(state.pid, state.launchId);
+  if (process.platform === "linux" || options.forceLaunchIdCheck) {
+    const verification = await verifyManagedProcessForStop(state.pid, state.launchId, options);
     if (!verification.allowed) {
-      throw new Error(
-        `Refusing to signal pid ${state.pid}: launch marker does not identify DataFoundry`
-      );
+      // PID reuse / foreign process: never signal, but clear stale state so start can recover.
+      await clearDeploymentState(root);
+      return {
+        stopped: false,
+        reason: "stale-launch-id",
+        detail: verification.reason
+      };
     }
   }
 
@@ -232,10 +282,4 @@ export async function stopManagedStack(root, options = {}) {
   }
 
   throw new Error(`Timed out waiting for pid ${state.pid} to exit after SIGKILL`);
-}
-
-async function clearDeploymentState(root) {
-  const paths = deploymentPaths(root);
-  await rm(paths.deploymentJson, { force: true });
-  await rm(paths.pidFile, { force: true });
 }

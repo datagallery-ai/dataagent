@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { constants, existsSync } from "node:fs";
-import { access, appendFile, copyFile, mkdir, readFile, statfs, writeFile } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, readFile, stat, statfs, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,7 @@ import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
   ensureDeploymentEnvironment,
   isCompleteDeploymentConfig,
+  isPlaceholderSecret,
   parseDeploymentEnvironment,
   redactSensitiveText,
   renderWebEnvironment,
@@ -22,6 +23,8 @@ import { collectDeploymentHealth, probeHttp, waitForDeployment } from "./health.
 import { probePort, selectDeploymentPort, verifySelectedPorts } from "./ports.mjs";
 import {
   deploymentPaths,
+  healStaleDeploymentState,
+  inspectManagedRuntime,
   isProcessAlive,
   readDeploymentState,
   startManagedStack,
@@ -30,6 +33,14 @@ import {
   writeDeploymentState
 } from "./process-state.mjs";
 
+const SECRET_OVERLAY_KEYS = ["AUTH_SESSION_SECRET", "SECRET_MASTER_KEY"];
+const PROCESS_OVERLAY_KEYS = [
+  "WEB_HOST",
+  "WEB_PORT",
+  "API_HOST",
+  "API_PORT",
+  "AUTH_PUBLIC_BASE_URL"
+];
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const TUI_ENTRY = "apps/tui/dist/index.js";
 
@@ -61,39 +72,69 @@ export async function inspectWritablePath(targetPath) {
   }
 }
 
-function overlayProcessEnv(text, processEnv = {}) {
+function envFlagEnabled(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+/**
+ * Overlay process env onto disk .env text.
+ * Non-secret bind/port/public URL keys may always overlay.
+ * Secrets overlay only when disk value is empty/placeholder, or when explicitly allowed.
+ */
+export function overlayProcessEnv(text, processEnv = {}, options = {}) {
   const updates = {};
-  for (const key of [
-    "WEB_HOST",
-    "WEB_PORT",
-    "API_HOST",
-    "API_PORT",
-    "AUTH_PUBLIC_BASE_URL",
-    "AUTH_SESSION_SECRET",
-    "SECRET_MASTER_KEY"
-  ]) {
+  for (const key of PROCESS_OVERLAY_KEYS) {
     if (processEnv[key] != null && String(processEnv[key]).trim() !== "") {
       updates[key] = String(processEnv[key]);
     }
   }
-  return Object.keys(updates).length > 0 ? updateDeploymentEnvironment(text, updates) : text;
+
+  const parsed = parseDeploymentEnvironment(text ?? "");
+  const allowSecretOverlay =
+    options.allowProcessSecretOverlay === true ||
+    envFlagEnabled(processEnv.DATAFOUNDRY_ALLOW_PROCESS_SECRET_OVERLAY);
+
+  for (const key of SECRET_OVERLAY_KEYS) {
+    if (processEnv[key] == null || String(processEnv[key]).trim() === "") continue;
+    if (allowSecretOverlay || isPlaceholderSecret(parsed[key])) {
+      updates[key] = String(processEnv[key]);
+    }
+  }
+
+  return Object.keys(updates).length > 0 ? updateDeploymentEnvironment(text ?? "", updates) : text;
 }
 
-export function collectManagedPorts(env = {}, state = null) {
+/**
+ * Ports are "managed" only when deployment.json exists, pid is alive, and
+ * (on Linux) launchId verification passes. Bare .env WEB_PORT/API_PORT are never owned.
+ */
+export async function collectManagedPorts(env = {}, state = null, options = {}) {
   const ports = new Set();
-  for (const key of ["WEB_PORT", "API_PORT"]) {
-    const port = Number(env[key]);
-    if (Number.isInteger(port) && port > 0) ports.add(port);
+  void env;
+
+  if (!state?.ports || typeof state.ports !== "object") return ports;
+  if (!state?.pid) return ports;
+
+  const alive = options.isAlive ?? isProcessAlive;
+  if (!alive(state.pid)) return ports;
+
+  if (process.platform === "linux" || options.forceLaunchIdCheck) {
+    const verification = await verifyManagedProcessForStop(state.pid, state.launchId, {
+      readLaunchId: options.readLaunchId,
+      forceLaunchIdCheck: options.forceLaunchIdCheck
+    });
+    if (!verification.allowed) return ports;
   }
-  if (state?.ports && typeof state.ports === "object") {
-    for (const value of Object.values(state.ports)) {
-      const port = Number(value);
-      if (Number.isInteger(port) && port > 0) ports.add(port);
-    }
+
+  for (const value of Object.values(state.ports)) {
+    const port = Number(value);
+    if (Number.isInteger(port) && port > 0) ports.add(port);
   }
   return ports;
 }
-
 export function resolveAuthPublicBaseUrl(existing, oldWebPort, newWebPort) {
   const url = String(existing ?? "").trim();
   if (!url) return `http://127.0.0.1:${newWebPort}`;
@@ -220,7 +261,11 @@ export async function configureDeploymentInteractively(options) {
   }
 
   const deploymentState = root ? await readDeploymentState(root).catch(() => null) : null;
-  const managedPorts = collectManagedPorts(env, deploymentState);
+  const managedPorts = await collectManagedPorts(
+    env,
+    deploymentState,
+    options.collectManagedPortsOptions ?? {}
+  );
 
   const reserved = new Set();
   const webPort = await selectPortWithHint({
@@ -373,10 +418,17 @@ function createRealDeps(context) {
     },
     async loadConfiguration() {
       const sourceText = await loadRootEnvText(root);
-      const overlaid = overlayProcessEnv(sourceText, process.env);
+      const overlaid = overlayProcessEnv(sourceText, process.env, {
+        allowProcessSecretOverlay: envFlagEnabled(process.env.DATAFOUNDRY_ALLOW_PROCESS_SECRET_OVERLAY)
+      });
       const generateSecrets = parsed.command === "deploy";
       const ensured = ensureDeploymentEnvironment(overlaid, { generateSecrets });
-      config = { env: ensured.env, envText: ensured.text, sourceText, generatedKeys: ensured.generatedKeys };
+      config = {
+        env: ensured.env,
+        envText: ensured.text,
+        sourceText,
+        generatedKeys: ensured.generatedKeys
+      };
       return config;
     },
     async preflight(current, options) {
@@ -419,12 +471,18 @@ function createRealDeps(context) {
     },
     async writeConfiguration(current) {
       await writeDeploymentConfiguration(root, current.envText, current.webText, {
-        backup: parsed.reconfigure
+        backup: parsed.reconfigure,
+        // Redeploy without --reconfigure must not silently lose disk secrets.
+        backupExistingSecrets: !parsed.reconfigure
       });
     },
     async isRunning() {
-      const state = await readDeploymentState(root);
-      return Boolean(state?.pid && isProcessAlive(state.pid));
+      const inspection = await inspectManagedRuntime(root);
+      if (inspection.stale) {
+        await healStaleDeploymentState(root);
+        return false;
+      }
+      return inspection.running;
     },
     async stop() {
       await stopManagedStack(root);
@@ -474,11 +532,15 @@ function createRealDeps(context) {
         { label: "Web", port: current.env.WEB_PORT },
         { label: "API", port: current.env.API_PORT }
       ];
-      // After stop-old, managed ports may still be briefly held by our previous process.
-      // Treat them as owned so verify-ports-again does not false-fail during redeploy.
+      // Only verified running managed ports are owned. After stop-old, TIME_WAIT is
+      // handled by short retries inside verifySelectedPorts — not by treating .env as owned.
       const state = await readDeploymentState(root).catch(() => null);
-      const managedPorts = collectManagedPorts(current.env, state);
-      await verifySelectedPorts(services, { managedPorts });
+      const managedPorts = await collectManagedPorts(current.env, state);
+      await verifySelectedPorts(services, {
+        managedPorts,
+        retries: 5,
+        retryDelayMs: 200
+      });
     },
     async start(current) {
       await startManagedStack(root, {
@@ -493,8 +555,8 @@ function createRealDeps(context) {
       try {
         return await waitForDeployment({
           checkProcessAlive: async () => {
-            const state = await readDeploymentState(root);
-            return Boolean(state?.pid && isProcessAlive(state.pid));
+            const inspection = await inspectManagedRuntime(root);
+            return inspection.running;
           },
           apiBaseUrl: `http://127.0.0.1:${current.env.API_PORT}`,
           webUrl: `http://127.0.0.1:${current.env.WEB_PORT}`
@@ -508,19 +570,11 @@ function createRealDeps(context) {
       }
     },
     async markHealthy(current) {
-      const state = await readDeploymentState(root);
-      if (!state?.pid || !isProcessAlive(state.pid)) {
+      const inspection = await inspectManagedRuntime(root);
+      if (!inspection.running || !inspection.state?.pid) {
         throw new Error("Managed process is not alive; refusing to mark deployment healthy");
       }
-      if (process.platform === "linux") {
-        const verification = await verifyManagedProcessForStop(state.pid, state.launchId);
-        if (!verification.allowed) {
-          throw new Error(
-            `Refusing to mark healthy: launch marker does not identify DataFoundry (${verification.reason})`
-          );
-        }
-      }
-      await writeDeploymentState(root, { ...state, status: "healthy" });
+      await writeDeploymentState(root, { ...inspection.state, status: "healthy" });
       if (deployLog) await deployLog.finalize();
       print(`DataFoundry is healthy at ${current.env.AUTH_PUBLIC_BASE_URL}`);
       print("Next: open Web, register/login, then create and enable a model profile.");
@@ -530,12 +584,13 @@ function createRealDeps(context) {
     },
 
     async status() {
-      const state = await readDeploymentState(root);
+      const inspection = await inspectManagedRuntime(root);
+      const state = inspection.state;
       const env =
         config?.env ??
         ensureDeploymentEnvironment(await loadRootEnvText(root), { generateSecrets: false }).env;
       const summary = await collectDeploymentHealth({
-        checkProcessAlive: async () => Boolean(state?.pid && isProcessAlive(state.pid)),
+        checkProcessAlive: async () => inspection.running,
         apiBaseUrl: `http://127.0.0.1:${env.API_PORT}`,
         webUrl: `http://127.0.0.1:${env.WEB_PORT}`
       });
@@ -594,8 +649,9 @@ export async function runDeploymentDoctor(root, options = {}) {
   record(`config: ${configIssues.length === 0 ? "ok" : configIssues.join(", ")}`);
   record(`config web=${env.WEB_PORT} api=${env.API_PORT} public=${env.AUTH_PUBLIC_BASE_URL}`);
 
-  const state = await readDeploymentState(root);
-  const managedPorts = collectManagedPorts(env, state);
+  const inspection = await inspectManagedRuntime(root);
+  const state = inspection.state;
+  const managedPorts = await collectManagedPorts(env, state);
   const portServices = [
     { label: "web", port: env.WEB_PORT },
     { label: "api", port: env.API_PORT }
@@ -630,7 +686,23 @@ export async function runDeploymentDoctor(root, options = {}) {
       `permissions storage: not writable (${storageWritability.error ?? storageWritability.checkedPath})`
     );
   }
-  record(`permissions .env: ${existsSync(envPath) ? "present" : "missing"}`);
+  if (existsSync(envPath)) {
+    try {
+      const mode = (await stat(envPath)).mode & 0o777;
+      const modeText = mode.toString(8).padStart(3, "0");
+      if (mode === 0o600) {
+        record(`permissions .env: present mode=${modeText}`);
+      } else {
+        record(
+          `permissions .env: present mode=${modeText} (expected 600; run: chmod 600 .env)`
+        );
+      }
+    } catch (error) {
+      record(`permissions .env: present (mode unavailable: ${error.message})`);
+    }
+  } else {
+    record("permissions .env: missing");
+  }
 
   try {
     const diskPath = existsSync(storageRoot) ? storageRoot : root;
@@ -643,12 +715,21 @@ export async function runDeploymentDoctor(root, options = {}) {
 
   if (state?.pid) {
     const alive = isProcessAlive(state.pid);
-    record(`pid: ${state.pid} status=${state.status ?? "unknown"} alive=${alive}`);
+    record(
+      `pid: ${state.pid} status=${state.status ?? "unknown"} alive=${alive} managed=${inspection.running}`
+    );
+    if (inspection.stale) {
+      record(
+        `pid: stale (${inspection.reason}). Fix: ./deploy.sh stop  # clears stale state without signaling foreign pid; then ./deploy.sh start`
+      );
+    }
+  } else if (inspection.stale) {
+    record(`pid: stale state (${inspection.reason}). Fix: ./deploy.sh stop && ./deploy.sh start`);
   } else {
     record("pid: none");
   }
 
-  if (state?.pid && isProcessAlive(state.pid)) {
+  if (inspection.running) {
     const summary = await collectDeploymentHealth(
       {
         processAlive: true,
@@ -664,9 +745,8 @@ export async function runDeploymentDoctor(root, options = {}) {
     record("health: skipped (process not running)");
   }
 
-  return { lines, env, state };
+  return { lines, env, state, inspection };
 }
-
 export function formatDeploymentFailure(failure) {
   const summary = failure.summary ?? failure.error?.message ?? failure.stage;
   const lines = [`✗ ${summary}`];

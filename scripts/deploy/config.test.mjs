@@ -87,16 +87,42 @@ test("redactSensitiveText masks JSON keys, bearer tokens, URL userinfo, and toke
       '{"apiKey":"json-secret-value","api_key":"also-secret"}',
       "Authorization: Bearer fixture-deploy-secret-at-least-32-chars",
       "https://user:fixture-deploy-secret-at-least-32-chars@example.com/path",
+      "postgres://dbuser:dbpass@localhost:5432/app",
       "token sk-abcdefghijklmnop",
       "WEB_PORT=3000"
     ].join("\n")
   );
-  assert.doesNotMatch(redacted, /json-secret-value|also-secret|fixture-deploy-secret-at-least-32-chars|sk-abcdefghijklmnop|user:fixture/);
+  assert.doesNotMatch(redacted, /json-secret-value|also-secret|fixture-deploy-secret-at-least-32-chars|sk-abcdefghijklmnop|user:fixture|dbuser:dbpass/);
   assert.match(redacted, /Authorization: Bearer \*+/i);
   assert.match(redacted, /https:\/\/\*\*\*\*:\*\*\*\*@example\.com\/path/);
+  assert.match(redacted, /postgres:\/\/\*\*\*\*:\*\*\*\*@localhost:5432\/app/);
   assert.match(redacted, /WEB_PORT=3000/);
 });
 
+test("writeDeploymentConfiguration backs up existing secrets even without reconfigure", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "datafoundry-config-secret-backup-"));
+  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  const existing = [
+    "AUTH_SESSION_SECRET=existing-session-secret-value",
+    "SECRET_MASTER_KEY=existing-master-secret-value",
+    "WEB_PORT=3000"
+  ].join("\n");
+  await writeFile(path.join(root, ".env"), `${existing}\n`);
+
+  const next = [
+    "AUTH_SESSION_SECRET=existing-session-secret-value",
+    "SECRET_MASTER_KEY=existing-master-secret-value",
+    "WEB_PORT=3310"
+  ].join("\n");
+  const written = await writeDeploymentConfiguration(root, `${next}\n`, "API_PROXY_TARGET=http://127.0.0.1:8787\n", {
+    backup: false,
+    backupExistingSecrets: true,
+    timestamp: "20260726-120000"
+  });
+  assert.ok(written.backupPath);
+  assert.match(await readFile(written.backupPath, "utf8"), /AUTH_SESSION_SECRET=existing-session-secret-value/);
+  assert.match(await readFile(path.join(root, ".env"), "utf8"), /WEB_PORT=3310/);
+});
 test("ensureDeploymentEnvironment can skip secret generation", () => {
   const result = ensureDeploymentEnvironment("WEB_PORT=3000\n", { generateSecrets: false });
   assert.equal(result.env.AUTH_SESSION_SECRET, undefined);
