@@ -101,7 +101,12 @@ export class AuthenticatedTransport {
   }
 
   private async runSessionInvalid(): Promise<void> {
-    await this.onSessionInvalid();
+    try {
+      await this.onSessionInvalid();
+    } catch {
+      // Disk/cleanup failures must not block auth-required UX; jar clear is best-effort
+      // inside onSessionInvalid. Sticky notification still proceeds below.
+    }
     for (const listener of this.authRequiredListeners) {
       try {
         listener();

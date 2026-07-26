@@ -20,13 +20,18 @@ export class TuiCookieJar {
         : splitSetCookieHeader(headers.get("set-cookie"));
 
     for (const cookie of values) {
-      const pair = String(cookie).split(";", 1)[0] ?? "";
+      const segments = String(cookie).split(";");
+      const pair = segments[0] ?? "";
       const eq = pair.indexOf("=");
       if (eq <= 0) {
         continue;
       }
       const name = pair.slice(0, eq).trim();
       if (!name) {
+        continue;
+      }
+      if (shouldDeleteCookie(segments.slice(1))) {
+        delete this.store[name];
         continue;
       }
       const rawValue = pair.slice(eq + 1);
@@ -66,4 +71,30 @@ function splitSetCookieHeader(value: string | null): string[] {
     return [];
   }
   return [value];
+}
+
+/** Honor Max-Age=0 / past Expires so logout Set-Cookie actually clears the jar. */
+function shouldDeleteCookie(attributeSegments: string[]): boolean {
+  for (const segment of attributeSegments) {
+    const trimmed = segment.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const eq = trimmed.indexOf("=");
+    const attrName = (eq >= 0 ? trimmed.slice(0, eq) : trimmed).trim().toLowerCase();
+    const attrValue = eq >= 0 ? trimmed.slice(eq + 1).trim() : "";
+    if (attrName === "max-age") {
+      const maxAge = Number(attrValue);
+      if (Number.isFinite(maxAge) && maxAge <= 0) {
+        return true;
+      }
+    }
+    if (attrName === "expires") {
+      const expiresMs = Date.parse(attrValue);
+      if (!Number.isNaN(expiresMs) && expiresMs <= Date.now()) {
+        return true;
+      }
+    }
+  }
+  return false;
 }

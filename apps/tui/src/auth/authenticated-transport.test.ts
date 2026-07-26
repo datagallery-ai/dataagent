@@ -274,6 +274,34 @@ describe("AuthenticatedTransport", () => {
     assert.equal(invalidCalls, 1);
   });
 
+  it("still notifies auth-required when onSessionInvalid cleanup throws", async () => {
+    const jar = new TuiCookieJar();
+    jar.replace({ df_session: "sess", df_csrf: "csrf" });
+    let authRequired = 0;
+    const transport = new AuthenticatedTransport({
+      cookieJar: jar,
+      refreshCsrf: async () => {},
+      onSessionInvalid: async () => {
+        throw new Error("disk locked");
+      },
+      fetchImpl: async () => jsonResponse(401, { error: { code: "UNAUTHORIZED" } }),
+    });
+    transport.onAuthRequired(() => {
+      authRequired += 1;
+    });
+
+    const response = await transport.fetch("http://127.0.0.1/api/v1/me");
+    assert.equal(response.status, 401);
+    assert.equal(authRequired, 1);
+
+    // Sticky replay for late subscribers must still work after a failed cleanup.
+    let late = 0;
+    transport.onAuthRequired(() => {
+      late += 1;
+    });
+    assert.equal(late, 1);
+  });
+
   it("dedups concurrent 401 cleanup before onSessionInvalid side effects", async () => {
     const jar = new TuiCookieJar();
     jar.replace({ df_session: "sess", df_csrf: "csrf" });
