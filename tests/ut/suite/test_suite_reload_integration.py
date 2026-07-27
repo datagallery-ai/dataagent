@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Integration tests: Suite discovery, activation, and ``ConfigManager.reload`` merge."""
+"""UT: Suite discovery, activation, and ``ConfigManager.reload`` merge (no live LLM)."""
 
 from __future__ import annotations
 

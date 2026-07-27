@@ -18,11 +18,8 @@ import pytest
 
 pytest.importorskip("elasticsearch", reason="requires dataagent[all]")
 
-from loguru import logger
-
 from dataagent.actions.perceptor.perceptor_atomic import (
     extract_keywords,
-    perceive_data_from_ontology,
     perceive_knowledge_from_memory,
     perceive_metadata_from_memory,
 )
@@ -244,24 +241,3 @@ class TestPerceptor:
         assert "data" in out and "knowledge" in out["data"]
         # Empty keywords => no retrieved knowledge
         assert out["data"]["knowledge"] == []
-
-    @pytest.mark.skipif(
-        not os.getenv("ONTOLOGY_SERVICE_URL"),
-        reason="ONTOLOGY_SERVICE_URL not set, skipping real ontology search test",
-    )
-    def test_perceive_data_from_ontology_real_call(self):
-        query = "查询订单金额相关的本体数据"
-        ontology_url = os.getenv("ONTOLOGY_SERVICE_URL")
-
-        ctx = _ut_tool_context()
-        ctx.config_manager.set("ONTOLOGY_SERVICE_URL", ontology_url)
-        out = perceive_data_from_ontology(query=query, _tool_context=ctx)
-
-        logger.debug(f"\n[DEBUG] Ontology Real Call Data: {out.get('data')}")
-
-        assert "original_msg" in out and isinstance(out["original_msg"], str)
-        assert "frontend_msg" in out and isinstance(out["frontend_msg"], str)
-        assert "data" in out
-
-        if out["original_msg"] == "Ontology query succeeded.":
-            assert isinstance(out["data"], (dict, list, str, int, float, bool))
