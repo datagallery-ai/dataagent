@@ -107,7 +107,9 @@ class ValidatorNode(BaseNL2SQLNode):
             logger.debug("Skip SQLGlot validation because sqlglot is not installed.")
             return []
         try:
-            parsed = sqlglot.parse_one(sql, read=self.engine, error_level=sqlglot.errors.ErrorLevel.RAISE)
+            # gaussvector is Postgres-compatible; sqlglot has no "gaussvector" dialect.
+            read_dialect = "postgres" if self.engine == "gaussvector" else self.engine
+            parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.errors.ErrorLevel.RAISE)
             ALLOWED = (exp.Select, exp.Union, exp.Except, exp.Intersect)
             FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Merge)
             if self.read_only and (not isinstance(parsed, ALLOWED) or parsed.find(*FORBIDDEN)):

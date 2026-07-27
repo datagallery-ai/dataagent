@@ -42,7 +42,8 @@ class GeneratorNode(BaseNL2SQLNode):
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
         expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
         sqls = sql_parser(content)[-expected_num_sql:]
-        if self.engine == "postgres":
+        # gaussvector is Postgres-compatible; strip MySQL-style backticks.
+        if self.engine in {"postgres", "gaussvector"}:
             sqls = [sql.replace("`", "") for sql in sqls]
         prompt_history = system_prompt + "\n\n" + user_prompt
         return [(sql, prompt_history, strategy) for sql in sqls]
@@ -67,7 +68,8 @@ class GeneratorNode(BaseNL2SQLNode):
         return fn(settings, context)
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        settings = {"engine": self.engine}
+        # Prompt dialect: gaussvector shares PostgreSQL SQL dialect.
+        settings = {"engine": "postgres" if self.engine == "gaussvector" else self.engine}
         context = {
             "question": state["question"],
             "schema": state["schema_str"],
