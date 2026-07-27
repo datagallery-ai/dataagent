@@ -6,6 +6,7 @@ import {
   createRunProtocolBoundary
 } from "../packages/agent-runtime/dist/testing.js";
 import { createModelProvider } from "../packages/providers/dist/index.js";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const provider = createModelProvider(process.env);
 assert.notEqual(provider.kind, "mock", "DeepSeek credentials are required; fake LLM is not allowed");
@@ -139,14 +140,22 @@ async function runApiScenarios(baseUrl) {
   );
 }
 
+
+const clientsByBase = new Map();
+async function createClientForBase(baseUrl) {
+  const client = createAuthenticatedTestClient({ baseUrl });
+  await client.registerAndLogin({ displayName: "Deepseek Protocol Smoke" });
+  clientsByBase.set(baseUrl, client);
+  return client;
+}
+
 async function runAgent(baseUrl, input) {
-  const response = await fetch(`${baseUrl}/api/copilotkit`, {
+  const client = clientsByBase.get(baseUrl) ?? await createClientForBase(baseUrl);
+  const response = await client.fetch("/api/copilotkit", {
     method: "POST",
     headers: {
       Accept: "text/event-stream",
-      Authorization: "Bearer dev-token",
-      "Content-Type": "application/json",
-      "X-Workspace-Id": "default"
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
       method: "agent/run",

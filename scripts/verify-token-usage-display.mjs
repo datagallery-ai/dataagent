@@ -2,6 +2,7 @@
  * Live API + frontend state verification for token_usage display.
  * Replays AG-UI events through live-run-state and prints overview/detail token stats.
  */
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 import {
   createInitialLiveRun,
   deriveRunUsage,
@@ -10,10 +11,12 @@ import {
 } from "../apps/web/src/app/data-tasks/live-run-state.ts";
 
 const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:8787";
+const client = createAuthenticatedTestClient({ baseUrl: API_BASE });
+await client.registerAndLogin({ displayName: "Token Usage Verify" });
 const threadId = `token-verify-${Date.now()}`;
 const runId = `token-verify-run-${Date.now()}`;
 
-const response = await fetch(`${API_BASE}/api/copilotkit`, {
+const response = await client.fetch("/api/copilotkit", {
   method: "POST",
   headers: {
     Accept: "text/event-stream",

@@ -14,6 +14,7 @@ import {
 import { createServer as createApiServer } from "../apps/api/dist/server.js";
 import { LocalDataGateway } from "../packages/data-gateway/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoFixture = join(repoRoot, "storage/fixtures/dtc-growth-demo.sqlite");
@@ -130,6 +131,11 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
 test("createServer auto-provisions DTC Growth Review and test-connect works", async () => {
   assert.ok(existsSync(repoFixture), `fixture missing: ${repoFixture}`);
   const root = mkdtempSync(join(tmpdir(), "dtc-growth-server-"));
+  process.env.DATAFOUNDRY_AUTH_MODE = "password";
+  process.env.AUTH_SESSION_SECRET = "dtc-growth-server-session-secret-32b!";
+  process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
+  process.env.AUTH_EMAIL_DELIVERY = "test";
+  process.env.AUTH_REGISTRATION_MODE = "open";
   process.env.STORAGE_ROOT_DIR = root;
   process.env.WORKSPACE_ROOT = join(root, "workspaces");
   process.env.MASTRA_STORAGE_PATH = join(root, "mastra.sqlite");
@@ -140,15 +146,18 @@ test("createServer auto-provisions DTC Growth Review and test-connect works", as
     database_path: join(root, "metadata.sqlite"),
     secret_master_key: "dtc-growth-server-test-key"
   });
-  const dataGateway = new LocalDataGateway(metadataStore, { workspaceId: "default" });
+  const dataGateway = new LocalDataGateway(metadataStore);
   const server = await createApiServer({ metadataStore });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();
   assert(address && typeof address === "object");
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  const client = createAuthenticatedTestClient({ baseUrl });
+  const identity = await client.registerAndLogin({ displayName: "Builtin DTC Growth" });
+  const { userId, workspaceId } = identity;
 
   try {
-    const listed = await fetch(`${baseUrl}/api/v1/datasources`);
+    const listed = await client.fetch("/api/v1/datasources");
     assert.equal(listed.status, 200);
     const listedBody = await listed.json();
     const items = listedBody.data ?? listedBody;
@@ -159,7 +168,7 @@ test("createServer auto-provisions DTC Growth Review and test-connect works", as
     assert.equal(dtc.builtin, true);
     assert.ok(typeof dtc.config?.path === "string" && existsSync(dtc.config.path));
 
-    const testConnect = await fetch(`${baseUrl}/api/v1/datasources/${DTC_GROWTH_DATASOURCE_ID}/test`, {
+    const testConnect = await client.fetch(`/api/v1/datasources/${DTC_GROWTH_DATASOURCE_ID}/test`, {
       method: "POST"
     });
     const testBody = await testConnect.json();
@@ -168,8 +177,8 @@ test("createServer auto-provisions DTC Growth Review and test-connect works", as
 
     // Gateway query against provisioned path.
     const schema = await dataGateway.inspectSchema({
-      user_id: "dev-user",
-      workspace_id: "default",
+      user_id: userId,
+      workspace_id: workspaceId,
       datasource_id: DTC_GROWTH_DATASOURCE_ID
     });
     const tableNames = schema.tables.map((table) => table.name).sort();
@@ -177,7 +186,7 @@ test("createServer auto-provisions DTC Growth Review and test-connect works", as
     assert.ok(tableNames.includes("ad_spend"));
 
     // Second list remains single datasource (idempotent via memo + ensure).
-    const listedAgain = await fetch(`${baseUrl}/api/v1/datasources`);
+    const listedAgain = await client.fetch("/api/v1/datasources");
     const againBody = await listedAgain.json();
     const againItems = againBody.data ?? againBody;
     const dtcCount = (Array.isArray(againItems) ? againItems : []).filter(

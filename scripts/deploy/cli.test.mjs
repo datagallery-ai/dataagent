@@ -48,6 +48,7 @@ test("existing complete config skips prompts unless reconfigure", async () => {
     "AUTH_SESSION_SECRET=existing-session-secret-value",
     "SECRET_MASTER_KEY=existing-master-secret-value",
     "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
+    "AUTH_REGISTRATION_MODE=open",
     "DATAFOUNDRY_AUTH_MODE=password",
     "AUTH_EMAIL_DELIVERY=test",
     "WEB_HOST=0.0.0.0",
@@ -70,6 +71,41 @@ test("existing complete config skips prompts unless reconfigure", async () => {
   });
   assert.equal(asked, 0);
   assert.equal(result.env.WEB_PORT, "3310");
+});
+
+test("legacy complete env missing AUTH_REGISTRATION_MODE fills default and skips prompts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-legacy-reg-"));
+  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  const source = [
+    "WEB_PORT=3310",
+    "API_PORT=8877",
+    "AUTH_SESSION_SECRET=existing-session-secret-value",
+    "SECRET_MASTER_KEY=existing-master-secret-value",
+    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
+    "DATAFOUNDRY_AUTH_MODE=password",
+    "AUTH_EMAIL_DELIVERY=test",
+    "WEB_HOST=0.0.0.0",
+    "API_HOST=127.0.0.1",
+    "STORAGE_ROOT_DIR=storage",
+    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
+  ].join("\n");
+  let asked = 0;
+  const result = await configureDeploymentInteractively({
+    root,
+    sourceText: source,
+    reconfigure: false,
+    nonInteractive: false,
+    ask: async () => {
+      asked += 1;
+      throw new Error("must not prompt");
+    },
+    print: () => {},
+    probe: async () => ({ available: true, owner: null })
+  });
+  assert.equal(asked, 0);
+  assert.equal(result.env.WEB_PORT, "3310");
+  assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
+  assert.match(result.envText, /^AUTH_REGISTRATION_MODE=open$/m);
 });
 
 test("partial .env is not treated as complete before fill and still prompts", async () => {
@@ -464,6 +500,7 @@ test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pi
   assert.match(joined, /^arch: /m);
   assert.match(joined, /dependency node: ok/);
   assert.match(joined, /config: ok/);
+  assert.match(joined, /registration=open/);
   assert.match(joined, /port web 3000: available/);
   assert.match(joined, /permissions storage: writable/);
   assert.match(joined, /disk free:/);

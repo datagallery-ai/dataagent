@@ -2,10 +2,19 @@ import { createErrorResult, createSuccessResult, type AppErrorCode } from "@data
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthIdentity, AuthService } from "./service.js";
 import { AuthError, userDto, workspaceDto } from "./service.js";
-import { appendAuthCookies, appendClearAuthCookies, CSRF_COOKIE, parseCookies, SESSION_COOKIE } from "./cookies.js";
+import {
+  appendAuthCookies,
+  appendClearAuthCookies,
+  appendCsrfCookie,
+  CSRF_COOKIE,
+  parseCookies,
+  SESSION_COOKIE
+} from "./cookies.js";
 
 export type AuthRouteContext = {
   authService: AuthService;
+  cookiePath: string;
+  cookieSecure: boolean;
   identity?: AuthIdentity;
 };
 
@@ -25,6 +34,10 @@ export async function handleAuthApiRequest(
       ? {}
       : await readJsonBody(request);
 
+    if (root === "status" && request.method === "GET") {
+      sendJson(response, 200, createSuccessResult(context.authService.getPublicStatus()));
+      return true;
+    }
     if (root === "register" && request.method === "POST") {
       const result = await context.authService.register({
         email: requiredString(body.email, "email"),
@@ -39,16 +52,22 @@ export async function handleAuthApiRequest(
       const result = await context.authService.login({
         email: requiredString(body.email, "email"),
         password: requiredString(body.password, "password"),
+        client: optionalClient(body.client),
         ...requestMeta(request)
       });
       appendAuthCookies(response, {
         csrfToken: result.csrfToken,
         maxAgeSeconds: result.maxAgeSeconds,
-        sessionToken: result.sessionToken
+        path: context.cookiePath,
+        sessionToken: result.sessionToken,
+        secure: context.cookieSecure
       });
       sendJson(response, 200, createSuccessResult({
         user: result.user,
-        workspace: result.workspace
+        workspace: result.workspace,
+        session: {
+          expiresAt: result.expiresAt
+        }
       }));
       return true;
     }
@@ -76,6 +95,18 @@ export async function handleAuthApiRequest(
     }
 
     const identity = requireIdentity(context);
+    if (root === "csrf" && segments[1] === "refresh" && request.method === "POST") {
+      const rotated = context.authService.rotateCsrf(identity);
+      appendCsrfCookie(response, rotated.csrfToken, {
+        path: context.cookiePath,
+        secure: context.cookieSecure,
+        maxAgeSeconds: rotated.maxAgeSeconds
+      });
+      sendJson(response, 200, createSuccessResult({ csrfToken: rotated.csrfToken }), {
+        "Cache-Control": "no-store"
+      });
+      return true;
+    }
     if (isUnsafeMethod(request.method)) {
       context.authService.validateCsrf(identity, headerString(request.headers["x-csrf-token"]));
     }
@@ -86,13 +117,19 @@ export async function handleAuthApiRequest(
     }
     if (root === "logout" && request.method === "POST") {
       const result = context.authService.logout(identity);
-      appendClearAuthCookies(response);
+      appendClearAuthCookies(response, {
+        path: context.cookiePath,
+        secure: context.cookieSecure
+      });
       sendJson(response, 200, createSuccessResult(result));
       return true;
     }
     if (root === "logout-all" && request.method === "POST") {
       const result = context.authService.logoutAll(identity);
-      appendClearAuthCookies(response);
+      appendClearAuthCookies(response, {
+        path: context.cookiePath,
+        secure: context.cookieSecure
+      });
       sendJson(response, 200, createSuccessResult(result));
       return true;
     }
@@ -178,6 +215,16 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function optionalClient(value: unknown): "web" | "tui" | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (value === "web" || value === "tui") {
+    return value;
+  }
+  throw new AuthError(400, "BAD_REQUEST", "client must be web or tui.");
+}
+
 function requestMeta(request: IncomingMessage): { ipAddress?: string | undefined; userAgent?: string | undefined } {
   return {
     ...(headerString(request.headers["x-forwarded-for"]) ?? request.socket.remoteAddress
@@ -191,11 +238,21 @@ function headerString(value: string | string[] | undefined): string | undefined 
   return Array.isArray(value) ? value[0] : value;
 }
 
-function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
+function sendJson(
+  response: ServerResponse,
+  statusCode: number,
+  body: unknown,
+  extraHeaders: Record<string, string> = {}
+): void {
+  const existingCookies = response.getHeader("Set-Cookie");
   response.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Credentials": "true",
-    "Content-Type": "application/json; charset=utf-8"
+    "Content-Type": "application/json; charset=utf-8",
+    ...extraHeaders,
+    ...(existingCookies
+      ? { "Set-Cookie": existingCookies as string | string[] }
+      : {})
   });
   response.end(JSON.stringify(body));
 }

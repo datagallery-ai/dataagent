@@ -30,6 +30,8 @@ const DEFAULTS = {
   DATAFOUNDRY_AUTH_MODE: "password",
   AUTH_EMAIL_DELIVERY: "test",
   AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+  // Required by password-mode API boot; open matches .env.example formal-test default.
+  AUTH_REGISTRATION_MODE: "open",
   STORAGE_ROOT_DIR: "storage",
   METADATA_DB_PATH: "storage/metadata/workbench.sqlite"
 };
@@ -44,10 +46,12 @@ export function isPlaceholderSecret(value) {
 }
 
 export function isCompleteDeploymentConfig(env = {}) {
+  const registrationMode = String(env.AUTH_REGISTRATION_MODE ?? "").trim();
   return Boolean(
     String(env.WEB_PORT ?? "").trim() &&
       String(env.API_PORT ?? "").trim() &&
       String(env.AUTH_PUBLIC_BASE_URL ?? "").trim() &&
+      (registrationMode === "open" || registrationMode === "closed") &&
       !isPlaceholderSecret(env.AUTH_SESSION_SECRET) &&
       !isPlaceholderSecret(env.SECRET_MASTER_KEY)
   );

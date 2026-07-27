@@ -1014,6 +1014,18 @@ export class AuthSessionRepository {
       .run(input.last_seen_at ?? new Date().toISOString(), input.id);
   }
 
+  rotateCsrf(input: { id: string; csrf_token_hash: string }): AuthSessionRecord {
+    const result = this.db.prepare(`
+      UPDATE auth_sessions
+      SET csrf_token_hash = ?, last_seen_at = ?
+      WHERE id = ? AND revoked_at IS NULL AND expires_at > ?
+    `).run(input.csrf_token_hash, new Date().toISOString(), input.id, new Date().toISOString());
+    if (result.changes !== 1) {
+      throw new Error(`AUTH_SESSION_CSRF_ROTATE_FAILED:${input.id}`);
+    }
+    return this.get({ id: input.id });
+  }
+
   revoke(input: { id: string; revoked_at?: string }): void {
     this.db.prepare("UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
       .run(input.revoked_at ?? new Date().toISOString(), input.id);

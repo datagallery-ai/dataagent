@@ -121,6 +121,57 @@ export const buildHitlToolCallStartEvent = (interrupt: InteractionInterrupt): Ba
     timestamp: Date.now()
   }) as BaseEvent;
 
+/**
+ * Pair with {@link buildHitlToolCallStartEvent} before the transport-only RUN_FINISHED.
+ * Mastra's on_interrupt path never emits TOOL_CALL_END; without it, AbstractAgent
+ * verifyEvents rejects RUN_FINISHED while the tool call is still active.
+ */
+export const buildHitlToolCallEndEvent = (interrupt: InteractionInterrupt): BaseEvent =>
+  ({
+    type: EventType.TOOL_CALL_END,
+    toolCallId: interrupt.toolCallId,
+    toolCallName: interrupt.toolName,
+    timestamp: Date.now()
+  }) as BaseEvent;
+
+export type HitlToolCallBoundaryState = {
+  endedToolCallIds: Set<string>;
+  startedToolCallIds: Set<string>;
+};
+
+/**
+ * Server event-bridge for HITL suspend (persisted stream events only).
+ * Ensures START (if missing) and END (if missing) around the interaction /
+ * on_interrupt events. Caller must still send a transport-only RUN_FINISHED
+ * via the subscriber (not through the persist pipeline).
+ */
+export function buildHitlSuspendBridgeEvents(input: {
+  interrupt: InteractionInterrupt;
+  interactionEvent: BaseEvent;
+  passthroughInterruptEvent?: BaseEvent;
+  state: HitlToolCallBoundaryState;
+}): BaseEvent[] {
+  const toolCallId = input.interrupt.toolCallId;
+  const events: BaseEvent[] = [];
+
+  if (!input.state.startedToolCallIds.has(toolCallId)) {
+    events.push(buildHitlToolCallStartEvent(input.interrupt));
+    input.state.startedToolCallIds.add(toolCallId);
+  }
+
+  events.push(input.interactionEvent);
+  if (input.passthroughInterruptEvent) {
+    events.push(input.passthroughInterruptEvent);
+  }
+
+  if (!input.state.endedToolCallIds.has(toolCallId)) {
+    events.push(buildHitlToolCallEndEvent(input.interrupt));
+    input.state.endedToolCallIds.add(toolCallId);
+  }
+
+  return events;
+}
+
 /** Extract a Mastra resume command from an AG-UI run request. */
 export const extractInteractionResume = (input: RunAgentInput): InteractionResume | undefined => {
   if (!isRecord(input.forwardedProps) || !isRecord(input.forwardedProps.command)) {

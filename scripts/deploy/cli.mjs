@@ -256,7 +256,21 @@ export async function configureDeploymentInteractively(options) {
   let env = ensured.env;
   const oldWebPort = env.WEB_PORT;
 
-  if (!reconfigure && !nonInteractive && completeBeforeFill && sourceText?.trim()) {
+  // Soft upgrade: only AUTH_REGISTRATION_MODE may be auto-filled without re-prompting
+  // ports. Broader DEFAULTS fills must still go through interactive port selection.
+  const softUpgradeKeys = new Set(["AUTH_REGISTRATION_MODE"]);
+  const filledOnlySoftUpgradeKeys =
+    !completeBeforeFill &&
+    isCompleteDeploymentConfig(env) &&
+    ensured.generatedKeys.length > 0 &&
+    ensured.generatedKeys.every((key) => softUpgradeKeys.has(key));
+
+  if (
+    !reconfigure &&
+    !nonInteractive &&
+    (completeBeforeFill || filledOnlySoftUpgradeKeys) &&
+    sourceText?.trim()
+  ) {
     return { env, envText: text, webText: renderWebEnvironment(env), wrote: false };
   }
 
@@ -646,8 +660,14 @@ export async function runDeploymentDoctor(root, options = {}) {
   if (!env.WEB_PORT) configIssues.push("WEB_PORT missing");
   if (!env.API_PORT) configIssues.push("API_PORT missing");
   if (!env.AUTH_PUBLIC_BASE_URL) configIssues.push("AUTH_PUBLIC_BASE_URL missing");
+  const registrationMode = String(env.AUTH_REGISTRATION_MODE ?? "").trim();
+  if (registrationMode !== "open" && registrationMode !== "closed") {
+    configIssues.push("AUTH_REGISTRATION_MODE missing or invalid");
+  }
   record(`config: ${configIssues.length === 0 ? "ok" : configIssues.join(", ")}`);
-  record(`config web=${env.WEB_PORT} api=${env.API_PORT} public=${env.AUTH_PUBLIC_BASE_URL}`);
+  record(
+    `config web=${env.WEB_PORT} api=${env.API_PORT} public=${env.AUTH_PUBLIC_BASE_URL} registration=${registrationMode || "(unset)"}`
+  );
 
   const inspection = await inspectManagedRuntime(root);
   const state = inspection.state;

@@ -17,9 +17,29 @@ test("creates safe defaults without model settings", () => {
   const result = ensureDeploymentEnvironment("", { randomSecret: () => "generated-secret-value" });
   assert.equal(result.env.WEB_PORT, "3000");
   assert.equal(result.env.API_PORT, "8787");
+  assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
   assert.equal(result.env.AUTH_SESSION_SECRET, "generated-secret-value");
   assert.equal(result.env.SECRET_MASTER_KEY, "generated-secret-value");
   assert.equal(result.env.LLM_API_KEY, undefined);
+});
+
+test("fills missing AUTH_REGISTRATION_MODE for legacy complete env", () => {
+  const source = [
+    "WEB_PORT=3000",
+    "API_PORT=8787",
+    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000",
+    "AUTH_SESSION_SECRET=existing-session-secret-value",
+    "SECRET_MASTER_KEY=existing-master-secret-value"
+  ].join("\n");
+  const result = ensureDeploymentEnvironment(source, { generateSecrets: false });
+  assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
+  assert.match(result.text, /^AUTH_REGISTRATION_MODE=open$/m);
+  assert.equal(
+    isCompleteDeploymentConfig(parseDeploymentEnvironment(source)),
+    false,
+    "legacy env without registration mode must not look complete"
+  );
+  assert.equal(isCompleteDeploymentConfig(result.env), true);
 });
 
 test("preserves existing secrets and unrelated values", () => {
@@ -138,6 +158,7 @@ test("isCompleteDeploymentConfig rejects placeholders and partial env", () => {
       WEB_PORT: "3000",
       API_PORT: "8787",
       AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+      AUTH_REGISTRATION_MODE: "open",
       AUTH_SESSION_SECRET: "change-me",
       SECRET_MASTER_KEY: "replace-me"
     }),
@@ -148,6 +169,17 @@ test("isCompleteDeploymentConfig rejects placeholders and partial env", () => {
       WEB_PORT: "3000",
       API_PORT: "8787",
       AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+      AUTH_SESSION_SECRET: "existing-session-secret-value",
+      SECRET_MASTER_KEY: "existing-master-secret-value"
+    }),
+    false
+  );
+  assert.equal(
+    isCompleteDeploymentConfig({
+      WEB_PORT: "3000",
+      API_PORT: "8787",
+      AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+      AUTH_REGISTRATION_MODE: "open",
       AUTH_SESSION_SECRET: "existing-session-secret-value",
       SECRET_MASTER_KEY: "existing-master-secret-value"
     }),
