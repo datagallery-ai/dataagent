@@ -5,12 +5,14 @@ import { join } from "node:path";
 
 import { createServer as createApiServer } from "../apps/api/dist/server.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "datafoundry-auth-smoke-"));
 process.env.DATAFOUNDRY_AUTH_MODE = "password";
 process.env.AUTH_SESSION_SECRET = "smoke-session-secret-with-at-least-32-bytes";
 process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1";
 process.env.AUTH_EMAIL_DELIVERY = "test";
+process.env.AUTH_REGISTRATION_MODE = "open";
 process.env.EMBEDDING_API_KEY = "";
 process.env.MASTRA_STORAGE_PATH = join(root, "mastra.sqlite");
 process.env.STORAGE_ROOT_DIR = root;
@@ -32,33 +34,10 @@ const closeServer = async () => {
   });
 };
 
-const cookieJar = [];
-const rememberCookies = (response) => {
-  const setCookie = response.headers.getSetCookie?.() ?? [];
-  for (const cookie of setCookie) {
-    const pair = cookie.split(";", 1)[0];
-    const name = pair.split("=", 1)[0];
-    const index = cookieJar.findIndex((item) => item.startsWith(`${name}=`));
-    if (index >= 0) {
-      cookieJar.splice(index, 1, pair);
-    } else {
-      cookieJar.push(pair);
-    }
-  }
-};
-const cookieHeader = () => cookieJar.join("; ");
-const csrfCookie = () => {
-  const entry = cookieJar.find((item) => item.startsWith("df_csrf="));
-  return entry ? decodeURIComponent(entry.slice("df_csrf=".length)) : undefined;
-};
+const client = createAuthenticatedTestClient({ baseUrl });
 
 const requestJson = async (path, init = {}) => {
-  const headers = {
-    ...(cookieJar.length > 0 ? { Cookie: cookieHeader() } : {}),
-    ...init.headers
-  };
-  const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
-  rememberCookies(response);
+  const response = await client.fetch(path, init);
   const body = await response.json();
   return { body, response };
 };
@@ -140,7 +119,7 @@ try {
 
   const missingCsrf = await requestJson("/api/v1/datasources", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": "" },
     body: JSON.stringify({
       id: "alice-sqlite",
       name: "Alice SQLite",
@@ -148,14 +127,15 @@ try {
       settings: { filePath: join(root, "alice.sqlite") }
     })
   });
+  // Clear empty override so subsequent unsafe calls auto-attach cookie CSRF.
   assert.equal(missingCsrf.response.status, 403);
-  assert.equal(missingCsrf.body.error.code, "FORBIDDEN");
+  assert.equal(missingCsrf.body.error.code, "CSRF_INVALID");
 
-  const csrf = csrfCookie();
+  const csrf = client.cookies.csrfToken();
   assert(csrf, "Expected login to set a readable CSRF cookie");
   const aliceDatasource = await requestJson("/api/v1/datasources", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       id: "alice-sqlite",
       name: "Alice SQLite",
@@ -186,7 +166,7 @@ try {
   const revokedMe = await requestJson("/api/v1/me");
   assert.equal(revokedMe.response.status, 401);
 
-  cookieJar.splice(0, cookieJar.length);
+  client.cookies.clear();
   const relogged = await requestJson("/api/v1/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -195,8 +175,7 @@ try {
   assert.equal(relogged.response.status, 200);
 
   const logout = await requestJson("/api/v1/auth/logout", {
-    method: "POST",
-    headers: { "X-CSRF-Token": csrfCookie() }
+    method: "POST"
   });
   assert.equal(logout.response.status, 200);
 

@@ -88,18 +88,21 @@ X-Workspace-Id: default
 ```text
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000
+AUTH_REGISTRATION_MODE=open
 AUTH_EMAIL_DELIVERY=test
 AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 ```
 
+`AUTH_REGISTRATION_MODE` 在 password 模式下必填（`open` = 开放自助注册，`closed` = 注册返回 `REGISTRATION_CLOSED`）。一键部署默认 `open`，便于正式本地/测试；对公网暴露且不接受公开注册时请设为 `closed`。`GET /api/v1/auth/status` 仅暴露 `registrationEnabled`，不含密钥。
+
 正式态分两种环境（启动命令相同）：
 
-| 环境 | `AUTH_EMAIL_DELIVERY` | `AUTH_PUBLIC_BASE_URL` |
-| --- | --- | --- |
-| 正式测试 | `test`（验证链接打 API 控制台） | 本机或内网地址 |
-| 真实生产 | `smtp`（并配置 `AUTH_SMTP_*`） | 公网 HTTPS 域名 |
+| 环境 | `AUTH_EMAIL_DELIVERY` | `AUTH_PUBLIC_BASE_URL` | 典型 `AUTH_REGISTRATION_MODE` |
+| --- | --- | --- | --- |
+| 正式测试 | `test`（验证链接打 API 控制台） | 回环 HTTP URL | `open` |
+| 真实生产 | `smtp`（并配置 `AUTH_SMTP_*`） | 公网 HTTPS 域名 | 默认 `closed`，除非明确要开放自助注册 |
 
-密码模式提供 `/api/v1/auth/*` 接口，用于注册、登录、邮箱验证、密码重置、退出登录、会话列表和修改密码。非安全方法请求需要携带来自 `df_csrf` Cookie 的 `X-CSRF-Token`。会话 Cookie 名为 `df_session`。
+密码模式提供 `/api/v1/auth/*` 接口，用于注册、登录、邮箱验证、密码重置、退出登录、会话列表和修改密码。非安全方法请求需要携带来自 `df_csrf` Cookie 的 `X-CSRF-Token`。会话 Cookie 名为 `df_session`。Cookie 的 `Path` / `Secure` 跟随 `AUTH_PUBLIC_BASE_URL`（HTTPS ⇒ `Secure`；pathname 前缀成为 cookie path）。非回环 `AUTH_PUBLIC_BASE_URL` 时禁止 `AUTH_EMAIL_DELIVERY=test`。
 
 前端请同步设置 `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password`，并留空 `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL`，让浏览器走同源 Next BFF；上游 API 用 `API_PROXY_TARGET`（写在 `apps/web/.env.local`）。启动命令：`npm run build && npm run build:web && npm run start:api && npm run start:web`。真实生产反代样例见 `deploy/nginx.datafoundry.conf.example`。
 

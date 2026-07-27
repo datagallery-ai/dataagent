@@ -91,7 +91,12 @@ export class GovernedToolFactory {
         const toolCallId = toolCallIdFromOptions(options);
         const toolInput = args[0];
         try {
-          if (this.actionRouter) {
+          // HITL tools (ask_user / submit_plan) must call Mastra suspend directly.
+          // Routing them through ActionRouter records a synthetic success for `undefined`
+          // and breaks the on_interrupt → interaction.requested contract.
+          const useActionRouter = Boolean(this.actionRouter)
+            && !this.externallyResolvedToolNames.has(toolName);
+          if (useActionRouter && this.actionRouter) {
             const segmentId = this.getSegmentId?.() ?? this.segmentId;
             if (!this.runId || !segmentId) {
               throw new Error("GOVERNED_ACTION_ROUTER_SCOPE_REQUIRED");

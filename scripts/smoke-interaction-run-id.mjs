@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const envPath = join(process.cwd(), ".env");
 try {
@@ -26,6 +27,8 @@ if (!process.env.LLM_API_KEY) {
 }
 
 const apiBase = `http://127.0.0.1:${process.env.API_PORT ?? "8787"}`;
+const client = createAuthenticatedTestClient({ baseUrl: apiBase });
+await client.registerAndLogin({ displayName: "Interaction RunId Smoke" });
 const threadId = `thread-run-id-smoke-${Date.now()}`;
 const originalRunId = randomUUID();
 const mismatchedResumeRunId = randomUUID();
@@ -116,7 +119,7 @@ if (runErrors.length > 0) {
 console.log("interaction run-id smoke OK");
 
 async function runAgent(body) {
-  const response = await fetch(`${apiBase}/api/copilotkit`, {
+  const response = await client.fetch("/api/copilotkit", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify({

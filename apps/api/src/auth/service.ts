@@ -10,9 +10,12 @@ import type { PasswordAuthConfig } from "./config.js";
 import { AuthMailer } from "./mailer.js";
 import { createSecretToken, hashPassword, hashToken, verifyPassword } from "./crypto.js";
 
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const WEB_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const TUI_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const EMAIL_VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 30;
+
+export type AuthClientKind = "web" | "tui";
 
 export type AuthUserDto = {
   id: string;
@@ -40,12 +43,20 @@ export class AuthError extends Error {
 
 export class AuthService {
   private readonly mailer: AuthMailer;
+  private readonly dummyPasswordHash = hashPassword(createSecretToken()).then((result) => result.hash);
 
   constructor(
     private readonly metadataStore: MetadataStore,
     private readonly config: PasswordAuthConfig
   ) {
     this.mailer = new AuthMailer(config);
+  }
+
+  getPublicStatus(): { publicBaseUrl: string; registrationEnabled: boolean } {
+    return {
+      publicBaseUrl: this.config.publicBaseUrl,
+      registrationEnabled: this.config.registrationMode === "open"
+    };
   }
 
   async register(input: {
@@ -55,6 +66,9 @@ export class AuthService {
     password: string;
     userAgent?: string | undefined;
   }): Promise<{ user: AuthUserDto; workspace: AuthWorkspaceDto; verificationToken?: string }> {
+    if (this.config.registrationMode !== "open") {
+      throw new AuthError(403, "REGISTRATION_CLOSED", "Registration is closed for this deployment.");
+    }
     const email = normalizeEmail(input.email);
     assertPassword(input.password);
     this.checkRateLimit(`register:ip:${input.ipAddress ?? "unknown"}`, 5, 60 * 60);
@@ -109,12 +123,14 @@ export class AuthService {
   }
 
   async login(input: {
+    client?: AuthClientKind | undefined;
     email: string;
     ipAddress?: string | undefined;
     password: string;
     userAgent?: string | undefined;
   }): Promise<{
     csrfToken: string;
+    expiresAt: string;
     maxAgeSeconds: number;
     sessionToken: string;
     user: AuthUserDto;
@@ -124,8 +140,21 @@ export class AuthService {
     this.checkRateLimit(`login:email:${email}`, 5, 60);
     this.checkRateLimit(`login:ip:${input.ipAddress ?? "unknown"}`, 20, 60);
     const user = this.metadataStore.users.findByEmail({ email });
-    if (!user || user.disabled_at) {
+    const credential = user
+      ? this.metadataStore.userPasswordCredentials.find({ user_id: user.id })
+      : undefined;
+    if (!user || user.disabled_at || !credential) {
+      await verifyPassword(await this.dummyPasswordHash, input.password);
       this.audit("auth.login_failed", { email, ipAddress: input.ipAddress, userAgent: input.userAgent });
+      throw new AuthError(401, "UNAUTHORIZED", "Invalid email or password.");
+    }
+    if (!(await verifyPassword(credential.password_hash, input.password))) {
+      this.audit("auth.login_failed", {
+        email,
+        ipAddress: input.ipAddress,
+        userAgent: input.userAgent,
+        userId: user.id
+      });
       throw new AuthError(401, "UNAUTHORIZED", "Invalid email or password.");
     }
     if (!user.email_verified_at) {
@@ -137,16 +166,8 @@ export class AuthService {
       });
       throw new AuthError(403, "EMAIL_NOT_VERIFIED", "Email verification is required before login.");
     }
-    const credential = this.metadataStore.userPasswordCredentials.find({ user_id: user.id });
-    if (!credential || !(await verifyPassword(credential.password_hash, input.password))) {
-      this.audit("auth.login_failed", {
-        email,
-        ipAddress: input.ipAddress,
-        userAgent: input.userAgent,
-        userId: user.id
-      });
-      throw new AuthError(401, "UNAUTHORIZED", "Invalid email or password.");
-    }
+    const maxAgeSeconds = input.client === "tui" ? TUI_SESSION_TTL_SECONDS : WEB_SESSION_TTL_SECONDS;
+    const expiresAt = new Date(Date.now() + maxAgeSeconds * 1000).toISOString();
     const sessionToken = createSecretToken();
     const csrfToken = createSecretToken();
     const session = this.metadataStore.authSessions.create({
@@ -154,7 +175,7 @@ export class AuthService {
       user_id: user.id,
       token_hash: hashToken(sessionToken, this.config.sessionSecret),
       csrf_token_hash: hashToken(csrfToken, this.config.sessionSecret),
-      expires_at: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString(),
+      expires_at: expiresAt,
       ...(input.ipAddress ? { ip_address: input.ipAddress } : {}),
       ...(input.userAgent ? { user_agent: input.userAgent } : {})
     });
@@ -162,13 +183,14 @@ export class AuthService {
     this.audit("auth.login_succeeded", {
       email,
       ipAddress: input.ipAddress,
-      metadata: { sessionId: session.id },
+      metadata: { sessionId: session.id, client: input.client ?? "web" },
       userAgent: input.userAgent,
       userId: user.id
     });
     return {
       csrfToken,
-      maxAgeSeconds: SESSION_TTL_SECONDS,
+      expiresAt: session.expires_at,
+      maxAgeSeconds,
       sessionToken,
       user: userDto(user),
       workspace: workspaceDto(workspace)
@@ -291,12 +313,33 @@ export class AuthService {
 
   validateCsrf(identity: AuthIdentity, csrfToken: string | undefined): void {
     if (!identity.session || !csrfToken) {
-      throw new AuthError(403, "FORBIDDEN", "CSRF token is required.");
+      throw new AuthError(403, "CSRF_INVALID", "CSRF token is required.");
     }
     const tokenHash = hashToken(csrfToken, this.config.sessionSecret);
     if (tokenHash !== identity.session.csrf_token_hash) {
-      throw new AuthError(403, "FORBIDDEN", "CSRF token is invalid.");
+      throw new AuthError(403, "CSRF_INVALID", "CSRF token is invalid.");
     }
+  }
+
+  rotateCsrf(identity: AuthIdentity): { csrfToken: string; maxAgeSeconds: number } {
+    if (!identity.session) {
+      throw new AuthError(401, "UNAUTHORIZED", "Authentication required.");
+    }
+    const csrfToken = createSecretToken();
+    try {
+      this.metadataStore.authSessions.rotateCsrf({
+        id: identity.session.id,
+        csrf_token_hash: hashToken(csrfToken, this.config.sessionSecret)
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("AUTH_SESSION_CSRF_ROTATE_FAILED:")) {
+        throw new AuthError(401, "UNAUTHORIZED", "Authentication required.");
+      }
+      throw error;
+    }
+    const remainingMs = Date.parse(identity.session.expires_at) - Date.now();
+    const maxAgeSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+    return { csrfToken, maxAgeSeconds };
   }
 
   logout(identity: AuthIdentity): { ok: boolean } {

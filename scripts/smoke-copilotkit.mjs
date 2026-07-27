@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const apiPort = process.env.API_PORT ?? "8798";
 const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
@@ -10,7 +11,12 @@ const child = spawn("npm", ["--workspace", "@datafoundry/api", "run", "dev"], {
     ...process.env,
     API_HOST: "127.0.0.1",
     API_PORT: apiPort,
-    METADATA_DB_PATH: metadataDbPath
+    METADATA_DB_PATH: metadataDbPath,
+    DATAFOUNDRY_AUTH_MODE: "password",
+    AUTH_SESSION_SECRET: process.env.AUTH_SESSION_SECRET ?? "copilotkit-smoke-session-secret-32b!",
+    AUTH_PUBLIC_BASE_URL: process.env.AUTH_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000",
+    AUTH_EMAIL_DELIVERY: process.env.AUTH_EMAIL_DELIVERY ?? "test",
+    AUTH_REGISTRATION_MODE: process.env.AUTH_REGISTRATION_MODE ?? "open"
   },
   stdio: ["ignore", "pipe", "pipe"]
 });
@@ -25,8 +31,10 @@ child.stderr.on("data", (chunk) => {
 
 try {
   await waitForHealth(apiBaseUrl);
+  const client = createAuthenticatedTestClient({ baseUrl: apiBaseUrl });
+  await client.registerAndLogin({ displayName: "CopilotKit Smoke" });
 
-  const optionsResponse = await fetch(`${apiBaseUrl}/api/copilotkit`, {
+  const optionsResponse = await client.fetch("/api/copilotkit", {
     method: "OPTIONS",
     headers: {
       Origin: "http://127.0.0.1:3000",
@@ -38,7 +46,7 @@ try {
     throw new Error(`Unexpected CopilotKit OPTIONS status: ${optionsResponse.status}`);
   }
 
-  const postResponse = await fetch(`${apiBaseUrl}/api/copilotkit`, {
+  const postResponse = await client.fetch("/api/copilotkit", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

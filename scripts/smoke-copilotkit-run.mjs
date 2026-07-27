@@ -6,12 +6,18 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { EventType } from "@ag-ui/core";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "open-data-foundry-copilotkit-run-"));
 const metadataPath = join(root, "metadata.sqlite");
 const mastraStoragePath = join(root, "mastra.sqlite");
 const workspaceRoot = join(root, "workspaces");
 
+process.env.DATAFOUNDRY_AUTH_MODE = "password";
+process.env.AUTH_SESSION_SECRET = "copilotkit-run-session-secret-32b!!!";
+process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
+process.env.AUTH_EMAIL_DELIVERY = "test";
+process.env.AUTH_REGISTRATION_MODE = "open";
 process.env.EMBEDDING_API_KEY = "";
 process.env.LLM_PROVIDER = "openai-compatible";
 process.env.LLM_MODEL = "copilotkit-smoke-model";
@@ -142,7 +148,30 @@ const address = server.address();
 assert(address && typeof address === "object");
 const baseUrl = `http://127.0.0.1:${address.port}`;
 
+const client = createAuthenticatedTestClient({ baseUrl });
+const identity = await client.registerAndLogin({ displayName: "CopilotKit Run Smoke" });
+const { userId } = identity;
+
 try {
+  const demoDbPath = join(root, "api-duckdb-demo.sqlite");
+  const demoDb = new DatabaseSync(demoDbPath);
+  demoDb.exec(`
+    CREATE TABLE orders (id INTEGER, amount REAL);
+    INSERT INTO orders VALUES (1, 10.5), (2, 20);
+  `);
+  demoDb.close();
+  const demoDatasource = await client.fetch("/api/v1/datasources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: "api-duckdb-demo",
+      name: "CopilotKit Smoke Demo",
+      type: "sqlite",
+      settings: { filePath: demoDbPath }
+    })
+  });
+  assert.equal(demoDatasource.status, 201, await demoDatasource.text());
+
   const skillForm = new FormData();
   skillForm.set("file", new Blob([
     "---\n",
@@ -154,12 +183,12 @@ try {
     "---\n",
     "Use this skill to prove Mastra skill tool loading works in the AG-UI runtime.\n"
   ], { type: "text/markdown" }), "SKILL.md");
-  const skillUploadResponse = await fetch(`${baseUrl}/api/v1/skills`, { method: "POST", body: skillForm });
+  const skillUploadResponse = await client.fetch("/api/v1/skills", { method: "POST", body: skillForm });
   assert.equal(skillUploadResponse.status, 201);
   const skillUpload = await skillUploadResponse.json();
   assert.equal(skillUpload.data.validationStatus, "valid");
 
-  const timeoutProfileResponse = await fetch(`${baseUrl}/api/v1/model-profiles`, {
+  const timeoutProfileResponse = await client.fetch("/api/v1/model-profiles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -204,8 +233,8 @@ try {
     "Missing model profile should emit RUN_ERROR"
   );
   assertRunStatusDelta(badModelEvents, "failed");
-  const badModelConversationResponse = await fetch(
-    `${baseUrl}/api/v1/sessions/${badModelThreadId}/conversation?limit=10`
+  const badModelConversationResponse = await client.fetch(
+    `/api/v1/sessions/${badModelThreadId}/conversation?limit=10`
   );
   assert.equal(badModelConversationResponse.status, 200);
   const badModelConversation = await badModelConversationResponse.json();
@@ -270,19 +299,19 @@ try {
   const branchSeedStore = createMetadataStore({ database_path: metadataPath });
   try {
     branchSeedStore.sessions.create({
-      user_id: "dev-user",
+      user_id: userId,
       id: branchParentSessionId,
       title: "CopilotKit branch smoke"
     });
     branchSeedStore.runs.create({
-      user_id: "dev-user",
+      user_id: userId,
       id: branchParentRunId,
       session_id: branchParentSessionId,
       user_input: "请分析订单。",
       status: "completed"
     });
     branchSeedStore.conversationMessages.append({
-      user_id: "dev-user",
+      user_id: userId,
       session_id: branchParentSessionId,
       run_id: branchParentRunId,
       id: `${branchParentRunId}:user`,
@@ -293,7 +322,7 @@ try {
       content: { text: "请分析订单。" }
     });
     branchSeedStore.conversationMessages.append({
-      user_id: "dev-user",
+      user_id: userId,
       session_id: branchParentSessionId,
       run_id: branchParentRunId,
       id: `${branchParentRunId}:assistant`,
@@ -304,13 +333,13 @@ try {
       content: { text: "订单分析已完成。" }
     });
     branchSeedStore.sessions.touchLastMessage({
-      user_id: "dev-user",
+      user_id: userId,
       session_id: branchParentSessionId
     });
   } finally {
     branchSeedStore.close();
   }
-  const branchResponse = await fetch(`${baseUrl}/api/v1/sessions/${branchParentSessionId}/branches`, {
+  const branchResponse = await client.fetch(`/api/v1/sessions/${branchParentSessionId}/branches`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ runId: branchParentRunId })
@@ -421,7 +450,7 @@ try {
 
   const store = createMetadataStore({ database_path: metadataPath });
   try {
-    const persisted = store.runEvents.listByRun({ user_id: "dev-user", run_id: runId });
+    const persisted = store.runEvents.listByRun({ user_id: userId, run_id: runId });
     assert(persisted.length > 0, "DataFoundryAgUiAgent.run should persist AG-UI events");
     const persistedEvents = persisted.map((item) => JSON.parse(item.payload_json));
     assert.equal(persistedEvents[persistedEvents.length - 1]?.type, EventType.RUN_FINISHED);
@@ -477,10 +506,10 @@ try {
 
   const suspendedStore = createMetadataStore({ database_path: metadataPath });
   try {
-    const suspendedRun = suspendedStore.runs.get({ user_id: "dev-user", run_id: suspendedRunId });
+    const suspendedRun = suspendedStore.runs.get({ user_id: userId, run_id: suspendedRunId });
     assert.equal(suspendedRun.status, "suspended");
     const suspendedPersistedEvents = suspendedStore.runEvents
-      .listByRun({ user_id: "dev-user", run_id: suspendedRunId })
+      .listByRun({ user_id: userId, run_id: suspendedRunId })
       .map((item) => JSON.parse(item.payload_json));
     assert.equal(
       suspendedPersistedEvents.some((event) => event.type === EventType.RUN_FINISHED),
@@ -491,7 +520,7 @@ try {
     );
     assertRunStatusDelta(suspendedPersistedEvents, "suspended");
     const suspendedMessages = suspendedStore.conversationMessages.listRecent({
-      user_id: "dev-user",
+      user_id: userId,
       session_id: suspendedThreadId,
       limit: 20
     });
@@ -535,8 +564,8 @@ function writeStreamDone(response, model, finishReason) {
   response.end("data: [DONE]\n\n");
 }
 
-async function runCopilotKitAgent(baseUrl, input) {
-  return readAgUiEventStream(await fetch(`${baseUrl}/api/copilotkit`, {
+async function runCopilotKitAgent(_baseUrl, input) {
+  return readAgUiEventStream(await client.fetch("/api/copilotkit", {
     method: "POST",
     headers: {
       "Accept": "text/event-stream",
@@ -550,8 +579,8 @@ async function runCopilotKitAgent(baseUrl, input) {
   }));
 }
 
-async function connectCopilotKitAgent(baseUrl, threadId) {
-  return readAgUiEventStream(await fetch(`${baseUrl}/api/copilotkit`, {
+async function connectCopilotKitAgent(_baseUrl, threadId) {
+  return readAgUiEventStream(await client.fetch("/api/copilotkit", {
     method: "POST",
     headers: {
       "Accept": "text/event-stream",

@@ -88,18 +88,21 @@ Set `DATAFOUNDRY_AUTH_MODE=password` for cookie-based password authentication. F
 ```text
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000
+AUTH_REGISTRATION_MODE=open
 AUTH_EMAIL_DELIVERY=test
 AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 ```
 
+`AUTH_REGISTRATION_MODE` is required in password mode (`open` = self-register, `closed` = reject register with `REGISTRATION_CLOSED`). Deploy defaults to `open` for formal local/test; set `closed` for internet-facing installs that should not accept public signup. `GET /api/v1/auth/status` exposes `registrationEnabled` without secrets.
+
 Two formal environments share the same start commands:
 
-| Environment | `AUTH_EMAIL_DELIVERY` | `AUTH_PUBLIC_BASE_URL` |
-| --- | --- | --- |
-| Formal test | `test` (links in API console) | Local or private URL |
-| Real production | `smtp` (plus `AUTH_SMTP_*`) | Public HTTPS origin |
+| Environment | `AUTH_EMAIL_DELIVERY` | `AUTH_PUBLIC_BASE_URL` | Typical `AUTH_REGISTRATION_MODE` |
+| --- | --- | --- | --- |
+| Formal test | `test` (links in API console) | Loopback HTTP URL | `open` |
+| Real production | `smtp` (plus `AUTH_SMTP_*`) | Public HTTPS origin | `closed` unless self-signup is intentional |
 
-Password mode adds `/api/v1/auth/*` endpoints for registration, login, email verification, password reset, logout, session listing, and password change. Unsafe requests require `X-CSRF-Token` from the `df_csrf` cookie. The session cookie is `df_session`.
+Password mode adds `/api/v1/auth/*` endpoints for registration, login, email verification, password reset, logout, session listing, and password change. Unsafe requests require `X-CSRF-Token` from the `df_csrf` cookie. The session cookie is `df_session`. Cookie `Path` / `Secure` follow `AUTH_PUBLIC_BASE_URL` (HTTPS ⇒ `Secure`; pathname prefix becomes cookie path). `AUTH_EMAIL_DELIVERY=test` is rejected unless `AUTH_PUBLIC_BASE_URL` is loopback.
 
 Also set `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password` and leave `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL` empty so the browser uses the same-origin Next BFF; point the upstream API with `API_PROXY_TARGET` in `apps/web/.env.local`. Start with `npm run build && npm run build:web && npm run start:api && npm run start:web`. Real-production reverse-proxy sample: `deploy/nginx.datafoundry.conf.example`.
 

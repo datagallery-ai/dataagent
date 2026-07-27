@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import { EventType } from "@ag-ui/client";
 
 import { dacomp6ComplexCases, findDacomp6Case } from "./dacomp6-complex-cases.mjs";
+import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const baseUrl = (process.env.DATAFOUNDRY_BASE_URL ?? "http://127.0.0.1:8787").replace(/\/$/u, "");
+
+const client = createAuthenticatedTestClient({ baseUrl });
+await client.registerAndLogin({ displayName: "DACOMP Smoke" });
 const caseId = process.argv[2] ?? "profit-root-cause";
 
 if (caseId === "--list") {
@@ -54,7 +58,7 @@ console.log(`Open in DataFoundry: http://localhost:3000/data-tasks?thread=${enco
 process.exit(0);
 
 async function runAgent(input) {
-  const response = await fetch(`${baseUrl}/api/copilotkit`, {
+  const response = await client.fetch("/api/copilotkit", {
     method: "POST",
     headers: requestHeaders("text/event-stream"),
     body: JSON.stringify({
@@ -90,8 +94,8 @@ async function runAgent(input) {
 async function waitForTraceSections(sessionId) {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
-    const response = await fetch(
-      `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/trace-dag`,
+    const response = await client.fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/trace-dag`,
       { headers: requestHeaders("application/json") },
     );
     if (response.ok) {
@@ -125,8 +129,6 @@ function parseEventStream(text) {
 function requestHeaders(accept) {
   return {
     Accept: accept,
-    Authorization: "Bearer dev-token",
     "Content-Type": "application/json",
-    "X-Workspace-Id": "default",
   };
 }
