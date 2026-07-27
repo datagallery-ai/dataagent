@@ -96,7 +96,9 @@ ACTOR_LOOP:
 
             ## 执行通道
 
-            - **语义**：`semantic_retrieve` → `read` tool-results → `write` `step1_0_table_schema.json`。
+            <必须>step1_0 执行顺序：**先取 ClickHouse 表清单（`system.tables`），再发 `semantic_retrieve`，顺序不可颠倒**。表名以 CH 清单为准，**禁止**在获取清单前发起语义查询，**禁止**自行猜测表名、**禁止**发自由关键词式语义查询。</必须>
+
+            - **语义**：`semantic_retrieve` → `read` tool-results → `write` `step1_0_table_schema.json`（<必须>`columns[].description` 必须逐字原样取自 `semantic_retrieve` 返回，禁止摘要、截断、去括号、删枚举；见 `scripts/step1_0_sampling_plan.md` 落盘环节的 description 保真规则</必须>）。
             - **ClickHouse**：见硬约束 7；过程表 `step1_temp_*`；交付表与源表同名，在 output_database 内。
             - **查表结构（仅缺信息时）**：`SELECT … FROM system.tables` / `system.columns`（优先一条批查）；不要用 `DESCRIBE`。
             - **Bash**：仅本地文件操作（例如：`ls`、解析超大 tool-results、确认 JSON 已落盘）。见硬约束 7、10。

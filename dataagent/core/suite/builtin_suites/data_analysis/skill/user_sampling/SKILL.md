@@ -32,6 +32,8 @@ step1_0 产出的 schema 每表 `columns` 非空（表名齐 ≠ 结构齐），
 
 ## 步骤一览
 
+<必须>step1_0 执行顺序：**先取 ClickHouse 表清单（`system.tables`），再发 `semantic_retrieve`，顺序不可颠倒**。表名以 CH 清单为准，**禁止**在获取清单前发起语义查询，**禁止**自行猜测表名、**禁止**发自由关键词式语义查询。</必须>
+
 <必须>所有 ClickHouse SQL **仅**通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
 
 硬约束见 `../../subagents/sampler.yaml` 的 ## 硬约束 小节。
