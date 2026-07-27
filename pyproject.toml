@@ -1,9 +1,9 @@
 [build-system]
-requires = ["setuptools>=67.6.1,<81", "wheel", "Cython>=3.0.0"]
+requires = ["setuptools>=67.6.1,<81", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dataagent"
+name = "datagallery-dataagent"
 version = "0.1.0"
 description = "DataAgent - A powerful multi-modal Data Agent workflow template framework"
 readme = "README.md"
@@ -39,12 +39,12 @@ namespaces = true
 [project.optional-dependencies]
 
 all = [
-    "dataagent[server]",
-    "dataagent[nl2sql]",
-    "dataagent[data-analysis]",
-    "dataagent[a2a-server]",
-    "dataagent[trajectory_graph]",
-    "dataagent[tool]",
+    "datagallery-dataagent[server]",
+    "datagallery-dataagent[nl2sql]",
+    "datagallery-dataagent[data-analysis]",
+    "datagallery-dataagent[a2a-server]",
+    "datagallery-dataagent[trajectory_graph]",
+    "datagallery-dataagent[tool]",
 ]
 
 data-analysis = [
@@ -77,7 +77,7 @@ nl2sql = [
     "sqlparse>=0.5.5"
 ]
 test = [
-    "dataagent[server]",
+    "datagallery-dataagent[server]",
     "setuptools>=67.6.1,<81",
     "pytest>=8.4.2",
     "pytest-cov>=4.0.0",

@@ -11,7 +11,7 @@
 # limitations under the License.
 # ============================================================================
 
-"""Integration test: verify Qwen prompt caching via httpx LLMClient.
+"""Integration: live Qwen prompt caching via httpx LLMClient (DashScope).
 
 Qwen prompt caching requires:
   - system message in content list format with cache_control: {"type": "ephemeral"}
@@ -25,7 +25,7 @@ Env vars (either QWEN_PLUS_* or OPENAI_* as fallback):
   - QWEN_PLUS_API_KEY / OPENAI_API_KEY
   - QWEN_PLUS_BASE_URL / OPENAI_BASE_URL
 
-Run:  QWEN_PLUS_API_KEY=... python -m pytest tests/ut/llm_manager/test_qwen_cache_reuse.py -xvs
+Run:  QWEN_PLUS_API_KEY=... python -m pytest tests/integration/llm/test_qwen_cache_reuse.py -xvs
 """
 
 from __future__ import annotations

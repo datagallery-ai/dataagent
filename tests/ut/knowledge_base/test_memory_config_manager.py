@@ -35,31 +35,27 @@ def test_memory_factory_cache_key_differs_by_config_manager_instance():
     assert key_a != key_b
 
 
+def _disabled_memory_cm(*, index_prefix: str, path_prefix: str) -> ConfigManager:
+    """Build a ConfigManager with MEMORY disabled (no ES) for factory cache UTs."""
+    cm = ConfigManager()
+    cm.set("MEMORY.enabled", False)
+    cm.set("MEMORY.index_prefix", index_prefix)
+    cm.set("MEMORY.path_prefix", path_prefix)
+    return cm
+
+
 def test_memory_factory_returns_distinct_instances_for_different_config_managers(monkeypatch):
     """Two ConfigManagers with different MEMORY settings must not return the same Memory object."""
     MemoryFactory.clear_all_memories()
 
-    cm_a = ConfigManager()
-    cm_a._config = {
-        "MEMORY": {
-            "enabled": False,
-            "index_prefix": "a",
-            "path_prefix": "/tmp/a",
-        }
-    }
-    cm_b = ConfigManager()
-    cm_b._config = {
-        "MEMORY": {
-            "enabled": False,
-            "index_prefix": "b",
-            "path_prefix": "/tmp/b",
-        }
-    }
+    cm_a = _disabled_memory_cm(index_prefix="a", path_prefix="/tmp/a")
+    cm_b = _disabled_memory_cm(index_prefix="b", path_prefix="/tmp/b")
 
     mem_a = MemoryFactory.get_memory(rag_id="same_rag", config_manager=cm_a)
     mem_b = MemoryFactory.get_memory(rag_id="same_rag", config_manager=cm_b)
     assert mem_a is not mem_b
-    assert mem_a.index_prefix != mem_b.index_prefix
+    # rag_id becomes Memory.index_prefix; config differentiation shows up on path_prefix.
+    assert mem_a.path_prefix != mem_b.path_prefix
 
     MemoryFactory.clear_all_memories()
 
@@ -68,25 +64,11 @@ def test_clear_user_memory_removes_instances_by_rag_id():
     """clear_user_memory must delete tuple-keyed cache entries matching rag_id."""
     MemoryFactory.clear_all_memories()
 
-    cm = ConfigManager()
-    cm._config = {
-        "MEMORY": {
-            "enabled": False,
-            "index_prefix": "rag_a",
-            "path_prefix": "/tmp/a",
-        }
-    }
+    cm = _disabled_memory_cm(index_prefix="rag_a", path_prefix="/tmp/a")
     mem_a = MemoryFactory.get_memory(rag_id="user_scope_1", config_manager=cm)
     assert mem_a is not None
 
-    cm_other = ConfigManager()
-    cm_other._config = {
-        "MEMORY": {
-            "enabled": False,
-            "index_prefix": "rag_b",
-            "path_prefix": "/tmp/b",
-        }
-    }
+    cm_other = _disabled_memory_cm(index_prefix="rag_b", path_prefix="/tmp/b")
     mem_b = MemoryFactory.get_memory(rag_id="other_scope", config_manager=cm_other)
     assert mem_b is not None
 

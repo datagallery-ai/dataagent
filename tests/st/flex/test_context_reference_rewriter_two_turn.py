@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Integration tests: context_reference_rewriter via FlexAgent.chat() two-turn flow."""
+"""ST: context_reference_rewriter via FlexAgent.chat() two-turn flow (Fake LLM, no live API)."""
 
 from __future__ import annotations
 

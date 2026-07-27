@@ -119,8 +119,20 @@ def _elasticsearch_reachable() -> bool:
         return False
 
 
+# ES-backed memory UT modules (storage needs a reachable Elasticsearch).
+# Offline modules such as test_memory_config_manager.py are intentionally excluded.
+_ES_REQUIRED_MEMORY_UT_FILES = (
+    "knowledge_base/test_memory_kb.py",
+    "knowledge_base/test_memory_metadata.py",
+)
+
+
 def pytest_collection_modifyitems(config, items):
-    """无 Elasticsearch 时跳过 memory 集成用例（LLM 已 mock，存储仍需真实 ES/PG）。"""
+    """无 Elasticsearch 时跳过需真实 ES 的 memory UT（LLM 已 mock，KB/metadata 存储仍需 ES）。
+
+    ``MEMORY_UT_RUN_WITHOUT_ES=1`` 仅关闭本 hook 的可达性检查，不会让用例在无 ES
+    时变成可离线运行；``test_memory_config_manager`` 等纯逻辑用例不受此 hook 影响。
+    """
     if os.environ.get("MEMORY_UT_RUN_WITHOUT_ES", "").lower() in ("1", "true", "yes"):
         return
     if _elasticsearch_reachable():
@@ -128,10 +140,10 @@ def pytest_collection_modifyitems(config, items):
     skip = pytest.mark.skip(
         reason=(
             "Elasticsearch not reachable; start ES or set MEMORY_UT_ELASTICSEARCH_URL. "
-            "MEMORY_UT_RUN_WITHOUT_ES=1 disables this skip (tests still need ES)."
+            "MEMORY_UT_RUN_WITHOUT_ES=1 disables this skip (ES-backed tests still need ES)."
         )
     )
     for item in items:
         nid = item.nodeid.replace("\\", "/")
-        if "knowledge_base/test_memory_" in nid:
+        if any(path in nid for path in _ES_REQUIRED_MEMORY_UT_FILES):
             item.add_marker(skip)

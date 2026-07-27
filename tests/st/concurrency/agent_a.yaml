@@ -31,5 +31,5 @@ ACTOR_LOOP:
 
 TOOLS:
   local_functions:
-    - module: "tests.e2e.concurrency.slow_tools"
+    - module: "tests.st.concurrency.slow_tools"
       function: "slow_tool_agent_a"

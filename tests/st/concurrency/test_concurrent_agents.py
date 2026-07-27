@@ -10,11 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""E2E concurrency test: two agents with different YAML configs run concurrently in the same process.
+"""ST concurrency: two agents with different YAML configs run concurrently in the same process.
 
 Verifies that per-Agent ToolManager isolation prevents cross-Agent tool leakage.
-Each agent has its own exclusive tool with different sleep durations (15s sync + 30s async),
-so concurrent execution completes in ~max(sleeps) vs serial sum, proving they don't block each other.
+Uses a Fake LLM (no live API). Each agent has its own exclusive tool with different sleep
+durations (15s sync + 30s async), so concurrent execution completes in ~max(sleeps) vs
+serial sum, proving they don't block each other.
 """
 
 from __future__ import annotations
