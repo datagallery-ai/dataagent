@@ -20,7 +20,7 @@ const stamp = Date.now();
 const storageDir = `storage/verify-tools/task-${stamp}`;
 const databasePath = `${storageDir}/state.sqlite`;
 const threadId = `verify-thread-${stamp}`;
-const resourceId = "dev-user";
+const resourceId = userId;
 
 function makeExecCtx(toolName, mastraCtx) {
   const customChunks = [];

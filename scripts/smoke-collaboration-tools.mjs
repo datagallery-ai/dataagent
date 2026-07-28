@@ -12,10 +12,15 @@ import {
 } from "../apps/api/dist/interaction-runtime-adapter.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { rmSync } from "node:fs";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const storageDir = `storage/collaboration-smoke/${Date.now()}`;
 const store = createMetadataStore({ database_path: `${storageDir}/metadata.sqlite` });
-const userId = "dev-user";
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
+
 const sessionId = "collaboration-session";
 const runId = "collaboration-run";
 

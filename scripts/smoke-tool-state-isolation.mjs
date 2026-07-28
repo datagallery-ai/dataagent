@@ -10,6 +10,7 @@ import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const stamp = Date.now();
 const storageDir = `storage/tool-state-smoke/${stamp}`;
@@ -17,9 +18,13 @@ const metadataPath = `${storageDir}/metadata.sqlite`;
 const sqlitePathA = `${storageDir}/orders-a.sqlite`;
 const sqlitePathB = `${storageDir}/orders-b.sqlite`;
 const store = createMetadataStore({ database_path: metadataPath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const gateway = new LocalDataGateway(store);
 
-const user_id = "dev-user";
+const user_id = userId;
 const session_id = "tool-state-session";
 const run_id = "tool-state-run";
 const datasource_a = "ds-orders-a";

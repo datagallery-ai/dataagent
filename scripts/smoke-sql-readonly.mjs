@@ -2,6 +2,7 @@ import { LocalDataGateway } from "../packages/data-gateway/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const stamp = Date.now();
 const root = `storage/sql-smoke/${stamp}`;
@@ -11,8 +12,12 @@ mkdirSync(root, { recursive: true });
 createSqliteFixture(sqlitePath);
 
 const store = createMetadataStore({ database_path: metadataPath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const gateway = new LocalDataGateway(store);
-const user_id = "dev-user";
+const user_id = userId;
 const session_id = "sql-smoke-session";
 const run_id = "sql-smoke-run";
 

@@ -35,41 +35,26 @@ File downloads and artifact downloads return binary responses; upload endpoints 
 
 ## Identity and auth
 
-Local development supports these headers:
+Only password session cookies and CSRF are supported. Business requests need the `df_session` cookie from login; unsafe methods also need `X-CSRF-Token` from the `df_csrf` cookie:
 
 ```text
-Authorization: Bearer <dev_token>
-X-Dev-Token: <dev_token>
-X-Workspace-Id: default
-```
-
-When headers are omitted, the backend uses the development default identity and default workspace. Web v1 does not expose workspace switching; use `default` unless you are building an integration that owns workspace routing.
-
-For local user isolation, send the same identity headers to both `/api/v1/*` REST calls and `POST /api/copilotkit`. If the two channels use different headers, sessions, resources, files, artifacts, and run events can appear under different users.
-
-Password mode uses session cookies and CSRF:
-
-```text
-DATAFOUNDRY_AUTH_MODE=password
 X-CSRF-Token: <token_from_df_csrf_cookie>
 ```
 
-Use `DATAFOUNDRY_AUTH_MODE=dev` only for contributor hot-reload. Formal test and real production default to `password` unless overridden.
+Web v1 does not expose workspace switching; custom integrations should use the workspace bound to the login session unless they manage workspace routing themselves. `/api/v1/*` and `POST /api/copilotkit` must share the same session, or sessions, resources, files, artifacts, and run events can appear under different users.
 
 ## Identity endpoints
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/me` | Read the current user and workspace. |
-| GET | `/api/v1/dev/identities` | List local development users. Disabled in production by default. |
-| POST | `/api/v1/dev/users` | Create or update a local development user. Disabled in production by default. |
 
 ## Password auth endpoints
 
-These endpoints are enabled when password auth mode is active:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| GET | `/api/v1/auth/status` | Read public auth status (`registrationEnabled`; no secrets). |
 | POST | `/api/v1/auth/register` | Create a user account and verification token. |
 | POST | `/api/v1/auth/login` | Sign in and set `df_session` and `df_csrf` cookies. |
 | POST | `/api/v1/auth/verify-email` | Verify an email token. |

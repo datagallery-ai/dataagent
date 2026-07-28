@@ -9,8 +9,7 @@
 | 可直接试用 | 本地启动后，配好模型 Key，用内置 DTC Growth Review 可以跑通。 |
 | 需要配置 | 功能入口已接入，需要你提供模型 Key、数据库凭据、文件、MCP Server 或 Skill package。 |
 | 受 capability 控制 | 读取 `GET /api/v1/capabilities`，按返回值启用或隐藏相关入口。 |
-| 本地开发边界 | 本地默认身份和默认 workspace 可用；Web 可切换本地开发用户用于隔离验证。 |
-| 密码认证边界 | 内置 password 模式覆盖账号注册、登录、重置、会话 Cookie 和 CSRF；生产部署仍需 Secret 管理、审计导出、访问控制策略和运维监控。 |
+| 密码认证边界 | 基于 Cookie 的密码会话覆盖账号注册、登录、重置和 CSRF；生产部署仍需 Secret 管理、审计导出、访问控制策略和运维监控。 |
 
 ## 总览
 
@@ -31,7 +30,7 @@
 | Checkpoint 分支 | 可直接试用 | 无分支控件 | 可直接试用 | 从早期问题重问，或 `POST /api/v1/sessions/:id/branches`。 |
 | 证据引用 | 可直接试用 | 无选区 UI | 可直接试用 | 引用完整产出或选区，查看 `evidenceRefs` 诊断。 |
 | Data Link 图 | 需要配置 | 无图形视图 | 需要配置 | 配置兼容的 Data Link MCP Server，再打开「Data Link」。 |
-| 用户身份 | 本地开发用户切换和 password auth 界面 | 使用后端身份 | 可直接试用 | `GET /api/v1/me`、`/api/v1/dev/*`、`/api/v1/auth/*`。 |
+| 用户身份 | 密码登录 / 注册界面 | 使用后端会话身份 | 可直接试用 | `GET /api/v1/me`、`/api/v1/auth/*`。 |
 | 工作区文件 | 可上传、查看、下载、删除、复用 | 通过 run_config 使用已启用文件 | 受 capability 控制 | `files`、`GET/POST /api/v1/files`、`POST /api/v1/files/:id/promote`。 |
 | 对话附件 | 可直接试用 | 不提供附件上传命令 | 受 capability 控制 | `chat.fileUpload`，`POST /api/v1/chat/uploads`。 |
 | 图片输入 | 输入组件受开关控制 | 不提供图片输入命令 | 受 capability 控制 | `chat.imageInput`。 |
@@ -115,7 +114,7 @@ TUI 适合远程服务器和终端工作流：
 - 客户端不能把数据库密码、模型 API Key、MCP Token 放进 Agent run body。
 - 读接口不返回明文凭据。
 - SQL 执行经过只读限制、行数限制、超时和审计。
-- 本地开发身份只用于试用和开发集成。
-- password auth 负责用户会话；生产部署仍需 Secret 管理、审计导出、访问控制策略和运维监控。
+- 所有产品路径都需要已认证的密码会话；不存在匿名或开发 token 身份。
+- 生产部署仍需 Secret 管理、审计导出、访问控制策略和运维监控。
 
 继续阅读：[安全说明](security.md)。

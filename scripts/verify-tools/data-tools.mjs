@@ -11,6 +11,7 @@ import {
 } from "../../packages/agent-runtime/dist/index.js";
 import { LocalDataGateway } from "../../packages/data-gateway/dist/index.js";
 import { createMetadataStore } from "../../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "../lib/metadata-test-identity.mjs";
 
 const envPath = join(process.cwd(), ".env");
 try {
@@ -33,9 +34,13 @@ const metadataPath = `storage/verify-tools/data-${stamp}/metadata.sqlite`;
 mkdirSync(`storage/verify-tools/data-${stamp}`, { recursive: true });
 
 const store = createMetadataStore({ database_path: metadataPath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const gateway = new LocalDataGateway(store);
 
-const user_id = "dev-user";
+const user_id = userId;
 const session_id = `verify-session-${stamp}`;
 const run_id = `verify-run-${stamp}`;
 const datasource_id = "api-duckdb-demo";

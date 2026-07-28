@@ -9,8 +9,7 @@ Status is based on current code:
 | Ready to try | After local startup, with a model key configured, the built-in DTC Growth Review runs end to end. |
 | Requires configuration | Feature entry exists but needs a model key, database credentials, files, MCP server, or Skill package. |
 | Capability-controlled | Read `GET /api/v1/capabilities` and enable or hide related entry points from the response. |
-| Local development boundary | Default local identity and default workspace work out of the box; Web can switch local dev users for isolation testing. |
-| Password auth boundary | Built-in password mode covers account registration, login, reset, session cookies, and CSRF. Production deployments still need secret management, audit export, access control policy, and operations monitoring. |
+| Password auth boundary | Cookie-based password sessions cover account registration, login, reset, and CSRF. Production deployments still need secret management, audit export, access control policy, and operations monitoring. |
 
 ## Overview
 
@@ -31,7 +30,7 @@ Status is based on current code:
 | Checkpoint branches | Ready to try | No branch controls | Ready to try | Re-ask from an earlier turn or `POST /api/v1/sessions/:id/branches`. |
 | Evidence references | Ready to try | No selection UI | Ready to try | Reference an output or selection and inspect `evidenceRefs` diagnostics. |
 | Data Link graph | Requires configuration | No graph view | Requires configuration | Configure a compatible Data Link MCP server, then open **Data Link**. |
-| User identity | Local dev switcher and password auth screens | Uses backend identity | Ready to try | `GET /api/v1/me`, `/api/v1/dev/*`, `/api/v1/auth/*`. |
+| User identity | Password login / register screens | Uses backend session identity | Ready to try | `GET /api/v1/me`, `/api/v1/auth/*`. |
 | Workspace files | Upload, view, download, delete, reuse | Use enabled files via run_config | Capability-controlled | `files`, `GET/POST /api/v1/files`, `POST /api/v1/files/:id/promote`. |
 | Chat attachments | Ready to try | No attachment upload command | Capability-controlled | `chat.fileUpload`, `POST /api/v1/chat/uploads`. |
 | Image input | Input controlled by switch | No image input command | Capability-controlled | `chat.imageInput`. |
@@ -115,7 +114,7 @@ Integrators should manage resources through the configuration API and start anal
 - Clients must not put database passwords, model API keys, or MCP tokens in the agent run body.
 - Read APIs do not return plaintext credentials.
 - SQL execution applies read-only limits, row limits, timeouts, and audit.
-- Local development identity is for trials and integration development only.
-- Password auth handles user sessions; production deployment still needs secret management, audit export, access control policy, and operations monitoring.
+- All product paths require an authenticated password session; there is no anonymous or development-token identity.
+- Production deployment still needs secret management, audit export, access control policy, and operations monitoring.
 
 Continue with [Security](security.md).

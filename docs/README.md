@@ -32,7 +32,7 @@ Engineering contracts, historical design notes, and internal documentation with 
 
 - Public docs must not link to internal documentation areas.
 - When adding external-facing capabilities, update both `en/` and `zh/` documentation.
-- Example credentials must use placeholder values such as `replace-with-your-key` or `<dev_token>`.
+- Example credentials must use placeholder values such as `replace-with-your-key`.
 - Do not retain source-sensitive narrative.
 - After doc changes, run `npm run docs:build` and `npm run smoke:docs`.
 

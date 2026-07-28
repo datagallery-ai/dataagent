@@ -11,8 +11,6 @@ import type {
   DatasourceSchemaDto,
   DatasourceTablePreviewDto,
   DatasourceTypeDto,
-  DevIdentitiesResponseDto,
-  DevIdentityUser,
   FileAssetRefDto,
   JobDto,
   KnowledgeBaseDto,
@@ -34,14 +32,11 @@ import type {
 } from "./types";
 import { ConfigApiError as ConfigApiErrorClass } from "./types";
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
-const DEFAULT_WORKSPACE_ID = "default";
 
 export type ConfigApiIdentity = {
   userId: string;
   displayName?: string;
   email?: string;
-  devToken: string;
 };
 
 let currentIdentity: ConfigApiIdentity | null = null;
@@ -55,49 +50,23 @@ export function clearConfigApiIdentity(): void {
 }
 
 export function configApiIdentityHeaders(): Record<string, string> {
-  if (isPasswordAuthMode()) {
-    return {};
-  }
-  if (!currentIdentity?.devToken) {
-    return {};
-  }
-  return {
-    Authorization: `Bearer ${currentIdentity.devToken}`,
-    "X-Workspace-Id": DEFAULT_WORKSPACE_ID,
-  };
+  return {};
 }
 
 export function getConfigApiBaseUrl(): string {
-  if (isPasswordAuthMode()) {
-    const configured = process.env.NEXT_PUBLIC_CONFIG_API_URL;
-    if (configured !== undefined) {
-      return configured.replace(/\/$/u, "");
-    }
-    return "";
+  const configured = process.env.NEXT_PUBLIC_CONFIG_API_URL;
+  if (configured !== undefined) {
+    return configured.replace(/\/$/u, "");
   }
-  return (
-    process.env.NEXT_PUBLIC_CONFIG_API_URL ??
-    process.env.NEXT_PUBLIC_AGENT_RUNTIME_URL?.replace(/\/api\/copilotkit\/?$/u, "") ??
-    DEFAULT_BASE_URL
-  ).replace(/\/$/u, "");
-}
-
-export function isPasswordAuthMode(): boolean {
-  return process.env.NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE === "password";
+  return "";
 }
 
 export function getAgentRuntimeUrl(): string {
-  if (isPasswordAuthMode()) {
-    return "/api/copilotkit";
-  }
-  return (
-    process.env.NEXT_PUBLIC_AGENT_RUNTIME_URL ??
-    `${DEFAULT_BASE_URL}/api/copilotkit`
-  );
+  return "/api/copilotkit";
 }
 
 function csrfHeader(method: string | undefined): Record<string, string> {
-  if (!isPasswordAuthMode() || !isUnsafeMethod(method)) {
+  if (!isUnsafeMethod(method)) {
     return {};
   }
   const token = csrfCookie();
@@ -145,7 +114,7 @@ async function requestEnvelope<T>(
   const identityHeaders = configApiIdentityHeaders();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
-    ...(isPasswordAuthMode() ? { credentials: "same-origin" as RequestCredentials } : {}),
+    credentials: "same-origin",
     headers: {
       Accept: "application/json",
       ...identityHeaders,
@@ -170,7 +139,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   const baseUrl = getConfigApiBaseUrl();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
-    ...(isPasswordAuthMode() ? { credentials: "same-origin" as RequestCredentials } : {}),
+    credentials: "same-origin",
     headers: {
       ...configApiIdentityHeaders(),
       ...csrfHeader(init?.method),
@@ -252,15 +221,8 @@ export const configApi = {
     return requestEnvelope<MeResponseDto>("/api/v1/me");
   },
 
-  getDevIdentities(): Promise<DevIdentitiesResponseDto> {
-    return requestEnvelope<DevIdentitiesResponseDto>("/api/v1/dev/identities");
-  },
-
-  createDevUser(body: { id?: string; email?: string; displayName?: string }): Promise<{ user: DevIdentityUser }> {
-    return requestEnvelope<{ user: DevIdentityUser }>("/api/v1/dev/users", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+  getAuthStatus(): Promise<{ publicBaseUrl: string; registrationEnabled: boolean }> {
+    return requestEnvelope<{ publicBaseUrl: string; registrationEnabled: boolean }>("/api/v1/auth/status");
   },
 
   getCapabilities(): Promise<BackendCapabilitiesResponse> {

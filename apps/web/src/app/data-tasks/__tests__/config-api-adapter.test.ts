@@ -20,7 +20,8 @@ afterEach(() => {
 });
 
 describe("config api adapter", () => {
-  it("adds current dev identity headers to REST requests", async () => {
+  it("does not add development auth headers to REST requests", async () => {
+    process.env.NEXT_PUBLIC_CONFIG_API_URL = "";
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: { "chat.fileUpload": true },
@@ -30,25 +31,25 @@ describe("config api adapter", () => {
       userId: "tenant-user",
       displayName: "Tenant User",
       email: "tenant@example.com",
-      devToken: "tenant-token",
     });
 
     await configApi.getCapabilities();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:8787/api/v1/capabilities",
+      "/api/v1/capabilities",
       expect.objectContaining({
+        credentials: "same-origin",
         headers: expect.objectContaining({
           Accept: "application/json",
-          Authorization: "Bearer tenant-token",
-          "X-Workspace-Id": "default",
         }),
       }),
     );
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toMatchObject({
+      Authorization: expect.anything(),
+    });
   });
 
-  it("uses cookie credentials and csrf headers in password auth mode", async () => {
-    process.env.NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE = "password";
+  it("uses cookie credentials and csrf headers", async () => {
     process.env.NEXT_PUBLIC_CONFIG_API_URL = "";
     vi.stubGlobal("document", { cookie: "df_csrf=csrf-token" });
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
@@ -60,7 +61,6 @@ describe("config api adapter", () => {
       userId: "tenant-user",
       displayName: "Tenant User",
       email: "tenant@example.com",
-      devToken: "tenant-token",
     });
 
     await configApi.deleteDatasource("db-1");
@@ -75,9 +75,6 @@ describe("config api adapter", () => {
         }),
       }),
     );
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toMatchObject({
-      Authorization: "Bearer tenant-token",
-    });
   });
 
   it("maps datasource dto into workspace item settings", () => {

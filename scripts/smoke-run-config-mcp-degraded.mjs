@@ -9,13 +9,14 @@ process.env.LLM_API_KEY = "mcp-smoke-key";
 
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { resolveRunConfig } from "../apps/api/dist/run-config-resolver.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "mcp-degraded-"));
 const store = createMetadataStore({ database_path: join(root, "m.sqlite") });
-store.users.upsertDevUser({ id: "dev-user", email: "dev@local", display_name: "dev", dev_token: "dev-token" });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
 
-const userId = "dev-user";
-const workspaceId = "default";
 
 try {
   store.configResources.upsert({

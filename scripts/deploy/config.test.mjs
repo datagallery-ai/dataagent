@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  assertNativeAuthPublicBaseUrl,
+  assertNativeBindHosts,
   ensureDeploymentEnvironment,
   isCompleteDeploymentConfig,
   parseDeploymentEnvironment,
@@ -15,12 +17,43 @@ import {
 
 test("creates safe defaults without model settings", () => {
   const result = ensureDeploymentEnvironment("", { randomSecret: () => "generated-secret-value" });
+  assert.equal(result.env.WEB_HOST, "127.0.0.1");
+  assert.equal(result.env.API_HOST, "127.0.0.1");
   assert.equal(result.env.WEB_PORT, "3000");
   assert.equal(result.env.API_PORT, "8787");
+  assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "http://127.0.0.1:3000");
   assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
+  assert.equal(result.env.AUTH_EMAIL_DELIVERY, "test");
   assert.equal(result.env.AUTH_SESSION_SECRET, "generated-secret-value");
   assert.equal(result.env.SECRET_MASTER_KEY, "generated-secret-value");
   assert.equal(result.env.LLM_API_KEY, undefined);
+  assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
+  assert.doesNotMatch(result.text, /DATAFOUNDRY_AUTH_MODE|NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE/);
+  assert.doesNotMatch(result.text, /DATALINK_/);
+});
+
+test("strips legacy DATAFOUNDRY_AUTH_MODE from upgraded env text", () => {
+  const source = [
+    "WEB_PORT=3000",
+    "API_PORT=8787",
+    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000",
+    "AUTH_SESSION_SECRET=existing-session-secret-value",
+    "SECRET_MASTER_KEY=existing-master-secret-value",
+    "AUTH_REGISTRATION_MODE=open",
+    "DATAFOUNDRY_AUTH_MODE=password",
+    "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password",
+    "CUSTOM_VALUE=keep-me"
+  ].join("\n");
+  const result = ensureDeploymentEnvironment(source, { generateSecrets: false });
+  assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
+  assert.equal(result.env.NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE, undefined);
+  assert.equal(result.env.CUSTOM_VALUE, "keep-me");
+  assert.doesNotMatch(result.text, /DATAFOUNDRY_AUTH_MODE|NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE/);
+  assert.match(result.text, /^CUSTOM_VALUE=keep-me$/m);
+  assert.deepEqual(result.removedKeys.sort(), [
+    "DATAFOUNDRY_AUTH_MODE",
+    "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE"
+  ]);
 });
 
 test("fills missing AUTH_REGISTRATION_MODE for legacy complete env", () => {
@@ -52,13 +85,32 @@ test("preserves existing secrets and unrelated values", () => {
 
 test("renders same-origin Web BFF configuration", () => {
   const text = renderWebEnvironment({
-    DATAFOUNDRY_AUTH_MODE: "password",
     API_HOST: "127.0.0.1",
     API_PORT: "8877"
   });
   assert.match(text, /NEXT_PUBLIC_AGENT_RUNTIME_URL=$/m);
   assert.match(text, /NEXT_PUBLIC_CONFIG_API_URL=$/m);
   assert.match(text, /API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8877/);
+  assert.doesNotMatch(text, /NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE/);
+});
+
+test("rejects non-loopback HTTP public URLs and wildcard bind hosts", () => {
+  assert.throws(
+    () => assertNativeAuthPublicBaseUrl("http://example.com"),
+    /loopback|SSH|HTTPS/i
+  );
+  assert.doesNotThrow(() => assertNativeAuthPublicBaseUrl("http://127.0.0.1:3100"));
+  assert.doesNotThrow(() => assertNativeAuthPublicBaseUrl("https://prod.example.com"));
+  assert.throws(() => assertNativeBindHosts({ WEB_HOST: "0.0.0.0" }), /WEB_HOST/);
+  assert.throws(() => assertNativeBindHosts({ API_HOST: "::" }), /API_HOST/);
+  assert.doesNotThrow(() => assertNativeBindHosts({ WEB_HOST: "127.0.0.1", API_HOST: "127.0.0.1" }));
+});
+
+test("generates AUTH_PUBLIC_BASE_URL for a custom Web port", () => {
+  const result = ensureDeploymentEnvironment("WEB_PORT=3100\n", {
+    generateSecrets: false
+  });
+  assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "http://127.0.0.1:3100");
 });
 
 test("reconfigure creates a backup and atomically writes both files", async () => {

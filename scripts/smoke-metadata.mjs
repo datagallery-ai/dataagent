@@ -3,12 +3,17 @@ import {
   createMetadataStore
 } from "../packages/metadata/dist/index.js";
 import { EventType } from "@ag-ui/core";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const databasePath = `storage/metadata/metadata-smoke-${Date.now()}.sqlite`;
 const store = createMetadataStore({ database_path: databasePath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 
 try {
-  const userId = "dev-user";
+  
   const sessionId = "session-smoke";
   const runId = "run-smoke";
 
@@ -86,13 +91,10 @@ try {
     throw new Error("Expected user-scoped replay to hide another user's run events");
   }
 
-  const otherUserId = "metadata-smoke-other-user";
-  store.users.upsertDevUser({
-    id: otherUserId,
-    email: "metadata-smoke-other@example.com",
-    display_name: "Metadata Smoke Other User",
-    dev_token: "metadata-smoke-other-token"
+  const otherIdentity = createVerifiedTestIdentity(store, {
+    email: "metadata-smoke-other@example.test",
   });
+  const otherUserId = otherIdentity.userId;
   store.sessions.create({
     user_id: otherUserId,
     id: sessionId,

@@ -15,6 +15,7 @@ import { createServer as createApiServer } from "../apps/api/dist/server.js";
 import { LocalDataGateway } from "../packages/data-gateway/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoFixture = join(repoRoot, "storage/fixtures/dtc-growth-demo.sqlite");
@@ -41,18 +42,15 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
     database_path: join(root, "metadata.sqlite"),
     secret_master_key: "dtc-growth-builtin-test-key"
   });
-  metadataStore.users.upsertDevUser({
-    id: "user-a",
-    email: "user-a@example.com",
-    display_name: "User A",
-    dev_token: "user-a-token"
+  const { userId, workspaceId } = createVerifiedTestIdentity(metadataStore, {
+    displayName: "Builtin DTC Growth"
   });
 
   try {
     const first = ensureBuiltinDtcGrowthDatasource({
       metadataStore,
-      userId: "user-a",
-      workspaceId: "default",
+      userId,
+      workspaceId,
       fixturePath: repoFixture,
       workspaceRoot
     });
@@ -60,7 +58,7 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
     assert.ok(first.filePath && existsSync(first.filePath));
 
     const record = metadataStore.dataSources.get({
-      user_id: "user-a",
+      user_id: userId,
       datasource_id: DTC_GROWTH_DATASOURCE_ID
     });
     assert.equal(record.name, DTC_GROWTH_DATASOURCE_NAME);
@@ -72,21 +70,21 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
 
     const second = ensureBuiltinDtcGrowthDatasource({
       metadataStore,
-      userId: "user-a",
-      workspaceId: "default",
+      userId,
+      workspaceId,
       fixturePath: repoFixture,
       workspaceRoot
     });
     assert.equal(second.action, "skipped");
     assert.equal(
-      metadataStore.dataSources.list({ user_id: "user-a" }).filter((item) => item.id === DTC_GROWTH_DATASOURCE_ID).length,
+      metadataStore.dataSources.list({ user_id: userId }).filter((item) => item.id === DTC_GROWTH_DATASOURCE_ID).length,
       1
     );
 
     // Broken path → repair without duplicating.
     rmSync(first.filePath, { force: true });
     metadataStore.dataSources.create({
-      user_id: "user-a",
+      user_id: userId,
       id: DTC_GROWTH_DATASOURCE_ID,
       name: DTC_GROWTH_DATASOURCE_NAME,
       type: "sqlite",
@@ -96,31 +94,31 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
     });
     const repaired = ensureBuiltinDtcGrowthDatasource({
       metadataStore,
-      userId: "user-a",
-      workspaceId: "default",
+      userId,
+      workspaceId,
       fixturePath: repoFixture,
       workspaceRoot
     });
     assert.equal(repaired.action, "repaired");
     assert.ok(repaired.filePath && existsSync(repaired.filePath));
     const repairedRecord = metadataStore.dataSources.get({
-      user_id: "user-a",
+      user_id: userId,
       datasource_id: DTC_GROWTH_DATASOURCE_ID
     });
     assert.equal(JSON.parse(repairedRecord.config_json).path, repaired.filePath);
 
     // Deleted datasource is not revived.
-    metadataStore.dataSources.delete({ user_id: "user-a", datasource_id: DTC_GROWTH_DATASOURCE_ID });
+    metadataStore.dataSources.delete({ user_id: userId, datasource_id: DTC_GROWTH_DATASOURCE_ID });
     const afterDelete = ensureBuiltinDtcGrowthDatasource({
       metadataStore,
-      userId: "user-a",
-      workspaceId: "default",
+      userId,
+      workspaceId,
       fixturePath: repoFixture,
       workspaceRoot
     });
     assert.equal(afterDelete.action, "skipped");
     assert.equal(
-      metadataStore.dataSources.find({ user_id: "user-a", datasource_id: DTC_GROWTH_DATASOURCE_ID })?.status,
+      metadataStore.dataSources.find({ user_id: userId, datasource_id: DTC_GROWTH_DATASOURCE_ID })?.status,
       "deleted"
     );
   } finally {
@@ -131,7 +129,6 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
 test("createServer auto-provisions DTC Growth Review and test-connect works", async () => {
   assert.ok(existsSync(repoFixture), `fixture missing: ${repoFixture}`);
   const root = mkdtempSync(join(tmpdir(), "dtc-growth-server-"));
-  process.env.DATAFOUNDRY_AUTH_MODE = "password";
   process.env.AUTH_SESSION_SECRET = "dtc-growth-server-session-secret-32b!";
   process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
   process.env.AUTH_EMAIL_DELIVERY = "test";

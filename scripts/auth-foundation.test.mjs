@@ -53,7 +53,38 @@ const PUBLIC_HTTP_TARGETS = [
   }
 });
 
-const DIRECT_METADATA_FIXTURE_TARGETS = [];
+const DIRECT_METADATA_FIXTURE_TARGETS = [
+  "diagnose-tool-result-events.mjs",
+  "lib/metadata-test-identity.mjs",
+  "lib/metadata-test-identity.test.mjs",
+  "password-only-cutover.test.mjs",
+  "run-test-every-tool-prompt.mjs",
+  "smoke-agent-runtime.mjs",
+  "smoke-collaboration-tools.mjs",
+  "smoke-conversation-memory.mjs",
+  "smoke-copilotkit-context.mjs",
+  "smoke-data-gateway.mjs",
+  "smoke-files.mjs",
+  "smoke-knowledge-retrieval-policy.mjs",
+  "smoke-long-term-memory.mjs",
+  "smoke-memory-recall-shadow.mjs",
+  "smoke-metadata.mjs",
+  "smoke-protocol-recovery.mjs",
+  "smoke-run-config-disabled.mjs",
+  "smoke-run-config-mcp-degraded.mjs",
+  "smoke-run-finalizer.mjs",
+  "smoke-run-identity.mjs",
+  "smoke-skills.mjs",
+  "smoke-sql-readonly.mjs",
+  "smoke-task-state.mjs",
+  "smoke-tool-state-isolation.mjs",
+  "smoke-trace-sections.mjs",
+  "test-builtin-dtc-growth-datasource.mjs",
+  "test-kb-skill-whitelist-fixes.mjs",
+  "verify-tools/data-tools.mjs",
+  "verify-tools/knowledge-tool.mjs",
+  "verify-tools/task-collab-tools.mjs"
+];
 
 const AUTH_FOUNDATION_HARNESS_TARGETS = [
   "auth-foundation.test.mjs",
@@ -61,8 +92,8 @@ const AUTH_FOUNDATION_HARNESS_TARGETS = [
 ];
 
 const FORBIDDEN_DEV_AUTH_PATTERNS = [
-  /X-Dev-Token/i,
-  /\bdev-token\b/,
+  new RegExp(["X", "Dev", "Token"].join("-"), "i"),
+  new RegExp(String.raw`\b` + ["dev", "token"].join("-") + String.raw`\b`),
   /Authorization\s*:\s*["']?Bearer\s+dev\b/i
 ];
 
@@ -89,7 +120,6 @@ const SECRET = "auth-foundation-session-secret-32b!";
 
 function baseEnv(overrides = {}) {
   return {
-    DATAFOUNDRY_AUTH_MODE: "password",
     AUTH_SESSION_SECRET: SECRET,
     AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     AUTH_EMAIL_DELIVERY: "test",
@@ -141,8 +171,8 @@ test("validateAuthPublicUrl rejects illegal URL shapes", () => {
 test("deploy ensureDeploymentEnvironment defaults are accepted by password auth config", () => {
   const secret = "deploy-default-session-secret-32b!!";
   const fresh = ensureDeploymentEnvironment("", { randomSecret: () => secret });
+  assert.equal(fresh.env.DATAFOUNDRY_AUTH_MODE, undefined);
   const freshConfig = loadPasswordAuthConfig(fresh.env);
-  assert.equal(freshConfig.mode, "password");
   assert.equal(freshConfig.registrationMode, "open");
   assert.equal(freshConfig.emailDelivery, "test");
 
@@ -157,6 +187,47 @@ test("deploy ensureDeploymentEnvironment defaults are accepted by password auth 
   assert.equal(upgraded.env.AUTH_REGISTRATION_MODE, "open");
   const upgradedConfig = loadPasswordAuthConfig(upgraded.env);
   assert.equal(upgradedConfig.registrationMode, "open");
+});
+
+test("ignores legacy DATAFOUNDRY_AUTH_MODE=password and rejects removed modes", () => {
+  assert.doesNotThrow(() => loadPasswordAuthConfig(baseEnv({ DATAFOUNDRY_AUTH_MODE: "password" })));
+  assert.doesNotThrow(() => loadPasswordAuthConfig(baseEnv({ DATAFOUNDRY_AUTH_MODE: "" })));
+  assert.throws(
+    () => loadPasswordAuthConfig(baseEnv({ DATAFOUNDRY_AUTH_MODE: "dev" })),
+    /DATAFOUNDRY_AUTH_MODE/
+  );
+});
+
+test("unauthenticated business routes and development tokens are rejected", async () => {
+  await withPasswordApi({}, async ({ baseUrl }) => {
+    const me = await fetch(`${baseUrl}/api/v1/me`);
+    assert.equal(me.status, 401);
+
+    const legacyTokenHeader = ["X", "Dev", "Token"].join("-");
+    const legacyTokenValue = ["dev", "token"].join("-");
+    const withDevToken = await fetch(`${baseUrl}/api/v1/me`, {
+      headers: {
+        [legacyTokenHeader]: legacyTokenValue,
+        Authorization: `Bearer ${legacyTokenValue}`
+      }
+    });
+    assert.equal(withDevToken.status, 401);
+
+    const withWorkspace = await fetch(`${baseUrl}/api/v1/me`, {
+      headers: { "X-Workspace-Id": "default" }
+    });
+    assert.equal(withWorkspace.status, 401);
+
+    const health = await fetch(`${baseUrl}/healthz`);
+    assert.equal(health.status, 200);
+
+    const status = await fetch(`${baseUrl}/api/v1/auth/status`);
+    assert.equal(status.status, 200);
+
+    const legacyDevUsersPath = "/api/v1/" + ["dev", "users"].join("/");
+    const devUsers = await fetch(`${baseUrl}${legacyDevUsersPath}`, { method: "POST", body: "{}" });
+    assert.equal(devUsers.status, 401);
+  });
 });
 
 test("password config matrix", () => {
@@ -357,7 +428,6 @@ async function withPasswordApi(envOverrides, run) {
   const root = mkdtempSync(join(tmpdir(), "datafoundry-auth-foundation-"));
   const previous = { ...process.env };
   Object.assign(process.env, {
-    DATAFOUNDRY_AUTH_MODE: "password",
     AUTH_SESSION_SECRET: SECRET,
     AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     AUTH_EMAIL_DELIVERY: "test",

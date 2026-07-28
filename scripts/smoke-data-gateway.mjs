@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import duckdb from "duckdb";
 import writeXlsxFile from "write-excel-file/node";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const stamp = Date.now();
 const root = `storage/data-gateway-smoke/${stamp}`;
@@ -26,8 +27,12 @@ writeFileSync(
 await createXlsxFixture(xlsxPath);
 
 const store = createMetadataStore({ database_path: metadataPath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const gateway = new LocalDataGateway(store);
-const user_id = "dev-user";
+const user_id = userId;
 const clickHouseServer = createClickHouseFixtureServer();
 await new Promise((resolve) => clickHouseServer.listen(0, "127.0.0.1", resolve));
 const clickHouseAddress = clickHouseServer.address();

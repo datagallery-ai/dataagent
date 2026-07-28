@@ -122,16 +122,15 @@ LLM_MODEL=qwen-plus                # 或 deepseek-chat、gpt-4o……
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=replace-with-your-key
 
-DATAFOUNDRY_AUTH_MODE=password
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000   # 真实生产改为 https://你的域名
+AUTH_REGISTRATION_MODE=open
 AUTH_EMAIL_DELIVERY=test                     # 真实生产改为 smtp，并填 AUTH_SMTP_*
 ```
 
 `apps/web/.env.local`：
 
 ```bash
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password
 NEXT_PUBLIC_AGENT_RUNTIME_URL=
 NEXT_PUBLIC_CONFIG_API_URL=
 API_PROXY_TARGET=http://127.0.0.1:8787

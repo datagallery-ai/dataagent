@@ -1,8 +1,6 @@
-export type AuthMode = "dev" | "password";
 export type RegistrationMode = "open" | "closed";
 
 export type PasswordAuthConfig = {
-  mode: AuthMode;
   publicBaseUrl: string;
   registrationMode: RegistrationMode;
   cookiePath: string;
@@ -69,11 +67,19 @@ export function validateAuthPublicUrl(raw: string): {
 }
 
 export function loadPasswordAuthConfig(env: Record<string, string | undefined>): PasswordAuthConfig {
-  const mode = parseAuthMode(env.DATAFOUNDRY_AUTH_MODE, env.NODE_ENV);
+  // Upgrade shim: previous .env.example / deploy defaults set DATAFOUNDRY_AUTH_MODE=password.
+  // Ignore empty/password leftovers; reject removed modes (especially dev).
+  if (env.DATAFOUNDRY_AUTH_MODE !== undefined) {
+    const legacyMode = String(env.DATAFOUNDRY_AUTH_MODE).trim();
+    if (legacyMode !== "" && legacyMode !== "password") {
+      throw new Error(
+        "AUTH_CONFIG_INVALID:DATAFOUNDRY_AUTH_MODE is no longer supported; remove it from the environment (dev mode has been removed)."
+      );
+    }
+  }
   const config: PasswordAuthConfig = {
-    mode,
     publicBaseUrl: env.AUTH_PUBLIC_BASE_URL ?? "",
-    registrationMode: parseRegistrationMode(env.AUTH_REGISTRATION_MODE, mode === "password"),
+    registrationMode: parseRegistrationMode(env.AUTH_REGISTRATION_MODE),
     cookiePath: "/",
     cookieSecure: false,
     sessionSecret: env.AUTH_SESSION_SECRET ?? "",
@@ -91,35 +97,13 @@ export function loadPasswordAuthConfig(env: Record<string, string | undefined>):
         : {})
     };
   }
-  if (mode === "password") {
-    validatePasswordAuthConfig(config);
-  } else if (config.publicBaseUrl) {
-    // Dev mode may still set a public URL; validate lightly when present.
-    try {
-      const validated = validateAuthPublicUrl(config.publicBaseUrl);
-      config.publicBaseUrl = validated.publicBaseUrl;
-      config.cookiePath = validated.cookiePath;
-      config.cookieSecure = validated.cookieSecure;
-    } catch {
-      // Keep legacy dev startups tolerant when AUTH_PUBLIC_BASE_URL is unused.
-    }
-  }
+  validatePasswordAuthConfig(config);
   return config;
 }
 
-function parseAuthMode(value: string | undefined, nodeEnv: string | undefined): AuthMode {
-  if (value === "password" || value === "dev") {
-    return value;
-  }
-  return nodeEnv === "production" ? "password" : "dev";
-}
-
-function parseRegistrationMode(value: string | undefined, required: boolean): RegistrationMode {
+function parseRegistrationMode(value: string | undefined): RegistrationMode {
   if (value === undefined || value.trim() === "") {
-    if (required) {
-      throw new Error("AUTH_CONFIG_MISSING:AUTH_REGISTRATION_MODE is required in password mode.");
-    }
-    return "open";
+    throw new Error("AUTH_CONFIG_MISSING:AUTH_REGISTRATION_MODE is required.");
   }
   if (value === "open" || value === "closed") {
     return value;

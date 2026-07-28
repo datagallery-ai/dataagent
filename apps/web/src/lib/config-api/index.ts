@@ -44,8 +44,6 @@ export type {
   DatasourceTablePreviewColumnDto,
   DatasourceTypeDto,
   DatasourceTypeParamDto,
-  DevIdentitiesResponseDto,
-  DevIdentityUser,
   FileAssetRefDto,
   IdentityWorkspace,
   JobDto,

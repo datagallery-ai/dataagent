@@ -7,17 +7,20 @@ import { LocalArtifactService } from "../packages/artifacts/dist/index.js";
 import { fileAssetRefDto, LocalFileAssetService } from "../packages/files/dist/index.js";
 import { LocalKnowledgeService } from "../packages/knowledge/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "open-data-foundry-files-smoke-"));
 const store = createMetadataStore({
   database_path: join(root, "metadata.sqlite")
 });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const files = new LocalFileAssetService(store, { storageRoot: join(root, "files") });
 const artifacts = new LocalArtifactService(store, files);
 const knowledge = new LocalKnowledgeService(store);
 
-const userId = "dev-user";
-const workspaceId = "default";
 const sessionId = "files-smoke-session";
 const runId = "files-smoke-run";
 

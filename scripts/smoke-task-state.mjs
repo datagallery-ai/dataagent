@@ -13,7 +13,7 @@ const smokeRoot = `storage/task-state-smoke/${Date.now()}`;
 const databasePath = `${smokeRoot}/task-state.sqlite`;
 const workingMemoryDatabasePath = `${smokeRoot}/working-memory.sqlite`;
 const threadId = "task-state-thread";
-const resourceId = "dev-user";
+const resourceId = userId;
 
 try {
   const firstRuntime = await createAgentMemoryRuntime(databasePath);

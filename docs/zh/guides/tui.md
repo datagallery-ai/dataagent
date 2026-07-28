@@ -4,11 +4,7 @@
 
 ## 启动方式
 
-先启动完整开发服务或后端：
-
-```bash
-npm run dev
-```
+先按 [快速开始](../quick-start.md) 以正式态启动 API（`npm run start:api` 或 `./deploy.sh deploy`）。不要把 `npm run dev` 当作正式入口；贡献者热更新见快速开始附录。
 
 启动 TUI：
 
@@ -141,7 +137,7 @@ TUI 默认停留在 Chat。使用 `/outputs` 可以像 `/resume` 一样打开独
 
 ## 排查
 
-- 无法连接后端：确认 `npm run dev` 或 `npm run dev:api` 正在运行。
+- 无法连接后端：确认正式态 API（`npm run start:api` 或一键部署）已在运行；贡献者热更新才用 `npm run dev:api`。
 - 后端地址变更：用 `--runtime-url` 指定完整 `/api/copilotkit` 地址。
 - 模型无响应：检查根目录 `.env` 中的 `LLM_PROVIDER`、`LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
 - 会话无法恢复：确认后端 `/api/v1/sessions` 接口可访问，并使用真实后端模式启动。

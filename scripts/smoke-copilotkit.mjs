@@ -12,7 +12,6 @@ const child = spawn("npm", ["--workspace", "@datafoundry/api", "run", "dev"], {
     API_HOST: "127.0.0.1",
     API_PORT: apiPort,
     METADATA_DB_PATH: metadataDbPath,
-    DATAFOUNDRY_AUTH_MODE: "password",
     AUTH_SESSION_SECRET: process.env.AUTH_SESSION_SECRET ?? "copilotkit-smoke-session-secret-32b!",
     AUTH_PUBLIC_BASE_URL: process.env.AUTH_PUBLIC_BASE_URL ?? "http://127.0.0.1:3000",
     AUTH_EMAIL_DELIVERY: process.env.AUTH_EMAIL_DELIVERY ?? "test",

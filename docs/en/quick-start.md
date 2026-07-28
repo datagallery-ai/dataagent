@@ -135,9 +135,9 @@ LLM_API_KEY=your-api-key
 Root `.env`:
 
 ```bash
-DATAFOUNDRY_AUTH_MODE=password
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000
+AUTH_REGISTRATION_MODE=open
 AUTH_EMAIL_DELIVERY=test
 AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 # SMTP settings can stay empty for now
@@ -146,7 +146,6 @@ AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 `apps/web/.env.local` (baked in at `next build`):
 
 ```bash
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password
 # Leave empty so the browser uses the same-origin BFF (Cookie + CSRF)
 NEXT_PUBLIC_AGENT_RUNTIME_URL=
 NEXT_PUBLIC_CONFIG_API_URL=
@@ -160,9 +159,9 @@ On register / password reset, copy the verification link from the **API process 
 Start from the formal-test settings, then change to:
 
 ```bash
-DATAFOUNDRY_AUTH_MODE=password
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=https://datafoundry.example.com
+AUTH_REGISTRATION_MODE=closed
 AUTH_EMAIL_DELIVERY=smtp
 AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 AUTH_SMTP_HOST=smtp.example.com
@@ -172,7 +171,7 @@ AUTH_SMTP_USER=
 AUTH_SMTP_PASSWORD=
 ```
 
-Keep the frontend on `password`, empty public API URLs, and `API_PROXY_TARGET`. Put a reverse proxy in front; see [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE.
+Keep empty public API URLs and `API_PROXY_TARGET`. Put a reverse proxy in front; see [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE.
 
 ### 3. Build and start (same for formal test and real production)
 
@@ -306,6 +305,14 @@ If the health check fails:
 - **Formal test** (`AUTH_EMAIL_DELIVERY=test`): copy the link from the `start:api` terminal.
 - **Real production** (`smtp`): check `AUTH_SMTP_*` and that `AUTH_PUBLIC_BASE_URL` matches the public origin.
 
+### `METADATA_SCHEMA_INCOMPATIBLE` after upgrade
+
+Symptom: API fails to start with `METADATA_SCHEMA_INCOMPATIBLE` and mentions `users.dev_token`.
+
+Cause: an older Metadata DB still has the development-token column. Password-only cutover does not migrate it.
+
+Fix: stop the stack, reset (or repoint) `STORAGE_ROOT_DIR` / `METADATA_DB_PATH` / `MASTRA_STORAGE_PATH` / `FILE_ASSET_STORAGE_ROOT` / `WORKSPACE_ROOT`, restart, and register again. Details: [Security](security.md).
+
 ### Model unavailable
 
 Symptom: Agent run reports provider, 401, rate limit, or model not found errors.
@@ -339,14 +346,13 @@ Stop the conflicting process, or use the port shown in the terminal. After chang
 
 For local code changes with hot reload only — **not** formal test or real production. Pick one stack; never mix with `start:*`.
 
+Contributor hot-reload still uses password sessions; the old development-token auth switch is gone.
+Root `.env` needs `AUTH_SESSION_SECRET` / `AUTH_PUBLIC_BASE_URL` /
+`AUTH_REGISTRATION_MODE` / `AUTH_EMAIL_DELIVERY` (the formal-test sample works).
+In `apps/web/.env.local`, leave `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL` empty
+and set `API_PROXY_TARGET=http://127.0.0.1:8787`.
+
 ```bash
-# Root .env
-DATAFOUNDRY_AUTH_MODE=dev
-
-# apps/web/.env.local
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=dev
-NEXT_PUBLIC_AGENT_RUNTIME_URL=http://127.0.0.1:8787/api/copilotkit
-
 npm run dev
 # or: npm run dev:api && npm run dev:web
 ```

@@ -10,8 +10,8 @@ export function resolveStackRuntimeConfig(env = process.env) {
   return {
     API_HOST: env.API_HOST?.trim() || "127.0.0.1",
     API_PORT: port(env.API_PORT, 8787, "API_PORT"),
-    WEB_HOST: env.WEB_HOST?.trim() || "0.0.0.0",
-    WEB_PORT: port(env.WEB_PORT, 3000, "WEB_PORT"),
+    WEB_HOST: env.WEB_HOST?.trim() || "127.0.0.1",
+    WEB_PORT: port(env.WEB_PORT, 3000, "WEB_PORT")
   };
 }
 

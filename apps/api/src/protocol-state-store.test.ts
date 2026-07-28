@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createMetadataStore } from "@datafoundry/metadata";
+import { createMetadataStore, createVerifiedTestIdentity } from "@datafoundry/metadata";
 import { MetadataProtocolStateStore } from "./protocol-state-store.js";
 
 describe("MetadataProtocolStateStore", () => {
@@ -11,23 +11,24 @@ describe("MetadataProtocolStateStore", () => {
     const root = mkdtempSync(join(tmpdir(), "protocol-state-store-"));
     try {
       const metadata = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
-      metadata.sessions.create({ user_id: "dev-user", id: "session-1", title: "Protocol" });
+      const { userId } = createVerifiedTestIdentity(metadata);
+      metadata.sessions.create({ user_id: userId, id: "session-1", title: "Protocol" });
       metadata.runs.create({
-        user_id: "dev-user",
+        user_id: userId,
         id: "run-1",
         session_id: "session-1",
         user_input: "test",
         status: "running"
       });
       metadata.contextPackageSnapshots.create({
-        user_id: "dev-user",
+        user_id: userId,
         session_id: "session-1",
         run_id: "run-1",
         package_id: "context-1",
         revision: 0,
         payload: {}
       });
-      const store = new MetadataProtocolStateStore(metadata, "dev-user");
+      const store = new MetadataProtocolStateStore(metadata, userId);
       const startedEvent = {
         eventId: "run-1:segment:1:0:protocol.run.started",
         type: "protocol.run.started",
@@ -51,7 +52,7 @@ describe("MetadataProtocolStateStore", () => {
         domain: {}
       }, [startedEvent]);
 
-      const restored = new MetadataProtocolStateStore(metadata, "dev-user")
+      const restored = new MetadataProtocolStateStore(metadata, userId)
         .get("run-1", "run-1:segment:1");
       expect(restored).toMatchObject({ protocolId: "general-task", revision: 0, phase: "work" });
       expect(store.pendingEvents("run-1")).toEqual([startedEvent]);
@@ -67,23 +68,24 @@ describe("MetadataProtocolStateStore", () => {
     const root = mkdtempSync(join(tmpdir(), "protocol-state-handoff-"));
     try {
       const metadata = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
-      metadata.sessions.create({ user_id: "dev-user", id: "session-1", title: "Protocol" });
+      const { userId } = createVerifiedTestIdentity(metadata);
+      metadata.sessions.create({ user_id: userId, id: "session-1", title: "Protocol" });
       metadata.runs.create({
-        user_id: "dev-user",
+        user_id: userId,
         id: "run-1",
         session_id: "session-1",
         user_input: "test",
         status: "running"
       });
       metadata.contextPackageSnapshots.create({
-        user_id: "dev-user",
+        user_id: userId,
         session_id: "session-1",
         run_id: "run-1",
         package_id: "context-1",
         revision: 0,
         payload: {}
       });
-      const store = new MetadataProtocolStateStore(metadata, "dev-user");
+      const store = new MetadataProtocolStateStore(metadata, userId);
       const current = store.create(createState("general-task", "run-1:segment:1", 0, "active"));
 
       store.transitionSegment({

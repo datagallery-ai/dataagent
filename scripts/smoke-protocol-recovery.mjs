@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "datafoundry-protocol-recovery-"));
 const databasePath = join(root, "metadata.sqlite");
-const userId = "dev-user";
+
 const sessionId = "protocol-session";
 const runId = "protocol-run";
 

@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
+  assertNativeAuthPublicBaseUrl,
+  assertNativeBindHosts,
   ensureDeploymentEnvironment,
   isCompleteDeploymentConfig,
   isPlaceholderSecret,
@@ -256,19 +258,23 @@ export async function configureDeploymentInteractively(options) {
   let env = ensured.env;
   const oldWebPort = env.WEB_PORT;
 
-  // Soft upgrade: only AUTH_REGISTRATION_MODE may be auto-filled without re-prompting
-  // ports. Broader DEFAULTS fills must still go through interactive port selection.
+  // Soft upgrade: AUTH_REGISTRATION_MODE fill and legacy auth-mode key removal may
+  // proceed without re-prompting ports. Broader DEFAULTS fills still need port selection.
   const softUpgradeKeys = new Set(["AUTH_REGISTRATION_MODE"]);
   const filledOnlySoftUpgradeKeys =
     !completeBeforeFill &&
     isCompleteDeploymentConfig(env) &&
     ensured.generatedKeys.length > 0 &&
     ensured.generatedKeys.every((key) => softUpgradeKeys.has(key));
+  const onlyLegacyAuthModeCleanup =
+    completeBeforeFill &&
+    (ensured.removedKeys?.length ?? 0) > 0 &&
+    ensured.generatedKeys.length === 0;
 
   if (
     !reconfigure &&
     !nonInteractive &&
-    (completeBeforeFill || filledOnlySoftUpgradeKeys) &&
+    (completeBeforeFill || filledOnlySoftUpgradeKeys || onlyLegacyAuthModeCleanup) &&
     sourceText?.trim()
   ) {
     return { env, envText: text, webText: renderWebEnvironment(env), wrote: false };
@@ -315,12 +321,7 @@ export async function configureDeploymentInteractively(options) {
     const defaultUrl = updates.AUTH_PUBLIC_BASE_URL;
     const answer = String((await ask(`浏览器公开访问地址 [${defaultUrl}]：`)) ?? "").trim();
     if (answer) {
-      let url;
-      try {
-        url = new URL(answer);
-      } catch {
-        throw new Error("AUTH_PUBLIC_BASE_URL must be a valid URL");
-      }
+      const url = assertNativeAuthPublicBaseUrl(answer);
       const urlPort = url.port || (url.protocol === "https:" ? "443" : "80");
       if (String(urlPort) !== String(webPort)) {
         const confirm = String(
@@ -340,13 +341,8 @@ export async function configureDeploymentInteractively(options) {
   ensured = ensureDeploymentEnvironment(text);
   text = ensured.text;
   env = ensured.env;
-
-  if (
-    (env.WEB_HOST === "0.0.0.0" || env.WEB_HOST === "::") &&
-    /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(env.AUTH_PUBLIC_BASE_URL)
-  ) {
-    print("警告：WEB_HOST 对外绑定，但 AUTH_PUBLIC_BASE_URL 仅适合本机访问。远程访问请设置正确的公开地址。");
-  }
+  assertNativeAuthPublicBaseUrl(env.AUTH_PUBLIC_BASE_URL);
+  assertNativeBindHosts(env);
 
   const webText = renderWebEnvironment(env);
   let wrote = false;

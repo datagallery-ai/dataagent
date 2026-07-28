@@ -18,7 +18,6 @@ const {
 } = await import(tuiAuthUrl);
 
 const root = mkdtempSync(join(tmpdir(), "datafoundry-tui-auth-share-"));
-process.env.DATAFOUNDRY_AUTH_MODE = "password";
 process.env.AUTH_SESSION_SECRET = "tui-share-session-secret-with-32-bytes!";
 process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1";
 process.env.AUTH_EMAIL_DELIVERY = "test";

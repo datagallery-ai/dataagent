@@ -23,7 +23,6 @@ Then go to `/data-tasks` after sign-in.
 Formal frontend settings (`apps/web/.env.local`; re-run `build:web` after changing `NEXT_PUBLIC_*`):
 
 ```bash
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password
 NEXT_PUBLIC_AGENT_RUNTIME_URL=
 NEXT_PUBLIC_CONFIG_API_URL=
 API_PROXY_TARGET=http://127.0.0.1:8787
@@ -83,7 +82,7 @@ The left panel manages two kinds of content:
 | --- | --- |
 | Data tasks | Create, switch, rename, pin, and delete tasks. |
 | Workspace resources | Manage data sources, knowledge bases, agent tools, and assets. |
-| User menu | View the current user, open settings, sign out, or switch local development users. |
+| User menu | View the current user, open settings, or sign out. |
 
 Resource entry points:
 

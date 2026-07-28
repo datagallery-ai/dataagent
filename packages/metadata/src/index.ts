@@ -1,6 +1,6 @@
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import type { ArtifactSummary, ArtifactType, RunEventEnvelope } from "@datafoundry/contracts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -18,7 +18,6 @@ export type UserRecord = {
   id: string;
   email?: string;
   display_name?: string;
-  dev_token?: string;
   email_verified_at?: string;
   disabled_at?: string;
   password_updated_at?: string;
@@ -392,12 +391,6 @@ export type SqlAuditLogRecord = {
 export type MetadataStoreOptions = {
   database_path?: string;
   secret_master_key?: string;
-  dev_user?: {
-    id: string;
-    email: string;
-    display_name: string;
-    dev_token: string;
-  };
 };
 
 export type CreateSessionInput = {
@@ -628,13 +621,6 @@ export type CreateQueryHistoryInput = {
   run_id?: string;
 };
 
-const DEFAULT_DEV_USER = {
-  id: "dev-user",
-  email: "dev@example.com",
-  display_name: "Dev User",
-  dev_token: "dev-token"
-};
-
 export class MetadataStore {
   readonly authAuditEvents: AuthAuditEventRepository;
   readonly authSessions: AuthSessionRepository;
@@ -850,30 +836,6 @@ export class UserRepository {
       VALUES (?, ?, ?, ?, ?)
     `).run(input.id, input.email.toLowerCase(), input.display_name ?? null, now, now);
     return this.getById({ user_id: input.id });
-  }
-
-  upsertDevUser(input: { id: string; email: string; display_name: string; dev_token: string }): UserRecord {
-    const now = new Date().toISOString();
-
-    this.db
-      .prepare(
-        `
-        INSERT INTO users (id, email, display_name, dev_token, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          email = excluded.email,
-          display_name = excluded.display_name,
-          dev_token = excluded.dev_token,
-          updated_at = excluded.updated_at
-      `
-      )
-      .run(input.id, input.email, input.display_name, input.dev_token, now, now);
-
-    return this.getById({ user_id: input.id });
-  }
-
-  getByDevToken(input: { dev_token: string }): Optional<UserRecord> {
-    return mapUserRow(this.db.prepare("SELECT * FROM users WHERE dev_token = ?").get(input.dev_token));
   }
 
   findByEmail(input: { email: string }): Optional<UserRecord> {
@@ -3322,11 +3284,49 @@ export const createMetadataStore = (options: MetadataStoreOptions = {}): Metadat
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   runMigrations(db);
+  assertPasswordOnlyUsersSchema(db);
 
-  const store = new MetadataStore(db, options.secret_master_key);
-  store.users.upsertDevUser(options.dev_user ?? DEFAULT_DEV_USER);
+  return new MetadataStore(db, options.secret_master_key);
+};
 
-  return store;
+/**
+ * Low-level fixture for package/smoke tests that talk to MetadataStore directly.
+ * Does not create password credentials or HTTP sessions.
+ */
+export function createVerifiedTestIdentity(
+  metadata: MetadataStore,
+  options: { email?: string; displayName?: string; workspaceName?: string } = {}
+): { userId: string; workspaceId: string; email: string } {
+  const userId = randomUUID();
+  const workspaceId = `personal-${userId}`;
+  const email = options.email ?? `${userId}@example.test`;
+  const user = metadata.users.createPasswordUser({
+    id: userId,
+    email,
+    display_name: options.displayName ?? "Test User"
+  });
+  metadata.users.markEmailVerified({ user_id: user.id });
+  const workspace = metadata.workspaces.createPersonal({
+    id: workspaceId,
+    owner_user_id: user.id,
+    name: options.workspaceName ?? "Test Workspace"
+  });
+  metadata.workspaceMemberships.upsertOwner({
+    workspace_id: workspace.id,
+    user_id: user.id
+  });
+  return { userId: user.id, workspaceId: workspace.id, email: user.email ?? email };
+}
+
+const assertPasswordOnlyUsersSchema = (db: DatabaseSync): void => {
+  const columns = db
+    .prepare("PRAGMA table_info(users)")
+    .all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === "dev_token")) {
+    throw new Error(
+      "METADATA_SCHEMA_INCOMPATIBLE: users.dev_token is present. Password-only cutover does not migrate old Metadata DBs; stop the stack and manually reset STORAGE_ROOT_DIR / METADATA_DB_PATH / MASTRA_STORAGE_PATH / FILE_ASSET_STORAGE_ROOT / WORKSPACE_ROOT, then restart and re-register."
+    );
+  }
 };
 
 export const runEventRecordToEnvelope = (record: RunEventRecord): RunEventEnvelope => ({
@@ -3386,7 +3386,6 @@ const runMigrations = (db: DatabaseSync): void => {
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE,
       display_name TEXT,
-      dev_token TEXT UNIQUE,
       email_verified_at TEXT,
       disabled_at TEXT,
       password_updated_at TEXT,
@@ -4476,7 +4475,6 @@ const mapUserRow = (row: unknown): Optional<UserRecord> => {
 
   const email = optionalString(row.email);
   const displayName = optionalString(row.display_name);
-  const devToken = optionalString(row.dev_token);
   const emailVerifiedAt = optionalString(row.email_verified_at);
   const disabledAt = optionalString(row.disabled_at);
   const passwordUpdatedAt = optionalString(row.password_updated_at);
@@ -4485,7 +4483,6 @@ const mapUserRow = (row: unknown): Optional<UserRecord> => {
     id: requiredString(row, "id"),
     ...(email ? { email } : {}),
     ...(displayName ? { display_name: displayName } : {}),
-    ...(devToken ? { dev_token: devToken } : {}),
     ...(emailVerifiedAt ? { email_verified_at: emailVerifiedAt } : {}),
     ...(disabledAt ? { disabled_at: disabledAt } : {}),
     ...(passwordUpdatedAt ? { password_updated_at: passwordUpdatedAt } : {}),

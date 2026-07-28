@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { EventType } from "@ag-ui/core";
 import { extractDatasourceId, extractEffectiveRunConfig, extractLastUserText } from "../apps/api/dist/run-input.js";
 import { createDataFoundry, createDataFoundryRunContext, DATA_AGENT_TOOL_NAMES } from "../packages/agent-runtime/dist/index.js";
 import { TaskPlanProjector } from "../apps/api/dist/task-plan-projector.js";
+
+const userId = randomUUID();
 
 const baseInput = {
   threadId: "thread-smoke",
@@ -164,7 +167,7 @@ assert(
 
 assert(
   createDataFoundryRunContext({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: "thread-smoke",
     run_id: "run-smoke",
     user_input: "你好",
@@ -179,7 +182,7 @@ const noDatasourceAgent = await createDataFoundry({
   messages: [],
   modelProvider: { kind: "mastra-router", model: "openai/smoke", model_name: "smoke-model" },
   runContext: createDataFoundryRunContext({
-    user_id: "dev-user",
+    user_id: userId,
     session_id: "thread-smoke",
     run_id: "run-smoke",
     user_input: "你好",
@@ -193,7 +196,7 @@ assert(
 );
 
 const projector = new TaskPlanProjector({
-  user_id: "dev-user",
+  user_id: userId,
   session_id: "thread-smoke",
   run_id: "run-smoke",
   user_input: "analyze orders",
