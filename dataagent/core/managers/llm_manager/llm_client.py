@@ -1939,7 +1939,7 @@ class LLMClient:
         """解析非流式 JSON；失败时抛 ``RESPONSE_INVALID``，并附响应体前缀便于区分压缩损坏。"""
         try:
             return resp.json()
-        except json.JSONDecodeError as err:
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
             raw = resp.content or b""
             ce = (resp.headers.get("content-encoding") or "").strip() or "(missing)"
             ct = resp.headers.get("content-type") or "(missing)"
@@ -1954,7 +1954,11 @@ class LLMClient:
                     "set params.disable_response_compression=true in the model YAML config"
                 )
             parts.append(f"content_type={ct} content_encoding={ce} body_len={len(raw)} body_prefix_hex={prefix}")
-            parts.append(f"json_error={err.msg} (pos={err.pos})")
+            if isinstance(err, json.JSONDecodeError):
+                json_error = f"{err.msg} (pos={err.pos})"
+            else:
+                json_error = f"decoding_failed encoding={err.encoding} reason={err.reason} (pos={err.start}-{err.end})"
+            parts.append(f"json_error={json_error}")
             raise LLMCallError(
                 LLMErrorCategory.RESPONSE_INVALID,
                 "; ".join(parts),

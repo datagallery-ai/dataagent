@@ -442,6 +442,32 @@ class TestNonStreamJsonDecodeDiagnostics:
         assert "body_prefix_hex=" in err.message
         assert mock_client.post.call_count == 1
 
+    def test_invoke_raw_gzip_reports_unicode_decode_error(self):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b"\x1f\x8b" + b"rest"
+        resp.json.side_effect = UnicodeDecodeError("utf-8", resp.content, 1, 2, "invalid start byte")
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+
+        err = ei.value
+        assert err.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "response-compression" in err.message
+        assert "decoding_failed encoding=utf-8" in err.message
+        assert "pos=1-2" in err.message
+        assert mock_client.post.call_count == 1
+
     def test_invoke_plain_bad_json_not_compression(self):
         resp = MagicMock()
         resp.is_error = False
