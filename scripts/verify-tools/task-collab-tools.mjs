@@ -1,6 +1,7 @@
 /**
  * Deterministic runtime verification for task + collaboration tools (no LLM).
  */
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { Mastra } from "@mastra/core/mastra";
 import {
@@ -20,7 +21,7 @@ const stamp = Date.now();
 const storageDir = `storage/verify-tools/task-${stamp}`;
 const databasePath = `${storageDir}/state.sqlite`;
 const threadId = `verify-thread-${stamp}`;
-const resourceId = userId;
+const resourceId = randomUUID();
 
 function makeExecCtx(toolName, mastraCtx) {
   const customChunks = [];

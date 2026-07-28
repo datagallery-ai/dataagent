@@ -1,5 +1,6 @@
 import { taskCheckTool, taskCompleteTool, taskWriteTool } from "@mastra/core/harness";
 import { Mastra } from "@mastra/core/mastra";
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 
 import {
@@ -13,7 +14,7 @@ const smokeRoot = `storage/task-state-smoke/${Date.now()}`;
 const databasePath = `${smokeRoot}/task-state.sqlite`;
 const workingMemoryDatabasePath = `${smokeRoot}/working-memory.sqlite`;
 const threadId = "task-state-thread";
-const resourceId = userId;
+const resourceId = randomUUID();
 
 try {
   const firstRuntime = await createAgentMemoryRuntime(databasePath);
