@@ -120,7 +120,7 @@ def _normalize_type(value_type: str):
     if not value_type:
         return "TEXT"
     vt = value_type.lower()
-    if any(k in vt for k in ["int", "id", "count", "num"]):
+    if "int" in vt or any(k in vt for k in ["id", "count", "num", "decimal(24,0)"]):
         return "INTEGER"
     if any(k in vt for k in ["float", "double", "price", "amount"]):
         return "REAL"
