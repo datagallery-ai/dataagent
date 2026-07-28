@@ -17,6 +17,7 @@
 - 平台差异全部由 ``extra_body`` 原样透传承担（遵守各平台自身参数规则）。
 - **``params``**：``model`` / ``base_url`` / ``api_key`` / ``timeout`` / ``num_retries`` 单独解析，
   其余自动透传进 ``extra_body``。
+  ``disable_response_compression: true`` 时请求 ``Accept-Encoding: identity``。
 - **cache_control**：支持显式缓存的模型（Qwen/Claude/百炼 deepseek-v3.2 等）由
   ``_apply_cache_control_with_anchors`` 注入 bp0-bp4 断点；不支持的模型由 ``_strip_cache_control``
   剥离预置 cc（替代 litellm 的 monkey-patch，见设计文档 §1.7）。
@@ -405,6 +406,11 @@ def _extract_http_error_message(exc: httpx.HTTPStatusError) -> str:
     return f"HTTP {resp.status_code}"
 
 
+# gzip magic ``1f 8b`` 被按 UTF-8 破坏后的疤痕：``1f`` + U+FFFD（``ef bf bd``）
+_MANGLED_GZIP_SCAR_PREFIX = b"\x1f\xef\xbf\xbd"
+_RAW_GZIP_MAGIC_PREFIX = b"\x1f\x8b"
+
+
 def map_httpx_exception(
     exc: BaseException,
     *,
@@ -738,6 +744,7 @@ class LLMClient:
         compress_message_cnt: int | None = None,
         repetition_leniency: float | None = None,
         enable_cache_control: bool | None = None,
+        disable_response_compression: bool = False,
     ) -> None:
         """初始化 LLMClient 实例。
 
@@ -757,6 +764,7 @@ class LLMClient:
                 （``_supports_explicit_cache_control``，向后兼容）；``True`` 强制启用；
                 ``False`` 强制禁用（用于自部署端点不支持 list content 格式的场景）。
                 环境变量 ``DATAAGENT_CACHE_CONTROL=0`` 优先级最高，全局禁用。
+            disable_response_compression: 是否通过 ``Accept-Encoding: identity`` 禁用响应压缩。
         """
         self._model = model
         self._api_base = api_base
@@ -772,6 +780,7 @@ class LLMClient:
             DEFAULT_REPETITION_LENIENCY if repetition_leniency is None else float(repetition_leniency)
         )
         self._enable_cache_control = enable_cache_control
+        self._disable_response_compression = disable_response_compression
 
     @staticmethod
     def _extract_previous_assistant_content(messages: list[Any]) -> str:
@@ -1421,6 +1430,7 @@ class LLMClient:
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
         enable_cache_control = params.pop("enable_cache_control", None)
+        disable_response_compression = params.pop("disable_response_compression", False)
         extra_body = {**dict(params.pop("extra_body", None) or {}), **params}
         extra_body.pop("custom_llm_provider", None)
 
@@ -1436,6 +1446,7 @@ class LLMClient:
             compress_message_cnt=compress_message_cnt,
             repetition_leniency=repetition_leniency,
             enable_cache_control=enable_cache_control,
+            disable_response_compression=disable_response_compression,
         )
 
     @classmethod
@@ -1463,6 +1474,7 @@ class LLMClient:
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
         enable_cache_control = params.pop("enable_cache_control", None)
+        disable_response_compression = params.pop("disable_response_compression", False)
         extra_body = {**dict(params.pop("extra_body", None) or {}), **params}
         extra_body.pop("custom_llm_provider", None)
         return cls(
@@ -1477,6 +1489,7 @@ class LLMClient:
             compress_message_cnt=compress_message_cnt,
             repetition_leniency=repetition_leniency,
             enable_cache_control=enable_cache_control,
+            disable_response_compression=disable_response_compression,
         )
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LLMClient:
@@ -1500,6 +1513,7 @@ class LLMClient:
             compress_message_cnt=self._compress_message_cnt,
             repetition_leniency=self._repetition_leniency,
             enable_cache_control=self._enable_cache_control,
+            disable_response_compression=self._disable_response_compression,
         )
 
     def invoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
@@ -1514,7 +1528,7 @@ class LLMClient:
                 resp = client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 self._ensure_non_stream_response(resp)
-                msg = self._wrap_response(resp.json())
+                msg = self._wrap_response(self._parse_non_stream_json(resp))
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
 
@@ -1532,7 +1546,7 @@ class LLMClient:
                 resp = await client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 self._ensure_non_stream_response(resp)
-                msg = self._wrap_response(resp.json())
+                msg = self._wrap_response(self._parse_non_stream_json(resp))
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
 
@@ -1815,10 +1829,14 @@ class LLMClient:
 
     def _headers(self) -> dict[str, str]:
         """Build the Authorization + Content-Type request headers."""
-        return {
+        headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        # 请求头覆盖 httpx Client 默认 Accept-Encoding。
+        if self._disable_response_compression:
+            headers["Accept-Encoding"] = "identity"
+        return headers
 
     def _should_inject_cache_control(self) -> bool:
         """Decide whether to inject cache_control breakpoints.
@@ -1916,6 +1934,34 @@ class LLMClient:
                 request_url=self._endpoint(),
                 status_code=resp.status_code,
             )
+
+    def _parse_non_stream_json(self, resp: httpx.Response) -> Any:
+        """解析非流式 JSON；失败时抛 ``RESPONSE_INVALID``，并附响应体前缀便于区分压缩损坏。"""
+        try:
+            return resp.json()
+        except json.JSONDecodeError as err:
+            raw = resp.content or b""
+            ce = (resp.headers.get("content-encoding") or "").strip() or "(missing)"
+            ct = resp.headers.get("content-type") or "(missing)"
+            prefix = raw[:16].hex(" ") if raw else "(empty)"
+            compression_likely = raw.startswith(_MANGLED_GZIP_SCAR_PREFIX) or (
+                ce == "(missing)" and raw.startswith(_RAW_GZIP_MAGIC_PREFIX)
+            )
+            parts = ["Non-stream chat completion response is not valid JSON"]
+            if compression_likely:
+                parts.append(
+                    "likely gateway response-compression bug; "
+                    "set params.disable_response_compression=true in the model YAML config"
+                )
+            parts.append(f"content_type={ct} content_encoding={ce} body_len={len(raw)} body_prefix_hex={prefix}")
+            parts.append(f"json_error={err.msg} (pos={err.pos})")
+            raise LLMCallError(
+                LLMErrorCategory.RESPONSE_INVALID,
+                "; ".join(parts),
+                model=self._model,
+                request_url=self._endpoint(),
+                status_code=resp.status_code,
+            ) from err
 
     def _with_transient_retry(self, operation, *, max_attempts: int) -> Any:
         """Run a sync operation with 5xx/conn/429/timeout/repetition retry + backoff."""

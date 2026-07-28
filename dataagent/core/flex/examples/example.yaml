@@ -130,6 +130,7 @@ MODEL:
       # api_key: "sk-xxx"       # 非生产推荐；通常走 {PROVIDER}_API_KEY 环境变量
       timeout: 300
       # enable_cache_control: false  # 自部署端点（vLLM Qwen 30B 等）不支持 list content 时禁用
+      # disable_response_compression: true  # 自部署端点响应压缩异常时禁用 gzip
   text_embedding:
     name: "text_embedding"      # 可选显式 name，默认同键名
     model_type: "embedding"

@@ -410,3 +410,93 @@ class TestNonStreamSSEDetection:
             with pytest.raises(LLMCallError) as ei:
                 client.invoke([{"role": "user", "content": "hi"}])
         assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+        assert mock_client.post.call_count == 1
+
+
+class TestNonStreamJsonDecodeDiagnostics:
+    """非流式 JSON 解析失败诊断；YAML 参数可关闭响应压缩。"""
+
+    def test_invoke_mangled_gzip_points_to_yaml_param(self):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b"\x1f\xef\xbf\xbd" + b"rest"
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", doc="", pos=0)
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+
+        err = ei.value
+        assert err.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "response-compression" in err.message
+        assert "params.disable_response_compression=true" in err.message
+        assert "body_prefix_hex=" in err.message
+        assert mock_client.post.call_count == 1
+
+    def test_invoke_plain_bad_json_not_compression(self):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b"not-json-at-all"
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", "not-json-at-all", 0)
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "response-compression" not in ei.value.message
+        assert mock_client.post.call_count == 1
+
+    def test_config_true_sets_accept_encoding_identity(self):
+        ok_json = _ok_response_json("ok")
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = json.dumps(ok_json).encode()
+        resp.json.return_value = ok_json
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(
+                model="m",
+                api_base="http://t",
+                api_key="k",
+                disable_response_compression=True,
+            )
+            out = client.invoke([{"role": "user", "content": "hi"}])
+
+        assert out.content == "ok"
+        assert mock_client.post.call_args.kwargs["headers"].get("Accept-Encoding") == "identity"
+
+    def test_config_false_does_not_set_identity(self):
+        client = LLMClient(
+            model="m",
+            api_base="http://t",
+            api_key="k",
+            disable_response_compression=False,
+        )
+        assert "Accept-Encoding" not in client._headers()
