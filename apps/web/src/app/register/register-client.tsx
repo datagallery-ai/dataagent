@@ -3,26 +3,27 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthFlow, PasswordAuthShell } from "../../components/auth/auth-flow";
-import { configApi, isPasswordAuthMode } from "../../lib/config-api/client";
+import { configApi } from "../../lib/config-api/client";
 
 export function RegisterClient() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [registrationEnabled, setRegistrationEnabled] = useState(true);
 
   useEffect(() => {
-    if (!isPasswordAuthMode()) {
-      router.replace("/data-tasks");
-      return;
-    }
     let cancelled = false;
-    configApi
-      .getMe()
-      .then(() => {
-        if (!cancelled) router.replace("/data-tasks");
-      })
-      .catch(() => {
-        if (!cancelled) setChecking(false);
-      });
+    Promise.all([
+      configApi.getMe().then(() => true).catch(() => false),
+      configApi.getAuthStatus().then((status) => status.registrationEnabled).catch(() => true),
+    ]).then(([signedIn, canRegister]) => {
+      if (cancelled) return;
+      if (signedIn) {
+        router.replace("/data-tasks");
+        return;
+      }
+      setRegistrationEnabled(canRegister);
+      setChecking(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -32,5 +33,28 @@ export function RegisterClient() {
     return <PasswordAuthShell title="Loading account..." />;
   }
 
-  return <AuthFlow initialMode="register" onAuthenticated={() => router.replace("/data-tasks")} />;
+  if (!registrationEnabled) {
+    return (
+      <PasswordAuthShell
+        title="Registration closed"
+        subtitle="Registration is closed. Contact your deployment administrator."
+      >
+        <button
+          type="button"
+          className="text-sm font-medium text-foreground underline-offset-2 hover:underline"
+          onClick={() => router.push("/login")}
+        >
+          Back to sign in
+        </button>
+      </PasswordAuthShell>
+    );
+  }
+
+  return (
+    <AuthFlow
+      initialMode="register"
+      registrationEnabled={registrationEnabled}
+      onAuthenticated={() => router.replace("/data-tasks")}
+    />
+  );
 }

@@ -27,10 +27,12 @@ export function AuthFlow({
   initialMode,
   onAuthenticated,
   error = null,
+  registrationEnabled = true,
 }: {
   initialMode: AuthMode;
   onAuthenticated: () => void | Promise<void>;
   error?: string | null;
+  registrationEnabled?: boolean;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>(initialMode);
@@ -194,17 +196,24 @@ export function AuthFlow({
         </button>
       </form>
 
-      <AuthModeSwitch mode={mode} onGoLogin={goToLogin} onGoRegister={goToRegister} />
+      <AuthModeSwitch
+        mode={mode}
+        registrationEnabled={registrationEnabled}
+        onGoLogin={goToLogin}
+        onGoRegister={goToRegister}
+      />
     </PasswordAuthShell>
   );
 }
 
 function AuthModeSwitch({
   mode,
+  registrationEnabled,
   onGoLogin,
   onGoRegister,
 }: {
   mode: AuthMode;
+  registrationEnabled: boolean;
   onGoLogin: () => void;
   onGoRegister: () => void;
 }) {
@@ -221,7 +230,11 @@ function AuthModeSwitch({
   return (
     <div className="mt-5 border-t border-border pt-4 text-center text-xs text-muted">
       {mode === "login" ? (
-        <p>New to DataFoundry? {link("Create an account", onGoRegister)}</p>
+        registrationEnabled ? (
+          <p>New to DataFoundry? {link("Create an account", onGoRegister)}</p>
+        ) : (
+          <p>Registration is closed. Contact your deployment administrator.</p>
+        )
       ) : mode === "register" ? (
         <p>Already have an account? {link("Sign in", onGoLogin)}</p>
       ) : (

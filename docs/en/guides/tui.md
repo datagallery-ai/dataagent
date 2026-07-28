@@ -4,11 +4,7 @@ This guide is for terminal users, remote server users, and developers. After rea
 
 ## How to start
 
-Start the full dev stack or backend first:
-
-```bash
-npm run dev
-```
+Start the API in formal mode first ([Quick start](../quick-start.md): `npm run start:api` or `./deploy.sh deploy`). Do not treat `npm run dev` as the formal entry; contributor hot-reload is in the Quick start appendix.
 
 Start the TUI:
 
@@ -141,7 +137,7 @@ Use the Web workbench for full visual demos. Use the TUI to verify agent runtime
 
 ## Troubleshooting
 
-- Cannot connect: confirm `npm run dev` or `npm run dev:api` is running.
+- Cannot connect: confirm the formal API (`npm run start:api` or one-click deploy) is running; use `npm run dev:api` only for contributor hot-reload.
 - Backend URL changed: pass full `/api/copilotkit` URL with `--runtime-url`.
 - Model not responding: check `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
 - Session restore fails: confirm `/api/v1/sessions` is reachable and that you are signed in against the same `--runtime-url`.

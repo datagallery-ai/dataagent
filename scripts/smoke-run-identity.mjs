@@ -7,12 +7,17 @@ import {
 } from "../apps/api/dist/run-identity.js";
 import { resolveRunIdentity } from "../apps/api/dist/run-identity-orchestrator.js";
 import { RunEventWriter, createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const databasePath = `storage/metadata/run-identity-smoke-${Date.now()}.sqlite`;
 const store = createMetadataStore({ database_path: databasePath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 
 try {
-  const userId = "dev-user";
+  
   const sessionId = "identity-session";
   const runId = "identity-run";
   const requestInput = {

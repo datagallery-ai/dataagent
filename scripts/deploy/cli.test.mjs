@@ -49,9 +49,8 @@ test("existing complete config skips prompts unless reconfigure", async () => {
     "SECRET_MASTER_KEY=existing-master-secret-value",
     "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
     "AUTH_REGISTRATION_MODE=open",
-    "DATAFOUNDRY_AUTH_MODE=password",
     "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=0.0.0.0",
+    "WEB_HOST=127.0.0.1",
     "API_HOST=127.0.0.1",
     "STORAGE_ROOT_DIR=storage",
     "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
@@ -106,6 +105,8 @@ test("legacy complete env missing AUTH_REGISTRATION_MODE fills default and skips
   assert.equal(result.env.WEB_PORT, "3310");
   assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
   assert.match(result.envText, /^AUTH_REGISTRATION_MODE=open$/m);
+  assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
+  assert.doesNotMatch(result.envText, /DATAFOUNDRY_AUTH_MODE/);
 });
 
 test("partial .env is not treated as complete before fill and still prompts", async () => {
@@ -127,8 +128,7 @@ test("partial .env is not treated as complete before fill and still prompts", as
   assert.ok(asked > 0);
 });
 
-test("non-interactive never calls ask and warns on loopback public URL with remote bind", async () => {
-  const lines = [];
+test("non-interactive never calls ask and uses loopback defaults", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
   const result = await configureDeploymentInteractively({
@@ -136,13 +136,35 @@ test("non-interactive never calls ask and warns on loopback public URL with remo
     sourceText: "",
     reconfigure: false,
     nonInteractive: true,
-    processEnv: { WEB_HOST: "0.0.0.0" },
     ask: async () => assert.fail("must not prompt"),
-    print: (line) => lines.push(String(line)),
+    print: () => {},
     probe: async () => ({ available: true, owner: null })
   });
   assert.equal(result.env.WEB_PORT, "3000");
-  assert.match(lines.join("\n"), /本机访问|local-machine|仅适合本机/i);
+  assert.equal(result.env.WEB_HOST, "127.0.0.1");
+  assert.equal(result.env.API_HOST, "127.0.0.1");
+  assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "http://127.0.0.1:3000");
+  assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
+  assert.equal(result.env.DATALINK_ENABLED, undefined);
+});
+
+test("non-interactive rejects wildcard bind hosts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
+  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await assert.rejects(
+    () =>
+      configureDeploymentInteractively({
+        root,
+        sourceText: "",
+        reconfigure: false,
+        nonInteractive: true,
+        processEnv: { WEB_HOST: "0.0.0.0" },
+        ask: async () => assert.fail("must not prompt"),
+        print: () => {},
+        probe: async () => ({ available: true, owner: null })
+      }),
+    /WEB_HOST|loopback|SSH|TLS/i
+  );
 });
 
 test("port menu rejects n with explicit hint", async () => {
@@ -189,9 +211,8 @@ test("reconfigure creates backup and keeps secrets", async () => {
     "AUTH_SESSION_SECRET=existing-session-secret-value",
     "SECRET_MASTER_KEY=existing-master-secret-value",
     "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000",
-    "DATAFOUNDRY_AUTH_MODE=password",
     "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=0.0.0.0",
+    "WEB_HOST=127.0.0.1",
     "API_HOST=127.0.0.1",
     "STORAGE_ROOT_DIR=storage",
     "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
@@ -306,9 +327,8 @@ test("reconfigure reuses managed listening ports only for a verified running sta
     "AUTH_SESSION_SECRET=existing-session-secret-value",
     "SECRET_MASTER_KEY=existing-master-secret-value",
     "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
-    "DATAFOUNDRY_AUTH_MODE=password",
     "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=0.0.0.0",
+    "WEB_HOST=127.0.0.1",
     "API_HOST=127.0.0.1",
     "STORAGE_ROOT_DIR=storage",
     "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
@@ -426,9 +446,8 @@ test("reconfigure keeps HTTPS public URL when ports are unchanged", async () => 
     "AUTH_SESSION_SECRET=existing-session-secret-value",
     "SECRET_MASTER_KEY=existing-master-secret-value",
     "AUTH_PUBLIC_BASE_URL=https://prod.example.com",
-    "DATAFOUNDRY_AUTH_MODE=password",
     "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=0.0.0.0",
+    "WEB_HOST=127.0.0.1",
     "API_HOST=127.0.0.1",
     "STORAGE_ROOT_DIR=storage",
     "METADATA_DB_PATH=storage/metadata/workbench.sqlite"

@@ -41,7 +41,7 @@ import { handleConfigApiRequest } from "./config-api.js";
 import { createAsyncMemoByKey, createStartupTimer } from "./async-memo.js";
 import { ensureBuiltinDtcGrowthDatasource } from "./builtin-dtc-growth-datasource.js";
 import { reclaimOrphanedQueuedAndRunningRuns } from "./stale-active-runs.js";
-import { loadPasswordAuthConfig, type PasswordAuthConfig } from "./auth/config.js";
+import { loadPasswordAuthConfig } from "./auth/config.js";
 import { AuthService, type AuthIdentity } from "./auth/service.js";
 import { serverDefaultConnectionStatus, isServerLlmEnvConfigured } from "./model-profile-connection-status.js";
 import {
@@ -75,12 +75,6 @@ import { RunFinalizer, createRunStatusDelta } from "./run-finalizer.js";
 import { startSessionTitleTask } from "./session-title.js";
 import { TaskPlanProjector } from "./task-plan-projector.js";
 import { ToolCallResultBridge } from "./tool-call-result-bridge.js";
-
-const DEV_USER: MeResponse = {
-  id: "dev-user",
-  email: "dev@example.com",
-  display_name: "Dev User"
-};
 
 const COPILOTKIT_PATH = "/api/copilotkit";
 const DEFAULT_WORKSPACE_ID = "default";
@@ -176,13 +170,7 @@ export const createServer = async (options: CreateServerOptions = {}): Promise<S
     options.metadataStore ??
     createMetadataStore({
       database_path: process.env.METADATA_DB_PATH ?? join(envConfig.storage.root_dir, "metadata", "workbench.sqlite"),
-      ...(envConfig.storage.secret_master_key ? { secret_master_key: envConfig.storage.secret_master_key } : {}),
-      dev_user: {
-        id: DEV_USER.id,
-        email: DEV_USER.email ?? "dev@example.com",
-        display_name: DEV_USER.display_name ?? "Dev User",
-        dev_token: "dev-token"
-      }
+      ...(envConfig.storage.secret_master_key ? { secret_master_key: envConfig.storage.secret_master_key } : {})
     }),
   );
   const fileAssetService = new LocalFileAssetService(metadataStore, {
@@ -214,15 +202,8 @@ export const createServer = async (options: CreateServerOptions = {}): Promise<S
     );
   const runCancelRegistry = new RunCancelRegistry();
   const authService = new AuthService(metadataStore, authConfig);
-  ensureDevUser(metadataStore);
-  removeLegacyBuiltinDemoDataSourceOnce(metadataStore, DEV_USER.id);
 
-  const [taskStateRuntime] = await Promise.all([
-    timer.measure("mastra_runtime", () => taskStateRuntimePromise),
-    timer.measure("builtin_resources", () =>
-      ensureBuiltinConfigResourcesOnce(fileAssetService, metadataStore, DEV_USER.id, DEFAULT_WORKSPACE_ID),
-    ),
-  ]);
+  const taskStateRuntime = await timer.measure("mastra_runtime", () => taskStateRuntimePromise);
 
   // After restart, cancel-registry is empty — reclaim queued/running rows left by dead workers.
   const reclaimedActiveRuns = await timer.measure("stale_active_run_reclaim", () =>
@@ -270,7 +251,7 @@ export const createServer = async (options: CreateServerOptions = {}): Promise<S
         return;
       }
 
-      if (isPasswordAuth(authConfig) && requestUrl.pathname.startsWith("/api/v1/auth/")) {
+      if (requestUrl.pathname.startsWith("/api/v1/auth/")) {
         let identity: AuthIdentity | undefined;
         try {
           identity = resolvePasswordSessionIdentity(authService, request);
@@ -287,8 +268,8 @@ export const createServer = async (options: CreateServerOptions = {}): Promise<S
         }
       }
 
-      const authContext = resolveRequestAuth(request, metadataStore, authConfig, authService);
-      if (isPasswordAuth(authConfig) && isUnsafeMethod(request.method)) {
+      const authContext = resolveRequestAuth(request, authService);
+      if (isUnsafeMethod(request.method)) {
         authService.validateCsrf(authContext.identity, headerString(request.headers["x-csrf-token"]));
       }
       removeLegacyBuiltinDemoDataSourceOnce(metadataStore, authContext.user.id);
@@ -1069,7 +1050,7 @@ const sendCorsPreflight = (response: ServerResponse): void => {
   response.writeHead(204, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-CSRF-Token, X-Dev-Token, X-Workspace-Id",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-CSRF-Token",
     "Access-Control-Max-Age": "86400"
   });
   response.end();
@@ -1083,47 +1064,13 @@ type RequestAuthContext = {
 
 const resolveRequestAuth = (
   request: IncomingMessage,
-  metadataStore: MetadataStore,
-  authConfig: PasswordAuthConfig,
   authService: AuthService
 ): RequestAuthContext => {
-  if (isPasswordAuth(authConfig)) {
-    const identity = resolvePasswordSessionIdentity(authService, request);
-    return {
-      identity,
-      user: userRecordToMeResponse(identity.user),
-      workspaceId: identity.workspace.id
-    };
-  }
-
-  const token = extractAuthToken(request);
-  const workspaceId = sanitizeWorkspaceId(headerString(request.headers["x-workspace-id"]));
-  const devUser = metadataStore.users.getById({ user_id: DEV_USER.id });
-  const devIdentity = {
-    user: devUser,
-    workspace: { id: workspaceId, name: workspaceId, kind: "personal" as const, owner_user_id: DEV_USER.id, created_at: "", updated_at: "" }
-  };
-  if (!token) {
-    return { identity: devIdentity, user: DEV_USER, workspaceId };
-  }
-  const user = metadataStore.users.getByDevToken({ dev_token: token });
-  if (!user) {
-    throw new Error("UNAUTHORIZED:Invalid local auth token.");
-  }
+  const identity = resolvePasswordSessionIdentity(authService, request);
   return {
-    identity: {
-      user,
-      workspace: {
-        id: workspaceId,
-        name: workspaceId,
-        kind: "personal",
-        owner_user_id: user.id,
-        created_at: "",
-        updated_at: ""
-      }
-    },
-    user: userRecordToMeResponse(user),
-    workspaceId
+    identity,
+    user: userRecordToMeResponse(identity.user),
+    workspaceId: identity.workspace.id
   };
 };
 
@@ -1147,24 +1094,6 @@ const ensureConversationWorkingMemoryThread = async (input: {
   });
 };
 
-const isPasswordAuth = (config: PasswordAuthConfig): boolean => config.mode === "password";
-
-const extractAuthToken = (request: IncomingMessage): string | undefined => {
-  const authorization = headerString(request.headers.authorization);
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length).trim() || undefined;
-  }
-  return headerString(request.headers["x-dev-token"]);
-};
-
-const sanitizeWorkspaceId = (value: string | undefined): string => {
-  const candidate = value?.trim() || DEFAULT_WORKSPACE_ID;
-  if (!/^[a-zA-Z0-9._-]{1,128}$/u.test(candidate)) {
-    throw new Error("UNAUTHORIZED:Invalid workspace id.");
-  }
-  return candidate;
-};
-
 const headerString = (value: string | string[] | undefined): string | undefined =>
   Array.isArray(value) ? value[0] : value;
 
@@ -1173,15 +1102,6 @@ const userRecordToMeResponse = (user: UserRecord): MeResponse => ({
   ...(user.email ? { email: user.email } : {}),
   ...(user.display_name ? { display_name: user.display_name } : {})
 });
-
-const ensureDevUser = (metadataStore: MetadataStore): void => {
-  metadataStore.users.upsertDevUser({
-    id: DEV_USER.id,
-    email: DEV_USER.email ?? "dev@example.com",
-    display_name: DEV_USER.display_name ?? "Dev User",
-    dev_token: "dev-token"
-  });
-};
 
 const sendJson = (response: ServerResponse, statusCode: number, body: unknown): void => {
   response.writeHead(statusCode, {

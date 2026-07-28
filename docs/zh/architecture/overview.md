@@ -95,9 +95,9 @@ workspace defaults
 
 ## 身份作用域
 
-本地开发使用 dev token 和 `default` workspace。Web v1 不在界面中暴露 workspace 切换，并按用户隔离浏览器状态。REST 配置请求和 CopilotKit AG-UI run 必须使用同一组身份头。
+DataFoundry 仅支持基于 Cookie 的密码会话。每个注册用户拥有个人 workspace；Web v1 不在界面中暴露 workspace 切换，并按用户隔离浏览器状态。REST 配置请求和 CopilotKit AG-UI run 必须使用同一已认证会话。
 
-password 模式在 `/api/v1/auth/*` 下提供基于 Cookie 的会话、非安全方法 CSRF 校验、账号注册、登录、密码重置和会话注销。
+`/api/v1/auth/*` 覆盖注册、登录、邮箱验证、密码重置、登出与会话注销；非安全方法需 CSRF 校验。
 
 ## 文件、知识库和产出
 
@@ -109,7 +109,7 @@ password 模式在 `/api/v1/auth/*` 下提供基于 Cookie 的会话、非安全
 
 ## 正式态部署边界
 
-默认部署路径是正式态（`password` + `build` / `start`），不要跑 `npm run dev`。正式测试与真实生产启动命令相同：
+默认部署路径是正式态（`build` / `start`），不要跑 `npm run dev`。正式测试与真实生产启动命令相同：
 
 ```bash
 npm run build && npm run build:web

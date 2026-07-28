@@ -41,7 +41,7 @@ describe("data task identity menu", () => {
     );
   });
 
-  it("does not expose placeholder account menu items", () => {
+  it("does not expose development identity paths", () => {
     const file = source();
 
     for (const label of [
@@ -55,18 +55,13 @@ describe("data task identity menu", () => {
       "Switch account",
       "Add account",
       "Local dev users authenticate with dev tokens",
+      "Continue as Dev User",
+      "DEV_SIGNED_OUT_STORAGE_KEY",
+      "DevIdentityProvider",
+      "getDevIdentities",
     ]) {
       expect(file).not.toContain(label);
     }
-  });
-
-  it("gives local dev sign out a visible signed-out state", () => {
-    const file = source();
-
-    expect(file).toContain("DEV_SIGNED_OUT_STORAGE_KEY");
-    expect(file).toContain("removeStoredIdentity");
-    expect(file).toContain("Signed out");
-    expect(file).toContain("Continue as Dev User");
   });
 
   it("uses a divider-only trigger and a flush animated popover", () => {
@@ -80,8 +75,6 @@ describe("data task identity menu", () => {
   });
 
   it("exposes production password auth screens and account actions", () => {
-    // Auth screens moved to a standalone flow component behind /login routes;
-    // the identity provider only delegates to it.
     const authFlow = readFileSync(
       join(process.cwd(), "src/components/auth/auth-flow.tsx"),
       "utf8",
@@ -98,5 +91,6 @@ describe("data task identity menu", () => {
 
     const file = source();
     expect(file).toContain("PasswordAuthShell");
+    expect(file).toContain('authMode: "password"');
   });
 });

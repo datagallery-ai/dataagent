@@ -13,11 +13,16 @@ import {
   createMastraConversationMemoryBridge
 } from "../packages/agent-runtime/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const databasePath = `storage/metadata/conversation-memory-smoke-${Date.now()}.sqlite`;
 const memoryDatabasePath = `storage/metadata/conversation-memory-shadow-${Date.now()}.sqlite`;
 const consumingMemoryDatabasePath = `storage/metadata/conversation-memory-consuming-${Date.now()}.sqlite`;
 const store = createMetadataStore({ database_path: databasePath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 let memoryRuntime;
 let consumingMemoryRuntime;
 
@@ -28,7 +33,7 @@ try {
   });
   const memoryBridge = createMastraConversationMemoryBridge({ memory: memoryRuntime.memory });
   const consumingMemoryBridge = createMastraConversationMemoryBridge({ memory: consumingMemoryRuntime.memory });
-  const userId = "dev-user";
+  
   const sessionId = "conversation-memory-session";
   const firstRunId = "conversation-memory-run-1";
   const secondRunId = "conversation-memory-run-2";
@@ -677,7 +682,7 @@ function assertEqual(actual, expected, message) {
 function createHistoryRecord(id, role, content, position) {
   return {
     id,
-    user_id: "dev-user",
+    user_id: userId,
     session_id: "conversation-memory-session",
     run_id: `history-${id}`,
     role,
@@ -694,7 +699,7 @@ function createHistoryRecord(id, role, content, position) {
 function createSummaryRecord(id, fromPosition, toPosition, summaryText) {
   return {
     id,
-    user_id: "dev-user",
+    user_id: userId,
     session_id: "conversation-memory-session",
     from_position: fromPosition,
     to_position: toPosition,

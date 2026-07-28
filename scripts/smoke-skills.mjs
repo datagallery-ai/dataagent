@@ -17,13 +17,16 @@ import {
 } from "../packages/agent-runtime/dist/testing.js";
 import { createRunWorkspace } from "../packages/agent-runtime/dist/tools/workspace-factory.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "open-data-foundry-skills-smoke-"));
 const metadataStore = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
+const __testIdentity = createVerifiedTestIdentity(metadataStore);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const fileAssetService = new LocalFileAssetService(metadataStore, { storageRoot: join(root, "files") });
 
-const userId = "dev-user";
-const workspaceId = "default";
 const packageBody = Buffer.from(`---
 name: sql-analysis-smoke
 description: Use for SQL analysis smoke tests.

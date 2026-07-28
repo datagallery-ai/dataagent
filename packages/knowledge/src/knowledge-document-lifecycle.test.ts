@@ -1,4 +1,4 @@
-import { createMetadataStore } from "@datafoundry/metadata";
+import { createMetadataStore, createVerifiedTestIdentity } from "@datafoundry/metadata";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,18 +20,13 @@ const createHarness = (embeddingService?: EmbeddingService) => {
   const root = mkdtempSync(join(tmpdir(), "knowledge-lifecycle-"));
   roots.push(root);
   const metadataStore = createMetadataStore({
-    database_path: join(root, "metadata.sqlite"),
-    dev_user: {
-      id: "user-1",
-      email: "user@example.com",
-      display_name: "Test User",
-      dev_token: "dev-token"
-    }
+    database_path: join(root, "metadata.sqlite")
   });
+  const { userId, workspaceId } = createVerifiedTestIdentity(metadataStore);
   metadataStore.configResources.upsert({
     id: "kb-1",
-    workspace_id: "default",
-    user_id: "user-1",
+    workspace_id: workspaceId,
+    user_id: userId,
     kind: "knowledge-base",
     name: "KB",
     payload: {
@@ -47,7 +42,7 @@ const createHarness = (embeddingService?: EmbeddingService) => {
       ? { embedding: embeddingConfig, embeddingService }
       : {})
   });
-  return { knowledge, metadataStore, root };
+  return { knowledge, metadataStore, root, userId };
 };
 
 afterEach(() => {
@@ -61,28 +56,28 @@ describe("LocalKnowledgeService document lifecycle", () => {
     const embed: EmbeddingService = {
       embed: async (texts) => texts.map((_, index) => [index + 1, 0, 0])
     };
-    const { knowledge, metadataStore } = createHarness(embed);
+    const { knowledge, metadataStore, userId } = createHarness(embed);
     const doc = await knowledge.ingestText({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       filename: "keep-me.md",
       content: "alpha revenue metric one"
     });
     const other = await knowledge.ingestText({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       filename: "other.md",
       content: "beta cost metric two"
     });
 
     const deleted = knowledge.deleteDocument({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       document_id: doc.id
     });
     expect(deleted).toEqual({ deleted: true, id: doc.id });
 
-    const remaining = knowledge.listDocuments({ user_id: "user-1", collection_id: "kb-1" });
+    const remaining = knowledge.listDocuments({ user_id: userId, collection_id: "kb-1" });
     expect(remaining.map((item) => item.id)).toEqual([other.id]);
 
     const chunkCount = metadataStore.db.prepare(
@@ -96,7 +91,7 @@ describe("LocalKnowledgeService document lifecycle", () => {
     expect(embeddingCount.count).toBe(0);
 
     const hits = await knowledge.retrieve({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       query: "alpha revenue metric"
     });
@@ -113,21 +108,21 @@ describe("LocalKnowledgeService document lifecycle", () => {
         return texts.map((_, index) => [index + 1, 0, 0]);
       }
     };
-    const { knowledge, metadataStore } = createHarness(embed);
+    const { knowledge, metadataStore, userId } = createHarness(embed);
 
     await expect(knowledge.ingestText({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       filename: "failed.md",
       content: "alpha revenue metric recoverable"
     })).rejects.toThrow(/EMBEDDING_REQUEST_FAILED/);
 
-    const failed = knowledge.listDocuments({ user_id: "user-1", collection_id: "kb-1" })[0];
+    const failed = knowledge.listDocuments({ user_id: userId, collection_id: "kb-1" })[0];
     expect(failed?.status).toBe("failed");
 
     shouldFail = false;
     const recovered = await knowledge.reindexDocument({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       document_id: failed!.id
     });
@@ -149,18 +144,18 @@ describe("LocalKnowledgeService document lifecycle", () => {
         return texts.map((_, index) => [index + 1, 0, 0]);
       }
     };
-    const { knowledge } = createHarness(embed);
+    const { knowledge, userId } = createHarness(embed);
     await expect(knowledge.ingestText({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       filename: "stuck.md",
       content: "alpha revenue metric stuck"
     })).rejects.toThrow(/EMBEDDING_REQUEST_FAILED/);
-    expect(knowledge.listDocuments({ user_id: "user-1", collection_id: "kb-1" })[0]?.status).toBe("failed");
+    expect(knowledge.listDocuments({ user_id: userId, collection_id: "kb-1" })[0]?.status).toBe("failed");
 
     shouldFail = false;
-    await knowledge.reindex({ user_id: "user-1", collection_id: "kb-1" });
-    expect(knowledge.listDocuments({ user_id: "user-1", collection_id: "kb-1" })[0]?.status).toBe("ready");
+    await knowledge.reindex({ user_id: userId, collection_id: "kb-1" });
+    expect(knowledge.listDocuments({ user_id: userId, collection_id: "kb-1" })[0]?.status).toBe("ready");
   });
 
   it("clears partial vectors and marks documents failed when collection reindex aborts mid-batch", async () => {
@@ -175,10 +170,10 @@ describe("LocalKnowledgeService document lifecycle", () => {
         return texts.map((_, index) => [index + 1, 0, 0]);
       }
     };
-    const { knowledge, metadataStore } = createHarness(embed);
+    const { knowledge, metadataStore, userId } = createHarness(embed);
     for (let index = 0; index < 33; index += 1) {
       const doc = await knowledge.ingestText({
-        user_id: "user-1",
+        user_id: userId,
         collection_id: "kb-1",
         filename: `doc-${index}.md`,
         content: `alpha revenue metric document ${index} unique content here`
@@ -189,17 +184,17 @@ describe("LocalKnowledgeService document lifecycle", () => {
     batches = 0;
     failAfterBatches = 1;
     await expect(knowledge.reindex({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1"
     })).rejects.toThrow(/EMBEDDING_REQUEST_FAILED:500:mid-reindex/);
 
-    const documents = knowledge.listDocuments({ user_id: "user-1", collection_id: "kb-1" });
+    const documents = knowledge.listDocuments({ user_id: userId, collection_id: "kb-1" });
     expect(documents).toHaveLength(33);
     expect(documents.every((item) => item.status === "failed")).toBe(true);
 
     const embeddingCount = metadataStore.db.prepare(
       "SELECT COUNT(*) AS count FROM knowledge_embeddings WHERE user_id = ? AND collection_id = ?"
-    ).get("user-1", "kb-1") as { count: number };
+    ).get(userId, "kb-1") as { count: number };
     expect(embeddingCount.count).toBe(0);
   });
 
@@ -210,9 +205,9 @@ describe("LocalKnowledgeService document lifecycle", () => {
       }
     };
     // FTS-only ingest (no embedding key) leaves a ready document with chunks.
-    const { knowledge, metadataStore } = createHarness();
+    const { knowledge, metadataStore, userId } = createHarness();
     const doc = await knowledge.ingestText({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       filename: "fts-only.md",
       content: "alpha revenue metric fts"
@@ -225,12 +220,12 @@ describe("LocalKnowledgeService document lifecycle", () => {
     });
 
     await expect(knowledgeWithEmbed.reindexDocument({
-      user_id: "user-1",
+      user_id: userId,
       collection_id: "kb-1",
       document_id: doc.id
     })).rejects.toThrow(/EMBEDDING_REQUEST_FAILED/);
 
-    expect(knowledgeWithEmbed.listDocuments({ user_id: "user-1", collection_id: "kb-1" })[0]?.status)
+    expect(knowledgeWithEmbed.listDocuments({ user_id: userId, collection_id: "kb-1" })[0]?.status)
       .toBe("failed");
   });
 });

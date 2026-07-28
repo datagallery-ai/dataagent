@@ -1,5 +1,5 @@
 import { LocalFileAssetService } from "@datafoundry/files";
-import { createMetadataStore } from "@datafoundry/metadata";
+import { createMetadataStore, createVerifiedTestIdentity } from "@datafoundry/metadata";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,34 +13,40 @@ const createTestServices = () => {
   const root = mkdtempSync(join(tmpdir(), "session-output-service-"));
   roots.push(root);
   const metadataStore = createMetadataStore({
-    database_path: join(root, "metadata.sqlite"),
-    dev_user: {
-      id: "user-1",
-      email: "user@example.com",
-      display_name: "Test User",
-      dev_token: "dev-token"
-    }
+    database_path: join(root, "metadata.sqlite")
   });
-  metadataStore.workspaces.createPersonal({
-    id: "workspace-1",
-    owner_user_id: "user-1",
-    name: "Workspace"
+  const { userId, workspaceId } = createVerifiedTestIdentity(metadataStore, {
+    email: "user@example.com",
+    displayName: "Test User",
+    workspaceName: "Workspace"
   });
+  // Keep stable ids expected by assertions below.
+  const sessionId = "session-1";
+  const runId = "run-1";
   metadataStore.sessions.create({
-    user_id: "user-1",
-    id: "session-1"
+    user_id: userId,
+    id: sessionId
   });
   metadataStore.runs.create({
-    user_id: "user-1",
-    session_id: "session-1",
-    id: "run-1",
+    user_id: userId,
+    session_id: sessionId,
+    id: runId,
     user_input: "test"
   });
   const fileAssetService = new LocalFileAssetService(metadataStore, {
     storageRoot: join(root, "files")
   });
   const sessionOutputService = new SessionOutputService(metadataStore, fileAssetService);
-  return { fileAssetService, metadataStore, root, sessionOutputService };
+  return {
+    fileAssetService,
+    metadataStore,
+    root,
+    sessionOutputService,
+    userId,
+    workspaceId,
+    sessionId,
+    runId
+  };
 };
 
 afterEach(() => {
@@ -51,30 +57,31 @@ afterEach(() => {
 
 describe("SessionOutputService", () => {
   it("returns null for paths excluded from session outputs", async () => {
-    const { root, sessionOutputService } = createTestServices();
+    const { root, sessionOutputService, userId, workspaceId, sessionId, runId } = createTestServices();
     const sourcePath = join(root, "analysis.py");
     writeFileSync(sourcePath, "print('draft')\n");
 
     await expect(sessionOutputService.upsertFromSessionFile({
-      user_id: "user-1",
-      workspace_id: "workspace-1",
-      session_id: "session-1",
-      run_id: "run-1",
+      user_id: userId,
+      workspace_id: workspaceId,
+      session_id: sessionId,
+      run_id: runId,
       path: "analysis.py",
       source_path: sourcePath
     })).resolves.toBeNull();
   });
 
   it("upserts one output per session file path and appends versions", async () => {
-    const { metadataStore, root, sessionOutputService } = createTestServices();
+    const { metadataStore, root, sessionOutputService, userId, workspaceId, sessionId, runId } =
+      createTestServices();
     const sourcePath = join(root, "summary.md");
     writeFileSync(sourcePath, "# First\n");
 
     const first = await sessionOutputService.upsertFromSessionFile({
-      user_id: "user-1",
-      workspace_id: "workspace-1",
-      session_id: "session-1",
-      run_id: "run-1",
+      user_id: userId,
+      workspace_id: workspaceId,
+      session_id: sessionId,
+      run_id: runId,
       path: "reports/summary.md",
       source_path: sourcePath,
       tool_call_id: "tool-1"
@@ -82,10 +89,10 @@ describe("SessionOutputService", () => {
 
     writeFileSync(sourcePath, "# Second\n");
     const second = await sessionOutputService.upsertFromSessionFile({
-      user_id: "user-1",
-      workspace_id: "workspace-1",
-      session_id: "session-1",
-      run_id: "run-1",
+      user_id: userId,
+      workspace_id: workspaceId,
+      session_id: sessionId,
+      run_id: runId,
       path: "reports/summary.md",
       source_path: sourcePath,
       tool_call_id: "tool-2"
@@ -96,17 +103,17 @@ describe("SessionOutputService", () => {
     expect(second?.artifact.id).toBe(first?.artifact.id);
     expect(second?.artifact.file_asset_ref_id).not.toBe(first?.artifact.file_asset_ref_id);
     expect(metadataStore.artifacts.listBySession({
-      user_id: "user-1",
-      session_id: "session-1"
+      user_id: userId,
+      session_id: sessionId
     })).toHaveLength(1);
     expect(metadataStore.artifacts.findBySessionLogicalKey({
-      user_id: "user-1",
-      session_id: "session-1",
+      user_id: userId,
+      session_id: sessionId,
       logical_key: "session_file:reports/summary.md"
     })?.id).toBe(first?.artifact.id);
 
     const versions = metadataStore.artifactVersions.listByArtifact({
-      user_id: "user-1",
+      user_id: userId,
       artifact_id: first?.artifact.id ?? ""
     });
     expect(versions.map((version) => version.version)).toEqual([1, 2]);

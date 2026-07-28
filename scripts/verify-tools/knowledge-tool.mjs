@@ -12,6 +12,7 @@ import {
 import { LocalDataGateway } from "../../packages/data-gateway/dist/index.js";
 import { LocalKnowledgeService } from "../../packages/knowledge/dist/index.js";
 import { createMetadataStore } from "../../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "../lib/metadata-test-identity.mjs";
 
 const envPath = join(process.cwd(), ".env");
 try {
@@ -38,8 +39,12 @@ const store = createMetadataStore({
   database_path: metadataPath,
   ...(process.env.SECRET_MASTER_KEY ? { secret_master_key: process.env.SECRET_MASTER_KEY } : {}),
 });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
 
-const user_id = "dev-user";
+
+const user_id = userId;
 const session_id = `verify-kb-session-${stamp}`;
 const run_id = `verify-kb-run-${stamp}`;
 const datasource_id = "api-duckdb-demo";
@@ -221,7 +226,7 @@ try {
   if (hasEmbeddingCreds) {
     store.configResources.upsert({
       id: collection_id,
-      workspace_id: "default",
+      workspace_id: workspaceId,
       user_id,
       kind: "knowledge-base",
       name: "Verify KB",

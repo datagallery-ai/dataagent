@@ -13,7 +13,6 @@ const metadataPath = join(root, "metadata.sqlite");
 const mastraStoragePath = join(root, "mastra.sqlite");
 const workspaceRoot = join(root, "workspaces");
 
-process.env.DATAFOUNDRY_AUTH_MODE = "password";
 process.env.AUTH_SESSION_SECRET = "copilotkit-run-session-secret-32b!!!";
 process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
 process.env.AUTH_EMAIL_DELIVERY = "test";

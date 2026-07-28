@@ -12,13 +12,18 @@ import {
 } from "../apps/api/dist/long-term-memory.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { rmSync } from "node:fs";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const databasePath = `storage/metadata/long-term-memory-smoke-${Date.now()}.sqlite`;
-const userId = "dev-user";
+
 const sessionId = "long-term-memory-session";
 const runId = "long-term-memory-run";
 const datasourceId = "api-duckdb-demo";
 const store = createMetadataStore({ database_path: databasePath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 
 try {
   store.sessions.create({

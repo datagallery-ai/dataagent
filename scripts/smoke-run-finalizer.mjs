@@ -7,12 +7,17 @@ import { join } from "node:path";
 import { ConversationMemoryService } from "../apps/api/dist/conversation-memory.js";
 import { RunFinalizer } from "../apps/api/dist/run-finalizer.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "datafoundry-run-finalizer-"));
-const userId = "dev-user";
+
 
 try {
   const metadataStore = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
+const __testIdentity = createVerifiedTestIdentity(metadataStore);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 
   await runCanceledDraftScenario(metadataStore);
   await runCanceledEmptyDraftScenario(metadataStore);
@@ -163,6 +168,6 @@ function createFinalizer(metadataStore, sessionId, runId, observer, emitted) {
     sessionDir: join(root, "sessions", sessionId),
     sessionId,
     userId,
-    workspaceId: "default",
+    workspaceId,
   });
 }

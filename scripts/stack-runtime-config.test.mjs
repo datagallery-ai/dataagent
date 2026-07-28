@@ -10,7 +10,7 @@ test("uses native deployment defaults", () => {
   const config = resolveStackRuntimeConfig({});
   assert.equal(config.API_HOST, "127.0.0.1");
   assert.equal(config.API_PORT, "8787");
-  assert.equal(config.WEB_HOST, "0.0.0.0");
+  assert.equal(config.WEB_HOST, "127.0.0.1");
   assert.equal(config.WEB_PORT, "3000");
 });
 

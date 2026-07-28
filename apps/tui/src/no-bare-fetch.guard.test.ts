@@ -65,8 +65,10 @@ describe("no bare fetch on protected TUI API paths", () => {
     assert.deepEqual(offenders, []);
   });
 
-  it("forbids offline demo symbols in apps, README, and docs", () => {
-    const banned = /DemoCopilotKitClient|seedDemoState|--demo/;
+  it("forbids offline demo symbols in production sources", () => {
+    const banned = new RegExp(
+      ["DemoCopilotKitClient", "seedDemoState", ["-", "-", "demo"].join("")].join("|"),
+    );
     const offenders: string[] = [];
     const roots = [
       join(repoRoot, "apps"),

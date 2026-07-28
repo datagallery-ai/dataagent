@@ -23,23 +23,44 @@ export function parseDeploymentEnvironment(sourceText = "") {
 }
 
 const DEFAULTS = {
-  WEB_HOST: "0.0.0.0",
+  WEB_HOST: "127.0.0.1",
   WEB_PORT: "3000",
   API_HOST: "127.0.0.1",
   API_PORT: "8787",
-  DATAFOUNDRY_AUTH_MODE: "password",
   AUTH_EMAIL_DELIVERY: "test",
-  AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-  // Required by password-mode API boot; open matches .env.example formal-test default.
   AUTH_REGISTRATION_MODE: "open",
   STORAGE_ROOT_DIR: "storage",
   METADATA_DB_PATH: "storage/metadata/workbench.sqlite"
 };
 
 const SECRET_KEYS = ["AUTH_SESSION_SECRET", "SECRET_MASTER_KEY"];
+/** Removed by password-only cutover; strip on ensure so upgraded .env can boot. */
+const REMOVED_LEGACY_AUTH_KEYS = ["DATAFOUNDRY_AUTH_MODE", "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE"];
 const PLACEHOLDER_SECRETS = new Set(["", "change-me", "replace-me"]);
 const SENSITIVE_KEY_PATTERN = /KEY|SECRET|TOKEN|PASSWORD|COOKIE|AUTHORIZATION/i;
 const SENSITIVE_JSON_KEY_PATTERN = /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|token|password|authorization|auth)$/i;
+
+export function removeEnvKeys(sourceText, keys) {
+  const keySet = new Set(keys);
+  const lines = String(sourceText ?? "").length > 0
+    ? String(sourceText).replace(/\r\n/g, "\n").split("\n")
+    : [];
+  if (lines.length > 0 && lines.at(-1) === "") lines.pop();
+  const removedKeys = [];
+  const next = [];
+  for (const line of lines) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (match && keySet.has(match[1])) {
+      if (!removedKeys.includes(match[1])) removedKeys.push(match[1]);
+      continue;
+    }
+    next.push(line);
+  }
+  return {
+    text: next.length > 0 ? `${next.join("\n")}\n` : "",
+    removedKeys
+  };
+}
 
 export function isPlaceholderSecret(value) {
   return value == null || PLACEHOLDER_SECRETS.has(String(value).trim());
@@ -98,7 +119,10 @@ export function updateDeploymentEnvironment(sourceText, updates) {
 export function ensureDeploymentEnvironment(sourceText, options = {}) {
   const randomSecret = options.randomSecret ?? (() => randomBytes(32).toString("base64url"));
   const generateSecrets = options.generateSecrets !== false;
-  const parsed = parseDeploymentEnvironment(sourceText ?? "");
+  const stripped = removeEnvKeys(sourceText ?? "", REMOVED_LEGACY_AUTH_KEYS);
+  const workingText = stripped.text;
+  const removedKeys = stripped.removedKeys;
+  const parsed = parseDeploymentEnvironment(workingText);
   const updates = {};
   const generatedKeys = [];
 
@@ -117,36 +141,78 @@ export function ensureDeploymentEnvironment(sourceText, options = {}) {
     }
   }
 
-  if (
-    (parsed.AUTH_PUBLIC_BASE_URL == null || String(parsed.AUTH_PUBLIC_BASE_URL).trim() === "") &&
-    updates.AUTH_PUBLIC_BASE_URL == null
-  ) {
+  if (parsed.AUTH_PUBLIC_BASE_URL == null || String(parsed.AUTH_PUBLIC_BASE_URL).trim() === "") {
     const webPort = updates.WEB_PORT ?? parsed.WEB_PORT ?? DEFAULTS.WEB_PORT;
     updates.AUTH_PUBLIC_BASE_URL = `http://127.0.0.1:${webPort}`;
-    generatedKeys.push("AUTH_PUBLIC_BASE_URL");
+    if (!generatedKeys.includes("AUTH_PUBLIC_BASE_URL")) {
+      generatedKeys.push("AUTH_PUBLIC_BASE_URL");
+    }
   }
 
   const text = Object.keys(updates).length > 0
-    ? updateDeploymentEnvironment(sourceText ?? "", updates)
-    : sourceText?.endsWith("\n") || sourceText === ""
-      ? sourceText ?? ""
-      : `${sourceText}\n`;
+    ? updateDeploymentEnvironment(workingText, updates)
+    : workingText?.endsWith("\n") || workingText === ""
+      ? workingText
+      : `${workingText}\n`;
 
   const env = { ...parseDeploymentEnvironment(text) };
-  return { text, env, generatedKeys };
+  delete env.DATAFOUNDRY_AUTH_MODE;
+  delete env.NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE;
+  return { text, env, generatedKeys, removedKeys };
 }
 
 export function renderWebEnvironment(env) {
-  const authMode = env.DATAFOUNDRY_AUTH_MODE?.trim() || "password";
   const apiHost = env.API_HOST?.trim() || "127.0.0.1";
   const apiPort = env.API_PORT?.trim() || "8787";
   return [
-    `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=${authMode}`,
     "NEXT_PUBLIC_AGENT_RUNTIME_URL=",
     "NEXT_PUBLIC_CONFIG_API_URL=",
     `API_PROXY_TARGET=http://${apiHost}:${apiPort}`,
     ""
   ].join("\n");
+}
+
+function isLoopbackHost(hostname) {
+  const host = String(hostname ?? "")
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/u, "$1");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/**
+ * Native deploy allows HTTP only on loopback. Non-loopback hosts must use HTTPS
+ * (or SSH port forwarding to a loopback listener).
+ */
+export function assertNativeAuthPublicBaseUrl(raw) {
+  let url;
+  try {
+    url = new URL(String(raw ?? "").trim());
+  } catch {
+    throw new Error("AUTH_PUBLIC_BASE_URL must be a valid absolute URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("AUTH_PUBLIC_BASE_URL must use http or https");
+  }
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+    throw new Error(
+      "AUTH_PUBLIC_BASE_URL HTTP is only allowed for loopback hosts (127.0.0.1, localhost, ::1). " +
+        "For remote access use SSH port forwarding to the loopback listener, or configure HTTPS."
+    );
+  }
+  return url;
+}
+
+export function assertNativeBindHosts(env = {}) {
+  for (const key of ["WEB_HOST", "API_HOST"]) {
+    const host = String(env[key] ?? "").trim();
+    if (!host) continue;
+    if (host === "0.0.0.0" || host === "::") {
+      throw new Error(
+        `${key}=${host} exposes the service on all interfaces over plain HTTP. ` +
+          "Native password-only installs bind loopback by default; use SSH forwarding or a TLS reverse proxy."
+      );
+    }
+  }
 }
 
 async function writeAtomic(filePath, content, mode = 0o600) {

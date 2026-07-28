@@ -19,6 +19,7 @@ import {
 } from "../packages/skills/dist/index.js";
 import { LocalFileAssetService } from "../packages/files/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 test("decodeMultipartFilename recovers UTF-8 Chinese names misread as Latin-1", () => {
   const original = "张三-2024-ProAgent.pdf";
@@ -45,9 +46,12 @@ test("extractEffectiveRunConfig defaults maxSkills to 20", () => {
 test("selectSkillsForRun keeps activeSkillId when maxSkills truncates", async () => {
   const root = mkdtempSync(join(tmpdir(), "skill-active-truncate-"));
   const metadataStore = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
+const __testIdentity = createVerifiedTestIdentity(metadataStore);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
   const fileAssetService = new LocalFileAssetService(metadataStore, { storageRoot: join(root, "files") });
-  const userId = "dev-user";
-  const workspaceId = "default";
+  
 
   const skillIds = [];
   for (let index = 0; index < 8; index += 1) {

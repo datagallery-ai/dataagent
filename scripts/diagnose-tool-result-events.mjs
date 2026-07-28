@@ -42,7 +42,11 @@ const metadataPath = `storage/diagnose-tool-result/${stamp}/metadata.sqlite`;
 const store = createMetadataStore({ database_path: metadataPath });
 const gateway = new LocalDataGateway(store);
 
-const user_id = "dev-user";
+const user_id = process.env.DATAFOUNDRY_USER_ID;
+if (!user_id || !process.env.DATAFOUNDRY_WORKSPACE_ID) {
+  throw new Error("diagnose-tool-result-events requires DATAFOUNDRY_USER_ID and DATAFOUNDRY_WORKSPACE_ID");
+}
+const workspace_id = process.env.DATAFOUNDRY_WORKSPACE_ID;
 const session_id = `diag-session-${stamp}`;
 const run_id = `diag-run-${stamp}`;
 const datasource_id = "api-duckdb-demo";

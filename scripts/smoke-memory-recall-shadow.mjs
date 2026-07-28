@@ -1,15 +1,20 @@
 import { LocalKnowledgeService } from "../packages/knowledge/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { rmSync } from "node:fs";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const databasePath = `storage/metadata/memory-recall-shadow-${Date.now()}.sqlite`;
-const userId = "dev-user";
+
 const sessionId = "memory-recall-shadow-session";
 const runId = "memory-recall-shadow-run";
 const datasourceId = "api-duckdb-demo";
 const collectionId = "memory-shadow-kb";
 const query = "GMV refund rate orders";
 const store = createMetadataStore({ database_path: databasePath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const knowledge = new LocalKnowledgeService(store);
 
 try {

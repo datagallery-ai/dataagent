@@ -5,7 +5,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -14,106 +13,25 @@ import { useRouter } from "next/navigation";
 import {
   clearConfigApiIdentity,
   configApi,
-  isPasswordAuthMode,
-  setConfigApiIdentity,
   type ConfigApiIdentity,
 } from "../../lib/config-api/client";
-import type { DevIdentityUser } from "../../lib/config-api";
-import { AUTH_BUTTON_CLASS, PasswordAuthShell } from "../../components/auth/auth-flow";
-
-const IDENTITY_STORAGE_KEY = "data-tasks:identity:v1";
-const DEV_SIGNED_OUT_STORAGE_KEY = "data-tasks:identity:signed-out:v1";
-
-const DEFAULT_IDENTITY: ConfigApiIdentity = {
-  userId: "dev-user",
-  displayName: "Dev User",
-  email: "dev@example.com",
-  devToken: "dev-token",
-};
+import { PasswordAuthShell } from "../../components/auth/auth-flow";
+import { LanguageToggle } from "../../i18n/LanguageToggle";
+import { useT } from "../../i18n/locale-context";
 
 type DataTaskIdentityContextValue = {
-  authMode: "dev" | "password";
+  authMode: "password";
   authHeaders: Record<string, string>;
   changePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
-  createUser: (input: { displayName: string; email?: string; id?: string }) => Promise<void>;
   currentUser: ConfigApiIdentity;
   error: string | null;
   loading: boolean;
   scopeKey: string;
-  selectUser: (userId: string) => void;
   signOut: () => void;
   signOutAll: () => void;
-  users: ConfigApiIdentity[];
 };
 
 const DataTaskIdentityContext = createContext<DataTaskIdentityContextValue | null>(null);
-
-function storageIdentity(): ConfigApiIdentity {
-  if (typeof window === "undefined") return DEFAULT_IDENTITY;
-  try {
-    const raw = window.localStorage.getItem(IDENTITY_STORAGE_KEY);
-    if (!raw) return DEFAULT_IDENTITY;
-    const parsed = JSON.parse(raw) as Partial<ConfigApiIdentity>;
-    if (!parsed.userId || !parsed.devToken) return DEFAULT_IDENTITY;
-    return {
-      userId: parsed.userId,
-      displayName: parsed.displayName || parsed.userId,
-      ...(parsed.email ? { email: parsed.email } : {}),
-      devToken: parsed.devToken,
-    };
-  } catch {
-    return DEFAULT_IDENTITY;
-  }
-}
-
-function persistIdentity(identity: ConfigApiIdentity): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(identity));
-  } catch {
-    // Identity stays in memory when localStorage is unavailable.
-  }
-}
-
-function removeStoredIdentity(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(IDENTITY_STORAGE_KEY);
-  } catch {
-    // Identity stays in memory when localStorage is unavailable.
-  }
-}
-
-function storageDevSignedOut(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(DEV_SIGNED_OUT_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
-function persistDevSignedOut(signedOut: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (signedOut) {
-      window.localStorage.setItem(DEV_SIGNED_OUT_STORAGE_KEY, "true");
-    } else {
-      window.localStorage.removeItem(DEV_SIGNED_OUT_STORAGE_KEY);
-    }
-  } catch {
-    // Signed-out state stays in memory when localStorage is unavailable.
-  }
-}
-
-function dtoToIdentity(user: DevIdentityUser): ConfigApiIdentity {
-  return {
-    userId: user.id,
-    displayName: user.displayName || user.id,
-    ...(user.email ? { email: user.email } : {}),
-    devToken: user.devToken ?? "",
-  };
-}
 
 function identityInitials(identity: ConfigApiIdentity): string {
   const source = identity.displayName || identity.userId;
@@ -124,172 +42,16 @@ function identityInitials(identity: ConfigApiIdentity): string {
   return source.slice(0, 2).toUpperCase();
 }
 
-function slugFromName(value: string): string {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/gu, "-")
-    .replace(/^-+|-+$/gu, "");
-  return slug || `user-${Date.now()}`;
+function dtoToIdentity(user: { id: string; displayName?: string; email?: string }): ConfigApiIdentity {
+  return {
+    userId: user.id,
+    displayName: user.displayName || user.id,
+    ...(user.email ? { email: user.email } : {}),
+  };
 }
 
 export function DataTaskIdentityProvider({ children }: { children: ReactNode }) {
-  if (isPasswordAuthMode()) {
-    return <PasswordIdentityProvider>{children}</PasswordIdentityProvider>;
-  }
-  return <DevIdentityProvider>{children}</DevIdentityProvider>;
-}
-
-function DevIdentityProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<ConfigApiIdentity>(() => storageIdentity());
-  const [users, setUsers] = useState<ConfigApiIdentity[]>(() => [storageIdentity()]);
-  const [signedOut, setSignedOut] = useState(() => storageDevSignedOut());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useLayoutEffect(() => {
-    if (signedOut) {
-      clearConfigApiIdentity();
-      removeStoredIdentity();
-      persistDevSignedOut(true);
-      return;
-    }
-    setConfigApiIdentity(currentUser);
-    persistIdentity(currentUser);
-    persistDevSignedOut(false);
-  }, [currentUser, signedOut]);
-
-  useEffect(() => {
-    if (signedOut) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void configApi
-      .getDevIdentities()
-      .then((response) => {
-        if (cancelled) return;
-        const nextUsers = response.users.map(dtoToIdentity);
-        setUsers(nextUsers.length > 0 ? nextUsers : [currentUser]);
-        const current = nextUsers.find((user) => user.userId === currentUser.userId);
-        if (current) {
-          setCurrentUser(current);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load users");
-          setUsers((current) => (current.length > 0 ? current : [currentUser]));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser.userId, signedOut]);
-
-  const selectUser = useCallback(
-    (userId: string) => {
-      const next = users.find((user) => user.userId === userId);
-      if (next) setCurrentUser(next);
-    },
-    [users],
-  );
-
-  const signOut = useCallback(() => {
-    clearConfigApiIdentity();
-    removeStoredIdentity();
-    persistDevSignedOut(true);
-    setSignedOut(true);
-  }, []);
-
-  const signOutAll = useCallback(() => {
-    signOut();
-  }, [signOut]);
-
-  const continueAsDevUser = useCallback(() => {
-    setCurrentUser(DEFAULT_IDENTITY);
-    setUsers([DEFAULT_IDENTITY]);
-    setSignedOut(false);
-  }, []);
-
-  const changePassword = useCallback(async () => {
-    throw new Error("Password changes are unavailable for local dev identities.");
-  }, []);
-
-  const createUser = useCallback(
-    async (input: { displayName: string; email?: string; id?: string }) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await configApi.createDevUser({
-          id: input.id || slugFromName(input.displayName),
-          displayName: input.displayName,
-          ...(input.email ? { email: input.email } : {}),
-        });
-        const next = dtoToIdentity(response.user);
-        setUsers((current) => {
-          const rest = current.filter((user) => user.userId !== next.userId);
-          return [next, ...rest];
-        });
-        setCurrentUser(next);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to create user");
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
-
-  const value = useMemo<DataTaskIdentityContextValue>(
-    () => ({
-      authMode: "dev",
-      authHeaders: {
-        Authorization: `Bearer ${currentUser.devToken}`,
-        "X-Workspace-Id": "default",
-      },
-      changePassword,
-      createUser,
-      currentUser,
-      error,
-      loading,
-      scopeKey: currentUser.userId,
-      selectUser,
-      signOut,
-      signOutAll,
-      users,
-    }),
-    [changePassword, createUser, currentUser, error, loading, selectUser, signOut, signOutAll, users],
-  );
-
-  if (signedOut) {
-    return <DevSignedOutScreen onContinue={continueAsDevUser} />;
-  }
-
-  return (
-    <DataTaskIdentityContext.Provider value={value}>
-      {children}
-    </DataTaskIdentityContext.Provider>
-  );
-}
-
-function DevSignedOutScreen({ onContinue }: { onContinue: () => void }) {
-  return (
-    <PasswordAuthShell title="Signed out" subtitle="Local development mode">
-      <div className="flex flex-col gap-4">
-        <p className="text-sm leading-relaxed text-muted">
-          Local dev mode uses a built-in account. Continue when you are ready to return to the
-          workspace.
-        </p>
-        <button type="button" onClick={onContinue} className={AUTH_BUTTON_CLASS}>
-          Continue as Dev User
-        </button>
-      </div>
-    </PasswordAuthShell>
-  );
+  return <PasswordIdentityProvider>{children}</PasswordIdentityProvider>;
 }
 
 function PasswordIdentityProvider({ children }: { children: ReactNode }) {
@@ -335,34 +97,20 @@ function PasswordIdentityProvider({ children }: { children: ReactNode }) {
     await configApi.changePassword(input);
   }, []);
 
-  const createUser = useCallback(async (input: { displayName: string; email?: string }) => {
-    if (!input.email) {
-      throw new Error("Email is required.");
-    }
-    await configApi.register({
-      email: input.email,
-      displayName: input.displayName,
-      password: "replace-this-password",
-    });
-  }, []);
-
   const value = useMemo<DataTaskIdentityContextValue | null>(() => {
     if (!currentUser) return null;
     return {
       authMode: "password",
       authHeaders: csrfAuthHeaders(),
       changePassword,
-      createUser,
       currentUser,
       error,
       loading,
       scopeKey: currentUser.userId,
-      selectUser: () => undefined,
       signOut,
       signOutAll,
-      users: [currentUser],
     };
-  }, [changePassword, createUser, currentUser, error, loading, signOut, signOutAll]);
+  }, [changePassword, currentUser, error, loading, signOut, signOutAll]);
 
   useEffect(() => {
     if (!loading && (!currentUser || !value)) {
@@ -400,9 +148,6 @@ export function useDataTaskIdentity(): DataTaskIdentityContextValue {
   }
   return context;
 }
-
-import { LanguageToggle } from "../../i18n/LanguageToggle";
-import { useT } from "../../i18n/locale-context";
 
 export function DataTaskUserBar({
   compact = false,

@@ -1,5 +1,5 @@
 import { createCustomEvent } from "@datafoundry/agent-runtime";
-import { createMetadataStore, RunEventWriter } from "@datafoundry/metadata";
+import { createMetadataStore, createVerifiedTestIdentity, RunEventWriter } from "@datafoundry/metadata";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,16 +12,17 @@ describe("RunCheckpointProjector protocol events", () => {
     const root = mkdtempSync(join(tmpdir(), "protocol-checkpoint-"));
     try {
       const metadata = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
-      metadata.sessions.create({ user_id: "dev-user", id: "session-1", title: "Protocol" });
+      const { userId } = createVerifiedTestIdentity(metadata);
+      metadata.sessions.create({ user_id: userId, id: "session-1", title: "Protocol" });
       metadata.runs.create({
-        user_id: "dev-user",
+        user_id: userId,
         id: "run-1",
         session_id: "session-1",
         user_input: "test",
         status: "running"
       });
       metadata.contextPackageSnapshots.create({
-        user_id: "dev-user",
+        user_id: userId,
         session_id: "session-1",
         run_id: "run-1",
         package_id: "context-1",
@@ -29,7 +30,7 @@ describe("RunCheckpointProjector protocol events", () => {
         payload: {}
       });
       const envelope = new RunEventWriter(metadata.runEvents).write({
-        user_id: "dev-user",
+        user_id: userId,
         run_id: "run-1",
         session_id: "session-1",
         event: createCustomEvent("protocol.phase.entered", {
@@ -38,9 +39,9 @@ describe("RunCheckpointProjector protocol events", () => {
         })
       });
 
-      new RunCheckpointProjector(metadata, "dev-user").observe(envelope);
+      new RunCheckpointProjector(metadata, userId).observe(envelope);
 
-      expect(metadata.checkpoints.latestByRun({ user_id: "dev-user", run_id: "run-1" })).toMatchObject({
+      expect(metadata.checkpoints.latestByRun({ user_id: userId, run_id: "run-1" })).toMatchObject({
         kind: "protocol-phase",
         label: "Protocol phase: query_planning",
         context_package_revision: 2

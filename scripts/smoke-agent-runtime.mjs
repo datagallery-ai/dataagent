@@ -13,14 +13,19 @@ import { EventType } from "@ag-ui/core";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const stamp = Date.now();
 const metadataPath = `storage/agent-smoke/${stamp}/metadata.sqlite`;
 const sqlitePath = `storage/agent-smoke/${stamp}/large.sqlite`;
 const store = createMetadataStore({ database_path: metadataPath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const gateway = new LocalDataGateway(store);
 
-const user_id = "dev-user";
+const user_id = userId;
 const session_id = "agent-smoke-session";
 const run_id = "agent-smoke-run";
 const datasource_id = "agent-sqlite-large";

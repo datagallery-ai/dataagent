@@ -23,7 +23,6 @@ http://127.0.0.1:3000/login
 正式态前端配置（`apps/web/.env.local`，改 `NEXT_PUBLIC_*` 后需重新 `build:web`）：
 
 ```bash
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password
 NEXT_PUBLIC_AGENT_RUNTIME_URL=
 NEXT_PUBLIC_CONFIG_API_URL=
 API_PROXY_TARGET=http://127.0.0.1:8787
@@ -83,7 +82,7 @@ Web 工作台分三栏：
 | --- | --- |
 | 数据任务 | 新建、切换、重命名、置顶、删除任务。 |
 | 工作区资源 | 管理 Data Sources、Knowledge、Agent Tools 和 Assets。 |
-| 用户菜单 | 查看当前用户、打开设置、退出登录或切换本地开发用户。 |
+| 用户菜单 | 查看当前用户、打开设置或退出登录。 |
 
 资源入口说明：
 

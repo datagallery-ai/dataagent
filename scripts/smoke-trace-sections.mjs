@@ -9,6 +9,7 @@ import {
 } from "../packages/metadata/dist/index.js";
 import { TraceSectionCoordinator } from "../apps/api/dist/trace-section-coordinator.js";
 import { buildSessionTraceDag } from "../apps/api/dist/trace-dag.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 loadDotEnv();
 
@@ -18,10 +19,14 @@ if (modelProvider.kind === "mock") {
 }
 
 const stamp = Date.now();
-const userId = "dev-user";
+
 const sessionId = `trace-section-session-${stamp}`;
 const runId = `trace-section-run-${stamp}`;
 const store = createMetadataStore({ database_path: `storage/trace-sections/${stamp}/metadata.sqlite` });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 
 try {
   store.sessions.create({ user_id: userId, id: sessionId, title: "Trace section smoke" });

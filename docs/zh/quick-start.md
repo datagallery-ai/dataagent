@@ -135,9 +135,9 @@ LLM_API_KEY=你的_API_Key
 根目录 `.env`：
 
 ```bash
-DATAFOUNDRY_AUTH_MODE=password
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000
+AUTH_REGISTRATION_MODE=open
 AUTH_EMAIL_DELIVERY=test
 AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 # smtp 相关可先留空
@@ -146,7 +146,6 @@ AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 `apps/web/.env.local`（会在 `next build` 时打进前端）：
 
 ```bash
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=password
 # 正式态留空，走同源 BFF（Cookie + CSRF）
 NEXT_PUBLIC_AGENT_RUNTIME_URL=
 NEXT_PUBLIC_CONFIG_API_URL=
@@ -160,9 +159,9 @@ API_PROXY_TARGET=http://127.0.0.1:8787
 在正式测试配置基础上改为：
 
 ```bash
-DATAFOUNDRY_AUTH_MODE=password
 AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
 AUTH_PUBLIC_BASE_URL=https://datafoundry.example.com
+AUTH_REGISTRATION_MODE=closed
 AUTH_EMAIL_DELIVERY=smtp
 AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
 AUTH_SMTP_HOST=smtp.example.com
@@ -172,7 +171,7 @@ AUTH_SMTP_USER=
 AUTH_SMTP_PASSWORD=
 ```
 
-前端同样保持 `password` + 空公开 API URL + `API_PROXY_TARGET`。对外入口请用反代，样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
+前端保持空公开 API URL + `API_PROXY_TARGET`（同源 BFF + Cookie 会话）。对外入口请用反代，样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
 
 ### 3. 构建并启动（正式测试 / 真实生产相同）
 
@@ -306,6 +305,14 @@ curl http://127.0.0.1:8787/ready
 - **正式测试**（`AUTH_EMAIL_DELIVERY=test`）：到运行 `start:api` 的终端里找验证链接。
 - **真实生产**（`smtp`）：检查 `AUTH_SMTP_*` 与发信账号；确认 `AUTH_PUBLIC_BASE_URL` 与对外域名一致。
 
+### 升级后出现 `METADATA_SCHEMA_INCOMPATIBLE`
+
+现象：API 启动失败，错误含 `METADATA_SCHEMA_INCOMPATIBLE`，并提到 `users.dev_token`。
+
+原因：旧 Metadata 库仍带开发 token 列；password-only 切换不会做原地迁移。
+
+处理：停栈后重置（或改指向空目录）`STORAGE_ROOT_DIR` / `METADATA_DB_PATH` / `MASTRA_STORAGE_PATH` / `FILE_ASSET_STORAGE_ROOT` / `WORKSPACE_ROOT`，再启动并重新注册。详见 [安全说明](security.md)。
+
 ### 模型不可用
 
 现象：Agent run 报 provider、401、rate limit 或 model not found。
@@ -339,14 +346,13 @@ curl http://127.0.0.1:8787/ready
 
 仅用于改代码时的热更新，**不是**正式测试或真实生产路径。与正式态二选一，不要混开。
 
+贡献者热更新仍使用密码会话；旧的开发 token / 认证模式开关已移除。
+根目录 `.env` 需具备 `AUTH_SESSION_SECRET` / `AUTH_PUBLIC_BASE_URL` /
+`AUTH_REGISTRATION_MODE` / `AUTH_EMAIL_DELIVERY`（可用正式测试样例）。
+`apps/web/.env.local` 留空 `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL`，
+并设置 `API_PROXY_TARGET=http://127.0.0.1:8787`。
+
 ```bash
-# 根目录 .env
-DATAFOUNDRY_AUTH_MODE=dev
-
-# apps/web/.env.local
-NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=dev
-NEXT_PUBLIC_AGENT_RUNTIME_URL=http://127.0.0.1:8787/api/copilotkit
-
 npm run dev
 # 或：npm run dev:api && npm run dev:web
 ```

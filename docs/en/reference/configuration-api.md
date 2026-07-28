@@ -33,24 +33,16 @@ effectiveRunConfig = merge(workspaceDefaults, perRunOverrides, serverPolicy)
 
 The backend merges these into an immutable snapshot before handing off to Agent Runtime.
 
-## Local development auth
+## Auth
+
+Configuration API calls and AG-UI runs must share the same password session (`df_session` cookie). Unsafe methods also need `X-CSRF-Token` from the `df_csrf` cookie:
 
 ```text
-Authorization: Bearer <dev_token>
-X-Dev-Token: <dev_token>
-X-Workspace-Id: default
+REST /api/v1/*           -> Cookie session + X-CSRF-Token (unsafe methods)
+CopilotKit /api/copilotkit -> Cookie session + X-CSRF-Token (unsafe methods)
 ```
 
-When headers are omitted, the backend uses the development default identity and default workspace. Web v1 treats one user as owning `default`; it does not expose workspace switching.
-
-Use the same identity headers for configuration API calls and AG-UI runs:
-
-```text
-REST /api/v1/*           -> Authorization / X-Dev-Token / X-Workspace-Id
-CopilotKit /api/copilotkit -> Authorization / X-Dev-Token / X-Workspace-Id
-```
-
-This keeps workspace defaults, server sessions, file assets, artifacts, SQL audit, and run history in one user scope. In password auth mode, cookies identify the user and unsafe requests also send `X-CSRF-Token`.
+This keeps workspace defaults, server sessions, file assets, artifacts, SQL audit, and run history in one user scope. Web v1 does not expose workspace switching.
 
 ## Common resource fields
 

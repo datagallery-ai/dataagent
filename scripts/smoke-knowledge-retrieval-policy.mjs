@@ -2,18 +2,23 @@ import { rmSync } from "node:fs";
 
 import { LocalKnowledgeService } from "../packages/knowledge/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const databasePath = `storage/metadata/knowledge-retrieval-policy-${Date.now()}.sqlite`;
-const userId = "dev-user";
+
 const collectionId = "policy-kb";
 const chunkPolicyCollectionId = "chunk-policy-kb";
 const store = createMetadataStore({ database_path: databasePath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const knowledge = new LocalKnowledgeService(store);
 
 try {
   store.configResources.upsert({
     id: collectionId,
-    workspace_id: "default",
+    workspace_id: workspaceId,
     user_id: userId,
     kind: "knowledge-base",
     name: "Policy KB",
@@ -59,7 +64,7 @@ try {
   const maxScore = Math.max(...explicitTopK.map((chunk) => chunk.score));
   store.configResources.upsert({
     id: collectionId,
-    workspace_id: "default",
+    workspace_id: workspaceId,
     user_id: userId,
     kind: "knowledge-base",
     name: "Policy KB",
@@ -76,7 +81,7 @@ try {
 
   store.configResources.upsert({
     id: chunkPolicyCollectionId,
-    workspace_id: "default",
+    workspace_id: workspaceId,
     user_id: userId,
     kind: "knowledge-base",
     name: "Chunk Policy KB",

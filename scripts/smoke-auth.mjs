@@ -8,7 +8,6 @@ import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { createAuthenticatedTestClient } from "./lib/authenticated-test-client.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "datafoundry-auth-smoke-"));
-process.env.DATAFOUNDRY_AUTH_MODE = "password";
 process.env.AUTH_SESSION_SECRET = "smoke-session-secret-with-at-least-32-bytes";
 process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1";
 process.env.AUTH_EMAIL_DELIVERY = "test";

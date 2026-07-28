@@ -91,9 +91,9 @@ This keeps left-panel workspace configuration, per-conversation selection, and b
 
 ## Identity scope
 
-Local development uses dev tokens and the `default` workspace. Web v1 keeps workspace switching out of the UI and scopes browser state by user. REST configuration requests and CopilotKit AG-UI runs must use the same identity headers.
+DataFoundry only supports cookie-based password sessions. Each registered user gets a personal workspace; Web v1 keeps workspace switching out of the UI and scopes browser state by user. REST configuration requests and CopilotKit AG-UI runs must use the same authenticated session.
 
-Password mode adds cookie-based sessions, CSRF checks for unsafe methods, account registration, login, password reset, and session revocation under `/api/v1/auth/*`.
+`/api/v1/auth/*` covers registration, login, email verification, password reset, logout, and session revocation. Unsafe methods require CSRF checks.
 
 ## Files, knowledge bases, and outputs
 
@@ -105,7 +105,7 @@ Artifacts are managed by the Artifact service—common types include tables, cha
 
 ## Formal deploy boundary
 
-The default path is formal mode (`password` + `build` / `start`); do not run `npm run dev`. Formal test and real production share the same start commands:
+The default path is formal deploy (`build` / `start`); do not run `npm run dev`. Formal test and real production share the same start commands:
 
 ```bash
 npm run build && npm run build:web

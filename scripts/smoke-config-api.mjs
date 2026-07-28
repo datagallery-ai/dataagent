@@ -27,7 +27,6 @@ source.exec(`
 `);
 source.close();
 
-process.env.DATAFOUNDRY_AUTH_MODE = "password";
 process.env.AUTH_SESSION_SECRET = "config-smoke-session-secret-32bytes!!";
 process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
 process.env.AUTH_EMAIL_DELIVERY = "test";

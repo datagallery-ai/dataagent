@@ -39,11 +39,10 @@ export class ConfigApiError extends Error {
   }
 }
 
-export type DevIdentityUser = {
+export type AuthUserDto = {
   id: string;
   email?: string;
   displayName?: string;
-  devToken?: string;
 };
 
 export type IdentityWorkspace = {
@@ -52,13 +51,7 @@ export type IdentityWorkspace = {
 };
 
 export type MeResponseDto = {
-  user: DevIdentityUser;
-  workspace: IdentityWorkspace;
-};
-
-export type DevIdentitiesResponseDto = {
-  users: DevIdentityUser[];
-  currentUserId: string;
+  user: AuthUserDto;
   workspace: IdentityWorkspace;
 };
 

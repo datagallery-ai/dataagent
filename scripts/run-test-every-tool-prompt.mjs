@@ -14,6 +14,7 @@ import {
 import { LocalDataGateway } from "../packages/data-gateway/dist/index.js";
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
 import { LocalKnowledgeService } from "../packages/knowledge/dist/index.js";
+import { createVerifiedTestIdentity } from "./lib/metadata-test-identity.mjs";
 
 const USER_PROMPT = "测试每一个tool";
 
@@ -45,9 +46,13 @@ mkdirSync(storageDir, { recursive: true });
 const metadataPath = `${storageDir}/metadata.sqlite`;
 const taskDbPath = `${storageDir}/task-state.sqlite`;
 const store = createMetadataStore({ database_path: metadataPath });
+const __testIdentity = createVerifiedTestIdentity(store);
+const userId = __testIdentity.userId;
+const workspaceId = __testIdentity.workspaceId;
+
 const gateway = new LocalDataGateway(store);
 
-const user_id = "dev-user";
+const user_id = userId;
 const session_id = `test-every-tool-session-${stamp}`;
 const run_id = `test-every-tool-run-${stamp}`;
 const datasource_id = "api-duckdb-demo";
