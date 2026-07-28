@@ -130,16 +130,18 @@ export class AuthenticatedTransport {
     input: string | URL | Request,
     init?: RequestInit,
   ): Promise<Response> {
+    // Never auto-follow redirects: a hop to another origin can return Set-Cookie
+    // that would overwrite df_session/df_csrf in the jar (open-redirect poison).
     if (input instanceof Request) {
       const headers = new Headers(input.headers);
       applyAuthHeaders(headers, input.method, this.cookieJar);
-      return this.fetchImpl(new Request(input, { headers }));
+      return this.fetchImpl(new Request(input, { headers, redirect: "manual" }));
     }
 
     const headers = new Headers(init?.headers);
     const method = String(init?.method ?? "GET");
     applyAuthHeaders(headers, method, this.cookieJar);
-    return this.fetchImpl(input, { ...init, headers });
+    return this.fetchImpl(input, { ...init, headers, redirect: "manual" });
   }
 }
 

@@ -419,4 +419,35 @@ describe("AuthenticatedTransport", () => {
       },
     );
   });
+
+  it("uses redirect:manual so open redirects cannot poison the cookie jar", async () => {
+    const jar = new TuiCookieJar();
+    jar.replace({ df_session: "good", df_csrf: "csrf" });
+    let seenRedirect: RequestRedirect | undefined;
+    const transport = new AuthenticatedTransport({
+      cookieJar: jar,
+      refreshCsrf: async () => {},
+      onSessionInvalid: async () => {
+        throw new Error("redirect must not invalidate the session");
+      },
+      fetchImpl: async (_input, init) => {
+        seenRedirect = init?.redirect;
+        // With redirect:manual the client must surface the hop, never follow to evil.
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "http://127.0.0.1:9/evil",
+            "Set-Cookie": "df_session=POISONED; Path=/",
+          },
+        });
+      },
+    });
+
+    const response = await transport.fetch("http://127.0.0.1:8787/api/v1/me");
+    assert.equal(seenRedirect, "manual");
+    assert.equal(response.status, 302);
+    // Same-origin 302 Set-Cookie from the API is still absorbed; the security win is
+    // never fetching the Location target (whose Set-Cookie would otherwise replace df_session).
+    assert.equal(jar.snapshot().df_session, "POISONED");
+  });
 });
