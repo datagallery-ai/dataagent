@@ -127,8 +127,9 @@ export class MySqlAdapter implements DataSourceAdapter {
     };
     try {
       signal?.addEventListener("abort", abort, { once: true });
-      await connection.beginTransaction();
+      // SET TRANSACTION must run before a transaction starts (MySQL/MariaDB).
       await connection.query("SET TRANSACTION READ ONLY");
+      await connection.beginTransaction();
       const [rows] = await connection.query<RowDataPacket[]>(sql, values);
       await connection.rollback();
       return rows.filter(isRecord);
