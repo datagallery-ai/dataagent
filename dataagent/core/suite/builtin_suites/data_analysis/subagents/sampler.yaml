@@ -79,7 +79,7 @@ ACTOR_LOOP:
             ## 硬约束 
             
             <下面的约束非常重要!!!/>
-            > **以下为采样阶段唯一权威约束，SKILL.md 中的业务约束仅为本节的快速索引。**
+            > **以下为采样阶段唯一权威约束。**
 
             0. **必须确认 output_database**：<必须>`output_database` 和 `source_database` 由上游 workflow 在任务参数中显式传入。执行 step1_0 前先检查这两个参数是否存在：缺失任一项时**立即停止**，在 receipt 中写阻塞原因（如 `"output_database not specified in task params"`），**严禁**从 ClickHouse 数据库列表中自行挑选空库代替。</必须>
             1. **顺序**：默认严格按 `step1_0` → `step1_1` → `step1_2` → `step1_3` → `step1_4` → `step1_5` → `step1_6` 执行，**不可跳过任一步**。允许例外：(a) `regular` 可跳过 step1_2；(b) **用户表已有可用 `label`** 时 `mode=="prelabeled"`，跳过 step1_1 / step1_2，step1_3 走内置 prelabeled 分支。须先完成 step1_0（磁盘上已有 `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`，且 `inventory_check.ok == true`），再进入 step1_1 或 step1_3。
@@ -92,13 +92,14 @@ ACTOR_LOOP:
             8. **语句白名单**：**每次恰好一条** SQL，顶层关键字**只能**是 `CREATE` 或 `SELECT`。**严禁** `INSERT` / `DROP` / `TRUNCATE` / `ALTER` / `DESCRIBE` / `DESC` / `SHOW` / `EXPLAIN` / `USE` / `FORMAT …` 后缀 / 多语句。覆盖旧表用单条 `CREATE OR REPLACE TABLE ... AS SELECT`，**不可**拆成「空表 + INSERT」。
             9. **禁止内联膨胀**：`similar_games` 已物化为 `step1_temp_similar_games` 后，后续 SQL（含更新后的 `sql_fragments.game_filter`）**必须**用 `IN (SELECT game_id FROM …step1_temp_similar_games)` / JOIN；**严禁**把成百个游戏名写进 SQL 或 plan 字面量。
             10. **禁止自写执行脚本**：不得 `write`/`edit` 任何用于连库或跑采样的 `.py` / `.sh`（如 `verify_data.py`）；不得用 Bash 把 SQL 写到 `/tmp` 再执行。
+            11. **schema 保真（最高优先级之一）**：写 `step1_0_table_schema.json` 前，<必须>先 `ls` 确认 `step1_semantic_batch_NN.json` 齐全，再逐个 `Read` 每个 dump 文件，最后才 `Write` schema；**禁止凭对话记忆写任何一个字段**</必须>。`columns[].description` 与 Read 到的语义内容逐字符一致（禁止摘要/截断/去括号/删枚举/改写成列名）；`join_hints[]` 从 Read 到的所有 dump 文件 `joinPaths` 收集去重后写入（禁止按列名补全、禁止调转方向；全部文件无 joinPaths 时写 `[]`）；`role_candidates` 从 dump 文件中机械搬运（五键齐全）。细则与错误示例见 `scripts/step1_0_sampling_plan.md`「落盘」节 `<下面的约束非常重要!!!/>` 块。</必须>
             </上面的约束非常重要!!!>
 
             ## 执行通道
 
             <必须>step1_0 执行顺序：**先取 ClickHouse 表清单（`system.tables`），再发 `semantic_retrieve`，顺序不可颠倒**。表名以 CH 清单为准，**禁止**在获取清单前发起语义查询，**禁止**自行猜测表名、**禁止**发自由关键词式语义查询。</必须>
 
-            - **语义**：`semantic_retrieve` → `read` tool-results → `write` `step1_0_table_schema.json`（<必须>`columns[].description` 必须逐字原样取自 `semantic_retrieve` 返回，禁止摘要、截断、去括号、删枚举；见 `scripts/step1_0_sampling_plan.md` 落盘环节的 description 保真规则</必须>）。
+            - **语义**：表名分批（≤8 张），每批一次 `semantic_retrieve` 同时问列结构 + JOIN + 角色 → 返回立刻 `write` 到 `step1_semantic_batch_NN.json` → 全部批次完成后 `read` 所有 dump 文件 → `write` `step1_0_table_schema.json`。<重要>落盘时强制执行硬约束 11 保真规则：所有字段从 dump 文件机械抄写，禁止凭记忆</重要>（见 `scripts/step1_0_sampling_plan.md` 落盘节）。
             - **ClickHouse**：见硬约束 7；过程表 `step1_temp_*`；交付表与源表同名，在 output_database 内。
             - **查表结构（仅缺信息时）**：`SELECT … FROM system.tables` / `system.columns`（优先一条批查）；不要用 `DESCRIBE`。
             - **Bash**：仅本地文件操作（例如：`ls`、解析超大 tool-results、确认 JSON 已落盘）。见硬约束 7、10。
@@ -145,7 +146,7 @@ TOOLS:
         command: python3
         args: [-m, dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.mcp_server]
         env:
-          SEMANTIC_SERVICE_BASE_URL: http://localhost:31000/api/semantic
+          SEMANTIC_SERVICE_BASE_URL: http://{semantic_service_base_url}:37000/api/semantic
 
 RESOURCES:
   - id: clickhouse
