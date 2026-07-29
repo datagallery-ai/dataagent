@@ -21,7 +21,7 @@ disable-model-invocation: true
 | `sample_size` | 任务参数（默认 null） |
 | `cold_start_threshold` | 默认 500 |
 
-> 不同表中的 `usid`、`rank_flg`、`dsid` 均为用户 ID 等效列。等效映射见 `step1_0_table_schema.json` 的 `column_aliases.user_id_columns`。
+> 不同表中可能出现如 `usid`、`rank_flg`、`dsid` 等用户 ID 等效列名。等效映射见 `step1_0_table_schema.json` 的 `column_aliases.user_id_columns`。
 
 ## 模式判定
 
@@ -33,6 +33,10 @@ step1_0 产出的 schema 每表 `columns` 非空（表名齐 ≠ 结构齐），
 ## 步骤一览
 
 <必须>step1_0 执行顺序：**先取 ClickHouse 表清单（`system.tables`），再发 `semantic_retrieve`，顺序不可颠倒**。表名以 CH 清单为准，**禁止**在获取清单前发起语义查询，**禁止**自行猜测表名、**禁止**发自由关键词式语义查询。</必须>
+
+<必须>step1_0 所有 `semantic_retrieve` **必须串行**（同一时刻只允许 1 个在途请求），禁止并行。</必须>
+
+<必须>每批语义返回后**立刻 `Write` 到 `step1_semantic_batch_NN.json`**（`01`、`02`…）。写 `step1_0_table_schema.json` 前必须先 `ls` 确认 dump 文件齐全，再逐个 `Read` 每个文件，最后才 `Write` schema。`description`、`join_hints`、`role_candidates` 全部从 Read 到的 dump 内容里机械抄写，禁止凭对话记忆写任何一个字段。</必须>
 
 <必须>所有 ClickHouse SQL **仅**通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
 
@@ -54,7 +58,7 @@ step1_0 产出的 schema 每表 `columns` 非空（表名齐 ≠ 结构齐），
 
 - **交付表**<必须>表名与源表同名，写于 `output_database`，一张都不能少</必须>；行数按采样用户削减；保留源表列集；用户表含 `label`（event_derived 追加 / prelabeled 保留源列）。
 - **中间表** `step1_temp_*`：仅用于过程计算，不计入交付。
-- **step1_0**：<必须>`step1_0_table_schema.json` 与 CH 清单 1:1，且每表 `columns` 非空，方可落盘</必须>（表名齐 ≠ 结构齐）；之后写 `step1_0_sampling_plan.json`，`projections[]` 与清单 1:1。
+- **step1_0**：<必须>`step1_0_table_schema.json` 与 CH 清单 1:1，且每表 `columns` 非空，方可落盘</必须>（表名齐 ≠ 结构齐）。<重要>每批语义返回后立刻 `Write` 到 `step1_semantic_batch_NN.json`；写 schema 时 Read 这些文件**机械抄写** `description`、`join_hints`、`role_candidates`，禁止凭记忆重写、禁止按列名补全、禁止缩写或改写</重要>（详见 `scripts/step1_0_sampling_plan.md` 落盘节）。之后写 `step1_0_sampling_plan.json`，`projections[]` 与清单 1:1。
 
 ## receipt 格式
 
@@ -69,6 +73,7 @@ step1_0 产出的 schema 每表 `columns` 非空（表名齐 ≠ 结构齐），
 | 类型 | 命名 | 说明 |
 |---|---|---|
 | 表结构文件（过程） | `step1_0_table_schema.json` | step1_0 创建；含 `tables`（每表 columns 非空）+ `join_hints` + `role_candidates` + `column_aliases`；采样各步读写 |
+| 语义 dump 文件（过程） | `step1_semantic_batch_NN.json` | 每批语义返回原样落盘；写 schema 时 `description` / `join_hints` / `role_candidates` 的唯一读取来源 |
 | 采样计划 | `step1_0_sampling_plan.json` | step1_0 创建，后续各步读取 |
 | 交付投影表 | `<源表名>`（output_database 内，与源表同名） | 与源表一对一，用户表含 `label` |
 | 语义交接 meta | `step1_output_meta.json` | step1_6 定稿：与 `step1_0_table_schema.json` **同构原样副本**，供下游读列/类型/join |
