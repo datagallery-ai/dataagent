@@ -9,7 +9,7 @@ disable-model-invocation: true
 # Feature Engineering Pipeline（step2_0 → step2_5）
 
 输入：采样阶段传来的 `step1_output_meta.json` + 全部交付表（output_database 内与源表同名）。
-输出：`step2_4_wide_userfiltered.csv`（模型唯一训练数据） + `receipt.json`。
+输出：`step2_4_wide_userfiltered.csv`（模型唯一训练数据） + `receipt.json`（仅登记 `schema_resolution.json` + `step2_4_wide_userfiltered.csv` 两个持久化产物）。
 
 ## 数据操作规则
 
@@ -30,13 +30,17 @@ disable-model-invocation: true
   - `command` 和 `command_file` 互斥，只能选其一。
 
 **脚本路径映射**：本文档中所有 `scripts/` 前缀指向 SKILL 包内的 `skill/feature-engineer/scripts/` 目录，不要假定工作区根目录下存在 `scripts/` 目录。
+
 ---
 
 ## Pipeline 总览
 
 | 步骤 | ClickHouse 表 | Workspace 文档 |
 |------|---------------|----------------|
-| step2_0 | `step2_0_table_profile`, `step2_0_column_profile` | `schema_resolution.json`, **`step2_0_source_data_analyze.md`** |
+| step2_0 阶段1 | — | `schema_resolution.json`（骨架） |
+| step2_0 阶段2 | `step2_0_table_profile`、`step2_0_column_profile` | — |
+| **step2_0 阶段2.5** | — | **格式门禁 → `step2_0_source_data_analyze.md`** |
+| step2_0 阶段3 | — | `schema_resolution.json`（补全） |
 | step2_1 | `step2_1_wide_simple` | — |
 | step2_2 | `step2_2_cleaning_report`, `step2_2_wide_cleaned` | `step2_2_cleaning_report.json` |
 | step2_3 | `step2_3_wide_complete` | `step2_3_feature_derivation.md`, `step2_3_high_cardinality_check.json` |
@@ -51,13 +55,16 @@ step2_0 阶段2: 替换占位符后执行
   scripts/step2_0_source_data_analyze.sql
   scripts/step2_0_column_profile.sql
   scripts/step2_0_validation.sql
+step2_0 阶段2.5: 格式门禁 — 执行 scripts/step2_0_format_gate.md
 step2_0 阶段3: 补全 schema_resolution.json + 撰写 step2_0_source_data_analyze.md
 scripts/step2_1_simple_merge.sql
 scripts/step2_1_validation.sql
+scripts/step2_2_format_gate.md    ← ⛔ 独立门禁 todo（不可跳过）
 scripts/step2_2_cleaning_report.sql
 scripts/step2_2_feature_cleaning.sql
 scripts/step2_2_validation.sql
 scripts/step2_3_feature_aggregation.sql
+scripts/step2_3_format_gate.md    ← ⛔ 提交前硬门禁
 scripts/step2_3_validation.sql
 scripts/step2_4_user_cleaning.sql
 scripts/step2_4_validation.sql
@@ -69,233 +76,157 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 
 **阶段依赖关系**：
 - `schema_resolution.json` 在 step2_0 中经历 **骨架 → 画像 → 补全** 三个子阶段。
-- 骨架版只包含可确定角色（`<user_table>`、`<user_id>`、`<label>`），用于替换画像 SQL 模板中的占位符。
-- 画像完成后，用结果补全 `<age>`、`<gender>`、`<game_id>` 等需值分布确认的角色，形成最终版。
+- 骨架版只包含可确定角色（`<user_table>`、`<user_id>`、`<label>`），其余角色暂留 `<TBD>`。
+- 画像完成后，用结果补全 `<age>`、`<gender>`、`<game_id>` 等角色。
 - 后续 step2_1 ~ step2_5 使用最终版 `schema_resolution.json`。
 
 ---
 
 ## step2_0：源数据深入理解
 
-本步是采样阶段之后的核心分析步，分三个阶段执行：
+三阶段流程，最终产出 `schema_resolution.json` + `step2_0_source_data_analyze.md`。`step2_0_table_profile` 和 `step2_0_column_profile` 为内部中间态，不持久化。
 
 ### 阶段 1：构建 schema_resolution.json（骨架）
 
-在 job workspace 创建 **`schema_resolution.json` 骨架版**。此阶段**不连线**，仅用 `step1_output_meta.json` 静态推断：
+仅用 `step1_output_meta.json` 静态推断。必须完成**候选键验证**（空值率、唯一性、重复倍数），结果写入 `key_validation`。
 
-1. **`output_database`** ← `output_meta.output_database`
-2. **`source_mode`** ← `"sampled"`
-3. **`source_tables`** ← `output_meta.projection_tables[].table`
-4. **`roles`**（骨架，仅填可确定性推断的角色）：
-   - `<user_table>` → `projection_tables` 中 `type == "user_table"` 的那张表
-   - `<user_id>` → **直接取 `user_table` 的 `<user_id>` 列名**。`rank_flg`、`dsid` 是等价映射键，也作为关联键使用，但 `<user_id>` 占位符必须填入实际的 `user_id` 列名（根据 `output_meta.projection_tables[].type` 中 `user_table` 的表结构获取）
-   - `<label>` → 固定列名 `label`，位于 `<user_table>` 中
-   - 其余角色（`<age>`、`<gender>`、`<game_id>` 等）暂留 `<TBD>` 占位，等阶段 2 画像完成后补全
+### 阶段 2：执行画像 SQL
 
-必须在此阶段完成**候选键验证**，通过 ClickHouse MCP `submit_resource_job` 提交临时 `SELECT` 查询（不走 Bash），结果写入 `schema_resolution.json` 的 `key_validation` 字段：
+按 pipeline 顺序执行三条 SQL。`missing_rate` **必须存储为百分比值（0-100），计算式 `(count()-count(col))/count()*100`**。`step2_0_validation.sql` 的 label 结果写回 `schema_resolution.json`。
 
-- 候选键检查空值率、唯一性、重复倍数，不可仅凭字段名声明主键
-  - 输出字段：`column`、`null_rate`、`uniqueness`、`max_duplication_factor`、`validated`
-- `source_tables` 与 `output_meta.projection_tables` 逐一核对，禁止混入原始源表或 `step1_temp_*`
-  - 输出字段：`source_tables_matched`
+> ⛔ **表分类硬规则**：`step2_0_table_profile` 的每表 SELECT 必须包含 `classification` 列，用 CASE WHEN 硬计算：
+> - `unique_user_id IS NULL` → `'维度表'`
+> - `unique_user_id = total_rows` → `'1:1用户表'`
+> - 否则 → `'1:N行为表'`
+> 禁止 LLM 手工判断。反面案例 013113：`list_detail_info`（30000=30000）被误判为 1:N。
+>
+> ⛔ **提交前验证**：展开 SQL 后、submit 前，`grep -cF "AS classification" <expanded_sql>` 必须 ≥ 源表数（每表一行 classification）。
+> 返回 0 → agent 漏掉了 CASE WHEN 展开。反面案例 013113：agent 展开了 table_profile SQL 但无 `AS classification`。
+> 格式门禁步骤 2 Check 8 会再次验证已提交的 SQL 文件（双层兜底）。
 
-骨架版完成后，用 `roles` 中的 `<user_table>`、`<user_id>`、`<label>` 替换 `step2_0_*.sql` 模板中的对应占位符（`{{output_database}}` 也一并替换），其余 `<TBD>` 角色可以不改（三个画像 SQL 不引用它们）。
+### 阶段 2.5：格式门禁
 
-### 阶段 2：执行源数据画像 SQL
+> ⛔ **独立 todo item，不可合并到阶段 3。**
+>
+> **首先 `rm -f gate_data_verified.txt`**（覆盖上次运行的旧标记）。然后执行 `read_file("scripts/step2_0_format_gate.md")`，按文件执行 7 条 grep + 数据交叉验证。
+> 不通过 → `delete` 文件重写 → 重新 grep。
 
-将骨架版 schema_resolution 中已确定的占位符替换到画像模板后，执行：
+### 阶段 3：补全 schema_resolution.json + 撰写分析文档
 
-`step2_0_source_data_analyze.sql` → `step2_0_column_profile.sql` → `step2_0_validation.sql`
+> ./ 硬前置：`test -f gate_data_verified.txt` 必须返回 true。文件不存在 → 数据交叉验证被跳过，**强制回退到阶段 2.5**。
+> 已知故障 1012：agent 跳过全部数据交叉验证，导致 delimiter/null_rate/n_unique 幻觉。
+> 此文件只由 `step2_0_format_gate.md` 成功完成写入——双重绑定，不可绕过。
 
-`step2_0_validation.sql` 的 `collect_job` 结果（包含 label 的空值/0/1/正负样本等统计）必须写回 `schema_resolution.json` 的 `key_validation.label_verified` 字段：
-  - 输出字段：`label_validated`、`label_null_count`、`label_values`、`label_positive_count`、`label_negative_count`
 
-### 阶段 3：补全 schema_resolution.json 并撰写分析文档
+从 `step2_0_column_profile` 查询全量字段数据补全 `<TBD>` 角色。撰写 `step2_0_source_data_analyze.md`：逐表 7 列表格 + 列表字段识别 + `## 列表字段检测结果` 汇总表。
 
-根据画像结果，补全 `schema_resolution.json` 中 `<TBD>` 的角色：
-   - `<age>`、`<gender>` → 在 `<user_table>` 的列画像中按值分布推断（如数值范围验证年龄，枚举值验证性别，并记录合法值域）
-   - `<game_id>` → 在 `game_keyed` 表的列画像中按列名约定推断
-   - 其余角色从数据画像中按列名约定和值分布推断，不可仅凭列名字面声明
+> ⛔ **防幻觉规则**：所有字段的 n_unique、missing_rate、sample_values **必须从 ClickHouse 查询获取**，禁止 LLM 编造。
+> **特征含义**优先从 `step1_output_meta.json` 的 `description` 取值，禁止机械复读字段名。
 
-然后从 ClickHouse 画像结果整理生成 **`step2_0_source_data_analyze.md`**。
-
-#### 表分类
-
-| 分类 | 定义 | 处理策略 |
-|------|------|---------|
-| **1:1 表** | 以 `<user_id>` 为键，每用户最多一行 | 重复时先查明原因，不可直接去重 |
-| **1:N 表** | 同一用户有多条事件/行为/订单/时序记录 | step2_3 聚合处理 |
-| **游戏维度表** | 以 `<game_id>` 为键描述游戏属性 | step2_3 连接 |
-| **未使用** | 无可关联键或与目标无关 | 记录原因 |
-
-分类完成后检查是否有遗漏的源表，确认总数 = `source_tables` 数量。
-
-**键映射规则**：`rank_flg`、`dsid` 均视为 `<user_id>` 的等价映射键。在分类时，这些列与实际 `<user_id>` 列同等对待，均作为关联键使用。
-
-#### 字段画像
-
-对每张表记录：业务含义、粒度、主键/候选键、行数、用户数、分类。
-
-对每个字段记录：
-
-1. 原始字段名、英文标准名、数据类型、主键标记
-2. **业务含义**（通过字段名、值的分布和样本值推断）
-3. 特征值语义（编码含义、取值说明）
-4. `n_unique`、空值数、空值率
-5. 至少三个互不相同的非空示例；`n_unique ≤ 10` 时列出全部取值及频数
-6. 常量判断：
-   - 仅一个非空值 → 常量候选
-   - 不同文案表达同一状态（如"预约完成"和"已预约"语义完全一致）→ 语义常量（标记 `semantic_constant: true`）
-7. **合法值域与异常值**：对 `<age>`、`<gender>` 等保护字段，记录合法取值范围（如 age 在 1-120 为合法，0、负数、空为非法；gender 合法枚举集合），供 step2_4 用户过滤使用
-8. **聚合方式建议**（仅 1:N 表字段）：对 1:N 表的每个数值/时间/类别字段，给出推荐聚合方式及理由
-
-   | 字段类型 | 推荐聚合 |
-   |---------|---------|
-   | 金额/耗时/次数 | sum、avg |
-   | 状态/类型（枚举） | count、mode（最近值） |
-   | 时间戳 | min、max、datediff（距今） |
-   | ID 字段 | countDistinct |
+> 格式门禁是阶段 3 的硬前置——完成阶段 2 后必须先通过 `scripts/step2_0_format_gate.md`。
 
 ---
 
 ## step2_1：1:1 初步合表
 
-执行 `step2_1_simple_merge.sql` → `step2_1_validation.sql`。
+执行 `scripts/step2_1_simple_merge.sql` → `scripts/step2_1_validation.sql`。以 `<user_table>` 为基表 LEFT JOIN 所有 1:1 表。
 
-以 `<user_table>` 为基表，所有 1:1 表按 `<user_id>` 左连接。连接前验证右表键唯一，连接后验证行数和用户数未膨胀。重名字段加来源表前缀。
+**执行流程：**
+1. 读取 `schema_resolution.json` 的 `key_validation`，检查 `max_duplication_factor`
+2. `max_duplication_factor > 1` → 去重；`== 1` → 直接 JOIN
+3. 验证行数和用户数未膨胀
 
 ---
 
 ## step2_2：原始特征清洗
 
-执行 `step2_2_cleaning_report.sql` → `step2_2_feature_cleaning.sql` → `step2_2_validation.sql`。
+> ⛔ **不可跳过。** 已知复发故障 0728-2：agent 从 step2_1 直接跳到 step2_3。
+>
+> **独立门禁文件**：`read_file("scripts/step2_2_format_gate.md")` 并按文件执行。独立 todo item，不可合并。
 
-> **与 step2_0 列画像的区别**：step2_0 的 `column_profile` 是对**原始源表**做探索性画像（理解数据），step2_2 的 `cleaning_report` 是对**合表后的 `step2_1_wide_simple`** 做清洗决策画像。合表后字段名可能因重名加前缀，字段数量和内容已不同。两者目的不同，不可跳过。
+执行顺序：`scripts/step2_2_cleaning_report.sql` → `scripts/step2_2_feature_cleaning.sql` → `scripts/step2_2_validation.sql`。
 
-- **`step2_2_cleaning_report.sql` 的 `/*__COLUMN_PROFILE_SELECTS__*/` 需展开为多条 UNION ALL SELECT，展开后 SQL 很长。** 必须先将完整展开后的 SQL 通过 bash/Python `write_file` 写入 workspace 文件，再以 `submit_resource_job(command_file="step2_2_cleaning_report.sql")` 一次性提交。
-
-**直接引用 step2_0 字段画像中的常量判断结果**：对于 step2_0 中已标记 `semantic_constant: true` 的字段，直接纳入删除决策，无需在 step2_2 重新判断语义等价性。
-
-依据 step2_0 画像逐字段决策：
+**清洗决策基于 `step2_0_column_profile` 的预计算结果**（不重复聚合 step2_1）。核心边界：
 
 | 条件 | 动作 |
 |------|------|
-| `missing_rate > 0.5` | 删除 |
-| 仅"空值 + 一个有效值"或 `n_unique == 1` | 常量删除 |
-| step2_0 中已标记 `semantic_constant: true` | 语义常量删除 |
-| `<user_id>`、`<label>`、`<age>`、`<gender>` | **保护，不删除** |
-| 其他 | 保留 |
+| `<user_id>`、`<label>`、`<age>`、`<gender>` | 保护 |
+| `sample_values` 含 `#` 或 `^`（列表字段） | 保护（空列表是有效信号） |
+| `missing_rate > 50`（非列表字段） | 删除 |
+| `n_unique <= 1` | 删除 |
 
-生成的 `step2_2_cleaning_report.json` 每个字段含：
-`feature`、`cleaned`、`recommendation`、`reason_code`、`reason`、`missing_rate`、`n_unique`、`semantic_constant`。
-`reason_code` 使用枚举：`MISSING_RATE_GT_0_5` / `CONSTANT` / `SEMANTIC_CONSTANT`。
+> step2_2 门禁包含 CASE WHEN 正确性校验（`WHERE recommendation='KEEP' AND null_rate > 50` 须返回 0 行）和 EXCEPT 展开流程。详见 `scripts/step2_2_format_gate.md`。
 
 ---
 
 ## step2_3：复杂聚合与特征衍生
 
-执行 `step2_3_feature_aggregation.sql` → `step2_3_validation.sql`。
-按全部 1:N、时序、游戏维表展开 `DERIVATION_CTES`、`DERIVED_SELECT_COLUMNS`、`DERIVATION_JOIN_BLOCKS`。
+执行 `scripts/step2_3_feature_aggregation.sql` → `scripts/step2_3_validation.sql`。
 
-### 1:N 聚合
+> ⛔ **必须在 todo list 中拆为 7 个独立 item（含 0 号前置检查）**：
 
-- 先明确事件粒度、时间窗、聚合键、去重规则，再按 `<user_id>` 聚合
-- **聚合方式依据 step2_0 字段画像中记录的"聚合方式建议"**，不凭空推断。若无建议记录，按字段类型默认规则：数值金额类用 sum/avg，时间戳用 min/max/datediff，ID 类用 countDistinct，枚举类用 count/mode
-- 原始缺失保留 NULL，不以 0/均值/众数/空字符串填充
+| 序号 | todo item | 内容 |
+|------|-----------|------|
+| 0 | **⛔ 前置检查** | `SELECT count() FROM {output_db}.step2_2_cleaning_report`——返回 0 → 回退执行 step2_2 |
+| 1 | **列表字段识别** | 读取 md 的 `## 列表字段检测结果`，确认全量待分割字段（含 1:N 表如 `list_detail_info`） |
+| 2 | **1:N 聚合** | 写 CTE 聚合 SQL。**检查该表的列表字段，在 CTE 内完成 splitByChar 二元展开**（见下方规则） |
+| 3 | **列表字段分割** | 对每个字段执行 splitByChar + has() 二元展开 + 删除原字段 |
+| 4 | **⛔ 提交前硬门禁** | `read_file("scripts/step2_3_format_gate.md")` 执行全部 grep。不通过 → 回到 todo 3 |
+| 5 | **SQL 建表 + 后端门禁** | submit 建表 → validation.sql 高基数门禁 |
+| 6 | **写文档** | `step2_3_feature_derivation.md` + `step2_3_high_cardinality_check.json` |
 
-### 高基数与列表特征处理
+> **已知复发故障**：跳过列表分割、count-only（无 has()）、每个字段只产出 1 个二元特征、`list_detail_info` 的 1:N 表列表字段在聚合 CTE 中透传。
+> **防范**：todo 4 的 `scripts/step2_3_format_gate.md` 包含 6 步 grep 硬门禁，必须全部通过才能 submit。
 
-| 场景 | 处理方式 |
-|------|---------|
-| 数值字段 `n_unique > 100` | 分位点或业务阈值分箱 → 新字段 → 删除旧字段 |
-| 城市 | `<city_tier_map>` 级联映射：一二线标准层级，其他非空统一三线，缺失 NULL |
-| 字符串字段 | 依据 step2_0 值语义分箱，禁止散列编码 |
-| 列表字段（`#`/`^` 分隔） | 词项 ≤100：生成二元特征 + 列表长度 + 是否为空 → 删除原字段。词项 >100：业务归类或 Top + other |
+### 关键规则速查
 
-收尾门禁：除 `<user_id>` 等标识列外，不得残留 `n_unique > 100` 字段。所有特征名英文 snake_case。
+- **列名确认**：展开 CTE 前必须 `read_file` 读取 `step2_0_source_data_analyze.md`，禁止凭记忆写 SQL
+- **GROUP BY**：ClickHouse 要求 `GROUP BY` 直接引用原生列名，**禁止 `GROUP BY toString(col)` 等函数包装**
+- **超前清洗**：1:N 表聚合前从 `step2_2_cleaning_report` 查询 DROP 字段并排除
+- **缺失值**：原始缺失保留 NULL，不以 0/均值/空字符串填充
+- **字符串高基数门禁**：`step2_3_validation.sql` 检查 `system.columns`，残留 String 高基数列 → 阻塞。**禁止自我评估绕过门禁**
 
-高基数门禁通过后，写入 **`step2_3_high_cardinality_check.json`**，每个被检查的字段含：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `feature` | string | 特征名 |
-| `n_unique_before` | int | 处理前唯一值数 |
-| `n_unique_after` | int | 处理后唯一值数 |
-| `method` | string | 处理方式（`binning` / `city_tier_mapping` / `binary_encoding` / `top_and_other` / `none`） |
-| `status` | string | `passed`（门禁通过） / `dropped`（已删除） |
-| `reason` | string | 处理原因说明 |
-
-### 特征文档
-
-`step2_3_feature_derivation.md` 覆盖**所有**特征（最终保留 + 删除 + 新衍生）。每个记录：
-
-| 字段 | 说明 |
-|------|------|
-| `status` | kept / dropped / derived |
-| `method` | 处理方式（分箱/映射/聚合等） |
-| `reason` | 处理原因 |
-| `source_table` | 来源表 |
-| `source_feature` | 来源字段 |
-| `source_n_unique` | 处理前唯一值数 |
-| `output_n_unique` | 处理后唯一值数 |
-| 空值策略 | NULL 保留 / 填充 / 不适用 |
-| SQL 表达式 / 连接方式 | 具体实现 |
-
-新衍生特征还要说明阈值、词表或映射版本。
+> 详细执行规则（列表分割流程、门禁 grep、正面/反面代码模板）见 `scripts/step2_3_format_gate.md`。
+> 1:N 表列表字段的拆分模板见该文件附录。
 
 ---
 
 ## step2_4：用户过滤
 
-执行 `step2_4_user_cleaning.sql` → `step2_4_validation.sql`。
+执行 `scripts/step2_4_user_cleaning.sql` → `scripts/step2_4_validation.sql`。
 
-- 删除年龄或性别不合法的用户：依据 step2_0 字段画像中记录的 `<age>`、`<gender>` 合法值域判定（如 age 为 0、负数、空视为非法；gender 不在合法枚举集合内视为非法）
-- 门禁验证：`<user_id>` 唯一、`<label>` 仍为 0/1
-- 记录过滤前后用户数、正负样本数及比例变化
-
-写入 **`step2_4_user_filter_report.json`**，格式如下：
-
-```json
-{
-  "before": {
-    "total_users": <int>,
-    "positive_count": <int>,
-    "negative_count": <int>,
-    "positive_ratio": <float>
-  },
-  "after": {
-    "total_users": <int>,
-    "positive_count": <int>,
-    "negative_count": <int>,
-    "positive_ratio": <float>
-  },
-  "filter_reasons": ["<string>"]
-}
-```
-
-- 门禁通过后导出 `step2_4_wide_userfiltered.csv`
+- 依据 step2_0 记录的合法值域过滤年龄/性别不合法用户
+- 门禁验证：`<user_id>` 唯一、`<label>` 0/1、列对账（step2_4 vs step2_3 `system.columns` 列数一致）
+- 写入 `step2_4_user_filter_report.json`，门禁通过后导出 `step2_4_wide_userfiltered.csv`
 
 ---
 
 ## step2_5：定稿 receipt
 
-按 `scripts/step2_5_finalize.md` 验收并写 `receipt.json`。本步不写 SQL、不连 CH。
-
-receipt 仅登记 Model 下游所需：`schema_resolution.json` + `step2_4_wide_userfiltered.csv`。
+按 `scripts/step2_5_finalize.md` 验收并写 `receipt.json`。不写 SQL、不连 CH。
 
 ---
 
 ## 完成自检清单
 
-提交 receipt 前逐项确认 pipeline 完整性：
+提交 receipt 前逐项确认：
 
 - [ ] `schema_resolution.json` 已分阶段补全，`source_tables` 与 `output_meta.projection_tables` 一致
 - [ ] step2_0 key_validation 中候选键验证和 label 验证已通过
-- [ ] `step2_0_table_profile`、`step2_0_column_profile` 已创建且非空
 - [ ] **`step2_0_source_data_analyze.md`** 已写入 workspace
 - [ ] `step2_1_wide_simple` 已创建，连接验证通过
-- [ ] `step2_2_cleaning_report`、`step2_2_wide_cleaned` 已创建，`step2_2_cleaning_report.json` 已写入
-- [ ] `step2_3_wide_complete` 已创建，高基数门禁通过，`step2_3_feature_derivation.md` 和 `step2_3_high_cardinality_check.json` 已写入
+- [ ] `step2_2_wide_cleaned` 已创建：
+  - [ ] `step2_2_cleaning_report` 数据来源为 `step2_0_column_profile`（不重复计算）
+  - [ ] 清洗决策正确性门禁通过（`WHERE recommendation='KEEP' AND null_rate > 50` 返回 0 行）
+  - [ ] `/*__CLEANING_EXCEPT_CLAUSE__*/` 已从 cleaning_report 的 DROP 字段查询展开，非手工列出
+  - [ ] `step2_2_cleaning_report.json` 已写入
+- [ ] `step2_3_wide_complete` 已创建：
+  - [ ] **提交前硬门禁通过**：grep splitByChar 命中数 ≥ 待分割字段数
+  - [ ] 高基数门禁 `system.columns` 查询返回 0 行
+  - [ ] `## 列表字段检测结果` 中**全量 delimiter 字段**（含 1:N 表如 `list_detail_info`）已执行 splitByChar
+  - [ ] 原列表字段已从 step2_3_wide_complete 中删除（含 `ld_*` 前缀的 1:N 表原始列表字段）
+  - [ ] `step2_3_feature_derivation.md` 已写入
+  - [ ] `step2_3_high_cardinality_check.json` 已写入（status 以门禁 SQL 结果为依据，非自我评估）
 - [ ] `step2_4_wide_userfiltered` 已创建，`<label>` 为 0/1，`step2_4_user_filter_report.json` 已写入
 - [ ] **`step2_4_wide_userfiltered.csv`** 已导出
 - [ ] 无 `_tmp_*`、`_ft_*`、`fe_` 等非标准前缀残留

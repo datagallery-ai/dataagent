@@ -3,6 +3,17 @@
 -- 输出: {{output_database}}.step2_3_wide_complete
 -- 动态块按 schema_resolution 与画像结果生成，不能假定固定表数、字段名或业务取值。
 -- 本文件整体必须作为一条独立 ClickHouse MCP command 提交。
+--
+-- !!! 前置要求：列名确认 !!!
+-- 展开 CTE 前必须 read_file 读取 step2_0_source_data_analyze.md，
+-- 确认每张要聚合的表的所有列名及其类型，禁止凭记忆写 SQL。
+-- 若 md 中缺少某表列信息，则查询 system.columns 补全。
+--
+-- !!! ClickHouse GROUP BY 硬规则 !!!
+-- ClickHouse 要求 GROUP BY 中直接引用原生列名，禁止对列名做任何函数包装。
+-- 错误: GROUP BY toString(usid)   →  ClickHouse 会报 NOT_AN_AGGREGATE
+-- 正确: GROUP BY usid              →  SELECT 中可以 toString(usid)
+-- 此规则对 toInt / toFloat / toDate / CAST 等所有类型转换函数均适用。
 
 CREATE OR REPLACE TABLE {{output_database}}.step2_3_wide_complete
 ENGINE = MergeTree
