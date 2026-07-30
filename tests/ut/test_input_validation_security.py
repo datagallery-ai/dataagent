@@ -10,8 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import sys
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,24 +18,8 @@ from dataagent.actions.gym.nl2sql.base_env import BaseNL2SQLEnv
 from dataagent.utils import env_file_loader
 
 
-def test_duckdb_connection_disables_external_access(monkeypatch, tmp_path):
-    db_path = tmp_path / "metadata.duckdb"
-    db_path.touch()
-    connection = MagicMock()
-    connect = MagicMock(return_value=connection)
-    monkeypatch.setitem(sys.modules, "duckdb", SimpleNamespace(connect=connect))
-
-    env = BaseNL2SQLEnv(str(db_path))
-
-    assert env.conn is connection
-    connect.assert_called_once_with(
-        str(db_path),
-        read_only=True,
-        config={"enable_external_access": "false"},
-    )
-
-
-def test_sql_validation_relies_on_database_external_access_policy():
+def test_base_nl2sql_env_does_not_apply_sql_guard():
+    """Gym tool layer has no AST guard; online gate stays in Validator."""
     env = object.__new__(BaseNL2SQLEnv)
     execute = MagicMock()
     env._execute = execute

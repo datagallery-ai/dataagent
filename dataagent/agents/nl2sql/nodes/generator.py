@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser
+from dataagent.agents.nl2sql.utils.nl2sql_utils import new_trace_id, sql_parser, sql_sha256
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
@@ -86,11 +86,22 @@ class GeneratorNode(BaseNL2SQLNode):
             for future in as_completed(futures):
                 res = future.result()
                 results.extend(res)
+        trace_id = state.get("trace_id") or new_trace_id()
+        state["trace_id"] = trace_id
         for i, (sql, prompt, strategy) in enumerate(results):
-            state["generation_results"].append(Result(id=i, sql=sql, prompt=prompt, strategy=strategy))
+            state["generation_results"].append(
+                Result(
+                    id=i,
+                    sql=sql,
+                    prompt=prompt,
+                    strategy=strategy,
+                    trace_id=trace_id,
+                    sql_sha256=sql_sha256(sql),
+                )
+            )
         state["sql"] = state["generation_results"][0].sql
-        p = "\n".join([f"[{s.strategy}]\n{s.sql}" for s in state["generation_results"]])
-        message = f"=== Generator ===\n{p}"
+        p = "\n".join([f"[{s.strategy}] sql_sha256={s.sql_sha256}\n{s.sql}" for s in state["generation_results"]])
+        message = f"=== Generator ===\ntrace_id={trace_id}\n{p}"
         logger.info(message)
         state["stream_message"] = message
         return state

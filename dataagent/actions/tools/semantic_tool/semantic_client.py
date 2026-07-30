@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -236,32 +237,7 @@ class SemanticServiceClient:
 
     def get(self, path: str, *, params: Any = None, headers: dict[str, str] | None = None) -> Any:
         """Send a GET request and return JSON response."""
-        url = self._url(path)
-        try:
-            response = self.session.get(
-                url,
-                params=params,
-                headers=headers,
-                timeout=self.timeout,
-                verify=self.verify,
-            )
-            response.raise_for_status()
-            try:
-                return response.json()
-            except ValueError as err:
-                raise ValueError("internal semantic service JSON response error: method=GET") from err
-        except requests.HTTPError as err:
-            service_err = _build_service_error(err, method="GET", path=path)
-            logger.opt(exception=err).error("{}", service_err)
-            raise service_err from err
-        except requests.Timeout as err:
-            wrapped = requests.RequestException("internal semantic service request failed: method=GET")
-            logger.error(str(wrapped))
-            raise wrapped from err
-        except requests.RequestException as err:
-            wrapped = requests.RequestException("internal semantic service request failed: method=GET")
-            logger.error(str(wrapped))
-            raise wrapped from err
+        return self._request("GET", path, params=params, headers=headers)
 
     def post(
         self,
@@ -271,32 +247,77 @@ class SemanticServiceClient:
         headers: dict[str, str] | None = None,
     ) -> Any:
         """Send a POST request and return JSON response."""
+        return self._request("POST", path, json=json, headers=headers)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Any = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """Send a request with JSON completeness checks and audit logging."""
         url = self._url(path)
+        started = time.perf_counter()
         try:
-            response = self.session.post(
-                url,
-                json=json,
-                headers=headers,
-                timeout=self.timeout,
-                verify=self.verify,
-            )
+            if method.upper() == "GET":
+                response = self.session.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=self.timeout,
+                    verify=self.verify,
+                )
+            elif method.upper() == "POST":
+                response = self.session.post(
+                    url,
+                    json=json,
+                    headers=headers,
+                    timeout=self.timeout,
+                    verify=self.verify,
+                )
+            else:
+                raise ValueError(f"unsupported semantic client method: {method}")
             response.raise_for_status()
+            _assert_json_content_type(response)
             try:
-                return response.json()
+                payload = response.json()
             except ValueError as err:
-                raise ValueError("internal semantic service JSON response error: method=POST") from err
+                raise ValueError(f"internal semantic service JSON response error: method={method}") from err
+            _assert_minimal_json_shape(payload, path=path)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "semantic.audit method={} path={} status={} elapsed_ms={:.1f} success=true",
+                method,
+                path,
+                getattr(response, "status_code", "-"),
+                elapsed_ms,
+            )
+            return payload
         except requests.HTTPError as err:
-            service_err = _build_service_error(err, method="POST", path=path)
-            logger.opt(exception=err).error("{}", service_err)
+            service_err = _build_service_error(err, method=method, path=path)
+            logger.error(
+                "semantic.audit method={} path={} status={} success=false error_code={}",
+                method,
+                path,
+                getattr(err.response, "status_code", None),
+                getattr(service_err, "error_code", None),
+            )
             raise service_err from err
         except requests.Timeout as err:
-            wrapped = requests.RequestException("internal semantic service request failed: method=POST")
-            logger.error(str(wrapped))
+            wrapped = requests.RequestException(f"internal semantic service request failed: method={method}")
+            logger.error("semantic.audit method={} path={} success=false error=timeout", method, path)
             raise wrapped from err
         except requests.RequestException as err:
-            wrapped = requests.RequestException("internal semantic service request failed: method=POST")
-            logger.error(str(wrapped))
+            wrapped = requests.RequestException(f"internal semantic service request failed: method={method}")
+            logger.error("semantic.audit method={} path={} success=false error=request", method, path)
             raise wrapped from err
+        except ValueError:
+            # JSON completeness checks (not covered by requests.* handlers).
+            logger.error("semantic.audit method={} path={} success=false error=response_validation", method, path)
+            raise
 
     def _url(self, path: str) -> str:
         """Build an absolute URL from a relative API path."""
@@ -322,6 +343,23 @@ def normalize_semantic_base_url(raw_url: str) -> str:
     return f"{base}/api/semantic/v1"
 
 
+def _assert_json_content_type(response: requests.Response) -> None:
+    """JSON completeness: reject non-JSON Content-Type when the header is present."""
+    raw_headers = getattr(response, "headers", None) or {}
+    content_type = str(raw_headers.get("Content-Type") or raw_headers.get("content-type") or "").lower()
+    if not content_type:
+        return
+    if "json" not in content_type and "javascript" not in content_type:
+        raise ValueError(f"internal semantic service content-type error: expected json, got {content_type}")
+
+
+def _assert_minimal_json_shape(payload: Any, *, path: str) -> None:
+    """JSON completeness: body must be object, array, or null (not a bare scalar)."""
+    if payload is None or isinstance(payload, (dict, list)):
+        return
+    raise ValueError(f"internal semantic service schema error: path={path} expected object/array")
+
+
 def _build_service_error(err: requests.HTTPError, *, method: str, path: str) -> SemanticServiceError:
     """Convert an HTTP error into a parsed semantic-service error."""
     response = err.response
@@ -337,7 +375,8 @@ def _build_service_error(err: requests.HTTPError, *, method: str, path: str) -> 
                 payload.get("errorMessage") or payload.get("error_message") or payload.get("message")
             )
         if not error_message:
-            error_message = _truncate(response.text.strip(), 500) if response.text else None
+            # Keep error_message short; do not dump full bodies into INFO logs.
+            error_message = _truncate(response.text.strip(), 200) if response.text else None
 
     return SemanticServiceError(
         method=method,

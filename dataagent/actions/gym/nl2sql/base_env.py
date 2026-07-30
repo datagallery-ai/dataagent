@@ -59,16 +59,8 @@ class BaseNL2SQLEnv(Env):
 
     @property
     def conn(self):
-        """Ensure connection to the database."""
-        if self._conn is None:
-            import duckdb
-
-            self._conn = duckdb.connect(
-                self.db_path,
-                read_only=True,
-                config={"enable_external_access": "false"},
-            )
-        return self._conn
+        """Backend connection; concrete envs (e.g. SQLiteEnv) must implement."""
+        raise NotImplementedError(f"{type(self).__name__} must implement conn")
 
     @staticmethod
     def _cursor_columns(cursor: Any) -> list[str]:

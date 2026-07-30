@@ -12,6 +12,7 @@
 # ============================================================================
 from typing import Any
 
+from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import truncate
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
@@ -32,8 +33,16 @@ class ExecutorNode(BaseNL2SQLNode):
         p = []
         with build_sql_service(self.sql_service_engine, config) as service:
             for v in state["validation_results"]:
-                v.columns, rows, v.error = service.execute(v.sql)
+                # SQL safety is enforced in Validator (guard_sql).
+                try:
+                    v.columns, rows, v.error = service.execute(v.sql)
+                except SQLServiceError as e:
+                    v.columns, rows, v.error = None, None, str(e.detail or e.message or e)
                 state["execution_results"].append(v)
+                if v.error and rows is None:
+                    v.rows, v.rows_preview = None, None
+                    p.append(str(v.error))
+                    continue
                 v.rows = None if rows is None else (rows[: self.limit] if self.limit >= 0 else rows)
                 v.rows_preview = (
                     None
@@ -44,11 +53,13 @@ class ExecutorNode(BaseNL2SQLNode):
                     ]
                 )
                 p.append(str(v.rows_preview))
-                if v.rows and len(v.rows) > len(v.rows_preview):
+                if v.rows and v.rows_preview and len(v.rows) > len(v.rows_preview):
                     p[-1] += f" ... and {len(v.rows) - len(v.rows_preview)} more rows"
         state["validation_results"].clear()
+        trace_id = state.get("trace_id") or ""
+        digests = ",".join(f"{v.id}:{v.sql_sha256}" for v in state["execution_results"] if getattr(v, "sql_sha256", ""))
         result_preview = "\n".join(p)
-        message = f"=== Executor ===\n{result_preview}"
+        message = f"=== Executor ===\ntrace_id={trace_id} sql_sha256=[{digests}]\n{result_preview}"
         logger.info(message)
         state["stream_message"] = message
         return state
