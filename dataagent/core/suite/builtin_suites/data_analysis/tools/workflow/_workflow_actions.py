@@ -99,6 +99,7 @@ def advance_workflow(
     retry_reason: str = "",
     task: str = "",
     timeout_sec: int = 600,
+    workspace_rel_path: str = "",
     tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Submit, complete, or retry the current step of the active data analysis workflow."""
@@ -133,6 +134,7 @@ def advance_workflow(
             tool_context=tool_context,
             task=task,
             timeout_sec=timeout_sec,
+            workspace_rel_path=workspace_rel_path,
         )
     if normalized_action == "complete_current_step":
         if step_status != "in_progress":
@@ -299,6 +301,7 @@ def _submit_ready_step(
     tool_context: ToolExecutionContext,
     task: str,
     timeout_sec: int,
+    workspace_rel_path: str = "",
 ) -> dict[str, Any]:
     try:
         agent_id = str(current_step.get("owner_id") or "").strip()
@@ -314,6 +317,7 @@ def _submit_ready_step(
             agent_id=agent_id,
             task=dispatch_task,
             timeout_sec=timeout_sec,
+            workspace_rel_path=workspace_rel_path,
         )
         if str(result.get("status") or "").upper() == "ERROR":
             return result
