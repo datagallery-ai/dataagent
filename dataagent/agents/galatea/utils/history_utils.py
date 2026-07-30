@@ -14,8 +14,8 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
-from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
 from dataagent.agents.galatea.utils.workspace_utils import workspace_state_dir
+from dataagent.core.utils.json_store import read_json_object, write_json_object
 
 
 def _history_path(workspace_dir: Path) -> Path:

@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from dataagent.agents.galatea.state.state import State
-from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
-from dataagent.agents.galatea.utils.metadata_utils import (
+from dataagent.agents.galatea.utils.workspace_utils import user_id_from_workspace_dir, user_state_dir
+from dataagent.core.cbb.runtime import Runtime
+from dataagent.core.utils.json_store import read_json_object, write_json_object
+from dataagent.core.utils.metadata_utils import (
     content_to_text,
     count_lines,
     extract_paths_from_args,
@@ -28,8 +30,6 @@ from dataagent.agents.galatea.utils.metadata_utils import (
     truncate_text,
     workspace_snapshot,
 )
-from dataagent.agents.galatea.utils.workspace_utils import user_id_from_workspace_dir, user_state_dir
-from dataagent.core.cbb.runtime import Runtime
 
 TOOL_ARGS_MAX_BYTES = 1024
 DESCRIPTION_MAX_BYTES = 256
