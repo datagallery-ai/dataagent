@@ -27,7 +27,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dataagent.agents.galatea.utils.metadata_utils import (
+from dataagent.core.cbb.runtime import Runtime
+from dataagent.core.flex.workflow.state import FlexState
+from dataagent.core.utils.metadata_utils import (
     content_to_text,
     count_lines,
     extract_paths_from_args,
@@ -37,8 +39,6 @@ from dataagent.agents.galatea.utils.metadata_utils import (
     truncate_text,
     workspace_snapshot,
 )
-from dataagent.core.cbb.runtime import Runtime
-from dataagent.core.flex.workflow.state import FlexState
 from dataagent.utils.constants import (
     DEFAULT_METADATA_DESCRIPTION_MAX_BYTES,
     DEFAULT_METADATA_TOOL_ARGS_MAX_BYTES,

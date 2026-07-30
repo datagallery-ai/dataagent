@@ -18,7 +18,7 @@ from pathlib import Path
 
 from helpers import make_subagent_dir, seed_catalog
 
-from dataagent.agents.galatea.utils.json_store import write_json_object
+from dataagent.core.utils.json_store import write_json_object
 from dataagent.core.workspace import catalog as workspace_catalog
 
 

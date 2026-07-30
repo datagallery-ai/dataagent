@@ -13,8 +13,8 @@
 from pathlib import Path
 from typing import Any
 
-from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
 from dataagent.agents.galatea.utils.workspace_utils import user_state_dir, workspace_state_dir
+from dataagent.core.utils.json_store import read_json_object, write_json_object
 
 
 def default_user_snapshot() -> dict[str, Any]:
