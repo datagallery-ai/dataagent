@@ -13,12 +13,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from dataagent.agents.nl2sql.errors import LLMOutputParseError
+from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
@@ -86,6 +89,20 @@ class BaseNL2SQLNode(BaseNode):
         content = response.content
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
         return content
+
+    def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
+        """Execute the LLM with the given context and action, returning parsed JSON output."""
+        for attempt in range(3):
+            try:
+                return json.loads(json_parser(self.execute_with_llm(context, action)))
+            except (LLMOutputParseError, json.JSONDecodeError) as exc:
+                if attempt == 2:
+                    detail = exc.detail if isinstance(exc, LLMOutputParseError) and exc.detail else str(exc)
+                    raise LLMOutputParseError(
+                        message=f"Model output format error: JSON parsing failed after 3 attempts: {detail}",
+                        detail=detail,
+                    ) from exc
+        return None
 
     def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
         """Persist the (system, user, AI) prompt triple to the node's context-dump file."""

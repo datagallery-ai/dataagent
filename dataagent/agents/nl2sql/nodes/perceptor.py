@@ -10,7 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import json
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +20,6 @@ from dataagent.agents.nl2sql.errors import SemanticServiceCallError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     iter_semantic_column_payloads,
-    json_parser,
     schema_to_ddl,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
@@ -221,7 +219,7 @@ class PerceptorNode(BaseNL2SQLNode):
 
     def _keyword_extraction(self, question: str) -> list[str]:
         context = {"question": question}
-        res = json.loads(json_parser(self.execute_with_llm(context, action="keyword_extraction_")))
+        res = self.execute_with_llm_json(context, action="keyword_extraction_")
         return res["keywords"]
 
     def _semantic_service_error_detail(self, exc: SemanticServiceError) -> str:

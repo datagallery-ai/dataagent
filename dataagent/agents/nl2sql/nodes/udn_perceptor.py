@@ -10,13 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import json
 import re
 from typing import Any
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser, schema_to_ddl
+from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.utils.log import logger
 
@@ -286,10 +285,9 @@ class UDNPerceptorNode(PerceptorNode):
         return catalog
 
     def _select_udn_business_ids(self, question: str) -> list[str]:
-        response = self.execute_with_llm(
+        values = self.execute_with_llm_json(
             {"question": question, "top_n": self.table_llm_topk}, action="filter_udn_business_id_"
         )
-        values = json.loads(json_parser(response))
         business_ids: list[str] = []
         for value in values:
             match = re.search(r"dw\d+", str(value))
@@ -298,11 +296,10 @@ class UDNPerceptorNode(PerceptorNode):
         return business_ids[: self.table_llm_topk]
 
     def _select_udn_table_family(self, question: str, families: list[dict[str, Any]]) -> dict[str, str] | None:
-        response = self.execute_with_llm(
+        parsed = self.execute_with_llm_json(
             {"question": question, "tables": self._format_udn_table_family_prompt_context(families)},
             action="filter_udn_table_family_",
         )
-        parsed = json.loads(json_parser(response))
         family_name = str(parsed.get("family_name") or "").strip()
         granularity = str(parsed.get("granularity") or "").strip()
         return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None

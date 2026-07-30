@@ -16,7 +16,7 @@ from typing import Any
 
 from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, json_parser, metadata_parser
+from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
 from dataagent.agents.nl2sql.utils.sql_guard import SQLGuardError, guard_sql, resolve_sqlglot_dialect
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
@@ -64,7 +64,7 @@ class ValidatorNode(BaseNL2SQLNode):
             "sqls": json.dumps(res),
         }
         for _ in range(3):
-            out = json.loads(json_parser(self.execute_with_llm(context, "validate_semantic_")))
+            out = self.execute_with_llm_json(context, "validate_semantic_")
             if len(out) == len(state["generation_results"]):
                 res = out
                 for r in res:

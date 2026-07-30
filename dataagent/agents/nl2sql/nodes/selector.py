@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser, sql_sha256
+from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SELECTOR_THRESHOLD
 from dataagent.utils.log import logger
@@ -46,7 +46,7 @@ class SelectorNode(BaseNL2SQLNode):
                 "res": json.dumps(res, default=str),
             }
             for _ in range(3):
-                out = json.loads(json_parser(self.execute_with_llm(context)))
+                out = self.execute_with_llm_json(context)
                 if len(out) == len(state["execution_results"]):
                     sel = out
                     for r in res:
