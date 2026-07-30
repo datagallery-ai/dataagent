@@ -12,11 +12,27 @@
 # ============================================================================
 """出站 mTLS 助手 outbound_tls 的单元测试。"""
 
+import os
 import ssl
 
 import pytest
 
 from dataagent.common_utils import outbound_tls
+
+_OUTBOUND_ENV_KEYS = (
+    outbound_tls.ENV_CA_FILE,
+    outbound_tls.ENV_CLIENT_CERT,
+    outbound_tls.ENV_CLIENT_KEY,
+    outbound_tls.ENV_CIPHERS,
+    outbound_tls.ENV_MODE,
+    outbound_tls.ENV_SSL_SERVICES,
+)
+
+
+def _hard_clear_outbound_env() -> None:
+    """Drop DATAAGENT_OUTBOUND_* from the real process env (not monkeypatch-tracked)."""
+    for name in _OUTBOUND_ENV_KEYS:
+        os.environ.pop(name, None)
 
 
 @pytest.fixture
@@ -58,19 +74,17 @@ def _cert_files(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    """清理 DATAAGENT_OUTBOUND_* 并在每个用例前后清空 SSLContext 缓存。"""
-    for name in (
-        outbound_tls.ENV_CA_FILE,
-        outbound_tls.ENV_CLIENT_CERT,
-        outbound_tls.ENV_CLIENT_KEY,
-        outbound_tls.ENV_CIPHERS,
-        outbound_tls.ENV_MODE,
-        outbound_tls.ENV_SSL_SERVICES,
-    ):
-        monkeypatch.delenv(name, raising=False)
+def _clean_env():
+    """清理 DATAAGENT_OUTBOUND_* 并在每个用例前后清空 SSLContext 缓存。
+
+    ``apply_certificate_config`` writes ``os.environ`` directly. Do not rely on
+    ``monkeypatch.delenv`` for these keys: its teardown can restore values leaked
+    by an earlier test and poison later modules (e.g. llm_manager httpx tests).
+    """
+    _hard_clear_outbound_env()
     outbound_tls.reset_cache()
     yield
+    _hard_clear_outbound_env()
     outbound_tls.reset_cache()
 
 

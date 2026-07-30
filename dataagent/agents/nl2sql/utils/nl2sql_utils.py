@@ -10,7 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import hashlib
 import re
+import uuid
 from typing import Any
 
 from dataagent.agents.nl2sql.errors import LLMOutputParseError
@@ -20,6 +22,22 @@ from dataagent.utils.constants import DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH
 _PLACEHOLDER_BRACE = re.compile(r"(?<!\')\$\{[^}]+\}(?!')")
 # 匹配未被单引号包裹的 $var 模板（如 $date）；排除 ${...} 中的 $
 _PLACEHOLDER_SIMPLE = re.compile(r"(?<!\')\$(?!\{)[a-zA-Z_][a-zA-Z0-9_]*(?!')")
+_WS_RE = re.compile(r"\s+")
+
+
+def normalize_sql(sql: str) -> str:
+    """Normalize SQL text for stable hashing (trim + collapse whitespace)."""
+    return _WS_RE.sub(" ", (sql or "").strip())
+
+
+def sql_sha256(sql: str) -> str:
+    """Return hex sha256 of normalized SQL."""
+    return hashlib.sha256(normalize_sql(sql).encode("utf-8")).hexdigest()
+
+
+def new_trace_id() -> str:
+    """Allocate a new dry-run trace id."""
+    return uuid.uuid4().hex
 
 
 def iter_semantic_column_payloads(raw: Any) -> list[dict]:

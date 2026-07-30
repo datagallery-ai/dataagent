@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser, quote_sql_placeholders
+from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser, normalize_sql, quote_sql_placeholders, sql_sha256
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_REFLECTOR_THRESHOLD
 from dataagent.utils.log import logger
@@ -27,10 +27,33 @@ class ReflectorNode(BaseNL2SQLNode):
 
     def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         best = max(state["validation_results"], key=lambda r: r.score)
-        if (best.score >= self.threshold and not best.need_ref) or state["ref_retries"] <= 0:
+        seen = list(state.get("seen_sqls") or [])
+        fingerprint = normalize_sql(best.sql)
+
+        # Same-fingerprint loop break: stop reflecting but keep the generated SQL
+        # on the happy path (generation-only clients still get an answer).
+        trace_id = state.get("trace_id") or ""
+        best_digest = best.sql_sha256 or sql_sha256(best.sql)
+
+        if fingerprint and fingerprint in seen:
+            logger.warning(
+                f"Reflector: repeated SQL fingerprint; stop reflecting and proceed. "
+                f"trace_id={trace_id} sql_sha256={best_digest}"
+            )
             state["proceed"] = True
             state["sql"] = best.sql
             return state
+
+        # Match upstream: threshold pass OR retries exhausted → proceed with best.sql.
+        if (best.score >= self.threshold and not best.need_ref) or state["ref_retries"] <= 0:
+            state["proceed"] = True
+            state["sql"] = best.sql
+            if fingerprint and best.score >= self.threshold and not best.need_ref:
+                seen.append(fingerprint)
+                state["seen_sqls"] = seen
+            logger.info(f"=== Reflector ===\ntrace_id={trace_id} sql_sha256={best_digest} proceed=True")
+            return state
+
         state["ref_retries"] -= 1
         state["proceed"] = False
         for _ in range(3):
@@ -40,14 +63,17 @@ class ReflectorNode(BaseNL2SQLNode):
                 break
         else:
             # skip if fail
-            logger.warning("Reflector failed.")
+            logger.warning(f"Reflector failed. trace_id={trace_id}")
             fix_sqls = [v.sql for v in state["validation_results"]]
         for v, sql in zip(state["validation_results"], fix_sqls, strict=True):
-            v.sql, v.score, v.issues, v.need_ref = sql, 0, [], False
+            v.sql, v.score, v.issues, v.need_ref, v.error = sql, 0, [], False, None
+            v.sql_sha256 = sql_sha256(sql)
+            if not v.trace_id:
+                v.trace_id = trace_id
             state["generation_results"].append(v)
         state["validation_results"].clear()
-        p = "\n".join([s.sql for s in state["generation_results"]])
-        message = f"=== Reflector ===\n{p}"
+        p = "\n".join([f"sql_sha256={s.sql_sha256}\n{s.sql}" for s in state["generation_results"]])
+        message = f"=== Reflector ===\ntrace_id={trace_id}\n{p}"
         logger.info(message)
         state["stream_message"] = message
         return state

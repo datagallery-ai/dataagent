@@ -36,6 +36,7 @@ import difflib
 import json
 import os
 import random
+import re
 import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
@@ -52,6 +53,30 @@ from dataagent.utils.constants import (
     DEFAULT_COMPRESS_TOKEN_LIMIT,
     DEFAULT_LLM_MAX_RETRIES,
 )
+
+_CREDENTIAL_SK_RE = re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")
+_CREDENTIAL_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._\-+/=]{32,}\b")
+_CREDENTIAL_ASSIGN_RE = re.compile(
+    r"(?i)\b(api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|password|passwd|pwd)"
+    r"\b\s*[:=]\s*(?:sk-(?:proj-)?[A-Za-z0-9]{20,}|[A-Za-z0-9._\-+/=]{32,})"
+)
+
+
+def _scan_payload_for_credentials(payload: Mapping[str, Any]) -> str | None:
+    """Return a short reason if outbound payload matches a hard credential pattern."""
+    try:
+        blob = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        blob = str(payload)
+    if _CREDENTIAL_SK_RE.search(blob):
+        return "credential-like pattern matched: sk-*"
+    if _CREDENTIAL_BEARER_RE.search(blob):
+        return "credential-like pattern matched: Bearer *"
+    m = _CREDENTIAL_ASSIGN_RE.search(blob)
+    if m:
+        return f"credential-like key/value matched: {m.group(1)}"
+    return None
+
 
 # ── 重试退避常量（定制模块自包含，不外置到 constants）────────────────────────────
 DEFAULT_LLM_RETRY_BACKOFF_BASE: float = 3.0
@@ -1522,9 +1547,10 @@ class LLMClient:
         timeout = self._resolve_timeout(kwargs)
         max_attempts = self._resolve_max_attempts(kwargs)
         logger.debug("invoke.request model={} payload_keys={}", self._model, sorted(payload.keys()))
+        verify = httpx_verify()
 
         def _call() -> LLMClientMessage:
-            with httpx.Client(timeout=timeout, verify=httpx_verify()) as client:
+            with httpx.Client(timeout=timeout, verify=verify) as client:
                 resp = client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 self._ensure_non_stream_response(resp)
@@ -1532,7 +1558,13 @@ class LLMClient:
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
 
-        return self._with_transient_retry(_call, max_attempts=max_attempts)
+        try:
+            result = self._with_transient_retry(_call, max_attempts=max_attempts)
+            self._audit_llm_call(success=True, stream=False)
+            return result
+        except Exception:
+            self._audit_llm_call(success=False, stream=False)
+            raise
 
     async def ainvoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以异步方式调用模型生成回复。"""
@@ -1540,9 +1572,10 @@ class LLMClient:
         timeout = self._resolve_timeout(kwargs)
         max_attempts = self._resolve_max_attempts(kwargs)
         logger.debug("ainvoke.request model={} payload_keys={}", self._model, sorted(payload.keys()))
+        verify = httpx_verify()
 
         async def _call() -> LLMClientMessage:
-            async with httpx.AsyncClient(timeout=timeout, verify=httpx_verify()) as client:
+            async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
                 resp = await client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 self._ensure_non_stream_response(resp)
@@ -1550,7 +1583,13 @@ class LLMClient:
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
 
-        return await self._awith_transient_retry(_call, max_attempts=max_attempts)
+        try:
+            result = await self._awith_transient_retry(_call, max_attempts=max_attempts)
+            self._audit_llm_call(success=True, stream=False)
+            return result
+        except Exception:
+            self._audit_llm_call(success=False, stream=False)
+            raise
 
     async def astream(self, messages: list[Any], **kwargs: Any) -> AsyncIterator[LLMClientMessage]:
         """以异步方式流式调用模型，逐步产生消息块。"""
@@ -1572,6 +1611,7 @@ class LLMClient:
                     yield msg
             except LLMRepetitionError as e:
                 if not self._astream_should_retry_repetition(e, attempt, max_attempts):
+                    self._audit_llm_call(success=False, stream=True)
                     raise
                 await self._astream_retry_with_backoff(
                     attempt,
@@ -1592,6 +1632,7 @@ class LLMClient:
                         status_code=mapped.status_code,
                     )
                     continue
+                self._audit_llm_call(success=False, stream=True)
                 raise mapped from e
 
             finish_error = self._astream_finish_error(stream_state)
@@ -1605,6 +1646,7 @@ class LLMClient:
                         status_code=finish_error.status_code,
                     )
                     continue
+                self._audit_llm_call(success=False, stream=True)
                 raise finish_error
 
             try:
@@ -1612,6 +1654,7 @@ class LLMClient:
                     yield msg
             except LLMRepetitionError as e:
                 if not self._astream_should_retry_repetition(e, attempt, max_attempts):
+                    self._audit_llm_call(success=False, stream=True)
                     raise
                 await self._astream_retry_with_backoff(
                     attempt,
@@ -1621,8 +1664,10 @@ class LLMClient:
                     snippet=e.content_snippet[:200],
                 )
                 continue
+            self._audit_llm_call(success=True, stream=True)
             return
 
+        self._audit_llm_call(success=False, stream=True)
         raise RuntimeError("Unexpected error in transient stream retry loop")
 
     def _astream_can_retry(
@@ -1903,7 +1948,33 @@ class LLMClient:
             # 仅 pop 掉仍会收到 SSE，导致 resp.json() 失败。
             payload["stream"] = False
             payload.pop("stream_options", None)
+        leak = _scan_payload_for_credentials(payload)
+        if leak:
+            raise LLMCallError(
+                LLMErrorCategory.CONTENT_POLICY,
+                f"Outbound LLM payload blocked: {leak}",
+                model=self._model,
+                request_url=self._endpoint(),
+            )
         return payload
+
+    def _audit_llm_call(self, *, success: bool, stream: bool) -> None:
+        """Emit a compact INFO audit line without message/body contents."""
+        host = ""
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self._api_base)
+            host = parsed.netloc or parsed.path
+        except Exception:
+            host = ""
+        logger.info(
+            "llm.audit host={} model={} stream={} success={}",
+            host or "-",
+            self._model,
+            stream,
+            success,
+        )
 
     def _resolve_timeout(self, kwargs: dict[str, Any]) -> httpx.Timeout | None:
         """Resolve the per-call httpx timeout, falling back to the client default."""
