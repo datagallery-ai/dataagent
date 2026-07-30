@@ -83,6 +83,7 @@ class JobResult:
     published_artifacts: list[str] = field(default_factory=list)
     outputs: list[dict[str, Any]] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
+    log_file_info: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the result for ``collect_subagent`` and storage."""
@@ -114,4 +115,6 @@ class JobResult:
             payload["subagent_session_id"] = self.subagent_session_id
         if self.workspace_rel_path:
             payload["workspace_rel_path"] = self.workspace_rel_path
+        if self.log_file_info:
+            payload["log_file_info"] = self.log_file_info
         return payload

@@ -299,17 +299,16 @@ class MCPClientWrapper:
                     httpx.AsyncClient(
                         headers=headers,
                         timeout=httpx.Timeout(timeout),
+                        follow_redirects=True,
                     ) as http_client,
                     streamable_http_client(params["url"], http_client=http_client) as (
                         read_stream,
                         write_stream,
-                        _get_session_id,
                     ),
+                    ClientSession(read_stream, write_stream) as session,
                 ):
-                    del _get_session_id
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        return await operation(session)
+                    await session.initialize()
+                    return await operation(session)
 
             raise ValueError(f"Unsupported transport type: {self.transport_type}")
 
