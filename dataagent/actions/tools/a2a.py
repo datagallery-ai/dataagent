@@ -24,7 +24,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from a2a.client import create_client
@@ -46,10 +46,21 @@ from dataagent.core.managers.action_manager.schemas import ParameterSchema, Tool
 A2A_AVAILABLE = True
 
 
-def _classify_exception(exc: Exception) -> ErrorType:
-    """根据异常类型分类错误（保持向后兼容，内部委托给统一函数）"""
-    err_type, _ = classify_exception(exc)
-    return err_type
+def _extract_http_status(exc: BaseException) -> Optional[tuple[int, str]]:  # noqa: UP045
+    """Extract an HTTP status code and reason phrase from an exception chain."""
+    current: Optional[BaseException] = exc  # noqa: UP045
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        response = getattr(current, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if status_code is None:
+            status_code = getattr(current, "status_code", None)
+        if isinstance(status_code, int):
+            reason = str(getattr(response, "reason_phrase", "") or "").strip()
+            return status_code, reason
+        current = current.__cause__ or current.__context__
+    return None
 
 
 @dataclass
@@ -133,6 +144,20 @@ class A2AClientWrapper:
                 result_text = await self._extract_result_text_from_stream(responses)
                 return result_text if result_text else str(responses)
         except Exception as e:
+            http_status = _extract_http_status(e)
+            if http_status is not None and http_status[0] in (401, 403):
+                status_code, reason = http_status
+                status_text = f"HTTP {status_code} {reason}".strip()
+                raise ToolError(
+                    (
+                        f"A2A authentication failed for agent '{self.config.agent_id}' while calling tool "
+                        f"'{tool_name}': the remote service rejected the configured Bearer token ({status_text}). "
+                        "Check TOOLS.A2A auth_token."
+                    ),
+                    error_type=ErrorType.AUTHENTICATION_ERROR,
+                    retriable=False,
+                    max_retries=0,
+                ) from e
             raise ToolError(f"Error during tool call '{tool_name}': {e}") from e
         finally:
             await httpx_client.aclose()
@@ -299,17 +324,7 @@ class A2AToolWrapper(BaseTool):
             )
 
         except Exception as e:
-            error_type = _classify_exception(e)
-            return ToolResult(
-                success=False,
-                error=str(e),
-                metadata={
-                    "tool_type": "a2a_tool",
-                    "error_type": type(e).__name__,
-                    "agent_id": self.a2a_client.config.agent_id,
-                },
-                error_type=error_type,
-            )
+            return self._build_failure_result(e)
 
     async def acall(self, **kwargs) -> ToolResult:
         """Execute A2A tool (async)."""
@@ -342,17 +357,7 @@ class A2AToolWrapper(BaseTool):
                     logger.warning(f"Failed to close temp A2A client in async execution: {e}")
 
         except Exception as e:
-            error_type = _classify_exception(e)
-            return ToolResult(
-                success=False,
-                error=str(e),
-                metadata={
-                    "tool_type": "a2a_tool",
-                    "error_type": type(e).__name__,
-                    "agent_id": self.a2a_client.config.agent_id,
-                },
-                error_type=error_type,
-            )
+            return self._build_failure_result(e)
 
     def get_schema(self) -> ToolSchema:
         """Generate tool schema."""
@@ -378,6 +383,29 @@ class A2AToolWrapper(BaseTool):
                 )
 
         return ToolSchema(self.name, self.description, parameters, "a2a_tool")
+
+    def _build_failure_result(self, exc: Exception) -> ToolResult:
+        """Convert an A2A exception into a failed tool result without losing retry semantics."""
+        if isinstance(exc, ToolError):
+            error_type = exc.error_type
+            retriable = exc.retriable
+            max_retries = exc.max_retries
+        else:
+            error_type, policy = classify_exception(exc)
+            retriable = policy.retriable
+            max_retries = policy.max_retries
+        return ToolResult(
+            success=False,
+            error=str(exc),
+            metadata={
+                "tool_type": "a2a_tool",
+                "error_type": type(exc).__name__,
+                "agent_id": self.a2a_client.config.agent_id,
+            },
+            error_type=error_type,
+            retriable=retriable,
+            max_retries=max_retries,
+        )
 
     def _json_type_to_python_type(self, json_type: str) -> type:
         """Map JSON Schema types to Python types."""

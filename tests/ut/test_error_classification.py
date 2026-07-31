@@ -32,6 +32,7 @@ class TestErrorType:
         """所有错误类型都应该被定义"""
         expected_types = {
             "validation_error",
+            "authentication_error",
             "rate_limit",
             "timeout",
             "network_error",
@@ -45,6 +46,7 @@ class TestErrorType:
     def test_error_type_string_values(self):
         """ErrorType 应该有正确的字符串值"""
         assert ErrorType.VALIDATION_ERROR.value == "validation_error"
+        assert ErrorType.AUTHENTICATION_ERROR.value == "authentication_error"
         assert ErrorType.RATE_LIMIT.value == "rate_limit"
         assert ErrorType.TIMEOUT.value == "timeout"
         assert ErrorType.NETWORK_ERROR.value == "network_error"
@@ -59,6 +61,12 @@ class TestErrorPolicy:
     def test_validation_error_not_retriable(self):
         """VALIDATION_ERROR 不可重试"""
         policy = ERROR_POLICIES[ErrorType.VALIDATION_ERROR]
+        assert policy.retriable is False
+        assert policy.max_retries == 0
+
+    def test_authentication_error_not_retriable(self):
+        """AUTHENTICATION_ERROR 不可重试。"""
+        policy = ERROR_POLICIES[ErrorType.AUTHENTICATION_ERROR]
         assert policy.retriable is False
         assert policy.max_retries == 0
 
@@ -132,6 +140,22 @@ class TestClassifyException:
         exc = Exception("Request deadline exceeded")
         error_type, policy = classify_exception(exc)
         assert error_type == ErrorType.TIMEOUT
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "HTTP Error 401: Client error '401 Unauthorized'",
+            "Authentication failed for remote service",
+            "Unauthorized request",
+            "Invalid Bearer token",
+        ],
+    )
+    def test_authentication_error_in_message(self, message):
+        """认证失败文本应该分类为不可重试的 AUTHENTICATION_ERROR。"""
+        error_type, policy = classify_exception(Exception(message))
+        assert error_type == ErrorType.AUTHENTICATION_ERROR
+        assert policy.retriable is False
+        assert policy.max_retries == 0
 
     def test_rate_limit_in_message(self):
         """消息中包含 'rate limit' 应该被分类为 RATE_LIMIT"""
@@ -462,6 +486,7 @@ class TestRetryPolicyConsistency:
         """不可重试的错误 max_retries 应该为 0"""
         non_retriable = [
             ErrorType.VALIDATION_ERROR,
+            ErrorType.AUTHENTICATION_ERROR,
             ErrorType.FILE_NOT_FOUND,
         ]
         for error_type in non_retriable:

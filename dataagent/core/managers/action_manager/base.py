@@ -32,6 +32,7 @@ class ErrorType(StrEnum):
     """错误类型枚举，用于分类错误并决定重试策略"""
 
     VALIDATION_ERROR = "validation_error"  # 参数 schema 校验失败
+    AUTHENTICATION_ERROR = "authentication_error"  # 认证凭据缺失或无效
     RATE_LIMIT = "rate_limit"  # 限流/配额耗尽
     TIMEOUT = "timeout"  # 工具执行超时
     NETWORK_ERROR = "network_error"  # 网络问题（MCP/A2A）
@@ -54,6 +55,7 @@ class ErrorPolicy:
 # 默认重试策略表
 ERROR_POLICIES: dict[ErrorType, ErrorPolicy] = {
     ErrorType.VALIDATION_ERROR: ErrorPolicy(ErrorType.VALIDATION_ERROR, retriable=False, max_retries=0),
+    ErrorType.AUTHENTICATION_ERROR: ErrorPolicy(ErrorType.AUTHENTICATION_ERROR, retriable=False, max_retries=0),
     ErrorType.RATE_LIMIT: ErrorPolicy(
         ErrorType.RATE_LIMIT, retriable=True, max_retries=3, backoff_base=1.0, backoff_type="exponential"
     ),
@@ -101,6 +103,14 @@ def classify_exception(exc: Exception) -> tuple[ErrorType, ErrorPolicy]:
     # 错误分类规则（按优先级顺序匹配）
     if "timeout" in exc_type or "timeout" in exc_msg or "timed out" in exc_msg or "deadline" in exc_msg:
         return (ErrorType.TIMEOUT, ERROR_POLICIES[ErrorType.TIMEOUT])
+    if (
+        "authentication" in exc_msg
+        or "unauthorized" in exc_msg
+        or "invalid bearer token" in exc_msg
+        or "http 401" in exc_msg
+        or "error 401" in exc_msg
+    ):
+        return (ErrorType.AUTHENTICATION_ERROR, ERROR_POLICIES[ErrorType.AUTHENTICATION_ERROR])
     if "rate limit" in exc_msg or "quota" in exc_msg or "too many" in exc_msg or "429" in exc_msg:
         return (ErrorType.RATE_LIMIT, ERROR_POLICIES[ErrorType.RATE_LIMIT])
     if (
