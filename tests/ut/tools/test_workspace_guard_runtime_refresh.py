@@ -216,9 +216,10 @@ async def test_chat_refreshes_runtime_sandbox_before_workflow_invocation(tmp_pat
         def set_runtime(self, runtime_obj):
             captured["runtime_set"] = runtime_obj
 
-        async def ainvoke(self, state):
+        async def ainvoke(self, state, *, runtime=None):
             sb = runtime.sandbox
             captured["state"] = dict(state)
+            captured["runtime_invoked"] = runtime
             captured["workspace_root"] = sb.workspace_root
             captured["skill_aliases"] = dict(sb.skill_aliases)
             captured["allow_read_roots"] = list(sb.allow_read_roots)
@@ -264,6 +265,7 @@ async def test_chat_refreshes_runtime_sandbox_before_workflow_invocation(tmp_pat
     assert result == {"messages": [], "complete": True}
     assert refreshed_users == ["runtime-user"]
     assert captured["runtime_set"] is runtime
+    assert captured.get("runtime_invoked") is runtime
     assert captured["state"]["user_query"] == "请执行"
     assert captured["workspace_root"] == workspace
     assert captured["skill_aliases"] == {"pdf": new_skill_root}

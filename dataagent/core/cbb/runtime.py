@@ -91,6 +91,8 @@ class Runtime:
         self._stream = StreamCursor()
         self._file_metadata = FileMetadataScratch()
         self._sandbox: Sandbox | None = None
+        env_workspace = getattr(env, "workspace_dir", None)
+        self._workspace_dir = Path(env_workspace).expanduser().resolve() if env_workspace is not None else None
         # Flex：本轮是否尚未在 Planner 中写入与 LLM 一致的用户模板 Human
         # 见 dataagent.core.flex.utils.planner_prompt_builder.sync_flex_planner_user_human_to_state
         self._flex_planner_user_sync_pending: bool = False
@@ -124,8 +126,8 @@ class Runtime:
 
     @property
     def workspace_dir(self) -> Path | None:
-        """当前调用的工作目录（从 env 读取，可由 update_from_state 在每次调用前刷新）。"""
-        return getattr(self.env, "workspace_dir", None)
+        """当前调用独占的工作目录，由 ``update_from_state`` 在调用前刷新。"""
+        return self._workspace_dir
 
     @property
     def sandbox(self) -> Sandbox:
@@ -335,7 +337,7 @@ class Runtime:
         """
         ws = state.get("workspace")
         if ws:
-            self.env.workspace_dir = Path(str(ws)).expanduser().resolve()
+            self._workspace_dir = Path(str(ws)).expanduser().resolve()
 
         uid = str(state.get("user_id") or self.user_id or "anonymous").strip()
         self.user_id = uid or "anonymous"

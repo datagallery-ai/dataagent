@@ -85,8 +85,7 @@ class BaseDataAgent:
         # 调用 LangGraphWorkflow 的流式接口
         logger.debug(f"💬 开始流式对话: {init_state.get('user_query', 'N/A')}")
         runtime = self._build_l1_runtime()
-        self._workflow.set_runtime(runtime)
-        async for event in self._workflow.astream(init_state):
+        async for event in self._workflow.astream(init_state, runtime=runtime):
             yield event
         logger.debug("✅ 流式对话完成")
 
@@ -124,8 +123,7 @@ class BaseDataAgent:
         # 调用 LangGraphWorkflow 的异步方法
         logger.debug(f"💬 开始对话: {user_query}")
         runtime = self._build_l1_runtime()
-        self._workflow.set_runtime(runtime)
-        result = await self._workflow.ainvoke(state)
+        result = await self._workflow.ainvoke(state, runtime=runtime)
         logger.debug("✅ 对话完成")
 
         return result

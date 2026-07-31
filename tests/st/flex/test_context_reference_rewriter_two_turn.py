@@ -161,8 +161,9 @@ def _build_flex_agent_stub(
         def set_runtime(self, _runtime_obj: Any) -> None:
             return None
 
-        async def ainvoke(self, state: dict[str, Any]) -> dict[str, Any]:
-            runtime = runtime_holder.get("runtime")
+        async def ainvoke(self, state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            runtime = kwargs.get("runtime")
+            assert runtime is runtime_holder.get("runtime")
             ctx = agent._get_or_init_context(state, runtime)
             run_id = int(state.get("run_id", 0))
             if run_id == 0 and ctx is not None and table_id_holder.get("id") is None:
@@ -443,7 +444,8 @@ MODEL:
         def set_runtime(self, _runtime_obj: Any) -> None:
             return None
 
-        async def ainvoke(self, state: dict[str, Any]) -> dict[str, Any]:
+        async def ainvoke(self, state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            assert isinstance(kwargs.get("runtime"), Runtime)
             workflow_capture["state"] = dict(state)
             return {"messages": [], "complete": True}
 

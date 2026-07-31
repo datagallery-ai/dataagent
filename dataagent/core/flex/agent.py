@@ -428,7 +428,11 @@ class FlexAgent(BaseAgent):
                     renderer_token = set_active_renderer(renderer)
                     runtime.on_subagent_progress = renderer.update_subagent_hint
                     try:
-                        stream = self.workflow_backend.astream(initial_state, stream_mode=["values", "custom"])
+                        stream = self.workflow_backend.astream(
+                            initial_state,
+                            runtime=runtime,
+                            stream_mode=["values", "custom"],
+                        )
                         async for chunk in stream:
                             mode, data = chunk
                             if mode == "custom" and isinstance(data, dict):
@@ -441,11 +445,11 @@ class FlexAgent(BaseAgent):
 
                     if not final_state or not isinstance(final_state, dict) or not final_state.get("messages"):
                         logger.warning("No valid values event in stream, falling back to ainvoke")
-                        final_state = await self.workflow_backend.ainvoke(initial_state)
+                        final_state = await self.workflow_backend.ainvoke(initial_state, runtime=runtime)
 
                     logger.trace("Chat completed (debug mode with streaming)")
                 else:
-                    final_state = await self.workflow_backend.ainvoke(initial_state)
+                    final_state = await self.workflow_backend.ainvoke(initial_state, runtime=runtime)
                     logger.trace(f"Chat completed ({self.mode} mode)")
 
                 final_state = self._run_agent_post_hooks(final_state, runtime)
@@ -569,7 +573,7 @@ class FlexAgent(BaseAgent):
                 kw["input"] = context_state
             else:
                 initial_state_arg = dict(context_state)
-            stream = self.workflow_backend.astream(initial_state_arg, **kw)
+            stream = self.workflow_backend.astream(initial_state_arg, runtime=runtime, **kw)
             async for item in self._stream_with_finalization(
                 stream,
                 initial_state_for_persist=initial_state_for_persist,

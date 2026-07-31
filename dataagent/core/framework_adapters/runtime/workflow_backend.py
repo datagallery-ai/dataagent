@@ -83,8 +83,16 @@ class LangGraphWorkflowBackend:
     async def ainvoke(self, initial_state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         """异步执行（langgraph）。kwargs 可包含 store。"""
         store = kwargs.pop("store", None)
-        _ = kwargs
-        return await self._wf.ainvoke(initial_state, store=store)
+        runtime = kwargs.pop("runtime", None)
+        checkpointer = kwargs.pop("checkpointer", None)
+        config = kwargs.pop("config", None)
+        return await self._wf.ainvoke(
+            initial_state,
+            store=store,
+            runtime=runtime,
+            checkpointer=checkpointer,
+            config=config,
+        )
 
     def astream(self, initial_state: dict[str, Any], **kwargs: Any) -> AsyncIterator[Any]:
         """
@@ -115,14 +123,17 @@ class LangGraphWorkflowBackend:
 
         store = kwargs.pop("store", None)
         checkpointer = kwargs.pop("checkpointer", None)
+        runtime = kwargs.pop("runtime", None)
         config = kwargs.pop("config", None) or {"configurable": {"thread_id": str(checkpoint_id)}}
         if checkpointer is None:
             raise ValueError("LangGraph resume requires 'checkpointer'.")
-        if getattr(self._wf, "graph", None) is None:
-            self._wf.ensure_graph_built()  # type: ignore[attr-defined]
-        compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
-        run_config = self._merge_langgraph_config(config)
-        return await compiled.ainvoke(Command(resume=message), config=run_config)
+        return await self._wf.ainvoke(
+            Command(resume=message),
+            store=store,
+            runtime=runtime,
+            checkpointer=checkpointer,
+            config=config,
+        )
 
     def astream_resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> AsyncIterator[Any]:
         """LangGraph 流式恢复（需要 checkpointer，输入使用 Command(resume=message)）。"""
@@ -130,14 +141,18 @@ class LangGraphWorkflowBackend:
 
         store = kwargs.pop("store", None)
         checkpointer = kwargs.pop("checkpointer", None)
+        runtime = kwargs.pop("runtime", None)
         config = kwargs.pop("config", None) or {"configurable": {"thread_id": str(checkpoint_id)}}
         if checkpointer is None:
             raise ValueError("LangGraph astream_resume requires 'checkpointer'.")
-        if getattr(self._wf, "graph", None) is None:
-            self._wf.ensure_graph_built()  # type: ignore[attr-defined]
-        compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
-        run_config = self._merge_langgraph_config(config)
-        return compiled.astream(input=Command(resume=message), config=run_config, **kwargs)
+        return self._wf.astream(
+            Command(resume=message),
+            store=store,
+            runtime=runtime,
+            checkpointer=checkpointer,
+            config=config,
+            **kwargs,
+        )
 
     async def aget_graph_state(
         self,
@@ -165,21 +180,23 @@ class LangGraphWorkflowBackend:
         """
         store = kwargs.pop("store", None)
         checkpointer = kwargs.pop("checkpointer", None)
-        if checkpointer is not None:
-            if getattr(self._wf, "graph", None) is None:
-                self._wf.ensure_graph_built()  # type: ignore[attr-defined]
-            compiled = self._wf.graph.compile(store=store, checkpointer=checkpointer)
-            kwargs["config"] = self._merge_langgraph_config(kwargs.get("config"))
-            return compiled.astream(**kwargs)
-
+        runtime = kwargs.pop("runtime", None)
         input_state = kwargs.pop("input", {})
-        return self._wf.astream(input_state, store=store, **kwargs)
+        return self._wf.astream(
+            input_state,
+            store=store,
+            runtime=runtime,
+            checkpointer=checkpointer,
+            **kwargs,
+        )
 
     def _merge_langgraph_config(self, config: Any) -> dict[str, Any]:
         """合并 LangGraph run config，写入由 max_iter 推导的 recursion_limit。"""
         merge_fn = getattr(self._wf, "merge_run_config", None)
         if callable(merge_fn):
-            return merge_fn(config if isinstance(config, dict) else None)
+            merged = merge_fn(config if isinstance(config, dict) else None)
+            if isinstance(merged, dict):
+                return merged
         run_config = dict(config) if isinstance(config, dict) else {}
         resolve_fn = getattr(self._wf, "resolve_recursion_limit", None)
         if callable(resolve_fn):
