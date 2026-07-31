@@ -71,6 +71,18 @@ DEFAULT_COMPRESS_MAX_RETRIES: int = 3
 DEFAULT_LLM_MAX_RETRIES: int = 5
 """429/Timeout（litellm retry_policy）与 5xx/连接（DataAgent 薄层）的重试次数上限。"""
 
+DEFAULT_LLM_NON_STREAM_TIMEOUT: float = 300.0
+"""非流式 LLM 调用（invoke/ainvoke）默认超时（秒）。
+
+无 YAML ``params.timeout`` 与 per-call ``kwargs.timeout`` 时由 ``LLMClient._resolve_timeout`` 注入。
+"""
+
+DEFAULT_LLM_STREAM_TIMEOUT: float = 60.0
+"""流式 LLM 调用（astream）默认超时（秒）。
+
+无 YAML ``params.timeout`` 与 per-call ``kwargs.timeout`` 时由 ``LLMClient._resolve_timeout`` 注入。
+"""
+
 DEFAULT_LLM_RETRY_POLICY: dict[str, int] = {
     "BadRequestErrorRetries": 0,
     "AuthenticationErrorRetries": 0,

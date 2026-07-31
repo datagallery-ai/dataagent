@@ -25,7 +25,11 @@ from dataagent.core.managers.llm_manager.llm_client import (
     LLMRepetitionError,
     map_httpx_exception,
 )
-from dataagent.utils.constants import DEFAULT_LLM_MAX_RETRIES
+from dataagent.utils.constants import (
+    DEFAULT_LLM_MAX_RETRIES,
+    DEFAULT_LLM_NON_STREAM_TIMEOUT,
+    DEFAULT_LLM_STREAM_TIMEOUT,
+)
 
 
 class TestMapHttpException:
@@ -97,6 +101,30 @@ class TestResolveMaxAttempts:
     def test_per_call_override(self):
         client = LLMClient(model="m", api_base="http://t", api_key="k")
         assert client._resolve_max_attempts({"num_retries": 7}) == 7
+
+
+class TestResolveTimeout:
+    """_resolve_timeout: kwargs > YAML/client ``_timeout`` > 流式/非流式默认。"""
+
+    def test_no_config_non_stream_defaults_to_300(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        resolved = client._resolve_timeout({}, default=DEFAULT_LLM_NON_STREAM_TIMEOUT)
+        assert resolved == httpx.Timeout(DEFAULT_LLM_NON_STREAM_TIMEOUT)
+
+    def test_no_config_stream_defaults_to_60(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        resolved = client._resolve_timeout({}, default=DEFAULT_LLM_STREAM_TIMEOUT)
+        assert resolved == httpx.Timeout(DEFAULT_LLM_STREAM_TIMEOUT)
+
+    def test_yaml_timeout_wins_over_path_default(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", timeout=45.0)
+        assert client._resolve_timeout({}, default=DEFAULT_LLM_NON_STREAM_TIMEOUT) == httpx.Timeout(45.0)
+        assert client._resolve_timeout({}, default=DEFAULT_LLM_STREAM_TIMEOUT) == httpx.Timeout(45.0)
+
+    def test_kwargs_timeout_wins_over_yaml_and_default(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", timeout=45.0)
+        assert client._resolve_timeout({"timeout": 9.0}, default=DEFAULT_LLM_NON_STREAM_TIMEOUT) == httpx.Timeout(9.0)
+        assert client._resolve_timeout({"timeout": 9.0}, default=DEFAULT_LLM_STREAM_TIMEOUT) == httpx.Timeout(9.0)
 
 
 def _ok_response_json(content="ok", tool_calls=None, usage=None):
