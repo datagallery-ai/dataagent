@@ -26,7 +26,7 @@ def start_data_analysis_workflow(
         data_refs: Comma or newline separated data-source references. Existing
             files in the active workspace are published for subagents; other
             non-empty references are passed through unchanged.
-        scenario_id: Scenario YAML id under this Suite's resources directory.
+        scenario_id: Scenario YAML id under this Suite's scenarios directory.
         step_targets_json: Optional JSON object keyed by scenario step id to
             override default step targets.
     """
