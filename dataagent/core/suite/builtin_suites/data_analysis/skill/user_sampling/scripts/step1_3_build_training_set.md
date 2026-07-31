@@ -10,7 +10,7 @@
 
 ## 前置
 
-`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。
+`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。**LIMIT 只能用 plan 文件里的 `sample_size`，禁止凭记忆填数字。**
 
 需要判定的 plan 字段：`mode`（决定走下面哪条分支）、`sampling_sources`、`keys`、`sql_fragments`、`y_label`、`negative_populations`、`sample_size`。
 
