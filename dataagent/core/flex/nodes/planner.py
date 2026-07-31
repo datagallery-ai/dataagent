@@ -449,7 +449,9 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, 
             workspace=state.get("workspace"),
             config=config,
         )
-        dump_dir = mem_dir / "context_dump" / f"run_{state['run_id']}"
+        sub_id = int(state.get("sub_id", 0) or 0)
+        context_dump_dir = "context_dump" if sub_id == 0 else f"context_dump_sub{sub_id}"
+        dump_dir = mem_dir / context_dump_dir / f"run_{state.get('run_id', 0)}"
         dump_dir.mkdir(parents=True, exist_ok=True)
         curr_iter = int(state.get("curr_iter", 0))
 
