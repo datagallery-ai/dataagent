@@ -72,6 +72,9 @@ def _deserialize(payload: dict[str, Any]) -> BaseMessage | None:
     """Parse one wire-format record into a LangChain message, or ``None`` when invalid."""
     t = str(payload.get("type", ""))
     content = payload.get("content", "")
+    name = payload.get("name")
+    if not isinstance(name, str):
+        name = None
     akw = payload.get("additional_kwargs") or {}
     rmeta = payload.get("response_metadata") or {}
     if not isinstance(akw, dict):
@@ -80,7 +83,7 @@ def _deserialize(payload: dict[str, Any]) -> BaseMessage | None:
         rmeta = {}
 
     if t == "HumanMessage":
-        return HumanMessage(content=content, additional_kwargs=akw, response_metadata=rmeta)
+        return HumanMessage(content=content, name=name, additional_kwargs=akw, response_metadata=rmeta)
     if t == "AIMessage":
         tool_calls = payload.get("tool_calls") or []
         if not tool_calls and isinstance(akw.get("tool_calls"), list):
@@ -96,6 +99,7 @@ def _deserialize(payload: dict[str, Any]) -> BaseMessage | None:
         }
         return AIMessage(
             content=content,
+            name=name,
             additional_kwargs=akw,
             response_metadata=rmeta,
             tool_calls=tool_calls,
@@ -110,6 +114,7 @@ def _deserialize(payload: dict[str, Any]) -> BaseMessage | None:
         return ToolMessage(
             content=content,
             tool_call_id=tid,
+            name=name,
             additional_kwargs=akw,
             response_metadata=rmeta,
         )
