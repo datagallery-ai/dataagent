@@ -10,7 +10,7 @@
 
 ## 前置
 
-step1_3 已完成，`step1_temp_sampled_users` 可查；`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。<必须>从 plan 读取 `projections[]`（每条含 `table`、`type`）和 `inventory_check.table_count`，确定要建的表和张数</必须>。ENGINE 固定 `MergeTree() ORDER BY tuple()`。
+step1_3 已完成，`step1_temp_sampled_users` 可查；`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。**从文件读 `projections[]` / `inventory_check.table_count`，禁止凭记忆列清单。**<必须>确定要建的表和张数</必须>。ENGINE 固定 `MergeTree() ORDER BY tuple()`。
 
 ---
 
