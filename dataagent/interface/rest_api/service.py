@@ -69,6 +69,27 @@ class DataAgentService:
             return f"{msg} - {summary}" if summary else msg
         return str(data.get("summary") or data.get("content") or "") or None
 
+    @staticmethod
+    def _collect_nl2sql_candidates(state: dict[str, Any], hash_sql) -> list[dict[str, Any]]:
+        """Build candidate list from generation/execution results without prompt fields."""
+        sources = (
+            state.get("execution_results") or state.get("validation_results") or state.get("generation_results") or []
+        )
+        candidates: list[dict[str, Any]] = []
+        for item in sources:
+            if isinstance(item, dict):
+                item_sql = str(item.get("sql") or "")
+                idx = item.get("id", len(candidates))
+                digest = item.get("sql_sha256") or (hash_sql(item_sql) if item_sql else "")
+            else:
+                item_sql = str(getattr(item, "sql", "") or "")
+                idx = getattr(item, "id", len(candidates))
+                digest = getattr(item, "sql_sha256", None) or (hash_sql(item_sql) if item_sql else "")
+            if not item_sql:
+                continue
+            candidates.append({"index": idx, "sql": item_sql, "sql_sha256": digest})
+        return candidates
+
     def initialize(self) -> None:
         """Initialize the service agent."""
         if self.config_path is None:
@@ -80,6 +101,10 @@ class DataAgentService:
         if self._agent is None:
             raise RuntimeError("DataAgent.from_config returned None")
         self._cached_agent_type = str(getattr(self._agent, "type", "") or "react")
+
+    def is_ready(self) -> bool:
+        """Return True when the underlying agent has been initialized."""
+        return self._agent is not None
 
     async def query(self, query: str) -> Any:
         """Run one DataAgent query."""
@@ -165,24 +190,7 @@ class DataAgentService:
             return self._format_error("Agent failed")
 
         if self._agent_type() == "nl2sql":
-            sql = str(state.get("sql") or "")
-            rows_preview = state.get("rows_preview")
-            message = "SQL generated."
-            if rows_preview:
-                message = "SQL generated and executed with preview rows."
-            if not sql:
-                message = "No executable SQL was generated."
-            return {
-                "result": {
-                    "success": True,
-                    "message": message,
-                    "sql": sql,
-                    "confidence": state.get("confidence"),
-                    "columns": state.get("columns"),
-                    "rows_preview": rows_preview,
-                    "session_id": state.get("session_id"),
-                },
-            }
+            return {"result": self._format_nl2sql_result(state)}
 
         messages = state.get("messages", [])
         if isinstance(messages, list) and messages:
@@ -208,6 +216,41 @@ class DataAgentService:
         if sql:
             payload["sql"] = sql
         return {"result": payload}
+
+    def _format_nl2sql_result(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Format NL2SQL final state as structured candidates (no prompts / raw model text)."""
+        from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256 as hash_sql
+
+        sql = str(state.get("sql") or "")
+        rows_preview = state.get("rows_preview")
+        message = "SQL generated."
+        if rows_preview:
+            message = "SQL generated and executed with preview rows."
+        if not sql:
+            message = "No executable SQL was generated."
+
+        candidates = self._collect_nl2sql_candidates(state, hash_sql)
+        if not candidates and sql:
+            candidates = [
+                {
+                    "index": 0,
+                    "sql": sql,
+                    "sql_sha256": hash_sql(sql),
+                }
+            ]
+
+        return {
+            "success": True,
+            "message": message,
+            "trace_id": state.get("trace_id") or "",
+            "candidates": candidates,
+            # Backward-compatible flat fields for existing clients.
+            "sql": sql,
+            "confidence": state.get("confidence"),
+            "columns": state.get("columns"),
+            "rows_preview": rows_preview,
+            "session_id": state.get("session_id"),
+        }
 
     def _format_error(self, message: str) -> dict[str, Any]:
         """Format base agent error payload."""

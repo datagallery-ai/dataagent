@@ -8,7 +8,7 @@
 
 ## 前置
 
-step1_0 已完成，`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。缺字段回 step1_0。
+step1_0 已完成，`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。缺字段回 step1_0。**谓词和阈值用文件值，禁止默写。**
 
 表名 / 列名 / 列类型均取自 `step1_0_table_schema.json`；SQL 片段来自 plan。
 

@@ -20,8 +20,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
 from dataagent.core.jobs.models import JobResult
+from dataagent.core.utils.json_store import read_json_object, write_json_object
 from dataagent.utils.runtime_paths import resolve_jobs_root
 
 

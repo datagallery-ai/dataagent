@@ -21,7 +21,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.agents.galatea.utils.json_store import read_json_object, write_json_object
+from dataagent.core.utils.json_store import read_json_object, write_json_object
 from dataagent.core.workspace.frontmatter import JobSummary, SubagentWorkspaceEntry, WorkspaceCatalogDoc
 from dataagent.utils.constants import INTERNAL_ARTIFACT_PATH_MARKERS
 from dataagent.utils.runtime_paths import resolve_job_subagents_root, resolve_jobs_root

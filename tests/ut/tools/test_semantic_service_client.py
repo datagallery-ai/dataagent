@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -20,10 +20,22 @@ class _FakeResponse:
 
 
 class _FakeHttpErrorResponse(_FakeResponse):
-    def __init__(self, payload: Any, *, status_code: int, text: str = "") -> None:
+    def __init__(
+        self,
+        payload: Any,
+        *,
+        status_code: int,
+        text: str = "",
+        url: str = "http://semantic.local:41000/api/semantic/v1/search/fulltext",
+        reason: str = "Bad Request",
+        headers: Optional[dict[str, str]] = None,  # noqa: UP045
+    ) -> None:
         super().__init__(payload)
         self.status_code = status_code
         self.text = text
+        self.url = url
+        self.reason = reason
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
         raise semantic_client.requests.HTTPError("bad request", response=self)
@@ -104,6 +116,8 @@ def test_http_error_exposes_semantic_service_error_fields() -> None:
             return _FakeHttpErrorResponse(
                 {"errorCode": "METAVISOR-400-00-002", "errorMessage": "sql is required"},
                 status_code=400,
+                text='{"errorCode":"METAVISOR-400-00-002","errorMessage":"sql is required"}',
+                headers={"Set-Cookie": "session=secret", "X-Request-ID": "request-123"},
             )
 
     client.session = _FailingSession()
@@ -118,3 +132,9 @@ def test_http_error_exposes_semantic_service_error_fields() -> None:
     assert err.error_message == "sql is required"
     assert err.method == "GET"
     assert err.path == "search/fulltext"
+    error_text = str(err)
+    assert "response_url='http://semantic.local:41000/api/semantic/v1/search/fulltext'" in error_text
+    assert "response_reason='Bad Request'" in error_text
+    assert "'Set-Cookie': '***REDACTED***'" in error_text
+    assert "'X-Request-ID': 'request-123'" in error_text
+    assert 'response_body=\'{"errorCode":"METAVISOR-400-00-002","errorMessage":"sql is required"}\'' in error_text

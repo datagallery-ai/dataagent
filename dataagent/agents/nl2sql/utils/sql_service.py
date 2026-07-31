@@ -46,6 +46,18 @@ class MySQLConfig:
 
 
 @dataclass
+class GaussVectorConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
+
+    def to_conn_kwargs(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+@dataclass
 class SQLiteConfig:
     path: str
 
@@ -165,6 +177,22 @@ class MySQLService(BaseService):
             import pymysql
 
             self._conn = pymysql.connect(charset="utf8mb4", **self.config.to_conn_kwargs())
+        return self._conn
+
+    def _handle_explain_error(self, e: Exception) -> str:
+        return str(e)
+
+
+class GaussVectorService(BaseService):
+    def __init__(self, config: GaussVectorConfig):
+        super().__init__()
+        self.config = config
+
+    def _get_conn(self):
+        if self._conn is None:
+            import psycopg2
+
+            self._conn = psycopg2.connect(**self.config.to_conn_kwargs())
         return self._conn
 
     def _handle_explain_error(self, e: Exception) -> str:
@@ -319,6 +347,8 @@ def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | UDNS
             return PrestoService(PrestoConfig(**config))
         if engine == "mysql":
             return MySQLService(MySQLConfig(**config))
+        if engine == "gaussvector":
+            return GaussVectorService(GaussVectorConfig(**config))
         if engine in {"sqlite", "sqlite3"}:
             return SQLiteService(SQLiteConfig(**config))
         if engine == "udn":

@@ -130,6 +130,7 @@ MODEL:
       # api_key: "sk-xxx"       # 非生产推荐；通常走 {PROVIDER}_API_KEY 环境变量
       timeout: 300
       # enable_cache_control: false  # 自部署端点（vLLM Qwen 30B 等）不支持 list content 时禁用
+      # disable_response_compression: true  # 自部署端点响应压缩异常时禁用 gzip
   text_embedding:
     name: "text_embedding"      # 可选显式 name，默认同键名
     model_type: "embedding"
@@ -397,6 +398,15 @@ SEMANTIC_LAYER:
   password: null                      # 未启用认证时保持 null；启用认证时填写
   timeout: 30                           # 可按服务端表数量和响应耗时调整
   verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
+
+# ===== REST API 入站限制（勿复用 TOOLS/LLM 的 timeout/max_concurrency）=====
+# 由 dataagent.interface.rest_api 读取；未配置时使用代码内默认值。
+rest_api:
+  max_body_bytes: 1048576             # 请求体上限（字节）
+  request_timeout_seconds: 120        # 单请求处理超时
+  rate_limit_per_minute: 60           # 按客户端 IP 的每分钟请求上限
+  max_concurrency: 16                 # 全局 in-flight 上限
+  queue_timeout_seconds: 5            # 获取并发名额的排队超时
 
 # ===== 证书通信（mTLS）=====
 # 入站(REST API 服务端) 与出站 LLM 请求共用同一段 certificate:，

@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from dataagent.agents.galatea.utils.json_store import write_json_object
+from dataagent.core.utils.json_store import write_json_object
 from dataagent.core.workspace.catalog import catalog_path
 
 

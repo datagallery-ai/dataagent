@@ -17,6 +17,7 @@
 - 平台差异全部由 ``extra_body`` 原样透传承担（遵守各平台自身参数规则）。
 - **``params``**：``model`` / ``base_url`` / ``api_key`` / ``timeout`` / ``num_retries`` 单独解析，
   其余自动透传进 ``extra_body``。
+  ``disable_response_compression: true`` 时请求 ``Accept-Encoding: identity``。
 - **cache_control**：支持显式缓存的模型（Qwen/Claude/百炼 deepseek-v3.2 等）由
   ``_apply_cache_control_with_anchors`` 注入 bp0-bp4 断点；不支持的模型由 ``_strip_cache_control``
   剥离预置 cc（替代 litellm 的 monkey-patch，见设计文档 §1.7）。
@@ -35,6 +36,7 @@ import difflib
 import json
 import os
 import random
+import re
 import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
@@ -50,7 +52,33 @@ from dataagent.utils.constants import (
     DEFAULT_COMPRESS_MESSAGE_CNT,
     DEFAULT_COMPRESS_TOKEN_LIMIT,
     DEFAULT_LLM_MAX_RETRIES,
+    DEFAULT_LLM_NON_STREAM_TIMEOUT,
+    DEFAULT_LLM_STREAM_TIMEOUT,
 )
+
+_CREDENTIAL_SK_RE = re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")
+_CREDENTIAL_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._\-+/=]{32,}\b")
+_CREDENTIAL_ASSIGN_RE = re.compile(
+    r"(?i)\b(api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|password|passwd|pwd)"
+    r"\b\s*[:=]\s*(?:sk-(?:proj-)?[A-Za-z0-9]{20,}|[A-Za-z0-9._\-+/=]{32,})"
+)
+
+
+def _scan_payload_for_credentials(payload: Mapping[str, Any]) -> str | None:
+    """Return a short reason if outbound payload matches a hard credential pattern."""
+    try:
+        blob = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        blob = str(payload)
+    if _CREDENTIAL_SK_RE.search(blob):
+        return "credential-like pattern matched: sk-*"
+    if _CREDENTIAL_BEARER_RE.search(blob):
+        return "credential-like pattern matched: Bearer *"
+    m = _CREDENTIAL_ASSIGN_RE.search(blob)
+    if m:
+        return f"credential-like key/value matched: {m.group(1)}"
+    return None
+
 
 # ── 重试退避常量（定制模块自包含，不外置到 constants）────────────────────────────
 DEFAULT_LLM_RETRY_BACKOFF_BASE: float = 3.0
@@ -405,6 +433,11 @@ def _extract_http_error_message(exc: httpx.HTTPStatusError) -> str:
     return f"HTTP {resp.status_code}"
 
 
+# gzip magic ``1f 8b`` 被按 UTF-8 破坏后的疤痕：``1f`` + U+FFFD（``ef bf bd``）
+_MANGLED_GZIP_SCAR_PREFIX = b"\x1f\xef\xbf\xbd"
+_RAW_GZIP_MAGIC_PREFIX = b"\x1f\x8b"
+
+
 def map_httpx_exception(
     exc: BaseException,
     *,
@@ -549,7 +582,7 @@ def _detect_ngram_repetition(
 
     for i in range(len(tokens) - window + 1):
         ngram = tuple(tokens[i : i + window])
-        if all(token == "=" for token in ngram):
+        if all(token in {"=", "-", "–", "—", "−"} for token in ngram):
             continue
         count = freq.get(ngram, 0) + 1
         freq[ngram] = count
@@ -738,6 +771,7 @@ class LLMClient:
         compress_message_cnt: int | None = None,
         repetition_leniency: float | None = None,
         enable_cache_control: bool | None = None,
+        disable_response_compression: bool = False,
     ) -> None:
         """初始化 LLMClient 实例。
 
@@ -747,7 +781,10 @@ class LLMClient:
             api_key: Bearer token。
             tools: 绑定的工具列表（OpenAI tools 形态或可转换对象）。
             extra_body: 原样透传进请求体的扩展参数（``temperature`` / ``enable_thinking`` 等）。
-            timeout: httpx 请求超时（秒）；``None`` 用 httpx 默认。
+            timeout: httpx 请求超时（秒）；``None`` 时由调用路径注入默认
+                （非流式 :data:`DEFAULT_LLM_NON_STREAM_TIMEOUT` /
+                流式 :data:`DEFAULT_LLM_STREAM_TIMEOUT`）。YAML ``params.timeout``
+                与 per-call ``kwargs.timeout`` 优先级更高。
             num_retries: 5xx/连接/429/timeout 的重试次数；``None`` 用默认值。
             provider: 模型供应商标识，用于判断是否支持显式 cache_control。
             compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
@@ -757,6 +794,7 @@ class LLMClient:
                 （``_supports_explicit_cache_control``，向后兼容）；``True`` 强制启用；
                 ``False`` 强制禁用（用于自部署端点不支持 list content 格式的场景）。
                 环境变量 ``DATAAGENT_CACHE_CONTROL=0`` 优先级最高，全局禁用。
+            disable_response_compression: 是否通过 ``Accept-Encoding: identity`` 禁用响应压缩。
         """
         self._model = model
         self._api_base = api_base
@@ -772,6 +810,7 @@ class LLMClient:
             DEFAULT_REPETITION_LENIENCY if repetition_leniency is None else float(repetition_leniency)
         )
         self._enable_cache_control = enable_cache_control
+        self._disable_response_compression = disable_response_compression
 
     @staticmethod
     def _extract_previous_assistant_content(messages: list[Any]) -> str:
@@ -1421,6 +1460,7 @@ class LLMClient:
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
         enable_cache_control = params.pop("enable_cache_control", None)
+        disable_response_compression = params.pop("disable_response_compression", False)
         extra_body = {**dict(params.pop("extra_body", None) or {}), **params}
         extra_body.pop("custom_llm_provider", None)
 
@@ -1436,6 +1476,7 @@ class LLMClient:
             compress_message_cnt=compress_message_cnt,
             repetition_leniency=repetition_leniency,
             enable_cache_control=enable_cache_control,
+            disable_response_compression=disable_response_compression,
         )
 
     @classmethod
@@ -1463,6 +1504,7 @@ class LLMClient:
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
         enable_cache_control = params.pop("enable_cache_control", None)
+        disable_response_compression = params.pop("disable_response_compression", False)
         extra_body = {**dict(params.pop("extra_body", None) or {}), **params}
         extra_body.pop("custom_llm_provider", None)
         return cls(
@@ -1477,6 +1519,7 @@ class LLMClient:
             compress_message_cnt=compress_message_cnt,
             repetition_leniency=repetition_leniency,
             enable_cache_control=enable_cache_control,
+            disable_response_compression=disable_response_compression,
         )
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LLMClient:
@@ -1500,48 +1543,63 @@ class LLMClient:
             compress_message_cnt=self._compress_message_cnt,
             repetition_leniency=self._repetition_leniency,
             enable_cache_control=self._enable_cache_control,
+            disable_response_compression=self._disable_response_compression,
         )
 
     def invoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以同步方式调用模型生成回复。"""
         payload = self._build_payload(messages, kwargs, stream=False)
-        timeout = self._resolve_timeout(kwargs)
+        timeout = self._resolve_timeout(kwargs, default=DEFAULT_LLM_NON_STREAM_TIMEOUT)
         max_attempts = self._resolve_max_attempts(kwargs)
         logger.debug("invoke.request model={} payload_keys={}", self._model, sorted(payload.keys()))
+        verify = httpx_verify()
 
         def _call() -> LLMClientMessage:
-            with httpx.Client(timeout=timeout, verify=httpx_verify()) as client:
+            with httpx.Client(timeout=timeout, verify=verify) as client:
                 resp = client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 self._ensure_non_stream_response(resp)
-                msg = self._wrap_response(resp.json())
+                msg = self._wrap_response(self._parse_non_stream_json(resp))
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
 
-        return self._with_transient_retry(_call, max_attempts=max_attempts)
+        try:
+            result = self._with_transient_retry(_call, max_attempts=max_attempts)
+            self._audit_llm_call(success=True, stream=False)
+            return result
+        except Exception:
+            self._audit_llm_call(success=False, stream=False)
+            raise
 
     async def ainvoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以异步方式调用模型生成回复。"""
         payload = self._build_payload(messages, kwargs, stream=False)
-        timeout = self._resolve_timeout(kwargs)
+        timeout = self._resolve_timeout(kwargs, default=DEFAULT_LLM_NON_STREAM_TIMEOUT)
         max_attempts = self._resolve_max_attempts(kwargs)
         logger.debug("ainvoke.request model={} payload_keys={}", self._model, sorted(payload.keys()))
+        verify = httpx_verify()
 
         async def _call() -> LLMClientMessage:
-            async with httpx.AsyncClient(timeout=timeout, verify=httpx_verify()) as client:
+            async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
                 resp = await client.post(self._endpoint(), headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 self._ensure_non_stream_response(resp)
-                msg = self._wrap_response(resp.json())
+                msg = self._wrap_response(self._parse_non_stream_json(resp))
                 self._check_repetition(msg.content, messages, tool_calls=msg.tool_calls)
                 return msg
 
-        return await self._awith_transient_retry(_call, max_attempts=max_attempts)
+        try:
+            result = await self._awith_transient_retry(_call, max_attempts=max_attempts)
+            self._audit_llm_call(success=True, stream=False)
+            return result
+        except Exception:
+            self._audit_llm_call(success=False, stream=False)
+            raise
 
     async def astream(self, messages: list[Any], **kwargs: Any) -> AsyncIterator[LLMClientMessage]:
         """以异步方式流式调用模型，逐步产生消息块。"""
         payload = self._build_payload(messages, kwargs, stream=True)
-        timeout = self._resolve_timeout(kwargs)
+        timeout = self._resolve_timeout(kwargs, default=DEFAULT_LLM_STREAM_TIMEOUT)
         max_attempts = self._resolve_max_attempts(kwargs)
         request_url = self._endpoint()
 
@@ -1558,6 +1616,7 @@ class LLMClient:
                     yield msg
             except LLMRepetitionError as e:
                 if not self._astream_should_retry_repetition(e, attempt, max_attempts):
+                    self._audit_llm_call(success=False, stream=True)
                     raise
                 await self._astream_retry_with_backoff(
                     attempt,
@@ -1578,6 +1637,7 @@ class LLMClient:
                         status_code=mapped.status_code,
                     )
                     continue
+                self._audit_llm_call(success=False, stream=True)
                 raise mapped from e
 
             finish_error = self._astream_finish_error(stream_state)
@@ -1591,6 +1651,7 @@ class LLMClient:
                         status_code=finish_error.status_code,
                     )
                     continue
+                self._audit_llm_call(success=False, stream=True)
                 raise finish_error
 
             try:
@@ -1598,6 +1659,7 @@ class LLMClient:
                     yield msg
             except LLMRepetitionError as e:
                 if not self._astream_should_retry_repetition(e, attempt, max_attempts):
+                    self._audit_llm_call(success=False, stream=True)
                     raise
                 await self._astream_retry_with_backoff(
                     attempt,
@@ -1607,8 +1669,10 @@ class LLMClient:
                     snippet=e.content_snippet[:200],
                 )
                 continue
+            self._audit_llm_call(success=True, stream=True)
             return
 
+        self._audit_llm_call(success=False, stream=True)
         raise RuntimeError("Unexpected error in transient stream retry loop")
 
     def _astream_can_retry(
@@ -1704,7 +1768,7 @@ class LLMClient:
         self,
         *,
         payload: dict[str, Any],
-        timeout: httpx.Timeout | None,
+        timeout: httpx.Timeout,
         request_url: str,
         messages: list[Any],
         state: _AStreamState,
@@ -1815,10 +1879,14 @@ class LLMClient:
 
     def _headers(self) -> dict[str, str]:
         """Build the Authorization + Content-Type request headers."""
-        return {
+        headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        # 请求头覆盖 httpx Client 默认 Accept-Encoding。
+        if self._disable_response_compression:
+            headers["Accept-Encoding"] = "identity"
+        return headers
 
     def _should_inject_cache_control(self) -> bool:
         """Decide whether to inject cache_control breakpoints.
@@ -1885,12 +1953,42 @@ class LLMClient:
             # 仅 pop 掉仍会收到 SSE，导致 resp.json() 失败。
             payload["stream"] = False
             payload.pop("stream_options", None)
+        leak = _scan_payload_for_credentials(payload)
+        if leak:
+            raise LLMCallError(
+                LLMErrorCategory.CONTENT_POLICY,
+                f"Outbound LLM payload blocked: {leak}",
+                model=self._model,
+                request_url=self._endpoint(),
+            )
         return payload
 
-    def _resolve_timeout(self, kwargs: dict[str, Any]) -> httpx.Timeout | None:
-        """Resolve the per-call httpx timeout, falling back to the client default."""
+    def _audit_llm_call(self, *, success: bool, stream: bool) -> None:
+        """Emit a compact TRACE audit line for this LLM call."""
+        host = ""
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self._api_base)
+            host = parsed.netloc or parsed.path
+        except Exception:
+            host = ""
+        logger.trace(
+            "llm.audit host={} model={} stream={} success={}",
+            host or "-",
+            self._model,
+            stream,
+            success,
+        )
+
+    def _resolve_timeout(self, kwargs: dict[str, Any], *, default: float) -> httpx.Timeout:
+        """解析 httpx 超时：kwargs.timeout > self._timeout > path ``default``。
+
+        路径默认由调用方传入：非流式 :data:`DEFAULT_LLM_NON_STREAM_TIMEOUT`，
+        流式 :data:`DEFAULT_LLM_STREAM_TIMEOUT`。
+        """
         timeout = kwargs.get("timeout", self._timeout)
-        return httpx.Timeout(timeout) if timeout is not None else None
+        return httpx.Timeout(timeout if timeout is not None else default)
 
     def _resolve_max_attempts(self, kwargs: dict[str, Any]) -> int:
         """Resolve the per-call retry attempt count, falling back to the default."""
@@ -1916,6 +2014,38 @@ class LLMClient:
                 request_url=self._endpoint(),
                 status_code=resp.status_code,
             )
+
+    def _parse_non_stream_json(self, resp: httpx.Response) -> Any:
+        """解析非流式 JSON；失败时抛 ``RESPONSE_INVALID``，并附响应体前缀便于区分压缩损坏。"""
+        try:
+            return resp.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
+            raw = resp.content or b""
+            ce = (resp.headers.get("content-encoding") or "").strip() or "(missing)"
+            ct = resp.headers.get("content-type") or "(missing)"
+            prefix = raw[:16].hex(" ") if raw else "(empty)"
+            compression_likely = raw.startswith(_MANGLED_GZIP_SCAR_PREFIX) or (
+                ce == "(missing)" and raw.startswith(_RAW_GZIP_MAGIC_PREFIX)
+            )
+            parts = ["Non-stream chat completion response is not valid JSON"]
+            if compression_likely:
+                parts.append(
+                    "likely gateway response-compression bug; "
+                    "set params.disable_response_compression=true in the model YAML config"
+                )
+            parts.append(f"content_type={ct} content_encoding={ce} body_len={len(raw)} body_prefix_hex={prefix}")
+            if isinstance(err, json.JSONDecodeError):
+                json_error = f"{err.msg} (pos={err.pos})"
+            else:
+                json_error = f"decoding_failed encoding={err.encoding} reason={err.reason} (pos={err.start}-{err.end})"
+            parts.append(f"json_error={json_error}")
+            raise LLMCallError(
+                LLMErrorCategory.RESPONSE_INVALID,
+                "; ".join(parts),
+                model=self._model,
+                request_url=self._endpoint(),
+                status_code=resp.status_code,
+            ) from err
 
     def _with_transient_retry(self, operation, *, max_attempts: int) -> Any:
         """Run a sync operation with 5xx/conn/429/timeout/repetition retry + backoff."""

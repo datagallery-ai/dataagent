@@ -8,7 +8,7 @@
 
 ## 前置
 
-`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。
+`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。列类型取自 schema。**表名 / 键 / 维度列用文件值，禁止默写。**
 
 | 用途 | plan 路径 |
 |---|---|

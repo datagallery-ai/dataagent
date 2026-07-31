@@ -10,47 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+"""Integration: live LLM manager invoke (requires DeepSeek credentials)."""
+
 import os
 
 import pytest
 
 from dataagent.core.managers.llm_manager import LLMConfig, llm_manager
-
-
-def test_llm_config_creation():
-    """测试LLM配置创建"""
-    config = LLMConfig(
-        name="gpt-4",
-        provider="openai",
-        model_type="chat",
-        base_url="https://api.openai.com/v1",
-        temperature=0.7,
-        max_tokens=2048,
-    )
-
-    assert config.name == "gpt-4"
-    assert config.provider == "openai"
-    assert config.model_type == "chat"
-    assert config.client_kwargs["base_url"] == "https://api.openai.com/v1"
-    assert config.client_kwargs["temperature"] == 0.7
-    assert config.client_kwargs["max_tokens"] == 2048
-
-
-def test_llm_config_from_dict():
-    """测试从字典创建LLM配置"""
-    config_dict = {
-        "name": "gpt-3.5-turbo",
-        "model_type": "chat",
-        "provider": "openai",
-        "base_url": "https://api.openai.com/v1",
-        "temperature": 0.5,
-    }
-
-    config = LLMConfig.from_dict(config_dict)
-    assert config.name == "gpt-3.5-turbo"
-    assert config.model_type == "chat"
-    assert config.client_kwargs["base_url"] == "https://api.openai.com/v1"
-    assert config.client_kwargs["temperature"] == 0.5
 
 
 def test_create_llm(monkeypatch: pytest.MonkeyPatch):

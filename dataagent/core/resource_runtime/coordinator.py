@@ -201,6 +201,31 @@ class ResourceJobCoordinator:
         result = self.job_service.cancel(job_id).to_dict()
         return result
 
+    def get_job_log(self, *, job_id: str, resource_id: str = "dataops") -> dict[str, Any]:
+        """Fetch detailed execution log from OBS for a failed resource job.
+
+        The job_id must have been previously submitted via submit_job and reached
+        a terminal state (failed). This method calls the resource's get_job_log
+        MCP tool to retrieve the actual error details from the execution log.
+
+        Args:
+            job_id: The job_id returned by submit_job.
+            resource_id: The resource id to use (default: dataops).
+
+        Returns:
+            A dict with ``status`` and either ``log_content`` or ``error``.
+        """
+        resource = self.catalog.get(resource_id)
+        if resource is None:
+            return {"status": "error", "error": f"resource not found: {resource_id}"}
+
+        driver = self.resolve.resolve_driver(resource)
+        if driver is None:
+            return {"status": "error", "error": f"cannot resolve driver for resource: {resource_id}"}
+
+        client = self.get_mcp_client(resource_id, driver)
+        return client.call_tool_sync("get_job_log", {"job_id": job_id})
+
     def list_resources(self) -> dict[str, Any]:
         """Return a read-only catalog with runtime used/available counts."""
         usage = {view.id: view for view in self.capacity.snapshot()}

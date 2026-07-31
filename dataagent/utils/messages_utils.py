@@ -354,7 +354,7 @@ def _last_node_name(context: Context) -> list[str]:
         raise ValueError("No active branch found in context.")
     if len(concurrent_actions) == 1:
         return [concurrent_actions[0]]
-    trajectory = context.get_trajectory(trimmed=True)
+    trajectory = context.get_trajectory(trimmed=False)
     predecessor_nodes = []
     for node_name in concurrent_actions:
         predecessor_nodes_of_action = list(trajectory.predecessors(node_name))

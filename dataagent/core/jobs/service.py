@@ -347,13 +347,16 @@ def _optional_positive_timeout(value: Any) -> int | None:
 
 def _job_result_from_payload(payload: dict[str, Any], job_id: str, agent_id: str) -> JobResult:
     safe = payload if isinstance(payload, dict) else {}
+    original_msg = safe.get("original_msg")
+    if original_msg is None:
+        original_msg = safe.get("logFileInfo") or safe.get("raw_result")
     return JobResult(
         job_id=str(safe.get("job_id") or job_id),
         agent_id=str(safe.get("agent_id") or agent_id),
         status=str(safe.get("status") or "completed"),
         summary=str(safe.get("summary") or safe.get("frontend_msg") or ""),
         error=str(safe.get("error") or ""),
-        original_msg=safe.get("original_msg"),
+        original_msg=original_msg,
         frontend_msg=str(safe.get("frontend_msg") or ""),
         state=safe.get("state") if isinstance(safe.get("state"), dict) else None,
         subagent_session_id=str(safe.get("subagent_session_id") or ""),

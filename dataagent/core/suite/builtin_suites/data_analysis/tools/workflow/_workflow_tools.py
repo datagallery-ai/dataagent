@@ -38,14 +38,19 @@ def submit_agent_job(
     agent_id: str,
     task: str,
     timeout_sec: int,
+    workspace_rel_path: str = "",
 ) -> dict[str, Any]:
     """Submit a subagent job through the runtime agent service."""
     agent_service = runtime.ensure_job_services()
     if agent_service is None:
         return {"status": "ERROR", "message": "runtime agent service is unavailable."}
+    envelope = envelope_from_tool_context(tool_context) or {}
+    resolved_workspace = str(workspace_rel_path or "").strip()
+    if resolved_workspace:
+        envelope["workspace_rel_path"] = resolved_workspace
     return agent_service.submit(
         agent_id=agent_id,
         task=task,
         timeout_sec=int(timeout_sec),
-        job_envelope=envelope_from_tool_context(tool_context) or None,
+        job_envelope=envelope or None,
     )
