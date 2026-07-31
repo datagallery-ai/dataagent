@@ -28,6 +28,25 @@ from dataagent.core.context.message_history import (
 )
 
 
+def test_message_names_survive_file_round_trip(tmp_path: Path) -> None:
+    """Preserve optional message names when writing and reading session history."""
+    messages = [
+        HumanMessage(content="hello", name="user"),
+        AIMessage(
+            content="",
+            name="assistant",
+            tool_calls=[{"name": "lookup_weather", "args": {}, "id": "call-1", "type": "tool_call"}],
+        ),
+        ToolMessage(content="sunny", tool_call_id="call-1", name="lookup_weather"),
+    ]
+    path = tmp_path / "messages.json"
+
+    write_messages_file(path, messages)
+    loaded = read_messages_file(path)
+
+    assert [message.name for message in loaded] == ["user", "assistant", "lookup_weather"]
+
+
 class TestSerializeUsageMetadata:
     def test_ai_message_with_full_usage(self):
         msg = AIMessage(
