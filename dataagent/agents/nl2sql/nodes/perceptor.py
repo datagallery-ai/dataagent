@@ -10,8 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import requests
 
@@ -23,6 +24,7 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     schema_to_ddl,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
+from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import (
     DEFAULT_NL2SQL_SCHEMA_TOP_K,
@@ -153,16 +155,17 @@ class PerceptorNode(BaseNL2SQLNode):
         except ValueError as exc:
             raise SemanticServiceCallError(detail=str(exc)) from exc
 
-    def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
+        state = cast(NL2SQLState, state)
         for attr, key in [
             ("schema_str", self.user_schema),
             ("evidence", self.user_evidence),
             ("sql_rules", self.user_sql_rules),
             ("few_shot_examples", self.user_few_shot_examples),
         ]:
-            state[attr] = self._load_prompt(key)
+            state[attr] = await asyncio.to_thread(self._load_prompt, key)
         if not state["schema_str"]:
-            state["schema"], state["joins"] = self.full_schema()
+            state["schema"], state["joins"] = await asyncio.to_thread(self.full_schema)
             state["schema_str"] = schema_to_ddl(state["schema"], state["joins"])
         message = f"=== Perceptor ===\n{state['schema_str']}"
         logger.info(message)
@@ -217,9 +220,9 @@ class PerceptorNode(BaseNL2SQLNode):
             limit=DEFAULT_NL2SQL_SEMANTIC_JOINABLE_TABLES_LIMIT,
         )
 
-    def _keyword_extraction(self, question: str) -> list[str]:
+    async def _keyword_extraction(self, question: str) -> list[str]:
         context = {"question": question}
-        res = self.execute_with_llm_json(context, action="keyword_extraction_")
+        res = await self.execute_with_llm_json(context, action="keyword_extraction_")
         return res["keywords"]
 
     def _semantic_service_error_detail(self, exc: SemanticServiceError) -> str:

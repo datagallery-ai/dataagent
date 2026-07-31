@@ -10,13 +10,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import re
-from typing import Any
+from typing import Any, Optional, cast
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
+from dataagent.core.cbb.base_state import BaseState
 from dataagent.utils.log import logger
 
 _UDN_DIMENSION_METADATA = {
@@ -243,9 +245,10 @@ class UDNPerceptorNode(PerceptorNode):
                     return table_name
         return None
 
-    def udn_schema_linking(self, question: str):
-        tables = self._select_udn_tables_by_business_family(question)
-        schema, joins = self.full_schema(allow_tables=tables)
+    async def udn_schema_linking(self, question: str):
+        """Select the UDN table family and return its schema, joins, and catalog."""
+        tables = await self._select_udn_tables_by_business_family(question)
+        schema, joins = await asyncio.to_thread(self.full_schema, tables)
         for table in schema.values():
             for column in table["columns"].values():
                 column["example_values"] = "|".join(
@@ -253,11 +256,13 @@ class UDNPerceptorNode(PerceptorNode):
                     for item in column.get("example_values", "").split("|")
                     if item
                 )
-        return schema, joins, self._udn_column_metadata()
+        catalog = await asyncio.to_thread(self._udn_column_metadata)
+        return schema, joins, catalog
 
-    def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        state["sql_rules"] = self._load_prompt(self.user_sql_rules)
-        schema, joins, catalog = self.udn_schema_linking(state["question"])
+    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
+        state = cast(NL2SQLState, state)
+        state["sql_rules"] = await asyncio.to_thread(self._load_prompt, self.user_sql_rules)
+        schema, joins, catalog = await self.udn_schema_linking(state["question"])
         state["schema"] = schema
         state["joins"] = joins
         state["schema_str"] = schema_to_ddl(schema, joins, catalog)
@@ -284,8 +289,8 @@ class UDNPerceptorNode(PerceptorNode):
                 catalog.append(parsed)
         return catalog
 
-    def _select_udn_business_ids(self, question: str) -> list[str]:
-        values = self.execute_with_llm_json(
+    async def _select_udn_business_ids(self, question: str) -> list[str]:
+        values = await self.execute_with_llm_json(
             {"question": question, "top_n": self.table_llm_topk}, action="filter_udn_business_id_"
         )
         business_ids: list[str] = []
@@ -295,8 +300,12 @@ class UDNPerceptorNode(PerceptorNode):
                 business_ids.append(match.group(0))
         return business_ids[: self.table_llm_topk]
 
-    def _select_udn_table_family(self, question: str, families: list[dict[str, Any]]) -> dict[str, str] | None:
-        parsed = self.execute_with_llm_json(
+    async def _select_udn_table_family(
+        self,
+        question: str,
+        families: list[dict[str, Any]],
+    ) -> Optional[dict[str, str]]:  # noqa: UP045
+        parsed = await self.execute_with_llm_json(
             {"question": question, "tables": self._format_udn_table_family_prompt_context(families)},
             action="filter_udn_table_family_",
         )
@@ -304,17 +313,18 @@ class UDNPerceptorNode(PerceptorNode):
         granularity = str(parsed.get("granularity") or "").strip()
         return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
 
-    def _select_udn_tables_by_business_family(self, question: str) -> list[str]:
-        business_ids = self._select_udn_business_ids(question)
+    async def _select_udn_tables_by_business_family(self, question: str) -> list[str]:
+        business_ids = await self._select_udn_business_ids(question)
         if not business_ids:
             raise NL2SQLError("UDN business ID selection returned no valid result")
-        families = self._build_udn_table_family_candidates(self._udn_full_table_catalog(), business_ids)
+        catalog = await asyncio.to_thread(self._udn_full_table_catalog)
+        families = self._build_udn_table_family_candidates(catalog, business_ids)
         if not families:
             raise NL2SQLError(
                 "UDN table family catalog is empty",
                 detail=f"No table family matched business IDs: {', '.join(business_ids)}",
             )
-        selection = self._select_udn_table_family(question, families)
+        selection = await self._select_udn_table_family(question, families)
         table = self._resolve_udn_table_family_selection(selection, families)
         if not table:
             raise NL2SQLError("UDN table family selection returned no valid table")

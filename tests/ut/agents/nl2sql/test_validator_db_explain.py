@@ -13,6 +13,8 @@
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
+import pytest
+
 from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.validator import ValidatorNode
 from dataagent.agents.nl2sql.workflow.state import Result
@@ -35,7 +37,8 @@ def _node() -> ValidatorNode:
     return node
 
 
-def test_validate_with_db_explain_returns_issue_on_sql_service_error(monkeypatch):
+@pytest.mark.asyncio
+async def test_validate_with_db_explain_returns_issue_on_sql_service_error(monkeypatch):
     """Explain path SQLServiceError must become issues, not crash the node."""
     node = _node()
 
@@ -52,12 +55,14 @@ def test_validate_with_db_explain_returns_issue_on_sql_service_error(monkeypatch
         _fake_build,
     )
 
-    issues = ValidatorNode._validate_with_db_explain(node, "DELETE FROM t")
+    issues = await ValidatorNode._validate_with_db_explain(node, "DELETE FROM t")
     assert issues
     assert "explain" in issues[0].lower()
 
 
-def test_validate_syntax_survives_explain_sql_service_error(monkeypatch):
+@pytest.mark.asyncio
+async def test_validate_syntax_survives_explain_sql_service_error(monkeypatch):
+    """Syntax validation should convert EXPLAIN failures into issues."""
     node = _node()
 
     class _Svc:
@@ -78,13 +83,14 @@ def test_validate_syntax_survives_explain_sql_service_error(monkeypatch):
     )
 
     gen = [Result(id=0, sql="SELECT 1", score=0)]
-    syntax = ValidatorNode._validate_syntax(node, gen)
+    syntax = await ValidatorNode._validate_syntax(node, gen)
     assert len(syntax) == 1
     assert syntax[0]["score"] == 0
     assert syntax[0]["issues"]
 
 
-def test_validate_syntax_skips_db_explain_when_guard_rejects(monkeypatch):
+@pytest.mark.asyncio
+async def test_validate_syntax_skips_db_explain_when_guard_rejects(monkeypatch):
     """Hard-gate failures must not reach EXPLAIN / the database."""
     node = _node()
     explain_called: list[str] = []
@@ -104,7 +110,7 @@ def test_validate_syntax_skips_db_explain_when_guard_rejects(monkeypatch):
     )
 
     gen = [Result(id=0, sql="DELETE FROM t", score=0)]
-    syntax = ValidatorNode._validate_syntax(node, gen)
+    syntax = await ValidatorNode._validate_syntax(node, gen)
     assert syntax[0]["score"] == 0
     assert syntax[0]["issues"]
     assert explain_called == []
