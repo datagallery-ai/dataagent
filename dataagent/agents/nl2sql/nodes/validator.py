@@ -10,9 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
@@ -20,6 +21,7 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, metadata_
 from dataagent.agents.nl2sql.utils.sql_guard import SQLGuardError, guard_sql, resolve_sqlglot_dialect
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
+from dataagent.core.cbb.base_state import BaseState
 from dataagent.utils.log import logger
 
 
@@ -31,11 +33,12 @@ class ValidatorNode(BaseNL2SQLNode):
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.read_only = kwargs.pop("read_only", True)
 
-    def _process(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
-        semantic_res = self._validate_semantic(state)
-        syntax_res = self._validate_syntax(state["generation_results"])
+    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
+        state = cast(NL2SQLState, state)
+        semantic_res = await self._validate_semantic(state)
+        syntax_res = await self._validate_syntax(state["generation_results"])
         if self.metadata_match:
-            metadata_res = self._validate_metadata(state["schema"], state["generation_results"])
+            metadata_res = await self._validate_metadata(state["schema"], state["generation_results"])
         else:
             metadata_res = [{"score": 1, "issues": []}] * len(state["generation_results"])
         state["validation_results"] = self._combine_validation_results(
@@ -54,7 +57,7 @@ class ValidatorNode(BaseNL2SQLNode):
         state["stream_message"] = message
         return state
 
-    def _validate_semantic(self, state: NL2SQLState) -> list[dict[str, Any]]:
+    async def _validate_semantic(self, state: NL2SQLState) -> list[dict[str, Any]]:
         res = [{"id": r.id, "sql": r.sql} for r in state["generation_results"]]
         context = {
             "schema": state["schema_str"],
@@ -64,7 +67,7 @@ class ValidatorNode(BaseNL2SQLNode):
             "sqls": json.dumps(res),
         }
         for _ in range(3):
-            out = self.execute_with_llm_json(context, "validate_semantic_")
+            out = await self.execute_with_llm_json(context, "validate_semantic_")
             if len(out) == len(state["generation_results"]):
                 res = out
                 for r in res:
@@ -76,7 +79,7 @@ class ValidatorNode(BaseNL2SQLNode):
             res = [{"score": 1, "issues": []}] * len(state["generation_results"])
         return res
 
-    def _validate_syntax(self, gen_res: list[Result]) -> list[dict[str, Any]]:
+    async def _validate_syntax(self, gen_res: list[Result]) -> list[dict[str, Any]]:
         res = []
         for gr in gen_res:
             issues = self._validate_with_sqlglot(gr.sql)
@@ -84,7 +87,7 @@ class ValidatorNode(BaseNL2SQLNode):
                 issues += self._validate_with_keyword_match(gr.sql)
             # Never EXPLAIN statements that already failed the hard SQL gate.
             if self.db_explain and not issues:
-                issues += self._validate_with_db_explain(gr.sql)
+                issues += await self._validate_with_db_explain(gr.sql)
             res.append({"score": 0 if issues else 1, "issues": issues})
         return res
 
@@ -102,7 +105,10 @@ class ValidatorNode(BaseNL2SQLNode):
                 issues.append(msg)
         return issues
 
-    def _validate_with_db_explain(self, sql: str) -> list[str]:
+    async def _validate_with_db_explain(self, sql: str) -> list[str]:
+        return await asyncio.to_thread(self._validate_with_db_explain_sync, sql)
+
+    def _validate_with_db_explain_sync(self, sql: str) -> list[str]:
         config = self._get_agent_config("DATABASE.config", {}) or {}
         try:
             with build_sql_service(self.sql_service_engine, config) as explain_service:
@@ -122,11 +128,12 @@ class ValidatorNode(BaseNL2SQLNode):
         except Exception as e:
             return [str(e)]
 
-    def _validate_metadata(self, schema: dict, gen_res: list[Result]) -> list[dict[str, Any]]:
+    async def _validate_metadata(self, schema: dict, gen_res: list[Result]) -> list[dict[str, Any]]:
         res = []
         valid = flatten_schema(schema)
         context = {"sqls": json.dumps([gr.sql for gr in gen_res])}
-        raws = metadata_parser(self.execute_with_llm(context, "extract_columns_"))
+        content = await self.execute_with_llm(context, "extract_columns_")
+        raws = metadata_parser(content)
         for raw in raws:
             invalid_cols = raw.keys() - valid
             issues = [f"Invalid columns: {', '.join(map(repr, invalid_cols))}"] if invalid_cols else []

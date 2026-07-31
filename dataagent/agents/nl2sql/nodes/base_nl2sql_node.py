@@ -12,7 +12,6 @@
 # ============================================================================
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +22,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from dataagent.agents.nl2sql.errors import LLMOutputParseError
 from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
 from dataagent.core.cbb.base_node import BaseNode
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, TZ_CN
@@ -73,7 +71,8 @@ class BaseNL2SQLNode(BaseNode):
         else:
             self._nl2sql_context_dump_dir = None
 
-    def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
+    async def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
+        """Render the node prompts and asynchronously invoke the configured LLM."""
         llm = llm_manager.get_default_llm()
         system_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}system"
@@ -85,16 +84,16 @@ class BaseNL2SQLNode(BaseNode):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        response = llm.invoke(prompts)
+        response = await llm.ainvoke(prompts)
         content = response.content
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
         return content
 
-    def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
+    async def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
         """Execute the LLM with the given context and action, returning parsed JSON output."""
         for attempt in range(3):
             try:
-                return json.loads(json_parser(self.execute_with_llm(context, action)))
+                return json.loads(json_parser(await self.execute_with_llm(context, action)))
             except (LLMOutputParseError, json.JSONDecodeError) as exc:
                 if attempt == 2:
                     detail = exc.detail if isinstance(exc, LLMOutputParseError) and exc.detail else str(exc)
@@ -142,6 +141,3 @@ class BaseNL2SQLNode(BaseNode):
                 f"NL2SQL node {self.name!r} has no config_manager; pass config_manager when constructing the node."
             )
         return self._config_manager.get(key, default)
-
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
-        return await asyncio.to_thread(self._process, state, runtime)

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -115,7 +115,8 @@ def test_gaussvector_explain_error_returns_message() -> None:
         assert service.explain("SELECT BAD") == "syntax error"
 
 
-def test_generator_strips_backticks_for_gaussvector() -> None:
+@pytest.mark.asyncio
+async def test_generator_strips_backticks_for_gaussvector() -> None:
     from unittest.mock import PropertyMock
 
     from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
@@ -128,20 +129,16 @@ def test_generator_strips_backticks_for_gaussvector() -> None:
     class _Resp:
         content = "```sql\nSELECT `id` FROM t\n```"
 
-    class _LLM:
-        def invoke(self, _prompts: Any) -> _Resp:
-            return _Resp()
-
     with (
         patch.object(BaseNL2SQLNode, "engine", new_callable=PropertyMock, return_value="gaussvector"),
         patch("dataagent.agents.nl2sql.nodes.generator.llm_manager") as llm_manager,
         patch("dataagent.agents.nl2sql.nodes.generator.PromptTemplate") as prompt_cls,
         patch.object(GeneratorNode, "_dump_llm_context"),
     ):
-        llm_manager.get_default_llm.return_value = _LLM()
+        llm_manager.get_default_llm.return_value.ainvoke = AsyncMock(return_value=_Resp())
         prompt_template = MagicMock()
         prompt_template.apply_prompt_template.return_value = "prompt-text"
         prompt_cls.from_package_relative.return_value = prompt_template
-        results = node.generate_with_llm("prompt", {"num_samples": 1}, {"q": "x"})
+        results = await node.generate_with_llm("prompt", {"num_samples": 1}, {"q": "x"})
 
     assert results[0][0] == "SELECT id FROM t"

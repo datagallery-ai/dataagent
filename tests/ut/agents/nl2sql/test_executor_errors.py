@@ -13,6 +13,8 @@
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
+import pytest
+
 from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.executor import ExecutorNode
 from dataagent.agents.nl2sql.workflow.state import Result
@@ -33,7 +35,9 @@ def _node() -> ExecutorNode:
     return node
 
 
-def test_executor_catches_sql_service_error(monkeypatch):
+@pytest.mark.asyncio
+async def test_executor_catches_sql_service_error(monkeypatch):
+    """Executor should convert SQL service failures into candidate errors."""
     node = _node()
     candidate = Result(id=0, sql="SELECT 1", score=1.0)
 
@@ -50,7 +54,7 @@ def test_executor_catches_sql_service_error(monkeypatch):
         _fake_build,
     )
 
-    ExecutorNode._process(
+    await ExecutorNode._aprocess(
         node,
         {
             "validation_results": [candidate],
