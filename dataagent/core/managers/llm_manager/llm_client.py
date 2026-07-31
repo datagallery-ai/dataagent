@@ -1964,7 +1964,7 @@ class LLMClient:
         return payload
 
     def _audit_llm_call(self, *, success: bool, stream: bool) -> None:
-        """Emit a compact INFO audit line without message/body contents."""
+        """Emit a compact TRACE audit line for this LLM call."""
         host = ""
         try:
             from urllib.parse import urlparse
@@ -1973,7 +1973,7 @@ class LLMClient:
             host = parsed.netloc or parsed.path
         except Exception:
             host = ""
-        logger.info(
+        logger.trace(
             "llm.audit host={} model={} stream={} success={}",
             host or "-",
             self._model,
