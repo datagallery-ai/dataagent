@@ -4,30 +4,26 @@
 
 **全表投影**：<必须>`projections[]` 与源表一一对应，一张都不能少</必须>；step1_4 为每张源表在 output_database 建同名表，全表投影。
 
+**核心原则**：所有语义查询结果**立刻落盘到独立文件**，写 schema 时只从文件读、对着抄，禁止凭对话记忆写任何一个字段。
+
 ---
 
 ## 本步做什么
 
-1. **ClickHouse 取全局表名列表**（最先做，唯一权威清单）→ `source_table_inventory.tables`。
-2. **① 全库表+列结构**（可附带 join；禁止探索性预查）→ 列覆盖门禁通过（§覆盖定义）→ 必要时 `system.columns` 批查。
-3. **② 角色定位** → 写 `role_candidates` → 落盘完整 schema。
-4. 判定 mode，写出 `step1_0_sampling_plan.json`。
-5. <重要>`mode=="prelabeled"` → step1_3；否则 → step1_1</重要>。
+1. **ClickHouse 取全局表名列表**（最先做，唯一权威清单）→ 写入 `source_table_inventory.tables`。
+2. **语义批查**：表名按 ≤8 张分组，每批一次 `semantic_retrieve`，同时问列结构 + JOIN 关系 + 业务角色。返回的完整 JSON **立刻 `Write` 到 `step1_semantic_batch_NN.json`**（`01`、`02`… 两位编号）。
+3. **覆盖检查**：所有批查完成后，核对 CH 清单是否全覆盖；列结构有缺口则用 `system.columns` 批查补齐。
+4. **写 schema**：先 `ls` 确认所有 `step1_semantic_batch_NN.json` 已落盘，再逐个 `Read`，从中**机械抄写** `description`、`join_hints`、`role_candidates` 到 `step1_0_table_schema.json`。
+5. **判定 mode**：查用户表 label 列情况 → `prelabeled` 或 `regular`。据此写出 `step1_0_sampling_plan.json`。
+6. <重要>`mode=="prelabeled"` → 跳至 step1_3；否则 → step1_1</重要>。
+
+<必须>本步所有 `semantic_retrieve` **必须串行**：同一时刻只允许 1 个在途请求；等返回后再发下一批，禁止并行。</必须>
 
 ---
 
 ## plan 字段
 
-> `run_id`/`T0`/`label_window_days`/`lookback_days`/`sample_size` 来自任务参数；`cold_start_threshold` 默认 500。  
-> `source_database` 存放原始业务表（只读），`output_database` 存放 step1 产物表。  
-> `mode`：`"regular"` / `"cold_start"` / `"prelabeled"`。  
-> `game_scope`：`target` 目标游戏名，`similar_games` 由 step1_2 填写。  
-> `y_label`：`family` 对应 `labels.md` 家族名，`task_type` 固定 `"binary_classification"`。  
-> `sampling_sources`：角色→表名，`game_dim` 是游戏维度表。  
-> `keys`：`similar_dim` 是游戏维表中匹配相似游戏的维度列（如 game_type）。  
-> `sql_fragments`：键表达式固定规则见 §3.1；时间/正样本片段仅 regular 路径填写。  
-> `negative_populations`：`neg_k` 仅作参考，实际负样本量由 `pos × 4` 计算。  
-> `projections[]`：与源表一一对应，`type` 为 `user_table` / `user_keyed` / `game_keyed`。
+> `source_database`（源库，只读）/ `output_database`（产物库）由上游传入；`mode` 为 `"regular"` / `"cold_start"` / `"prelabeled"`；`run_id`/`T0`/`label_window_days`/`lookback_days`/`sample_size` 来自任务参数，`cold_start_threshold` 默认 500；其余字段规则见对应章节。
 
 ```json
 {
@@ -78,8 +74,6 @@
 }
 ```
 
-**prelabeled 填法**：`mode` 写 `"prelabeled"`；`y_label.event_table` / `sampling_sources.label_event` / `sampling_sources.activity_event` / `sampling_sources.conversion_event` / `sql_fragments`（除 `user_key_expr`、`valid_user`、`game_filter` 外）写 `null`；`negative_populations` 写 `[]`；`keys.label_column` 必填（用户表实列名）。`sql_fragments.game_filter` 仅当 `projections[]` 有 `game_keyed` 时才构造。
-
 ---
 
 ## 1. 数据 schema 落盘
@@ -93,54 +87,30 @@ ORDER BY name
 ```
 
 写入 `source_table_inventory.tables`。`inventory_check.table_count` = 该列表长度。
-<必须>CH 表名清单是后续语义查询的**唯一表名来源**；禁止在未获取此清单前发起 `semantic_retrieve`，也禁止发自由关键词式语义查询（如 "数据库 <source_database> 有哪些表"），必须以 CH 清单中的具体表名逐张注入 query。</必须>
+<必须>CH 表名清单是后续语义查询的**唯一表名来源**；禁止在未获取此清单前发起 `semantic_retrieve`，也禁止发自由关键词式语义查询，必须以 CH 清单中的具体表名逐张注入 query。</必须>
 
 ---
 
-### 覆盖定义（硬门禁）
+### 1. 语义批查 + 立即落盘
 
-表名出现 ≠ 结构齐备。<必须>仅当下列全部成立，才可宣称「① 列结构覆盖完成」并进入 ②</必须>；写 plan 前还须完成 ② 与 schema 落盘：
+<必须>语义服务单批不稳定，必须分批查询，每批 ≤8 张且不重复</必须>。
 
-1. **`missing_names` 为空**：`CH清单 \ 已合并结果中的表名`
-2. **`missing_columns` 为空**：已出现但 `columns` 为空数组、或任一条目缺 `name` 的表
-3. 每张表 `columns.length >= 1`；每列至少有 `name`（`valueType` 缺失则必须已用 CH 兜底补齐）
-
-<禁止>
-- 用 `answerGuidance`、diagnostic / toolTrace、或「behavior_1~7」等概括语充数
-- 仅因表名与 CH 清单对齐就写「25 已齐 / 全覆盖」
-- 在 `missing_columns` 非空时进入 ②、判定 mode 或写 plan
-- CH 清单之前或 ①② 之外的探索性 `semantic_retrieve`
-- 单独再开「全库 JOIN」语义轮
-- 发自由关键词式语义查询（如 "数据库 xxx 有哪些表"）；语义 query 中必须注入 CH 实表名
-</禁止>
-
----
-
-### ① 全库表 + 列结构（含可选 join）
-
-<必须>语义服务每次最多返回 10 张表，必须分批查询，每批 ≤10 张且不重复</必须>。
-
-query 固定为（每批注入对应表名）：
+每批 `semantic_retrieve` 一次问清三件事——列结构、JOIN 关系、业务角色。query 固定为：
 
 ```text
-数据库 <source_database> 中的下表，逐表列出：
-- 表名、表用途描述
-- 全部列名、每列数据类型（String/Int64/Float64/Date/DateTime 等）、业务含义
-- 主键
-若能确认表间关联，可附带 JOIN 线索；无法确认时省略，不要猜测。
-表：<t1>, <t2>, …
+查询 <source_database> 数据库以下表的语义信息：<t1>, <t2>, …
+目标游戏：<target_game>
 ```
 
 流程：
 
-1. 从 `source_table_inventory.tables` 取完整表名列表，按 ≤10 张拆分为多批
-2. 各批**并行**发出 `semantic_retrieve`，合并进工作副本
-3. 合并后重算 `missing_names` / `missing_columns`；若仍有 → 立刻走 CH 批查（禁止再开语义轮补查）
-4. 两层差集皆空 → 结束 ①
+1. 从 `source_table_inventory.tables` 取出全部表名，每批 ≤8 张分组
+2. 按组**串行**发 `semantic_retrieve`：发完一批，等返回
+3. 返回后**立刻落盘**——把语义返回的完整 JSON 用 `Write` 写入 `step1_semantic_batch_NN.json`（`NN` 从 `01` 开始两位编号，如 `step1_semantic_batch_01.json`）
+4. 继续下一批，重复 2–3
+5. 全部分批完成后，对照 CH 清单检查覆盖：重算 `missing_names`（CH 清单中有但任何 dump 文件里都没出现的表）和 `missing_columns`（表名出现了但列结构不全）；若任一项非空 → 立即走 CH 批查补齐（不再追加语义查询）
 
-有可靠关联则写入 `join_hints[]`，否则 `[]`（不要求覆盖全部表，不阻塞）。
-
-#### 列缺口 CH 批查（① 唯一兜底）
+#### 列缺口 CH 批查（唯一兜底）
 
 对 `missing_columns`（如有 `missing_names` 一并包含）**一次**提交：
 
@@ -154,28 +124,82 @@ ORDER BY table, position
 
 将结果写回对应 `tables[].columns`（`name`←`name`，`valueType`←`type`；`description`/`isPrimaryKey` 可空）。
 
-<禁止>使用 `is_in_primary_key`、`ordinal_position` 等可能不存在的元数据列</禁止>。单表备选：`DESCRIBE TABLE {{source_database}}.<table>`。  
+<禁止>使用 `is_in_primary_key`、`ordinal_position` 等可能不存在的元数据列</禁止>。
 语义侧的表用途描述可保留；**列清单以 CH 为准**。
 
 ---
 
-### ② 角色定位
+### 覆盖定义（硬门禁）
 
-<必须>仅在 ① 覆盖门禁通过后执行</必须>。
+CH 清单里有这张表名，不代表我们已经拿到了它的列结构。<必须>下面两条同时满足，才能说覆盖完成，才能进入写 schema</必须>：
 
-query 固定为：
+1. **表名未遗漏**：`missing_names` 为空。CH 清单中的每一张表，在语义查询结果中都出现了，一张不少。
+2. **每表的列结构到位**：`missing_columns` 为空。对 CH 清单中的任意一张表，以下三点同时满足才算到位：
+   - `columns` 数组非空（`columns.length >= 1`）
+   - 每条列都有 `name` 字段
+   - 若 `valueType` 缺失，已用 CH `system.columns` 兜底补齐
 
-```text
-在数据库 <source_database> 已列出的业务表中，分别指出：
-- 用户信息表（含用户画像/属性）
-- 付费/label 转化事件表
-- 活跃行为事件表
-- 游戏维度表
-并指出每张表中的用户键列、游戏键列、事件时间列。
-目标游戏：<target_game>。
-```
+<禁止>
+- 把 `answerGuidance`、diagnostic、toolTrace、或 `behavior_1~7` 这类无列名无类型的字段当成列结构来凑数
+- 表名数量对上了就写「全覆盖」，无视 `missing_columns` 不为空
+- `missing_columns` 还没清空就判定 mode 或写 plan
+- 在拿到 CH 表名清单之前发送任何 `semantic_retrieve`
+- 发自由关键词式语义查询；query 中必须注入 CH 实表名
+</禁止>
 
-写入 `role_candidates`（键必须齐全）：
+---
+
+### 写 schema
+
+覆盖门禁通过后，写出 **`step1_0_table_schema.json`**。
+
+<必须>写 schema 前三步走，漏一步视为未完成</必须>：
+1. `ls` 确认所有 `step1_semantic_batch_*.json` 文件已落盘，数量与批次数一致
+2. **逐个 `Read`** 每一个 dump 文件（不跳、不凭记忆），读完再汇总
+3. 最后 `Write` `step1_0_table_schema.json`
+
+<下面的约束非常重要!!!/>
+<重要>写 schema 时**禁止凭记忆**。所有内容必须来自第 2 步 `Read` 到的 dump 文件内容——对着原文搬运，不缩写、不改写、不补全。</重要>
+
+#### description 保真
+
+<必须>以下规则逐字遵守；违反任意一条即视为落盘失败，须 Read 对应 dump 文件重写该列 description。</必须>
+
+| 规则 | 说明 |
+|------|------|
+| **逐字搬运** | `columns[].description` <必须>与 dump 文件中语义返回的 `dataAccessPlan.tables[].columns[].description` **逐字符一致**</必须>（含空格、标点、括号、枚举全文），不得改写、摘要、截断 |
+| **括号/枚举全保留** | 含括号内枚举值、编码映射、补充说明时，**整段原样写入**，禁止只留括号前短标题 |
+| **排序/TopN说明保留** | 含 `TOPN`、`按XX排序`、`截断` 等说明时，**全量保留** |
+| **语义无描述则留 null** | 语义侧为 `null` 时写 `null`，**不得**用列名或自拟短词填上 |
+
+<禁止>
+- **禁止**去掉括号内的枚举/映射/补充说明
+- **禁止**缩写为短标签（完整描述截成前缀）
+- **禁止**概括语义已列出的值列表
+- **禁止**在语义有描述时自行改写、换同义词、重新措辞
+- **禁止**把 description 写成列名本身
+</禁止>
+
+<错误示例>
+<错误> 语义返回包含括号内完整枚举，写入时只取了括号前的短标题
+<错误> 语义返回列出了一系列枚举值，写入时替换成了概括性的简短标签
+<错误> 语义返回了完整的时间和排序说明，写入时只保留了列名本身
+</错误示例>
+
+#### join_hints 保真
+
+<必须>写 `join_hints` 时，逐个 Read 所有 `step1_semantic_batch_NN.json`，从各文件的 `dataAccessPlan.joinPaths` 中收集，按 `left` + `right` + `on` 去重后写入。</必须>
+
+映射规则：
+- 每条 joinPath → 一条 hint：`left` / `right` = `<表名>.<列名>`（去掉库前缀，列名从 `on` 解析）
+- `note` 可写简短说明
+- left/right 顺序与语义返回一致，禁止调转
+- 所有 dump 文件中都找不到 joinPaths → `join_hints` 写 `[]`
+- 禁止因多表都有同名键列而自行加边——文件里没写的表对，不补
+
+#### role_candidates
+
+<必须>从所有 `step1_semantic_batch_NN.json` 中，收集语义返回的每张表业务角色，写入 `role_candidates`</必须>（五键齐全）：
 
 | 角色 | 要求 |
 |---|---|
@@ -185,11 +209,7 @@ query 固定为：
 
 <禁止>要求全局每张表都分到上述五类</禁止>。其余表只进入 `tables[]`，后续在 `projections[].type` 标 `user_keyed` / `game_keyed`。角色无法从语义确认时，用已落盘的列名约定推断并写入，不阻塞。
 
----
-
-### 落盘
-
-写出 **`step1_0_table_schema.json`**：
+</上面的约束非常重要!!!>
 
 ```json
 {
@@ -215,7 +235,7 @@ query 固定为：
     "game_dim": ["<候选表>"]
   },
   "column_aliases": {
-    "user_id_columns": ["usid", "rank_flg", "dsid"]
+    "user_id_columns": ["<如 usid>", "<rank_flg>", "<dsid>"]
   }
 }
 ```
@@ -254,7 +274,7 @@ WHERE <valid_user>
 
 ### 3.A prelabeled（`mode=="prelabeled"`）
 
-按上方 plan JSON 的 <必须>prelabeled 填法</必须> 逐字段填写：
+`mode` 写 `"prelabeled"`；`y_label.event_table` / `sampling_sources.label_event` / `sampling_sources.activity_event` / `sampling_sources.conversion_event` / `sql_fragments`（除 `user_key_expr`、`valid_user`、`game_filter` 外）写 `null`；`negative_populations` 写 `[]`。具体：
 
 - <必须>`keys.label_column` 必填</必须>（以 schema 实列为准）
 - <必须>仅当 `projections[]` 有 `game_keyed` 时才构造 `sql_fragments.game_filter`</必须>
@@ -276,7 +296,7 @@ WHERE <valid_user>
 
 填写顺序：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
 
-`sampling_sources` / `keys` / `sql_fragments` 依据 `role_candidates` / `join_hints` / `tables`。
+`sampling_sources` / `keys` / `sql_fragments` 依据 `role_candidates` / `tables`（`join_hints` 仅作下游参考，采样阶段不依赖它构造 SQL）。
 
 ### 3.1 sql_fragments 构造规则
 
@@ -318,9 +338,13 @@ LIMIT 20
 
 ## 4. 完成检查
 
-- [ ] `step1_0_table_schema.json` 已写；`table_names` 与 CH 清单 1:1
-- [ ] <必须>每张表 `columns.length >= 1`</必须>（表名齐 ≠ 结构齐）
-- [ ] <必须>`join_hints` 字段存在（可为 `[]`）；`role_candidates` 五键齐全；`column_aliases.user_id_columns` 非空</必须>
-- [ ] `step1_0_sampling_plan.json` 已写；`source_table_inventory` / `projections` 1:1
-- [ ] `inventory_check.ok == true` 且 `table_count == len(projections)`
-- [ ] `projections[]` 每项 `type` 仅为 `user_table` / `user_keyed` / `game_keyed`
+- [ ] 文件已写出：`step1_0_table_schema.json`、`step1_0_sampling_plan.json`
+- [ ] 语义 dump 文件齐全：`step1_semantic_batch_01.json`、`02`… 与批次数对应
+- [ ] schema 覆盖：`table_names` 与 CH 清单一一对应，每张表 `columns.length >= 1`
+- [ ] description 保真：每列的 description 来自 dump 文件逐字搬运，没返回的就写 `null`，不缩写不重写
+- [ ] join_hints 保真：每条 hint 都能在 dump 文件的 `joinPaths` 中找到对应，没有凭空多出的表对，全部文件无 joinPaths 时写 `[]`
+- [ ] role_candidates 五键齐全：`user_table`、`game_dim`、`label_event`、`activity_event`、`conversion_event`
+- [ ] column_aliases：`user_id_columns` 非空
+- [ ] plan 完整：`source_table_inventory` 与 `projections` 一一对应
+- [ ] inventory 核对：`inventory_check.ok == true`，`table_count == len(projections)`
+- [ ] projections 类型合法：每项 `type` 只允许 `user_table` / `user_keyed` / `game_keyed`

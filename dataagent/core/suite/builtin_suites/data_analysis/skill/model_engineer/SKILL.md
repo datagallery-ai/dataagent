@@ -8,8 +8,7 @@ disable-model-invocation: true
 
 # Model Engineering Pipeline（step3_1–step3_6）
 
-业务阶段固定为：**采样 step1 → 特征工程 step2 → 模型工程 step3 → NL2SQL step4**。本 skill
-承接训练集切分至两类白盒模型；**唯一 tabular 输入**为  
+本 skill承接训练集切分至两类白盒模型；**唯一 tabular 输入**为  
 `OUTPUT_DIR/step2_4_wide_userfiltered.csv`。部署 SQL 由下游 `step4_1` 生成。
 
 ## 完成标准
@@ -37,7 +36,7 @@ workflow 从 feature_engineering receipt 传入：
 
 | artifact | 用途 |
 |----------|------|
-| `schema_resolution.json` | 解析 `USER_ID_COL`、`LABEL_COL` |
+| `step1_output_meta.json` | 解析 `USER_ID_COL`（`user_id_columns`）、`LABEL_COL`（`label_column`） |
 | `step2_4_wide_userfiltered.csv` | 唯一训练数据 |
 
 开工前从只读共享产物区的 `manifest.json` 中定位特征工程阶段已发布的文件，并将所需文件复制到当前 job workspace 的 `OUTPUT_DIR`。
@@ -46,9 +45,8 @@ workflow 从 feature_engineering receipt 传入：
 
 ```bash
 export OUTPUT_DIR="<current job workspace>"
-export USER_ID_COL="<schema_resolution.roles.user_id>"
-export LABEL_COL="<schema_resolution.roles.label>"
-export SCHEMA_RESOLUTION_PATH="${OUTPUT_DIR}/schema_resolution.json"
+export USER_ID_COL="<step1_output_meta.user_id_columns 中在 CSV 列名中命中的第一列>"
+export LABEL_COL="<step1_output_meta.label_column>"
 ```
 
 | 类型 | 位置 |
@@ -135,7 +133,6 @@ receipt 仅登记 NL2SQL 下游所需文件，缺一不可：
 
 | artifact | 来源 | 用途 |
 |----------|------|------|
-| `schema_resolution.json` | FE handoff | 解析 `USER_ID_COL`、`LABEL_COL` |
 | `step3_4_feature_importance.csv` | step3_4 | LightGBM 特征权重 |
 | `step3_5_rule_card.csv` | step3_5 | 决策树规则 |
 | `step3_6_score_rule.csv` | step3_6 | 评分卡规则 |

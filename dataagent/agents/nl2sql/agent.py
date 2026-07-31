@@ -10,12 +10,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+# ruff: noqa: UP045
+
 from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
-from typing import Any
+from contextvars import Token
+from functools import partial
+from pathlib import Path
+from typing import Any, Optional, cast
 
+from dataagent.agents.nl2sql.context_recorder import NL2SQLContextRecorder
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes import (
     BaseNL2SQLNode,
@@ -45,7 +51,9 @@ class NL2SQLAgent(BaseAgent):
         router: NL2SQLRouter,
         config: Any,
         state_defaults: dict[str, Any] | None = None,
+        config_manager: Optional[Any] = None,
     ):
+        """Initialize an NL2SQL agent and attach Context trajectory hooks."""
         self._config_obj = config
         cfg_dict = {}
         try:
@@ -59,6 +67,10 @@ class NL2SQLAgent(BaseAgent):
         self.backend = backend
         self.router = router
         self.nodes = nodes
+        self.config_manager = config_manager
+        self._context_recording_enabled = True
+        for node in self.nodes:
+            node.add_post_hook(partial(NL2SQLContextRecorder.record_action_hook, node_name=node.name))
         self.workflow_backend = create_workflow_backend(
             backend=backend,
             nodes=list(self.nodes),
@@ -68,8 +80,30 @@ class NL2SQLAgent(BaseAgent):
         )
         self.state_defaults = state_defaults or {}
 
+    @staticmethod
+    def _finish_context_recorder(
+        *,
+        recorder: Optional[NL2SQLContextRecorder],
+        token: Optional[Token[Optional[NL2SQLContextRecorder]]],
+        final_state: Optional[Mapping[str, Any]],
+        completed: bool,
+    ) -> None:
+        if recorder is None or token is None:
+            return
+        try:
+            try:
+                recorder.finish(final_state=final_state, completed=completed)
+            except Exception as exc:
+                logger.warning(f"Failed to finish NL2SQL Context recorder: {exc}")
+        finally:
+            try:
+                recorder.reset(token)
+            except Exception as exc:
+                logger.warning(f"Failed to reset NL2SQL Context recorder: {exc}")
+
     @classmethod
     def from_config(cls, config: Any, config_manager: Any | None = None) -> NL2SQLAgent:
+        """Build an NL2SQL agent from its YAML-compatible configuration."""
         core_cfg = config.get("CORE", {})
         db_cfg = config.get("DATABASE", {})
         perceptor_cls = UDNPerceptorNode if db_cfg.get("sql_service_engine") == "udn" else PerceptorNode
@@ -98,7 +132,12 @@ class NL2SQLAgent(BaseAgent):
             raise ValueError("Perceptor and Generator are required in the yaml.")
         router = NL2SQLRouter(enabled_nodes)
         return cls(
-            backend="langgraph", nodes=node_instances, router=router, config=config, state_defaults=state_defaults
+            backend="langgraph",
+            nodes=node_instances,
+            router=router,
+            config=config,
+            state_defaults=state_defaults,
+            config_manager=config_manager,
         )
 
     async def chat(self, message: str, initial_state: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
@@ -106,21 +145,46 @@ class NL2SQLAgent(BaseAgent):
         try:
             checkpoint_id: str | None = kwargs.pop("checkpoint_id", None)
             session_id: str | None = kwargs.pop("session_id", None)
+            init = initial_state or kwargs.pop("initial_state", None) or {}
             if checkpoint_id:
-                return await self.workflow_backend.resume(
-                    checkpoint_id=str(checkpoint_id), message=message, session_id=session_id, **kwargs
-                )
+                recorder, token = self._start_context_recorder(state=init, question=message, session_id=session_id)
+                final_state: Optional[dict[str, Any]] = None
+                completed = False
+                try:
+                    final_state = await self.workflow_backend.resume(
+                        checkpoint_id=str(checkpoint_id), message=message, session_id=session_id, **kwargs
+                    )
+                    completed = True
+                    return final_state
+                finally:
+                    self._finish_context_recorder(
+                        recorder=recorder,
+                        token=token,
+                        final_state=final_state,
+                        completed=completed,
+                    )
             if not session_id:
                 session_id = str(uuid.uuid4())
-            init = initial_state or kwargs.pop("initial_state", None) or {}
             state = get_default_state(question=message, **{**self.state_defaults, **(init or {})})
             self._distribute_context_dump_dir(init, session_id=session_id)
             latest, flush_provider = make_perf_state_holder(state)
-            with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
-                final_state = await self.workflow_backend.ainvoke(state)
-                if isinstance(final_state, dict):
-                    latest["state"] = final_state
-            return final_state
+            recorder, token = self._start_context_recorder(state=state, question=message, session_id=session_id)
+            final_state = None
+            completed = False
+            try:
+                with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
+                    final_state = await self.workflow_backend.ainvoke(state)
+                    if isinstance(final_state, dict):
+                        latest["state"] = final_state
+                completed = True
+                return final_state
+            finally:
+                self._finish_context_recorder(
+                    recorder=recorder,
+                    token=token,
+                    final_state=final_state,
+                    completed=completed,
+                )
         except NL2SQLError as exc:
             return {"error": exc.to_dict()}
         except Exception as exc:
@@ -133,8 +197,15 @@ class NL2SQLAgent(BaseAgent):
             try:
                 kw = dict(kwargs)
 
-                if "input" in kw and isinstance(kw["input"], dict):
-                    async for item in self._yield_perf_stream(kw["input"], self.workflow_backend.astream({}, **kw)):
+                input_state = kw.get("input")
+                if isinstance(input_state, dict):
+                    question = str(input_state.get("question") or input_state.get("user_query", ""))
+                    async for item in self._yield_context_stream(
+                        state=input_state,
+                        question=question,
+                        session_id=input_state.get("session_id"),
+                        stream=self.workflow_backend.astream({}, **kw),
+                    ):
                         yield item
                     return
 
@@ -149,9 +220,11 @@ class NL2SQLAgent(BaseAgent):
                     perf_state: dict[str, Any] = dict(initial_state) if isinstance(initial_state, dict) else {}
                     if session_id:
                         perf_state.setdefault("session_id", session_id)
-                    async for item in self._yield_perf_stream(
-                        perf_state,
-                        self.workflow_backend.astream_resume(
+                    async for item in self._yield_context_stream(
+                        state=perf_state,
+                        question=str(message or ""),
+                        session_id=session_id,
+                        stream=self.workflow_backend.astream_resume(
                             checkpoint_id=str(checkpoint_id),
                             message=str(message or ""),
                             session_id=session_id,
@@ -174,9 +247,16 @@ class NL2SQLAgent(BaseAgent):
                 question = str(message or initial_state.pop("question", None) or initial_state.pop("user_query", ""))
                 initial_state.setdefault("session_id", session_id)
                 state = get_default_state(question=question, **{**self.state_defaults, **(initial_state or {})})
-                async for item in self._yield_perf_stream(
-                    state,
-                    self.workflow_backend.astream(state, start_at=start_at, stream_mode=stream_mode, **kw),
+                async for item in self._yield_context_stream(
+                    state=state,
+                    question=question,
+                    session_id=session_id,
+                    stream=self.workflow_backend.astream(
+                        cast(dict[str, Any], state),
+                        start_at=start_at,
+                        stream_mode=stream_mode,
+                        **kw,
+                    ),
                 ):
                     yield item
             except NL2SQLError as exc:
@@ -186,55 +266,120 @@ class NL2SQLAgent(BaseAgent):
 
         return _gen()
 
+    def _start_context_recorder(
+        self,
+        *,
+        state: Mapping[str, Any],
+        question: str,
+        session_id: Optional[str],
+    ) -> tuple[
+        Optional[NL2SQLContextRecorder],
+        Optional[Token[Optional[NL2SQLContextRecorder]]],
+    ]:
+        if not getattr(self, "_context_recording_enabled", False):
+            return None, None
+        config = self.config if isinstance(getattr(self, "config", None), Mapping) else {}
+        recorder = NL2SQLContextRecorder.create(
+            state=state,
+            question=question,
+            session_id=session_id,
+            config=config,
+            config_manager=getattr(self, "config_manager", None),
+        )
+        if recorder is None:
+            return None, None
+        return recorder, recorder.bind()
+
+    async def _yield_context_stream(
+        self,
+        *,
+        state: Mapping[str, Any],
+        question: str,
+        session_id: Optional[str],
+        stream: AsyncIterator[Any],
+    ) -> AsyncGenerator[Any, None]:
+        recorder, token = self._start_context_recorder(state=state, question=question, session_id=session_id)
+        completed = True
+        try:
+            async for item in self._yield_perf_stream(state, stream):
+                yield item
+        except BaseException:
+            completed = False
+            raise
+        finally:
+            self._finish_context_recorder(
+                recorder=recorder,
+                token=token,
+                final_state=None,
+                completed=completed,
+            )
+
     def _distribute_context_dump_dir(self, init: dict[str, Any], *, session_id: str | None = None) -> None:
         """Resolve and distribute the per-run NL2SQL context-dump dir to all nodes."""
         from dataagent.utils.env_utils import get_env_bool
 
         if not get_env_bool("DATAAGENT_CONTEXT_DUMP"):
             return
-        try:
-            from dataagent.utils.runtime_paths import resolve_session_root
 
-            user_id = str(init.get("user_id") or "anonymous")
-            cfg = self._config_obj
-            cfg_session_id = cfg.get("SESSION_ID") if isinstance(cfg, dict) else None
-            parent_session_id = init.get("_parent_session_id")
-            if cfg_session_id:
-                effective_session_id = str(cfg_session_id)
-            elif parent_session_id:
-                effective_session_id = str(parent_session_id)
-            elif session_id:
-                effective_session_id = str(session_id)
-            else:
-                effective_session_id = str(init.get("session_id") or "default_session")
-            run_id = init.get("_parent_run_id", init.get("run_id", 0))
-            base_dir = (
-                resolve_session_root(user_id=user_id, session_id=effective_session_id)
-                / "workspace"
-                / ".memory"
-                / "context_dump"
-                / f"run_{run_id}"
+        user_id = str(init.get("user_id") or "anonymous")
+        cfg = self._config_obj
+        cfg_session_id = cfg.get("SESSION_ID") if isinstance(cfg, dict) else None
+        parent_session_id = init.get("_parent_session_id")
+        if cfg_session_id:
+            effective_session_id = str(cfg_session_id)
+        elif parent_session_id:
+            effective_session_id = str(parent_session_id)
+        elif session_id:
+            effective_session_id = str(session_id)
+        else:
+            effective_session_id = str(init.get("session_id") or "default_session")
+        run_id = init.get("_parent_run_id", init.get("run_id", 0))
+        try:
+            dump_dir = self._create_context_dump_dir(
+                user_id=user_id,
+                session_id=effective_session_id,
+                workspace=init.get("workspace"),
+                run_id=run_id,
             )
-            existing = (
-                [d.name for d in base_dir.iterdir() if d.is_dir() and d.name.startswith("nl2sql_")]
-                if base_dir.is_dir()
-                else []
-            )
-            next_idx = len(existing) + 1
-            dump_dir = base_dir / f"nl2sql_{next_idx:02d}"
-            logger.info(
-                f"[_distribute_context_dump_dir] session_id={effective_session_id}, "
-                f"user_id={user_id}, run_id={run_id}, dump_dir={dump_dir}"
-            )
-            dump_dir.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
             logger.warning(f"Failed to init NL2SQL context dump dir: {exc}")
             return
+        logger.info(
+            f"[_distribute_context_dump_dir] session_id={effective_session_id}, "
+            f"user_id={user_id}, run_id={run_id}, dump_dir={dump_dir}"
+        )
         shared_seq: list[int] = [0]
         for node in self.nodes:
             node.set_context_dump_dir(dump_dir)
             node._context_dump_seq = shared_seq
         logger.info(f"[_distribute_context_dump_dir] distributed dump_dir to {len(self.nodes)} nodes")
+
+    def _create_context_dump_dir(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        workspace: Any,
+        run_id: Any,
+    ) -> Path:
+        """Create and return the next per-run NL2SQL context-dump directory."""
+        from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir
+
+        memory_dir = resolve_flex_session_memory_dir(
+            user_id=user_id,
+            session_id=session_id,
+            workspace=workspace,
+            config=self.config,
+        )
+        base_dir = memory_dir / "context_dump" / f"run_{run_id}"
+        existing = (
+            [path.name for path in base_dir.iterdir() if path.is_dir() and path.name.startswith("nl2sql_")]
+            if base_dir.is_dir()
+            else []
+        )
+        dump_dir = base_dir / f"nl2sql_{len(existing) + 1:02d}"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        return dump_dir
 
     async def _yield_perf_stream(
         self,

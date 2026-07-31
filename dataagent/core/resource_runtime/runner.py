@@ -77,6 +77,7 @@ def build_resource_runner(
                     **(result.get("metrics") if isinstance(result.get("metrics"), dict) else {}),
                 },
                 error=error_text(result) if status == "failed" else "",
+                log_file_info=_extract_log_file_info(result),
             )
         finally:
             coordinator.release_capacity(job_id)
@@ -93,6 +94,8 @@ def run_resource_operations(
     cancel_event: Event,
 ) -> dict[str, Any]:
     """Execute submit/poll/collect operations for one resource job."""
+    resource_id = resource.metadata.get("name") or resource.metadata.get("id", "unknown")
+    logger.debug(f"[runner] start run_resource_operations resource={resource_id}")
     context = ResourceOperationContext(runtime=coordinator.runtime, resource=resource, cancel_event=cancel_event)
     allocation = plan.allocation.get("resource") if isinstance(plan.allocation.get("resource"), dict) else {}
     submit_result = invoke_operation(
@@ -103,6 +106,7 @@ def run_resource_operations(
         arguments={"envelope": envelope, "allocation": allocation},
         context=context,
     )
+    logger.debug(f"[runner] submit done resource={resource_id} result={submit_result}")
     if not isinstance(submit_result, dict):
         submit_result = {"status": "completed", "result": submit_result}
     remote_job_id = remote_job_id_from_payload(submit_result)
@@ -111,9 +115,15 @@ def run_resource_operations(
 
     if remote_job_id and status not in _REMOTE_TERMINAL_STATUSES:
         deadline = time.monotonic() + max(1, int(envelope.get("timeout_sec") or 3600))
+        logger.debug(
+            f"[runner] start polling resource={resource_id} job_id={remote_job_id}"
+            f" timeout_sec={envelope.get('timeout_sec')} deadline={deadline:.0f}"
+        )
         cursor: str | None = None
+        poll_count = 0
         while time.monotonic() < deadline:
             if cancel_event.is_set():
+                logger.debug(f"[runner] cancel requested resource={resource_id} job_id={remote_job_id}")
                 cancel_operation(coordinator, resource, plan.driver, remote_job_id, context)
                 return {"status": "cancelled", "exit_code": 130, "error": "cancelled"}
             poll_result = invoke_operation(
@@ -124,17 +134,24 @@ def run_resource_operations(
                 arguments={"job_id": remote_job_id, "cursor": cursor, "event_limit": 20},
                 context=context,
             )
+            poll_count += 1
             final_result = poll_result if isinstance(poll_result, dict) else {"result": poll_result}
             status = str(final_result.get("status") or "").strip().lower()
             cursor = str(final_result.get("cursor") or cursor or "") or None
+            logger.debug(
+                f"[runner] poll #{poll_count} resource={resource_id} job_id={remote_job_id}"
+                f" status={status} cursor={cursor}"
+            )
             if status in _REMOTE_TERMINAL_STATUSES:
                 break
             time.sleep(3.0)
         else:
+            logger.debug(f"[runner] poll timeout resource={resource_id} job_id={remote_job_id} poll_count={poll_count}")
             cancel_operation(coordinator, resource, plan.driver, remote_job_id, context)
             return {"status": "failed", "exit_code": 1, "error": "resource job timed out"}
 
     if remote_job_id and status in _REMOTE_TERMINAL_STATUSES:
+        logger.debug(f"[runner] start collect resource={resource_id} job_id={remote_job_id}")
         collected = invoke_operation(
             coordinator=coordinator,
             resource=resource,
@@ -145,6 +162,10 @@ def run_resource_operations(
         )
         if isinstance(collected, dict):
             final_result = merge_remote_terminal_result(final_result, collected)
+    logger.debug(
+        f"[runner] done resource={resource_id} final_status={status} "
+        f"result_keys={list(final_result.keys()) if isinstance(final_result, dict) else 'N/A'}"
+    )
     return final_result
 
 
@@ -158,11 +179,27 @@ def invoke_operation(
     context: ResourceOperationContext,
 ) -> Any:
     """Invoke one configured operation for a resource."""
+    resource_id = resource.metadata.get("name") or resource.metadata.get("id", "unknown")
     operation_id = str(driver.operation_ids.get(operation) or "").strip()
+    logger.debug(
+        f"[runner] invoke_operation resource={resource_id} operation={operation} operation_id={operation_id} "
+        f"driver={driver.transport_type} args_keys={list(arguments.keys())}"
+    )
     if driver.transport_type == "mcp":
         client = coordinator.get_mcp_client(resource.id, driver)
-        return client.call_tool_sync(operation_id, arguments)
-    return coordinator.operation_registry.invoke(operation_id, arguments, context)
+        result = client.call_tool_sync(operation_id, arguments)
+        logger.debug(
+            f"[runner] invoke_operation done resource={resource_id} operation={operation}"
+            f"result_type={type(result).__name__}"
+            f"result_keys={list(result.keys()) if isinstance(result, dict) else 'N/A'}"
+        )
+        return result
+    result = coordinator.operation_registry.invoke(operation_id, arguments, context)
+    logger.debug(
+        f"[runner] invoke_operation done resource={resource_id}"
+        f"operation={operation} result_type={type(result).__name__}"
+    )
+    return result
 
 
 def cancel_operation(
@@ -250,6 +287,24 @@ def summary_text(payload: Any) -> str:
 def error_text(payload: dict[str, Any]) -> str:
     """Extract an error string from an operation result."""
     return str(payload.get("error") or payload.get("stderr") or summary_text(payload))
+
+
+def _extract_log_file_info(payload: Any) -> dict[str, Any] | None:
+    """Pull the OBS ``logFileInfo`` block out of a MCP result payload.
+
+    Some MCP servers (e.g. DataOps) expose a pre-signed log download URL under
+    ``logFileInfo`` / ``log_file_info`` when a job fails. Persist the block on
+    :class:`JobResult` so downstream ``collect`` callers can fetch the log
+    without re-querying the remote backend.
+    """
+    if not isinstance(payload, dict):
+        return None
+    info = payload.get("logFileInfo")
+    if not isinstance(info, dict) or not info:
+        info = payload.get("log_file_info")
+    if not isinstance(info, dict) or not info:
+        return None
+    return dict(info)
 
 
 def outputs(payload: Any) -> list[dict[str, Any]]:

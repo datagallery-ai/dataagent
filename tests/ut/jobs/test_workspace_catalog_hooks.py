@@ -22,12 +22,12 @@ from typing import Any
 import pytest
 import yaml
 
-from dataagent.agents.galatea.utils.json_store import read_json_object
 from dataagent.core.agents.registry import AgentRegistry
 from dataagent.core.agents.service import AgentService
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
+from dataagent.core.utils.json_store import read_json_object
 from dataagent.core.workspace.catalog import catalog_path
 
 

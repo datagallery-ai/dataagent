@@ -34,6 +34,12 @@ BOOTSTRAP_ITERATIONS = int(os.environ.get("NL2SQL_BOOTSTRAP_ITERATIONS", "500"))
 CONFIDENCE_LEVEL = float(os.environ.get("NL2SQL_CONFIDENCE_LEVEL", "0.95"))
 MIN_RELATIVE_UPLIFT = float(os.environ.get("NL2SQL_MIN_RELATIVE_UPLIFT", "0.02"))
 RANDOM_SEED = int(os.environ.get("NL2SQL_RANDOM_SEED", "42"))
+TEMPLATE_PATH = Path(
+    os.environ.get("NL2SQL_TEMPLATE_PATH", str(Path(__file__).resolve()))
+).resolve()
+GENERATOR_CHANGE_REASON = os.environ.get("NL2SQL_GENERATOR_CHANGE_REASON", "").strip()
+
+INPUT_NORMALIZATION_WARNINGS: list[str] = []
 
 REQUIRED_INPUTS = (
     "step1_0_table_schema.json",
@@ -46,6 +52,7 @@ REQUIRED_INPUTS = (
     "step3_5_rule_card.csv",
     "step3_5_white_box_scores.csv",
     "step3_5_model_report.json",
+    "step3_5_preprocessing_reconstructed.json",
     "step3_6_score_rule.csv",
     "step3_6_white_box_scores.csv",
     "step3_6_model_report.json",
@@ -120,6 +127,51 @@ class CandidateSQL:
     parse_coverage: float
     renderable: bool = True
     render_errors: list[str] | None = None
+    deployment_errors: list[str] | None = None
+
+
+def _sha256_file(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _generator_provenance() -> dict[str, Any]:
+    executed_path = Path(__file__).resolve()
+    executed_sha256 = _sha256_file(executed_path)
+    template_sha256 = _sha256_file(TEMPLATE_PATH)
+    modified = bool(
+        template_sha256
+        and executed_sha256
+        and template_sha256 != executed_sha256
+    )
+    warnings: list[str] = []
+    if not TEMPLATE_PATH.is_file():
+        warnings.append("template_path_does_not_exist")
+    if modified and not GENERATOR_CHANGE_REASON:
+        warnings.append("modified_generator_missing_change_reason")
+    return {
+        "template_path": str(TEMPLATE_PATH),
+        "template_sha256": template_sha256,
+        "executed_path": str(executed_path),
+        "executed_sha256": executed_sha256,
+        "working_copy_modified": modified,
+        "change_reason": GENERATOR_CHANGE_REASON or None,
+        "warnings": warnings,
+    }
+
+
+def _ensure_executed_generator_artifact() -> Path:
+    artifact_path = OUTPUT_DIR / "scripts" / "step4_1_generate_sql.py"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    executed_path = Path(__file__).resolve()
+    if artifact_path.resolve() != executed_path:
+        artifact_path.write_bytes(executed_path.read_bytes())
+    return artifact_path
 
 
 def _require_inputs() -> None:
@@ -128,12 +180,34 @@ def _require_inputs() -> None:
         raise SystemExit("Missing NL2SQL input artifacts: " + ", ".join(missing))
 
 
-def _read_json(name: str) -> dict[str, Any]:
+def _read_json(name: str, *, allow_safe_repairs: bool = False) -> dict[str, Any]:
     path = OUTPUT_DIR / name
+    raw = ""
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = path.read_text(encoding="utf-8-sig")
+        data = json.loads(raw)
+    except OSError as exc:
         raise SystemExit(f"Cannot read {name}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        if not allow_safe_repairs:
+            raise SystemExit(f"Cannot read {name}: {exc}") from exc
+        # Some historical FE artifacts emitted `"expected_unique_after": "<=" 7`.
+        # Repair only this unambiguous serialization defect in memory. Never
+        # rewrite the copied upstream artifact.
+        repaired = re.sub(
+            r'("expected_unique_after"\s*:\s*"<=)"\s*(-?\d+(?:\.\d+)?)',
+            r'\1 \2"',
+            raw,
+        )
+        if repaired == raw:
+            raise SystemExit(f"Cannot read {name}: {exc}") from exc
+        try:
+            data = json.loads(repaired)
+        except json.JSONDecodeError:
+            raise SystemExit(f"Cannot read {name}: {exc}") from exc
+        INPUT_NORMALIZATION_WARNINGS.append(
+            f"{name}: repaired malformed expected_unique_after value in memory"
+        )
     if not isinstance(data, dict):
         raise SystemExit(f"{name} must contain one JSON object")
     return data
@@ -189,6 +263,7 @@ def _canonical_header(header: str) -> str:
         "特征名": "feature",
         "状态": "status",
         "处理方式": "method",
+        "聚合方式": "method",
         "来源表": "source_table",
         "来源字段": "source_feature",
         "数据类型": "data_type",
@@ -208,7 +283,18 @@ def _canonical_header(header: str) -> str:
 
 def _table_schema_map(table_schema: dict[str, Any]) -> dict[str, dict[str, str]]:
     result: dict[str, dict[str, str]] = {}
-    for table in table_schema.get("tables", []):
+    raw_tables = table_schema.get("tables", [])
+    if isinstance(raw_tables, dict):
+        tables = [
+            {"name": table_name, **table_value}
+            for table_name, table_value in raw_tables.items()
+            if isinstance(table_value, dict)
+        ]
+    elif isinstance(raw_tables, list):
+        tables = raw_tables
+    else:
+        tables = []
+    for table in tables:
         if not isinstance(table, dict) or not table.get("name"):
             continue
         columns: dict[str, str] = {}
@@ -397,11 +483,126 @@ def _merge_lineage_entry(target: dict[str, dict[str, Any]], entry: dict[str, Any
         target[feature] = combined
 
 
-def normalize_feature_derivation(contract: RuntimeContract) -> dict[str, Any]:
+def _aggregation_alias_expressions() -> dict[str, str]:
+    path = OUTPUT_DIR / "step2_3_feature_aggregation.sql"
+    if not path.is_file():
+        return {}
+    expressions: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        match = re.match(
+            r"^\s*(.+)\s+AS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s*,?\s*$",
+            line,
+            flags=re.I,
+        )
+        if not match:
+            continue
+        expression, alias = match.group(1).strip(), match.group(2)
+        if expression.upper().startswith(("SELECT ", "CREATE ", "WITH ")):
+            continue
+        expressions[alias] = expression
+    return expressions
+
+
+def _resolve_physical_source(
+    feature: str,
+    contract: RuntimeContract,
+) -> tuple[str, str] | None:
+    direct = [
+        (table, feature)
+        for table, columns in contract.table_columns.items()
+        if feature in columns
+    ]
+    if len(direct) == 1:
+        return direct[0]
+    for table in sorted(contract.table_columns, key=len, reverse=True):
+        prefix = table + "_"
+        if not feature.startswith(prefix):
+            continue
+        source_feature = feature[len(prefix) :]
+        if source_feature in contract.table_columns[table]:
+            return table, source_feature
+    return None
+
+
+def _high_cardinality_lineage(
+    high_cardinality_check: dict[str, Any],
+    contract: RuntimeContract,
+) -> list[dict[str, Any]]:
+    details = high_cardinality_check.get("high_cardinality_check", {})
+    if not isinstance(details, dict):
+        return []
+    findings = details.get("findings_before_binning", [])
+    if not isinstance(findings, list):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        source_name = str(finding.get("column") or "").strip()
+        target_name = str(finding.get("new_column") or "").strip()
+        resolved = _resolve_physical_source(source_name, contract)
+        if not source_name or not target_name or resolved is None:
+            continue
+        source_table, source_feature = resolved
+        quoted = _quote_identifier(source_feature)
+        grouped_value = quoted if source_table == contract.user_table else f"any({quoted})"
+
+        thresholds = finding.get("quantile_thresholds")
+        expression: str | None = None
+        if isinstance(thresholds, dict) and thresholds:
+            ordered = [
+                thresholds[key]
+                for key in ("p20", "p40", "p60", "p80")
+                if key in thresholds
+            ]
+            if ordered:
+                numeric = f"toFloat64OrNull({grouped_value})"
+                conditions = [f"{numeric} IS NULL, 0"]
+                conditions.extend(
+                    f"{numeric} <= {_sql_literal(str(value))}, {index}"
+                    for index, value in enumerate(ordered, start=1)
+                )
+                expression = "multiIf(" + ", ".join([*conditions, str(len(ordered) + 1)]) + ")"
+        if expression is None:
+            formula = str(finding.get("binning_formula") or "")
+            delimiter_match = re.search(r"splitByChar\(\s*'([^']+)'", formula, flags=re.I)
+            if delimiter_match:
+                delimiter = delimiter_match.group(1).replace("'", "''")
+                text_value = f"ifNull({grouped_value}, '')"
+                expression = (
+                    f"multiIf({text_value} = '', 0, "
+                    f"length(splitByChar('{delimiter}', {text_value})))"
+                )
+        if expression is None:
+            continue
+        entries.append(
+            {
+                "feature": target_name,
+                "status": "derived",
+                "method": str(finding.get("action") or "high_cardinality_transform"),
+                "data_type": finding.get("new_type"),
+                "source_table": source_table,
+                "source_tables": [source_table],
+                "source_feature": source_feature,
+                "source_columns": [source_feature],
+                "sql_expression": expression,
+                "null_strategy": "derived expression handles null",
+                "section": "step2_3_high_cardinality_check.json",
+            }
+        )
+    return entries
+
+
+def normalize_feature_derivation(
+    contract: RuntimeContract,
+    high_cardinality_check: dict[str, Any],
+) -> dict[str, Any]:
     markdown_path = OUTPUT_DIR / "step2_3_feature_derivation.md"
     markdown = markdown_path.read_text(encoding="utf-8-sig")
     lines = markdown.splitlines()
     known_tables = list(contract.table_columns)
+    aggregation_expressions = _aggregation_alias_expressions()
     features: dict[str, dict[str, Any]] = {}
     current_heading = ""
     current_tables: list[str] = []
@@ -446,11 +647,27 @@ def normalize_feature_derivation(contract: RuntimeContract) -> dict[str, Any]:
                         source_tables = list(current_tables)
                     source_table = source_tables[0] if len(source_tables) == 1 else None
                     source_feature = _strip_markup(row.get("source_feature", ""))
-                    expression = _strip_markup(row.get("sql_expression", ""))
+                    expression = _strip_markup(row.get("sql_expression", "")) or aggregation_expressions.get(
+                        feature, ""
+                    )
                     method = _strip_markup(row.get("method", row.get("handling", "")))
                     if source_table and not source_feature and feature in contract.table_columns[source_table]:
                         source_feature = feature
                     source_columns = _sql_source_columns(expression)
+                    if source_table and not source_feature:
+                        physical_columns = [
+                            column
+                            for column in source_columns
+                            if column in contract.table_columns[source_table]
+                        ]
+                        if len(physical_columns) == 1:
+                            source_feature = physical_columns[0]
+                        else:
+                            source_feature = _infer_source_feature(
+                                feature,
+                                method,
+                                set(contract.table_columns[source_table]),
+                            )
                     if source_feature and source_feature not in source_columns:
                         source_columns.append(source_feature)
                     _merge_lineage_entry(
@@ -503,6 +720,9 @@ def normalize_feature_derivation(contract: RuntimeContract) -> dict[str, Any]:
                 },
             )
         index += 1
+
+    for entry in _high_cardinality_lineage(high_cardinality_check, contract):
+        _merge_lineage_entry(features, entry)
 
     # Physical direct columns are safe fallback lineage, especially for concise
     # Markdown sections that list a category without repeating source_feature.
@@ -576,6 +796,10 @@ def _sql_literal(value: str) -> str:
     raise ValueError(f"Non-finite numeric SQL literal: {raw}")
 
 
+def _sql_string_literal(value: str) -> str:
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
+
+
 def _is_numeric_literal(value: str) -> bool:
     raw = _strip_markup(value).strip().strip("'\"")
     try:
@@ -588,7 +812,11 @@ def _split_and(condition: str) -> list[str]:
     return [piece.strip() for piece in re.split(r"\s+AND\s+", str(condition).strip(), flags=re.I) if piece.strip()]
 
 
-def parse_tree_atom(atom: str, alias: str = "features") -> tuple[str, str]:
+def parse_tree_atom(
+    atom: str,
+    alias: str = "features",
+    feature_prefix: str = "__tree_",
+) -> tuple[str, str]:
     match = re.fullmatch(
         r"\s*([A-Za-z_][A-Za-z0-9_.]*)\s*(<=|>=|!=|=|<|>)\s*(.*?)\s*",
         atom,
@@ -597,7 +825,7 @@ def parse_tree_atom(atom: str, alias: str = "features") -> tuple[str, str]:
         raise ValueError(f"Unsupported decision-tree condition: {atom}")
     raw_feature, operator, raw_value = match.groups()
     feature = raw_feature.split(".")[-1]
-    reference = f"{alias}.{_quote_identifier(feature)}"
+    reference = f"{alias}.{_quote_identifier(feature_prefix + feature)}"
     value = _strip_markup(raw_value)
     if value.strip("'\"") in {"__MISSING__", ""}:
         return feature, f"{reference} IS NULL"
@@ -605,11 +833,15 @@ def parse_tree_atom(atom: str, alias: str = "features") -> tuple[str, str]:
     return feature, f"{comparable} {operator} {_sql_literal(value)}"
 
 
-def parse_tree_condition(condition: str, alias: str = "features") -> tuple[set[str], str]:
+def parse_tree_condition(
+    condition: str,
+    alias: str = "features",
+    feature_prefix: str = "__tree_",
+) -> tuple[set[str], str]:
     features: set[str] = set()
     sql_parts: list[str] = []
     for atom in _split_and(condition):
-        feature, sql = parse_tree_atom(atom, alias)
+        feature, sql = parse_tree_atom(atom, alias, feature_prefix)
         features.add(feature)
         sql_parts.append(sql)
     if not sql_parts:
@@ -709,6 +941,48 @@ def build_scorecard_candidate(path: Path) -> CandidateSQL:
     )
 
 
+def apply_deployment_contract(
+    tree: CandidateSQL,
+    scorecard: CandidateSQL,
+    tree_preprocessing: dict[str, Any],
+) -> None:
+    errors = list(tree.deployment_errors or [])
+    validation = tree_preprocessing.get("validation")
+    metadata = tree_preprocessing.get("features")
+    if not isinstance(validation, dict) or validation.get("passed") is not True:
+        errors.append(
+            "reconstructed decision-tree preprocessing did not pass validation"
+        )
+    if not isinstance(metadata, dict):
+        errors.append("decision-tree preprocessing feature metadata is missing")
+        metadata = {}
+    missing = sorted(tree.features - set(metadata))
+    if missing:
+        errors.append(
+            "decision-tree preprocessing metadata lacks: " + ", ".join(missing)
+        )
+    unsupported = sorted(
+        feature
+        for feature in tree.features & set(metadata)
+        if metadata[feature].get("kind")
+        not in {
+            "numeric_quantile_ordinal",
+            "numeric_identity",
+            "categorical_label_encoder",
+        }
+    )
+    if unsupported:
+        errors.append(
+            "unsupported decision-tree preprocessing kind for: "
+            + ", ".join(unsupported)
+        )
+    if errors:
+        tree.renderable = False
+        tree.deployment_errors = errors
+    if scorecard.parse_coverage != 1.0:
+        scorecard.renderable = False
+
+
 def _find_join_key(table: str, contract: RuntimeContract) -> str | None:
     columns = contract.table_columns.get(table, {})
     candidates = contract.validated_keys.get(table, [])
@@ -765,10 +1039,140 @@ def _null_wrapped(reference: str, entry: dict[str, Any]) -> str:
     return reference
 
 
+def _qualify_expression_columns(
+    expression: str,
+    columns: Iterable[str],
+    alias: str,
+) -> str:
+    result = expression
+    for column in sorted(set(columns), key=len, reverse=True):
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_`.])`?{re.escape(column)}`?(?![A-Za-z0-9_`])"
+        )
+        parts = re.split(r"('(?:''|\\.|[^'])*')", result)
+        for index in range(0, len(parts), 2):
+            parts[index] = pattern.sub(f"{alias}.{_quote_identifier(column)}", parts[index])
+        result = "".join(parts)
+    return result
+
+
+def _tree_preprocessing_expression(
+    feature: str,
+    metadata: dict[str, Any],
+    alias: str,
+) -> str:
+    reference = f"{alias}.{_quote_identifier(feature)}"
+    kind = metadata.get("kind")
+    if kind == "numeric_identity":
+        missing_value = float(metadata.get("missing_encoded_value", -1.0))
+        return (
+            f"coalesce(toFloat64OrNull(toString({reference})), "
+            f"toFloat64({missing_value:.17g}))"
+        )
+    if kind == "numeric_quantile_ordinal":
+        edges = metadata.get("bin_edges")
+        if not isinstance(edges, list) or len(edges) < 2:
+            raise ValueError(f"{feature}: invalid reconstructed numeric bin edges")
+        numeric = f"toFloat64OrNull(toString({reference}))"
+        missing_value = float(metadata.get("missing_encoded_value", -1.0))
+        branches = [
+            f"{numeric} IS NULL",
+            f"toFloat64({missing_value:.17g})",
+        ]
+        for index, edge in enumerate(edges[1:-1]):
+            branches.extend(
+                [
+                    f"{numeric} < {float(edge):.17g}",
+                    f"toFloat64({index})",
+                ]
+            )
+        branches.append(f"toFloat64({len(edges) - 2})")
+        return "multiIf(" + ", ".join(branches) + ")"
+    if kind == "categorical_label_encoder":
+        classes = metadata.get("classes")
+        mapping = metadata.get("mapping")
+        if not isinstance(classes, list) or not isinstance(mapping, dict):
+            raise ValueError(f"{feature}: invalid reconstructed category mapping")
+        categorical = (
+            f"ifNull(toString({reference}), "
+            f"{_sql_string_literal(str(metadata.get('missing_string_value', 'nan')))})"
+        )
+        branches: list[str] = []
+        for value in classes:
+            encoded = mapping.get(str(value))
+            if encoded is None:
+                raise ValueError(f"{feature}: category mapping lacks {value!r}")
+            branches.extend(
+                [
+                    f"{categorical} = {_sql_string_literal(str(value))}",
+                    f"toFloat64({int(encoded)})",
+                ]
+            )
+        unknown = float(metadata.get("unknown_encoded_value", -1.0))
+        branches.append(f"toFloat64({unknown:.17g})")
+        return "multiIf(" + ", ".join(branches) + ")"
+    raise ValueError(f"{feature}: unsupported preprocessing kind {kind!r}")
+
+
+def _wrap_tree_preprocessing(
+    feature_sql: str,
+    required_features: set[str],
+    tree_features: set[str],
+    tree_preprocessing: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
+    if not tree_features:
+        return feature_sql, []
+    metadata = tree_preprocessing.get("features")
+    if not isinstance(metadata, dict):
+        raise ValueError("decision-tree preprocessing feature metadata is missing")
+    encoded_selects: list[str] = []
+    encoded_report: list[dict[str, Any]] = []
+    for feature in sorted(tree_features):
+        if feature not in metadata:
+            raise ValueError(
+                f"{feature}: absent from step3_5_preprocessing_reconstructed.json"
+            )
+        expression = _tree_preprocessing_expression(
+            feature,
+            metadata[feature],
+            "raw_features",
+        )
+        encoded_name = "__tree_" + feature
+        encoded_selects.append(
+            f"      {expression} AS {_quote_identifier(encoded_name)}"
+        )
+        encoded_report.append(
+            {
+                "feature": feature,
+                "encoded_feature": encoded_name,
+                "kind": metadata[feature].get("kind"),
+            }
+        )
+    raw_selects = [
+        f"      raw_features.{_quote_identifier('user_id')} AS {_quote_identifier('user_id')}",
+        *[
+            f"      raw_features.{_quote_identifier(feature)} AS {_quote_identifier(feature)}"
+            for feature in sorted(required_features)
+        ],
+    ]
+    wrapped = "\n".join(
+        [
+            "    SELECT",
+            ",\n".join([*raw_selects, *encoded_selects]),
+            "    FROM (",
+            feature_sql,
+            "    ) AS raw_features",
+        ]
+    )
+    return wrapped, encoded_report
+
+
 def render_feature_subquery(
     required_features: set[str],
+    tree_features: set[str],
     lineage: dict[str, Any],
     contract: RuntimeContract,
+    tree_preprocessing: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
     index = _lineage_index(lineage)
     errors: list[str] = []
@@ -791,7 +1195,15 @@ def render_feature_subquery(
             if source_feature not in contract.table_columns[contract.user_table]:
                 errors.append(f"{feature}: {contract.user_table}.{source_feature} does not exist")
                 continue
-            reference = f"u.{_quote_identifier(source_feature)}"
+            raw_expression = str(entry.get("sql_expression") or "").strip()
+            if raw_expression:
+                reference = _qualify_expression_columns(
+                    raw_expression,
+                    entry.get("source_columns") or [source_feature],
+                    "u",
+                )
+            else:
+                reference = f"u.{_quote_identifier(source_feature)}"
             direct_selects.append(f"      {_null_wrapped(reference, entry)} AS {_quote_identifier(feature)}")
             continue
 
@@ -886,11 +1298,19 @@ def render_feature_subquery(
                 "null_strategy": entry.get("null_strategy"),
             }
         )
+    feature_sql, encoded_report = _wrap_tree_preprocessing(
+        feature_sql,
+        required_features,
+        tree_features,
+        tree_preprocessing,
+    )
     report = {
         "required_feature_count": len(required_features),
         "resolved_feature_count": len(required_features),
         "feature_coverage": 1.0,
         "features": sorted(lineage_rows, key=lambda item: item["feature"]),
+        "tree_encoded_features": encoded_report,
+        "tree_preprocessing_validation": tree_preprocessing.get("validation"),
     }
     return feature_sql, report
 
@@ -1133,10 +1553,14 @@ def choose_strategy(
     tree_metrics["rule_count"] = tree.rule_count
     tree_metrics["rule_parse_coverage"] = tree.parse_coverage
     tree_metrics["rule_parse_errors"] = tree.render_errors or []
+    tree_metrics["deployment_renderable"] = tree.renderable
+    tree_metrics["deployment_errors"] = tree.deployment_errors or []
     tree_metrics["risk_flags"] = _risk_flags("decision_tree", tree_metrics, tree.rule_count)
     card_metrics["rule_count"] = scorecard.rule_count
     card_metrics["rule_parse_coverage"] = scorecard.parse_coverage
     card_metrics["rule_parse_errors"] = scorecard.render_errors or []
+    card_metrics["deployment_renderable"] = scorecard.renderable
+    card_metrics["deployment_errors"] = scorecard.deployment_errors or []
     card_metrics["risk_flags"] = _risk_flags("scorecard", card_metrics, scorecard.rule_count)
 
     if not tree.renderable and not scorecard.renderable:
@@ -1162,7 +1586,7 @@ def choose_strategy(
                 },
                 "fusion_attempted": False,
                 "strategy": strategy,
-                "reason": "only_one_rule_artifact_fully_parseable",
+                "reason": "only_one_strategy_deployable",
             },
             {},
         )
@@ -1418,6 +1842,14 @@ def validate_final_sql(
     contains_label = bool(re.search(r"(?<![A-Za-z0-9_])`?label`?(?![A-Za-z0-9_])", code, re.I))
     semicolons = code.count(";")
     single_query = code.lstrip().upper().startswith("SELECT") and semicolons <= 1
+    unknown_columns: list[str] = []
+    for item in feature_report.get("features", []):
+        if not isinstance(item, dict):
+            continue
+        source_tables = [str(value) for value in item.get("source_tables", []) if value]
+        for column in item.get("source_columns", []):
+            if not any(column in contract.table_columns.get(table, {}) for table in source_tables):
+                unknown_columns.append(str(column))
     report = {
         "artifact": "sql/step4_1_final.sql",
         "strategy": strategy,
@@ -1427,7 +1859,7 @@ def validate_final_sql(
         "contains_label": contains_label,
         "unresolved_placeholders": unresolved,
         "unknown_tables": unknown_tables,
-        "unknown_columns": [],
+        "unknown_columns": sorted(set(unknown_columns)),
         "forbidden_constructs": forbidden,
         "feature_coverage": feature_report["feature_coverage"],
         "tree_rule_parse_coverage": tree.parse_coverage,
@@ -1443,6 +1875,7 @@ def validate_final_sql(
             not contains_label,
             not unresolved,
             not unknown_tables,
+            not unknown_columns,
             not forbidden,
             feature_report["feature_coverage"] == 1.0,
         )
@@ -1461,37 +1894,62 @@ def main() -> None:
     SQL_DIR.mkdir(parents=True, exist_ok=True)
     _require_inputs()
 
+    _ensure_executed_generator_artifact()
     contract = load_runtime_contract()
-    high_cardinality_check = _read_json("step2_3_high_cardinality_check.json")
+    generator_provenance = _generator_provenance()
+    high_cardinality_check = _read_json(
+        "step2_3_high_cardinality_check.json",
+        allow_safe_repairs=True,
+    )
     upstream_reports = {
         "lightgbm_teacher": _read_json("step3_4_model_report.json"),
         "decision_tree": _read_json("step3_5_model_report.json"),
         "scorecard": _read_json("step3_6_model_report.json"),
     }
-    lineage = normalize_feature_derivation(contract)
+    tree_preprocessing = _read_json("step3_5_preprocessing_reconstructed.json")
+    lineage = normalize_feature_derivation(contract, high_cardinality_check)
     tree = build_tree_candidate(OUTPUT_DIR / "step3_5_rule_card.csv")
     scorecard = build_scorecard_candidate(OUTPUT_DIR / "step3_6_score_rule.csv")
+    apply_deployment_contract(tree, scorecard, tree_preprocessing)
     aligned, alignment_report = load_aligned_scores()
 
     selection, fusion_parameters = choose_strategy(aligned, tree, scorecard)
     strategy = str(selection["strategy"])
     if strategy == "decision_tree":
         required_features = set(tree.features)
+        tree_features = set(tree.features)
     elif strategy == "scorecard":
         required_features = set(scorecard.features)
+        tree_features = set()
     else:
         required_features = set(tree.features) | set(scorecard.features)
+        tree_features = set(tree.features)
 
     try:
-        feature_subquery, feature_report = render_feature_subquery(required_features, lineage, contract)
+        feature_subquery, feature_report = render_feature_subquery(
+            required_features,
+            tree_features,
+            lineage,
+            contract,
+            tree_preprocessing,
+        )
     except ValueError as exc:
         # If a selected single candidate is not technically renderable, use the
         # other candidate before failing the fixed input contract.
         alternative = "scorecard" if strategy == "decision_tree" else "decision_tree"
         if strategy != "decision_tree_scorecard_fusion":
             alternative_features = scorecard.features if alternative == "scorecard" else tree.features
+            alternative_tree_features = (
+                tree.features if alternative == "decision_tree" else set()
+            )
             try:
-                feature_subquery, feature_report = render_feature_subquery(set(alternative_features), lineage, contract)
+                feature_subquery, feature_report = render_feature_subquery(
+                    set(alternative_features),
+                    set(alternative_tree_features),
+                    lineage,
+                    contract,
+                    tree_preprocessing,
+                )
             except ValueError:
                 raise SystemExit(f"Cannot render selected white-box strategy: {exc}") from exc
             selection["initial_strategy"] = strategy
@@ -1518,7 +1976,15 @@ def main() -> None:
             errors = [str(exc)]
             for candidate in alternatives:
                 try:
-                    rendered = render_feature_subquery(set(candidate.features), lineage, contract)
+                    rendered = render_feature_subquery(
+                        set(candidate.features),
+                        set(candidate.features)
+                        if candidate.name == "decision_tree"
+                        else set(),
+                        lineage,
+                        contract,
+                        tree_preprocessing,
+                    )
                 except ValueError as candidate_exc:
                     errors.append(str(candidate_exc))
                     continue
@@ -1542,17 +2008,31 @@ def main() -> None:
     selection["teacher_model_deployment_candidate"] = False
     selection["final_strategy"] = strategy
     selection["full_database_execution_performed"] = False
+    selection["generator_provenance"] = generator_provenance
+    selection["tree_preprocessing"] = {
+        "artifact": "step3_5_preprocessing_reconstructed.json",
+        "validation": tree_preprocessing.get("validation"),
+        "script_provenance": tree_preprocessing.get("script_provenance"),
+    }
+    selection["input_normalization_warnings"] = list(INPUT_NORMALIZATION_WARNINGS)
     _write_json(OUTPUT_DIR / "step4_1_strategy_selection.json", selection)
     feature_report["high_cardinality_check"] = high_cardinality_check
+    feature_report["input_normalization_warnings"] = list(INPUT_NORMALIZATION_WARNINGS)
     _write_json(OUTPUT_DIR / "step4_1_feature_lineage_report.json", feature_report)
 
     validation_report = validate_final_sql(sql, strategy, contract, feature_report, tree, scorecard)
+    validation_report["generator_provenance"] = generator_provenance
+    validation_report["tree_preprocessing_validation"] = tree_preprocessing.get(
+        "validation"
+    )
+    validation_report["input_normalization_warnings"] = list(INPUT_NORMALIZATION_WARNINGS)
     _write_json(OUTPUT_DIR / "step4_1_sql_validation_report.json", validation_report)
 
     receipt = {
         "summary": (
             f"NL2SQL completed with {strategy}; generated one final SQL targeting "
-            f"{contract.source_database} without executing it."
+            f"{contract.source_database} without executing it. Generator working copy modified: "
+            f"{str(generator_provenance['working_copy_modified']).lower()}."
         ),
         "artifacts": [
             {
@@ -1579,6 +2059,21 @@ def main() -> None:
                 "kind": "file",
                 "path": "step4_1_sql_validation_report.json",
                 "type": "json",
+            },
+            {
+                "kind": "file",
+                "path": "step3_5_preprocessing_reconstructed.json",
+                "type": "json",
+            },
+            {
+                "kind": "file",
+                "path": "scripts/step4_0_reconstruct_tree_preprocessing.py",
+                "type": "python",
+            },
+            {
+                "kind": "file",
+                "path": "scripts/step4_1_generate_sql.py",
+                "type": "python",
             },
         ],
     }

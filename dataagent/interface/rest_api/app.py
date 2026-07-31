@@ -19,6 +19,7 @@ from fastapi import Body, Depends, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
 from dataagent.interface.rest_api.service import DataAgentService
 
 
@@ -72,13 +73,18 @@ async def stream_agent_events(query: str, service: DataAgentService) -> AsyncGen
 
 
 app = FastAPI(title="DataAgent Service", version="1.0.0")
+_middleware_installed = False
 
 
 def create_app() -> FastAPI:
-    """Create the DataAgent FastAPI app."""
-    global _data_agent_service
+    """Create the DataAgent FastAPI app with ingress limits middleware."""
+    global _data_agent_service, _middleware_installed
     config_path = os.getenv(_CONFIG_ENV_NAME)
     _data_agent_service = DataAgentService(config_path=config_path) if config_path else None
+    limits = load_rest_api_limits(config_path)
+    if not _middleware_installed:
+        app.add_middleware(SecurityLimitsMiddleware, limits=limits)
+        _middleware_installed = True
     return app
 
 
@@ -90,8 +96,14 @@ async def startup_data_agent_service():
 
 @app.get("/health")
 async def health_check():
-    """Return service health status."""
-    return {"status": "healthy", "service": "DataAgent Service"}
+    """Service availability: agent finished initialize() and can accept traffic."""
+    service = _data_agent_service
+    if service is None or not service.is_ready():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "service": "DataAgent Service"},
+        )
+    return {"status": "ok", "service": "DataAgent Service"}
 
 
 @app.post("/api/agent/query")

@@ -12,6 +12,7 @@ def advance_data_analysis_workflow(
     retry_reason: str = "",
     task: str = "",
     timeout_sec: int = 600,
+    workspace_rel_path: str = "",
     *,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
@@ -27,6 +28,10 @@ def advance_data_analysis_workflow(
     inspect_data_analysis_workflow instead. Do not call submit_subagent directly
     while a workflow is active.
 
+    When resubmitting a retried step, optionally pass ``workspace_rel_path`` from
+    ``search_workspaces`` / ``inspect_workspace`` (for example ``subagents/{id}``)
+    to reuse that subagent workspace. Omit it to allocate a fresh workspace.
+
     Args:
         action: One of "submit_current_step", "complete_current_step", or
             "retry_current_step".
@@ -36,6 +41,9 @@ def advance_data_analysis_workflow(
         task: Optional override instruction when submitting a ready step. Leave
             empty to use the scenario-configured step target.
         timeout_sec: Maximum seconds for a newly submitted subagent job.
+        workspace_rel_path: Optional relative path under the parent workspace used
+            only with ``submit_current_step`` to reuse an existing subagent
+            workspace. Leave empty to allocate a fresh workspace.
     """
     return advance_workflow(
         action=action,
@@ -43,5 +51,6 @@ def advance_data_analysis_workflow(
         retry_reason=retry_reason,
         task=task,
         timeout_sec=timeout_sec,
+        workspace_rel_path=workspace_rel_path,
         tool_context=_tool_context,
     )
