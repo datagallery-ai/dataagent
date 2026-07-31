@@ -18,6 +18,7 @@ import inspect
 import json
 import queue as _queue
 from collections.abc import Callable, Coroutine, Iterator
+from contextvars import Token
 from typing import Any, cast
 
 _current_runtime: contextvars.ContextVar[Any] = contextvars.ContextVar("dataagent_current_runtime", default=None)
@@ -49,9 +50,9 @@ def _resolve_ojw_interrupt_types() -> tuple[type[Any], type[Any]]:
     return GraphInterrupt, Interrupt
 
 
-def set_current_runtime(runtime: Any) -> None:
+def set_current_runtime(runtime: Any) -> Token[Any]:
     """设置当前 Context 中的运行时对象。"""
-    _current_runtime.set(runtime)
+    return _current_runtime.set(runtime)
 
 
 def get_current_runtime() -> Any:
@@ -62,6 +63,11 @@ def get_current_runtime() -> Any:
 def clear_current_runtime() -> None:
     """清除当前 Context 中的运行时对象。"""
     _current_runtime.set(None)
+
+
+def reset_current_runtime(token: Token[Any]) -> None:
+    """恢复设置 Runtime 之前的 ContextVar 值。"""
+    _current_runtime.reset(token)
 
 
 def set_current_backend_runtime(runtime: Any) -> None:

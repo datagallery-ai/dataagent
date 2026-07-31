@@ -57,7 +57,6 @@ class Planner(BaseNode):
 
         if chat_model is None:
             raise RuntimeError("Chat model name is required for planner.")
-        self.llm = None
 
         ns = self.name or "planner"
         self.system_prompt = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/{ns}/system").with_partials(
@@ -123,10 +122,9 @@ class Planner(BaseNode):
         """终端模式整段输出，前端模式流式输出。runtime 由 workflow._wrap_process 显式传入。"""
         if runtime is None:
             raise RuntimeError("Planner requires runtime; env.llm_configs must include this node")
-        if self.llm is None:
-            base = runtime.llm(self.name)
-            tools = runtime.get_tools_for_llm()
-            self.llm = base.bind_tools(tools) if tools else base
+        base = runtime.llm(self.name)
+        tools = runtime.get_tools_for_llm()
+        llm = base.bind_tools(tools) if tools else base
 
         # 意图未填满：仅由 hook 记录意图状态，此处作为正常 planner 结果返回缺口提示，
         # 不依赖 BaseNode 全局短路，避免影响 pruner 的消息归并与后处理节点执行。
@@ -162,7 +160,7 @@ class Planner(BaseNode):
         try:
             if terminal_mode:
                 self._emit_planner_stream_event(writer, phase="start")
-            async for chunk in self.llm.astream(messages_to_process):
+            async for chunk in llm.astream(messages_to_process):
                 if chunk.done:
                     # 在最后一个 chunk 中可以获取到完整的输出
                     final_resp = chunk.final_response

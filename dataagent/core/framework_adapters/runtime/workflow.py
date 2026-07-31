@@ -13,11 +13,15 @@
 from __future__ import annotations
 
 import traceback
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Any, Optional, cast
 
 from langgraph.errors import GraphInterrupt  # type: ignore[import-not-found]
 from langgraph.graph import StateGraph  # type: ignore[import-not-found]
+from langgraph.runtime import Runtime as LangGraphRuntime  # type: ignore[import-not-found]
 from loguru import logger
 
 from dataagent.core.cbb.base_node import BaseNode
@@ -25,9 +29,16 @@ from dataagent.core.cbb.base_router import BaseRouter
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.framework_adapters.runtime.context import (
-    clear_current_runtime,
+    reset_current_runtime,
     set_current_runtime,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkflowContext:
+    """LangGraph run-scoped context carrying the DataAgent Runtime."""
+
+    runtime: Any
 
 
 class LangGraphWorkflow:
@@ -42,32 +53,50 @@ class LangGraphWorkflow:
         self.state_class = state_class
         self.graph: Any = None
         self.compiled_graph: Any = None
-        # runtime 由 FlexAgent 在每次调用前通过 set_runtime() 更新；
-        # _wrap_process 闭包在节点被调用时读取此处的值并显式传给 aprocess(state, runtime)。
-        self.runtime: Any = None
+        self._runtime_context: ContextVar[Any] = ContextVar(
+            f"dataagent_langgraph_runtime_{id(self)}",
+            default=None,
+        )
         self._build_graph()
 
-    def set_runtime(self, runtime: Any) -> None:
-        """在每次 ainvoke/astream 前更新 runtime，供 _wrap_process 传递给节点。"""
-        self.runtime = runtime
+    @staticmethod
+    def _build_run_context(runtime: Any) -> _WorkflowContext:
+        """Wrap a DataAgent Runtime in LangGraph's typed run context."""
+        return _WorkflowContext(runtime=runtime)
 
-    def resolve_recursion_limit(self) -> int:
-        """从 Runtime.max_iter 推导图引擎步数上限；未注入 runtime 时用默认常量。"""
-        rt = self.runtime
+    def set_runtime(self, runtime: Any) -> None:
+        """Bind a compatibility Runtime default in the current async context."""
+        self._runtime_context.set(runtime)
+
+    def resolve_recursion_limit(self, runtime: Optional[Any] = None) -> int:  # noqa: UP045
+        """从本次调用的 Runtime.max_iter 推导图引擎步数上限。"""
+        rt = self._resolve_runtime(runtime)
         if rt is not None:
             resolve_fn = getattr(rt, "resolve_workflow_recursion_limit", None)
             if callable(resolve_fn):
-                return int(resolve_fn())
+                return int(cast(Any, resolve_fn()))
             return Runtime.resolve_recursion_limit_from_max_iter(getattr(rt, "max_iter", None))
         return Runtime.resolve_recursion_limit_from_max_iter(None)
 
-    def merge_run_config(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    def merge_run_config(
+        self,
+        config: Optional[dict[str, Any]] = None,  # noqa: UP045
+        runtime: Optional[Any] = None,  # noqa: UP045
+    ) -> dict[str, Any]:
         """合并调用方 config，并写入 recursion_limit（调用方已显式设置时不覆盖）。"""
         run_config = dict(config) if isinstance(config, dict) else {}
-        run_config.setdefault("recursion_limit", self.resolve_recursion_limit())
+        run_config.setdefault("recursion_limit", self.resolve_recursion_limit(runtime))
         return run_config
 
-    def invoke(self, initial_state: dict[str, Any], store=None) -> dict[str, Any]:
+    def invoke(
+        self,
+        initial_state: dict[str, Any],
+        store: Any = None,
+        *,
+        runtime: Optional[Any] = None,  # noqa: UP045
+        checkpointer: Any = None,
+        config: Optional[dict[str, Any]] = None,  # noqa: UP045
+    ) -> dict[str, Any]:
         """
         Invoke the workflow with a given initial state.
 
@@ -81,18 +110,28 @@ class LangGraphWorkflow:
         Raises:
             Exception: If workflow execution fails, the original exception is raised.
         """
-        if self.compiled_graph is None:
-            if self.graph is None:
-                self._build_graph()
-            self.compiled_graph = self.graph.compile(store=store)
+        compiled = self._get_compiled_graph(store=store, checkpointer=checkpointer)
+        call_runtime = self._resolve_runtime(runtime)
         try:
-            result = self.compiled_graph.invoke(initial_state, config=self.merge_run_config())
-            return result
+            with self._activate_runtime(call_runtime):
+                return compiled.invoke(
+                    initial_state,
+                    config=self.merge_run_config(config, call_runtime),
+                    context=self._build_run_context(call_runtime),
+                )
         except Exception as e:
             logger.error(f"LangGraph workflow execution failed: {e}\n Traceback: {traceback.format_exc()}")
             raise e
 
-    async def ainvoke(self, initial_state: dict[str, Any], store=None) -> dict[str, Any]:
+    async def ainvoke(
+        self,
+        initial_state: Any,
+        store: Any = None,
+        *,
+        runtime: Optional[Any] = None,  # noqa: UP045
+        checkpointer: Any = None,
+        config: Optional[dict[str, Any]] = None,  # noqa: UP045
+    ) -> dict[str, Any]:
         """
         Asynchronously invoke the workflow with a given initial state.
 
@@ -106,15 +145,24 @@ class LangGraphWorkflow:
         Raises:
             Exception: If workflow execution fails, the original exception is raised.
         """
-        if self.compiled_graph is None:
-            if self.graph is None:
-                self._build_graph()
-            self.compiled_graph = self.graph.compile(store=store)
-        result = await self.compiled_graph.ainvoke(initial_state, config=self.merge_run_config())
-        return result
+        compiled = self._get_compiled_graph(store=store, checkpointer=checkpointer)
+        call_runtime = self._resolve_runtime(runtime)
+        with self._activate_runtime(call_runtime):
+            result = await compiled.ainvoke(
+                initial_state,
+                config=self.merge_run_config(config, call_runtime),
+                context=self._build_run_context(call_runtime),
+            )
+            return result
 
-    def astream(
-        self, initial_state: dict[str, Any], store=None, **kwargs
+    async def astream(
+        self,
+        initial_state: Any,
+        store: Any = None,
+        *,
+        runtime: Optional[Any] = None,  # noqa: UP045
+        checkpointer: Any = None,
+        **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any] | tuple[str, dict[str, Any]]]:
         """
         Asynchronously stream the execution of the workflow with a given initial state.
@@ -131,13 +179,17 @@ class LangGraphWorkflow:
         Raises:
             Exception: If workflow execution fails, the original exception is raised.
         """
-        if self.compiled_graph is None:
-            if self.graph is None:
-                self._build_graph()
-            self.compiled_graph = self.graph.compile(store=store)
-        run_config = self.merge_run_config(kwargs.pop("config", None))
-        result = self.compiled_graph.astream(initial_state, config=run_config, **kwargs)
-        return result
+        compiled = self._get_compiled_graph(store=store, checkpointer=checkpointer)
+        call_runtime = self._resolve_runtime(runtime)
+        run_config = self.merge_run_config(kwargs.pop("config", None), call_runtime)
+        with self._activate_runtime(call_runtime):
+            async for result in compiled.astream(
+                initial_state,
+                config=run_config,
+                context=self._build_run_context(call_runtime),
+                **kwargs,
+            ):
+                yield result
 
     def get_graph_info(self) -> dict[str, Any]:
         """
@@ -161,8 +213,9 @@ class LangGraphWorkflow:
         if self.graph is None:
             self._build_graph()
 
-    def _build_graph(self):
-        self.graph = StateGraph(self.state_class)
+    def _build_graph(self) -> None:
+        """Build and store the workflow graph."""
+        self.graph = StateGraph(self.state_class, context_schema=_WorkflowContext)
         for name in self.nodes:
             self.graph.add_node(name, self._wrap_process(name))
         self.graph.set_entry_point(self.router.entry_point)
@@ -171,16 +224,15 @@ class LangGraphWorkflow:
             if route_func is None:
                 raise ValueError(f"No routing function found for node: {name}")
             self.graph.add_conditional_edges(name, route_func)
-        return self.graph
 
     def _wrap_process(self, node_name: str):
         node = self.nodes[node_name]
 
-        async def wrapped_process(state):
-            runtime = self.runtime
-            set_current_runtime(runtime)
+        async def wrapped_process(state: Any, runtime: LangGraphRuntime[_WorkflowContext]):
+            call_runtime = runtime.context.runtime
+            token = set_current_runtime(call_runtime)
             try:
-                result = await node.aprocess(state, runtime)
+                result = await node.aprocess(state, call_runtime)
             except GraphInterrupt:
                 logger.debug(f"Node {node_name} interrupted for human feedback")
                 raise
@@ -188,7 +240,30 @@ class LangGraphWorkflow:
                 logger.exception(f"Error in node {node_name}: {e}")
                 raise
             finally:
-                clear_current_runtime()
+                reset_current_runtime(token)
             return result
 
         return wrapped_process
+
+    def _get_compiled_graph(self, store: Any = None, checkpointer: Any = None) -> Any:
+        """Return a compiled graph, avoiding checkpointer instances in the shared cache."""
+        if self.graph is None:
+            self._build_graph()
+        if checkpointer is not None:
+            return self.graph.compile(store=store, checkpointer=checkpointer)
+        if self.compiled_graph is None:
+            self.compiled_graph = self.graph.compile(store=store)
+        return self.compiled_graph
+
+    def _resolve_runtime(self, runtime: Optional[Any]) -> Any:  # noqa: UP045
+        """Resolve an explicit per-invocation Runtime before the compatibility default."""
+        return runtime if runtime is not None else self._runtime_context.get()
+
+    @contextmanager
+    def _activate_runtime(self, runtime: Any) -> Iterator[None]:
+        """Expose one invocation's Runtime through ContextVar for routers and tools."""
+        token = set_current_runtime(runtime)
+        try:
+            yield
+        finally:
+            reset_current_runtime(token)
