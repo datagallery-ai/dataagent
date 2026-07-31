@@ -9,4 +9,4 @@
   form of `TOOLS.skills.custom_dirs`.
 - `governance/governance.yaml` guards main-Agent orchestration; the subagent YAMLs
   apply the resource-job Python policy directly.
-- `resources/`, `data_models/`, `fixtures/`, and `docs/` are packaged Suite assets.
+- `scenarios/`, `data_models/`, `fixtures/`, and `docs/` are packaged Suite assets.

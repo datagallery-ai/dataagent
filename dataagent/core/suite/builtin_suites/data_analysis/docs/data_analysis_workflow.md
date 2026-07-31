@@ -2,7 +2,7 @@
 
 The Suite stores durable workflow state under `.metadata/workflows/<run_id>/`.
 Accepted local artifacts are published under `subagent_output/<session>/`.
-`resources/target_audience_selection.yaml` defines the default four-step flow.
+`scenarios/target_audience_selection.yaml` defines the default four-step flow.
 
 The main Agent must inspect durable state before starting or advancing a flow.
 Each ready step is submitted through `advance_data_analysis_workflow`; successful

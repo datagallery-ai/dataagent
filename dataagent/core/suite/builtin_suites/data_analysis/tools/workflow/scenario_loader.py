@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 SUITE_DIR = Path(__file__).resolve().parents[2]
-SCENARIOS_ROOT = SUITE_DIR / "resources"
+SCENARIOS_ROOT = SUITE_DIR / "scenarios"
 
 
 def load_scenario_steps(scenario_id: str, step_targets_json: str = "") -> list[dict[str, str]]:
