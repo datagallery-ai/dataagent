@@ -52,6 +52,8 @@ from dataagent.utils.constants import (
     DEFAULT_COMPRESS_MESSAGE_CNT,
     DEFAULT_COMPRESS_TOKEN_LIMIT,
     DEFAULT_LLM_MAX_RETRIES,
+    DEFAULT_LLM_NON_STREAM_TIMEOUT,
+    DEFAULT_LLM_STREAM_TIMEOUT,
 )
 
 _CREDENTIAL_SK_RE = re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")
@@ -779,7 +781,10 @@ class LLMClient:
             api_key: Bearer token。
             tools: 绑定的工具列表（OpenAI tools 形态或可转换对象）。
             extra_body: 原样透传进请求体的扩展参数（``temperature`` / ``enable_thinking`` 等）。
-            timeout: httpx 请求超时（秒）；``None`` 用 httpx 默认。
+            timeout: httpx 请求超时（秒）；``None`` 时由调用路径注入默认
+                （非流式 :data:`DEFAULT_LLM_NON_STREAM_TIMEOUT` /
+                流式 :data:`DEFAULT_LLM_STREAM_TIMEOUT`）。YAML ``params.timeout``
+                与 per-call ``kwargs.timeout`` 优先级更高。
             num_retries: 5xx/连接/429/timeout 的重试次数；``None`` 用默认值。
             provider: 模型供应商标识，用于判断是否支持显式 cache_control。
             compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
@@ -1544,7 +1549,7 @@ class LLMClient:
     def invoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以同步方式调用模型生成回复。"""
         payload = self._build_payload(messages, kwargs, stream=False)
-        timeout = self._resolve_timeout(kwargs)
+        timeout = self._resolve_timeout(kwargs, default=DEFAULT_LLM_NON_STREAM_TIMEOUT)
         max_attempts = self._resolve_max_attempts(kwargs)
         logger.debug("invoke.request model={} payload_keys={}", self._model, sorted(payload.keys()))
         verify = httpx_verify()
@@ -1569,7 +1574,7 @@ class LLMClient:
     async def ainvoke(self, messages: list[Any], **kwargs: Any) -> LLMClientMessage:
         """以异步方式调用模型生成回复。"""
         payload = self._build_payload(messages, kwargs, stream=False)
-        timeout = self._resolve_timeout(kwargs)
+        timeout = self._resolve_timeout(kwargs, default=DEFAULT_LLM_NON_STREAM_TIMEOUT)
         max_attempts = self._resolve_max_attempts(kwargs)
         logger.debug("ainvoke.request model={} payload_keys={}", self._model, sorted(payload.keys()))
         verify = httpx_verify()
@@ -1594,7 +1599,7 @@ class LLMClient:
     async def astream(self, messages: list[Any], **kwargs: Any) -> AsyncIterator[LLMClientMessage]:
         """以异步方式流式调用模型，逐步产生消息块。"""
         payload = self._build_payload(messages, kwargs, stream=True)
-        timeout = self._resolve_timeout(kwargs)
+        timeout = self._resolve_timeout(kwargs, default=DEFAULT_LLM_STREAM_TIMEOUT)
         max_attempts = self._resolve_max_attempts(kwargs)
         request_url = self._endpoint()
 
@@ -1763,7 +1768,7 @@ class LLMClient:
         self,
         *,
         payload: dict[str, Any],
-        timeout: httpx.Timeout | None,
+        timeout: httpx.Timeout,
         request_url: str,
         messages: list[Any],
         state: _AStreamState,
@@ -1976,10 +1981,14 @@ class LLMClient:
             success,
         )
 
-    def _resolve_timeout(self, kwargs: dict[str, Any]) -> httpx.Timeout | None:
-        """Resolve the per-call httpx timeout, falling back to the client default."""
+    def _resolve_timeout(self, kwargs: dict[str, Any], *, default: float) -> httpx.Timeout:
+        """解析 httpx 超时：kwargs.timeout > self._timeout > path ``default``。
+
+        路径默认由调用方传入：非流式 :data:`DEFAULT_LLM_NON_STREAM_TIMEOUT`，
+        流式 :data:`DEFAULT_LLM_STREAM_TIMEOUT`。
+        """
         timeout = kwargs.get("timeout", self._timeout)
-        return httpx.Timeout(timeout) if timeout is not None else None
+        return httpx.Timeout(timeout if timeout is not None else default)
 
     def _resolve_max_attempts(self, kwargs: dict[str, Any]) -> int:
         """Resolve the per-call retry attempt count, falling back to the default."""
