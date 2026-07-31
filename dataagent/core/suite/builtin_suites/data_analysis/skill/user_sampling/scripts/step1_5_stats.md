@@ -9,7 +9,7 @@
 ## 前置
 
 - step1_4 已完成，全部交付表（output_database 内与投影源表一一对应）在库中
-- `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`（含 `projections`）；`actual_sample_size` 必须与 plan.`sample_size` 一致，否则回 step1_3
+- `read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`（含 `projections`）；`actual_sample_size` 必须 **≤** plan.`sample_size`（超量则回 step1_3）；池不足导致采不满属合法，**不得因此回退重采**
 
 ---
 
