@@ -14,6 +14,7 @@ MODEL:
           type: "disabled"
 CORE:
   perceptor:
+    schema_mode: "full_schema"  # "full_schema", "schema_linking"
     user_schema: null  # name of .md file under templates/nl2sql/user/
     user_evidence: null
     user_sql_rules: "sql_rules_bird"
