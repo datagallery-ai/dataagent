@@ -144,6 +144,7 @@ class UDNPerceptorNode(PerceptorNode):
     _UDN_SCHEMA_PREFIX = "udn."
 
     def __init__(self, **kwargs):
+        kwargs.pop("schema_mode", None)
         super().__init__(**kwargs)
         udn_cfg: dict = self._get_agent_config("SEMANTIC_LAYER.udn", {}) or {}
         table_cfg: dict = udn_cfg.get("table_selection", {})

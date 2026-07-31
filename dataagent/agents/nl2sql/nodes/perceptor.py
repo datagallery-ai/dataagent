@@ -12,12 +12,12 @@
 # ============================================================================
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import requests
 
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient, SemanticServiceError
-from dataagent.agents.nl2sql.errors import SemanticServiceCallError
+from dataagent.agents.nl2sql.errors import SchemaNotFoundError, SemanticServiceCallError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     iter_semantic_column_payloads,
@@ -35,12 +35,22 @@ from dataagent.utils.constants import (
 )
 from dataagent.utils.log import logger
 
+_SCHEMA_MODE_FULL = "full_schema"
+_SCHEMA_MODE_LINKING = "schema_linking"
+_SUPPORTED_SCHEMA_MODES = (_SCHEMA_MODE_FULL, _SCHEMA_MODE_LINKING)
+
 
 class PerceptorNode(BaseNL2SQLNode):
     def __init__(self, **kwargs):
         super().__init__(name="perceptor", **kwargs)
-        self._semantic_client: SemanticServiceClient | None = None
+        self._semantic_client: Optional[SemanticServiceClient] = None  # noqa: UP045
         self.top_k = kwargs.get("top_k", DEFAULT_NL2SQL_SCHEMA_TOP_K)
+        self.schema_mode = kwargs.get("schema_mode", _SCHEMA_MODE_FULL)
+        if self.schema_mode not in _SUPPORTED_SCHEMA_MODES:
+            allowed_values = ", ".join(_SUPPORTED_SCHEMA_MODES)
+            raise ValueError(
+                f"Invalid CORE.perceptor.schema_mode {self.schema_mode!r}; allowed values: {allowed_values}"
+            )
         self.user_schema = kwargs.pop("user_schema", None)
         self.user_evidence = kwargs.pop("user_evidence", None)
         self.user_sql_rules = kwargs.pop("user_sql_rules", None)
@@ -55,20 +65,11 @@ class PerceptorNode(BaseNL2SQLNode):
                 raise SemanticServiceCallError(detail=str(exc)) from exc
         return self._semantic_client
 
-    def schema_linking(self, keywords: list[str] | None):
-        """
-        state["schema"] = {
-          "tbl1": {
-            "description": "...",
-            "columns": {
-              "col1": {"description": "...", "value_type": "..."},
-              "col2": {...}
-            }
-          }
-          "tbl2": {...}
-        }
-        state["joins"] = [("tbl1.col1", "tbl2.col1"), ...]
-        """
+    def schema_linking(
+        self,
+        keywords: Optional[list[str]],  # noqa: UP045
+    ) -> tuple[dict, list[tuple[str, str]]]:
+        """Retrieve the schema and joins relevant to semantic search keywords."""
         if not keywords:
             return {}, []
         dt_set, tc_set, j_set, dt_desc, schema = set(), set(), set(), {}, {}
@@ -92,28 +93,35 @@ class PerceptorNode(BaseNL2SQLNode):
         for dt in dt_set:
             _, t = dt.split(".")
             cols = self._get_table_columns_info(dt)
-            schema[t] = {"description": dt_desc[dt], "columns": {}}
+            columns = {}
+            schema[t] = {"description": dt_desc.get(dt, ""), "columns": columns}
             for dtc, meta in cols.items():
                 _, _, c = dtc.split(".")
                 if f"{t}.{c}" not in tc_set:
                     continue
-                schema[t]["columns"][c] = {
+                columns[c] = {
                     "description": meta.get("column_short_description", ""),
                     "value_type": meta.get("value_type", ""),
                     "example_values": meta.get("value_description", ""),
                 }
         for j in self._get_joinable_tables(list(dt_set)):
             try:
-                src = j["src"].split(".", 1)[1]
-                tgt = j["target_column"][0].split(".", 1)[1]
-            except (KeyError, IndexError, ValueError) as exc:
+                src_value = j.get("src", "")
+                target_columns = j.get("target_column", [])
+                src = src_value.split(".", 1)[1]
+                tgt = target_columns[0].split(".", 1)[1]
+            except (AttributeError, IndexError, TypeError, ValueError) as exc:
                 logger.warning(f"Perceptor: malformed joinable_table entry {j}: {exc}")
                 continue
             if src in tc_set and tgt in tc_set:
                 j_set.add((src, tgt))
         return schema, sorted(j_set)
 
-    def full_schema(self, allow_tables: list[str] | None = None):
+    def full_schema(
+        self,
+        allow_tables: Optional[list[str]] = None,  # noqa: UP045
+    ) -> tuple[dict, list[tuple[str, str]]]:
+        """Retrieve the complete schema and joins, optionally limited to selected tables."""
         j_set, dt_desc, schema = set(), {}, {}
         allow_set = {str(t).strip() for t in (allow_tables or []) if str(t).strip()} or None
         allow_names = {t.split(".", 1)[1] if "." in t else t for t in allow_set} if allow_set else None
@@ -127,19 +135,22 @@ class PerceptorNode(BaseNL2SQLNode):
         for dt in dt_desc:
             t = dt.split(".", 1)[1]
             cols = self._get_table_columns_info(dt)
-            schema[t] = {"description": dt_desc[dt], "columns": {}}
+            columns = {}
+            schema[t] = {"description": dt_desc.get(dt, ""), "columns": columns}
             for dtc, meta in cols.items():
                 c = dtc.split(".", 2)[2]
-                schema[t]["columns"][c] = {
+                columns[c] = {
                     "description": meta.get("column_short_description", ""),
                     "value_type": meta.get("value_type", ""),
                     "example_values": meta.get("value_description", ""),
                 }
         for j in self._get_joinable_tables(list(dt_desc.keys())):
             try:
-                src = j["src"].split(".", 1)[1]
-                tgt = j["target_column"][0].split(".", 1)[1]
-            except (KeyError, IndexError, ValueError) as exc:
+                src_value = j.get("src", "")
+                target_columns = j.get("target_column", [])
+                src = src_value.split(".", 1)[1]
+                tgt = target_columns[0].split(".", 1)[1]
+            except (AttributeError, IndexError, TypeError, ValueError) as exc:
                 logger.warning(f"Perceptor.full_schema: malformed joinable_table entry {j}: {exc}")
                 continue
             j_set.add((src, tgt))
@@ -164,10 +175,18 @@ class PerceptorNode(BaseNL2SQLNode):
             ("few_shot_examples", self.user_few_shot_examples),
         ]:
             state[attr] = await asyncio.to_thread(self._load_prompt, key)
-        if not state["schema_str"]:
-            state["schema"], state["joins"] = await asyncio.to_thread(self.full_schema)
-            state["schema_str"] = schema_to_ddl(state["schema"], state["joins"])
-        message = f"=== Perceptor ===\n{state['schema_str']}"
+        if not state.get("schema_str", "").strip():
+            if self.schema_mode == _SCHEMA_MODE_LINKING:
+                question = state.get("question", "").strip()
+                schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
+                if not schema:
+                    raise SchemaNotFoundError(detail=f"schema_mode={self.schema_mode}")
+            else:
+                schema, joins = await asyncio.to_thread(self.full_schema)
+            state["schema"] = schema
+            state["joins"] = joins
+            state["schema_str"] = schema_to_ddl(schema, joins)
+        message = f"=== Perceptor ===\n{state.get('schema_str', '')}"
         logger.info(message)
         state["stream_message"] = message
         return state

@@ -15,6 +15,7 @@ from __future__ import annotations
 __all__ = [
     "LLMOutputParseError",
     "NL2SQLError",
+    "SchemaNotFoundError",
     "SemanticServiceCallError",
     "SQLServiceError",
     "ThirdPartyServiceError",
@@ -76,6 +77,15 @@ class SemanticServiceCallError(ThirdPartyServiceError):
 
     code = "NL2SQL-META-001"
     message = "语义服务调用失败"
+    component = "semantic_service"
+
+
+class SchemaNotFoundError(NL2SQLError):
+    """Raised when schema perception returns no usable database schema."""
+
+    code = "NL2SQL-META-002"
+    message = "未检索到可用的数据库 Schema"
+    http_status = 422
     component = "semantic_service"
 
 
