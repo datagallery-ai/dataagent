@@ -29,8 +29,6 @@ env_path = Path(os.getcwd()) / ".env"
 if env_path.exists():
     load_env_file(env_path)
     logger.trace(f"Loaded environment variables from: {env_path}")
-else:
-    logger.warning(f".env file not found at: {env_path}")
 
 
 class ConfigManager:
