@@ -37,8 +37,8 @@
 | 🔬 **自动特征工程** | Agent 自主探索数百张数据表关联关系，自动发现潜在特征组合，支持特征重要性排序与可视化，**特征工程效率提升 10 倍+** |
 | 🏭 **全链路数据工厂** | 数据接入→Schema 感知→特征挖掘→模型训练→报告生成，**一套 YAML 配置跑通完整数据工程流水线** |
 | 🧩 **统一语义层** | 优先支持 GaussVector 作为语义层增强向量检索底座，将表、字段、指标口径和业务描述沉淀为可检索的 schema 线索，支撑 NL2SQL 与多源查询的语义对齐 |
-| 🔌 **插件化工具体系** | 本地函数 / MCP (stdio+sse) / A2A 三类工具统一注册与调用机制，工具自动发现、按需加载；内置数据分析等 SKILL |
-| 📡 **多 Agent 协同原生** | 完整 A2A 1.0 协议支持，Agent 间自动能力发现、能力映射、标准化通信，天然支持复杂业务的分布式协作 |
+| 🔌 **插件化工具体系** | 本地 Python 工具与 gym 环境工具（如 SQLiteEnv）经 `ToolManager` 统一注册；YAML `TOOLS.local_functions` / 可选 builtin 覆盖 |
+| 📡 **Agent 组合编排** | Flex + NL2SQL，可选 sub-agent / job 工具支撑多步流程；对外以 REST 与 Python SDK 为北向入口 |
 | 🧩 **YAML 即 Agent** | 模型、工具、记忆、工作流、场景提示词全部声明式编排，**分钟级从想法到可运行 Agent** |
 | 🛡️ **企业级安全沙箱** | Workspace 隔离 + 路径白名单 + 全链路操作审计，满足金融级安全合规要求 |
 | ⚡ **开箱即用** | 20+ 行业场景示例配置，**零代码启动，分钟级上手** |
@@ -63,12 +63,12 @@ uv run mkdocs serve -f docs/mkdocs.yml -a 0.0.0.0:8000
 | --- | --- |
 | 📖 [安装部署](docs/zh/installation/installation.md) | 使用 `uv` / pip 安装、环境变量配置与安装验证 |
 | 📖 [快速开始](docs/zh/quick_start/quick_start.md) | 分钟级跑通 DataAgent 端到端流程 |
-| 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 部署 Elasticsearch、PostgreSQL、MySQL；优先支持 GaussVector 接入，导入场景数据并接入 Semantic Service |
+| 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 可选：Semantic Service / GaussVector 用于 NL2SQL；MySQL / PostgreSQL / Elasticsearch 仅扩展场景需要 |
 | ⚙️ [功能特性](docs/zh/function/function.md) | 核心能力、模块划分、工具与模型支持 |
 | 🧩 [Semantic Service](docs/zh/semantic_service/semantic-service-user-guide.md) | 面向 NL2SQL 的语义服务增强元数据，优先围绕 GaussVector 提供语义层索引、候选表字段召回与 schema 感知增强 |
 | 🔗 [openJiuwen](docs/zh/openJiuwen/openJiuwen-user-guide.md) | openJiuwen 集成与使用说明 |
 | 🏗️ [架构文档](docs/zh/design_doc/design_doc.md) | 系统架构；context、规划引擎、action 等模块设计 |
-| 📡 [接口设计](docs/zh/api_doc/api_doc.md) | A2A 北向服务接口与 Python SDK |
+| 📡 [接口设计](docs/zh/api_doc/api_doc.md) | REST 北向服务接口与 Python SDK |
 | 📋 [应用案例](docs/zh/case/case.md) | 构建 NL2SQL 专用 Agent、构建数据分析 Agent |
 | 📝 [说明](docs/zh/explain/explain.md) | 开发、测试与文档维护说明 |
 | 🗓️ [里程碑](docs/zh/milestone/milestone.md) | 版本规划与发布节奏 |
@@ -110,26 +110,18 @@ cp .env.example .env
 
 ## ⚡ 快速开始
 
-### 🎮 交互式快速启动
+### 📡 启动 REST 服务
 
 ```bash
-uv run -m dataagent quickstart
+uv run -m dataagent --config dataagent/core/flex/examples/ueg.yaml --host 0.0.0.0 --port 8010
 ```
 
-按提示输入模型配置后即可开始与 Agent 对话！
+### 🐍 或使用 Python SDK
 
-### 📁 使用配置文件启动
+```python
+from dataagent import DataAgent
 
-```bash
-# 终端交互模式
-uv run -m dataagent --config dataagent/core/flex/examples/quickstart.yaml
-```
-
-### 🔍 配置检查
-
-```bash
-# 检查配置文件中的环境变量引用
-uv run -m dataagent config check dataagent/core/flex/examples/quickstart.yaml
+agent = DataAgent.from_config("dataagent/core/flex/examples/ueg.yaml")
 ```
 
 ## 📖 使用方法
@@ -174,22 +166,6 @@ WORKSPACE:
   path: "/tmp/dataagent_workspace"
   allow_path:
     - "/tmp/dataagent_workspace"
-```
-
-### 🌐 A2A 1.0 服务模式
-
-```bash
-# 启动 A2A 服务器
-uv run -m dataagent serve-a2a \
-  --config path/to/config.yaml \
-  --host 0.0.0.0 \
-  --port 9999 \
-  --auth-token your_token
-
-# 服务地址
-# ├── 🌟 AgentCard: http://localhost:9999/.well-known/agent.json
-# ├── 📡 JSON-RPC:  http://localhost:9999/a2a/jsonrpc
-# └── 🔌 REST:      http://localhost:9999/a2a/rest
 ```
 
 ## ⚙️ 配置说明

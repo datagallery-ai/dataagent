@@ -44,11 +44,7 @@ class _ToolManagerStub:
     """占位 tool_manager：满足 FlexAgent._refresh_workspace_runtime_context。"""
 
     @staticmethod
-    def refresh_user_skills(*, user_id: str | None = None) -> None:
-        return None
-
-    @staticmethod
-    def list_skills() -> list[dict[str, str]]:
+    def workspace_allow_path_list(config):
         return []
 
 
@@ -134,7 +130,6 @@ def _build_flex_agent_stub(
         runtime.workspace_dir = workspace
         runtime.hierarchy = None
         runtime.reset_flex_planner_user_sync = lambda: None
-        runtime.on_subagent_progress = None
         runtime.update_from_state = lambda state: setattr(
             runtime,
             "workspace_dir",

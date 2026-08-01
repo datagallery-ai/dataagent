@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from dataagent.actions.tools.local_tool.sandbox import NoopSandbox, create_sandbox
+from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 
 
 def test_sandbox_init_rejects_relative_allow_read_paths():

@@ -245,3 +245,7 @@ openspec/
 opencode.jsonc
 
 run_logs/
+
+# Local analysis / verification residue (do not commit)
+graphify-out/
+ut_results/

@@ -26,6 +26,7 @@ from dataagent.actions.tools.local_tool.sandbox import (
     build_workspace_mount_lists,
     create_sandbox,
 )
+from dataagent.config.allow_paths import effective_workspace_allow_paths
 from dataagent.config.config_manager import ConfigManager, build_prompt_append
 from dataagent.core.cbb.agent_env import Env
 from dataagent.core.cbb.base_agent import BaseAgent
@@ -39,9 +40,7 @@ from dataagent.core.flex.hooks.registry import resolve_builtin_hook
 from dataagent.core.flex.workflow.router import FlexRouter, LimitReachedError
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
-from dataagent.core.suite.allow_paths import effective_workspace_allow_paths
 from dataagent.core.utils.performance import callable_perf_name, get_current_collector, make_perf_state_holder
-from dataagent.utils.cli.rich_renderer import RICH_AVAILABLE, StreamRenderer, reset_active_renderer, set_active_renderer
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.import_utils import import_class
 
@@ -117,16 +116,6 @@ class FlexAgent(BaseAgent):
             token_limit=getattr(self.env_config, "token_limit", None),
         )
 
-        # If HITL is enabled, create HumanFeedbackNode
-        enable_hitl = (config or {}).get("AGENT_CONFIG", {}).get("enable_human_feedback", False)
-        if enable_hitl is True:
-            from dataagent.core.flex.nodes.human_feedback import HumanFeedbackNode
-
-            hitl_node = HumanFeedbackNode(name="human_feedback")
-            all_nodes.append(hitl_node)
-            logger.trace("[FlexAgent] HITL 功能已启用，创建 human_feedback 节点")
-            # 注意：request_human_feedback 工具已经在 DataAgent.global_init() 中注册过了
-
         # state_class 在 langgraph 下用于 StateGraph schema；
         # 在 openjiuwen 下仅用于解析 Annotated reducer（messages/add 等），不影响执行引擎。
         state_class = FlexState
@@ -149,26 +138,6 @@ class FlexAgent(BaseAgent):
 
         # 从 config 的 HOOKS 段挂载内置 hook（见 registry；memory/metadata 亦通过 YAML 声明）
         self._register_hooks_from_config(config or {})
-
-    @staticmethod
-    def import_hook_from_suite_root(
-        relative_spec: str,
-        *,
-        root: Path,
-        suite_name: str,
-        location: str,
-    ) -> Any:
-        """Import a hook callable relative to a Suite root directory."""
-        from dataagent.utils.import_utils import import_callable_from_suite_root
-
-        try:
-            return import_callable_from_suite_root(
-                relative_spec,
-                root=root,
-                suite_name=suite_name,
-            )
-        except Exception as exc:
-            raise ValueError(f"{location}: failed to import Suite hook {relative_spec!r} from {root}: {exc}") from exc
 
     @staticmethod
     def _create_nodes_from_config(
@@ -280,22 +249,6 @@ class FlexAgent(BaseAgent):
                 return cm
         return agent_config_manager
 
-    @staticmethod
-    def _import_hook_from_suite_root(
-        relative_spec: str,
-        *,
-        root: Path,
-        suite_name: str,
-        location: str,
-    ) -> Any:
-        """Backward-compatible alias for :meth:`import_hook_from_suite_root`."""
-        return FlexAgent.import_hook_from_suite_root(
-            relative_spec,
-            root=root,
-            suite_name=suite_name,
-            location=location,
-        )
-
     @classmethod
     def from_config(cls, config: dict[str, Any], config_manager: ConfigManager | None = None) -> "FlexAgent":
         """
@@ -375,13 +328,10 @@ class FlexAgent(BaseAgent):
         initial_state["user_query"] = message
         initial_state["raw_user_query"] = message
 
-        # 🆕 注入 HITL 配置到 initial_state（从 self.config 读取）
         agent_config = (self.config or {}).get("AGENT_CONFIG", {})
-        enable_hitl = agent_config.get("enable_human_feedback", False)
         # chat 接口下 terminal_mode 默认 True
         terminal_mode = agent_config.get("terminal_mode", True)
 
-        initial_state.setdefault("enable_human_feedback", enable_hitl)
         initial_state.setdefault("terminal_mode", terminal_mode)
         initial_state.setdefault(
             "enable_portrait",
@@ -392,7 +342,7 @@ class FlexAgent(BaseAgent):
         initial_state.setdefault("user_id", self.config.get("USER_ID", "anonymous"))
         initial_state.setdefault("session_id", self.config.get("SESSION_ID", "default_session"))
 
-        logger.debug(f"[FlexAgent] chat() 注入 HITL 配置: enable={enable_hitl}, terminal_mode={terminal_mode}")
+        logger.debug(f"[FlexAgent] chat() terminal_mode={terminal_mode}")
 
         # 每次 chat() 新建 Runtime（per-call），引用共享的不可变 env_config
         runtime = self._create_call_runtime()
@@ -422,31 +372,8 @@ class FlexAgent(BaseAgent):
             latest["state"] = initial_state
             final_state: dict[str, Any] = {}
             try:
-                if self.debug and RICH_AVAILABLE:
-                    renderer = StreamRenderer()
-                    renderer.start(initial_node="planner")
-                    renderer_token = set_active_renderer(renderer)
-                    runtime.on_subagent_progress = renderer.update_subagent_hint
-                    try:
-                        stream = self.workflow_backend.astream(initial_state, stream_mode=["values", "custom"])
-                        async for chunk in stream:
-                            mode, data = chunk
-                            if mode == "custom" and isinstance(data, dict):
-                                renderer.handle_event(data)
-                            elif mode in ("values", "updates") and isinstance(data, dict):
-                                final_state = data
-                    finally:
-                        reset_active_renderer(renderer_token)
-                        renderer.stop()
-
-                    if not final_state or not isinstance(final_state, dict) or not final_state.get("messages"):
-                        logger.warning("No valid values event in stream, falling back to ainvoke")
-                        final_state = await self.workflow_backend.ainvoke(initial_state)
-
-                    logger.trace("Chat completed (debug mode with streaming)")
-                else:
-                    final_state = await self.workflow_backend.ainvoke(initial_state)
-                    logger.trace(f"Chat completed ({self.mode} mode)")
+                final_state = await self.workflow_backend.ainvoke(initial_state)
+                logger.trace(f"Chat completed ({self.mode} mode)")
 
                 final_state = self._run_agent_post_hooks(final_state, runtime)
 
@@ -890,16 +817,13 @@ class FlexAgent(BaseAgent):
     def _prepare_context_for_langgraph_stream(self, input_val: dict[str, Any], runtime: Any = None) -> None:
         """
         LangGraph 原生调用分支下：
-        - 注入 HITL 配置到 input
         - 同步 workspace 到 runtime，设置 ContextVar
         - 初始化/获取 Context，并在首次运行时注册 Query
         """
         try:
             agent_config = (self.config or {}).get("AGENT_CONFIG", {})
-            enable_hitl = agent_config.get("enable_human_feedback", False)
             terminal_mode = agent_config.get("terminal_mode", False)
 
-            input_val.setdefault("enable_human_feedback", enable_hitl)
             input_val.setdefault("terminal_mode", terminal_mode)
             input_val.setdefault(
                 "enable_portrait",
@@ -922,22 +846,15 @@ class FlexAgent(BaseAgent):
             logger.debug(f"Context initialization skipped in langgraph stream prepare: {e}")
 
     def _refresh_workspace_runtime_context(self, state: dict[str, Any], runtime: Any = None) -> None:
-        """Refresh runtime-local skills snapshot and rebuild sandbox before one run."""
+        """Rebuild sandbox mounts before one run."""
         user_id = str(state.get("user_id") or "").strip() or None
-        tm = self.env_config.tool_manager
-        if tm is not None:
-            tm.refresh_user_skills(user_id=user_id)
         workspace = state.get("workspace") or (runtime.workspace_dir if runtime else None)
         if workspace is None:
             raise RuntimeError("workspace is required before refreshing runtime workspace context")
-        skills = tm.list_skills() if tm is not None else []
-        skill_aliases = {skill["name"]: Path(str(skill["path"])).resolve() for skill in skills}
+        skill_aliases: dict[str, Path] = {}
         cm = getattr(self, "config_manager", None)
         settings = cm.get_all() if cm is not None else (self.config or {})
-        activated_suites = getattr(cm, "activated_suites", None) or []
-        allow_read_roots = [
-            Path(p).expanduser().resolve() for p in effective_workspace_allow_paths(settings, activated_suites)
-        ]
+        allow_read_roots = [Path(p).expanduser().resolve() for p in effective_workspace_allow_paths(settings)]
         resolved_workspace = Path(str(workspace)).expanduser().resolve()
 
         # 默认开启：若系统未安装 bwrap，则 create_sandbox 会自动回退为 NoopSandbox 并打印 warning。
@@ -1046,11 +963,10 @@ class FlexAgent(BaseAgent):
         配置，经 ``functools.partial`` 绑定为 keyword-only 参数（hook 须以带默认值的
         keyword-only 形参接收，见 :meth:`BaseAgent._validate_hook`）。例如::
 
-            - name: plan_enforcer
-              require_plan_skills:
-                - create-neutralization-experiment
+            - name: pruner
+              some_option: value
 
-        会将 ``require_plan_skills`` 绑定到 hook 的同名 kwarg。
+        会将 ``some_option`` 绑定到 hook 的同名 kwarg。
         """
         hook_llm_key: str | None = None
         if isinstance(item, dict):
@@ -1086,43 +1002,8 @@ class FlexAgent(BaseAgent):
         return self._maybe_warn_hook_llm_missing(fn, None, location)
 
     def _resolve_hook_callable(self, spec: str, *, location: str) -> Any:
-        """
-        Resolve a hook spec to a callable.
-
-        Supports built-in short names, framework dotted paths, and ``{suite_name}.`` prefixed
-        Suite hooks loaded from the activated suite root.
-        """
-        suite_fn = self._try_resolve_suite_hook(spec, location=location)
-        if suite_fn is not None:
-            return suite_fn
+        """Resolve a hook spec to a callable (builtin short names or dotted paths)."""
         return resolve_builtin_hook(spec)
-
-    def _try_resolve_suite_hook(self, spec: str, *, location: str) -> Any | None:
-        """Load a Suite hook when ``spec`` starts with an activated Suite name prefix."""
-        activated = getattr(getattr(self, "config_manager", None), "activated_suites", None) or []
-        ordered = sorted(
-            (entry for entry in activated if isinstance(entry, dict)),
-            key=lambda item: len(str(item.get("name") or "")),
-            reverse=True,
-        )
-        for entry in ordered:
-            suite_name = str(entry.get("name") or "").strip()
-            root_raw = entry.get("root")
-            if not suite_name or not root_raw:
-                continue
-            prefix = f"{suite_name}."
-            if not spec.startswith(prefix):
-                continue
-            relative = spec[len(prefix) :]
-            if not relative:
-                raise ValueError(f"{location}: invalid Suite hook spec {spec!r}")
-            return self.import_hook_from_suite_root(
-                relative,
-                root=Path(str(root_raw)),
-                suite_name=suite_name,
-                location=location,
-            )
-        return None
 
     def _run_builtin_agent_pre_hooks(self, state: dict[str, Any], runtime: Any = None) -> dict[str, Any]:
         """运行默认内置 agent pre 链（先于 YAML ``HOOKS.agent.pre``）。

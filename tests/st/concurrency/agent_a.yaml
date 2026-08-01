@@ -10,6 +10,13 @@ MODEL:
     params:
       model: "deepseek-v3.2"
       temperature: 0.7
+  # Default ACTOR_LOOP keeps nl2sql_react → chat_model; provide provider for merge.
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "deepseek-v3.2"
+      temperature: 0.7
 
 SCENARIO:
   chat:

@@ -11,7 +11,6 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
-import re
 import shutil
 from collections import defaultdict
 from collections.abc import Generator, Mapping
@@ -21,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import networkx as nx
-import yaml
 from loguru import logger
 
 from dataagent.core.context.utils_context_filesystem import is_text_file, lineage_path_key, load_file, load_table
@@ -445,47 +443,6 @@ class ScriptNode(DataNode):
         return "No data preview available."
 
 
-@dataclass
-class SkillNode(DataNode):
-    """
-    Skill Node IR
-    """
-
-    path: str
-
-    async def infer_description_async(self, **kwargs: Any) -> str:
-        try:
-            content = load_file(filepath=self.path)
-        except Exception:
-            return "No description available."
-        # 匹配形如下方的字符串，注意---最后需要以换行符作为结尾
-        # ---
-        # group 1
-        # ---
-        # group 2
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", content, flags=re.DOTALL)
-        if match is None:
-            return content[:600]
-        try:
-            meta = yaml.safe_load(match.group(1))
-            desc = (meta or {}).get("description", "")
-            if desc:
-                return str(desc)
-        except Exception:
-            logger.warning("Cannot parse yaml formatter.")
-        return content[:600]
-
-    def get_full_data(self, *, from_backup: bool = False) -> str:
-        try:
-            content = load_file(filepath=self.path)
-        except Exception:
-            return f"Unable to read skill file: {self.path}"
-        match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", content, flags=re.DOTALL)
-        if match:
-            return match.group(2)
-        return content
-
-
 NODE_REGISTRY: dict[str, type[BaseIR]] = {
     "Query": QueryNode,
     "Response": ResponseNode,
@@ -497,7 +454,6 @@ NODE_REGISTRY: dict[str, type[BaseIR]] = {
     "Column": ColumnNode,
     "File": FileNode,
     "Script": ScriptNode,
-    "Skill": SkillNode,
 }
 
 
@@ -513,7 +469,7 @@ class IRManager:
         Args:
             node_types (Optional[list[str]]): node types to be managed
              (Default: `["Query", "Response","State", "Action", "Knowledge", "Tool", "Table", "Column", "File",
-              "Script", "Skill"]`)
+              "Script"]`)
         """
         if node_types is None:
             node_types = [
@@ -527,7 +483,6 @@ class IRManager:
                 "Column",
                 "File",
                 "Script",
-                "Skill",
             ]
 
         self._nodes: dict[str, dict[str, BaseIR]] = {i: {} for i in node_types}

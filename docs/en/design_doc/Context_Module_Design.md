@@ -12,7 +12,7 @@ Context is not a global singleton but is managed per-instance using the tuple of
 
 Trajectories use a directed acyclic graph:
 
-- **Nodes**: Divided into computation nodes and data nodes. Computation nodes include user questions, agent reasoning conclusions, and tool call actions; data nodes include knowledge snippets, tool definitions, data tables, data columns, files, scripts, skill packages, and other intermediate artifacts. Ten node types are supported in total.
+- **Nodes**: Divided into computation nodes and data nodes. Computation nodes include user questions, agent reasoning conclusions, and tool call actions; data nodes include knowledge snippets, tool definitions, data tables, data columns, files, scripts, and other intermediate artifacts. Nine node types are supported in total.
 - **Edges**: Represent relationships between nodes. Main types include trigger edges (question or conclusion triggers action), output edges (action produces conclusion or data), and continuation edges (cross-round). Edge types can be explicitly specified by the caller or automatically inferred by the system based on predecessor and current node types.
 - **Active Branch Pointers**: Maintain the set of current trajectory endpoints for identifying focus areas in subsequent planning and debugging. When new nodes are added, pointers can be advanced (moved forward) or branches can simply be appended.
 

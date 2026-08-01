@@ -39,12 +39,3 @@ class TestEnvConfigConfigManagerInjection:
         )
 
         assert env.db_path == str(db_path)
-
-    def test_arithmetic_env_ignores_config_manager(self):
-        """Env classes without config_manager param are unaffected by injection."""
-        env = from_config(
-            {"module": "dataagent.actions.gym.ArithmeticEnv"},
-            config_manager=ConfigManager(),
-        )
-
-        assert env.__class__.__name__ == "ArithmeticEnv"

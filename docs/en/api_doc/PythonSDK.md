@@ -32,7 +32,7 @@ A `DataAgent` instance.
 ```python
 from dataagent.interface.sdk.agent import DataAgent
 
-agent = DataAgent.from_config("path/to/ecommerce_agent.yaml")
+agent = DataAgent.from_config("dataagent/core/flex/examples/ueg.yaml")
 ```
 
 ---
@@ -234,40 +234,19 @@ TOOLS:
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "natural_language_to_sql"
     - module: "dataagent.actions.tools.local_tool.tools"
-      function: "natural_language_to_plot"
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "report_generator"
-
-  mcp_servers:                           # MCP server tools
-    - name: "my_mcp_server"
-      url: "http://localhost:8000/mcp"
-
-  A2A:                                   # Agent-to-Agent protocol tools
-    - name: "other_agent"
-      url: "http://localhost:9000/a2a"
-
-  builtin:                               # Builtin tool override (6 tools registered by default below)
-    - module: "dataagent.actions.tools.local_tool.bash_tool"
       function: "bash"
-    - module: "dataagent.actions.tools.local_tool.file_tools"
-      function: "edit_file"
-    - module: "dataagent.actions.tools.local_tool.file_tools"
+    - module: "dataagent.actions.tools.local_tool.tools"
       function: "read_file"
-    - module: "dataagent.actions.tools.local_tool.file_tools"
+    - module: "dataagent.actions.tools.local_tool.tools"
       function: "write_file"
-    - module: "dataagent.actions.tools.local_tool.search_tools"
-      function: "grep"
-    - module: "dataagent.actions.tools.local_tool.search_tools"
-      function: "glob"
+
+  builtin: []                            # Prefab builtin catalog is empty by default
 ```
 
 **Code Behavior**:
-- 6 builtin tools registered by default: `bash`, `edit_file`, `read_file`, `write_file`, `grep`, `glob`
-- Setting `TOOLS.builtin` overrides the default list
+- Prefab builtin local tools are empty by default (`TOOLS.builtin: []` or omit)
 - Each `local_functions` entry is dynamically imported via `module` + `function` and registered
-- `mcp_servers` starts MCP client connections and auto-discovers tools
-- `A2A` registers remote Agent tools
-- Builtin skill `data_analysis_report` is active by default (`dataagent/actions/skills/data_analysis_report/`)
+- MCP / A2A tool stacks are removed from the mainline; use local tools / gym env tools only
 - All tools are registered with `ToolManager`; executor calls them via `runtime.tool_manager`
 
 ---
@@ -383,7 +362,7 @@ WORKSPACE:
 from dataagent.interface.sdk.agent import DataAgent
 
 # Create Agent from config
-agent = DataAgent.from_config("ecommerce_agent.yaml")
+agent = DataAgent.from_config("ueg.yaml")
 
 # Single-turn conversation
 response = await agent.chat("What was the top-selling product last month?")

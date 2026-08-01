@@ -35,7 +35,7 @@ def _make_runtime(*, call_tool, workspace, tool_manager=None, bash_tool_whitelis
         workspace: Isolated directory for sandbox and IR workspace snapshots (use pytest ``tmp_path``).
         tool_manager: Optional tool manager for schema lookup.
         bash_tool_whitelist: Optional bash command whitelist.
-        agent_config: Per-Agent config dict for swarm helper tests.
+        agent_config: Per-Agent config dict for helper tests.
     """
     ws = str(Path(workspace).resolve())
     cfg = dict(agent_config or {})
@@ -101,7 +101,7 @@ def test_normalize_payload_serializes_structured_messages_as_json():
     executor = Executor("executor")
 
     execution = executor._normalize_payload(
-        tool_name="sub_agent_tool",
+        tool_name="demo_tool",
         tool_call_id="call-1",
         tool_args={},
         raw_result={
@@ -320,11 +320,11 @@ async def test_executor_aprocess_preserves_original_order_for_parallel_tools(mon
         await asyncio.sleep(0.05)
         return {"original_msg": "bash result", "frontend_msg": "bash ui"}
 
-    async def fast_subagent():
+    async def fast_other():
         await asyncio.sleep(0.01)
-        return {"original_msg": "subagent result", "frontend_msg": "subagent ui"}
+        return {"original_msg": "other result", "frontend_msg": "other ui"}
 
-    tools = {"bash": slow_bash, "sub_agent_tool": fast_subagent}
+    tools = {"bash": slow_bash, "other_tool": fast_other}
     ws = str(tmp_path)
     runtime = _make_runtime(call_tool=_wrap_tools_as_call_tool(tools), workspace=ws)
 
@@ -333,7 +333,7 @@ async def test_executor_aprocess_preserves_original_order_for_parallel_tools(mon
         content="",
         tool_calls=[
             {"id": "bash-call", "name": "bash", "args": {}},
-            {"id": "subagent-call", "name": "sub_agent_tool", "args": {}},
+            {"id": "other-call", "name": "other_tool", "args": {}},
         ],
         invalid_tool_calls=[],
     )
@@ -343,139 +343,12 @@ async def test_executor_aprocess_preserves_original_order_for_parallel_tools(mon
     # ToolMessages are in original insertion order
     assert [tool_message.tool_call_id for tool_message in _tool_messages_only(state_updates)] == [
         "bash-call",
-        "subagent-call",
+        "other-call",
     ]
     # record_message is also called in insertion order (line 152 loop)
-    assert recorded_messages == ["bash-call", "subagent-call"]
+    assert recorded_messages == ["bash-call", "other-call"]
     # But _convert_ir fires inside asyncio.wait loop (completion order)
-    assert set(convert_calls) == {"bash-call", "subagent-call"}
-
-
-@pytest.mark.asyncio
-async def test_executor_rejects_duplicate_explicit_subagent_sub_id(monkeypatch, tmp_path):
-    recorded_messages = []
-    calls: list[dict] = []
-
-    def fake_record_message(_context, message):
-        recorded_messages.append((message.tool_call_id, message.status, str(message.content)))
-
-    monkeypatch.setattr(executor_module, "record_message", fake_record_message)
-    monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(lambda **kwargs: []))
-
-    async def subagent_tool(**kwargs):
-        calls.append(kwargs)
-        return {"original_msg": "should not happen", "frontend_msg": "should not happen"}
-
-    tools = {"sub_agent_tool": subagent_tool}
-    ws = str(tmp_path)
-    runtime = _make_runtime(call_tool=_wrap_tools_as_call_tool(tools), workspace=ws)
-
-    executor = Executor("executor")
-    message = AIMessage(
-        content="",
-        tool_calls=[
-            {"id": "subagent-1", "name": "sub_agent_tool", "args": {"query": "a", "sub_id": 123456}},
-            {"id": "subagent-2", "name": "sub_agent_tool", "args": {"query": "b", "sub_id": 123456}},
-        ],
-        invalid_tool_calls=[],
-    )
-
-    state_updates = await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
-
-    tool_messages = _tool_messages_only(state_updates)
-    assert calls == []
-    assert [msg.status for msg in tool_messages] == ["error", "error"]
-    assert all("duplicate sub_id" in str(msg.content) for msg in tool_messages)
-    assert recorded_messages == [
-        ("subagent-1", "error", str(tool_messages[0].content)),
-        ("subagent-2", "error", str(tool_messages[1].content)),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_executor_enforces_swarm_worker_max_concurrent(monkeypatch, tmp_path):
-    recorded_messages = []
-    calls: list[str] = []
-
-    def fake_record_message(_context, message):
-        recorded_messages.append((message.tool_call_id, message.status))
-
-    monkeypatch.setattr(executor_module, "record_message", fake_record_message)
-    monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(lambda **kwargs: []))
-
-    async def subagent_tool(**kwargs):
-        calls.append(str(kwargs.get("query") or ""))
-        return {"original_msg": "ok", "frontend_msg": "ok"}
-
-    tools = {"sub_agent_tool": subagent_tool}
-    ws = str(tmp_path)
-    runtime = _make_runtime(
-        call_tool=_wrap_tools_as_call_tool(tools),
-        workspace=ws,
-        agent_config={"SWARM": {"enable": True, "worker_max_concurrent": 2}},
-    )
-
-    executor = Executor("executor")
-    message = AIMessage(
-        content="",
-        tool_calls=[
-            {"id": "subagent-1", "name": "sub_agent_tool", "args": {"query": "a", "sub_id": 111111}},
-            {"id": "subagent-2", "name": "sub_agent_tool", "args": {"query": "b", "sub_id": 222222}},
-            {"id": "subagent-3", "name": "sub_agent_tool", "args": {"query": "c", "sub_id": 333333}},
-        ],
-        invalid_tool_calls=[],
-    )
-
-    state_updates = await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
-
-    tool_messages = _tool_messages_only(state_updates)
-    assert len(tool_messages) == 3
-    assert calls == ["a", "b"]
-    assert [msg.status for msg in tool_messages] == ["success", "success", "error"]
-    assert "parallel sub_agent_tool limit exceeded" in str(tool_messages[2].content)
-
-
-@pytest.mark.asyncio
-async def test_executor_skips_swarm_subagent_cap_when_max_concurrent_none(monkeypatch, tmp_path):
-    """When ``swarm_worker_max_concurrent()`` is unset (None), do not block extra sub_agent_tool calls."""
-    recorded_messages = []
-    calls: list[str] = []
-
-    def fake_record_message(_context, message):
-        recorded_messages.append((message.tool_call_id, message.status))
-
-    monkeypatch.setattr(executor_module, "record_message", fake_record_message)
-    monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(lambda **kwargs: []))
-
-    async def subagent_tool(**kwargs):
-        calls.append(str(kwargs.get("query") or ""))
-        return {"original_msg": "ok", "frontend_msg": "ok"}
-
-    tools = {"sub_agent_tool": subagent_tool}
-    ws = str(tmp_path)
-    runtime = _make_runtime(
-        call_tool=_wrap_tools_as_call_tool(tools),
-        workspace=ws,
-        agent_config={"SWARM": {"enable": True}},
-    )
-
-    executor = Executor("executor")
-    message = AIMessage(
-        content="",
-        tool_calls=[
-            {"id": "subagent-1", "name": "sub_agent_tool", "args": {"query": "a", "sub_id": 111111}},
-            {"id": "subagent-2", "name": "sub_agent_tool", "args": {"query": "b", "sub_id": 222222}},
-            {"id": "subagent-3", "name": "sub_agent_tool", "args": {"query": "c", "sub_id": 333333}},
-        ],
-        invalid_tool_calls=[],
-    )
-
-    state_updates = await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
-
-    tool_messages = _tool_messages_only(state_updates)
-    assert len(tool_messages) == 3
-    assert calls == ["a", "b", "c"]
-    assert all(msg.status == "success" for msg in tool_messages)
+    assert set(convert_calls) == {"bash-call", "other-call"}
 
 
 @pytest.mark.asyncio

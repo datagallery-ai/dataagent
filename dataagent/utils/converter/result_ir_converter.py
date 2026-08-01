@@ -196,7 +196,7 @@ def _extract_file_paths_from_args(tool_args: dict[str, Any], workspace: Path | N
 
 
 _KNOWN_PATHS_KEY = "_ir_known_data_paths"
-_PATH_BEARING_NODE_TYPES = {"File", "Table", "Script", "Skill"}
+_PATH_BEARING_NODE_TYPES = {"File", "Table", "Script"}
 
 
 def _get_known_data_paths(context: Context) -> set[str]:

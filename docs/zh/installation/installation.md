@@ -49,11 +49,7 @@ cp .env.example .env
 
 ## 4. 验证安装
 
-```bash
-uv run -m dataagent quickstart
-```
-
-也可以运行一个示例配置：
+用 Python SDK 跑一个示例配置：
 
 ```python
 import asyncio
@@ -61,12 +57,18 @@ from dataagent.interface.sdk.agent import DataAgent
 
 
 async def main():
-    agent = DataAgent.from_config("dataagent/core/flex/examples/ecommerce_agent.yaml")
+    agent = DataAgent.from_config("dataagent/core/flex/examples/ueg.yaml")
     result = await agent.chat("请介绍一下你能做什么")
     print(result["messages"][-1].content)
 
 
 asyncio.run(main())
+```
+
+或启动 REST 服务：
+
+```bash
+uv run -m dataagent --config dataagent/core/flex/examples/ueg.yaml --host 127.0.0.1 --port 8010
 ```
 
 ## 5. 可选数据库服务

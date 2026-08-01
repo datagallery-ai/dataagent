@@ -25,7 +25,6 @@ Wraps an ``Env`` instance and provides:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -95,8 +94,6 @@ class Runtime:
         # 见 dataagent.core.flex.utils.planner_prompt_builder.sync_flex_planner_user_human_to_state
         self._flex_planner_user_sync_pending: bool = False
         self._cache: dict[str, Any] = {}  # 通用缓存，供各模块使用
-        # Subagent 实时进度回调（CLI 侧 StreamRenderer 通过延迟绑定注入）
-        self.on_subagent_progress: Callable[[str, str], None] | None = None
         self._runtime_environment: dict[str, Any] | None = None  # 运行环境信息
         # 与 Flex state / ContextFactory 对齐的会话四元组（由 update_from_state 刷新）
         self.user_id: str = "anonymous"
@@ -105,12 +102,6 @@ class Runtime:
         self.sub_id: int = 0
         self.user_query: Optional[str] = None  # noqa: UP045
         self.parent_user_query: Optional[str] = None  # noqa: UP045
-        self._job_stack_workspace: Path | None = None
-        self._job_service: Any = None
-        self._agent_service: Any = None
-        self._agent_registry: Any = None
-        self._resource_stack_workspace: Path | None = None
-        self._resource_coordinator: Any = None
 
     @property
     def stream(self) -> StreamCursor:
@@ -180,24 +171,6 @@ class Runtime:
         return getattr(self.env, "tool_manager", None)
 
     @property
-    def job_service(self) -> Any:
-        """Return the workspace-scoped :class:`~dataagent.core.jobs.service.JobService`, if available."""
-        _ = self.ensure_job_services()
-        return self._job_service
-
-    @property
-    def agent_service(self) -> Any:
-        """Return the workspace-scoped :class:`~dataagent.core.agents.service.AgentService`, if available."""
-        _ = self.ensure_job_services()
-        return self._agent_service
-
-    @property
-    def resource_coordinator(self) -> Any:
-        """Return the workspace-scoped :class:`ResourceJobCoordinator`, if available."""
-        self.ensure_resource_coordinator()
-        return self._resource_coordinator
-
-    @property
     def config_manager(self) -> ConfigManager:
         """Return the per-Agent :class:`~dataagent.config.config_manager.ConfigManager`.
 
@@ -226,71 +199,6 @@ class Runtime:
     def resolve_workflow_recursion_limit(self) -> int:
         """Derive graph engine recursion_limit from this Runtime's ``max_iter``."""
         return self.resolve_recursion_limit_from_max_iter(self.max_iter)
-
-    def ensure_job_services(self) -> Any:
-        """Bind Job/Agent services to the current ``workspace_dir``.
-
-        Returns:
-            :class:`~dataagent.core.agents.service.AgentService` when ``workspace_dir`` is set,
-            otherwise ``None``.
-        """
-        ws = self.workspace_dir
-        if ws is None:
-            self._job_service = None
-            self._agent_service = None
-            self._job_stack_workspace = None
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
-            return None
-        resolved = Path(ws).expanduser().resolve()
-        if self._job_stack_workspace == resolved and self._agent_service is not None:
-            return self._agent_service
-        from dataagent.core.agents.service import AgentService
-        from dataagent.core.jobs.file_store import FileJobStore
-        from dataagent.core.jobs.service import JobService
-
-        store = FileJobStore(resolved, config=self.get_all_config())
-        self._job_service = JobService(store)
-        registry = self._ensure_agent_registry()
-        self._agent_service = AgentService(registry=registry, job_service=self._job_service, runtime=self)
-        self._job_stack_workspace = resolved
-        return self._agent_service
-
-    def ensure_resource_coordinator(self) -> Any:
-        """Bind :class:`ResourceJobCoordinator` to the current workspace.
-
-        Returns:
-            :class:`ResourceJobCoordinator` when ``workspace_dir`` is set and merged
-            config contains non-empty ``RESOURCES``; otherwise ``None``.
-        """
-        ws = self.workspace_dir
-        if ws is None:
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
-            return None
-        config = self.get_all_config()
-        resources = config.get("RESOURCES") or []
-        if not resources:
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
-            return None
-        resolved = Path(ws).expanduser().resolve()
-        _ = self.ensure_job_services()
-        if self._job_service is None:
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
-            return None
-        if self._resource_stack_workspace == resolved and self._resource_coordinator is not None:
-            return self._resource_coordinator
-        from dataagent.core.resource_runtime.wiring import build_resource_coordinator
-
-        self._resource_coordinator = build_resource_coordinator(
-            job_service=self._job_service,
-            runtime=self,
-            config=config,
-        )
-        self._resource_stack_workspace = resolved
-        return self._resource_coordinator
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Read a value from the per-Agent ConfigManager.
@@ -401,21 +309,7 @@ class Runtime:
         tm = self.tool_manager
         if tm is None:
             return []
-        governance = getattr(self.env, "governance", None)
-        tools = tm.get_all_tool_instances()
-        if governance is not None:
-            tools = [tool for tool in tools if not governance.is_tool_invisible(tool.name)]
-        return [tool.to_langchain_tool() for tool in tools]
-
-    def list_builtin_skills(self) -> list[dict[str, Any]]:
-        """List builtin skills from the per-Agent ToolManager."""
-        tm = self.tool_manager
-        return tm.list_builtin_skills() if tm is not None else []
-
-    def list_user_skills(self) -> list[dict[str, Any]]:
-        """List user skills from the per-Agent ToolManager."""
-        tm = self.tool_manager
-        return tm.list_user_skills() if tm is not None else []
+        return [tool.to_langchain_tool() for tool in tm.get_all_tool_instances()]
 
     def is_cancelled(self) -> bool:
         """Check if the runtime has been cancelled."""
@@ -454,14 +348,3 @@ class Runtime:
                 f"{commands}\n"
             )
         return prompt
-
-    def _ensure_agent_registry(self) -> Any:
-        """Build or return the cached :class:`~dataagent.core.agents.registry.AgentRegistry`."""
-        if self._agent_registry is not None:
-            return self._agent_registry
-        from dataagent.core.agents.registry import AgentRegistry
-
-        cm = self.config_manager
-        entries = cm.get("SUBAGENT_CONFIGS") or []
-        self._agent_registry = AgentRegistry.from_subagent_configs(entries)
-        return self._agent_registry

@@ -174,7 +174,6 @@ class Context:
             "Column",
             "File",
             "Script",
-            "Skill",
         ]
         self.state = ContextState.build(
             user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id, node_types=node_types
@@ -497,7 +496,7 @@ class Context:
         except ImportError:
             logger.info(
                 "Pyvis is required for trajectory visualization. "
-                "Install it via `pip install dataagent[all]` or `pip install pyvis`."
+                "Install it via `pip install 'datagallery-dataagent[trajectory_graph]'` or `pip install pyvis`."
             )
             return
 

@@ -96,16 +96,6 @@ class _FakeFileNode(_FakeDataNode):
 
 def _patch_isinstance():
     """Monkey-patch isinstance checks for fake nodes by using real IR class registries."""
-    import dataagent.utils.converter.ir_message_consumer as mod
-    from dataagent.core.context.context_ir import (
-        ColumnNode,
-        FileNode,
-        KnowledgeNode,
-        ScriptNode,
-        SkillNode,
-        TableNode,
-        ToolNode,
-    )
 
     # We need the isinstance checks in _render_single_node to work with our fakes.
     # Instead, we'll test via render_ir_summary which calls _render_single_node,

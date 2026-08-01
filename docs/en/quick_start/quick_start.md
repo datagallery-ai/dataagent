@@ -23,15 +23,7 @@ cp .env.example .env
 
 Edit the `.env` file with your actual configuration values.
 
-## 2. Interactive Quick Start
-
-```bash
-uv run -m dataagent quickstart
-```
-
-This command verifies installation, configuration loading and basic Agent flow. Follow the prompts to enter model configuration and start chatting with the Agent!
-
-## 3. Start with Config File
+## 2. Start with Config File
 
 Create `config.yaml`:
 
@@ -85,21 +77,13 @@ TOOLS:
       function: "report_generator"
 ```
 
-Start the Agent:
+Start the REST service:
 
 ```bash
-# Terminal interactive mode
-uv run -m dataagent --config config.yaml
+uv run -m dataagent --config config.yaml --host 0.0.0.0 --port 8010
 ```
 
-## 4. Config Check
-
-```bash
-# Check environment variable references in config
-uv run -m dataagent config check config.yaml
-```
-
-## 5. Python SDK
+## 3. Python SDK
 
 ```python
 from dataagent import DataAgent
@@ -115,23 +99,7 @@ async for chunk in agent.astream(input={"user_query": "Generate user report"}):
     print(chunk, end="", flush=True)
 ```
 
-## 6. A2A 1.0 Server Mode
-
-```bash
-# Start A2A server
-uv run -m dataagent serve-a2a \
-  --config config.yaml \
-  --host 0.0.0.0 \
-  --port 9999 \
-  --auth-token your_token
-
-# Service endpoints
-# ├── 🌟 AgentCard: http://localhost:9999/.well-known/agent.json
-# ├── 📡 JSON-RPC:  http://localhost:9999/a2a/jsonrpc
-# └── 🔌 REST:      http://localhost:9999/a2a/rest
-```
-
-## 7. More Examples
+## 4. More Examples
 
 Reference the example configs in the repository:
 
@@ -139,9 +107,9 @@ Reference the example configs in the repository:
 dataagent/core/flex/examples/
 ```
 
-## 8. Optional: Connect Database Semantic Service {#optional-semantic-service}
+## 5. Optional: Connect Database Semantic Service {#optional-semantic-service}
 
-Semantic Service (Semantic Layer REST service) is an **optional external component** of DataAgent—not required to start an Agent. After the steps above, you can already run a Flex/ReAct Agent, use the SDK, or start an A2A server.
+Semantic Service (Semantic Layer REST service) is an **optional external component** of DataAgent—not required to start an Agent. After the steps above, you can already run a Flex/ReAct Agent, use the SDK, or start the REST server.
 
 Deploy Semantic Service and import scenario data when you need:
 

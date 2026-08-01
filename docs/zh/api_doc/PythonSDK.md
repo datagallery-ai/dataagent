@@ -32,7 +32,7 @@ class DataAgent:
 ```python
 from dataagent.interface.sdk.agent import DataAgent
 
-agent = DataAgent.from_config("path/to/ecommerce_agent.yaml")
+agent = DataAgent.from_config("dataagent/core/flex/examples/ueg.yaml")
 ```
 
 ---
@@ -236,40 +236,19 @@ TOOLS:
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "natural_language_to_sql"
     - module: "dataagent.actions.tools.local_tool.tools"
-      function: "natural_language_to_plot"
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "report_generator"
-
-  mcp_servers:                         # MCP 服务端工具
-    - name: "my_mcp_server"
-      url: "http://localhost:8000/mcp"
-
-  A2A:                                 # Agent-to-Agent 协议工具
-    - name: "other_agent"
-      url: "http://localhost:9000/a2a"
-
-  builtin:                             # 不需配置，内置工具覆盖（默认注册下方 6 个）
-    - module: "dataagent.actions.tools.local_tool.bash_tool"
       function: "bash"
-    - module: "dataagent.actions.tools.local_tool.file_tools"
-      function: "edit_file"
-    - module: "dataagent.actions.tools.local_tool.file_tools"
+    - module: "dataagent.actions.tools.local_tool.tools"
       function: "read_file"
-    - module: "dataagent.actions.tools.local_tool.file_tools"
+    - module: "dataagent.actions.tools.local_tool.tools"
       function: "write_file"
-    - module: "dataagent.actions.tools.local_tool.search_tools"
-      function: "grep"
-    - module: "dataagent.actions.tools.local_tool.search_tools"
-      function: "glob"
+
+  builtin: []                          # 预制 builtin 目录默认为空
 ```
 
 **代码行为**：
-- 默认注册 6 个内置工具：`bash`、`edit_file`、`read_file`、`write_file`、`grep`、`glob`
-- 配了 `TOOLS.builtin` 会覆盖默认列表
+- 预制 builtin 本地工具默认为空（`TOOLS.builtin: []` 或省略）
 - `local_functions` 中每个条目通过 `module` + `function` 动态 import 并注册
-- `mcp_servers` 会启动 MCP 客户端连接并自动发现工具
-- `A2A` 注册远端 Agent 的工具
-- 内置 Skill `data_analysis_report` 默认激活（`dataagent/actions/skills/data_analysis_report/`）
+- 主线已拆除 MCP / A2A 工具栈；请仅使用本地工具 / gym 环境工具
 - 所有工具注册到 `ToolManager`，executor 通过 `runtime.tool_manager` 调用
 
 ---
@@ -385,7 +364,7 @@ WORKSPACE:
 from dataagent.interface.sdk.agent import DataAgent
 
 # 从配置创建 Agent
-agent = DataAgent.from_config("ecommerce_agent.yaml")
+agent = DataAgent.from_config("ueg.yaml")
 
 # 单轮对话
 response = await agent.chat("上个月销售额最高的产品是什么？")

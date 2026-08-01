@@ -19,9 +19,7 @@ import yaml
 
 from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
 
-_AGENT_PRESET_PATHS = {
-    "deep_analyze": ("core", "flex", "examples", "deep_analyze.yaml"),
-}
+_AGENT_PRESET_PATHS: dict[str, tuple[str, ...]] = {}
 
 
 def _require_supported_agent_type(agent_type: Any, *, source: str | Path) -> str:
@@ -42,7 +40,7 @@ def _require_supported_agent_type(agent_type: Any, *, source: str | Path) -> str
 def get_agent_type(config: Any, *, source: str | Path) -> str:
     """从配置中提取 agent_type。"""
     try:
-        # agent_type 区别于现存 YAML 配置文件中的 type。agent_type 可选值：deep_analyze
+        # agent_type 区别于现存 YAML 配置文件中的 type。
         agent_type = config["AGENT_CONFIG"]["agent_type"]
     except (TypeError, KeyError):
         raise ValueError(
@@ -267,56 +265,3 @@ def get_final_yaml(*, agent_type: str, config_dict: dict) -> Path:
     finally:
         # 无论 get_final_yaml 是否成功，output 目录下已经生成的 YAML 都会被统一脱敏后覆盖写回
         remove_sensitive_info_of_output_yamls(output_dir=output_dir)
-
-
-def normalize_actions(
-    value: list[dict[str, Any]] | None,
-    field_name: str,
-) -> list[dict[str, Any]] | None:
-    """规范化 TOOLS 下列表型 action 配置，并做字段校验。"""
-    required_fields_map: dict[str, tuple[str, ...]] = {
-        "skills": ("user", "builtin"),
-    }
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ValueError(f"`{field_name}` must be a list[dict] or None.")
-    if field_name not in required_fields_map:
-        raise ValueError(f"Unsupported action field: {field_name!r}.")
-
-    required_fields = required_fields_map[field_name]
-    normalized_items: list[dict[str, Any]] = []
-    for index, item in enumerate(value):
-        if not isinstance(item, dict):
-            raise ValueError(f"`{field_name}[{index}]` must be a dict.")
-
-        normalized_item = dict(item)
-        for required_field in required_fields:
-            field_value = normalized_item.get(required_field)
-            if not isinstance(field_value, str) or not field_value.strip():
-                raise ValueError(f"`{field_name}[{index}].{required_field}` must be a non-empty string.")
-
-        if field_name == "mcp":
-            config = normalized_item.get("config")
-            if config is None:
-                normalized_item["config"] = {}
-            elif not isinstance(config, dict):
-                raise ValueError(f"`{field_name}[{index}].config` must be a dict.")
-
-        normalized_items.append(normalized_item)
-
-    return normalized_items
-
-
-def normalize_skill_allowlists(value: list[str] | None) -> dict[str, list[str]] | None:
-    """规范化 TOOLS.skills allowlist 配置。"""
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        raise ValueError("`skills` must be a list[str] or None.")
-    res = {"builtin": [], "user": []}
-    for name in value:
-        if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"`skills[{name}]` must be a non-empty string.")
-        res["user"].append(name.strip())
-    return res

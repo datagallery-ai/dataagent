@@ -31,9 +31,7 @@ from dataagent.actions.tools.local_tool.sandbox import (
     create_sandbox,
     is_bwrap_sandbox_usable,
     os_config_bind_paths,
-    reset_current_sandbox,
     runtime_python_bind_paths,
-    set_current_sandbox,
 )
 
 
@@ -601,74 +599,6 @@ class TestBubblewrapIntegration:
 
 
 @requires_bwrap
-class TestRunSubprocessAsyncIntegration:
-    """Test _run_subprocess_async with sandbox via contextvars."""
-
-    @pytest.mark.asyncio
-    async def test_subprocess_with_sandbox(self, tmp_path: Path):
-        from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
-
-        workspace = tmp_path / "ws"
-        workspace.mkdir()
-        policy = SandboxPolicy(
-            readonly_binds=["/usr", "/lib", "/lib64", "/bin", "/sbin"],
-            writable_binds=[str(workspace)],
-        )
-        sandbox = BubblewrapSandbox(policy, workspace_root=workspace)
-        token = set_current_sandbox(sandbox)
-        try:
-            result = await _run_subprocess_async(
-                ["/bin/sh", "-c", "echo hello"],
-                timeout=10,
-                cwd=str(workspace),
-            )
-            assert result["returncode"] == 0
-            assert "hello" in result["stdout"]
-        finally:
-            reset_current_sandbox(token)
-
-    @pytest.mark.asyncio
-    async def test_subprocess_sandbox_blocks_home(self, tmp_path: Path):
-        from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
-
-        workspace = tmp_path / "ws"
-        workspace.mkdir()
-        policy = SandboxPolicy(
-            readonly_binds=["/usr", "/lib", "/lib64", "/bin", "/sbin"],
-            writable_binds=[str(workspace)],
-        )
-        sandbox = BubblewrapSandbox(policy, workspace_root=workspace)
-        token = set_current_sandbox(sandbox)
-        try:
-            result = await _run_subprocess_async(
-                ["/bin/sh", "-c", "ls /home"],
-                timeout=10,
-                cwd=str(workspace),
-            )
-            assert result["returncode"] != 0
-            assert "No such file" in result["stderr"]
-        finally:
-            reset_current_sandbox(token)
-
-    @pytest.mark.asyncio
-    async def test_subprocess_without_sandbox_passthrough(self, tmp_path: Path):
-        """When NoopSandbox is used, commands run without bwrap."""
-        from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
-
-        sandbox = NoopSandbox(workspace_root=tmp_path)
-        token = set_current_sandbox(sandbox)
-        try:
-            result = await _run_subprocess_async(
-                ["/bin/sh", "-c", "ls /home"],
-                timeout=10,
-                cwd=str(tmp_path),
-            )
-            assert result["returncode"] == 0
-        finally:
-            reset_current_sandbox(token)
-
-
-@requires_bwrap
 class TestBubblewrapReadonlyRoots:
     """Verify that allow_read_roots and skill roots are accessible as ro-bind inside the sandbox."""
 
@@ -706,7 +636,7 @@ class TestBubblewrapReadonlyRoots:
 
         workspace = tmp_path / "ws"
         workspace.mkdir()
-        skill_root = tmp_path / "skills" / "data_analysis"
+        skill_root = tmp_path / "skills" / "demo_skill"
         skill_root.mkdir(parents=True)
         (skill_root / "run.py").write_text("print('skill script')")
 

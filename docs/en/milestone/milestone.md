@@ -33,9 +33,8 @@ gantt
     Data Analysis Capabilities     :feat5, 2026-06-28, 14d
 
     section Infrastructure
-    A2A Northbound Interface       :enhance1, 2026-06-01, 14d
-    Semantic Engine Integration    :enhance2, 2026-06-14, 14d
-    Performance Optimization       :enhance3, 2026-06-28, 14d
+    Semantic Engine Integration    :enhance1, 2026-06-01, 14d
+    Performance Optimization       :enhance2, 2026-06-14, 14d
 ```
 
 ---
@@ -57,9 +56,8 @@ gantt
 
 | # | Feature | Description | Timeline | Status |
 |---|---|---|---|---|
-| 1 | A2A Northbound Interface | Streaming, interrupt, and other A2A protocol capabilities | 06-01 ~ 06-14 | ⬜ |
-| 2 | Semantic Engine Integration | Enhance data semantic perception module | 06-14 ~ 06-28 | ⬜ |
-| 3 | Performance Optimization | Throughput QPS and parallelism optimization | 06-28 ~ 07-12 | ⬜ |
+| 1 | Semantic Engine Integration | Enhance data semantic perception module | 06-01 ~ 06-14 | ⬜ |
+| 2 | Performance Optimization | Throughput QPS and parallelism optimization | 06-14 ~ 06-28 | ⬜ |
 
 ---
 

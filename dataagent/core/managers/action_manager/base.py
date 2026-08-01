@@ -23,8 +23,6 @@ class ToolType(Enum):
     """工具类型"""
 
     LOCAL_FUNCTION = "local_function"
-    MCP_TOOL = "mcp_tool"
-    A2A_TOOL = "a2a_tool"  # Agent-to-Agent tool
     CUSTOM = "custom"
 
 
@@ -34,7 +32,7 @@ class ErrorType(StrEnum):
     VALIDATION_ERROR = "validation_error"  # 参数 schema 校验失败
     RATE_LIMIT = "rate_limit"  # 限流/配额耗尽
     TIMEOUT = "timeout"  # 工具执行超时
-    NETWORK_ERROR = "network_error"  # 网络问题（MCP/A2A）
+    NETWORK_ERROR = "network_error"  # 网络问题
     INTERNAL_ERROR = "internal_error"  # 工具内部异常
     FILE_NOT_FOUND = "file_not_found"  # 文件/路径不存在
     UNKNOWN = "unknown"  # 未知错误

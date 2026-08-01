@@ -26,12 +26,8 @@ _BUILDER_FORWARD_NAMES = frozenset(
         "set_base_config",
         "set_models",
         "set_scenario",
-        "set_actions",
         "set_history",
-        "set_knowledge_base",
-        "set_metavisor",
         "set_database",
-        "set_ontology",
         "from_config",
     }
 )

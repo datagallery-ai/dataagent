@@ -45,7 +45,6 @@ class ConfigManager:
         """
         self.config_path = Path(config_path) if config_path else None
         self.settings: dict[str, Any] = {}
-        self.activated_suites: list[dict[str, str]] = []
         self._lock = threading.Lock()
         self.last_reload = None
 
@@ -62,8 +61,8 @@ class ConfigManager:
         Merge two configuration mappings using ``merge_layers``.
 
         Unlike legacy ``_deep_merge``, list-valued keys (``TOOLS.*``, ``HOOKS`` slots,
-        ``SUBAGENT_CONFIGS``, workflow lists, etc.) are **appended** with the override
-        layer before the base layer. Dict/scalar keys in the override still win.
+        workflow lists, etc.) are **appended** with the override layer before the base
+        layer. Dict/scalar keys in the override still win.
 
         When ``override_config`` contains ``OVERRIDE_KEYS``, each listed top-level key
         that is also written in ``override_config`` replaces the merged value entirely.
@@ -75,7 +74,7 @@ class ConfigManager:
         Returns:
             Merged configuration dict.
         """
-        from dataagent.core.suite.merge import apply_override_keys, merge_layers, parse_override_keys
+        from dataagent.config.merge import apply_override_keys, merge_layers, parse_override_keys
         from dataagent.utils.constants import META_OVERRIDE_KEYS
 
         override = override_config or {}
@@ -162,34 +161,6 @@ class ConfigManager:
                 raise ValueError(f"WORKSPACE_POLICY.layout.{key} must not contain '..'; got: {raw!r}")
 
     @staticmethod
-    def _validate_swarm_yaml_config(config: Mapping[str, Any]) -> None:
-        """Validate ``SWARM.worker_max_concurrent`` after YAML load.
-
-        Only ``None``/omitted or a non-negative Python ``int`` is allowed.
-        ``bool`` is rejected because it is a subclass of ``int`` in Python.
-        Strings, floats, and negative integers are rejected.
-        """
-        swarm = config.get("SWARM")
-        if not isinstance(swarm, Mapping):
-            return
-        raw = swarm.get("worker_max_concurrent")
-        if raw is None:
-            return
-        if isinstance(raw, bool):
-            raise ValueError(
-                "SWARM.worker_max_concurrent must be a non-negative integer or omitted/null; "
-                "boolean values are not allowed."
-            )
-        if isinstance(raw, int):
-            if raw < 0:
-                raise ValueError(f"SWARM.worker_max_concurrent must be non-negative, got {raw!r}.")
-            return
-        raise ValueError(
-            "SWARM.worker_max_concurrent must be a non-negative integer or omitted/null; "
-            f"got {type(raw).__name__}: {raw!r}."
-        )
-
-    @staticmethod
     def _get_raw_value_from(config: Mapping[str, Any], key: str) -> Any:
         """
         Resolve a dotted configuration path against a mapping root.
@@ -218,7 +189,6 @@ class ConfigManager:
         new_config = ConfigManager()
         new_config.config_path = self.config_path
         new_config.settings = self.get_all()
-        new_config.activated_suites = list(self.activated_suites)
         return new_config
 
     def interpolate_config(self, config: Mapping[str, Any]) -> dict[str, Any]:
@@ -232,22 +202,17 @@ class ConfigManager:
         Reload configuration.
 
         1. Load default and user YAML (each deep-copied).
-        2. Merge into ``tmp``, interpolate, validate workspace/swarm settings.
+        2. Merge into a working dict, interpolate, validate workspace settings.
         3. Extract the user merge layer from user-written paths only.
-        4. Discover and activate suites when ``SUITE`` is present.
-        5. ``merge_layers([default, suite layers…, user layer])``, apply ``OVERRIDE_KEYS``, validate, assign settings.
+        4. ``merge_layers([default, user layer])``, apply ``OVERRIDE_KEYS``, assign settings.
         """
         with self._lock:
-            from dataagent.core.suite.activation import activate_suites, order_suites_for_merge
-            from dataagent.core.suite.discovery import discover_suite_index
-            from dataagent.core.suite.merge import (
+            from dataagent.config.merge import (
                 apply_override_keys,
                 extract_user_layer,
                 merge_layers,
                 parse_override_keys,
             )
-            from dataagent.core.suite.suite_layer import build_suite_layers
-            from dataagent.core.suite.validation import validate_merged_config
             from dataagent.utils.constants import META_OVERRIDE_KEYS
 
             default_config: dict[str, Any] = {}
@@ -276,53 +241,28 @@ class ConfigManager:
             except Exception as e:
                 raise RuntimeError(f"Failed to load configuration file {yaml_file}: {e}") from e
 
-            user_keys = set(user_config.keys())
             working: dict[str, Any] = copy.deepcopy(default_config)
             self._deep_merge(working, user_config)
 
             self._validate_workspace_path_no_config_refs(user_config, default_config)
             self._process_interpolation(working)
             self._validate_workspace_yaml_config(working)
-            self._validate_swarm_yaml_config(working)
 
             override_keys = parse_override_keys(user_config)
             user_layer = extract_user_layer(working, user_config)
             user_layer.pop(META_OVERRIDE_KEYS, None)
-            default_actor_nodes = {
-                str(item.get("node")).strip()
-                for item in default_config.get("ACTOR_LOOP", [])
-                if isinstance(item, dict) and item.get("node")
-            }
+            # Suite layer removed: drop leftover SUITE keys from old YAML.
+            user_layer.pop("SUITE", None)
 
-            suite_layers: list[dict[str, Any]] = []
-            activated_meta: list[dict[str, str]] = []
-            if "SUITE" in user_keys:
-                suite_config = user_layer.get("SUITE")
-                if suite_config is None:
-                    suite_config = user_config.get("SUITE")
-                index = discover_suite_index(config=working)
-                activated = activate_suites(
-                    suite_config=suite_config if isinstance(suite_config, dict) else None,
-                    index=index,
-                )
-                suite_layers, activated_meta = build_suite_layers(
-                    order_suites_for_merge(activated),
-                    default_actor_nodes=default_actor_nodes,
-                )
-                logger.debug("Activated suites: {}", [m["name"] for m in activated_meta])
-
-            layers = [default_config, *suite_layers, user_layer]
-            result = merge_layers(layers)
+            result = merge_layers([default_config, user_layer])
             result.pop("SUITE", None)
             apply_override_keys(result, user_layer, override_keys)
             result.pop(META_OVERRIDE_KEYS, None)
 
-            validate_merged_config(result, activated_suites=activated_meta)
             self._validate_workspace_policy_layout(result)
 
             self.config_path = resolved_config_path
             self.settings = result
-            self.activated_suites = activated_meta
             self.last_reload = datetime.now(timezone(timedelta(hours=8)))  # 东八区
 
     def get_all(self) -> dict:
@@ -376,27 +316,6 @@ class ConfigManager:
                     return default
 
             return value
-
-    def get_activated_suite_root(self, suite_name: str) -> Path:
-        """
-        Return the absolute root directory for one activated Suite.
-
-        Args:
-            suite_name: ``name`` from ``suite.yaml`` (e.g. ``ecommerce_suite``).
-
-        Returns:
-            Resolved absolute Suite root directory.
-
-        Raises:
-            ValueError: ``suite_name`` is empty, or the Suite is not activated.
-        """
-        from dataagent.core.suite.activated_suites import resolve_activated_suite_root
-
-        with self._lock:
-            return resolve_activated_suite_root(
-                suite_name,
-                activated_suites=self.activated_suites,
-            )
 
     def update(self, new_config: dict[str, Any]):
         """

@@ -14,11 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from dataclasses import replace
 from typing import get_type_hints
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.core.jobs.envelope import SUBMIT_JOB_TOOLS, build_base_job_envelope, finalize_job_envelope
 from dataagent.core.managers.action_manager.base import BaseTool, ErrorType, ToolResult, ToolType, classify_exception
 from dataagent.core.managers.action_manager.schemas import ToolSchema
 
@@ -150,7 +148,6 @@ class LocalToolWrapper(BaseTool):
             config_manager=base.config_manager if base is not None else None,
             tool_config=tool_config,
             runtime=get_current_runtime(),
-            job_envelope=dict(base.job_envelope) if base is not None and base.job_envelope else {},
         )
 
     def _inject_tool_context(self, kwargs: dict) -> ToolResult | None:
@@ -171,7 +168,6 @@ class LocalToolWrapper(BaseTool):
             )
         try:
             injected_context = self._build_injected_tool_context()
-            injected_context = self._attach_job_envelope(injected_context, kwargs)
         except ValueError as exc:
             return ToolResult(
                 success=False,
@@ -187,22 +183,3 @@ class LocalToolWrapper(BaseTool):
             )
         kwargs["_tool_context"] = injected_context
         return None
-
-    def _attach_job_envelope(self, context: ToolExecutionContext, kwargs: dict) -> ToolExecutionContext:
-        """Build and finalize a submit-tool envelope onto the injected tool context.
-
-        Args:
-            context: Per-call tool context assembled by :meth:`_build_injected_tool_context`.
-            kwargs: LLM-visible tool arguments for the current invocation.
-
-        Returns:
-            Context with ``job_envelope`` populated for submit lifecycle tools.
-        """
-        if self.name not in SUBMIT_JOB_TOOLS:
-            return context
-        base = build_base_job_envelope(self.name, kwargs)
-        if base is None:
-            return context
-        candidate = dict(context.job_envelope) if context.job_envelope else dict(base)
-        finalized = finalize_job_envelope(self.name, base, candidate)
-        return replace(context, job_envelope=finalized)

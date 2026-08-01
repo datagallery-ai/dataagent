@@ -13,7 +13,7 @@
 """Shared ``messages.json`` wire format and file I/O for LangChain message histories.
 
 Provides serialize/deserialize, replay-safe sanitization, and explicit-path read/write
-helpers. Flex session hooks and swarm worker persistence both reuse this module so
+helpers. Flex session hooks and related persistence paths reuse this module so
 message artifacts stay format-compatible across session and worker directories.
 """
 

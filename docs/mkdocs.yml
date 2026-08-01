@@ -72,7 +72,6 @@ plugins:
                 - action 管理模块设计: design_doc/Action_Management_Module_Design.md
             - 接口设计:
                 - 接口设计索引: api_doc/api_doc.md
-                - A2A 北向服务接口: api_doc/A2A_Northbound_Service_Interface.md
                 - Python SDK 接口: api_doc/PythonSDK.md
             - 应用案例:
                 - 应用案例索引: case/case.md
@@ -108,7 +107,6 @@ plugins:
                 - Action Management Module Design: design_doc/Action_Management_Module_Design.md
             - API Design:
                 - API Design Index: api_doc/api_doc.md
-                - A2A Northbound Service Interface: api_doc/A2A_Northbound_Service_Interface.md
                 - Python SDK Interface: api_doc/PythonSDK.md
             - Application Cases:
                 - Application Cases Index: case/case.md

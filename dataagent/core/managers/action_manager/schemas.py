@@ -166,68 +166,6 @@ class ToolSchema:
         return cls(name, description, parameters, "local_function")
 
     @classmethod
-    def from_mcp_tool(cls, tool_definition: dict[str, Any], server_id: str) -> "ToolSchema":
-        """从MCP工具定义生成Schema"""
-        name = tool_definition.get("name", "unknown_mcp_tool")
-        description = tool_definition.get("description", f"MCP tool: {name}")
-        input_schema = tool_definition.get("inputSchema", {})
-
-        parameters = []
-        if "properties" in input_schema:
-            required_fields = input_schema.get("required", [])
-
-            for prop_name, prop_def in input_schema["properties"].items():
-                param_type = cls._json_type_to_python_type(prop_def.get("type", "string"))
-                is_required = prop_name in required_fields
-                default_value = prop_def.get("default")
-                param_description = prop_def.get("description", f"Parameter {prop_name}")
-
-                parameters.append(
-                    ParameterSchema(
-                        name=prop_name,
-                        type=param_type,
-                        required=is_required,
-                        default=default_value,
-                        description=param_description,
-                    )
-                )
-
-        metadata = {"server_id": server_id, "original_definition": tool_definition}
-
-        return cls(name, description, parameters, "mcp_tool", metadata)
-
-    @classmethod
-    def from_a2a_tool(cls, tool_definition: dict[str, Any], agent_id: str) -> "ToolSchema":
-        """从A2A工具定义生成Schema"""
-        name = tool_definition.get("name", "unknown_a2a_tool")
-        description = tool_definition.get("description", f"A2A tool: {name}")
-        parameters_schema = tool_definition.get("parameters", {})
-
-        parameters = []
-        if "properties" in parameters_schema:
-            required_fields = parameters_schema.get("required", [])
-
-            for prop_name, prop_def in parameters_schema["properties"].items():
-                param_type = cls._json_type_to_python_type(prop_def.get("type", "string"))
-                is_required = prop_name in required_fields
-                default_value = prop_def.get("default")
-                param_description = prop_def.get("description", f"Parameter {prop_name}")
-
-                parameters.append(
-                    ParameterSchema(
-                        name=prop_name,
-                        type=param_type,
-                        required=is_required,
-                        default=default_value,
-                        description=param_description,
-                    )
-                )
-
-        metadata = {"agent_id": agent_id, "original_definition": tool_definition}
-
-        return cls(name, description, parameters, "a2a_tool", metadata)
-
-    @classmethod
     def _parse_docstring_param_descriptions(cls, args_section: str) -> dict[str, str]:
         """Parse parameter descriptions from Args section string.
 

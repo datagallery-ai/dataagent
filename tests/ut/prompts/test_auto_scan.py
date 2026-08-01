@@ -80,8 +80,6 @@ def test_flex_prompt_template_appends_to_planner_defaults():
     assert "# Role" in planner.system_prompt.content
     assert "DataAgent" in planner.system_prompt.content
     system_rendered = planner.system_prompt.apply_prompt_template(
-        builtin_skills_prompt="",
-        user_skills_prompt="",
         enable_human_feedback=False,
         runtime_environment="runtime",
     )

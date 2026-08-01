@@ -34,7 +34,7 @@ from dataagent.utils.runtime_paths import resolve_layout_dir, resolve_session_fr
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
 
-DATA_NODE_PREFIXES = ("Table", "Column", "Knowledge", "Tool", "Script", "File", "Skill")
+DATA_NODE_PREFIXES = ("Table", "Column", "Knowledge", "Tool", "Script", "File")
 INTERNAL_NODE_PREFIXES = ("Table",)
 # 历史 run 摘要缓存文件后缀，避免每轮重复调模型总结同一段历史。
 SUMMARY_FILE_SUFFIX = "_summary.md"

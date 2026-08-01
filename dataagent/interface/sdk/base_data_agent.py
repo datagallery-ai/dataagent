@@ -47,8 +47,6 @@ class BaseDataAgent:
 
         # ===== 工具/服务配置（可选） =====
         self._actions: dict[str, Any] = {}
-        self._metavisor_cfg: dict[str, Any] = {}
-        self._ontology_cfg: dict[str, Any] = {}
         self._database_cfg: dict[str, Any] = {}
 
         # ===== 运行时对象 =====
@@ -169,39 +167,25 @@ class BaseDataAgent:
                 "entry_point": self._router.entry_point if self._router else None,
             },
             "actions": self._actions,
-            "metavisor": self._metavisor_cfg,
-            "ontology": self._ontology_cfg,
         }
 
     def set_actions(
         self,
         *,
         local_functions: list[dict[str, Any]] | None = None,
-        a2a: list[dict[str, Any]] | None = None,
-        mcp: list[dict[str, Any]] | None = None,
-        skills: dict[str, list[str]] | None = None,
     ) -> "BaseDataAgent":
-        """配置 Agent 可以使用的工具、Skills、MCP、A2A 等
+        """配置 Agent 可以使用的本地工具。
 
         注意：L1 只存储配置，不负责注册。用户需要在自己的 Node 中使用这些工具。
 
         Args:
             local_functions: 本地工具配置列表
-            a2a: 服务化的 A2A 接口配置列表
-            mcp: MCP 服务配置列表
-            skills: Skill allowlist 配置
 
         Returns:
             self，支持链式调用
         """
         if local_functions is not None:
             self._actions["local_functions"] = local_functions
-        if a2a is not None:
-            self._actions["a2a"] = a2a
-        if mcp is not None:
-            self._actions["mcp"] = mcp
-        if skills is not None:
-            self._actions["skills"] = skills
 
         logger.debug(f"✅ 工具配置完成: {len(self._actions)} 类工具")
         return self
@@ -281,74 +265,6 @@ class BaseDataAgent:
 
         return self
 
-    def set_metavisor(
-        self,
-        enable: bool,
-        metavisor_url: str | None = None,
-        url: str | None = None,  # 保留兼容性
-        scene: str | None = None,  # 保留兼容性
-    ) -> "BaseDataAgent":
-        """配置增强元数据服务
-
-        这些配置会被注册到 config_manager 的 METAVISOR 节，供节点使用。
-
-        Args:
-            enable: 是否启用增强元数据服务
-            metavisor_url: Metavisor 服务地址
-            url: 部署地址（向后兼容）
-            scene: 场景（向后兼容）
-
-        Returns:
-            self，支持链式调用
-        """
-        if not enable:
-            self._metavisor_cfg = {}
-            return self
-
-        cfg: dict[str, Any] = {"enable": True}
-        if metavisor_url:
-            cfg["metavisor_url"] = metavisor_url
-        if url:
-            cfg["url"] = url
-        if scene:
-            cfg["scene"] = scene
-        self._metavisor_cfg = cfg
-
-        logger.debug(f"✅ Metavisor 配置完成: enable={enable}")
-        return self
-
-    def set_ontology(
-        self,
-        enable: bool,
-        url: str | None = None,
-        scene: str | None = None,
-    ) -> "BaseDataAgent":
-        """配置本体服务
-
-        这些配置会被注册到 config_manager 的 ONTOLOGY 节，供节点使用。
-
-        Args:
-            enable: 是否启用本体服务
-            url: 部署地址
-            scene: 场景
-
-        Returns:
-            self，支持链式调用
-        """
-        if not enable:
-            self._ontology_cfg = {}
-            return self
-
-        cfg: dict[str, Any] = {"enable": True}
-        if url:
-            cfg["url"] = url
-        if scene:
-            cfg["scene"] = scene
-        self._ontology_cfg = cfg
-
-        logger.debug(f"✅ 本体配置完成: enable={enable}")
-        return self
-
     def _build(self):
         """构建 Agent（延迟构建，在第一次 chat/astream 时调用）"""
         if self._built:
@@ -406,16 +322,6 @@ class BaseDataAgent:
 
     def _register_configs(self):
         """将 L1 配置注册到本 Agent 的 ConfigManager，供节点使用。"""
-        # 注册 METAVISOR 配置
-        if self._metavisor_cfg:
-            self._config_manager.set("METAVISOR", self._metavisor_cfg)
-            logger.debug("📝 已注册 METAVISOR 配置: enabled={}", bool(self._metavisor_cfg.get("enable")))
-
-        # 注册 ONTOLOGY 配置
-        if self._ontology_cfg:
-            self._config_manager.set("ONTOLOGY", self._ontology_cfg)
-            logger.debug("📝 已注册 ONTOLOGY 配置: enabled={}", bool(self._ontology_cfg.get("enable")))
-
         # 注册 DATABASE 配置
         if self._database_cfg:
             self._config_manager.set("DATABASE", self._database_cfg)

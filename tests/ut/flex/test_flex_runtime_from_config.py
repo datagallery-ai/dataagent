@@ -112,7 +112,7 @@ def test_build_llm_configs_registers_suite_prefixed_hook(monkeypatch: pytest.Mon
     """Suite-prefixed hook ``name`` + ``model`` maps to ``llm_configs[full_name]``."""
     monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
     monkeypatch.setenv("BAILIAN_API_KEY", "sk-env")
-    hook_name = "example_suite.hooks.custom_hooks.suite_example_with_model"
+    hook_name = "demo.hooks.custom_hooks.suite_example_with_model"
     config = _flex_config_with_hooks({"name": hook_name, "model": "chat_model"})
     llm_configs = build_llm_configs_from_flex_config(config)
     assert hook_name in llm_configs

@@ -168,31 +168,6 @@ def resolve_job_subagents_root(
     return (parent_root / layout.subagents_dir).resolve()
 
 
-def resolve_subagent_output_root(
-    *,
-    parent_workspace: str | Path,
-    config: Mapping[str, Any] | None = None,
-) -> Path:
-    """Return the shared, read-only subagent output root under a parent workspace."""
-    parent_root = Path(parent_workspace).expanduser().resolve()
-    layout = resolve_workspace_layout(config)
-    return (parent_root / layout.subagent_output_dir).resolve()
-
-
-def is_subagent_output_sharing_enabled(config: Mapping[str, Any] | None) -> bool:
-    """Return whether this parent Agent enables Job subagent output sharing.
-
-    The feature is deliberately opt-in so existing Agent YAML files preserve
-    their current Job and workspace behavior.
-    """
-    if not isinstance(config, Mapping):
-        return False
-    agent_config = config.get("AGENT_CONFIG")
-    if not isinstance(agent_config, Mapping):
-        return False
-    return agent_config.get("subagent_output_sharing") is True
-
-
 def resolve_jobs_root(
     *,
     parent_workspace: str | Path,

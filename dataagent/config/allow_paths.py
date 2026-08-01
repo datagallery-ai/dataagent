@@ -10,24 +10,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+"""Effective workspace allow-path resolution."""
+
 from __future__ import annotations
 
-from dataagent.core.flex.workflow.router import FlexRouter
+from collections.abc import Mapping
+from typing import Any
+
+from dataagent.core.managers.action_manager.manager import ToolManager
 
 
-def test_route_after_first_actor_complete_returns_post_or_end():
-    router = FlexRouter(
-        actor_nodes=["planner", "executor"],
-        post_nodes=["post"],
-    )
-
-    assert router.routing_rules["planner"]({"complete": True}) == "post"
-
-
-def test_route_after_last_actor_complete_returns_post_or_end():
-    router = FlexRouter(
-        actor_nodes=["planner", "executor"],
-        post_nodes=["post"],
-    )
-
-    assert router.routing_rules["executor"]({"complete": True}) == "post"
+def effective_workspace_allow_paths(settings: Mapping[str, Any]) -> list[str]:
+    """Return ``WORKSPACE.allow_path`` entries from settings."""
+    return list(ToolManager.workspace_allow_path_list(settings))

@@ -20,8 +20,6 @@ from dataagent.actions.tools.hooks.base import (
 )
 from dataagent.actions.tools.hooks.config import ToolHookLists, load_tool_hooks_from_config
 
-# Example hooks live under ``dataagent.actions.tools.hooks.examples`` (see example.yaml).
-
 __all__ = [
     "ToolHookInvocation",
     "ToolHookRunner",

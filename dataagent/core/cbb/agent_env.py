@@ -69,5 +69,3 @@ class Env:
     tool_manager: ToolManager | None = None
     # Per-Agent YAML configuration (not server.backend.config).
     config_manager: ConfigManager | None = None
-    # Runtime governance registry built from top-level GOVERNANCE config.
-    governance: Any | None = None

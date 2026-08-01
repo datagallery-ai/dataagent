@@ -18,7 +18,6 @@ import yaml
 from dataagent.utils.builder_utils import (
     get_agent_type,
     get_final_yaml,
-    normalize_skill_allowlists,
 )
 
 if TYPE_CHECKING:
@@ -163,31 +162,6 @@ class AgentBuilder:
 
         return self
 
-    def set_actions(
-        self,
-        *,
-        skills: list[str] | None = None,
-    ) -> "AgentBuilder":
-        """
-        设置 Agent 可额外使用的工具能力配置。
-
-        可选字段:
-            - skills：Skill allowlist 配置
-        """
-        normalized_skills = normalize_skill_allowlists(skills)
-
-        tools = self._global_config.get("TOOLS")
-        if not isinstance(tools, dict):
-            tools = {}
-
-        if normalized_skills is not None:
-            tools["skills"] = normalized_skills
-
-        if tools:
-            self._global_config["TOOLS"] = tools
-
-        return self
-
     def set_history(
         self,
         *,
@@ -218,64 +192,6 @@ class AgentBuilder:
 
         return self
 
-    def set_knowledge_base(
-        self,
-        *,
-        backend: str,
-        index: str,
-        url: str,
-        embedding_model: dict[str, Any],
-        **kwargs: Any,
-    ) -> "AgentBuilder":
-        """
-        设置知识库存储配置。
-
-        必填字段:
-            - backend：knowledge_base 后端类型（如 elasticsearch）
-            - index：数据库查询前缀（映射为 KNOWLEDGE_BASE.scene）
-            - url：knowledge_base 后端连接地址
-            - embedding_model：嵌入模型配置（映射为 KNOWLEDGE_BASE.model）
-        """
-        if not isinstance(embedding_model, dict):
-            raise ValueError("`embedding_model` is required and must be a dict.")
-
-        knowledge_base = {
-            "backend": backend,
-            "scene": index,
-            "url": url,
-            "model": dict(embedding_model),
-        }
-        for key, value in kwargs.items():
-            knowledge_base[key] = value
-        self._global_config["KNOWLEDGE_BASE"] = knowledge_base
-        return self
-
-    def set_metavisor(
-        self,
-        *,
-        url: str = "",
-        **kwargs: Any,
-    ) -> "AgentBuilder":
-        """
-        设置增强元数据配置。
-
-        可选字段:
-            - url：元数据服务地址（格式 x.x.x.x:port）
-        """
-        metavisor = self._global_config.get("METAVISOR")
-        if not isinstance(metavisor, dict):
-            metavisor = {}
-
-        if url:
-            metavisor["url"] = url
-        for key, value in kwargs.items():
-            metavisor[key] = value
-
-        if metavisor:
-            self._global_config["METAVISOR"] = metavisor
-
-        return self
-
     def set_database(
         self,
         *,
@@ -302,36 +218,6 @@ class AgentBuilder:
 
         if database:
             self._global_config["DATABASE"] = database
-
-        return self
-
-    def set_ontology(
-        self,
-        *,
-        url: str = "",
-        scene: str = "",
-        **kwargs: Any,
-    ) -> "AgentBuilder":
-        """
-        设置本体配置。
-
-        可选字段:
-            - url：本体服务地址（格式 x.x.x.x:port）
-            - scene：本体场景
-        """
-        ontology = self._global_config.get("ONTOLOGY")
-        if not isinstance(ontology, dict):
-            ontology = {}
-
-        if url:
-            ontology["url"] = url
-        if scene:
-            ontology["scene"] = scene
-        for key, value in kwargs.items():
-            ontology[key] = value
-
-        if ontology:
-            self._global_config["ONTOLOGY"] = ontology
 
         return self
 

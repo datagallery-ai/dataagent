@@ -139,7 +139,7 @@ class TrajectoryNavigator:
         self._ctx.get_IR_from_node(graph_node_label=action_node_label)
 
         internal_node_prefix = ["Table"]
-        data_node_prefix = ["Table", "Column", "Knowledge", "Tool", "Script", "File", "Skill"]
+        data_node_prefix = ["Table", "Column", "Knowledge", "Tool", "Script", "File"]
 
         def _collect_data_from_successors(node_label: str) -> list[DataNode]:
             """Collect the data nodes from the successors of the given node."""

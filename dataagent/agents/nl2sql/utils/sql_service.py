@@ -34,18 +34,6 @@ class PrestoConfig:
 
 
 @dataclass
-class MySQLConfig:
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
-
-    def to_conn_kwargs(self) -> dict[str, Any]:
-        return self.__dict__.copy()
-
-
-@dataclass
 class GaussVectorConfig:
     host: str
     port: int
@@ -165,22 +153,6 @@ class PrestoService(BaseService):
         if isinstance(e, PrestoUserError):
             return str(e.message)
         raise e
-
-
-class MySQLService(BaseService):
-    def __init__(self, config: MySQLConfig):
-        super().__init__()
-        self.config = config
-
-    def _get_conn(self):
-        if self._conn is None:
-            import pymysql
-
-            self._conn = pymysql.connect(charset="utf8mb4", **self.config.to_conn_kwargs())
-        return self._conn
-
-    def _handle_explain_error(self, e: Exception) -> str:
-        return str(e)
 
 
 class GaussVectorService(BaseService):
@@ -345,8 +317,6 @@ def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | UDNS
     try:
         if engine == "presto":
             return PrestoService(PrestoConfig(**config))
-        if engine == "mysql":
-            return MySQLService(MySQLConfig(**config))
         if engine == "gaussvector":
             return GaussVectorService(GaussVectorConfig(**config))
         if engine in {"sqlite", "sqlite3"}:

@@ -11,12 +11,11 @@
 # limitations under the License.
 # ============================================================================
 
-__all__ = ["ArithmeticEnv", "SQLiteEnv"]
+__all__ = ["SQLiteEnv"]
 
 import importlib
 
 _ENV_REGISTRY = {
-    "ArithmeticEnv": "dataagent.actions.gym.arithmetic.arithmetic",
     "SQLiteEnv": "dataagent.actions.gym.nl2sql.sqlite_env",
 }
 

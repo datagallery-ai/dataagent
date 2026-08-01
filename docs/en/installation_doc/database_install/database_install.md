@@ -8,7 +8,7 @@ This section is organized by goal. **Semantic Service (Semantic Layer REST servi
 | --- | --- |
 | Run an Agent only | [Quick Start](../../quick_start/quick_start.md) main path—skip this section |
 | NL2SQL / database semantic capabilities | [Semantic Service Deployment Guide](semantic-service-deployment.md) → [Scenario Data Import](scenario-data-import.md) → [Application cases](../../case/case.md) |
-| MySQL / PostgreSQL / Elasticsearch base stack | [Pull Docker Images](image-pull.md) → [Deploy Database Services](service-deployment.md) (extended scenarios; not required for Semantic Service) |
+| MySQL / PostgreSQL / Elasticsearch (optional extension) | [Pull Docker Images](image-pull.md) → [Deploy Database Services](service-deployment.md) (not required for the mainline) |
 
 ## Document index
 

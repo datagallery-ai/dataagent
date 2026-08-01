@@ -11,7 +11,6 @@
 # limitations under the License.
 # ============================================================================
 import pytest
-import yaml
 
 from dataagent.actions.tools import BaseTool, ToolResult
 from dataagent.core.managers.action_manager import ToolSchema
@@ -94,8 +93,8 @@ async def test_local_tool_register_by_class():
 
 
 @pytest.mark.asyncio
-async def test_register_local_tools_ignores_yaml_description_for_non_sub_agent_tools():
-    """YAML ``description`` is ignored for tools other than ``sub_agent_tool``."""
+async def test_register_local_tools_ignores_yaml_description():
+    """YAML ``description`` is ignored; registration uses the function docstring."""
     tm = ToolManager()
     tm._register_local_tools(
         [
@@ -125,40 +124,6 @@ async def test_register_local_tools_falls_back_to_docstring_without_yaml_descrip
         ]
     )
     assert "计算两个数的和" in tm.get("add_numbers").description
-    await tm.cleanup()
-
-
-@pytest.mark.asyncio
-async def test_implicit_sub_agent_tool_appends_catalog_description(tmp_path):
-    """``SUBAGENT_CONFIGS`` implicitly registers job lifecycle tools with catalog text."""
-    subagent_yaml = tmp_path / "worker.yaml"
-    subagent_yaml.write_text(
-        yaml.safe_dump({"AGENT_CONFIG": {"name": "arith", "description": "does math"}}),
-        encoding="utf-8",
-    )
-    tm = ToolManager()
-    tm._register_implicit_job_tools({"SUBAGENT_CONFIGS": [{"path": str(subagent_yaml)}]})
-    desc = tm.get("submit_subagent").description
-    assert "does math" in desc
-    assert "agent_id" in desc
-    assert tm.exists("poll_subagent")
-    assert not tm.exists("sub_agent_tool")
-    await tm.cleanup()
-
-
-@pytest.mark.asyncio
-async def test_register_local_tools_rejects_explicit_sub_agent_tool():
-    """Explicit ``sub_agent_tool`` in ``TOOLS.local_functions`` is forbidden."""
-    tm = ToolManager()
-    with pytest.raises(ValueError, match="SUBAGENT_CONFIGS"):
-        tm._register_local_tools(
-            [
-                {
-                    "module": "dataagent.actions.tools.local_tool.tools",
-                    "function": "sub_agent_tool",
-                }
-            ]
-        )
     await tm.cleanup()
 
 

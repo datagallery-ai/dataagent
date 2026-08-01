@@ -14,7 +14,7 @@
 
 本文件集中管理所有跨模块使用的可配置常量，按功能分类排列：
   - 压缩与LLM调用：消息压缩阈值、LLM 重试退避、Flex Pruner
-  - 工具执行与并发控制：工具超时、文件限制、结果截断、沙箱、MCP 发现、并发度、Swarm Worker metadata / messages 简易裁剪
+  - 工具执行与并发控制：工具超时、文件限制、结果截断、沙箱、并发度、Swarm Worker metadata / messages 简易裁剪
   - NL2SQL与IR与知识图谱：NL2SQL 各阶段参数、IR 转换/消费者、Bioinfo Skill、内置工具注册
   - UI渲染与可视化：Rich 渲染器、Context 轨迹图
   - 数据库与运行时探测：连接探测、进程等待、CPU 采样
@@ -26,7 +26,6 @@
 # ============================================================================
 # 压缩与LLM调用
 # ============================================================================
-
 
 # ── Cross-Session Recall ────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/flex/hooks/cross_session_recall.py
@@ -42,7 +41,6 @@ DEFAULT_CROSS_SESSION_RECALL_TOP_K: int = 3
 
 DEFAULT_CROSS_SESSION_RECALL_MAX_CHARS: int = 1500
 """每个历史 Session 注入到 prompt 的最大字符数。"""
-
 
 # ── 消息压缩 ─────────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/utils/compression_utils.py
@@ -62,7 +60,6 @@ DEFAULT_COMPRESS_FOLD_TEMPERATURE: float = 0.7
 
 DEFAULT_COMPRESS_MAX_RETRIES: int = 3
 """压缩操作失败时的最大重试次数。"""
-
 
 # ── LLM 调用重试 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/managers/llm_manager/llm_client.py
@@ -101,88 +98,12 @@ DEFAULT_PRUNER_TOKEN_LIMIT: int = DEFAULT_COMPRESS_TOKEN_LIMIT
 # 工具执行与并发控制
 # ============================================================================
 
-
 # ── 工具调用超时 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/tools.py
 # 建议 YAML 路径: TOOLS.*_timeout
 
 DEFAULT_BASH_TIMEOUT: int = 600
 """Bash 工具命令执行的默认超时（秒）。"""
-
-DEFAULT_SUBAGENT_TOOL_TIMEOUT: int = 3600
-"""子 Agent 工具调用的默认超时（秒）。"""
-
-SUBAGENT_TOOL_CATALOG_HEADER: str = "可选的 config_path 及用途："
-"""``sub_agent_tool`` 工具说明中 worker 目录段标题（由 ``SUBAGENT_CONFIGS`` 动态生成列表）。"""
-
-SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
-调用时请在参数中显式传入 config_path 为上述绝对路径之一，并严格遵循工具的参数要求，例如：
-- query: "What is 5 + 3 * 2"
-- config_path: "/abs/path/to/subagent.yaml"
-"""
-"""``sub_agent_tool`` 固定调用说明（硬编码，不放入 ``SUBAGENT_CONFIGS``）。"""
-
-JOB_SUBAGENT_TOOL_CATALOG_HEADER: str = "可选的 agent_id 及用途："
-"""``submit_subagent`` 工具说明 catalog 段标题。"""
-
-JOB_SUBAGENT_TOOL_FIXED_CALL_INSTRUCTIONS: str = """\
-调用时请在参数中显式传入 agent_id 为上述 id 之一，并严格遵循工具的参数要求，例如：
-- agent_id: "arithmetic_ref"
-- task: "What is 5 + 3 * 2"
-"""
-"""``submit_subagent`` 固定调用说明。"""
-
-DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC: int = 600
-"""``submit_subagent`` 默认 job 超时（秒）。"""
-
-DEFAULT_JOBS_SUBAGENTS_MAX: int = 4
-"""Job 路径 subagent 并发上限默认值（``JOBS.subagents.max``）。"""
-
-POLL_WATCH_DEFAULT_INTERVAL_SEC: float = 2.0
-"""``poll_subagent`` watch 模式默认轮询间隔（秒）。"""
-
-POLL_WATCH_MAX_WATCH_SEC: int = 120
-"""``poll_subagent`` watch 模式最长 watch 秒数。"""
-
-POLL_WATCH_MIN_INTERVAL_SEC: float = 0.5
-"""``poll_subagent`` watch 模式最小轮询间隔（秒）。"""
-
-POLL_WATCH_MAX_INTERVAL_SEC: float = 30.0
-"""``poll_subagent`` watch 模式最大轮询间隔（秒）。"""
-
-POLL_WATCH_DEFAULT_EVENT_LIMIT: int = 20
-"""``poll_subagent`` 单次 poll 默认 events 条数上限。"""
-
-POLL_WATCH_MAX_EVENT_LIMIT: int = 200
-"""``poll_subagent`` 单次 poll 最大 events 条数。"""
-
-HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX: str = (
-    "请调用request_human_feedback工具，询问用户是否需要进一步的指导或是否同意操作。"
-)
-"""``human_feedback_conditions`` 每条条件展开后追加的固定动作说明。"""
-
-MAX_WORKER_METADATA_ARTIFACTS: int = 50
-"""Worker ``metadata.json`` 中 ``artifacts`` 路径列表最大条数。
-
-超出时丢弃更早的记录、保留列表末尾（可视作较新的路径）。
-当前使用位置: dataagent/core/swarm/worker_metadata.py（``upsert_worker_metadata``）。
-"""
-
-WORKER_LOCK_TTL_GRACE_SECONDS: int = 60
-"""子 Agent worker 锁 TTL 在 ``sub_agent_tool`` 超时之外的额外缓冲（秒）。
-
-当前使用位置: dataagent/actions/tools/local_tool/tools.py（``acquire_worker_lock`` 的 ``ttl_seconds``）。
-"""
-
-DEFAULT_GREP_TIMEOUT: int = 30
-"""Grep 子进程超时（秒）。"""
-
-DEFAULT_GLOB_MAX_RESULTS: int = 100
-"""Glob 文件搜索默认最大结果数。"""
-
-DEFAULT_GREP_HEAD_LIMIT: int = 250
-"""Grep 搜索默认结果行数上限。"""
-
 
 # ── 文件工具限制 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/tools.py
@@ -208,21 +129,6 @@ DEFAULT_MAX_TOOL_RESULT_LENGTH: int = 8192
 """发给 LLM 的工具结果内容截断长度（字符）。Flex executor 可通过节点配置
 ``max_tool_result_length`` 覆盖，默认值由此常量提供。"""
 
-
-# ── Metadata Tracker ─────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/flex/hooks/metadata_tracker.py
-# 建议 YAML 路径: AGENT_CONFIG.metadata_tool_args_max_bytes / metadata_description_max_bytes
-
-DEFAULT_METADATA_TOOL_ARGS_MAX_BYTES: int = 1024
-"""文件元数据中存储工具参数的最大字节数。"""
-
-DEFAULT_METADATA_DESCRIPTION_MAX_BYTES: int = 256
-"""文件元数据中描述文本的最大字节数。"""
-
-DEFAULT_METADATA_TRUNCATION_SUFFIX: str = " ...(truncated)"
-"""元数据截断时的后缀标记。"""
-
-
 # ── 并发控制 ─────────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/concurrency.py
 # 建议 YAML 路径: AGENT_CONFIG.cpu_buffer / max_concurrency_cap / min_concurrency
@@ -236,17 +142,6 @@ DEFAULT_MAX_CONCURRENCY_CAP: int = 16
 DEFAULT_MIN_CONCURRENCY: int = 1
 """并发数最小值，低配机器至少保持的并发度。"""
 
-
-# ── MCP / A2A 工具发现超时 ──────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/managers/action_manager/manager.py
-# 建议 YAML 路径: TOOLS.mcp_discovery_timeout / mcp_cleanup_timeout
-
-DEFAULT_MCP_DISCOVERY_TIMEOUT: float = 60.0
-"""MCP / A2A 工具自动发现时的 future.result() 超时（秒）。"""
-
-DEFAULT_MCP_CLEANUP_TIMEOUT: float = 5.0
-"""MCP / A2A 注册表清理时 asyncio.wait_for 超时（秒）。"""
-
 # ── 沙箱默认值 ───────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/sandbox.py
 # 建议 YAML 路径: SANDBOX.ro_binds / tmpfs_paths
@@ -257,11 +152,9 @@ DEFAULT_SANDBOX_RO_BINDS: list[str] = ["/usr", "/lib", "/lib64", "/bin", "/sbin"
 DEFAULT_SANDBOX_TMPFS_PATHS: list[str] = ["/tmp"]
 """bwrap 沙箱默认 tmpfs 挂载路径。"""
 
-
 # ============================================================================
 # NL2SQL与IR与知识图谱
 # ============================================================================
-
 
 # ── IR 消息消费者 ────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/utils/converter/ir_message_consumer.py
@@ -275,7 +168,6 @@ DEFAULT_IR_KNOWLEDGE_MAX_LEN: int = 300
 
 DEFAULT_IR_SCRIPT_MAX_LEN: int = 200
 """IR 摘要中 Script 节点内容预览的最大字符数。"""
-
 
 # ── IR 转换器 ────────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/utils/converter/ir_converter_constants.py
@@ -296,7 +188,6 @@ DEFAULT_IR_COLUMN_SAMPLE_ROWS: int = 100
 
 DEFAULT_IR_COLUMN_UNIQUE_SAMPLES: int = 20
 """IR 转换时每列最大唯一样本值数。"""
-
 
 # ── NL2SQL ───────────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/agents/nl2sql/ 下各文件
@@ -347,7 +238,6 @@ DEFAULT_NL2SQL_SQLITE_TIMEOUT: int = 30
 DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL: int = 10000
 """SQLite 进度处理器回调间隔（虚拟机器指令数）。"""
 
-
 # ── Semantic Service ─────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/semantic_tool/semantic_client.py
 # 默认值对齐 semantic-service 接口层 @DefaultValue
@@ -370,59 +260,12 @@ DEFAULT_SEMANTIC_SERVICE_TYPENAME_SEARCH_TOP_K: int = 20
 DEFAULT_SEMANTIC_SERVICE_METRIC_TABLE_COLUMNS_LIMIT: int = 100
 """semantic-service 指标召回按表补充字段时的默认字段上限。"""
 
-
 # ── 内置工具注册 ─────────────────────────────────────────────────────────────
 # 完整工具目录见 dataagent/core/managers/action_manager/manager.py（_BUILTIN_LOCAL_TOOL_CATALOG）
 # 此处仅声明默认启用的工具名（与目录取交集）；YAML 可用 TOOLS.builtin 覆盖（含 [] 表示不注册）
 
-DEFAULT_BUILTIN_SKILL_NAMES: frozenset[str] = frozenset({})
-"""始终有资格被发现的内置 Skill 名称集合。"""
-
-DEFAULT_BUILTIN_LOCAL_TOOLS: tuple[str, ...] = (
-    "bash",
-    "edit_file",
-    "read_file",
-    "write_file",
-    "grep",
-    "glob",
-    "create_plan",
-    "update_plan",
-    "delete_plan",
-    "complete_current_todo",
-)
-"""默认注册的本地工具模块名列表。"""
-
-
-# ============================================================================
-# UI渲染与可视化
-# ============================================================================
-
-
-# ── Rich 渲染器 ──────────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/utils/cli/rich_renderer.py
-# 建议 YAML 路径: DISPLAY.*
-
-DEFAULT_INITIAL_THINKING_MIN_DISPLAY_SECONDS: float = 1.0
-"""Rich 渲染器中 "思考中" 转轮最短显示时间（秒）。"""
-
-DEFAULT_PLANNER_REFRESH_INTERVAL_SECONDS: float = 0.05
-"""Planner 流式输出面板刷新间隔（秒）。"""
-
-DEFAULT_LIVE_REFRESH_PER_SECOND: int = 12
-"""Rich Live 面板刷新频率。"""
-
-DEFAULT_MAX_SUBAGENT_HINT_LINES: int = 5
-"""终端显示的子 Agent 进度最大行数。"""
-
-DEFAULT_RICH_SCALAR_MAX_LENGTH: int = 120
-"""Rich 树状视图中标量值截断长度。"""
-
-DEFAULT_RICH_RESULT_TRUNCATION: int = 500
-"""Rich 渲染中工具结果体截断字符数。"""
-
-DEFAULT_RICH_ERROR_TRUNCATION: int = 160
-"""Rich 渲染中错误文本截断字符数。"""
-
+DEFAULT_BUILTIN_LOCAL_TOOLS: tuple[str, ...] = ()
+"""默认注册的本地工具模块名列表（空元组：与 ueg 对齐，不预制 builtin）。"""
 
 # ── 上下文可视化 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/context/utils_context_trajectory.py
@@ -442,11 +285,9 @@ DEFAULT_CONTEXT_STABILIZATION_ITERATIONS: int = 1000
 DEFAULT_CONTEXT_MAX_NODE_TITLE_LEN: int = 180
 """Context 图中节点标题最大长度。"""
 
-
 # ============================================================================
 # 数据库与运行时探测
 # ============================================================================
-
 
 # ── 数据库探测 ───────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/cbb/runtime_env.py
@@ -461,13 +302,11 @@ DEFAULT_DB_PROCESS_PROBE_TIMEOUT: int = 5
 DEFAULT_DB_PROCESS_KILL_TIMEOUT: int = 1
 """数据库进程终止后清理等待超时（秒）。"""
 
-
 # ── CPU 采样 ─────────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/cbb/runtime_env.py
 
 DEFAULT_CPU_SAMPLE_SECONDS: float = 0.5
 """CPU 使用率采样间隔（秒）。"""
-
 
 # ── Workflow 图引擎步数上限 ──────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/cbb/runtime.py
@@ -480,11 +319,9 @@ DEFAULT_WORKFLOW_RECURSION_LIMIT: int = 200
 MAX_ITER_TO_RECURSION_FACTOR: int = 10
 """``max_iter`` 换算 ``recursion_limit`` 的倍数：``max(DEFAULT, max_iter * FACTOR)``。"""
 
-
 # ============================================================================
 # 环境默认值与内置注册
 # ============================================================================
-
 
 # ── 默认回退值 ───────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/core/flex/agent.py
@@ -507,7 +344,6 @@ DEFAULT_BACKEND: str = "langgraph"
 
 DEFAULT_MODE: str = "chat"
 """未指定时的默认运行模式。DataAgent 属性 setter 已可控制。"""
-
 
 # ── Workspace 框架目录布局 ─────────────────────────────────────────────────────
 # 当前定义位置: dataagent/utils/runtime_paths.py（resolve_workspace_layout / resolve_layout_dir）
@@ -537,9 +373,8 @@ INTERNAL_ARTIFACT_PATH_MARKERS: tuple[str, ...] = (
 )
 """Session workspace 内框架产物路径片段，用于 ``is_framework_internal_artifact_path`` 等过滤逻辑。"""
 
-
 # ── 合并配置 YAML 展示顺序 ───────────────────────────────────────────────────
-# 当前使用位置: dataagent/core/suite/debug_dump.py（``format_settings_yaml``）
+# 当前使用位置: dataagent/config/debug_dump.py（``format_settings_yaml``）
 # 仅影响 dryrun / ``.runtime`` dump 等序列化输出顺序，不影响 ``merge_layers`` / ``reload`` 语义。
 
 META_OVERRIDE_KEYS = "OVERRIDE_KEYS"
@@ -553,7 +388,6 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "SCENARIO",
     "TOOLS",
     "HOOKS",
-    "SUBAGENT_CONFIGS",
     "ACTOR_LOOP",
     "PRE_WORKFLOW",
     "POST_WORKFLOW",
@@ -566,20 +400,17 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "SEMANTIC_LAYER",
     "METAVISOR",
     "ONTOLOGY",
-    "SWARM",
     "CONTEXT",
     "CROSS_SESSION_RECALL",
     "BASH_TOOL_WHITELIST",
 )
 """合并后 Agent 配置 YAML 的顶层段推荐输出顺序；未列出的 key 保持 ``settings`` 原有顺序追加在末尾。"""
 
-
 # ── Context Trajectory TodoList ──────────────────────────────────────────────
 # 当前定义位置: dataagent/core/context/todolist_manager.py, context_trajectory.py
 
 DEFAULT_TODOLIST_MAXLEN: int = 100
 """Context 中待办事项列表最大条目数。"""
-
 
 # ============================================================================
 # 聚合导出 — 按用途分组，方便外部一次性引用
@@ -596,9 +427,6 @@ COMPRESSION_DEFAULTS: dict[str, int | float] = {
 # 工具超时全套
 TOOL_TIMEOUT_DEFAULTS: dict[str, int] = {
     "bash": DEFAULT_BASH_TIMEOUT,
-    "subagent": DEFAULT_SUBAGENT_TOOL_TIMEOUT,
-    "grep": DEFAULT_GREP_TIMEOUT,
-    "mcp_discovery": int(DEFAULT_MCP_DISCOVERY_TIMEOUT),
 }
 
 # 文件工具限制全套

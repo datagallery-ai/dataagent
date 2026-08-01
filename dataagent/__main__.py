@@ -10,7 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from dataagent.interface.cli.main import main
+"""Package entry: start the REST API service (``python -m dataagent``)."""
+
+from dataagent.interface.rest_api import main
 
 if __name__ == "__main__":
     main()

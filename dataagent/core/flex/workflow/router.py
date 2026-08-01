@@ -115,30 +115,14 @@ class FlexRouter(BaseRouter):
             node_after_loop = post_nodes[0] if post_nodes else "__end__"
 
             def _route_after_first_actor(state):
-                """第一个 actor 执行完后持久化消息，检查是否需要 HITL"""
+                """第一个 actor 执行完后持久化消息，继续到下一个 actor。"""
                 self._write_message_history(state)
 
                 if state.get("complete", False):
                     logger.debug("[Router] 首个 actor 已结束，直接返回结束节点")
                     return node_after_loop
 
-                # 检查 HITL 是否启用
-                if not state.get("enable_human_feedback", False):
-                    logger.debug("[Router] HITL 未启用，跳过检查")
-                    return actor_nodes[1]
-
-                # 检查是否需要 HITL
-                need_hitl = state.get("need_human_feedback", False)
-                already_in_hitl = state.get("__hitl_in_current_turn__", False)
-
-                logger.debug(f"[Router] need_hitl: {need_hitl}, already_in_hitl: {already_in_hitl}")
-
-                if need_hitl and not already_in_hitl:
-                    logger.debug("[Router] 满足 HITL 条件，路由到 human_feedback")
-                    return "human_feedback"
-
-                # 否则继续到下一个 actor 节点（通常是 Executor）
-                logger.debug(f"[Router] 不满足 HITL 条件，路由到 {actor_nodes[1]}")
+                logger.debug(f"[Router] 路由到 {actor_nodes[1]}")
                 return actor_nodes[1]
 
             self.add_custom_rule(actor_nodes[0], _route_after_first_actor)
@@ -184,16 +168,6 @@ class FlexRouter(BaseRouter):
             return actor_nodes[0]
 
         self.add_custom_rule(actor_nodes[-1], _route_after_last_actor)
-
-        # HITL node routing (hardcoded)
-        def _route_after_hitl(state):
-            """HITL 执行完后持久化消息，固定返回 Actor 第一个节点"""
-            self._write_message_history(state)
-            hitl_count = state.get("hitl_count", 0)
-            logger.info(f"[Router] HITL 处理完成 (共 {hitl_count} 次)，返回 {actor_nodes[0]} 重新决策")
-            return actor_nodes[0]
-
-        self.add_custom_rule("human_feedback", _route_after_hitl)
 
     def set_merged_config(self, config: Mapping[str, Any] | None) -> None:
         """Publish merged agent config for routing-time layout resolution."""

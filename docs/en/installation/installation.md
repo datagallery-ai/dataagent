@@ -49,11 +49,7 @@ Which variables are required depends on your YAML configuration. For example, wh
 
 ## 4. Verify Installation
 
-```bash
-uv run -m dataagent quickstart
-```
-
-You can also run an example configuration:
+Run an example configuration with the Python SDK:
 
 ```python
 import asyncio
@@ -61,12 +57,18 @@ from dataagent.interface.sdk.agent import DataAgent
 
 
 async def main():
-    agent = DataAgent.from_config("dataagent/core/flex/examples/ecommerce_agent.yaml")
+    agent = DataAgent.from_config("dataagent/core/flex/examples/ueg.yaml")
     result = await agent.chat("What can you do?")
     print(result["messages"][-1].content)
 
 
 asyncio.run(main())
+```
+
+Or start the REST service:
+
+```bash
+uv run -m dataagent --config dataagent/core/flex/examples/ueg.yaml --host 127.0.0.1 --port 8010
 ```
 
 ## 5. Optional Database Services

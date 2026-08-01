@@ -373,17 +373,6 @@ class Planner(BaseNode):
 
         curr_iter = int(state.get("curr_iter", 0)) + 1
 
-        if self._has_hitl_request(ai_message):
-            logger.trace(f"[{self.name}] 检测到 request_human_feedback 调用，设置 HITL 标志")
-            return {
-                "messages": ai_message,
-                "need_human_feedback": True,
-                "__hitl_in_current_turn__": False,
-                "complete": False,
-                "num_turns": 1,
-                "curr_iter": curr_iter,
-            }
-
         if len(ai_message.tool_calls) == 0 and len(ai_message.invalid_tool_calls) == 0:
             context.register_node(
                 node_type="Response",
@@ -425,13 +414,6 @@ class Planner(BaseNode):
         writer({"type": "break"})
         error_ai_message = AIMessage(content=error_msg, additional_kwargs={"error": True})
         return {"messages": error_ai_message, "complete": True, "error": error_msg}
-
-    def _has_hitl_request(self, ai_message: AIMessage) -> bool:
-        """检测是否有 request_human_feedback 工具调用"""
-        if not hasattr(ai_message, "tool_calls"):
-            return False
-
-        return any(tool_call.get("name") == "request_human_feedback" for tool_call in ai_message.tool_calls)
 
 
 def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, runtime: Any = None) -> None:

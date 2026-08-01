@@ -122,12 +122,6 @@ def _build_original_content_hint(node: DataNode) -> str | None:
             )
         return None
 
-    if node_type == "Skill":
-        path = getattr(node, "path", None)
-        if path:
-            return f"Original content: skill package at `{path}` | To restore: `ls -la {path}`"
-        return None
-
     if node_type == "Knowledge":
         content = getattr(node, "knowledge_content", None)
         if content:

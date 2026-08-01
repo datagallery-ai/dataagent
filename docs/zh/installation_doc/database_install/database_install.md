@@ -8,7 +8,7 @@
 | --- | --- |
 | 只想跑通 Agent | [快速开始](../../quick_start/quick_start.md) 主链路即可，无需阅读本节 |
 | 需要 NL2SQL / 数据库语义能力 | [Semantic Service 部署指南](semantic-service-deployment.md) → [场景数据导入](scenario-data-import.md) → [应用案例](../../case/case.md) |
-| 需要 MySQL / PostgreSQL / Elasticsearch 基础环境 | [数据库镜像拉取](image-pull.md) → [数据库服务部署](service-deployment.md)（扩展场景，非 Semantic Service 必需） |
+| 需要 MySQL / PostgreSQL / Elasticsearch（可选扩展） | [数据库镜像拉取](image-pull.md) → [数据库服务部署](service-deployment.md)（非主线必需） |
 
 ## 文档索引
 

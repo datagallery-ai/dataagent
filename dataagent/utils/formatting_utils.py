@@ -18,7 +18,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from loguru import logger
-from matplotlib import font_manager
 
 from dataagent.utils.parsing_utils import extract_json_block, remove_think_block
 
@@ -199,6 +198,8 @@ def _detect_chinese_font() -> tuple[str, str]:
     try:
         import subprocess
 
+        from matplotlib import font_manager
+
         result = subprocess.run(
             ["/usr/bin/fc-list", ":lang=zh", "-f", "%{family[0]}|%{file}\n"], capture_output=True, text=True, timeout=10
         )
@@ -281,6 +282,8 @@ def get_available_chinese_font():
     Returns:
         str: The best available Chinese font name
     """
+    from matplotlib import font_manager
+
     try:
         # get all available fonts in system
         available_fonts = [f.name for f in font_manager.fontManager.ttflist]

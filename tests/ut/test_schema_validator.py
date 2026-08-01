@@ -14,8 +14,6 @@
 
 from typing import Union
 
-import pytest
-
 from dataagent.actions.tools.schema_validator import (
     ParamsValueError,
     SchemaValidator,

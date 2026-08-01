@@ -63,11 +63,6 @@ DATA_NODE_SPECS: list[dict[str, Any]] = [
         },
         "update": {"script_content": "print('updated')"},
     },
-    {
-        "node_type": "Skill",
-        "create": {"path": "/tmp/skills/refund"},
-        "update": {"path": "/tmp/skills/refund_v2"},
-    },
 ]
 
 

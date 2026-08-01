@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCOPE_TARGETS: dict[str, tuple[str, ...]] = {

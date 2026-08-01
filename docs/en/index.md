@@ -40,8 +40,8 @@ hide:
 | 🔬 **Automated Feature Engineering** | Agents autonomously explore relationships across hundreds of tables, auto-discover latent feature combinations with importance ranking and visualization — **10x+ efficiency boost** |
 | 🏭 **Full-Pipeline Data Factory** | Data ingestion→Schema perception→Feature mining→Model training→Report generation — **one YAML config runs the complete data engineering pipeline** |
 | 🧩 **Unified Semantic Layer** | Prioritizes GaussVector as an enhanced vector retrieval foundation in the semantic layer, turning tables, columns, metric definitions, and business descriptions into retrievable schema signals for NL2SQL and multi-source semantic alignment |
-| 🔌 **Plugin Tool Ecosystem** | Local functions / MCP (stdio+sse) / A2A — three tool types with unified registration and invocation. Auto-discovery and on-demand loading. Built-in data analysis SKILLs |
-| 📡 **Native Multi-Agent Collaboration** | Full A2A 1.0 protocol support: automatic agent discovery, capability mapping, standardized communication. Naturally supports distributed collaboration for complex business tasks |
+| 🔌 **Plugin Tool Ecosystem** | Local Python tools and gym env tools (e.g. SQLiteEnv) register through `ToolManager`; YAML `TOOLS.local_functions` / optional builtin overrides |
+| 📡 **Agent Composition** | Flex + NL2SQL with optional sub-agent / job tools for multi-step workflows; REST and Python SDK as northbound entrypoints |
 | 🧩 **YAML as Agent** | Model, tools, memory, workflow, scenario prompts — all declaratively orchestrated. **From idea to running Agent in minutes** |
 | 🛡️ **Enterprise Security Sandbox** | Workspace isolation + path whitelisting + full audit trail, meeting financial-grade compliance requirements |
 | ⚡ **Out of the Box** | 20+ industry scenario example configs — **zero code to start, up and running in minutes** |
@@ -59,7 +59,7 @@ hide:
 
 -   **Installation**
 
-    Choose `uv` / `pip` installation, environment setup and model configuration; when databases are needed, continue with Elasticsearch, PostgreSQL, MySQL deployment, prioritized GaussVector integration, scenario data import, and Semantic Service setup.
+    Choose `uv` / `pip` installation, environment setup and model configuration; for NL2SQL prefer Semantic Service / GaussVector; MySQL / PostgreSQL / Elasticsearch are optional for extended scenarios only.
 
     [Start Installation →](installation/installation.md) · [Database Installation →](installation_doc/database_install/database_install.md)
 

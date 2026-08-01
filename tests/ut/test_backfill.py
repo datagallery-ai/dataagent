@@ -12,8 +12,6 @@
 # ============================================================================
 """Unit tests for backfill module."""
 
-import pytest
-
 from dataagent.actions.tools.backfill import (
     BackfillAction,
     BackfillChange,

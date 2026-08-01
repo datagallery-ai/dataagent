@@ -23,15 +23,7 @@ cp .env.example .env
 
 编辑 `.env` 文件，填入实际的配置值。
 
-## 2. 交互式快速启动
-
-```bash
-uv run -m dataagent quickstart
-```
-
-该命令用于快速验证安装、配置加载和基础 Agent 流程。按提示输入模型配置后即可开始与 Agent 对话！
-
-## 3. 使用配置文件启动
+## 2. 使用配置文件启动
 
 创建 `config.yaml`：
 
@@ -85,21 +77,13 @@ TOOLS:
       function: "report_generator"
 ```
 
-启动 Agent：
+启动 REST 服务：
 
 ```bash
-# 终端交互模式
-uv run -m dataagent --config config.yaml
+uv run -m dataagent --config config.yaml --host 0.0.0.0 --port 8010
 ```
 
-## 4. 配置检查
-
-```bash
-# 检查配置文件中的环境变量引用
-uv run -m dataagent config check config.yaml
-```
-
-## 5. Python SDK 调用
+## 3. Python SDK 调用
 
 ```python
 from dataagent import DataAgent
@@ -115,23 +99,7 @@ async for chunk in agent.astream(input={"user_query": "生成用户报告"}):
     print(chunk, end="", flush=True)
 ```
 
-## 6. A2A 1.0 服务模式
-
-```bash
-# 启动 A2A 服务器
-uv run -m dataagent serve-a2a \
-  --config config.yaml \
-  --host 0.0.0.0 \
-  --port 9999 \
-  --auth-token your_token
-
-# 服务地址
-# ├── 🌟 AgentCard: http://localhost:9999/.well-known/agent.json
-# ├── 📡 JSON-RPC:  http://localhost:9999/a2a/jsonrpc
-# └── 🔌 REST:      http://localhost:9999/a2a/rest
-```
-
-## 7. 更多示例
+## 4. 更多示例
 
 可继续参考仓库内示例配置：
 
@@ -139,9 +107,9 @@ uv run -m dataagent serve-a2a \
 dataagent/core/flex/examples/
 ```
 
-## 8. 可选：接入数据库语义服务 {#optional-semantic-service}
+## 5. 可选：接入数据库语义服务 {#optional-semantic-service}
 
-Semantic Service（Semantic Layer REST 服务）是 DataAgent 的**外部可选组件**，不是启动 Agent 的必选依赖。完成上文步骤后，你已经可以运行 Flex/ReAct Agent、调用 SDK 或启动 A2A 服务。
+Semantic Service（Semantic Layer REST 服务）是 DataAgent 的**外部可选组件**，不是启动 Agent 的必选依赖。完成上文步骤后，你已经可以运行 Flex/ReAct Agent、调用 SDK 或启动 REST 服务。
 
 当你需要以下能力时，再部署 Semantic Service 并导入场景数据：
 

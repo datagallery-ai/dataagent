@@ -23,7 +23,7 @@ from loguru import logger
 
 @dataclass
 class ToolHookLists:
-    """Resolved pre/post hook callables for a tool or MCP/A2A server/agent."""
+    """Resolved pre/post hook callables for a tool."""
 
     pre: list[Callable[..., Any]] = field(default_factory=list)
     post: list[Callable[..., Any]] = field(default_factory=list)

@@ -40,8 +40,8 @@ hide:
 | 🔬 **自动特征工程** | Agent 自主探索数百张数据表关联关系，自动发现潜在特征组合，支持特征重要性排序与可视化，**特征工程效率提升 10 倍+** |
 | 🏭 **全链路数据工厂** | 数据接入→Schema 感知→特征挖掘→模型训练→报告生成，**一套 YAML 配置跑通完整数据工程流水线** |
 | 🧩 **统一语义层** | 优先支持 GaussVector 作为语义层增强向量检索底座，将表、字段、指标口径和业务描述沉淀为可检索的 schema 线索，支撑 NL2SQL 与多源查询的语义对齐 |
-| 🔌 **插件化工具体系** | 本地函数 / MCP (stdio+sse) / A2A 三类工具统一注册与调用机制，工具自动发现、按需加载；内置数据分析等 SKILL |
-| 📡 **多 Agent 协同原生** | 完整 A2A 1.0 协议支持，Agent 间自动能力发现、能力映射、标准化通信，天然支持复杂业务的分布式协作 |
+| 🔌 **插件化工具体系** | 本地 Python 工具与 gym 环境工具（如 SQLiteEnv）经 `ToolManager` 统一注册；YAML `TOOLS.local_functions` / 可选 builtin 覆盖 |
+| 📡 **Agent 组合编排** | Flex + NL2SQL，可选 sub-agent / job 工具支撑多步流程；对外以 REST 与 Python SDK 为北向入口 |
 | 🧩 **YAML 即 Agent** | 模型、工具、记忆、工作流、场景提示词全部声明式编排，**分钟级从想法到可运行 Agent** |
 | 🛡️ **企业级安全沙箱** | Workspace 隔离 + 路径白名单 + 全链路操作审计，满足金融级安全合规要求 |
 | ⚡ **开箱即用** | 20+ 行业场景示例配置，**零代码启动，分钟级上手** |
@@ -59,7 +59,7 @@ hide:
 
 -   **安装部署**
 
-    选择 `uv` / `pip` 安装方式，完成环境配置与模型接入；需要数据库时，可继续完成 Elasticsearch、PostgreSQL、MySQL 部署，优先支持 GaussVector 接入，并导入场景数据与 Semantic Service。
+    选择 `uv` / `pip` 安装方式，完成环境配置与模型接入；需要 NL2SQL 时优先接入 Semantic Service / GaussVector；MySQL / PostgreSQL / Elasticsearch 仅扩展场景可选部署。
 
     [开始安装 →](installation/installation.md) · [数据库安装指导 →](installation_doc/database_install/database_install.md)
 

@@ -13,7 +13,6 @@
 import asyncio
 import json
 import re
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,12 +26,6 @@ from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolHookRunne
 from dataagent.actions.tools.local_tool.sandbox import (
     reset_current_sandbox,
     set_current_sandbox,
-)
-from dataagent.actions.tools.local_tool.tools import (
-    reset_subagent_runtime_context,
-    set_file_inspect_workspace,
-    set_subagent_runtime_context,
-    set_user_sqlite_path,
 )
 from dataagent.actions.tools.schema_validator import ParamsValueError, SchemaValidator
 from dataagent.core.cbb.base_node import BaseNode
@@ -48,7 +41,6 @@ from dataagent.core.managers.action_manager.base import (
     ToolError,
     classify_exception,
 )
-from dataagent.core.swarm.swarm_config import swarm_enabled, swarm_worker_max_concurrent
 from dataagent.core.utils.performance import measure_tool
 from dataagent.utils.constants import DEFAULT_MAX_TOOL_RESULT_LENGTH
 from dataagent.utils.converter.ir_message_consumer import try_replace_with_ir
@@ -79,10 +71,8 @@ class _ToolCallExecutionSetup:
     tool_name: str
     tool_args: dict[str, Any]
     tool_call_id: str
-    progress_finalize: Any
     metadata: dict[str, Any]
     guard_token: Any
-    context_token: Any
 
 
 _BASH_COMMAND_SEPARATORS = re.compile(r"[;&|\n]")
@@ -178,110 +168,10 @@ class Executor(BaseNode):
         else:  # fixed
             return policy.backoff_base
 
-    def _reset_context(self, context_token, guard_token) -> None:
-        """清理运行时 context 和 sandbox"""
-        reset_subagent_runtime_context(context_token)
+    def _reset_context(self, guard_token) -> None:
+        """清理 sandbox context。"""
         if guard_token is not None:
             reset_current_sandbox(guard_token)
-
-    def _build_subagent_progress_emitter(
-        self,
-        *,
-        runtime: Any,
-        tool_call_id: str,
-        tool_name: str,
-    ) -> tuple[Any, Any]:
-        """为 subagent 子进程 stderr 进度构建回调（Web 用），并返回 finalize。
-
-        - 若存在 ``runtime.on_subagent_progress``（CLI debug rich renderer 使用），仅透传给该回调，
-          不写入任何 stream 事件，避免影响原 CLI 体验。
-        - Web 流式：复用 ``type=execution_msg``，并通过 ``extra_msg=subagent_progress`` + ``tool_call_id`` 聚合，
-          同时做节流避免刷爆前端。
-        """
-        base_cb = getattr(runtime, "on_subagent_progress", None) if runtime is not None else None
-        if base_cb is not None:
-
-            def _noop_finalize(*_args: Any, **_kwargs: Any) -> None:
-                return
-
-            return base_cb, _noop_finalize
-
-        writer = get_stream_writer()
-        flush_interval_s = 0.15
-        max_buffer_chars = 4096
-        buf: list[str] = []
-        buf_chars = 0
-        last_flush_at = 0.0
-        started = False
-
-        def _flush(*, is_final: bool = False) -> None:
-            nonlocal buf_chars, last_flush_at, started
-            now = time.monotonic()
-            if buf:
-                content = "".join(buf)
-                buf.clear()
-                buf_chars = 0
-                last_flush_at = now
-                started = True
-                writer(
-                    {
-                        "type": "execution_msg",
-                        "node_name": self.name,
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "extra_msg": "subagent_progress",
-                        "content": content,
-                    }
-                )
-            if is_final:
-                # Close the code fence if we ever started streaming.
-                if started:
-                    writer(
-                        {
-                            "type": "execution_msg",
-                            "node_name": self.name,
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "extra_msg": "subagent_progress",
-                            "content": "\n```\n",
-                        }
-                    )
-                writer(
-                    {
-                        "type": "execution_msg",
-                        "node_name": self.name,
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "extra_msg": "subagent_progress",
-                        "content": "",
-                        "is_final": True,
-                    }
-                )
-
-        def on_progress(_tcid: str, hint_text: str) -> None:
-            nonlocal buf_chars, last_flush_at, started
-            text = str(hint_text or "").strip()
-            if not text:
-                return
-            if not started and not buf:
-                # Title + open a fenced code block to preserve line breaks.
-                # Using a code fence avoids relying on markdown hard-break rules in the frontend.
-                header = f"**{tool_name} 工具执行过程：**\n\n```text\n"
-                buf.append(header)
-                buf_chars += len(header)
-            line = f"↳ {text}\n"
-            buf.append(line)
-            buf_chars += len(line)
-            now = time.monotonic()
-            if buf_chars >= max_buffer_chars or (now - last_flush_at) >= flush_interval_s:
-                _flush(is_final=False)
-
-        def finalize(*, is_final: bool = True) -> None:
-            _flush(is_final=False)
-            if is_final:
-                _flush(is_final=True)
-
-        return on_progress, finalize
 
     def _get_tool_schema(self, tool_name: str, runtime: Any = None):
         """获取工具的 Schema，如果工具不存在或没有 schema 则返回 None。"""
@@ -316,12 +206,6 @@ class Executor(BaseNode):
             "num_invalid_tool_calls": len(message.invalid_tool_calls),
         }
 
-        # 检查同一轮 tool_calls 中是否有多个 sub_agent_tool 使用同一个显式 sub_id，
-        # 这些调用都会被转成 validation error， 因为同一个 sub_id 的subagent不允许被并发调用
-        blocked_parallel_tool_calls = self._blocked_sub_agent_tool_executions_this_round(
-            message.tool_calls, runtime=runtime
-        )
-
         parallel_tasks: dict[str, asyncio.Task[NormalizedToolExecution]] = {}
         tool_call_specs: dict[str, dict[str, Any]] = {}
         for tool_call in message.tool_calls:
@@ -329,8 +213,6 @@ class Executor(BaseNode):
             tool_name = str(tool_call["name"])
             tool_args = tool_call.get("args", {})
             tool_call_specs[tool_call_id] = {"name": tool_name, "args": tool_args}
-            if tool_call_id in blocked_parallel_tool_calls:
-                continue
             self._emit_tool_status(
                 writer,
                 tool_call_id=tool_call_id,
@@ -355,7 +237,6 @@ class Executor(BaseNode):
             )
 
         parallel_results: dict[str, NormalizedToolExecution] = {}
-        parallel_results.update(blocked_parallel_tool_calls)
         if parallel_tasks:
             task_to_call_id = {task: tool_call_id for tool_call_id, task in parallel_tasks.items()}
             pending_tasks = set(parallel_tasks.values())
@@ -402,124 +283,6 @@ class Executor(BaseNode):
         state_updates["messages"] = tool_messages
 
         return state_updates
-
-    def _blocked_sub_agent_tool_executions_this_round(
-        self, tool_calls: Sequence[Any], *, runtime: Any = None
-    ) -> dict[str, NormalizedToolExecution]:
-        """Return synthetic failed executions for ``sub_agent_tool`` calls blocked before launch.
-
-        Applies two guardrails for one AIMessage round:
-
-        - Same explicit ``sub_id`` reused by multiple ``sub_agent_tool`` calls (would corrupt one worker dir).
-        - Optional ``SWARM.worker_max_concurrent`` ceiling when swarm mode is enabled.
-
-        Returns:
-            Map ``tool_call_id`` → ``NormalizedToolExecution`` rows merged from both rules.
-        """
-        duplicate_blocks = self._blocked_executions_for_duplicate_sub_agent_sub_id_same_round(tool_calls)
-        merged: dict[str, NormalizedToolExecution] = dict(duplicate_blocks)
-        agent_cfg: dict[str, Any] = {}
-        if runtime is not None and hasattr(runtime, "get_all_config"):
-            agent_cfg = runtime.get_all_config() or {}
-        if not swarm_enabled(agent_cfg):
-            return merged
-        cap = swarm_worker_max_concurrent(agent_cfg)
-        if cap is None:
-            return merged
-        merged.update(
-            self._blocked_executions_for_sub_agent_tools_over_parallel_cap(
-                tool_calls,
-                duplicate_blocks,
-                max_concurrent=cap,
-            )
-        )
-        return merged
-
-    def _blocked_executions_for_duplicate_sub_agent_sub_id_same_round(
-        self, tool_calls: Sequence[Any]
-    ) -> dict[str, NormalizedToolExecution]:
-        """Mark every ``sub_agent_tool`` call whose explicit ``sub_id`` clashes with another call in this round."""
-        seen: dict[int, list[Any]] = {}
-        for tool_call in tool_calls:
-            if str(tool_call.get("name")) != "sub_agent_tool":
-                continue
-            args = tool_call.get("args", {})
-            if not isinstance(args, dict) or args.get("sub_id") is None:
-                continue
-            try:
-                sub_id = int(args["sub_id"])
-            except (TypeError, ValueError):
-                continue
-            seen.setdefault(sub_id, []).append(tool_call)
-
-        results: dict[str, NormalizedToolExecution] = {}
-        for sub_id, calls in seen.items():
-            if len(calls) < 2:
-                continue
-            for call in calls:
-                call_id = str(call["id"])
-                args = call.get("args", {})
-                results[call_id] = NormalizedToolExecution(
-                    tool_name="sub_agent_tool",
-                    tool_call_id=call_id,
-                    tool_args=dict(args) if isinstance(args, dict) else {},
-                    success=False,
-                    error_text=(
-                        f"duplicate sub_id {sub_id} in the same executor round; "
-                        "create a new subagent for concurrent work instead of reusing this worker."
-                    ),
-                    error_type=ErrorType.VALIDATION_ERROR.value,
-                    retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
-                )
-        return results
-
-    def _blocked_executions_for_sub_agent_tools_over_parallel_cap(
-        self,
-        tool_calls: Sequence[Any],
-        duplicate_sub_id_blocks: dict[str, NormalizedToolExecution],
-        *,
-        max_concurrent: int,
-    ) -> dict[str, NormalizedToolExecution]:
-        """Mark excess ``sub_agent_tool`` calls when this round fans out beyond ``max_concurrent``.
-
-        Walks ``tool_calls`` in order. Calls already listed in ``duplicate_sub_id_blocks``
-        are skipped (duplicate-worker guard takes precedence). Among remaining
-        ``sub_agent_tool`` entries, only the first ``max_concurrent`` may execute; the rest
-        receive validation-style failures without subprocess launch.
-
-        Args:
-            tool_calls: Tool calls from the current AIMessage, in planner order.
-            duplicate_sub_id_blocks: Blocks from
-                ``_blocked_executions_for_duplicate_sub_agent_sub_id_same_round``.
-            max_concurrent: Positive ceiling from ``swarm_worker_max_concurrent()`` (caller
-                must not pass non-positive values; those are normalized away at config read).
-        """
-        results: dict[str, NormalizedToolExecution] = {}
-        scheduled = 0
-        limit = int(max_concurrent)
-        for tool_call in tool_calls:
-            tool_call_id = str(tool_call.get("id"))
-            if tool_call_id in duplicate_sub_id_blocks:
-                continue
-            if str(tool_call.get("name")) != "sub_agent_tool":
-                continue
-            scheduled += 1
-            if scheduled <= limit:
-                continue
-            args = tool_call.get("args", {})
-            results[tool_call_id] = NormalizedToolExecution(
-                tool_name="sub_agent_tool",
-                tool_call_id=tool_call_id,
-                tool_args=dict(args) if isinstance(args, dict) else {},
-                success=False,
-                error_text=(
-                    f"parallel sub_agent_tool limit exceeded for this round "
-                    f"(SWARM.worker_max_concurrent={max_concurrent}); reduce concurrency or sequence calls."
-                ),
-                error_type=ErrorType.VALIDATION_ERROR.value,
-                retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
-            )
-        return results
 
     def _build_invalid_tool_messages(self, invalid_tool_calls: Sequence[Any], writer) -> list[ToolMessage]:
         tool_messages: list[ToolMessage] = []
@@ -598,8 +361,7 @@ class Executor(BaseNode):
         try:
             await ToolHookRunner.run_pre_hooks(pre_hooks, hook_inv)
         except Exception as exc:
-            self._finalize_tool_progress_safe(setup.progress_finalize)
-            self._reset_context(setup.context_token, setup.guard_token)
+            self._reset_context(setup.guard_token)
             return self._failed_execution_from_hook(setup, dict(hook_inv.tool_args), exc, phase="pre")
         tool_args = dict(hook_inv.tool_args)
 
@@ -610,7 +372,7 @@ class Executor(BaseNode):
 
         try:
             tool_result = await self._invoke_manager_tool_async(setup.tool_name, tool_args, runtime=runtime)
-            self._reset_context(setup.context_token, setup.guard_token)
+            self._reset_context(setup.guard_token)
             execution = self._normalize_tool_execution(
                 tool_name=setup.tool_name,
                 tool_call_id=setup.tool_call_id,
@@ -628,7 +390,6 @@ class Executor(BaseNode):
                 tool_name=setup.tool_name,
                 tool_args=tool_args,
                 tool_call_id=setup.tool_call_id,
-                context_token=setup.context_token,
                 guard_token=setup.guard_token,
                 policy=policy,
                 last_error=last_error,
@@ -643,7 +404,7 @@ class Executor(BaseNode):
                 logger.debug(
                     f"[Executor] Tool '{setup.tool_name}' failed after {policy.max_retries} retries: {last_error}"
                 )
-                self._reset_context(setup.context_token, setup.guard_token)
+                self._reset_context(setup.guard_token)
                 execution = NormalizedToolExecution(
                     tool_name=setup.tool_name,
                     tool_call_id=setup.tool_call_id,
@@ -668,7 +429,6 @@ class Executor(BaseNode):
             except Exception as exc:
                 execution = self._apply_hook_failure_to_execution(execution, exc, phase="post")
 
-        self._finalize_tool_progress_safe(setup.progress_finalize)
         return execution
 
     def _resolve_tool_hooks(self, runtime: Any, tool_name: str) -> tuple[list[Any], list[Any]]:
@@ -725,24 +485,12 @@ class Executor(BaseNode):
             metadata=setup.metadata,
         )
 
-    def _finalize_tool_progress_safe(self, progress_finalize: Any) -> None:
-        """Finalize subagent progress stream; log and swallow errors to avoid masking tool results.
-
-        Args:
-            progress_finalize: Callback returned by :meth:`_build_subagent_progress_emitter`.
-        """
-        try:
-            progress_finalize(is_final=True)
-        except Exception:
-            logger.debug("Failed to finalize subagent progress stream", exc_info=True)
-
     async def _retry_tool_execution(
         self,
         *,
         tool_name: str,
         tool_args: dict[str, Any],
         tool_call_id: str,
-        context_token: Any,
         guard_token: Any,
         policy: ErrorPolicy,
         last_error: Exception,
@@ -771,7 +519,7 @@ class Executor(BaseNode):
 
             try:
                 result = await self._invoke_manager_tool_async(tool_name, tool_args, runtime=runtime)
-                self._reset_context(context_token, guard_token)
+                self._reset_context(guard_token)
                 return (
                     self._normalize_tool_execution(
                         tool_name=tool_name,
@@ -806,14 +554,14 @@ class Executor(BaseNode):
         run_id: int | None = None,
         runtime: Any = None,
     ) -> _ToolCallExecutionSetup:
-        """Prepare progress emitter, metadata, sandbox guard, and subagent runtime context for one tool call.
+        """Prepare metadata and sandbox guard for one tool call.
 
         Args:
             tool_call: Raw tool call dict from the LLM (name, args, id).
             workspace: Workspace directory path, if any.
-            user_id: User identifier for subagent context.
-            session_id: Session identifier for subagent context.
-            sub_id: Sub-agent identifier for subagent context.
+            user_id: User identifier.
+            session_id: Session identifier.
+            sub_id: Optional sub-agent identifier.
             runtime: Per-call Runtime instance.
 
         Returns:
@@ -822,11 +570,6 @@ class Executor(BaseNode):
         tool_name = str(tool_call["name"])
         tool_args = tool_call.get("args", {})
         tool_call_id = str(tool_call["id"])
-        progress_cb, progress_finalize = self._build_subagent_progress_emitter(
-            runtime=runtime,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-        )
         pre_existing_files = ResultIRConverter.snapshot_dir(workspace)
         metadata = {
             "workspace": workspace,
@@ -836,8 +579,6 @@ class Executor(BaseNode):
             "sub_id": sub_id,
         }
 
-        if workspace:
-            set_file_inspect_workspace(workspace)
         guard_token = None
         if runtime is not None:
             guard_token = set_current_sandbox(runtime.sandbox)
@@ -847,40 +588,13 @@ class Executor(BaseNode):
                 runtime.sandbox.workspace_root,
                 ", ".join(f"{k}: {v}" for k, v in runtime.sandbox.skill_aliases.items()),
             )
-        agent_cfg: dict[str, Any] = {}
-        if runtime is not None and hasattr(runtime, "get_all_config"):
-            agent_cfg = runtime.get_all_config() or {}
 
-        # 把 DATABASE.config.path 透传给 bash 子进程的 USER_SQLITE_PATH，供 skill 脚本
-        # 直接 sqlite3.connect(os.environ['USER_SQLITE_PATH'])。仅 sqlite 引擎注入，
-        # 非 sqlite 或缺失时清空，避免上一轮调用的残值污染当前调用。
-        sqlite_path_for_shell: str | None = None
-        db_cfg = agent_cfg.get("DATABASE") if isinstance(agent_cfg, dict) else None
-        if isinstance(db_cfg, dict) and db_cfg.get("engine") == "sqlite":
-            db_path_val = (db_cfg.get("config") or {}).get("path") if isinstance(db_cfg.get("config"), dict) else None
-            if isinstance(db_path_val, str) and db_path_val.strip():
-                sqlite_path_for_shell = db_path_val.strip()
-        set_user_sqlite_path(sqlite_path_for_shell)
-
-        context_token = set_subagent_runtime_context(
-            user_id=user_id,
-            session_id=session_id,
-            sub_id=sub_id,
-            parent_user_query=getattr(runtime, "parent_user_query", None) or getattr(runtime, "user_query", None),
-            run_id=run_id,
-            progress_callback=progress_cb,
-            tool_call_id=tool_call_id,
-            agent_config=agent_cfg,
-            parent_workspace=getattr(runtime, "workspace_dir", None),
-        )
         return _ToolCallExecutionSetup(
             tool_name=tool_name,
             tool_args=tool_args,
             tool_call_id=tool_call_id,
-            progress_finalize=progress_finalize,
             metadata=metadata,
             guard_token=guard_token,
-            context_token=context_token,
         )
 
     async def _try_execute_tool(
@@ -889,12 +603,11 @@ class Executor(BaseNode):
         tool_args: dict[str, Any],
         tool_call_id: str,
         metadata: dict[str, Any],
-        context_token: Any,
         guard_token: Any,
         runtime: Any = None,
     ) -> NormalizedToolExecution:
         result = await self._invoke_manager_tool_async(tool_name, tool_args, runtime=runtime)
-        self._reset_context(context_token, guard_token)
+        self._reset_context(guard_token)
         return self._normalize_tool_execution(
             tool_name=tool_name,
             tool_call_id=tool_call_id,

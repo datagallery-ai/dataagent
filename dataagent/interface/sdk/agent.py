@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING, Any
 
 from dataagent.actions.tools.local_tool.sandbox import create_sandbox
 from dataagent.config import ConfigManager
+from dataagent.config.debug_dump import dump_merged_config
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.core.suite.debug_dump import dump_merged_config
 from dataagent.utils.log import logger, setup_session_log
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
 if TYPE_CHECKING:
-    from dataagent.interface.sdk.builder import AgentBuilder
+    pass
 
 
 class DataAgent:
