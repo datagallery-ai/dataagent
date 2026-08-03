@@ -65,7 +65,7 @@ NL2SQLAgent（AGENT_CONFIG.type = nl2sql）
 ```yaml
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
@@ -143,7 +143,7 @@ CORE:
 
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
@@ -158,7 +158,7 @@ SEMANTIC_LAYER:
 配置时重点检查：
 
 - `DATABASE.db_id` 必须和 Semantic Service 中导入的数据库标识一致。
-- `DATABASE.engine` 要和实际数据库一致，例如 `sqlite`、`mysql`、`postgres`。
+- `DATABASE.dialect` 要和实际数据库一致，例如 `sqlite`、`mysql`、`postgres`。
 - SQLite 的 `DATABASE.config.path` 建议使用绝对路径，避免从不同目录启动时找不到文件。
 - 模型的 `api_key` 不建议写入 YAML，优先放到 `.env` 中。
 - `SEMANTIC_LAYER.base_url` 指向已部署的 Semantic Service；`username` / `password` 按实际部署填写，无认证环境可不配置。

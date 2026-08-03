@@ -106,7 +106,7 @@ class NL2SQLAgent(BaseAgent):
         """Build an NL2SQL agent from its YAML-compatible configuration."""
         core_cfg = config.get("CORE", {})
         db_cfg = config.get("DATABASE", {})
-        perceptor_cls = UDNPerceptorNode if db_cfg.get("sql_service_engine") == "udn" else PerceptorNode
+        perceptor_cls = UDNPerceptorNode if db_cfg.get("engine") == "udn" else PerceptorNode
         node_chain = [
             ("perceptor", perceptor_cls, {}),
             ("generator", GeneratorNode, {}),

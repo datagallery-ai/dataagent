@@ -948,7 +948,7 @@ MODEL:
       temperature: 0.0
 DATABASE:
   db_id: "default_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/tmp/default.sqlite"
 SEMANTIC_LAYER:
@@ -981,7 +981,7 @@ TOOLS:
 
     runtime_database = {
         "db_id": "runtime_db",
-        "engine": "sqlite",
+        "dialect": "sqlite",
         "config": {"host": "127.0.0.1", "port": 5432},
     }
     runtime_semantic_layer = {

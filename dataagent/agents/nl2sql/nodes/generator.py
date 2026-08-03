@@ -11,12 +11,11 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
-from typing import Any, cast
+from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import new_trace_id, sql_parser, sql_sha256
+from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import DEFAULT_NL2SQL_NUM_SAMPLES, DEFAULT_NL2SQL_NUM_WORKERS, NL2SQL_PROMPT_PREFIX
@@ -43,9 +42,6 @@ class GeneratorNode(BaseNL2SQLNode):
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
         expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
         sqls = sql_parser(content)[-expected_num_sql:]
-        # GaussVector is PostgreSQL-compatible and does not accept MySQL-style backticks.
-        if self.engine in {"postgres", "gaussvector"}:
-            sqls = [sql.replace("`", "") for sql in sqls]
         prompt_history = system_prompt + "\n\n" + user_prompt
         return [(sql, prompt_history, strategy) for sql in sqls]
 
@@ -73,10 +69,9 @@ class GeneratorNode(BaseNL2SQLNode):
             raise ValueError(f"Unknown strategy: {strategy}")
         return await fn(settings, context)
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
-        # Reuse the PostgreSQL prompt dialect for GaussVector.
-        settings = {"engine": "postgres" if self.engine == "gaussvector" else self.engine}
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        _ = runtime
+        settings = {"dialect": self.dialect}
         context = {
             "question": state["question"],
             "schema": state["schema_str"],
@@ -115,22 +110,11 @@ class GeneratorNode(BaseNL2SQLNode):
             if failures:
                 raise error from failures[0]
             raise error
-        trace_id = state.get("trace_id") or new_trace_id()
-        state["trace_id"] = trace_id
         for i, (sql, prompt, strategy) in enumerate(results):
-            state["generation_results"].append(
-                Result(
-                    id=i,
-                    sql=sql,
-                    prompt=prompt,
-                    strategy=strategy,
-                    trace_id=trace_id,
-                    sql_sha256=sql_sha256(sql),
-                )
-            )
+            state["generation_results"].append(Result(id=i, sql=sql, prompt=prompt, strategy=strategy))
         state["sql"] = state["generation_results"][0].sql
-        p = "\n".join([f"[{s.strategy}] sql_sha256={s.sql_sha256}\n{s.sql}" for s in state["generation_results"]])
-        message = f"=== Generator ===\ntrace_id={trace_id}\n{p}"
+        p = "\n".join([f"[{s.strategy}]\n{s.sql}" for s in state["generation_results"]])
+        message = f"=== Generator ===\n{p}"
         logger.info(message)
         state["stream_message"] = message
         return state

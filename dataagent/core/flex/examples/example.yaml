@@ -360,8 +360,8 @@ SWARM:
 # ── 数据库（NL2SQL / SQL 工具，可选） ───────────────────────────────────────
 DATABASE:
   db_id: "superhero"
-  engine: "sqlite"              # sqlite | mysql | hive | postgres
-  sql_service_engine: null      # 如 udn
+  dialect: "sqlite"              # sqlite | mysql | hive | postgres
+  engine: null      # 如 udn
   config:
     path: "/abs/path/to/superhero.sqlite"
 

@@ -12,15 +12,17 @@
 # ============================================================================
 import inspect
 import traceback
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from loguru import logger
 
 from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.utils.performance import callable_perf_name, get_current_collector
 
+StateT = TypeVar("StateT", bound=BaseState)
 
-class BaseNode:
+
+class BaseNode(Generic[StateT]):
     def __init__(self, name: str, chat_model_name: str | None = None, **kwargs):
         self.name = name
         self.chat_model_name = chat_model_name
@@ -30,12 +32,12 @@ class BaseNode:
         self.post_hooks: list = []
 
     @classmethod
-    def validate_input(cls, state: BaseState | dict[str, Any]) -> bool:
+    def validate_input(cls, state: StateT | dict[str, Any]) -> bool:
         """Implement validation logic."""
         return True
 
     @classmethod
-    def handle_error(cls, state: BaseState | dict[str, Any], error: Exception) -> BaseState | dict[str, Any]:
+    def handle_error(cls, state: StateT | dict[str, Any], error: Exception) -> StateT | dict[str, Any]:
         """Implement error handling logic."""
         return state
 
@@ -83,7 +85,7 @@ class BaseNode:
         else:
             raise ValueError("side must be 'left' or 'right'")
 
-    def process(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
+    def process(self, state: StateT, runtime: Any = None) -> dict[str, Any] | StateT:
         """Main entry of node (sync, galatea-style)."""
         from dataagent.core.cbb.base_hook import invoke_hook
 
@@ -104,7 +106,7 @@ class BaseNode:
                     )
             return state
 
-    async def aprocess(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
+    async def aprocess(self, state: StateT, runtime: Any = None) -> dict[str, Any] | StateT:
         """Main entry of node (async, flex-style).
 
         与 galatea 的 process(state, runtime) 完全对称：
@@ -168,10 +170,10 @@ class BaseNode:
             "config": self.config,
         }
 
-    def _process(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
+    def _process(self, state: StateT, runtime: Any = None) -> dict[str, Any] | StateT:
         """Override this in galatea-style subclasses to get pre/post hook chains for free."""
         raise NotImplementedError("The sync process is not implemented")
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
+    async def _aprocess(self, state: StateT, runtime: Any = None) -> dict[str, Any] | StateT:
         """Override this in flex-style subclasses to get async pre/post hook chains for free."""
         raise NotImplementedError("The async process is not implemented")

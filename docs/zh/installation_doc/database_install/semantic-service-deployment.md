@@ -353,7 +353,7 @@ grep -E 'Model loaded OK|Local embedding model initialized|Failed' logs/applicat
 ```yaml
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/demo_retail.sqlite"
 
@@ -368,7 +368,7 @@ SEMANTIC_LAYER:
 | DataAgent | Semantic Service 元数据 |
 | --- | --- |
 | `DATABASE.db_id` | `databaseName` |
-| `DATABASE.engine` | `sourceType` |
+| `DATABASE.dialect` | `sourceType` |
 | SQLite 表名 | `tableNameEn` |
 | `qualifiedName` 后缀 | `@sqlite` / `@mysql` / `@postgresql` |
 

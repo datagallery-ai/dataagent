@@ -31,8 +31,6 @@ class Result:
     rows_preview: list[tuple[str, ...]] | None = field(default_factory=list)
     error: str | None = None
     need_ref: bool = False
-    trace_id: str = ""
-    sql_sha256: str = ""
 
 
 class NL2SQLState(BaseState):
@@ -44,7 +42,6 @@ class NL2SQLState(BaseState):
     columns: list[str] | None
     rows: list[tuple[Any, ...]] | None
     rows_preview: list[tuple[str, ...]] | None
-    trace_id: str
 
     # perceptor
     keywords: list[str]
@@ -64,7 +61,6 @@ class NL2SQLState(BaseState):
     # reflector
     ref_retries: int
     proceed: bool
-    seen_sqls: list[str]
 
     # executor
     execution_results: list[Result]
@@ -85,7 +81,6 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "columns": None,
         "rows": None,
         "rows_preview": None,
-        "trace_id": "",
         "keywords": [],
         "schema": {},
         "joins": [],
@@ -97,7 +92,6 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "validation_results": [],
         "ref_retries": DEFAULT_NL2SQL_REF_RETRIES,
         "proceed": True,
-        "seen_sqls": [],
         "execution_results": [],
         "sel_retries": DEFAULT_NL2SQL_SEL_RETRIES,
         "stream_message": "",

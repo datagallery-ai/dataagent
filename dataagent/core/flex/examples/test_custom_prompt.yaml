@@ -60,6 +60,6 @@ TOOLS:
 # replace with actual superhero.sqlite path
 DATABASE:
   db_id: "superhero" #
-  engine: "sqlite"  # "sqlite" | "mysql"
+  dialect: "sqlite"  # "sqlite" | "mysql"
   config:
     path: ""  
