@@ -1305,7 +1305,7 @@ async def nl2sql_sub_agent_tool(
     try:
         import sqlglot
 
-        dialect = source_config["DATABASE"]["engine"]
+        dialect = source_config["DATABASE"]["dialect"]
         sql = sqlglot.parse_one(sql, read=dialect).sql(pretty=True)
     except Exception:
         try:
@@ -2743,7 +2743,7 @@ _user_sqlite_path: contextvars.ContextVar[str] = contextvars.ContextVar("user_sq
 def set_user_sqlite_path(path: str | None) -> None:
     """由 executor 在每次工具调用前注入 DATABASE.config.path。
 
-    当 YAML 配置 ``DATABASE.engine == "sqlite"`` 时，把 ``config.path`` 透传给 bash
+    当 YAML 配置 ``DATABASE.dialect == "sqlite"`` 时，把 ``config.path`` 透传给 bash
     子进程的 ``USER_SQLITE_PATH`` 环境变量，供 skill 脚本（约定从该 env 取 DB 路径）
     直接 ``sqlite3.connect(...)`` 成功。传入 ``None`` 或空串则清空，避免上一轮调用的
     残值污染当前调用。

@@ -856,7 +856,7 @@ class Executor(BaseNode):
         # 非 sqlite 或缺失时清空，避免上一轮调用的残值污染当前调用。
         sqlite_path_for_shell: str | None = None
         db_cfg = agent_cfg.get("DATABASE") if isinstance(agent_cfg, dict) else None
-        if isinstance(db_cfg, dict) and db_cfg.get("engine") == "sqlite":
+        if isinstance(db_cfg, dict) and db_cfg.get("dialect") == "sqlite":
             db_path_val = (db_cfg.get("config") or {}).get("path") if isinstance(db_cfg.get("config"), dict) else None
             if isinstance(db_path_val, str) and db_path_val.strip():
                 sqlite_path_for_shell = db_path_val.strip()

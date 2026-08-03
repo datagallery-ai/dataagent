@@ -39,7 +39,7 @@ POST_WORKFLOW: []
 
 DATABASE:
   db_id: "superhero"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: ""
 

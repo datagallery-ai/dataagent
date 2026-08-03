@@ -22,8 +22,8 @@ CORE:
     threshold: 0.9
 DATABASE:
   db_id: "udn"
-  engine: "postgres"
-  sql_service_engine: "udn"
+  dialect: "postgres"
+  engine: "udn"
   config:
     path: ""
     explain_url: "http://"

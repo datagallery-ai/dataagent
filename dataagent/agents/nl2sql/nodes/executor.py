@@ -11,18 +11,16 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
-from typing import Any, Optional, cast
+from typing import Any
 
-from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import truncate
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.utils.constants import DEFAULT_NL2SQL_PREVIEW_LIMIT
 from dataagent.utils.log import logger
 
-_ExecutionOutput = tuple[Optional[list[str]], Optional[list[tuple[Any, ...]]], Optional[str]]  # noqa: UP045
+_ExecutionOutput = tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]  # noqa: UP045
 
 
 class ExecutorNode(BaseNL2SQLNode):
@@ -31,8 +29,8 @@ class ExecutorNode(BaseNL2SQLNode):
         self.limit = kwargs.pop("limit", -1)
         self.preview_limit = kwargs.pop("preview_limit", DEFAULT_NL2SQL_PREVIEW_LIMIT)
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        _ = runtime
         config = self._get_agent_config("DATABASE.config", {}) or {}
         state["execution_results"] = []
         p = []
@@ -41,10 +39,6 @@ class ExecutorNode(BaseNL2SQLNode):
         for v, (columns, rows, error) in zip(validation_results, outputs, strict=True):
             v.columns, v.error = columns, error
             state["execution_results"].append(v)
-            if v.error and rows is None:
-                v.rows, v.rows_preview = None, None
-                p.append(str(v.error))
-                continue
             v.rows = None if rows is None else (rows[: self.limit] if self.limit >= 0 else rows)
             v.rows_preview = (
                 None
@@ -58,20 +52,18 @@ class ExecutorNode(BaseNL2SQLNode):
             if v.rows and v.rows_preview and len(v.rows) > len(v.rows_preview):
                 p[-1] += f" ... and {len(v.rows) - len(v.rows_preview)} more rows"
         state["validation_results"].clear()
-        trace_id = state.get("trace_id") or ""
-        digests = ",".join(f"{v.id}:{v.sql_sha256}" for v in state["execution_results"] if getattr(v, "sql_sha256", ""))
         result_preview = "\n".join(p)
-        message = f"=== Executor ===\ntrace_id={trace_id} sql_sha256=[{digests}]\n{result_preview}"
+        message = f"=== Executor ===\n{result_preview}"
         logger.info(message)
         state["stream_message"] = message
         return state
 
     def _execute_queries(self, config: dict[str, Any], sqls: list[str]) -> list[_ExecutionOutput]:
         outputs: list[_ExecutionOutput] = []
-        with build_sql_service(self.sql_service_engine, config) as service:
+        with build_sql_service(self.engine, config) as service:
             for sql in sqls:
                 try:
                     outputs.append(service.execute(sql))
-                except SQLServiceError as exc:
-                    outputs.append((None, None, str(exc.detail or exc.message or exc)))
+                except Exception as e:
+                    outputs.append((None, None, str(e)))
         return outputs

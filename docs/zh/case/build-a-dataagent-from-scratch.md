@@ -115,7 +115,7 @@ POST_WORKFLOW: []
 
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 

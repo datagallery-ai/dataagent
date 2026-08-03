@@ -40,7 +40,8 @@ CORE:
     sel_retries: 1  # retry generator-...-selector
 DATABASE:
   db_id: ""
-  engine: "sqlite"  # "sqlite", "mysql", "hive", "postgres", "gaussvector"
+  dialect: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
+  engine: null  # specify when different from dialect (e.g. "udn", "gaussvector")
   config:
     path: ""  # replace with actual .sqlite path
 SEMANTIC_LAYER:

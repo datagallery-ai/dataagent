@@ -12,8 +12,8 @@ MODEL:
 
 DATABASE:
   db_id: "udn" # UEG useless
-  engine: "postgres" # UEG useless
-  sql_service_engine: "udn" # UEG useless
+  dialect: "postgres" # UEG useless
+  engine: "udn" # UEG useless
   config:
     path: "/mnt/c/work/udf_project/ferry_react_combine/yunhe_shengchan.sqlite" # UEG: sqlite file, UDN: ip:port/query
 

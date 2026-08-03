@@ -56,13 +56,12 @@ class BaseNL2SQLNode(BaseNode):
         return self._get_agent_config("DATABASE.db_id", "")
 
     @property
-    def engine(self):
-        return self._get_agent_config("DATABASE.engine", "sqlite")
+    def dialect(self):
+        return self._get_agent_config("DATABASE.dialect", "sqlite")
 
     @property
-    def sql_service_engine(self) -> str:
-        svc = self._get_agent_config("DATABASE.sql_service_engine")
-        return svc if svc else self.engine
+    def engine(self):
+        return self._get_agent_config("DATABASE.engine") or self.dialect
 
     def set_context_dump_dir(self, dump_dir: Any | None) -> None:
         """Set or clear this node's NL2SQL context-dump directory."""

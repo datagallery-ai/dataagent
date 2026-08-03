@@ -12,7 +12,7 @@
 # ============================================================================
 import asyncio
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any
 
 import requests
 
@@ -24,7 +24,6 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     schema_to_ddl,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import (
     DEFAULT_NL2SQL_SCHEMA_TOP_K,
@@ -43,7 +42,7 @@ _SUPPORTED_SCHEMA_MODES = (_SCHEMA_MODE_FULL, _SCHEMA_MODE_LINKING)
 class PerceptorNode(BaseNL2SQLNode):
     def __init__(self, **kwargs):
         super().__init__(name="perceptor", **kwargs)
-        self._semantic_client: Optional[SemanticServiceClient] = None  # noqa: UP045
+        self._semantic_client: SemanticServiceClient | None = None  # noqa: UP045
         self.top_k = kwargs.get("top_k", DEFAULT_NL2SQL_SCHEMA_TOP_K)
         self.schema_mode = kwargs.get("schema_mode", _SCHEMA_MODE_FULL)
         if self.schema_mode not in _SUPPORTED_SCHEMA_MODES:
@@ -65,10 +64,7 @@ class PerceptorNode(BaseNL2SQLNode):
                 raise SemanticServiceCallError(detail=str(exc)) from exc
         return self._semantic_client
 
-    def schema_linking(
-        self,
-        keywords: Optional[list[str]],  # noqa: UP045
-    ) -> tuple[dict, list[tuple[str, str]]]:
+    def schema_linking(self, keywords: list[str] | None) -> tuple[dict, list[tuple[str, str]]]:
         """Retrieve the schema and joins relevant to semantic search keywords."""
         if not keywords:
             return {}, []
@@ -117,10 +113,7 @@ class PerceptorNode(BaseNL2SQLNode):
                 j_set.add((src, tgt))
         return schema, sorted(j_set)
 
-    def full_schema(
-        self,
-        allow_tables: Optional[list[str]] = None,  # noqa: UP045
-    ) -> tuple[dict, list[tuple[str, str]]]:
+    def full_schema(self, allow_tables: list[str] | None = None) -> tuple[dict, list[tuple[str, str]]]:
         """Retrieve the complete schema and joins, optionally limited to selected tables."""
         j_set, dt_desc, schema = set(), {}, {}
         allow_set = {str(t).strip() for t in (allow_tables or []) if str(t).strip()} or None
@@ -166,8 +159,8 @@ class PerceptorNode(BaseNL2SQLNode):
         except ValueError as exc:
             raise SemanticServiceCallError(detail=str(exc)) from exc
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        _ = runtime
         for attr, key in [
             ("schema_str", self.user_schema),
             ("evidence", self.user_evidence),

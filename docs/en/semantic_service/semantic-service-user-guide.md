@@ -64,7 +64,7 @@ AGENT_CONFIG:
 
 DATABASE:
   db_id: "<your_db_id>"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/path/to/your.sqlite"
 
