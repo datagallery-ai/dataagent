@@ -363,14 +363,14 @@ def _basic_search_udf_function(
     if len(keywords) == 1:
         # 单关键字搜索：在所有属性中使用 OR 关系搜索
         criterion = [
-            {"attributeName": attr_name, "operator": "CONTAINS", "attributeValue": keywords[0]}
+            {"attributeName": attr_name, "operator": "CONTAINS_LIKE", "attributeValue": keywords[0]}
             for attr_name in attribute_names
         ]
         entity_filters = {"condition": "OR", "criterion": criterion}
     else:
         # 多关键字搜索：构建 condition + criterion 结构，所有关键字和属性都用 OR 连接
         criterion = [
-            {"attributeName": attr_name, "operator": "CONTAINS", "attributeValue": kw}
+            {"attributeName": attr_name, "operator": "CONTAINS_LIKE", "attributeValue": kw}
             for attr_name in attribute_names
             for kw in keywords
         ]
