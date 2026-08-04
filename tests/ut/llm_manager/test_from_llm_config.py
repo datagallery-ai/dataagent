@@ -223,7 +223,7 @@ class TestQwenCacheDefaults:
 
 
 class TestDashscopeCacheControl:
-    """Tests for _apply_cache_control_with_anchors bp allocation.
+    """Tests for apply_cache_control_with_anchors bp allocation.
 
     去除 StableUser/VariableUser split 后，主 Agent 无 explicit cc user 消息；
     bp1=history_summary, bp2=动态 first-large-tool/tail2, bp3=tail_anchor。
@@ -234,7 +234,7 @@ class TestDashscopeCacheControl:
             {"role": "system", "content": ""},
             {"role": "user", "content": "Hello"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         assert result[0]["content"] == ""
 
     def test_explicit_cache_control_respected(self):
@@ -247,7 +247,7 @@ class TestDashscopeCacheControl:
             {"role": "user", "content": [{"type": "text", "text": "y" * 4000, "cache_control": {"type": "ephemeral"}}]},
             {"role": "user", "content": "short variable"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
         assert result[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
         assert result[2]["content"] == "short variable"
@@ -270,7 +270,7 @@ class TestHistorySummaryBp1:
             {"role": "user", "content": "User query"},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         assert self._has_cc(result[0]), "bp0 (System) should always have cc"
 
     def test_bp0_empty_system_no_cc(self):
@@ -280,7 +280,7 @@ class TestHistorySummaryBp1:
             {"role": "user", "content": "User query"},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         assert not self._has_cc(result[0]), "empty System should NOT have cc"
 
     def test_bp0_survives_compression_scenario(self):
@@ -298,7 +298,7 @@ class TestHistorySummaryBp1:
             {"role": "tool", "content": "result"},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         assert self._has_cc(result[0]), "bp0 (System) should have cc"
         assert self._has_cc(result[2]), "bp1 (history_summary) should have cc"
 
@@ -317,7 +317,7 @@ class TestHistorySummaryBp1:
             {"role": "tool", "content": "result"},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         # bp1 = history_summary [2]
         assert self._has_cc(result[2]), "bp1 (history_summary) should have cc"
         # user [1] is a plain message — no explicit cc (split removed)
@@ -333,7 +333,7 @@ class TestHistorySummaryBp1:
             {"role": "user", "content": "<history_summary>\nIntent\n</history_summary>"},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         assert self._has_cc(result[2]), "bp1 should be on history_summary [2] (content prefix fallback)"
 
     def test_no_history_summary_no_bp1(self):
@@ -350,7 +350,7 @@ class TestHistorySummaryBp1:
             {"role": "tool", "content": "T" * 600},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         # bp1 = None (no history_summary); bp2 = tail2 fallback [2]
         assert self._has_cc(result[2]), "bp2 (tail2 fallback) should have cc"
         # bp3 = tail [4] (todo_idx-1 = 5-1 = 4)
@@ -374,7 +374,7 @@ class TestHistorySummaryBp1:
             msgs.append({"role": "assistant", "content": f"AI_{i}"})
             msgs.append({"role": "tool", "content": f"R_{i}"})
         msgs.append({"role": "user", "content": "# Work Plan Status\nDone"})
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         tail_idx = len(msgs) - 2
         assert self._has_cc(result[tail_idx]), "bp3 must NOT be skipped by approaching_compress"
 
@@ -395,7 +395,7 @@ class TestHistorySummaryBp1:
             msgs.append({"role": "assistant", "content": f"AI_{i}"})
             msgs.append({"role": "tool", "content": f"R_{i}"})
         msgs.append({"role": "user", "content": "# Work Plan Status\nDone"})
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         # bp4 = tail2 = todo_idx - 3
         tail2_idx = len(msgs) - 4
         assert not self._has_cc(result[tail2_idx]), "bp4 should be skipped when approaching_compress"
@@ -411,7 +411,7 @@ class TestHistorySummaryBp1:
             {"role": "tool", "content": "T" * 600},
             {"role": "user", "content": "# Work Plan Status\nDone"},
         ]
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         # bp3 (tail [4]) should NOT have cc when env var is "0"
         assert not self._has_cc(result[4])
 
@@ -425,7 +425,7 @@ class TestHistorySummaryBp1:
             msgs.append({"role": "assistant", "content": long_body})
             msgs.append({"role": "tool", "content": long_body})
         msgs.append({"role": "user", "content": "# Work Plan Status\nDone"})
-        result = LLMClient._apply_cache_control_with_anchors(msgs)
+        result = LLMClient.apply_cache_control_with_anchors(msgs)
         cc_count = 0
         for m in result:
             content = m.get("content")
@@ -442,7 +442,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
 
     Regression guard: previously the dump only scanned LangChain messages for
     pre-existing cache_control, missing the dynamic breakpoints that
-    _apply_cache_control_with_anchors adds at LLM call time.
+    apply_cache_control_with_anchors adds at LLM call time.
     """
 
     @staticmethod
@@ -482,7 +482,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
             f"got {len(bp_tags)}:\n{chr(10).join(bp_tags)}"
         )
 
-        # dynamic markers for breakpoints injected by _apply_cache_control_with_anchors
+        # dynamic markers for breakpoints injected by apply_cache_control_with_anchors
         assert "cache_control (dynamic)" in text, "dynamic breakpoints (bp0/bp2/bp3/bp4) must be marked"
 
         # bp0 (System) should be annotated as bp 1 in the header
@@ -500,7 +500,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
 
         # ground truth: run the anchor function directly on dict form
         dict_msgs = LangChainChatModelAdapter.messages_to_openai_dicts(msgs)
-        processed = LLMClient._apply_cache_control_with_anchors(dict_msgs)
+        processed = LLMClient.apply_cache_control_with_anchors(dict_msgs)
         expected_bp = sum(
             1
             for m in processed
@@ -530,7 +530,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
 
         # ground truth with the same compress config
         dict_msgs = LangChainChatModelAdapter.messages_to_openai_dicts(msgs)
-        processed = LLMClient._apply_cache_control_with_anchors(dict_msgs, compress_message_cnt=3)
+        processed = LLMClient.apply_cache_control_with_anchors(dict_msgs, compress_message_cnt=3)
         expected_bp = sum(
             1
             for m in processed

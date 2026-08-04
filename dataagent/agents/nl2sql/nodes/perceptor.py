@@ -47,6 +47,7 @@ class PerceptorNode(BaseNL2SQLNode):
 
     @property
     def semantic_client(self) -> SemanticServiceClient:
+        """Lazily build the semantic-layer client from agent config."""
         if self._semantic_client is None:
             try:
                 self._semantic_client = SemanticServiceClient.from_config(self._config_manager)
@@ -113,6 +114,7 @@ class PerceptorNode(BaseNL2SQLNode):
         return schema, sorted(j_set)
 
     def full_schema(self, allow_tables: list[str] | None = None):
+        """Fetch full table/column schema and joins from the semantic service."""
         j_set, dt_desc, schema = set(), {}, {}
         allow_set = {str(t).strip() for t in (allow_tables or []) if str(t).strip()} or None
         allow_names = {t.split(".", 1)[1] if "." in t else t for t in allow_set} if allow_set else None

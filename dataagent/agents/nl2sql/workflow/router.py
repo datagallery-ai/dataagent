@@ -21,23 +21,29 @@ class NL2SQLRouter(BaseRouter):
         self._setup_default_rules()
 
     def route_from_perceptor(self, state: NL2SQLState) -> str:
+        """Route after perceptor to the next enabled node."""
         return self._next("perceptor")
 
     def route_from_generator(self, state: NL2SQLState) -> str:
+        """Route after generator to the next enabled node."""
         return self._next("generator")
 
     def route_from_validator(self, state: NL2SQLState) -> str:
+        """Route after validator to the next enabled node."""
         return self._next("validator")
 
     def route_from_reflector(self, state: NL2SQLState) -> str:
+        """Route after reflector based on proceed flag."""
         if state["proceed"]:
             return self._next("reflector")
         return "validator"
 
     def route_from_executor(self, state: NL2SQLState) -> str:
+        """Route after executor to the next enabled node."""
         return self._next("executor")
 
     def route_from_selector(self, state: NL2SQLState) -> str:
+        """Route after selector to end or back to reflector."""
         if state["proceed"]:
             return "__end__"
         return "reflector"
