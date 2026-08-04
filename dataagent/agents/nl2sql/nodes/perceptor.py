@@ -12,7 +12,7 @@
 # ============================================================================
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import requests
 
@@ -24,7 +24,6 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     schema_to_ddl,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import (
     DEFAULT_NL2SQL_SCHEMA_TOP_K,
@@ -155,8 +154,7 @@ class PerceptorNode(BaseNL2SQLNode):
         except ValueError as exc:
             raise SemanticServiceCallError(detail=str(exc)) from exc
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         for attr, key in [
             ("schema_str", self.user_schema),
             ("evidence", self.user_evidence),

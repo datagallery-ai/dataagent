@@ -74,7 +74,7 @@ async def test_l1_chat_passes_runtime_config_to_node() -> None:
             nodes=[_L1ProbeNode()],
             router=_L1ProbeRouter(),
         )
-        .set_database(db_id="l1_ut_db", engine="sqlite", config={})
+        .set_database(db_id="l1_ut_db", dialect="sqlite", config={})
     )
     result = await agent.chat("hello")
     assert result.get("seen_db_id") == "l1_ut_db"
@@ -91,7 +91,7 @@ def test_register_configs_does_not_log_config_values(monkeypatch: pytest.MonkeyP
 
     database_cfg = {
         "db_id": "private_database",
-        "engine": "postgresql://admin:secret@internal-db/private",
+        "dialect": "postgresql://admin:secret@internal-db/private",
         "config": {"password": "secret"},
     }
     metavisor_cfg = {

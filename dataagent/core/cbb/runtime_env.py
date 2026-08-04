@@ -440,7 +440,7 @@ class RuntimeEnvironmentCollector:
     def _get_database_info(self) -> dict[str, Any]:
         """获取数据库配置及可读状态。
 
-        规则：仅当能从 DATABASE.engine 拿到引擎类型时才展示数据库信息；否则打 warning 并跳过展示。
+        规则：仅当能从 DATABASE.dialect 拿到引擎类型时才展示数据库信息；否则打 warning 并跳过展示。
         """
         cm = self._agent_config_manager
         if cm is None:
@@ -448,11 +448,11 @@ class RuntimeEnvironmentCollector:
         database_cfg = cm.get("DATABASE") or {}
         if not database_cfg:
             return {}
-        engine = ""
-        if isinstance(database_cfg, dict) and database_cfg.get("engine"):
-            engine = str(database_cfg.get("engine") or "").strip().lower()
-        if not engine:
-            logger.warning("runtime_env: DATABASE.engine is missing; skip database info in prompt.")
+        dialect = ""
+        if isinstance(database_cfg, dict) and database_cfg.get("dialect"):
+            dialect = str(database_cfg.get("dialect") or "").strip().lower()
+        if not dialect:
+            logger.warning("runtime_env: DATABASE.dialect is missing; skip database info in prompt.")
             return {}
 
         # 获取数据库URL（仅支持 DATABASE.config.path）
@@ -474,7 +474,7 @@ class RuntimeEnvironmentCollector:
 
         return {
             "db_id": db_id,
-            "engine": engine,
+            "dialect": dialect,
             "readable": readable,
         }
 
@@ -555,7 +555,7 @@ def format_runtime_environment(env_data: dict[str, Any]) -> str:
     db = env_data.get("database")
     if db:
         status = "readable" if db.get("readable") else "unreachable"
-        lines.append(f"- Database ({db.get('engine', 'unknown')}): {db.get('db_id', 'unknown')} ({status})")
+        lines.append(f"- Database ({db.get('dialect', 'unknown')}): {db.get('db_id', 'unknown')} ({status})")
 
     # planner 模型上下文窗口（token budget 提醒）
     planner_model = env_data.get("planner_model") or {}

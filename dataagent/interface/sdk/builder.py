@@ -196,7 +196,7 @@ class AgentBuilder:
         self,
         *,
         db_id: str,
-        engine: str = "",
+        dialect: str = "",
         config: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> "AgentBuilder":
@@ -209,8 +209,8 @@ class AgentBuilder:
 
         if db_id:
             database["db_id"] = db_id
-        if engine:
-            database["engine"] = engine
+        if dialect:
+            database["dialect"] = dialect
         if config:
             database["config"] = config
         for key, value in kwargs.items():

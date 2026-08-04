@@ -13,15 +13,12 @@
 import asyncio
 import json
 import re
-from typing import Any, cast
+from typing import Any
 
-from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
-from dataagent.agents.nl2sql.utils.sql_guard import SQLGuardError, guard_sql, resolve_sqlglot_dialect
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.utils.log import logger
 
 
@@ -33,8 +30,8 @@ class ValidatorNode(BaseNL2SQLNode):
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.read_only = kwargs.pop("read_only", True)
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        _ = runtime
         semantic_res = await self._validate_semantic(state)
         syntax_res = await self._validate_syntax(state["generation_results"])
         if self.metadata_match:
@@ -45,14 +42,8 @@ class ValidatorNode(BaseNL2SQLNode):
             state["generation_results"], semantic_res, syntax_res, metadata_res
         )
         state["generation_results"].clear()
-        trace_id = state.get("trace_id") or ""
-        p = "\n".join(
-            [
-                f"Score: {v.score:.2f}, sql_sha256={v.sql_sha256}, Issues: {v.issues}"
-                for v in state["validation_results"]
-            ]
-        )
-        message = f"=== Validator ===\ntrace_id={trace_id}\n{p}"
+        p = "\n".join([f"Score: {v.score:.2f}, Issues: {v.issues}" for v in state["validation_results"]])
+        message = f"=== Validator ===\n{p}"
         logger.info(message)
         state["stream_message"] = message
         return state
@@ -85,8 +76,7 @@ class ValidatorNode(BaseNL2SQLNode):
             issues = self._validate_with_sqlglot(gr.sql)
             if self.keyword_match:
                 issues += self._validate_with_keyword_match(gr.sql)
-            # Never EXPLAIN statements that already failed the hard SQL gate.
-            if self.db_explain and not issues:
+            if self.db_explain:
                 issues += await self._validate_with_db_explain(gr.sql)
             res.append({"score": 0 if issues else 1, "issues": issues})
         return res
@@ -111,20 +101,26 @@ class ValidatorNode(BaseNL2SQLNode):
     def _validate_with_db_explain_sync(self, sql: str) -> list[str]:
         config = self._get_agent_config("DATABASE.config", {}) or {}
         try:
-            with build_sql_service(self.sql_service_engine, config) as explain_service:
+            with build_sql_service(self.engine, config) as explain_service:
                 res = explain_service.explain(sql)
             return [res] if res else []
-        except SQLServiceError as e:
-            return [str(e.detail or e.message or e)]
         except Exception as e:
             return [str(e)]
 
     def _validate_with_sqlglot(self, sql: str) -> list[str]:
         try:
-            guard_sql(sql, dialect=resolve_sqlglot_dialect(self.engine), read_only=self.read_only)
+            import sqlglot
+            from sqlglot import exp
+        except ImportError:
+            logger.warning("Skip SQLGlot validation because SQLGlot is not installed.")
             return []
-        except SQLGuardError as e:
-            return [str(e)]
+        try:
+            parsed = sqlglot.parse_one(sql, read=self.dialect, error_level=sqlglot.errors.ErrorLevel.RAISE)
+            ALLOWED = (exp.Select, exp.Union, exp.Except, exp.Intersect)
+            FORBIDDEN = (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Merge)
+            if self.read_only and (not isinstance(parsed, ALLOWED) or parsed.find(FORBIDDEN)):
+                return ["Only read-only statements are allowed. Write operations are forbidden."]
+            return []
         except Exception as e:
             return [str(e)]
 

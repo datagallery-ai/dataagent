@@ -22,18 +22,6 @@ from dataagent.utils.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, D
 
 
 @dataclass
-class PrestoConfig:
-    host: str
-    port: int
-    user: str
-    catalog: str
-    schema: str
-
-    def to_conn_kwargs(self) -> dict[str, Any]:
-        return self.__dict__.copy()
-
-
-@dataclass
 class GaussVectorConfig:
     host: str
     port: int
@@ -133,26 +121,6 @@ class BaseService(SqlService, ABC):
     @abstractmethod
     def _handle_explain_error(self, e: Exception) -> str:
         pass
-
-
-class PrestoService(BaseService):
-    def __init__(self, config: PrestoConfig):
-        super().__init__()
-        self.config = config
-
-    def _get_conn(self):
-        if self._conn is None:
-            import prestodb
-
-            self._conn = prestodb.dbapi.connect(**self.config.to_conn_kwargs())
-        return self._conn
-
-    def _handle_explain_error(self, e: Exception) -> str:
-        from prestodb.exceptions import PrestoUserError
-
-        if isinstance(e, PrestoUserError):
-            return str(e.message)
-        raise e
 
 
 class GaussVectorService(BaseService):
@@ -315,8 +283,6 @@ class SparkService(SqlService):
 
 def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | UDNService:
     try:
-        if engine == "presto":
-            return PrestoService(PrestoConfig(**config))
         if engine == "gaussvector":
             return GaussVectorService(GaussVectorConfig(**config))
         if engine in {"sqlite", "sqlite3"}:

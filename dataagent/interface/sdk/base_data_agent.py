@@ -23,7 +23,7 @@ from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.framework_adapters.runtime.workflow import LangGraphWorkflow
 from dataagent.utils.log import logger
 
-_DATABASE_ENGINES_FOR_LOGGING = frozenset({"hive", "mysql", "postgres", "postgresql", "sqlite"})
+_DATABASE_DIALECTS_FOR_LOGGING = frozenset({"hive", "mysql", "postgres", "postgresql", "sqlite"})
 
 
 class BaseDataAgent:
@@ -242,7 +242,7 @@ class BaseDataAgent:
     def set_database(
         self,
         db_id: str = "",
-        engine: str = "sqlite",
+        dialect: str = "sqlite",
         config: dict[str, Any] | None = None,
     ) -> "BaseDataAgent":
         """配置数据库
@@ -251,7 +251,7 @@ class BaseDataAgent:
 
         Args:
             db_id: 数据库 ID
-            engine: 数据库引擎（sqlite, mysql, postgresql等）
+            dialect: 数据库引擎（sqlite, mysql, postgresql等）
             config: 数据库连接配置
 
         Returns:
@@ -259,7 +259,7 @@ class BaseDataAgent:
         """
         self._database_cfg = {
             "db_id": db_id,
-            "engine": engine,
+            "dialect": dialect,
             "config": config or {},
         }
 
@@ -325,11 +325,11 @@ class BaseDataAgent:
         # 注册 DATABASE 配置
         if self._database_cfg:
             self._config_manager.set("DATABASE", self._database_cfg)
-            engine = self._database_cfg.get("engine")
-            normalized_engine = str(engine).lower() if isinstance(engine, str) else ""
-            engine_for_log = normalized_engine if normalized_engine in _DATABASE_ENGINES_FOR_LOGGING else "other"
+            dialect = self._database_cfg.get("dialect")
+            normalized_dialect = str(dialect).lower() if isinstance(dialect, str) else ""
+            dialect_for_log = normalized_dialect if normalized_dialect in _DATABASE_DIALECTS_FOR_LOGGING else "other"
             logger.debug(
-                "📝 已注册 DATABASE 配置: engine={}, has_config={}",
-                engine_for_log,
+                "📝 已注册 DATABASE 配置: dialect={}, has_config={}",
+                dialect_for_log,
                 bool(self._database_cfg.get("config")),
             )

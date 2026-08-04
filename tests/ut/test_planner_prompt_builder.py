@@ -25,7 +25,7 @@ def test_build_database_context_prompt_returns_structured_content_when_tool_miss
         "TOOLS": {"local_functions": []},
         "DATABASE": {
             "db_id": "superhero",
-            "engine": "sqlite",
+            "dialect": "sqlite",
             "config": {"path": "/tmp/superhero.sqlite"},
         },
     }
@@ -33,7 +33,7 @@ def test_build_database_context_prompt_returns_structured_content_when_tool_miss
     prompt = planner_prompt_builder._build_database_context_prompt(config)
 
     assert "- DB ID: `superhero`" in prompt
-    assert "- DB Engine: `sqlite`" in prompt
+    assert "- DB Dialect: `sqlite`" in prompt
     assert "- `path`: `/tmp/superhero.sqlite`" in prompt
     assert "The current task includes available database context." not in prompt
 
@@ -49,7 +49,7 @@ def test_planner_user_template_renders_database_context_when_tool_missing():
                 "TOOLS": {"local_functions": []},
                 "DATABASE": {
                     "db_id": "superhero",
-                    "engine": "sqlite",
+                    "dialect": "sqlite",
                     "config": {"path": "/tmp/superhero.sqlite"},
                 },
             }
@@ -67,7 +67,7 @@ def test_planner_user_template_renders_database_context_when_tool_missing():
         in rendered
     )
     assert "- DB ID: `superhero`" in rendered
-    assert "- DB Engine: `sqlite`" in rendered
+    assert "- DB Dialect: `sqlite`" in rendered
 
 
 def test_planner_init_appends_prompts_to_defaults():

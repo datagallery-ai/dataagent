@@ -12,6 +12,7 @@
 # ============================================================================
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -219,7 +220,9 @@ class DataAgentService:
 
     def _format_nl2sql_result(self, state: dict[str, Any]) -> dict[str, Any]:
         """Format NL2SQL final state as structured candidates (no prompts / raw model text)."""
-        from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256 as hash_sql
+
+        def hash_sql(sql: str) -> str:
+            return hashlib.sha256(re.sub(r"\s+", " ", (sql or "").strip()).encode()).hexdigest()
 
         sql = str(state.get("sql") or "")
         rows_preview = state.get("rows_preview")
@@ -242,7 +245,6 @@ class DataAgentService:
         return {
             "success": True,
             "message": message,
-            "trace_id": state.get("trace_id") or "",
             "candidates": candidates,
             # Backward-compatible flat fields for existing clients.
             "sql": sql,

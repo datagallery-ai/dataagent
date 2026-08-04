@@ -30,4 +30,4 @@ Your task is to generate a SQL query for the target question by learning from th
 # Output:
 Please respond with:
 1. Your analysis of the examples and reasoning for the SQL generation, enclosed in ```text``` block
-2. The final SQL query that answers the target question and can be executed by {{ engine }}, enclosed in ```sql``` block.
+2. The final SQL query that answers the target question and can be executed by {{ dialect }}, enclosed in ```sql``` block.

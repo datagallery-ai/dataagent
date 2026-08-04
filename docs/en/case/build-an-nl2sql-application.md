@@ -65,7 +65,7 @@ Example SQLite path and Semantic Service connection (same fields as the built-in
 ```yaml
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
@@ -99,7 +99,7 @@ You can edit that file or copy it as your own business config. Core configuratio
 | `AGENT_CONFIG` | Agent type. Dedicated NL2SQL must use `type: "nl2sql"`. |
 | `MODEL` | Chat model for SQL generation and revision. |
 | `CORE` | NL2SQL internal nodes and thresholds. |
-| `DATABASE` | Database id, engine, and connection parameters. |
+| `DATABASE` | Database id, dialect, and connection parameters. |
 | `SEMANTIC_LAYER` | Semantic Service REST URL, authentication, and timeout settings. |
 
 Example configuration (same structure as repository `dataagent/agents/nl2sql/nl2sql_agent.yaml`; replace `demo_db` and paths for your scenario):
@@ -143,7 +143,7 @@ CORE:
 
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
@@ -158,7 +158,7 @@ SEMANTIC_LAYER:
 When configuring, verify:
 
 - `DATABASE.db_id` matches the database id imported into Semantic Service.
-- `DATABASE.engine` matches the real database, for example `sqlite`, `mysql`, or `postgres`.
+- `DATABASE.dialect` matches the real database, for example `sqlite`, `mysql`, or `postgres`.
 - For SQLite, prefer an absolute path in `DATABASE.config.path` so the file is found regardless of the working directory.
 - Do not put `api_key` in YAML; use `.env` instead.
 - Point `SEMANTIC_LAYER.base_url` at your deployed Semantic Service; set `username` / `password` for your deployment, or omit them in environments without authentication.

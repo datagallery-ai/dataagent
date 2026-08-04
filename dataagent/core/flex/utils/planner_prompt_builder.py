@@ -252,12 +252,12 @@ def _build_database_context_prompt(config: dict[str, Any]) -> str:
         return ""
 
     db_id = database.get("db_id")
-    engine = database.get("engine")
+    dialect = database.get("dialect")
     db_config = database.get("config") or {}
 
     lines = [
         f"- DB ID: `{db_id}`" if db_id else "",
-        f"- DB Engine: `{engine}`" if engine else "",
+        f"- DB Dialect: `{dialect}`" if dialect else "",
     ]
     for key, value in db_config.items():
         lines.append(f"- `{key}`: `{value}`")

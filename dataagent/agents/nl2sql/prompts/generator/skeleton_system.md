@@ -43,4 +43,4 @@ Fill in the skeleton with:
 # Output:
 Please respond with:
 1. Your comprehensive analysis and planning for the SQL query generation and the SQL skeleton with placeholders, enclosed in ```text``` block.
-2. The final SQL query that answers the target question and can be executed by {{ engine }}, enclosed in ```sql``` block.
+2. The final SQL query that answers the target question and can be executed by {{ dialect }}, enclosed in ```sql``` block.
