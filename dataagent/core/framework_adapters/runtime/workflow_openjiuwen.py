@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+# ruff: noqa: UP045
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +21,9 @@ import re
 import traceback
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any, get_type_hints
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Any, Optional, get_type_hints
 
 from loguru import logger
 from sqlalchemy.engine.url import make_url
@@ -42,6 +45,16 @@ from dataagent.core.framework_adapters.runtime.context import (
     set_current_runtime,
     set_current_stream_queue,
 )
+
+_CALL_CONTEXT_ATTR = "_dataagent_openjiuwen_call_context"
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenJiuWenCallContext:
+    """Per-call DataAgent context bound to one OpenJiuWen workflow runtime."""
+
+    agent_runtime: Any
+    stream_queue: Optional[queue.Queue[dict[str, Any]]] = None
 
 
 def _resolve_ojw_workflow_runtime_class() -> type[Any]:
@@ -121,19 +134,36 @@ class OpenJiuWenWorkflow:
         self.router = router
         self.state_class = state_class
         self.config = config
-        self.workflow = None
-        # 仅缓存「图是否已按 start_at 构建」；**不要**缓存 compile() 返回值。
-        # openjiuwen 的 Workflow.compile(runtime) 会绑定当前 runtime（见 workflow/base.py：self._runtime.set_runtime(runtime)）；
-        # 若跨多次 ainvoke 复用同一份 ExecutableGraph，第二轮仍会附着第一次的 global_state，导致 run_id/session 等错位。
-        self._graph_built_for_start: set[str] = set()
-        # astream 期间的事件队列（线程安全），由节点 invoke 注入到 contextvar，确保 writer() 能回传前端
-        self._active_stream_queue: queue.Queue[dict[str, Any]] | None = None
         self._end_comp_id = "__dataagent_end__"
         # reducer 规则（用于 openjiuwen 写回时的 delta merge）
         self._reducers: dict[str, Any] = self._extract_reducers_from_state_class(state_class)
-        # FlexAgent 通过 set_runtime 注入的 DataAgent Runtime（含 llm / workspace_dir）；与 openjiuwen 引擎 runtime 分离。
-        self._agent_runtime: Any | None = None
+        # set_runtime 仅作为兼容入口；ContextVar 确保并发任务间不共享 DataAgent Runtime。
+        self._agent_runtime_context: ContextVar[Any] = ContextVar(
+            f"dataagent_openjiuwen_agent_runtime_{id(self)}",
+            default=None,
+        )
         # 注意：不要在 __init__（同步上下文）里构图：
+
+    @staticmethod
+    def _bind_call_context(
+        runtime: Any,
+        agent_runtime: Any,
+        stream_queue: Optional[queue.Queue[dict[str, Any]]] = None,
+    ) -> None:
+        """Bind per-call DataAgent state to an OpenJiuWen workflow runtime."""
+        current_runtime, base_runtime = _unwrap_runtime(runtime)
+        target_runtime = base_runtime if base_runtime is not None else current_runtime
+        if target_runtime is None:
+            raise ValueError("OpenJiuWen workflow runtime is required")
+        setattr(target_runtime, _CALL_CONTEXT_ATTR, _OpenJiuWenCallContext(agent_runtime, stream_queue))
+
+    @staticmethod
+    def _get_call_context(runtime: Any) -> Optional[_OpenJiuWenCallContext]:
+        """Return the DataAgent call context attached to an OpenJiuWen runtime."""
+        current_runtime, base_runtime = _unwrap_runtime(runtime)
+        target_runtime = base_runtime if base_runtime is not None else current_runtime
+        call_context = getattr(target_runtime, _CALL_CONTEXT_ATTR, None)
+        return call_context if isinstance(call_context, _OpenJiuWenCallContext) else None
 
     @staticmethod
     def _extract_reducers_from_state_class(state_class: type[Any] | None) -> dict[str, Any]:
@@ -164,6 +194,21 @@ class OpenJiuWenWorkflow:
                     reducers[key] = meta
                     break
         return reducers
+
+    @staticmethod
+    def _resolve_recursion_limit(
+        override: Optional[int] = None,
+        agent_runtime: Optional[Any] = None,
+    ) -> int:
+        """解析图引擎步数上限：显式参数 > Runtime.max_iter 换算 > 默认常量。"""
+        if override is not None:
+            return max(1, int(override))
+        if agent_runtime is not None:
+            resolve_fn = getattr(agent_runtime, "resolve_workflow_recursion_limit", None)
+            if callable(resolve_fn):
+                return int(agent_runtime.resolve_workflow_recursion_limit())
+            return Runtime.resolve_recursion_limit_from_max_iter(getattr(agent_runtime, "max_iter", None))
+        return Runtime.resolve_recursion_limit_from_max_iter(None)
 
     @staticmethod
     def _ojw_is_graph_interrupt(e: Exception) -> bool:
@@ -291,15 +336,16 @@ class OpenJiuWenWorkflow:
 
     def set_runtime(self, runtime: Any) -> None:
         """由 FlexAgent 在每轮 chat/astream 前注入，供节点 ``aprocess(state, runtime)``（与 LangGraphWorkflow 对齐）。"""
-        self._agent_runtime = runtime
+        self._agent_runtime_context.set(runtime)
 
     def astream(
         self,
         initial_state: dict[str, Any],
-        runtime: Any | None = None,
-        start_at: str | None = None,
+        runtime: Optional[Any] = None,
+        agent_runtime: Optional[Any] = None,
+        start_at: Optional[str] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[Any]:
         """
         流式调用（DataAgent 侧实现）。
 
@@ -315,19 +361,27 @@ class OpenJiuWenWorkflow:
 
         async def _gen() -> AsyncIterator[Any]:
             _ = kwargs
-            workflow_runtime_cls = _resolve_ojw_workflow_runtime_class()
-
-            rt = runtime or workflow_runtime_cls(workflow_id="dataagent_openjiuwen")
+            if runtime is None:
+                workflow_runtime_cls = _resolve_ojw_workflow_runtime_class()
+                rt = workflow_runtime_cls(workflow_id="dataagent_openjiuwen")
+            else:
+                rt = runtime
+            call_agent_runtime = self._resolve_agent_runtime(agent_runtime)
             # 注意：openjiuwen 的节点执行可能发生在不同的 event loop/thread。
             # asyncio.Queue 跨 loop put 会失败（并被我们吞掉），导致前端收不到 output_msg。
             # 这里使用线程安全的 queue.Queue 作为事件缓冲。
             q: queue.Queue[dict[str, Any]] = queue.Queue()
 
-            # 关键：将队列挂在 workflow 实例上（比挂 runtime 更稳），供节点 invoke 注入 contextvar
-            self._active_stream_queue = q
-
-            task = asyncio.create_task(self.ainvoke(initial_state, runtime=rt, start_at=start_at))
-            final_state: dict[str, Any] | None = None
+            task = asyncio.create_task(
+                self.ainvoke(
+                    initial_state,
+                    runtime=rt,
+                    agent_runtime=call_agent_runtime,
+                    stream_queue=q,
+                    start_at=start_at,
+                )
+            )
+            final_state: Optional[dict[str, Any]] = None
             try:
                 while True:
                     if task.done() and q.empty():
@@ -343,8 +397,6 @@ class OpenJiuWenWorkflow:
             finally:
                 if not task.done():
                     task.cancel()
-                # 清理队列引用，避免跨请求串流
-                self._active_stream_queue = None
 
             # 对齐 langgraph：interrupt 走 "updates" 且包含 "__interrupt__"
             if isinstance(final_state, dict) and "__interrupt__" in final_state:
@@ -359,28 +411,35 @@ class OpenJiuWenWorkflow:
     async def ainvoke(
         self,
         initial_state: dict[str, Any],
-        runtime: Any | None = None,
+        runtime: Optional[Any] = None,
         *,
-        start_at: str | None = None,
+        agent_runtime: Optional[Any] = None,
+        stream_queue: Optional[queue.Queue[dict[str, Any]]] = None,
+        start_at: Optional[str] = None,
         # None：从 Agent Runtime.max_iter 换算；显式传入时优先生效。
-        recursion_limit: int | None = None,
+        recursion_limit: Optional[int] = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """异步执行工作流，处理状态初始化、执行循环及中断检查点保存。"""
         inputs_key, config_key = _resolve_ojw_inputs_and_config_keys()
-        workflow_runtime_cls = _resolve_ojw_workflow_runtime_class()
-
-        rt = runtime or workflow_runtime_cls(workflow_id="dataagent_openjiuwen")
+        if runtime is None:
+            workflow_runtime_cls = _resolve_ojw_workflow_runtime_class()
+            rt = workflow_runtime_cls(workflow_id="dataagent_openjiuwen")
+        else:
+            rt = runtime
+        call_agent_runtime = self._resolve_agent_runtime(agent_runtime)
+        self._bind_call_context(rt, call_agent_runtime, stream_queue)
         start_node = start_at or self.router.entry_point
-        compiled_graph = self._ensure_compiled(rt, start_at=start_node)
+        call_workflow = self._build_graph(start_at=start_node)
+        compiled_graph = _compile_workflow_internal(call_workflow, rt)
 
-        resolved_limit = self._resolve_recursion_limit(recursion_limit)
+        resolved_limit = self._resolve_recursion_limit(recursion_limit, call_agent_runtime)
 
         # 构建 openjiuwen config（字典操作，不会抛异常）
         # openjiuwen 的 Pregel 引擎默认 recursion_limit 很小（常见为 1），
         # 对于 flex 这种“actor-loop”会导致还没 complete 就被提前截停。
         # 默认 DEFAULT_WORKFLOW_RECURSION_LIMIT；若配置了 max_iter 则按常量倍数换算。
-        ojw_cfg: dict[str, Any] | None = None
+        ojw_cfg: Optional[dict[str, Any]] = None
         if resolved_limit is not None:
             # 注意：openjiuwen 在 graph.after_step 里会读取 loop.config['ns'] 做日志；
             # 如果我们传入一个“只有 recursion_limit”的 config，会覆盖掉其默认 config，
@@ -493,9 +552,8 @@ class OpenJiuWenWorkflow:
         finally:
             with contextlib.suppress(Exception):
                 await rt.close()
-            if self.workflow is not None:
-                with contextlib.suppress(Exception):
-                    await _reset_workflow_internal(self.workflow)
+            with contextlib.suppress(Exception):
+                await _reset_workflow_internal(call_workflow)
 
     def load_checkpoint_state(self, checkpoint_id: str) -> tuple[str, dict[str, Any]]:
         """
@@ -530,10 +588,15 @@ class OpenJiuWenWorkflow:
         """
         _current, base_runtime = _unwrap_runtime(runtime)
         backend_runtime = base_runtime if base_runtime is not None else runtime
-        runtime_for_node = self._agent_runtime if self._agent_runtime is not None else backend_runtime
+        call_context = self._get_call_context(backend_runtime)
+        runtime_for_node = (
+            call_context.agent_runtime
+            if call_context is not None and call_context.agent_runtime is not None
+            else backend_runtime
+        )
         set_current_runtime(runtime_for_node)
         set_current_backend_runtime(backend_runtime)
-        self._ojw_try_set_stream_queue()
+        self._ojw_try_set_stream_queue(backend_runtime)
         try:
             state_proxy: Any = GlobalStateProxy(runtime)
             if isinstance(inputs, dict) and inputs:
@@ -561,21 +624,14 @@ class OpenJiuWenWorkflow:
             clear_current_runtime()
             clear_current_stream_queue()
 
-    def _resolve_recursion_limit(self, override: int | None = None) -> int:
-        """解析图引擎步数上限：显式参数 > Runtime.max_iter 换算 > 默认常量。"""
-        if override is not None:
-            return max(1, int(override))
-        agent_rt = self._agent_runtime
-        if agent_rt is not None:
-            resolve_fn = getattr(agent_rt, "resolve_workflow_recursion_limit", None)
-            if callable(resolve_fn):
-                return int(resolve_fn())
-            return Runtime.resolve_recursion_limit_from_max_iter(getattr(agent_rt, "max_iter", None))
-        return Runtime.resolve_recursion_limit_from_max_iter(None)
+    def _resolve_agent_runtime(self, runtime: Optional[Any]) -> Any:
+        """Resolve an explicit per-invocation Runtime before the compatibility default."""
+        return runtime if runtime is not None else self._agent_runtime_context.get()
 
-    def _ojw_try_set_stream_queue(self) -> None:
+    def _ojw_try_set_stream_queue(self, runtime: Any) -> None:
         try:
-            stream_queue = getattr(self, "_active_stream_queue", None)
+            call_context = self._get_call_context(runtime)
+            stream_queue = call_context.stream_queue if call_context is not None else None
             if isinstance(stream_queue, queue.Queue):
                 set_current_stream_queue(stream_queue)
         except Exception:
@@ -616,7 +672,7 @@ class OpenJiuWenWorkflow:
         self._ojw_try_commit(runtime)
         return node_delta
 
-    def _build_graph(self, *, start_at: str) -> None:
+    def _build_graph(self, *, start_at: str) -> Any:
         """构建 openjiuwen 计算图，定义节点封装器与条件路由逻辑。"""
         resolved_workflow_types = _resolve_ojw_workflow_types()
         (
@@ -679,15 +735,7 @@ class OpenJiuWenWorkflow:
 
             wf.add_conditional_connection(name, _make_router(route_func))
 
-        self.workflow = wf
-
-    def _ensure_compiled(self, runtime: Any, *, start_at: str) -> Any:
-        """按 start_at 懒构建 Workflow，并基于当前 session runtime 生成 compiled graph。"""
-        if start_at not in self._graph_built_for_start:
-            self._build_graph(start_at=start_at)
-            self._graph_built_for_start.add(start_at)
-        assert self.workflow is not None
-        return _compile_workflow_internal(self.workflow, runtime)
+        return wf
 
     def _snapshot_global_state(self, runtime: Any) -> dict[str, Any]:
         """获取当前运行时的全局状态快照（plain dict）。"""
@@ -837,7 +885,7 @@ class OpenJiuWenWorkflow:
         return merged
         # openjiuwen 在构造 Graph/Vertex 时可能创建 asyncio.Future，
         # 在没有 event loop 的同步初始化阶段会报错（例如 DataAgent lazy init / import 阶段）。
-        # 统一改为在 ainvoke/astream 的 async 上下文里通过 _ensure_compiled 懒构图+compile。
+        # 统一改为在 ainvoke/astream 的 async 上下文里为每次调用独立构图并 compile。
 
 
 class OpenJiuWenInterrupt(Exception):
@@ -853,7 +901,7 @@ class OpenJiuWenInterrupt(Exception):
         self.raw = raw
 
 
-def _unwrap_runtime(runtime: Any) -> tuple[Any, Any | None]:
+def _unwrap_runtime(runtime: Any) -> tuple[Any, Optional[Any]]:
     """
     openjiuwen 的 runtime 在不同阶段可能被 RouterRuntime/WrappedNodeRuntime 包一层，
     某些 wrapper 的 base() 会返回 None。
@@ -864,8 +912,10 @@ def _unwrap_runtime(runtime: Any) -> tuple[Any, Any | None]:
     """
     seen: set[int] = set()
     current_runtime = runtime
+    was_unwrapped = False
     while current_runtime is not None and id(current_runtime) not in seen:
         seen.add(id(current_runtime))
+        next_runtime = None
         base_fn = getattr(current_runtime, "base", None)
         if callable(base_fn):
             try:
@@ -873,16 +923,33 @@ def _unwrap_runtime(runtime: Any) -> tuple[Any, Any | None]:
             except Exception:
                 base_runtime = None
                 logger.debug("failed to unwrap runtime", exc_info=True)
-            if base_runtime is not None:
-                return current_runtime, base_runtime
+            if base_runtime is not None and base_runtime is not current_runtime:
+                next_runtime = base_runtime
 
-        # 常见 wrapper 字段：_runtime / runtime
-        next_runtime = getattr(current_runtime, "_runtime", None) or getattr(current_runtime, "runtime", None)
-        if next_runtime is not None and next_runtime is not current_runtime:
-            current_runtime = next_runtime
-            continue
-        break
-    return current_runtime, None
+        # openjiuwen 0.1.14 的 Component Session -> NodeSession -> WorkflowSession 依次使用 _inner/_session。
+        if next_runtime is None:
+            for attr_name in ("_inner", "_session", "_runtime", "runtime"):
+                candidate = getattr(current_runtime, attr_name, None)
+                if candidate is not None and candidate is not current_runtime:
+                    next_runtime = candidate
+                    break
+
+        if next_runtime is None:
+            parent_fn = getattr(current_runtime, "parent", None)
+            if callable(parent_fn):
+                try:
+                    parent_runtime = parent_fn()
+                except Exception:
+                    parent_runtime = None
+                    logger.debug("failed to unwrap parent runtime", exc_info=True)
+                if parent_runtime is not None and parent_runtime is not current_runtime:
+                    next_runtime = parent_runtime
+
+        if next_runtime is None:
+            break
+        current_runtime = next_runtime
+        was_unwrapped = True
+    return current_runtime, current_runtime if was_unwrapped else None
 
 
 def _extract_interrupt_message(e: Exception) -> str:
