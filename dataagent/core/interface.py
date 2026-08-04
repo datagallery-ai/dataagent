@@ -82,13 +82,15 @@ class ReActAgent:
     async def chat(self, *args: Any, **kwargs: Any) -> Any:
         """Chat with the agent."""
         await self._ensure_built()
-        assert self._data_agent is not None
+        if self._data_agent is None:
+            raise RuntimeError("data agent is not built")
         return await self._data_agent.chat(*args, **kwargs)
 
     async def astream(self, *args: Any, **kwargs: Any) -> Any:
         """Stream responses from the agent."""
         await self._ensure_built()
-        assert self._data_agent is not None
+        if self._data_agent is None:
+            raise RuntimeError("data agent is not built")
         return self._data_agent.astream(*args, **kwargs)
 
     async def _ensure_built(self) -> None:

@@ -30,6 +30,7 @@ class MySQLConfig:
     database: str
 
     def to_conn_kwargs(self) -> dict[str, Any]:
+        """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
 
 
@@ -42,6 +43,7 @@ class GaussVectorConfig:
     database: str
 
     def to_conn_kwargs(self) -> dict[str, Any]:
+        """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
 
 
@@ -50,6 +52,7 @@ class SQLiteConfig:
     path: str
 
     def to_conn_kwargs(self) -> dict[str, Any]:
+        """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
 
 
@@ -59,6 +62,7 @@ class UDNConfig:
     explain_url: str | None = None
 
     def to_conn_kwargs(self) -> dict[str, Any]:
+        """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
 
 
@@ -67,16 +71,19 @@ class SparkConfig:
     warehouse_dir: str
 
     def to_conn_kwargs(self) -> dict[str, Any]:
+        """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
 
 
 class SqlService(ABC):
     @abstractmethod
     def explain(self, sql: str) -> str | None:
+        """Dry-run / explain SQL and return diagnostics."""
         pass
 
     @abstractmethod
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+        """Execute SQL and return result rows."""
         pass
 
 
@@ -95,6 +102,7 @@ class BaseService(SqlService, ABC):
         return False
 
     def explain(self, sql: str) -> str | None:
+        """Explain SQL using the underlying driver connection."""
         try:
             conn = self._get_conn()
             cursor = conn.cursor()
@@ -111,6 +119,7 @@ class BaseService(SqlService, ABC):
                 raise SQLServiceError(detail=str(exc)) from exc
 
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+        """Execute SQL using the underlying driver connection."""
         try:
             conn = self._get_conn()
             self._before_execute(conn)
@@ -215,6 +224,7 @@ class UDNService(SqlService):
         return False
 
     def explain(self, sql: str) -> str | None:
+        """Explain SQL via the UDN explain HTTP endpoint."""
         try:
             if self.config.explain_url:
                 import requests
@@ -246,6 +256,7 @@ class UDNService(SqlService):
             raise SQLServiceError(detail=str(e)) from e
 
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+        """Execute SQL against the UDN/sqlite path."""
         try:
             data = json.dumps({"sql": sql}).encode()
             req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
@@ -279,6 +290,7 @@ class SparkService(SqlService):
         return False
 
     def explain(self, sql: str) -> str | None:
+        """Explain SQL through the Spark session."""
         try:
             spark = self._get_spark()
             explain_df = spark.sql(f"EXPLAIN {sql}")
@@ -288,6 +300,7 @@ class SparkService(SqlService):
             return str(e)
 
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+        """Execute SQL through the Spark session."""
         try:
             spark = self._get_spark()
             df = spark.sql(sql)
@@ -310,6 +323,7 @@ class SparkService(SqlService):
 
 
 def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | UDNService:
+    """Construct a SQL service implementation for the given engine."""
     try:
         if engine == "mysql":
             return MySQLService(MySQLConfig(**config))

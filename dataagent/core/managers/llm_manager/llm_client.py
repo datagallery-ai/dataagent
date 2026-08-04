@@ -19,7 +19,7 @@
   其余自动透传进 ``extra_body``。
   ``disable_response_compression: true`` 时请求 ``Accept-Encoding: identity``。
 - **cache_control**：支持显式缓存的模型（Qwen/Claude/百炼 deepseek-v3.2 等）由
-  ``_apply_cache_control_with_anchors`` 注入 bp0-bp4 断点；不支持的模型由 ``_strip_cache_control``
+  ``apply_cache_control_with_anchors`` 注入 bp0-bp4 断点；不支持的模型由 ``_strip_cache_control``
   剥离预置 cc（替代 litellm 的 monkey-patch，见设计文档 §1.7）。
 - **缓存命中指标**：``_usage_to_metadata`` 调用 ``_extract_detail_tokens_from_dict`` 提取
   OpenAI/Anthropic/DeepSeek 三种格式的 cache_read/cache_creation/reasoning 子 token 字段。
@@ -813,6 +813,59 @@ class LLMClient:
         self._disable_response_compression = disable_response_compression
 
     @staticmethod
+    def apply_cache_control_with_anchors(
+        messages: list[dict[str, Any]],
+        *,
+        compress_token_limit: int | None = None,
+        compress_message_cnt: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Apply cache_control breakpoints (dynamic tail strategy).
+
+        Breakpoint layout (max 4, priority bp0>bp1>bp3>bp2>bp4):
+          bp0 — System (always set; ensures [0..0] cache entry survives compression)
+          bp1 — history_summary (if present, largest stable prefix that survives compression)
+          bp2 — first tool with spacing≥3072c AND content≥512c, falling back to
+                tail2 position (only when no history_summary; bp1/bp2 mutually exclusive)
+          bp3 — Todo前一条 (unconditional tail anchor, NOT gated by approaching_compress)
+          bp4 — tail2 = Todo前第3条 (optional, skipped when approaching_compress)
+        """
+        use_tail_cc = os.getenv("DATAAGENT_CACHE_ANCHOR", "1") != "0"
+        system_idx, history_summary_idx, tool_indices, todo_idx = LLMClient._scan_messages_for_anchors(messages)
+
+        system_chars = LLMClient._content_chars(messages[system_idx].get("content")) if system_idx is not None else 0
+
+        eff_token_limit = compress_token_limit or DEFAULT_COMPRESS_TOKEN_LIMIT
+        eff_message_cnt = compress_message_cnt or DEFAULT_COMPRESS_MESSAGE_CNT
+        total_chars = sum(LLMClient._content_chars(msg.get("content")) for msg in messages)
+        estimated_tokens = total_chars // 4
+        approaching_compress = (
+            len(messages) >= _CACHE_COMPRESS_APPROACH_RATIO * eff_message_cnt
+            or estimated_tokens >= _CACHE_COMPRESS_APPROACH_RATIO * eff_token_limit
+        )
+
+        bp0_idx: int | None = system_idx
+        bp1_idx: int | None = history_summary_idx
+        bp3_idx: int | None = None
+        bp2_idx: int | None = None
+        bp4_idx: int | None = None
+        if use_tail_cc and todo_idx is not None and todo_idx > (system_idx or 0):
+            bp3_idx = todo_idx - 1
+            if not approaching_compress:
+                bp2_idx, bp4_idx = LLMClient._assign_bp2_bp4(
+                    messages=messages,
+                    todo_idx=todo_idx,
+                    system_idx=system_idx,
+                    bp1_idx=bp1_idx,
+                    bp3_idx=bp3_idx,
+                    tool_indices=tool_indices,
+                    system_chars=system_chars,
+                )
+
+        priority = [bp0_idx, bp1_idx, bp3_idx, bp2_idx, bp4_idx]
+        selected = list(dict.fromkeys(bp for bp in priority if bp is not None))[:_MAX_BREAKPOINTS]
+        return LLMClient._apply_breakpoints(messages, selected)
+
+    @staticmethod
     def _extract_previous_assistant_content(messages: list[Any]) -> str:
         """从 messages 列表中提取最后一条 assistant 消息的 content。"""
         for msg in reversed(messages):
@@ -1113,59 +1166,6 @@ class LLMClient:
 
         converted = LangChainChatModelAdapter.messages_to_openai_dicts(messages)
         return converted if isinstance(converted, list) else messages
-
-    @staticmethod
-    def _apply_cache_control_with_anchors(
-        messages: list[dict[str, Any]],
-        *,
-        compress_token_limit: int | None = None,
-        compress_message_cnt: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Apply cache_control breakpoints (dynamic tail strategy).
-
-        Breakpoint layout (max 4, priority bp0>bp1>bp3>bp2>bp4):
-          bp0 — System (always set; ensures [0..0] cache entry survives compression)
-          bp1 — history_summary (if present, largest stable prefix that survives compression)
-          bp2 — first tool with spacing≥3072c AND content≥512c, falling back to
-                tail2 position (only when no history_summary; bp1/bp2 mutually exclusive)
-          bp3 — Todo前一条 (unconditional tail anchor, NOT gated by approaching_compress)
-          bp4 — tail2 = Todo前第3条 (optional, skipped when approaching_compress)
-        """
-        use_tail_cc = os.getenv("DATAAGENT_CACHE_ANCHOR", "1") != "0"
-        system_idx, history_summary_idx, tool_indices, todo_idx = LLMClient._scan_messages_for_anchors(messages)
-
-        system_chars = LLMClient._content_chars(messages[system_idx].get("content")) if system_idx is not None else 0
-
-        eff_token_limit = compress_token_limit or DEFAULT_COMPRESS_TOKEN_LIMIT
-        eff_message_cnt = compress_message_cnt or DEFAULT_COMPRESS_MESSAGE_CNT
-        total_chars = sum(LLMClient._content_chars(msg.get("content")) for msg in messages)
-        estimated_tokens = total_chars // 4
-        approaching_compress = (
-            len(messages) >= _CACHE_COMPRESS_APPROACH_RATIO * eff_message_cnt
-            or estimated_tokens >= _CACHE_COMPRESS_APPROACH_RATIO * eff_token_limit
-        )
-
-        bp0_idx: int | None = system_idx
-        bp1_idx: int | None = history_summary_idx
-        bp3_idx: int | None = None
-        bp2_idx: int | None = None
-        bp4_idx: int | None = None
-        if use_tail_cc and todo_idx is not None and todo_idx > (system_idx or 0):
-            bp3_idx = todo_idx - 1
-            if not approaching_compress:
-                bp2_idx, bp4_idx = LLMClient._assign_bp2_bp4(
-                    messages=messages,
-                    todo_idx=todo_idx,
-                    system_idx=system_idx,
-                    bp1_idx=bp1_idx,
-                    bp3_idx=bp3_idx,
-                    tool_indices=tool_indices,
-                    system_chars=system_chars,
-                )
-
-        priority = [bp0_idx, bp1_idx, bp3_idx, bp2_idx, bp4_idx]
-        selected = list(dict.fromkeys(bp for bp in priority if bp is not None))[:_MAX_BREAKPOINTS]
-        return LLMClient._apply_breakpoints(messages, selected)
 
     @staticmethod
     def _content_chars(content: Any) -> int:
@@ -1922,7 +1922,7 @@ class LLMClient:
             msgs = self._lc_messages_to_dicts(msgs)
 
         if self._should_inject_cache_control():
-            msgs = self._apply_cache_control_with_anchors(
+            msgs = self.apply_cache_control_with_anchors(
                 msgs,
                 compress_token_limit=self._compress_token_limit,
                 compress_message_cnt=self._compress_message_cnt,

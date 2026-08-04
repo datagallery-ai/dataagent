@@ -73,6 +73,7 @@ class NL2SQLState(BaseState):
 
 
 def get_default_state(question: str, **override) -> NL2SQLState:
+    """Return a fresh NL2SQLState with default field values."""
     default_state = {
         "messages": [],
         "question": question,

@@ -57,6 +57,7 @@ class PerceptorNode(BaseNL2SQLNode):
 
     @property
     def semantic_client(self) -> SemanticServiceClient:
+        """Lazily build the semantic-layer client from agent config."""
         if self._semantic_client is None:
             try:
                 self._semantic_client = SemanticServiceClient.from_config(self._config_manager)

@@ -379,7 +379,7 @@ def _compute_final_breakpoints(
     compress_message_cnt: int | None,
     enable_cache_control: bool | None = None,
 ) -> dict[int, Any]:
-    """Compute final cache_control breakpoint allocation via _apply_cache_control_with_anchors.
+    """Compute final cache_control breakpoint allocation via apply_cache_control_with_anchors.
 
     遵循与 ``LLMClient._should_inject_cache_control`` 相同的三层决策（§2.5.1）：
     1. ``DATAAGENT_CACHE_CONTROL=0`` 环境变量 → 全局禁用，返回空 dict
@@ -399,7 +399,7 @@ def _compute_final_breakpoints(
         return {}
 
     # L3: 默认 None 或 True → 计算断点
-    # 运行 _apply_cache_control_with_anchors 得到最终断点分配
+    # 运行 apply_cache_control_with_anchors 得到最终断点分配
     # （含动态注入的 bp2/bp3/bp4），使 dump 反映 LLM 调用时的真实 cache_control 布局，
     # 而非仅标注消息构建阶段预置的显式 cc（仅有 bp1）。
     # final_bp: idx -> cache_control 值
@@ -409,7 +409,7 @@ def _compute_final_breakpoints(
         from dataagent.core.managers.llm_manager.llm_client import LLMClient
 
         dict_msgs = LangChainChatModelAdapter.messages_to_openai_dicts(messages)
-        processed = LLMClient._apply_cache_control_with_anchors(
+        processed = LLMClient.apply_cache_control_with_anchors(
             dict_msgs,
             compress_token_limit=compress_token_limit,
             compress_message_cnt=compress_message_cnt,
@@ -460,7 +460,7 @@ def _write_message_content(
     else:
         f.write(f"{json.dumps(content, ensure_ascii=False, indent=2)}\n")
 
-    # 动态注入的断点（原 LangChain 消息无显式 cc，由 _apply_cache_control_with_anchors
+    # 动态注入的断点（原 LangChain 消息无显式 cc，由 apply_cache_control_with_anchors
     # 在 dict 形态上添加）在此补充 ⭐ 标记，避免漏标 bp2/bp3/bp4。
     if annotate_cache_breakpoints and is_bp and not has_explicit_cc:
         cc_val = final_bp.get(idx, {"type": "ephemeral"})
@@ -530,7 +530,7 @@ def dump_prompt_to_file(
         file_path: 输出文件路径，默认 "prompt_dump.txt"。
         append: 为 True 时追加写入，否则覆盖。
         annotate_cache_breakpoints: 为 True 时，在消息头标注 cache_control 位置和 breakpoint 信息。
-            断点分配通过运行 ``_apply_cache_control_with_anchors`` 得到最终结果
+            断点分配通过运行 ``apply_cache_control_with_anchors`` 得到最终结果
             （含动态注入的 bp2/bp3/bp4），而非仅标注 LangChain 消息中预置的显式 cc。
         compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
         compress_message_cnt: 实际压缩消息数阈值（由 runtime.env 注入），影响 approaching_compress 判断。
@@ -598,7 +598,7 @@ def dump_prompt_to_file(
         if annotate_cache_breakpoints:
             f.write(
                 f"  Breakpoint summary: {bp_count} breakpoints "
-                "(final allocation via _apply_cache_control_with_anchors)\n"
+                "(final allocation via apply_cache_control_with_anchors)\n"
             )
             f.write(
                 "  NOTE: bp0/bp1/bp2/bp3/bp4 are dynamically injected at LLM call time; "
