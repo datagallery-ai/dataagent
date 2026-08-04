@@ -80,13 +80,16 @@ def _provenance() -> dict[str, Any]:
     executed_path = Path(__file__).resolve()
     template_hash = _sha256_file(TEMPLATE_PATH)
     executed_hash = _sha256_file(executed_path)
-    modified = bool(template_hash and executed_hash and template_hash != executed_hash)
+    modified: bool | None = None
+    if template_hash and executed_hash:
+        modified = template_hash != executed_hash
     warnings: list[str] = []
     if not TEMPLATE_PATH.is_file():
         warnings.append("template_path_does_not_exist")
-    if modified and not CHANGE_REASON:
+    if modified is True and not CHANGE_REASON:
         warnings.append("modified_script_missing_change_reason")
     return {
+        "template_available": TEMPLATE_PATH.is_file(),
         "template_path": str(TEMPLATE_PATH),
         "template_sha256": template_hash,
         "executed_path": str(executed_path),

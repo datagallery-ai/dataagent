@@ -10,7 +10,8 @@ disable-model-invocation: true
 
 业务阶段固定为：**采样 step1 → 特征工程 step2 → 模型工程 step3 → NL2SQL step4**。
 
-本阶段只生成 SQL，不执行全量数据库查询。LightGBM 仅作为教师模型参照，不是部署候选。
+本阶段生成最终 SQL，并在 `source_database` 上执行内部限量 `SELECT` 试算；不提交或执行未经
+限量的完整圈选查询。LightGBM 仅作为教师模型参照，不是部署候选。
 
 最终策略只允许为：
 
@@ -24,18 +25,17 @@ decision_tree_scorecard_fusion
 
 - 只读取上游已发布产物，不修改 Sampling、Feature Engineering 或 Model Engineering 文件。
 - 所有本阶段产物只写当前 workspace。
-- 允许在当前 workspace 创建并执行本地 Python 脚本，也允许使用 `python -c` 或
-  Python here-doc 进行文件检查、格式归一化、特征血缘整理和静态验证。
+- 允许在当前 workspace 创建、修改并执行本地 Python 脚本，也允许使用 `python -c` 或
+  Python here-doc。
 - 将打包的 `step4_0_reconstruct_tree_preprocessing.py` 和
   `step4_1_generate_sql.py` 视为两个职责独立的初始模板。先复制到当前 workspace，
   再按步骤运行并按需修改相应工作副本；不得直接修改共享的打包模板。
-- 本地 Python 不得连接数据库或其他外部资源，不得通过 `submit_resource_job` 等资源工具
-  提交 Python 代码。该限制由 governance 同时强制执行。
 - 共享输出区中的上游原件始终只读。需要归一化时保留原始副本，并在当前 workspace
   生成供生成器工作副本读取的输入副本；不得回写共享输出区。
 - `source_database` 是最终 SQL 的目标数据库。
 - `output_database` 是训练采样库，不得出现在最终 SQL。
-- 不提交或执行最终圈选 SQL；本阶段只进行本地生成和静态验证。
+- 不提交或执行未经限量的最终圈选 SQL。通过 ClickHouse 资源工具只执行生成器产生的源表
+  内部限量试算 SQL；提交给 ClickHouse MCP 的顶层关键字必须是 `SELECT`，不得提交 `EXPLAIN`。
 - 不读取 `step3_4_lgb_model.pkl`，不生成 LightGBM SQL。
 
 ## 上游输入
@@ -45,20 +45,23 @@ decision_tree_scorecard_fusion
 
 ### Sampling
 
-- `step1_0_table_schema.json`
 - `step1_output_meta.json`
+- `step1_sample_stats.json`
+- `step1_0_table_schema.json`（存在时仅作旧版一致性核对）
 
 用途：
 
-- 从 `step1_0_table_schema.json` 获取全量源表、字段和类型。
-- 从 `step1_output_meta.json` 获取 `source_database`、`output_database` 和表清单。
+- 从 `step1_output_meta.json` 获取全量源表、字段、类型、join hints 和用户键别名。
+- 从 `step1_sample_stats.json` 获取 `source_database`、`output_database`、`target_game` 和
+  `projection_tables[].type`。
 
 ### Feature Engineering
 
 - `schema_resolution.json`
 - `step2_3_feature_derivation.md`
 - `step2_3_high_cardinality_check.json`
-- `step2_3_feature_aggregation.sql`（上游已发布时作为可选的血缘核对输入）
+- `step2_3_feature_aggregation_expanded.sql`（优先的实际表达式输入）
+- `step2_3_feature_aggregation.sql`（旧版兼容 fallback）
 
 用途：
 
@@ -66,7 +69,8 @@ decision_tree_scorecard_fusion
 - 将 `step2_3_feature_derivation.md` 在当前 workspace 中标准化为
   `step2_3_feature_derivation.json`。
 - `step2_3_high_cardinality_check.json` 用于审计分箱、映射和列表特征处理。
-- Markdown 信息不足时，只能使用已发布的 `step2_3_feature_aggregation.sql`、Schema
+- 血缘权威顺序为 expanded SQL → Schema/schema_resolution → Markdown。Markdown 信息不足时，
+  只能使用已发布的聚合 SQL、Schema
   和高基数检查结果补全血缘；不得根据常识补造表、字段或表达式。
 
 后续 SQL renderer 只读取生成后的 `step2_3_feature_derivation.json`，不直接自由解释 Markdown。
@@ -126,7 +130,8 @@ LightGBM 教师参照：
 - 融合没有增益时，按主指标、PR-AUC、AUC、教师 Spearman、规则数和 SQL 长度确定性回退。
 - 不因 AUC、Spearman、AUC gap、规则数或 Top-K 低而停止正常流程；这些问题写入 `risk_flags`。
 
-如果只有一个策略具备完整规则、特征血缘和部署预处理信息，则直接使用该策略。
+先分别检查两个白盒候选的规则、预处理、特征血缘和 SQL 可渲染性，再在技术上可部署的候选
+之间比较验证效果。如果只有一个策略具备完整部署信息，则直接使用该策略。
 
 ## SQL 生成规则
 
@@ -141,6 +146,29 @@ LightGBM 教师参照：
 - 不得存在 `<...>`、`<TBD>` 或其他未解析占位符。
 - JOIN 和聚合必须来自 Schema、已验证键和特征血缘，不得补造逻辑表。
 - 未提供明确 `selection_rate` 或阈值时输出完整用户评分排序，不自行决定圈选人数。
+
+## ClickHouse 源库验证
+
+静态校验通过后，执行生成器输出的源库限量 `SELECT` 试算 SQL。试算 SQL 在每张物理源表
+内部添加 `LIMIT`，再设置时间、线程、读取行数、读取字节和内存上限；禁止只在 final SQL
+外层添加 LIMIT。该试算用于验证真实源库中的表、字段、函数、类型、别名和 JOIN。
+
+使用生成器第一次运行产生的 `.nl2sql_runtime/source_validation_request.json`：
+
+- 按其中 `source_trial.path` 和 `source_trial.sha256` 提交唯一的 `source_trial`。
+- 固定调用 `submit_resource_job(resource_id="clickhouse", task_type="sql_query",
+  command_file=<path>)`，再 `poll_job` 和 `collect_job`。
+- 将原始 collect payload 机械写入 `.nl2sql_runtime/source_validation_result.json`，结构为：
+
+```json
+{
+  "source_trial": {"query_sha256": "<request sha256>", "result": {}}
+}
+```
+
+再次运行 step4_1，由生成器核对 hash、判定结果并生成 receipt。返回零行属于执行成功；
+ClickHouse 语法、字段、函数或类型错误时修改生成器工作副本并重跑。资源限额错误必须在报告
+中单独标识，不能冒充 SQL 语法错误。
 
 ## 分步脚本与运行方式
 
@@ -182,16 +210,16 @@ export NL2SQL_TEMPLATE_PATH="skill/nl2sql/scripts/step4_1_generate_sql.py"
 mkdir -p "${OUTPUT_DIR}/scripts" "${SQL_DIR}"
 cp "${NL2SQL_PREPROCESS_TEMPLATE_PATH}" "${OUTPUT_DIR}/scripts/step4_0_reconstruct_tree_preprocessing.py"
 cp "${NL2SQL_TEMPLATE_PATH}" "${OUTPUT_DIR}/scripts/step4_1_generate_sql.py"
-python3 "${OUTPUT_DIR}/scripts/step4_0_reconstruct_tree_preprocessing.py"
-python3 "${OUTPUT_DIR}/scripts/step4_1_generate_sql.py"
+uv run --no-sync python "${OUTPUT_DIR}/scripts/step4_0_reconstruct_tree_preprocessing.py"
+uv run --no-sync python "${OUTPUT_DIR}/scripts/step4_1_generate_sql.py"
 ```
 
 如果某一步初始模板运行失败，或者结果不符合本 skill 的输入、预处理回放、策略、血缘或
-SQL 静态校验要求，可以修改发生问题的对应工作副本后从该步骤重跑。修改前必须：
+SQL 静态或 ClickHouse 验证要求，可以修改发生问题的对应工作副本后从该步骤重跑。修改时：
 
 - 确认问题来自模板兼容或生成逻辑，而不是通过改写规则、标签或分数规避输入事实。
-- 修改 step4_0 时设置 `NL2SQL_PREPROCESS_CHANGE_REASON`；修改 step4_1 时设置
-  `NL2SQL_GENERATOR_CHANGE_REASON`，简要记录修改原因。
+- 建议在修改 step4_0 时设置 `NL2SQL_PREPROCESS_CHANGE_REASON`，修改 step4_1 时设置
+  `NL2SQL_GENERATOR_CHANGE_REASON`，记录修改原因；缺失原因只记审计 warning，不拒绝运行。
 - 保持打包模板不变，不手工编辑生成后的 SQL、报告或 receipt。
 
 两个脚本都会记录模板与实际执行脚本的 SHA-256、是否修改和修改原因。实际执行的两个工作
@@ -213,11 +241,9 @@ export NL2SQL_TREE_SCORE_TOLERANCE="0.00051"
 - 修改共享的打包生成器模板。
 - 修改共享输出区中的任何上游文件。
 - 使用本地 Python 改写模型规则、验证标签、预测分数或策略指标。
-- 手工修改生成后的 SQL。
-- 手写策略选择、血缘或 SQL 验证报告。
-- 使用两个规定工作副本以外的脚本直接生成或覆盖预处理重建结果、最终 SQL、策略报告、
-  血缘报告、SQL 验证报告或 `receipt.json`。
-- 通过 `submit_resource_job` 或其他外部资源通道发送、执行 Python 代码。
+
+修复后应从相应步骤重新生成 SQL、报告和 receipt，避免产物之间不一致；本地辅助 Python
+脚本不受文件名和数量限制。
 
 ## 最终产物
 
@@ -239,8 +265,10 @@ export NL2SQL_TREE_SCORE_TOLERANCE="0.00051"
 ```json
 {
   "full_database_execution_performed": false,
-  "full_database_execution_expected": false
+  "full_database_execution_expected": false,
+  "source_trial_validation": {"performed": true, "passed": true}
 }
 ```
 
-不得声称已经在 ClickHouse 或全量数据库执行最终 SQL。
+不得声称执行了未经限量的最终 SQL。只有源库内部限量 `SELECT` 试算成功后才写
+`receipt.json`；`.nl2sql_runtime/` 中的临时 SQL、请求和结果不登记为最终产物。

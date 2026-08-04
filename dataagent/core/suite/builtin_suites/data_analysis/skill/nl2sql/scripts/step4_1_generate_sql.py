@@ -1,13 +1,15 @@
-"""Generate one deployable white-box audience-selection SQL.
+"""Generate and validate one deployable white-box audience-selection SQL.
 
-The step is deliberately local-only:
+The final audience query is never executed without bounds:
 
 * LightGBM is a teacher/reference model, never a deployment candidate.
 * The only deployment candidates are the distilled decision tree, scorecard,
   or a deterministic blend of those two.
 * Feature lineage is normalized from the existing step2 Markdown artifact into
   ``step2_3_feature_derivation.json`` inside the current NL2SQL workspace.
-* The emitted SQL targets the full ``source_database`` but is not executed.
+* The emitted SQL targets the full ``source_database``.
+* A separately rendered source-limited SELECT is executed for runtime validation.
+* The unrestricted final SQL is never submitted to ClickHouse.
 """
 
 from __future__ import annotations
@@ -38,12 +40,25 @@ TEMPLATE_PATH = Path(
     os.environ.get("NL2SQL_TEMPLATE_PATH", str(Path(__file__).resolve()))
 ).resolve()
 GENERATOR_CHANGE_REASON = os.environ.get("NL2SQL_GENERATOR_CHANGE_REASON", "").strip()
+RUNTIME_DIR = OUTPUT_DIR / ".nl2sql_runtime"
+SOURCE_VALIDATION_RESULT_PATH = Path(
+    os.environ.get(
+        "NL2SQL_SOURCE_VALIDATION_RESULT_PATH",
+        str(RUNTIME_DIR / "source_validation_result.json"),
+    )
+).resolve()
+TRIAL_ROWS_PER_TABLE = int(os.environ.get("NL2SQL_TRIAL_ROWS_PER_TABLE", "10000"))
+TRIAL_OUTPUT_ROWS = int(os.environ.get("NL2SQL_TRIAL_OUTPUT_ROWS", "10"))
+TRIAL_MAX_EXECUTION_TIME = int(os.environ.get("NL2SQL_TRIAL_MAX_EXECUTION_TIME", "30"))
+TRIAL_MAX_ROWS_TO_READ = int(os.environ.get("NL2SQL_TRIAL_MAX_ROWS_TO_READ", "100000"))
+TRIAL_MAX_BYTES_TO_READ = int(os.environ.get("NL2SQL_TRIAL_MAX_BYTES_TO_READ", "500000000"))
+TRIAL_MAX_MEMORY_USAGE = int(os.environ.get("NL2SQL_TRIAL_MAX_MEMORY_USAGE", "1000000000"))
 
 INPUT_NORMALIZATION_WARNINGS: list[str] = []
 
 REQUIRED_INPUTS = (
-    "step1_0_table_schema.json",
     "step1_output_meta.json",
+    "step1_sample_stats.json",
     "schema_resolution.json",
     "step2_3_feature_derivation.md",
     "step2_3_high_cardinality_check.json",
@@ -66,55 +81,20 @@ FORBIDDEN_SQL_PATTERNS = (
     (re.compile(r"\bLIMIT\b", re.I), "LIMIT"),
 )
 
-SQL_FUNCTIONS = {
-    "abs",
-    "avg",
-    "case",
-    "cast",
-    "coalesce",
-    "count",
-    "countdistinct",
-    "countif",
-    "date",
-    "datetime",
-    "else",
-    "end",
-    "float32",
-    "float64",
-    "if",
-    "ifnull",
-    "int16",
-    "int32",
-    "int64",
-    "int8",
-    "isnull",
-    "length",
-    "max",
-    "min",
-    "multiif",
-    "nullif",
-    "replace",
-    "round",
-    "sum",
-    "then",
-    "tostring",
-    "uint16",
-    "uint32",
-    "uint64",
-    "uint8",
-    "uniqexact",
-    "when",
-}
-
 
 @dataclass(frozen=True)
 class RuntimeContract:
     source_database: str
     sampling_database: str
+    target_game: str
     user_table: str
     user_id: str
     table_columns: dict[str, dict[str, str]]
+    table_types: dict[str, str]
     validated_keys: dict[str, list[str]]
+    user_id_aliases: tuple[str, ...]
+    game_dimension_tables: set[str]
+    game_keys: dict[str, str]
     one_to_one_tables: set[str]
 
 
@@ -144,17 +124,16 @@ def _generator_provenance() -> dict[str, Any]:
     executed_path = Path(__file__).resolve()
     executed_sha256 = _sha256_file(executed_path)
     template_sha256 = _sha256_file(TEMPLATE_PATH)
-    modified = bool(
-        template_sha256
-        and executed_sha256
-        and template_sha256 != executed_sha256
-    )
+    modified: bool | None = None
+    if template_sha256 and executed_sha256:
+        modified = template_sha256 != executed_sha256
     warnings: list[str] = []
     if not TEMPLATE_PATH.is_file():
         warnings.append("template_path_does_not_exist")
-    if modified and not GENERATOR_CHANGE_REASON:
+    if modified is True and not GENERATOR_CHANGE_REASON:
         warnings.append("modified_generator_missing_change_reason")
     return {
+        "template_available": TEMPLATE_PATH.is_file(),
         "template_path": str(TEMPLATE_PATH),
         "template_sha256": template_sha256,
         "executed_path": str(executed_path),
@@ -261,11 +240,13 @@ def _canonical_header(header: str) -> str:
         "字段": "feature",
         "特征": "feature",
         "特征名": "feature",
+        "派生列": "feature",
         "状态": "status",
         "处理方式": "method",
         "聚合方式": "method",
         "来源表": "source_table",
         "来源字段": "source_feature",
+        "原字段": "source_feature",
         "数据类型": "data_type",
         "类型": "data_type",
         "空值策略": "null_strategy",
@@ -304,25 +285,69 @@ def _table_schema_map(table_schema: dict[str, Any]) -> dict[str, dict[str, str]]
             columns[str(column["name"])] = str(column.get("valueType", column.get("type", "Unknown")))
         result[str(table["name"])] = columns
     if not result:
-        raise SystemExit("step1_0_table_schema.json contains no tables")
+        raise SystemExit("step1_output_meta.json contains no tables")
     return result
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _classification_tables(classification: Any, *keys: str) -> set[str]:
+    if not isinstance(classification, dict):
+        return set()
+    result: set[str] = set()
+    for key in keys:
+        result.update(_string_list(classification.get(key)))
+    return result
+
+
+def _hint_game_key_candidates(output_meta: dict[str, Any]) -> dict[str, list[str]]:
+    candidates: dict[str, list[str]] = {}
+    hints = output_meta.get("join_hints", [])
+    if not isinstance(hints, list):
+        return candidates
+    for hint in hints:
+        if not isinstance(hint, dict):
+            continue
+        for side in ("left", "right"):
+            value = str(hint.get(side) or "").strip()
+            match = re.fullmatch(
+                r"`?([^.`]+)`?\s*\.\s*`?([^`]+)`?",
+                value,
+            )
+            if not match:
+                continue
+            table, column = match.groups()
+            candidates.setdefault(table, []).append(column)
+    return candidates
+
+
 def load_runtime_contract() -> RuntimeContract:
-    table_schema = _read_json("step1_0_table_schema.json")
     output_meta = _read_json("step1_output_meta.json")
+    sample_stats = _read_json("step1_sample_stats.json")
     schema_resolution = _read_json("schema_resolution.json")
 
-    source_database = str(output_meta.get("source_database") or table_schema.get("source_database") or "").strip()
+    source_database = str(sample_stats.get("source_database") or output_meta.get("source_database") or "").strip()
     if not source_database:
         raise SystemExit("source_database is absent from step1 artifacts")
-    schema_source = str(table_schema.get("source_database") or "").strip()
+    schema_source = str(output_meta.get("source_database") or "").strip()
     if schema_source and schema_source != source_database:
-        raise SystemExit("source_database mismatch between step1_output_meta.json and step1_0_table_schema.json")
+        raise SystemExit("source_database mismatch between step1_output_meta.json and step1_sample_stats.json")
 
-    sampling_database = str(
-        output_meta.get("output_database") or schema_resolution.get("output_database") or ""
-    ).strip()
+    legacy_schema_path = OUTPUT_DIR / "step1_0_table_schema.json"
+    if legacy_schema_path.is_file():
+        legacy_schema = _read_json("step1_0_table_schema.json")
+        legacy_source = str(legacy_schema.get("source_database") or "").strip()
+        if legacy_source and legacy_source != source_database:
+            raise SystemExit("source_database mismatch in optional step1_0_table_schema.json")
+
+    sampling_database = str(sample_stats.get("output_database") or "").strip()
+    if not sampling_database:
+        raise SystemExit("step1_sample_stats.json must provide output_database")
+    target_game = str(sample_stats.get("target_game") or "").strip()
     roles = schema_resolution.get("roles", {})
     if not isinstance(roles, dict):
         raise SystemExit("schema_resolution.roles must be an object")
@@ -331,13 +356,24 @@ def load_runtime_contract() -> RuntimeContract:
     if not user_table or not user_id:
         raise SystemExit("schema_resolution must resolve <user_table> and <user_id>")
 
-    table_columns = _table_schema_map(table_schema)
+    table_columns = _table_schema_map(output_meta)
     if user_table not in table_columns:
         raise SystemExit(f"Resolved user table does not exist in source schema: {user_table}")
     if user_id not in table_columns[user_table]:
         raise SystemExit(f"Resolved user id {user_id} does not exist in source table {user_table}")
 
     validated_keys: dict[str, list[str]] = {}
+    key_mapping = schema_resolution.get("key_mapping", {})
+    if isinstance(key_mapping, dict):
+        for table, raw_mapping in key_mapping.items():
+            if not isinstance(raw_mapping, dict):
+                continue
+            for key in ("user_key", "alternative_keys"):
+                values = raw_mapping.get(key)
+                if isinstance(values, list):
+                    validated_keys.setdefault(str(table), []).extend(_string_list(values))
+                elif values:
+                    validated_keys.setdefault(str(table), []).append(str(values))
     key_validation = schema_resolution.get("key_validation", {})
     if isinstance(key_validation, dict):
         for item in key_validation.get("candidate_keys", []):
@@ -348,20 +384,75 @@ def load_runtime_contract() -> RuntimeContract:
             if table and column:
                 validated_keys.setdefault(table, []).append(column)
 
+    aliases = output_meta.get("column_aliases", {})
+    user_id_aliases = _string_list(
+        aliases.get("user_id_columns") if isinstance(aliases, dict) else []
+    )
+
+    table_types: dict[str, str] = {}
+    projections = sample_stats.get("projection_tables", [])
+    if isinstance(projections, list):
+        for projection in projections:
+            if not isinstance(projection, dict):
+                continue
+            table = str(projection.get("table") or "").strip()
+            table_type = str(projection.get("type") or "").strip()
+            if table and table_type:
+                table_types[table] = table_type
+
     classification = schema_resolution.get("table_classification", {})
     one_to_one: set[str] = {user_table}
-    if isinstance(classification, dict):
-        values = classification.get("1:1_tables", classification.get("one_to_one_tables", []))
-        if isinstance(values, list):
-            one_to_one.update(str(item) for item in values)
+    one_to_one.update(
+        _classification_tables(
+            classification,
+            "1:1_tables",
+            "one_to_one_tables",
+            "one_to_one",
+        )
+    )
+    game_dimension_tables = {
+        table for table, table_type in table_types.items() if table_type == "game_keyed"
+    }
+    game_dimension_tables.update(
+        _classification_tables(
+            classification,
+            "game_dimension",
+            "game_dimension_tables",
+            "game_dimensions",
+        )
+    )
+
+    role_game_key = str(roles.get("<game_id>") or roles.get("game_id") or "").strip()
+    hint_candidates = _hint_game_key_candidates(output_meta)
+    game_keys: dict[str, str] = {}
+    for table in sorted(game_dimension_tables):
+        columns = table_columns.get(table, {})
+        mapping = key_mapping.get(table, {}) if isinstance(key_mapping, dict) else {}
+        candidates: list[str] = []
+        if isinstance(mapping, dict):
+            for key in ("game_key", "game_id", "game_name"):
+                value = mapping.get(key)
+                if value:
+                    candidates.append(str(value))
+        if role_game_key:
+            candidates.append(role_game_key)
+        candidates.extend(hint_candidates.get(table, []))
+        resolved = next((candidate for candidate in candidates if candidate in columns), None)
+        if resolved:
+            game_keys[table] = resolved
 
     return RuntimeContract(
         source_database=source_database,
         sampling_database=sampling_database,
+        target_game=target_game,
         user_table=user_table,
         user_id=user_id,
         table_columns=table_columns,
+        table_types=table_types,
         validated_keys=validated_keys,
+        user_id_aliases=tuple(dict.fromkeys([user_id, *user_id_aliases])),
+        game_dimension_tables=game_dimension_tables,
+        game_keys=game_keys,
         one_to_one_tables=one_to_one,
     )
 
@@ -380,14 +471,38 @@ def _known_tables_in_text(text: str, known_tables: Iterable[str]) -> list[str]:
     return found
 
 
-def _sql_source_columns(expression: str) -> list[str]:
+def _sql_source_columns(
+    expression: str,
+    contract: RuntimeContract | None = None,
+    source_tables: Iterable[str] = (),
+) -> list[str]:
     if not expression:
         return []
-    identifiers = re.findall(r"(?<!['\"])\b[A-Za-z_][A-Za-z0-9_]*\b", expression)
+    code = _strip_sql_comments_and_literals(expression)
+    if contract is None:
+        # Compatibility mode for callers outside lineage normalization. Only
+        # return identifiers that are not immediately followed by ``(``, which
+        # excludes SQL function names without maintaining a fragile blacklist.
+        identifiers = re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()", code)
+        return list(dict.fromkeys(identifiers))
+
+    tables = [table for table in source_tables if table in contract.table_columns]
+    qualified: list[str] = []
+    for table, column in re.findall(
+        r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*`?([A-Za-z_][A-Za-z0-9_]*)`?",
+        code,
+    ):
+        if table in contract.table_columns and column in contract.table_columns[table]:
+            qualified.append(column)
+
+    known_columns: set[str] = set()
+    search_tables = tables or list(contract.table_columns)
+    for table in search_tables:
+        known_columns.update(contract.table_columns.get(table, {}))
+    identifiers = re.findall(r"(?<!\.)\b[A-Za-z_][A-Za-z0-9_]*\b(?!\s*\()", code)
     result: list[str] = []
-    for identifier in identifiers:
-        lowered = identifier.lower()
-        if lowered in SQL_FUNCTIONS or lowered in {"and", "or", "not", "null", "as"}:
+    for identifier in [*qualified, *identifiers]:
+        if identifier not in known_columns:
             continue
         if identifier not in result:
             result.append(identifier)
@@ -483,24 +598,82 @@ def _merge_lineage_entry(target: dict[str, dict[str, Any]], entry: dict[str, Any
         target[feature] = combined
 
 
-def _aggregation_alias_expressions() -> dict[str, str]:
-    path = OUTPUT_DIR / "step2_3_feature_aggregation.sql"
-    if not path.is_file():
-        return {}
+def _sql_scan_boundaries(sql: str, end: int) -> tuple[int, list[tuple[int, int]]]:
+    """Return parenthesis depth and projection boundaries before ``end``."""
+    depth = 0
+    boundaries: list[tuple[int, int]] = []
+    quote: str | None = None
+    index = 0
+    while index < end:
+        char = sql[index]
+        if quote:
+            if char == quote:
+                if quote == "'" and index + 1 < end and sql[index + 1] == "'":
+                    index += 2
+                    continue
+                quote = None
+            elif char == "\\" and index + 1 < end:
+                index += 2
+                continue
+            index += 1
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == ",":
+            boundaries.append((index + 1, depth))
+        elif sql[index : index + 6].upper() == "SELECT" and (
+            index == 0 or not (sql[index - 1].isalnum() or sql[index - 1] == "_")
+        ) and (
+            index + 6 >= end
+            or not (sql[index + 6].isalnum() or sql[index + 6] == "_")
+        ):
+            boundaries.append((index + 6, depth))
+            index += 5
+        index += 1
+    return depth, boundaries
+
+
+def _aggregation_alias_expressions() -> tuple[dict[str, str], str | None]:
+    candidates = (
+        "step2_3_feature_aggregation_expanded.sql",
+        "step2_3_feature_aggregation.sql",
+    )
+    path = next((OUTPUT_DIR / name for name in candidates if (OUTPUT_DIR / name).is_file()), None)
+    if path is None:
+        return {}, None
+    sql = path.read_text(encoding="utf-8-sig")
     expressions: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8-sig").splitlines():
-        match = re.match(
-            r"^\s*(.+)\s+AS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s*,?\s*$",
-            line,
+    for match in re.finditer(
+        r"\bAS\s+`?([A-Za-z_][A-Za-z0-9_]*)`?",
+        sql,
+        flags=re.I,
+    ):
+        depth, boundaries = _sql_scan_boundaries(sql, match.start())
+        starts = [position for position, boundary_depth in boundaries if boundary_depth == depth]
+        start = max(starts, default=0)
+        expression = sql[start : match.start()].strip()
+        expression = re.sub(r"^SELECT\s+", "", expression, flags=re.I).strip()
+        if not expression or expression.upper().startswith(("CREATE ", "WITH ")):
+            continue
+        # Ignore CAST(x AS Type) and similar nested type aliases. They are not
+        # projection aliases and usually end before a closing parenthesis.
+        suffix = sql[match.end() :]
+        next_text = suffix.lstrip()
+        next_non_space = next_text[:1]
+        if next_non_space and next_non_space not in {",", "\n", "\r", ")"} and not re.match(
+            r"^(?:FROM|WHERE|GROUP|HAVING|ORDER|JOIN|LEFT|RIGHT|INNER|CROSS)\b",
+            next_text,
             flags=re.I,
-        )
-        if not match:
+        ):
             continue
-        expression, alias = match.group(1).strip(), match.group(2)
-        if expression.upper().startswith(("SELECT ", "CREATE ", "WITH ")):
-            continue
-        expressions[alias] = expression
-    return expressions
+        expressions[match.group(1)] = expression
+    return expressions, path.name
 
 
 def _resolve_physical_source(
@@ -602,7 +775,7 @@ def normalize_feature_derivation(
     markdown = markdown_path.read_text(encoding="utf-8-sig")
     lines = markdown.splitlines()
     known_tables = list(contract.table_columns)
-    aggregation_expressions = _aggregation_alias_expressions()
+    aggregation_expressions, aggregation_source = _aggregation_alias_expressions()
     features: dict[str, dict[str, Any]] = {}
     current_heading = ""
     current_tables: list[str] = []
@@ -651,9 +824,18 @@ def normalize_feature_derivation(
                         feature, ""
                     )
                     method = _strip_markup(row.get("method", row.get("handling", "")))
+                    if source_feature and re.search(r"[()]", source_feature):
+                        # Some FE Markdown versions put the aggregate expression
+                        # under “原字段”. Treat it as SQL, not as a physical name.
+                        expression = expression or source_feature
+                        source_feature = ""
                     if source_table and not source_feature and feature in contract.table_columns[source_table]:
                         source_feature = feature
-                    source_columns = _sql_source_columns(expression)
+                    source_columns = _sql_source_columns(
+                        expression,
+                        contract,
+                        source_tables,
+                    )
                     if source_table and not source_feature:
                         physical_columns = [
                             column
@@ -670,6 +852,15 @@ def normalize_feature_derivation(
                             )
                     if source_feature and source_feature not in source_columns:
                         source_columns.append(source_feature)
+                    feature_kind = "direct"
+                    if source_tables and all(
+                        table in contract.game_dimension_tables for table in source_tables
+                    ):
+                        feature_kind = "game_dimension"
+                    elif source_tables != [contract.user_table]:
+                        feature_kind = "user_aggregation"
+                    elif expression:
+                        feature_kind = "derived"
                     _merge_lineage_entry(
                         features,
                         {
@@ -685,6 +876,9 @@ def normalize_feature_derivation(
                             "null_strategy": _strip_markup(row.get("null_strategy", row.get("null_policy", "")))
                             or None,
                             "section": current_heading,
+                            "feature_kind": feature_kind,
+                            "renderable": True,
+                            "diagnostics": [],
                         },
                     )
                 index += 1
@@ -717,6 +911,13 @@ def normalize_feature_derivation(
                     "null_strategy": None,
                     "section": current_heading,
                     "description": description,
+                    "feature_kind": (
+                        "game_dimension"
+                        if source_table in contract.game_dimension_tables
+                        else "user_aggregation"
+                    ),
+                    "renderable": True,
+                    "diagnostics": [],
                 },
             )
         index += 1
@@ -744,12 +945,25 @@ def normalize_feature_derivation(
                     "sql_expression": None,
                     "null_strategy": None,
                     "section": "physical_schema_fallback",
+                    "feature_kind": (
+                        "game_dimension"
+                        if table in contract.game_dimension_tables
+                        else "direct"
+                    ),
+                    "renderable": True,
+                    "diagnostics": [],
                 },
             )
+
+    for entry in features.values():
+        entry.setdefault("feature_kind", "derived" if entry.get("sql_expression") else "direct")
+        entry.setdefault("renderable", True)
+        entry.setdefault("diagnostics", [])
 
     normalized = {
         "version": 1,
         "source": "step2_3_feature_derivation.md",
+        "aggregation_sql_source": aggregation_source,
         "entity": {
             "base_table": contract.user_table,
             "entity_key": contract.user_id,
@@ -986,7 +1200,14 @@ def apply_deployment_contract(
 def _find_join_key(table: str, contract: RuntimeContract) -> str | None:
     columns = contract.table_columns.get(table, {})
     candidates = contract.validated_keys.get(table, [])
-    for candidate in (contract.user_id, *candidates, "usid", "rank_flg", "dsid"):
+    for candidate in (
+        *candidates,
+        *contract.user_id_aliases,
+        contract.user_id,
+        "usid",
+        "rank_flg",
+        "dsid",
+    ):
         if candidate in columns:
             return candidate
     return None
@@ -1004,7 +1225,16 @@ def _validate_lineage_entry(feature: str, entry: dict[str, Any], contract: Runti
     for column in source_columns:
         if not any(column in contract.table_columns.get(table, {}) for table in source_tables):
             errors.append(f"{feature}: unknown source column {column}")
-    if source_tables != [contract.user_table]:
+    game_dimension = bool(source_tables) and all(
+        table in contract.game_dimension_tables for table in source_tables
+    )
+    if game_dimension:
+        if not contract.target_game:
+            errors.append(f"{feature}: target_game is absent for game dimension feature")
+        for table in source_tables:
+            if table not in contract.game_keys:
+                errors.append(f"{feature}: no validated game key for {table}")
+    elif source_tables != [contract.user_table]:
         for table in source_tables:
             if _find_join_key(table, contract) is None:
                 errors.append(f"{feature}: no user join key for {table}")
@@ -1043,9 +1273,24 @@ def _qualify_expression_columns(
     expression: str,
     columns: Iterable[str],
     alias: str,
+    source_tables: Iterable[str] = (),
 ) -> str:
     result = expression
-    for column in sorted(set(columns), key=len, reverse=True):
+    normalized_columns = {
+        str(column) for column in columns if column is not None and str(column)
+    }
+    for column in sorted(normalized_columns, key=len, reverse=True):
+        for table in sorted(set(source_tables), key=len, reverse=True):
+            qualified_pattern = re.compile(
+                rf"`?{re.escape(table)}`?\s*\.\s*`?{re.escape(column)}`?"
+            )
+            parts = re.split(r"('(?:''|\\.|[^'])*')", result)
+            for index in range(0, len(parts), 2):
+                parts[index] = qualified_pattern.sub(
+                    f"{alias}.{_quote_identifier(column)}",
+                    parts[index],
+                )
+            result = "".join(parts)
         pattern = re.compile(
             rf"(?<![A-Za-z0-9_`.])`?{re.escape(column)}`?(?![A-Za-z0-9_`])"
         )
@@ -1054,6 +1299,40 @@ def _qualify_expression_columns(
             parts[index] = pattern.sub(f"{alias}.{_quote_identifier(column)}", parts[index])
         result = "".join(parts)
     return result
+
+
+def _source_relation(
+    contract: RuntimeContract,
+    table: str,
+    *,
+    trial_mode: bool,
+) -> str:
+    qualified = _qualified_table(contract.source_database, table)
+    if not trial_mode:
+        return qualified
+    return f"(SELECT * FROM {qualified} LIMIT {TRIAL_ROWS_PER_TABLE})"
+
+
+def _dimension_expression_for_entry(
+    entry: dict[str, Any],
+    table: str,
+) -> str | None:
+    expression = _aggregate_expression_for_entry(entry)
+    if not expression:
+        return None
+    qualified = _qualify_expression_columns(
+        expression,
+        entry.get("source_columns") or [entry.get("source_feature")],
+        "dimension_rows",
+        [table],
+    )
+    if re.search(
+        r"\b(?:any|anyLast|avg|count|countIf|max|min|sum|sumIf|uniqExact)\s*\(",
+        qualified,
+        flags=re.I,
+    ):
+        return qualified
+    return f"any({qualified})"
 
 
 def _tree_preprocessing_expression(
@@ -1173,11 +1452,14 @@ def render_feature_subquery(
     lineage: dict[str, Any],
     contract: RuntimeContract,
     tree_preprocessing: dict[str, Any],
+    *,
+    trial_mode: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     index = _lineage_index(lineage)
     errors: list[str] = []
     direct_selects: list[str] = []
     grouped: dict[tuple[tuple[str, ...], str], list[tuple[str, dict[str, Any]]]] = {}
+    dimension_grouped: dict[str, list[tuple[str, dict[str, Any]]]] = {}
 
     for feature in sorted(required_features):
         entry = index.get(feature)
@@ -1201,10 +1483,22 @@ def render_feature_subquery(
                     raw_expression,
                     entry.get("source_columns") or [source_feature],
                     "u",
+                    [contract.user_table],
                 )
             else:
                 reference = f"u.{_quote_identifier(source_feature)}"
             direct_selects.append(f"      {_null_wrapped(reference, entry)} AS {_quote_identifier(feature)}")
+            continue
+
+        if source_tables and all(
+            table in contract.game_dimension_tables for table in source_tables
+        ):
+            if len(source_tables) != 1:
+                errors.append(
+                    f"{feature}: game dimension feature must resolve to exactly one table"
+                )
+                continue
+            dimension_grouped.setdefault(source_tables[0], []).append((feature, entry))
             continue
 
         first_table = source_tables[0]
@@ -1244,26 +1538,113 @@ def render_feature_subquery(
         if not aggregate_lines:
             continue
         if len(source_tables) == 1:
-            source_sql = _qualified_table(contract.source_database, source_tables[0])
+            source_sql = _source_relation(
+                contract,
+                source_tables[0],
+                trial_mode=trial_mode,
+            )
         else:
             union_parts = [
-                f"SELECT * FROM {_qualified_table(contract.source_database, table)}" for table in source_tables
+                "SELECT * FROM "
+                + _source_relation(contract, table, trial_mode=trial_mode)
+                for table in source_tables
             ]
             source_sql = "(\n          " + "\n          UNION ALL\n          ".join(union_parts) + "\n        )"
-        aggregate_block = ",\n".join(aggregate_lines)
+        qualified_aggregate_lines: list[str] = []
+        for feature, entry in entries:
+            expression = _aggregate_expression_for_entry(entry)
+            if not expression:
+                continue
+            expression = _qualify_expression_columns(
+                expression,
+                entry.get("source_columns") or [entry.get("source_feature")],
+                "source_rows",
+                source_tables,
+            )
+            qualified_aggregate_lines.append(
+                f"        {expression} AS {_quote_identifier(feature)}"
+            )
+            for row in lineage_rows:
+                if row["feature"] == feature:
+                    row["sql_expression"] = expression
+        aggregate_block = ",\n".join(qualified_aggregate_lines)
         joins.append(
             "\n".join(
                 [
                     "    LEFT JOIN (",
                     "      SELECT",
-                    f"        {_quote_identifier(join_key)} AS {_quote_identifier('__join_key')},",
+                    "        source_rows."
+                    + _quote_identifier(join_key)
+                    + f" AS {_quote_identifier('__join_key')},",
                     aggregate_block,
-                    f"      FROM {source_sql}",
-                    f"      GROUP BY {_quote_identifier(join_key)}",
+                    f"      FROM {source_sql} AS source_rows",
+                    f"      GROUP BY source_rows.{_quote_identifier(join_key)}",
                     f"    ) AS {alias}",
                     "      ON toString(u."
                     + _quote_identifier(contract.user_id)
                     + f") = toString({alias}.{_quote_identifier('__join_key')})",
+                ]
+            )
+        )
+
+    dimension_joins: list[str] = []
+    dimension_selects: list[str] = []
+    for group_number, (table, entries) in enumerate(
+        sorted(dimension_grouped.items()),
+        start=1,
+    ):
+        game_key = contract.game_keys.get(table)
+        if not game_key:
+            errors.extend(
+                f"{feature}: no validated game key for {table}"
+                for feature, _entry in entries
+            )
+            continue
+        if not contract.target_game:
+            errors.extend(
+                f"{feature}: target_game is absent"
+                for feature, _entry in entries
+            )
+            continue
+        alias = f"game_dim_{group_number}"
+        projections: list[str] = []
+        for feature, entry in entries:
+            expression = _dimension_expression_for_entry(entry, table)
+            if not expression:
+                errors.append(f"{feature}: cannot derive game dimension SQL expression")
+                continue
+            projections.append(f"        {expression} AS {_quote_identifier(feature)}")
+            dimension_selects.append(
+                f"      {_null_wrapped(f'{alias}.{_quote_identifier(feature)}', entry)} "
+                f"AS {_quote_identifier(feature)}"
+            )
+            lineage_rows.append(
+                {
+                    "feature": feature,
+                    "feature_kind": "game_dimension",
+                    "source_tables": [table],
+                    "source_columns": entry.get("source_columns", []),
+                    "game_key": game_key,
+                    "target_game": contract.target_game,
+                    "sql_expression": expression,
+                    "null_strategy": entry.get("null_strategy"),
+                }
+            )
+        if not projections:
+            continue
+        source_sql = _source_relation(contract, table, trial_mode=trial_mode)
+        dimension_joins.append(
+            "\n".join(
+                [
+                    "    CROSS JOIN (",
+                    "      SELECT",
+                    ",\n".join(projections),
+                    f"      FROM {source_sql} AS dimension_rows",
+                    "      WHERE toString(dimension_rows."
+                    + _quote_identifier(game_key)
+                    + ") = "
+                    + _sql_string_literal(contract.target_game),
+                    f"    ) AS {alias}",
                 ]
             )
         )
@@ -1275,13 +1656,21 @@ def render_feature_subquery(
         f"      u.{_quote_identifier(contract.user_id)} AS {_quote_identifier('user_id')}",
         *direct_selects,
         *aggregate_selects,
+        *dimension_selects,
     ]
     feature_sql = "\n".join(
         [
             "    SELECT",
             ",\n".join(select_lines),
-            f"    FROM {_qualified_table(contract.source_database, contract.user_table)} AS u",
+            "    FROM "
+            + _source_relation(
+                contract,
+                contract.user_table,
+                trial_mode=trial_mode,
+            )
+            + " AS u",
             *joins,
+            *dimension_joins,
         ]
     )
     for feature in sorted(required_features):
@@ -1291,6 +1680,7 @@ def render_feature_subquery(
         lineage_rows.append(
             {
                 "feature": feature,
+                "feature_kind": entry.get("feature_kind", "direct"),
                 "source_tables": entry.get("source_tables") or [entry.get("source_table")],
                 "source_columns": entry.get("source_columns", []),
                 "join_key": contract.user_id,
@@ -1311,6 +1701,7 @@ def render_feature_subquery(
         "features": sorted(lineage_rows, key=lambda item: item["feature"]),
         "tree_encoded_features": encoded_report,
         "tree_preprocessing_validation": tree_preprocessing.get("validation"),
+        "trial_mode": trial_mode,
     }
     return feature_sql, report
 
@@ -1807,6 +2198,33 @@ def render_final_sql(
     )
 
 
+def render_source_trial_sql(trial_scoring_sql: str) -> str:
+    """Wrap the scoring SQL into a resource-bounded ClickHouse trial query.
+
+    Strips a trailing semicolon from ``trial_scoring_sql``, wraps it as a
+    subquery aliased ``__nl2sql_trial``, and appends a row limit plus a
+    ``SETTINGS`` clause capping execution time, threads, rows, bytes, and memory.
+    """
+    settings = (
+        f"max_execution_time = {TRIAL_MAX_EXECUTION_TIME}, "
+        f"max_threads = 2, "
+        f"max_rows_to_read = {TRIAL_MAX_ROWS_TO_READ}, "
+        f"max_bytes_to_read = {TRIAL_MAX_BYTES_TO_READ}, "
+        f"max_memory_usage = {TRIAL_MAX_MEMORY_USAGE}"
+    )
+    return "\n".join(
+        [
+            "SELECT *",
+            "FROM (",
+            trial_scoring_sql.strip().rstrip(";"),
+            ") AS __nl2sql_trial",
+            f"LIMIT {TRIAL_OUTPUT_ROWS}",
+            f"SETTINGS {settings}",
+            "",
+        ]
+    )
+
+
 def _strip_sql_comments_and_literals(sql: str) -> str:
     without_block = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
     without_line = re.sub(r"--[^\r\n]*", " ", without_block)
@@ -1887,11 +2305,158 @@ def validate_final_sql(
     return report
 
 
+_RESOURCE_LIMIT_PATTERNS = (
+    "max_rows_to_read",
+    "max_bytes_to_read",
+    "max_execution_time",
+    "max_memory_usage",
+    "memory limit",
+    "timeout exceeded",
+    "too many rows",
+    "too many bytes",
+)
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _write_source_validation_request(trial_sql: str) -> dict[str, Any]:
+    if not re.match(r"^\s*SELECT\b", trial_sql, flags=re.IGNORECASE):
+        raise SystemExit(
+            "source_trial SQL must start with SELECT to satisfy the ClickHouse MCP whitelist"
+        )
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    trial_path = RUNTIME_DIR / "source_trial.sql"
+    # Remove the obsolete EXPLAIN artifact when rerunning in a workspace prepared
+    # by the previous two-query validation contract.
+    (RUNTIME_DIR / "source_explain.sql").unlink(missing_ok=True)
+    trial_path.write_text(trial_sql, encoding="utf-8")
+    request = {
+        "version": 2,
+        "resource_id": "clickhouse",
+        "task_type": "sql_query",
+        "queries": {
+            "source_trial": {
+                "path": str(trial_path.relative_to(OUTPUT_DIR)),
+                "sha256": _sha256_text(trial_sql),
+                "source_limited": True,
+                "executes_final_query": False,
+            },
+        },
+        "result_path": str(SOURCE_VALIDATION_RESULT_PATH.relative_to(OUTPUT_DIR)),
+    }
+    _write_json(RUNTIME_DIR / "source_validation_request.json", request)
+    return request
+
+
+def _result_text(payload: dict[str, Any]) -> str:
+    parts = [
+        str(payload.get("status") or ""),
+        str(payload.get("summary") or ""),
+        str(payload.get("error") or ""),
+        str(payload.get("message") or ""),
+    ]
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _source_validation_item(
+    name: str,
+    raw: Any,
+    expected_sha256: str,
+) -> dict[str, Any]:
+    base = {
+        "performed": False,
+        "passed": False,
+        "query_sha256": expected_sha256,
+        "job_id": None,
+        "status": "missing",
+        "returned_rows": None,
+        "resource_limit_reached": False,
+        "error": None,
+    }
+    if not isinstance(raw, dict):
+        return base
+    supplied_sha256 = str(raw.get("query_sha256") or raw.get("sha256") or "").strip()
+    if supplied_sha256 != expected_sha256:
+        base["status"] = "stale_or_mismatched_query"
+        base["error"] = f"{name} query_sha256 does not match current generated SQL"
+        return base
+    payload = raw.get("result", raw.get("collect", raw.get("payload")))
+    if not isinstance(payload, dict):
+        base["status"] = "invalid_result_payload"
+        base["error"] = f"{name} must contain the raw collect_job payload"
+        return base
+    status = str(payload.get("status") or "").strip().lower()
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    exit_code = metrics.get("exit_code")
+    error_text = _result_text(payload)
+    outputs = payload.get("outputs") if isinstance(payload.get("outputs"), list) else []
+    returned_rows = sum(
+        int(item.get("row_count") or 0)
+        for item in outputs
+        if isinstance(item, dict) and item.get("kind") == "clickhouse_result"
+    )
+    completed = status in {"completed", "success", "succeeded"}
+    passed = completed and exit_code in (None, 0) and not str(payload.get("error") or "").strip()
+    lowered_error = error_text.lower()
+    return {
+        "performed": status not in {"", "queued", "pending", "running", "submitted"},
+        "passed": passed,
+        "query_sha256": expected_sha256,
+        "job_id": payload.get("job_id"),
+        "status": status or "unknown",
+        "returned_rows": returned_rows if completed else None,
+        "resource_limit_reached": any(
+            pattern in lowered_error for pattern in _RESOURCE_LIMIT_PATTERNS
+        ),
+        "error": None if passed else error_text or "ClickHouse validation did not complete",
+    }
+
+
+def evaluate_source_validation(
+    request: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Evaluate the source-validation result file against expected query digests.
+
+    When the result file is absent, returns a pending report (not passed).
+    Otherwise parses it and reports whether the source-trial query matched its
+    expected ``sha256`` and completed successfully.
+    """
+    queries = request["queries"]
+    if not SOURCE_VALIDATION_RESULT_PATH.is_file():
+        pending = {
+            "source_trial_validation": _source_validation_item(
+                "source_trial",
+                None,
+                queries["source_trial"]["sha256"],
+            ),
+        }
+        return pending, False
+    try:
+        raw = json.loads(SOURCE_VALIDATION_RESULT_PATH.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Cannot read source validation result: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise SystemExit("source_validation_result.json must contain one JSON object")
+    report = {
+        "source_trial_validation": _source_validation_item(
+            "source_trial",
+            raw.get("source_trial"),
+            queries["source_trial"]["sha256"],
+        ),
+    }
+    passed = all(item["passed"] for item in report.values())
+    return report, passed
+
+
 def main() -> None:
     if not 0 < PRIMARY_K <= 1:
         raise SystemExit("NL2SQL_PRIMARY_K must be in (0, 1]")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     SQL_DIR.mkdir(parents=True, exist_ok=True)
+    receipt_path = OUTPUT_DIR / "receipt.json"
+    receipt_path.unlink(missing_ok=True)
     _require_inputs()
 
     _ensure_executed_generator_artifact()
@@ -1913,56 +2478,69 @@ def main() -> None:
     apply_deployment_contract(tree, scorecard, tree_preprocessing)
     aligned, alignment_report = load_aligned_scores()
 
+    candidate_renderings: dict[
+        str,
+        tuple[tuple[str, dict[str, Any]], tuple[str, dict[str, Any]]],
+    ] = {}
+    for candidate in (tree, scorecard):
+        if not candidate.renderable:
+            continue
+        candidate_tree_features = (
+            set(candidate.features) if candidate.name == "decision_tree" else set()
+        )
+        try:
+            final_rendering = render_feature_subquery(
+                set(candidate.features),
+                candidate_tree_features,
+                lineage,
+                contract,
+                tree_preprocessing,
+            )
+            trial_rendering = render_feature_subquery(
+                set(candidate.features),
+                candidate_tree_features,
+                lineage,
+                contract,
+                tree_preprocessing,
+                trial_mode=True,
+            )
+        except ValueError as exc:
+            candidate.renderable = False
+            candidate.deployment_errors = [
+                *(candidate.deployment_errors or []),
+                str(exc),
+            ]
+            continue
+        candidate_renderings[candidate.name] = (final_rendering, trial_rendering)
+
     selection, fusion_parameters = choose_strategy(aligned, tree, scorecard)
     strategy = str(selection["strategy"])
-    if strategy == "decision_tree":
-        required_features = set(tree.features)
-        tree_features = set(tree.features)
-    elif strategy == "scorecard":
-        required_features = set(scorecard.features)
-        tree_features = set()
+    if strategy in candidate_renderings:
+        (feature_subquery, feature_report), (
+            trial_feature_subquery,
+            _trial_feature_report,
+        ) = candidate_renderings[strategy]
     else:
         required_features = set(tree.features) | set(scorecard.features)
-        tree_features = set(tree.features)
-
-    try:
-        feature_subquery, feature_report = render_feature_subquery(
-            required_features,
-            tree_features,
-            lineage,
-            contract,
-            tree_preprocessing,
-        )
-    except ValueError as exc:
-        # If a selected single candidate is not technically renderable, use the
-        # other candidate before failing the fixed input contract.
-        alternative = "scorecard" if strategy == "decision_tree" else "decision_tree"
-        if strategy != "decision_tree_scorecard_fusion":
-            alternative_features = scorecard.features if alternative == "scorecard" else tree.features
-            alternative_tree_features = (
-                tree.features if alternative == "decision_tree" else set()
+        try:
+            feature_subquery, feature_report = render_feature_subquery(
+                required_features,
+                set(tree.features),
+                lineage,
+                contract,
+                tree_preprocessing,
             )
-            try:
-                feature_subquery, feature_report = render_feature_subquery(
-                    set(alternative_features),
-                    set(alternative_tree_features),
-                    lineage,
-                    contract,
-                    tree_preprocessing,
-                )
-            except ValueError:
-                raise SystemExit(f"Cannot render selected white-box strategy: {exc}") from exc
-            selection["initial_strategy"] = strategy
-            selection["strategy"] = alternative
-            selection["reason"] = "selected_strategy_not_renderable_used_other_strategy"
-            selection["render_warning"] = str(exc)
-            strategy = alternative
-            fusion_parameters = {}
-        else:
-            # Try the deterministic single-strategy ordering used after a
-            # rejected blend.
+            trial_feature_subquery, _trial_feature_report = render_feature_subquery(
+                required_features,
+                set(tree.features),
+                lineage,
+                contract,
+                tree_preprocessing,
+                trial_mode=True,
+            )
+        except ValueError as exc:
             alternatives = sorted(
-                (tree, scorecard),
+                (candidate for candidate in (tree, scorecard) if candidate.name in candidate_renderings),
                 key=lambda item: (
                     selection["candidates"][item.name]["precision_at_k"],
                     selection["candidates"][item.name]["pr_auc"],
@@ -1972,34 +2550,31 @@ def main() -> None:
                 ),
                 reverse=True,
             )
-            rendered = None
-            errors = [str(exc)]
-            for candidate in alternatives:
-                try:
-                    rendered = render_feature_subquery(
-                        set(candidate.features),
-                        set(candidate.features)
-                        if candidate.name == "decision_tree"
-                        else set(),
-                        lineage,
-                        contract,
-                        tree_preprocessing,
-                    )
-                except ValueError as candidate_exc:
-                    errors.append(str(candidate_exc))
-                    continue
-                strategy = candidate.name
-                feature_subquery, feature_report = rendered
-                selection["initial_strategy"] = "decision_tree_scorecard_fusion"
-                selection["strategy"] = strategy
-                selection["reason"] = "fusion_not_renderable_used_best_renderable_single_strategy"
-                selection["render_warning"] = str(exc)
-                fusion_parameters = {}
-                break
-            if rendered is None:
-                raise SystemExit("Cannot render either white-box strategy: " + " | ".join(errors)) from exc
+            if not alternatives:
+                raise SystemExit(
+                    "Cannot render a deployable white-box SQL after lineage normalization: "
+                    + str(exc)
+                ) from exc
+            fallback = alternatives[0]
+            strategy = fallback.name
+            selection["initial_strategy"] = "decision_tree_scorecard_fusion"
+            selection["strategy"] = strategy
+            selection["reason"] = "fusion_not_renderable_used_best_renderable_single_strategy"
+            selection["render_warning"] = str(exc)
+            fusion_parameters = {}
+            (feature_subquery, feature_report), (
+                trial_feature_subquery,
+                _trial_feature_report,
+            ) = candidate_renderings[strategy]
 
     sql = render_final_sql(strategy, tree, scorecard, fusion_parameters, feature_subquery)
+    trial_scoring_sql = render_final_sql(
+        strategy,
+        tree,
+        scorecard,
+        fusion_parameters,
+        trial_feature_subquery,
+    )
     sql_path = SQL_DIR / "step4_1_final.sql"
     sql_path.write_text(sql, encoding="utf-8")
 
@@ -2020,18 +2595,57 @@ def main() -> None:
     feature_report["input_normalization_warnings"] = list(INPUT_NORMALIZATION_WARNINGS)
     _write_json(OUTPUT_DIR / "step4_1_feature_lineage_report.json", feature_report)
 
-    validation_report = validate_final_sql(sql, strategy, contract, feature_report, tree, scorecard)
-    validation_report["generator_provenance"] = generator_provenance
-    validation_report["tree_preprocessing_validation"] = tree_preprocessing.get(
-        "validation"
+    static_validation = validate_final_sql(
+        sql,
+        strategy,
+        contract,
+        feature_report,
+        tree,
+        scorecard,
     )
-    validation_report["input_normalization_warnings"] = list(INPUT_NORMALIZATION_WARNINGS)
-    _write_json(OUTPUT_DIR / "step4_1_sql_validation_report.json", validation_report)
+    source_trial_sql = render_source_trial_sql(trial_scoring_sql)
+    source_request = _write_source_validation_request(source_trial_sql)
+    source_validation, source_validation_passed = evaluate_source_validation(
+        source_request
+    )
+    validation_report = {
+        "artifact": "sql/step4_1_final.sql",
+        "strategy": strategy,
+        "passed": bool(static_validation["passed"] and source_validation_passed),
+        "static_validation": static_validation,
+        **source_validation,
+        "full_database_execution_performed": False,
+        "full_database_execution_expected": False,
+        "source_database_limited_trial_performed": source_validation[
+            "source_trial_validation"
+        ]["performed"],
+        "generator_provenance": generator_provenance,
+        "tree_preprocessing_validation": tree_preprocessing.get("validation"),
+        "input_normalization_warnings": list(INPUT_NORMALIZATION_WARNINGS),
+    }
+    _write_json(
+        OUTPUT_DIR / "step4_1_sql_validation_report.json",
+        validation_report,
+    )
+
+    if not SOURCE_VALIDATION_RESULT_PATH.is_file():
+        print(f"Generated: {sql_path}")
+        print("Static validation passed. Source validation is pending.")
+        print(f"Validation request: {RUNTIME_DIR / 'source_validation_request.json'}")
+        return
+    if not source_validation_passed:
+        failures = [
+            f"{name}: {details.get('error') or details.get('status')}"
+            for name, details in source_validation.items()
+            if not details.get("passed")
+        ]
+        raise SystemExit("Source database validation failed: " + " | ".join(failures))
 
     receipt = {
         "summary": (
             f"NL2SQL completed with {strategy}; generated one final SQL targeting "
-            f"{contract.source_database} without executing it. Generator working copy modified: "
+            f"{contract.source_database}; source-limited SELECT trial passed without "
+            f"executing the full query. Generator working copy modified: "
             f"{str(generator_provenance['working_copy_modified']).lower()}."
         ),
         "artifacts": [
@@ -2077,9 +2691,10 @@ def main() -> None:
             },
         ],
     }
-    _write_json(OUTPUT_DIR / "receipt.json", receipt)
+    _write_json(receipt_path, receipt)
     print(f"Generated: {sql_path}")
     print(f"Final strategy: {strategy}")
+    print("Source limited trial passed: true")
     print("Full database execution performed: false")
 
 
