@@ -23,6 +23,7 @@ _PLACEHOLDER_SIMPLE = re.compile(r"(?<!\')\$(?!\{)[a-zA-Z_][a-zA-Z0-9_]*(?!')")
 
 
 def iter_semantic_column_payloads(raw: Any) -> list[dict]:
+    """Normalize semantic column-search payloads into a list of dicts."""
     if raw is None:
         return []
     outer = raw if isinstance(raw, list) else [raw]
@@ -43,6 +44,7 @@ def quote_sql_placeholders(sql: str) -> str:
 
 
 def sql_parser(content: str) -> list[str]:
+    """Extract SQL statements from model output text."""
     m = re.findall(r"```sql\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
         raise LLMOutputParseError(detail="No SQL found")
@@ -57,6 +59,7 @@ def sql_parser(content: str) -> list[str]:
 
 
 def json_parser(content: str) -> str:
+    """Extract a JSON object/array string from model output."""
     m = re.search(r"```json\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
         raise LLMOutputParseError(detail="No JSON found")
@@ -64,6 +67,7 @@ def json_parser(content: str) -> str:
 
 
 def metadata_parser(text: str) -> list[dict[str, set[str]]]:
+    """Parse metadata-match model output into table/column sets."""
     blocks = re.findall(r"<res>\s*(.*?)\s*</res>", text, flags=re.S | re.I)
     if not blocks:
         raise LLMOutputParseError(detail="No metadata result found")
@@ -88,6 +92,7 @@ def metadata_parser(text: str) -> list[dict[str, set[str]]]:
 
 
 def flatten_schema(schema: dict) -> set[str]:
+    """Flatten schema IR into a set of table.column identifiers."""
     res = set()
     for t, t_meta in schema.items():
         for c in t_meta["columns"]:
@@ -96,6 +101,7 @@ def flatten_schema(schema: dict) -> set[str]:
 
 
 def filter_schema(schema: dict, used: set[str]) -> dict:
+    """Keep only schema entries referenced by the used identifier set."""
     res = {}
     for t, c in (u.split(".", 1) for u in used):
         if t in schema and c in schema[t]["columns"]:
@@ -107,10 +113,12 @@ def filter_schema(schema: dict, used: set[str]) -> dict:
 
 
 def snippets_to_str(sql_snippets: list[dict[str, str]]) -> str:
+    """Render SQL snippet dicts as a single prompt string."""
     return "\n".join(f"{snip['description']}\n```sql\n{snip['content']}\n```\n" for snip in sql_snippets)
 
 
 def truncate(v: Any) -> str:
+    """Truncate a value for prompt-friendly display."""
     MAX_LEN = DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH
     s = str(v)
     return f"{s[:MAX_LEN]}..." if len(s) > MAX_LEN else v
@@ -130,6 +138,7 @@ def _normalize_type(value_type: str):
 
 
 def format_col(col_name: str):
+    """Format a column name for DDL/prompt output."""
     return f"`{col_name}`"
 
 
@@ -184,6 +193,7 @@ def _assign_relation_formulas(schema_ir, relation_catalog) -> dict[tuple[str, st
 
 
 def schema_to_ddl(schema_ir, joins=None, relation_catalog=None):
+    """Convert schema IR (and joins) into a DDL-like prompt string."""
     relation_formulas = _assign_relation_formulas(schema_ir, relation_catalog)
     fk_map = {}
     if joins:

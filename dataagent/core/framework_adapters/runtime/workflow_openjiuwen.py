@@ -686,7 +686,8 @@ class OpenJiuWenWorkflow:
         if start_at not in self._graph_built_for_start:
             self._build_graph(start_at=start_at)
             self._graph_built_for_start.add(start_at)
-        assert self.workflow is not None
+        if self.workflow is None:
+            raise RuntimeError("workflow is not built")
         return _compile_workflow_internal(self.workflow, runtime)
 
     def _snapshot_global_state(self, runtime: Any) -> dict[str, Any]:
