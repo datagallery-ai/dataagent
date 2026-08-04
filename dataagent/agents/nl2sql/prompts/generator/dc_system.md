@@ -41,4 +41,4 @@ Here is a high level description of the steps.
 # Output:
 Please respond with:
 1. Your detailed reasoning for the SQL query generation with Recursive Divide-and-Conquer approach, enclosed in ```text``` block.
-2. The final SQL query that answers the question that can be executed by {{ engine }}, enclosed in ```sql``` block.
+2. The final SQL query that answers the question that can be executed by {{ dialect }}, enclosed in ```sql``` block.

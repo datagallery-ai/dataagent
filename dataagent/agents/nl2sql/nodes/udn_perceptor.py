@@ -12,13 +12,12 @@
 # ============================================================================
 import asyncio
 import re
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.utils.log import logger
 
 _UDN_DIMENSION_METADATA = {
@@ -259,8 +258,8 @@ class UDNPerceptorNode(PerceptorNode):
         catalog = await asyncio.to_thread(self._udn_column_metadata)
         return schema, joins, catalog
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        _ = runtime
         state["sql_rules"] = await asyncio.to_thread(self._load_prompt, self.user_sql_rules)
         schema, joins, catalog = await self.udn_schema_linking(state["question"])
         state["schema"] = schema

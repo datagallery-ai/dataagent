@@ -242,13 +242,11 @@ def test_format_nl2sql_structured_candidates():
     result = service._format_result(
         {
             "sql": "SELECT 1",
-            "trace_id": "abc",
             "confidence": 0.9,
-            "generation_results": [{"id": 0, "sql": "SELECT 1", "sql_sha256": "deadbeef", "prompt": "SECRET"}],
+            "generation_results": [{"id": 0, "sql": "SELECT 1", "prompt": "SECRET"}],
         }
     )
     payload = result["result"]
     assert payload["success"] is True
-    assert payload["trace_id"] == "abc"
     assert payload["candidates"][0]["sql"] == "SELECT 1"
     assert "SECRET" not in str(result)

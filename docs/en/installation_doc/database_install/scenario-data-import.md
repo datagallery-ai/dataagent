@@ -525,7 +525,7 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 | Concept | Example | Notes |
 | --- | --- | --- |
 | `databaseName` / `db_id` | `demo_db` | Logical name; may differ from SQLite filename |
-| `sourceType` / `engine` | `sqlite` | Data source type |
+| `sourceType` / `dialect` | `sqlite` | Data source type |
 | Table `qualifiedName` | `demo_db.retail_orders@sqlite` | `{db_id}.{table}@{sourceType}` |
 | Column `qualifiedName` | `demo_db.retail_orders.order_id@sqlite` | `{db_id}.{table}.{column}@{sourceType}` |
 
@@ -534,7 +534,7 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 ```yaml
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
@@ -549,7 +549,7 @@ SEMANTIC_LAYER:
 | DataAgent | Metadata | This guide |
 | --- | --- | --- |
 | `DATABASE.db_id` | `databaseName` | `demo_db` |
-| `DATABASE.engine` | `sourceType` | `sqlite` |
+| `DATABASE.dialect` | `sourceType` | `sqlite` |
 | `DATABASE.config.path` | SQLite absolute path | From §2 |
 | Table names | `tableNameEn` | `retail_orders`, `retail_customers` |
 

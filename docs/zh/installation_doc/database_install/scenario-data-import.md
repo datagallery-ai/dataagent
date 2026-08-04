@@ -525,7 +525,7 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 | 概念 | 示例 | 说明 |
 | --- | --- | --- |
 | `databaseName` / `db_id` | `demo_db` | 逻辑库名，不一定等于 SQLite 文件名 |
-| `sourceType` / `engine` | `sqlite` | 数据源类型 |
+| `sourceType` / `dialect` | `sqlite` | 数据源类型 |
 | 表 `qualifiedName` | `demo_db.retail_orders@sqlite` | `{db_id}.{table}@{sourceType}` |
 | 列 `qualifiedName` | `demo_db.retail_orders.order_id@sqlite` | `{db_id}.{table}.{column}@{sourceType}` |
 
@@ -534,7 +534,7 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 ```yaml
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/data/demo_retail.sqlite"
 
@@ -549,7 +549,7 @@ SEMANTIC_LAYER:
 | DataAgent 配置 | 元数据字段 | 本文示例 |
 | --- | --- | --- |
 | `DATABASE.db_id` | `databaseName` | `demo_db` |
-| `DATABASE.engine` | `sourceType` | `sqlite` |
+| `DATABASE.dialect` | `sourceType` | `sqlite` |
 | `DATABASE.config.path` | SQLite 绝对路径 | 见 §2 创建结果 |
 | 表名 | `tableNameEn` | `retail_orders`、`retail_customers` |
 

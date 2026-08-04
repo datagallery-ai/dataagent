@@ -344,7 +344,7 @@ After [Scenario data import](scenario-data-import.md), configure Agent YAML:
 ```yaml
 DATABASE:
   db_id: "demo_db"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "/absolute/path/to/demo_retail.sqlite"
 
@@ -359,7 +359,7 @@ SEMANTIC_LAYER:
 | DataAgent | Semantic Service metadata |
 | --- | --- |
 | `DATABASE.db_id` | `databaseName` |
-| `DATABASE.engine` | `sourceType` |
+| `DATABASE.dialect` | `sourceType` |
 | SQLite table names | `tableNameEn` |
 | `qualifiedName` suffix | `@sqlite` / `@mysql` / `@postgresql` |
 

@@ -11,12 +11,10 @@
 # limitations under the License.
 # ============================================================================
 import json
-from typing import Any, cast
+from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SELECTOR_THRESHOLD
 from dataagent.utils.log import logger
 
@@ -27,15 +25,14 @@ class SelectorNode(BaseNL2SQLNode):
         self.threshold = self.config.get("threshold", DEFAULT_NL2SQL_SELECTOR_THRESHOLD)
         self.shortcut = self.config.get("shortcut", -1)
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        _ = runtime
         best = None
         if self.shortcut >= 0:
             best, vote = self._vote(state["execution_results"])
             if best:
                 best.confidence = 1.0
-                digest = best.sql_sha256 or sql_sha256(best.sql)
-                p = f"Shortcut with {vote} votes: sql_sha256={digest} {best.sql}"
+                p = f"Shortcut with {vote} votes: {best.sql}"
         if not best:
             res = [
                 {"id": r.id, "sql": r.sql, "cols": r.columns, "rows": r.rows_preview, "err": r.error}
@@ -62,24 +59,17 @@ class SelectorNode(BaseNL2SQLNode):
                 e.confidence = s["score"]
                 e.issues = e.issues + s["issues"]
             best = max(state["execution_results"], key=lambda e: (e.confidence, e.score))
-            p = "\n".join(
-                [
-                    f"Score: {e.confidence:.2f}, sql_sha256={e.sql_sha256}, Issues: {e.issues}"
-                    for e in state["execution_results"]
-                ]
-            )
-        trace_id = state.get("trace_id") or ""
-        message = f"=== Selector ===\ntrace_id={trace_id}\n{p}"
+            p = "\n".join([f"Score: {e.confidence:.2f}, Issues: {e.issues}" for e in state["execution_results"]])
+        message = f"=== Selector ===\n{p}"
         logger.info(message)
         state["stream_message"] = message
         if best.confidence >= self.threshold or state["sel_retries"] <= 0:
             state["sql"], state["confidence"] = best.sql, best.confidence
             state["columns"], state["rows"], state["rows_preview"] = best.columns, best.rows, best.rows_preview
-            selected_digest = best.sql_sha256 or sql_sha256(best.sql)
             p = f"{state['sql']}\n{state['rows_preview']}"
             if best.rows and len(best.rows) > len(best.rows_preview):
                 p += f" ... and {len(best.rows) - len(best.rows_preview)} more rows"
-            message = f"=== Final Result ===\ntrace_id={trace_id} sql_sha256={selected_digest}\n{p}"
+            message = f"=== Final Result ===\n{p}"
             logger.info(message)
             state["stream_message"] = message
             return state

@@ -149,8 +149,8 @@ class TestRuntimeEnvironmentCollector:
 
         assert url == "mysql://user:pass@host/db"
 
-    def test_database_engine_missing_skip(self):
-        """拿不到 DATABASE.engine 时应跳过数据库信息展示。"""
+    def test_database_dialect_missing_skip(self):
+        """拿不到 DATABASE.dialect 时应跳过数据库信息展示。"""
         mock_config = MagicMock()
         mock_config.get.return_value = {}
         collector = RuntimeEnvironmentCollector(agent_config_manager=mock_config)
@@ -161,11 +161,11 @@ class TestRuntimeEnvironmentCollector:
             info = collector._get_database_info()
         assert info == {}
 
-    def test_database_engine_prefer_config(self):
-        """DATABASE.engine 存在时应优先使用，不从 URL/路径推断。"""
+    def test_database_dialect_prefer_config(self):
+        """DATABASE.dialect 存在时应优先使用，不从 URL/路径推断。"""
         mock_config = MagicMock()
         mock_config.get.side_effect = lambda key, default=None: (
-            {"engine": "mysql", "db_id": "x"} if key == "DATABASE" else default
+            {"dialect": "mysql", "db_id": "x"} if key == "DATABASE" else default
         )
         collector = RuntimeEnvironmentCollector(agent_config_manager=mock_config)
         with (
@@ -173,7 +173,7 @@ class TestRuntimeEnvironmentCollector:
             patch.object(collector, "_check_db_readable", return_value=True),
         ):
             info = collector._get_database_info()
-        assert info["engine"] == "mysql"
+        assert info["dialect"] == "mysql"
 
     def test_check_db_readable_sqlite_file_path(self, tmp_path):
         """sqlite 文件路径应只读打开且不会创建新文件。"""
@@ -267,7 +267,7 @@ class TestFormatRuntimeEnvironment:
             "system": {"os_type": "Linux", "os_release": "5.15", "arch": "x86_64"},
             "runtime": {"python_version": "3.11", "env_type": "system"},
             "resources": {"available": False},
-            "database": {"db_id": "testdb", "engine": "mysql", "readable": True},
+            "database": {"db_id": "testdb", "dialect": "mysql", "readable": True},
         }
 
         result = format_runtime_environment(env_data)
