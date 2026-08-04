@@ -12,7 +12,7 @@
 # ============================================================================
 """Flex 内置 pruner hook（planner 节点 pre-hook）。
 
-从 8577 ``core.state.pruner`` 移植：字符阈值 + 固定尾部窗口 + LLM 摘要。
+从 ``core.state.pruner`` 移植：字符阈值 + 固定尾部窗口 + LLM 摘要。
 适配本仓 Runtime / FlexState / ``add_messages`` reducer。
 
 可选 YAML（任选其一 dict）::

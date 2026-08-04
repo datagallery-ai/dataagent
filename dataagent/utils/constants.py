@@ -247,6 +247,12 @@ DEFAULT_MCP_DISCOVERY_TIMEOUT: float = 60.0
 DEFAULT_MCP_CLEANUP_TIMEOUT: float = 5.0
 """MCP / A2A 注册表清理时 asyncio.wait_for 超时（秒）。"""
 
+# 当前定义位置: dataagent/core/resource_runtime/mcp.py
+# 建议 YAML 路径: RESOURCES[].transport.preflight_timeout_sec
+
+DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC: int = 5
+"""Resource MCP submit 前探活 ping 的默认超时（秒）。"""
+
 # ── 沙箱默认值 ───────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/sandbox.py
 # 建议 YAML 路径: SANDBOX.ro_binds / tmpfs_paths

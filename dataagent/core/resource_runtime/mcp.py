@@ -26,6 +26,23 @@ from dataagent.core.resource_runtime.operations.protocols import McpResourceClie
 from dataagent.resources.catalog.models import Resource
 from dataagent.resources.drivers.mcp_resource import resolve_mcp_transport
 from dataagent.resources.resolve.prepare import DriverBinding
+from dataagent.utils.constants import DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC
+
+
+def resolve_mcp_preflight_timeout_sec(resource: Resource, driver: DriverBinding) -> int:
+    """Return the MCP preflight probe timeout, capped by the transport timeout.
+
+    Args:
+        resource: Executable MCP-backed resource definition.
+        driver: Resolved driver binding for the resource.
+
+    Returns:
+        Positive timeout in seconds for submit-time reachability checks.
+    """
+    transport = resource.transport if isinstance(resource.transport, dict) else {}
+    raw = transport.get("preflight_timeout_sec")
+    configured = max(1, int(raw)) if raw is not None else DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC
+    return min(configured, max(1, int(driver.mcp_timeout_sec)))
 
 
 def mcp_server_config_from_binding(resource_id: str, driver: DriverBinding) -> MCPServerConfig:
@@ -104,6 +121,52 @@ class McpResourceClientAdapter:
         """Invoke one remote MCP tool and return a normalized operation result."""
         return call_resource_mcp_tool_sync(self._client, tool_name, arguments)
 
+    def probe_reachable_sync(self, *, timeout_sec: int = DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC) -> str | None:
+        """Check MCP reachability before queueing a resource job."""
+        return probe_mcp_reachability_sync(self._client, timeout_sec=timeout_sec)
+
+
+def _run_async_coro_sync(coro: Any) -> Any:
+    """Run one coroutine from a sync caller, including when an event loop is already running."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
+    return asyncio.run(coro)
+
+
+async def _async_probe_mcp_client(client: MCPClientWrapper) -> None:
+    """Raise when the MCP server does not respond to a ping."""
+    if not await client.ping():
+        raise ConnectionError("MCP server did not respond to preflight ping")
+
+
+def probe_mcp_reachability_sync(
+    client: MCPClientWrapper,
+    *,
+    timeout_sec: int = DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC,
+) -> str | None:
+    """Return a user-facing error when the MCP endpoint is unreachable, else ``None``.
+
+    Args:
+        client: MCP client configured for one resource backend.
+        timeout_sec: Maximum seconds to wait for the preflight ping.
+
+    Returns:
+        ``None`` when reachable; otherwise an error string suitable for tool responses.
+    """
+    try:
+        _run_async_coro_sync(asyncio.wait_for(_async_probe_mcp_client(client), timeout=float(max(1, int(timeout_sec)))))
+        return None
+    except Exception as exc:
+        return format_mcp_call_exception(client, "preflight", exc)
+
 
 def call_resource_mcp_tool_sync(
     client: MCPClientWrapper,
@@ -112,18 +175,7 @@ def call_resource_mcp_tool_sync(
 ) -> dict[str, Any]:
     """Invoke one MCP tool synchronously from a resource job runner thread."""
     try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop is not None and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, _async_call_resource_mcp_tool(client, tool_name, arguments))
-                raw = future.result()
-        else:
-            raw = asyncio.run(_async_call_resource_mcp_tool(client, tool_name, arguments))
+        raw = _run_async_coro_sync(_async_call_resource_mcp_tool(client, tool_name, arguments))
         normalized = normalize_mcp_call_tool_result(raw)
         return normalized if isinstance(normalized, dict) else {"result": normalized}
     except Exception as exc:

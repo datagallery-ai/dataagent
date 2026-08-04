@@ -127,6 +127,9 @@ def test_mcp_resource_submit_poll_collect_with_mocked_driver(tmp_path, monkeypat
     class FakeMcpClient:
         """Test double that records MCP tool invocations."""
 
+        def probe_reachable_sync(self, *, timeout_sec: int = 5) -> str | None:
+            return None
+
         def call_tool_sync(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return fake_call(None, tool_name, arguments)
 
@@ -176,6 +179,9 @@ def test_mcp_resource_failed_poll_collects_error_details(tmp_path, monkeypatch):
     class FakeMcpClient:
         """Test double that records MCP tool invocations."""
 
+        def probe_reachable_sync(self, *, timeout_sec: int = 5) -> str | None:
+            return None
+
         def call_tool_sync(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return fake_call(None, tool_name, arguments)
 
@@ -192,3 +198,35 @@ def test_mcp_resource_failed_poll_collects_error_details(tmp_path, monkeypatch):
     assert collected["status"] == "failed"
     assert "maximum sleep time is 3000000 microseconds" in str(collected.get("error") or "")
     assert [item[1] for item in calls].count("collect_job") == 1
+
+
+def test_mcp_resource_submit_errors_when_preflight_fails(tmp_path, monkeypatch):
+    """Unreachable MCP backends fail at submit time without reserving capacity."""
+    service = _build_mcp_service(tmp_path)
+
+    class UnreachableMcpClient:
+        """Test double that simulates a failed preflight probe."""
+
+        def probe_reachable_sync(self, *, timeout_sec: int = 5) -> str | None:
+            return (
+                "MCP server unreachable at https://compute.example.com/mcp while calling preflight: connection refused"
+            )
+
+        def call_tool_sync(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            raise AssertionError(f"runner should not call MCP when preflight fails: {tool_name}")
+
+    monkeypatch.setattr(
+        service,
+        "get_mcp_client",
+        lambda _resource_id, _driver: UnreachableMcpClient(),
+    )
+
+    handle = service.submit_job(command="python run.py", task_type="resource", resource_id="compute_pool")
+    assert handle["status"] == "ERROR"
+    assert "MCP server unreachable" in str(handle.get("message") or "")
+    assert "job_id" not in handle
+
+    payload = service.list_resources()
+    by_id = {item["id"]: item for item in payload["resources"]}
+    assert by_id["compute_pool"]["used"] == 0
+    assert by_id["compute_pool"]["available"] == 2
