@@ -608,6 +608,7 @@ class FlexAgent(BaseAgent):
                 checkpoint_id=str(checkpoint_id),
                 message=str(message or ""),
                 session_id=None,
+                runtime=runtime,
                 **kwargs,
             )
             latest, flush_state_provider = make_perf_state_holder(initial_state)
@@ -649,7 +650,7 @@ class FlexAgent(BaseAgent):
             initial_state_for_persist = initial_state
             latest["state"] = initial_state
             self._bind_workflow_runtime(runtime)
-            stream = self.workflow_backend.astream(initial_state, start_at=start_at, **kwargs)
+            stream = self.workflow_backend.astream(initial_state, runtime=runtime, start_at=start_at, **kwargs)
             async for item in self._stream_with_finalization(
                 stream,
                 initial_state_for_persist=initial_state_for_persist,

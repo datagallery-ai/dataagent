@@ -220,11 +220,25 @@ class OpenJiuWenWorkflowBackend:
 
     async def ainvoke(self, initial_state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         """异步执行（openjiuwen），kwargs 透传给 OpenJiuWenWorkflow.ainvoke。"""
-        return await self._wf.ainvoke(initial_state, **kwargs)
+        agent_runtime = kwargs.pop("runtime", None)
+        workflow_runtime = kwargs.pop("workflow_runtime", None)
+        return await self._wf.ainvoke(
+            initial_state,
+            runtime=workflow_runtime,
+            agent_runtime=agent_runtime,
+            **kwargs,
+        )
 
     def astream(self, initial_state: dict[str, Any], **kwargs: Any) -> AsyncIterator[Any]:
         """流式执行（openjiuwen），kwargs 透传给 OpenJiuWenWorkflow.astream。"""
-        return self._wf.astream(initial_state, **kwargs)
+        agent_runtime = kwargs.pop("runtime", None)
+        workflow_runtime = kwargs.pop("workflow_runtime", None)
+        return self._wf.astream(
+            initial_state,
+            runtime=workflow_runtime,
+            agent_runtime=agent_runtime,
+            **kwargs,
+        )
 
     def load_checkpoint_state(self, checkpoint_id: str) -> tuple[str, dict[str, Any]]:
         """读取 openjiuwen checkpoint（通常为 human_feedback 中断点）。"""
@@ -247,7 +261,7 @@ class OpenJiuWenWorkflowBackend:
         recovered_state.setdefault("developer_mode", False)
         if session_id:
             recovered_state.setdefault("conversation_id", session_id)
-        return await self._wf.ainvoke(recovered_state, start_at=start_at)
+        return await self.ainvoke(recovered_state, start_at=start_at, **kwargs)
 
     def astream_resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> AsyncIterator[Any]:
         """openjiuwen 流式恢复：load checkpoint + 注入恢复输入 + 从 start_at 继续 astream。"""
@@ -257,4 +271,4 @@ class OpenJiuWenWorkflowBackend:
         recovered_state.setdefault("developer_mode", False)
         if session_id:
             recovered_state.setdefault("conversation_id", session_id)
-        return self._wf.astream(recovered_state, start_at=start_at, **kwargs)
+        return self.astream(recovered_state, start_at=start_at, **kwargs)
