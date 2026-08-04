@@ -53,14 +53,17 @@ class BaseNL2SQLNode(BaseNode):
 
     @property
     def db(self):
+        """Return the configured DATABASE.db_id."""
         return self._get_agent_config("DATABASE.db_id", "")
 
     @property
     def dialect(self):
+        """Return the configured DATABASE.dialect (default sqlite)."""
         return self._get_agent_config("DATABASE.dialect", "sqlite")
 
     @property
     def engine(self):
+        """Return DATABASE.engine, falling back to dialect."""
         return self._get_agent_config("DATABASE.engine") or self.dialect
 
     def set_context_dump_dir(self, dump_dir: Any | None) -> None:
