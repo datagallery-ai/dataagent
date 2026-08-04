@@ -24,7 +24,11 @@ from dataagent.core.jobs.envelope import (
     finalize_job_envelope,
 )
 from dataagent.core.jobs.service import JobService
-from dataagent.core.resource_runtime.mcp import build_mcp_client_from_driver, build_mcp_resource_client
+from dataagent.core.resource_runtime.mcp import (
+    build_mcp_client_from_driver,
+    build_mcp_resource_client,
+    resolve_mcp_preflight_timeout_sec,
+)
 from dataagent.core.resource_runtime.operations.operations import ResourceOperationRegistry
 from dataagent.core.resource_runtime.operations.protocols import McpResourceClient
 from dataagent.core.resource_runtime.runner import build_resource_runner
@@ -125,16 +129,10 @@ class ResourceJobCoordinator:
 
         normalized_command = str(envelope.get("command") or "").strip()
         if transport_type == "local" and resource.operations.get("submit") == "sandbox.submit":
-            envelope.setdefault(
-                "sandbox_request",
-                {"enabled": True, "backend": "best-effort"},
-            )
+            envelope.setdefault("sandbox_request", {"enabled": True, "backend": "best-effort"})
             command_error = _local_command_error(normalized_command)
             if command_error:
                 return {"status": "ERROR", "message": command_error}
-        elif transport_type == "mcp":
-            if not normalized_command:
-                return {"status": "ERROR", "message": "command or job_envelope is required"}
         elif not normalized_command:
             return {"status": "ERROR", "message": "command or job_envelope is required"}
 
@@ -144,6 +142,11 @@ class ResourceJobCoordinator:
             if script_path is None:
                 return {"status": "ERROR", "message": "script_artifact must point to a file inside the workspace"}
             envelope["script_artifact"] = {**effective_script_artifact, "path": str(script_path)}
+
+        if transport_type == "mcp":
+            preflight_error = self._probe_mcp_resource(resource)
+            if preflight_error:
+                return {"status": "ERROR", "message": preflight_error}
 
         job_id = JobService.new_job_id()
         reserve = self.capacity.try_reserve(
@@ -265,6 +268,24 @@ class ResourceJobCoordinator:
                 client = self._mcp_client_factory(resource)
         self._mcp_clients[resource_id] = client
         return client
+
+    def _probe_mcp_resource(self, resource: Resource) -> str | None:
+        """Preflight MCP reachability before reserving capacity for one resource job.
+
+        Args:
+            resource: Selected executable MCP-backed resource.
+
+        Returns:
+            ``None`` when reachable; otherwise an error string for the submit tool response.
+        """
+        try:
+            driver = self.resolve.driver_binding_for(resource)
+        except ValueError as exc:
+            return str(exc)
+        client = self.get_mcp_client(resource.id, driver)
+        return client.probe_reachable_sync(
+            timeout_sec=resolve_mcp_preflight_timeout_sec(resource, driver),
+        )
 
     def _pick_resource(self, *, resource_id: str, task_type: str) -> tuple[Resource | None, int, str]:
         """Select one executable resource and resolve consumption amount."""

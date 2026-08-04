@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Any, Optional
 
 from dataagent.actions.tools.local_tool.sandbox import Sandbox
@@ -113,6 +114,7 @@ class Runtime:
         self._agent_registry: Any = None
         self._resource_stack_workspace: Path | None = None
         self._resource_coordinator: Any = None
+        self._services_lock = RLock()
 
     @property
     def stream(self) -> StreamCursor:
@@ -238,25 +240,26 @@ class Runtime:
         """
         ws = self.workspace_dir
         if ws is None:
-            self._job_service = None
-            self._agent_service = None
-            self._job_stack_workspace = None
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
+            with self._services_lock:
+                self._clear_job_and_resource_services()
             return None
         resolved = Path(ws).expanduser().resolve()
-        if self._job_stack_workspace == resolved and self._agent_service is not None:
-            return self._agent_service
-        from dataagent.core.agents.service import AgentService
-        from dataagent.core.jobs.file_store import FileJobStore
-        from dataagent.core.jobs.service import JobService
+        with self._services_lock:
+            if self._job_stack_workspace == resolved and self._agent_service is not None:
+                return self._agent_service
+            from dataagent.core.agents.service import AgentService
+            from dataagent.core.jobs.file_store import FileJobStore
+            from dataagent.core.jobs.service import JobService
 
-        store = FileJobStore(resolved, config=self.get_all_config())
-        self._job_service = JobService(store)
-        registry = self._ensure_agent_registry()
-        self._agent_service = AgentService(registry=registry, job_service=self._job_service, runtime=self)
-        self._job_stack_workspace = resolved
-        return self._agent_service
+            if self._job_stack_workspace != resolved:
+                self._resource_coordinator = None
+                self._resource_stack_workspace = None
+            store = FileJobStore(resolved, config=self.get_all_config())
+            self._job_service = JobService(store)
+            registry = self._ensure_agent_registry()
+            self._agent_service = AgentService(registry=registry, job_service=self._job_service, runtime=self)
+            self._job_stack_workspace = resolved
+            return self._agent_service
 
     def ensure_resource_coordinator(self) -> Any:
         """Bind :class:`ResourceJobCoordinator` to the current workspace.
@@ -267,32 +270,34 @@ class Runtime:
         """
         ws = self.workspace_dir
         if ws is None:
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
+            with self._services_lock:
+                self._resource_coordinator = None
+                self._resource_stack_workspace = None
             return None
         config = self.get_all_config()
         resources = config.get("RESOURCES") or []
         if not resources:
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
+            with self._services_lock:
+                self._resource_coordinator = None
+                self._resource_stack_workspace = None
             return None
         resolved = Path(ws).expanduser().resolve()
-        _ = self.ensure_job_services()
-        if self._job_service is None:
-            self._resource_coordinator = None
-            self._resource_stack_workspace = None
-            return None
-        if self._resource_stack_workspace == resolved and self._resource_coordinator is not None:
-            return self._resource_coordinator
-        from dataagent.core.resource_runtime.wiring import build_resource_coordinator
+        with self._services_lock:
+            if self.ensure_job_services() is None:
+                self._resource_coordinator = None
+                self._resource_stack_workspace = None
+                return None
+            if self._resource_stack_workspace == resolved and self._resource_coordinator is not None:
+                return self._resource_coordinator
+            from dataagent.core.resource_runtime.wiring import build_resource_coordinator
 
-        self._resource_coordinator = build_resource_coordinator(
-            job_service=self._job_service,
-            runtime=self,
-            config=config,
-        )
-        self._resource_stack_workspace = resolved
-        return self._resource_coordinator
+            self._resource_coordinator = build_resource_coordinator(
+                job_service=self._job_service,
+                runtime=self,
+                config=config,
+            )
+            self._resource_stack_workspace = resolved
+            return self._resource_coordinator
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Read a value from the per-Agent ConfigManager.
@@ -456,6 +461,14 @@ class Runtime:
                 f"{commands}\n"
             )
         return prompt
+
+    def _clear_job_and_resource_services(self) -> None:
+        """Reset workspace-scoped job and resource services (caller must hold ``_services_lock``)."""
+        self._job_service = None
+        self._agent_service = None
+        self._job_stack_workspace = None
+        self._resource_coordinator = None
+        self._resource_stack_workspace = None
 
     def _ensure_agent_registry(self) -> Any:
         """Build or return the cached :class:`~dataagent.core.agents.registry.AgentRegistry`."""

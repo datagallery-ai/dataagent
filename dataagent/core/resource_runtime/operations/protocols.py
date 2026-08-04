@@ -23,3 +23,7 @@ class McpResourceClient(Protocol):
     def call_tool_sync(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Invoke one remote MCP tool synchronously from a resource job runner thread."""
         ...
+
+    def probe_reachable_sync(self, *, timeout_sec: int = 5) -> str | None:
+        """Return an error message when the MCP endpoint is unreachable, else ``None``."""
+        ...
