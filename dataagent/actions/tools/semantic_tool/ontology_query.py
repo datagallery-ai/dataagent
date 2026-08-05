@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import requests
@@ -43,12 +44,14 @@ _ONTOLOGY_TABLE_COLUMNS_LIMIT = 1000
 _JOINABLE_TABLES_BATCH = 50
 
 
-def _resolve_databases(ctx: ToolExecutionContext) -> list[str]:
+def _resolve_databases(ctx: ToolExecutionContext, *, required: bool = True) -> list[str]:
     """Resolve the semantic-service database name(s) from ``DATABASE.db_id``.
 
     The ontology scene is the semantic-service ``databaseName``. It is read from
     the same ``DATABASE.db_id`` config the other semantic tools use (single
-    string or list).
+    string or list). Query-driven semantic retrieval can run without a configured
+    database; in that case callers pass ``required=False`` and table names remain
+    fully qualified during rendering.
     """
     raw = ctx.config_manager.get("DATABASE.db_id", "")
     if isinstance(raw, list):
@@ -57,9 +60,31 @@ def _resolve_databases(ctx: ToolExecutionContext) -> list[str]:
         dbs = [raw.strip()]
     else:
         dbs = []
-    if not dbs:
+    if required and not dbs:
         raise ValueError("Ontology database is required: set DATABASE.db_id in config.")
     return dbs
+
+
+def _resolve_query(ctx: ToolExecutionContext, query: str | None) -> str:
+    """Resolve the natural-language query for query-driven semantic retrieval."""
+    query_text = str(query or "").strip()
+    if query_text:
+        return query_text
+
+    runtime = getattr(ctx, "runtime", None)
+    if runtime is not None:
+        try:
+            from dataagent.utils.info_utils import get_current_query
+
+            current_query = get_current_query(runtime)
+        except Exception as exc:
+            logger.debug("ontology semantic retrieve: failed to read current query: {}", exc)
+        else:
+            query_text = str(current_query or "").strip()
+            if query_text:
+                return query_text
+
+    raise ValueError("original user query is required for semantic retrieve")
 
 
 def _client(ctx: ToolExecutionContext) -> SemanticServiceClient:
@@ -194,6 +219,160 @@ def _fetch_relations(
     return relations
 
 
+def _strip_source_suffix(name: str) -> str:
+    """Strip Atlas-style source suffix, e.g. ``db.table@sqlite`` -> ``db.table``."""
+    return str(name or "").split("@", 1)[0]
+
+
+def _normalize_join_condition(value: Any) -> str:
+    """Normalize join ``on`` values, including JSON-array strings returned by some builds."""
+    if isinstance(value, list):
+        return "；".join(str(item).strip() for item in value if str(item).strip())
+    text = str(value or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return text
+        if isinstance(parsed, list):
+            return "；".join(str(item).strip() for item in parsed if str(item).strip())
+    return text
+
+
+def _semantic_table_name(table: dict[str, Any]) -> str:
+    """Normalize one semantic bundle table reference to ``db.table`` when possible."""
+    table_name = _strip_source_suffix(str(table.get("table") or table.get("name") or "").strip())
+    db_name = _strip_source_suffix(str(table.get("db") or "").strip())
+    if not table_name:
+        return ""
+    if db_name and not table_name.startswith(f"{db_name}."):
+        return f"{db_name}.{table_name}"
+    return table_name
+
+
+def _display_table_name(name: str, databases: list[str]) -> str:
+    """Return the rendered table name for the configured database display policy."""
+    text = _strip_source_suffix(str(name or "").strip())
+    db_prefixes = databases if len(databases) == 1 else []
+    return _strip_db_prefix(text, db_prefixes)
+
+
+def _replace_table_names(text: str, display_names: dict[str, str]) -> str:
+    """Replace known table names in join text using longest-match priority."""
+    text = str(text or "")
+    for source, display in sorted(display_names.items(), key=lambda item: len(item[0]), reverse=True):
+        if not source or not display or source == display:
+            continue
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(source)}(?=\.|[^A-Za-z0-9_]|$)"
+        text = re.sub(pattern, display, text)
+    return text
+
+
+def _semantic_bundle_to_ontology_inputs(
+    bundle: dict[str, Any],
+    *,
+    databases: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    """Convert a semantic retrieve bundle to the basic ontology render inputs."""
+    data_access_plan = bundle.get("dataAccessPlan", {})
+    if not isinstance(data_access_plan, dict):
+        data_access_plan = {}
+
+    entities: list[dict[str, Any]] = []
+    columns_by_table: dict[str, list[dict[str, Any]]] = {}
+    display_names: dict[str, str] = {}
+    for table in data_access_plan.get("tables", []):
+        if not isinstance(table, dict):
+            continue
+
+        table_name = _semantic_table_name(table)
+        if not table_name:
+            continue
+        display_names[table_name] = _display_table_name(table_name, databases)
+
+        columns: list[dict[str, Any]] = []
+        for column in table.get("columns", []):
+            if not isinstance(column, dict):
+                continue
+            columns.append(
+                {
+                    "column_name": column.get("name") or "",
+                    "column_description": column.get("description") or "",
+                }
+            )
+
+        entities.append(
+            {
+                "table_name": table_name,
+                "table_description": table.get("description") or "",
+            }
+        )
+        columns_by_table[table_name] = columns
+
+    relations: list[dict[str, Any]] = []
+    for join in data_access_plan.get("joinPaths", []):
+        if not isinstance(join, dict):
+            continue
+        source = _strip_source_suffix(str(join.get("left") or "").strip())
+        target = _strip_source_suffix(str(join.get("right") or "").strip())
+
+        join_condition = _normalize_join_condition(join.get("on"))
+        join_condition = _replace_table_names(join_condition, display_names)
+
+        relations.append(
+            {
+                "source_table": source,
+                "target_table": target,
+                "cardinality": join.get("cardinality") or join.get("joinType") or "JOIN",
+                "join_condition": join_condition,
+            }
+        )
+
+    return entities, columns_by_table, relations
+
+
+def _render_ontology_result(
+    object_type_details: list[dict[str, Any]],
+    relation_triplets: list[dict[str, Any]],
+    *,
+    frontend_msg: str,
+) -> dict[str, str]:
+    """Render normalized ontology entities/relations into the prompt text shape."""
+    object_types = [e.get("entity_name", "") for e in object_type_details]
+
+    def _pretty(obj: Any) -> str:
+        return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+
+    return {
+        "original_msg": (
+            f"\n对本体查询结果如下：\n"
+            f"本体目前包含以下几种类型实体：\n{_pretty(object_types)}\n\n"
+            f"每种实体的描述和属性定义如下:\n{_pretty(object_type_details)}\n\n"
+            f"实体之间有以下几种类型的关联，"
+            f"每种关联用(源实体-关系-目标实体)的三元组表示:\n"
+            f"{_pretty(relation_triplets)}\n\n"
+            f"可以根据以上信息理解实体间的关联关系，"
+            f"以及每个实体的属性含义，从而构造查询条件。\n"
+        ),
+        "frontend_msg": frontend_msg,
+    }
+
+
+def _render_relevant_ontology_unavailable(*, scene: str, reason: str) -> dict[str, str]:
+    """Render a fail-close message for semantic retrieve failures or empty recalls."""
+    target = scene or "default"
+    msg = (
+        f"本体 {target} 相关语义检索失败：{reason}。"
+        "未召回到可用于本次查询的表、列或关联关系。"
+        "请不要基于空本体继续构造 SQL；应停止当前数据库查询流程，"
+        "向用户说明语义服务失败或未返回可用 schema。"
+    )
+    return {
+        "original_msg": msg,
+        "frontend_msg": msg,
+    }
+
+
 def _strip_db_prefix(name: str, db_prefixes: list[str]) -> str:
     """Strip a leading, known ``<db>.`` prefix from an entity/table name.
 
@@ -216,6 +395,7 @@ def _render_ontology_description(
     relations: list[dict[str, Any]],
     scene: str,
     databases: list[str] | None = None,
+    frontend_msg: str | None = None,
 ) -> dict[str, str]:
     """Render the three-section ontology text consumed by the main Agent.
 
@@ -227,7 +407,7 @@ def _render_ontology_description(
 
     Entity/relation names are rendered *without* their ``<db>.`` prefix so the
     prompt shows bare table names (e.g. ``antibodies`` rather than
-    ``changping02.antibodies``). Internal fetch logic keeps using the fully
+    ``bio_lab.antibodies``). Internal fetch logic keeps using the fully
     qualified ``db.table`` keys; stripping happens only here in the render
     layer. To avoid ambiguity, prefixes are only stripped when exactly one
     database is configured; multi-database scenes keep the qualifier so two
@@ -238,8 +418,6 @@ def _render_ontology_description(
 
     def _display(name: str) -> str:
         return _strip_db_prefix(name, db_prefixes)
-
-    object_types = [_display(e.get("table_name", "")) for e in entities]
 
     object_type_details: list[dict[str, Any]] = []
     for e in entities:
@@ -274,24 +452,16 @@ def _render_ontology_description(
             }
         )
 
-    def _pretty(obj: list[dict]) -> str:
-        return json.dumps(obj, ensure_ascii=False, indent=2)
-
-    return {
-        "original_msg": (
-            f"\n对本体查询结果如下：\n"
-            f"本体目前包含以下几种类型实体：\n{_pretty(object_types)}\n\n"
-            f"每种实体的描述和属性定义如下:\n{_pretty(object_type_details)}\n\n"
-            f"实体之间有以下几种类型的关联，每种关联用(源实体-关系-目标实体)的三元组表示:\n"
-            f"{_pretty(relation_triplets)}\n\n"
-            f"可以根据以上信息理解实体间的关联关系，以及每个实体的属性含义，从而构造查询条件。\n"
-        ),
-        "frontend_msg": (
+    return _render_ontology_result(
+        object_type_details,
+        relation_triplets,
+        frontend_msg=frontend_msg
+        or (
             f"已从语义层服务加载本体 {scene} 描述信息，本体中共包括"
-            f"{len(object_types)}种实体，{len(relation_triplets)}种关系，"
+            f"{len(object_type_details)}种实体，{len(relation_triplets)}种关系，"
             f"它们的具体schema也已经被加载。"
         ),
-    }
+    )
 
 
 def get_ontology_description(*, _tool_context: ToolExecutionContext) -> dict[str, Any]:
@@ -333,3 +503,46 @@ def get_ontology_description(*, _tool_context: ToolExecutionContext) -> dict[str
         return rendered
 
     return _render_ontology_description(entities, columns_by_table, relations, scene, databases)
+
+
+def get_relevant_ontology_description(
+    query: str | None = None,
+    *,
+    _tool_context: ToolExecutionContext,
+) -> dict[str, Any]:
+    """Fetch only ontology information relevant to the current natural-language query.
+
+    Uses semantic-service ``/semantic/retrieve`` to fetch a query-scoped
+    Semantic Bundle, then intentionally renders only its table, column, and
+    join subset in the legacy ontology text shape consumed by existing prompts.
+    Metric context, knowledge evidence, answer guidance, and SQL examples from
+    the raw bundle are not returned in this tool result.
+    """
+    query_text = _resolve_query(_tool_context, query)
+    databases = _resolve_databases(_tool_context, required=False)
+    client = _client(_tool_context)
+    scene = ", ".join(databases)
+
+    try:
+        bundle = client.semantic_retrieve(query_text)
+    except (requests.RequestException, ValueError) as err:
+        logger.error(f"加载相关本体描述失败：{err}")
+        return _render_relevant_ontology_unavailable(scene=scene, reason=str(err))
+
+    if not isinstance(bundle, dict):
+        return _render_relevant_ontology_unavailable(scene=scene, reason="semantic/retrieve 返回格式无效")
+
+    entities, columns_by_table, relations = _semantic_bundle_to_ontology_inputs(bundle, databases=databases)
+    if not entities:
+        return _render_relevant_ontology_unavailable(scene=scene, reason="semantic/retrieve 未召回相关表")
+    return _render_ontology_description(
+        entities,
+        columns_by_table,
+        relations,
+        scene,
+        databases,
+        frontend_msg=(
+            f"已从语义层服务按查询加载相关本体 {scene or 'default'} 描述信息，本体中共包括"
+            f"{len(entities)}种实体，{len(relations)}种关系，它们的具体schema也已经被加载。"
+        ),
+    )

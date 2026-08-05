@@ -246,7 +246,7 @@ def get_semantic_retrieve_context(
         _save_semantic_retrieve_metric_outputs(cached, workspace_root)
         return cached
 
-    result = client.semantic_search_tables(query_text)
+    result = client.semantic_retrieve(query_text)
 
     recalled_tables: list[str] = []
     context_text = f"匹配原始query的表如下：（query为 {query_text}）"

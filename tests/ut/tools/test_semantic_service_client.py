@@ -99,6 +99,13 @@ def test_client_uses_semantic_v1_paths_for_metadata_apis(monkeypatch) -> None:
     assert method == "GET"
     assert url == "http://semantic.local:41000/api/semantic/v1/retrieval/tables/data_table/schema"
 
+    assert client.semantic_retrieve("查找 IC50 结果") == {"ok": True}
+    method, url, payload, headers, timeout, verify = fake_session.calls[-1]
+    assert method == "POST"
+    assert url == "http://semantic.local:41000/api/semantic/v1/semantic/retrieve"
+    assert payload == {"query": "查找 IC50 结果"}
+    assert headers == {"Content-Type": "application/json"}
+
 
 def test_http_error_exposes_semantic_service_error_fields() -> None:
     client = SemanticServiceClient("http://semantic.local:41000")

@@ -526,7 +526,7 @@ def _build_shell_env() -> dict[str, str]:
     sqlite_path = _user_sqlite_path.get()
     if sqlite_path:
         # 覆盖而非 setdefault：仓库根 .env 文件会把 USER_SQLITE_PATH 静态地设成
-        # /tmp/agent/web_backend/changping02.sqlite（部署默认值），在测试或分场景
+        # /tmp/agent/web_backend/bio_lab.sqlite（部署默认值），在测试或分场景
         # 运行时该路径不存在，导致 skill 脚本 sqlite3.connect 报 OperationalError。
         # executor 注入的 DATABASE.config.path 是会话级权威值，必须覆盖 .env 默认。
         env["USER_SQLITE_PATH"] = sqlite_path
@@ -1818,6 +1818,32 @@ def get_ontology_description_tool(*, _tool_context: ToolExecutionContext) -> dic
     from dataagent.actions.tools.semantic_tool.ontology_query import get_ontology_description
 
     return get_ontology_description(_tool_context=_tool_context)
+
+
+def get_relevant_ontology_description_tool(
+    query: str | None = None,
+    *,
+    _tool_context: ToolExecutionContext,
+) -> dict[str, Any]:
+    """
+    Fetch ontology metadata relevant to the current natural-language query.
+    Call this tool once for every new user query that involves database access,
+    data analysis, or multi-step database workflows. Pass the current user query
+    as the query argument; do not reuse ontology metadata retrieved for a
+    different user query.
+
+    Use when:
+    - You need ontology text for query-relevant tables, columns, and joins from semantic-service.
+    - You need table/column/relation context to choose follow-up schema or SQL tools.
+    - Do not use this tool as a source for metric definitions, knowledge evidence, answer guidance, or SQL examples.
+
+    Returns:
+        A dict containing query-relevant ontology metadata rendered as entity types,
+        attributes, and relation triplets.
+    """
+    from dataagent.actions.tools.semantic_tool.ontology_query import get_relevant_ontology_description
+
+    return get_relevant_ontology_description(query=query, _tool_context=_tool_context)
 
 
 async def bash(command: str, purpose: str | None = None, timeout: int = DEFAULT_BASH_TIMEOUT) -> dict[str, Any]:

@@ -133,11 +133,9 @@ class SemanticServiceClient:
         """Get column metadata for a table."""
         return self.get("advanced-search/table-columns-info", params={"tableName": table_name, "limit": limit})
 
-    def semantic_search_tables(self, query: str, top_k: int | None = None) -> dict:
-        """Search tables by query."""
+    def semantic_retrieve(self, query: str) -> dict:
+        """Retrieve the semantic bundle relevant to one natural-language query."""
         payload: dict[str, Any] = {"query": query}
-        if top_k is not None:
-            payload["topK"] = int(top_k)
         return self.post("semantic/retrieve", json=payload, headers={"Content-Type": "application/json"})
 
     def semantic_search_columns(
