@@ -21,7 +21,7 @@ class _FakeSemanticClient:
         self.last_query = ""
         self.calls = 0
 
-    def semantic_search_tables(self, query: str) -> dict[str, Any]:
+    def semantic_retrieve(self, query: str) -> dict[str, Any]:
         """Return a semantic retrieve response with diagnostic payload."""
         self.last_query = query
         self.calls += 1
@@ -58,14 +58,14 @@ class _EmptySemanticClient:
     def __init__(self) -> None:
         self.calls = 0
 
-    def semantic_search_tables(self, query: str) -> dict[str, Any]:
+    def semantic_retrieve(self, query: str) -> dict[str, Any]:
         """Return a successful semantic retrieve response with no table candidates."""
         self.calls += 1
         return {"dataAccessPlan": {"tables": []}}
 
 
 class _FailingSemanticClient:
-    def semantic_search_tables(self, query: str) -> dict[str, Any]:
+    def semantic_retrieve(self, query: str) -> dict[str, Any]:
         """Raise the terminal semantic-service error returned to the parent agent."""
         raise SemanticServiceError(
             method="POST",

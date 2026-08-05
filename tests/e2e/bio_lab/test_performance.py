@@ -44,6 +44,8 @@ Usage::
     export DATAAGENT_CACHE_BREAKPOINT_ANNOTATION=1
     python tests/e2e/bio_lab/test_performance.py
     python tests/e2e/bio_lab/test_performance.py --skip_slow
+    SEMANTIC_SERVICE_URL=http://8.92.9.219:32000 \
+      python tests/e2e/bio_lab/test_performance.py --config main_config_retrieve.yaml
 
     # Switch model preset (default: deepseek). bailian enables cache_control.
     python tests/e2e/bio_lab/test_performance.py --model bailian
@@ -65,6 +67,8 @@ CLI options:
   --compress_message_cnt N       CONTEXT.compress_message_cnt pruner threshold.
   --recent_turns N               CONTEXT.recent_turns IR threshold (0 = replace
                                  all turns).
+  --config PATH                  Agent config YAML under tests/e2e/bio_lab/config
+                                 or an absolute/relative file path.
 
 Each run auto-generates a fresh timestamped user_id/session_id under
 dataagent_home() (e.g. ``cache_test_user_v3_20260623_141023_ab12``), so
@@ -106,10 +110,12 @@ os.environ.setdefault("DATAAGENT_CACHE_BREAKPOINT_ANNOTATION", "1")
 
 
 def _disable_proxy_env() -> None:
-    """Strip inherited proxy settings so the e2e test is self-contained.
+    """Strip inherited proxy settings while preserving direct-host bypasses.
 
     This avoids httpx/litellm picking up Clash Verge SOCKS/HTTP proxy settings
-    from the parent shell when the test is launched via `uv run`.
+    from the parent shell when the test is launched via `uv run`. Keep
+    NO_PROXY/no_proxy so requests does not fall back to macOS system proxies
+    for real semantic-service hosts.
     """
     for key in (
         "ALL_PROXY",
@@ -120,14 +126,36 @@ def _disable_proxy_env() -> None:
         "https_proxy",
         "FTP_PROXY",
         "ftp_proxy",
-        "NO_PROXY",
-        "no_proxy",
         "SOCKS_PROXY",
         "socks_proxy",
         "SOCKS5_PROXY",
         "socks5_proxy",
     ):
         os.environ.pop(key, None)
+
+    semantic_url = os.environ.get("SEMANTIC_SERVICE_URL", "").strip()
+    if semantic_url:
+        parsed = urlparse(semantic_url if "://" in semantic_url else f"http://{semantic_url}")
+        _add_no_proxy_hosts([parsed.hostname, "localhost", "127.0.0.1"])
+
+
+def _add_no_proxy_hosts(hosts: list[str | None]) -> None:
+    """Append direct-connect hosts to both NO_PROXY spellings."""
+    additions = [host for host in hosts if host]
+    if not additions:
+        return
+
+    for key in ("NO_PROXY", "no_proxy"):
+        raw = os.environ.get(key, "")
+        if raw.strip() == "*":
+            continue
+        existing = [item.strip() for item in raw.split(",") if item.strip()]
+        seen = set(existing)
+        for host in additions:
+            if host not in seen:
+                existing.append(host)
+                seen.add(host)
+        os.environ[key] = ",".join(existing)
 
 
 _disable_proxy_env()
@@ -141,16 +169,56 @@ _MOCK_PORT = 0  # 0 = auto-resolve (random or --mock_port); set before _start_mo
 # Defaults to the inline mock server (offline-reproducible); set the
 # SEMANTIC_SERVICE_URL env var to opt into a real semantic-service instance.
 _SEMANTIC_SERVICE_URL = os.getenv("SEMANTIC_SERVICE_URL", "")
-_CHANGPING_SCENE = os.getenv("CHANGPING_SCENE", "bio_lab")
+_REAL_SEMANTIC_SERVICE_TIMEOUT = 180
+_DEFAULT_AGENT_CONFIG_FILE = "main_config.yaml"
 _mock_server: HTTPServer | None = None
+
+
+def _semantic_service_timeout() -> int:
+    """Return semantic-service timeout for real-service e2e runs."""
+    raw_timeout = os.getenv("SEMANTIC_SERVICE_TIMEOUT", "").strip()
+    if not raw_timeout:
+        return _REAL_SEMANTIC_SERVICE_TIMEOUT
+    timeout = int(raw_timeout)
+    if timeout <= 0:
+        raise ValueError("SEMANTIC_SERVICE_TIMEOUT must be positive")
+    return timeout
+
+
+def _apply_semantic_layer_config(config: dict) -> None:
+    semantic_layer = config.setdefault("SEMANTIC_LAYER", {})
+    if _SEMANTIC_SERVICE_URL:
+        semantic_layer["base_url"] = _SEMANTIC_SERVICE_URL
+        # 真实服务可能是自签 https，跳过证书校验。
+        semantic_layer["verify_ssl"] = False
+        semantic_layer["timeout"] = _semantic_service_timeout()
+    else:
+        if _uses_relevant_ontology_tool(config):
+            raise ValueError(
+                "main_config_retrieve.yaml uses semantic/retrieve, which is backed by the real semantic-service LLM "
+                "path and is not mocked. Set SEMANTIC_SERVICE_URL for retrieve ontology tests."
+            )
+        semantic_layer["base_url"] = f"http://localhost:{_MOCK_PORT}"
+
+
+def _uses_relevant_ontology_tool(config: dict) -> bool:
+    tools = config.get("TOOLS", {})
+    if not isinstance(tools, dict):
+        return False
+    local_functions = tools.get("local_functions", [])
+    if not isinstance(local_functions, list):
+        return False
+    return any(
+        isinstance(item, dict) and item.get("function") == "get_relevant_ontology_description_tool"
+        for item in local_functions
+    )
 
 
 def _load_metavisor_cache() -> dict[str, Any]:
     """Load pre-captured MetaVisor responses from the merged config JSON."""
     cache_path = CONFIG_DIR / "metavisor_responses.json"
     with open(cache_path, encoding="utf-8") as fh:
-        cache = json.load(fh)
-    return cache
+        return json.load(fh)
 
 
 _MV_CACHE: dict[str, Any] | None = None
@@ -190,6 +258,9 @@ class _MockMVHandler(BaseHTTPRequestHandler):
         if path == "/api/semantic/v1/advanced-search/joinable-tables":
             self._json(cache.get("joinable-tables") or {"error": "joinable-tables not cached"})
             return
+        if path == "/api/semantic/v1/search/dsl":
+            self._json(self._mock_search_dsl(cache))
+            return
         if path in (
             "/api/semantic/v1/advanced-search/semantic-search-columns",
             "/api/semantic/v1/advanced-search/vector-search-table-desc",
@@ -199,6 +270,36 @@ class _MockMVHandler(BaseHTTPRequestHandler):
             self._json(cache.get(key, {}))
             return
         self._error(404, f"Unknown endpoint: {path}")
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        self._error(404, f"Unknown endpoint: {path}")
+
+    @staticmethod
+    def _table_key(qualified_name: str) -> str:
+        parts = str(qualified_name or "").split(".")
+        return ".".join(parts[:2]) if len(parts) >= 3 else str(qualified_name or "")
+
+    @staticmethod
+    def _table_list_items(cache: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        items: list[tuple[str, dict[str, Any]]] = []
+        for item in cache.get("table-list") or []:
+            if not isinstance(item, dict):
+                continue
+            for name, meta in item.items():
+                if name:
+                    items.append((str(name), meta if isinstance(meta, dict) else {}))
+        return items
+
+    def _mock_search_dsl(self, cache: dict[str, Any]) -> dict[str, Any]:
+        names = ["db_name_en", "table_name", "table_description", "qualified_name"]
+        values: list[list[str]] = []
+        for full_name, meta in self._table_list_items(cache):
+            db_name, _, table = full_name.partition(".")
+            description = meta.get("table_description_enhanced") or meta.get("table_description") or ""
+            values.append([db_name, table, description, full_name])
+        return {"entities": None, "relations": None, "attributes": {"name": names, "values": values}}
 
     def _json(self, data: Any) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -284,9 +385,11 @@ def _load_ontology_fixture() -> dict[str, str]:
             del table_names
             return list(self.cache.get("joinable-tables") or [])[:limit]
 
-    database = _CHANGPING_SCENE
     client = _FixtureSemanticClient(_get_metavisor_cache())
-    entities = _fetch_entities(client, database)
+    entities = _fetch_entities(client, "")
+    database = ""
+    if entities:
+        database = str(entities[0].get("table_name") or "").partition(".")[0]
     columns_by_table = {
         e["table_name"]: _fetch_columns(client, e["table_name"]) for e in entities if e.get("table_name")
     }
@@ -349,6 +452,29 @@ def _resolve_config_paths(config: dict, workspace_dir: Path) -> dict:
                 skills["custom_dirs"] = [_resolve_path(d, BIO_LAB_DIR) for d in custom_dirs]
 
     return resolved
+
+
+def _resolve_agent_config_path(config_file: str | Path) -> Path:
+    """Resolve an agent config YAML path for this e2e suite."""
+    path = Path(config_file)
+    if not path.is_absolute():
+        candidate = CONFIG_DIR / path
+        path = candidate if candidate.exists() else (Path.cwd() / path)
+    path = path.resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Agent config YAML not found: {path}")
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        raise ValueError(f"Agent config must be a YAML file: {path}")
+    return path
+
+
+def _load_agent_config(config_file: str | Path) -> dict:
+    """Load the requested agent config YAML."""
+    import yaml
+
+    config_path = _resolve_agent_config_path(config_file)
+    with open(config_path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 _ORIGINAL_SQLITE_PATH = BIO_LAB_DIR / "data" / "bio_lab.sqlite"
@@ -470,29 +596,17 @@ def _build_cache_test_config(
     session_root: Path | None = None,
     model_choice: str = DEFAULT_MODEL_CHOICE,
     recent_turns: int | None = DEFAULT_RECENT_TURNS,
+    config_file: str | Path = _DEFAULT_AGENT_CONFIG_FILE,
 ) -> Path:
     import yaml
 
-    config_path = CONFIG_DIR / "main_config.yaml"
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
+    config = _load_agent_config(config_file)
     config = _resolve_config_paths(config, workspace_dir)
     # Ontology (get_ontology_description) and NL2SQL perceptor both go through
     # SemanticServiceClient reading SEMANTIC_LAYER.base_url. 默认走内联 mock
     # server（离线可复现，三个基础检索 REST 端点齐全）；仅当显式提供
     # SEMANTIC_SERVICE_URL 时才 opt-in 到真实 semantic-service。
-    if _SEMANTIC_SERVICE_URL:
-        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = _SEMANTIC_SERVICE_URL
-        # 真实服务可能是自签 https，跳过证书校验。
-        config.setdefault("SEMANTIC_LAYER", {})["verify_ssl"] = False
-    else:
-        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
-    # get_ontology_description_tool 走 SemanticServiceClient 的基础检索 REST 接口
-    # (advanced-search/table-list | table-columns-info | joinable-tables),
-    # 场景（databaseName）与其它 semantic 工具统一取自 DATABASE.db_id。
-    config.setdefault("DATABASE", {})["db_id"] = _CHANGPING_SCENE
-
+    _apply_semantic_layer_config(config)
     context_cfg = config.setdefault("CONTEXT", {})
     context_cfg["compress_message_cnt"] = compress_message_cnt
     context_cfg["compress_token_limit"] = compress_token_limit
@@ -970,6 +1084,7 @@ async def test_v3_session_replay(
     model_choice: str = DEFAULT_MODEL_CHOICE,
     compress_message_cnt: int = DEFAULT_COMPRESS_MESSAGE_CNT,
     recent_turns: int | None = DEFAULT_RECENT_TURNS,
+    config_file: str | Path = _DEFAULT_AGENT_CONFIG_FILE,
 ) -> dict[str, Any]:
     """TC1: Replay the user's real 2026-06-22 session query sequence.
 
@@ -1004,6 +1119,8 @@ async def test_v3_session_replay(
             the pruner hook (message-count based compression trigger).
         recent_turns: ``CONTEXT.recent_turns`` IR-replacement threshold
             (0 = replace all turns).
+        config_file: Agent config YAML to use. Pass ``main_config_retrieve.yaml``
+            to test the semantic retrieve ontology tool.
 
     Returns:
         dict with usage stats, per-query stats, and verification results.
@@ -1032,8 +1149,10 @@ async def test_v3_session_replay(
         session_root=session_root,
         model_choice=model_choice,
         recent_turns=recent_turns,
+        config_file=config_file,
     )
     logger.info(f"TC1 config: {config_path}")
+    logger.info(f"TC1 source_config: {_resolve_agent_config_path(config_file)}")
     logger.info(
         f"TC1 model_choice={model_choice}, compress_message_cnt={compress_message_cnt}, recent_turns={recent_turns}"
     )
@@ -2087,23 +2206,15 @@ def _create_test_workspace() -> Path:
     return workspace_dir
 
 
-def _build_test_config(workspace_dir: Path) -> Path:
+def _build_test_config(workspace_dir: Path, config_file: str | Path = _DEFAULT_AGENT_CONFIG_FILE) -> Path:
     """Load config from YAML, resolve paths, override SEMANTIC_LAYER base_url, write to temp file."""
     import yaml
 
-    config_path = CONFIG_DIR / "main_config.yaml"
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
+    config = _load_agent_config(config_file)
     config = _resolve_config_paths(config, workspace_dir)
     # 默认走内联 mock server（离线可复现）；仅当显式提供 SEMANTIC_SERVICE_URL
     # 时才 opt-in 到真实 semantic-service（可能是自签 https，跳过证书校验）。
-    if _SEMANTIC_SERVICE_URL:
-        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = _SEMANTIC_SERVICE_URL
-        config.setdefault("SEMANTIC_LAYER", {})["verify_ssl"] = False
-    else:
-        config.setdefault("SEMANTIC_LAYER", {})["base_url"] = f"http://localhost:{_MOCK_PORT}"
-    config.setdefault("DATABASE", {})["db_id"] = _CHANGPING_SCENE
+    _apply_semantic_layer_config(config)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", prefix="test_bio_lab_", delete=False) as tmp:
         yaml.safe_dump(config, tmp, allow_unicode=True, sort_keys=False)
@@ -2123,10 +2234,11 @@ async def run_tool_mode(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
+    config_file: str | Path = _DEFAULT_AGENT_CONFIG_FILE,
 ) -> None:
     """Start mock services and enter interactive terminal chat mode."""
     workspace_dir = _create_test_workspace()
-    config_path = _build_test_config(workspace_dir)
+    config_path = _build_test_config(workspace_dir, config_file=config_file)
     logger.info(f"Tool mode config written to: {config_path}")
 
     from dataagent.interface.cli.main import run_terminal_mode
@@ -2141,12 +2253,16 @@ async def run_tool_mode(
         _cleanup_test_workspace(workspace_dir, config_path)
 
 
-async def run_single_query(query: str) -> None:
+async def run_single_query(query: str, *, config_file: str | Path = _DEFAULT_AGENT_CONFIG_FILE) -> None:
     """Run a single user query against the agent and print the response."""
     workspace_dir = Path(tempfile.mkdtemp(prefix="bio_lab_query_"))
     shutil.copy2(_ORIGINAL_SQLITE_PATH, workspace_dir / "bio_lab.sqlite")
 
-    config_path = _build_cache_test_config(workspace_dir, enable_human_feedback=False)
+    config_path = _build_cache_test_config(
+        workspace_dir,
+        enable_human_feedback=False,
+        config_file=config_file,
+    )
     logger.info(f"Query mode config: {config_path}")
 
     from dataagent.interface.sdk.agent import DataAgent
@@ -2194,6 +2310,15 @@ async def main():
     )
     parser.add_argument("--skip_slow", action="store_true", help="Skip the slow 'create experiment' query")
     parser.add_argument("--quick", action="store_true", help="Run only 3 fast count queries (~5 min, CI smoke test)")
+    parser.add_argument(
+        "--config",
+        default=_DEFAULT_AGENT_CONFIG_FILE,
+        metavar="YAML",
+        help=(
+            "Agent config YAML to use. Relative names are resolved under tests/e2e/bio_lab/config. "
+            "Use main_config_retrieve.yaml with SEMANTIC_SERVICE_URL for the semantic retrieve ontology tool."
+        ),
+    )
     parser.add_argument("--tc2_only", action="store_true", help="Run only TC2 (offline extraction) on existing session")
     parser.add_argument(
         "--user_id",
@@ -2278,6 +2403,7 @@ async def main():
     logger.info(f"  compress_message_cnt: {args.compress_message_cnt}")
     logger.info(f"  recent_turns: {args.recent_turns}")
     logger.info(f"  threshold_profile: {CACHE_THRESHOLD_PROFILE}")
+    logger.info(f"  config    : {_resolve_agent_config_path(args.config)}")
     logger.info(f"  mock_port : {_MOCK_PORT}")
     logger.info("=" * 60)
 
@@ -2290,10 +2416,10 @@ async def main():
     _start_mock_metavisor()
     try:
         if args.tool_mode:
-            await run_tool_mode(user_id=args.user, session_id=args.session)
+            await run_tool_mode(user_id=args.user, session_id=args.session, config_file=args.config)
             return
         if args.query:
-            await run_single_query(args.query)
+            await run_single_query(args.query, config_file=args.config)
             return
 
         logger.info("Starting main Agent cache v3.0 tests...")
@@ -2308,6 +2434,7 @@ async def main():
                 model_choice=args.model,
                 compress_message_cnt=args.compress_message_cnt,
                 recent_turns=args.recent_turns,
+                config_file=args.config,
             )
             logger.info("")
             await test_v3_offline_extraction(tc1_result["session_root"])
