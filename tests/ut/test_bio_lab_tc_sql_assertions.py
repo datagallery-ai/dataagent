@@ -1,5 +1,7 @@
 """Focused tests for Bio Lab TC SQL functional assertions."""
 
+import shutil
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +33,18 @@ def test_tc_expected_assertions_exclude_ambiguous_cases():
     assert set(query_cases.TC_EXPECTED_ANSWER_ASSERTIONS) == tc_keys
 
 
+def test_tcw_cases_are_registered_with_assertions_and_rollback_flags():
+    tcw_keys = set(query_cases.TCW_QUERY_SEQUENCES)
+
+    assert len(tcw_keys) == 15
+    assert query_cases.select_query_keys("TC-W", query_numbers=[1, 15]) == ["TC-W01", "TC-W15"]
+    assert set(query_cases.TCW_EXPECTED_ANSWER_ASSERTIONS) == tcw_keys
+    assert set(query_cases.TCW_DB_EFFECT_ASSERTIONS) == tcw_keys
+    assert {key for key, spec in query_cases.TCW_QUERY_SEQUENCES.items() if spec.get("rollback_database")} == tcw_keys
+    assert all(key in query_cases.ALL_EXPECTED_ANSWER_ASSERTIONS for key in tcw_keys)
+    assert all(key in query_cases.QUERY_GROUPS["TC-W"] for key in tcw_keys)
+
+
 def test_tc_expected_sql_executes_on_fixture():
     db_path = BIO_LAB_DIR / "data" / "bio_lab.sqlite"
 
@@ -44,6 +58,38 @@ def test_tc_expected_sql_executes_on_fixture():
 
             assert not errors, f"{tc_key} expected SQL should execute cleanly: {errors}"
             assert result_sets, f"{tc_key} expected SQL should produce a comparable result set"
+
+
+def test_tcw_database_effect_capture_finds_created_target_experiment(tmp_path):
+    source_db = BIO_LAB_DIR / "data" / "bio_lab.sqlite"
+    db_path = tmp_path / "bio_lab.sqlite"
+    shutil.copy2(source_db, db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        experiment_id = 990901
+        today = assertions.datetime.now().strftime("%Y-%m-%d")
+        conn.execute(
+            """
+            INSERT INTO experiments (id, start_date, submitter, operator, status, type)
+            VALUES (?, ?, 900001, NULL, 'NEW', 'neutralization')
+            """,
+            (experiment_id, today),
+        )
+        conn.execute(
+            """
+            INSERT INTO neutralization_experiments (
+                id, cell_sample_id, inhibitor_sample_id, pseudovirus_sample_id,
+                inhibitor_concentration, dilution_factors, result_id
+            )
+            VALUES (?, 800001, 11396, 900412, 1, '[5, 5, 5, 5]', NULL)
+            """,
+            (experiment_id,),
+        )
+
+    captured = assertions.capture_tcw_database_effects(db_path, "TC-W01")
+
+    assert captured["matched"]
+    assert captured["created_experiment_ids"] == [experiment_id]
 
 
 def test_tc_unqueryable_answer_requires_no_sql_and_schema_boundary_explanation():

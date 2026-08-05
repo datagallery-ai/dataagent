@@ -171,6 +171,111 @@ TC_QUERY_SEQUENCES = {
     },
 }
 
+TCW_QUERY_SEQUENCES = {
+    "TC-W01": {
+        "query": "创建 BD55-1111 和 XBB.1 的中和实验，使用 huh-7 细胞。操作人是 Seeder。",
+        "feedback_responses": [
+            "BD55-1111 用样本 11396，XBB.1 用样本 900412，huh-7 用样本 800001。请继续。",
+            "确认，请创建该中和实验。",
+        ],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W02": {
+        "query": "新建一个实验：用 BA286 毒株（注：错别字）和 SA 58（注：带空格）抗体在 293T 细胞上做中和。",
+        "feedback_responses": [
+            "BA.2.86 用样本 900410，SA58 用样本 903002，HEK293T-ACE2 用样本 900310。请继续。",
+            "确认，请创建该中和实验。",
+        ],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W03": {
+        "query": "今天帮我提交一个中和实验，把抗体 SA55 和假病毒 KP.2 关联上，细胞用默认的。",
+        "feedback_responses": ["SA55 样本余量不足，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W04": {
+        "query": "创建中和实验，抗体 BD55-1111 初始浓度设置为 100，稀释梯度为 1, 2, 4, 8, 16 232。细胞使用 huh-7，毒株 JN.1。",
+        "feedback_responses": [
+            "BD55-1111 用样本 11396，JN.1 用样本 904002，huh-7 用样本 800001。请继续。",
+            "确认按可解析的稀释梯度继续；如果参数不合法，请不要创建实验。",
+        ],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W05": {
+        "query": (
+            '在昌平数据列描述表中新建一个字段记录，列名叫 "neutralization_index"，'
+            '属于表 "neutralization_data"，描述是"中和率指标"。'
+        ),
+        "feedback_responses": ["确认仅在数据字典表存在且支持写入时新增该字段记录。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W06": {
+        "query": '创建抗体 "SA99"（注：不存在）和假病毒 JN.1 的中和实验。',
+        "feedback_responses": ["SA99 不存在，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W07": {
+        "query": "使用 非典病毒株 (SARS-CoV-1) 在 HeLa 细胞上建一个全新的中和实验流程。",
+        "feedback_responses": ["SARS-CoV-1 和 HeLa 不存在，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W08": {
+        "query": '帮我用抗体 SA55 建个中和实验。注：SA55 对应的所有样本在系统里的状态都是 "ARCHIVED"（已归档/不可用）。',
+        "feedback_responses": ["SA55 样本不可用或余量不足，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W09": {
+        "query": "关联抗体 BD-368 插入新实验，要求必须指定使用那批冻融次数（freeze_count）大于 5 次的旧标本。",
+        "feedback_responses": ["不存在 freeze_count 大于 5 的 BD-368 样本，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W10": {
+        "query": '新建一个中和实验流程，要求在插入时直接把它的实验状态（status）初始化为 "COMPLETED"（已完成）。',
+        "feedback_responses": ["新建实验不能直接初始化为 COMPLETED，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W11": {
+        "query": "提交一个新实验，开始日期设为今天，结束日期（end_date）设为上个月。",
+        "feedback_responses": ["结束日期不能早于开始日期，确认不要创建实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W12": {
+        "query": '创建一个中和实验，操作人和审批提交人都写 "外来访客"。',
+        "feedback_responses": ['"外来访客" 不是有效用户，确认不要创建实验。'],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W13": {
+        "query": '把实验 LIMS ID 为 10 那个任务的状态紧急修改为 "ABORTED"（中止/取消），并录入今天的结束日期。',
+        "feedback_responses": ["LIMS ID 10 不存在，确认不要修改任何实验。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W14": {
+        "query": "把实验 ID 为 99999（注：不存在）的任务状态修改为 COMPLETED。",
+        "feedback_responses": ["实验 99999 不存在，确认不要修改状态。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+    "TC-W15": {
+        "query": "帮我把抗体表（antibodies）里 ID 是 1 的那条抗体元数据资产彻底删除（DELETE）。",
+        "feedback_responses": ["抗体 ID 1 不存在，确认不要删除任何记录。"],
+        "needs_feedback": True,
+        "rollback_database": True,
+    },
+}
+
 # TC09, TC11, and TC19 are intentionally excluded per the local TC-note import
 # request.
 TC_EXCLUDED_QUERY_KEYS = {"TC09", "TC11", "TC19"}
@@ -495,7 +600,6 @@ TC_EXPECTED_SQL_ASSERTIONS = {
     },
 }
 
-
 SLOW_QUERY_KEYS = ["create_experiment"]
 FAST_QUERY_KEYS = [
     "find_antibody_neutralization",
@@ -512,6 +616,7 @@ QUERY_GROUPS = {
     "default": QUERY_SEQUENCES,
     "bad_cases": BAD_CASE_QUERY_SEQUENCES,
     "TC": TC_QUERY_SEQUENCES,
+    "TC-W": TCW_QUERY_SEQUENCES,
 }
 
 # Two-process session replay: Q1-Q3 run in process 0 (normal continuous
@@ -893,6 +998,166 @@ TC_EXPECTED_ANSWER_ASSERTIONS = {
         "expected_summary": "User 小张 does not exist and the requested status condition is contradictory.",
         "required_terms": ["小张"],
         "absence_answer_terms": TC_ABSENCE_ANSWER_TERMS,
+    },
+}
+
+TCW_EXPECTED_ANSWER_ASSERTIONS = {
+    "TC-W01": {
+        "blocking": False,
+        "expected_summary": "Creates a NEW neutralization experiment for BD55-1111, XBB.1, and huh-7.",
+        "required_terms": ["BD55-1111", "XBB.1", "huh-7"],
+    },
+    "TC-W02": {
+        "blocking": False,
+        "expected_summary": "Resolves BA286/SA 58 to BA.2.86 and SA58, using a 293T cell sample.",
+        "required_any_term_groups": [["BA.2.86", "BA286"], ["SA58", "SA 58"], ["293T", "HEK293T-ACE2"]],
+    },
+    "TC-W03": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "SA55 / KP.2 request should stop because the SA55 sample volume is insufficient.",
+        "required_terms": ["SA55", "KP.2"],
+    },
+    "TC-W04": {
+        "blocking": False,
+        "expected_summary": "BD55-1111 / JN.1 creation with non-structured dilution factors needs manual review.",
+        "required_any_term_groups": [["BD55-1111"], ["JN.1"], ["稀释", "dilution", "梯度"]],
+    },
+    "TC-W05": {
+        "blocking": False,
+        "expected_summary": "Data dictionary insertion should name neutralization_index and neutralization_data.",
+        "required_terms": ["neutralization_index", "neutralization_data"],
+    },
+    "TC-W06": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "SA99 does not exist, so the neutralization experiment must not be created.",
+        "required_terms": ["SA99"],
+    },
+    "TC-W07": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "SARS-CoV-1 and HeLa are absent, so the creation request must be blocked.",
+        "required_terms": ["SARS-CoV-1", "HeLa"],
+    },
+    "TC-W08": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "SA55 is not usable for creation because its only sample has insufficient volume.",
+        "required_terms": ["SA55"],
+    },
+    "TC-W09": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "No BD-368 sample has freeze_count > 5, so the creation request must be blocked.",
+        "required_terms": ["BD-368", "freeze_count"],
+    },
+    "TC-W10": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "A newly created neutralization experiment cannot be initialized as COMPLETED.",
+        "required_terms": ["COMPLETED"],
+    },
+    "TC-W11": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "End date earlier than start date is a time-paradox; creation must be blocked.",
+        "required_terms": ["结束日期", "开始日期"],
+    },
+    "TC-W12": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "Operator/submitter '外来访客' is not a valid user; creation must be blocked.",
+        "required_terms": ["外来访客"],
+    },
+    "TC-W13": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "Experiment id=10 does not exist; UPDATE to ABORTED must be blocked.",
+        "required_terms": ["10"],
+    },
+    "TC-W14": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "Experiment id=99999 does not exist; status update to COMPLETED must be blocked.",
+        "required_terms": ["99999"],
+    },
+    "TC-W15": {
+        "allow_human_feedback_pass": True,
+        "expected_summary": "Antibody id=1 does not exist; DELETE must be blocked.",
+        "required_terms": ["1"],
+    },
+}
+
+ALL_EXPECTED_ANSWER_ASSERTIONS = {
+    **TC_EXPECTED_ANSWER_ASSERTIONS,
+    **TCW_EXPECTED_ANSWER_ASSERTIONS,
+}
+
+TCW_DB_EFFECT_ASSERTIONS = {
+    "TC-W01": {
+        "kind": "neutralization_created",
+        "antibody_name": "BD55-1111",
+        "pseudovirus_name": "XBB.1",
+        "cell_name": "huh-7",
+        "status": EXPECTED_NEW_EXPERIMENT_STATUS,
+    },
+    "TC-W02": {
+        "kind": "neutralization_created",
+        "antibody_name": "SA58",
+        "pseudovirus_name": "BA.2.86",
+        "cell_name": "HEK293T-ACE2",
+        "status": EXPECTED_NEW_EXPERIMENT_STATUS,
+    },
+    "TC-W03": {
+        "kind": "experiment_not_created",
+        "antibody_name": "SA55",
+        "pseudovirus_name": "KP.2",
+    },
+    "TC-W04": {
+        "kind": "neutralization_created",
+        "antibody_name": "BD55-1111",
+        "pseudovirus_name": "JN.1",
+        "cell_name": "huh-7",
+        "status": EXPECTED_NEW_EXPERIMENT_STATUS,
+        "blocking": False,
+    },
+    "TC-W05": {
+        "kind": "table_absent_no_write",
+        "table_globs": ["%column%", "%dictionary%", "%changping%"],
+    },
+    "TC-W06": {
+        "kind": "experiment_not_created",
+        "antibody_name": "SA99",
+        "pseudovirus_name": "JN.1",
+    },
+    "TC-W07": {
+        "kind": "experiment_not_created",
+        "pseudovirus_name": "SARS-CoV-1",
+        "cell_name": "HeLa",
+    },
+    "TC-W08": {
+        "kind": "experiment_not_created",
+        "antibody_name": "SA55",
+    },
+    "TC-W09": {
+        "kind": "experiment_not_created",
+        "antibody_name": "BD-368",
+    },
+    "TC-W10": {
+        "kind": "experiment_not_created",
+        "status": "COMPLETED",
+    },
+    "TC-W11": {
+        "kind": "experiment_not_created",
+    },
+    "TC-W12": {
+        "kind": "experiment_not_created",
+        "operator_name": "外来访客",
+    },
+    "TC-W13": {
+        "kind": "experiment_not_modified",
+        "experiment_id": 10,
+        "forbidden_status": "ABORTED",
+    },
+    "TC-W14": {
+        "kind": "experiment_not_modified",
+        "experiment_id": 99999,
+        "forbidden_status": "COMPLETED",
+    },
+    "TC-W15": {
+        "kind": "antibody_not_deleted",
+        "antibody_id": 1,
     },
 }
 
