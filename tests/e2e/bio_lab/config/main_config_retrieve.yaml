@@ -87,7 +87,7 @@ TOOLS:
 
 DATABASE:
   db_id: "bio_lab"
-  engine: "sqlite"
+  dialect: "sqlite"
   config:
     path: "__WORKSPACE_DIR__/bio_lab.sqlite"
 
