@@ -108,6 +108,7 @@ def _load_suite_index_entry(root: Path, suite_yaml: Path) -> SuiteIndexEntry:
     enabled = _parse_suite_enabled(meta.get("enabled"))
     requires = _normalize_requires(meta.get("requires"))
     conflicts = _normalize_name_list(meta.get("conflicts"))
+    _validate_replaces(meta.get("replaces"), suite_name=name)
     return SuiteIndexEntry(
         name=name,
         root=root.resolve(),
@@ -323,3 +324,32 @@ def _normalize_name_list(raw: Any) -> tuple[str, ...]:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         raise ValueError("suite.yaml list field must be a list of names")
     return tuple(str(item).strip() for item in raw if str(item).strip())
+
+
+def _validate_replaces(raw: Any, *, suite_name: str) -> None:
+    """
+    Validate ``suite.yaml`` ``replaces`` field.
+
+    ``replaces`` declares which default builtin tools this suite replaces.
+    Each entry must be a known tool name in ``DEFAULT_BUILTIN_LOCAL_TOOLS``.
+
+    Args:
+        raw: Raw YAML value for ``replaces``.
+        suite_name: Suite name for error messages.
+
+    Raises:
+        ValueError: When ``replaces`` is not a list or contains unknown tool names.
+    """
+    if raw is None:
+        return
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise ValueError(f"Suite {suite_name!r} replaces must be a list of tool names")
+    from dataagent.utils.constants import DEFAULT_BUILTIN_LOCAL_TOOLS
+
+    allowed = set(DEFAULT_BUILTIN_LOCAL_TOOLS)
+    names = [str(item).strip() for item in raw if str(item).strip()]
+    unknown = [n for n in names if n not in allowed]
+    if unknown:
+        raise ValueError(
+            f"Suite {suite_name!r} replaces contains unknown builtin tool names: {unknown}. Allowed: {sorted(allowed)}"
+        )

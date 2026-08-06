@@ -1,0 +1,23 @@
+# =============================================================================
+# suite.yaml — Windows Suite（Windows 专用工具集）
+# =============================================================================
+
+name: windows
+
+version: "0.1.0"
+
+display_name: "Windows Suite"
+
+description: >
+  Windows 专用工具集。提供 cmd 工具用于在 Windows 上执行 cmd.exe 命令。
+  仅在 Windows (os.name == 'nt') 环境下可用，非 Windows 环境激活时会报错。
+
+priority: 50
+
+enabled: true
+
+requires: []
+
+conflicts: []
+
+replaces: ["bash", "grep"]

@@ -573,6 +573,10 @@ async def _run_subprocess_async(
         cwd = None  # cwd handled by bwrap --chdir
         logger.debug("[sandbox] wrapped cmd: {}", cmd[:5])
 
+    # Windows: CREATE_NEW_PROCESS_GROUP enables process-tree termination via taskkill /T.
+    # CREATE_NO_WINDOW suppresses the flashing console window on Windows.
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -580,6 +584,7 @@ async def _run_subprocess_async(
         cwd=cwd,
         env=env,
         start_new_session=os.name != "nt",
+        creationflags=creationflags,
     )
     try:
         if progress_callback and tool_call_id:
