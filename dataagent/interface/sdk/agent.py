@@ -21,7 +21,12 @@ from dataagent.config import ConfigManager
 from dataagent.config.debug_dump import dump_merged_config
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.utils.log import logger, setup_session_log
+from dataagent.utils.log import (
+    attach_session_log_context,
+    logger,
+    reset_session_log_context,
+    set_session_log_context,
+)
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
 if TYPE_CHECKING:
@@ -154,17 +159,23 @@ class DataAgent:
             kwargs.get("session_id"),
             workspace,
         )
-        self._ensure_workspace(initial_state)
-        self._touch_workspace_catalog(initial_state)
-        self._dump_runtime_config(initial_state)
-        setup_session_log(
-            user_id=str(initial_state.get("user_id", "anonymous")),
-            session_id=str(initial_state.get("session_id", kwargs.get("session_id"))),
-        )
-        kwargs["initial_state"] = initial_state
-        if "workspace" in kwargs:
-            kwargs["workspace"] = workspace
-        return self._chat_agent.astream(*args, **kwargs)
+        session_id = str(initial_state.get("session_id", kwargs.get("session_id")))
+        run_id = int(initial_state.get("run_id") or 0)
+        # Pre-work runs in the caller Context: set → work → reset immediately.
+        # Never hand the caller Token to a consumer Task (cross-Context reset raises).
+        log_token = set_session_log_context(session_id=session_id, run_id=run_id)
+        try:
+            self._ensure_workspace(initial_state)
+            self._touch_workspace_catalog(initial_state)
+            self._dump_runtime_config(initial_state)
+            kwargs["initial_state"] = initial_state
+            if "workspace" in kwargs:
+                kwargs["workspace"] = workspace
+            stream = self._chat_agent.astream(*args, **kwargs)
+        finally:
+            reset_session_log_context(log_token)
+        # Consumer Task/Context re-binds session/run for the stream lifetime.
+        return attach_session_log_context(stream, session_id=session_id, run_id=run_id)
 
     def select_engine(self, config: Any):
         """根据后端类型创建具体实现（固定使用 SCENARIO.chat）。"""
@@ -224,9 +235,9 @@ class DataAgent:
         workspace = self._validate_workspace(workspace)
         initial_state = self._initialize_state(initial_state, session_id, workspace)
         logger.debug(f"当前 workspace：{initial_state['workspace']}")
-        setup_session_log(
-            user_id=str(initial_state.get("user_id", "anonymous")),
+        log_token = set_session_log_context(
             session_id=str(initial_state.get("session_id", session_id)),
+            run_id=int(initial_state.get("run_id") or 0),
         )
         try:
             self._ensure_workspace(initial_state)
@@ -245,6 +256,8 @@ class DataAgent:
         except Exception as e:
             logger.error(f"Chat failed: {e}")
             return {"error": str(e), "final_answer": f"抱歉，处理您的请求时出现错误：{str(e)}"}
+        finally:
+            reset_session_log_context(log_token)
 
     def build_agent_graph(self, mode: str = "chat") -> BaseAgent:
         """Pre-build the agent workflow graph (only ``chat`` is supported)."""

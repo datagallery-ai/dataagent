@@ -44,6 +44,5 @@ environments:
 # 环境变量配置说明
 # 可以通过以下环境变量覆盖配置：
 # DATAAGENT_LOG_LEVEL=DEBUG
-# DATAAGENT_LOG_FILE=/path/to/dataagent.log
 # DATAAGENT_LOG_CONSOLE=true
 # DATAAGENT_LOG_JSON=false

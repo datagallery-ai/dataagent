@@ -14,5 +14,4 @@ LOGGING:
 # 环境变量配置说明
 # 开发环境可以通过以下环境变量覆盖配置：
 # DATAAGENT_LOG_LEVEL=DEBUG
-# DATAAGENT_LOG_FILE=/tmp/dataagent/dev_dataagent.log
 # DATAAGENT_LOG_CONSOLE=true
