@@ -63,7 +63,7 @@ DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追�
 
 - **可分支的并发分析** — 多个会话可同时运行，运行中可排队后续问题；恢复历史后，可从早期问题或 checkpoint 创建新分支，不覆盖原分析路径。
 - **证据驱动的追问** — 可将完整产出，或选中的表格区域、文本片段引用到下一个问题；证据解析结果和诊断信息会进入受控 run context。
-- **语义 Trace 与自研 Data Link** — 通过基于 checkpoint 的语义 Trace DAG 复盘执行结构；结合我们新近开源的 [Data Link](https://github.com/datagallery-lab/datalink)，把表和字段连接到业务概念、实体、可 JOIN 路径和带置信度的关系，为 Agent 提供更强语义支撑。
+- **语义 Trace 与 DataLink 集成** — 通过基于 checkpoint 的语义 Trace DAG 复盘执行结构；连接外部 DataLink 服务，把表和字段映射到业务概念、实体、可 JOIN 路径和带置信度的关系，为 Agent 提供更强语义支撑。
 - **可复用的产出与工作区资产** — 统一预览和导出表格、图表、报告、SQL 和文件；文件可先上传到当前会话，再提升为跨会话复用的工作区资产。
 - **面向正式部署的 Web 基础** — 内置密码认证、同源 API 代理、中英双语界面、模型连接测试、首次引导，并自动准备 DTC 增长分析案例。
 
@@ -75,7 +75,7 @@ DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追�
 
 ### 推荐：Ubuntu / Debian 一键部署
 
-`./deploy.sh` 自动生成配置、安装依赖、构建（含 Web、API 与 TUI），并以 detached 后台进程启动 Web + API——关闭终端一般不会停止服务。TUI 会在部署时构建就绪，但它是前台交互客户端：请另开终端执行 `./deploy.sh tui`（或 `npm run start:tui`），**不会**随 stack 后台常驻。语义 Data Link 为**外置**组件（deploy 不会安装或启动）——如需使用，稍后在 Web 的 MCP 配置中连接外部服务即可。部署时不要求填写模型 Key——登录后在 Web 中创建并启用模型即可。**不支持**原生 Windows / macOS。
+`./deploy.sh` 自动生成配置、安装依赖、构建（含 Web、API 与 TUI），并以 detached 后台进程启动 Web + API——关闭终端一般不会停止服务。TUI 会在部署时构建就绪，但它是前台交互客户端：请另开终端执行 `./deploy.sh tui`（或 `npm run start:tui`），**不会**随 stack 后台常驻。DataLink 为**外置**组件（deploy 不会安装或启动）——如需使用，稍后在 Web 的 MCP 配置中连接外部服务即可。部署时不要求填写模型 Key——登录后在 Web 中创建并启用模型即可。**不支持**原生 Windows / macOS。
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git

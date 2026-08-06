@@ -13,7 +13,7 @@ After deploy, configure a model in the Web UI and run an analysis against the bu
 
 - **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent)
 - **Manual npm**: Linux, macOS, or Windows; Node.js >= 22 and npm
-- Optional external [Data Link](https://github.com/datagallery-lab/datalink): run it as a separate process if you want semantic graph features (not required for deploy)
+- Optional external [DataLink](guides/datalink.md): run it as a separate process if you want semantic graph features (not required for deploy)
 
 Install and run the project in the same environment. On Windows, do not share `node_modules` between Windows and WSL.
 
@@ -64,11 +64,11 @@ Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the 
 
 `LLM_*` is not required during deploy. Set `AUTH_PUBLIC_BASE_URL` for remote hosts. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
 
-### External Data Link (optional)
+### External DataLink (optional)
 
-One-click deploy starts **only** Web + API. It does **not** install, start, or health-check Data Link.
+One-click deploy starts **only** Web + API. It does **not** install, start, or health-check DataLink.
 
-To use semantic features, run [Data Link](https://github.com/datagallery-lab/datalink) as a separate service (typically MCP on `:8080` and REST on `:8081`), then in the Web workbench MCP settings add an external server, for example:
+To use semantic features, run [DataLink](guides/datalink.md) as a separate service (typically MCP on `:8080` and REST on `:8081`), then in the Web workbench MCP settings add an external server, for example:
 
 | Field | Example |
 | --- | --- |
@@ -77,7 +77,7 @@ To use semantic features, run [Data Link](https://github.com/datagallery-lab/dat
 | `transport` | `streamable-http` |
 | `toolManifest` | `[{ "name": "datalink_explore" }]` |
 
-Use a name/id containing `datalink` (or `datagraph`) so the Data Link panel can recognize it.
+Use a name/id containing `datalink` (or `datagraph`) so the DataLink panel can recognize it.
 
 ## Windows / macOS / other: manual npm deploy
 
