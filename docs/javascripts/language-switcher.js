@@ -105,6 +105,7 @@
     ["Web workbench", "Web 工作台"],
     ["TUI", "TUI"],
     ["Data sources", "数据源"],
+    ["DataLink", "DataLink"],
     ["Examples", "案例"],
     ["DTC growth operating review", "DTC 增长经营复盘"],
     ["Developer Guide", "开发者指南"],
