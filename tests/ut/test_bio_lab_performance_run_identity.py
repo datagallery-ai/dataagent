@@ -103,7 +103,7 @@ def test_semantic_layer_url_mode_writes_config_and_no_proxy(monkeypatch):
 
     assert semantic_mock.get_semantic_layer_mode() == "semantic_layer"
     assert config["SEMANTIC_LAYER"]["base_url"] == "http://8.92.9.219:32000"
-    assert config["SEMANTIC_LAYER"]["verify_ssl"] is False
+    assert "verify_ssl" not in config["SEMANTIC_LAYER"]
     assert config["SEMANTIC_LAYER"]["timeout"] == 180
     assert "8.92.9.219" in semantic_mock.os.environ["NO_PROXY"].split(",")
 

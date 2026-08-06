@@ -160,8 +160,6 @@ def _apply_semantic_layer_config(config: dict) -> None:
         if not _SEMANTIC_LAYER_URL:
             raise ValueError("--semantic_layer semantic_layer requires --semantic_layer_url or SEMANTIC_SERVICE_URL")
         semantic_layer["base_url"] = _SEMANTIC_LAYER_URL
-        # 真实服务可能是自签 https，跳过证书校验。
-        semantic_layer["verify_ssl"] = False
         semantic_layer["timeout"] = _semantic_service_timeout()
     else:
         if _uses_relevant_ontology_tool(config):

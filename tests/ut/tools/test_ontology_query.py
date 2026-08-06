@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import pytest
-import requests
 
 from dataagent.actions.tools.semantic_tool import ontology_query
 
@@ -226,7 +226,7 @@ def test_relevant_ontology_service_error_does_not_render_empty_sql_template(
 ) -> None:
     class _FailingRetrieveClient(_FakeClient):
         def semantic_retrieve(self, query: str) -> dict[str, Any]:
-            raise requests.RequestException("semantic service down")
+            raise httpx.RequestError("semantic service down")
 
     monkeypatch.setattr(ontology_query, "_client", lambda ctx: _FailingRetrieveClient())
 
@@ -414,7 +414,7 @@ def test_column_fetch_error_is_tolerated(monkeypatch: pytest.MonkeyPatch) -> Non
         def get_table_columns_info(self, table_name: str, *, limit: int) -> dict[str, Any]:
             self.columns_calls.append(table_name)
             if table_name == "bio_lab.orders":
-                raise requests.RequestException("boom")
+                raise httpx.RequestError("boom")
             return {"bio_lab.users.user_id": {"column_short_description": "用户ID"}}
 
     fake = _Client()
@@ -430,7 +430,7 @@ def test_column_fetch_error_is_tolerated(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_service_error_degrades_gracefully(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Client(_FakeClient):
         def get_table_list(self, database_name: str, *, limit: int) -> list[dict[str, Any]]:
-            raise requests.RequestException("service down")
+            raise httpx.RequestError("service down")
 
     monkeypatch.setattr(ontology_query, "_client", lambda ctx: _Client())
     result = ontology_query.get_ontology_description(_tool_context=_FakeContext({"DATABASE.db_id": "bio_lab"}))

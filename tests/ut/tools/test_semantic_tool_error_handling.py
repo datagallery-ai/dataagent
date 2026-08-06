@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
-import requests
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.semantic_tool import basic_retrieval, get_join_relations
@@ -27,7 +27,7 @@ from dataagent.core.managers.action_manager.manager import ToolManager
 def test_list_semantic_layer_tables_propagates_internal_request_error(monkeypatch) -> None:
     class _FailingClient:
         def list_retrieval_tables(self) -> dict:
-            raise requests.RequestException("internal semantic service request failed: method=GET")
+            raise httpx.RequestError("internal semantic service request failed: method=GET")
 
     monkeypatch.setattr(
         basic_retrieval.SemanticServiceClient,
@@ -37,7 +37,7 @@ def test_list_semantic_layer_tables_propagates_internal_request_error(monkeypatc
 
     context = ToolExecutionContext(config_manager=SimpleNamespace())
 
-    with pytest.raises(requests.RequestException) as exc_info:
+    with pytest.raises(httpx.HTTPError) as exc_info:
         basic_retrieval.list_semantic_layer_tables(_tool_context=context)
 
     assert classify_exception(exc_info.value)[0] == ErrorType.INTERNAL_ERROR
@@ -104,7 +104,7 @@ async def test_tool_manager_raises_tool_error_with_classified_semantic_error(mon
 def test_get_join_relations_propagates_internal_request_error(monkeypatch) -> None:
     class _FailingClient:
         def get_joinable_tables(self, table_names: list[str], *, limit: int) -> list:
-            raise requests.RequestException("internal semantic service request failed: method=GET")
+            raise httpx.RequestError("internal semantic service request failed: method=GET")
 
     monkeypatch.setattr(
         get_join_relations.SemanticServiceClient,
@@ -114,7 +114,7 @@ def test_get_join_relations_propagates_internal_request_error(monkeypatch) -> No
 
     context = ToolExecutionContext(config_manager=SimpleNamespace())
 
-    with pytest.raises(requests.RequestException) as exc_info:
+    with pytest.raises(httpx.HTTPError) as exc_info:
         get_join_relations.get_join_relations(["demo.orders"], _tool_context=context)
 
     assert classify_exception(exc_info.value)[0] == ErrorType.INTERNAL_ERROR

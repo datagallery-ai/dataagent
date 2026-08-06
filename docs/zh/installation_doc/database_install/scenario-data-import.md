@@ -543,7 +543,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 | DataAgent 配置 | 元数据字段 | 本文示例 |
