@@ -26,6 +26,7 @@ from typing import Any
 _ALLOWED_CALLABLE_MODULE_PREFIXES = (
     "dataagent.actions.tools.hooks",
     "dataagent.core.flex.hooks",
+    "dataagent.core.suite.builtin_suites.de_agent.hooks",
 )
 
 
