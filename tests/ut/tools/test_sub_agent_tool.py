@@ -954,7 +954,6 @@ DATABASE:
 SEMANTIC_LAYER:
   base_url: "default-semantic"
   timeout: 30
-  verify_ssl: false
 """.strip(),
         encoding="utf-8",
     )
@@ -987,7 +986,6 @@ TOOLS:
     runtime_semantic_layer = {
         "base_url": "runtime-semantic",
         "timeout": 30,
-        "verify_ssl": False,
     }
     runtime_model = {
         "model_type": "chat",

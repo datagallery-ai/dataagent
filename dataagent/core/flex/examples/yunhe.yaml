@@ -22,4 +22,3 @@ SEMANTIC_LAYER:
   username: null                       # 未启用认证时保持 null；启用认证时填写
   password: null                       # 未启用认证时保持 null；启用认证时填写
   timeout: 30                           # 可按服务端表数量和响应耗时调整
-  verify_ssl: false                    # 测试/自签证书环境可关闭；生产环境建议开启

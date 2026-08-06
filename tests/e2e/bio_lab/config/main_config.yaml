@@ -94,4 +94,3 @@ SEMANTIC_LAYER:
   username: null
   password: null
   timeout: 30
-  verify_ssl: false

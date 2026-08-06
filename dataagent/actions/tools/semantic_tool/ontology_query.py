@@ -29,7 +29,7 @@ import json
 import re
 from typing import Any
 
-import requests
+import httpx
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
@@ -145,7 +145,7 @@ def _fetch_columns(client: SemanticServiceClient, table_name: str) -> list[dict[
     """
     try:
         cols_raw = client.get_table_columns_info(table_name, limit=_ONTOLOGY_TABLE_COLUMNS_LIMIT)
-    except (requests.RequestException, ValueError) as err:
+    except (httpx.HTTPError, ValueError) as err:
         logger.warning("ontology: failed to load columns for {}: {}", table_name, err)
         return []
     if not isinstance(cols_raw, dict):
@@ -496,7 +496,7 @@ def get_ontology_description(*, _tool_context: ToolExecutionContext) -> dict[str
                 columns_by_table[table_name] = _fetch_columns(client, table_name)
 
         relations = _fetch_relations(client, [e["table_name"] for e in entities if e.get("table_name")])
-    except (requests.RequestException, ValueError) as err:
+    except (httpx.HTTPError, ValueError) as err:
         logger.error(f"加载本体描述失败：{err}")
         rendered = _render_ontology_description([], {}, [], scene, databases)
         rendered["frontend_msg"] = f"本体 {scene} 加载失败：{err}"
@@ -525,7 +525,7 @@ def get_relevant_ontology_description(
 
     try:
         bundle = client.semantic_retrieve(query_text)
-    except (requests.RequestException, ValueError) as err:
+    except (httpx.HTTPError, ValueError) as err:
         logger.error(f"加载相关本体描述失败：{err}")
         return _render_relevant_ontology_unavailable(scene=scene, reason=str(err))
 

@@ -91,12 +91,15 @@ def _clean_env():
 def test_outbound_services_default_off(monkeypatch):
     assert outbound_tls.outbound_ssl_enabled("llm") is False
     assert outbound_tls.outbound_ssl_enabled("metavisor") is False
+    assert outbound_tls.outbound_ssl_enabled("semantic_layer") is False
     assert outbound_tls.httpx_verify() is False
+    assert outbound_tls.httpx_verify("semantic_layer") is False
 
 
 def test_absent_env_is_disabled():
     assert outbound_tls.outbound_ssl_enabled("llm") is False
     assert outbound_tls.outbound_ssl_enabled("metavisor") is False
+    assert outbound_tls.outbound_ssl_enabled("semantic_layer") is False
 
 
 def test_non_llm_tls_helpers_are_not_exposed():
@@ -183,6 +186,29 @@ def test_non_llm_services_do_not_enable_httpx_verify(monkeypatch):
     monkeypatch.setenv(outbound_tls.ENV_MODE, "3")
 
     assert outbound_tls.outbound_ssl_enabled("metavisor") is True
+    assert outbound_tls.httpx_verify() is False
+    assert outbound_tls.httpx_verify("semantic_layer") is False
+
+
+def test_semantic_layer_httpx_verify_disabled_returns_false(monkeypatch):
+    monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
+    monkeypatch.setenv(outbound_tls.ENV_MODE, "0")
+
+    assert outbound_tls.outbound_ssl_enabled("semantic_layer") is False
+    assert outbound_tls.httpx_verify("semantic_layer") is False
+    assert isinstance(outbound_tls.httpx_verify("llm"), ssl.SSLContext)
+
+
+def test_semantic_layer_httpx_verify_enabled_returns_context(monkeypatch, _cert_files):
+    monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "semantic_layer")
+    monkeypatch.setenv(outbound_tls.ENV_MODE, "3")
+    monkeypatch.setenv(outbound_tls.ENV_CA_FILE, _cert_files["ca"])
+    monkeypatch.setenv(outbound_tls.ENV_CLIENT_CERT, _cert_files["cert"])
+    monkeypatch.setenv(outbound_tls.ENV_CLIENT_KEY, _cert_files["key"])
+
+    assert outbound_tls.outbound_ssl_enabled("semantic_layer") is True
+    ctx = outbound_tls.httpx_verify("semantic_layer")
+    assert isinstance(ctx, ssl.SSLContext)
     assert outbound_tls.httpx_verify() is False
 
 

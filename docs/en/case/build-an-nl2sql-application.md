@@ -74,7 +74,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 Sample verification questions:
@@ -152,7 +151,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 When configuring, verify:

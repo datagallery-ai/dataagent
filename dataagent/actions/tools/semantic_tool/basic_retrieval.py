@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import requests
+import httpx
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
@@ -39,7 +39,7 @@ def list_semantic_layer_tables(*, _tool_context: ToolExecutionContext) -> dict:
     try:
         client = SemanticServiceClient.from_config(_tool_context.config_manager)
         raw = client.list_retrieval_tables()
-    except (requests.RequestException, ValueError) as err:
+    except (httpx.HTTPError, ValueError) as err:
         logger.error(f"查询语义层表清单失败：{err}")
         raise
 
@@ -75,7 +75,7 @@ def get_semantic_layer_table_schema(table: str, *, _tool_context: ToolExecutionC
     try:
         client = SemanticServiceClient.from_config(_tool_context.config_manager)
         raw = client.get_retrieval_table_schema(normalized_table)
-    except (requests.RequestException, ValueError) as err:
+    except (httpx.HTTPError, ValueError) as err:
         logger.error(f"查询语义层表 schema 失败：{err}")
         raise
 

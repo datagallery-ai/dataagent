@@ -12,7 +12,7 @@
 # ============================================================================
 from typing import Any
 
-import requests
+import httpx
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
@@ -53,7 +53,7 @@ def get_join_relations(
     try:
         client = SemanticServiceClient.from_config(_tool_context.config_manager)
         raw = client.get_joinable_tables(names, limit=DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT)
-    except (requests.RequestException, ValueError) as e:
+    except (httpx.HTTPError, ValueError) as e:
         logger.error(f"请求语义服务 joinable-tables 失败：{e}")
         raise
 
