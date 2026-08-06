@@ -20,7 +20,6 @@ hide:
 |-|-|
 | **NL2SQL** | Dedicated capability for natural language to SQL execution. |
 | **Semantic Service** | NL2SQL-oriented enriched metadata REST capabilities at the current stage, prioritizing GaussVector-oriented semantic-layer enhancements for vector indexing, recall ranking, and schema perception across tables, columns, metric definitions, and business descriptions; Ontology service capabilities are under development. See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md). |
-| **openJiuwen** | openJiuwen integration and usage. See [openJiuwen User Guide](../openJiuwen/openJiuwen-user-guide.md). |
 | **Perceptor** | Retrieval and perception capabilities for organizing tool information, metadata, and knowledge. |
 | **Config Manager** | Configuration management, including configuration modification and loading. |
 | **CBB** | Core foundation abstraction defining base classes for Agent, Node, Router, State, and related concepts. |
@@ -93,8 +92,8 @@ Note: the mainline no longer ships an MCP client or A2A tool stack. Use local fu
 | --- | --- |
 | Unified Management Entry | DataAgent uses `LLMManager` to manage model instance creation and caching. Model configuration comes from the YAML `MODEL` section. |
 | Initialization Flow | During initialization, the system iterates through each section under `MODEL` in the YAML file and creates the corresponding model instance for Agents and workflows. |
-| Backend Selection | Controlled by `AGENT_CONFIG.backend`: `langgraph` uses the OpenAI-compatible / LiteLLM call path; `openjiuwen` uses the OpenJiuWen Provider, mainly through an OpenAI-compatible interface. |
-| Provider Semantics | `provider` is a platform identifier used to read `{PROVIDER}_BASE_URL` and `{PROVIDER}_API_KEY`, such as `deepseek`, `bailian`, `openai`, or `embedding`. When `backend=langgraph`, the OpenAI-compatible client path is used. When `backend=openjiuwen`, the OpenJiuWen Provider is used. |
+| Backend Selection | Controlled by `AGENT_CONFIG.backend` (currently `langgraph` only). LLM calls use the OpenAI-compatible / LiteLLM path. |
+| Provider Semantics | `provider` is a platform identifier used to read `{PROVIDER}_BASE_URL` and `{PROVIDER}_API_KEY`, such as `deepseek`, `bailian`, `openai`, or `embedding`. |
 
 ### Usage: YAML Configuration
 
@@ -136,4 +135,4 @@ MODEL:
 2. **Name uniqueness**: duplicate `name` values overwrite existing instances. Avoid duplicates. The current code has a compatibility fallback for configurations without `name`: it uses the section name under `MODEL` as the model instance name. Explicitly setting `name` is recommended.
 3. **API key lookup**: `MODEL.<section>.params.api_key` is used first. If it is not configured, the system looks up `{PROVIDER}_API_KEY` by `provider`.
 4. **Base URL lookup**: `MODEL.<section>.params.base_url` is used first. If it is not configured, the system looks up `{PROVIDER}_BASE_URL` by `provider`.
-5. **Backend SDK selection**: `provider` no longer selects the SDK. `AGENT_CONFIG.backend` decides whether LangGraph/OpenAI-compatible or OpenJiuWen is used.
+5. **Backend engine selection**: `provider` no longer selects the SDK. `AGENT_CONFIG.backend` currently supports LangGraph only.

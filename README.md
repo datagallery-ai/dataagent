@@ -10,7 +10,6 @@
   <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
   <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
   <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/openJiuwen-0.1.14-purple" alt="openJiuwen">
   <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
 </p>
 
@@ -66,7 +65,6 @@ uv run mkdocs serve -f docs/mkdocs.yml
 | 🗄️ [Database Installation](docs/en/installation_doc/database_install/database_install.md) | Optional: Semantic Service / GaussVector for NL2SQL; MySQL / PostgreSQL / Elasticsearch only for extended scenarios |
 | ⚙️ [Features](docs/en/function/function.md) | Core capabilities, modules, tools, and model support |
 | 🧩 [Semantic Service](docs/en/semantic_service/semantic-service-user-guide.md) | Semantic Service enriched metadata for NL2SQL, prioritizing GaussVector-oriented semantic-layer indexing, candidate schema recall, and schema perception enhancement |
-| 🔗 [openJiuwen](docs/en/openJiuwen/openJiuwen-user-guide.md) | openJiuwen integration and usage guide |
 | 🏗️ [Architecture](docs/en/design_doc/design_doc.md) | System architecture; context, planning engine, and action modules |
 | 📡 [API Design](docs/en/api_doc/api_doc.md) | REST northbound interface and Python SDK |
 | 📋 [Application Cases](docs/en/case/case.md) | Build a dedicated NL2SQL Agent; build a data analysis Agent |
