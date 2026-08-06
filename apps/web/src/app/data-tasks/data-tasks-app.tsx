@@ -879,7 +879,7 @@ function StableDataTaskChatInput({
       onEditQueuedPrompt={handleEditQueuedPrompt}
       onDeleteQueuedPrompt={handleDeleteQueuedPrompt}
       onSendQueuedPromptNow={handleSendQueuedPromptNow}
-      submitError={submitError}
+      submitError={submitError ?? bindings.liveRunErrorMessage}
       showDisclaimer={false}
       sessionLockSlot={sessionLockSlot}
     />
@@ -1966,6 +1966,7 @@ function DataTaskWorkspace({
       onUserMessageSubmitted: handleUserMessageSubmitted,
       liveRunStatus: liveRun.runStatus,
       liveRunRunId: liveRun.runId ?? null,
+      liveRunErrorMessage: liveRun.errorMessage ?? null,
       onCancelRun: cancelCurrentRun,
       stopActiveRun,
       stopActiveChatRunRef,
@@ -2002,6 +2003,7 @@ function DataTaskWorkspace({
       toggleSessionResourceItem,
       sessionStartedHints,
       workspaceConfig,
+      liveRun.errorMessage,
       liveRun.runId,
       liveRun.runStatus,
       runCancelBusy,

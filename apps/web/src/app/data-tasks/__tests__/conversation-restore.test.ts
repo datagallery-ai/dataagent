@@ -1191,6 +1191,7 @@ describe("shouldRestoreConversationMessages", () => {
       shouldRestoreConversationMessages({
         conversationMemoryEnabled: true,
         isRunning: false,
+        replaceExistingMessages: true,
         agentMessages: [{ id: "msg-user-1", role: "user", content: "old question" }],
         dto,
       }),
@@ -1230,6 +1231,7 @@ describe("shouldRestoreConversationMessages", () => {
       shouldRestoreConversationMessages({
         conversationMemoryEnabled: true,
         isRunning: false,
+        replaceExistingMessages: false,
         agentMessages: [
           ...conversationToAgentMessages(dto),
           {
@@ -1276,6 +1278,7 @@ describe("shouldRestoreConversationMessages", () => {
       shouldRestoreConversationMessages({
         conversationMemoryEnabled: true,
         isRunning: false,
+        replaceExistingMessages: false,
         agentMessages: [
           ...conversationToAgentMessages(dto),
           {
@@ -1288,6 +1291,40 @@ describe("shouldRestoreConversationMessages", () => {
             role: "assistant",
             content: "正在生成第二轮分析结论。",
           },
+        ],
+        dto,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not replace an existing transcript during a same-thread background refresh", () => {
+    const dto: SessionConversationDto = {
+      sessionId: "thread-1",
+      messages: [
+        {
+          id: "persisted-user-1",
+          runId: "run-1",
+          role: "user",
+          source: "client",
+          messageId: "persisted-user-message-1",
+          contentText: "你好",
+          position: 1,
+          createdAt: "2026-06-25T10:00:01Z",
+        },
+      ],
+      runEventRefs: [],
+      toolCalls: [],
+    };
+
+    expect(
+      shouldRestoreConversationMessages({
+        conversationMemoryEnabled: true,
+        isRunning: false,
+        replaceExistingMessages: false,
+        agentMessages: [
+          { id: "live-user-1", role: "user", content: "你好" },
+          { id: "live-assistant-1", role: "assistant", content: "你好，有什么可以帮你？" },
+          { id: "live-user-2", role: "user", content: "继续" },
         ],
         dto,
       }),

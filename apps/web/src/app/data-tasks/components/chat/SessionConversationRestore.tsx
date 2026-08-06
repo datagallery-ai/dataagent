@@ -55,6 +55,7 @@ export function SessionConversationRestore({
   const { setThreadRestoring, markThreadRestored } = useConversationRestoreGate();
   const fetchGenerationRef = useRef(0);
   const prevThreadIdRef = useRef<string | undefined>(undefined);
+  const messageReplacementThreadRef = useRef<string | undefined>(undefined);
   const agentRef = useRef(agent);
   agentRef.current = agent;
   const restoreRunActive = isConversationRestoreRunActive({
@@ -88,6 +89,7 @@ export function SessionConversationRestore({
       return;
     }
     agentRef.current.setMessages([]);
+    messageReplacementThreadRef.current = threadId;
     clearRestoredInterrupts(threadId);
     clearPendingCollaborationInterrupt(threadId);
     clearConversationBranchSnapshot(threadId);
@@ -138,6 +140,9 @@ export function SessionConversationRestore({
           shouldRestoreConversationMessages({
             conversationMemoryEnabled,
             isRunning: restoreRunActive,
+            replaceExistingMessages:
+              messageReplacementThreadRef.current === threadId ||
+              (currentAgent.messages?.length ?? 0) === 0,
             agentMessages: currentAgent.messages,
             dto: conversation,
           })
@@ -186,6 +191,9 @@ export function SessionConversationRestore({
         }
       } finally {
         if (!cancelled && fetchGenerationRef.current === generation) {
+          if (messageReplacementThreadRef.current === threadId) {
+            messageReplacementThreadRef.current = undefined;
+          }
           markThreadRestored(threadId);
           setThreadRestoring(threadId, false);
         }
