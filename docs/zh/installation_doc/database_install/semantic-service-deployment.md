@@ -362,7 +362,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 | DataAgent | Semantic Service 元数据 |

@@ -124,7 +124,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 
 SWARM:
   enable: false

@@ -73,7 +73,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 For full configuration, run commands, and troubleshooting, see [Build a Dedicated NL2SQL Agent](../case/build-an-nl2sql-application.md).
