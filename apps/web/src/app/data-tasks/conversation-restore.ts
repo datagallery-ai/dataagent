@@ -239,10 +239,18 @@ function hasLocalMessagesAfterRestoredPrefix(
 export function shouldRestoreConversationMessages(input: {
   conversationMemoryEnabled: boolean;
   isRunning: boolean;
+  replaceExistingMessages: boolean;
   agentMessages: unknown;
   dto: SessionConversationDto;
 }): boolean {
   if (!input.conversationMemoryEnabled || input.isRunning) {
+    return false;
+  }
+  if (
+    !input.replaceExistingMessages &&
+    Array.isArray(input.agentMessages) &&
+    input.agentMessages.length > 0
+  ) {
     return false;
   }
   const expected = conversationToAgentMessages(input.dto);

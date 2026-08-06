@@ -64,7 +64,7 @@ type DataTaskChatInputProps = CopilotChatInputProps & {
   onEditQueuedPrompt?: (id: string, text: string) => void;
   onDeleteQueuedPrompt?: (id: string) => void;
   onSendQueuedPromptNow?: (id: string) => void;
-  /** Client-side send/upload failure shown above the composer (never silent). */
+  /** Current run or client-side send/upload failure shown above the composer. */
   submitError?: string | null;
   /** Session lock / remote-busy prompt rendered above the composer. */
   sessionLockSlot?: ReactNode;

@@ -52,6 +52,7 @@ export type DataTaskChatInputBindings = {
   onUserMessageSubmitted: (text: string) => void;
   liveRunStatus: LiveRunStatus;
   liveRunRunId: string | null;
+  liveRunErrorMessage: string | null;
   onCancelRun?: () => Promise<void> | void;
   stopActiveRun?: () => Promise<void>;
   stopActiveChatRunRef?: MutableRefObject<(() => void) | undefined>;
