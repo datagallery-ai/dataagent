@@ -7,6 +7,7 @@ edit_uri: edit/main/docs/
 
 exclude_docs: |
   README.md
+  assets/readme/tui-demo.mp4
   en/README.md
   zh/README.md
 
