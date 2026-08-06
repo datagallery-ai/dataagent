@@ -15,8 +15,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from typing import Any, Protocol, runtime_checkable
 
-from loguru import logger
-
 from dataagent.core.cbb.runtime import Runtime
 
 
@@ -27,7 +25,7 @@ class WorkflowBackend(Protocol):
 
     说明：
     - 使用 Protocol（结构化类型），实现类不必显式继承，只要方法“长得一样”即可被当作 backend 使用。
-    - Flow/Flex 只依赖该接口，不直接 import LangGraph/openjiuwen。
+    - Flow/Flex 只依赖该接口，不直接 import LangGraph。
     """
 
     async def ainvoke(self, initial_state: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -50,9 +48,7 @@ class WorkflowBackend(Protocol):
         """
         从中断恢复，继续执行。
 
-        约定：
-        - openjiuwen：checkpoint_id 是 core 存储的 checkpoint 记录 id
-        - langgraph：checkpoint_id 通常对应 thread_id（由上层 checkpointer 体系维护）
+        约定：langgraph 下 ``checkpoint_id`` 通常对应 thread_id（由上层 checkpointer 体系维护）。
         """
         ...
 
@@ -187,57 +183,3 @@ class LangGraphWorkflowBackend:
         else:
             run_config.setdefault("recursion_limit", Runtime.resolve_recursion_limit_from_max_iter(None))
         return run_config
-
-
-class OpenJiuWenWorkflowBackend:
-    """openjiuwen backend 的薄封装：直接代理 OpenJiuWenWorkflow。"""
-
-    def __init__(self, workflow: Any):
-        """创建 openjiuwen backend 封装，内部持有 OpenJiuWenWorkflow。"""
-        self._wf = workflow
-
-    def set_runtime(self, runtime: Any) -> None:
-        """将 Agent Runtime 传递给底层 workflow。"""
-        if hasattr(self._wf, "set_runtime"):
-            self._wf.set_runtime(runtime)
-
-    async def ainvoke(self, initial_state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        """异步执行（openjiuwen），kwargs 透传给 OpenJiuWenWorkflow.ainvoke。"""
-        return await self._wf.ainvoke(initial_state, **kwargs)
-
-    def astream(self, initial_state: dict[str, Any], **kwargs: Any) -> AsyncIterator[Any]:
-        """流式执行（openjiuwen），kwargs 透传给 OpenJiuWenWorkflow.astream。"""
-        return self._wf.astream(initial_state, **kwargs)
-
-    def load_checkpoint_state(self, checkpoint_id: str) -> tuple[str, dict[str, Any]]:
-        """读取 openjiuwen checkpoint（通常为 human_feedback 中断点）。"""
-        try:
-            return self._wf.load_checkpoint_state(checkpoint_id)
-        except Exception as e:
-            logger.error(f"Failed to load openjiuwen checkpoint: {checkpoint_id}, err={e}")
-            raise
-
-    async def resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> dict[str, Any]:
-        """
-        openjiuwen 恢复：
-        - load checkpoint -> (start_at, state)
-        - 注入 __human_feedback_resume__
-        - 从 start_at 继续 ainvoke
-        """
-        session_id = kwargs.pop("session_id", None)
-        start_at, recovered_state = self.load_checkpoint_state(str(checkpoint_id))
-        recovered_state["__human_feedback_resume__"] = message
-        recovered_state.setdefault("developer_mode", False)
-        if session_id:
-            recovered_state.setdefault("conversation_id", session_id)
-        return await self._wf.ainvoke(recovered_state, start_at=start_at)
-
-    def astream_resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> AsyncIterator[Any]:
-        """openjiuwen 流式恢复：load checkpoint + 注入恢复输入 + 从 start_at 继续 astream。"""
-        session_id = kwargs.pop("session_id", None)
-        start_at, recovered_state = self.load_checkpoint_state(str(checkpoint_id))
-        recovered_state["__human_feedback_resume__"] = message
-        recovered_state.setdefault("developer_mode", False)
-        if session_id:
-            recovered_state.setdefault("conversation_id", session_id)
-        return self._wf.astream(recovered_state, start_at=start_at, **kwargs)

@@ -216,9 +216,7 @@ class BaseDataAgent:
         """
         # 验证 backend
         if backend != "langgraph":
-            raise ValueError(
-                f"当前只支持 backend='langgraph'，暂不支持 '{backend}'。openjiuwen 支持将在修复后重新加入。"
-            )
+            raise ValueError(f"当前只支持 backend='langgraph'，暂不支持 '{backend}'。")
 
         # 验证节点名称唯一性
         node_names = [node.name for node in nodes]

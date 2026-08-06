@@ -11,7 +11,6 @@ hide:
   <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/Python-3.11+-blue.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
   <a href="https://github.com/langchain-ai/langgraph"><img alt="LangGraph" src="https://img.shields.io/badge/LangGraph-1.1.3-red.svg"></a>
-  <a href="openJiuwen/openJiuwen-user-guide.md"><img alt="openJiuwen" src="https://img.shields.io/badge/openJiuwen-0.1.14-purple.svg"></a>
   <img alt="GaussVector" src="https://img.shields.io/badge/GaussVector-semantic%20layer-blue.svg">
 </p>
 
@@ -71,9 +70,9 @@ hide:
 
 -   **功能特性**
 
-    了解核心能力、模块划分、工具与模型支持；含 Semantic Service、优先支持 GaussVector 的语义层向量检索增强、openJiuwen 等子模块。
+    了解核心能力、模块划分、工具与模型支持；含 Semantic Service、优先支持 GaussVector 的语义层向量检索增强等子模块。
 
-    [查看功能特性 →](function/function.md) · [Semantic Service →](semantic_service/semantic-service-user-guide.md) · [openJiuwen →](openJiuwen/openJiuwen-user-guide.md)
+    [查看功能特性 →](function/function.md) · [Semantic Service →](semantic_service/semantic-service-user-guide.md)
 
 -   **架构文档**
 

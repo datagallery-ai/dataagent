@@ -103,7 +103,7 @@ def astream(self, *args, **kwargs):
 支持两种调用方式：
 
 1. **LangGraph 原生调用**：`astream(input={...}, config={...}, stream_mode=...)`
-2. **openJiuwen 调用**：`astream(initial_state={...}, start_at=..., checkpoint_id=...)`
+2. **DataAgent 原生调用**：`astream(initial_state={...}, start_at=..., checkpoint_id=...)`
 
 两种方式均支持通过 `initial_state` 传入 `session_id` 和 `workspace` 等状态字段。
 

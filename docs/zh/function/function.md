@@ -20,7 +20,6 @@ hide:
 |-|-|
 | **NL2SQL** | 自然语言 → SQL 执行的专用能力。 |
 | **Semantic Service** | 当前阶段提供面向 NL2SQL 的增强元数据 REST 能力，并优先围绕 GaussVector 做了语义层向量索引、召回排序和 schema 感知增强，支撑表、字段、指标口径和业务描述的候选 schema 召回；本体服务相关能力正在开发中。详见 [Semantic Service 使用指南](../semantic_service/semantic-service-user-guide.md)。 |
-| **openJiuwen** | openJiuwen 集成与使用。详见 [openJiuwen 使用指南](../openJiuwen/openJiuwen-user-guide.md)。 |
 | **Perceptor** | 检索与感知能力。组织工具信息、元数据与知识。 |
 | **Config Manager** | 配置管理。支持配置修改与加载。 |
 | **CBB** | Core 基座抽象。定义 Agent、Node、Router、State 等基类。 |
@@ -95,7 +94,7 @@ hide:
 | 初始化流程 | 在初始化阶段，系统会遍历yaml配置文件的 `MODEL` 下的每个 section 并创建对应模型实例，供 Agent 与工作流调用。 |
 | LLM 底层 | 统一经 `LLMClient`（litellm，OpenAI 兼容协议）；`MODEL.provider` 用于拼接环境变量 `{PROVIDER}_BASE_URL` / `{PROVIDER}_API_KEY`。 |
 | Embedding | `model_type=embedding` 的 section 仅注册配置（`get_llm_config`）；向量推理由知识库/工具侧通过 OpenAI 兼容 `embeddings` API 直接调用，不创建 `LLMClient` 实例。 |
-| 工作流 backend | `AGENT_CONFIG.backend`（`langgraph` / `openjiuwen`）仅决定工作流引擎，不影响 LLM SDK 选择。 |
+| 工作流 backend | `AGENT_CONFIG.backend`（当前仅 `langgraph`）决定工作流引擎，不影响 LLM SDK 选择。 |
 
 ### 使用方法（YAML 配置）
 
@@ -136,4 +135,4 @@ MODEL:
  2. **name 唯一性** ：相同 `name` 会覆盖已有实例，请避免重名。当前代码对未填写 `name` 的配置有兼容兜底，会使用 `MODEL` 下的 section 名作为模型实例名称；建议显式填写 `name`。
  3. **API Key 读取逻辑** ：优先读取 `MODEL.<section>.params.api_key`；未配置时按 `provider` 查找 `{PROVIDER}_API_KEY`。
  4. **base_url 读取逻辑** ：优先读取 `MODEL.<section>.params.base_url`；未配置时按 `provider` 查找 `{PROVIDER}_BASE_URL`。
- 5. **backend 选择 SDK** ：`provider` 不再用于选择 SDK；`AGENT_CONFIG.backend` 决定使用 LangGraph 还是 openJiuWen。
+ 5. **backend 选择引擎** ：`provider` 不再用于选择 SDK；`AGENT_CONFIG.backend` 当前仅支持 LangGraph。

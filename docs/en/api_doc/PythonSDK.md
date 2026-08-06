@@ -103,7 +103,7 @@ Triggers a streaming agent conversation, yielding events one by one via async ge
 Supports two calling conventions:
 
 1. **LangGraph native**: `astream(input={...}, config={...}, stream_mode=...)`
-2. **openJiuwen**: `astream(initial_state={...}, start_at=..., checkpoint_id=...)`
+2. **DataAgent native**: `astream(initial_state={...}, start_at=..., checkpoint_id=...)`
 
 Both support passing state fields such as `session_id` and `workspace` via `initial_state`.
 

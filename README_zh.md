@@ -10,7 +10,6 @@
   <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
   <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
   <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/openJiuwen-0.1.14-purple" alt="openJiuwen">
   <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
 </p>
 
@@ -66,7 +65,6 @@ uv run mkdocs serve -f docs/mkdocs.yml -a 0.0.0.0:8000
 | 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 可选：Semantic Service / GaussVector 用于 NL2SQL；MySQL / PostgreSQL / Elasticsearch 仅扩展场景需要 |
 | ⚙️ [功能特性](docs/zh/function/function.md) | 核心能力、模块划分、工具与模型支持 |
 | 🧩 [Semantic Service](docs/zh/semantic_service/semantic-service-user-guide.md) | 面向 NL2SQL 的语义服务增强元数据，优先围绕 GaussVector 提供语义层索引、候选表字段召回与 schema 感知增强 |
-| 🔗 [openJiuwen](docs/zh/openJiuwen/openJiuwen-user-guide.md) | openJiuwen 集成与使用说明 |
 | 🏗️ [架构文档](docs/zh/design_doc/design_doc.md) | 系统架构；context、规划引擎、action 等模块设计 |
 | 📡 [接口设计](docs/zh/api_doc/api_doc.md) | REST 北向服务接口与 Python SDK |
 | 📋 [应用案例](docs/zh/case/case.md) | 构建 NL2SQL 专用 Agent、构建数据分析 Agent |
