@@ -74,7 +74,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 跑通后可尝试的验证问题：
@@ -152,7 +151,6 @@ SEMANTIC_LAYER:
   username: "example"
   password: "123456"
   timeout: 30
-  verify_ssl: false
 ```
 
 配置时重点检查：

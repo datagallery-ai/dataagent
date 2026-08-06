@@ -10,12 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""LLM 出站 mTLS 证书能力。
+"""出站 mTLS 证书能力。
 
 证书材料仍统一来自 ``certificate:`` 段。REST 入站由 ``certificate.inbound_enabled`` 控制；
-当前仅当 ``outbound_ssl_services`` 包含 ``llm`` 时，LLM 出站请求启用 mTLS。
+出站请求仅当 ``outbound_ssl_services`` 包含对应服务名时启用 mTLS。
 
-``outbound_ssl_services`` 保留为列表，是为了后续扩展其它出站服务时不再改配置结构。
+当前支持的出站服务名：``llm``、``semantic_layer``。
+未列入的服务对 httpx 返回 ``False``（不校验、不出示客户端证书），与 LLM 未 opt-in 行为一致。
 """
 
 from __future__ import annotations
@@ -175,12 +176,15 @@ def _build_context() -> ssl.SSLContext:
     return ctx
 
 
-def httpx_verify():
+def httpx_verify(service: str = "llm"):
     """httpx 的 ``verify`` 取值：启用返回 ``SSLContext``，未启用返回 ``False``。
+
+    ``service`` 默认 ``llm``，保持既有调用方兼容。Semantic Layer 出站请传
+    ``semantic_layer``。未在 ``outbound_ssl_services`` 中 opt-in 时返回 ``False``。
 
     注意：客户端证书已注入 ``SSLContext``，httpx 不应再额外传 ``cert=``。
     """
-    return _build_context() if outbound_ssl_enabled("llm") else False
+    return _build_context() if outbound_ssl_enabled(service) else False
 
 
 def reset_cache() -> None:

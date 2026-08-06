@@ -242,7 +242,7 @@ class DataAgentService:
                 }
             ]
 
-        return {
+        payload = {
             "success": True,
             "message": message,
             "candidates": candidates,
@@ -253,6 +253,9 @@ class DataAgentService:
             "rows_preview": rows_preview,
             "session_id": state.get("session_id"),
         }
+        if sql:
+            payload["sql_fingerprint"] = hash_sql(sql)
+        return payload
 
     def _format_error(self, message: str) -> dict[str, Any]:
         """Format base agent error payload."""

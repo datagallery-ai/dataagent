@@ -14,7 +14,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import requests
+import httpx
 
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient, SemanticServiceError
 from dataagent.agents.nl2sql.errors import SemanticServiceCallError
@@ -151,7 +151,7 @@ class PerceptorNode(BaseNL2SQLNode):
             return func(*args, **kwargs)
         except SemanticServiceError as exc:
             raise SemanticServiceCallError(detail=self._semantic_service_error_detail(exc)) from exc
-        except requests.RequestException as exc:
+        except httpx.HTTPError as exc:
             raise SemanticServiceCallError(detail=str(exc)) from exc
         except ValueError as exc:
             raise SemanticServiceCallError(detail=str(exc)) from exc

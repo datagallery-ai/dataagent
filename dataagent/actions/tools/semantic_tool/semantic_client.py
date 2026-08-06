@@ -19,10 +19,11 @@ import time
 from typing import Any, Optional
 from urllib.parse import quote
 
-import requests
+import httpx
 from loguru import logger
 
 from dataagent.actions.tools.semantic_tool.auth import get_semantic_layer_auth
+from dataagent.common_utils.outbound_tls import httpx_verify
 from dataagent.utils.constants import (
     DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT,
     DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT,
@@ -30,7 +31,7 @@ from dataagent.utils.constants import (
 )
 
 
-class SemanticServiceError(requests.HTTPError):
+class SemanticServiceError(httpx.HTTPError):
     """HTTP error returned by semantic-service with parsed service error fields."""
 
     def __init__(
@@ -41,7 +42,7 @@ class SemanticServiceError(requests.HTTPError):
         status_code: int | None,
         error_code: str | None = None,
         error_message: str | None = None,
-        response: requests.Response | None = None,
+        response: httpx.Response | None = None,
     ) -> None:
         """Create an error with HTTP and semantic-service error details."""
         self.method = method
@@ -49,10 +50,11 @@ class SemanticServiceError(requests.HTTPError):
         self.status_code = status_code
         self.error_code = error_code
         self.error_message = error_message
+        self.response = response
 
         self.classification_hint = "internal semantic service error"
 
-        super().__init__(f"{self.classification_hint}: Semantic service {method} failed", response=response)
+        super().__init__(f"{self.classification_hint}: Semantic service {method} failed")
 
     def __str__(self) -> str:
         """Return semantic-service error details suitable for diagnostic logs."""
@@ -70,7 +72,9 @@ class SemanticServiceError(requests.HTTPError):
         response = self.response
         if response is not None:
             response_url = _optional_str(getattr(response, "url", None))
-            response_reason = _optional_str(getattr(response, "reason", None))
+            response_reason = _optional_str(
+                getattr(response, "reason_phrase", None) or getattr(response, "reason", None)
+            )
             response_headers = _response_headers(response)
             response_body = _response_body(response)
             if response_url:
@@ -93,16 +97,17 @@ class SemanticServiceClient:
         *,
         auth: tuple[str, str] | None = None,
         timeout: float = 30.0,
-        verify: bool = True,
     ) -> None:
         """Create a client for the configured semantic-service base URL."""
         self.base_url = normalize_semantic_base_url(base_url)
         self.timeout = timeout
-        self.verify = verify
-        self.session = requests.Session()
-        self.session.headers.update({"Accept": "application/json"})
-        if auth:
-            self.session.auth = auth
+        self.auth = auth
+        self.client = httpx.Client(
+            timeout=timeout,
+            auth=auth,
+            headers={"Accept": "application/json"},
+            verify=httpx_verify("semantic_layer"),
+        )
 
     @classmethod
     def from_config(cls, config_manager: Any) -> SemanticServiceClient:
@@ -117,11 +122,7 @@ class SemanticServiceClient:
             config_manager.get("SEMANTIC_LAYER.timeout", 30.0),
             30.0,
         )
-        verify = _as_bool(
-            config_manager.get("SEMANTIC_LAYER.verify_ssl", True),
-            True,
-        )
-        return cls(str(raw_base_url), auth=auth, timeout=timeout, verify=verify)
+        return cls(str(raw_base_url), auth=auth, timeout=timeout)
 
     def get_table_list(self, database_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT) -> list:
         """Get tables under a semantic database."""
@@ -263,20 +264,16 @@ class SemanticServiceClient:
         started = time.perf_counter()
         try:
             if method.upper() == "GET":
-                response = self.session.get(
+                response = self.client.get(
                     url,
                     params=params,
                     headers=headers,
-                    timeout=self.timeout,
-                    verify=self.verify,
                 )
             elif method.upper() == "POST":
-                response = self.session.post(
+                response = self.client.post(
                     url,
                     json=json,
                     headers=headers,
-                    timeout=self.timeout,
-                    verify=self.verify,
                 )
             else:
                 raise ValueError(f"unsupported semantic client method: {method}")
@@ -296,7 +293,7 @@ class SemanticServiceClient:
                 elapsed_ms,
             )
             return payload
-        except requests.HTTPError as err:
+        except httpx.HTTPStatusError as err:
             service_err = _build_service_error(err, method=method, path=path)
             logger.error(
                 "semantic.audit method={} path={} status={} success=false error_code={}",
@@ -306,16 +303,16 @@ class SemanticServiceClient:
                 getattr(service_err, "error_code", None),
             )
             raise service_err from err
-        except requests.Timeout as err:
-            wrapped = requests.RequestException(f"internal semantic service request failed: method={method}")
+        except httpx.TimeoutException as err:
+            wrapped = httpx.RequestError(f"internal semantic service request failed: method={method}")
             logger.error("semantic.audit method={} path={} success=false error=timeout", method, path)
             raise wrapped from err
-        except requests.RequestException as err:
-            wrapped = requests.RequestException(f"internal semantic service request failed: method={method}")
+        except httpx.RequestError as err:
+            wrapped = httpx.RequestError(f"internal semantic service request failed: method={method}")
             logger.error("semantic.audit method={} path={} success=false error=request", method, path)
             raise wrapped from err
         except ValueError:
-            # JSON completeness checks (not covered by requests.* handlers).
+            # JSON completeness checks (not covered by httpx.* handlers).
             logger.error("semantic.audit method={} path={} success=false error=response_validation", method, path)
             raise
 
@@ -343,7 +340,7 @@ def normalize_semantic_base_url(raw_url: str) -> str:
     return f"{base}/api/semantic/v1"
 
 
-def _assert_json_content_type(response: requests.Response) -> None:
+def _assert_json_content_type(response: httpx.Response) -> None:
     """JSON completeness: reject non-JSON Content-Type when the header is present."""
     raw_headers = getattr(response, "headers", None) or {}
     content_type = str(raw_headers.get("Content-Type") or raw_headers.get("content-type") or "").lower()
@@ -360,7 +357,7 @@ def _assert_minimal_json_shape(payload: Any, *, path: str) -> None:
     raise ValueError(f"internal semantic service schema error: path={path} expected object/array")
 
 
-def _build_service_error(err: requests.HTTPError, *, method: str, path: str) -> SemanticServiceError:
+def _build_service_error(err: httpx.HTTPStatusError, *, method: str, path: str) -> SemanticServiceError:
     """Convert an HTTP error into a parsed semantic-service error."""
     response = err.response
     status_code = response.status_code if response is not None else None
@@ -376,7 +373,8 @@ def _build_service_error(err: requests.HTTPError, *, method: str, path: str) -> 
             )
         if not error_message:
             # Keep error_message short; do not dump full bodies into INFO logs.
-            error_message = _truncate(response.text.strip(), 200) if response.text else None
+            text = getattr(response, "text", "") or ""
+            error_message = _truncate(text.strip(), 200) if text else None
 
     return SemanticServiceError(
         method=method,
@@ -388,7 +386,7 @@ def _build_service_error(err: requests.HTTPError, *, method: str, path: str) -> 
     )
 
 
-def _response_json(response: requests.Response) -> Any:
+def _response_json(response: httpx.Response) -> Any:
     """Return response JSON when possible."""
     try:
         return response.json()
@@ -396,7 +394,7 @@ def _response_json(response: requests.Response) -> Any:
         return None
 
 
-def _response_headers(response: requests.Response) -> dict[str, str]:
+def _response_headers(response: httpx.Response) -> dict[str, str]:
     """Return response headers with credential-bearing values redacted."""
     raw_headers = getattr(response, "headers", None)
     if raw_headers is None:
@@ -409,7 +407,7 @@ def _response_headers(response: requests.Response) -> dict[str, str]:
     }
 
 
-def _response_body(response: requests.Response) -> Optional[str]:  # noqa: UP045
+def _response_body(response: httpx.Response) -> Optional[str]:  # noqa: UP045
     """Return a bounded response body for diagnostics."""
     response_text = getattr(response, "text", None)
     if response_text is None:
@@ -436,18 +434,3 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
-
-
-def _as_bool(value: Any, default: bool) -> bool:
-    """Convert common config values to bool."""
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "y", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "n", "off"}:
-            return False
-    return bool(value)

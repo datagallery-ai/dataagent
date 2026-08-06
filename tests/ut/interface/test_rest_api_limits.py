@@ -237,6 +237,9 @@ async def test_health_returns_503_when_service_not_ready():
 
 
 def test_format_nl2sql_structured_candidates():
+    import hashlib
+    import re
+
     service = DataAgentService()
     service._cached_agent_type = "nl2sql"
     result = service._format_result(
@@ -249,4 +252,15 @@ def test_format_nl2sql_structured_candidates():
     payload = result["result"]
     assert payload["success"] is True
     assert payload["candidates"][0]["sql"] == "SELECT 1"
+    expected = hashlib.sha256(re.sub(r"\s+", " ", "SELECT 1".strip()).encode()).hexdigest()
+    assert payload["sql_fingerprint"] == expected
     assert "SECRET" not in str(result)
+
+
+def test_format_nl2sql_omits_fingerprint_when_sql_empty():
+    service = DataAgentService()
+    service._cached_agent_type = "nl2sql"
+    result = service._format_result({"sql": "", "trace_id": "abc"})
+    payload = result["result"]
+    assert payload["sql"] == ""
+    assert "sql_fingerprint" not in payload
