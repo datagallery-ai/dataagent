@@ -67,7 +67,8 @@ def _build_sdk_probe_agent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> t
     agent._ensure_workspace = lambda _state: None
     agent._touch_workspace_catalog = lambda _state: None
     agent._dump_runtime_config = lambda _state: None
-    monkeypatch.setattr(sdk_agent_module, "setup_session_log", lambda **_kwargs: None)
+    monkeypatch.setattr(sdk_agent_module, "set_session_log_context", lambda **_kwargs: "token")
+    monkeypatch.setattr(sdk_agent_module, "reset_session_log_context", lambda _token: None)
     return agent, chat_agent
 
 
