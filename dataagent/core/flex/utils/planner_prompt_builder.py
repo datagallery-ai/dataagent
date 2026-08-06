@@ -111,6 +111,7 @@ def prepare_flex_planner_prompt(
         ),
         "runtime_environment": runtime_env_prompt,
         "worker_metadata_prompt": worker_metadata_prompt,
+        **_resource_job_protocol_template_vars(agent_cfg),
         "database_environment": database_environment,
         **kwargs,
     }
@@ -258,6 +259,28 @@ def _build_skill_entries_prompt(skills: list[dict[str, Any]], *, section_title: 
             f"  skill entry alias: `{skill_md_path}`\n"
         )
     return "\n".join(lines)
+
+
+def _resource_job_protocol_template_vars(agent_config: dict[str, Any] | None) -> dict[str, Any]:
+    """Return Jinja vars that enable the Resource Job Protocol section in ``planner/system.md``.
+
+    Protocol body lives in the markdown template; this helper only decides whether
+    the section is enabled and supplies the dynamic watch-cap value.
+
+    Args:
+        agent_config: Merged per-agent config from ``runtime.get_all_config()``.
+
+    Returns:
+        Template variables for ``resource_job_protocol_enabled`` and ``poll_watch_max_sec``.
+    """
+    from dataagent.utils.constants import POLL_WATCH_MAX_WATCH_SEC
+
+    resources = (agent_config or {}).get("RESOURCES") or []
+    enabled = isinstance(resources, list) and bool(resources)
+    return {
+        "resource_job_protocol_enabled": enabled,
+        "poll_watch_max_sec": int(POLL_WATCH_MAX_WATCH_SEC),
+    }
 
 
 def _build_subagent_worker_metadata_prompt_fragment(
