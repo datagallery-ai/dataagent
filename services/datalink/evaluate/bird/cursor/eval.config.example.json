@@ -1,0 +1,20 @@
+{
+  "cursor_api_key": "",
+  "model": "composer-2.5",
+  "cwd": "evaluate/bird/sandbox",
+  "mcp_url": "http://127.0.0.1:8082/mcp",
+  "dataset": "evaluate/bird/dev_questions.json",
+  "answers": "evaluate/bird/dev_answers.json",
+  "output_dir": "evaluate/bird/cursor/eval_results",
+  "sqlite_url": "",
+  "sqlite_url_template": "sqlite:///{db_dir}/{db_id}/{db_id}.sqlite",
+  "db_dir": "C:/path/to/bird/dev_databases",
+  "sqlite_databases": {},
+  "limit": 10,
+  "offset": 0,
+  "difficulties": [],
+  "db_ids": [],
+  "modes": ["with_datalink", "without_datalink"],
+  "timeout_seconds": 600,
+  "sandbox_enabled": true
+}

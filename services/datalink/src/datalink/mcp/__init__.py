@@ -1,0 +1,1 @@
+"""MCP Server adapter layer."""
