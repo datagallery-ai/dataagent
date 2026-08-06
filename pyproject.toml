@@ -65,6 +65,7 @@ trajectory_graph = [
 ]
 
 all = [
+    "datagallery-dataagent[server]",
     "datagallery-dataagent[nl2sql]",
 ]
 
