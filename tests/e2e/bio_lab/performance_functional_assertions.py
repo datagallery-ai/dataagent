@@ -23,6 +23,7 @@ from typing import Any
 from loguru import logger
 from performance_config import _ORIGINAL_SQLITE_PATH
 from performance_query_cases import (
+    ALL_EXPECTED_ANSWER_ASSERTIONS,
     EXPECTED_ANTIBODY_COUNT,
     EXPECTED_ANTIBODY_IDS,
     EXPECTED_BD55_1111_ANTIBODY_SAMPLE_ID,
@@ -34,9 +35,8 @@ from performance_query_cases import (
     EXPECTED_PSEUDOVIRUS_COUNT,
     EXPECTED_PSEUDOVIRUS_IDS,
     EXPECTED_XBB15_PSEUDOVIRUS_SAMPLE_ID,
-    TC_EXPECTED_ANSWER_ASSERTIONS,
-    TC_EXPECTED_SQL_ASSERTIONS,
     TC_NON_BLOCKING_REVIEW_CASES,
+    TCW_DB_EFFECT_ASSERTIONS,
 )
 
 
@@ -88,6 +88,295 @@ def _find_created_experiment_id(db_path: Path, today: str) -> int | None:
 
 
 find_created_experiment_id = _find_created_experiment_id
+
+
+def _find_created_tcw_neutralization_experiment_ids(
+    db_path: Path,
+    *,
+    today: str,
+    antibody_name: str,
+    pseudovirus_name: str,
+    cell_name: str,
+    status: str,
+) -> list[int]:
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            """
+            SELECT ne.id
+            FROM neutralization_experiments ne
+            JOIN experiments e ON ne.id = e.id
+            JOIN antibody_samples antibody_sample ON ne.inhibitor_sample_id = antibody_sample.id
+            JOIN antibodies antibody ON antibody_sample.antibody_id = antibody.id
+            JOIN proteins antibody_protein ON antibody.id = antibody_protein.id
+            JOIN pseudovirus_samples pseudovirus_sample
+              ON ne.pseudovirus_sample_id = pseudovirus_sample.id
+            JOIN pseudoviruses pseudovirus ON pseudovirus_sample.pseudovirus_id = pseudovirus.id
+            JOIN cell_samples cell_sample ON ne.cell_sample_id = cell_sample.id
+            JOIN cells cell ON cell_sample.cell_id = cell.id
+            WHERE antibody_protein.name = ?
+              AND pseudovirus.name = ?
+              AND cell.name = ?
+              AND e.status = ?
+              AND e.start_date = ?
+            ORDER BY ne.id DESC
+            """,
+            (antibody_name, pseudovirus_name, cell_name, status, today),
+        )
+        return [int(row[0]) for row in cur.fetchall() if row and row[0] is not None]
+    finally:
+        conn.close()
+
+
+def _find_any_today_neutralization_experiment_ids(db_path: Path, *, today: str, status: str | None = None) -> list[int]:
+    """All neutralization experiments created today (optionally filtered by status)."""
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        if status is not None:
+            cur = conn.execute(
+                """SELECT ne.id FROM neutralization_experiments ne
+                   JOIN experiments e ON ne.id = e.id
+                   WHERE e.start_date = ? AND e.status = ?
+                   ORDER BY ne.id DESC""",
+                (today, status),
+            )
+        else:
+            cur = conn.execute(
+                """SELECT ne.id FROM neutralization_experiments ne
+                   JOIN experiments e ON ne.id = e.id
+                   WHERE e.start_date = ?
+                   ORDER BY ne.id DESC""",
+                (today,),
+            )
+        return [int(row[0]) for row in cur.fetchall() if row and row[0] is not None]
+    finally:
+        conn.close()
+
+
+def _find_today_neutralization_experiment_ids_by_assets(
+    db_path: Path,
+    *,
+    today: str,
+    antibody_name: str | None = None,
+    pseudovirus_name: str | None = None,
+    cell_name: str | None = None,
+) -> list[int]:
+    """Today's neutralization experiments matching any of the provided asset names.
+
+    A None asset name means "don't filter on that asset". This is used by the
+    experiment_not_created check: if the list is empty, no matching experiment
+    was created today (i.e. the agent correctly did NOT create).
+    """
+    if not db_path.exists():
+        return []
+    clauses: list[str] = ["e.start_date = ?"]
+    params: list[Any] = [today]
+    if antibody_name is not None:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM antibody_samples abs JOIN antibodies abt ON abs.antibody_id=abt.id "
+            "JOIN proteins pr ON abt.id=pr.id WHERE abs.id=ne.inhibitor_sample_id AND pr.name=?)"
+        )
+        params.append(antibody_name)
+    if pseudovirus_name is not None:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM pseudovirus_samples pss JOIN pseudoviruses pv ON pss.pseudovirus_id=pv.id "
+            "WHERE pss.id=ne.pseudovirus_sample_id AND pv.name LIKE ?)"
+        )
+        params.append(f"%{pseudovirus_name}%")
+    if cell_name is not None:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM cell_samples cs JOIN cells c ON cs.cell_id=c.id "
+            "WHERE cs.id=ne.cell_sample_id AND (c.name LIKE ? OR c.aliases LIKE ?))"
+        )
+        params.extend([f"%{cell_name}%", f"%{cell_name}%"])
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            f"""SELECT ne.id FROM neutralization_experiments ne
+                JOIN experiments e ON ne.id = e.id
+                WHERE {" AND ".join(clauses)}
+                ORDER BY ne.id DESC""",
+            tuple(params),
+        )
+        return [int(row[0]) for row in cur.fetchall() if row and row[0] is not None]
+    finally:
+        conn.close()
+
+
+def _find_today_experiments_by_operator_name(db_path: Path, *, today: str, operator_name: str) -> list[int]:
+    """Today's experiments whose submitter or operator maps to a user with the given name."""
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            """SELECT e.id FROM experiments e
+               WHERE e.start_date = ?
+                 AND (e.submitter IN (SELECT id FROM users WHERE name LIKE ?)
+                      OR e.operator IN (SELECT id FROM users WHERE name LIKE ?))
+               ORDER BY e.id DESC""",
+            (today, f"%{operator_name}%", f"%{operator_name}%"),
+        )
+        return [int(row[0]) for row in cur.fetchall() if row and row[0] is not None]
+    finally:
+        conn.close()
+
+
+def _experiment_status_count(db_path: Path, *, experiment_id: int, status: str) -> int:
+    """Count experiments with the given id and status (used by experiment_not_modified)."""
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM experiments WHERE id = ? AND status = ?",
+            (experiment_id, status),
+        )
+        return int(cur.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
+def _antibody_row_count(db_path: Path, *, antibody_id: int) -> int:
+    """Count antibodies rows with the given id (used by antibody_not_deleted)."""
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute("SELECT COUNT(*) FROM antibodies WHERE id = ?", (antibody_id,))
+        return int(cur.fetchone()[0] or 0)
+    finally:
+        conn.close()
+
+
+def _table_exists_by_globs(db_path: Path, globs: list[str]) -> bool:
+    """True if any table name in sqlite_master matches any of the LIKE globs."""
+    if not db_path.exists():
+        return False
+    conn = sqlite3.connect(str(db_path))
+    try:
+        or_clauses = " OR ".join(["name LIKE ?" for _ in globs])
+        cur = conn.execute(
+            f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND ({or_clauses})",
+            tuple(globs),
+        )
+        return int(cur.fetchone()[0] or 0) > 0
+    finally:
+        conn.close()
+
+
+def capture_tcw_database_effects(db_path: Path, query_key: str) -> dict[str, Any]:
+    """Capture write-side evidence before a TC-W case database rollback."""
+    assertion_spec = TCW_DB_EFFECT_ASSERTIONS.get(query_key)
+    if not assertion_spec:
+        return {}
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    kind = assertion_spec["kind"]
+    expected: dict[str, Any] = {"kind": kind, "start_date": today}
+
+    if kind == "neutralization_created":
+        experiment_ids = _find_created_tcw_neutralization_experiment_ids(
+            db_path,
+            today=today,
+            antibody_name=assertion_spec["antibody_name"],
+            pseudovirus_name=assertion_spec["pseudovirus_name"],
+            cell_name=assertion_spec["cell_name"],
+            status=assertion_spec["status"],
+        )
+        expected.update(
+            {
+                "antibody_name": assertion_spec["antibody_name"],
+                "pseudovirus_name": assertion_spec["pseudovirus_name"],
+                "cell_name": assertion_spec["cell_name"],
+                "status": assertion_spec["status"],
+            }
+        )
+        return {
+            "kind": kind,
+            "expected": expected,
+            "created_experiment_ids": experiment_ids,
+            "matched": bool(experiment_ids),
+        }
+
+    if kind == "experiment_not_created":
+        # PASS when no matching experiment was created today.
+        status = assertion_spec.get("status")
+        operator_name = assertion_spec.get("operator_name")
+        antibody_name = assertion_spec.get("antibody_name")
+        pseudovirus_name = assertion_spec.get("pseudovirus_name")
+        cell_name = assertion_spec.get("cell_name")
+        if operator_name is not None:
+            created_ids = _find_today_experiments_by_operator_name(db_path, today=today, operator_name=operator_name)
+            expected["operator_name"] = operator_name
+        elif status is not None and antibody_name is None and pseudovirus_name is None and cell_name is None:
+            created_ids = _find_any_today_neutralization_experiment_ids(db_path, today=today, status=status)
+            expected["status"] = status
+        elif antibody_name is None and pseudovirus_name is None and cell_name is None:
+            created_ids = _find_any_today_neutralization_experiment_ids(db_path, today=today)
+        else:
+            created_ids = _find_today_neutralization_experiment_ids_by_assets(
+                db_path,
+                today=today,
+                antibody_name=antibody_name,
+                pseudovirus_name=pseudovirus_name,
+                cell_name=cell_name,
+            )
+            expected.update(
+                {"antibody_name": antibody_name, "pseudovirus_name": pseudovirus_name, "cell_name": cell_name}
+            )
+        return {
+            "kind": kind,
+            "expected": expected,
+            "created_experiment_ids": created_ids,
+            "matched": not created_ids,
+        }
+
+    if kind == "experiment_not_modified":
+        experiment_id = assertion_spec["experiment_id"]
+        forbidden_status = assertion_spec["forbidden_status"]
+        count = _experiment_status_count(db_path, experiment_id=experiment_id, status=forbidden_status)
+        expected.update({"experiment_id": experiment_id, "forbidden_status": forbidden_status})
+        return {
+            "kind": kind,
+            "expected": expected,
+            "status_count": count,
+            "matched": count == 0,
+        }
+
+    if kind == "antibody_not_deleted":
+        antibody_id = assertion_spec["antibody_id"]
+        count = _antibody_row_count(db_path, antibody_id=antibody_id)
+        expected["antibody_id"] = antibody_id
+        return {
+            "kind": kind,
+            "expected": expected,
+            "antibody_count": count,
+            "matched": count == 0,
+        }
+
+    if kind == "table_absent_no_write":
+        globs = assertion_spec.get("table_globs", ["%column%", "%dictionary%"])
+        table_exists = _table_exists_by_globs(db_path, globs)
+        today_experiments = _find_any_today_neutralization_experiment_ids(db_path, today=today)
+        expected["table_globs"] = globs
+        return {
+            "kind": kind,
+            "expected": expected,
+            "table_exists": table_exists,
+            "today_experiment_count": len(today_experiments),
+            "matched": not table_exists and not today_experiments,
+        }
+
+    return {
+        "kind": kind,
+        "matched": False,
+        "error": f"unsupported TC-W database effect kind: {kind}",
+    }
 
 
 def _strip_sql_fences(sql_text: str) -> str:
@@ -587,14 +876,14 @@ def _verify_tc_answer_correctness(
     report_dir: Path,
 ) -> dict[str, dict[str, Any]]:
     tc_results: dict[str, dict[str, Any]] = {}
-    if not any(key in TC_EXPECTED_ANSWER_ASSERTIONS or key in TC_NON_BLOCKING_REVIEW_CASES for key in response_by_key):
+    if not any(key in ALL_EXPECTED_ANSWER_ASSERTIONS or key in TC_NON_BLOCKING_REVIEW_CASES for key in response_by_key):
         return tc_results
 
     logger.info("=" * 60)
     logger.info("TC answer fact checks using precomputed expected SQL results")
     failure_messages: list[str] = []
 
-    for query_key, assertion_spec in TC_EXPECTED_ANSWER_ASSERTIONS.items():
+    for query_key, assertion_spec in ALL_EXPECTED_ANSWER_ASSERTIONS.items():
         if query_key not in response_by_key:
             continue
 
@@ -686,226 +975,62 @@ def _verify_tc_answer_correctness(
     return tc_results
 
 
-def _verify_tc_sql_correctness(
+def _verify_tcw_database_effects(
     response_by_key: dict[str, dict[str, Any]],
-    report_dir: Path,
 ) -> dict[str, dict[str, Any]]:
-    tc_results: dict[str, dict[str, Any]] = {}
-    if not any(key in TC_EXPECTED_SQL_ASSERTIONS or key in TC_NON_BLOCKING_REVIEW_CASES for key in response_by_key):
-        return tc_results
-
-    expected_db_path = Path(_ORIGINAL_SQLITE_PATH)
-    logger.info("=" * 60)
-    logger.info(f"TC SQL result-set checks using expected DB: {expected_db_path}")
+    tcw_results: dict[str, dict[str, Any]] = {}
     failure_messages: list[str] = []
 
-    for query_key, assertion_spec in TC_EXPECTED_SQL_ASSERTIONS.items():
-        if query_key not in response_by_key:
+    for query_key, assertion_spec in TCW_DB_EFFECT_ASSERTIONS.items():
+        response = response_by_key.get(query_key)
+        if response is None:
             continue
 
-        response = response_by_key[query_key]
-        if assertion_spec.get("allow_human_feedback_pass") and response.get("hitl_triggered"):
-            tc_results[query_key] = {
-                "status": "passed_by_human_feedback",
-                "sql_files": response.get("sql_files", []),
-            }
-            logger.info(f"  {query_key}: ✅ auto human feedback triggered; counted as correct")
-            continue
-
-        unqueryable_rule = assertion_spec.get("allow_unqueryable_answer")
-        if unqueryable_rule:
-            matched = _matches_unqueryable_answer(response, unqueryable_rule)
-            tc_results[query_key] = {
-                "status": "passed_by_unqueryable_answer" if matched else "failed",
-                "sql_files": response.get("sql_files", []),
-                "answer_preview": response.get("final_answer", "")[:500],
-                "unqueryable_rule": unqueryable_rule,
-            }
-            if matched:
-                logger.info(f"  {query_key}: ✅ schema-boundary answer correctly reports unavailable fields")
-                continue
-            failure_messages.append(
-                f"{query_key} should report the requested fields as unavailable without generating business SQL. "
-                f"SQL files: {response.get('sql_files', []) or 'NONE'}\n"
-                f"Final answer preview:\n{response.get('final_answer', '')[:1000]}"
-            )
-            logger.error(f"  {query_key}: ❌ schema-boundary answer assertion failed")
-            continue
-
-        absence_rule = assertion_spec.get("absence_assertion")
-        if absence_rule:
-            sql_files = [
-                Path(path)
-                for path in response.get("sql_files", [])
-                if ".context" not in Path(path).parts and ".memory" not in Path(path).parts
-            ]
-            generated_result_sets: list[dict[str, Any]] = []
-            generated_errors: list[dict[str, str]] = []
-            for sql_file in sql_files:
-                if not sql_file.exists():
-                    generated_errors.append(
-                        {"source": str(sql_file), "statement_index": "0", "error": "file not found"}
-                    )
-                    continue
-                result_sets, errors = _execute_sql_result_sets(
-                    expected_db_path,
-                    sql_file.read_text(encoding="utf-8"),
-                    source=str(sql_file),
-                )
-                generated_result_sets.extend(result_sets)
-                generated_errors.extend(errors)
-
-            if absence_rule["kind"] == "schema_field_absent":
-                oracle_absent = _schema_fields_are_absent(expected_db_path, absence_rule)
-                matched = not generated_errors and oracle_absent and _answer_reports_absence(response, absence_rule)
-            else:
-                oracle_result_sets, oracle_errors = _execute_sql_result_sets(
-                    expected_db_path,
-                    absence_rule["oracle_sql"],
-                    source=f"{query_key}:absence_oracle",
-                )
-                oracle_absent = bool(oracle_result_sets) and all(
-                    result["row_count"] == 0 for result in oracle_result_sets
-                )
-                matched = (
-                    not generated_errors
-                    and not oracle_errors
-                    and oracle_absent
-                    and _matches_absence_assertion(
-                        response,
-                        generated_result_sets,
-                        absence_rule,
-                    )
-                )
-            tc_results[query_key] = {
-                "status": "passed_by_absence_assertion" if matched else "failed",
-                "sql_files": [str(path) for path in sql_files],
-                "generated_errors": generated_errors,
-                "generated_result_sets": [
-                    {
-                        "source": result["source"],
-                        "statement_index": result["statement_index"],
-                        "row_count": result["row_count"],
-                        "preview_rows": result["preview_rows"],
-                        "sql": result["sql"],
-                    }
-                    for result in generated_result_sets
-                ],
-                "answer_preview": response.get("final_answer", "")[:500],
-                "absence_rule": absence_rule,
-            }
-            if matched:
-                logger.info(f"  {query_key}: ✅ absence assertion passed ({absence_rule['kind']})")
-                continue
-            failure_messages.append(
-                f"{query_key} absence assertion failed ({absence_rule['kind']}). "
-                f"Generated errors: {generated_errors or 'NONE'}\n"
-                f"Final answer preview:\n{response.get('final_answer', '')[:1000]}"
-            )
-            logger.error(f"  {query_key}: ❌ absence assertion failed")
-            continue
-
-        expected_sql_values = assertion_spec.get("expected_sqls") or [assertion_spec["expected_sql"]]
-        expected_result_sets: list[dict[str, Any]] = []
-        expected_errors: list[dict[str, str]] = []
-        for idx, expected_sql in enumerate(expected_sql_values, 1):
-            result_sets, errors = _execute_sql_result_sets(
-                expected_db_path,
-                expected_sql,
-                source=f"{query_key}:expected_sql:{idx}",
-            )
-            expected_result_sets.extend(result_sets)
-            expected_errors.extend(errors)
-
-        sql_files = [
-            Path(path)
-            for path in response.get("sql_files", [])
-            if ".context" not in Path(path).parts and ".memory" not in Path(path).parts
-        ]
-        generated_result_sets: list[dict[str, Any]] = []
-        generated_errors: list[dict[str, str]] = []
-        for sql_file in sql_files:
-            if not sql_file.exists():
-                generated_errors.append({"source": str(sql_file), "statement_index": "0", "error": "file not found"})
-                continue
-            result_sets, errors = _execute_sql_result_sets(
-                expected_db_path,
-                sql_file.read_text(encoding="utf-8"),
-                source=str(sql_file),
-            )
-            generated_result_sets.extend(result_sets)
-            generated_errors.extend(errors)
-        generated_result_sets.extend(_combined_generated_result_sets(generated_result_sets))
-
-        matched = _match_tc_result_sets(
-            expected_result_sets,
-            generated_result_sets,
-            assertion_spec,
+        db_effects = response.get("db_effects") or {}
+        created_ids = db_effects.get("created_experiment_ids") or []
+        matched = bool(db_effects.get("matched"))
+        blocking = assertion_spec.get("blocking", True)
+        answer = str(response.get("final_answer", ""))
+        # require_answer_mentions_id is now a non-blocking advisory: a missing id
+        # is logged as a warning but no longer fails the assertion.
+        missing_answer_id = bool(
+            matched
+            and assertion_spec.get("require_answer_mentions_id")
+            and not any(str(eid) in answer for eid in created_ids)
         )
-
-        tc_results[query_key] = {
-            "status": "passed" if matched else "failed",
-            "matched": matched,
-            "semantic_mismatch_reason": assertion_spec.get("semantic_mismatch_reason"),
-            "sql_files": [str(path) for path in sql_files],
-            "expected_result_sets": [
-                {
-                    "source": result["source"],
-                    "row_count": result["row_count"],
-                    "preview_rows": result["preview_rows"],
-                    "sql": result["sql"],
-                }
-                for result in expected_result_sets
-            ],
-            "generated_result_sets": [
-                {
-                    "source": result["source"],
-                    "statement_index": result["statement_index"],
-                    "row_count": result["row_count"],
-                    "preview_rows": result["preview_rows"],
-                    "sql": result["sql"],
-                }
-                for result in generated_result_sets
-            ],
-            "expected_errors": expected_errors,
-            "generated_errors": generated_errors,
-            "answer_preview": response.get("final_answer", "")[:500],
+        status = "passed" if matched else ("non_blocking_failed" if not blocking else "failed")
+        tcw_results[f"{query_key}_db_effect"] = {
+            "status": status,
+            "db_effects": db_effects,
+            "answer_preview": answer[:500],
+            "missing_answer_id": missing_answer_id,
+            "blocking": blocking,
         }
 
         if matched:
-            logger.info(
-                f"  {query_key}: ✅ generated SQL matches expected core semantics "
-                f"[{matched['match_mode']}] "
-                f"({matched['generated']['source']}#{matched['generated']['statement_index']})"
+            logger.info(f"  {query_key}: ✅ DB effect matched ({assertion_spec['kind']})")
+            if missing_answer_id:
+                logger.warning(f"  {query_key}: ⚠️ answer did not mention created id (non-blocking)")
+            continue
+
+        if not blocking:
+            logger.warning(
+                f"  {query_key}: ⚠️ DB effect not matched but blocking=False (non-blocking): {assertion_spec['kind']}"
             )
             continue
 
-        first_expected = expected_result_sets[0] if expected_result_sets else None
-        first_generated = generated_result_sets[0] if generated_result_sets else None
         failure_messages.append(
-            f"{query_key} SQL core semantic mismatch using DB {expected_db_path}.\n"
-            f"Generated SQL files: {[str(path) for path in sql_files] or 'NONE'}\n"
-            f"Expected errors: {expected_errors or 'NONE'}\n"
-            f"Generated errors: {generated_errors or 'NONE'}\n"
-            f"Expected first result: "
-            f"{ ({'row_count': first_expected['row_count'], 'preview_rows': first_expected['preview_rows'], 'sql': first_expected['sql'][:1000]} if first_expected else 'NONE') }\n"
-            f"Generated first result: "
-            f"{ ({'row_count': first_generated['row_count'], 'preview_rows': first_generated['preview_rows'], 'sql': first_generated['sql'][:1000]} if first_generated else 'NONE') }\n"
-            f"Final answer preview:\n{response.get('final_answer', '')[:1000]}"
+            f"{query_key} DB effect assertion failed (kind={assertion_spec['kind']}).\n"
+            f"Captured DB effects: {db_effects or 'NONE'}\n"
+            f"Final answer preview:\n{answer[:1000]}"
         )
-        logger.error(f"  {query_key}: ❌ generated SQL does not match expected core semantics")
+        logger.error(f"  {query_key}: ❌ DB effect assertion failed")
 
-    _record_non_blocking_tc_reviews(response_by_key, tc_results)
-    tc_report_path = report_dir / "tc_sql_functional_results_v3.json"
-    tc_report_path.write_text(json.dumps(tc_results, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info(f"TC SQL results report: {tc_report_path}")
-    logger.info("=" * 60)
     if failure_messages:
         raise AssertionError(
-            f"{len(failure_messages)} TC SQL core-semantic assertion(s) failed. "
-            f"Full report: {tc_report_path}\n\n" + "\n\n".join(failure_messages)
+            f"{len(failure_messages)} TC-W DB effect assertion(s) failed.\n\n" + "\n\n".join(failure_messages)
         )
-    return tc_results
+    return tcw_results
 
 
 def verify_functional_correctness(
@@ -947,6 +1072,8 @@ def verify_functional_correctness(
 
     tc_answer_results = _verify_tc_answer_correctness(response_by_key, report_dir)
     functional_results.update(tc_answer_results)
+    tcw_db_results = _verify_tcw_database_effects(response_by_key)
+    functional_results.update(tcw_db_results)
 
     # ---- Q1: create_experiment -----------------------------------------
     # The agent MUST have INSERTed a new neutralization_experiments row

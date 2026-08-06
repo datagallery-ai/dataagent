@@ -183,4 +183,12 @@ def _build_cache_test_config(
     out_path = dump_dir / "test_cache_v3.yaml"
     with out_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
+
+    # Expose the workspace sqlite path to child processes (bash tool) so that
+    # the neutralization skill scripts (check_inhibitor_sample_sufficiency.py,
+    # insert_neutralization_experiment.py, assign_experiment_researcher.py) can
+    # resolve USER_SQLITE_PATH instead of crashing with sqlite3.connect(None).
+    # The path is run-specific (timestamped workspace), so it must be set per
+    # build, not hardcoded in .env / main_config.yaml.
+    os.environ["USER_SQLITE_PATH"] = str(workspace_dir / "bio_lab.sqlite")
     return out_path

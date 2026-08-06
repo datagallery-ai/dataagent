@@ -47,6 +47,7 @@ Usage::
     python tests/e2e/bio_lab/test_performance.py --bad_cases
     python tests/e2e/bio_lab/test_performance.py --bad_cases --query_no 3
     python tests/e2e/bio_lab/test_performance.py --tc_cases --query_no 1
+    python tests/e2e/bio_lab/test_performance.py --tcw_cases --query_no 1
     python tests/e2e/bio_lab/test_performance.py --semantic_layer mock
     python tests/e2e/bio_lab/test_performance.py \
       --semantic_layer semantic_layer \
@@ -75,9 +76,10 @@ CLI options:
                                  all turns).
   --bad_cases                    Run the Changping bad-case query group only.
   --tc_cases                     Run the imported TC query group only.
+  --tcw_cases                    Run the imported TC-W workflow query group only.
   --query_no N                   Run only the 1-based query number in the active
                                  group (default replay, --bad_cases, or
-                                 --tc_cases group).
+                                 --tc_cases / --tcw_cases group).
   --config PATH                  Agent config YAML under tests/e2e/bio_lab/config
                                  or an absolute/relative file path.
 
@@ -126,7 +128,7 @@ from performance_config import (
     _resolve_agent_config_path,
     _resolve_config_paths,
 )
-from performance_functional_assertions import verify_functional_correctness
+from performance_functional_assertions import capture_tcw_database_effects, verify_functional_correctness
 from performance_query_cases import (
     EXPECTED_ANTIBODY_COUNT,
     EXPECTED_ANTIBODY_IDS,
@@ -317,7 +319,7 @@ async def test_v3_session_replay(
         skip_slow: If True, skip the "create experiment" query (takes ~10 min).
         quick: If True, run only 3 fast count queries in a single process
             (~5 min total, CI smoke test — no restart, no D6 verification).
-        query_group: Query group to run: ``"default"``, ``"bad_cases"``, or ``"TC"``.
+        query_group: Query group to run: ``"default"``, ``"bad_cases"``, ``"TC"``, or ``"TC-W"``.
         query_numbers: Optional 1-based query numbers within the active group.
         model_choice: Model preset for the test config — one of
             ``{"deepseek", "openai", "bailian"}`` (see :data:`MODEL_PRESETS`).
@@ -480,20 +482,36 @@ async def test_v3_session_replay(
         # (from agent.chat() entry to its return). Covers Planner loop,
         # tool execution, and any human-feedback round-trips.
         sql_files_before_query = _snapshot_sql_files(workspace_dir)
+        db_path = workspace_dir / "bio_lab.sqlite"
+        db_backup_path = workspace_dir / f".bio_lab_before_{query_key}.sqlite"
+        should_rollback_db = bool(spec.get("rollback_database"))
+        if should_rollback_db:
+            shutil.copy2(db_path, db_backup_path)
+            logger.info(f"  Database rollback snapshot created for {query_key}: {db_backup_path}")
+
+        db_effects: dict[str, Any] = {}
         t_start = time.perf_counter()
-        if spec.get("needs_feedback") and spec.get("feedback_responses"):
-            with auto_human_feedback(spec["feedback_responses"]):
+        try:
+            if spec.get("needs_feedback") and spec.get("feedback_responses"):
+                with auto_human_feedback(spec["feedback_responses"]):
+                    response = await agent.chat(
+                        query,
+                        session_id=CACHE_TEST_SESSION_ID,
+                        initial_state=initial_state,
+                    )
+            else:
                 response = await agent.chat(
                     query,
                     session_id=CACHE_TEST_SESSION_ID,
                     initial_state=initial_state,
                 )
-        else:
-            response = await agent.chat(
-                query,
-                session_id=CACHE_TEST_SESSION_ID,
-                initial_state=initial_state,
-            )
+            db_effects = capture_tcw_database_effects(db_path, query_key)
+        finally:
+            if should_rollback_db and db_backup_path.exists():
+                shutil.copy2(db_backup_path, db_path)
+                db_backup_path.unlink()
+                logger.info(f"  Database rolled back after {query_key}: {db_path}")
+
         hitl_triggered = _HITL_TRIGGERED if spec.get("needs_feedback") else False
         t_end = time.perf_counter()
         elapsed_sec = round(t_end - t_start, 2)
@@ -536,6 +554,7 @@ async def test_v3_session_replay(
                 "final_answer": final_answer,
                 "hitl_triggered": hitl_triggered,
                 "sql_files": generated_sql_files,
+                "db_effects": db_effects,
             }
         )
         logger.info(
@@ -871,6 +890,7 @@ async def main():
     parser.add_argument("--quick", action="store_true", help="Run only 3 fast count queries (~5 min, CI smoke test)")
     parser.add_argument("--bad_cases", action="store_true", help="Run only the Changping bad-case query group")
     parser.add_argument("--tc_cases", action="store_true", help="Run only the imported TC query group")
+    parser.add_argument("--tcw_cases", action="store_true", help="Run only the imported TC-W workflow query group")
     parser.add_argument(
         "--query_no",
         default=None,
@@ -987,9 +1007,10 @@ async def main():
         CACHE_TEST_SESSION_ID = args.session_id
         _CACHE_TEST_SESSION_ID_EXPLICIT = True
     CACHE_THRESHOLD_PROFILE = args.cache_threshold_profile
-    if args.bad_cases and args.tc_cases:
-        raise ValueError("--bad_cases and --tc_cases are mutually exclusive")
-    query_group = "TC" if args.tc_cases else "bad_cases" if args.bad_cases else "default"
+    selected_case_groups = [args.bad_cases, args.tc_cases, args.tcw_cases]
+    if sum(bool(value) for value in selected_case_groups) > 1:
+        raise ValueError("--bad_cases, --tc_cases, and --tcw_cases are mutually exclusive")
+    query_group = "TC-W" if args.tcw_cases else "TC" if args.tc_cases else "bad_cases" if args.bad_cases else "default"
     query_numbers = parse_query_numbers(args.query_no)
     _set_generated_cache_test_identity(
         build_run_parameter_label(
