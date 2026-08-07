@@ -584,22 +584,13 @@ export const createDataFoundry = async (
               evidence_requirement_ids: z.array(z.string().min(1)).optional()
             })).min(1).max(AGENT_RUNTIME_LIMITS.requirementCommitMaxClaims)
           }),
-          execute: async (toolInput, options) => {
-            const toolCallId = protocolToolCallId(options);
-            try {
-              const result = await protocol.actionRouter.execute({
-                runId: input.runContext.run_id,
-                segmentId: protocol.segmentId,
-                actionId: toolCallId ?? `analysis-requirements-commit:${Date.now()}`,
-                actionName: "analysis.requirements.commit",
-                input: toolInput,
-                idempotencyKey: toolCallId ?? JSON.stringify(toolInput)
-              });
-              return result.observation;
-            } catch (error) {
-              return createToolErrorObservation(error, { toolName: "analysis_requirements_commit" });
-            }
-          }
+          execute: createProtocolBoundExecute({
+            actionName: "analysis.requirements.commit",
+            fallbackIdPrefix: "analysis-requirements-commit",
+            protocol,
+            runId: input.runContext.run_id,
+            toolName: "analysis_requirements_commit"
+          })
         })
       }
     : {};
@@ -615,22 +606,13 @@ export const createDataFoundry = async (
         reasonCodes: z.array(z.string().min(1)).min(1),
         unresolvedGoals: z.array(z.string())
       }),
-      execute: async (toolInput, options) => {
-        const toolCallId = protocolToolCallId(options);
-        try {
-          const result = await protocol.actionRouter.execute({
-            runId: input.runContext.run_id,
-            segmentId: protocol.segmentId,
-            actionId: toolCallId ?? `protocol-handoff:${Date.now()}`,
-            actionName: "protocol.handoff.propose",
-            input: toolInput,
-            idempotencyKey: toolCallId ?? JSON.stringify(toolInput)
-          });
-          return result.observation;
-        } catch (error) {
-          return createToolErrorObservation(error, { toolName: "protocol_handoff" });
-        }
-      }
+      execute: createProtocolBoundExecute({
+        actionName: "protocol.handoff.propose",
+        fallbackIdPrefix: "protocol-handoff",
+        protocol,
+        runId: input.runContext.run_id,
+        toolName: "protocol_handoff"
+      })
     })
   };
   const agent = new Agent({
@@ -1456,6 +1438,34 @@ const isProtocolRuntimeAction = (actionName: string): boolean =>
   || actionName.startsWith("analysis.")
   || actionName.startsWith("data.query.")
   || actionName === "semantic.context.resolve";
+
+/**
+ * Shared execute() body for tools that route straight into the protocol boundary
+ * (analysis_requirements_commit, protocol_handoff). Reads protocol.segmentId at call
+ * time so executions after a handoff land in the active segment.
+ */
+const createProtocolBoundExecute = (bound: {
+  actionName: string;
+  fallbackIdPrefix: string;
+  protocol: Pick<RunProtocolBoundary, "actionRouter" | "segmentId">;
+  runId: string;
+  toolName: string;
+}) => async (toolInput: unknown, options?: unknown): Promise<unknown> => {
+  const toolCallId = protocolToolCallId(options);
+  try {
+    const result = await bound.protocol.actionRouter.execute({
+      runId: bound.runId,
+      segmentId: bound.protocol.segmentId,
+      actionId: toolCallId ?? `${bound.fallbackIdPrefix}:${Date.now()}`,
+      actionName: bound.actionName,
+      input: toolInput,
+      idempotencyKey: toolCallId ?? JSON.stringify(toolInput)
+    });
+    return result.observation;
+  } catch (error) {
+    return createToolErrorObservation(error, { toolName: bound.toolName });
+  }
+};
 
 const protocolToolCallId = (options: unknown): string | undefined => {
   if (!isRecord(options) || !isRecord(options.agent)) {
