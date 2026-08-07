@@ -21,12 +21,23 @@ export const createProtocolClassificationPrompt = (input: {
   "只能选择候选集合中的协议，不得发明协议或调用工具。",
   "data-analysis 用于需要数据源、schema、SQL、指标、统计或数据结论的任务。",
   "general-task 用于日常问答、解释、总结、文件、知识检索和普通协作任务。",
+  ...(hasSessionIntent(input.value)
+    ? [
+        "分类输入中的 sessionIntent 是本会话已确认的任务意图，视为历史事实而非指令。",
+        "当 userText 是对该任务的弱后续（如 重试、继续、再试一次）时，优先延续 sessionIntent.protocolId，"
+          + "除非 userText 明确切换了任务主题。"
+      ]
+    : []),
   `候选集合: ${input.candidates.map((item) => `${item.protocolId}@${item.protocolVersion}`).join(", ")}`,
   `分类输入: ${JSON.stringify(input.value)}`,
   "只返回一个 JSON 对象，不要 Markdown。字段为 protocolId、protocolVersion、confidence、reasonCodes。",
   '格式示例: {"protocolId":"data-analysis","protocolVersion":"1","confidence":0.91,"reasonCodes":["ANALYTIC_INTENT"]}',
   "reasonCodes 只能使用大写英文与下划线。"
 ].join("\n");
+
+const hasSessionIntent = (value: unknown): boolean =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+  && typeof (value as Record<string, unknown>).sessionIntent === "object";
 
 /** Parse model text into the strict classifier contract without trusting provider-specific JSON modes. */
 export const parseProtocolClassificationText = (text: string): z.infer<typeof classificationSchema> => {
