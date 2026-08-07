@@ -65,6 +65,26 @@ export type CreateRunProtocolBoundaryInput = {
   semanticRequest?: Omit<SemanticRequest, "query">;
   requirementExtractor?: AnalysisRequirementExtractor;
   analysisContractGrounder?: AnalysisContractGrounder;
+  /** Compact routing context for follow-up intents. Lets the protocol classifier
+   * see the previous round's query, protocol, and selected resources so a short
+   * follow-up such as "再次尝试" can inherit the prior data-analysis intent. */
+  routingContext?: RoutingContext;
+};
+
+export type RoutingContext = {
+  /** The previous round's meaningful user query, if any. */
+  previousQuery?: string;
+  /** The previous round's resolved protocol and its terminal status, if any. */
+  previousProtocol?: {
+    protocolId: string;
+    protocolVersion: string;
+    /** Terminal completion status, e.g. completed/degraded/partial/failed. */
+    terminalStatus?: string;
+  };
+  /** Skill IDs selected for this run. */
+  selectedSkillIds?: string[];
+  /** Datasource ID selected for this run. */
+  selectedDatasourceId?: string;
 };
 
 export type RunProtocolBoundary = {
@@ -128,7 +148,7 @@ export const createRunProtocolBoundary = async (
             reasonCode: "ANALYTIC_INTENT"
           }]
         : [],
-      classificationInput: { userText: input.userInput }
+      classificationInput: buildClassificationInput(input.userInput, input.routingContext)
     });
   } catch (error) {
     input.runtimeOptions?.onEvent?.({
@@ -142,6 +162,27 @@ export const createRunProtocolBoundary = async (
       payload: { reason: error instanceof Error ? error.message : String(error) }
     });
     throw error;
+  }
+  // Consistency guard (issue: "a run cannot expose a data-analysis tool policy
+  // while being governed by a protocol that rejects every data action"). When the
+  // resolved protocol is general-task but the run exposes data tools and a selected
+  // datasource, emit a warning so the agent can self-correct via protocol_handoff.
+  if (route.definition.id === "general-task" && exposesDataToolPolicy(input) && input.routingContext?.selectedDatasourceId) {
+    const warningCode = "PROTOCOL_TOOL_POLICY_MISMATCH";
+    route = {
+      ...route,
+      warnings: [...route.warnings, warningCode]
+    };
+    input.runtimeOptions?.onEvent?.({
+      eventId: `${input.runId}:segment:1:0:protocol.route.consistency.warning`,
+      type: "protocol.route.consistency.warning",
+      runId: input.runId,
+      segmentId: `${input.runId}:segment:1`,
+      protocolId: route.definition.id,
+      protocolVersion: route.definition.version,
+      revision: 0,
+      payload: { code: warningCode, reason: "general-task rejects every data action while data tools are exposed" }
+    });
   }
   let activeProtocolId = route.definition.id;
   const reduceAction = (state: unknown, actionName: string, result: unknown): unknown =>
@@ -504,6 +545,42 @@ const stripLeadingSqlComments = (sql: string): string => {
 
 const analyticIntent = (userInput: string): boolean =>
   /\b(?:sql|query|metric|analytics?|statistics?)\b|分析|统计|指标|数据|销售额/iu.test(userInput);
+
+const DATA_TOOL_NAMES = new Set(["list_data_sources", "inspect_schema", "preview_table", "run_sql_readonly"]);
+
+/** Whether the run exposes any data-analysis tool in its selected tool set. */
+const exposesDataToolPolicy = (input: CreateRunProtocolBoundaryInput): boolean =>
+  Object.keys(input.tools).some((name) => DATA_TOOL_NAMES.has(name));
+
+/** Build the compact routing context the classifier sees alongside the current query. */
+const buildClassificationInput = (
+  userInput: string,
+  routingContext?: RoutingContext
+): Record<string, unknown> => {
+  const value: Record<string, unknown> = { userText: userInput };
+  if (!routingContext) {
+    return value;
+  }
+  if (routingContext.previousQuery) {
+    value.previousQuery = routingContext.previousQuery;
+  }
+  if (routingContext.previousProtocol) {
+    value.previousProtocol = {
+      protocolId: routingContext.previousProtocol.protocolId,
+      protocolVersion: routingContext.previousProtocol.protocolVersion,
+      ...(routingContext.previousProtocol.terminalStatus
+        ? { terminalStatus: routingContext.previousProtocol.terminalStatus }
+        : {})
+    };
+  }
+  if (routingContext.selectedSkillIds?.length) {
+    value.selectedSkillIds = [...routingContext.selectedSkillIds];
+  }
+  if (routingContext.selectedDatasourceId) {
+    value.selectedDatasourceId = routingContext.selectedDatasourceId;
+  }
+  return value;
+};
 
 const allowAction = (): ProtocolGuardResult => ({ allowed: true });
 

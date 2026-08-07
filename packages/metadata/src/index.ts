@@ -1701,6 +1701,28 @@ export class RunRepository {
     return mapRunRow(this.db.prepare(sql).get(...params));
   }
 
+  /** Most recent terminal run in the session (completed/failed/canceled), excluding
+   * the current run. Used by the protocol router to inherit the prior round's intent
+   * for short follow-ups such as "再次尝试" ("try again"). */
+  findPreviousRunBySession(input: {
+    exclude_run_id: string;
+    session_id: string;
+    user_id: string;
+  }): Optional<RunRecord> {
+    return mapRunRow(
+      this.db.prepare(`
+        SELECT *
+        FROM runs
+        WHERE user_id = ?
+          AND session_id = ?
+          AND status IN ('completed', 'failed', 'canceled')
+          AND id <> ?
+        ORDER BY started_at DESC
+        LIMIT 1
+      `).get(input.user_id, input.session_id, input.exclude_run_id)
+    );
+  }
+
   listByStatuses(input: { statuses: Array<RunRecord["status"]>; limit?: number }): RunRecord[] {
     if (input.statuses.length === 0) {
       return [];

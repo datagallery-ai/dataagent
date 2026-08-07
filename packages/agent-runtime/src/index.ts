@@ -80,7 +80,8 @@ import { createTool, type ToolAction } from "@mastra/core/tools";
 import { z } from "zod";
 import {
   createRunProtocolBoundary,
-  type RunProtocolBoundary
+  type RunProtocolBoundary,
+  type RoutingContext
 } from "./protocol/run-protocol-boundary.js";
 import type { ProtocolClassifier, ProtocolIdentity } from "./protocol/protocol-router.js";
 import { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
@@ -253,6 +254,10 @@ export type CreateDataFoundryInput = {
   protocolClassifier?: ProtocolClassifier;
   analysisRequirementExtractor?: AnalysisRequirementExtractor;
   analysisContractGrounder?: AnalysisContractGrounder;
+  /** Compact routing context for follow-up intents, sourced by the caller from the
+   * previous run's protocol snapshot + selected resources. Lets the protocol
+   * classifier see prior intent so short follow-ups inherit the right protocol. */
+  routingContext?: RoutingContext;
   onProtocolEvent?(event: ProtocolEvent): void;
   protocolStateStore?: ProtocolStateStore;
   resourceRevisions?: Record<string, number>;
@@ -504,6 +509,7 @@ export const createDataFoundry = async (
         }
       : {}),
     ...(input.explicitProtocol ? { explicitProtocol: input.explicitProtocol } : {}),
+    ...(input.routingContext ? { routingContext: input.routingContext } : {}),
     classifier: input.protocolClassifier ?? createModelProtocolClassifier(input.modelProvider),
     requirementExtractor: input.analysisRequirementExtractor
       ?? createModelAnalysisRequirementExtractor(input.modelProvider),
@@ -1486,6 +1492,7 @@ export { ProtocolRouter } from "./protocol/protocol-router.js";
 export { ProtocolRuntime } from "./protocol/protocol-runtime.js";
 export { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 export { createRunProtocolBoundary } from "./protocol/run-protocol-boundary.js";
+export type { RoutingContext } from "./protocol/run-protocol-boundary.js";
 export type * from "./protocol/run-protocol-boundary.js";
 export { createGeneralTaskProtocol } from "./protocol/protocols/general-task.js";
 export { createDataAnalysisProtocol } from "./protocol/protocols/data-analysis.js";

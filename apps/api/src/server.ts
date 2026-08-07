@@ -56,6 +56,7 @@ import { replayPendingProtocolEvents } from "./protocol-event-recovery.js";
 import { assistantMessageIdFromEvent, completeProtocolRun } from "./protocol-run-completion.js";
 import { persistCurrentUserMessage } from "./conversation-memory.js";
 import { resolveEvidenceReferenceContext } from "./evidence-reference-context.js";
+import { resolveRoutingContext } from "./resolve-routing-context.js";
 import { createRunAgentAssembly, createRunAgentContext } from "./run-agent-assembly.js";
 import { RunCheckpointProjector } from "./run-checkpoint-projector.js";
 import { TraceSectionCoordinator } from "./trace-section-coordinator.js";
@@ -643,6 +644,14 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           eventPipeline.emit(event);
         };
         replayPendingProtocolEvents({ runId, stateStore: protocolStateStore, emit });
+        const routingContext = resolveRoutingContext({
+          metadataStore: this.input.metadataStore,
+          runId,
+          ...(effectiveRunConfig.skillIds.length > 0 ? { selectedSkillIds: effectiveRunConfig.skillIds } : {}),
+          ...(selectedDatasourceId ? { selectedDatasourceId } : {}),
+          sessionId,
+          userId: this.input.user.id
+        });
         const agentAssembly = await createRunAgentAssembly({
           abortSignal: runAbortController.signal,
           contextPackageRecorder,
@@ -675,6 +684,7 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           selectedSkills,
           skillSelection,
           taskStateRuntime: this.input.taskStateRuntime,
+          ...(routingContext ? { routingContext } : {}),
           userId: this.input.user.id,
           workspaceId: this.input.workspaceId,
           workspaceRoot: this.input.workspaceRoot

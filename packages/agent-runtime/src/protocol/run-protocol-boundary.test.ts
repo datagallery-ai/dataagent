@@ -1137,6 +1137,108 @@ describe("createRunProtocolBoundary", () => {
     });
     expect(boundary.protocolRuntime.getState("run-agent-handoff").phase).toBe("query_planning");
   });
+
+  it("routes a weak follow-up to data-analysis when routingContext carries a prior data-analysis protocol", async () => {
+    const classificationInputs: unknown[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-follow-up-inherit",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-follow-up", revision: 0 },
+      tools: {},
+      routingContext: {
+        previousQuery: "帮我分析当前数据",
+        previousProtocol: { protocolId: "data-analysis", protocolVersion: "1", terminalStatus: "completed" },
+        selectedSkillIds: ["data-analysis"],
+        selectedDatasourceId: "orders-db"
+      },
+      // Stub classifier simulates the LLM picking data-analysis when it sees the
+      // prior protocol in classificationInput. A real LLM is expected to do the same.
+      classifier: async ({ value }) => {
+        classificationInputs.push(value);
+        const record = value as Record<string, unknown>;
+        const previous = record.previousProtocol as { protocolId: string } | undefined;
+        return {
+          protocolId: previous?.protocolId === "data-analysis" ? "data-analysis" : "general-task",
+          protocolVersion: "1",
+          confidence: previous?.protocolId === "data-analysis" ? 0.9 : 0.4,
+          reasonCodes: previous?.protocolId === "data-analysis" ? ["INHERITED_PRIOR_PROTOCOL"] : ["WEAK_INTENT"]
+        };
+      },
+      projectContext: () => ({ packageId: "context-follow-up", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("data-analysis");
+    expect(boundary.route.source).toBe("classifier");
+    expect(boundary.route.reasonCodes).toEqual(["INHERITED_PRIOR_PROTOCOL"]);
+    // The classifier must receive the routing context fields, not just the bare follow-up text.
+    expect(classificationInputs).toEqual([expect.objectContaining({
+      userText: "再次尝试",
+      previousQuery: "帮我分析当前数据",
+      previousProtocol: expect.objectContaining({ protocolId: "data-analysis", terminalStatus: "completed" }),
+      selectedSkillIds: ["data-analysis"],
+      selectedDatasourceId: "orders-db"
+    })]);
+  });
+
+  it("falls back to general-task for a weak follow-up when no routingContext is provided", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-follow-up-no-context",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-follow-up-none", revision: 0 },
+      tools: {},
+      // Without session context the classifier sees only the ambiguous text → low confidence.
+      classifier: async () => ({
+        protocolId: "data-analysis",
+        protocolVersion: "1",
+        confidence: 0.4,
+        reasonCodes: ["WEAK_INTENT"]
+      }),
+      projectContext: () => ({ packageId: "context-follow-up-none", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("general-task");
+    expect(boundary.route.source).toBe("default");
+    expect(boundary.route.warnings).toEqual(["PROTOCOL_CLASSIFICATION_LOW_CONFIDENCE"]);
+  });
+
+  it("emits a consistency warning when general-task is selected but data tools are exposed", async () => {
+    const events: ProtocolEvent[] = [];
+    await createRunProtocolBoundary({
+      runId: "run-consistency-mismatch",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      explicitProtocol: { protocolId: "general-task", protocolVersion: "1" },
+      initialContextPackageRef: { packageId: "context-consistency", revision: 0 },
+      tools: { inspect_schema: { execute: async () => ({}) } },
+      routingContext: { selectedDatasourceId: "orders-db" },
+      runtimeOptions: { onEvent: (event) => events.push(event) },
+      projectContext: () => ({ packageId: "context-consistency", revision: 0 })
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "protocol.route.consistency.warning",
+      payload: { code: "PROTOCOL_TOOL_POLICY_MISMATCH", reason: expect.stringContaining("general-task rejects every data action") }
+    }));
+  });
+
+  it("does not emit a consistency warning when no datasource is selected", async () => {
+    const events: ProtocolEvent[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-consistency-no-datasource",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      explicitProtocol: { protocolId: "general-task", protocolVersion: "1" },
+      initialContextPackageRef: { packageId: "context-consistency-none", revision: 0 },
+      tools: { inspect_schema: { execute: async () => ({}) } },
+      runtimeOptions: { onEvent: (event) => events.push(event) },
+      projectContext: () => ({ packageId: "context-consistency-none", revision: 0 })
+    });
+
+    expect(events.some((event) => event.type === "protocol.route.consistency.warning")).toBe(false);
+    expect(boundary.route.warnings).not.toContain("PROTOCOL_TOOL_POLICY_MISMATCH");
+  });
 });
 
 const liveSemanticProvider = (): { resolve(request: SemanticRequest): Promise<SemanticResolution> } => ({

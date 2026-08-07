@@ -13,6 +13,7 @@ import {
   type RunProtocolBoundary,
   type ContextPackageRef,
   type ProtocolStateStore,
+  type RoutingContext,
   type TaskStateRuntime,
   type WorkspaceAttachment
 } from "@datafoundry/agent-runtime";
@@ -84,6 +85,10 @@ type CreateRunAgentAssemblyInput = {
   userId: string;
   workspaceId: string;
   workspaceRoot: string;
+  /** Compact routing context resolved by the caller from the previous run's
+   * protocol snapshot + selected resources. Lets follow-up intents inherit the
+   * prior protocol so short prompts route correctly. */
+  routingContext?: RoutingContext;
 };
 
 /** Create the canonical agent run context used by Mastra tools, projections, and metadata. */
@@ -174,6 +179,7 @@ export const createRunAgentAssembly = async (
     selectedSkills: input.selectedSkills,
     skillSelection: input.skillSelection,
     taskStateRuntime: input.taskStateRuntime,
+    ...(input.routingContext ? { routingContext: input.routingContext } : {}),
     ...(!input.interactionResume && input.goal ? { goal: input.goal } : {}),
     ...(input.effectiveRunConfig.fileIds.length > 0
       ? { workspaceAttachments: resolveWorkspaceAttachments(input) }
