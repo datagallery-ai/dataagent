@@ -84,6 +84,7 @@ import {
   type SessionIntent
 } from "./protocol/run-protocol-boundary.js";
 import { DATA_ACTION_NAMES } from "./protocol/data-actions.js";
+import { buildToolPlan, type ToolPlanEntry } from "./tools/tool-plan.js";
 import type { ProtocolClassifier, ProtocolIdentity } from "./protocol/protocol-router.js";
 import { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 import {
@@ -286,6 +287,8 @@ export const createDataFoundry = async (
   workspaceDir: string;
   sessionDir: string;
   protocol: RunProtocolBoundary;
+  /** Why each tool is (not) exposed this run — for diagnostics and audit surfaces. */
+  toolPlan: ToolPlanEntry[];
   flushProtocolEvents(): void;
   destroyWorkspace(): Promise<void>;
 }> => {
@@ -449,15 +452,6 @@ export const createDataFoundry = async (
   const skillTools = runWorkspace.workspace.skills ? createSkillTools(runWorkspace.workspace.skills) : {};
   runWorkspace.workspace.setToolsConfig({ enabled: false });
   const dataToolsEnabled = (input.runContext.enabled_datasource_ids?.length ?? 0) > 0;
-  const availableTools = {
-    ...(dataToolsEnabled ? registry.mastraTools : {}),
-    ...fileAssetTools,
-    ...knowledgeTools,
-    ...taskTools,
-    ...collaborationTools,
-    ...workspaceTools,
-    ...skillTools
-  };
   // Platform tools for enabled KB / datasources must survive skill allowed-tools
   // unions: maxSkills truncation often leaves import-oriented skills that never
   // declare retrieve_knowledge or SQL tools.
@@ -470,15 +464,21 @@ export const createDataFoundry = async (
       alwaysAllowTools.add(name);
     }
   }
-  const selectedPolicyTools = selectToolsByPolicy(
-    availableTools,
-    input.skillSelection,
-    alwaysAllowTools
-  );
-  const selectedTools = {
-    ...selectedPolicyTools,
-    ...(input.mcpTools ?? {})
-  };
+  const toolPlan = buildToolPlan({
+    groups: [
+      { source: "data", tools: dataToolsEnabled ? registry.mastraTools : {} },
+      { source: "files", tools: fileAssetTools },
+      { source: "knowledge", tools: knowledgeTools },
+      { source: "task", tools: taskTools },
+      { source: "collaboration", tools: collaborationTools },
+      { source: "workspace", tools: workspaceTools },
+      { source: "skill", tools: skillTools }
+    ],
+    ...(input.mcpTools ? { mcpTools: input.mcpTools } : {}),
+    alwaysAllow: alwaysAllowTools,
+    skillPolicy: input.skillSelection?.effectiveToolPolicy
+  });
+  const selectedTools = toolPlan.exposedTools;
   const selectedDatasourceId = input.runContext.selected_datasource_id;
   const deferredProtocolEvents: ProtocolEvent[] = [];
   let protocolEventsReady = false;
@@ -584,22 +584,13 @@ export const createDataFoundry = async (
               evidence_requirement_ids: z.array(z.string().min(1)).optional()
             })).min(1).max(AGENT_RUNTIME_LIMITS.requirementCommitMaxClaims)
           }),
-          execute: async (toolInput, options) => {
-            const toolCallId = protocolToolCallId(options);
-            try {
-              const result = await protocol.actionRouter.execute({
-                runId: input.runContext.run_id,
-                segmentId: protocol.segmentId,
-                actionId: toolCallId ?? `analysis-requirements-commit:${Date.now()}`,
-                actionName: "analysis.requirements.commit",
-                input: toolInput,
-                idempotencyKey: toolCallId ?? JSON.stringify(toolInput)
-              });
-              return result.observation;
-            } catch (error) {
-              return createToolErrorObservation(error, { toolName: "analysis_requirements_commit" });
-            }
-          }
+          execute: createProtocolBoundExecute({
+            actionName: "analysis.requirements.commit",
+            fallbackIdPrefix: "analysis-requirements-commit",
+            protocol,
+            runId: input.runContext.run_id,
+            toolName: "analysis_requirements_commit"
+          })
         })
       }
     : {};
@@ -615,22 +606,13 @@ export const createDataFoundry = async (
         reasonCodes: z.array(z.string().min(1)).min(1),
         unresolvedGoals: z.array(z.string())
       }),
-      execute: async (toolInput, options) => {
-        const toolCallId = protocolToolCallId(options);
-        try {
-          const result = await protocol.actionRouter.execute({
-            runId: input.runContext.run_id,
-            segmentId: protocol.segmentId,
-            actionId: toolCallId ?? `protocol-handoff:${Date.now()}`,
-            actionName: "protocol.handoff.propose",
-            input: toolInput,
-            idempotencyKey: toolCallId ?? JSON.stringify(toolInput)
-          });
-          return result.observation;
-        } catch (error) {
-          return createToolErrorObservation(error, { toolName: "protocol_handoff" });
-        }
-      }
+      execute: createProtocolBoundExecute({
+        actionName: "protocol.handoff.propose",
+        fallbackIdPrefix: "protocol-handoff",
+        protocol,
+        runId: input.runContext.run_id,
+        toolName: "protocol_handoff"
+      })
     })
   };
   const agent = new Agent({
@@ -724,6 +706,8 @@ export const createDataFoundry = async (
     ...(goalRuntime ? { goalRuntime } : {}),
     isolation: runWorkspace.isolation,
     protocol,
+    // Why each tool is (not) exposed this run — for diagnostics and audit surfaces.
+    toolPlan: toolPlan.entries,
     flushProtocolEvents: () => {
       protocolEventsReady = true;
       while (deferredProtocolEvents.length > 0) {
@@ -1142,25 +1126,6 @@ ${policies.map((policy, index) => `${index + 1}. ${policy}`).join("\n")}
 `;
 };
 
-const selectToolsByPolicy = <TTool>(
-  availableTools: Record<string, TTool>,
-  skillSelection: SkillSelectionResult | undefined,
-  alwaysAllowTools: ReadonlySet<string> = new Set()
-): Record<string, TTool> => {
-  const policy = skillSelection?.effectiveToolPolicy;
-  const deniedTools = new Set(policy?.deniedTools ?? []);
-  const allowedTools = policy?.allowedTools ? new Set(policy.allowedTools) : undefined;
-  const skillMetaTools = new Set(["skill", "skill_search", "skill_read"]);
-  return Object.fromEntries(Object.entries(availableTools).filter(([name]) =>
-    !deniedTools.has(name)
-    && (
-      alwaysAllowTools.has(name)
-      || !allowedTools
-      || allowedTools.has(name)
-      || skillMetaTools.has(name)
-    )
-  ));
-};
 
 const createReadOnlyWorkingMemoryProcessor = async (
   runtime: TaskStateRuntime
@@ -1457,6 +1422,34 @@ const isProtocolRuntimeAction = (actionName: string): boolean =>
   || actionName.startsWith("data.query.")
   || actionName === "semantic.context.resolve";
 
+/**
+ * Shared execute() body for tools that route straight into the protocol boundary
+ * (analysis_requirements_commit, protocol_handoff). Reads protocol.segmentId at call
+ * time so executions after a handoff land in the active segment.
+ */
+const createProtocolBoundExecute = (bound: {
+  actionName: string;
+  fallbackIdPrefix: string;
+  protocol: Pick<RunProtocolBoundary, "actionRouter" | "segmentId">;
+  runId: string;
+  toolName: string;
+}) => async (toolInput: unknown, options?: unknown): Promise<unknown> => {
+  const toolCallId = protocolToolCallId(options);
+  try {
+    const result = await bound.protocol.actionRouter.execute({
+      runId: bound.runId,
+      segmentId: bound.protocol.segmentId,
+      actionId: toolCallId ?? `${bound.fallbackIdPrefix}:${Date.now()}`,
+      actionName: bound.actionName,
+      input: toolInput,
+      idempotencyKey: toolCallId ?? JSON.stringify(toolInput)
+    });
+    return result.observation;
+  } catch (error) {
+    return createToolErrorObservation(error, { toolName: bound.toolName });
+  }
+};
+
 const protocolToolCallId = (options: unknown): string | undefined => {
   if (!isRecord(options) || !isRecord(options.agent)) {
     return undefined;
@@ -1497,6 +1490,8 @@ export { ProtocolRegistry } from "./protocol/protocol-registry.js";
 export { ProtocolRouter } from "./protocol/protocol-router.js";
 export { ProtocolRuntime } from "./protocol/protocol-runtime.js";
 export { DATA_ACTION_NAMES, DATA_ACTIONS, isDataActionName } from "./protocol/data-actions.js";
+export { buildToolPlan } from "./tools/tool-plan.js";
+export type * from "./tools/tool-plan.js";
 export { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 export { createRunProtocolBoundary } from "./protocol/run-protocol-boundary.js";
 export type * from "./protocol/run-protocol-boundary.js";
