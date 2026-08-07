@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import os
 import shutil
 import subprocess
 import sys
@@ -618,6 +619,10 @@ def create_sandbox(
     """
     kwargs = {"workspace_root": workspace_root, "skill_aliases": skill_aliases, "allow_read_roots": allow_read_roots}
     if not enabled:
+        return NoopSandbox(**kwargs)
+    # bwrap is Linux-only; skip the capability probe on Windows entirely.
+    if os.name == "nt":
+        logger.info("Windows detected: bwrap sandbox not available, using NoopSandbox")
         return NoopSandbox(**kwargs)
     policy = policy or SandboxPolicy()
     sandbox = BubblewrapSandbox(policy, **kwargs)

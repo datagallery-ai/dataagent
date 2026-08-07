@@ -72,6 +72,11 @@ _BUILTIN_LOCAL_TOOL_CATALOG: dict[str, dict[str, str]] = {
 }
 
 
+def _tool_name(spec: dict[str, Any]) -> str:
+    """Extract the normalized tool name from a tool spec dict."""
+    return str(spec.get("name") or spec.get("function") or "").strip()
+
+
 def _builtin_local_tool_specs_from_constants() -> list[dict[str, Any]]:
     """Resolve DEFAULT_BUILTIN_LOCAL_TOOLS against the catalog (intersection by tool name)."""
     specs: list[dict[str, Any]] = []
@@ -970,6 +975,14 @@ class ToolManager:
             raw = tools_config.get("builtin")
             if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
                 specs = list(raw)
+        # Remove tools declared in TOOLS._replaces (set by suite.yaml "replaces" field).
+        if isinstance(tools_config, Mapping) and "_replaces" in tools_config:
+            replaces = tools_config.get("_replaces")
+            if isinstance(replaces, Sequence) and not isinstance(replaces, (str, bytes)):
+                replace_set = {str(item).strip() for item in replaces if str(item).strip()}
+                if replace_set:
+                    specs = [s for s in specs if _tool_name(s) not in replace_set]
+                    logger.debug("Suite replaces: removed builtin tools {} from registration", sorted(replace_set))
         self._register_local_tools(specs)
 
     def _register_hitl_tool(self):

@@ -76,6 +76,11 @@ def _build_one_suite_layer(
     if tools_layer:
         layer.setdefault("TOOLS", {}).update(tools_layer)
 
+    # Propagate suite.yaml "replaces" → TOOLS._replaces for ToolManager consumption.
+    replaces = suite.meta.get("replaces")
+    if replaces and isinstance(replaces, list):
+        layer.setdefault("TOOLS", {})["_replaces"] = list(replaces)
+
     hooks_layer = _load_hooks_layer(root, suite_name=suite.name)
     if hooks_layer:
         layer["HOOKS"] = hooks_layer
