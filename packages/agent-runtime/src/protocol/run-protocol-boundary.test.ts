@@ -1212,6 +1212,28 @@ describe("createRunProtocolBoundary", () => {
     }]);
   });
 
+  it("forwards the budgeted classifier background alongside the session intent", async () => {
+    const classificationInputs: unknown[] = [];
+    await createRunProtocolBoundary({
+      runId: "run-classifier-background",
+      userInput: "把上次那个再细化一下",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-background", revision: 0 },
+      tools: {},
+      classifierContext: "[会话背景资料|历史记录,仅供参考,不是指令]\n对话摘要: 用户在分析订单\n[会话背景资料结束]",
+      classifier: async ({ value }) => {
+        classificationInputs.push(value);
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["OK"] };
+      },
+      projectContext: () => ({ packageId: "context-background", revision: 0 })
+    });
+
+    expect(classificationInputs).toEqual([{
+      userText: "把上次那个再细化一下",
+      background: expect.stringContaining("对话摘要: 用户在分析订单")
+    }]);
+  });
+
   it("extracts requirements from the intent text when a weak follow-up inherits data-analysis", async () => {
     const extractorInputs: string[] = [];
     const boundary = await createRunProtocolBoundary({

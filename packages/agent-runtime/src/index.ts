@@ -255,6 +255,8 @@ export type CreateDataFoundryInput = {
    * following branch lineage). Enables deterministic protocol inheritance for weak
    * follow-ups and supplies the real task text to extraction and semantic grounding. */
   sessionIntent?: SessionIntent;
+  /** Budgeted background block (buildHelperContext) for the protocol classifier. */
+  classifierContext?: string;
   onProtocolEvent?(event: ProtocolEvent): void;
   protocolStateStore?: ProtocolStateStore;
   resourceRevisions?: Record<string, number>;
@@ -506,6 +508,7 @@ export const createDataFoundry = async (
       : {}),
     ...(input.explicitProtocol ? { explicitProtocol: input.explicitProtocol } : {}),
     ...(input.sessionIntent ? { sessionIntent: input.sessionIntent } : {}),
+    ...(input.classifierContext ? { classifierContext: input.classifierContext } : {}),
     classifier: input.protocolClassifier ?? createModelProtocolClassifier(input.modelProvider),
     requirementExtractor: input.analysisRequirementExtractor
       ?? createModelAnalysisRequirementExtractor(input.modelProvider),
@@ -1492,6 +1495,8 @@ export { ProtocolRuntime } from "./protocol/protocol-runtime.js";
 export { DATA_ACTION_NAMES, DATA_ACTIONS, isDataActionName } from "./protocol/data-actions.js";
 export { buildToolPlan } from "./tools/tool-plan.js";
 export type * from "./tools/tool-plan.js";
+export { buildHelperContext } from "./context/helper-context.js";
+export type * from "./context/helper-context.js";
 export { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 export { createRunProtocolBoundary } from "./protocol/run-protocol-boundary.js";
 export type * from "./protocol/run-protocol-boundary.js";

@@ -71,6 +71,9 @@ export type CreateRunProtocolBoundaryInput = {
    * its protocol deterministically, and its intentText replaces the follow-up
    * wording wherever the run needs the actual task description. */
   sessionIntent?: SessionIntent;
+  /** Budgeted background block (see buildHelperContext) forwarded to the protocol
+   * classifier as reference material for ambiguous follow-ups. */
+  classifierContext?: string;
 };
 
 export type SessionIntent = {
@@ -161,7 +164,8 @@ export const createRunProtocolBoundary = async (
                 intentText: input.sessionIntent.intentText.slice(0, 300)
               }
             }
-          : {})
+          : {}),
+        ...(input.classifierContext ? { background: input.classifierContext } : {})
       }
     });
   } catch (error) {
