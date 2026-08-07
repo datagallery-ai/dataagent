@@ -83,6 +83,8 @@ type CreateRunAgentAssemblyInput = {
   /** Session intent resolved by the caller; enables deterministic protocol
    * inheritance for weak follow-ups. */
   sessionIntent?: SessionIntent | undefined;
+  /** Budgeted background block for the protocol classifier. */
+  classifierContext?: string | undefined;
   skillSelection: SkillSelectionResult;
   taskStateRuntime: TaskStateRuntime;
   userId: string;
@@ -177,6 +179,7 @@ export const createRunAgentAssembly = async (
     sessionOutputService: input.sessionOutputService,
     selectedSkills: input.selectedSkills,
     ...(input.sessionIntent ? { sessionIntent: input.sessionIntent } : {}),
+    ...(input.classifierContext ? { classifierContext: input.classifierContext } : {}),
     skillSelection: input.skillSelection,
     taskStateRuntime: input.taskStateRuntime,
     ...(!input.interactionResume && input.goal ? { goal: input.goal } : {}),

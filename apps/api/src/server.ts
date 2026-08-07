@@ -52,6 +52,7 @@ import {
 } from "./auth/routes.js";
 import { createMetadataContextPackageRecorder } from "./context-package-recorder.js";
 import { MetadataProtocolStateStore } from "./protocol-state-store.js";
+import { buildHelperContext } from "@datafoundry/agent-runtime";
 import { replayPendingProtocolEvents } from "./protocol-event-recovery.js";
 import { persistSessionIntentFromRoute, resolveSessionIntentForRun } from "./session-intent.js";
 import { assistantMessageIdFromEvent, completeProtocolRun } from "./protocol-run-completion.js";
@@ -649,6 +650,16 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           userId: this.input.user.id,
           sessionId
         });
+        const classifierContext = buildHelperContext({
+          ...(sessionIntent
+            ? { sessionIntent: { protocolId: sessionIntent.protocolId, intentText: sessionIntent.intentText } }
+            : {}),
+          conversationSummary: this.input.metadataStore.conversationSummaries.latest({
+            user_id: this.input.user.id,
+            session_id: sessionId
+          })?.summary_text,
+          relevantMemories: longTermMemories.map((memory) => memory.content_text)
+        });
         const agentAssembly = await createRunAgentAssembly({
           abortSignal: runAbortController.signal,
           contextPackageRecorder,
@@ -681,6 +692,7 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           selectedSkills,
           skillSelection,
           ...(sessionIntent ? { sessionIntent } : {}),
+          ...(classifierContext ? { classifierContext: classifierContext.text } : {}),
           taskStateRuntime: this.input.taskStateRuntime,
           userId: this.input.user.id,
           workspaceId: this.input.workspaceId,
@@ -994,7 +1006,14 @@ class DataFoundryAgUiAgent extends AbstractAgent {
                   modelTemperature: modelSettings?.temperature,
                   sessionId,
                   userId: this.input.user.id,
-                  userInput
+                  // Title the session by its recorded task, not by a weak follow-up:
+                  // a branched session whose first message is "再次尝试" should carry
+                  // its inherited intent as the title.
+                  userInput: resolveSessionIntentForRun({
+                    metadataStore: this.input.metadataStore,
+                    userId: this.input.user.id,
+                    sessionId
+                  })?.intentText ?? userInput
                 });
               }
             }
