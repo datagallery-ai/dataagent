@@ -561,8 +561,15 @@ const stripLeadingSqlComments = (sql: string): string => {
   return remaining;
 };
 
+/**
+ * Routing ACCELERATOR only: a keyword hit skips the classifier call for obviously
+ * analytic requests. It gates no quality-critical path — requirement extraction and
+ * semantic grounding follow the resolved route, never this regex — so a miss costs
+ * one classifier call and a false hit is corrected by session-intent inheritance.
+ */
 const analyticIntent = (userInput: string): boolean =>
-  /\b(?:sql|query|metric|analytics?|statistics?)\b|分析|统计|指标|数据|销售额/iu.test(userInput);
+  /\b(?:sql|query|queries|metrics?|analytics?|analyz|analys|statistics?|revenue|sales|orders?|trends?|breakdown|aggregate|average|median|count|sum|percentile|top\s?\d|group\s?by|cohort|retention|conversion|funnel)\b|分析|统计|指标|数据|销售额|营收|订单量|环比|同比|留存|转化|漏斗|分组|排名|占比|中位数|平均/iu
+    .test(userInput);
 
 /**
  * The task description this run should analyze: the recorded session intent for a

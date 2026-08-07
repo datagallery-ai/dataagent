@@ -1194,7 +1194,7 @@ describe("createRunProtocolBoundary", () => {
     const classificationInputs: unknown[] = [];
     await createRunProtocolBoundary({
       runId: "run-intent-classifier-context",
-      userInput: "把结果按地区分组再排一下",
+      userInput: "把上次那个再细化一下",
       authorizedProtocolIds: ["general-task", "data-analysis"],
       initialContextPackageRef: { packageId: "context-intent-4", revision: 0 },
       tools: {},
@@ -1207,7 +1207,7 @@ describe("createRunProtocolBoundary", () => {
     });
 
     expect(classificationInputs).toEqual([{
-      userText: "把结果按地区分组再排一下",
+      userText: "把上次那个再细化一下",
       sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" }
     }]);
   });
@@ -1329,6 +1329,26 @@ describe("createRunProtocolBoundary", () => {
     expect(boundary.protocolRuntime.getState("run-handoff-extraction").domain).toMatchObject({
       requirements: expect.arrayContaining([expect.objectContaining({ description: "查数" })])
     });
+  });
+
+  it("accelerates full english analytic phrasing without a classifier call", async () => {
+    let classifierCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-english-accelerator",
+      userInput: "How did revenue trend last quarter?",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-english", revision: 0 },
+      tools: {},
+      classifier: async () => {
+        classifierCalls += 1;
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["X"] };
+      },
+      projectContext: () => ({ packageId: "context-english", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("data-analysis");
+    expect(boundary.route.reasonCodes).toEqual(["ANALYTIC_INTENT"]);
+    expect(classifierCalls).toBe(0);
   });
 
   it("keeps weak follow-ups on the default route when no session intent exists", async () => {
