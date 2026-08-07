@@ -16,6 +16,7 @@ import type {
   AnalysisContractGroundingInput
 } from "./model-analysis-contract-grounder.js";
 import type { AnalysisValidationFinding } from "./analysis-contract.js";
+import type { AnalysisRequirement } from "./analysis-requirements.js";
 import { InMemoryProtocolStateStore } from "./in-memory-protocol-state-store.js";
 import { ProtocolHandoffCoordinator } from "./protocol-handoff-coordinator.js";
 import { ProtocolRegistry } from "./protocol-registry.js";
@@ -65,6 +66,17 @@ export type CreateRunProtocolBoundaryInput = {
   semanticRequest?: Omit<SemanticRequest, "query">;
   requirementExtractor?: AnalysisRequirementExtractor;
   analysisContractGrounder?: AnalysisContractGrounder;
+  /** Authoritative session intent (persisted per session, resolved through branch
+   * lineage by the caller). Weak continuation follow-ups such as "再次尝试" inherit
+   * its protocol deterministically, and its intentText replaces the follow-up
+   * wording wherever the run needs the actual task description. */
+  sessionIntent?: SessionIntent;
+};
+
+export type SessionIntent = {
+  protocolId: string;
+  protocolVersion: string;
+  intentText: string;
 };
 
 export type RunProtocolBoundary = {
@@ -96,15 +108,13 @@ export const createRunProtocolBoundary = async (
   ) {
     throw new Error("PROTOCOL_RESUME_SELECTION_MISMATCH");
   }
-  const shouldExtractRequirements = !persistedState
-    && Boolean(input.requirementExtractor)
-    && (input.explicitProtocol?.protocolId === "data-analysis" || analyticIntent(input.userInput));
-  const userRequirements = shouldExtractRequirements
-    ? await input.requirementExtractor?.({ userText: input.userInput }) ?? []
-    : [];
+  // Routing needs only protocol identities, so definitions register requirement-free
+  // and the data-analysis definition is rebuilt once extraction has run. Extraction
+  // itself happens after routing: whether to extract is the route's decision, not a
+  // keyword guess about one sentence.
   const protocolRegistry = new ProtocolRegistry();
   protocolRegistry.register(createGeneralTaskProtocol(actionNames));
-  protocolRegistry.register(createDataAnalysisProtocol(actionNames, userRequirements));
+  protocolRegistry.register(createDataAnalysisProtocol(actionNames));
   const router = new ProtocolRouter(protocolRegistry, {
     ...(input.classifier ? { classifier: input.classifier } : {})
   });
@@ -120,15 +130,39 @@ export const createRunProtocolBoundary = async (
             priority: 1000,
             reasonCode: "PROTOCOL_SEGMENT_RESTORED"
           }]
-        : analyticIntent(input.userInput)
-        ? [{
-            protocolId: "data-analysis",
-            protocolVersion: "1",
-            priority: 100,
-            reasonCode: "ANALYTIC_INTENT"
-          }]
-        : [],
-      classificationInput: { userText: input.userInput }
+        : [
+            // Session-intent inheritance outranks the keyword accelerator: a recorded
+            // intent is a fact about the session, the regex is only a guess about one
+            // sentence. Neither requires a model call.
+            ...(input.sessionIntent && weakContinuationIntent(input.userInput)
+              ? [{
+                  protocolId: input.sessionIntent.protocolId,
+                  protocolVersion: input.sessionIntent.protocolVersion,
+                  priority: 300,
+                  reasonCode: "SESSION_INTENT_INHERITED"
+                }]
+              : []),
+            ...(analyticIntent(input.userInput)
+              ? [{
+                  protocolId: "data-analysis",
+                  protocolVersion: "1",
+                  priority: 100,
+                  reasonCode: "ANALYTIC_INTENT"
+                }]
+              : [])
+          ],
+      classificationInput: {
+        userText: input.userInput,
+        ...(input.sessionIntent
+          ? {
+              sessionIntent: {
+                protocolId: input.sessionIntent.protocolId,
+                protocolVersion: input.sessionIntent.protocolVersion,
+                intentText: input.sessionIntent.intentText.slice(0, 300)
+              }
+            }
+          : {})
+      }
     });
   } catch (error) {
     input.runtimeOptions?.onEvent?.({
@@ -142,6 +176,26 @@ export const createRunProtocolBoundary = async (
       payload: { reason: error instanceof Error ? error.message : String(error) }
     });
     throw error;
+  }
+  const intentText = effectiveIntentText(input);
+  let userRequirements: AnalysisRequirement[] = [];
+  let requirementsExtracted = Boolean(persistedState);
+  const extractRequirementsInto = async (): Promise<void> => {
+    if (requirementsExtracted || !input.requirementExtractor) {
+      return;
+    }
+    requirementsExtracted = true;
+    userRequirements = await input.requirementExtractor({ userText: intentText }) ?? [];
+    if (userRequirements.length > 0) {
+      protocolRegistry.replace(createDataAnalysisProtocol(actionNames, userRequirements));
+    }
+  };
+  if (route.definition.id === "data-analysis") {
+    await extractRequirementsInto();
+    const refreshed = protocolRegistry.find(route.definition.id, route.definition.version);
+    if (refreshed) {
+      route = { ...route, definition: refreshed };
+    }
   }
   let activeProtocolId = route.definition.id;
   const reduceAction = (state: unknown, actionName: string, result: unknown): unknown =>
@@ -265,7 +319,7 @@ export const createRunProtocolBoundary = async (
         ? analysisContractGroundingEventResult(rawResult)
         : undefined;
     },
-    afterAction: ({ actionName, rawResult }) => {
+    afterAction: async ({ actionName, rawResult }) => {
       if (actionName !== "protocol.handoff.propose") {
         return;
       }
@@ -273,6 +327,11 @@ export const createRunProtocolBoundary = async (
       const targetProtocolVersion = directString(rawResult, "targetProtocolVersion");
       if (!targetProtocolId || !targetProtocolVersion) {
         throw new Error("PROTOCOL_HANDOFF_PROPOSAL_INVALID");
+      }
+      if (targetProtocolId === "data-analysis") {
+        // A general-task run handing off to data-analysis still owes the analysis its
+        // requirements; extract them now so the new segment starts with a full contract.
+        await extractRequirementsInto();
       }
       const current = protocolRuntime.getState(input.runId, segmentId);
       const handoff = handoffCoordinator.handoff({
@@ -502,8 +561,40 @@ const stripLeadingSqlComments = (sql: string): string => {
   return remaining;
 };
 
+/**
+ * Routing ACCELERATOR only: a keyword hit skips the classifier call for obviously
+ * analytic requests. It gates no quality-critical path — requirement extraction and
+ * semantic grounding follow the resolved route, never this regex — so a miss costs
+ * one classifier call and a false hit is corrected by session-intent inheritance.
+ */
 const analyticIntent = (userInput: string): boolean =>
-  /\b(?:sql|query|metric|analytics?|statistics?)\b|分析|统计|指标|数据|销售额/iu.test(userInput);
+  /\b(?:sql|query|queries|metrics?|analytics?|analyz|analys|statistics?|revenue|sales|orders?|trends?|breakdown|aggregate|average|median|count|sum|percentile|top\s?\d|group\s?by|cohort|retention|conversion|funnel)\b|分析|统计|指标|数据|销售额|营收|订单量|环比|同比|留存|转化|漏斗|分组|排名|占比|中位数|平均/iu
+    .test(userInput);
+
+/**
+ * The task description this run should analyze: the recorded session intent for a
+ * weak continuation follow-up (with the follow-up appended as a trailing note), or
+ * the user's own words whenever they carry a task of their own.
+ */
+const effectiveIntentText = (input: CreateRunProtocolBoundaryInput): string =>
+  input.sessionIntent && weakContinuationIntent(input.userInput)
+    ? `${input.sessionIntent.intentText}\n(后续指示: ${input.userInput})`
+    : input.userInput;
+
+/**
+ * Short "try again"-style follow-ups that carry no task of their own. They are the
+ * canonical case for inheriting the recorded session intent: the words say nothing,
+ * the session record says everything. The length cap keeps sentences that add real
+ * new instructions out of the deterministic path (the classifier handles those with
+ * the session intent as context).
+ */
+const weakContinuationIntent = (userInput: string): boolean => {
+  const normalized = userInput.trim();
+  return normalized.length > 0
+    && normalized.length <= 24
+    && /再次尝试|再试|重试|继续|接着|重来|再来一次|重新来|重新试|重新跑|try again|retry|continue|resume|keep going|one more time/iu
+      .test(normalized);
+};
 
 const allowAction = (): ProtocolGuardResult => ({ allowed: true });
 
@@ -606,7 +697,9 @@ const dataAnalysisAutomaticActions = (input: {
       actionName: "semantic.context.resolve",
       input: {
         ...boundaryInput.semanticRequest,
-        query: boundaryInput.userInput,
+        // The semantic service needs the actual task description; a weak follow-up
+        // like "再次尝试" would only return noise, so inherit the session intent text.
+        query: effectiveIntentText(boundaryInput),
         physicalSchema: input.rawResult
       }
     }];

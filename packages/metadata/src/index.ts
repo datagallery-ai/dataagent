@@ -115,6 +115,21 @@ export type SessionBranchRecord = {
   created_at: string;
 };
 
+/**
+ * Authoritative record of what a session is working on. The protocol router
+ * inherits it deterministically for weak follow-ups ("再次尝试"), and helper
+ * models use intent_text instead of the ambiguous follow-up wording.
+ */
+export type SessionIntentRecord = {
+  user_id: string;
+  session_id: string;
+  protocol_id: string;
+  protocol_version: string;
+  intent_text: string;
+  source_run_id: string;
+  updated_at: string;
+};
+
 export type RunRecord = {
   id: string;
   user_id: string;
@@ -643,6 +658,7 @@ export class MetadataStore {
   readonly runEvents: RunEventRepository;
   readonly runs: RunRepository;
   readonly sessionBranches: SessionBranchRepository;
+  readonly sessionIntents: SessionIntentRepository;
   readonly sessions: SessionRepository;
   readonly secrets: EncryptedSecretStore;
   readonly sqlAuditLogs: SqlAuditLogRepository;
@@ -664,6 +680,7 @@ export class MetadataStore {
     this.runs = new RunRepository(db);
     this.runEvents = new RunEventRepository(db);
     this.sessionBranches = new SessionBranchRepository(db);
+    this.sessionIntents = new SessionIntentRepository(db);
     this.conversationMessages = new ConversationMessageRepository(db);
     this.conversationSummaries = new ConversationSummaryRepository(db);
     this.artifacts = new ArtifactRepository(db);
@@ -1316,6 +1333,10 @@ export class SessionRepository {
       `).run(input.user_id, ...sessionIds, ...sessionIds, ...sessionIds);
 
       this.db.prepare(`
+        DELETE FROM session_intents WHERE user_id = ? AND session_id IN (${placeholders})
+      `).run(...scope);
+
+      this.db.prepare(`
         DELETE FROM artifact_versions
         WHERE user_id = ?
           AND artifact_id IN (
@@ -1520,6 +1541,83 @@ export class SessionBranchRepository {
       ORDER BY created_at ASC, child_session_id ASC
     `).all(input.user_id, ...parentIds)
       .map(mapRequiredSessionBranchRow);
+  }
+}
+
+export class SessionIntentRepository {
+  constructor(private readonly db: DatabaseSync) {}
+
+  upsert(input: {
+    user_id: string;
+    session_id: string;
+    protocol_id: string;
+    protocol_version: string;
+    intent_text: string;
+    source_run_id: string;
+  }): SessionIntentRecord {
+    const updatedAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO session_intents (
+        user_id, session_id, protocol_id, protocol_version, intent_text, source_run_id, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, session_id) DO UPDATE SET
+        protocol_id = excluded.protocol_id,
+        protocol_version = excluded.protocol_version,
+        intent_text = excluded.intent_text,
+        source_run_id = excluded.source_run_id,
+        updated_at = excluded.updated_at
+    `).run(
+      input.user_id,
+      input.session_id,
+      input.protocol_id,
+      input.protocol_version,
+      input.intent_text,
+      input.source_run_id,
+      updatedAt
+    );
+    const record = this.find({ user_id: input.user_id, session_id: input.session_id });
+    if (!record) {
+      throw new Error(`SESSION_INTENT_UPSERT_FAILED:${input.session_id}`);
+    }
+    return record;
+  }
+
+  find(input: { user_id: string; session_id: string }): Optional<SessionIntentRecord> {
+    return mapSessionIntentRow(
+      this.db.prepare(`
+        SELECT * FROM session_intents WHERE user_id = ? AND session_id = ?
+      `).get(input.user_id, input.session_id)
+    );
+  }
+
+  /**
+   * Resolve the governing intent for a session. A branched session starts with no
+   * intent of its own but continues its parent's task, so resolution walks up the
+   * session_branches lineage until an intent is found. Depth is bounded so a
+   * corrupt lineage cannot loop.
+   */
+  resolveForSession(input: {
+    user_id: string;
+    session_id: string;
+    max_depth?: number;
+  }): Optional<SessionIntentRecord> {
+    const maxDepth = Math.max(1, input.max_depth ?? 10);
+    let sessionId = input.session_id;
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+      const intent = this.find({ user_id: input.user_id, session_id: sessionId });
+      if (intent) {
+        return intent;
+      }
+      const parent = this.db.prepare(`
+        SELECT parent_session_id FROM session_branches WHERE user_id = ? AND child_session_id = ?
+      `).get(input.user_id, sessionId);
+      const parentSessionId = isRecord(parent) ? optionalString(parent.parent_session_id) : undefined;
+      if (!parentSessionId || parentSessionId === sessionId) {
+        return undefined;
+      }
+      sessionId = parentSessionId;
+    }
+    return undefined;
   }
 }
 
@@ -3827,6 +3925,9 @@ const runMigrations = (db: DatabaseSync): void => {
   runSchemaMigration(db, "0017_protocol_event_journal", "Ensure protocol event journal schema", () => {
     initializeProtocolEventJournalSchema(db);
   });
+  runSchemaMigration(db, "0018_session_intents", "Ensure session intent schema", () => {
+    initializeSessionIntentSchema(db);
+  });
 };
 
 const initializeSchemaMigrationTable = (db: DatabaseSync): void => {
@@ -3976,6 +4077,23 @@ const initializeProtocolStateSnapshotSchema = (db: DatabaseSync): void => {
     );
     CREATE INDEX IF NOT EXISTS idx_protocol_state_snapshots_user_run
       ON protocol_state_snapshots(user_id, run_id, updated_at);
+  `);
+};
+
+const initializeSessionIntentSchema = (db: DatabaseSync): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_intents (
+      user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      protocol_id TEXT NOT NULL,
+      protocol_version TEXT NOT NULL,
+      intent_text TEXT NOT NULL,
+      source_run_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, session_id),
+      FOREIGN KEY (user_id, session_id) REFERENCES sessions(user_id, id),
+      FOREIGN KEY (user_id, source_run_id) REFERENCES runs(user_id, id)
+    );
   `);
 };
 
@@ -4692,6 +4810,21 @@ const mapRequiredSessionBranchRow = (row: unknown): SessionBranchRecord => {
     throw new Error("Invalid session branch row");
   }
   return branch;
+};
+
+const mapSessionIntentRow = (row: unknown): Optional<SessionIntentRecord> => {
+  if (!isRecord(row)) {
+    return undefined;
+  }
+  return {
+    user_id: requiredString(row, "user_id"),
+    session_id: requiredString(row, "session_id"),
+    protocol_id: requiredString(row, "protocol_id"),
+    protocol_version: requiredString(row, "protocol_version"),
+    intent_text: requiredString(row, "intent_text"),
+    source_run_id: requiredString(row, "source_run_id"),
+    updated_at: requiredString(row, "updated_at")
+  };
 };
 
 const mapRunRow = (row: unknown): Optional<RunRecord> => {

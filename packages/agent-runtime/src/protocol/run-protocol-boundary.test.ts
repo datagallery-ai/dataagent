@@ -1137,6 +1137,240 @@ describe("createRunProtocolBoundary", () => {
     });
     expect(boundary.protocolRuntime.getState("run-agent-handoff").phase).toBe("query_planning");
   });
+
+  it("inherits the session intent deterministically for a weak follow-up without calling the classifier", async () => {
+    let classifierCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-inherit",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent", revision: 0 },
+      tools: {},
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      classifier: async () => {
+        classifierCalls += 1;
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.99, reasonCodes: ["WRONG"] };
+      },
+      projectContext: () => ({ packageId: "context-intent", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("data-analysis");
+    expect(boundary.route.source).toBe("deterministic");
+    expect(boundary.route.reasonCodes).toEqual(["SESSION_INTENT_INHERITED"]);
+    expect(classifierCalls).toBe(0);
+  });
+
+  it("outranks the keyword accelerator with the recorded session intent", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-vs-regex",
+      userInput: "重试统计",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-2", revision: 0 },
+      tools: {},
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "统计订单量" },
+      projectContext: () => ({ packageId: "context-intent-2", revision: 0 })
+    });
+
+    expect(boundary.route.source).toBe("deterministic");
+    expect(boundary.route.reasonCodes).toEqual(["SESSION_INTENT_INHERITED"]);
+  });
+
+  it("ignores an unauthorized session intent and falls back to the normal route", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-unauthorized",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task"],
+      initialContextPackageRef: { packageId: "context-intent-3", revision: 0 },
+      tools: {},
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "分析" },
+      projectContext: () => ({ packageId: "context-intent-3", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("general-task");
+    expect(boundary.route.source).toBe("default");
+  });
+
+  it("passes the session intent to the classifier for ambiguous non-continuation input", async () => {
+    const classificationInputs: unknown[] = [];
+    await createRunProtocolBoundary({
+      runId: "run-intent-classifier-context",
+      userInput: "把上次那个再细化一下",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-4", revision: 0 },
+      tools: {},
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      classifier: async ({ value }) => {
+        classificationInputs.push(value);
+        return { protocolId: "data-analysis", protocolVersion: "1", confidence: 0.9, reasonCodes: ["FOLLOW_UP"] };
+      },
+      projectContext: () => ({ packageId: "context-intent-4", revision: 0 })
+    });
+
+    expect(classificationInputs).toEqual([{
+      userText: "把上次那个再细化一下",
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" }
+    }]);
+  });
+
+  it("extracts requirements from the intent text when a weak follow-up inherits data-analysis", async () => {
+    const extractorInputs: string[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-extraction",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-extract", revision: 0 },
+      tools: {},
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      requirementExtractor: async ({ userText }) => {
+        extractorInputs.push(userText);
+        return createUserAnalysisRequirements([
+          { kind: "metric", description: "分析当前数据", acceptanceCriteria: ["给出结论"] }
+        ]);
+      },
+      projectContext: () => ({ packageId: "context-intent-extract", revision: 0 })
+    });
+
+    expect(extractorInputs).toEqual(["帮我分析当前数据\n(后续指示: 再次尝试)"]);
+    expect(boundary.protocolRuntime.getState("run-intent-extraction").domain).toMatchObject({
+      requirements: expect.arrayContaining([expect.objectContaining({ id: "R1", description: "分析当前数据" })])
+    });
+  });
+
+  it("does not extract requirements when the route resolves to general-task", async () => {
+    let extractorCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-general-no-extraction",
+      userInput: "你好",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-general", revision: 0 },
+      tools: {},
+      requirementExtractor: async () => {
+        extractorCalls += 1;
+        return [];
+      },
+      projectContext: () => ({ packageId: "context-general", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("general-task");
+    expect(extractorCalls).toBe(0);
+  });
+
+  it("sends the intent text, not the weak follow-up, as the semantic resolution query", async () => {
+    const semanticQueries: string[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-semantic-query",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-semantic", revision: 0 },
+      tools: { inspect_schema: { execute: async () => ({ schema_id: "schema-1", tables: [] }) } },
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      semanticProvider: {
+        resolve: async (request) => {
+          semanticQueries.push(request.query);
+          return {
+            value: {},
+            capabilities: ["graph-explore"],
+            trust: "verified" as const,
+            warnings: [],
+            provider: "datalink" as const,
+            mode: "live" as const,
+            datasourceRevision: request.datasourceRevision
+          };
+        }
+      },
+      semanticRequest: semanticRequest(),
+      projectContext: () => ({ packageId: "context-intent-semantic", revision: 0 })
+    });
+
+    await boundary.actionRouter.execute({
+      runId: "run-intent-semantic-query",
+      segmentId: boundary.segmentId,
+      actionId: "inspect-1",
+      actionName: "inspect_schema",
+      input: {}
+    });
+
+    expect(semanticQueries).toEqual(["帮我分析当前数据\n(后续指示: 再次尝试)"]);
+  });
+
+  it("extracts requirements at handoff when a general-task run moves to data-analysis", async () => {
+    const extractorInputs: string[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-handoff-extraction",
+      userInput: "先聊聊,可能要查数",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      explicitProtocol: { protocolId: "general-task", protocolVersion: "1" },
+      initialContextPackageRef: { packageId: "context-handoff-extract", revision: 0 },
+      tools: {},
+      requirementExtractor: async ({ userText }) => {
+        extractorInputs.push(userText);
+        return createUserAnalysisRequirements([
+          { kind: "metric", description: "查数", acceptanceCriteria: ["有证据"] }
+        ]);
+      },
+      projectContext: () => ({ packageId: "context-handoff-extract", revision: 0 })
+    });
+    expect(extractorInputs).toEqual([]);
+
+    await boundary.actionRouter.execute({
+      runId: "run-handoff-extraction",
+      segmentId: boundary.segmentId,
+      actionId: "handoff-1",
+      actionName: "protocol.handoff.propose",
+      input: {
+        targetProtocolId: "data-analysis",
+        targetProtocolVersion: "1",
+        reasonCodes: ["ANALYTIC_INTENT"],
+        unresolvedGoals: []
+      }
+    });
+
+    expect(extractorInputs).toEqual(["先聊聊,可能要查数"]);
+    expect(boundary.protocolRuntime.getState("run-handoff-extraction").domain).toMatchObject({
+      requirements: expect.arrayContaining([expect.objectContaining({ description: "查数" })])
+    });
+  });
+
+  it("accelerates full english analytic phrasing without a classifier call", async () => {
+    let classifierCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-english-accelerator",
+      userInput: "How did revenue trend last quarter?",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-english", revision: 0 },
+      tools: {},
+      classifier: async () => {
+        classifierCalls += 1;
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["X"] };
+      },
+      projectContext: () => ({ packageId: "context-english", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("data-analysis");
+    expect(boundary.route.reasonCodes).toEqual(["ANALYTIC_INTENT"]);
+    expect(classifierCalls).toBe(0);
+  });
+
+  it("keeps weak follow-ups on the default route when no session intent exists", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-none",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-5", revision: 0 },
+      tools: {},
+      classifier: async () => ({
+        protocolId: "data-analysis",
+        protocolVersion: "1",
+        confidence: 0.4,
+        reasonCodes: ["WEAK"]
+      }),
+      projectContext: () => ({ packageId: "context-intent-5", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("general-task");
+    expect(boundary.route.source).toBe("default");
+    expect(boundary.route.warnings).toEqual(["PROTOCOL_CLASSIFICATION_LOW_CONFIDENCE"]);
+  });
 });
 
 const liveSemanticProvider = (): { resolve(request: SemanticRequest): Promise<SemanticResolution> } => ({
