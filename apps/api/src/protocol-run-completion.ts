@@ -1,5 +1,5 @@
 import { EventType, type BaseEvent } from "@ag-ui/client";
-import type { ProtocolRunState } from "@datafoundry/agent-runtime";
+import { isDataActionName, type ProtocolRunState } from "@datafoundry/agent-runtime";
 
 import type { RunFinalizer } from "./run-finalizer.js";
 
@@ -38,6 +38,27 @@ type ProtocolCompletionInput = {
 export const completeProtocolRun = async (input: ProtocolCompletionInput): Promise<void> => {
   try {
     let protocolState = input.protocol.protocolRuntime.getState(input.runId, input.protocol.segmentId);
+    const rejectedDataActions = protocolState.actions.filter((action) =>
+      action.status === "rejected"
+      && isDataActionName(action.actionName)
+      && (action.reasonCode?.startsWith("ACTION_NOT_ALLOWED_IN_PHASE") ?? false));
+    if (protocolState.protocolId === "general-task" && rejectedDataActions.length > 0) {
+      // The agent tried to do data work and the protocol refused every attempt. A
+      // closing text message must not launder that into "completed": record a terminal
+      // protocol decision for replay, then surface the run as failed with the reason.
+      input.protocol.protocolRuntime.proposeCompletion({
+        runId: input.runId,
+        segmentId: input.protocol.segmentId,
+        expectedRevision: protocolState.revision,
+        forceTerminal: true
+      });
+      const attempted = [...new Set(rejectedDataActions.map((action) => action.actionName))].join(", ");
+      const message = `DATA_ACTIONS_REJECTED_BY_PROTOCOL: ${rejectedDataActions.length} data tool call(s) `
+        + `(${attempted}) were rejected by the general-task protocol before execution, so the requested analysis `
+        + "never ran. The final assistant text explains the failure and is not a completed analysis.";
+      input.finalizer.fail({ errorMessage: message, terminalEvent: createRunErrorEvent(message) });
+      return;
+    }
     const answerMessageId = input.lastAssistantMessageId ?? input.persistedAssistantMessageId;
     if (
       protocolState.protocolId === "general-task"
