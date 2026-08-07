@@ -40,6 +40,9 @@ jobs:
       - name: Build TypeScript workspaces
         run: npm run build
 
+      - name: Run package unit tests
+        run: npm run test:packages
+
       - name: Run Web tests
         run: npm run test:web
 
