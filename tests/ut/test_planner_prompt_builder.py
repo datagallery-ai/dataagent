@@ -1015,6 +1015,143 @@ def test_prepare_flex_planner_prompt_skips_worker_metadata_when_swarm_disabled(m
     assert "# Subagent Running History" not in str(messages[0].content)
 
 
+def test_prepare_flex_planner_prompt_injects_resource_job_protocol_when_resources(monkeypatch, tmp_path):
+    """RESOURCES 非空时应向 planner system prompt 注入 Resource Job Protocol。"""
+    from dataagent.core.context.context import ContextFactory
+    from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+    from dataagent.utils.constants import POLL_WATCH_MAX_WATCH_SEC
+
+    ContextFactory.clear_context()
+    monkeypatch.setattr(planner_prompt_builder.llm_manager, "get_default_llm", lambda: None)
+
+    context = ContextFactory.get_context(user_id="u", session_id="s", run_id=1, sub_id=0)
+    context.register_query("跑个 sandbox 任务", [])
+
+    class _Runtime:
+        instructions = ""
+        flex_planner_user_sync_pending = True
+        env = SimpleNamespace(environment_description="")
+
+        def __init__(self) -> None:
+            self._cache = {}
+
+        def get_cache(self, key, default=None):
+            return self._cache.get(key, default)
+
+        def set_cache(self, key, value):
+            self._cache[key] = value
+
+        def get_all_config(self) -> dict:
+            return {
+                "RESOURCES": [
+                    {
+                        "id": "local",
+                        "name": "Local Sandbox",
+                        "category": "executable",
+                        "transport": {"type": "local"},
+                    }
+                ]
+            }
+
+        def get_runtime_env_prompt(self) -> str:
+            return ""
+
+        def list_builtin_skills(self):
+            return []
+
+        def list_user_skills(self):
+            return []
+
+        def clear_flex_planner_user_sync_pending(self) -> None:
+            self.flex_planner_user_sync_pending = False
+
+    state = {
+        "user_id": "u",
+        "session_id": "s",
+        "run_id": 1,
+        "sub_id": 0,
+        "user_query": "跑个 sandbox 任务",
+        "messages": [],
+        "planner_user_sync_pending": True,
+    }
+    messages = prepare_flex_planner_prompt(
+        context,
+        state,
+        system_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/system"),
+        user_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/user"),
+        runtime=_Runtime(),
+        workspace=str(tmp_path),
+    )
+
+    system_content = str(messages[0].content)
+    assert "# Resource Job Protocol" in system_content
+    assert "submit_resource_job" in system_content
+    assert "poll_job" in system_content
+    assert str(POLL_WATCH_MAX_WATCH_SEC) in system_content
+    assert "Resource Job Protocol" not in str(messages[1].content)
+
+
+def test_prepare_flex_planner_prompt_skips_resource_job_protocol_without_resources(monkeypatch, tmp_path):
+    """未配置 RESOURCES 时不应注入 Resource Job Protocol。"""
+    from dataagent.core.context.context import ContextFactory
+    from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+
+    ContextFactory.clear_context()
+    monkeypatch.setattr(planner_prompt_builder.llm_manager, "get_default_llm", lambda: None)
+
+    context = ContextFactory.get_context(user_id="u", session_id="s", run_id=1, sub_id=0)
+    context.register_query("随便问问", [])
+
+    class _Runtime:
+        instructions = ""
+        flex_planner_user_sync_pending = True
+        env = SimpleNamespace(environment_description="")
+
+        def __init__(self) -> None:
+            self._cache = {}
+
+        def get_cache(self, key, default=None):
+            return self._cache.get(key, default)
+
+        def set_cache(self, key, value):
+            self._cache[key] = value
+
+        def get_all_config(self) -> dict:
+            return {}
+
+        def get_runtime_env_prompt(self) -> str:
+            return ""
+
+        def list_builtin_skills(self):
+            return []
+
+        def list_user_skills(self):
+            return []
+
+        def clear_flex_planner_user_sync_pending(self) -> None:
+            self.flex_planner_user_sync_pending = False
+
+    state = {
+        "user_id": "u",
+        "session_id": "s",
+        "run_id": 1,
+        "sub_id": 0,
+        "user_query": "随便问问",
+        "messages": [],
+        "planner_user_sync_pending": True,
+    }
+    messages = prepare_flex_planner_prompt(
+        context,
+        state,
+        system_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/system"),
+        user_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/user"),
+        runtime=_Runtime(),
+        workspace=str(tmp_path),
+    )
+
+    assert "# Resource Job Protocol" not in str(messages[0].content)
+
+
 def test_prepare_flex_planner_prompt_does_not_apply_rolling_ir(monkeypatch, tmp_path):
     """普通 Planner Prompt 构建不得按 turn 年龄改写历史 ToolMessage。"""
     from dataagent.core.context.context import ContextFactory

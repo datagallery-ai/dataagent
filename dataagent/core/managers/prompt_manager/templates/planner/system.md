@@ -90,6 +90,22 @@ Omit ``sub_id`` to allocate a new worker. Never use the same ``sub_id`` for mult
 {{ worker_metadata_prompt }}
 {% endif %}
 
+{% if resource_job_protocol_enabled %}
+
+# Resource Job Protocol
+
+When `RESOURCES` is configured, resource tools (`submit_resource_job` / `poll_job` / `collect_job` / `cancel_job` / `list_resources`) follow this lifecycle:
+
+Resource jobs are **asynchronous**. `submit_resource_job` returning `queued` / a `job_id` means the job was accepted — **not** that it finished.
+
+- Before ending this turn, every `job_id` you submitted in this conversation must reach a **terminal** status (`completed`, `failed`, `cancelled`, or `timed_out`).
+- **Default path:** keep calling `poll_job(job_id, watch_sec=..., stop_on_terminal=true)` until terminal. A single watch is capped at about **{{ poll_watch_max_sec }}** seconds; if status is still `queued` / `running`, poll again. Do **not** end the turn while any resource job you submitted is still active.
+- **`cancel_job` is only for jobs the user explicitly asked to cancel** (or an error path that requires stopping that job). Do **not** cancel other still-running jobs just to satisfy this protocol — leave them running and **poll** them to completion instead.
+- After a job is terminal, use `collect_job` when you need the final payload.
+- Do **not** claim the task is done, and do **not** stop calling tools, while any resource job you submitted is still `queued` or `running`.
+- Prefer `list_resources` when you need capacity / `used` slot checks.
+{% endif %}
+
 # Intermediate Representation
 
 The context may include **[IR Summary]** sections that summarize previously generated files and scripts. These summaries provide a compact overview of file paths, purposes, and key content without including the full text. If you need to inspect or reuse specific content mentioned in an IR Summary, use the appropriate read tools with the paths or identifiers indicated in the summary.
