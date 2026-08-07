@@ -45,6 +45,65 @@ describe("completeProtocolRun", () => {
     expect(harness.complete).toHaveBeenCalledOnce();
   });
 
+  it("finalizes as failed when general-task rejected the run's data actions", async () => {
+    const harness = createHarness({
+      actions: [
+        rejectedAction("a1", "inspect_schema"),
+        rejectedAction("a2", "inspect_schema"),
+        rejectedAction("a3", "list_data_sources")
+      ]
+    });
+
+    await completeProtocolRun({
+      ...harness.input,
+      lastAssistantMessageId: "apology-message",
+      terminalEvent
+    });
+
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(harness.complete).not.toHaveBeenCalled();
+    expect(harness.input.protocol.protocolRuntime.proposeCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ forceTerminal: true })
+    );
+    expect(harness.fail).toHaveBeenCalledWith(expect.objectContaining({
+      errorMessage: expect.stringContaining("DATA_ACTIONS_REJECTED_BY_PROTOCOL"),
+      terminalEvent: expect.objectContaining({ type: EventType.RUN_ERROR })
+    }));
+    expect(harness.fail.mock.calls[0]?.[0]?.errorMessage).toContain("inspect_schema, list_data_sources");
+  });
+
+  it("keeps completing general-task runs whose rejected actions are not data actions", async () => {
+    const harness = createHarness({
+      actions: [rejectedAction("a1", "retrieve_knowledge")]
+    });
+
+    await completeProtocolRun({
+      ...harness.input,
+      lastAssistantMessageId: "message-1",
+      terminalEvent
+    });
+
+    expect(harness.fail).not.toHaveBeenCalled();
+    expect(harness.complete).toHaveBeenCalledOnce();
+  });
+
+  it("does not gate data-analysis runs on phase-rejected data actions", async () => {
+    const harness = createHarness({
+      protocolId: "data-analysis",
+      answerMessageId: "n/a",
+      actions: [rejectedAction("a1", "run_sql_readonly")]
+    });
+
+    await completeProtocolRun({
+      ...harness.input,
+      lastAssistantMessageId: "message-1",
+      terminalEvent
+    });
+
+    expect(harness.fail).not.toHaveBeenCalled();
+    expect(harness.complete).toHaveBeenCalledOnce();
+  });
+
   it("emits a clean run error when terminal protocol finalization fails", async () => {
     const harness = createHarness({});
     harness.execute.mockRejectedValueOnce(new Error("ACTION_NOT_ALLOWED_IN_PHASE:answer:general.answer.commit"));
@@ -65,12 +124,25 @@ describe("completeProtocolRun", () => {
   });
 });
 
-const createHarness = (input: { answerMessageId?: string; phase?: string }) => {
+const rejectedAction = (actionId: string, actionName: string): ProtocolRunState["actions"][number] => ({
+  actionId,
+  actionName,
+  status: "rejected",
+  inputContextPackageRef: { packageId: "context-1", revision: 1 },
+  reasonCode: "ACTION_NOT_ALLOWED_IN_PHASE"
+});
+
+const createHarness = (input: {
+  answerMessageId?: string;
+  phase?: string;
+  protocolId?: string;
+  actions?: ProtocolRunState["actions"];
+}) => {
   const execute = vi.fn(async () => undefined);
   const complete = vi.fn(async () => undefined);
   const fail = vi.fn();
   let state: ProtocolRunState = {
-    protocolId: "general-task",
+    protocolId: input.protocolId ?? "general-task",
     protocolVersion: "1",
     runId: "run-1",
     segmentId: "segment-1",
@@ -78,7 +150,7 @@ const createHarness = (input: { answerMessageId?: string; phase?: string }) => {
     revision: 1,
     status: "active",
     contextPackageRef: { packageId: "context-1", revision: 1 },
-    actions: [],
+    actions: input.actions ?? [],
     completionRejections: 0,
     domain: input.answerMessageId ? { answerMessageId: input.answerMessageId } : {},
   };

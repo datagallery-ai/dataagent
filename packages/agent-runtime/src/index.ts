@@ -1490,6 +1490,7 @@ export { InMemoryProtocolStateStore } from "./protocol/in-memory-protocol-state-
 export { ProtocolRegistry } from "./protocol/protocol-registry.js";
 export { ProtocolRouter } from "./protocol/protocol-router.js";
 export { ProtocolRuntime } from "./protocol/protocol-runtime.js";
+export { DATA_ACTION_NAMES, DATA_ACTIONS, isDataActionName } from "./protocol/data-actions.js";
 export { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 export { createRunProtocolBoundary } from "./protocol/run-protocol-boundary.js";
 export type * from "./protocol/run-protocol-boundary.js";
