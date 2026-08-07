@@ -53,6 +53,7 @@ import {
 import { createMetadataContextPackageRecorder } from "./context-package-recorder.js";
 import { MetadataProtocolStateStore } from "./protocol-state-store.js";
 import { replayPendingProtocolEvents } from "./protocol-event-recovery.js";
+import { persistSessionIntentFromRoute, resolveSessionIntentForRun } from "./session-intent.js";
 import { assistantMessageIdFromEvent, completeProtocolRun } from "./protocol-run-completion.js";
 import { persistCurrentUserMessage } from "./conversation-memory.js";
 import { resolveEvidenceReferenceContext } from "./evidence-reference-context.js";
@@ -643,6 +644,11 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           eventPipeline.emit(event);
         };
         replayPendingProtocolEvents({ runId, stateStore: protocolStateStore, emit });
+        const sessionIntent = resolveSessionIntentForRun({
+          metadataStore: this.input.metadataStore,
+          userId: this.input.user.id,
+          sessionId
+        });
         const agentAssembly = await createRunAgentAssembly({
           abortSignal: runAbortController.signal,
           contextPackageRecorder,
@@ -674,10 +680,19 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           runContext,
           selectedSkills,
           skillSelection,
+          ...(sessionIntent ? { sessionIntent } : {}),
           taskStateRuntime: this.input.taskStateRuntime,
           userId: this.input.user.id,
           workspaceId: this.input.workspaceId,
           workspaceRoot: this.input.workspaceRoot
+        });
+        persistSessionIntentFromRoute({
+          metadataStore: this.input.metadataStore,
+          userId: this.input.user.id,
+          sessionId,
+          runId,
+          userInput,
+          route: agentAssembly.protocol.route
         });
         const finalizer = new RunFinalizer({
           destroyWorkspace: agentAssembly.destroyWorkspace,

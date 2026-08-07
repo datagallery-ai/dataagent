@@ -80,7 +80,8 @@ import { createTool, type ToolAction } from "@mastra/core/tools";
 import { z } from "zod";
 import {
   createRunProtocolBoundary,
-  type RunProtocolBoundary
+  type RunProtocolBoundary,
+  type SessionIntent
 } from "./protocol/run-protocol-boundary.js";
 import { DATA_ACTION_NAMES } from "./protocol/data-actions.js";
 import type { ProtocolClassifier, ProtocolIdentity } from "./protocol/protocol-router.js";
@@ -249,6 +250,10 @@ export type CreateDataFoundryInput = {
   protocolClassifier?: ProtocolClassifier;
   analysisRequirementExtractor?: AnalysisRequirementExtractor;
   analysisContractGrounder?: AnalysisContractGrounder;
+  /** Authoritative session intent resolved by the caller (persisted per session,
+   * following branch lineage). Enables deterministic protocol inheritance for weak
+   * follow-ups and supplies the real task text to extraction and semantic grounding. */
+  sessionIntent?: SessionIntent;
   onProtocolEvent?(event: ProtocolEvent): void;
   protocolStateStore?: ProtocolStateStore;
   resourceRevisions?: Record<string, number>;
@@ -500,6 +505,7 @@ export const createDataFoundry = async (
         }
       : {}),
     ...(input.explicitProtocol ? { explicitProtocol: input.explicitProtocol } : {}),
+    ...(input.sessionIntent ? { sessionIntent: input.sessionIntent } : {}),
     classifier: input.protocolClassifier ?? createModelProtocolClassifier(input.modelProvider),
     requirementExtractor: input.analysisRequirementExtractor
       ?? createModelAnalysisRequirementExtractor(input.modelProvider),

@@ -13,6 +13,7 @@ import {
   type RunProtocolBoundary,
   type ContextPackageRef,
   type ProtocolStateStore,
+  type SessionIntent,
   type TaskStateRuntime,
   type WorkspaceAttachment
 } from "@datafoundry/agent-runtime";
@@ -79,6 +80,9 @@ type CreateRunAgentAssemblyInput = {
   runContext: AgentRunContext;
   sessionOutputService: SessionOutputService;
   selectedSkills: SkillRecord[];
+  /** Session intent resolved by the caller; enables deterministic protocol
+   * inheritance for weak follow-ups. */
+  sessionIntent?: SessionIntent | undefined;
   skillSelection: SkillSelectionResult;
   taskStateRuntime: TaskStateRuntime;
   userId: string;
@@ -172,6 +176,7 @@ export const createRunAgentAssembly = async (
     runContext: input.runContext,
     sessionOutputService: input.sessionOutputService,
     selectedSkills: input.selectedSkills,
+    ...(input.sessionIntent ? { sessionIntent: input.sessionIntent } : {}),
     skillSelection: input.skillSelection,
     taskStateRuntime: input.taskStateRuntime,
     ...(!input.interactionResume && input.goal ? { goal: input.goal } : {}),
