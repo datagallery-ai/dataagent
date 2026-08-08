@@ -15,13 +15,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import signal
 import sys
 import time
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
@@ -150,6 +153,202 @@ def test_job_service_running_ids_are_instance_scoped(tmp_path):
     assert handle["job_id"] in service_a.running_job_ids()
     assert handle["job_id"] not in service_b.running_job_ids()
     service_a.cancel(handle["job_id"])
+
+
+def test_job_service_shutdown_kills_registered_child_process(tmp_path):
+    """shutdown() must kill a registered child process group even if the runner stalls."""
+    store = FileJobStore(tmp_path)
+    service = JobService(store)
+    child_started = Event()
+    child_proc_box: list[Any] = []
+
+    def runner(job_id: str, cancel_event: Event) -> JobResult:
+        proc = __import__("subprocess").Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        child_proc_box.append(proc)
+        service.register_child_pgid(job_id, int(proc.pid))
+        child_started.set()
+        # Do not kill the child here; shutdown() must killpg it.
+        while not cancel_event.is_set():
+            time.sleep(0.05)
+        return JobResult(job_id=job_id, agent_id="demo", status="cancelled", summary="cancelled")
+
+    handle = service.start(agent_id="demo", task="orphan-child", runner=runner, timeout_sec=60)
+    assert child_started.wait(timeout=2.0)
+    child_proc = child_proc_box[0]
+
+    service.shutdown()
+
+    deadline = time.time() + 3.0
+    while time.time() < deadline and child_proc.poll() is None:
+        time.sleep(0.05)
+    assert child_proc.poll() is not None
+    assert service.poll(handle["job_id"]).status == "cancelled"
+
+
+def test_job_service_cancel_kills_registered_child_process(tmp_path):
+    """cancel() must killpg the registered child immediately."""
+    store = FileJobStore(tmp_path)
+    service = JobService(store)
+    child_started = Event()
+    child_proc_box: list[Any] = []
+
+    def runner(job_id: str, cancel_event: Event) -> JobResult:
+        proc = __import__("subprocess").Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        child_proc_box.append(proc)
+        service.register_child_pgid(job_id, int(proc.pid))
+        child_started.set()
+        while not cancel_event.is_set():
+            time.sleep(0.05)
+        service.clear_child_pgid(job_id)
+        return JobResult(job_id=job_id, agent_id="demo", status="cancelled", summary="cancelled")
+
+    handle = service.start(agent_id="demo", task="cancel-child", runner=runner, timeout_sec=60)
+    assert child_started.wait(timeout=2.0)
+    child_proc = child_proc_box[0]
+    service.cancel(handle["job_id"])
+
+    deadline = time.time() + 3.0
+    while time.time() < deadline and child_proc.poll() is None:
+        time.sleep(0.05)
+    assert child_proc.poll() is not None
+
+
+def test_job_service_cancel_kills_orphans_by_subagent_workspace_cwd(tmp_path):
+    """cancel() must kill orphans whose cwd is under the subagent workspace."""
+    parent_ws = tmp_path / "parent"
+    sub_ws = parent_ws / "subagents" / "sess-cwd"
+    sub_ws.mkdir(parents=True)
+    store = FileJobStore(parent_ws)
+    service = JobService(store)
+    orphan_started = Event()
+    orphan_box: list[Any] = []
+
+    def runner(job_id: str, cancel_event: Event) -> JobResult:
+        # Nested start_new_session: not covered by register_child_pgid killpg alone.
+        proc = __import__("subprocess").Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            cwd=str(sub_ws),
+            start_new_session=True,
+        )
+        orphan_box.append(proc)
+        orphan_started.set()
+        while not cancel_event.is_set():
+            time.sleep(0.05)
+        return JobResult(
+            job_id=job_id,
+            agent_id="demo",
+            status="cancelled",
+            summary="cancelled",
+            workspace_rel_path="subagents/sess-cwd",
+        )
+
+    handle = service.start(
+        agent_id="demo",
+        task="cwd-orphan",
+        runner=runner,
+        timeout_sec=60,
+        metadata={"workspace_rel_path": "subagents/sess-cwd", "subagent_session_id": "sess-cwd"},
+    )
+    assert orphan_started.wait(timeout=2.0)
+    orphan = orphan_box[0]
+    assert orphan.poll() is None
+
+    service.cancel(handle["job_id"])
+    deadline = time.time() + 3.0
+    while time.time() < deadline and orphan.poll() is None:
+        time.sleep(0.05)
+    assert orphan.poll() is not None
+    assert service.poll(handle["job_id"]).status == "cancelled"
+
+
+def test_terminate_processes_with_cwd_under_only_targets_subtree(tmp_path):
+    """cwd sweep must hit the scoped workspace and leave sibling cwd processes alone."""
+    from dataagent.core.utils.subprocess import terminate_processes_with_cwd_under
+
+    target = tmp_path / "subagents" / "a"
+    sibling = tmp_path / "subagents" / "b"
+    target.mkdir(parents=True)
+    sibling.mkdir(parents=True)
+    target_proc = __import__("subprocess").Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        cwd=str(target),
+        start_new_session=True,
+    )
+    sibling_proc = __import__("subprocess").Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        cwd=str(sibling),
+        start_new_session=True,
+    )
+    try:
+        assert target_proc.poll() is None
+        assert sibling_proc.poll() is None
+        killed = terminate_processes_with_cwd_under(target)
+        assert target_proc.pid in killed
+        deadline = time.time() + 3.0
+        while time.time() < deadline and target_proc.poll() is None:
+            time.sleep(0.05)
+        assert target_proc.poll() is not None
+        assert sibling_proc.poll() is None
+    finally:
+        for proc in (target_proc, sibling_proc):
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+
+
+def test_resolve_subagent_kill_workspace_rejects_parent_and_bare_subagents(tmp_path):
+    """Only concrete subagents/<id> paths are accepted for cwd-scoped cleanup."""
+    from dataagent.core.jobs.service import _resolve_subagent_kill_workspace
+
+    parent = tmp_path / "parent"
+    (parent / "subagents" / "sess").mkdir(parents=True)
+    assert (
+        _resolve_subagent_kill_workspace(parent, {"workspace_rel_path": "subagents/sess"})
+        == (parent / "subagents" / "sess").resolve()
+    )
+    assert _resolve_subagent_kill_workspace(parent, {"workspace_rel_path": "."}) is None
+    assert _resolve_subagent_kill_workspace(parent, {"workspace_rel_path": "subagents"}) is None
+    assert _resolve_subagent_kill_workspace(parent, {"workspace_rel_path": "artifacts/x"}) is None
+    assert _resolve_subagent_kill_workspace(parent, {}) is None
+
+
+@pytest.mark.asyncio
+async def test_cancellable_subprocess_registers_child_lifecycle_callbacks():
+    """Child start/finish callbacks must fire around a cancellable subprocess."""
+    cancel_event = Event()
+    token = set_current_sandbox(NoopSandbox())
+    started: list[int] = []
+    finished = Event()
+
+    async def _set_cancel_after_delay() -> None:
+        await asyncio.sleep(0.3)
+        cancel_event.set()
+
+    watcher = asyncio.create_task(_set_cancel_after_delay())
+    try:
+        completed = await _run_cancellable_subprocess_async(
+            cmd=[sys.executable, "-c", "import time; time.sleep(30)"],
+            timeout=60,
+            env=dict(os.environ),
+            cancel_event=cancel_event,
+            progress_callback=None,
+            tool_call_id=None,
+            on_child_started=started.append,
+            on_child_finished=finished.set,
+        )
+    finally:
+        await watcher
+        reset_current_sandbox(token)
+
+    assert started and started[0] > 0
+    assert finished.is_set()
+    assert "cancelled" in str(completed.get("stderr") or "").lower()
 
 
 def test_completed_collect_includes_required_business_keys(tmp_path):

@@ -14,17 +14,21 @@
 
 from __future__ import annotations
 
+import atexit
 import time
 import uuid
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Event, Lock, Thread, Timer
-from typing import Any
+from typing import Any, ClassVar
 
 from loguru import logger
 
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import TERMINAL_STATUSES, JobResult, JobSnapshot
+from dataagent.core.utils.subprocess import terminate_process_group, terminate_processes_with_cwd_under
 
 
 @dataclass
@@ -34,22 +38,48 @@ class RunningJob:
     job_id: str
     cancel_event: Event
     timed_out_event: Event
+    child_pgid: int | None = None
+    workspace_dir: Path | None = None
 
 
 class JobService:
     """Manage asynchronous jobs backed by :class:`FileJobStore`."""
+
+    _ACTIVE_SERVICES: ClassVar[weakref.WeakSet[JobService]] = weakref.WeakSet()
+    _ATEXIT_REGISTERED: ClassVar[bool] = False
+    _ATEXIT_LOCK: ClassVar[Lock] = Lock()
 
     def __init__(self, store: FileJobStore) -> None:
         """Create a service bound to one workspace-scoped store."""
         self.store = store
         self._running: dict[str, RunningJob] = {}
         self._lock = Lock()
+        JobService._ACTIVE_SERVICES.add(self)
+        JobService._ensure_atexit_hook()
         self._reconcile_orphaned_jobs()
 
     @staticmethod
     def new_job_id() -> str:
         """Allocate a new opaque job id."""
         return uuid.uuid4().hex
+
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Cancel and kill children for every live :class:`JobService` in this process."""
+        for service in list(cls._ACTIVE_SERVICES):
+            try:
+                service.shutdown()
+            except Exception as exc:
+                logger.warning("JobService.shutdown_all failed for one service: {}", exc)
+
+    @classmethod
+    def _ensure_atexit_hook(cls) -> None:
+        """Register a process-exit hook that shuts down all in-process job services."""
+        with cls._ATEXIT_LOCK:
+            if cls._ATEXIT_REGISTERED:
+                return
+            atexit.register(cls.shutdown_all)
+            cls._ATEXIT_REGISTERED = True
 
     def start(
         self,
@@ -95,11 +125,18 @@ class JobService:
         timed_out_event = Event()
         terminal_lock = Lock()
         timeout_timer: Timer | None = None
-        running = RunningJob(job_id=job_id, cancel_event=cancel_event, timed_out_event=timed_out_event)
+        workspace_dir = _resolve_subagent_kill_workspace(self.store.parent_workspace, job_metadata)
+        running = RunningJob(
+            job_id=job_id,
+            cancel_event=cancel_event,
+            timed_out_event=timed_out_event,
+            workspace_dir=workspace_dir,
+        )
 
         def mark_timed_out() -> None:
             timed_out_event.set()
             cancel_event.set()
+            self._kill_job_os_children(job_id)
             with terminal_lock:
                 status = self.store.read_status(job_id)
                 if str(status.get("status") or "").strip().lower() in TERMINAL_STATUSES:
@@ -254,6 +291,7 @@ class JobService:
             return self.poll(job_id)
         if running is not None:
             running.cancel_event.set()
+        self._kill_job_os_children(job_id)
         agent_id = str(status.get("agent_id") or "")
         self.store.write_status(job_id, {"status": "cancelled"})
         self.store.append_event(
@@ -272,10 +310,121 @@ class JobService:
         self.store.write_result(result)
         return self.poll(job_id)
 
+    def cancel_all(self) -> None:
+        """Cancel every job currently tracked by this service instance."""
+        for job_id in self.running_job_ids():
+            try:
+                self.cancel(job_id)
+            except Exception as exc:
+                logger.warning("Failed to cancel job {}: {}", job_id, exc)
+
+    def register_child_pgid(self, job_id: str, pgid: int) -> None:
+        """Record the OS process group id for a job's child subprocess.
+
+        Args:
+            job_id: Active job id tracked in ``_running``.
+            pgid: Child process group id (Unix session leader pid) or process id.
+        """
+        normalized = str(job_id or "").strip()
+        resolved = int(pgid or 0)
+        if not normalized or resolved <= 0:
+            return
+        with self._lock:
+            running = self._running.get(normalized)
+            if running is not None:
+                running.child_pgid = resolved
+
+    def clear_child_pgid(self, job_id: str) -> None:
+        """Clear the registered child process group id after the subprocess exits.
+
+        Args:
+            job_id: Job id whose child handle should be cleared.
+        """
+        normalized = str(job_id or "").strip()
+        if not normalized:
+            return
+        with self._lock:
+            running = self._running.get(normalized)
+            if running is not None:
+                running.child_pgid = None
+
+    def kill_registered_children(self) -> None:
+        """Kill all registered child process groups and workspace-scoped orphans."""
+        for job_id in self.running_job_ids():
+            self._kill_job_os_children(job_id)
+
+    def shutdown(self) -> None:
+        """Cancel running jobs and kill registered child process groups.
+
+        Used on Ctrl+C / process exit so daemon job threads cannot leave orphan
+        subprocesses behind after the parent interpreter exits.
+        """
+        with self._lock:
+            job_ids = list(self._running.keys())
+        for job_id in job_ids:
+            try:
+                with self._lock:
+                    running = self._running.get(job_id)
+                if running is not None:
+                    running.cancel_event.set()
+                self._kill_job_os_children(job_id)
+                status = self.store.read_status(job_id)
+                if str(status.get("status") or "") not in TERMINAL_STATUSES:
+                    agent_id = str(status.get("agent_id") or "")
+                    metadata = status.get("metadata") if isinstance(status.get("metadata"), dict) else {}
+                    self.store.write_status(job_id, {"status": "cancelled"})
+                    self.store.append_event(
+                        job_id,
+                        {
+                            "type": "agent_job_end",
+                            "job_id": job_id,
+                            "agent_id": agent_id,
+                            "status": "cancelled",
+                        },
+                    )
+                    self.store.write_result(
+                        JobResult(
+                            job_id=job_id,
+                            agent_id=agent_id,
+                            status="cancelled",
+                            summary="Agent job cancelled.",
+                            subagent_session_id=str(metadata.get("subagent_session_id") or ""),
+                            workspace_rel_path=str(metadata.get("workspace_rel_path") or ""),
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("Failed to mark job {} cancelled during shutdown: {}", job_id, exc)
+
     def running_job_ids(self) -> set[str]:
         """Return job ids currently tracked in-process for this service instance."""
         with self._lock:
             return set(self._running.keys())
+
+    def _kill_job_os_children(self, job_id: str) -> None:
+        """Kill the registered process group and cwd-scoped orphans for one job.
+
+        Args:
+            job_id: Active or recently-active job id.
+        """
+        with self._lock:
+            running = self._running.get(job_id)
+            child_pgid = running.child_pgid if running is not None else None
+            workspace_dir = running.workspace_dir if running is not None else None
+        if workspace_dir is None:
+            status = self.store.read_status(job_id)
+            metadata = status.get("metadata") if isinstance(status.get("metadata"), dict) else {}
+            workspace_dir = _resolve_subagent_kill_workspace(self.store.parent_workspace, metadata)
+        if child_pgid is not None:
+            terminate_process_group(child_pgid)
+        if workspace_dir is not None:
+            killed = terminate_processes_with_cwd_under(workspace_dir)
+            if killed:
+                logger.info(
+                    "Killed {} workspace-scoped process(es) under {} for job {}",
+                    len(killed),
+                    workspace_dir,
+                    job_id,
+                )
 
     def _reconcile_orphaned_jobs(self) -> None:
         """Mark persisted queued/running jobs as failed when no runner is active."""
@@ -328,6 +477,43 @@ class JobService:
         self.store.append_event(job_id, event)
         if callable(event_sink):
             event_sink(event)
+
+
+def _resolve_subagent_kill_workspace(
+    parent_workspace: Path,
+    metadata: dict[str, Any] | None,
+) -> Path | None:
+    """Resolve a subagent workspace path safe for cwd-scoped process cleanup.
+
+    Only paths under ``{parent}/subagents/<id>`` are accepted. The parent
+    workspace root itself is never returned, so resource jobs that run with
+    cwd=parent are not swept.
+
+    Args:
+        parent_workspace: Parent agent workspace root bound to the job store.
+        metadata: Job metadata that may contain ``workspace_rel_path``.
+
+    Returns:
+        Absolute subagent workspace directory, or ``None`` when unavailable.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    rel = str(metadata.get("workspace_rel_path") or "").strip().replace("\\", "/")
+    if not rel or rel in {".", "/"}:
+        return None
+    rel_path = Path(rel)
+    if rel_path.is_absolute():
+        return None
+    try:
+        parent = Path(parent_workspace).expanduser().resolve()
+        candidate = (parent / rel_path).resolve()
+        subagents_root = (parent / "subagents").resolve()
+        candidate.relative_to(subagents_root)
+    except (OSError, ValueError):
+        return None
+    if candidate == subagents_root:
+        return None
+    return candidate
 
 
 def _dict_status_field(status: dict[str, Any], key: str) -> dict[str, Any]:

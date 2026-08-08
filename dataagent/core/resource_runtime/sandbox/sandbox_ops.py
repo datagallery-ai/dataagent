@@ -44,12 +44,25 @@ def _sandbox_submit(arguments: dict[str, Any], context: ResourceOperationContext
     if not command:
         return {"status": "failed", "exit_code": 1, "error": "command is required"}
     sandbox = context.runtime.sandbox
+    job_service = context.job_service
+    job_id = str(context.job_id or "").strip()
+
+    def _on_child_started(pgid: int) -> None:
+        if job_service is not None and job_id:
+            job_service.register_child_pgid(job_id, pgid)
+
+    def _on_child_finished() -> None:
+        if job_service is not None and job_id:
+            job_service.clear_child_pgid(job_id)
+
     result = run_local_sandbox_command(
         command=command,
         workspace_dir=workspace_dir,
         sandbox=sandbox,
         timeout_sec=timeout_sec,
         cancel_event=context.cancel_event,
+        on_child_started=_on_child_started,
+        on_child_finished=_on_child_finished,
     )
     return dict(result)
 

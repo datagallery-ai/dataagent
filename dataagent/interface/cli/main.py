@@ -322,72 +322,77 @@ async def _run_terminal_chat_loop(
     run_id = 0
     stream_enabled = bool(getattr(getattr(agent, "_chat_agent", None), "debug", False))
     skip_display = stream_enabled and RICH_AVAILABLE
-    while True:
-        try:
-            user_input = await get_user_input()
+    try:
+        while True:
+            try:
+                user_input = await get_user_input()
 
-            if not user_input:
-                continue
+                if not user_input:
+                    continue
 
-            if user_input.lower() in {"quit", "exit", "q"}:
-                console.print("[dim]再见！[/dim]")
+                if user_input.lower() in {"quit", "exit", "q"}:
+                    console.print("[dim]再见！[/dim]")
+                    break
+                if user_input.lower() == "help":
+                    print_help()
+                    continue
+
+                initial_state: dict = {
+                    "user_query": user_input,
+                    "run_id": run_id,
+                    "session_id": session_id_resolved,
+                }
+                # 仅 CLI 显式开启时写入；否则由 FlexAgent 从 AGENT_CONFIG.enable_portrait 注入
+                if enable_portrait:
+                    initial_state["enable_portrait"] = True
+                if uid is not None:
+                    initial_state["user_id"] = uid
+                start_t = time.perf_counter()
+                response = await agent.chat(user_query=user_input, initial_state=initial_state)
+                elapsed_sec = round(time.perf_counter() - start_t, 2)
+                if isinstance(response, dict) and response.get("error"):
+                    console.print(
+                        Panel(
+                            str(response.get("final_answer") or response["error"]),
+                            title="[bold red]❌ 错误[/bold red]",
+                            border_style="red",
+                            padding=(1, 2),
+                        )
+                    )
+                elif not skip_display and isinstance(response, dict) and response.get("messages"):
+                    final_message = response["messages"][-1]
+                    final_content = getattr(final_message, "content", str(final_message))
+                    if final_content:
+                        console.print(
+                            Panel(
+                                Markdown(str(final_content)),
+                                title="[bold cyan]🤖 Agent[/bold cyan]",
+                                border_style="cyan",
+                                padding=(1, 2),
+                            )
+                        )
+                        console.print()
+                _print_turn_summary(console, response, elapsed_sec)
+                run_id += 1
+
+            except KeyboardInterrupt:
+                logger.error("\n\n程序被用户中断")
                 break
-            if user_input.lower() == "help":
-                print_help()
-                continue
-
-            initial_state: dict = {
-                "user_query": user_input,
-                "run_id": run_id,
-                "session_id": session_id_resolved,
-            }
-            # 仅 CLI 显式开启时写入；否则由 FlexAgent 从 AGENT_CONFIG.enable_portrait 注入
-            if enable_portrait:
-                initial_state["enable_portrait"] = True
-            if uid is not None:
-                initial_state["user_id"] = uid
-            start_t = time.perf_counter()
-            response = await agent.chat(user_query=user_input, initial_state=initial_state)
-            elapsed_sec = round(time.perf_counter() - start_t, 2)
-            if isinstance(response, dict) and response.get("error"):
+            except Exception as e:
+                logger.exception(f"处理请求时出错: {e}")
                 console.print(
                     Panel(
-                        str(response.get("final_answer") or response["error"]),
-                        title="[bold red]❌ 错误[/bold red]",
+                        str(e),
+                        title="[bold red]❌ 请求异常[/bold red]",
                         border_style="red",
                         padding=(1, 2),
                     )
                 )
-            elif not skip_display and isinstance(response, dict) and response.get("messages"):
-                final_message = response["messages"][-1]
-                final_content = getattr(final_message, "content", str(final_message))
-                if final_content:
-                    console.print(
-                        Panel(
-                            Markdown(str(final_content)),
-                            title="[bold cyan]🤖 Agent[/bold cyan]",
-                            border_style="cyan",
-                            padding=(1, 2),
-                        )
-                    )
-                    console.print()
-            _print_turn_summary(console, response, elapsed_sec)
-            run_id += 1
+                continue
+    finally:
+        from dataagent.core.jobs.service import JobService
 
-        except KeyboardInterrupt:
-            logger.error("\n\n程序被用户中断")
-            break
-        except Exception as e:
-            logger.exception(f"处理请求时出错: {e}")
-            console.print(
-                Panel(
-                    str(e),
-                    title="[bold red]❌ 请求异常[/bold red]",
-                    border_style="red",
-                    padding=(1, 2),
-                )
-            )
-            continue
+        JobService.shutdown_all()
 
 
 async def run_terminal_mode(

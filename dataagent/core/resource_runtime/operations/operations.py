@@ -41,6 +41,8 @@ class ResourceOperationContext:
     runtime: Any
     resource: Resource
     cancel_event: Event
+    job_id: str = ""
+    job_service: Any = None
 
 
 class ResourceOperationRegistry:

@@ -207,6 +207,7 @@ class AgentService:
                 parent_tool_call_id=resolved_parent_tool_call_id,
                 reuse_workspace=reused,
                 timeout_sec=resolved_timeout_sec,
+                job_service=self.job_service,
             )
 
         metadata = {
