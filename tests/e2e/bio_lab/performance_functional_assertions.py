@@ -23,7 +23,6 @@ from typing import Any
 from loguru import logger
 from performance_config import _ORIGINAL_SQLITE_PATH
 from performance_query_cases import (
-    ALL_EXPECTED_ANSWER_ASSERTIONS,
     EXPECTED_ANTIBODY_COUNT,
     EXPECTED_ANTIBODY_IDS,
     EXPECTED_BD55_1111_ANTIBODY_SAMPLE_ID,
@@ -35,8 +34,10 @@ from performance_query_cases import (
     EXPECTED_PSEUDOVIRUS_COUNT,
     EXPECTED_PSEUDOVIRUS_IDS,
     EXPECTED_XBB15_PSEUDOVIRUS_SAMPLE_ID,
+    TC_EXPECTED_ANSWER_ASSERTIONS,
     TC_NON_BLOCKING_REVIEW_CASES,
     TCW_DB_EFFECT_ASSERTIONS,
+    TCW_EXPECTED_ANSWER_ASSERTIONS,
 )
 
 
@@ -538,110 +539,6 @@ def _execute_sql_result_sets(
     return result_sets, errors
 
 
-def _combined_generated_result_sets(result_sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_width: dict[int, list[dict[str, Any]]] = {}
-    for result in result_sets:
-        if result["row_count"] == 0:
-            continue
-        width = len(result["canonical_rows"][0]) if result["canonical_rows"] else len(result["columns"])
-        by_width.setdefault(width, []).append(result)
-
-    combined: list[dict[str, Any]] = []
-    for width, same_width_results in by_width.items():
-        if len(same_width_results) < 2:
-            continue
-        rows: list[tuple[str, ...]] = []
-        sources: list[str] = []
-        for result in same_width_results:
-            rows.extend(result["canonical_rows"])
-            sources.append(f"{result['source']}#{result['statement_index']}")
-        combined.append(
-            {
-                "source": "combined_generated_result_sets",
-                "statement_index": 0,
-                "sql": "\n".join(sources),
-                "columns": [f"column_{i + 1}" for i in range(width)],
-                "row_count": len(rows),
-                "canonical_rows": sorted(rows),
-                "preview_rows": [list(row) for row in sorted(rows)[:10]],
-            }
-        )
-    return combined
-
-
-def _matches_unqueryable_answer(response: dict[str, Any], rule: dict[str, list[str]]) -> bool:
-    """Accept a schema-boundary answer only when it names the unavailable fields."""
-    answer = str(response.get("final_answer", ""))
-    sql_files = [
-        Path(path)
-        for path in response.get("sql_files", [])
-        if ".context" not in Path(path).parts and ".memory" not in Path(path).parts
-    ]
-    required_terms = rule.get("required_terms", [])
-    unavailable_terms = rule.get("unavailable_terms", [])
-    return (
-        not sql_files
-        and all(term in answer for term in required_terms)
-        and any(term in answer for term in unavailable_terms)
-    )
-
-
-def _schema_fields_are_absent(db_path: Path, rule: dict[str, Any]) -> bool:
-    forbidden_terms = [str(term).casefold() for term in rule.get("forbidden_schema_terms", [])]
-    conn = sqlite3.connect(f"file:{db_path.resolve().as_posix()}?mode=ro", uri=True)
-    try:
-        columns: list[str] = []
-        for table in rule.get("schema_tables", []):
-            columns.extend(str(row[1]).casefold() for row in conn.execute(f"PRAGMA table_info({table})"))
-    finally:
-        conn.close()
-    return not any(term in column for term in forbidden_terms for column in columns)
-
-
-def _answer_reports_absence(response: dict[str, Any], rule: dict[str, Any]) -> bool:
-    answer = str(response.get("final_answer", "")).casefold()
-    required_answer_terms = [str(term).casefold() for term in rule.get("required_answer_terms", [])]
-    absence_answer_terms = [str(term).casefold() for term in rule.get("absence_answer_terms", [])]
-    return all(term in answer for term in required_answer_terms) and any(
-        term in answer for term in absence_answer_terms
-    )
-
-
-def _matches_absence_assertion(
-    response: dict[str, Any],
-    generated_result_sets: list[dict[str, Any]],
-    rule: dict[str, Any],
-) -> bool:
-    """Require an absence conclusion supported by relevant empty or NULL SQL output."""
-    has_absence_answer = not rule.get("require_absence_answer", True) or _answer_reports_absence(response, rule)
-    sql_term_groups = rule.get("sql_term_groups", [])
-    null_column = rule.get("generated_null_column")
-    expected_row_count = rule.get("expected_generated_row_count")
-    allow_empty_result = rule.get("allow_empty_generated_result", True)
-
-    for term_group in sql_term_groups:
-        has_group_absence_evidence = False
-        for result in generated_result_sets:
-            sql_text = result["sql"].casefold()
-            has_relevant_sql = any(str(term).casefold() in sql_text for term in term_group)
-            has_empty_result = allow_empty_result and result["row_count"] == 0
-            has_expected_row_count = expected_row_count is None or result["row_count"] == expected_row_count
-            has_null_result = (
-                isinstance(null_column, int)
-                and result["row_count"] > 0
-                and has_expected_row_count
-                and all(len(row) > null_column and row[null_column] == "<NULL>" for row in result["canonical_rows"])
-            )
-            if has_relevant_sql and (has_empty_result or has_null_result):
-                has_group_absence_evidence = True
-                break
-
-        if not has_group_absence_evidence:
-            return False
-
-    return has_absence_answer and bool(sql_term_groups)
-
-
 def _matches_sql_evidence(
     generated_result_sets: list[dict[str, Any]],
     rule: dict[str, Any],
@@ -670,139 +567,6 @@ def _matches_sql_evidence(
                 "preview_rows": result["preview_rows"],
                 "sql": result["sql"],
             }
-
-    return None
-
-
-def _match_result_payload(
-    expected: dict[str, Any],
-    generated: dict[str, Any],
-    match_mode: str,
-    core_rows: list[tuple[str, ...]] | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "match_mode": match_mode,
-        "expected": {
-            "source": expected["source"],
-            "row_count": expected["row_count"],
-            "preview_rows": expected["preview_rows"],
-        },
-        "generated": {
-            "source": generated["source"],
-            "statement_index": generated["statement_index"],
-            "row_count": generated["row_count"],
-            "preview_rows": generated["preview_rows"],
-        },
-    }
-    if core_rows is not None:
-        payload["core_row_count"] = len(core_rows)
-        payload["core_preview_rows"] = [list(row) for row in core_rows[:10]]
-    return payload
-
-
-def _project_result_rows(
-    result: dict[str, Any],
-    column_indexes: list[int],
-) -> list[tuple[str, ...]] | None:
-    if not column_indexes:
-        return None
-    rows = result["canonical_rows"]
-    if any(any(index >= len(row) for index in column_indexes) for row in rows):
-        return None
-    if not rows and any(index >= len(result["columns"]) for index in column_indexes):
-        return None
-    return sorted(tuple(row[index] for index in column_indexes) for row in rows)
-
-
-def _extract_json_field_rows(
-    result: dict[str, Any],
-    id_column: int,
-    value_column: int,
-    json_key: str | None = None,
-) -> list[tuple[str, str]] | None:
-    rows = result["canonical_rows"]
-    if any(max(id_column, value_column) >= len(row) for row in rows):
-        return None
-    if not rows and max(id_column, value_column) >= len(result["columns"]):
-        return None
-
-    extracted_rows: list[tuple[str, str]] = []
-    for row in rows:
-        value = row[value_column]
-        if json_key is not None:
-            if value == "<NULL>":
-                extracted_value = "<NULL>"
-            else:
-                try:
-                    parsed_value = json.loads(value)
-                except json.JSONDecodeError:
-                    return None
-                if not isinstance(parsed_value, dict):
-                    return None
-                extracted_value = _normalize_sql_value(parsed_value.get(json_key))
-        else:
-            extracted_value = value
-        extracted_rows.append((row[id_column], extracted_value))
-    return sorted(extracted_rows)
-
-
-def _match_tc_result_sets(
-    expected_result_sets: list[dict[str, Any]],
-    generated_result_sets: list[dict[str, Any]],
-    assertion_spec: dict[str, Any],
-) -> dict[str, Any] | None:
-    if assertion_spec.get("semantic_mismatch_reason"):
-        return None
-
-    core_columns = assertion_spec.get("core_result_columns")
-    if core_columns:
-        for expected in expected_result_sets:
-            expected_core_rows = _project_result_rows(expected, core_columns["expected"])
-            if expected_core_rows is None:
-                continue
-            for generated in generated_result_sets:
-                generated_core_rows = _project_result_rows(generated, core_columns["generated"])
-                if generated_core_rows == expected_core_rows:
-                    return _match_result_payload(
-                        expected,
-                        generated,
-                        "core_result_columns",
-                        expected_core_rows,
-                    )
-
-        return None
-
-    core_json_field = assertion_spec.get("core_json_field")
-    if core_json_field:
-        for expected in expected_result_sets:
-            expected_core_rows = _extract_json_field_rows(
-                expected,
-                core_json_field["expected_id_column"],
-                core_json_field["expected_json_column"],
-                json_key=core_json_field["json_key"],
-            )
-            if expected_core_rows is None:
-                continue
-            for generated in generated_result_sets:
-                generated_core_rows = _extract_json_field_rows(
-                    generated,
-                    core_json_field["generated_id_column"],
-                    core_json_field["generated_value_column"],
-                )
-                if generated_core_rows == expected_core_rows:
-                    return _match_result_payload(
-                        expected,
-                        generated,
-                        "core_json_field",
-                        expected_core_rows,
-                    )
-
-        return None
-
-    for expected in expected_result_sets:
-        for generated in generated_result_sets:
-            if generated["canonical_rows"] == expected["canonical_rows"]:
-                return _match_result_payload(expected, generated, "exact_result_set")
 
     return None
 
@@ -853,131 +617,218 @@ def _missing_answer_term_groups(
     ]
 
 
-def _matches_tc_answer_assertion(answer: str, assertion_spec: dict[str, Any]) -> dict[str, Any]:
+def _match_answer_terms(answer: str, assertion_spec: dict[str, Any]) -> dict[str, Any]:
+    """Match required terms / any-term-groups.
+
+    ``soft_required_terms`` are query-echo terms (entity names, concepts copied
+    from the query) that need not appear verbatim in a correct answer.  They are
+    checked but never gate ``matched`` — a missing soft term is surfaced as a
+    non-blocking advisory by the caller.
+
+    ``absence_answer_terms`` is reported but no longer gates ``matched``:
+    a missing absence phrase is handled as a non-blocking manual-review by the
+    caller (``_check_answer_assertion``), so an "absent" answer that otherwise
+    states the expected facts still counts as correct.
+    """
     required_terms = assertion_spec.get("required_terms", [])
+    soft_required_terms = assertion_spec.get("soft_required_terms", [])
     required_any_term_groups = assertion_spec.get("required_any_term_groups", [])
     absence_answer_terms = assertion_spec.get("absence_answer_terms", [])
     missing_terms = _missing_answer_terms(answer, required_terms)
+    missing_soft_terms = _missing_answer_terms(answer, soft_required_terms)
     missing_groups = _missing_answer_term_groups(answer, required_any_term_groups)
     has_absence_answer = not absence_answer_terms or any(
         _answer_contains(answer, term) for term in absence_answer_terms
     )
-    matched = not missing_terms and not missing_groups and has_absence_answer
+    matched = not missing_terms and not missing_groups
     return {
         "matched": matched,
         "missing_terms": missing_terms,
+        "missing_soft_terms": missing_soft_terms,
         "missing_any_term_groups": missing_groups,
+        "has_absence_answer": has_absence_answer,
         "missing_absence_terms": [] if has_absence_answer else [str(term) for term in absence_answer_terms],
     }
 
 
-def _verify_tc_answer_correctness(
-    response_by_key: dict[str, dict[str, Any]],
-    report_dir: Path,
-) -> dict[str, dict[str, Any]]:
-    tc_results: dict[str, dict[str, Any]] = {}
-    if not any(key in ALL_EXPECTED_ANSWER_ASSERTIONS or key in TC_NON_BLOCKING_REVIEW_CASES for key in response_by_key):
-        return tc_results
-
-    logger.info("=" * 60)
-    logger.info("TC answer fact checks using precomputed expected SQL results")
-    failure_messages: list[str] = []
-
-    for query_key, assertion_spec in ALL_EXPECTED_ANSWER_ASSERTIONS.items():
-        if query_key not in response_by_key:
+def _collect_sql_evidence(response: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Execute the agent-generated SQL files against the fixture and return result sets + errors."""
+    generated_result_sets: list[dict[str, Any]] = []
+    sql_evidence_errors: list[dict[str, str]] = []
+    for sql_path in response.get("sql_files", []):
+        sql_file = Path(sql_path)
+        if ".context" in sql_file.parts or ".memory" in sql_file.parts:
             continue
-
-        response = response_by_key[query_key]
-        if assertion_spec.get("allow_human_feedback_pass") and response.get("hitl_triggered"):
-            tc_results[query_key] = {
-                "status": "passed_by_human_feedback",
-                "expected_summary": assertion_spec.get("expected_summary"),
-                "answer_preview": response.get("final_answer", "")[:500],
-            }
-            logger.info(f"  {query_key}: ✅ auto human feedback triggered; counted as correct")
+        if not sql_file.exists():
+            sql_evidence_errors.append({"source": str(sql_file), "statement_index": "0", "error": "file not found"})
             continue
-
-        final_answer = str(response.get("final_answer", ""))
-        match_result = _matches_tc_answer_assertion(final_answer, assertion_spec)
-        sql_evidence_rule = assertion_spec.get("sql_evidence")
-        sql_evidence_match = None
-        sql_evidence_errors: list[dict[str, str]] = []
-        if sql_evidence_rule:
-            generated_result_sets: list[dict[str, Any]] = []
-            for sql_path in response.get("sql_files", []):
-                sql_file = Path(sql_path)
-                if ".context" in sql_file.parts or ".memory" in sql_file.parts:
-                    continue
-                if not sql_file.exists():
-                    sql_evidence_errors.append(
-                        {"source": str(sql_file), "statement_index": "0", "error": "file not found"}
-                    )
-                    continue
-                result_sets, errors = _execute_sql_result_sets(
-                    Path(_ORIGINAL_SQLITE_PATH),
-                    sql_file.read_text(encoding="utf-8"),
-                    source=str(sql_file),
-                )
-                generated_result_sets.extend(result_sets)
-                sql_evidence_errors.extend(errors)
-            sql_evidence_match = _matches_sql_evidence(generated_result_sets, sql_evidence_rule)
-
-        blocking = assertion_spec.get("blocking", True)
-        matched = bool(match_result["matched"]) and (
-            not sql_evidence_rule or (not sql_evidence_errors and sql_evidence_match is not None)
+        result_sets, errors = _execute_sql_result_sets(
+            Path(_ORIGINAL_SQLITE_PATH),
+            sql_file.read_text(encoding="utf-8"),
+            source=str(sql_file),
         )
-        status = "passed_by_answer_assertion" if matched else "failed"
-        if not blocking:
-            status = "passed_with_non_blocking_answer_review" if matched else "non_blocking_answer_assertion_failed"
+        generated_result_sets.extend(result_sets)
+        sql_evidence_errors.extend(errors)
+    return generated_result_sets, sql_evidence_errors
 
-        tc_results[query_key] = {
-            "status": status,
-            "blocking": blocking,
+
+def _check_answer_assertion(response: dict[str, Any], assertion_spec: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate one answer assertion and return a result dict (caller handles failures)."""
+    if assertion_spec.get("allow_human_feedback_pass") and response.get("hitl_triggered"):
+        return {
+            "status": "passed_by_human_feedback",
             "expected_summary": assertion_spec.get("expected_summary"),
-            "missing_terms": match_result["missing_terms"],
-            "missing_any_term_groups": match_result["missing_any_term_groups"],
-            "missing_absence_terms": match_result["missing_absence_terms"],
-            "sql_evidence": sql_evidence_match,
-            "sql_evidence_errors": sql_evidence_errors,
-            "answer_preview": final_answer[:500],
+            "answer_preview": response.get("final_answer", "")[:500],
+            "blocking": assertion_spec.get("blocking", True),
+            "manual_review_required": False,
         }
 
-        if matched:
-            logger.info(f"  {query_key}: ✅ answer contains expected facts")
-            continue
+    answer = str(response.get("final_answer", ""))
+    term_result = _match_answer_terms(answer, assertion_spec)
+    sql_evidence_rule = assertion_spec.get("sql_evidence")
+    sql_evidence_match = None
+    sql_evidence_errors: list[dict[str, str]] = []
+    if sql_evidence_rule:
+        generated_result_sets, sql_evidence_errors = _collect_sql_evidence(response)
+        sql_evidence_match = _matches_sql_evidence(generated_result_sets, sql_evidence_rule)
 
-        message = (
-            f"{query_key} answer fact assertion failed. Expected: "
-            f"{assertion_spec.get('expected_summary')}\n"
-            f"Missing terms: {match_result['missing_terms'] or 'NONE'}\n"
-            f"Missing any-term groups: {match_result['missing_any_term_groups'] or 'NONE'}\n"
-            f"Missing absence terms: {match_result['missing_absence_terms'] or 'NONE'}\n"
-            f"SQL evidence: {sql_evidence_match or 'NONE'}\n"
-            f"SQL evidence errors: {sql_evidence_errors or 'NONE'}\n"
-            f"Final answer preview:\n{final_answer[:1000]}"
-        )
-        if blocking:
+    blocking = assertion_spec.get("blocking", True)
+    hard_matched = bool(term_result["matched"]) and (
+        not sql_evidence_rule or (not sql_evidence_errors and sql_evidence_match is not None)
+    )
+
+    # Absence advisory: if an absence vocabulary is configured but the answer
+    # shows none of it, defer to manual review instead of failing the run.
+    if assertion_spec.get("absence_answer_terms") and not term_result["has_absence_answer"]:
+        return {
+            "status": "requires_manual_review",
+            "blocking": False,
+            "expected_summary": assertion_spec.get("expected_summary"),
+            "missing_terms": term_result["missing_terms"],
+            "missing_soft_terms": term_result["missing_soft_terms"],
+            "missing_any_term_groups": term_result["missing_any_term_groups"],
+            "missing_absence_terms": term_result["missing_absence_terms"],
+            "sql_evidence": sql_evidence_match,
+            "sql_evidence_errors": sql_evidence_errors,
+            "answer_preview": answer[:500],
+            "manual_review_required": True,
+        }
+
+    if hard_matched:
+        status = "passed_by_answer_assertion"
+    else:
+        status = "non_blocking_answer_assertion_failed" if not blocking else "failed"
+    return {
+        "status": status,
+        "blocking": blocking,
+        "expected_summary": assertion_spec.get("expected_summary"),
+        "missing_terms": term_result["missing_terms"],
+        "missing_soft_terms": term_result["missing_soft_terms"],
+        "missing_any_term_groups": term_result["missing_any_term_groups"],
+        "missing_absence_terms": term_result["missing_absence_terms"],
+        "sql_evidence": sql_evidence_match,
+        "sql_evidence_errors": sql_evidence_errors,
+        "answer_preview": answer[:500],
+        "manual_review_required": False,
+    }
+
+
+def _format_answer_failure(query_key: str, result: dict[str, Any], response: dict[str, Any]) -> str:
+    final_answer = str(response.get("final_answer", ""))
+    return (
+        f"{query_key} answer fact assertion failed. Expected: {result.get('expected_summary')}\n"
+        f"Missing terms: {result['missing_terms'] or 'NONE'}\n"
+        f"Missing soft terms: {result.get('missing_soft_terms') or 'NONE'}\n"
+        f"Missing any-term groups: {result['missing_any_term_groups'] or 'NONE'}\n"
+        f"Missing absence terms: {result['missing_absence_terms'] or 'NONE'}\n"
+        f"SQL evidence: {result.get('sql_evidence') or 'NONE'}\n"
+        f"SQL evidence errors: {result.get('sql_evidence_errors') or 'NONE'}\n"
+        f"Final answer preview:\n{final_answer[:1000]}"
+    )
+
+
+def _run_answer_checks(
+    answer_specs: dict[str, dict[str, Any]],
+    response_by_key: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    results: dict[str, dict[str, Any]] = {}
+    if not any(key in answer_specs or key in TC_NON_BLOCKING_REVIEW_CASES for key in response_by_key):
+        return results, []
+    failure_messages: list[str] = []
+    for query_key, assertion_spec in answer_specs.items():
+        if query_key not in response_by_key:
+            continue
+        result = _check_answer_assertion(response_by_key[query_key], assertion_spec)
+        results[query_key] = result
+        status = result["status"]
+        if status == "requires_manual_review":
+            logger.warning(f"  {query_key}: ⚠️ absence language missing — requires manual review (non-blocking)")
+            if result.get("missing_soft_terms"):
+                logger.warning(f"  {query_key}: ⚠️ missing soft terms (non-blocking): {result['missing_soft_terms']}")
+            continue
+        if status.startswith("passed"):
+            if result.get("missing_soft_terms"):
+                logger.warning(
+                    f"  {query_key}: ⚠️ passed but missing soft terms (non-blocking): {result['missing_soft_terms']}"
+                )
+            logger.info(f"  {query_key}: ✅ {status}")
+            continue
+        message = _format_answer_failure(query_key, result, response_by_key[query_key])
+        if result["blocking"]:
             failure_messages.append(message)
             logger.error(f"  {query_key}: ❌ answer is missing expected facts")
         else:
             logger.warning(f"  {query_key}: {status} (non-blocking): {message}")
+    return results, failure_messages
 
-    _record_non_blocking_tc_reviews(response_by_key, tc_results)
-    tc_report_path = report_dir / "tc_answer_functional_results_v3.json"
-    tc_report_path.write_text(json.dumps(tc_results, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info(f"TC answer results report: {tc_report_path}")
-    logger.info("=" * 60)
+
+def _write_answer_report(
+    report_dir: Path,
+    report_name: str,
+    results: dict[str, dict[str, Any]],
+    failure_messages: list[str],
+) -> None:
+    report_path = report_dir / report_name
+    report_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"Answer results report: {report_path}")
     if failure_messages:
         raise AssertionError(
-            f"{len(failure_messages)} TC answer fact assertion(s) failed. "
-            f"Full report: {tc_report_path}\n\n" + "\n\n".join(failure_messages)
+            f"{len(failure_messages)} answer assertion(s) failed. Full report: {report_path}\n\n"
+            + "\n\n".join(failure_messages)
         )
-    return tc_results
 
 
-def _verify_tcw_database_effects(
+def verify_tc_answer_assertions(
+    response_by_key: dict[str, dict[str, Any]],
+    report_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Verify TC (问数) answer assertions only."""
+    logger.info("=" * 60)
+    logger.info("TC answer fact checks")
+    results, failure_messages = _run_answer_checks(TC_EXPECTED_ANSWER_ASSERTIONS, response_by_key)
+    _record_non_blocking_tc_reviews(response_by_key, results)
+    _write_answer_report(report_dir, "tc_answer_functional_results_v3.json", results, failure_messages)
+    logger.info("=" * 60)
+    return results
+
+
+def verify_tcw_answer_assertions(
+    response_by_key: dict[str, dict[str, Any]],
+    report_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Verify TC-W (流程) answer assertions only."""
+    logger.info("=" * 60)
+    logger.info("TC-W answer fact checks")
+    results, failure_messages = _run_answer_checks(TCW_EXPECTED_ANSWER_ASSERTIONS, response_by_key)
+    _write_answer_report(report_dir, "tcw_answer_functional_results_v3.json", results, failure_messages)
+    logger.info("=" * 60)
+    return results
+
+
+def verify_tcw_database_effects(
     response_by_key: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
+    """Verify TC-W write-side database effects (read pre-captured ``db_effects``)."""
     tcw_results: dict[str, dict[str, Any]] = {}
     failure_messages: list[str] = []
 
@@ -991,7 +842,7 @@ def _verify_tcw_database_effects(
         matched = bool(db_effects.get("matched"))
         blocking = assertion_spec.get("blocking", True)
         answer = str(response.get("final_answer", ""))
-        # require_answer_mentions_id is now a non-blocking advisory: a missing id
+        # require_answer_mentions_id is a non-blocking advisory: a missing id
         # is logged as a warning but no longer fails the assertion.
         missing_answer_id = bool(
             matched
@@ -1033,54 +884,21 @@ def _verify_tcw_database_effects(
     return tcw_results
 
 
-def verify_functional_correctness(
-    per_query_responses: list[dict[str, Any]],
+def verify_default_replay_assertions(
+    response_by_key: dict[str, dict[str, Any]],
     workspace_dir: Path,
     report_dir: Path,
 ) -> tuple[dict[str, dict[str, Any]], int | None]:
-    # ------------------------------------------------------------------
-    # Per-query functional correctness assertions
-    # ------------------------------------------------------------------
-    # These checks verify that the agent produced the CORRECT answer for
-    # each user question — not just that it called the LLM. They catch
-    # functional regressions that pure cache-hit-rate metrics miss, e.g.
-    # NL2SQL generating SQL that confuses the antibody NAME ("BD55-1111")
-    # with its numeric id column (11397) and so failing to create the
-    # experiment at all (the qwen-plus run on 2026-06-30 17:11 hit exactly
-    # this bug: Q1 silently no-op'd, Q7 then had no experiment to report).
-    #
-    # Expected values are DB-verified (see EXPECTED_* constants above) and
-    # cross-checked against the known-good deepseek reference run
-    # cache_test_user_v3_20260630_163422_9a55, which created experiment
-    # 902036 with the expected inhibitor/pseudovirus/cell sample ids.
-    #
-    # Assertions are SKIPPED (with a logger.warning) when their target
-    # query wasn't run (e.g. --skip_slow drops Q1; --quick drops Q1-Q3
-    # and Q7). This keeps the cache-smoke modes usable while still
-    # enforcing correctness on the full 7-query replay.
+    """Verify the default 7-question session replay (Q1 create_experiment … Q7)."""
     logger.info("=" * 60)
-    logger.info("TC1 Functional correctness checks:")
-
-    # Build query_key → response dict for fast lookup. per_query_responses
-    # preserves execution order which equals QUERY_SEQUENCES order (minus
-    # any skipped keys).
-    response_by_key: dict[str, dict[str, Any]] = {r["query_key"]: r for r in per_query_responses}
+    logger.info("Default replay correctness checks:")
 
     db_path = workspace_dir / "bio_lab.sqlite"
     today_str = datetime.now().strftime("%Y-%m-%d")
     functional_results: dict[str, dict[str, Any]] = {}
-
-    tc_answer_results = _verify_tc_answer_correctness(response_by_key, report_dir)
-    functional_results.update(tc_answer_results)
-    tcw_db_results = _verify_tcw_database_effects(response_by_key)
-    functional_results.update(tcw_db_results)
+    created_experiment_id: int | None = None
 
     # ---- Q1: create_experiment -----------------------------------------
-    # The agent MUST have INSERTed a new neutralization_experiments row
-    # with the expected inhibitor/pseudovirus/cell sample ids, status=NEW,
-    # and start_date=today. The new experiment id (auto-generated, e.g.
-    # 902036) is captured here and reused by the Q3 / Q7 assertions.
-    created_experiment_id: int | None = None
     if "create_experiment" in response_by_key:
         created_experiment_id = _find_created_experiment_id(db_path, today_str)
         q1_answer = response_by_key["create_experiment"].get("final_answer", "")
@@ -1101,7 +919,6 @@ def verify_functional_correctness(
             f"the create workflow aborted before INSERT. Final answer was:\n"
             f"{q1_answer[:1000]}"
         )
-        # The agent's reply should mention the new experiment id.
         assert str(created_experiment_id) in q1_answer, (
             f"Q1 (create_experiment): the agent created experiment "
             f"{created_experiment_id} in the DB but its final answer does "
@@ -1122,10 +939,6 @@ def verify_functional_correctness(
         )
 
     # ---- Q2: find_antibody_neutralization ------------------------------
-    # The agent MUST report all 5 pseudoviruses that BD-368 neutralizes
-    # with IC50 < 0.1 (and fit_success=1). The response text must contain
-    # every expected pseudovirus NAME (subset match is NOT enough — a
-    # working agent lists all of them).
     if "find_antibody_neutralization" in response_by_key:
         q2_answer = response_by_key["find_antibody_neutralization"].get("final_answer", "")
         missing = [name for name in EXPECTED_BD368_NEUTRALIZED_PSEUDOVIRUSES if name not in q2_answer]
@@ -1155,9 +968,6 @@ def verify_functional_correctness(
         logger.info("  Q2 find_antibody_neutralization: SKIPPED (not in query sequence).")
 
     # ---- Q3: find_recent_experiment ------------------------------------
-    # The most recent experiment for XBB.1.5 + BD55-1111 MUST be the one
-    # created in Q1. If Q1 was skipped, this assertion is also skipped
-    # (no reference id to compare against).
     if "find_recent_experiment" in response_by_key:
         q3_answer = response_by_key["find_recent_experiment"].get("final_answer", "")
         functional_results["find_recent_experiment"] = {
@@ -1184,10 +994,6 @@ def verify_functional_correctness(
         logger.info("  Q3 find_recent_experiment: SKIPPED (not in query sequence).")
 
     # ---- Q4: count_cells -----------------------------------------------
-    # Literal interpretation: total distinct cell types in the DB = 2
-    # (800002 huh-7, 900300 HEK293T-ACE2). Both ids must appear in the
-    # answer. The query wording explicitly says "不同类型" so the literal
-    # count interpretation is unambiguous.
     if "count_cells" in response_by_key:
         q4_answer = response_by_key["count_cells"].get("final_answer", "")
         missing_ids = [cid for cid in EXPECTED_CELL_IDS if cid not in q4_answer]
@@ -1264,8 +1070,6 @@ def verify_functional_correctness(
         logger.info("  Q6 count_antibodies: SKIPPED (not in query sequence).")
 
     # ---- Q7: ask_recent_experiment_id ----------------------------------
-    # The agent MUST report the experiment id that Q1 created. If Q1 was
-    # skipped, this assertion is also skipped.
     if "ask_recent_experiment_id" in response_by_key:
         q7_answer = response_by_key["ask_recent_experiment_id"].get("final_answer", "")
         functional_results["ask_recent_experiment_id"] = {
@@ -1291,15 +1095,39 @@ def verify_functional_correctness(
     else:
         logger.info("  Q7 ask_recent_experiment_id: SKIPPED (not in query sequence).")
 
-    # Persist the functional results alongside the cache stats so a failure
-    # can be diagnosed offline from the .memory dir.
+    logger.info("=" * 60)
+    return functional_results, created_experiment_id
+
+
+def verify_functional_correctness(
+    per_query_responses: list[dict[str, Any]],
+    workspace_dir: Path,
+    report_dir: Path,
+) -> tuple[dict[str, dict[str, Any]], int | None]:
+    """Dispatch functional checks to the group that actually ran.
+
+    Each group verifier self-gates on the query keys present in
+    ``per_query_responses``, so only the group that was replayed is checked.
+    """
+    response_by_key: dict[str, dict[str, Any]] = {r["query_key"]: r for r in per_query_responses}
+
+    logger.info("=" * 60)
+    logger.info("Functional correctness checks:")
+
+    functional_results: dict[str, dict[str, Any]] = {}
+    functional_results.update(verify_tc_answer_assertions(response_by_key, report_dir))
+    functional_results.update(verify_tcw_answer_assertions(response_by_key, report_dir))
+    functional_results.update(verify_tcw_database_effects(response_by_key))
+    default_results, created_experiment_id = verify_default_replay_assertions(
+        response_by_key, workspace_dir, report_dir
+    )
+    functional_results.update(default_results)
+
     functional_report_path = report_dir / "functional_results_v3.json"
     functional_report_path.write_text(
         json.dumps(functional_results, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     logger.info(f"Functional results report: {functional_report_path}")
-    logger.info("=" * 60)
-
     logger.info("=" * 60)
     return functional_results, created_experiment_id
