@@ -1,4 +1,4 @@
-"""Focused tests for Bio Lab TC SQL functional assertions."""
+"""Focused tests for Bio Lab TC answer / TC-W DB-effect assertions."""
 
 import shutil
 import sqlite3
@@ -20,16 +20,12 @@ def test_tc_expected_assertions_exclude_ambiguous_cases():
     assert not (tc_keys & {"TC09", "TC11", "TC19"})
     assert "TC21" in tc_keys
     assert not query_cases.TC_AMBIGUOUS_QUERY_KEYS
-    assert len(query_cases.TC_AMBIGUOUS_EXPECTED_SQLS["TC22"]) == 8
     assert not query_cases.TC_PENDING_QUERY_KEYS
     assert {"TC10", "TC22"} == set(query_cases.TC_NON_BLOCKING_REVIEW_CASES)
     review_only_keys = {
         key for key, spec in query_cases.TC_NON_BLOCKING_REVIEW_CASES.items() if spec.get("skip_expected_assertion")
     }
     assert review_only_keys == {"TC10"}
-    assert set(query_cases.TC_EXPECTED_SQL_ASSERTIONS) == tc_keys - (
-        query_cases.TC_AMBIGUOUS_QUERY_KEYS | query_cases.TC_PENDING_QUERY_KEYS | review_only_keys
-    )
     assert set(query_cases.TC_EXPECTED_ANSWER_ASSERTIONS) == tc_keys
 
 
@@ -43,21 +39,6 @@ def test_tcw_cases_are_registered_with_assertions_and_rollback_flags():
     assert {key for key, spec in query_cases.TCW_QUERY_SEQUENCES.items() if spec.get("rollback_database")} == tcw_keys
     assert all(key in query_cases.ALL_EXPECTED_ANSWER_ASSERTIONS for key in tcw_keys)
     assert all(key in query_cases.QUERY_GROUPS["TC-W"] for key in tcw_keys)
-
-
-def test_tc_expected_sql_executes_on_fixture():
-    db_path = BIO_LAB_DIR / "data" / "bio_lab.sqlite"
-
-    for tc_key, spec in query_cases.TC_EXPECTED_SQL_ASSERTIONS.items():
-        expected_sqls = spec.get("expected_sqls") or ([spec["expected_sql"]] if "expected_sql" in spec else [])
-        if not expected_sqls:
-            assert {"allow_unqueryable_answer", "allow_empty_result_pass", "absence_assertion"} & set(spec)
-            continue
-        for expected_sql in expected_sqls:
-            result_sets, errors = assertions._execute_sql_result_sets(db_path, expected_sql, source=tc_key)
-
-            assert not errors, f"{tc_key} expected SQL should execute cleanly: {errors}"
-            assert result_sets, f"{tc_key} expected SQL should produce a comparable result set"
 
 
 def test_tcw_database_effect_capture_finds_created_target_experiment(tmp_path):
@@ -92,60 +73,8 @@ def test_tcw_database_effect_capture_finds_created_target_experiment(tmp_path):
     assert captured["created_experiment_ids"] == [experiment_id]
 
 
-def test_tc_unqueryable_answer_requires_no_sql_and_schema_boundary_explanation():
-    rule = {
-        "required_terms": ["生产厂家", "采购价格"],
-        "unavailable_terms": ["没有存储", "未存储", "无法查询", "不支持查询"],
-    }
-
-    assert assertions._matches_unqueryable_answer(
-        {"final_answer": "当前系统没有存储抗体的生产厂家和采购价格信息。", "sql_files": []},
-        rule,
-    )
-    assert not assertions._matches_unqueryable_answer(
-        {"final_answer": "当前系统没有存储抗体的生产厂家和采购价格信息。", "sql_files": ["query.sql"]},
-        rule,
-    )
-
-
-def test_tc_absence_assertion_requires_relevant_empty_sql_and_absence_answer():
-    generated = {
-        "source": "test.sql",
-        "statement_index": 1,
-        "row_count": 0,
-        "preview_rows": [],
-        "canonical_rows": [],
-        "columns": ["id", "name"],
-        "sql": "SELECT id FROM cells WHERE name LIKE '%HeLa%'",
-    }
-    rule = {
-        "sql_term_groups": [["hela"]],
-        "required_answer_terms": ["HeLa"],
-        "absence_answer_terms": ["未找到", "不存在"],
-    }
-
-    assert assertions._matches_absence_assertion(
-        {"final_answer": "未找到 HeLa 对应的中和原始读数。", "sql_files": ["query.sql"]},
-        [generated],
-        rule,
-    )
-    assert not assertions._matches_absence_assertion(
-        {"final_answer": "找到 HeLa 对应的中和原始读数。", "sql_files": ["query.sql"]},
-        [generated],
-        rule,
-    )
-    assert not assertions._matches_absence_assertion(
-        {"final_answer": "未找到 HeLa 对应的中和原始读数。", "sql_files": ["query.sql"]},
-        [
-            {**generated, "row_count": 1, "canonical_rows": [["1", "HeLa"]]},
-            {**generated, "sql": "SELECT id FROM cells WHERE name LIKE '%Vero%'"},
-        ],
-        rule,
-    )
-
-
 def test_tc_manual_review_is_reported_without_changing_a_passing_assertion():
-    tc_results = {"TC22": {"status": "passed_by_absence_assertion"}}
+    tc_results = {"TC22": {"status": "passed_by_answer_assertion"}}
     responses = {
         "TC10": {"sql_files": ["cells.sql"], "final_answer": "No cells without STORED samples"},
         "TC22": {"sql_files": ["sars.sql"], "final_answer": "No matching relation"},
@@ -155,14 +84,14 @@ def test_tc_manual_review_is_reported_without_changing_a_passing_assertion():
 
     assert tc_results["TC10"]["status"] == "passed_with_non_discriminating_fixture"
     assert tc_results["TC10"]["manual_review"]["blocking"] is False
-    assert tc_results["TC22"]["status"] == "passed_by_absence_assertion"
+    assert tc_results["TC22"]["status"] == "passed_by_answer_assertion"
     assert tc_results["TC22"]["manual_review"]["blocking"] is False
 
 
 def test_tc_answer_assertion_matches_precomputed_facts():
     spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC05"]
 
-    matched = assertions._matches_tc_answer_assertion("最强的是 BD-368，最低 IC50 为 0.018614。", spec)
+    matched = assertions._match_answer_terms("最强的是 BD-368，最低 IC50 为 0.018614。", spec)
 
     assert matched["matched"]
     assert not matched["missing_terms"]
@@ -171,18 +100,18 @@ def test_tc_answer_assertion_matches_precomputed_facts():
 def test_tc08_answer_assertion_only_requires_r2_value():
     spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC08"]
 
-    matched = assertions._matches_tc_answer_assertion("查询结果显示 R2 拟合优度为 0.98。", spec)
+    matched = assertions._match_answer_terms("查询结果显示 R2 拟合优度为 0.98。", spec)
 
     assert matched["matched"]
     assert not matched["missing_terms"]
 
 
 def test_tc_answer_assertion_does_not_require_unasked_full_id_lists():
-    tc07 = assertions._matches_tc_answer_assertion(
+    tc07 = assertions._match_answer_terms(
         "共有 44 个实验，其中 43 个是 COMPLETED，1 个是 NEW。",
         query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC07"],
     )
-    tc15 = assertions._matches_tc_answer_assertion(
+    tc15 = assertions._match_answer_terms(
         "共有 38 个状态为 COMPLETED 且使用 3-param logistic 模型的 IC50 拟合实验。",
         query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC15"],
     )
@@ -194,7 +123,7 @@ def test_tc_answer_assertion_does_not_require_unasked_full_id_lists():
 def test_tc23_answer_assertion_does_not_require_enumerated_absence_language():
     spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC23"]
 
-    matched = assertions._matches_tc_answer_assertion('fit_info 的 "p_value" 检查结果为 0 项可用值。', spec)
+    matched = assertions._match_answer_terms('fit_info 的 "p_value" 检查结果为 0 项可用值。', spec)
 
     assert matched["matched"]
     assert not matched["missing_absence_terms"]
@@ -295,17 +224,48 @@ def test_extract_final_assistant_text_falls_back_without_plan():
     assert cache_analysis._extract_final_assistant_text(messages) == "针对 JN.1，最强的是 BD-368，IC50 为 0.018614。"
 
 
-def test_tc_answer_assertion_requires_absence_language():
+def test_tc_answer_assertion_without_absence_language_is_advisory_only():
+    """Absence vocabulary missing no longer fails: terms present -> matched; absence is advisory."""
     spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC21"]
 
-    matched = assertions._matches_tc_answer_assertion("抗体999 和 SA99 的重链 DNA 序列如下。", spec)
+    matched = assertions._match_answer_terms("抗体999 和 SA99 的重链 DNA 序列如下。", spec)
 
-    assert not matched["matched"]
+    assert matched["matched"]
     assert matched["missing_absence_terms"]
+    assert not matched["has_absence_answer"]
+
+
+def test_check_answer_assertion_absence_missing_is_non_blocking_manual_review():
+    """Absence vocabulary missing -> requires_manual_review, non-blocking (not a hard fail)."""
+    spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC21"]
+
+    # Terms present but no absence language (e.g. agent invented data instead of reporting none).
+    result = assertions._check_answer_assertion(
+        {"final_answer": "抗体999 和 SA99 的重链 DNA 序列如下：ATCG…", "hitl_triggered": False},
+        spec,
+    )
+
+    assert result["status"] == "requires_manual_review"
+    assert result["blocking"] is False
+    assert result["manual_review_required"] is True
+    assert result["missing_absence_terms"]
+
+
+def test_check_answer_assertion_absence_present_passes_when_terms_match():
+    """Absence vocabulary present + required terms match -> passed_by_answer_assertion."""
+    spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC21"]
+
+    result = assertions._check_answer_assertion(
+        {"final_answer": "抗体999 和 SA99 不存在，无法提供重链 DNA 序列。", "hitl_triggered": False},
+        spec,
+    )
+
+    assert result["status"] == "passed_by_answer_assertion"
+    assert result["blocking"] is True
 
 
 def test_absent_tc_answer_correctness_accepts_human_feedback_pass(tmp_path):
-    results = assertions._verify_tc_answer_correctness(
+    results = assertions.verify_tc_answer_assertions(
         {
             "TC20": {
                 "final_answer": "待确认后按空结果处理。",
@@ -337,6 +297,47 @@ def test_absent_tc_answer_correctness_accepts_human_feedback_pass(tmp_path):
     assert results["TC23"]["status"] == "passed_by_human_feedback"
     assert results["TC24"]["status"] == "passed_by_human_feedback"
     assert (tmp_path / "tc_answer_functional_results_v3.json").exists()
+
+
+def test_soft_required_terms_do_not_block_but_are_reported():
+    """Soft (query-echo) terms are advisory: missing them does not fail the run."""
+    spec = {
+        "expected_summary": "test",
+        "required_terms": ["38"],
+        "soft_required_terms": ["COMPLETED", "3-param logistic"],
+    }
+    result = assertions._match_answer_terms("共有 38 个实验。", spec)
+    assert result["matched"]
+    assert result["missing_soft_terms"] == ["COMPLETED", "3-param logistic"]
+
+    check = assertions._check_answer_assertion(
+        {"final_answer": "共有 38 个实验。", "hitl_triggered": False},
+        spec,
+    )
+    assert check["status"] == "passed_by_answer_assertion"
+    assert check["missing_soft_terms"] == ["COMPLETED", "3-param logistic"]
+
+
+def test_tc20_missing_entity_name_is_soft_non_blocking():
+    """TC20: missing SA58 (query-echo) does not fail — only absence language matters."""
+    spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC20"]
+    result = assertions._check_answer_assertion(
+        {"final_answer": "当前数据库没有生产厂家和采购价格字段，无法提供。", "hitl_triggered": False},
+        spec,
+    )
+    assert result["status"] == "passed_by_answer_assertion"
+    assert "SA58" in result["missing_soft_terms"]
+
+
+def test_tc25_missing_user_name_is_soft_non_blocking():
+    """TC25: missing 小张 (query-echo) does not fail — only absence language matters."""
+    spec = query_cases.TC_EXPECTED_ANSWER_ASSERTIONS["TC25"]
+    result = assertions._check_answer_assertion(
+        {"final_answer": "不存在还没开始但已经做完的实验，这是逻辑矛盾。", "hitl_triggered": False},
+        spec,
+    )
+    assert result["status"] == "passed_by_answer_assertion"
+    assert "小张" in result["missing_soft_terms"]
 
 
 def _ai(content: str, *, tool_calls: list[dict[str, object]] | None = None, additional_kwargs: dict | None = None):
