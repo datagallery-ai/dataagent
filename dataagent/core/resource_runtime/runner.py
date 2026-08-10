@@ -63,6 +63,7 @@ def build_resource_runner(
                 envelope=envelope,
                 plan=plan,
                 cancel_event=cancel_event,
+                job_id=job_id,
             )
             status = job_status(result, cancelled=cancel_event.is_set())
             exit_code = int(result.get("exit_code", 0 if status == "completed" else 1))
@@ -92,11 +93,18 @@ def run_resource_operations(
     envelope: dict[str, Any],
     plan: SubmitPlan,
     cancel_event: Event,
+    job_id: str = "",
 ) -> dict[str, Any]:
     """Execute submit/poll/collect operations for one resource job."""
     resource_id = resource.metadata.get("name") or resource.metadata.get("id", "unknown")
     logger.debug(f"[runner] start run_resource_operations resource={resource_id}")
-    context = ResourceOperationContext(runtime=coordinator.runtime, resource=resource, cancel_event=cancel_event)
+    context = ResourceOperationContext(
+        runtime=coordinator.runtime,
+        resource=resource,
+        cancel_event=cancel_event,
+        job_id=str(job_id or "").strip(),
+        job_service=getattr(coordinator, "job_service", None),
+    )
     allocation = plan.allocation.get("resource") if isinstance(plan.allocation.get("resource"), dict) else {}
     submit_result = invoke_operation(
         coordinator=coordinator,

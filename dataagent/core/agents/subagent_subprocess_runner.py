@@ -21,11 +21,16 @@ import os
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 from typing import Any
 
+from dataagent.actions.tools.local_tool.agent_status_handler import (
+    extract_subagent_status,
+    reset_subagent_status,
+)
 from dataagent.actions.tools.local_tool.sandbox import Sandbox, get_current_sandbox, set_current_sandbox
 from dataagent.actions.tools.local_tool.tools import (
     _coerce_flex_state_dict_from_payload,
@@ -71,6 +76,8 @@ class SubagentSubprocessRunner:
         progress_callback: Any = None,
         tool_call_id: str | None = None,
         reuse_workspace: bool = False,
+        on_child_started: Callable[[int], None] | None = None,
+        on_child_finished: Callable[[], None] | None = None,
     ) -> JobSubagentOutcome:
         """Launch the subagent subprocess and parse stdout into collect fields.
 
@@ -89,6 +96,8 @@ class SubagentSubprocessRunner:
             progress_callback: Optional stderr progress callback.
             tool_call_id: Optional tool call id for progress parsing.
             reuse_workspace: When true, hydrate messages/state from the existing workspace.
+            on_child_started: Optional callback invoked with the child pid/pgid after spawn.
+            on_child_finished: Optional callback invoked when the child wait loop ends.
 
         Returns:
             Parsed collect-compatible fields. Never writes ``workers/.memory``.
@@ -140,6 +149,8 @@ class SubagentSubprocessRunner:
                 cancel_event=cancel_event,
                 progress_callback=progress_callback,
                 tool_call_id=tool_call_id,
+                on_child_started=on_child_started,
+                on_child_finished=on_child_finished,
             )
             return _parse_job_subagent_completed(
                 completed=completed,
@@ -165,6 +176,8 @@ class SubagentSubprocessRunner:
         cancel_event: Event | None,
         progress_callback: Any,
         tool_call_id: str | None,
+        on_child_started: Callable[[int], None] | None = None,
+        on_child_finished: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         """Run subprocess and honour ``cancel_event`` while the child is running."""
         if cancel_event is None:
@@ -179,23 +192,15 @@ class SubagentSubprocessRunner:
             except TimeoutError:
                 return {"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1}
 
-        if progress_callback and tool_call_id:
-            return await _run_cancellable_subprocess_async(
-                cmd=cmd,
-                timeout=timeout,
-                env=env,
-                cancel_event=cancel_event,
-                progress_callback=progress_callback,
-                tool_call_id=tool_call_id,
-            )
-
         return await _run_cancellable_subprocess_async(
             cmd=cmd,
             timeout=timeout,
             env=env,
             cancel_event=cancel_event,
-            progress_callback=None,
-            tool_call_id=None,
+            progress_callback=progress_callback,
+            tool_call_id=tool_call_id,
+            on_child_started=on_child_started,
+            on_child_finished=on_child_finished,
         )
 
 
@@ -207,20 +212,10 @@ async def _run_cancellable_subprocess_async(
     cancel_event: Event,
     progress_callback: Any,
     tool_call_id: str | None,
+    on_child_started: Callable[[int], None] | None = None,
+    on_child_finished: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Execute a subprocess and terminate it when ``cancel_event`` is set or timeout elapses."""
-    if progress_callback and tool_call_id:
-        try:
-            return await _run_subprocess_async(
-                cmd,
-                timeout=timeout,
-                env=env,
-                progress_callback=progress_callback,
-                tool_call_id=tool_call_id,
-            )
-        except TimeoutError:
-            return {"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1}
-
     sandbox = get_current_sandbox()
     original_cmd = cmd
     wrapped_cmd = sandbox.wrap_command(cmd, env=env)
@@ -236,6 +231,37 @@ async def _run_cancellable_subprocess_async(
         env=env,
         start_new_session=os.name != "nt",
     )
+    if callable(on_child_started) and process.pid is not None:
+        on_child_started(int(process.pid))
+
+    try:
+        if progress_callback and tool_call_id:
+            return await _wait_cancellable_with_progress(
+                process=process,
+                timeout=timeout,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+                tool_call_id=tool_call_id,
+            )
+        return await _wait_cancellable_communicate(
+            process=process,
+            timeout=timeout,
+            cancel_event=cancel_event,
+        )
+    finally:
+        if tool_call_id:
+            reset_subagent_status(tool_call_id)
+        if callable(on_child_finished):
+            on_child_finished()
+
+
+async def _wait_cancellable_communicate(
+    *,
+    process: asyncio.subprocess.Process,
+    timeout: int,
+    cancel_event: Event,
+) -> dict[str, Any]:
+    """Wait for ``process.communicate`` while honouring cancel and timeout."""
     communicate_task = asyncio.create_task(process.communicate())
     deadline = time.monotonic() + max(1, int(timeout))
     try:
@@ -260,6 +286,77 @@ async def _run_cancellable_subprocess_async(
     return {
         "stdout": stdout_bytes.decode("utf-8", errors="replace").strip(),
         "stderr": stderr_bytes.decode("utf-8", errors="replace").strip(),
+        "returncode": process.returncode,
+    }
+
+
+async def _wait_cancellable_with_progress(
+    *,
+    process: asyncio.subprocess.Process,
+    timeout: int,
+    cancel_event: Event,
+    progress_callback: Any,
+    tool_call_id: str,
+) -> dict[str, Any]:
+    """Drain stdout/stderr with progress parsing while honouring cancel and timeout."""
+    stdout_stream = process.stdout
+    stderr_stream = process.stderr
+    if stdout_stream is None or stderr_stream is None:
+        raise RuntimeError("Subprocess stdout/stderr pipes are not available.")
+
+    chunk_size = 64 * 1024
+    stdout_chunks: list[bytes] = []
+    stderr_lines: list[str] = []
+
+    async def _drain_stdout() -> None:
+        while True:
+            chunk = await stdout_stream.read(chunk_size)
+            if not chunk:
+                break
+            stdout_chunks.append(chunk)
+
+    async def _drain_stderr() -> None:
+        pending = b""
+        while True:
+            chunk = await stderr_stream.read(chunk_size)
+            if not chunk:
+                break
+            pending += chunk
+            parts = pending.split(b"\n")
+            pending = parts.pop()
+            for line in parts:
+                decoded = line.decode("utf-8", errors="replace")
+                extract_subagent_status(decoded, tool_call_id, progress_callback)
+                stderr_lines.append(decoded)
+        if pending:
+            decoded = pending.decode("utf-8", errors="replace")
+            extract_subagent_status(decoded, tool_call_id, progress_callback)
+            stderr_lines.append(decoded)
+
+    drain_task = asyncio.create_task(asyncio.gather(_drain_stdout(), _drain_stderr(), process.wait()))
+    deadline = time.monotonic() + max(1, int(timeout))
+    try:
+        while not drain_task.done():
+            if cancel_event.is_set():
+                await terminate_process_tree_async(process)
+                drain_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await drain_task
+                return {"stdout": "", "stderr": "subagent job cancelled", "returncode": -1}
+            if time.monotonic() >= deadline:
+                await terminate_process_tree_async(process)
+                drain_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await drain_task
+                return {"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1}
+            await asyncio.sleep(_CANCEL_POLL_INTERVAL_SEC)
+        await drain_task
+    except asyncio.CancelledError:
+        await terminate_process_tree_async(process)
+        raise
+    return {
+        "stdout": b"".join(stdout_chunks).decode("utf-8", errors="replace").strip(),
+        "stderr": "\n".join(stderr_lines).strip(),
         "returncode": process.returncode,
     }
 

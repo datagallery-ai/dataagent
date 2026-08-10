@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 
@@ -34,6 +35,8 @@ def run_local_sandbox_command(
     sandbox: Sandbox,
     timeout_sec: int,
     cancel_event: Event,
+    on_child_started: Callable[[int], None] | None = None,
+    on_child_finished: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     """Execute one shell command in the workspace sandbox with cancel support.
 
@@ -43,6 +46,8 @@ def run_local_sandbox_command(
         sandbox: Active sandbox used to wrap the command.
         timeout_sec: Maximum runtime in seconds.
         cancel_event: Job cancel event propagated from :class:`JobService`.
+        on_child_started: Optional callback invoked with the child pid/pgid after spawn.
+        on_child_finished: Optional callback invoked when the child wait loop ends.
 
     Returns:
         Result payload with ``status``, ``exit_code``, ``stdout``, and ``stderr``.
@@ -58,6 +63,8 @@ def run_local_sandbox_command(
                 timeout=max(1, int(timeout_sec)),
                 cancel_event=cancel_event,
                 sandbox=sandbox,
+                on_child_started=on_child_started,
+                on_child_finished=on_child_finished,
             )
         )
     finally:
@@ -103,6 +110,8 @@ async def _run_cancellable_command_async(
     timeout: int,
     cancel_event: Event,
     sandbox: Sandbox,
+    on_child_started: Callable[[int], None] | None = None,
+    on_child_finished: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     """Run a wrapped subprocess and honour ``cancel_event`` while it is active."""
     wrapped_cmd = sandbox.wrap_command(cmd, cwd=cwd, env=None)
@@ -114,6 +123,8 @@ async def _run_cancellable_command_async(
         cwd=process_cwd,
         start_new_session=os.name != "nt",
     )
+    if callable(on_child_started) and process.pid is not None:
+        on_child_started(int(process.pid))
     communicate_task = asyncio.create_task(process.communicate())
     deadline = time.monotonic() + max(1, int(timeout))
     try:
@@ -135,6 +146,9 @@ async def _run_cancellable_command_async(
     except asyncio.CancelledError:
         await terminate_process_tree_async(process)
         raise
+    finally:
+        if callable(on_child_finished):
+            on_child_finished()
     return {
         "stdout": stdout_bytes.decode("utf-8", errors="replace"),
         "stderr": stderr_bytes.decode("utf-8", errors="replace"),

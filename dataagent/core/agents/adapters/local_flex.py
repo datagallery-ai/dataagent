@@ -58,8 +58,25 @@ class LocalFlexAdapter:
         parent_tool_call_id: str = "",
         reuse_workspace: bool = False,
         timeout_sec: int = DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC,
+        job_service: Any = None,
     ) -> JobResult:
-        """Execute one subagent job synchronously inside a JobService worker thread."""
+        """Execute one subagent job synchronously inside a JobService worker thread.
+
+        Args:
+            job_id: Active job id from :class:`~dataagent.core.jobs.service.JobService`.
+            spec: Resolved specialist agent spec.
+            task: Task text forwarded to the subagent subprocess.
+            workspace_dir: Subagent workspace directory.
+            subagent_session_id: Opaque subagent workspace id.
+            workspace_rel_path: Workspace-relative path recorded on the job result.
+            runtime: Parent :class:`~dataagent.core.cbb.runtime.Runtime`.
+            cancel_event: Cooperative cancel event from the job service.
+            emit_event: Callback that persists job progress events.
+            parent_tool_call_id: Optional parent tool-call id for event correlation.
+            reuse_workspace: When true, hydrate messages/state from the workspace.
+            timeout_sec: Subprocess timeout in seconds.
+            job_service: Optional job service used to register the child process group.
+        """
         started_at = time.monotonic()
         emit_event(
             {
@@ -96,6 +113,15 @@ class LocalFlexAdapter:
         sub_id = derive_job_sub_id(subagent_session_id)
         progress_callback = getattr(runtime, "on_subagent_progress", None)
         sandbox = runtime.sandbox
+        resolved_job_service = job_service if job_service is not None else getattr(runtime, "job_service", None)
+
+        def _on_child_started(pgid: int) -> None:
+            if resolved_job_service is not None:
+                resolved_job_service.register_child_pgid(job_id, pgid)
+
+        def _on_child_finished() -> None:
+            if resolved_job_service is not None:
+                resolved_job_service.clear_child_pgid(job_id)
 
         try:
             outcome = asyncio.run(
@@ -113,6 +139,8 @@ class LocalFlexAdapter:
                     cancel_event=cancel_event,
                     progress_callback=progress_callback,
                     reuse_workspace=reuse_workspace,
+                    on_child_started=_on_child_started,
+                    on_child_finished=_on_child_finished,
                 )
             )
         except Exception as exc:
