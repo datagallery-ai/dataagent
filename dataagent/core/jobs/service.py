@@ -283,11 +283,19 @@ class JobService:
         return merged
 
     def cancel(self, job_id: str) -> JobSnapshot:
-        """Cancel a running job and persist a terminal cancelled result."""
+        """Cancel a running job and persist a terminal cancelled result.
+
+        Unknown ``job_id`` values (store status ``not_found`` and not tracked in
+        ``_running``) return a ``not_found`` snapshot without creating job files.
+        Already-terminal jobs are returned as-is without rewriting status.
+        """
         with self._lock:
             running = self._running.get(job_id)
         status = self.store.read_status(job_id)
-        if str(status.get("status") or "") in TERMINAL_STATUSES:
+        current = str(status.get("status") or "").strip().lower()
+        if current in TERMINAL_STATUSES:
+            return self.poll(job_id)
+        if current == "not_found" and running is None:
             return self.poll(job_id)
         if running is not None:
             running.cancel_event.set()

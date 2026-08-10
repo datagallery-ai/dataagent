@@ -99,6 +99,8 @@ def _read_job_kind(runtime: Any, job_id: str) -> tuple[str | None, dict[str, Any
     Returns:
         A ``(job_kind, error_payload)`` pair. When ``error_payload`` is not ``None``,
         ``job_kind`` is ``None`` and the dict is an ERROR tool response.
+        Missing jobs (``status=not_found``) yield ``(None, None)`` so cancel/poll
+        tools can surface not-found without a misleading kind mismatch.
     """
     job_service = _resolve_job_service(runtime)
     if job_service is None:
@@ -110,7 +112,25 @@ def _read_job_kind(runtime: Any, job_id: str) -> tuple[str | None, dict[str, Any
         return None, None
     if not isinstance(status, dict) or not str(status.get("job_id") or job_id).strip():
         return None, None
+    if str(status.get("status") or "").strip().lower() == "not_found":
+        return None, None
     return _job_kind_from_status(status), None
+
+
+def _map_cancel_tool_result(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert a cancel snapshot with ``not_found`` into a tool ERROR payload.
+
+    Args:
+        job_id: Job id passed to the cancel tool.
+        payload: Snapshot dict returned by the job service / coordinator.
+
+    Returns:
+        The original payload, or ``{"status": "ERROR", "message": ...}`` when the
+        job does not exist.
+    """
+    if str(payload.get("status") or "").strip().lower() != "not_found":
+        return payload
+    return {"status": "ERROR", "message": f"job_id {job_id} not found"}
 
 
 def _require_job_kind(
@@ -570,7 +590,10 @@ def cancel_subagent(job_id: str, *, _tool_context: ToolExecutionContext) -> dict
     )
     if kind_error is not None:
         return kind_error
-    return agent_service.cancel(job_id=normalized_job_id)
+    return _map_cancel_tool_result(
+        normalized_job_id,
+        agent_service.cancel(job_id=normalized_job_id),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -770,7 +793,10 @@ def cancel_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str,
     )
     if kind_error is not None:
         return kind_error
-    return coordinator.cancel(job_id=normalized_job_id)
+    return _map_cancel_tool_result(
+        normalized_job_id,
+        coordinator.cancel(job_id=normalized_job_id),
+    )
 
 
 def list_resources(*, _tool_context: ToolExecutionContext) -> dict[str, Any]:
