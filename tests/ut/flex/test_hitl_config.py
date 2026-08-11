@@ -34,13 +34,11 @@ def test_resolve_human_feedback_conditions_from_scenario():
 
 
 def test_format_human_feedback_conditions_block():
-    block = format_human_feedback_conditions_block(
-        ["调用read_file工具之前", "调用perceive_metadata_from_memory工具之前"]
-    )
+    block = format_human_feedback_conditions_block(["调用read_file工具之前", "调用natural_language_to_sql工具之前"])
     assert block == "\n".join(
         [
             f"调用read_file工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}",
-            f"调用perceive_metadata_from_memory工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}",
+            f"调用natural_language_to_sql工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}",
         ]
     )
 
@@ -48,10 +46,10 @@ def test_format_human_feedback_conditions_block():
 def test_append_human_feedback_conditions_to_instructions():
     merged = append_human_feedback_conditions_to_instructions(
         "先获取表结构信息。",
-        ["调用perceive_metadata_from_memory工具之前"],
+        ["调用natural_language_to_sql工具之前"],
     )
     assert merged.startswith("先获取表结构信息。")
-    assert f"调用perceive_metadata_from_memory工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}" in merged
+    assert f"调用natural_language_to_sql工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}" in merged
 
 
 def test_resolve_scenario_instructions_appends_conditions_when_hitl_enabled():
@@ -60,13 +58,13 @@ def test_resolve_scenario_instructions_appends_conditions_when_hitl_enabled():
         "SCENARIO": {
             "chat": {
                 "instructions": "生成分析报告。",
-                "human_feedback_conditions": ["调用perceive_metadata_from_memory工具之前"],
+                "human_feedback_conditions": ["调用natural_language_to_sql工具之前"],
             }
         },
     }
     instructions = resolve_scenario_instructions(config, mode="chat")
     assert instructions.startswith("生成分析报告。")
-    assert f"调用perceive_metadata_from_memory工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}" in instructions
+    assert f"调用natural_language_to_sql工具之前，{HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX}" in instructions
 
 
 def test_resolve_scenario_instructions_ignores_conditions_when_hitl_disabled():

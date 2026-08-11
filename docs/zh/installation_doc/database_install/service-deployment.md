@@ -8,36 +8,6 @@
 docker network create datapilot-network 2>/dev/null || true
 cat > ~/docker-compose-db.yaml << 'EOF'
 services:
-  elasticsearch:
-    image: elasticsearch:7.10.1
-    container_name: datapilot-es
-    restart: unless-stopped
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    environment:
-      - "discovery.type=single-node"
-      - "xpack.security.enabled=false"
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
-      - "path.repo=/usr/share/elasticsearch/snapshots"
-    ulimits:
-        memlock:
-          soft: -1
-          hard: -1
-        nofile:
-          soft: 65536
-          hard: 65536
-    volumes:
-      - ${ES_DATA_DIR:-~/es_data}:/usr/share/elasticsearch/data
-    networks:
-      datapilot-network:
-        aliases:
-          - elasticsearch
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -E '\"status\":\"(green|yellow)\"'"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
   postgres:
     image: postgres:15-alpine
     container_name: datapilot-postgres
@@ -95,7 +65,6 @@ services:
       retries: 3
       start_period: 40s
 volumes:
-  es_data:
   postgres_data:
   mysql_data:
 networks:
@@ -105,12 +74,6 @@ networks:
 EOF
 ```
 
-然后设置vm.max_map_count
-
-```bash
-sudo chmod -R 777 ~/es_data
-[ $(cat /proc/sys/vm/max_map_count) -lt 262144 ] && (echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf && sudo sysctl -p) || echo "vm.max_map_count 已经符合要求，无需修改。"
-```
 
 然后启动&验证数据库
 
@@ -126,7 +89,6 @@ docker ps
 # 连接数据库（连接后退出使用Ctrl+D）
 sudo docker exec -it datapilot-mysql mysql -uapp -papp_pass
 sudo docker exec -it datapilot-postgres psql -U datapilot_user -d datapilot
-curl localhost:9200
 ```
 
 若需要停止并删除数据库&卷&网络，执行↓

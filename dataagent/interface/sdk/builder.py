@@ -218,38 +218,6 @@ class AgentBuilder:
 
         return self
 
-    def set_knowledge_base(
-        self,
-        *,
-        backend: str,
-        index: str,
-        url: str,
-        embedding_model: dict[str, Any],
-        **kwargs: Any,
-    ) -> "AgentBuilder":
-        """
-        设置知识库存储配置。
-
-        必填字段:
-            - backend：knowledge_base 后端类型（如 elasticsearch）
-            - index：数据库查询前缀（映射为 KNOWLEDGE_BASE.scene）
-            - url：knowledge_base 后端连接地址
-            - embedding_model：嵌入模型配置（映射为 KNOWLEDGE_BASE.model）
-        """
-        if not isinstance(embedding_model, dict):
-            raise ValueError("`embedding_model` is required and must be a dict.")
-
-        knowledge_base = {
-            "backend": backend,
-            "scene": index,
-            "url": url,
-            "model": dict(embedding_model),
-        }
-        for key, value in kwargs.items():
-            knowledge_base[key] = value
-        self._global_config["KNOWLEDGE_BASE"] = knowledge_base
-        return self
-
     def set_metavisor(
         self,
         *,

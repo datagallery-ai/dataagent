@@ -565,7 +565,6 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "POST_WORKFLOW",
     "USER_ID",
     "ENV",
-    "MEMORY",
     "DATASOURCE",
     "DATABASE",
     "CORE",

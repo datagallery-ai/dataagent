@@ -71,7 +71,7 @@ asyncio.run(main())
 
 ## 5. Optional Database Services
 
-Some scenarios use Elasticsearch, PostgreSQL, MySQL, or business databases. Deploy these external services only when your configuration enables `MEMORY`, `DATASOURCE`, NL2SQL databases, or specific business tools.
+Some scenarios use PostgreSQL, MySQL, or business databases. Deploy these external services only when your configuration enables `DATASOURCE`, NL2SQL databases, or specific business tools.
 
 For database deployment and data import, see: [Database Installation Guide](../installation_doc/database_install/database_install.md).
 

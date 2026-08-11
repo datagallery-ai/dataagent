@@ -63,7 +63,7 @@ uv run mkdocs serve -f docs/mkdocs.yml -a 0.0.0.0:8000
 | --- | --- |
 | 📖 [安装部署](docs/zh/installation/installation.md) | 使用 `uv` / pip 安装、环境变量配置与安装验证 |
 | 📖 [快速开始](docs/zh/quick_start/quick_start.md) | 分钟级跑通 DataAgent 端到端流程 |
-| 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 部署 Elasticsearch、PostgreSQL、MySQL；优先支持 GaussVector 接入，导入场景数据并接入 Semantic Service |
+| 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 部署 PostgreSQL、MySQL；优先支持 GaussVector 接入，导入场景数据并接入 Semantic Service |
 | ⚙️ [功能特性](docs/zh/function/function.md) | 核心能力、模块划分、工具与模型支持 |
 | 🧩 [Semantic Service](docs/zh/semantic_service/semantic-service-user-guide.md) | 面向 NL2SQL 的语义服务增强元数据，优先围绕 GaussVector 提供语义层索引、候选表字段召回与 schema 感知增强 |
 | 🔗 [openJiuwen](docs/zh/openJiuwen/openJiuwen-user-guide.md) | openJiuwen 集成与使用说明 |

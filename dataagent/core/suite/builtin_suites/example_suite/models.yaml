@@ -11,11 +11,3 @@ MODEL:
     params:
       # 【选填】模型参数；示例为 Suite 层覆盖 temperature
       temperature: 0.1
-
-  # 【选填】嵌入模型槽位示例
-  embedding_model:
-    name: "jina_v3"
-    model_type: "embedding"
-    provider: "embedding"
-    params:
-      model: "jina-v3"

@@ -9,8 +9,6 @@
 
 TOOLS:
   local_functions:
-    - module: "dataagent.actions.perceptor.perceptor_atomic"
-      function: "perceive_metadata_from_memory"
     - module: "dataagent.actions.tools.local_tool.tools"
       function: "natural_language_to_plot"
     - module: "dataagent.actions.tools.local_tool.tools"
