@@ -7,8 +7,6 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 # ============================================================================
 from __future__ import annotations
 
@@ -26,23 +24,28 @@ from dataagent.config.config_manager import ConfigManager
 
 _CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
 
-# certificate_mode 数值 -> Python ssl 客户端校验策略。
-# 数值含义以甲方接口规范为准；确认后只需调整这张表，无需改动其余逻辑。
+# inbound_certificate_mode -> ssl 客户端校验策略。0 与 2 实现等价（均为 CERT_NONE）。
 _CERT_MODE_TO_SSL: dict[int, int] = {
-    0: ssl.CERT_NONE,  # 不校验客户端证书
-    1: ssl.CERT_OPTIONAL,  # 可选校验客户端证书
-    2: ssl.CERT_NONE,  # 单向认证：仅提供服务端证书
-    3: ssl.CERT_REQUIRED,  # 双向认证(mTLS)：强制校验网元客户端证书
+    0: ssl.CERT_NONE,
+    1: ssl.CERT_OPTIONAL,
+    2: ssl.CERT_NONE,
+    3: ssl.CERT_REQUIRED,
 }
 
 
-def _bool_enabled(value: Any) -> bool:
+def _bool_enabled(value: Any, *, default: bool = True) -> bool:
+    """开关：未写/None 用 default；显式 false/0/off/no 为关。"""
+    if value is None:
+        return default
     if isinstance(value, bool):
         return value
-    if value is None:
-        return False
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "on", "yes"}
+        text = value.strip().lower()
+        if text in {"1", "true", "on", "yes"}:
+            return True
+        if text in {"0", "false", "off", "no"}:
+            return False
+        return default
     return bool(value)
 
 
@@ -72,34 +75,40 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
-    """Build uvicorn TLS kwargs from the ``certificate`` section of the YAML config.
-
-    Returns an empty dict when TLS is disabled so the server falls back to plain HTTP.
-    Each uvicorn worker loads the certificate independently, so multi-worker mode is
-    supported without extra handling.
-    """
+    """Build uvicorn TLS kwargs from ``certificate``; empty dict means plain HTTP."""
     cert = load_certificate_config(config_path)
-    if not _bool_enabled(cert.get("inbound_enabled")):
+    if not cert:
+        return {}
+    if not _bool_enabled(cert.get("inbound_enabled"), default=True):
         return {}
 
     server_cert = cert.get("server_cert_file")
     server_key = cert.get("server_key_file")
-    if not (server_cert and server_key):
-        raise ValueError("certificate.inbound_enabled=true requires server_cert_file and server_key_file")
+    required_files = (
+        ("server_cert_file", server_cert),
+        ("server_key_file", server_key),
+    )
+    missing = [name for name, value in required_files if not value]
+    if missing:
+        raise ValueError(f"inbound TLS enabled but missing: {', '.join(missing)}")
 
     ca_cert = cert.get("ca_cert_file")
-    for label, path in (("server_cert_file", server_cert), ("server_key_file", server_key), ("ca_cert_file", ca_cert)):
+    path_checks = (
+        ("server_cert_file", server_cert),
+        ("server_key_file", server_key),
+        ("ca_cert_file", ca_cert),
+    )
+    for label, path in path_checks:
         if path and not Path(path).expanduser().is_file():
             raise FileNotFoundError(f"certificate.{label} not found: {path}")
 
-    mode = int(cert.get("certificate_mode", 3))
+    mode = int(cert.get("inbound_certificate_mode", 3))
     cert_reqs = _CERT_MODE_TO_SSL.get(mode)
     if cert_reqs is None:
-        raise ValueError(f"Unsupported certificate_mode={mode}; expected one of {sorted(_CERT_MODE_TO_SSL)}")
+        raise ValueError(f"Unsupported inbound_certificate_mode={mode}; expected one of {sorted(_CERT_MODE_TO_SSL)}")
 
-    # 双向认证必须提供 CA 用于校验客户端证书，否则握手必然失败，提前拦截给出明确报错。
     if cert_reqs != ssl.CERT_NONE and not ca_cert:
-        raise ValueError(f"certificate_mode={mode} requires ca_cert_file to verify client certificates")
+        raise ValueError(f"inbound TLS enabled (inbound_certificate_mode={mode}) but missing: ca_cert_file")
 
     ssl_kwargs: dict[str, Any] = {
         "ssl_certfile": server_cert,
@@ -108,7 +117,7 @@ def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
     }
     if ca_cert:
         ssl_kwargs["ssl_ca_certs"] = ca_cert
-    cipher_suites = cert.get("cipher_suites")
+    cipher_suites = cert.get("inbound_cipher_suites")
     if cipher_suites:
         ssl_kwargs["ssl_ciphers"] = cipher_suites
     return ssl_kwargs
