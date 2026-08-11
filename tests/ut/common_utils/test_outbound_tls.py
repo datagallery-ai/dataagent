@@ -143,7 +143,7 @@ def test_unknown_mode_raises(monkeypatch):
     monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
     monkeypatch.setenv(outbound_tls.ENV_MODE, "9")
 
-    with pytest.raises(ValueError, match="Unsupported certificate_mode=9"):
+    with pytest.raises(ValueError, match="Unsupported outbound_certificate_mode='9'"):
         outbound_tls.httpx_verify()
 
 
@@ -151,7 +151,7 @@ def test_mode3_missing_client_cert_raises(monkeypatch, _cert_files):
     monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
     monkeypatch.setenv(outbound_tls.ENV_MODE, "3")
     monkeypatch.setenv(outbound_tls.ENV_CA_FILE, _cert_files["ca"])
-    with pytest.raises(ValueError, match="mutual TLS"):
+    with pytest.raises(ValueError, match="missing: client_cert_file"):
         outbound_tls.httpx_verify()
 
 
@@ -216,42 +216,57 @@ def test_apply_certificate_config_downfeeds_env(monkeypatch):
     monkeypatch.delenv(outbound_tls.ENV_SSL_SERVICES, raising=False)
     outbound_tls.apply_certificate_config(
         {
-            "inbound_enabled": True,
             "outbound_ssl_services": ["llm", "metavisor"],
-            "ca_cert_file": "/etc/certs/ca.crt",
-            "outbound_ca_cert_file": "/etc/certs/outbound-ca.crt",
-            "server_cert_file": "/etc/certs/server.crt",
-            "server_key_file": "/etc/certs/server.key",
-            "cipher_suites": "ECDHE-RSA-AES128-GCM-SHA256",
-            "certificate_mode": 3,
+            "outbound_certificate_mode": 2,
+            "outbound_cipher_suites": "ECDHE-RSA-AES128-GCM-SHA256",
         }
     )
     import os
 
     assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm,metavisor"
-    assert os.environ[outbound_tls.ENV_CA_FILE] == "/etc/certs/outbound-ca.crt"
+    assert outbound_tls.ENV_CA_FILE not in os.environ
     assert outbound_tls.ENV_CLIENT_CERT not in os.environ
-    assert outbound_tls.ENV_CLIENT_KEY not in os.environ
+    assert os.environ[outbound_tls.ENV_MODE] == "2"
+    assert os.environ[outbound_tls.ENV_CIPHERS] == "ECDHE-RSA-AES128-GCM-SHA256"
+
+
+def test_apply_certificate_config_client_paths(_cert_files):
+    import os
+
+    outbound_tls.apply_certificate_config(
+        {
+            "outbound_ssl_services": "llm",
+            "outbound_certificate_mode": 3,
+            "ca_cert_file": _cert_files["ca"],
+            "client_cert_file": _cert_files["cert"],
+            "client_key_file": _cert_files["key"],
+        }
+    )
+
+    assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm"
+    assert os.environ[outbound_tls.ENV_CLIENT_CERT] == _cert_files["cert"]
+    assert os.environ[outbound_tls.ENV_CLIENT_KEY] == _cert_files["key"]
     assert os.environ[outbound_tls.ENV_MODE] == "3"
 
 
-def test_apply_certificate_config_client_override(monkeypatch):
-    monkeypatch.delenv(outbound_tls.ENV_CLIENT_CERT, raising=False)
-    monkeypatch.delenv(outbound_tls.ENV_CLIENT_KEY, raising=False)
-    outbound_tls.apply_certificate_config(
-        {
-            "inbound_enabled": False,
-            "outbound_ssl_services": "llm",
-            "server_cert_file": "/etc/certs/server.crt",
-            "client_cert_file": "/etc/certs/client.crt",
-            "client_key_file": "/etc/certs/client.key",
-        }
-    )
-    import os
+def test_apply_certificate_config_mode3_missing_client_errors():
+    with pytest.raises(ValueError, match="missing: client_cert_file, client_key_file"):
+        outbound_tls.apply_certificate_config(
+            {
+                "outbound_ssl_services": ["llm"],
+                "outbound_certificate_mode": 3,
+            }
+        )
 
-    assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm"
-    assert os.environ[outbound_tls.ENV_CLIENT_CERT] == "/etc/certs/client.crt"
-    assert os.environ[outbound_tls.ENV_CLIENT_KEY] == "/etc/certs/client.key"
+
+def test_apply_certificate_config_rejects_bad_mode():
+    with pytest.raises(ValueError, match="Unsupported outbound_certificate_mode"):
+        outbound_tls.apply_certificate_config(
+            {
+                "outbound_ssl_services": ["llm"],
+                "outbound_certificate_mode": 9,
+            }
+        )
 
 
 def test_apply_certificate_config_missing_section_clears_inherited_env_by_default(monkeypatch):
@@ -301,14 +316,51 @@ def test_apply_certificate_config_empty_services_disables_inherited_tls(monkeypa
     assert outbound_tls.outbound_ssl_enabled("metavisor") is False
 
 
-def test_apply_certificate_config_falls_back_to_shared_ca(monkeypatch):
+def test_apply_certificate_config_defaults_all_known_services(monkeypatch):
+    import os
+
+    outbound_tls.apply_certificate_config({"outbound_certificate_mode": 2})
+
+    assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm,semantic_layer"
+    assert outbound_tls.outbound_ssl_enabled("llm") is True
+    assert outbound_tls.outbound_ssl_enabled("semantic_layer") is True
+    assert outbound_tls.outbound_ssl_enabled("metavisor") is False
+
+
+def test_apply_certificate_config_outbound_enabled_false_disables_all(monkeypatch):
+    import os
+
+    outbound_tls.apply_certificate_config(
+        {
+            "outbound_enabled": False,
+            "outbound_ssl_services": ["llm", "semantic_layer"],
+        }
+    )
+
+    assert outbound_tls.ENV_SSL_SERVICES not in os.environ
+    assert outbound_tls.outbound_ssl_enabled("llm") is False
+    assert outbound_tls.outbound_ssl_enabled("semantic_layer") is False
+
+
+def test_apply_certificate_config_empty_mapping_clears_env(monkeypatch):
+    import os
+
+    monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
+    outbound_tls.apply_certificate_config({})
+
+    assert outbound_tls.ENV_SSL_SERVICES not in os.environ
+    assert outbound_tls.outbound_ssl_enabled("llm") is False
+
+
+def test_apply_certificate_config_falls_back_to_shared_ca(_cert_files):
     import os
 
     outbound_tls.apply_certificate_config(
         {
             "outbound_ssl_services": ["llm"],
-            "ca_cert_file": "/etc/certs/shared-ca.crt",
+            "outbound_certificate_mode": 2,
+            "ca_cert_file": _cert_files["ca"],
         }
     )
 
-    assert os.environ[outbound_tls.ENV_CA_FILE] == "/etc/certs/shared-ca.crt"
+    assert os.environ[outbound_tls.ENV_CA_FILE] == _cert_files["ca"]
