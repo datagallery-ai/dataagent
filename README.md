@@ -63,7 +63,7 @@ uv run mkdocs serve -f docs/mkdocs.yml
 | --- | --- |
 | 📖 [Installation](docs/en/installation/installation.md) | Install with `uv` / pip, environment variables, and verification |
 | 📖 [Quick Start](docs/en/quick_start/quick_start.md) | Run an end-to-end DataAgent workflow in minutes |
-| 🗄️ [Database Installation](docs/en/installation_doc/database_install/database_install.md) | Deploy Elasticsearch, PostgreSQL, MySQL; prioritize GaussVector integration, import scenario data, and connect Semantic Service |
+| 🗄️ [Database Installation](docs/en/installation_doc/database_install/database_install.md) | Deploy PostgreSQL, MySQL; prioritize GaussVector integration, import scenario data, and connect Semantic Service |
 | ⚙️ [Features](docs/en/function/function.md) | Core capabilities, modules, tools, and model support |
 | 🧩 [Semantic Service](docs/en/semantic_service/semantic-service-user-guide.md) | Semantic Service enriched metadata for NL2SQL, prioritizing GaussVector-oriented semantic-layer indexing, candidate schema recall, and schema perception enhancement |
 | 🔗 [openJiuwen](docs/en/openJiuwen/openJiuwen-user-guide.md) | openJiuwen integration and usage guide |

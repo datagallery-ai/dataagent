@@ -59,7 +59,7 @@ hide:
 
 -   **安装部署**
 
-    选择 `uv` / `pip` 安装方式，完成环境配置与模型接入；需要数据库时，可继续完成 Elasticsearch、PostgreSQL、MySQL 部署，优先支持 GaussVector 接入，并导入场景数据与 Semantic Service。
+    选择 `uv` / `pip` 安装方式，完成环境配置与模型接入；需要数据库时，可继续完成 PostgreSQL、MySQL 部署，并导入场景数据与 Semantic Service。
 
     [开始安装 →](installation/installation.md) · [数据库安装指导 →](installation_doc/database_install/database_install.md)
 

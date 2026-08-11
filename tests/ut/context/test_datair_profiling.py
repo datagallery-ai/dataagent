@@ -33,10 +33,6 @@ class TestDataIRProfiling:
         """Context中添加基本信息"""
         # This test loads `ecommerce_agent.yaml`, which uses explicit $env{...} interpolation.
         # Provide dummy defaults so `config_manager.reload()` won't fail in CI/local runs without `.env`.
-        if not os.getenv("MEMORY_LONG_TERM_STORAGE_URL", "").strip():
-            os.environ["MEMORY_LONG_TERM_STORAGE_URL"] = "http://127.0.0.1:9200"
-        if not os.getenv("MEMORY_SHORT_TERM_STORAGE_URL", "").strip():
-            os.environ["MEMORY_SHORT_TERM_STORAGE_URL"] = "sqlite:///./test.db"
         if not os.getenv("DATASOURCE_DATABASE_ADDRESS", "").strip():
             os.environ["DATASOURCE_DATABASE_ADDRESS"] = "mysql+pymysql://user:pass@127.0.0.1:3306/Ecommerce"
 

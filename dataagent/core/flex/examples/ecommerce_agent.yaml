@@ -21,20 +21,9 @@ SCENARIO:
   chat:
     input: data engineering prompt
     task: run a tool chain and summarize
-    instructions: 先调用这个工具：perceive_metadata_from_memory
+    instructions: 先调用 natural_language_to_sql 获取所需数据，再按需生成图表或报告。
       After you generate the report, you can end the process.
     output_format: done
-
-MEMORY:
-  path_prefix: "/data1/agent/agent_database/usr_graph"
-  index_prefix: "ecommerce"
-  embedding_model: "jina_v3"
-  long_term_storage:
-    backend: "elasticsearch"
-    url: $env{MEMORY_LONG_TERM_STORAGE_URL}
-  short_term_storage:
-    backend: "postgresql"
-    url: $env{MEMORY_SHORT_TERM_STORAGE_URL}
 
 DATASOURCE:
   database_address: $env{DATASOURCE_DATABASE_ADDRESS}

@@ -71,7 +71,7 @@ asyncio.run(main())
 
 ## 5. 可选数据库服务
 
-部分场景会使用 Elasticsearch、PostgreSQL、MySQL 或业务数据库。只有当你的配置中启用了 `MEMORY`、`DATASOURCE`、NL2SQL 数据库或特定业务工具时，才需要部署这些外部服务。
+部分场景会使用 PostgreSQL、MySQL 或业务数据库。只有当你的配置中启用了 `DATASOURCE`、NL2SQL 数据库或特定业务工具时，才需要部署这些外部服务。
 
 数据库服务部署与数据导入请参考：[数据库安装指导](../installation_doc/database_install/database_install.md)。
 

@@ -59,7 +59,7 @@ hide:
 
 -   **Installation**
 
-    Choose `uv` / `pip` installation, environment setup and model configuration; when databases are needed, continue with Elasticsearch, PostgreSQL, MySQL deployment, prioritized GaussVector integration, scenario data import, and Semantic Service setup.
+    Choose `uv` / `pip` installation, environment setup and model configuration; when databases are needed, continue with PostgreSQL and MySQL deployment, scenario data import, and Semantic Service setup.
 
     [Start Installation →](installation/installation.md) · [Database Installation →](installation_doc/database_install/database_install.md)
 
