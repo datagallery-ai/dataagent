@@ -4,6 +4,8 @@ export type ProtocolSegmentIdentity = ProtocolIdentity & {
   segmentId: string;
 };
 
+export type ProtocolHandoffKind = "continue" | "route-correction";
+
 export type ProtocolHandoffInput = {
   authorizedProtocolIds: string[];
   current: ProtocolSegmentIdentity;
@@ -11,6 +13,7 @@ export type ProtocolHandoffInput = {
   reasonCodes: string[];
   strictProtocolIds?: string[];
   unresolvedGoals: string[];
+  transitionKind?: ProtocolHandoffKind;
 };
 
 export type ProtocolHandoffDecision =
@@ -27,6 +30,7 @@ export const evaluateProtocolHandoff = (input: ProtocolHandoffInput): ProtocolHa
     strictProtocolIds.has(input.current.protocolId)
     && !strictProtocolIds.has(input.target.protocolId)
     && input.unresolvedGoals.length > 0
+    && input.transitionKind !== "route-correction"
   ) {
     return { status: "rejected", reasonCode: "PROTOCOL_HANDOFF_UNRESOLVED_STRICT_GOALS" };
   }

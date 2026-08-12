@@ -266,6 +266,7 @@ export const createRunProtocolBoundary = async (
                 protocolVersion: route.definition.version,
                 reasonCodes: route.reasonCodes,
                 source: route.source,
+                taskRelation: route.taskRelation,
                 warnings: route.warnings
               }
             },
@@ -296,14 +297,19 @@ export const createRunProtocolBoundary = async (
     stateStore,
     runtimeOptions
   );
-  if (persistedState) {
-    protocolRuntime.restore(input.runId, segmentId);
-  } else {
-    protocolRuntime.start({
-      runId: input.runId,
-      segmentId,
-      contextPackageRef: input.initialContextPackageRef
-    });
+  try {
+    if (persistedState) {
+      protocolRuntime.restore(input.runId, segmentId);
+    } else {
+      protocolRuntime.start({
+        runId: input.runId,
+        segmentId,
+        contextPackageRef: input.initialContextPackageRef
+      });
+    }
+  } catch (error) {
+    await capabilityRegistry.dispose();
+    throw error;
   }
   const handoffCoordinator = new ProtocolHandoffCoordinator(protocolRegistry, stateStore, {
     ...(runtimeOptions.onEvent ? { onEvent: runtimeOptions.onEvent } : {})
@@ -371,6 +377,13 @@ export const createRunProtocolBoundary = async (
         await extractRequirementsInto();
       }
       const current = protocolRuntime.getState(input.runId, segmentId);
+      const transitionKind = route.source === "classifier"
+        && route.taskRelation === "replace"
+        && current.protocolId === "data-analysis"
+        && targetProtocolId === "general-task"
+        && current.phase === route.definition.initialPhase
+        ? "route-correction" as const
+        : "continue" as const;
       const handoff = handoffCoordinator.handoff({
         runId: input.runId,
         segmentId,
@@ -378,6 +391,7 @@ export const createRunProtocolBoundary = async (
         authorizedProtocolIds: input.authorizedProtocolIds,
         target: { protocolId: targetProtocolId, protocolVersion: targetProtocolVersion },
         reasonCodes: recordStringArray(rawResult, "reasonCodes"),
+        transitionKind,
         ...(input.sessionId
           ? {
               intentTransition: {

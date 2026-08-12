@@ -126,6 +126,14 @@ export const createAgentContextItem = createContextItem;
 export const createAgentContextSourceMetadata = createContextSourceMetadata;
 
 export const DATA_AGENT_TOOL_NAMES = DATA_ACTION_NAMES;
+/** Stable model-facing contract. `unresolvedGoals` is retained for backwards
+ * compatibility and audit only; the runtime never trusts it for authorization. */
+export const protocolHandoffInputSchema = z.object({
+  targetProtocolId: z.string().min(1),
+  targetProtocolVersion: z.string().min(1),
+  reasonCodes: z.array(z.string().min(1)).min(1),
+  unresolvedGoals: z.array(z.string())
+});
 /** HITL tools that suspend the run; their TOOL_CALL_RESULT is emitted on interaction resume. */
 const HITL_TOOL_NAMES = ["ask_user", "submit_plan"] as const;
 export const STATIC_AGENT_TOOL_NAMES = [
@@ -505,76 +513,82 @@ export const createDataFoundry = async (
   const selectedDatasourceId = input.runContext.selected_datasource_id;
   const deferredProtocolEvents: ProtocolEvent[] = [];
   let protocolEventsReady = false;
-  const protocol = await createRunProtocolBoundary({
-    runId: input.runContext.run_id,
-    sessionId: input.runContext.session_id,
-    userInput: input.runContext.user_input,
-    authorizedProtocolIds: ["general-task", "data-analysis"],
-    initialContextPackageRef: {
-      packageId: contextRunState.package.packageId,
-      revision: contextRunState.package.revision
-    },
-    tools: selectedTools,
-    toolPlanEntries: agentToolPlanEntries,
-    ...(selectedDatasourceId
-      ? {
-          semanticProvider: createDefaultSemanticProvider({ tools: selectedTools }),
-          semanticRequest: {
-            userId: input.runContext.user_id,
-            workspaceId: input.runContext.workspace_id ?? "default",
-            datasourceId: selectedDatasourceId,
-            datasourceRevision: String(
-              input.resourceRevisions?.[`datasource:${selectedDatasourceId}`] ?? "unknown"
-            )
+  let protocol: RunProtocolBoundary;
+  try {
+    protocol = await createRunProtocolBoundary({
+      runId: input.runContext.run_id,
+      sessionId: input.runContext.session_id,
+      userInput: input.runContext.user_input,
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: {
+        packageId: contextRunState.package.packageId,
+        revision: contextRunState.package.revision
+      },
+      tools: selectedTools,
+      toolPlanEntries: agentToolPlanEntries,
+      ...(selectedDatasourceId
+        ? {
+            semanticProvider: createDefaultSemanticProvider({ tools: selectedTools }),
+            semanticRequest: {
+              userId: input.runContext.user_id,
+              workspaceId: input.runContext.workspace_id ?? "default",
+              datasourceId: selectedDatasourceId,
+              datasourceRevision: String(
+                input.resourceRevisions?.[`datasource:${selectedDatasourceId}`] ?? "unknown"
+              )
+            }
           }
+        : {}),
+      ...(input.explicitProtocol ? { explicitProtocol: input.explicitProtocol } : {}),
+      ...(input.sessionIntent ? { sessionIntent: input.sessionIntent } : {}),
+      ...(input.classifierContext ? { classifierContext: input.classifierContext } : {}),
+      classifier: input.protocolClassifier ?? createModelProtocolClassifier(input.modelProvider),
+      requirementExtractor: input.analysisRequirementExtractor
+        ?? createModelAnalysisRequirementExtractor(input.modelProvider),
+      analysisContractGrounder: input.analysisContractGrounder
+        ?? createModelAnalysisContractGrounder(input.modelProvider),
+      ...(input.protocolStateStore ? { stateStore: input.protocolStateStore } : {}),
+      projectContext: ({ actionName, rawResult }) => {
+        if (isProtocolRuntimeAction(actionName)) {
+          const currentPackage = contextRunState.package;
+          return {
+            contextPackageRef: {
+              packageId: currentPackage.packageId,
+              revision: currentPackage.revision
+            },
+            contextPackage: currentPackage,
+            observation: rawResult
+          };
         }
-      : {}),
-    ...(input.explicitProtocol ? { explicitProtocol: input.explicitProtocol } : {}),
-    ...(input.sessionIntent ? { sessionIntent: input.sessionIntent } : {}),
-    ...(input.classifierContext ? { classifierContext: input.classifierContext } : {}),
-    classifier: input.protocolClassifier ?? createModelProtocolClassifier(input.modelProvider),
-    requirementExtractor: input.analysisRequirementExtractor
-      ?? createModelAnalysisRequirementExtractor(input.modelProvider),
-    analysisContractGrounder: input.analysisContractGrounder
-      ?? createModelAnalysisContractGrounder(input.modelProvider),
-    ...(input.protocolStateStore ? { stateStore: input.protocolStateStore } : {}),
-    projectContext: ({ actionName, rawResult }) => {
-      if (isProtocolRuntimeAction(actionName)) {
+        const contextPackage = dispatcher.dispatch(actionName, rawResult);
         const currentPackage = contextRunState.package;
+        input.contextPackageRecorder?.record({ contextPackage: currentPackage });
         return {
           contextPackageRef: {
             packageId: currentPackage.packageId,
             revision: currentPackage.revision
           },
-          contextPackage: currentPackage,
-          observation: rawResult
+          contextPackage,
+          observation: toolObservationModelFromPackage(contextPackage)
         };
-      }
-      const contextPackage = dispatcher.dispatch(actionName, rawResult);
-      const currentPackage = contextRunState.package;
-      input.contextPackageRecorder?.record({ contextPackage: currentPackage });
-      return {
-        contextPackageRef: {
-          packageId: currentPackage.packageId,
-          revision: currentPackage.revision
-        },
-        contextPackage,
-        observation: toolObservationModelFromPackage(contextPackage)
-      };
-    },
-    runtimeOptions: {
-      ...(input.contextPackageExists ? { contextPackageExists: input.contextPackageExists } : {}),
-      onEvent: (event) => {
-        if (!protocolEventsReady) {
-          deferredProtocolEvents.push(event);
-          return false;
+      },
+      runtimeOptions: {
+        ...(input.contextPackageExists ? { contextPackageExists: input.contextPackageExists } : {}),
+        onEvent: (event) => {
+          if (!protocolEventsReady) {
+            deferredProtocolEvents.push(event);
+            return false;
+          }
+          input.onProtocolEvent?.(event);
+          input.emitter.emit(createCustomEvent(event.type, event));
+          return true;
         }
-        input.onProtocolEvent?.(event);
-        input.emitter.emit(createCustomEvent(event.type, event));
-        return true;
       }
-    }
-  });
+    });
+  } catch (error) {
+    await runWorkspace.destroy();
+    throw error;
+  }
   const governedToolFactory = new GovernedToolFactory(
     dispatcher,
     onGovernedResultWithSessionOutput,
@@ -624,11 +638,7 @@ export const createDataFoundry = async (
     protocol_handoff: createTool({
       id: "protocol_handoff",
       description: "Propose switching this run to another authorized protocol when the current protocol is unsuitable.",
-      inputSchema: z.object({
-        targetProtocolId: z.string().min(1),
-        targetProtocolVersion: z.string().min(1),
-        reasonCodes: z.array(z.string().min(1)).min(1)
-      }),
+      inputSchema: protocolHandoffInputSchema,
       execute: createProtocolBoundExecute({
         actionName: "protocol.handoff.propose",
         fallbackIdPrefix: "protocol-handoff",
@@ -841,16 +851,13 @@ export const buildAgentInstructions = (input: AgentInstructionsInput): string =>
   const enabled = (name: string): boolean => input.toolNames.includes(name);
   const promoteWorkspaceFileEnabled = enabled("promote_workspace_file");
   const dataTools = [...DATA_ACTION_NAMES].filter(enabled);
-  // The tool schema stays static for the whole run, so when the governing protocol
-  // rejects every data action the instructions must say so explicitly — otherwise the
-  // model sees the tools advertised, tries them, and burns steps on phase rejections.
+  // The tool schema stays static for the whole run, while runtime observations carry
+  // the authoritative protocol/phase availability after a handoff.
   const toolGroups: string[] = dataTools.length > 0
-    ? [input.protocolId === "general-task"
-        ? `Data tools present but DISABLED by the current protocol (${dataTools.join(", ")}): this run is governed `
-          + "by general-task, which rejects every data action with ACTION_NOT_ALLOWED_IN_PHASE before execution. "
-          + "Do not call them in this protocol. If the user's goal genuinely requires datasource analysis, first "
-          + 'call protocol_handoff with targetProtocolId "data-analysis", then use the data tools.'
-        : `Data tools: ${dataTools.join(", ")}.`]
+    ? [`Data tools (availability is governed by the latest runtime protocol and phase): ${dataTools.join(", ")}. `
+      + "If the latest runtime observation marks them protocol-disabled, do not call them. If the user's goal "
+      + "requires datasource analysis while general-task is active, first call protocol_handoff with "
+      + 'targetProtocolId "data-analysis".']
     : [];
   if (input.mcpToolNames.length > 0) {
     toolGroups.push(`MCP tools: ${input.mcpToolNames.join(", ")}.`);
@@ -1071,8 +1078,12 @@ export const buildAgentInstructions = (input: AgentInstructionsInput): string =>
     );
   }
   policies.push(
-    `This run is governed by ${input.protocolId}@1. Use protocol_handoff only when the user's remaining goal truly `
-      + "requires the other registered protocol (general-task@1 or data-analysis@1). Provide stable reasonCodes. "
+    `This run starts under ${input.protocolId}@1, but an accepted handoff may change the governing protocol. `
+      + "The latest runtime state and protocol_handoff observation are authoritative for the current protocol, "
+      + "phase, and tool availability; this startup label is not authoritative after a handoff. Use "
+      + "protocol_handoff only when the user's remaining goal truly requires the other registered protocol "
+      + "(general-task@1 or data-analysis@1). Provide stable reasonCodes and unresolvedGoals for compatibility "
+      + "and audit. "
       + "The runtime computes unresolved goals from authoritative protocol state and will reject a handoff that "
       + "would bypass schema, SQL validation, evidence, policy, or completion gates."
   );
