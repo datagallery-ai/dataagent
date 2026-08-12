@@ -46,7 +46,7 @@ class RestApiLimits:
     request_timeout_seconds: float = 120.0
     rate_limit_per_minute: int = 60
     max_concurrency: int = 16
-    queue_timeout_seconds: float = 5.0
+    queue_timeout_seconds: float = 15.0
 
 
 DEFAULT_REST_API_LIMITS = RestApiLimits()
