@@ -1,6 +1,5 @@
+import { DATA_ACTIONS } from "../data-actions.js";
 import type { AgentProtocolDefinition } from "../types.js";
-
-const DATA_ACTIONS = new Set(["list_data_sources", "inspect_schema", "preview_table", "run_sql_readonly"]);
 
 export type GeneralTaskState = {
   answerMessageId?: string;
