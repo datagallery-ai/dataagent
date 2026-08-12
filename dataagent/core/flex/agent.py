@@ -35,7 +35,6 @@ from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.context.context import ContextFactory, build_context_init_options
 from dataagent.core.flex.flex_runtime_from_config import build_agent_env_from_flex_config
 from dataagent.core.flex.hooks.agent_turn import session_history_restore
-from dataagent.core.flex.hooks.cross_session_recall import cross_session_recall
 from dataagent.core.flex.hooks.registry import resolve_builtin_hook
 from dataagent.core.flex.workflow.router import FlexRouter, LimitReachedError
 from dataagent.core.flex.workflow.state import FlexState
@@ -935,7 +934,6 @@ class FlexAgent(BaseAgent):
         """
         self._builtin_agent_pre_hooks = [
             BaseAgent._validate_hook(session_history_restore, "agent.builtin.session_history_restore"),
-            BaseAgent._validate_hook(cross_session_recall, "agent.builtin.cross_session_recall"),
         ]
 
         hooks_config = config.get("HOOKS", {}) or {}
