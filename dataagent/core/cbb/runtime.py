@@ -115,6 +115,8 @@ class Runtime:
         self._resource_stack_workspace: Path | None = None
         self._resource_coordinator: Any = None
         self._services_lock = RLock()
+        # OTel event recorder — set by FlexAgent.chat() when __otel_config is present
+        self.otel_recorder: Any = None
 
     @property
     def stream(self) -> StreamCursor:

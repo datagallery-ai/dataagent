@@ -396,6 +396,34 @@ class LangChainChatModelAdapter:
         if name is not None:
             m["name"] = name
 
+    @staticmethod
+    def _infer_finish_reason(resp: LLMResponse) -> str:
+        """Infer the finish_reason from an LLM response.
+
+        Returns ``"tool_calls"`` if the response contains tool calls,
+        ``"stop"`` otherwise.
+        """
+        if resp.tool_calls:
+            return "tool_calls"
+        return "stop"
+
+    @staticmethod
+    def _get_otel_recorder() -> Any:
+        """Get the OTel event recorder from the current runtime context, if available.
+
+        Returns the ``OtelEventRecorder`` instance set on the current Runtime,
+        or ``None`` when OTel tracing is not enabled.
+        """
+        try:
+            from dataagent.core.framework_adapters.runtime.context import get_current_runtime
+
+            runtime = get_current_runtime()
+            if runtime is not None:
+                return getattr(runtime, "otel_recorder", None)
+        except Exception:
+            logger.debug("Failed to get OTel recorder from runtime context.")
+        return None
+
     @classmethod
     def messages_to_openai_dicts(cls, chat_input: Any) -> Any:
         """非 langchain 后端：LangChain Message / dict 列表 → OpenAI dict messages。"""
@@ -520,21 +548,44 @@ class LangChainChatModelAdapter:
 
     def invoke(self, chat_input: Any, **kwargs: Any) -> LLMResponse:
         """规范化输入并同步调用模型。"""
+        recorder = self._get_otel_recorder()
+        if recorder:
+            recorder.record_llm_start(model=self._llm_perf_name)
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="invoke") as h:
             resp = self._invoke_inner(chat_input, kwargs)
             self._fill_llm_extra(h, resp)
-            return resp
+        if recorder:
+            recorder.record_llm_end(
+                usage=resp.usage_metadata,
+                finish_reason=self._infer_finish_reason(resp),
+                content=resp.content,
+                reasoning_content=resp.reasoning_content,
+            )
+        return resp
 
     async def ainvoke(self, chat_input: Any, **kwargs: Any) -> LLMResponse:
         """规范化输入并异步调用模型。"""
+        recorder = self._get_otel_recorder()
+        if recorder:
+            recorder.record_llm_start(model=self._llm_perf_name)
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="ainvoke") as h:
             norm_input = self._normalize_input_for_langchain(chat_input)
             resp = await self._ainvoke_normalized(norm_input, kwargs)
             self._fill_llm_extra(h, resp)
-            return resp
+        if recorder:
+            recorder.record_llm_end(
+                usage=resp.usage_metadata,
+                finish_reason=self._infer_finish_reason(resp),
+                content=resp.content,
+                reasoning_content=resp.reasoning_content,
+            )
+        return resp
 
     async def astream(self, chat_input: Any, **kwargs: Any) -> AsyncIterator[LLMStreamChunk]:
         """规范化输入并优先使用底层流式能力；不支持时回退到一次性调用。"""
+        recorder = self._get_otel_recorder()
+        if recorder:
+            recorder.record_llm_start(model=self._llm_perf_name)
         norm_input = self._normalize_input_for_langchain(chat_input)
         raw_fn = getattr(self._raw, "astream", None)
 
@@ -542,6 +593,13 @@ class LangChainChatModelAdapter:
             if not callable(raw_fn):
                 final_resp = await self._ainvoke_normalized(norm_input, kwargs)
                 self._fill_llm_extra(h, final_resp)
+                if recorder:
+                    recorder.record_llm_end(
+                        usage=final_resp.usage_metadata,
+                        finish_reason=self._infer_finish_reason(final_resp),
+                        content=final_resp.content,
+                        reasoning_content=final_resp.reasoning_content,
+                    )
                 yield LLMStreamChunk(final_response=final_resp, done=True)
                 return
 
@@ -569,7 +627,14 @@ class LangChainChatModelAdapter:
             log_llm_done("LLM stream finished", final_resp, rid=rid)
             self._fill_llm_extra(h, final_resp)
             h["chunk_count"] = chunk_count
-            yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
+        if recorder:
+            recorder.record_llm_end(
+                usage=final_resp.usage_metadata,
+                finish_reason=self._infer_finish_reason(final_resp),
+                content=final_resp.content,
+                reasoning_content=final_resp.reasoning_content,
+            )
+        yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LangChainChatModelAdapter:
         """绑定工具，委托底层 bind_tools。"""
