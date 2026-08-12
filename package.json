@@ -65,6 +65,7 @@
     "test:deploy": "node --test scripts/deploy/*.test.mjs scripts/stack-runtime-config.test.mjs",
     "smoke:native-deploy": "node scripts/deploy/smoke-native-deploy.mjs",
     "test:web": "npm --workspace @datafoundry/web run test",
+    "test:packages": "vitest run packages",
     "dev:tui": "npm --workspace @datafoundry/tui run dev",
     "start:tui": "npm --workspace @datafoundry/tui run start --",
     "build:tui": "npm --workspace @datafoundry/tui run build",
@@ -120,6 +121,7 @@
     "@types/pg": "^8.20.0",
     "@types/yauzl": "^3.4.0",
     "typescript": "^5.8.0",
+    "vitest": "^3.2.6",
     "write-excel-file": "^4.1.1"
   },
   "dependencies": {
