@@ -5,18 +5,25 @@ export type ProtocolIdentity = {
   protocolVersion: string;
 };
 
+export type TaskRelation = "continue" | "refine" | "replace" | "side-chat";
+
 export type ProtocolRouteSource = "explicit" | "deterministic" | "classifier" | "default";
 
 export type ProtocolRouteInput = {
   authorizedProtocolIds: string[];
   classificationInput?: unknown;
-  deterministicCandidates?: Array<ProtocolIdentity & { priority: number; reasonCode: string }>;
-  explicit?: ProtocolIdentity;
+  deterministicCandidates?: Array<ProtocolIdentity & {
+    priority: number;
+    reasonCode: string;
+    taskRelation: TaskRelation;
+  }>;
+  explicit?: ProtocolIdentity & { taskRelation?: TaskRelation };
 };
 
 export type ProtocolRouteClassification = ProtocolIdentity & {
   confidence: number;
   reasonCodes: string[];
+  taskRelation: TaskRelation;
 };
 
 export type ProtocolClassifier = (input: {
@@ -35,6 +42,7 @@ export type ProtocolRouteResult = {
   reasonCodes: string[];
   source: ProtocolRouteSource;
   warnings: string[];
+  taskRelation: TaskRelation;
 };
 
 export class ProtocolRouter {
@@ -53,7 +61,13 @@ export class ProtocolRouter {
       if (!definition) {
         throw new Error(`PROTOCOL_NOT_REGISTERED:${input.explicit.protocolId}@${input.explicit.protocolVersion}`);
       }
-      return { definition, reasonCodes: ["USER_EXPLICIT"], source: "explicit", warnings: [] };
+      return {
+        definition,
+        reasonCodes: ["USER_EXPLICIT"],
+        source: "explicit",
+        warnings: [],
+        taskRelation: input.explicit.taskRelation ?? "replace"
+      };
     }
     const deterministicCandidates = (input.deterministicCandidates ?? [])
       .filter((candidate) => input.authorizedProtocolIds.includes(candidate.protocolId))
@@ -72,7 +86,8 @@ export class ProtocolRouter {
         definition: selected.definition,
         reasonCodes: [selected.candidate.reasonCode],
         source: "deterministic",
-        warnings: []
+        warnings: [],
+        taskRelation: selected.candidate.taskRelation
       };
     }
     if (equallyRanked.length > 1 && !this.options.classifier) {
@@ -107,7 +122,8 @@ export class ProtocolRouter {
             definition,
             reasonCodes: classification.reasonCodes,
             source: "classifier",
-            warnings: []
+            warnings: [],
+            taskRelation: classification.taskRelation
           };
         }
         defaultWarning = "PROTOCOL_CLASSIFICATION_LOW_CONFIDENCE";
@@ -124,7 +140,8 @@ export class ProtocolRouter {
           definition,
           reasonCodes: ["GENERAL_TASK_DEFAULT"],
           source: "default",
-          warnings: defaultWarning ? [defaultWarning] : []
+          warnings: defaultWarning ? [defaultWarning] : [],
+          taskRelation: "side-chat"
         };
       }
     }

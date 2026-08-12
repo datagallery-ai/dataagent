@@ -109,6 +109,10 @@ export class RunCheckpointProjector {
       user_id: this.userId,
       run_id: envelope.run_id
     });
+    const intentBinding = this.metadataStore.sessionIntents.findRunBinding({
+      user_id: this.userId,
+      run_id: envelope.run_id
+    });
     this.metadataStore.checkpoints.create({
       id: `ckpt_${envelope.run_id}_${envelope.seq}_${input.kind}`,
       user_id: this.userId,
@@ -123,7 +127,10 @@ export class RunCheckpointProjector {
       ...(input.contextPlanId ? { context_plan_id: input.contextPlanId } : {}),
       ...(parent ? { parent_checkpoint_id: parent.id } : {}),
       ...(input.stepNumber !== undefined ? { step_number: input.stepNumber } : {}),
-      ...(input.toolCallId ? { tool_call_id: input.toolCallId } : {})
+      ...(input.toolCallId ? { tool_call_id: input.toolCallId } : {}),
+      ...(intentBinding?.active_revision_id
+        ? { intent_revision_id: intentBinding.active_revision_id }
+        : {})
     });
   }
 }

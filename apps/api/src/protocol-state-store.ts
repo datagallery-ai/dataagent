@@ -1,4 +1,9 @@
-import type { ProtocolEvent, ProtocolRunState, ProtocolStateStore } from "@datafoundry/agent-runtime";
+import type {
+  ProtocolEvent,
+  ProtocolIntentTransition,
+  ProtocolRunState,
+  ProtocolStateStore
+} from "@datafoundry/agent-runtime";
 import type { MetadataStore, ProtocolStateSnapshotRecord } from "@datafoundry/metadata";
 
 /** Persist Protocol Runtime snapshots through the user-scoped metadata repository. */
@@ -47,6 +52,7 @@ export class MetadataProtocolStateStore implements ProtocolStateStore {
     expectedRevision: number;
     next: ProtocolRunState<TNextDomainState>;
     events?: ProtocolEvent[];
+    intentTransition?: ProtocolIntentTransition;
   }): {
     current: ProtocolRunState<TCurrentDomainState>;
     next: ProtocolRunState<TNextDomainState>;
@@ -65,7 +71,19 @@ export class MetadataProtocolStateStore implements ProtocolStateStore {
         expected_revision: -1,
         state: input.next
       },
-      events: input.events ?? []
+      events: input.events ?? [],
+      ...(input.intentTransition
+        ? {
+            intent_transition: {
+              session_id: input.intentTransition.sessionId,
+              source_run_id: input.intentTransition.sourceRunId,
+              user_input: input.intentTransition.userInput,
+              task_relation: input.intentTransition.taskRelation,
+              target_protocol_id: input.intentTransition.targetProtocolId,
+              target_protocol_version: input.intentTransition.targetProtocolVersion
+            }
+          }
+        : {})
     });
     return {
       current: parseProtocolState<TCurrentDomainState>(records.current),

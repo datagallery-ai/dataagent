@@ -133,6 +133,13 @@ export function createSessionBranch(input: {
     user_id: input.userId,
     session_id: run.session_id
   });
+  const runIntentBinding = input.metadataStore.sessionIntents.findRunBinding({
+    user_id: input.userId,
+    run_id: run.id
+  });
+  const forkIntentRevisionId = target.checkpoint
+    ? target.checkpoint.intent_revision_id
+    : runIntentBinding?.base_revision_id;
   const childSessionId = randomUUID();
   const session = input.metadataStore.sessions.create({
     user_id: input.userId,
@@ -150,6 +157,7 @@ export function createSessionBranch(input: {
     root_session_id: parentRootSessionId,
     fork_run_id: run.id,
     ...(target.checkpoint ? { fork_checkpoint_id: target.checkpoint.id } : {}),
+    ...(forkIntentRevisionId ? { fork_intent_revision_id: forkIntentRevisionId } : {}),
     fork_message_end_position: Math.max(0, forkMessageEndPosition)
   });
   return { branch, session };

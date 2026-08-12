@@ -40,8 +40,8 @@ describe("ProtocolRouter", () => {
     const result = await router.route({
       authorizedProtocolIds: ["general-task", "data-analysis"],
       deterministicCandidates: [
-        { protocolId: "general-task", protocolVersion: "1", priority: 10, reasonCode: "DEFAULT_TASK" },
-        { protocolId: "data-analysis", protocolVersion: "1", priority: 100, reasonCode: "ANALYTIC_INTENT" }
+        { protocolId: "general-task", protocolVersion: "1", priority: 10, reasonCode: "DEFAULT_TASK", taskRelation: "replace" },
+        { protocolId: "data-analysis", protocolVersion: "1", priority: 100, reasonCode: "ANALYTIC_INTENT", taskRelation: "replace" }
       ]
     });
 
@@ -59,7 +59,8 @@ describe("ProtocolRouter", () => {
           protocolId: "data-analysis",
           protocolVersion: "1",
           confidence: 0.92,
-          reasonCodes: ["ANALYTIC_INTENT"]
+          reasonCodes: ["ANALYTIC_INTENT"],
+          taskRelation: "replace"
         };
       }
     });
@@ -79,7 +80,8 @@ describe("ProtocolRouter", () => {
         protocolId: "data-analysis",
         protocolVersion: "1",
         confidence: 0.4,
-        reasonCodes: ["WEAK_ANALYTIC_INTENT"]
+        reasonCodes: ["WEAK_ANALYTIC_INTENT"],
+        taskRelation: "refine"
       })
     });
 
@@ -115,8 +117,8 @@ describe("ProtocolRouter", () => {
     await expect(router.route({
       authorizedProtocolIds: ["general-task", "data-analysis"],
       deterministicCandidates: [
-        { protocolId: "general-task", protocolVersion: "1", priority: 50, reasonCode: "SKILL_ROUTE" },
-        { protocolId: "data-analysis", protocolVersion: "1", priority: 50, reasonCode: "TASK_ROUTE" }
+        { protocolId: "general-task", protocolVersion: "1", priority: 50, reasonCode: "SKILL_ROUTE", taskRelation: "replace" },
+        { protocolId: "data-analysis", protocolVersion: "1", priority: 50, reasonCode: "TASK_ROUTE", taskRelation: "replace" }
       ]
     })).rejects.toThrow("PROTOCOL_AMBIGUOUS:data-analysis@1,general-task@1");
   });

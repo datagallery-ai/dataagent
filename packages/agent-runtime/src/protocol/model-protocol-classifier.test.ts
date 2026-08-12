@@ -55,12 +55,13 @@ describe("createProtocolClassificationPrompt", () => {
 
   it("strictly parses fenced JSON returned by compatible models", () => {
     expect(parseProtocolClassificationText(`\`\`\`json
-{"protocolId":"general-task","protocolVersion":"1","confidence":0.9,"reasonCodes":["GENERAL_EXPLANATION"]}
+{"protocolId":"general-task","protocolVersion":"1","confidence":0.9,"reasonCodes":["GENERAL_EXPLANATION"],"taskRelation":"replace"}
 \`\`\``)).toEqual({
       protocolId: "general-task",
       protocolVersion: "1",
       confidence: 0.9,
-      reasonCodes: ["GENERAL_EXPLANATION"]
+      reasonCodes: ["GENERAL_EXPLANATION"],
+      taskRelation: "replace"
     });
   });
 });

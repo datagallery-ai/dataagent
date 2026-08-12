@@ -87,11 +87,34 @@ describe("MetadataProtocolStateStore", () => {
       });
       const store = new MetadataProtocolStateStore(metadata, userId);
       const current = store.create(createState("general-task", "run-1:segment:1", 0, "active"));
+      const intent = metadata.sessionIntents.upsert({
+        user_id: userId,
+        session_id: "session-1",
+        protocol_id: "general-task",
+        protocol_version: "1",
+        intent_text: "分析订单",
+        source_run_id: "run-1"
+      });
+      metadata.sessionIntents.bindRun({
+        user_id: userId,
+        run_id: "run-1",
+        session_id: "session-1",
+        active_revision_id: intent.id,
+        task_relation: "replace"
+      });
 
       store.transitionSegment({
         current: { ...current, revision: 1, status: "handed_off" },
         expectedRevision: 0,
-        next: createState("data-analysis", "run-1:segment:2", 0, "active")
+        next: createState("data-analysis", "run-1:segment:2", 0, "active"),
+        intentTransition: {
+          sessionId: "session-1",
+          sourceRunId: "run-1",
+          userInput: "分析订单",
+          taskRelation: "replace",
+          targetProtocolId: "data-analysis",
+          targetProtocolVersion: "1"
+        }
       });
 
       expect(store.get("run-1", "run-1:segment:1").status).toBe("handed_off");
@@ -99,6 +122,46 @@ describe("MetadataProtocolStateStore", () => {
         protocolId: "data-analysis",
         segmentId: "run-1:segment:2"
       });
+      expect(metadata.sessionIntents.find({ user_id: userId, session_id: "session-1" })).toMatchObject({
+        protocol_id: "data-analysis",
+        intent_id: intent.intent_id,
+        previous_revision_id: intent.id,
+        change_kind: "handoff"
+      });
+
+      metadata.runs.create({
+        user_id: userId,
+        id: "run-2",
+        session_id: "session-1",
+        user_input: "new concurrent task",
+        status: "running"
+      });
+      const concurrentHead = metadata.sessionIntents.upsert({
+        user_id: userId,
+        session_id: "session-1",
+        protocol_id: "general-task",
+        protocol_version: "1",
+        intent_text: "new concurrent task",
+        source_run_id: "run-2"
+      });
+      const activeSegment = store.get("run-1", "run-1:segment:2");
+      expect(() => store.transitionSegment({
+        current: { ...activeSegment, revision: 1, status: "handed_off" },
+        expectedRevision: 0,
+        next: createState("general-task", "run-1:segment:3", 0, "active"),
+        intentTransition: {
+          sessionId: "session-1",
+          sourceRunId: "run-1",
+          userInput: "分析订单",
+          taskRelation: "replace",
+          targetProtocolId: "general-task",
+          targetProtocolVersion: "1"
+        }
+      })).toThrow("SESSION_INTENT_REVISION_CONFLICT:session-1");
+      expect(store.get("run-1", "run-1:segment:2")).toMatchObject({ revision: 0, status: "active" });
+      expect(store.find("run-1", "run-1:segment:3")).toBeUndefined();
+      expect(metadata.sessionIntents.find({ user_id: userId, session_id: "session-1" })?.id)
+        .toBe(concurrentHead.id);
       metadata.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

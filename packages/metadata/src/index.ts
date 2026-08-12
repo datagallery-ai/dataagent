@@ -111,6 +111,7 @@ export type SessionBranchRecord = {
   root_session_id: string;
   fork_run_id: string;
   fork_checkpoint_id?: string;
+  fork_intent_revision_id?: string;
   fork_message_end_position: number;
   created_at: string;
 };
@@ -121,12 +122,29 @@ export type SessionBranchRecord = {
  * models use intent_text instead of the ambiguous follow-up wording.
  */
 export type SessionIntentRecord = {
+  id: string;
+  intent_id: string;
   user_id: string;
   session_id: string;
+  previous_revision_id?: string;
   protocol_id: string;
   protocol_version: string;
   intent_text: string;
+  change_kind: SessionIntentChangeKind;
   source_run_id: string;
+  created_at: string;
+};
+
+export type SessionIntentChangeKind = "initial" | "refine" | "replace" | "route-switch" | "handoff";
+export type SessionIntentTaskRelation = "continue" | "refine" | "replace" | "side-chat";
+
+export type RunIntentBindingRecord = {
+  user_id: string;
+  run_id: string;
+  session_id: string;
+  base_revision_id?: string;
+  active_revision_id?: string;
+  task_relation: SessionIntentTaskRelation;
   updated_at: string;
 };
 
@@ -312,6 +330,7 @@ export type CheckpointRecord = {
   step_id?: string;
   tool_call_id?: string;
   message_position?: number;
+  intent_revision_id?: string;
   created_at: string;
 };
 
@@ -425,6 +444,7 @@ export type CreateSessionBranchInput = {
   root_session_id: string;
   fork_run_id: string;
   fork_checkpoint_id?: string;
+  fork_intent_revision_id?: string;
   fork_message_end_position: number;
 };
 
@@ -513,6 +533,14 @@ export type TransitionProtocolSegmentInput = {
   current: Omit<CompareAndSetProtocolStateInput, "user_id">;
   next: Omit<CompareAndSetProtocolStateInput, "user_id">;
   events?: unknown[];
+  intent_transition?: {
+    session_id: string;
+    source_run_id: string;
+    user_input: string;
+    task_relation: SessionIntentTaskRelation;
+    target_protocol_id: string;
+    target_protocol_version: string;
+  };
 };
 
 export type CreateCheckpointInput = {
@@ -533,6 +561,7 @@ export type CreateCheckpointInput = {
   step_id?: string;
   tool_call_id?: string;
   message_position?: number;
+  intent_revision_id?: string;
 };
 
 export type UpsertTraceSectionInput = {
@@ -1333,7 +1362,13 @@ export class SessionRepository {
       `).run(input.user_id, ...sessionIds, ...sessionIds, ...sessionIds);
 
       this.db.prepare(`
-        DELETE FROM session_intents WHERE user_id = ? AND session_id IN (${placeholders})
+        DELETE FROM run_intent_bindings WHERE user_id = ? AND session_id IN (${placeholders})
+      `).run(...scope);
+      this.db.prepare(`
+        DELETE FROM session_intent_heads WHERE user_id = ? AND session_id IN (${placeholders})
+      `).run(...scope);
+      this.db.prepare(`
+        DELETE FROM session_intent_revisions WHERE user_id = ? AND session_id IN (${placeholders})
       `).run(...scope);
 
       this.db.prepare(`
@@ -1477,8 +1512,8 @@ export class SessionBranchRepository {
     this.db.prepare(`
       INSERT INTO session_branches (
         id, user_id, child_session_id, parent_session_id, root_session_id,
-        fork_run_id, fork_checkpoint_id, fork_message_end_position, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        fork_run_id, fork_checkpoint_id, fork_intent_revision_id, fork_message_end_position, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.user_id,
@@ -1487,6 +1522,7 @@ export class SessionBranchRepository {
       input.root_session_id,
       input.fork_run_id,
       input.fork_checkpoint_id ?? null,
+      input.fork_intent_revision_id ?? null,
       input.fork_message_end_position,
       createdAt
     );
@@ -1547,6 +1583,7 @@ export class SessionBranchRepository {
 export class SessionIntentRepository {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** Compatibility wrapper for callers that replace the current task outright. */
   upsert(input: {
     user_id: string;
     session_id: string;
@@ -1555,69 +1592,152 @@ export class SessionIntentRepository {
     intent_text: string;
     source_run_id: string;
   }): SessionIntentRecord {
-    const updatedAt = new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO session_intents (
-        user_id, session_id, protocol_id, protocol_version, intent_text, source_run_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, session_id) DO UPDATE SET
-        protocol_id = excluded.protocol_id,
-        protocol_version = excluded.protocol_version,
-        intent_text = excluded.intent_text,
-        source_run_id = excluded.source_run_id,
-        updated_at = excluded.updated_at
-    `).run(
-      input.user_id,
-      input.session_id,
-      input.protocol_id,
-      input.protocol_version,
-      input.intent_text,
-      input.source_run_id,
-      updatedAt
-    );
-    const record = this.find({ user_id: input.user_id, session_id: input.session_id });
-    if (!record) {
-      throw new Error(`SESSION_INTENT_UPSERT_FAILED:${input.session_id}`);
+    const current = this.find({ user_id: input.user_id, session_id: input.session_id });
+    return this.commit({
+      ...input,
+      ...(current ? { expected_head_revision_id: current.id, previous_revision_id: current.id } : {}),
+      change_kind: current ? "replace" : "initial"
+    });
+  }
+
+  commit(input: {
+    user_id: string;
+    session_id: string;
+    expected_head_revision_id?: string;
+    intent_id?: string;
+    previous_revision_id?: string;
+    protocol_id: string;
+    protocol_version: string;
+    intent_text: string;
+    change_kind: SessionIntentChangeKind;
+    source_run_id: string;
+  }): SessionIntentRecord {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const revision = this.commitWithinTransaction(input);
+      this.db.exec("COMMIT");
+      return revision;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
     }
-    return record;
+  }
+
+  commitWithinTransaction(input: {
+    user_id: string;
+    session_id: string;
+    expected_head_revision_id?: string;
+    intent_id?: string;
+    previous_revision_id?: string;
+    protocol_id: string;
+    protocol_version: string;
+    intent_text: string;
+    change_kind: SessionIntentChangeKind;
+    source_run_id: string;
+  }): SessionIntentRecord {
+    const currentHead = this.findHeadRevisionId({ user_id: input.user_id, session_id: input.session_id });
+    if (currentHead !== input.expected_head_revision_id) {
+      throw new Error(`SESSION_INTENT_REVISION_CONFLICT:${input.session_id}`);
+    }
+    const id = randomUUID();
+    const intentId = input.intent_id ?? randomUUID();
+    const createdAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO session_intent_revisions (
+        id, intent_id, user_id, session_id, previous_revision_id, protocol_id,
+        protocol_version, intent_text, change_kind, source_run_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, intentId, input.user_id, input.session_id, input.previous_revision_id ?? null,
+      input.protocol_id, input.protocol_version, input.intent_text, input.change_kind,
+      input.source_run_id, createdAt
+    );
+    this.db.prepare(`
+      INSERT INTO session_intent_heads (user_id, session_id, revision_id, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, session_id) DO UPDATE SET revision_id = excluded.revision_id, updated_at = excluded.updated_at
+    `).run(input.user_id, input.session_id, id, createdAt);
+    return this.getRevision({ user_id: input.user_id, revision_id: id });
+  }
+
+  findHeadRevisionId(input: { user_id: string; session_id: string }): string | undefined {
+    const row = this.db.prepare(`
+      SELECT revision_id FROM session_intent_heads WHERE user_id = ? AND session_id = ?
+    `).get(input.user_id, input.session_id);
+    return isRecord(row) ? optionalString(row.revision_id) : undefined;
   }
 
   find(input: { user_id: string; session_id: string }): Optional<SessionIntentRecord> {
-    return mapSessionIntentRow(
-      this.db.prepare(`
-        SELECT * FROM session_intents WHERE user_id = ? AND session_id = ?
-      `).get(input.user_id, input.session_id)
+    const revisionId = this.findHeadRevisionId(input);
+    return revisionId ? this.findRevision({ user_id: input.user_id, revision_id: revisionId }) : undefined;
+  }
+
+  findRevision(input: { user_id: string; revision_id: string }): Optional<SessionIntentRecord> {
+    return mapSessionIntentRow(this.db.prepare(`
+      SELECT * FROM session_intent_revisions WHERE user_id = ? AND id = ?
+    `).get(input.user_id, input.revision_id));
+  }
+
+  getRevision(input: { user_id: string; revision_id: string }): SessionIntentRecord {
+    const revision = this.findRevision(input);
+    if (!revision) throw new Error(`SESSION_INTENT_REVISION_NOT_FOUND:${input.revision_id}`);
+    return revision;
+  }
+
+  bindRun(input: {
+    user_id: string;
+    run_id: string;
+    session_id: string;
+    base_revision_id?: string;
+    active_revision_id?: string;
+    task_relation: SessionIntentTaskRelation;
+  }): RunIntentBindingRecord {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO run_intent_bindings (
+        user_id, run_id, session_id, base_revision_id, active_revision_id, task_relation, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, run_id) DO UPDATE SET
+        active_revision_id = excluded.active_revision_id,
+        task_relation = excluded.task_relation,
+        updated_at = excluded.updated_at
+    `).run(
+      input.user_id, input.run_id, input.session_id, input.base_revision_id ?? null,
+      input.active_revision_id ?? null, input.task_relation, now
     );
+    return this.getRunBinding({ user_id: input.user_id, run_id: input.run_id });
+  }
+
+  findRunBinding(input: { user_id: string; run_id: string }): Optional<RunIntentBindingRecord> {
+    return mapRunIntentBindingRow(this.db.prepare(`
+      SELECT * FROM run_intent_bindings WHERE user_id = ? AND run_id = ?
+    `).get(input.user_id, input.run_id));
+  }
+
+  getRunBinding(input: { user_id: string; run_id: string }): RunIntentBindingRecord {
+    const binding = this.findRunBinding(input);
+    if (!binding) throw new Error(`RUN_INTENT_BINDING_NOT_FOUND:${input.run_id}`);
+    return binding;
   }
 
   /**
-   * Resolve the governing intent for a session. A branched session starts with no
-   * intent of its own but continues its parent's task, so resolution walks up the
-   * session_branches lineage until an intent is found. Depth is bounded so a
-   * corrupt lineage cannot loop.
+   * Resolve the governing intent for a session. A branch without its own head uses
+   * the immutable revision captured at fork time; it never reads a mutable parent.
    */
   resolveForSession(input: {
     user_id: string;
     session_id: string;
     max_depth?: number;
   }): Optional<SessionIntentRecord> {
-    const maxDepth = Math.max(1, input.max_depth ?? 10);
-    let sessionId = input.session_id;
-    for (let depth = 0; depth < maxDepth; depth += 1) {
-      const intent = this.find({ user_id: input.user_id, session_id: sessionId });
-      if (intent) {
-        return intent;
-      }
-      const parent = this.db.prepare(`
-        SELECT parent_session_id FROM session_branches WHERE user_id = ? AND child_session_id = ?
-      `).get(input.user_id, sessionId);
-      const parentSessionId = isRecord(parent) ? optionalString(parent.parent_session_id) : undefined;
-      if (!parentSessionId || parentSessionId === sessionId) {
-        return undefined;
-      }
-      sessionId = parentSessionId;
-    }
-    return undefined;
+    const ownIntent = this.find({ user_id: input.user_id, session_id: input.session_id });
+    if (ownIntent) return ownIntent;
+    const branch = this.db.prepare(`
+      SELECT fork_intent_revision_id FROM session_branches WHERE user_id = ? AND child_session_id = ?
+    `).get(input.user_id, input.session_id);
+    const forkRevisionId = isRecord(branch) ? optionalString(branch.fork_intent_revision_id) : undefined;
+    return forkRevisionId
+      ? this.findRevision({ user_id: input.user_id, revision_id: forkRevisionId })
+      : undefined;
   }
 }
 
@@ -2571,12 +2691,56 @@ export class ProtocolStateSnapshotRepository {
       const current = this.compareAndSet({ user_id: input.user_id, ...input.current });
       const next = this.compareAndSet({ user_id: input.user_id, ...input.next });
       this.appendEvents(input.user_id, input.events ?? []);
+      if (input.intent_transition) {
+        this.applyIntentTransition(input.user_id, input.intent_transition);
+      }
       this.db.exec("COMMIT");
       return { current, next };
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  private applyIntentTransition(
+    userId: string,
+    transition: NonNullable<TransitionProtocolSegmentInput["intent_transition"]>
+  ): void {
+    const repository = new SessionIntentRepository(this.db);
+    const binding = repository.getRunBinding({ user_id: userId, run_id: transition.source_run_id });
+    const active = binding.active_revision_id
+      ? repository.getRevision({ user_id: userId, revision_id: binding.active_revision_id })
+      : undefined;
+    const currentHeadRevisionId = repository.findHeadRevisionId({
+      user_id: userId,
+      session_id: transition.session_id
+    });
+    if (currentHeadRevisionId && currentHeadRevisionId !== binding.active_revision_id) {
+      throw new Error(`SESSION_INTENT_REVISION_CONFLICT:${transition.session_id}`);
+    }
+    const replacesSideChat = binding.task_relation === "side-chat" || !active;
+    const intentText = replacesSideChat ? transition.user_input.trim() : active.intent_text;
+    if (!intentText) throw new Error(`SESSION_INTENT_TEXT_REQUIRED:${transition.session_id}`);
+    const revision = repository.commitWithinTransaction({
+      user_id: userId,
+      session_id: transition.session_id,
+      ...(currentHeadRevisionId ? { expected_head_revision_id: currentHeadRevisionId } : {}),
+      ...(!replacesSideChat && active ? { intent_id: active.intent_id } : {}),
+      ...(active ? { previous_revision_id: active.id } : {}),
+      protocol_id: transition.target_protocol_id,
+      protocol_version: transition.target_protocol_version,
+      intent_text: intentText.slice(0, 2000),
+      change_kind: "handoff",
+      source_run_id: transition.source_run_id
+    });
+    repository.bindRun({
+      user_id: userId,
+      run_id: transition.source_run_id,
+      session_id: transition.session_id,
+      ...(binding.base_revision_id ? { base_revision_id: binding.base_revision_id } : {}),
+      active_revision_id: revision.id,
+      task_relation: replacesSideChat ? "replace" : binding.task_relation
+    });
   }
 
   find(input: {
@@ -2663,9 +2827,9 @@ export class CheckpointRepository {
         INSERT INTO checkpoints (
           id, user_id, session_id, run_id, branch_id, event_seq, context_package_id,
           context_package_revision, context_plan_id, kind, status, label, parent_checkpoint_id,
-          step_number, step_id, tool_call_id, message_position, created_at
+          step_number, step_id, tool_call_id, message_position, intent_revision_id, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, id) DO NOTHING
       `
       )
@@ -2687,6 +2851,7 @@ export class CheckpointRepository {
         input.step_id ?? null,
         input.tool_call_id ?? null,
         input.message_position ?? null,
+        input.intent_revision_id ?? null,
         createdAt
       );
 
@@ -4082,19 +4247,53 @@ const initializeProtocolStateSnapshotSchema = (db: DatabaseSync): void => {
 
 const initializeSessionIntentSchema = (db: DatabaseSync): void => {
   db.exec(`
-    CREATE TABLE IF NOT EXISTS session_intents (
+    CREATE TABLE IF NOT EXISTS session_intent_revisions (
+      id TEXT NOT NULL,
+      intent_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
+      previous_revision_id TEXT,
       protocol_id TEXT NOT NULL,
       protocol_version TEXT NOT NULL,
       intent_text TEXT NOT NULL,
+      change_kind TEXT NOT NULL CHECK (change_kind IN ('initial', 'refine', 'replace', 'route-switch', 'handoff')),
       source_run_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, id),
+      FOREIGN KEY (user_id, session_id) REFERENCES sessions(user_id, id),
+      FOREIGN KEY (user_id, previous_revision_id) REFERENCES session_intent_revisions(user_id, id),
+      FOREIGN KEY (user_id, source_run_id) REFERENCES runs(user_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_intent_revisions_intent
+      ON session_intent_revisions(user_id, intent_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS session_intent_heads (
+      user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      revision_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (user_id, session_id),
       FOREIGN KEY (user_id, session_id) REFERENCES sessions(user_id, id),
-      FOREIGN KEY (user_id, source_run_id) REFERENCES runs(user_id, id)
+      FOREIGN KEY (user_id, revision_id) REFERENCES session_intent_revisions(user_id, id)
+    );
+
+    CREATE TABLE IF NOT EXISTS run_intent_bindings (
+      user_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      base_revision_id TEXT,
+      active_revision_id TEXT,
+      task_relation TEXT NOT NULL CHECK (task_relation IN ('continue', 'refine', 'replace', 'side-chat')),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, run_id),
+      FOREIGN KEY (user_id, run_id) REFERENCES runs(user_id, id),
+      FOREIGN KEY (user_id, session_id) REFERENCES sessions(user_id, id),
+      FOREIGN KEY (user_id, base_revision_id) REFERENCES session_intent_revisions(user_id, id),
+      FOREIGN KEY (user_id, active_revision_id) REFERENCES session_intent_revisions(user_id, id)
     );
   `);
+  ensureColumn(db, "session_branches", "fork_intent_revision_id", "TEXT");
+  ensureColumn(db, "checkpoints", "intent_revision_id", "TEXT");
 };
 
 const initializeProtocolEventJournalSchema = (db: DatabaseSync): void => {
@@ -4791,6 +4990,7 @@ const mapSessionBranchRow = (row: unknown): Optional<SessionBranchRecord> => {
     return undefined;
   }
   const forkCheckpointId = optionalString(row.fork_checkpoint_id);
+  const forkIntentRevisionId = optionalString(row.fork_intent_revision_id);
   return {
     id: requiredString(row, "id"),
     user_id: requiredString(row, "user_id"),
@@ -4799,6 +4999,7 @@ const mapSessionBranchRow = (row: unknown): Optional<SessionBranchRecord> => {
     root_session_id: requiredString(row, "root_session_id"),
     fork_run_id: requiredString(row, "fork_run_id"),
     ...(forkCheckpointId ? { fork_checkpoint_id: forkCheckpointId } : {}),
+    ...(forkIntentRevisionId ? { fork_intent_revision_id: forkIntentRevisionId } : {}),
     fork_message_end_position: requiredNumber(row, "fork_message_end_position"),
     created_at: requiredString(row, "created_at")
   };
@@ -4816,13 +5017,33 @@ const mapSessionIntentRow = (row: unknown): Optional<SessionIntentRecord> => {
   if (!isRecord(row)) {
     return undefined;
   }
+  const previousRevisionId = optionalString(row.previous_revision_id);
   return {
+    id: requiredString(row, "id"),
+    intent_id: requiredString(row, "intent_id"),
     user_id: requiredString(row, "user_id"),
     session_id: requiredString(row, "session_id"),
+    ...(previousRevisionId ? { previous_revision_id: previousRevisionId } : {}),
     protocol_id: requiredString(row, "protocol_id"),
     protocol_version: requiredString(row, "protocol_version"),
     intent_text: requiredString(row, "intent_text"),
+    change_kind: requiredString(row, "change_kind") as SessionIntentChangeKind,
     source_run_id: requiredString(row, "source_run_id"),
+    created_at: requiredString(row, "created_at")
+  };
+};
+
+const mapRunIntentBindingRow = (row: unknown): Optional<RunIntentBindingRecord> => {
+  if (!isRecord(row)) return undefined;
+  const baseRevisionId = optionalString(row.base_revision_id);
+  const activeRevisionId = optionalString(row.active_revision_id);
+  return {
+    user_id: requiredString(row, "user_id"),
+    run_id: requiredString(row, "run_id"),
+    session_id: requiredString(row, "session_id"),
+    ...(baseRevisionId ? { base_revision_id: baseRevisionId } : {}),
+    ...(activeRevisionId ? { active_revision_id: activeRevisionId } : {}),
+    task_relation: requiredString(row, "task_relation") as SessionIntentTaskRelation,
     updated_at: requiredString(row, "updated_at")
   };
 };
@@ -5137,6 +5358,7 @@ const mapCheckpointRow = (row: unknown): Optional<CheckpointRecord> => {
   const stepId = optionalString(row.step_id);
   const toolCallId = optionalString(row.tool_call_id);
   const messagePosition = optionalNumber(row.message_position);
+  const intentRevisionId = optionalString(row.intent_revision_id);
   return {
     id: requiredString(row, "id"),
     user_id: requiredString(row, "user_id"),
@@ -5155,6 +5377,7 @@ const mapCheckpointRow = (row: unknown): Optional<CheckpointRecord> => {
     ...(stepId ? { step_id: stepId } : {}),
     ...(toolCallId ? { tool_call_id: toolCallId } : {}),
     ...(messagePosition !== undefined ? { message_position: messagePosition } : {}),
+    ...(intentRevisionId ? { intent_revision_id: intentRevisionId } : {}),
     created_at: requiredString(row, "created_at")
   };
 };

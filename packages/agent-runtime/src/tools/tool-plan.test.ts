@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildToolPlan } from "./tool-plan.js";
+import { buildToolPlan, resolveToolPlanAvailability } from "./tool-plan.js";
 
 type FakeTool = { execute: () => Promise<unknown> };
 const tool = (): FakeTool => ({ execute: async () => ({}) });
@@ -16,8 +16,8 @@ describe("buildToolPlan", () => {
 
     expect(Object.keys(plan.exposedTools)).toEqual(["inspect_schema", "write_file"]);
     expect(plan.entries).toEqual([
-      { name: "inspect_schema", source: "data", exposed: true, reasons: ["source:data", "skill-policy:open"] },
-      { name: "write_file", source: "workspace", exposed: true, reasons: ["source:workspace", "skill-policy:open"] }
+      { name: "inspect_schema", source: "data", exposed: true, availability: "available", reasons: ["source:data", "skill-policy:open"] },
+      { name: "write_file", source: "workspace", exposed: true, availability: "available", reasons: ["source:workspace", "skill-policy:open"] }
     ]);
   });
 
@@ -32,6 +32,7 @@ describe("buildToolPlan", () => {
       name: "execute_command",
       source: "workspace",
       exposed: false,
+      availability: "available",
       reasons: ["source:workspace", "skill-policy:denied"]
     });
   });
@@ -66,6 +67,7 @@ describe("buildToolPlan", () => {
       name: "get_file",
       source: "files",
       exposed: false,
+      availability: "available",
       reasons: ["source:files", "skill-policy:not-allowed"]
     });
   });
@@ -96,5 +98,23 @@ describe("buildToolPlan", () => {
     expect(plan.exposedTools.read_file).toBe(second);
     expect(plan.entries).toHaveLength(1);
     expect(plan.entries[0]?.source).toBe("workspace");
+  });
+
+  it("marks static data tools protocol-disabled and supplies a handoff recovery", () => {
+    const plan = buildToolPlan({
+      groups: [{ source: "data", tools: { inspect_schema: tool(), read_file: tool() } }]
+    });
+    const resolved = resolveToolPlanAvailability({
+      entries: plan.entries,
+      protocolId: "general-task",
+      phase: "understand",
+      allowedActions: ["read_file", "protocol.handoff.propose"]
+    });
+
+    expect(resolved.find((entry) => entry.name === "inspect_schema")).toMatchObject({
+      availability: "protocol-disabled",
+      recovery: { action: "protocol-handoff", targetProtocolId: "data-analysis" }
+    });
+    expect(resolved.find((entry) => entry.name === "read_file")?.availability).toBe("available");
   });
 });
