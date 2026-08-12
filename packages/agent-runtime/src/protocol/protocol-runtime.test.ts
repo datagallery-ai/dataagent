@@ -37,6 +37,17 @@ describe("ProtocolRuntime", () => {
     })).toThrow("ACTION_NOT_ALLOWED_IN_PHASE:inspect:data.query");
   });
 
+  it("carries the allowed actions of the current phase in the rejection message", () => {
+    const runtime = new ProtocolRuntime(createDefinition(), new InMemoryProtocolStateStore());
+    runtime.start({ runId: "run-1", segmentId: "segment-1", contextPackageRef });
+
+    expect(() => runtime.assertActionAllowed({
+      runId: "run-1",
+      actionName: "data.query",
+      actionInput: {}
+    })).toThrow("ACTION_NOT_ALLOWED_IN_PHASE:inspect:data.query:data.inspect");
+  });
+
   it("rejects an action when a phase guard denies it", () => {
     const definition = createDefinition();
     const inspectPhase = definition.phases.inspect;
