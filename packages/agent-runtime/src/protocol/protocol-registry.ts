@@ -15,6 +15,13 @@ export class ProtocolRegistry {
     this.definitions.set(key, definition);
   }
 
+  /** Replace a registered definition in place (same id@version). Used when routing
+   * resolves first and the definition is later rebuilt with extracted requirements. */
+  replace(definition: RegisteredProtocolDefinition): void {
+    validateProtocolDefinition(definition);
+    this.definitions.set(protocolDefinitionKey(definition.id, definition.version), definition);
+  }
+
   list(): RegisteredProtocolDefinition[] {
     return [...this.definitions.values()];
   }
