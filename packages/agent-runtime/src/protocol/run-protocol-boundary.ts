@@ -378,7 +378,6 @@ export const createRunProtocolBoundary = async (
         authorizedProtocolIds: input.authorizedProtocolIds,
         target: { protocolId: targetProtocolId, protocolVersion: targetProtocolVersion },
         reasonCodes: recordStringArray(rawResult, "reasonCodes"),
-        unresolvedGoals: recordStringArray(rawResult, "unresolvedGoals"),
         ...(input.sessionId
           ? {
               intentTransition: {

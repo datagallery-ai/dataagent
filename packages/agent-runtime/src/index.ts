@@ -627,8 +627,7 @@ export const createDataFoundry = async (
       inputSchema: z.object({
         targetProtocolId: z.string().min(1),
         targetProtocolVersion: z.string().min(1),
-        reasonCodes: z.array(z.string().min(1)).min(1),
-        unresolvedGoals: z.array(z.string())
+        reasonCodes: z.array(z.string().min(1)).min(1)
       }),
       execute: createProtocolBoundExecute({
         actionName: "protocol.handoff.propose",
@@ -1073,8 +1072,9 @@ export const buildAgentInstructions = (input: AgentInstructionsInput): string =>
   }
   policies.push(
     `This run is governed by ${input.protocolId}@1. Use protocol_handoff only when the user's remaining goal truly `
-      + "requires the other registered protocol (general-task@1 or data-analysis@1). Provide stable reasonCodes and "
-      + "all unresolvedGoals. Never hand off to bypass schema, SQL validation, evidence, policy, or completion gates."
+      + "requires the other registered protocol (general-task@1 or data-analysis@1). Provide stable reasonCodes. "
+      + "The runtime computes unresolved goals from authoritative protocol state and will reject a handoff that "
+      + "would bypass schema, SQL validation, evidence, policy, or completion gates."
   );
   policies.push(
     "Reply in the same natural language as the user's latest request. If the user mixes languages, use the dominant "
