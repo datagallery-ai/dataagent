@@ -65,6 +65,17 @@ export type CreateRunProtocolBoundaryInput = {
   semanticRequest?: Omit<SemanticRequest, "query">;
   requirementExtractor?: AnalysisRequirementExtractor;
   analysisContractGrounder?: AnalysisContractGrounder;
+  /** Authoritative session intent (persisted per session, resolved through branch
+   * lineage by the caller). Weak continuation follow-ups such as "再次尝试" inherit
+   * its protocol deterministically, and its intentText replaces the follow-up
+   * wording wherever the run needs the actual task description. */
+  sessionIntent?: SessionIntent;
+};
+
+export type SessionIntent = {
+  protocolId: string;
+  protocolVersion: string;
+  intentText: string;
 };
 
 export type RunProtocolBoundary = {
@@ -120,15 +131,39 @@ export const createRunProtocolBoundary = async (
             priority: 1000,
             reasonCode: "PROTOCOL_SEGMENT_RESTORED"
           }]
-        : analyticIntent(input.userInput)
-        ? [{
-            protocolId: "data-analysis",
-            protocolVersion: "1",
-            priority: 100,
-            reasonCode: "ANALYTIC_INTENT"
-          }]
-        : [],
-      classificationInput: { userText: input.userInput }
+        : [
+            // Session-intent inheritance outranks the keyword accelerator: a recorded
+            // intent is a fact about the session, the regex is only a guess about one
+            // sentence. Neither requires a model call.
+            ...(input.sessionIntent && weakContinuationIntent(input.userInput)
+              ? [{
+                  protocolId: input.sessionIntent.protocolId,
+                  protocolVersion: input.sessionIntent.protocolVersion,
+                  priority: 300,
+                  reasonCode: "SESSION_INTENT_INHERITED"
+                }]
+              : []),
+            ...(analyticIntent(input.userInput)
+              ? [{
+                  protocolId: "data-analysis",
+                  protocolVersion: "1",
+                  priority: 100,
+                  reasonCode: "ANALYTIC_INTENT"
+                }]
+              : [])
+          ],
+      classificationInput: {
+        userText: input.userInput,
+        ...(input.sessionIntent
+          ? {
+              sessionIntent: {
+                protocolId: input.sessionIntent.protocolId,
+                protocolVersion: input.sessionIntent.protocolVersion,
+                intentText: input.sessionIntent.intentText.slice(0, 300)
+              }
+            }
+          : {})
+      }
     });
   } catch (error) {
     input.runtimeOptions?.onEvent?.({
@@ -504,6 +539,21 @@ const stripLeadingSqlComments = (sql: string): string => {
 
 const analyticIntent = (userInput: string): boolean =>
   /\b(?:sql|query|metric|analytics?|statistics?)\b|分析|统计|指标|数据|销售额/iu.test(userInput);
+
+/**
+ * Short "try again"-style follow-ups that carry no task of their own. They are the
+ * canonical case for inheriting the recorded session intent: the words say nothing,
+ * the session record says everything. The length cap keeps sentences that add real
+ * new instructions out of the deterministic path (the classifier handles those with
+ * the session intent as context).
+ */
+const weakContinuationIntent = (userInput: string): boolean => {
+  const normalized = userInput.trim();
+  return normalized.length > 0
+    && normalized.length <= 24
+    && /再次尝试|再试|重试|继续|接着|重来|再来一次|重新来|重新试|重新跑|try again|retry|continue|resume|keep going|one more time/iu
+      .test(normalized);
+};
 
 const allowAction = (): ProtocolGuardResult => ({ allowed: true });
 
