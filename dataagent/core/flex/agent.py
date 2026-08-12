@@ -296,6 +296,36 @@ class FlexAgent(BaseAgent):
             location=location,
         )
 
+    @staticmethod
+    def _create_otel_recorder(initial_state: dict[str, Any]) -> Any:
+        """Create an OTel event recorder from ``initial_state["__otel_config"]``.
+
+        Returns ``None`` when OTel tracing is not enabled, making it safe to
+        call unconditionally.
+
+        Args:
+            initial_state: The agent's initial_state dict containing ``__otel_config``.
+
+        Returns:
+            An ``OtelEventRecorder`` instance, or ``None`` if tracing is disabled.
+        """
+        from dataagent.core.utils.otel_event_recorder import OtelEventRecorder
+
+        return OtelEventRecorder.from_state(initial_state)
+
+    @staticmethod
+    def _flush_otel_recorder(recorder: Any) -> None:
+        """Flush the OTel event recorder to disk, if active.
+
+        Swallows any exceptions to avoid masking the primary chat result.
+        """
+        if recorder is None:
+            return
+        try:
+            recorder.flush()
+        except Exception as e:
+            logger.warning(f"Failed to flush OTel event recorder: {e}")
+
     @classmethod
     def from_config(cls, config: dict[str, Any], config_manager: ConfigManager | None = None) -> "FlexAgent":
         """
@@ -403,6 +433,11 @@ class FlexAgent(BaseAgent):
         self._refresh_workspace_runtime_context(initial_state, runtime)
         logger.trace(f"[FlexAgent] runtime updated: workspace={runtime.workspace_dir}, hierarchy={runtime.hierarchy}")
 
+        # OTel: create event recorder from initial_state["__otel_config"] and bind to runtime
+        otel_recorder = self._create_otel_recorder(initial_state)
+        if otel_recorder is not None:
+            runtime.otel_recorder = otel_recorder
+
         call_context = self._get_or_init_context(initial_state, runtime)
         if call_context:
             try:
@@ -497,6 +532,9 @@ class FlexAgent(BaseAgent):
                         logger.warning(f"Failed to persist context after chat error: {persist_error}")
                 logger.error(f"Chat execution failed: {e}\nTraceback: {traceback.format_exc()}")
                 raise RuntimeError(f"Chat failed: {e}") from e
+            finally:
+                # OTel: flush recorded events to trajectory.json
+                self._flush_otel_recorder(otel_recorder)
 
     def get_agent_info(self) -> dict[str, Any]:
         """
@@ -557,6 +595,11 @@ class FlexAgent(BaseAgent):
             if str(context_state.get("user_query") or "").strip():
                 runtime.reset_flex_planner_user_sync()
 
+        # OTel: create event recorder from initial_state and bind to runtime
+        otel_recorder = self._create_otel_recorder(context_state) if isinstance(context_state, dict) else None
+        if otel_recorder is not None:
+            runtime.otel_recorder = otel_recorder
+
         langgraph_config = kw.get("config") if isinstance(kw.get("config"), dict) else None
         langgraph_checkpointer = kw.get("checkpointer")
         langgraph_store = kw.get("store")
@@ -574,17 +617,20 @@ class FlexAgent(BaseAgent):
             else:
                 initial_state_arg = dict(context_state)
             stream = self.workflow_backend.astream(initial_state_arg, runtime=runtime, **kw)
-            async for item in self._stream_with_finalization(
-                stream,
-                initial_state_for_persist=initial_state_for_persist,
-                runtime=runtime,
-                log_parse_error=False,
-                langgraph_config=langgraph_config,
-                langgraph_checkpointer=langgraph_checkpointer,
-                langgraph_store=langgraph_store,
-                latest_state=latest,
-            ):
-                yield item
+            try:
+                async for item in self._stream_with_finalization(
+                    stream,
+                    initial_state_for_persist=initial_state_for_persist,
+                    runtime=runtime,
+                    log_parse_error=False,
+                    langgraph_config=langgraph_config,
+                    langgraph_checkpointer=langgraph_checkpointer,
+                    langgraph_store=langgraph_store,
+                    latest_state=latest,
+                ):
+                    yield item
+            finally:
+                self._flush_otel_recorder(otel_recorder)
 
     async def _astream_openjiuwen(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
         """_astream_openjiuwen"""
@@ -603,6 +649,11 @@ class FlexAgent(BaseAgent):
         # Per-call runtime for astream (same pattern as chat())
         runtime = self._create_call_runtime()
 
+        # OTel: create event recorder from initial_state and bind to runtime
+        otel_recorder = self._create_otel_recorder(initial_state) if isinstance(initial_state, dict) else None
+        if otel_recorder is not None:
+            runtime.otel_recorder = otel_recorder
+
         if checkpoint_id:
             stream = self.workflow_backend.astream_resume(
                 checkpoint_id=str(checkpoint_id),
@@ -617,14 +668,17 @@ class FlexAgent(BaseAgent):
                 backend=getattr(self, "backend", None),
                 flush_state_provider=flush_state_provider,
             ):
-                async for item in self._stream_with_finalization(
-                    stream,
-                    initial_state_for_persist=initial_state_for_persist,
-                    runtime=runtime,
-                    log_parse_error=True,
-                    latest_state=latest,
-                ):
-                    yield item
+                try:
+                    async for item in self._stream_with_finalization(
+                        stream,
+                        initial_state_for_persist=initial_state_for_persist,
+                        runtime=runtime,
+                        log_parse_error=True,
+                        latest_state=latest,
+                    ):
+                        yield item
+                finally:
+                    self._flush_otel_recorder(otel_recorder)
             return
 
         # OpenJiuWen 分支：对齐 LangGraph 行为，补齐 Context + initial_pt
@@ -651,14 +705,17 @@ class FlexAgent(BaseAgent):
             latest["state"] = initial_state
             self._bind_workflow_runtime(runtime)
             stream = self.workflow_backend.astream(initial_state, runtime=runtime, start_at=start_at, **kwargs)
-            async for item in self._stream_with_finalization(
-                stream,
-                initial_state_for_persist=initial_state_for_persist,
-                runtime=runtime,
-                log_parse_error=True,
-                latest_state=latest,
-            ):
-                yield item
+            try:
+                async for item in self._stream_with_finalization(
+                    stream,
+                    initial_state_for_persist=initial_state_for_persist,
+                    runtime=runtime,
+                    log_parse_error=True,
+                    latest_state=latest,
+                ):
+                    yield item
+            finally:
+                self._flush_otel_recorder(otel_recorder)
 
     def _create_call_runtime(self) -> "Runtime":
         """Create a fresh Runtime for a single chat()/astream() call.

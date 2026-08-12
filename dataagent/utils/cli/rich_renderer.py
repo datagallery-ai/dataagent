@@ -284,22 +284,29 @@ class StreamRenderer:
         self._has_rendered_planner = True
 
     def handle_event(self, data: dict[str, Any]) -> None:
-        """Dispatch a single stream event dict to the appropriate renderer."""
-        msg_type = data.get("type", "")
-        if msg_type == "planner_stream":
-            self._handle_planner_stream(data)
-        elif msg_type == "planner_tool_calls":
-            self._handle_planner_tool_calls(data)
-        elif msg_type == "planner_error":
-            self._handle_planner_error(data)
-        elif msg_type == "output_msg":
-            self._handle_output_msg(data)
-        elif msg_type == "execution_msg":
-            self._handle_execution_msg(data)
-        elif msg_type == "tool_status":
-            self._handle_tool_status(data)
-        elif msg_type == "break":
-            pass
+        """Dispatch a single stream event dict to the appropriate renderer.
+
+        Errors during rendering (e.g. UnicodeEncodeError on Windows GBK consoles)
+        are caught and logged so they never crash the agent's main execution loop.
+        """
+        try:
+            msg_type = data.get("type", "")
+            if msg_type == "planner_stream":
+                self._handle_planner_stream(data)
+            elif msg_type == "planner_tool_calls":
+                self._handle_planner_tool_calls(data)
+            elif msg_type == "planner_error":
+                self._handle_planner_error(data)
+            elif msg_type == "output_msg":
+                self._handle_output_msg(data)
+            elif msg_type == "execution_msg":
+                self._handle_execution_msg(data)
+            elif msg_type == "tool_status":
+                self._handle_tool_status(data)
+            elif msg_type == "break":
+                pass
+        except Exception:
+            logger.warning("Renderer event handling failed (non-fatal)", exc_info=True)
 
     def update_subagent_hint(self, tool_call_id: str, hint_text: str) -> None:
         """更新指定工具调用的 Subagent 实时进度提示（供 Runtime 回调注入）。"""
@@ -703,7 +710,7 @@ class StreamRenderer:
         if self._status is not None:
             try:
                 self._status.stop()
-            except (RuntimeError, OSError):
+            except (RuntimeError, OSError, UnicodeEncodeError):
                 logger.warning("Failed to stop status", exc_info=True)
             self._status = None
 

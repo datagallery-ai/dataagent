@@ -78,6 +78,7 @@ class SubagentSubprocessRunner:
         reuse_workspace: bool = False,
         on_child_started: Callable[[int], None] | None = None,
         on_child_finished: Callable[[], None] | None = None,
+        otel_config: dict[str, Any] | None = None,
     ) -> JobSubagentOutcome:
         """Launch the subagent subprocess and parse stdout into collect fields.
 
@@ -98,6 +99,7 @@ class SubagentSubprocessRunner:
             reuse_workspace: When true, hydrate messages/state from the existing workspace.
             on_child_started: Optional callback invoked with the child pid/pgid after spawn.
             on_child_finished: Optional callback invoked when the child wait loop ends.
+            otel_config: Optional ``__otel_config`` dict to propagate OTel tracing into the sub-agent.
 
         Returns:
             Parsed collect-compatible fields. Never writes ``workers/.memory``.
@@ -114,6 +116,7 @@ class SubagentSubprocessRunner:
                 sub_id=sub_id,
                 query=query,
                 reuse_workspace=reuse_workspace,
+                otel_config=otel_config,
             )
             env = dict(os.environ)
             env[FLEX_PERSISTENCE_ROOT_ENV] = str(resolved_workspace)
@@ -370,6 +373,7 @@ def _prepare_job_initial_state_file(
     sub_id: int,
     query: str,
     reuse_workspace: bool = False,
+    otel_config: dict[str, Any] | None = None,
 ) -> Path:
     """Create an initial state file for a cold start or hydrated workspace reuse."""
     resolved_workspace = Path(workspace_dir).expanduser().resolve()
@@ -390,6 +394,9 @@ def _prepare_job_initial_state_file(
         "sub_id": int(sub_id),
         "workspace": str(resolved_workspace),
     }
+    # Propagate OTel config so the sub-agent creates its own OtelEventRecorder
+    if otel_config:
+        payload["__otel_config"] = otel_config
     tmp_dir = resolved_workspace / ".runtime" / "job_state"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     path = tmp_dir / f"initial_state_{uuid.uuid4().hex}.json"

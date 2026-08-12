@@ -14,7 +14,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -295,6 +295,12 @@ class Executor(BaseNode):
         return None
 
     async def _aprocess(self, state: Any, runtime: Any = None) -> dict[str, Any] | FlexState:
+        """执行一轮工具调用：校验、并行调度、收集结果、构建 ToolMessage。
+
+        从 ``state["messages"][-1]`` 中取出 AIMessage，对其中的 tool_calls
+        并行执行，最终返回包含 ``messages`` / ``num_valid_tool_calls`` /
+        ``num_invalid_tool_calls`` 的状态更新字典。
+        """
         context = get_context_for_flex_state(state, runtime)
         writer = get_stream_writer()
         message = state["messages"][-1]
@@ -302,47 +308,93 @@ class Executor(BaseNode):
             raise Exception(f"Executor received Invalid message {message}")
 
         workspace_str: str | None = str(runtime.workspace_dir) if runtime is not None else None
+        otel_recorder = getattr(runtime, "otel_recorder", None) if runtime is not None else None
 
-        # 应用 YAML 配置的最大并发数限制
         self._apply_runtime_max_concurrency(runtime)
-        # 从 CONTEXT 读取 file_node_threshold，供 _convert_ir 使用
         if runtime is not None and hasattr(runtime, "env"):
             self._file_node_threshold = getattr(runtime.env, "file_node_threshold", None)
 
         tool_messages = self._build_invalid_tool_messages(message.invalid_tool_calls, writer)
 
-        state_updates: dict[str, Any] = {
-            "num_valid_tool_calls": len(message.tool_calls),
-            "num_invalid_tool_calls": len(message.invalid_tool_calls),
-        }
-
-        # 检查同一轮 tool_calls 中是否有多个 sub_agent_tool 使用同一个显式 sub_id，
-        # 这些调用都会被转成 validation error， 因为同一个 sub_id 的subagent不允许被并发调用
         blocked_parallel_tool_calls = self._blocked_sub_agent_tool_executions_this_round(
             message.tool_calls, runtime=runtime
         )
 
+        parallel_tasks, tool_call_specs = self._launch_parallel_tool_calls(
+            message.tool_calls,
+            blocked_parallel_tool_calls,
+            state=state,
+            workspace=workspace_str,
+            runtime=runtime,
+            writer=writer,
+            otel_recorder=otel_recorder,
+        )
+
+        parallel_results = await self._await_parallel_tool_results(
+            parallel_tasks,
+            tool_call_specs,
+            blocked_parallel_tool_calls,
+            workspace=workspace_str,
+            writer=writer,
+            context=context,
+            otel_recorder=otel_recorder,
+        )
+
+        for tool_call in message.tool_calls:
+            tool_call_id = str(tool_call["id"])
+            execution = parallel_results[tool_call_id]
+            tool_msg = self._build_tool_message(execution)
+            tool_msg = self._maybe_replace_with_ir(tool_msg, context)
+            tool_messages.append(tool_msg)
+
+        for tool_message in tool_messages:
+            record_message(context, tool_message)
+
+        return {
+            "num_valid_tool_calls": len(message.tool_calls),
+            "num_invalid_tool_calls": len(message.invalid_tool_calls),
+            "messages": tool_messages,
+        }
+
+    def _launch_parallel_tool_calls(
+        self,
+        tool_calls: Sequence[Any],
+        blocked_parallel_tool_calls: dict[str, NormalizedToolExecution],
+        *,
+        state: Any,
+        workspace: str | None,
+        runtime: Any,
+        writer: Callable[[dict[str, Any]], None],
+        otel_recorder: Any,
+    ) -> tuple[dict[str, asyncio.Task[NormalizedToolExecution]], dict[str, dict[str, Any]]]:
+        """Create asyncio tasks for each unblocked tool call; return (tasks, specs)."""
         parallel_tasks: dict[str, asyncio.Task[NormalizedToolExecution]] = {}
         tool_call_specs: dict[str, dict[str, Any]] = {}
-        for tool_call in message.tool_calls:
+
+        for tool_call in tool_calls:
             tool_call_id = str(tool_call["id"])
             tool_name = str(tool_call["name"])
             tool_args = tool_call.get("args", {})
             tool_call_specs[tool_call_id] = {"name": tool_name, "args": tool_args}
+
             if tool_call_id in blocked_parallel_tool_calls:
                 continue
+
             self._emit_tool_status(
-                writer,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                status="start",
+                writer, tool_call_id=tool_call_id, tool_name=tool_name, tool_args=tool_args, status="start"
             )
+
+            if otel_recorder is not None:
+                otel_recorder.record_tool_start(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    arguments=json.dumps(tool_args, ensure_ascii=False),
+                )
 
             async def wrapped_execute(tc: Any) -> NormalizedToolExecution:
                 return await self._execute_tool_call(
                     tc,
-                    workspace=workspace_str,
+                    workspace=workspace,
                     user_id=str(state.get("user_id")) if state.get("user_id") is not None else None,
                     session_id=str(state.get("session_id")) if state.get("session_id") is not None else None,
                     sub_id=int(state.get("sub_id")) if state.get("sub_id") is not None else None,
@@ -354,54 +406,68 @@ class Executor(BaseNode):
                 self._concurrency.execute(tool_call_id, tool_name, tool_args, wrapped_execute(tool_call))
             )
 
-        parallel_results: dict[str, NormalizedToolExecution] = {}
-        parallel_results.update(blocked_parallel_tool_calls)
-        if parallel_tasks:
-            task_to_call_id = {task: tool_call_id for tool_call_id, task in parallel_tasks.items()}
-            pending_tasks = set(parallel_tasks.values())
-            while pending_tasks:
-                done, pending_tasks = await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    tool_call_id = task_to_call_id[task]
-                    tool_spec = tool_call_specs[tool_call_id]
-                    try:
-                        execution = await task
-                    except Exception as exc:
-                        policy = self._classify_error(exc)
-                        execution = NormalizedToolExecution(
-                            tool_name=str(tool_spec["name"]),
-                            tool_call_id=tool_call_id,
-                            tool_args=dict(tool_spec["args"]),
-                            success=False,
-                            error_text=str(exc),
-                            error_type=policy.error_type.value,
-                            retry_info={"attempt": 0, "max_retries": policy.max_retries, "retriable": policy.retriable},
-                            metadata={"workspace": workspace_str},
-                        )
-                    parallel_results[tool_call_id] = execution
-                    self._emit_tool_status(
-                        writer,
-                        tool_call_id=execution.tool_call_id,
-                        tool_name=execution.tool_name,
-                        tool_args=execution.tool_args,
-                        status="success" if execution.success else "error",
-                        error_text=execution.error_text,
-                        summary=execution.frontend_msg or execution.output_text,
+        return parallel_tasks, tool_call_specs
+
+    async def _await_parallel_tool_results(
+        self,
+        parallel_tasks: dict[str, asyncio.Task[NormalizedToolExecution]],
+        tool_call_specs: dict[str, dict[str, Any]],
+        blocked_parallel_tool_calls: dict[str, NormalizedToolExecution],
+        *,
+        workspace: str | None,
+        writer: Callable[[dict[str, Any]], None],
+        context: Any,
+        otel_recorder: Any,
+    ) -> dict[str, NormalizedToolExecution]:
+        """Await running tasks, emit status/output events, and merge with blocked results."""
+        parallel_results: dict[str, NormalizedToolExecution] = dict(blocked_parallel_tool_calls)
+
+        if not parallel_tasks:
+            return parallel_results
+
+        task_to_call_id = {task: tool_call_id for tool_call_id, task in parallel_tasks.items()}
+        pending_tasks = set(parallel_tasks.values())
+
+        while pending_tasks:
+            done, pending_tasks = await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                tool_call_id = task_to_call_id[task]
+                tool_spec = tool_call_specs[tool_call_id]
+                try:
+                    execution = await task
+                except Exception as exc:
+                    policy = self._classify_error(exc)
+                    execution = NormalizedToolExecution(
+                        tool_name=str(tool_spec["name"]),
+                        tool_call_id=tool_call_id,
+                        tool_args=dict(tool_spec["args"]),
+                        success=False,
+                        error_text=str(exc),
+                        error_type=policy.error_type.value,
+                        retry_info={"attempt": 0, "max_retries": policy.max_retries, "retriable": policy.retriable},
+                        metadata={"workspace": workspace},
                     )
-                    self._emit_tool_execution_output(execution, context, writer)
 
-        for tool_call in message.tool_calls:
-            tool_call_id = str(tool_call["id"])
-            execution = parallel_results[tool_call_id]
-            tool_msg = self._build_tool_message(execution)
-            tool_msg = self._maybe_replace_with_ir(tool_msg, context)
-            tool_messages.append(tool_msg)
+                parallel_results[tool_call_id] = execution
+                self._emit_tool_status(
+                    writer,
+                    tool_call_id=execution.tool_call_id,
+                    tool_name=execution.tool_name,
+                    tool_args=execution.tool_args,
+                    status="success" if execution.success else "error",
+                    error_text=execution.error_text,
+                    summary=execution.frontend_msg or execution.output_text,
+                )
+                self._emit_tool_execution_output(execution, context, writer)
 
-        for tool_message in tool_messages:
-            record_message(context, tool_message)
-        state_updates["messages"] = tool_messages
+                if otel_recorder is not None:
+                    otel_recorder.record_tool_end(
+                        tool_call_id=execution.tool_call_id,
+                        result=execution.output_text or execution.error_text or "",
+                        is_error=not execution.success,
+                    )
 
-        return state_updates
+        return parallel_results
 
     def _blocked_sub_agent_tool_executions_this_round(
         self, tool_calls: Sequence[Any], *, runtime: Any = None

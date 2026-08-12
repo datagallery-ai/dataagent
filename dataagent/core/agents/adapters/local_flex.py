@@ -115,6 +115,10 @@ class LocalFlexAdapter:
         sandbox = runtime.sandbox
         resolved_job_service = job_service if job_service is not None else getattr(runtime, "job_service", None)
 
+        # Propagate OTel config to the sub-agent so it creates its own OtelEventRecorder
+        parent_otel_recorder = getattr(runtime, "otel_recorder", None)
+        otel_config = parent_otel_recorder.otel_config if parent_otel_recorder is not None else None
+
         def _on_child_started(pgid: int) -> None:
             if resolved_job_service is not None:
                 resolved_job_service.register_child_pgid(job_id, pgid)
@@ -141,6 +145,7 @@ class LocalFlexAdapter:
                     reuse_workspace=reuse_workspace,
                     on_child_started=_on_child_started,
                     on_child_finished=_on_child_finished,
+                    otel_config=otel_config,
                 )
             )
         except Exception as exc:
