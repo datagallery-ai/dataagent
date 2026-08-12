@@ -71,7 +71,41 @@ describe("ProtocolHandoffCoordinator", () => {
       target: { protocolId: "general-task", protocolVersion: "1" },
       reasonCodes: ["MODEL_REQUESTED"]
     })).toThrow("PROTOCOL_HANDOFF_UNRESOLVED_STRICT_GOALS");
-    expect(store.get("run-strict", current.segmentId)).toMatchObject({ status: "active", revision: 0 });
+    expect(store.get("run-strict", current.segmentId)).toMatchObject({ status: "active", revision: 1 });
+    expect(store.pendingEvents("run-strict").map((event) => event.type)).toEqual([
+      "protocol.run.started",
+      "protocol.phase.entered",
+      "protocol.handoff.proposed",
+      "protocol.handoff.rejected"
+    ]);
+  });
+
+  it("aborts an untouched misrouted strict segment during an authoritative route correction", () => {
+    const store = new InMemoryProtocolStateStore();
+    const registry = new ProtocolRegistry();
+    registry.register(createDefinition("general-task"));
+    registry.register(createDefinition("data-analysis"));
+    const current = new ProtocolRuntime(createDefinition("data-analysis"), store).start({
+      runId: "run-correction",
+      segmentId: "run-correction:segment:1",
+      contextPackageRef: { packageId: "context-correction", revision: 0 }
+    });
+
+    const result = new ProtocolHandoffCoordinator(registry, store).handoff({
+      runId: current.runId,
+      segmentId: current.segmentId,
+      expectedRevision: current.revision,
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      target: { protocolId: "general-task", protocolVersion: "1" },
+      reasonCodes: ["CLASSIFIER_ROUTE_CORRECTION"],
+      transitionKind: "route-correction"
+    });
+
+    expect(result.current.status).toBe("aborted");
+    expect(result.next).toMatchObject({ protocolId: "general-task", status: "active" });
+    expect(store.pendingEvents("run-correction").map((event) => event.type)).toContain(
+      "protocol.handoff.proposed"
+    );
   });
 });
 

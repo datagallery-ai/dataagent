@@ -2672,14 +2672,22 @@ export class ProtocolStateSnapshotRepository {
   ): ProtocolStateSnapshotRecord {
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const state = this.compareAndSet(input);
-      this.appendEvents(input.user_id, events);
+      const state = this.compareAndSetWithEventsWithinTransaction(input, events);
       this.db.exec("COMMIT");
       return state;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  compareAndSetWithEventsWithinTransaction(
+    input: CompareAndSetProtocolStateInput,
+    events: unknown[]
+  ): ProtocolStateSnapshotRecord {
+    const state = this.compareAndSet(input);
+    this.appendEvents(input.user_id, events);
+    return state;
   }
 
   transitionSegment(input: TransitionProtocolSegmentInput): {

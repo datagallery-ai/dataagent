@@ -6,17 +6,43 @@ import type {
 } from "@datafoundry/agent-runtime";
 import type { MetadataStore, ProtocolStateSnapshotRecord } from "@datafoundry/metadata";
 
+export type MetadataProtocolStateStoreOptions = {
+  onCreateWithinTransaction?(input: {
+    state: ProtocolRunState;
+    events: ProtocolEvent[];
+  }): void;
+};
+
 /** Persist Protocol Runtime snapshots through the user-scoped metadata repository. */
 export class MetadataProtocolStateStore implements ProtocolStateStore {
   constructor(
     private readonly metadataStore: MetadataStore,
-    private readonly userId: string
+    private readonly userId: string,
+    private readonly options: MetadataProtocolStateStoreOptions = {}
   ) {}
 
   create<TDomainState>(
     state: ProtocolRunState<TDomainState>,
     events: ProtocolEvent[] = []
   ): ProtocolRunState<TDomainState> {
+    if (this.options.onCreateWithinTransaction) {
+      this.metadataStore.db.exec("BEGIN IMMEDIATE");
+      try {
+        const record = this.metadataStore.protocolStates.compareAndSetWithEventsWithinTransaction({
+          user_id: this.userId,
+          run_id: state.runId,
+          segment_id: state.segmentId,
+          expected_revision: -1,
+          state
+        }, events);
+        this.options.onCreateWithinTransaction({ state, events });
+        this.metadataStore.db.exec("COMMIT");
+        return parseProtocolState<TDomainState>(record);
+      } catch (error) {
+        this.metadataStore.db.exec("ROLLBACK");
+        throw error;
+      }
+    }
     return this.persist(state, -1, events);
   }
 

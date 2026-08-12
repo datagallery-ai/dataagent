@@ -70,7 +70,7 @@ export type ProtocolRunState<TDomainState = unknown> = {
   segmentId: string;
   revision: number;
   phase: string;
-  status: "active" | "waiting" | "terminal" | "handed_off";
+  status: "active" | "waiting" | "terminal" | "handed_off" | "aborted";
   contextPackageRef: ContextPackageRef;
   actions: ProtocolActionRecord[];
   completionRejections: number;

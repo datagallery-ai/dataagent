@@ -1196,6 +1196,47 @@ describe("createRunProtocolBoundary", () => {
     });
   });
 
+  it("safely exits an untouched strict protocol when correcting a classifier replace route", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-route-correction",
+      userInput: "帮我写一段 README",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-route-correction", revision: 0 },
+      tools: {},
+      classifier: async () => ({
+        protocolId: "data-analysis",
+        protocolVersion: "1",
+        confidence: 0.91,
+        reasonCodes: ["CLASSIFIER_MISROUTE_FOR_TEST"],
+        taskRelation: "replace"
+      }),
+      projectContext: () => ({ packageId: "context-route-correction", revision: 0 })
+    });
+    const firstSegmentId = boundary.segmentId;
+
+    await boundary.actionRouter.execute({
+      runId: "run-route-correction",
+      segmentId: firstSegmentId,
+      actionId: "correct-route",
+      actionName: "protocol.handoff.propose",
+      input: {
+        targetProtocolId: "general-task",
+        targetProtocolVersion: "1",
+        reasonCodes: ["TASK_IS_NOT_ANALYTIC"],
+        unresolvedGoals: []
+      }
+    });
+
+    expect(boundary.protocolRuntime.getState("run-route-correction", firstSegmentId)).toMatchObject({
+      protocolId: "data-analysis",
+      status: "aborted"
+    });
+    expect(boundary.protocolRuntime.getState("run-route-correction")).toMatchObject({
+      protocolId: "general-task",
+      status: "active"
+    });
+  });
+
   it("inherits the session intent deterministically for a weak follow-up without calling the classifier", async () => {
     let classifierCalls = 0;
     const boundary = await createRunProtocolBoundary({

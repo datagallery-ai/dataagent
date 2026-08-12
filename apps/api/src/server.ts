@@ -54,7 +54,10 @@ import { createMetadataContextPackageRecorder } from "./context-package-recorder
 import { MetadataProtocolStateStore } from "./protocol-state-store.js";
 import { buildHelperContext } from "@datafoundry/agent-runtime";
 import { replayPendingProtocolEvents } from "./protocol-event-recovery.js";
-import { commitSessionIntentFromRoute, resolveSessionIntentForRun } from "./session-intent.js";
+import {
+  commitSessionIntentFromProtocolStartWithinTransaction,
+  resolveSessionIntentForRun
+} from "./session-intent.js";
 import { assistantMessageIdFromEvent, completeProtocolRun } from "./protocol-run-completion.js";
 import { persistCurrentUserMessage } from "./conversation-memory.js";
 import { resolveEvidenceReferenceContext } from "./evidence-reference-context.js";
@@ -618,9 +621,40 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           sessionId,
           userId: this.input.user.id
         });
+        const persistedProtocolState = this.input.metadataStore.protocolStates.latestByRun({
+          user_id: this.input.user.id,
+          run_id: runId
+        });
+        const persistedIntentBinding = this.input.metadataStore.sessionIntents.findRunBinding({
+          user_id: this.input.user.id,
+          run_id: runId
+        });
+        if (persistedProtocolState && !persistedIntentBinding) {
+          throw new Error(`RUN_INTENT_BINDING_REQUIRED:${runId}`);
+        }
+        const sessionIntent = resolveSessionIntentForRun({
+          metadataStore: this.input.metadataStore,
+          userId: this.input.user.id,
+          sessionId,
+          runId
+        });
         const protocolStateStore = new MetadataProtocolStateStore(
           this.input.metadataStore,
-          this.input.user.id
+          this.input.user.id,
+          {
+            onCreateWithinTransaction: ({ state, events }) => {
+              commitSessionIntentFromProtocolStartWithinTransaction({
+                metadataStore: this.input.metadataStore,
+                userId: this.input.user.id,
+                sessionId,
+                runId,
+                userInput,
+                ...(sessionIntent ? { expectedBaseRevisionId: sessionIntent.revisionId } : {}),
+                state,
+                events
+              });
+            }
+          }
         );
         const runAbortController = new AbortController();
         const interactionRuntime = new InteractionRuntimeAdapter(
@@ -645,12 +679,6 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           eventPipeline.emit(event);
         };
         replayPendingProtocolEvents({ runId, stateStore: protocolStateStore, emit });
-        const sessionIntent = resolveSessionIntentForRun({
-          metadataStore: this.input.metadataStore,
-          userId: this.input.user.id,
-          sessionId,
-          runId
-        });
         const classifierContext = buildHelperContext({
           ...(sessionIntent
             ? { sessionIntent: { protocolId: sessionIntent.protocolId, intentText: sessionIntent.intentText } }
@@ -700,20 +728,6 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           workspaceId: this.input.workspaceId,
           workspaceRoot: this.input.workspaceRoot
         });
-        try {
-          commitSessionIntentFromRoute({
-            metadataStore: this.input.metadataStore,
-            userId: this.input.user.id,
-            sessionId,
-            runId,
-            userInput,
-            ...(sessionIntent ? { expectedBaseRevisionId: sessionIntent.revisionId } : {}),
-            route: agentAssembly.protocol.route
-          });
-        } catch (error) {
-          await agentAssembly.destroyWorkspace();
-          throw error;
-        }
         const finalizer = new RunFinalizer({
           destroyWorkspace: agentAssembly.destroyWorkspace,
           emit,

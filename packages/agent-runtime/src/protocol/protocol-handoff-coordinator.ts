@@ -1,4 +1,5 @@
-import { evaluateProtocolHandoff } from "./protocol-handoff.js";
+import { isDataActionName } from "./data-actions.js";
+import { evaluateProtocolHandoff, type ProtocolHandoffKind } from "./protocol-handoff.js";
 import type { ProtocolRegistry } from "./protocol-registry.js";
 import type {
   ProtocolCompletionDecision,
@@ -19,6 +20,7 @@ export type CoordinateProtocolHandoffInput = {
   authorizedProtocolIds: string[];
   target: ProtocolIdentity;
   reasonCodes: string[];
+  transitionKind?: ProtocolHandoffKind;
   intentTransition?: import("./types.js").ProtocolIntentTransition;
 };
 
@@ -43,19 +45,19 @@ export class ProtocolHandoffCoordinator {
       contextPackageRef: current.contextPackageRef,
       state: current.domain
     }));
-    this.publish(this.createEvent("protocol.handoff.proposed", current, {
+    const transitionKind = input.transitionKind ?? "continue";
+    const proposedEvent = this.createEvent("protocol.handoff.proposed", current, {
       target: input.target,
       reasonCodes: input.reasonCodes,
+      transitionKind,
       unresolvedGoals
-    }));
+    });
     const targetDefinition = this.registry.find(input.target.protocolId, input.target.protocolVersion);
     if (!targetDefinition) {
-      this.publish(this.createEvent(
-        "protocol.handoff.rejected",
-        current,
-        { reasonCode: "PROTOCOL_HANDOFF_TARGET_UNAVAILABLE" }
-      ));
-      throw new Error("PROTOCOL_HANDOFF_TARGET_UNAVAILABLE");
+      this.reject(current, input.expectedRevision, proposedEvent, "PROTOCOL_HANDOFF_TARGET_UNAVAILABLE");
+    }
+    if (transitionKind === "route-correction" && !this.isSafeRouteCorrection(current, input)) {
+      this.reject(current, input.expectedRevision, proposedEvent, "PROTOCOL_ROUTE_CORRECTION_NOT_ALLOWED");
     }
     const decision = evaluateProtocolHandoff({
       authorizedProtocolIds: input.authorizedProtocolIds,
@@ -66,11 +68,11 @@ export class ProtocolHandoffCoordinator {
       },
       target: input.target,
       reasonCodes: input.reasonCodes,
-      unresolvedGoals
+      unresolvedGoals,
+      transitionKind
     });
     if (decision.status === "rejected") {
-      this.publish(this.createEvent("protocol.handoff.rejected", current, { reasonCode: decision.reasonCode }));
-      throw new Error(decision.reasonCode);
+      this.reject(current, input.expectedRevision, proposedEvent, decision.reasonCode);
     }
     if (current.status !== "active" && current.status !== "waiting") {
       throw new Error(`PROTOCOL_HANDOFF_SOURCE_NOT_ACTIVE:${current.status}`);
@@ -78,7 +80,7 @@ export class ProtocolHandoffCoordinator {
     const ended: ProtocolRunState = {
       ...current,
       revision: current.revision + 1,
-      status: "handed_off"
+      status: transitionKind === "route-correction" ? "aborted" : "handed_off"
     };
     const next: ProtocolRunState = {
       protocolId: targetDefinition.id,
@@ -97,10 +99,16 @@ export class ProtocolHandoffCoordinator {
       })
     };
     const events = [
-      this.createEvent("protocol.segment.ended", ended, { status: "handed_off" }),
+      proposedEvent,
+      this.createEvent("protocol.segment.ended", ended, {
+        status: ended.status,
+        transitionKind,
+        ...(transitionKind === "route-correction" ? { reasonCode: "PROTOCOL_ROUTE_CORRECTED" } : {})
+      }),
       this.createEvent("protocol.handoff.accepted", next, {
         previousSegmentId: current.segmentId,
-        reasonCodes: decision.reasonCodes
+        reasonCodes: decision.reasonCodes,
+        transitionKind
       }),
       this.createEvent("protocol.segment.started", next, { phase: next.phase })
     ];
@@ -113,6 +121,34 @@ export class ProtocolHandoffCoordinator {
     });
     events.forEach((event) => this.publish(event));
     return persisted;
+  }
+
+  private isSafeRouteCorrection(
+    current: ProtocolRunState,
+    input: CoordinateProtocolHandoffInput
+  ): boolean {
+    return current.protocolId === "data-analysis"
+      && input.target.protocolId === "general-task"
+      && !current.actions.some((action) => action.status === "succeeded" && isDataActionName(action.actionName));
+  }
+
+  private reject(
+    current: ProtocolRunState,
+    expectedRevision: number,
+    proposedEvent: ProtocolEvent,
+    reasonCode: string
+  ): never {
+    const rejectedState: ProtocolRunState = {
+      ...current,
+      revision: current.revision + 1
+    };
+    const events = [
+      proposedEvent,
+      this.createEvent("protocol.handoff.rejected", rejectedState, { reasonCode })
+    ];
+    this.store.compareAndSet(rejectedState, expectedRevision, events);
+    events.forEach((event) => this.publish(event));
+    throw new Error(reasonCode);
   }
 
   private createEvent(type: string, state: ProtocolRunState, payload?: unknown): ProtocolEvent {
