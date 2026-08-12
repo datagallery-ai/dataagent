@@ -41,9 +41,6 @@ class FlexState(BaseState):
     __human_feedback_resume__: str = ""  # OpenJiuWen resume mechanism
     __final_human_feedback_guard_triggered__: bool = False  # Final delivery HITL guard has fired once
 
-    # Cross-session memory: Retrieved historical session summaries for context
-    cross_session_memory: str = ""
-
     # Intent understanding (意图理解模板)
     intent_complete: bool = True  # 本轮意图是否填满，默认 True 保证向后兼容
     intent_slots: dict = {}  # 已抽取的槽位 {field: value}

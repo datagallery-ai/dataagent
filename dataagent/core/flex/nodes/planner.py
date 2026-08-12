@@ -469,7 +469,7 @@ def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, 
 
 
 def _build_memory_str(state: FlexState, *, runtime: Any = None) -> str:
-    """读取 snapshot + profile + cross_session_memory，拼接为注入 prompt 的 memory 字符串。"""
+    """读取 snapshot + profile，拼接为注入 prompt 的 memory 字符串。"""
     user_id = str(state.get("user_id") or "").strip()
     session_id = str(state.get("session_id") or "").strip()
     if not user_id or not session_id:
@@ -493,11 +493,6 @@ def _build_memory_str(state: FlexState, *, runtime: Any = None) -> str:
         if any(v for v in profile.values()):
             prof_j = json.dumps(profile, ensure_ascii=False, indent=2)
             parts.append("**User Profile:**\n```json\n" + prof_j + "\n```")
-
-        # Cross-session memories
-        cross_session_memory = str(state.get("cross_session_memory") or "").strip()
-        if cross_session_memory:
-            parts.append("**Cross-Session Memories:**\n" + cross_session_memory)
 
         return "\n\n".join(parts)
     except Exception:

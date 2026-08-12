@@ -27,20 +27,10 @@
 # 压缩与LLM调用
 # ============================================================================
 
-# ── Cross-Session Recall ────────────────────────────────────────────────────
-# 当前定义位置: dataagent/core/flex/hooks/cross_session_recall.py
-# 建议 YAML 路径: CROSS_SESSION_RECALL.enable / top_k / max_chars_per_session
-
 from datetime import timedelta, timezone
 
 TZ_CN = timezone(timedelta(hours=8))
 """中国标准时区（UTC+8），供日志时间戳/会话 ID 生成等跨模块使用。"""
-
-DEFAULT_CROSS_SESSION_RECALL_TOP_K: int = 3
-"""跨 Session 召回的历史 Session 数量上限。"""
-
-DEFAULT_CROSS_SESSION_RECALL_MAX_CHARS: int = 1500
-"""每个历史 Session 注入到 prompt 的最大字符数。"""
 
 # ── 消息压缩 ─────────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/utils/compression_utils.py
@@ -401,7 +391,6 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "METAVISOR",
     "ONTOLOGY",
     "CONTEXT",
-    "CROSS_SESSION_RECALL",
     "BASH_TOOL_WHITELIST",
 )
 """合并后 Agent 配置 YAML 的顶层段推荐输出顺序；未列出的 key 保持 ``settings`` 原有顺序追加在末尾。"""

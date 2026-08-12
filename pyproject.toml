@@ -19,7 +19,6 @@ dependencies = [
     "psutil==6.0.0",
     "pydantic==2.12.5",
     "PyYAML==6.0.2",
-    "jieba>=0.42.1",
     # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
     "sqlalchemy==2.0.49",
     "uvicorn==0.34.0",
