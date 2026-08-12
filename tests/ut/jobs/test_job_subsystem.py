@@ -290,6 +290,31 @@ def test_job_service_lifecycle_writes_result(tmp_path):
     assert store.result_json_path(job_id).exists()
 
 
+def test_job_service_cancel_unknown_job_id_does_not_persist(tmp_path):
+    """Cancel of a missing job_id returns not_found and must not create job files."""
+    store = FileJobStore(tmp_path)
+    service = JobService(store)
+
+    snap = service.cancel("1000")
+
+    assert snap.status == "not_found"
+    assert snap.job_id == "1000"
+    assert not store.job_dir("1000").exists()
+    assert not store.job_json_path("1000").exists()
+    assert not store.result_json_path("1000").exists()
+
+
+def test_map_cancel_tool_result_converts_not_found_to_error():
+    """Tool-facing cancel maps store not_found into an ERROR payload."""
+    from dataagent.actions.tools.local_tool.job_tools import _map_cancel_tool_result
+
+    mapped = _map_cancel_tool_result("1000", {"job_id": "1000", "status": "not_found"})
+    assert mapped == {"status": "ERROR", "message": "job_id 1000 not found"}
+
+    passthrough = _map_cancel_tool_result("j1", {"job_id": "j1", "status": "cancelled"})
+    assert passthrough["status"] == "cancelled"
+
+
 @pytest.mark.asyncio
 async def test_implicit_job_tools_registered_from_subagent_configs(tmp_path):
     """``SUBAGENT_CONFIGS`` registers job lifecycle and workspace catalog tools."""
