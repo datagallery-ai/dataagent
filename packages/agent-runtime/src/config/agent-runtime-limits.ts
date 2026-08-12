@@ -188,6 +188,13 @@ export const AGENT_RUNTIME_LIMIT_DEFINITIONS = {
     env: "DATAFOUNDRY_CONTRACT_GROUNDER_MAX_ATTEMPTS",
     description: "Maximum model attempts for producing one schema-valid grounded analysis contract."
   },
+  helperContextMaxChars: {
+    defaultValue: 2000,
+    min: 200,
+    max: 20000,
+    env: "DATAFOUNDRY_HELPER_CONTEXT_MAX_CHARS",
+    description: "Maximum characters of budgeted background context shared with helper models."
+  },
   toolObservationMaxNames: {
     defaultValue: 5,
     min: 1,
