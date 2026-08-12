@@ -19,6 +19,7 @@ export type CoordinateProtocolHandoffInput = {
   target: ProtocolIdentity;
   reasonCodes: string[];
   unresolvedGoals: string[];
+  intentTransition?: import("./types.js").ProtocolIntentTransition;
 };
 
 /** Validate a handoff and atomically replace the active protocol segment. */
@@ -99,7 +100,8 @@ export class ProtocolHandoffCoordinator {
       current: ended,
       expectedRevision: input.expectedRevision,
       next,
-      events
+      events,
+      ...(input.intentTransition ? { intentTransition: input.intentTransition } : {})
     });
     events.forEach((event) => this.publish(event));
     return persisted;

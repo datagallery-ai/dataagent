@@ -8,9 +8,9 @@ import { AGENT_RUNTIME_LIMITS } from "../config/agent-runtime-limits.js";
  * recentQueries. The session intent is never dropped (truncated only as a last
  * resort).
  *
- * All content here is model- or user-generated history, not instructions — the
- * delimiters mark it as reference material so a recorded "ignore all rules"
- * memory cannot steer a helper.
+ * All content here is untrusted model- or user-generated history, not instructions.
+ * Delimiters and marker escaping make that boundary explicit; protocol state remains
+ * the authority and never comes from this helper block.
  */
 export type HelperContextInput = {
   sessionIntent?: { protocolId: string; intentText: string } | undefined;
@@ -39,22 +39,28 @@ export const buildHelperContext = (
   if (input.sessionIntent) {
     sections.push({
       key: "sessionIntent",
-      text: `会话意图: ${input.sessionIntent.protocolId} — ${input.sessionIntent.intentText}`
+      text: `会话意图: ${escapeBoundaryMarkers(input.sessionIntent.protocolId)} — ${escapeBoundaryMarkers(input.sessionIntent.intentText)}`
     });
   }
   const recentQueries = (input.recentQueries ?? []).filter((query) => query.trim().length > 0);
   if (recentQueries.length > 0) {
     sections.push({
       key: "recentQueries",
-      text: `近期查询: ${recentQueries.slice(0, MAX_RECENT_QUERIES).join(" / ")}`
+      text: `近期查询: ${recentQueries.slice(0, MAX_RECENT_QUERIES).map(escapeBoundaryMarkers).join(" / ")}`
     });
   }
   if (input.conversationSummary?.trim()) {
-    sections.push({ key: "conversationSummary", text: `对话摘要: ${input.conversationSummary.trim()}` });
+    sections.push({
+      key: "conversationSummary",
+      text: `对话摘要: ${escapeBoundaryMarkers(input.conversationSummary.trim())}`
+    });
   }
   const memories = (input.relevantMemories ?? []).filter((memory) => memory.trim().length > 0);
   if (memories.length > 0) {
-    sections.push({ key: "relevantMemories", text: `相关记忆: ${memories.slice(0, MAX_MEMORIES).join(" | ")}` });
+    sections.push({
+      key: "relevantMemories",
+      text: `相关记忆: ${memories.slice(0, MAX_MEMORIES).map(escapeBoundaryMarkers).join(" | ")}`
+    });
   }
   if (sections.length === 0) {
     return undefined;
@@ -73,7 +79,17 @@ export const buildHelperContext = (
   }
   let text = render();
   if (text.length > maxChars) {
-    text = text.slice(0, maxChars);
+    const envelopeChars = HEADER.length + FOOTER.length + 2;
+    const available = Math.max(0, maxChars - envelopeChars);
+    const surviving = sections[0];
+    sections.splice(0, sections.length, ...(surviving
+      ? [{ ...surviving, text: surviving.text.slice(0, available) }]
+      : []));
+    text = render();
   }
   return { text, droppedSections };
 };
+
+const escapeBoundaryMarkers = (value: string): string => value
+  .replaceAll(HEADER, "[已转义的会话背景资料开始标记]")
+  .replaceAll(FOOTER, "[已转义的会话背景资料结束标记]");

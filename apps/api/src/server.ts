@@ -54,7 +54,7 @@ import { createMetadataContextPackageRecorder } from "./context-package-recorder
 import { MetadataProtocolStateStore } from "./protocol-state-store.js";
 import { buildHelperContext } from "@datafoundry/agent-runtime";
 import { replayPendingProtocolEvents } from "./protocol-event-recovery.js";
-import { persistSessionIntentFromRoute, resolveSessionIntentForRun } from "./session-intent.js";
+import { commitSessionIntentFromRoute, resolveSessionIntentForRun } from "./session-intent.js";
 import { assistantMessageIdFromEvent, completeProtocolRun } from "./protocol-run-completion.js";
 import { persistCurrentUserMessage } from "./conversation-memory.js";
 import { resolveEvidenceReferenceContext } from "./evidence-reference-context.js";
@@ -648,7 +648,8 @@ class DataFoundryAgUiAgent extends AbstractAgent {
         const sessionIntent = resolveSessionIntentForRun({
           metadataStore: this.input.metadataStore,
           userId: this.input.user.id,
-          sessionId
+          sessionId,
+          runId
         });
         const classifierContext = buildHelperContext({
           ...(sessionIntent
@@ -658,6 +659,7 @@ class DataFoundryAgUiAgent extends AbstractAgent {
             user_id: this.input.user.id,
             session_id: sessionId
           })?.summary_text,
+          recentQueries: recentUserQueries(conversationMessages),
           relevantMemories: longTermMemories.map((memory) => memory.content_text)
         });
         const agentAssembly = await createRunAgentAssembly({
@@ -698,14 +700,20 @@ class DataFoundryAgUiAgent extends AbstractAgent {
           workspaceId: this.input.workspaceId,
           workspaceRoot: this.input.workspaceRoot
         });
-        persistSessionIntentFromRoute({
-          metadataStore: this.input.metadataStore,
-          userId: this.input.user.id,
-          sessionId,
-          runId,
-          userInput,
-          route: agentAssembly.protocol.route
-        });
+        try {
+          commitSessionIntentFromRoute({
+            metadataStore: this.input.metadataStore,
+            userId: this.input.user.id,
+            sessionId,
+            runId,
+            userInput,
+            ...(sessionIntent ? { expectedBaseRevisionId: sessionIntent.revisionId } : {}),
+            route: agentAssembly.protocol.route
+          });
+        } catch (error) {
+          await agentAssembly.destroyWorkspace();
+          throw error;
+        }
         const finalizer = new RunFinalizer({
           destroyWorkspace: agentAssembly.destroyWorkspace,
           emit,
@@ -1339,4 +1347,19 @@ const materializeConfiguredSkillCache = async (
 const stringRecordValue = (record: Record<string, unknown> | undefined, key: string): string | undefined => {
   const value = record?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+};
+
+const recentUserQueries = (messages: RunAgentInput["messages"]): string[] => {
+  const queries = messages.flatMap((message) => {
+    if (message.role !== "user" || message.id?.startsWith("memory-summary:")) return [];
+    if (typeof message.content === "string") return [message.content.trim()];
+    if (!Array.isArray(message.content)) return [];
+    const text = message.content.flatMap((part) =>
+      typeof part === "object" && part !== null && "type" in part && part.type === "text"
+        && "text" in part && typeof part.text === "string"
+        ? [part.text]
+        : []).join("\n").trim();
+    return text ? [text] : [];
+  }).filter((query) => query.length > 0);
+  return queries.slice(0, -1).slice(-2);
 };

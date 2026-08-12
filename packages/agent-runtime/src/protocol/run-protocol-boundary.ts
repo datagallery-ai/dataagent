@@ -45,16 +45,23 @@ import type {
   ProtocolStateStore
 } from "./types.js";
 import type { SemanticRequest, SemanticResolution } from "../semantic/types.js";
+import {
+  resolveToolPlanAvailability,
+  type ToolPlanEntry
+} from "../tools/tool-plan.js";
 
 type ExistingTool = { execute?: (...args: unknown[]) => unknown | Promise<unknown> };
 type RunProtocolDomainState = GeneralTaskState | DataAnalysisState;
 
 export type CreateRunProtocolBoundaryInput = {
   runId: string;
+  sessionId?: string;
   userInput: string;
   authorizedProtocolIds: string[];
   initialContextPackageRef: ContextPackageRef;
   tools: Record<string, ExistingTool>;
+  /** Complete static agent schema, used to project post-handoff availability. */
+  toolPlanEntries?: ToolPlanEntry[];
   explicitProtocol?: ProtocolIdentity;
   classifier?: ProtocolClassifier;
   projectContext: ActionRouterOptions["projectContext"];
@@ -77,6 +84,8 @@ export type CreateRunProtocolBoundaryInput = {
 };
 
 export type SessionIntent = {
+  intentId: string;
+  revisionId: string;
   protocolId: string;
   protocolVersion: string;
   intentText: string;
@@ -125,13 +134,21 @@ export const createRunProtocolBoundary = async (
   try {
     route = await router.route({
       authorizedProtocolIds: input.authorizedProtocolIds,
-      ...(!persistedState && input.explicitProtocol ? { explicit: input.explicitProtocol } : {}),
+      ...(!persistedState && input.explicitProtocol
+        ? {
+            explicit: {
+              ...input.explicitProtocol,
+              taskRelation: input.sessionIntent && weakContinuationIntent(input.userInput) ? "continue" : "replace"
+            }
+          }
+        : {}),
       deterministicCandidates: persistedState
         ? [{
             protocolId: persistedState.protocolId,
             protocolVersion: persistedState.protocolVersion,
             priority: 1000,
-            reasonCode: "PROTOCOL_SEGMENT_RESTORED"
+            reasonCode: "PROTOCOL_SEGMENT_RESTORED",
+            taskRelation: "continue" as const
           }]
         : [
             // Session-intent inheritance outranks the keyword accelerator: a recorded
@@ -142,15 +159,17 @@ export const createRunProtocolBoundary = async (
                   protocolId: input.sessionIntent.protocolId,
                   protocolVersion: input.sessionIntent.protocolVersion,
                   priority: 300,
-                  reasonCode: "SESSION_INTENT_INHERITED"
+                  reasonCode: "SESSION_INTENT_INHERITED",
+                  taskRelation: "continue" as const
                 }]
               : []),
-            ...(analyticIntent(input.userInput)
+            ...(!input.sessionIntent && analyticIntent(input.userInput)
               ? [{
                   protocolId: "data-analysis",
                   protocolVersion: "1",
                   priority: 100,
-                  reasonCode: "ANALYTIC_INTENT"
+                  reasonCode: "ANALYTIC_INTENT",
+                  taskRelation: "replace" as const
                 }]
               : [])
           ],
@@ -181,7 +200,7 @@ export const createRunProtocolBoundary = async (
     });
     throw error;
   }
-  const intentText = effectiveIntentText(input);
+  const intentText = effectiveIntentText(input, route.taskRelation);
   let userRequirements: AnalysisRequirement[] = [];
   let requirementsExtracted = Boolean(persistedState);
   const extractRequirementsInto = async (): Promise<void> => {
@@ -291,7 +310,7 @@ export const createRunProtocolBoundary = async (
   });
   const actionRouter = new ActionRouter(capabilityRegistry, protocolRuntime, {
     automaticActions: (actionInput) => activeProtocolId === "data-analysis"
-      ? dataAnalysisAutomaticActions(actionInput, input)
+      ? dataAnalysisAutomaticActions(actionInput, input, intentText)
       : [],
     preparatoryActions: (actionInput) => activeProtocolId === "data-analysis"
       ? dataAnalysisPreparatoryActions(actionInput)
@@ -312,7 +331,21 @@ export const createRunProtocolBoundary = async (
     ...(input.resourceAuthorization ? { resourceAuthorization: input.resourceAuthorization } : {}),
     projectContext: input.projectContext,
     projectFinalObservation: ({ actionName, domain, observation }) =>
-      activeProtocolId === "data-analysis" && actionName === "inspect_schema"
+      actionName === "protocol.handoff.propose"
+        ? handoffObservation({
+            observation,
+            protocolId: activeProtocolId,
+            phase: protocolRuntime.getState(input.runId, segmentId).phase,
+            allowedActions: protocolRuntime.allowedActions(input.runId, segmentId),
+            toolPlanEntries: input.toolPlanEntries ?? actionNames.map((name) => ({
+              name,
+              source: "selected-run-tools",
+              exposed: true,
+              availability: "available" as const,
+              reasons: ["source:selected-run-tools"]
+            }))
+          })
+        : activeProtocolId === "data-analysis" && actionName === "inspect_schema"
         ? projectGroundedSchemaObservation(observation, domain as DataAnalysisState)
         : observation,
     projectProtocolEventResult: ({ actionName, rawResult }) => {
@@ -345,7 +378,19 @@ export const createRunProtocolBoundary = async (
         authorizedProtocolIds: input.authorizedProtocolIds,
         target: { protocolId: targetProtocolId, protocolVersion: targetProtocolVersion },
         reasonCodes: recordStringArray(rawResult, "reasonCodes"),
-        unresolvedGoals: recordStringArray(rawResult, "unresolvedGoals")
+        unresolvedGoals: recordStringArray(rawResult, "unresolvedGoals"),
+        ...(input.sessionId
+          ? {
+              intentTransition: {
+                sessionId: input.sessionId,
+                sourceRunId: input.runId,
+                userInput: input.userInput,
+                taskRelation: route.taskRelation,
+                targetProtocolId,
+                targetProtocolVersion
+              }
+            }
+          : {})
       });
       const targetDefinition = protocolRegistry.find(targetProtocolId, targetProtocolVersion);
       if (!targetDefinition) {
@@ -572,7 +617,7 @@ const stripLeadingSqlComments = (sql: string): string => {
  * one classifier call and a false hit is corrected by session-intent inheritance.
  */
 const analyticIntent = (userInput: string): boolean =>
-  /\b(?:sql|query|queries|metrics?|analytics?|analyz|analys|statistics?|revenue|sales|orders?|trends?|breakdown|aggregate|average|median|count|sum|percentile|top\s?\d|group\s?by|cohort|retention|conversion|funnel)\b|分析|统计|指标|数据|销售额|营收|订单量|环比|同比|留存|转化|漏斗|分组|排名|占比|中位数|平均/iu
+  /\b(?:sql|queries?|metrics?|analytics?|analyz(?:e|ing|ed)?|analys(?:e|is|ing|ed)|statistics?|data\s+(?:analysis|query)|revenue\s+trend|group\s+by|cohort\s+analysis|retention\s+analysis|conversion\s+funnel)\b|分析|统计|查询数据|指标分析|(?:计算.*(?:数据|订单|利润|指标))|销售额分析|营收分析|订单量分析|环比分析|同比分析|留存分析|转化漏斗/iu
     .test(userInput);
 
 /**
@@ -580,9 +625,13 @@ const analyticIntent = (userInput: string): boolean =>
  * weak continuation follow-up (with the follow-up appended as a trailing note), or
  * the user's own words whenever they carry a task of their own.
  */
-const effectiveIntentText = (input: CreateRunProtocolBoundaryInput): string =>
-  input.sessionIntent && weakContinuationIntent(input.userInput)
-    ? `${input.sessionIntent.intentText}\n(后续指示: ${input.userInput})`
+const effectiveIntentText = (
+  input: CreateRunProtocolBoundaryInput,
+  taskRelation: import("./protocol-router.js").TaskRelation
+): string => input.sessionIntent && taskRelation === "continue"
+  ? `${input.sessionIntent.intentText}\n(后续指示: ${input.userInput})`
+  : input.sessionIntent && taskRelation === "refine"
+    ? `${input.sessionIntent.intentText}\n(补充要求: ${input.userInput})`
     : input.userInput;
 
 /**
@@ -596,8 +645,36 @@ const weakContinuationIntent = (userInput: string): boolean => {
   const normalized = userInput.trim();
   return normalized.length > 0
     && normalized.length <= 24
-    && /再次尝试|再试|重试|继续|接着|重来|再来一次|重新来|重新试|重新跑|try again|retry|continue|resume|keep going|one more time/iu
+    && /^(?:请\s*)?(?:再次尝试|再试(?:一次)?|重试(?:一次)?|继续|接着|重来|再来一次|重新来|重新试|重新跑|try again|retry|continue|resume|keep going|one more time)[\s!！?？。,.，]*$/iu
       .test(normalized);
+};
+
+const handoffObservation = (input: {
+  observation: unknown;
+  protocolId: string;
+  phase: string;
+  allowedActions: string[];
+  toolPlanEntries: ToolPlanEntry[];
+}): Record<string, unknown> => {
+  const snapshot = resolveToolPlanAvailability({
+    entries: input.toolPlanEntries,
+    protocolId: input.protocolId,
+    phase: input.phase,
+    allowedActions: input.allowedActions
+  });
+  return {
+    ...(typeof input.observation === "object" && input.observation !== null && !Array.isArray(input.observation)
+      ? input.observation as Record<string, unknown>
+      : { result: input.observation }),
+    activeProtocolId: input.protocolId,
+    activePhase: input.phase,
+    availableTools: snapshot
+      .filter((entry) => entry.exposed && entry.availability === "available")
+      .map((entry) => entry.name),
+    protocolDisabledTools: snapshot
+      .filter((entry) => entry.exposed && entry.availability === "protocol-disabled")
+      .map((entry) => entry.name)
+  };
 };
 
 const allowAction = (): ProtocolGuardResult => ({ allowed: true });
@@ -695,7 +772,7 @@ const dataAnalysisAutomaticActions = (input: {
   domain: unknown;
   input: unknown;
   rawResult: unknown;
-}, boundaryInput: CreateRunProtocolBoundaryInput): Array<{ actionName: string; input: unknown }> => {
+}, boundaryInput: CreateRunProtocolBoundaryInput, intentText: string): Array<{ actionName: string; input: unknown }> => {
   if (input.actionName === "inspect_schema" && boundaryInput.semanticProvider && boundaryInput.semanticRequest) {
     return [{
       actionName: "semantic.context.resolve",
@@ -703,7 +780,7 @@ const dataAnalysisAutomaticActions = (input: {
         ...boundaryInput.semanticRequest,
         // The semantic service needs the actual task description; a weak follow-up
         // like "再次尝试" would only return noise, so inherit the session intent text.
-        query: effectiveIntentText(boundaryInput),
+        query: intentText,
         physicalSchema: input.rawResult
       }
     }];

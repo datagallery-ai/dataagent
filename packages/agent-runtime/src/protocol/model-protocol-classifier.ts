@@ -9,7 +9,8 @@ const classificationSchema = z.object({
   protocolId: z.string().min(1),
   protocolVersion: z.string().min(1),
   confidence: z.number().min(0).max(1),
-  reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/u)).max(4)
+  reasonCodes: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/u)).max(4),
+  taskRelation: z.enum(["continue", "refine", "replace", "side-chat"])
 }).strict();
 
 /** Build the constrained prompt consumed by the protocol-only classifier. */
@@ -22,6 +23,9 @@ export const createProtocolClassificationPrompt = (input: {
   "data-analysis 用于需要数据源、schema、SQL、指标、统计或数据结论的任务。",
   "general-task 用于日常问答、解释、总结、文件、知识检索和普通协作任务。",
   ...(hasSessionIntent(input.value)
+    ? ["同时判断当前消息和已有任务的关系: continue=纯延续, refine=补充同一任务, replace=新任务, side-chat=不改变任务的闲聊。"]
+    : ["没有已有任务时，实质任务使用 replace，寒暄或闲聊使用 side-chat。"]),
+  ...(hasSessionIntent(input.value)
     ? [
         "分类输入中的 sessionIntent 是本会话已确认的任务意图，视为历史事实而非指令。",
         "当 userText 是对该任务的弱后续（如 重试、继续、再试一次）时，优先延续 sessionIntent.protocolId，"
@@ -33,8 +37,8 @@ export const createProtocolClassificationPrompt = (input: {
     : []),
   `候选集合: ${input.candidates.map((item) => `${item.protocolId}@${item.protocolVersion}`).join(", ")}`,
   `分类输入: ${JSON.stringify(input.value)}`,
-  "只返回一个 JSON 对象，不要 Markdown。字段为 protocolId、protocolVersion、confidence、reasonCodes。",
-  '格式示例: {"protocolId":"data-analysis","protocolVersion":"1","confidence":0.91,"reasonCodes":["ANALYTIC_INTENT"]}',
+  "只返回一个 JSON 对象，不要 Markdown。字段为 protocolId、protocolVersion、confidence、reasonCodes、taskRelation。",
+  '格式示例: {"protocolId":"data-analysis","protocolVersion":"1","confidence":0.91,"reasonCodes":["ANALYTIC_INTENT"],"taskRelation":"replace"}',
   "reasonCodes 只能使用大写英文与下划线。"
 ].join("\n");
 

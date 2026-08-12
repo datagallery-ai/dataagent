@@ -89,6 +89,15 @@ export type ProtocolEvent = {
   payload?: unknown;
 };
 
+export type ProtocolIntentTransition = {
+  sessionId: string;
+  sourceRunId: string;
+  userInput: string;
+  taskRelation: "continue" | "refine" | "replace" | "side-chat";
+  targetProtocolId: string;
+  targetProtocolVersion: string;
+};
+
 export interface ProtocolStateStore {
   create<TDomainState>(
     state: ProtocolRunState<TDomainState>,
@@ -106,6 +115,7 @@ export interface ProtocolStateStore {
     expectedRevision: number;
     next: ProtocolRunState<TNextDomainState>;
     events?: ProtocolEvent[];
+    intentTransition?: ProtocolIntentTransition;
   }): {
     current: ProtocolRunState<TCurrentDomainState>;
     next: ProtocolRunState<TNextDomainState>;

@@ -84,7 +84,11 @@ import {
   type SessionIntent
 } from "./protocol/run-protocol-boundary.js";
 import { DATA_ACTION_NAMES } from "./protocol/data-actions.js";
-import { buildToolPlan, type ToolPlanEntry } from "./tools/tool-plan.js";
+import {
+  buildToolPlan,
+  resolveToolPlanAvailability,
+  type ToolPlanEntry
+} from "./tools/tool-plan.js";
 import type { ProtocolClassifier, ProtocolIdentity } from "./protocol/protocol-router.js";
 import { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 import {
@@ -480,12 +484,30 @@ export const createDataFoundry = async (
     alwaysAllow: alwaysAllowTools,
     skillPolicy: input.skillSelection?.effectiveToolPolicy
   });
+  const agentToolPlanEntries: ToolPlanEntry[] = [
+    ...toolPlan.entries,
+    {
+      name: "analysis_requirements_commit",
+      source: "protocol-runtime",
+      exposed: true,
+      availability: "available",
+      reasons: ["source:protocol-runtime"]
+    },
+    {
+      name: "protocol_handoff",
+      source: "protocol-runtime",
+      exposed: true,
+      availability: "available",
+      reasons: ["source:protocol-runtime", "always-allow"]
+    }
+  ];
   const selectedTools = toolPlan.exposedTools;
   const selectedDatasourceId = input.runContext.selected_datasource_id;
   const deferredProtocolEvents: ProtocolEvent[] = [];
   let protocolEventsReady = false;
   const protocol = await createRunProtocolBoundary({
     runId: input.runContext.run_id,
+    sessionId: input.runContext.session_id,
     userInput: input.runContext.user_input,
     authorizedProtocolIds: ["general-task", "data-analysis"],
     initialContextPackageRef: {
@@ -493,6 +515,7 @@ export const createDataFoundry = async (
       revision: contextRunState.package.revision
     },
     tools: selectedTools,
+    toolPlanEntries: agentToolPlanEntries,
     ...(selectedDatasourceId
       ? {
           semanticProvider: createDefaultSemanticProvider({ tools: selectedTools }),
@@ -569,34 +592,32 @@ export const createDataFoundry = async (
     ? ((protocolState.domain as DataAnalysisState).requirements ?? []).filter((requirement) =>
         requirement.source === "user")
     : [];
-  const requirementsCommitTools = analysisRequirements.length > 0
-    ? {
-        analysis_requirements_commit: createTool({
-          id: "analysis_requirements_commit",
-          description: "Commit final claims for analysis requirements using artifact evidence from successful SQL results.",
-          inputSchema: z.object({
-            claims: z.array(z.object({
-              requirement_id: z.string().min(1),
-              claim: z.string().min(1),
-              values: z.array(z.object({
-                name: z.string().min(1),
-                value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
-                unit: z.string().optional()
-              })).max(AGENT_RUNTIME_LIMITS.requirementCommitMaxOutputFields).optional(),
-              evidence_refs: z.array(z.string().min(1)).optional(),
-              evidence_requirement_ids: z.array(z.string().min(1)).optional()
-            })).min(1).max(AGENT_RUNTIME_LIMITS.requirementCommitMaxClaims)
-          }),
-          execute: createProtocolBoundExecute({
-            actionName: "analysis.requirements.commit",
-            fallbackIdPrefix: "analysis-requirements-commit",
-            protocol,
-            runId: input.runContext.run_id,
-            toolName: "analysis_requirements_commit"
-          })
-        })
-      }
-    : {};
+  const requirementsCommitTools = {
+    analysis_requirements_commit: createTool({
+      id: "analysis_requirements_commit",
+      description: "Commit final claims for analysis requirements using artifact evidence from successful SQL results.",
+      inputSchema: z.object({
+        claims: z.array(z.object({
+          requirement_id: z.string().min(1),
+          claim: z.string().min(1),
+          values: z.array(z.object({
+            name: z.string().min(1),
+            value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+            unit: z.string().optional()
+          })).max(AGENT_RUNTIME_LIMITS.requirementCommitMaxOutputFields).optional(),
+          evidence_refs: z.array(z.string().min(1)).optional(),
+          evidence_requirement_ids: z.array(z.string().min(1)).optional()
+        })).min(1).max(AGENT_RUNTIME_LIMITS.requirementCommitMaxClaims)
+      }),
+      execute: createProtocolBoundExecute({
+        actionName: "analysis.requirements.commit",
+        fallbackIdPrefix: "analysis-requirements-commit",
+        protocol,
+        runId: input.runContext.run_id,
+        toolName: "analysis_requirements_commit"
+      })
+    })
+  };
   const tools = {
     ...governedToolFactory.governTools(selectedTools),
     ...requirementsCommitTools,
@@ -618,6 +639,16 @@ export const createDataFoundry = async (
       })
     })
   };
+  const currentToolPlan = (): ToolPlanEntry[] => {
+    const currentState = protocol.protocolRuntime.getState(input.runContext.run_id, protocol.segmentId);
+    return resolveToolPlanAvailability({
+      entries: agentToolPlanEntries,
+      protocolId: currentState.protocolId,
+      phase: currentState.phase,
+      allowedActions: protocol.protocolRuntime.allowedActions(input.runContext.run_id, protocol.segmentId)
+    });
+  };
+  const initialToolPlan = currentToolPlan();
   const agent = new Agent({
     id: "data-foundry",
     name: "DataFoundry",
@@ -628,7 +659,7 @@ export const createDataFoundry = async (
       pythonRuntimeAvailable: Boolean(runWorkspace.pythonRuntime),
       selectedSkills: input.selectedSkills ?? [],
       taskToolsEnabled: Boolean(input.taskStateRuntime),
-      toolNames: [...Object.keys(selectedTools), ...Object.keys(requirementsCommitTools), "protocol_handoff"],
+      toolNames: initialToolPlan.filter((entry) => entry.exposed).map((entry) => entry.name),
       mcpToolNames: input.mcpToolNames ?? [],
       protocolId: protocolState.protocolId,
       analysisRequirements,
@@ -710,7 +741,9 @@ export const createDataFoundry = async (
     isolation: runWorkspace.isolation,
     protocol,
     // Why each tool is (not) exposed this run — for diagnostics and audit surfaces.
-    toolPlan: toolPlan.entries,
+    get toolPlan() {
+      return currentToolPlan();
+    },
     flushProtocolEvents: () => {
       protocolEventsReady = true;
       while (deferredProtocolEvents.length > 0) {

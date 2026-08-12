@@ -29,6 +29,21 @@ describe("RunCheckpointProjector protocol events", () => {
         revision: 2,
         payload: {}
       });
+      const intent = metadata.sessionIntents.upsert({
+        user_id: userId,
+        session_id: "session-1",
+        protocol_id: "data-analysis",
+        protocol_version: "1",
+        intent_text: "分析订单",
+        source_run_id: "run-1"
+      });
+      metadata.sessionIntents.bindRun({
+        user_id: userId,
+        run_id: "run-1",
+        session_id: "session-1",
+        active_revision_id: intent.id,
+        task_relation: "replace"
+      });
       const envelope = new RunEventWriter(metadata.runEvents).write({
         user_id: userId,
         run_id: "run-1",
@@ -44,7 +59,8 @@ describe("RunCheckpointProjector protocol events", () => {
       expect(metadata.checkpoints.latestByRun({ user_id: userId, run_id: "run-1" })).toMatchObject({
         kind: "protocol-phase",
         label: "Protocol phase: query_planning",
-        context_package_revision: 2
+        context_package_revision: 2,
+        intent_revision_id: intent.id
       });
       metadata.close();
     } finally {

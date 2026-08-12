@@ -83,7 +83,7 @@ describe("SessionIntentRepository", () => {
 
   it("resolves a branched session's intent through its parent lineage", () => {
     seedSessionWithRun("session-root", "run-root", "帮我分析当前数据");
-    metadata.sessionIntents.upsert({
+    const rootIntent = metadata.sessionIntents.upsert({
       user_id: userId, session_id: "session-root", protocol_id: "data-analysis",
       protocol_version: "1", intent_text: "帮我分析当前数据", source_run_id: "run-root"
     });
@@ -92,13 +92,15 @@ describe("SessionIntentRepository", () => {
     metadata.sessionBranches.create({
       user_id: userId, id: "branch:session-branch", child_session_id: "session-branch",
       parent_session_id: "session-root", root_session_id: "session-root",
-      fork_run_id: "run-root", fork_message_end_position: 1
+      fork_run_id: "run-root", fork_message_end_position: 1,
+      fork_intent_revision_id: rootIntent.id
     });
     metadata.sessions.create({ user_id: userId, id: "session-grandchild", title: "g" });
     metadata.sessionBranches.create({
       user_id: userId, id: "branch:session-grandchild", child_session_id: "session-grandchild",
       parent_session_id: "session-branch", root_session_id: "session-root",
-      fork_run_id: "run-root", fork_message_end_position: 1
+      fork_run_id: "run-root", fork_message_end_position: 1,
+      fork_intent_revision_id: rootIntent.id
     });
 
     const resolved = metadata.sessionIntents.resolveForSession({
@@ -149,5 +151,53 @@ describe("SessionIntentRepository", () => {
 
     expect(result.deleted).toBe(true);
     expect(metadata.sessionIntents.find({ user_id: userId, session_id: "session-1" })).toBeUndefined();
+  });
+
+  it("rejects a stale expected head without changing the active revision", () => {
+    seedSessionWithRun("session-cas", "run-cas", "分析订单");
+    const first = metadata.sessionIntents.upsert({
+      user_id: userId, session_id: "session-cas", protocol_id: "data-analysis",
+      protocol_version: "1", intent_text: "分析订单", source_run_id: "run-cas"
+    });
+
+    expect(() => metadata.sessionIntents.commit({
+      user_id: userId,
+      session_id: "session-cas",
+      expected_head_revision_id: "stale-revision",
+      intent_id: first.intent_id,
+      previous_revision_id: first.id,
+      protocol_id: "data-analysis",
+      protocol_version: "1",
+      intent_text: "分析订单并分组",
+      change_kind: "refine",
+      source_run_id: "run-cas"
+    })).toThrow("SESSION_INTENT_REVISION_CONFLICT:session-cas");
+    expect(metadata.sessionIntents.find({ user_id: userId, session_id: "session-cas" })?.id).toBe(first.id);
+  });
+
+  it("keeps a branch pinned when the parent intent changes after the fork", () => {
+    seedSessionWithRun("session-parent", "run-parent-a", "分析订单");
+    metadata.runs.create({
+      user_id: userId, id: "run-parent-b", session_id: "session-parent",
+      user_input: "写 README", status: "completed"
+    });
+    const forkIntent = metadata.sessionIntents.upsert({
+      user_id: userId, session_id: "session-parent", protocol_id: "data-analysis",
+      protocol_version: "1", intent_text: "分析订单", source_run_id: "run-parent-a"
+    });
+    metadata.sessions.create({ user_id: userId, id: "session-child", title: "child" });
+    metadata.sessionBranches.create({
+      user_id: userId, id: "branch:child", child_session_id: "session-child",
+      parent_session_id: "session-parent", root_session_id: "session-parent",
+      fork_run_id: "run-parent-a", fork_message_end_position: 1,
+      fork_intent_revision_id: forkIntent.id
+    });
+    metadata.sessionIntents.upsert({
+      user_id: userId, session_id: "session-parent", protocol_id: "general-task",
+      protocol_version: "1", intent_text: "写 README", source_run_id: "run-parent-b"
+    });
+
+    expect(metadata.sessionIntents.resolveForSession({ user_id: userId, session_id: "session-child" }))
+      .toMatchObject({ id: forkIntent.id, protocol_id: "data-analysis", intent_text: "分析订单" });
   });
 });

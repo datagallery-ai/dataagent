@@ -12,14 +12,18 @@
  *                      governed by their own per-server allowlist (policy-mcp
  *                      middleware), not by skill allow/deny sets.
  *
- * Protocol-phase permissions are deliberately NOT part of the plan: they are
- * dynamic per phase and stay with the protocol runtime's action gate.
+ * The assembled schema is static, while resolveToolPlanAvailability projects the
+ * active protocol/phase onto it. The protocol runtime action gate remains authoritative.
  */
+
+import { isDataActionName } from "../protocol/data-actions.js";
 
 export type ToolPlanEntry = {
   name: string;
   source: string;
   exposed: boolean;
+  availability: "available" | "protocol-disabled";
+  recovery?: { action: "protocol-handoff"; targetProtocolId: string };
   reasons: string[];
 };
 
@@ -70,14 +74,52 @@ export const buildToolPlan = <TTool>(input: {
       exposed = false;
       reasons.push("skill-policy:not-allowed");
     }
-    entries.push({ name, source, exposed, reasons });
+    entries.push({ name, source, exposed, availability: "available", reasons });
     if (exposed) {
       exposedTools[name] = tool;
     }
   }
   for (const [name, tool] of Object.entries(input.mcpTools ?? {})) {
-    entries.push({ name, source: "mcp", exposed: true, reasons: ["source:mcp", "mcp-policy:server-allowlist"] });
+    entries.push({
+      name,
+      source: "mcp",
+      exposed: true,
+      availability: "available",
+      reasons: ["source:mcp", "mcp-policy:server-allowlist"]
+    });
     exposedTools[name] = tool;
   }
   return { entries, exposedTools };
+};
+
+const TOOL_ACTION_ALIASES: Record<string, string> = {
+  protocol_handoff: "protocol.handoff.propose",
+  analysis_requirements_commit: "analysis.requirements.commit"
+};
+
+/** Resolve the protocol/phase availability of the static agent tool schema. */
+export const resolveToolPlanAvailability = (input: {
+  entries: ToolPlanEntry[];
+  protocolId: string;
+  phase: string;
+  allowedActions: string[];
+}): ToolPlanEntry[] => {
+  const allowed = new Set(input.allowedActions);
+  return input.entries.map((entry) => {
+    if (!entry.exposed) return { ...entry };
+    const actionName = TOOL_ACTION_ALIASES[entry.name] ?? entry.name;
+    const available = allowed.has(actionName);
+    return {
+      ...entry,
+      availability: available ? "available" : "protocol-disabled",
+      reasons: [
+        ...entry.reasons.filter((reason) => !reason.startsWith("protocol:")),
+        `protocol:${input.protocolId}:${input.phase}:${available ? "allowed" : "disabled"}`
+      ],
+      ...(!available && input.protocolId === "general-task"
+        && (isDataActionName(actionName) || actionName === "analysis.requirements.commit")
+        ? { recovery: { action: "protocol-handoff" as const, targetProtocolId: "data-analysis" } }
+        : {})
+    };
+  });
 };

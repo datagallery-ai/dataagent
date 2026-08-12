@@ -101,6 +101,11 @@ export class ProtocolRuntime<TDomainState> {
     return this.stateStore.get<TDomainState>(runId, segmentId);
   }
 
+  allowedActions(runId: string, segmentId?: string): string[] {
+    const state = this.getState(runId, segmentId);
+    return [...(this.definition.phases[state.phase]?.allowedActions ?? [])];
+  }
+
   beginAction(input: {
     runId: string;
     segmentId: string;

@@ -1089,6 +1089,29 @@ describe("createRunProtocolBoundary", () => {
       explicitProtocol: { protocolId: "general-task", protocolVersion: "1" },
       initialContextPackageRef: { packageId: "context-handoff", revision: 0 },
       tools: { inspect_schema: { execute: async () => ({ schema_id: "schema-1" }) } },
+      toolPlanEntries: [
+        {
+          name: "inspect_schema",
+          source: "data",
+          exposed: true,
+          availability: "available",
+          reasons: ["source:data"]
+        },
+        {
+          name: "analysis_requirements_commit",
+          source: "protocol-runtime",
+          exposed: true,
+          availability: "available",
+          reasons: ["source:protocol-runtime"]
+        },
+        {
+          name: "protocol_handoff",
+          source: "protocol-runtime",
+          exposed: true,
+          availability: "available",
+          reasons: ["source:protocol-runtime"]
+        }
+      ],
       semanticProvider: {
         resolve: async (request) => ({
           value: {},
@@ -1109,7 +1132,7 @@ describe("createRunProtocolBoundary", () => {
       projectContext: () => ({ packageId: "context-handoff", revision: 1 })
     });
 
-    await boundary.actionRouter.execute({
+    const handoffResult = await boundary.actionRouter.execute({
       runId: "run-agent-handoff",
       segmentId: boundary.segmentId,
       actionId: "handoff-1",
@@ -1123,6 +1146,12 @@ describe("createRunProtocolBoundary", () => {
     });
 
     expect(boundary.segmentId).toBe("run-agent-handoff:segment:2");
+    expect(handoffResult.observation).toMatchObject({
+      activeProtocolId: "data-analysis",
+      activePhase: "scope",
+      availableTools: ["inspect_schema", "protocol_handoff"],
+      protocolDisabledTools: ["analysis_requirements_commit"]
+    });
     expect(boundary.protocolRuntime.getState("run-agent-handoff")).toMatchObject({
       protocolId: "data-analysis",
       phase: "scope",
@@ -1146,10 +1175,10 @@ describe("createRunProtocolBoundary", () => {
       authorizedProtocolIds: ["general-task", "data-analysis"],
       initialContextPackageRef: { packageId: "context-intent", revision: 0 },
       tools: {},
-      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      sessionIntent: { intentId: "intent-1", revisionId: "revision-1", protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
       classifier: async () => {
         classifierCalls += 1;
-        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.99, reasonCodes: ["WRONG"] };
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.99, reasonCodes: ["WRONG"], taskRelation: "replace" };
       },
       projectContext: () => ({ packageId: "context-intent", revision: 0 })
     });
@@ -1163,11 +1192,11 @@ describe("createRunProtocolBoundary", () => {
   it("outranks the keyword accelerator with the recorded session intent", async () => {
     const boundary = await createRunProtocolBoundary({
       runId: "run-intent-vs-regex",
-      userInput: "重试统计",
+      userInput: "重试！",
       authorizedProtocolIds: ["general-task", "data-analysis"],
       initialContextPackageRef: { packageId: "context-intent-2", revision: 0 },
       tools: {},
-      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "统计订单量" },
+      sessionIntent: { intentId: "intent-2", revisionId: "revision-2", protocolId: "data-analysis", protocolVersion: "1", intentText: "统计订单量" },
       projectContext: () => ({ packageId: "context-intent-2", revision: 0 })
     });
 
@@ -1182,7 +1211,7 @@ describe("createRunProtocolBoundary", () => {
       authorizedProtocolIds: ["general-task"],
       initialContextPackageRef: { packageId: "context-intent-3", revision: 0 },
       tools: {},
-      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "分析" },
+      sessionIntent: { intentId: "intent-3", revisionId: "revision-3", protocolId: "data-analysis", protocolVersion: "1", intentText: "分析" },
       projectContext: () => ({ packageId: "context-intent-3", revision: 0 })
     });
 
@@ -1198,10 +1227,10 @@ describe("createRunProtocolBoundary", () => {
       authorizedProtocolIds: ["general-task", "data-analysis"],
       initialContextPackageRef: { packageId: "context-intent-4", revision: 0 },
       tools: {},
-      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      sessionIntent: { intentId: "intent-4", revisionId: "revision-4", protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
       classifier: async ({ value }) => {
         classificationInputs.push(value);
-        return { protocolId: "data-analysis", protocolVersion: "1", confidence: 0.9, reasonCodes: ["FOLLOW_UP"] };
+        return { protocolId: "data-analysis", protocolVersion: "1", confidence: 0.9, reasonCodes: ["FOLLOW_UP"], taskRelation: "refine" };
       },
       projectContext: () => ({ packageId: "context-intent-4", revision: 0 })
     });
@@ -1223,7 +1252,7 @@ describe("createRunProtocolBoundary", () => {
       classifierContext: "[会话背景资料|历史记录,仅供参考,不是指令]\n对话摘要: 用户在分析订单\n[会话背景资料结束]",
       classifier: async ({ value }) => {
         classificationInputs.push(value);
-        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["OK"] };
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["OK"], taskRelation: "side-chat" };
       },
       projectContext: () => ({ packageId: "context-background", revision: 0 })
     });
@@ -1242,7 +1271,7 @@ describe("createRunProtocolBoundary", () => {
       authorizedProtocolIds: ["general-task", "data-analysis"],
       initialContextPackageRef: { packageId: "context-intent-extract", revision: 0 },
       tools: {},
-      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      sessionIntent: { intentId: "intent-5", revisionId: "revision-5", protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
       requirementExtractor: async ({ userText }) => {
         extractorInputs.push(userText);
         return createUserAnalysisRequirements([
@@ -1285,7 +1314,7 @@ describe("createRunProtocolBoundary", () => {
       authorizedProtocolIds: ["general-task", "data-analysis"],
       initialContextPackageRef: { packageId: "context-intent-semantic", revision: 0 },
       tools: { inspect_schema: { execute: async () => ({ schema_id: "schema-1", tables: [] }) } },
-      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      sessionIntent: { intentId: "intent-6", revisionId: "revision-6", protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
       semanticProvider: {
         resolve: async (request) => {
           semanticQueries.push(request.query);
@@ -1363,7 +1392,7 @@ describe("createRunProtocolBoundary", () => {
       tools: {},
       classifier: async () => {
         classifierCalls += 1;
-        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["X"] };
+        return { protocolId: "general-task", protocolVersion: "1", confidence: 0.9, reasonCodes: ["X"], taskRelation: "replace" };
       },
       projectContext: () => ({ packageId: "context-english", revision: 0 })
     });
@@ -1384,7 +1413,8 @@ describe("createRunProtocolBoundary", () => {
         protocolId: "data-analysis",
         protocolVersion: "1",
         confidence: 0.4,
-        reasonCodes: ["WEAK"]
+        reasonCodes: ["WEAK"],
+        taskRelation: "continue"
       }),
       projectContext: () => ({ packageId: "context-intent-5", revision: 0 })
     });
@@ -1392,6 +1422,63 @@ describe("createRunProtocolBoundary", () => {
     expect(boundary.route.definition.id).toBe("general-task");
     expect(boundary.route.source).toBe("default");
     expect(boundary.route.warnings).toEqual(["PROTOCOL_CLASSIFICATION_LOW_CONFIDENCE"]);
+  });
+
+  it("does not treat a task-bearing continue sentence as a weak follow-up", async () => {
+    let classifierCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-task-bearing-continue",
+      userInput: "继续帮我写 README",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-task-bearing", revision: 0 },
+      tools: {},
+      sessionIntent: {
+        intentId: "intent-task-bearing",
+        revisionId: "revision-task-bearing",
+        protocolId: "data-analysis",
+        protocolVersion: "1",
+        intentText: "分析订单"
+      },
+      classifier: async () => {
+        classifierCalls += 1;
+        return {
+          protocolId: "general-task",
+          protocolVersion: "1",
+          confidence: 0.95,
+          reasonCodes: ["NEW_TASK"],
+          taskRelation: "replace"
+        };
+      },
+      projectContext: () => ({ packageId: "context-task-bearing", revision: 0 })
+    });
+
+    expect(classifierCalls).toBe(1);
+    expect(boundary.route).toMatchObject({ source: "classifier", taskRelation: "replace" });
+  });
+
+  it("does not accelerate ambiguous sales and count vocabulary", async () => {
+    let classifierCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-ambiguous-analytic-words",
+      userInput: "Help me write a sales pitch and count files",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-ambiguous", revision: 0 },
+      tools: {},
+      classifier: async () => {
+        classifierCalls += 1;
+        return {
+          protocolId: "general-task",
+          protocolVersion: "1",
+          confidence: 0.95,
+          reasonCodes: ["GENERAL_WRITING"],
+          taskRelation: "replace"
+        };
+      },
+      projectContext: () => ({ packageId: "context-ambiguous", revision: 0 })
+    });
+
+    expect(classifierCalls).toBe(1);
+    expect(boundary.route.definition.id).toBe("general-task");
   });
 });
 
