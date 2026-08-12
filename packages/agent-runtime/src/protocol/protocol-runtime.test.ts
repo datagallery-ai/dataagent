@@ -331,6 +331,31 @@ describe("ProtocolRuntime", () => {
       missing: ["not done"]
     });
   });
+
+  it("persists an explicit failed terminal decision without converting it to partial", () => {
+    const events: string[] = [];
+    const runtime = new ProtocolRuntime(createDefinition(), new InMemoryProtocolStateStore(), {
+      onEvent: (event) => events.push(event.type)
+    });
+    runtime.start({ runId: "run-failed", segmentId: "segment-failed", contextPackageRef });
+    events.length = 0;
+
+    const state = runtime.terminateFailure({
+      runId: "run-failed",
+      segmentId: "segment-failed",
+      expectedRevision: 0,
+      reasons: ["DATA_ACTIONS_REJECTED_BY_PROTOCOL"]
+    });
+
+    expect(state).toMatchObject({
+      status: "terminal",
+      terminalDecision: {
+        status: "failed",
+        reasons: ["DATA_ACTIONS_REJECTED_BY_PROTOCOL"]
+      }
+    });
+    expect(events).toEqual(["protocol.completion.proposed", "protocol.run.failed"]);
+  });
 });
 
 const createDefinition = (): AgentProtocolDefinition<{ inspected: boolean }> => ({

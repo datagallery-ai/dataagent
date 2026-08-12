@@ -62,8 +62,9 @@ describe("completeProtocolRun", () => {
 
     expect(harness.execute).not.toHaveBeenCalled();
     expect(harness.complete).not.toHaveBeenCalled();
-    expect(harness.input.protocol.protocolRuntime.proposeCompletion).toHaveBeenCalledWith(
-      expect.objectContaining({ forceTerminal: true })
+    expect(harness.input.protocol.protocolRuntime.proposeCompletion).not.toHaveBeenCalled();
+    expect(harness.input.protocol.protocolRuntime.terminateFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ reasons: [expect.stringContaining("DATA_ACTIONS_REJECTED_BY_PROTOCOL")] })
     );
     expect(harness.fail).toHaveBeenCalledWith(expect.objectContaining({
       errorMessage: expect.stringContaining("DATA_ACTIONS_REJECTED_BY_PROTOCOL"),
@@ -156,6 +157,15 @@ const createHarness = (input: {
   };
   const protocolRuntime = {
     getState: vi.fn(() => state),
+    terminateFailure: vi.fn((failure: { reasons: string[] }) => {
+      state = {
+        ...state,
+        revision: state.revision + 1,
+        status: "terminal",
+        terminalDecision: { status: "failed", reasons: failure.reasons }
+      };
+      return state;
+    }),
     proposeCompletion: vi.fn(() => {
       state = {
         ...state,

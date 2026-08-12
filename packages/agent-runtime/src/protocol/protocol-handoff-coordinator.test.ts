@@ -29,8 +29,7 @@ describe("ProtocolHandoffCoordinator", () => {
       expectedRevision: current.revision,
       authorizedProtocolIds: ["general-task", "data-analysis"],
       target: { protocolId: "data-analysis", protocolVersion: "1" },
-      reasonCodes: ["ANALYTIC_INTENT"],
-      unresolvedGoals: []
+      reasonCodes: ["ANALYTIC_INTENT"]
     });
 
     expect(store.get("run-1", "run-1:segment:1")).toMatchObject({
@@ -50,6 +49,29 @@ describe("ProtocolHandoffCoordinator", () => {
       "protocol.handoff.accepted",
       "protocol.segment.started"
     ]);
+  });
+
+  it("derives unresolved strict goals from protocol state instead of trusting the caller", () => {
+    const store = new InMemoryProtocolStateStore();
+    const registry = new ProtocolRegistry();
+    registry.register(createDefinition("general-task"));
+    registry.register(createDefinition("data-analysis"));
+    const current = new ProtocolRuntime(createDefinition("data-analysis"), store).start({
+      runId: "run-strict",
+      segmentId: "run-strict:segment:1",
+      contextPackageRef: { packageId: "context-strict", revision: 0 }
+    });
+    const coordinator = new ProtocolHandoffCoordinator(registry, store);
+
+    expect(() => coordinator.handoff({
+      runId: "run-strict",
+      segmentId: current.segmentId,
+      expectedRevision: current.revision,
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      target: { protocolId: "general-task", protocolVersion: "1" },
+      reasonCodes: ["MODEL_REQUESTED"]
+    })).toThrow("PROTOCOL_HANDOFF_UNRESOLVED_STRICT_GOALS");
+    expect(store.get("run-strict", current.segmentId)).toMatchObject({ status: "active", revision: 0 });
   });
 });
 

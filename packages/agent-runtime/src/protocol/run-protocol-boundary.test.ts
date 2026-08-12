@@ -520,8 +520,7 @@ describe("createRunProtocolBoundary", () => {
       expectedRevision: 0,
       authorizedProtocolIds: ["general-task", "data-analysis"],
       target: { protocolId: "data-analysis", protocolVersion: "1" },
-      reasonCodes: ["ANALYTIC_INTENT"],
-      unresolvedGoals: []
+      reasonCodes: ["ANALYTIC_INTENT"]
     });
 
     const restored = await createRunProtocolBoundary({
@@ -1140,8 +1139,7 @@ describe("createRunProtocolBoundary", () => {
       input: {
         targetProtocolId: "data-analysis",
         targetProtocolVersion: "1",
-        reasonCodes: ["ANALYTIC_INTENT"],
-        unresolvedGoals: []
+        reasonCodes: ["ANALYTIC_INTENT"]
       }
     });
 
@@ -1165,6 +1163,37 @@ describe("createRunProtocolBoundary", () => {
       input: {}
     });
     expect(boundary.protocolRuntime.getState("run-agent-handoff").phase).toBe("query_planning");
+  });
+
+  it("rejects a model-requested handoff that would abandon incomplete data-analysis goals", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-handoff-gate",
+      userInput: "分析订单",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      explicitProtocol: { protocolId: "data-analysis", protocolVersion: "1" },
+      initialContextPackageRef: { packageId: "context-handoff-gate", revision: 0 },
+      tools: {},
+      projectContext: () => ({ packageId: "context-handoff-gate", revision: 0 })
+    });
+
+    await expect(boundary.actionRouter.execute({
+      runId: "run-handoff-gate",
+      segmentId: boundary.segmentId,
+      actionId: "handoff-bypass",
+      actionName: "protocol.handoff.propose",
+      input: {
+        targetProtocolId: "general-task",
+        targetProtocolVersion: "1",
+        reasonCodes: ["MODEL_REQUESTED"],
+        // A caller-supplied empty list used to bypass the strict completion gate.
+        unresolvedGoals: []
+      }
+    })).rejects.toThrow("PROTOCOL_HANDOFF_UNRESOLVED_STRICT_GOALS");
+    expect(boundary.segmentId).toBe("run-handoff-gate:segment:1");
+    expect(boundary.protocolRuntime.getState("run-handoff-gate")).toMatchObject({
+      protocolId: "data-analysis",
+      status: "active"
+    });
   });
 
   it("inherits the session intent deterministically for a weak follow-up without calling the classifier", async () => {
@@ -1371,8 +1400,7 @@ describe("createRunProtocolBoundary", () => {
       input: {
         targetProtocolId: "data-analysis",
         targetProtocolVersion: "1",
-        reasonCodes: ["ANALYTIC_INTENT"],
-        unresolvedGoals: []
+        reasonCodes: ["ANALYTIC_INTENT"]
       }
     });
 

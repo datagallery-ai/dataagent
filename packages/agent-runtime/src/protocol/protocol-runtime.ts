@@ -328,6 +328,39 @@ export class ProtocolRuntime<TDomainState> {
     return persisted;
   }
 
+  /** Persist an explicit failed terminal decision when an external governance
+   * invariant proves the run cannot honestly complete. Unlike forceTerminal,
+   * this never rewrites an unmet completion decision into `partial`. */
+  terminateFailure(input: {
+    runId: string;
+    segmentId: string;
+    expectedRevision: number;
+    reasons: string[];
+  }): ProtocolRunState<TDomainState> {
+    const current = this.stateStore.get<TDomainState>(input.runId, input.segmentId);
+    if (current.status !== "active" && current.status !== "waiting") {
+      throw new Error(`PROTOCOL_RUN_NOT_ACTIVE:${current.status}`);
+    }
+    const reasons = [...new Set(input.reasons.map((reason) => reason.trim()).filter(Boolean))];
+    if (reasons.length === 0) {
+      throw new Error("PROTOCOL_FAILURE_REASON_REQUIRED");
+    }
+    const terminalDecision = { status: "failed" as const, reasons };
+    const next: ProtocolRunState<TDomainState> = {
+      ...current,
+      revision: current.revision + 1,
+      status: "terminal",
+      terminalDecision
+    };
+    const events = [
+      this.createEvent("protocol.completion.proposed", next, { decision: terminalDecision }),
+      this.createEvent("protocol.run.failed", next, { decision: terminalDecision })
+    ];
+    const persisted = this.stateStore.compareAndSet(next, input.expectedRevision, events);
+    events.forEach((event) => this.publish(event));
+    return persisted;
+  }
+
   private commitWithRetry(
     operation: string,
     runId: string,

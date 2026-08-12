@@ -1,6 +1,7 @@
 import { evaluateProtocolHandoff } from "./protocol-handoff.js";
 import type { ProtocolRegistry } from "./protocol-registry.js";
 import type {
+  ProtocolCompletionDecision,
   ProtocolEvent,
   ProtocolRunState,
   ProtocolStateStore
@@ -18,7 +19,6 @@ export type CoordinateProtocolHandoffInput = {
   authorizedProtocolIds: string[];
   target: ProtocolIdentity;
   reasonCodes: string[];
-  unresolvedGoals: string[];
   intentTransition?: import("./types.js").ProtocolIntentTransition;
 };
 
@@ -35,10 +35,18 @@ export class ProtocolHandoffCoordinator {
     next: ProtocolRunState;
   } {
     const current = this.store.get(input.runId, input.segmentId);
+    const currentDefinition = this.registry.find(current.protocolId, current.protocolVersion);
+    if (!currentDefinition) {
+      throw new Error(`PROTOCOL_HANDOFF_SOURCE_UNAVAILABLE:${current.protocolId}@${current.protocolVersion}`);
+    }
+    const unresolvedGoals = unresolvedGoalsFromDecision(currentDefinition.completionPolicy({
+      contextPackageRef: current.contextPackageRef,
+      state: current.domain
+    }));
     this.publish(this.createEvent("protocol.handoff.proposed", current, {
       target: input.target,
       reasonCodes: input.reasonCodes,
-      unresolvedGoals: input.unresolvedGoals
+      unresolvedGoals
     }));
     const targetDefinition = this.registry.find(input.target.protocolId, input.target.protocolVersion);
     if (!targetDefinition) {
@@ -58,7 +66,7 @@ export class ProtocolHandoffCoordinator {
       },
       target: input.target,
       reasonCodes: input.reasonCodes,
-      unresolvedGoals: input.unresolvedGoals
+      unresolvedGoals
     });
     if (decision.status === "rejected") {
       this.publish(this.createEvent("protocol.handoff.rejected", current, { reasonCode: decision.reasonCode }));
@@ -133,4 +141,14 @@ const nextSegmentId = (runId: string, currentSegmentId: string): string => {
   const match = currentSegmentId.match(/:segment:(\d+)$/u);
   const nextIndex = match ? Number(match[1]) + 1 : 2;
   return `${runId}:segment:${nextIndex}`;
+};
+
+const unresolvedGoalsFromDecision = (decision: ProtocolCompletionDecision): string[] => {
+  if (decision.status === "continue" || decision.status === "failed") {
+    return [...decision.reasons];
+  }
+  if (decision.status === "partial") {
+    return [...decision.missing];
+  }
+  return [];
 };
