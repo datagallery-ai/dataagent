@@ -1212,6 +1212,125 @@ describe("createRunProtocolBoundary", () => {
     }]);
   });
 
+  it("extracts requirements from the intent text when a weak follow-up inherits data-analysis", async () => {
+    const extractorInputs: string[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-extraction",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-extract", revision: 0 },
+      tools: {},
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      requirementExtractor: async ({ userText }) => {
+        extractorInputs.push(userText);
+        return createUserAnalysisRequirements([
+          { kind: "metric", description: "分析当前数据", acceptanceCriteria: ["给出结论"] }
+        ]);
+      },
+      projectContext: () => ({ packageId: "context-intent-extract", revision: 0 })
+    });
+
+    expect(extractorInputs).toEqual(["帮我分析当前数据\n(后续指示: 再次尝试)"]);
+    expect(boundary.protocolRuntime.getState("run-intent-extraction").domain).toMatchObject({
+      requirements: expect.arrayContaining([expect.objectContaining({ id: "R1", description: "分析当前数据" })])
+    });
+  });
+
+  it("does not extract requirements when the route resolves to general-task", async () => {
+    let extractorCalls = 0;
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-general-no-extraction",
+      userInput: "你好",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-general", revision: 0 },
+      tools: {},
+      requirementExtractor: async () => {
+        extractorCalls += 1;
+        return [];
+      },
+      projectContext: () => ({ packageId: "context-general", revision: 0 })
+    });
+
+    expect(boundary.route.definition.id).toBe("general-task");
+    expect(extractorCalls).toBe(0);
+  });
+
+  it("sends the intent text, not the weak follow-up, as the semantic resolution query", async () => {
+    const semanticQueries: string[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-intent-semantic-query",
+      userInput: "再次尝试",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      initialContextPackageRef: { packageId: "context-intent-semantic", revision: 0 },
+      tools: { inspect_schema: { execute: async () => ({ schema_id: "schema-1", tables: [] }) } },
+      sessionIntent: { protocolId: "data-analysis", protocolVersion: "1", intentText: "帮我分析当前数据" },
+      semanticProvider: {
+        resolve: async (request) => {
+          semanticQueries.push(request.query);
+          return {
+            value: {},
+            capabilities: ["graph-explore"],
+            trust: "verified" as const,
+            warnings: [],
+            provider: "datalink" as const,
+            mode: "live" as const,
+            datasourceRevision: request.datasourceRevision
+          };
+        }
+      },
+      semanticRequest: semanticRequest(),
+      projectContext: () => ({ packageId: "context-intent-semantic", revision: 0 })
+    });
+
+    await boundary.actionRouter.execute({
+      runId: "run-intent-semantic-query",
+      segmentId: boundary.segmentId,
+      actionId: "inspect-1",
+      actionName: "inspect_schema",
+      input: {}
+    });
+
+    expect(semanticQueries).toEqual(["帮我分析当前数据\n(后续指示: 再次尝试)"]);
+  });
+
+  it("extracts requirements at handoff when a general-task run moves to data-analysis", async () => {
+    const extractorInputs: string[] = [];
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-handoff-extraction",
+      userInput: "先聊聊,可能要查数",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      explicitProtocol: { protocolId: "general-task", protocolVersion: "1" },
+      initialContextPackageRef: { packageId: "context-handoff-extract", revision: 0 },
+      tools: {},
+      requirementExtractor: async ({ userText }) => {
+        extractorInputs.push(userText);
+        return createUserAnalysisRequirements([
+          { kind: "metric", description: "查数", acceptanceCriteria: ["有证据"] }
+        ]);
+      },
+      projectContext: () => ({ packageId: "context-handoff-extract", revision: 0 })
+    });
+    expect(extractorInputs).toEqual([]);
+
+    await boundary.actionRouter.execute({
+      runId: "run-handoff-extraction",
+      segmentId: boundary.segmentId,
+      actionId: "handoff-1",
+      actionName: "protocol.handoff.propose",
+      input: {
+        targetProtocolId: "data-analysis",
+        targetProtocolVersion: "1",
+        reasonCodes: ["ANALYTIC_INTENT"],
+        unresolvedGoals: []
+      }
+    });
+
+    expect(extractorInputs).toEqual(["先聊聊,可能要查数"]);
+    expect(boundary.protocolRuntime.getState("run-handoff-extraction").domain).toMatchObject({
+      requirements: expect.arrayContaining([expect.objectContaining({ description: "查数" })])
+    });
+  });
+
   it("keeps weak follow-ups on the default route when no session intent exists", async () => {
     const boundary = await createRunProtocolBoundary({
       runId: "run-intent-none",
