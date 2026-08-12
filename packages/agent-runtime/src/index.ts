@@ -82,6 +82,7 @@ import {
   createRunProtocolBoundary,
   type RunProtocolBoundary
 } from "./protocol/run-protocol-boundary.js";
+import { DATA_ACTION_NAMES } from "./protocol/data-actions.js";
 import type { ProtocolClassifier, ProtocolIdentity } from "./protocol/protocol-router.js";
 import { createModelProtocolClassifier } from "./protocol/model-protocol-classifier.js";
 import {
@@ -118,12 +119,7 @@ export type AgentModelContextProfile = {
 export const createAgentContextItem = createContextItem;
 export const createAgentContextSourceMetadata = createContextSourceMetadata;
 
-export const DATA_AGENT_TOOL_NAMES = [
-  "inspect_schema",
-  "list_data_sources",
-  "preview_table",
-  "run_sql_readonly"
-] as const;
+export const DATA_AGENT_TOOL_NAMES = DATA_ACTION_NAMES;
 /** HITL tools that suspend the run; their TOOL_CALL_RESULT is emitted on interaction resume. */
 const HITL_TOOL_NAMES = ["ask_user", "submit_plan"] as const;
 export const STATIC_AGENT_TOOL_NAMES = [
@@ -815,12 +811,22 @@ type MaterializedWorkspaceAttachment = {
   size_bytes: number;
 };
 
-const buildAgentInstructions = (input: AgentInstructionsInput): string => {
+export const buildAgentInstructions = (input: AgentInstructionsInput): string => {
   const { runContext: context, collaborationToolsEnabled, commandExecutionEnabled, taskToolsEnabled } = input;
   const enabled = (name: string): boolean => input.toolNames.includes(name);
   const promoteWorkspaceFileEnabled = enabled("promote_workspace_file");
-  const dataTools = ["list_data_sources", "inspect_schema", "preview_table", "run_sql_readonly"].filter(enabled);
-  const toolGroups: string[] = dataTools.length > 0 ? [`Data tools: ${dataTools.join(", ")}.`] : [];
+  const dataTools = [...DATA_ACTION_NAMES].filter(enabled);
+  // The tool schema stays static for the whole run, so when the governing protocol
+  // rejects every data action the instructions must say so explicitly — otherwise the
+  // model sees the tools advertised, tries them, and burns steps on phase rejections.
+  const toolGroups: string[] = dataTools.length > 0
+    ? [input.protocolId === "general-task"
+        ? `Data tools present but DISABLED by the current protocol (${dataTools.join(", ")}): this run is governed `
+          + "by general-task, which rejects every data action with ACTION_NOT_ALLOWED_IN_PHASE before execution. "
+          + "Do not call them in this protocol. If the user's goal genuinely requires datasource analysis, first "
+          + 'call protocol_handoff with targetProtocolId "data-analysis", then use the data tools.'
+        : `Data tools: ${dataTools.join(", ")}.`]
+    : [];
   if (input.mcpToolNames.length > 0) {
     toolGroups.push(`MCP tools: ${input.mcpToolNames.join(", ")}.`);
   }
