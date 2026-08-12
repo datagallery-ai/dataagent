@@ -79,7 +79,11 @@ export class ProtocolRuntime<TDomainState> {
     }
     const phase = this.definition.phases[state.phase];
     if (!phase?.allowedActions.includes(actionName)) {
-      throw new Error(`ACTION_NOT_ALLOWED_IN_PHASE:${state.phase}:${actionName}`);
+      // Fourth segment lists the currently allowed actions so the rejection can steer
+      // the model to a viable next step instead of leaving it to guess.
+      throw new Error(
+        `ACTION_NOT_ALLOWED_IN_PHASE:${state.phase}:${actionName}:${phase?.allowedActions.join(",") ?? ""}`
+      );
     }
     for (const guard of phase.actionGuards?.[actionName] ?? []) {
       const result = guard({

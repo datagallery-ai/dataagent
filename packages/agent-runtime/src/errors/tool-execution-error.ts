@@ -89,15 +89,19 @@ const createToolErrorObservation = (error: unknown, context: ToolErrorContext): 
   const executionStatus = context.executionStatus ?? inferExecutionStatus(code);
 
   if (code === "ACTION_NOT_ALLOWED_IN_PHASE") {
-    const [, phase = "unknown", actionName = context.toolName] = rawMessage.split(":");
+    const [, phase = "unknown", actionName = context.toolName, allowedSegment = ""] = rawMessage.split(":");
+    const allowedActions = allowedSegment.split(",").filter((name) => name.length > 0);
     return observation({
       code,
       category: "protocol",
       message: `Tool ${actionName} is not allowed in protocol phase ${phase}.`,
       executionStatus: "not_started",
       retryable: false,
+      ...(allowedActions.length > 0 ? { details: { allowedActions } } : {}),
       strategy: "refresh_and_replan",
-      instruction: "Choose an action allowed in the current phase before calling this tool again.",
+      instruction: allowedActions.length > 0
+        ? `Continue with one of the actions allowed in phase ${phase}: ${formatActionList(allowedActions)}.`
+        : "Choose an action allowed in the current phase before calling this tool again.",
       avoid: [`Do not repeat ${actionName} while the protocol remains in phase ${phase}.`]
     });
   }
@@ -185,6 +189,7 @@ const observation = (input: {
   message: string;
   executionStatus: ToolExecutionStatus;
   retryable: boolean;
+  details?: Record<string, unknown>;
   strategy: ToolRecoveryStrategy;
   instruction: string;
   avoid: string[];
@@ -196,7 +201,8 @@ const observation = (input: {
     category: input.category,
     message: input.message,
     executionStatus: input.executionStatus,
-    retryable: input.retryable
+    retryable: input.retryable,
+    ...(input.details ? { details: input.details } : {})
   },
   recovery: {
     strategy: input.strategy,
@@ -204,6 +210,11 @@ const observation = (input: {
     avoid: input.avoid
   }
 });
+
+const formatActionList = (actions: string[]): string =>
+  actions.length <= 12
+    ? actions.join(", ")
+    : `${actions.slice(0, 12).join(", ")} (+${actions.length - 12} more)`;
 
 const errorMessage = (error: unknown): string => {
   if (error instanceof Error) {
