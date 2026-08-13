@@ -31,6 +31,8 @@ class Result:
     rows_preview: list[tuple[str, ...]] | None = field(default_factory=list)
     error: str | None = None
     need_ref: bool = False
+    security_checked: bool = False
+    security_violations: list[dict[str, str]] = field(default_factory=list)
 
 
 class NL2SQLState(BaseState):
@@ -57,6 +59,7 @@ class NL2SQLState(BaseState):
 
     # validator
     validation_results: list[Result]
+    security_sql_approved: bool
 
     # reflector
     ref_retries: int
@@ -91,6 +94,7 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "sql_rules": "",
         "generation_results": [],
         "validation_results": [],
+        "security_sql_approved": False,
         "ref_retries": DEFAULT_NL2SQL_REF_RETRIES,
         "proceed": True,
         "execution_results": [],
