@@ -68,6 +68,9 @@ class NL2SQLAgent(BaseAgent):
         self.router = router
         self.nodes = nodes
         self.config_manager = config_manager
+        self.sql_security_enabled = any(
+            isinstance(node, ValidatorNode) and node.sql_security_enabled for node in self.nodes
+        )
         self._context_recording_enabled = True
         for node in self.nodes:
             node.add_post_hook(partial(NL2SQLContextRecorder.record_action_hook, node_name=node.name))
@@ -106,6 +109,10 @@ class NL2SQLAgent(BaseAgent):
         """Build an NL2SQL agent from its YAML-compatible configuration."""
         core_cfg = config.get("CORE", {})
         db_cfg = config.get("DATABASE", {})
+        validator_cfg = core_cfg.get("validator", {}) or {}
+        security_enabled = bool(validator_cfg.get("sql_security_enabled", False))
+        if security_enabled and "reflector" not in core_cfg:
+            raise ValueError("CORE.reflector is required when CORE.validator.sql_security_enabled is true.")
         perceptor_cls = UDNPerceptorNode if db_cfg.get("engine") == "udn" else PerceptorNode
         node_chain = [
             ("perceptor", perceptor_cls, {}),
@@ -123,6 +130,8 @@ class NL2SQLAgent(BaseAgent):
                 break
             enabled_nodes.append(name)
             node_cfg = dict(core_cfg.get(name, {}) or {})
+            if name == "reflector" and security_enabled:
+                node_cfg.update({"sql_security_enabled": True})
             for state_key, state_value in default_state.items():
                 state_defaults[state_key] = node_cfg.get(state_key, state_value)
             if config_manager is not None:
@@ -390,4 +399,8 @@ class NL2SQLAgent(BaseAgent):
         with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
             async for item in stream:
                 update_latest_state_from_stream_item(item, latest)
+                if self.sql_security_enabled:
+                    from dataagent.agents.nl2sql.security.streaming import sanitize_stream_item
+
+                    item = sanitize_stream_item(item)
                 yield item

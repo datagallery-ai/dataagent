@@ -17,6 +17,7 @@ __all__ = [
     "NL2SQLError",
     "SchemaNotFoundError",
     "SemanticServiceCallError",
+    "SQLSecurityValidationError",
     "SQLServiceError",
     "ThirdPartyServiceError",
 ]
@@ -97,3 +98,13 @@ class SQLServiceError(NL2SQLError):
     http_status = 502
     retryable = True
     component = "sql_service"
+
+
+class SQLSecurityValidationError(NL2SQLError):
+    """Raised when every generated SQL candidate remains security blocked."""
+
+    code = "NL2SQL-SEC-001"
+    message = "生成的 SQL 未通过安全校验"
+    http_status = 422
+    retryable = False
+    component = "sql_security"
