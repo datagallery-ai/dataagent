@@ -11,7 +11,7 @@
 # limitations under the License.
 # ============================================================================
 import uuid
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +21,13 @@ from dataagent.config import ConfigManager
 from dataagent.core.cbb.base_agent import BaseAgent
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.suite.debug_dump import dump_merged_config
+from dataagent.core.workspace.lock import (
+    MAIN_SESSION_LOCK_TTL_SECONDS,
+    WorkspaceBusyError,
+    WorkspaceLockHandle,
+    acquire_workspace_lock,
+    release_workspace_lock,
+)
 from dataagent.utils.log import logger, setup_session_log
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
@@ -106,6 +113,37 @@ class DataAgent:
             return
         safe_touch_catalog(workspace, session_id)
 
+    @staticmethod
+    def _acquire_session_workspace_lock(initial_state: Mapping[str, Any]) -> WorkspaceLockHandle:
+        """Acquire the cooperative lock for the main-agent session workspace.
+
+        Args:
+            initial_state: State that already contains the resolved ``workspace`` path.
+
+        Returns:
+            Acquired lock handle.
+
+        Raises:
+            WorkspaceBusyError: When another live owner already holds ``{workspace}/.lock/``.
+            ValueError: When ``workspace`` is missing from ``initial_state``.
+        """
+        workspace = initial_state.get("workspace")
+        if workspace is None or not str(workspace).strip():
+            raise ValueError("Cannot acquire session workspace lock without a resolved workspace")
+        session_id = str(initial_state.get("session_id") or "").strip() or "unknown_session"
+        handle = acquire_workspace_lock(
+            workspace_root=workspace,
+            owner_kind="main_session",
+            owner_id=session_id,
+            purpose="flex_chat",
+            ttl_seconds=MAIN_SESSION_LOCK_TTL_SECONDS,
+        )
+        if handle is None:
+            busy = WorkspaceBusyError.from_workspace(workspace)
+            logger.warning("{}", busy)
+            raise busy
+        return handle
+
     @classmethod
     def from_config(cls, config: str | Path) -> "DataAgent":
         """从YAML配置文件创建Agent
@@ -144,7 +182,7 @@ class DataAgent:
         return cls(config=agent_config_manager)
 
     def astream(self, *args, **kwargs):
-        """流式对话"""
+        """流式对话；整轮持有 session workspace 锁，busy 时直接失败。"""
         input_val = kwargs.get("input")
         # 优先级：显式 kwargs.workspace > input.workspace（input 可能是 LangGraph Command，无 .get）
         in_ws = input_val.get("workspace") if isinstance(input_val, Mapping) else None
@@ -155,8 +193,6 @@ class DataAgent:
             workspace,
         )
         self._ensure_workspace(initial_state)
-        self._touch_workspace_catalog(initial_state)
-        self._dump_runtime_config(initial_state)
         setup_session_log(
             user_id=str(initial_state.get("user_id", "anonymous")),
             session_id=str(initial_state.get("session_id", kwargs.get("session_id"))),
@@ -164,7 +200,23 @@ class DataAgent:
         kwargs["initial_state"] = initial_state
         if "workspace" in kwargs:
             kwargs["workspace"] = workspace
-        return self._chat_agent.astream(*args, **kwargs)
+        lock = self._acquire_session_workspace_lock(initial_state)
+        try:
+            self._touch_workspace_catalog(initial_state)
+            self._dump_runtime_config(initial_state)
+        except Exception:
+            release_workspace_lock(lock)
+            raise
+
+        async def _locked_astream() -> AsyncIterator[Any]:
+            """Hold the session workspace lock for the full stream lifetime."""
+            try:
+                async for item in self._chat_agent.astream(*args, **kwargs):
+                    yield item
+            finally:
+                release_workspace_lock(lock)
+
+        return _locked_astream()
 
     def select_engine(self, config: Any):
         """根据后端类型创建具体实现（固定使用 SCENARIO.chat）。"""
@@ -212,7 +264,7 @@ class DataAgent:
         initial_state: dict[str, Any] | None = None,
         checkpoint_id: str | None = None,
     ) -> dict[str, Any]:
-        """单轮对话"""
+        """单轮对话；整轮持有 session workspace 锁，busy 时直接失败。"""
         # 显式参数 session_id > initial_state 中的 session_id（如 CLI 只传 initial_state）>  新生成
         if not session_id and isinstance(initial_state, dict):
             sid = initial_state.get("session_id")
@@ -228,8 +280,10 @@ class DataAgent:
             user_id=str(initial_state.get("user_id", "anonymous")),
             session_id=str(initial_state.get("session_id", session_id)),
         )
+        lock: WorkspaceLockHandle | None = None
         try:
             self._ensure_workspace(initial_state)
+            lock = self._acquire_session_workspace_lock(initial_state)
             self._touch_workspace_catalog(initial_state)
             self._dump_runtime_config(initial_state)
             extra: dict[str, Any] = {}
@@ -245,6 +299,9 @@ class DataAgent:
         except Exception as e:
             logger.error(f"Chat failed: {e}")
             return {"error": str(e), "final_answer": f"抱歉，处理您的请求时出现错误：{str(e)}"}
+        finally:
+            if lock is not None:
+                release_workspace_lock(lock)
 
     def build_agent_graph(self, mode: str = "chat") -> BaseAgent:
         """Pre-build the agent workflow graph (only ``chat`` is supported)."""
