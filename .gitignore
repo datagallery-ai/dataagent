@@ -239,9 +239,8 @@ server/web/node_modules/
 *.pfx
 certs/
 
-# OpenSpec & OpenCode Config
+# OpenCode Config
 .opencode/
-openspec/
 opencode.jsonc
 
 run_logs/
