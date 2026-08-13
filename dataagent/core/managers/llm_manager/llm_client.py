@@ -66,6 +66,9 @@ _CREDENTIAL_ASSIGN_RE = re.compile(
     r"(?![A-Za-z0-9_])(?:\\?[\"'])?\s*[:=：＝]\s*(?:\\?[\"'])?"
     r"(?:sk-(?:proj-)?[A-Za-z0-9]{20,}|[A-Za-z0-9._\-+/=]{32,})"
 )
+# json.dumps turns NL/tab/CR/quote into \\n \\t \\r \\uXXXX etc. The last char is
+# [A-Za-z0-9_], so lookaround would miss "Question:\\napi_key=". Neutralize first.
+_JSON_STRING_ESCAPE_RE = re.compile(r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})')
 
 
 def _scan_payload_for_credentials(payload: Mapping[str, Any]) -> str | None:
@@ -74,6 +77,7 @@ def _scan_payload_for_credentials(payload: Mapping[str, Any]) -> str | None:
         blob = json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         blob = str(payload)
+    blob = _JSON_STRING_ESCAPE_RE.sub(" ", blob)
     if _CREDENTIAL_SK_RE.search(blob):
         return "credential-like pattern matched: sk-*"
     if _CREDENTIAL_BEARER_RE.search(blob):
