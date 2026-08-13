@@ -1,0 +1,8 @@
+langchain==1.3.2
+loguru==0.7.3
+networkx==3.4.2
+pandas==2.3.2
+psutil==6.0.0
+sqlalchemy==2.0.49
+fastapi[standard]==0.115.11
+sqlglot>=28.1.0
