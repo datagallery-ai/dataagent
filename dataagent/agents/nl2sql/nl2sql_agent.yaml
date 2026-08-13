@@ -24,6 +24,7 @@ CORE:
     num_workers: 1  # parallelization for each strategy, **VERY EXPENSIVE**
     num_samples: 1  # number of SQLs to generate in "prompt" strategy
   validator:
+    sql_security_enabled: false  # enable deterministic SQLGlot security checks; default off
     read_only: true  # allow only read-only queries
     db_explain: true  # use `EXPLAIN` to validate SQL schema and syntax
     keyword_match: false  # ban SQL that contains certain keywords
