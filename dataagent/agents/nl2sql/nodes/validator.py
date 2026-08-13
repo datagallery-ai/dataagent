@@ -29,11 +29,12 @@ class ValidatorNode(BaseNL2SQLNode):
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.read_only = kwargs.pop("read_only", True)
+        self.sql_security_enabled = kwargs.pop("sql_security_enabled", False)
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
         semantic_res = await self._validate_semantic(state)
-        syntax_res = await self._validate_syntax(state["generation_results"])
+        syntax_res = await self._validate_syntax(state["generation_results"], state["schema"])
         if self.metadata_match:
             metadata_res = await self._validate_metadata(state["schema"], state["generation_results"])
         else:
@@ -70,13 +71,23 @@ class ValidatorNode(BaseNL2SQLNode):
             res = [{"score": 1, "issues": []}] * len(state["generation_results"])
         return res
 
-    async def _validate_syntax(self, gen_res: list[Result]) -> list[dict[str, Any]]:
+    async def _validate_syntax(self, gen_res: list[Result], schema: dict) -> list[dict[str, Any]]:
         res = []
         for gr in gen_res:
-            issues = self._validate_with_sqlglot(gr.sql)
+            if self.sql_security_enabled:
+                from dataagent.agents.nl2sql.security import check_sql
+
+                security_result = check_sql(gr.sql, dialect=self.dialect, schema=schema)
+                gr.security_checked = True
+                gr.security_violations = [violation.to_dict() for violation in security_result.violations]
+                issues = [f"{violation.rule_id}: {violation.message}" for violation in security_result.violations]
+            else:
+                gr.security_checked = False
+                gr.security_violations = []
+                issues = self._validate_with_sqlglot(gr.sql)
             if self.keyword_match:
                 issues += self._validate_with_keyword_match(gr.sql)
-            if self.db_explain:
+            if self.db_explain and not issues:
                 issues += await self._validate_with_db_explain(gr.sql)
             res.append({"score": 0 if issues else 1, "issues": issues})
         return res
