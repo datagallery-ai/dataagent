@@ -13,7 +13,7 @@
 __all__ = [
     "BaseNL2SQLNode",
     "PerceptorNode",
-    "UDNPerceptorNode",
+    "BusinessTwinPerceptorNode",
     "GeneratorNode",
     "ValidatorNode",
     "ReflectorNode",
@@ -22,10 +22,10 @@ __all__ = [
 ]
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
+from dataagent.agents.nl2sql.nodes.business_twin_perceptor import BusinessTwinPerceptorNode
 from dataagent.agents.nl2sql.nodes.executor import ExecutorNode
 from dataagent.agents.nl2sql.nodes.generator import GeneratorNode
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.nodes.reflector import ReflectorNode
 from dataagent.agents.nl2sql.nodes.selector import SelectorNode
-from dataagent.agents.nl2sql.nodes.udn_perceptor import UDNPerceptorNode
 from dataagent.agents.nl2sql.nodes.validator import ValidatorNode

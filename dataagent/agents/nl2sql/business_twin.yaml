@@ -11,7 +11,7 @@ MODEL:
       temperature: 0.0
 CORE:
   perceptor:
-    user_sql_rules: "sql_rules_udn"
+    user_sql_rules: "sql_rules_business_twin"
   generator:
     strategies: ["prompt"]
   validator:
@@ -21,9 +21,9 @@ CORE:
   reflector:
     threshold: 0.9
 DATABASE:
-  db_id: "udn"
+  db_id: "business_twin"
   dialect: "postgres"
-  engine: "udn"
+  engine: "cloud_core"
   config:
     path: ""
     explain_url: "http://"
@@ -32,7 +32,7 @@ SEMANTIC_LAYER:
   username: null                       # 未启用认证时保持 null；启用认证时填写
   password: null                       # 未启用认证时保持 null；启用认证时填写
   timeout: 30                           # 可按服务端表数量和响应耗时调整
-  udn:
+  business_twin:
     table_selection:
       mode: "business_family"
       llm_topk: 4
