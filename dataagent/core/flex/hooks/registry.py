@@ -28,6 +28,7 @@ BUILTIN_HOOK_REGISTRY: dict[str, str] = {
     "intent_understanding": "dataagent.core.flex.hooks.intent_understanding.intent_understanding",
     "semantic_retrieve_context_loader": "dataagent.core.flex.hooks.semantic_retrieve.semantic_retrieve_context_loader",
     "plan_enforcer": "dataagent.core.flex.hooks.plan_enforcer.plan_enforcer",
+    "hitl_auto_resolver": "dataagent.core.flex.hooks.hitl_auto_resolver.hitl_auto_resolver",
 }
 
 

@@ -88,158 +88,125 @@ class HumanFeedbackNode(BaseNode):
             pass
 
     async def _aprocess(self, state: BaseState, runtime: Any = None) -> dict[str, Any] | BaseState:
-        """
-        收集人工反馈
-
-        流程：
-        1. 提取 request_human_feedback 的参数
-        2. 构造提示
-        3. 收集反馈（三路分支，terminal_mode 路径支持节点内空值重试）
-        4. 空反馈防御：超过重试上限后注入 sentinel，强制 planner 重新询问
-        5. 添加 ToolMessage
-        6. 清除标志，返回 Actor
-        """
+        """收集人工反馈"""
         state = cast(FlexState, state)
-
         if not state["messages"]:
             raise ValueError("HumanFeedbackNode should not be the first node.")
-
-        writer = get_stream_writer()
-
-        # === 阶段1：提取请求信息 ===
-        last_message = state["messages"][-1]
-        request_info = self._extract_request_info(last_message)
-
+        if state.get("hitl_auto_resolved"):
+            return self._handle_auto_resolved(state)
+        request_info = self._extract_request_info(state["messages"][-1])
         if not request_info:
-            logger.error("[HITL] 未找到 request_human_feedback 工具调用")
-            return {
-                "need_human_feedback": False,
-                "__hitl_processed__": True,
-            }
-
-        tool_call_id = request_info["tool_call_id"]
-        reason = request_info["reason"]
-        pending_action = request_info["pending_action"]
-
-        # === 阶段2：构造反馈提示 ===
-        feedback_msg = self._build_feedback_prompt(reason, pending_action)
-
-        logger.info("中断等待用户输入...")
-
-        # === 阶段3：获取用户反馈（三路分支 + 空值重试）===
-        updated_state: dict[str, Any] = {}
-        user_feedback = ""
-        empty_attempts = 0
-
-        if state.get("terminal_mode", False):
-            # 路径1：终端模式 — 支持节点内重试
-            # 在 debug 模式下，Rich Live spinner 会持续刷新终端，导致输入行被覆盖，表现为“打字不显示”。
-            # 这里直接暂停 Live 更新，待输入完成后再恢复。
-            suspend_active_renderer()
-            try:
-                rendered_by_renderer = render_active_human_feedback_prompt(reason=reason, pending_action=pending_action)
-                base_prompt = "请提供您的意见： " if rendered_by_renderer else feedback_msg + "\n"
-                for attempt in range(MAX_EMPTY_FEEDBACK_RETRIES):
-                    prompt_text = base_prompt
-                    if attempt > 0:
-                        prompt_text = (
-                            f"\n⚠️ 您已连续 {attempt} 次未提供有效输入，请重新提供反馈后回车。\n\n" + base_prompt
-                        )
-                    candidate = await asyncio.to_thread(input, prompt_text)
-                    if candidate and candidate.strip():
-                        user_feedback = candidate
-                        break
-                    empty_attempts += 1
-                    logger.warning(f"[HITL] 用户反馈为空 (attempt {empty_attempts}/{MAX_EMPTY_FEEDBACK_RETRIES})")
-            finally:
-                resume_active_renderer()
-
-        elif isinstance(state.get("__human_feedback_resume__"), str) and state.get("__human_feedback_resume__").strip():
-            # 路径2：工作流 session 恢复（一次性，无法在节点内重试）
-            resume_feedback = state["__human_feedback_resume__"]
-            user_feedback = resume_feedback.strip()
-            updated_state = {"__human_feedback_resume__": ""}
-
-            self._clear_human_feedback_resume_on_runtime(runtime)
-
-            # === 恢复 Context（必要时从存储重建当前 run 的 Context）===
-            try:
-                ctx = get_context_for_flex_state(state, runtime, swallow_errors=True)
-                self._restore_context_from_storage_if_needed(state, ctx)
-            except Exception as e:
-                logger.warning(f"[HITL] 恢复 Context 时出错：{e}")
-
-            if not user_feedback:
-                empty_attempts = 1
-                logger.warning("[HITL] session 恢复反馈为空，无法在节点内重试")
-
-        else:
-            # 路径3：正常模式（LangGraph / OpenJiuWen 中断）
-            # 注意：LangGraph 的 interrupt() 会通过 GraphInterrupt 挂起当前执行，
-            # 恢复时节点从头重新执行，无法在节点内维护 attempt 计数。
-            # 此处仅做一次采集；空反馈交由下方 sentinel + planner 层重试处理。
-            # 这里只负责触发中断；Context 的快照/最终持久化统一在 Agent.astream 中处理。
-            try:
-                ctx = get_context_for_flex_state(state, runtime, swallow_errors=True)
-                if ctx is not None:
-                    # 若这是跨 worker / 进程重启后的场景，可在此按需从存储重建 Context（目前主要在恢复路径使用）
-                    self._restore_context_from_storage_if_needed(state, ctx)
-            except Exception as e:
-                logger.warning(f"[HITL] 在中断前尝试恢复 Context 时出错：{e}")
-
-            # 对于 langgraph：
-            # - 第一次调用：interrupt 会抛 GraphInterrupt，中断本轮执行；
-            # - 恢复时：interrupt(Command.resume=...) 会直接返回用户输入字符串。
-            user_feedback = interrupt(feedback_msg)
-            updated_state = {}
-
-            if not (user_feedback and user_feedback.strip()):
-                empty_attempts = 1
-                logger.warning("[HITL] interrupt 返回的反馈为空")
-
-        # === 空反馈防御：超过重试上限后注入 sentinel，强制 planner 重新询问 ===
+            return {"need_human_feedback": False, "__hitl_processed__": True}
+        user_feedback, empty_attempts = await self._collect_feedback(state, runtime, request_info)
         if not (user_feedback and user_feedback.strip()):
             user_feedback = _EMPTY_FEEDBACK_SENTINEL_TMPL.format(n=empty_attempts or MAX_EMPTY_FEEDBACK_RETRIES)
-            logger.warning(
-                f"[HITL] 重试 {empty_attempts} 次后用户仍未提供有效反馈，"
-                f"注入 sentinel 引导 planner 重新询问: {user_feedback}"
+            logger.warning(f"[HITL] 重试 {empty_attempts} 次后用户仍未提供有效反馈，注入 sentinel")
+        return self._build_feedback_result(state, user_feedback, request_info)
+
+    def _handle_auto_resolved(self, state: FlexState) -> dict[str, Any]:
+        """处理已通过 hook 自动解析的情况（HITL 透明模式）。"""
+        logger.info("[HITL] 检测到 hitl_auto_resolved=True，跳过人工反馈")
+        tool_msg = state["messages"][-1]
+        if not isinstance(tool_msg, ToolMessage):
+            logger.warning(f"[HITL] 但末条消息不是 ToolMessage，跳过早退分支: type={type(tool_msg).__name__}")
+            return state
+        return {
+            "messages": [tool_msg],
+            "hitl_auto_resolved": True,
+            "hitl_resolved_info": state.get("hitl_resolved_info", {}),
+            "need_human_feedback": False,
+        }
+
+    async def _collect_feedback(self, state: FlexState, runtime: Any, request_info: dict) -> tuple[str, int]:
+        """收集用户反馈，支持三种模式。"""
+        feedback_msg = self._build_feedback_prompt(request_info["reason"], request_info["pending_action"])
+        logger.info("中断等待用户输入...")
+        if state.get("terminal_mode", False):
+            return await self._collect_terminal_feedback(feedback_msg, request_info)
+        elif isinstance(state.get("__human_feedback_resume__"), str) and state["__human_feedback_resume__"].strip():
+            return self._collect_resume_feedback(state, runtime)
+        return await self._collect_interrupt_feedback(state, runtime, feedback_msg)
+
+    async def _collect_terminal_feedback(self, feedback_msg: str, request_info: dict) -> tuple[str, int]:
+        """终端模式收集反馈，支持节点内重试。"""
+        suspend_active_renderer()
+        try:
+            rendered = render_active_human_feedback_prompt(
+                reason=request_info["reason"], pending_action=request_info["pending_action"]
             )
+            base_prompt = "请提供您的意见： " if rendered else feedback_msg + "\n"
+            for attempt in range(MAX_EMPTY_FEEDBACK_RETRIES):
+                prompt_text = (
+                    base_prompt
+                    if attempt == 0
+                    else f"\n⚠️ 您已连续 {attempt} 次未提供有效输入，请重新提供反馈后回车。\n\n" + base_prompt
+                )
+                candidate = await asyncio.to_thread(input, prompt_text)
+                if candidate and candidate.strip():
+                    return candidate, 0
+                logger.warning(f"[HITL] 用户反馈为空 (attempt {attempt + 1}/{MAX_EMPTY_FEEDBACK_RETRIES})")
+            return "", MAX_EMPTY_FEEDBACK_RETRIES
+        finally:
+            resume_active_renderer()
 
-        # === 阶段4：处理反馈 ===
+    def _collect_resume_feedback(self, state: FlexState, runtime: Any) -> tuple[str, int]:
+        """Session 恢复模式收集反馈（一次性，无法节点内重试）。"""
+        resume_feedback = state["__human_feedback_resume__"].strip()
+        self._clear_human_feedback_resume_on_runtime(runtime)
+        try:
+            ctx = get_context_for_flex_state(state, runtime, swallow_errors=True)
+            self._restore_context_from_storage_if_needed(state, ctx)
+        except Exception as e:
+            logger.warning(f"[HITL] 恢复 Context 时出错：{e}")
+        empty_attempts = 0 if resume_feedback else 1
+        if not resume_feedback:
+            logger.warning("[HITL] session 恢复反馈为空，无法在节点内重试")
+        return resume_feedback, empty_attempts
+
+    async def _collect_interrupt_feedback(self, state: FlexState, runtime: Any, feedback_msg: str) -> tuple[str, int]:
+        """LangGraph 中断模式收集反馈。"""
+        try:
+            ctx = get_context_for_flex_state(state, runtime, swallow_errors=True)
+            if ctx is not None:
+                self._restore_context_from_storage_if_needed(state, ctx)
+        except Exception as e:
+            logger.warning(f"[HITL] 在中断前尝试恢复 Context 时出错：{e}")
+        user_feedback = interrupt(feedback_msg)
+        empty_attempts = 0 if (user_feedback and user_feedback.strip()) else 1
+        if empty_attempts:
+            logger.warning("[HITL] interrupt 返回的反馈为空")
+        return user_feedback, empty_attempts
+
+    def _build_feedback_result(self, state: FlexState, user_feedback: str, request_info: dict) -> dict[str, Any]:
+        """构建反馈处理结果。"""
+        writer = get_stream_writer()
         logger.info("已收到用户反馈")
-
         writer({"type": "output_msg", "node_name": self.name, "content": f"✅ 已收到用户反馈：{user_feedback}"})
         writer({"type": "break"})
-
-        # 添加 ToolMessage
-        tool_message = ToolMessage(
-            content=user_feedback,
-            tool_call_id=tool_call_id,
-            name="request_human_feedback",
-        )
-
-        # 清除标志
         with contextlib.suppress(Exception):
             state["need_human_feedback"] = False
-
+        updated_state: dict[str, Any] = (
+            {"__human_feedback_resume__": ""} if "__human_feedback_resume__" in state else {}
+        )
         updated_state.update(
             {
                 "need_human_feedback": False,
-                "__hitl_in_current_turn__": True,  # 标记本轮已进入 HITL
-                "hitl_count": 1,  # 使用 add reducer 累加
-                "messages": [tool_message],
+                "__hitl_in_current_turn__": True,
+                "hitl_count": 1,
+                "messages": [
+                    ToolMessage(
+                        content=user_feedback, tool_call_id=request_info["tool_call_id"], name="request_human_feedback"
+                    )
+                ],
                 "feedback": state.get("feedback", "") + user_feedback + "\n",
             }
         )
-
         logger.debug(f"[HITL] 返回 updated_state keys: {updated_state.keys()}")
-        logger.debug(f"[HITL] ToolMessage: id={tool_call_id}")
-
         return updated_state
 
     def _is_context_empty_for_restore(self, ctx: Any) -> bool:
         """
-        判断 Context 是否“看起来是空的”，从而需要从存储恢复。
+        判断 Context 是否"看起来是空的"，从而需要从存储恢复。
 
         注意：保持与旧逻辑一致——若获取 trajectory 失败，则视为非空（不触发恢复）。
         """
@@ -408,7 +375,7 @@ class HumanFeedbackNode(BaseNode):
 
         触发条件：
         - ctx 非空；
-        - 当前 Context 看起来是“空的”（没有 initial_pt 且 _trajectory 为空）——
+        - 当前 Context 看起来是"空的"（没有 initial_pt 且 _trajectory 为空）——
           这通常意味着命中了一个新的 worker 或进程已重启。
         """
         try:

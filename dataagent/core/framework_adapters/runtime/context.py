@@ -243,6 +243,10 @@ class GlobalStateProxy(dict):
             return default
         return val
 
+    def local_updates(self) -> dict[str, Any]:
+        """返回自上次提交以来累积的本地更新（用于 hook 读取未提交的变更）。"""
+        return dict(self._local_updates)
+
 
 def global_state() -> GlobalStateProxy:
     """获取当前运行时的全局状态代理。"""
