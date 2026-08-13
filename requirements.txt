@@ -5,4 +5,4 @@ pandas==2.3.2
 psutil==6.0.0
 sqlalchemy==2.0.49
 fastapi[standard]==0.115.11
-sqlglot>=28.1.0
+ibis-framework==11.0.0
