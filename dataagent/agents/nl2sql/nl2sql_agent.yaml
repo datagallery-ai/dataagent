@@ -42,7 +42,7 @@ CORE:
 DATABASE:
   db_id: ""
   dialect: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
-  engine: null  # specify when different from dialect (e.g. "udn", "gaussvector")
+  engine: null  # specify when different from dialect (e.g. "cloud_core", "gaussvector")
   config:
     path: ""  # replace with actual .sqlite path
 SEMANTIC_LAYER:

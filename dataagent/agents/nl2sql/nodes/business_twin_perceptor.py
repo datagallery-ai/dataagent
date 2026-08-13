@@ -20,7 +20,7 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.utils.log import logger
 
-_UDN_DIMENSION_METADATA = {
+_DIMENSION_METADATA = {
     1: {
         "field": "mos4_qds",
         "name": "保障&MOS四象限",
@@ -134,32 +134,31 @@ _UDN_DIMENSION_METADATA = {
 }
 
 
-class UDNPerceptorNode(PerceptorNode):
-    _UDN_TABLE_RE = re.compile(
+class BusinessTwinPerceptorNode(PerceptorNode):
+    _TABLE_RE = re.compile(
         r"^(?:[^.]+\.)?fact_(?P<business_id>dw\d+)_"
         r"(?P<dimension_code>[0-9a-fA-F]{16})_metric_(?P<granularity>5min|15min|1h|1d)$"
     )
-    _UDN_GRANULARITY_ORDER = {"5min": 0, "15min": 1, "1h": 2, "1d": 3}
-    _UDN_SCHEMA_PREFIX = "udn."
+    _GRANULARITY_ORDER = {"5min": 0, "15min": 1, "1h": 2, "1d": 3}
 
     def __init__(self, **kwargs):
         kwargs.pop("schema_mode", None)
         super().__init__(**kwargs)
-        udn_cfg: dict = self._get_agent_config("SEMANTIC_LAYER.udn", {}) or {}
-        table_cfg: dict = udn_cfg.get("table_selection", {})
+        scenario_cfg: dict = self._get_agent_config("SEMANTIC_LAYER.business_twin", {}) or {}
+        table_cfg: dict = scenario_cfg.get("table_selection", {})
         table_selection_mode = table_cfg.get("mode", "business_family")
         if table_selection_mode != "business_family":
-            raise ValueError("SEMANTIC_LAYER.udn.table_selection.mode must be 'business_family'")
+            raise ValueError("SEMANTIC_LAYER.business_twin.table_selection.mode must be 'business_family'")
         self.table_llm_topk = table_cfg.get("llm_topk", 4)
 
     @staticmethod
-    def _decode_udn_dimensions(dimension_code: str) -> list[str]:
+    def _decode_dimensions(dimension_code: str) -> list[str]:
         value = int(str(dimension_code), 16)
-        return [metadata["field"] for bit, metadata in _UDN_DIMENSION_METADATA.items() if value & (1 << bit)]
+        return [metadata["field"] for bit, metadata in _DIMENSION_METADATA.items() if value & (1 << bit)]
 
     @staticmethod
-    def _format_udn_table_family_prompt_context(families: list[dict[str, Any]]) -> str:
-        metadata_by_field = {metadata["field"]: metadata for metadata in _UDN_DIMENSION_METADATA.values()}
+    def _format_table_family_prompt_context(families: list[dict[str, Any]]) -> str:
+        metadata_by_field = {metadata["field"]: metadata for metadata in _DIMENSION_METADATA.values()}
         dimension_fields: list[str] = []
         for family in families:
             for field in family["dimensions"]:
@@ -185,9 +184,9 @@ class UDNPerceptorNode(PerceptorNode):
         return "\n".join(lines).rstrip()
 
     @classmethod
-    def _parse_udn_table_name(cls, table_name: str) -> dict[str, str] | None:
+    def _parse_table_name(cls, table_name: str) -> dict[str, str] | None:
         name = str(table_name or "").strip()
-        match = cls._UDN_TABLE_RE.match(name)
+        match = cls._TABLE_RE.match(name)
         if not match:
             return None
         business_id = match.group("business_id")
@@ -200,7 +199,7 @@ class UDNPerceptorNode(PerceptorNode):
         }
 
     @classmethod
-    def _build_udn_table_family_candidates(
+    def _build_table_family_candidates(
         cls, catalog: list[dict[str, Any]], business_ids: list[str]
     ) -> list[dict[str, Any]]:
         allowed_business_ids = {str(value).strip() for value in business_ids if str(value).strip()}
@@ -216,25 +215,24 @@ class UDNPerceptorNode(PerceptorNode):
         for (business_id, dimension_code), table_pairs in sorted(grouped.items()):
             pairs = sorted(
                 table_pairs,
-                key=lambda item: cls._UDN_GRANULARITY_ORDER.get(item[0], 999),
+                key=lambda item: cls._GRANULARITY_ORDER.get(item[0], 999),
             )
             families.append(
                 {
                     "family_name": f"fact_{business_id}_{dimension_code}",
-                    "dimensions": cls._decode_udn_dimensions(dimension_code),
+                    "dimensions": cls._decode_dimensions(dimension_code),
                     "available_granularities": [granularity for granularity, _ in pairs],
                     "candidate_table_names": [table_name for _, table_name in pairs],
                 }
             )
         return families
 
-    @classmethod
-    def _resolve_udn_table_family_selection(
-        cls, selection: dict[str, str] | None, families: list[dict[str, Any]]
+    def _resolve_table_family_selection(
+        self, selection: dict[str, str] | None, families: list[dict[str, Any]]
     ) -> str | None:
         if not selection:
             return None
-        family_name = selection["family_name"].removeprefix(cls._UDN_SCHEMA_PREFIX)
+        family_name = selection["family_name"].removeprefix(f"{self.db}.")
         for family in families:
             if family["family_name"] != family_name:
                 continue
@@ -245,9 +243,9 @@ class UDNPerceptorNode(PerceptorNode):
                     return table_name
         return None
 
-    async def udn_schema_linking(self, question: str):
-        """Select the UDN table family and return its schema, joins, and catalog."""
-        tables = await self._select_udn_tables_by_business_family(question)
+    async def _business_twin_schema_linking(self, question: str):
+        """Select the business-twin table family and return its schema, joins, and catalog."""
+        tables = await self._select_tables_by_business_family(question)
         schema, joins = await asyncio.to_thread(self.full_schema, tables)
         for table in schema.values():
             for column in table["columns"].values():
@@ -256,13 +254,13 @@ class UDNPerceptorNode(PerceptorNode):
                     for item in column.get("example_values", "").split("|")
                     if item
                 )
-        catalog = await asyncio.to_thread(self._udn_column_metadata)
+        catalog = await asyncio.to_thread(self._column_metadata)
         return schema, joins, catalog
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
         state["sql_rules"] = await asyncio.to_thread(self._load_prompt, self.user_sql_rules)
-        schema, joins, catalog = await self.udn_schema_linking(state["question"])
+        schema, joins, catalog = await self._business_twin_schema_linking(state["question"])
         state["schema"] = schema
         state["joins"] = joins
         state["schema_str"] = schema_to_ddl(schema, joins, catalog)
@@ -271,27 +269,28 @@ class UDNPerceptorNode(PerceptorNode):
         state["stream_message"] = message
         return state
 
-    def _udn_column_metadata(self) -> dict[str, dict[str, Any]]:
+    def _column_metadata(self) -> dict[str, dict[str, Any]]:
         return {
             str(col_key): dict(meta)
-            for col_key, meta in self._get_table_columns_info("udn.derived_metrics").items()
+            for col_key, meta in self._get_table_columns_info(f"{self.db}.derived_metrics").items()
             if isinstance(meta, dict)
         }
 
-    def _udn_full_table_catalog(self) -> list[dict[str, Any]]:
+    def _full_table_catalog(self) -> list[dict[str, Any]]:
         catalog: list[dict[str, Any]] = []
         for item in self._get_table_list():
             if not isinstance(item, dict) or not item:
                 continue
             table_name = next(iter(item))
-            parsed = self._parse_udn_table_name(table_name)
+            parsed = self._parse_table_name(table_name)
             if parsed:
                 catalog.append(parsed)
         return catalog
 
-    async def _select_udn_business_ids(self, question: str) -> list[str]:
+    async def _select_business_ids(self, question: str) -> list[str]:
         values = await self.execute_with_llm_json(
-            {"question": question, "top_n": self.table_llm_topk}, action="filter_udn_business_id_"
+            {"question": question, "top_n": self.table_llm_topk},
+            action="filter_business_twin_business_id_",
         )
         business_ids: list[str] = []
         for value in values:
@@ -300,32 +299,32 @@ class UDNPerceptorNode(PerceptorNode):
                 business_ids.append(match.group(0))
         return business_ids[: self.table_llm_topk]
 
-    async def _select_udn_table_family(
+    async def _select_table_family(
         self,
         question: str,
         families: list[dict[str, Any]],
     ) -> Optional[dict[str, str]]:  # noqa: UP045
         parsed = await self.execute_with_llm_json(
-            {"question": question, "tables": self._format_udn_table_family_prompt_context(families)},
-            action="filter_udn_table_family_",
+            {"question": question, "tables": self._format_table_family_prompt_context(families)},
+            action="filter_business_twin_table_family_",
         )
         family_name = str(parsed.get("family_name") or "").strip()
         granularity = str(parsed.get("granularity") or "").strip()
         return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
 
-    async def _select_udn_tables_by_business_family(self, question: str) -> list[str]:
-        business_ids = await self._select_udn_business_ids(question)
+    async def _select_tables_by_business_family(self, question: str) -> list[str]:
+        business_ids = await self._select_business_ids(question)
         if not business_ids:
-            raise NL2SQLError("UDN business ID selection returned no valid result")
-        catalog = await asyncio.to_thread(self._udn_full_table_catalog)
-        families = self._build_udn_table_family_candidates(catalog, business_ids)
+            raise NL2SQLError("Business ID selection returned no valid result")
+        catalog = await asyncio.to_thread(self._full_table_catalog)
+        families = self._build_table_family_candidates(catalog, business_ids)
         if not families:
             raise NL2SQLError(
-                "UDN table family catalog is empty",
+                "Business-twin table family catalog is empty",
                 detail=f"No table family matched business IDs: {', '.join(business_ids)}",
             )
-        selection = await self._select_udn_table_family(question, families)
-        table = self._resolve_udn_table_family_selection(selection, families)
+        selection = await self._select_table_family(question, families)
+        table = self._resolve_table_family_selection(selection, families)
         if not table:
-            raise NL2SQLError("UDN table family selection returned no valid table")
+            raise NL2SQLError("Business-twin table family selection returned no valid table")
         return [table]
