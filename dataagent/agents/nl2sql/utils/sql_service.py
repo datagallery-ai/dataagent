@@ -44,7 +44,7 @@ class SQLiteConfig:
 
 
 @dataclass
-class UDNConfig:
+class CloudCoreConfig:
     path: str
     explain_url: str | None = None
 
@@ -184,8 +184,8 @@ class SQLiteService(BaseService):
         raise e
 
 
-class UDNService(SqlService):
-    def __init__(self, config: UDNConfig):
+class CloudCoreService(SqlService):
+    def __init__(self, config: CloudCoreConfig):
         self.config = config
 
     def __enter__(self):
@@ -195,7 +195,7 @@ class UDNService(SqlService):
         return False
 
     def explain(self, sql: str) -> str | None:
-        """Explain SQL via the UDN explain HTTP endpoint."""
+        """Explain SQL via the cloud-core HTTP endpoint."""
         try:
             if self.config.explain_url:
                 import requests
@@ -227,7 +227,7 @@ class UDNService(SqlService):
             raise SQLServiceError(detail=str(e)) from e
 
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
-        """Execute SQL against the UDN/sqlite path."""
+        """Execute SQL against the cloud-core business-twin HTTP endpoint."""
         try:
             data = json.dumps({"sql": sql}).encode()
             req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
@@ -293,15 +293,15 @@ class SparkService(SqlService):
         return self._spark
 
 
-def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | UDNService:
+def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | CloudCoreService:
     """Construct a SQL service implementation for the given engine."""
     try:
         if engine == "gaussvector":
             return GaussVectorService(GaussVectorConfig(**config))
         if engine in {"sqlite", "sqlite3"}:
             return SQLiteService(SQLiteConfig(**config))
-        if engine == "udn":
-            return UDNService(UDNConfig(**config))
+        if engine == "cloud_core":
+            return CloudCoreService(CloudCoreConfig(**config))
         if engine in {"hive", "spark"}:
             return SparkService(SparkConfig(**config))
     except Exception as e:

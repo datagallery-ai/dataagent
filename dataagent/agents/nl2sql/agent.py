@@ -25,12 +25,12 @@ from dataagent.agents.nl2sql.context_recorder import NL2SQLContextRecorder
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes import (
     BaseNL2SQLNode,
+    BusinessTwinPerceptorNode,
     ExecutorNode,
     GeneratorNode,
     PerceptorNode,
     ReflectorNode,
     SelectorNode,
-    UDNPerceptorNode,
     ValidatorNode,
 )
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
@@ -113,7 +113,7 @@ class NL2SQLAgent(BaseAgent):
         security_enabled = bool(validator_cfg.get("sql_security_enabled", False))
         if security_enabled and "reflector" not in core_cfg:
             raise ValueError("CORE.reflector is required when CORE.validator.sql_security_enabled is true.")
-        perceptor_cls = UDNPerceptorNode if db_cfg.get("engine") == "udn" else PerceptorNode
+        perceptor_cls = BusinessTwinPerceptorNode if db_cfg.get("db_id") == "business_twin" else PerceptorNode
         node_chain = [
             ("perceptor", perceptor_cls, {}),
             ("generator", GeneratorNode, {}),
