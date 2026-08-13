@@ -20,7 +20,7 @@ dependencies = [
     # ---- REST 服务 ----
     "fastapi[standard]==0.115.11",
     # ---- NL2SQL ----
-    "sqlglot>=28.1.0",
+    "ibis-framework==11.0.0",
 ]
 
 [tool.setuptools.packages.find]
