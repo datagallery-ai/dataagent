@@ -10,18 +10,17 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # ---- DataAgent core ----
-    "jinja2>=3.1.0",
-    "httpx==0.28.1",
     "langchain==1.3.2",
     "loguru==0.7.3",
     "networkx==3.4.2",
     "pandas==2.3.2",
     "psutil==6.0.0",
-    "pydantic==2.12.5",
-    "PyYAML==6.0.2",
     # ---- 数据库驱动（核心 Agent / 知识库 / NL2SQL 等共用） ----
     "sqlalchemy==2.0.49",
-    "uvicorn==0.34.0",
+    # ---- REST 服务 ----
+    "fastapi[standard]==0.115.11",
+    # ---- NL2SQL ----
+    "sqlglot>=28.1.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -31,22 +30,13 @@ namespaces = true
 
 [project.optional-dependencies]
 
-server = [
-    "fastapi==0.116.1",
-]
 mkdoc = [
     "mkdocs>=1.6,<2.0",
     "mkdocs-material>=9.6.0",
     "mkdocs-static-i18n>=1.2.0",
     "pymdown-extensions>=10.8.0",
 ]
-nl2sql = [
-    "sqlglot>=28.1.0",
-    "sqlparse>=0.5.5"
-]
 test = [
-    "datagallery-dataagent[server]",
-    "datagallery-dataagent[nl2sql]",
     "setuptools>=67.6.1,<81",
     "pytest>=8.4.2",
     "pytest-cov>=4.0.0",
@@ -60,10 +50,8 @@ trajectory_graph = [
     "pyvis==0.3.2",
 ]
 
-all = [
-    "datagallery-dataagent[server]",
-    "datagallery-dataagent[nl2sql]",
-]
+# 保留空 extra，兼容 CI：`uv sync --extra=all --extra=test`
+all = []
 
 [tool.setuptools.package-data]
 "*" = [
