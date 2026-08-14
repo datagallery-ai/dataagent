@@ -16,7 +16,7 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from loguru import logger
 from networkx.classes.digraph import DiGraph
@@ -120,6 +120,32 @@ class ContextFactory:
                 cls._n_instances += 1
 
             return cls._instances[index]
+
+    @classmethod
+    def release_context(
+        cls,
+        *,
+        user_id: str,
+        session_id: str,
+        run_id: Optional[int] = None,  # noqa: UP045
+        sub_id: Optional[int] = None,  # noqa: UP045
+    ) -> int:
+        """Release matching in-process Context instances and return the removed count."""
+        with cls._lock:
+            indexes_to_remove = []
+            for index in cls._instances:
+                if index[0] != user_id or index[1] != session_id:
+                    continue
+                if run_id is not None and index[2] != run_id:
+                    continue
+                if sub_id is not None and index[3] != sub_id:
+                    continue
+                indexes_to_remove.append(index)
+
+            for index in indexes_to_remove:
+                cls._instances.pop(index, None)
+            cls._n_instances = max(0, cls._n_instances - len(indexes_to_remove))
+            return len(indexes_to_remove)
 
     @classmethod
     def clear_context(cls) -> None:
