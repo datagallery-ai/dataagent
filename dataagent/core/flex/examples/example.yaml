@@ -505,3 +505,15 @@ rest_api:
 #       unit: slot
 #     consumption:
 #       remote: 1                   # 任务类型名叫 remote 的，占 1 个名额（名字可自定义，和下面 key 一致即可）
+
+# ===== OTel trajectory tracing — produces <workspace>/.otel/trajectory.json =====
+# compatible with evo-eval's DataAgentInstrumentor.replay_events_from_file().
+#
+# enabled defaults to false — set it to true explicitly to activate tracing.
+# output_dir defaults to <workspace>/.otel/ when omitted.
+OTEL_CONFIG:
+  enabled: true
+  # output_dir: "/abs/path/to/otel_output"  # optional; defaults to <workspace>/.otel/
+  # parent_trace_id: ""   # optional: link to an external trace
+  # parent_span_id: ""    # optional: link to an external span
+  # provider_name: "dataagent"  # optional: defaults to "dataagent"

@@ -98,6 +98,7 @@ def set_subagent_runtime_context(
     tool_call_id: str | None = None,
     agent_config: dict[str, Any] | None = None,
     parent_workspace: str | Path | None = None,
+    otel_config: dict[str, Any] | None = None,
 ) -> contextvars.Token:
     """Set per-tool-call runtime identity for sub-agent launching."""
     return _subagent_runtime_context.set(
@@ -111,6 +112,7 @@ def set_subagent_runtime_context(
             "tool_call_id": tool_call_id,
             "agent_config": dict(agent_config) if isinstance(agent_config, dict) else {},
             "parent_workspace": None if parent_workspace is None else str(parent_workspace),
+            "otel_config": otel_config,
         }
     )
 
@@ -1742,6 +1744,11 @@ def _prepare_worker_initial_state_file(
         "_parent_session_id": parent_session_id,
         "_parent_run_id": int(next_run_id),
     }
+    # Propagate OTel config so the sub-agent creates its own OtelEventRecorder
+    ctx = get_subagent_runtime_context()
+    otel_config = ctx.get("otel_config") if isinstance(ctx, dict) else None
+    if otel_config:
+        payload["__otel_config"] = otel_config
     workspace_root = get_current_sandbox().workspace_root
     if workspace_root is not None:
         tmp_dir = Path(workspace_root) / ".dataagent_tmp" / "subagents" / uuid.uuid4().hex
