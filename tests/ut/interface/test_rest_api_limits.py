@@ -215,6 +215,67 @@ async def test_probes_bypass_concurrency_during_streaming():
     assert stream_resp.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_request_timeout_cancels_downstream_task():
+    """A 504 response must cancel the downstream request before the middleware exits."""
+    downstream_started = asyncio.Event()
+    downstream_stopped = asyncio.Event()
+    response_started = asyncio.Event()
+    never_finish = asyncio.Event()
+
+    async def slow_app(scope, receive, send):
+        _ = scope, receive, send
+        downstream_started.set()
+        try:
+            await never_finish.wait()
+        finally:
+            downstream_stopped.set()
+
+    limits = RestApiLimits(
+        max_concurrency=1,
+        request_timeout_seconds=0.02,
+        rate_limit_per_minute=10_000,
+        queue_timeout_seconds=0.1,
+        max_body_bytes=1_000_000,
+    )
+    app = SecurityLimitsMiddleware(slow_app, limits=limits)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/api/agent/query",
+        "raw_path": b"/api/agent/query",
+        "query_string": b"",
+        "headers": [(b"host", b"test")],
+        "client": ("127.0.0.1", 123),
+        "server": ("test", 80),
+    }
+    messages: list[dict] = []
+
+    async def receive():
+        await never_finish.wait()
+
+    async def send(message):
+        messages.append(message)
+        if message.get("type") == "http.response.start":
+            response_started.set()
+
+    app_task = asyncio.create_task(app(scope, receive, send))
+    try:
+        await asyncio.wait_for(downstream_started.wait(), timeout=0.1)
+        await asyncio.wait_for(response_started.wait(), timeout=0.1)
+        start = next(message for message in messages if message.get("type") == "http.response.start")
+        assert start.get("status") == 504
+        await asyncio.wait_for(downstream_stopped.wait(), timeout=0.1)
+        await asyncio.wait_for(app_task, timeout=0.1)
+    finally:
+        if not app_task.done():
+            app_task.cancel()
+            await asyncio.gather(app_task, return_exceptions=True)
+
+
 def test_service_is_ready_false_until_initialized():
     assert DataAgentService().is_ready() is False
 
