@@ -48,22 +48,6 @@ class _MinimalConfig:
 
 def _build_sdk_probe_agent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[DataAgent, _CaptureChatAgent]:
     monkeypatch.setattr(DataAgent, "global_init", lambda _self, _config: None)
-
-    def fake_acquire_workspace_lock(**_kwargs: Any) -> sdk_agent_module.WorkspaceLockHandle:
-        """Stub lock acquire so session-id tests stay decoupled from lock uuid usage."""
-        return sdk_agent_module.WorkspaceLockHandle(
-            workspace_root=tmp_path,
-            lock_dir=tmp_path / ".lock",
-            token="test-lock-token",
-            owner_kind="main_session",
-            owner_id="probe",
-            purpose="flex_chat",
-            expires_at="2099-01-01T00:00:00+00:00",
-        )
-
-    # Keep this test focused on session identity; do not couple to workspace-lock uuid usage.
-    monkeypatch.setattr(sdk_agent_module, "acquire_workspace_lock", fake_acquire_workspace_lock)
-    monkeypatch.setattr(sdk_agent_module, "release_workspace_lock", lambda _handle: None)
     agent = DataAgent(_MinimalConfig())
     chat_agent = _CaptureChatAgent()
     agent._chat_agent_instance = chat_agent
