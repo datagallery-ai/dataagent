@@ -28,7 +28,7 @@ from dataagent.utils.runtime_paths import resolve_job_subagents_root, resolve_jo
 
 METADATA_DIR = ".metadata"
 WORKSPACE_CATALOG_FILE = "workspace_catalog.json"
-ARTIFACT_SKIP_DIRS = frozenset({".memory", ".context", ".runtime", ".dataagent", ".lock", METADATA_DIR})
+ARTIFACT_SKIP_DIRS = frozenset({".memory", ".context", ".runtime", ".dataagent", METADATA_DIR})
 
 
 def is_framework_internal_artifact_path(path: str | Path) -> bool:
