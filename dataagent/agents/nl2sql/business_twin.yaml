@@ -24,6 +24,7 @@ DATABASE:
   db_id: "business_twin"
   dialect: "postgres"
   engine: "cloud_core"
+  perceptor_type: "business_twin"
   config:
     path: ""
     explain_url: "http://"

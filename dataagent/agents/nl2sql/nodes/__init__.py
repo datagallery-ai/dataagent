@@ -14,6 +14,7 @@ __all__ = [
     "BaseNL2SQLNode",
     "PerceptorNode",
     "BusinessTwinPerceptorNode",
+    "TrafficInsightPerceptorNode",
     "GeneratorNode",
     "ValidatorNode",
     "ReflectorNode",
@@ -28,4 +29,5 @@ from dataagent.agents.nl2sql.nodes.generator import GeneratorNode
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.nodes.reflector import ReflectorNode
 from dataagent.agents.nl2sql.nodes.selector import SelectorNode
+from dataagent.agents.nl2sql.nodes.traffic_insight_perceptor import TrafficInsightPerceptorNode
 from dataagent.agents.nl2sql.nodes.validator import ValidatorNode

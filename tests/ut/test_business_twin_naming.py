@@ -33,7 +33,7 @@ def test_cloud_core_engine_builds_http_sql_service() -> None:
     assert service.__class__.__name__ == "CloudCoreService"
 
 
-def test_business_twin_db_id_routes_to_specialized_perceptor(monkeypatch) -> None:
+def test_business_twin_perceptor_type_routes_to_specialized_perceptor(monkeypatch) -> None:
     monkeypatch.setattr(
         "dataagent.agents.nl2sql.agent.create_workflow_backend",
         lambda **_: object(),
@@ -44,6 +44,7 @@ def test_business_twin_db_id_routes_to_specialized_perceptor(monkeypatch) -> Non
             "db_id": "business_twin",
             "dialect": "postgres",
             "engine": "cloud_core",
+            "perceptor_type": "business_twin",
         },
         "SEMANTIC_LAYER": {"business_twin": {"table_selection": {"mode": "business_family", "llm_topk": 4}}},
     }
@@ -53,7 +54,7 @@ def test_business_twin_db_id_routes_to_specialized_perceptor(monkeypatch) -> Non
     assert isinstance(agent.nodes[0], BusinessTwinPerceptorNode)
 
 
-def test_other_cloud_core_db_id_uses_default_perceptor(monkeypatch) -> None:
+def test_unset_perceptor_type_uses_default_perceptor(monkeypatch) -> None:
     monkeypatch.setattr(
         "dataagent.agents.nl2sql.agent.create_workflow_backend",
         lambda **_: object(),
@@ -96,6 +97,7 @@ def test_scenario_yaml_and_sql_rules_use_business_twin_name() -> None:
 
     assert config["DATABASE"]["db_id"] == "business_twin"
     assert config["DATABASE"]["engine"] == "cloud_core"
+    assert config["DATABASE"]["perceptor_type"] == "business_twin"
     assert config["CORE"]["perceptor"]["user_sql_rules"] == "sql_rules_business_twin"
     assert "business_twin" in config["SEMANTIC_LAYER"]
     assert "certificate" not in config
