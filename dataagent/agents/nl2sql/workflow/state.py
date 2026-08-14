@@ -49,7 +49,7 @@ class NL2SQLState(BaseState):
     keywords: list[str]
     schema: dict
     joins: list[tuple[str, str]]
-    schema_str: str  # backdoor for schema injection
+    schema_str: str
     few_shot_examples: str
     sql_rules: str
     evidence: str
