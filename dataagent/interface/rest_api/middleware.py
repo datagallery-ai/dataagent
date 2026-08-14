@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import anyio
 import yaml
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -36,6 +37,7 @@ from dataagent.utils.log import logger
 
 request_id_var: ContextVar[str] = ContextVar("dataagent_request_id", default="")
 _PROBE_PATHS = frozenset({"/health"})
+_DOWNSTREAM_EXECUTION_SCOPE_KEY = "dataagent_downstream_execution"
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,34 @@ def get_request_id() -> str:
     return request_id_var.get()
 
 
+@dataclass(frozen=True)
+class _DownstreamExecution:
+    """Cancellation handle and completion signal for one downstream ASGI request."""
+
+    cancel_scope: anyio.CancelScope
+    done: asyncio.Event
+
+
+class _TrackedDownstreamApp:
+    """Expose the actual downstream ASGI task so request timeouts can cancel it."""
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Track the current downstream task for the lifetime of one ASGI request."""
+        done = asyncio.Event()
+        with anyio.CancelScope() as cancel_scope:
+            execution = _DownstreamExecution(cancel_scope=cancel_scope, done=done)
+            scope[_DOWNSTREAM_EXECUTION_SCOPE_KEY] = execution
+            try:
+                await self._app(scope, receive, send)
+            finally:
+                done.set()
+                if scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY) is execution:
+                    scope.pop(_DOWNSTREAM_EXECUTION_SCOPE_KEY, None)
+
+
 class SecurityLimitsMiddleware(BaseHTTPMiddleware):
     """P0 ingress limits + access audit.
 
@@ -132,7 +162,7 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app: Any, limits: RestApiLimits):
         """Initialize semaphore, per-IP hit windows, and limit config."""
-        super().__init__(app)
+        super().__init__(_TrackedDownstreamApp(app))
         self.limits = limits
         self._semaphore = asyncio.Semaphore(max(1, limits.max_concurrency))
         self._hits: dict[str, deque[float]] = defaultdict(deque)
@@ -149,6 +179,15 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
         if path not in _PROBE_PATHS:
             receive = self._wrap_receive_with_body_limit(scope, receive)
         await super().__call__(scope, receive, send)
+
+    @staticmethod
+    async def _cancel_downstream(scope: Scope) -> None:
+        """Cancel and join the actual downstream ASGI task for one timed-out request."""
+        execution = scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY)
+        if not isinstance(execution, _DownstreamExecution):
+            return
+        execution.cancel_scope.cancel()
+        await execution.done.wait()
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Apply body/rate/concurrency limits, then forward with request id."""
@@ -182,6 +221,7 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
             try:
                 response = await asyncio.wait_for(call_next(request), timeout=self.limits.request_timeout_seconds)
             except TimeoutError:
+                await self._cancel_downstream(request.scope)
                 if acquired:
                     self._semaphore.release()
                     acquired = False
