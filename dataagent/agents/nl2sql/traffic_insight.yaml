@@ -1,5 +1,5 @@
 AGENT_CONFIG:
-  name: "NL2SQL Agent"
+  name: "NL2SQL Traffic Insight Agent"
   backend: "langgraph"
   type: "nl2sql"
 MODEL:
@@ -11,7 +11,7 @@ MODEL:
       temperature: 0.0
 CORE:
   perceptor:
-    user_sql_rules: "sql_rules_business_twin"
+    user_sql_rules: "sql_rules_traffic_insight"
   generator:
     strategies: ["prompt"]
   validator:
@@ -21,19 +21,23 @@ CORE:
   reflector:
     threshold: 0.9
 DATABASE:
-  db_id: "business_twin"
+  db_id: "yunhe"
   dialect: "postgres"
   engine: "cloud_core"
-  perceptor_type: "business_twin"
+  perceptor_type: "traffic_insight"
   config:
     path: ""
     explain_url: "http://"
 SEMANTIC_LAYER:
   base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
-  username: null                       # 未启用认证时保持 null；启用认证时填写
-  password: null                       # 未启用认证时保持 null；启用认证时填写
-  timeout: 30                           # 可按服务端表数量和响应耗时调整
-  business_twin:
-    table_selection:
-      mode: "business_family"
-      llm_topk: 4
+  username: null
+  password: null
+  timeout: 30
+  traffic_insight:
+    recall:
+      column_eq_page_size: 200
+      column_eq_max_offset: 100000
+      max_candidate_tables: 200
+      hybrid_batch_size: 50
+      max_llm_table_families: 20
+      exclude_table_prefix: ["dim"]
