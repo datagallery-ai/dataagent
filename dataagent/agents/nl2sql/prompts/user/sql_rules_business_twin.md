@@ -22,8 +22,9 @@ Before applying any other rules, first classify the user question into exactly o
 - Schema descriptions starting with '指标' are metric fields.
 - Identify the dimensions involved in the user question. A dimension is involved only when the question refers to the dimension itself or one of its values.
 - SELECT and GROUP BY MUST contain exactly the involved dimensions.
+- **If the user explicitly requests a time-series breakdown (by mentioning any time granularity such as '1h', '1d', '每小时', '每天', '按小时聚合', '时间粒度', or equivalent), then `time` MUST also be included in SELECT and GROUP BY. This includes phrases like "支持时间粒度" or "建议时间粒度".**
 - All metric fields must be aggregated using SUM() (or appropriate aggregate functions) across all dimensions not explicitly involved in the query, and MUST NOT appear in the GROUP BY clause.
-- Any time expression makes time an involved dimension. Group by time unless the user explicitly asks for whole-period aggregation.
+- A time range alone does not make time an output dimension; only an explicit time granularity or time-series request does.
 - Use HAVING for filtering aggregated metric results (with the same expression as SELECT). Use WHERE only for pre-aggregation row filtering when explicitly requested.
 
 ### Self-Check Before Generating
@@ -32,16 +33,86 @@ Before you output SQL, verify:
 
 - [ ] Do SELECT and GROUP BY contain exactly the dimensions involved in the user question?
 - [ ] Are all metric fields aggregated and absent from GROUP BY?
+- [ ] **If the user mentioned any time granularity keyword, is `time` included in SELECT and GROUP BY?**
 
 ## 2. Type B: Comparison Query
 
-### Rules:
+First classify the comparison into exactly one subtype. A question containing two time ranges does not by itself request a time-series output.
+
+### Type B1: Whole-period comparison
+
+Use Type B1 when the question compares two periods but does not explicitly request a time granularity, time-series trend, hourly/daily detail, or values for each time bucket.
+
+Rules:
+- Use `time` only in the two period filters. Do not SELECT, GROUP BY, ORDER BY, or JOIN on `time`.
+- Aggregate the current period and comparison period independently.
+- Both period CTEs must SELECT and GROUP BY the same involved non-time dimensions.
+- If there are no involved non-time dimensions, each CTE returns one row and the final SELECT combines those two scalar rows with CROSS JOIN.
+- If involved non-time dimensions exist, use FULL OUTER JOIN only on those dimensions so values present in only one period are preserved. Never include `time` in that JOIN.
+- For 同比/环比 or explicit rate wording, calculate `(current_value::numeric - comparison_value::numeric) / NULLIF(comparison_value::numeric, 0) AS change_rate` after the two whole-period values are produced.
+- For plain 对比 without rate wording, return the current and comparison values without adding `change_rate`.
+
+### Type B2: Independent time-series comparison
+
+Use Type B2 when the question explicitly requests a time granularity, time-series trend, hourly/daily detail, or separate values for each time bucket, but does not use 同比/环比 wording and does not request a difference, growth amount, change rate, or another calculation between corresponding buckets.
+
+This is the default SQL shape for time-series comparison.
+
+Rules:
+- Generate the current-period series and comparison-period series independently.
+- Both SELECT branches must return the same columns in the same order: `period_label`, raw `time`, the same involved non-time dimensions, and the same metric expressions.
+- Use the ASCII literals `'current_period'` and `'comparison_period'` as `period_label` values.
+- Each branch must apply its own time filter and GROUP BY raw `time` plus the same involved non-time dimensions.
+- Combine the two branches with UNION ALL.
+- Preserve each period's original raw `time`. Never shift a timestamp merely to make two different periods appear equal.
+- Never JOIN the two periods on raw `time`, and do not put current and comparison values into the same row.
+- Order the combined result by `period_label`, raw `time`, and then any involved non-time dimensions.
+
+Required SQL Shape:
+
+The schematic omits optional non-time dimensions. When such dimensions are involved, insert the same dimension columns after `time` in both branches and add them to both GROUP BY clauses.
+
+SELECT
+    'current_period' AS period_label,
+    time,
+    metric_expression AS metric_value
+FROM table_name
+WHERE current_time_filter
+GROUP BY time
+
+UNION ALL
+
+SELECT
+    'comparison_period' AS period_label,
+    time,
+    metric_expression AS metric_value
+FROM table_name
+WHERE comparison_time_filter
+GROUP BY time
+
+### Type B3: Per-bucket calculated comparison
+
+Use Type B3 only when the question requests a time-series breakdown and either uses 同比/环比 wording or explicitly requests a difference, growth amount, change rate, or another calculation between corresponding time buckets.
+
+Rules:
+- Never JOIN different periods on raw `time` because their absolute timestamps are different.
+- Derive a zero-based `bucket_index` independently for each period from that period's own start boundary and the selected table's bucket size:
+  - `5min` → `bucket_seconds = 300`
+  - `15min` → `bucket_seconds = 900`
+  - `1h` → `bucket_seconds = 3600`
+  - `1d` → `bucket_seconds = 86400`
+- Use `FLOOR((time - period_start_epoch)::numeric / bucket_seconds)::bigint AS bucket_index`. This relative index aligns the first bucket of one arbitrary absolute period with the first bucket of the other without changing either raw timestamp.
+- Each period CTE must retain its own raw timestamp as `current_time` or `comparison_time`, aggregate by raw `time` and the same involved non-time dimensions, and calculate its own `bucket_index`.
+- Use FULL OUTER JOIN on `bucket_index` plus all involved non-time dimensions so missing or extra buckets from either period are preserved.
+- Return both raw timestamps, both metric values, and the requested calculated difference or rate.
+- For 同比/环比 or explicit rate wording, calculate `(current_value::numeric - comparison_value::numeric) / NULLIF(comparison_value::numeric, 0) AS change_rate` only after relative bucket alignment.
+
+### Time boundaries shared by all Type B subtypes
+
 - Identify the current period and comparison period from the user question.
-- Build the current period boundaries from Section 5. Build the comparison period by applying the comparison offset to the timestamp boundaries before epoch conversion.
-- For whole-period comparisons, use `time` only in WHERE and aggregate each complete period.
-- Never join different time windows on raw `time`.
-- Both periods must SELECT and GROUP BY the same involved non-time dimensions. The final JOIN must include those dimensions.
-- For 同比/环比 queries, ALWAYS calculate `(current_value::numeric - comparison_value::numeric) / NULLIF(comparison_value::numeric, 0) AS change_rate`. For plain 对比 queries without rate wording, return only current and comparison values.
+- Build all time boundaries according to Section 4.
+- If the user explicitly gives both absolute periods, build each period directly from its own stated boundaries; do not invent an offset between them.
+- Otherwise, build the current period first and derive the comparison period by applying the requested comparison offset to the timestamp boundaries before epoch conversion.
 
 current_time_filter:
 - time >= EXTRACT(EPOCH FROM current_start_timestamp)::bigint
@@ -55,6 +126,7 @@ Important:
 - Build timestamp boundaries first, apply INTERVAL inside the timestamp expression, then convert the final boundary with EXTRACT(EPOCH FROM ... )::bigint.
 - Never subtract offset from an already-extracted bigint epoch value.
 - Do not replace comparison_time_filter with a complete calendar period unless the user explicitly asks for a complete historical period.
+- The Type B3 `bucket_index` calculation is not a time boundary and is the only permitted relative numeric epoch calculation.
 
 ## 3. Type C: Assurance Improvement Rate Query
 
@@ -70,7 +142,7 @@ Formula:
 ### Rules:
 - Use the same time_filter and other_filters for both states.
 - Use the same metric_expression for both states.
-- Only change the guarantee_group filter: baseline CTE uses guarantee_group = 2, improved CTE uses guarantee_group = 3.
+- Only change the guarantee_group filter: baseline CTE uses guarantee_group = 3, improved CTE uses guarantee_group = 4.
 - Do not SELECT or GROUP BY guarantee_group for this query type unless the user explicitly asks to list guarantee_group itself.
 - If the question names a metric, use that metric's normal aggregation/formula as metric_expression.
 - If the question only asks 保障提升率 without naming a metric, measure both states by user/count metric when available, preferring SUM(total_subs_count::numeric), then SUM(exp_subs_count::numeric), otherwise COUNT(*).
@@ -86,7 +158,7 @@ WITH baseline_state AS (
     WHERE
         time_filter
         AND other_filters
-        AND guarantee_group = 2
+        AND guarantee_group = 3
 ),
 improved_state AS (
     SELECT
@@ -95,7 +167,7 @@ improved_state AS (
     WHERE
         time_filter
         AND other_filters
-        AND guarantee_group = 3
+        AND guarantee_group = 4
 )
 SELECT
     bs.baseline_value,
@@ -114,9 +186,10 @@ All time filters:
 - Never use <= as upper time boundary.
 - Use date_trunc(..., NOW()) for calendar boundaries.
 - Use INTERVAL inside timestamp expressions.
-- Do not use numeric epoch arithmetic.
+- Do not use numeric epoch arithmetic to construct time-window boundaries or to shift one period's raw timestamp onto another period. Type B3 may subtract its own period start epoch only to calculate `bucket_index`.
 - Do not use MAX(time) as time anchor.
-- The selected table already provides the requested time granularity. Use `time` unchanged in SELECT, GROUP BY, and ORDER BY; never wrap it in `to_timestamp`, `date_trunc`, or any other expression. Time granularity does not affect WHERE boundaries.
+- The physical granularity of the selected table alone does not require grouping or outputting time.
+- Only when the question explicitly requests a time-series output, use the selected table's raw `time` unchanged in SELECT, GROUP BY, and ORDER BY; never wrap it in `to_timestamp`, `date_trunc`, or any other expression. Type B3 may additionally derive `bucket_index` from raw `time` without replacing the raw timestamp. Time granularity does not affect WHERE boundaries.
 
 Ordinary current windows:
 - 今天: current_start_timestamp = date_trunc('day', NOW()), current_end_timestamp = NOW()
@@ -191,6 +264,7 @@ Comparison examples:
 - Use IS NULL or IS NOT NULL. Do not compare metrics with 'NULL' or empty string.
 - Do not invent SPLIT_PART, regex, JSON extraction, delimiters, unit conversions, ::hll, or HLL functions unless schema or evidence confirms them.
 - If a column has `relation_formula` in its description, use that formula to compute the metric.
+- When returning dimension members that are filtered, ranked, or ordered by a metric, SELECT must include both the involved dimensions and the computed metric value. Reuse exactly the same aggregate or formula expression in SELECT and HAVING/ORDER BY; do not return only the dimensions. If the user explicitly asks only for the count of qualifying members, return the count only.
 - **MANDATORY: All division operations MUST use NUMERIC arithmetic. Integer division is NOT allowed. Always cast at least one operand (prefer the numerator) to NUMERIC, e.g., `SUM(metric)::numeric / NULLIF(...)`.**
 - No Chinese aliases are allowed in generated SQL.
 

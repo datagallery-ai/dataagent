@@ -35,7 +35,6 @@ SEMANTIC_LAYER:
   business_twin:
     table_selection:
       mode: "business_family"
-      llm_topk: 4
 
 # certificate:
 #   # inbound_enabled / outbound_enabled 省略 = true

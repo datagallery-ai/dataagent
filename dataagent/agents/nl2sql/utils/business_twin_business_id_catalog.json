@@ -1,0 +1,696 @@
+{
+  "version": 1,
+  "ignored_temporal_fields": [
+    "date",
+    "datetime",
+    "day",
+    "hour",
+    "month",
+    "statistical_period",
+    "time",
+    "time_granularity",
+    "week",
+    "year"
+  ],
+  "network_subject_terms": {
+    "amf": "AMF",
+    "pcf": "PCF",
+    "nwdaf": "NWDAF"
+  },
+  "business_schemas": {
+    "dw1745159003": {
+      "metrics": [
+        "app_assurance_times_of_nwdaf",
+        "app_poor_quality_times_of_nwdaf",
+        "assurance_abnormal_release_times_of_nwdaf",
+        "key_service_assurance_req_times_of_nwdaf",
+        "key_service_assurance_success_times_of_nwdaf",
+        "max_online_qos_ana_event_subs_sessions_of_nwdaf",
+        "max_online_qos_exp_event_subs_sessions_of_nwdaf",
+        "online_qos_ana_event_subs_sessions_of_nwdaf",
+        "online_qos_exp_event_subs_sessions_of_nwdaf",
+        "recv_pcf_policy_auth_creation_success_times_of_nwdaf",
+        "recv_pcf_qos_ana_event_subs_creation_request_times_of_nwdaf",
+        "recv_pcf_qos_exp_event_subs_creation_request_times_of_nwdaf",
+        "recv_smf_qos_ana_event_subs_creation_success_times_of_nwdaf",
+        "recv_smf_qos_exp_event_subs_creation_success_times_of_nwdaf",
+        "to_pcf_policy_auth_creation_request_times_of_nwdaf",
+        "to_pcf_qos_ana_event_subs_creation_success_times_of_nwdaf",
+        "to_pcf_qos_exp_event_subs_creation_success_times_of_nwdaf",
+        "to_smf_qos_ana_event_subs_creation_request_times_of_nwdaf",
+        "to_smf_qos_exp_event_subs_creation_request_times_of_nwdaf"
+      ],
+      "dimensions": [
+        "ne_name"
+      ]
+    },
+    "dw1745159004": {
+      "metrics": [
+        "cell_prb_dl_total",
+        "cell_prb_dl_usage",
+        "cell_prb_ul_total",
+        "cell_prb_ul_usage"
+      ],
+      "dimensions": [
+        "cell_dl_group",
+        "cell_id",
+        "cell_ul_group",
+        "gnb"
+      ]
+    },
+    "dw1745159005": {
+      "metrics": [
+        "recv_ue_logo_max_users_of_amf",
+        "recv_ue_logo_online_users_of_amf"
+      ],
+      "dimensions": [
+        "ne_name"
+      ]
+    },
+    "dw1745159006": {
+      "metrics": [
+        "from_amf_policy_auth_request_times_of_pcf",
+        "to_amf_policy_auth_request_success_times_of_pcf"
+      ],
+      "dimensions": [
+        "ne_name"
+      ]
+    },
+    "dw1745159007": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "delay_an",
+        "delay_an_times",
+        "delay_dn",
+        "delay_dn_times",
+        "delay_e2e",
+        "delay_e2e_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "lost_pkg_dl",
+        "lost_pkg_ul",
+        "max_bit_rate",
+        "max_bit_rate_times",
+        "max_delay_an",
+        "max_delay_an_times",
+        "max_delay_dn",
+        "max_delay_dn_times",
+        "max_resolution*_times",
+        "mos_sec*_times",
+        "mos_times",
+        "most_resolution*_times",
+        "pkg_dl",
+        "pkg_ul",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_initial_duration",
+        "service_initial_duration_times",
+        "service_times",
+        "stalling_duration",
+        "stalling_number",
+        "sub_app_eff_duration",
+        "uplink_duration",
+        "uplink_traffic",
+        "volume_dl",
+        "volume_ul"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "custom_group",
+        "gnb",
+        "guarantee_group",
+        "sub_app_id",
+        "tai"
+      ]
+    },
+    "dw1745159008": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_times",
+        "assurance_users",
+        "service_times",
+        "trigger_assurance_users"
+      ],
+      "dimensions": [
+        "app_id",
+        "city",
+        "county",
+        "custom_group",
+        "info_indicate",
+        "sub_app_id"
+      ]
+    },
+    "dw1745159009": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "assurance_times",
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "exp_subs_count",
+        "mos_sec*_users",
+        "mos_times",
+        "most_resolution*_times",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_times",
+        "stalling_number",
+        "uplink_duration",
+        "uplink_traffic"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "custom_group",
+        "gpsi",
+        "mos4_qds",
+        "sub_app_id"
+      ]
+    },
+    "dw1745159010": {
+      "metrics": [
+        "crh_users"
+      ],
+      "dimensions": [
+        "city",
+        "county",
+        "crh_group",
+        "guarantee_group"
+      ]
+    },
+    "dw1745159011": {
+      "metrics": [
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "delay_an",
+        "delay_an_times",
+        "delay_dn",
+        "delay_dn_times",
+        "delay_e2e",
+        "delay_e2e_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "mos_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_initial_duration",
+        "service_initial_duration_times",
+        "service_times",
+        "stalling_duration",
+        "stalling_number",
+        "uplink_duration",
+        "uplink_traffic"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "crh_group",
+        "gnb",
+        "guarantee_group",
+        "sub_app_id",
+        "tai"
+      ]
+    },
+    "dw1745159012": {
+      "metrics": [
+        "crh_ride_times"
+      ],
+      "dimensions": [
+        "crh_group",
+        "gpsi"
+      ]
+    },
+    "dw1745159013": {
+      "metrics": [
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "delay_an",
+        "delay_an_times",
+        "delay_dn",
+        "delay_dn_times",
+        "delay_e2e",
+        "delay_e2e_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "mos_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_initial_duration",
+        "service_initial_duration_times",
+        "stalling_duration",
+        "stalling_number",
+        "uplink_duration",
+        "uplink_traffic"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_dl_group",
+        "cell_ul_group",
+        "city",
+        "county",
+        "custom_group",
+        "default5qi_group",
+        "guarantee_group",
+        "sub_app_id",
+        "term_brand"
+      ]
+    },
+    "dw1745159014": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "delay_an",
+        "delay_an_times",
+        "delay_dn",
+        "delay_dn_times",
+        "delay_e2e",
+        "delay_e2e_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "max_bit_rate",
+        "max_bit_rate_times",
+        "max_delay_an",
+        "max_delay_an_times",
+        "max_delay_dn",
+        "max_delay_dn_times",
+        "max_resolution*_times",
+        "mos_sec*_times",
+        "mos_times",
+        "most_resolution*_times",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_initial_duration",
+        "service_initial_duration_times",
+        "service_times",
+        "stalling_duration",
+        "stalling_number",
+        "sub_app_eff_duration",
+        "uplink_duration",
+        "uplink_traffic",
+        "volume_dl",
+        "volume_ul"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "gnb",
+        "guarantee_group",
+        "sub_app_id",
+        "tai",
+        "term_brand"
+      ]
+    },
+    "dw1745159015": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "delay_an",
+        "delay_an_times",
+        "delay_dn",
+        "delay_dn_times",
+        "delay_e2e",
+        "delay_e2e_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "max_bit_rate",
+        "max_bit_rate_times",
+        "max_delay_an",
+        "max_delay_an_times",
+        "max_delay_dn",
+        "max_delay_dn_times",
+        "max_resolution*_times",
+        "mos_sec*_times",
+        "mos_times",
+        "most_resolution*_times",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_initial_duration",
+        "service_initial_duration_times",
+        "service_times",
+        "stalling_duration",
+        "stalling_number",
+        "sub_app_eff_duration",
+        "uplink_duration",
+        "uplink_traffic",
+        "volume_dl",
+        "volume_ul"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "default5qi_group",
+        "gnb",
+        "guarantee_group",
+        "sub_app_id",
+        "tai"
+      ]
+    },
+    "dw1745159016": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_times",
+        "assurance_users",
+        "service_times",
+        "trigger_assurance_users"
+      ],
+      "dimensions": [
+        "app_id",
+        "city",
+        "county",
+        "info_indicate",
+        "sub_app_id",
+        "term_brand"
+      ]
+    },
+    "dw1745159017": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_times",
+        "assurance_users",
+        "service_times",
+        "trigger_assurance_users"
+      ],
+      "dimensions": [
+        "app_id",
+        "city",
+        "county",
+        "default5qi_group",
+        "info_indicate",
+        "sub_app_id"
+      ]
+    },
+    "dw1745159018": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "assurance_times",
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "exp_subs_count",
+        "mos_sec*_users",
+        "mos_times",
+        "most_resolution*_times",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_times",
+        "stalling_number",
+        "uplink_duration",
+        "uplink_traffic"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "gpsi",
+        "mos4_qds",
+        "sub_app_id",
+        "term_brand"
+      ]
+    },
+    "dw1745159019": {
+      "metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "assurance_times",
+        "avg_qoe",
+        "bit_rate",
+        "bit_rate_times",
+        "downlink_duration",
+        "downlink_traffic",
+        "exp_subs_count",
+        "mos_sec*_users",
+        "mos_times",
+        "most_resolution*_times",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "service_times",
+        "stalling_number",
+        "uplink_duration",
+        "uplink_traffic"
+      ],
+      "dimensions": [
+        "app_id",
+        "cell_id",
+        "city",
+        "county",
+        "default5qi_group",
+        "gpsi",
+        "mos4_qds",
+        "sub_app_id"
+      ]
+    },
+    "dw1745159020": {
+      "metrics": [
+        "avg_qoe",
+        "downlink_duration",
+        "downlink_traffic",
+        "exp_subs_count",
+        "mos_times",
+        "service_delay",
+        "service_delay_times",
+        "service_duration",
+        "stalling_number",
+        "uplink_duration",
+        "uplink_traffic"
+      ],
+      "dimensions": [
+        "city",
+        "mos4_qds",
+        "sub_app_id"
+      ]
+    },
+    "dw1745159021": {
+      "metrics": [
+        "crh_users"
+      ],
+      "dimensions": [
+        "city",
+        "county",
+        "user_type"
+      ]
+    }
+  },
+  "business_rules": {
+    "network_element_routes": {
+      "amf": "dw1745159005",
+      "nwdaf": "dw1745159003",
+      "pcf": "dw1745159006"
+    },
+    "prb": {
+      "business_ids": [
+        "dw1745159004"
+      ],
+      "trigger_metrics": [
+        "cell_prb_dl_total",
+        "cell_prb_dl_usage",
+        "cell_prb_ul_total",
+        "cell_prb_ul_usage"
+      ]
+    },
+    "assurance_scale": {
+      "trigger_metrics": [
+        "assurance_duration",
+        "assurance_times",
+        "assurance_users",
+        "service_times",
+        "trigger_assurance_users"
+      ],
+      "routes": {
+        "default": [
+          "dw1745159008"
+        ],
+        "default5qi_group": [
+          "dw1745159017"
+        ],
+        "term_brand": [
+          "dw1745159016"
+        ]
+      }
+    },
+    "mos_analysis": {
+      "trigger_dimensions": [
+        "mos4_qds"
+      ],
+      "trigger_metrics": [
+        "avg_qoe",
+        "exp_subs_count",
+        "mos_sec*_users",
+        "mos_times"
+      ],
+      "routes": {
+        "default": [
+          "dw1745159020",
+          "dw1745159009"
+        ],
+        "default5qi_group": [
+          "dw1745159019"
+        ],
+        "term_brand": [
+          "dw1745159018"
+        ]
+      }
+    },
+    "high_rail": {
+      "default_routes": [
+        "dw1745159021"
+      ],
+      "experience_routes": [
+        "dw1745159011"
+      ],
+      "grouped_user_dimensions": [
+        "crh_group",
+        "guarantee_group"
+      ],
+      "grouped_user_routes": [
+        "dw1745159010"
+      ],
+      "ride_dimensions": [
+        "gpsi"
+      ],
+      "ride_metrics": [
+        "crh_ride_times"
+      ],
+      "ride_routes": [
+        "dw1745159012"
+      ],
+      "user_metrics": [
+        "crh_users"
+      ]
+    },
+    "ordinary_experience": {
+      "default_routes": [
+        "dw1745159007"
+      ],
+      "default5qi_routes": [
+        "dw1745159015",
+        "dw1745159013"
+      ],
+      "extended_metrics": [
+        "assurance_duration",
+        "assurance_failure_reason1_times",
+        "assurance_failure_reason2_times",
+        "assurance_failure_reason3_times",
+        "assurance_failure_reason4_times",
+        "lost_pkg_dl",
+        "lost_pkg_ul",
+        "max_bit_rate",
+        "max_bit_rate_times",
+        "max_delay_an",
+        "max_delay_an_times",
+        "max_delay_dn",
+        "max_delay_dn_times",
+        "max_resolution*_times",
+        "mos_sec*_times",
+        "most_resolution*_times",
+        "pkg_dl",
+        "pkg_ul",
+        "poor_bandwidth_dl_times",
+        "poor_bandwidth_ul_times",
+        "poor_delay_an_times",
+        "poor_delay_dn_times",
+        "poor_delay_e2e_times",
+        "service_times",
+        "sub_app_eff_duration",
+        "volume_dl",
+        "volume_ul"
+      ],
+      "load_dimensions": [
+        "cell_dl_group",
+        "cell_ul_group"
+      ],
+      "load_routes": [
+        "dw1745159013",
+        "dw1745159004"
+      ],
+      "term_brand_routes": [
+        "dw1745159014"
+      ]
+    }
+  }
+}

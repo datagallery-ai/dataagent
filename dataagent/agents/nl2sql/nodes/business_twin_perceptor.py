@@ -12,10 +12,13 @@
 # ============================================================================
 import asyncio
 import re
+from datetime import date
 from typing import Any, Optional
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
+from dataagent.agents.nl2sql.utils.administrative_divisions import format_administrative_division_rules
+from dataagent.agents.nl2sql.utils.business_twin_business_id_selector import select_business_twin_business_id
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.utils.log import logger
@@ -148,7 +151,6 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         table_selection_mode = table_cfg.get("mode", "business_family")
         if table_selection_mode != "business_family":
             raise ValueError("SEMANTIC_LAYER.business_twin.table_selection.mode must be 'business_family'")
-        self.table_llm_topk = table_cfg.get("llm_topk", 4)
 
     @staticmethod
     def _decode_dimensions(dimension_code: str) -> list[str]:
@@ -171,7 +173,7 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         lines.extend(["", "## 候选表簇"])
         for index, family in enumerate(families, start=1):
             dimensions = ", ".join(f"`{field}`" for field in family["dimensions"])
-            granularities = ", ".join(f"`{value}`" for value in family["available_granularities"])
+            granularities = ", ".join(f"`{value}`" for value in family["tables_by_granularity"])
             lines.extend(
                 [
                     f"### {index}. `{family['family_name']}`",
@@ -220,8 +222,7 @@ class BusinessTwinPerceptorNode(PerceptorNode):
                 {
                     "family_name": f"fact_{business_id}_{dimension_code}",
                     "dimensions": cls._decode_dimensions(dimension_code),
-                    "available_granularities": [granularity for granularity, _ in pairs],
-                    "candidate_table_names": [table_name for _, table_name in pairs],
+                    "tables_by_granularity": dict(pairs),
                 }
             )
         return families
@@ -235,17 +236,13 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         for family in families:
             if family["family_name"] != family_name:
                 continue
-            for granularity, table_name in zip(
-                family["available_granularities"], family["candidate_table_names"], strict=True
-            ):
-                if granularity == selection["granularity"]:
-                    return table_name
+            return family["tables_by_granularity"].get(selection["granularity"])
         return None
 
     async def _business_twin_schema_linking(self, question: str):
         """Select the business-twin table family and return its schema, joins, and catalog."""
-        tables = await self._select_tables_by_business_family(question)
-        schema, joins = await asyncio.to_thread(self.full_schema, tables)
+        table = await self._select_table_by_business_family(question)
+        schema, joins = await asyncio.to_thread(self.full_schema, [table])
         for table in schema.values():
             for column in table["columns"].values():
                 column["example_values"] = "|".join(
@@ -259,6 +256,14 @@ class BusinessTwinPerceptorNode(PerceptorNode):
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
         state["sql_rules"] = await asyncio.to_thread(self._load_prompt, self.user_sql_rules)
+        today = date.today()
+        state["sql_rules"] += (
+            f"\n现在为{today.year}年{today.month}月{today.day}日。请基于当前日期解析用户问题中的相对时间。"
+        )
+        state["sql_rules"] += await asyncio.to_thread(
+            format_administrative_division_rules,
+            state["question"],
+        )
         schema, joins, catalog = await self._business_twin_schema_linking(state["question"])
         state["schema"] = schema
         state["joins"] = joins
@@ -286,17 +291,18 @@ class BusinessTwinPerceptorNode(PerceptorNode):
                 catalog.append(parsed)
         return catalog
 
-    async def _select_business_ids(self, question: str) -> list[str]:
-        values = await self.execute_with_llm_json(
-            {"question": question, "top_n": self.table_llm_topk},
+    async def _select_business_id(self, question: str) -> str:
+        payload = await self.execute_with_llm_json(
+            {"question": question},
             action="filter_business_twin_business_id_",
         )
-        business_ids: list[str] = []
-        for value in values:
-            match = re.search(r"dw\d+", str(value))
-            if match and match.group(0) not in business_ids:
-                business_ids.append(match.group(0))
-        return business_ids[: self.table_llm_topk]
+        try:
+            return select_business_twin_business_id(question, payload)
+        except (TypeError, ValueError) as exc:
+            raise NL2SQLError(
+                "Business-twin column extraction returned no valid result",
+                detail=str(exc),
+            ) from exc
 
     async def _select_table_family(
         self,
@@ -311,19 +317,17 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         granularity = str(parsed.get("granularity") or "").strip()
         return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
 
-    async def _select_tables_by_business_family(self, question: str) -> list[str]:
-        business_ids = await self._select_business_ids(question)
-        if not business_ids:
-            raise NL2SQLError("Business ID selection returned no valid result")
+    async def _select_table_by_business_family(self, question: str) -> str:
+        business_id = await self._select_business_id(question)
         catalog = await asyncio.to_thread(self._full_table_catalog)
-        families = self._build_table_family_candidates(catalog, business_ids)
+        families = self._build_table_family_candidates(catalog, [business_id])
         if not families:
             raise NL2SQLError(
                 "Business-twin table family catalog is empty",
-                detail=f"No table family matched business IDs: {', '.join(business_ids)}",
+                detail=f"No table family matched business ID: {business_id}",
             )
         selection = await self._select_table_family(question, families)
         table = self._resolve_table_family_selection(selection, families)
         if not table:
             raise NL2SQLError("Business-twin table family selection returned no valid table")
-        return [table]
+        return table
