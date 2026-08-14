@@ -14,10 +14,16 @@ from __future__ import annotations
 
 import hashlib
 import re
+import tempfile
+import uuid
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from dataagent.core.context.context import ContextFactory
 from dataagent.interface.sdk.agent import DataAgent
+from dataagent.utils.log import logger
 
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.DOTALL | re.IGNORECASE)
 _PUBLIC_ERROR_FIELD_TYPES = {
@@ -114,7 +120,11 @@ class DataAgentService:
                 self.initialize()
             if self._agent is None:
                 return self._format_error("DataAgent service is not initialized.")
-            return self._format_result(await self._agent.chat(query))
+            with self._request_scope() as request:
+                if not request:
+                    return self._format_result(await self._agent.chat(query))
+                initial_state = {"session_id": request.get("session_id")}
+                return self._format_result(await self._agent.chat(query, initial_state=initial_state, **request))
         except Exception as exc:
             return self._format_error(str(exc))
 
@@ -128,45 +138,57 @@ class DataAgentService:
             if self._agent is None:
                 self.initialize()
 
-            stream = self._agent.astream(
-                initial_state={"user_query": query}, stream_mode=["updates", "custom", "values"]
-            )
-            async for item in stream:
-                if isinstance(item, dict) and "error" in item:
-                    yield {"event": "result", "data": self._normalize_error_payload(item["error"])}
-                    return
-
-                if isinstance(item, tuple) and len(item) == 3:
-                    _, stream_mode, data = item
-                elif isinstance(item, tuple) and len(item) == 2:
-                    stream_mode, data = item
+            with self._request_scope() as request:
+                if request:
+                    initial_state = {"user_query": query, "session_id": request.get("session_id")}
+                    workspace = request.get("workspace")
+                    if workspace is not None:
+                        initial_state["workspace"] = workspace
+                    stream = self._agent.astream(
+                        initial_state=initial_state,
+                        session_id=request.get("session_id"),
+                        stream_mode=["updates", "custom", "values"],
+                    )
                 else:
-                    message = str(item)
-                    if message and message != last_message:
-                        yield {"event": "message", "data": {"message": message}}
-                        last_message = message
-                    continue
+                    stream = self._agent.astream(
+                        initial_state={"user_query": query}, stream_mode=["updates", "custom", "values"]
+                    )
+                async for item in stream:
+                    if isinstance(item, dict) and "error" in item:
+                        yield {"event": "result", "data": self._normalize_error_payload(item.get("error"))}
+                        return
 
-                if stream_mode == "values":
-                    final_state = data
-                    continue
+                    if isinstance(item, tuple) and len(item) == 3:
+                        _, stream_mode, data = item
+                    elif isinstance(item, tuple) and len(item) == 2:
+                        stream_mode, data = item
+                    else:
+                        message = str(item)
+                        if message and message != last_message:
+                            yield {"event": "message", "data": {"message": message}}
+                            last_message = message
+                        continue
 
-                if stream_mode == "updates":
-                    if isinstance(data, dict):
-                        for value in data.values():
-                            if isinstance(value, dict):
-                                update_state.update(value)
-                    message = self._extract_stream_message(data)
-                    if message and message != last_message:
-                        yield {"event": "message", "data": {"message": message}}
-                        last_message = message
-                    continue
+                    if stream_mode == "values":
+                        final_state = data
+                        continue
 
-                if stream_mode == "custom":
-                    message = self._extract_custom_message(data)
-                    if message and message != last_message:
-                        yield {"event": "message", "data": {"message": message}}
-                        last_message = message
+                    if stream_mode == "updates":
+                        if isinstance(data, dict):
+                            for value in data.values():
+                                if isinstance(value, dict):
+                                    update_state.update(value)
+                        message = self._extract_stream_message(data)
+                        if message and message != last_message:
+                            yield {"event": "message", "data": {"message": message}}
+                            last_message = message
+                        continue
+
+                    if stream_mode == "custom":
+                        message = self._extract_custom_message(data)
+                        if message and message != last_message:
+                            yield {"event": "message", "data": {"message": message}}
+                            last_message = message
 
             result_state = final_state if final_state is not None else update_state
             if result_state:
@@ -291,3 +313,41 @@ class DataAgentService:
         if self._cached_agent_type is not None:
             return self._cached_agent_type
         return str(getattr(self._agent, "type", "") or "react")
+
+    @contextmanager
+    def _request_scope(self) -> Iterator[dict[str, Any]]:
+        """Create isolated resources for one stateless REST request and release them on exit."""
+        if self._agent_type() != "nl2sql":
+            yield {}
+            return
+
+        agent_config = getattr(self._agent, "config", {})
+        if hasattr(agent_config, "get_all") and callable(agent_config.get_all):
+            config = agent_config.get_all() or {}
+        elif isinstance(agent_config, Mapping):
+            config = agent_config
+        else:
+            config = {}
+
+        user_id = str(config.get("USER_ID", "anonymous") or "anonymous")
+        run_id = int(config.get("RUN_ID", 0) or 0)
+        sub_id = int(config.get("SUB_ID", 0) or 0)
+        session_id = str(uuid.uuid4())
+        workspace_config = config.get("WORKSPACE", {})
+        persistent_workspace = workspace_config.get("path") if isinstance(workspace_config, Mapping) else None
+        temporary_workspace = None
+        request: dict[str, Any] = {"session_id": session_id}
+        if not persistent_workspace:
+            temporary_workspace = tempfile.TemporaryDirectory(prefix="dataagent-rest-")
+            request["workspace"] = Path(temporary_workspace.name)
+
+        try:
+            yield request
+        finally:
+            released = ContextFactory.release_context(
+                user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id
+            )
+            if released:
+                logger.debug("Released {} REST Context instance(s) for session {}", released, session_id)
+            if temporary_workspace is not None:
+                temporary_workspace.cleanup()
