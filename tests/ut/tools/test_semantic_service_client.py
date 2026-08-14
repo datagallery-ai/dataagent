@@ -93,6 +93,13 @@ def test_client_uses_semantic_v1_paths_for_metadata_apis(monkeypatch) -> None:
     assert method == "GET"
     assert url == "http://semantic.local:41000/api/semantic/v1/retrieval/tables/data_table/schema"
 
+    assert client.hybrid_table_columns([" db.table ", "", "db.other"]) == {"ok": True}
+    method, url, payload, headers = fake_client.calls[-1]
+    assert method == "POST"
+    assert url == "http://semantic.local:41000/api/semantic/v1/hybrid/table-columns"
+    assert payload == {"tables": ["db.table", "db.other"]}
+    assert headers == {"Content-Type": "application/json"}
+
 
 def test_http_error_exposes_semantic_service_error_fields(monkeypatch) -> None:
     fake_client = _FakeClient()

@@ -236,6 +236,17 @@ class SemanticServiceClient:
         """Get schema for a semantic-layer retrieval table."""
         return self.get(f"retrieval/tables/{quote(table, safe='')}/schema")
 
+    def hybrid_table_columns(self, tables: list[str]) -> list:
+        """Batch-fetch physical columns for the given tables via hybrid/table-columns."""
+        normalized = [str(name).strip() for name in tables if str(name or "").strip()]
+        if not normalized:
+            return []
+        return self.post(
+            "hybrid/table-columns",
+            json={"tables": normalized},
+            headers={"Content-Type": "application/json"},
+        )
+
     def get(self, path: str, *, params: Any = None, headers: dict[str, str] | None = None) -> Any:
         """Send a GET request and return JSON response."""
         return self._request("GET", path, params=params, headers=headers)

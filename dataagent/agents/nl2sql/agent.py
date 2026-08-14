@@ -31,6 +31,7 @@ from dataagent.agents.nl2sql.nodes import (
     PerceptorNode,
     ReflectorNode,
     SelectorNode,
+    TrafficInsightPerceptorNode,
     ValidatorNode,
 )
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
@@ -104,6 +105,15 @@ class NL2SQLAgent(BaseAgent):
             except Exception as exc:
                 logger.warning(f"Failed to reset NL2SQL Context recorder: {exc}")
 
+    @staticmethod
+    def _perceptor_class(db_cfg: Mapping[str, Any]) -> type[PerceptorNode]:
+        """Select a specialized perceptor for the configured scenario."""
+        perceptor_classes: dict[str, type[PerceptorNode]] = {
+            "business_twin": BusinessTwinPerceptorNode,
+            "traffic_insight": TrafficInsightPerceptorNode,
+        }
+        return perceptor_classes.get(str(db_cfg.get("perceptor_type")), PerceptorNode)
+
     @classmethod
     def from_config(cls, config: Any, config_manager: Any | None = None) -> NL2SQLAgent:
         """Build an NL2SQL agent from its YAML-compatible configuration."""
@@ -113,7 +123,7 @@ class NL2SQLAgent(BaseAgent):
         security_enabled = bool(validator_cfg.get("sql_security_enabled", False))
         if security_enabled and "reflector" not in core_cfg:
             raise ValueError("CORE.reflector is required when CORE.validator.sql_security_enabled is true.")
-        perceptor_cls = BusinessTwinPerceptorNode if db_cfg.get("db_id") == "business_twin" else PerceptorNode
+        perceptor_cls = cls._perceptor_class(db_cfg)
         node_chain = [
             ("perceptor", perceptor_cls, {}),
             ("generator", GeneratorNode, {}),
