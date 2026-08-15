@@ -27,7 +27,7 @@ DATABASE:
   perceptor_type: "business_twin"
   config:
     path: ""
-    explain_url: "http://"
+    explain_url: "https://"  # 出站走 outbound_tls（httpx_verify("cloud_core")）；填完整 https 地址
 SEMANTIC_LAYER:
   base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
   username: null                       # 未启用认证时保持 null；启用认证时填写
@@ -39,7 +39,7 @@ SEMANTIC_LAYER:
 
 # certificate:
 #   # inbound_enabled / outbound_enabled 省略 = true
-#   # outbound_ssl_services 省略 = [llm, semantic_layer]；[] = 出站全关
+#   # outbound_ssl_services 省略 = [llm, semantic_layer, cloud_core]；[] = 出站全关
 #   server_cert_file: /etc/dataagent/certs/server.crt
 #   server_key_file: /etc/dataagent/certs/server.key
 #   ca_cert_file: /etc/dataagent/certs/ca.crt

@@ -11,14 +11,17 @@
 # limitations under the License.
 # ============================================================================
 import contextlib
-import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
-from urllib.request import Request, urlopen
+
+import httpx
 
 from dataagent.agents.nl2sql.errors import SQLServiceError
+from dataagent.common_utils.outbound_tls import httpx_verify
 from dataagent.utils.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, DEFAULT_NL2SQL_SQLITE_TIMEOUT
+
+_CLOUD_CORE_TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=1800.0, pool=10.0)
 
 
 @dataclass
@@ -197,29 +200,33 @@ class CloudCoreService(SqlService):
     def explain(self, sql: str) -> str | None:
         """Explain SQL via the cloud-core HTTP endpoint."""
         try:
+            verify = httpx_verify("cloud_core")
             if self.config.explain_url:
-                import requests
-
-                response = requests.post(
+                response = httpx.post(
                     self.config.explain_url,
                     params={
                         "auto_repair": "true",
                         "format_sql": "false",
                     },
-                    data=sql.encode("utf-8"),
+                    content=sql.encode("utf-8"),
                     headers={
                         "Content-Type": "text/plain; charset=utf-8",
                     },
-                    timeout=(10, 1800),
+                    timeout=_CLOUD_CORE_TIMEOUT,
+                    verify=verify,
                 )
                 response.raise_for_status()
                 error = response.json().get("error")
                 return str(error) if error else None
 
-            data = json.dumps({"sql": sql}).encode("utf-8")
-            req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
-            with urlopen(req) as resp:
-                result = json.loads(resp.read())
+            response = httpx.post(
+                self.config.path,
+                json={"sql": sql},
+                timeout=_CLOUD_CORE_TIMEOUT,
+                verify=verify,
+            )
+            response.raise_for_status()
+            result = response.json()
             if result.get("success"):
                 return None
             return result.get("message", "Unknown error")
@@ -229,10 +236,14 @@ class CloudCoreService(SqlService):
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         """Execute SQL against the cloud-core business-twin HTTP endpoint."""
         try:
-            data = json.dumps({"sql": sql}).encode()
-            req = Request(self.config.path, data=data, headers={"Content-Type": "application/json"})
-            with urlopen(req) as resp:
-                result = json.loads(resp.read())
+            response = httpx.post(
+                self.config.path,
+                json={"sql": sql},
+                timeout=_CLOUD_CORE_TIMEOUT,
+                verify=httpx_verify("cloud_core"),
+            )
+            response.raise_for_status()
+            result = response.json()
             if not result.get("success"):
                 return None, None, result.get("message", "Unknown error")
             rows_data = result.get("data", [])

@@ -92,6 +92,8 @@ def test_traffic_insight_config_wires_perceptor_dialect_and_execution_service() 
     assert NL2SQLAgent._perceptor_class(database_config) is TrafficInsightPerceptorNode
     assert database_config["dialect"] == "postgres"
     assert database_config["perceptor_type"] == "traffic_insight"
+    assert database_config["config"]["explain_url"].startswith("https://")
+    assert database_config["config"]["path"] == ""
     assert isinstance(build_sql_service(database_config["engine"], database_config["config"]), CloudCoreService)
 
 
