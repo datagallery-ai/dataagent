@@ -40,7 +40,7 @@ from typing import Any
 from loguru import logger as _loguru_logger
 
 from dataagent.utils.constants import TZ_CN
-from dataagent.utils.env_utils import get_env
+from dataagent.utils.env_utils import get_env, get_env_bool
 from dataagent.utils.runtime_paths import dataagent_home
 
 DEFAULT_LOG_ROTATION = "100 MB"
@@ -108,6 +108,7 @@ def build_config_from_env(process_name: str | None = None) -> LoggerConfig:
         rotation=get_env("DATAAGENT_LOG_ROTATION", default=DEFAULT_LOG_ROTATION) or DEFAULT_LOG_ROTATION,
         retention_count=_parse_retention_count(get_env("DATAAGENT_LOG_RETENTION_COUNT")),
         process_name=process,
+        diagnose=get_env_bool("DATAAGENT_LOG_DIAGNOSE", default=True),
     )
 
 
@@ -275,6 +276,7 @@ class LoggerConfig:
     rotation: str = DEFAULT_LOG_ROTATION
     retention_count: int = DEFAULT_LOG_RETENTION_COUNT
     process_name: str = "main"
+    diagnose: bool = True
     redirect_stdout_stderr: bool = False
     # Legacy construct/attr compatibility (br_release_930); ignored by file routing/sink.
     file_path: str | None = None
@@ -332,7 +334,7 @@ class DataAgentLogger:
                 format=format_callable,
                 colorize=True,
                 backtrace=True,
-                diagnose=True,
+                diagnose=effective_config.diagnose,
             )
 
         active_file: Path | None = None
@@ -362,7 +364,7 @@ class DataAgentLogger:
                     encoding="utf-8",
                     enqueue=True,
                     backtrace=True,
-                    diagnose=True,
+                    diagnose=effective_config.diagnose,
                 )
             except OSError as e:
                 if effective_config.console:
@@ -374,7 +376,7 @@ class DataAgentLogger:
                         format=format_callable,
                         colorize=True,
                         backtrace=True,
-                        diagnose=True,
+                        diagnose=effective_config.diagnose,
                     )
                     _loguru_logger.warning(f"无法写入日志目录 {log_path}: {e}，已强制启用控制台输出")
                 cls._config = replace(effective_config, log_path=None)

@@ -372,6 +372,64 @@ def test_astream_same_cross_task_early_close_and_error_reset(tmp_path: Path, mon
     assert "session=AST-S" in text and "pre-ensure" in text and "stream-chunk" in text
 
 
+def _handler_diagnose_flags() -> list[bool]:
+    from loguru import logger as _loguru
+
+    return [handler._exception_formatter._diagnose for handler in _loguru._core.handlers.values()]
+
+
+def _handler_backtrace_flags() -> list[bool]:
+    from loguru import logger as _loguru
+
+    return [handler._exception_formatter._backtrace for handler in _loguru._core.handlers.values()]
+
+
+def test_diagnose_defaults_true_and_env_can_disable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATAAGENT_LOG_DIAGNOSE", raising=False)
+    assert logmod.LoggerConfig().diagnose is True
+    assert logmod.build_config_from_env().diagnose is True
+
+    monkeypatch.setenv("DATAAGENT_LOG_PATH", str(tmp_path / "logs-default"))
+    monkeypatch.setenv("DATAAGENT_LOG_CONSOLE", "true")
+    logmod.reconfigure(logmod.build_config_from_env())
+    default_flags = _handler_diagnose_flags()
+    assert default_flags
+    assert all(default_flags)
+    assert all(_handler_backtrace_flags())
+
+    for raw in ("false", "0", "no"):
+        monkeypatch.setenv("DATAAGENT_LOG_DIAGNOSE", raw)
+        assert logmod.build_config_from_env().diagnose is False
+
+    monkeypatch.setenv("DATAAGENT_LOG_DIAGNOSE", "false")
+    monkeypatch.setenv("DATAAGENT_LOG_PATH", str(tmp_path / "logs-off"))
+    logmod.reconfigure(logmod.build_config_from_env())
+    off_flags = _handler_diagnose_flags()
+    assert off_flags
+    assert all(flag is False for flag in off_flags)
+    assert all(_handler_backtrace_flags())
+
+    for raw in ("true", "1", "yes"):
+        monkeypatch.setenv("DATAAGENT_LOG_DIAGNOSE", raw)
+        assert logmod.build_config_from_env().diagnose is True
+
+
+def test_diagnose_fallback_stderr_uses_same_config(tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    logmod.reconfigure(
+        logmod.LoggerConfig(
+            log_path=str(blocker / "logs"),
+            console=False,
+            diagnose=False,
+        )
+    )
+    flags = _handler_diagnose_flags()
+    assert flags
+    assert all(flag is False for flag in flags)
+    assert all(_handler_backtrace_flags())
+
+
 def test_retention_count_invalid_fail_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATAAGENT_LOG_RETENTION_COUNT", raising=False)
     assert logmod.build_config_from_env().retention_count == 20
