@@ -25,6 +25,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from dataagent.interface.rest_api.middleware import (
+    DEFAULT_REST_API_LIMITS,
     RestApiLimits,
     SecurityLimitsMiddleware,
     load_rest_api_limits,
@@ -274,6 +275,89 @@ async def test_request_timeout_cancels_downstream_task():
         if not app_task.done():
             app_task.cancel()
             await asyncio.gather(app_task, return_exceptions=True)
+
+
+def test_default_request_timeout_seconds_is_600():
+    """Ingress default covers the whole request, including SSE body."""
+    assert RestApiLimits.request_timeout_seconds == 600.0
+    assert DEFAULT_REST_API_LIMITS.request_timeout_seconds == 600.0
+    assert load_rest_api_limits(None).request_timeout_seconds == 600.0
+
+
+@pytest.mark.asyncio
+async def test_nonstreaming_timeout_returns_504():
+    """A handler that never returns still maps to 504 after request_timeout_seconds."""
+
+    async def slow(_request: Request) -> JSONResponse:
+        await asyncio.sleep(1.0)
+        return JSONResponse({"ok": True})
+
+    inner = Starlette(routes=[Route("/slow", slow, methods=["GET"])])
+    limits = RestApiLimits(
+        max_concurrency=1,
+        request_timeout_seconds=0.05,
+        rate_limit_per_minute=10_000,
+        queue_timeout_seconds=0.5,
+        max_body_bytes=1_000_000,
+    )
+    app = SecurityLimitsMiddleware(inner, limits=limits)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/slow", timeout=2.0)
+    assert resp.status_code == 504
+    assert resp.json()["detail"] == "Request timed out"
+
+
+@pytest.mark.asyncio
+async def test_streaming_total_timeout_ends_body_releases_slot_and_cancels_downstream():
+    """Never-ending SSE must stop at request_timeout_seconds, free the slot, and cancel downstream."""
+    downstream_stopped = asyncio.Event()
+    never_finish = asyncio.Event()
+
+    async def never_ending_stream(_request: Request) -> StreamingResponse:
+        async def gen():
+            try:
+                yield b"data: start\n\n"
+                await never_finish.wait()
+                yield b"data: done\n\n"
+            finally:
+                downstream_stopped.set()
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    async def ok(_request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    inner = Starlette(
+        routes=[
+            Route("/stream", never_ending_stream, methods=["GET"]),
+            Route("/ok", ok, methods=["GET"]),
+        ]
+    )
+    limits = RestApiLimits(
+        max_concurrency=1,
+        request_timeout_seconds=0.05,
+        rate_limit_per_minute=10_000,
+        queue_timeout_seconds=0.2,
+        max_body_bytes=1_000_000,
+    )
+    app = SecurityLimitsMiddleware(inner, limits=limits)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        t0 = time.perf_counter()
+        try:
+            resp = await asyncio.wait_for(client.get("/stream", timeout=5.0), timeout=0.8)
+        except TimeoutError:
+            pytest.fail("streaming request did not finish after request_timeout_seconds")
+        elapsed = time.perf_counter() - t0
+        content = resp.content
+        second = await client.get("/ok", timeout=1.0)
+
+    assert resp.status_code == 200
+    assert elapsed < 0.8
+    assert b"data: done" not in content
+    assert second.status_code == 200
+    await asyncio.wait_for(downstream_stopped.wait(), timeout=0.5)
 
 
 def test_service_is_ready_false_until_initialized():
