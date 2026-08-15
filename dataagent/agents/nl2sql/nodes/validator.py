@@ -29,7 +29,7 @@ class ValidatorNode(BaseNL2SQLNode):
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.read_only = kwargs.pop("read_only", True)
-        self.sql_security_enabled = kwargs.pop("sql_security_enabled", False)
+        self.sql_security_enabled = kwargs.pop("sql_security_enabled", True)
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
