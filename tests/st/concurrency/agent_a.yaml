@@ -40,3 +40,9 @@ TOOLS:
   local_functions:
     - module: "tests.st.concurrency.slow_tools"
       function: "slow_tool_agent_a"
+
+# 测试夹具：无证书材料，显式关闭出站 mTLS，避免默认 mode 3 缺文件失败。
+certificate:
+  outbound_enabled: false
+  inbound_enabled: false
+

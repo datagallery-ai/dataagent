@@ -51,3 +51,7 @@ SEMANTIC_LAYER:
   username: null
   password: null
   timeout: 30
+
+# certificate: 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径；
+#   要关请显式 inbound_enabled: false / outbound_enabled: false。
+
