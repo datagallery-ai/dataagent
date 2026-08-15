@@ -98,6 +98,8 @@ def test_scenario_yaml_and_sql_rules_use_business_twin_name() -> None:
     assert config["DATABASE"]["db_id"] == "business_twin"
     assert config["DATABASE"]["engine"] == "cloud_core"
     assert config["DATABASE"]["perceptor_type"] == "business_twin"
+    assert config["DATABASE"]["config"]["explain_url"].startswith("https://")
+    assert config["DATABASE"]["config"]["path"] == ""
     assert config["CORE"]["perceptor"]["user_sql_rules"] == "sql_rules_business_twin"
     assert "business_twin" in config["SEMANTIC_LAYER"]
     assert "certificate" not in config

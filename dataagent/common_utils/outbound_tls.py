@@ -11,7 +11,7 @@
 """出站 mTLS 证书能力。
 
 证书材料来自 ``certificate:`` 段。出站由 ``outbound_enabled``（缺省开启）与
-``outbound_ssl_services``（缺省 ``llm``+``semantic_layer``；显式列表收窄；``[]`` 全关）
+``outbound_ssl_services``（缺省 ``llm``+``semantic_layer``+``cloud_core``；显式列表收窄；``[]`` 全关）
 控制；校验策略用 ``outbound_certificate_mode``（缺省 3）。
 """
 
@@ -34,7 +34,7 @@ ENV_SSL_SERVICES = "DATAAGENT_OUTBOUND_SSL_SERVICES"
 ENV_PRESERVE_ON_MISSING = "DATAAGENT_OUTBOUND_TLS_PRESERVE_ON_MISSING"
 
 _DEFAULT_MODE = 3
-_DEFAULT_OUTBOUND_SERVICES = ("llm", "semantic_layer")
+_DEFAULT_OUTBOUND_SERVICES = ("llm", "semantic_layer", "cloud_core")
 
 # outbound_certificate_mode -> (校验服务端, 出示客户端证书)。1 与 2 实现等价。
 _OUTBOUND_CERT_MODE: dict[int, tuple[bool, bool]] = {
@@ -218,7 +218,7 @@ def _build_context() -> ssl.SSLContext:
 def httpx_verify(service: str = "llm"):
     """httpx 的 ``verify``：启用返回 ``SSLContext``，未启用返回 ``False``。
 
-    ``service`` 默认 ``llm``；Semantic Layer 传 ``semantic_layer``。
+    ``service`` 默认 ``llm``；Semantic Layer 传 ``semantic_layer``；CloudCore SQL 传 ``cloud_core``。
     客户端证书已注入 ``SSLContext``，httpx 不应再传 ``cert=``。
     """
     return _build_context() if outbound_ssl_enabled(service) else False

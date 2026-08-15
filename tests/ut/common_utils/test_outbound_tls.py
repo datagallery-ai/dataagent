@@ -321,10 +321,12 @@ def test_apply_certificate_config_defaults_all_known_services(monkeypatch):
 
     outbound_tls.apply_certificate_config({"outbound_certificate_mode": 2})
 
-    assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm,semantic_layer"
+    assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm,semantic_layer,cloud_core"
     assert outbound_tls.outbound_ssl_enabled("llm") is True
     assert outbound_tls.outbound_ssl_enabled("semantic_layer") is True
+    assert outbound_tls.outbound_ssl_enabled("cloud_core") is True
     assert outbound_tls.outbound_ssl_enabled("metavisor") is False
+    assert isinstance(outbound_tls.httpx_verify("cloud_core"), ssl.SSLContext)
 
 
 def test_apply_certificate_config_outbound_enabled_false_disables_all(monkeypatch):
