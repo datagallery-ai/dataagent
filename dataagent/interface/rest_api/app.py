@@ -72,7 +72,7 @@ async def stream_agent_events(query: str, service: DataAgentService) -> AsyncGen
             yield sse_event("message", data)
 
 
-app = FastAPI(title="DataAgent Service", version="1.0.0")
+app = FastAPI(title="DataAgent Service", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 _middleware_installed = False
 
 
