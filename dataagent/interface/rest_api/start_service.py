@@ -31,6 +31,9 @@ _CERT_MODE_TO_SSL: dict[int, int] = {
     2: ssl.CERT_NONE,
     3: ssl.CERT_REQUIRED,
 }
+_DEFAULT_INBOUND_MODE = 3
+_MODE_TRUE_ALIASES = frozenset({"true"})
+_MODE_FALSE_ALIASES = frozenset({"false"})
 
 
 def _bool_enabled(value: Any, *, default: bool = True) -> bool:
@@ -47,6 +50,37 @@ def _bool_enabled(value: Any, *, default: bool = True) -> bool:
             return False
         return default
     return bool(value)
+
+
+def _parse_inbound_mode(raw: Any) -> int:
+    """解析 inbound_certificate_mode：仅 true 当成默认 mode 3，禁止 int(True)==1。
+
+    ``True`` / ``true`` → 3（CERT_REQUIRED）。数字 ``0/1/2/3`` 与 ``"3"``
+    保持原义。``False`` / ``false`` 保持 ``int(False)==0``（CERT_NONE），
+    不把 mode 字段当成 ``inbound_enabled: false``。其它未识别值当缺省 mode 3。
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return _DEFAULT_INBOUND_MODE
+    if isinstance(raw, bool):
+        return _DEFAULT_INBOUND_MODE if raw else 0
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text in _MODE_TRUE_ALIASES:
+            return _DEFAULT_INBOUND_MODE
+        if text in _MODE_FALSE_ALIASES:
+            return 0
+        try:
+            mode = int(text)
+        except ValueError:
+            return _DEFAULT_INBOUND_MODE
+    else:
+        try:
+            mode = int(raw)
+        except (TypeError, ValueError):
+            return _DEFAULT_INBOUND_MODE
+    if mode not in _CERT_MODE_TO_SSL:
+        raise ValueError(f"Unsupported inbound_certificate_mode={mode}; expected one of {sorted(_CERT_MODE_TO_SSL)}")
+    return mode
 
 
 def load_certificate_config(config_path: str) -> dict[str, Any]:
@@ -75,24 +109,32 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
-    """Build uvicorn TLS kwargs from ``certificate``; empty dict means plain HTTP."""
+    """Build uvicorn TLS kwargs from ``certificate``; empty dict means plain HTTP.
+
+    整段不写或 ``certificate: {}`` 视为入站默认开启且 mode 3；缺服务端证/CA 报错。
+    ``inbound_certificate_mode: true`` 也当成 mode 3，不得 ``int(True)==1``。
+    仅显式 ``inbound_enabled: false`` 才走纯 HTTP，且不校验证件文件。
+    """
     cert = load_certificate_config(config_path)
-    if not cert:
-        return {}
     if not _bool_enabled(cert.get("inbound_enabled"), default=True):
         return {}
 
     server_cert = cert.get("server_cert_file")
     server_key = cert.get("server_key_file")
+    ca_cert = cert.get("ca_cert_file")
+    mode = _parse_inbound_mode(cert.get("inbound_certificate_mode", _DEFAULT_INBOUND_MODE))
+    cert_reqs = _CERT_MODE_TO_SSL[mode]
+
     required_files = (
         ("server_cert_file", server_cert),
         ("server_key_file", server_key),
     )
     missing = [name for name, value in required_files if not value]
+    if cert_reqs != ssl.CERT_NONE and not ca_cert:
+        missing.append("ca_cert_file")
     if missing:
-        raise ValueError(f"inbound TLS enabled but missing: {', '.join(missing)}")
+        raise ValueError(f"inbound TLS enabled (inbound_certificate_mode={mode}) but missing: {', '.join(missing)}")
 
-    ca_cert = cert.get("ca_cert_file")
     path_checks = (
         ("server_cert_file", server_cert),
         ("server_key_file", server_key),
@@ -101,14 +143,6 @@ def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
     for label, path in path_checks:
         if path and not Path(path).expanduser().is_file():
             raise FileNotFoundError(f"certificate.{label} not found: {path}")
-
-    mode = int(cert.get("inbound_certificate_mode", 3))
-    cert_reqs = _CERT_MODE_TO_SSL.get(mode)
-    if cert_reqs is None:
-        raise ValueError(f"Unsupported inbound_certificate_mode={mode}; expected one of {sorted(_CERT_MODE_TO_SSL)}")
-
-    if cert_reqs != ssl.CERT_NONE and not ca_cert:
-        raise ValueError(f"inbound TLS enabled (inbound_certificate_mode={mode}) but missing: ca_cert_file")
 
     ssl_kwargs: dict[str, Any] = {
         "ssl_certfile": server_cert,

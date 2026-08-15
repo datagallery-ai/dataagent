@@ -41,3 +41,7 @@ SEMANTIC_LAYER:
       hybrid_batch_size: 50
       max_llm_table_families: 20
       exclude_table_prefix: ["dim"]
+
+# certificate: 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径；
+#   要关请显式 inbound_enabled: false / outbound_enabled: false。
+

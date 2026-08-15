@@ -411,6 +411,10 @@ MODEL:
       model: "deepseek-v4-flash"
       base_url: "http://127.0.0.1:9999"
       api_key: "test-key"
+
+certificate:
+  outbound_enabled: false
+  inbound_enabled: false
 """,
         encoding="utf-8",
     )
