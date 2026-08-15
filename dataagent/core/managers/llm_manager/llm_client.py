@@ -1797,7 +1797,10 @@ class LLMClient:
             if not state.finish_reason:
                 state.has_interrupted = True
         finally:
-            await client.aclose()
+            try:
+                await client.aclose()
+            except Exception:
+                logger.warning("Failed to close httpx client after stream", exc_info=True)
 
     def _astream_parse_line(
         self,
