@@ -26,14 +26,30 @@ def _config_manager() -> ConfigManager:
 
 
 @pytest.mark.asyncio
-async def test_validator_security_switch_defaults_to_disabled() -> None:
-    """Validator should preserve the current behavior when the new switch is omitted."""
+async def test_validator_security_switch_defaults_to_enabled() -> None:
+    """Omitting sql_security_enabled should run check_sql, not the weak sqlglot path."""
     node = ValidatorNode(config_manager=_config_manager(), db_explain=False)
+    node._validate_with_sqlglot = Mock(return_value=[])
+    candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
+
+    result = await node._validate_syntax(candidates, {})
+
+    node._validate_with_sqlglot.assert_not_called()
+    assert result[0].get("score", 1) == 0
+    assert candidates[0].security_checked is True
+    assert candidates[0].security_violations[0].get("rule_id", "") == "FUNCTION-001"
+
+
+@pytest.mark.asyncio
+async def test_validator_explicit_false_uses_weak_sqlglot_check() -> None:
+    """Explicit sql_security_enabled=false should keep the legacy sqlglot validator."""
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=False)
     candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
 
     result = await node._validate_syntax(candidates, {})
 
     assert result[0].get("score", 0) == 1
+    assert candidates[0].security_checked is False
     assert candidates[0].security_violations == []
 
 

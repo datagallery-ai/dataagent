@@ -120,7 +120,11 @@ class NL2SQLAgent(BaseAgent):
         core_cfg = config.get("CORE", {})
         db_cfg = config.get("DATABASE", {})
         validator_cfg = core_cfg.get("validator", {}) or {}
-        security_enabled = bool(validator_cfg.get("sql_security_enabled", False))
+        if "sql_security_enabled" in validator_cfg:
+            security_enabled = bool(validator_cfg["sql_security_enabled"])
+        else:
+            # Default-on only when a reflector exists; otherwise keep the weak path.
+            security_enabled = "reflector" in core_cfg
         if security_enabled and "reflector" not in core_cfg:
             raise ValueError("CORE.reflector is required when CORE.validator.sql_security_enabled is true.")
         perceptor_cls = cls._perceptor_class(db_cfg)
@@ -140,6 +144,8 @@ class NL2SQLAgent(BaseAgent):
                 break
             enabled_nodes.append(name)
             node_cfg = dict(core_cfg.get(name, {}) or {})
+            if name == "validator" and "sql_security_enabled" not in node_cfg:
+                node_cfg["sql_security_enabled"] = security_enabled
             if name == "reflector" and security_enabled:
                 node_cfg.update({"sql_security_enabled": True})
             for state_key, state_value in default_state.items():
