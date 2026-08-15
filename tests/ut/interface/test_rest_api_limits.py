@@ -28,6 +28,7 @@ from dataagent.interface.rest_api.middleware import (
     DEFAULT_REST_API_LIMITS,
     RestApiLimits,
     SecurityLimitsMiddleware,
+    _client_ip,
     load_rest_api_limits,
 )
 from dataagent.interface.rest_api.service import DataAgentService
@@ -87,6 +88,50 @@ def test_middleware_rejects_oversized_body_and_rate_limits():
     limited = client.post("/api/agent/query", json={"q": 2})
     assert limited.status_code == 429
     assert limited.headers.get("x-request-id")
+
+
+def _http_request(*, client: tuple[str, int] | None, forwarded_for: str | None = None) -> Request:
+    headers: list[tuple[bytes, bytes]] = []
+    if forwarded_for is not None:
+        headers.append((b"x-forwarded-for", forwarded_for.encode()))
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": headers,
+            "client": client,
+            "server": ("test", 80),
+        }
+    )
+
+
+def test_client_ip_uses_socket_peer_when_xff_absent():
+    request = _http_request(client=("10.0.0.8", 123))
+    assert _client_ip(request) == "10.0.0.8"
+
+
+def test_client_ip_ignores_forged_x_forwarded_for():
+    request = _http_request(client=("10.0.0.8", 123), forwarded_for="203.0.113.1, 192.0.2.1")
+    assert _client_ip(request) == "10.0.0.8"
+
+
+def test_client_ip_unknown_when_peer_missing_even_with_xff():
+    request = _http_request(client=None, forwarded_for="203.0.113.1")
+    assert _client_ip(request) == "unknown"
+
+
+def test_rate_limit_key_ignores_forged_x_forwarded_for():
+    client = TestClient(_app(RestApiLimits(rate_limit_per_minute=1, max_body_bytes=1_000_000)))
+    first = client.post("/api/agent/query", json={"q": 1}, headers={"X-Forwarded-For": "203.0.113.1"})
+    second = client.post("/api/agent/query", json={"q": 2}, headers={"X-Forwarded-For": "198.51.100.2"})
+    assert first.status_code == 200
+    assert second.status_code == 429
 
 
 @pytest.mark.asyncio
