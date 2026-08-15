@@ -6,13 +6,18 @@
 
 # 输出约束
 
-只返回一个 JSON 字符串数组，不要使用 Markdown 代码块，不要返回 JSON 对象，不要添加解释或其他文字。
+只返回一个 JSON 字符串数组，不要使用 Markdown 代码块，用json块包裹。结构必须是：
 
 格式示例：
+```json
 ["规范列名"]
+```
 
 实际示例：
+```json
 ["downlink_traffic", "downlink_duration", "county", "guarantee_group"]
+```
+
 
 - 数组元素只能是下方字段目录中的规范列名。
 - 指标和维度放在同一个数组中，不区分类型，不返回用途和值。
