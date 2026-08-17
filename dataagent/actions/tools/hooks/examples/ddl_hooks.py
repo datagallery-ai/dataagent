@@ -185,6 +185,9 @@ def _validate_table_ddl(sql_text: str) -> list[str]:
     if not table_comment_matches:
         reasons.append("DDL 中表级不能没有COMMENT关键字且内容不能为空")
 
+    if not _validate_target_table_with_database(sql_text):
+        reasons.append("DDL 中目标表缺少库名，请使用 `库名.表名` 格式")
+
     for match_info in table_comment_matches:
         reasons.extend(
             _validate_comment_text(
@@ -195,6 +198,68 @@ def _validate_table_ddl(sql_text: str) -> list[str]:
         )
 
     return reasons
+
+
+def _validate_target_table_with_database(sql_text: str) -> tuple[bool, str]:
+    """
+    校验 DDL/DML 中目标表是否缺少库名（必须使用 ``库名.表名``）。
+
+    覆盖范围：
+
+    * DDL: ``CREATE TABLE [IF NOT EXISTS] <目标>``
+    * DML: ``INSERT OVERWRITE TABLE <目标>`` / ``INSERT INTO TABLE <目标>``
+
+    当检测到目标表没有带库名（不含 ``.``）时返回错误。
+    """
+    # 去掉 SQL 注释行（行内 -- 之后的内容），避免误判注释里的 CREATE/INSERT
+    lines = sql_text.split("\n")
+    stripped_lines = []
+    for line in lines:
+        idx = line.find("--")
+        if idx >= 0:
+            stripped_lines.append(line[:idx])
+        else:
+            stripped_lines.append(line)
+    content_no_comment = "\n".join(stripped_lines)
+    content_upper = content_no_comment.upper()
+
+    # 标识符允许：字母/数字/下划线，可整体被反引号/双引号/中括号包裹
+    ident = r"`[^`]+`|\"[^\"]+\"|\[[^\]]+\]|[A-Za-z_]\w*"
+    schema_group = rf"(?:({ident})\.)?"
+    table_group = rf"({ident})"
+    target_group = schema_group + table_group
+
+    # DDL: CREATE [EXTERNAL] TABLE [IF NOT EXISTS] <target>
+    ddl_pattern = re.compile(
+        rf"\bCREATE\s+(?:EXTERNAL\s+)?TABLE\b(?:\s+IF\s+NOT\s+EXISTS)?\s+{target_group}",
+        re.IGNORECASE,
+    )
+
+    # DML: INSERT OVERWRITE|INTO [TABLE] <target>
+    dml_pattern = re.compile(
+        rf"\bINSERT\s+(?:OVERWRITE|INTO)\b(?:\s+TABLE)?\s+{target_group}",
+        re.IGNORECASE,
+    )
+
+    for pattern, kind in (
+        (ddl_pattern, "DDL"),
+        (dml_pattern, "DML"),
+    ):
+        for match in pattern.finditer(content_upper):
+            schema = match.group(1)
+            # 从原始 content 中按匹配偏移切片回小写原文（避免大写转换影响错误信息）
+            start_in_original = match.start(2)
+            end_in_original = match.end(2)
+            table_original = sql_text[start_in_original:end_in_original]
+            if schema:
+                # 已带库名
+                continue
+            return (
+                False,
+                f"{kind}校验失败:  目标表 `{table_original}` 缺少库名，请使用 `库名.{table_original}` 格式",
+            )
+
+    return True, ""
 
 
 def _validate_field_ddl(sql_text: str) -> list[str]:
