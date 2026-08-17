@@ -79,6 +79,8 @@ def build_resource_runner(
                 },
                 error=error_text(result) if status == "failed" else "",
                 log_file_info=_extract_log_file_info(result),
+                data=result.get("data"),
+                data_meta=result.get("data_meta"),
             )
         finally:
             coordinator.release_capacity(job_id)

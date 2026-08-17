@@ -84,6 +84,8 @@ class JobResult:
     outputs: list[dict[str, Any]] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
     log_file_info: dict[str, Any] | None = None
+    data: list[dict[str, Any]] | None = None
+    data_meta: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the result for ``collect_subagent`` and storage."""
@@ -104,6 +106,10 @@ class JobResult:
             payload["state"] = self.state if isinstance(self.state, dict) else {}
             payload["subagent_session_id"] = self.subagent_session_id
             payload["workspace_rel_path"] = self.workspace_rel_path
+            if self.data is not None:
+                payload["data"] = self.data
+            if self.data_meta is not None:
+                payload["data_meta"] = self.data_meta
             return payload
         if self.original_msg is not None:
             payload["original_msg"] = self.original_msg

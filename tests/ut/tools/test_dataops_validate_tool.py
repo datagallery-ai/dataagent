@@ -98,18 +98,29 @@ def _wired_coordinator(
     *,
     resource: Resource | None = None,
     submit: dict | None = None,
-    poll: dict | None = None,
-    collect: dict | None = None,
+    poll: dict | list | None = None,
+    collect: dict | list | None = None,
 ) -> MagicMock:
-    """Build a coordinator already wired to return canned submit/poll/collect."""
+    """Build a coordinator already wired to return canned submit/poll/collect.
+
+    poll and collect can be a single dict (return_value) or a list
+    (side_effect returning one value per call, used by tests with
+    multiple submit/poll/collect rounds such as the post-validate phase).
+    """
     coordinator = MagicMock()
     coordinator.catalog = _catalog(resource)
     if submit is not None:
         coordinator.submit_job.return_value = submit
     if poll is not None:
-        coordinator.poll.return_value = poll
+        if isinstance(poll, list):
+            coordinator.poll.side_effect = poll
+        else:
+            coordinator.poll.return_value = poll
     if collect is not None:
-        coordinator.collect.return_value = collect
+        if isinstance(collect, list):
+            coordinator.collect.side_effect = collect
+        else:
+            coordinator.collect.return_value = collect
     return coordinator
 
 
@@ -1274,3 +1285,672 @@ class TestDataopsValidateSqlWithLogAnalysis:
         idx_lfi = keys.index("log_file_info")
         assert "log_analysis" in keys[:idx_lfi]
         assert "log_analysis_summary" in keys[:idx_lfi]
+
+
+# ===========================================================================
+# _is_insert_sql / _extract_insert_target_table / _build_count_sql
+# ===========================================================================
+
+
+class TestIsInsertSql:
+    def test_insert_overwrite(self):
+        assert vt._is_insert_sql("INSERT OVERWRITE TABLE biads.x SELECT 1") is True
+
+    def test_insert_into(self):
+        assert vt._is_insert_sql("INSERT INTO TABLE biads.x SELECT 1") is True
+
+    def test_insert_external(self):
+        assert vt._is_insert_sql("INSERT OVERWRITE EXTERNAL TABLE biads.x SELECT 1") is True
+
+    def test_select_not_insert(self):
+        assert vt._is_insert_sql("SELECT 1 FROM biads.x") is False
+
+    def test_create_not_insert(self):
+        assert vt._is_insert_sql("CREATE TABLE biads.x (id INT)") is False
+
+    def test_case_insensitive(self):
+        assert vt._is_insert_sql("insert overwrite table x select 1") is True
+
+    def test_empty(self):
+        assert vt._is_insert_sql("") is False
+
+
+class TestExtractInsertTargetTable:
+    def test_insert_overwrite_with_db(self):
+        t = vt._extract_insert_target_table(
+            "INSERT OVERWRITE TABLE biads.ads_xxx SELECT 1",
+            user_account="alice",
+            table_suffix="",
+        )
+        assert t is not None
+        assert "adhoctemp" in t
+        assert "ads_xxx" in t
+
+    def test_insert_into(self):
+        t = vt._extract_insert_target_table(
+            "INSERT INTO TABLE biads.ads_yyy SELECT * FROM src",
+            user_account="bob",
+            table_suffix="",
+        )
+        assert t is not None
+        assert "adhoctemp" in t
+        assert "ads_yyy" in t
+
+    def test_insert_external(self):
+        t = vt._extract_insert_target_table(
+            "INSERT OVERWRITE EXTERNAL TABLE biads.ads_eee SELECT * FROM src",
+            user_account="alice",
+            table_suffix="",
+        )
+        assert t is not None
+        assert "adhoctemp" in t
+
+    def test_select_returns_none(self):
+        t = vt._extract_insert_target_table(
+            "SELECT 1 FROM biads.x",
+            user_account="alice",
+            table_suffix="",
+        )
+        assert t is None
+
+    def test_with_table_suffix(self):
+        t = vt._extract_insert_target_table(
+            "INSERT OVERWRITE TABLE biads.ads_zzz SELECT 1",
+            user_account="alice",
+            table_suffix="v1",
+        )
+        assert t is not None
+        assert "v1" in t
+
+
+class TestBuildCountSql:
+    def test_standard_insert(self):
+        # Build from the rewritten form (after _replace_target_table)
+        rewritten = (
+            "INSERT OVERWRITE TABLE adhoctemp.tmp_alice_20260817_ads_xxx "
+            "SELECT * FROM biads.src WHERE pt_d = '20260817'"
+        )
+        sql = vt._build_count_sql(rewritten)
+        assert sql is not None
+        assert "SELECT count(*)" in sql
+        assert "adhoctemp" in sql
+        assert "ads_xxx" in sql
+        assert "pt_d" in sql
+        assert "20260817" in sql
+
+    def test_insert_without_db(self):
+        rewritten = "INSERT OVERWRITE TABLE adhoctemp.tmp_bob_20260817_src SELECT 1"
+        sql = vt._build_count_sql(rewritten)
+        assert sql is not None
+        assert "count(*)" in sql
+
+    def test_select_returns_none(self):
+        sql = vt._build_count_sql("SELECT 1 FROM biads.x")
+        assert sql is None
+
+
+class TestParseCountFromCollect:
+    def test_standard_data(self):
+        result = {"status": "completed", "data": [{"_c0": "42"}]}
+        assert vt._parse_count_from_collect(result) == 42
+
+    def test_named_count_column(self):
+        result = {"status": "completed", "data": [{"count(*)": "0"}]}
+        assert vt._parse_count_from_collect(result) == 0
+
+    def test_float_that_is_integer(self):
+        result = {"status": "completed", "data": [{"_c0": "7.0"}]}
+        assert vt._parse_count_from_collect(result) == 7
+
+    def test_empty_data_returns_none(self):
+        result = {"status": "completed", "data": []}
+        assert vt._parse_count_from_collect(result) is None
+
+    def test_data_not_list_returns_none(self):
+        result = {"status": "completed", "data": "not a list"}
+        assert vt._parse_count_from_collect(result) is None
+
+    def test_no_data_field_returns_none(self):
+        result = {"status": "completed"}
+        assert vt._parse_count_from_collect(result) is None
+
+
+# ===========================================================================
+# _run_post_validate
+# ===========================================================================
+
+
+class TestRunPostValidate:
+    """Mocked coordinator — submit / poll / collect all via MagicMock side_effect."""
+
+    @pytest.mark.asyncio
+    async def test_count_success_greater_than_zero(self):
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-1"}
+        # First poll: running → Second poll: completed
+        coordinator.poll.side_effect = [
+            {"status": "running", "job_id": "pv-1"},
+            {"status": "completed", "job_id": "pv-1"},
+        ]
+        coordinator.collect.return_value = {
+            "status": "completed",
+            "job_id": "pv-1",
+            "data": [{"_c0": "10"}],
+            "data_meta": {"format": "csv", "row_count": 1},
+        }
+
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM t",
+            timeout_sec=60,
+            poll_interval=0.01,
+        )
+        assert result["ok"] is True
+        assert result["count"] == 10
+        assert result["job_id"] == "pv-1"
+        assert result["error"] is None
+
+    @pytest.mark.asyncio
+    async def test_count_zero_parsed(self):
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-2"}
+        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-2"}]
+        coordinator.collect.return_value = {
+            "status": "completed",
+            "job_id": "pv-2",
+            "data": [{"_c0": "0"}],
+        }
+
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM t",
+            timeout_sec=60,
+            poll_interval=0.01,
+        )
+        assert result["ok"] is True
+        assert result["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_submit_error(self):
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "ERROR", "message": "queue full"}
+
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM t",
+            timeout_sec=60,
+            poll_interval=0.01,
+        )
+        assert result["ok"] is False
+        assert "queue full" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_collect_failed(self):
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-3"}
+        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-3"}]
+        coordinator.collect.return_value = {
+            "status": "failed",
+            "job_id": "pv-3",
+            "error": "table not found",
+        }
+
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM nonexistent",
+            timeout_sec=60,
+            poll_interval=0.01,
+        )
+        assert result["ok"] is False
+        assert "table not found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_count_parse_failure(self):
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-4"}
+        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-4"}]
+        coordinator.collect.return_value = {
+            "status": "completed",
+            "job_id": "pv-4",
+            "data": "not a list",
+        }
+
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM t",
+            timeout_sec=60,
+            poll_interval=0.01,
+        )
+        assert result["ok"] is False
+        assert "parse failed" in result["error"]
+
+
+# ===========================================================================
+# dataops_validate_sql — INSERT post-validate integration
+# ===========================================================================
+
+
+class TestDataopsValidateSqlPostValidate:
+    """INSERT only: when first-phase passes, second-phase SELECT count(*) runs."""
+
+    @pytest.mark.asyncio
+    async def test_insert_passed_count_gt_zero_final_passed(self):
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-1"},
+            poll=[{"status": "completed", "job_id": "j-1"}],
+            collect={"status": "completed", "job_id": "j-1"},
+        )
+        # Second-phase submit + poll + collect for count query
+        coordinator.submit_job.side_effect = [
+            {"status": "queued", "job_id": "j-1"},  # first INSERT
+            {"status": "queued", "job_id": "pv-1"},  # count
+        ]
+        coordinator.poll.side_effect = [
+            {"status": "completed", "job_id": "j-1"},
+            {"status": "completed", "job_id": "pv-1"},
+        ]
+        coordinator.collect.side_effect = [
+            {"status": "completed", "job_id": "j-1"},
+            {
+                "status": "completed",
+                "job_id": "pv-1",
+                "data": [{"_c0": "5"}],
+                "data_meta": {"format": "csv", "row_count": 1},
+            },
+        ]
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql(
+            "INSERT OVERWRITE TABLE biads.x SELECT 1",
+            _tool_context=ctx,
+        )
+        assert result["passed"] is True
+        assert result["job_id"] == "j-1"
+
+    @pytest.mark.asyncio
+    async def test_insert_passed_count_zero_final_failed(self):
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-2"},
+            poll=[{"status": "completed", "job_id": "j-2"}],
+            collect={"status": "completed", "job_id": "j-2"},
+        )
+        coordinator.submit_job.side_effect = [
+            {"status": "queued", "job_id": "j-2"},
+            {"status": "queued", "job_id": "pv-2"},
+        ]
+        coordinator.poll.side_effect = [
+            {"status": "completed", "job_id": "j-2"},
+            {"status": "completed", "job_id": "pv-2"},
+        ]
+        coordinator.collect.side_effect = [
+            {"status": "completed", "job_id": "j-2"},
+            {"status": "completed", "job_id": "pv-2", "data": [{"_c0": "0"}]},
+        ]
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql(
+            "INSERT INTO TABLE biads.x SELECT * FROM src",
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert "empty" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_insert_count_job_failed_final_failed(self):
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-3"},
+            poll=[{"status": "completed", "job_id": "j-3"}],
+            collect={"status": "completed", "job_id": "j-3"},
+        )
+        coordinator.submit_job.side_effect = [
+            {"status": "queued", "job_id": "j-3"},
+            {"status": "queued", "job_id": "pv-3"},
+        ]
+        coordinator.poll.side_effect = [
+            {"status": "completed", "job_id": "j-3"},
+            {"status": "failed", "job_id": "pv-3"},
+        ]
+        coordinator.collect.side_effect = [
+            {"status": "completed", "job_id": "j-3"},
+            {"status": "failed", "job_id": "pv-3", "error": "table not found"},
+        ]
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql(
+            "INSERT OVERWRITE TABLE biads.x SELECT 1",
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert "post_validate" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_select_no_post_validate(self):
+        """SELECT does not trigger second-phase count query."""
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-sel"},
+            poll=[{"status": "completed", "job_id": "j-sel"}],
+            collect={"status": "completed", "job_id": "j-sel"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql(
+            "SELECT 1 FROM biads.x",
+            _tool_context=ctx,
+        )
+        assert result["passed"] is True
+        assert result["job_id"] == "j-sel"
+        # submit_job should be called only once
+        assert coordinator.submit_job.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_create_no_post_validate(self):
+        """CREATE TABLE does not trigger second-phase count query."""
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-create"},
+            poll=[{"status": "completed", "job_id": "j-create"}],
+            collect={"status": "completed", "job_id": "j-create"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql(
+            "CREATE TABLE biads.x (id INT)",
+            _tool_context=ctx,
+        )
+        assert result["passed"] is True
+        assert coordinator.submit_job.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_first_phase_failed_no_post_validate(self):
+        """First phase failed — no second phase at all."""
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-fail"},
+            poll=[{"status": "failed", "job_id": "j-fail"}],
+            collect={"status": "failed", "job_id": "j-fail", "error": "bad sql"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql(
+            "INSERT OVERWRITE TABLE biads.x SELECT 1",
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert "bad sql" in result["error"]
+        # Only the first submit_job was called (count not submitted)
+        assert coordinator.submit_job.call_count == 1
+
+
+# ===========================================================================
+# _analyze_count_zero_with_llm + count_zero_analysis integration
+# ===========================================================================
+
+
+class TestAnalyzeCountZeroWithLlm:
+    """_analyze_count_zero_with_llm resolves LLM and parses the response."""
+
+    @pytest.mark.asyncio
+    async def test_returns_has_mismatch_true(self):
+        fake_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp(
+                    '{"has_mismatch":true,'
+                    '"mismatch_reason":"WHERE condition filters out all rows",'
+                    '"fix_suggestion":"Change pt_d to 20260817"}'
+                )
+            )
+        )
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+        result = await vt._analyze_count_zero_with_llm(
+            original_query="insert today data",
+            generated_sql="INSERT INTO t SELECT * FROM src WHERE pt_d='20260801'",
+            runtime=runtime,
+        )
+        assert result["has_mismatch"] is True
+        assert "WHERE condition" in result["mismatch_reason"]
+        assert "pt_d to 20260817" in result["fix_suggestion"]
+
+    @pytest.mark.asyncio
+    async def test_returns_has_mismatch_false_when_llm_says_so(self):
+        fake_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp('{"has_mismatch":false,"mismatch_reason":"","fix_suggestion":""}')
+            )
+        )
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+        result = await vt._analyze_count_zero_with_llm(
+            original_query="insert today data",
+            generated_sql="INSERT INTO t SELECT * FROM src WHERE pt_d='20260817'",
+            runtime=runtime,
+        )
+        assert result["has_mismatch"] is False
+        assert result["mismatch_reason"] == ""
+        assert result["fix_suggestion"] == ""
+
+    @pytest.mark.asyncio
+    async def test_no_runtime_llm_falls_back_to_llm_manager(self):
+        fallback_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp(
+                    '{"has_mismatch":true,"mismatch_reason":"wrong table","fix_suggestion":"use src instead of dst"}'
+                )
+            )
+        )
+        runtime = MagicMock()
+        runtime.llm = MagicMock(side_effect=RuntimeError("not ready"))
+        with patch.object(vt, "llm_manager") as mock_llm_manager:
+            mock_llm_manager.get_default_llm.return_value = fallback_llm
+            result = await vt._analyze_count_zero_with_llm(
+                original_query="copy from src",
+                generated_sql="INSERT INTO dst SELECT * FROM src",
+                runtime=runtime,
+            )
+        mock_llm_manager.get_default_llm.assert_called_once()
+        assert result["has_mismatch"] is True
+        assert "wrong table" in result["mismatch_reason"]
+
+    @pytest.mark.asyncio
+    async def test_no_llm_returns_no_mismatch(self):
+        runtime = MagicMock()
+        runtime.llm = MagicMock(side_effect=RuntimeError("no LLM"))
+        with patch.object(vt, "llm_manager") as mock_llm_manager:
+            mock_llm_manager.get_default_llm.side_effect = RuntimeError("no LLM at all")
+            result = await vt._analyze_count_zero_with_llm(
+                original_query="insert today data",
+                generated_sql="INSERT INTO t SELECT * FROM src",
+                runtime=runtime,
+            )
+        assert result["has_mismatch"] is False
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_returns_no_mismatch(self):
+        fake_llm = MagicMock(invoke=MagicMock(return_value=_FakeLLMResp("not json output")))
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+        result = await vt._analyze_count_zero_with_llm(
+            original_query="insert today data",
+            generated_sql="INSERT INTO t SELECT * FROM src",
+            runtime=runtime,
+        )
+        assert result["has_mismatch"] is False
+
+    @pytest.mark.asyncio
+    async def test_llm_exception_returns_no_mismatch(self):
+        fake_llm = MagicMock(invoke=MagicMock(side_effect=RuntimeError("LLM down")))
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+        result = await vt._analyze_count_zero_with_llm(
+            original_query="insert today data",
+            generated_sql="INSERT INTO t SELECT * FROM src",
+            runtime=runtime,
+        )
+        assert result["has_mismatch"] is False
+
+    @pytest.mark.asyncio
+    async def test_strips_markdown_fences(self):
+        fake_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp(
+                    '```json\n{"has_mismatch":true,"mismatch_reason":"bad","fix_suggestion":"fix"}\n```'
+                )
+            )
+        )
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+        result = await vt._analyze_count_zero_with_llm(
+            original_query="q",
+            generated_sql="INSERT INTO t SELECT * FROM src",
+            runtime=runtime,
+        )
+        assert result["has_mismatch"] is True
+
+
+class TestRunPostValidateCountZeroWithLlm:
+    """_run_post_validate returns LLM analysis fields when count=0 and original_query given."""
+
+    @pytest.mark.asyncio
+    async def test_count_zero_no_original_query_no_llm_call(self):
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-5"}
+        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-5"}]
+        coordinator.collect.return_value = {
+            "status": "completed",
+            "job_id": "pv-5",
+            "data": [{"_c0": "0"}],
+        }
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM t",
+            timeout_sec=60,
+            poll_interval=0.01,
+            runtime=None,
+            original_query="",  # empty → no LLM call
+        )
+        assert result["ok"] is True
+        assert result["count"] == 0
+        assert result["has_mismatch"] is False
+
+    @pytest.mark.asyncio
+    async def test_count_zero_with_original_query_calls_llm(self):
+        fake_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp(
+                    '{"has_mismatch":true,'
+                    '"mismatch_reason":"date range too narrow",'
+                    '"fix_suggestion":"extend to last 7 days"}'
+                )
+            )
+        )
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-6"}
+        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-6"}]
+        coordinator.collect.return_value = {
+            "status": "completed",
+            "job_id": "pv-6",
+            "data": [{"_c0": "0"}],
+        }
+        result = await vt._run_post_validate(
+            coordinator,
+            "SELECT count(*) FROM t",
+            "INSERT INTO t SELECT * FROM src WHERE pt_d='20260817'",
+            timeout_sec=60,
+            poll_interval=0.01,
+            runtime=runtime,
+            original_query="insert today's data",
+        )
+        assert result["ok"] is True
+        assert result["count"] == 0
+        assert result["has_mismatch"] is True
+        assert "date range" in result["mismatch_reason"]
+        assert "last 7 days" in result["fix_suggestion"]
+
+
+class TestDataopsValidateSqlCountZeroAnalysis:
+    """INSERT + count=0: count_zero_analysis appears when LLM detects mismatch."""
+
+    @pytest.mark.asyncio
+    async def test_count_zero_llm_mismatch_includes_count_zero_analysis(self):
+        """INSERT + count=0 + LLM mismatch: count_zero_analysis in result."""
+        fake_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp(
+                    '{"has_mismatch":true,'
+                    '"mismatch_reason":"WHERE condition filters out all rows",'
+                    '"fix_suggestion":"Remove pt_d filter"}'
+                )
+            )
+        )
+        resource = _make_resource(timeout_s=300, poll_interval_ms=50)
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(resource)
+        # INSERT submit+collect
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-cz-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed", "job_id": "j-cz-1"}
+        runtime = MagicMock()
+        runtime.ensure_resource_coordinator.return_value = coordinator
+        runtime.llm = MagicMock(return_value=fake_llm)
+        ctx = _make_context(runtime)
+        with patch.object(vt, "_run_post_validate") as mock_pv:
+            mock_pv.return_value = {
+                "ok": True,
+                "count": 0,
+                "job_id": "pv-1",
+                "has_mismatch": True,
+                "mismatch_reason": "WHERE condition filters out all rows",
+                "fix_suggestion": "Remove pt_d filter",
+            }
+            result = await vt.dataops_validate_sql(
+                "INSERT OVERWRITE TABLE biads.x SELECT * FROM biads.src WHERE pt_d = '$date'",
+                _tool_context=ctx,
+            )
+        assert result["passed"] is False
+        assert "empty" in result["error"].lower()
+        assert "count_zero_analysis" in result
+        assert result["count_zero_analysis"]["has_mismatch"] is True
+        assert "WHERE condition" in result["count_zero_analysis"]["mismatch_reason"]
+        assert "Remove pt_d filter" in result["count_zero_analysis"]["fix_suggestion"]
+
+    @pytest.mark.asyncio
+    async def test_count_zero_no_llm_no_count_zero_analysis(self):
+        """No original_query → no LLM call → no count_zero_analysis field."""
+        resource = _make_resource(timeout_s=300, poll_interval_ms=50)
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(resource)
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-cz-2"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed", "job_id": "j-cz-2"}
+        runtime = MagicMock()
+        runtime.ensure_resource_coordinator.return_value = coordinator
+        ctx = _make_context(runtime)
+        with patch.object(vt, "_run_post_validate") as mock_pv:
+            mock_pv.return_value = {
+                "ok": True,
+                "count": 0,
+                "job_id": "pv-2",
+                "has_mismatch": False,
+                "mismatch_reason": "",
+                "fix_suggestion": "",
+            }
+            result = await vt.dataops_validate_sql(
+                "INSERT OVERWRITE TABLE biads.x SELECT * FROM src",
+                _tool_context=ctx,
+            )
+        assert result["passed"] is False
+        assert "empty" in result["error"].lower()
+        assert "count_zero_analysis" not in result

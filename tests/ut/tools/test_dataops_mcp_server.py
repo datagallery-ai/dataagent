@@ -484,6 +484,7 @@ class TestMcpTools:
     def _make_server(self) -> tuple[Any, MagicMock]:
         """Build a server with a mocked client and return (server, client_mock)."""
         client = MagicMock(spec=srv.DataOpsClient)
+        client.timeout_sec = 30
         return srv.create_server(host="127.0.0.1", port=8767, client=client), client
 
     def _call(self, server, tool_name: str, arguments: dict) -> dict[str, Any]:
