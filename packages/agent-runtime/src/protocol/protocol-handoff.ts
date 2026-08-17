@@ -22,6 +22,9 @@ export type ProtocolHandoffDecision =
 
 /** Evaluate whether a proposed protocol handoff may create a new segment. */
 export const evaluateProtocolHandoff = (input: ProtocolHandoffInput): ProtocolHandoffDecision => {
+  if (input.current.protocolId === input.target.protocolId) {
+    return { status: "rejected", reasonCode: "PROTOCOL_HANDOFF_SAME_PROTOCOL" };
+  }
   if (!input.authorizedProtocolIds.includes(input.target.protocolId)) {
     return { status: "rejected", reasonCode: "PROTOCOL_HANDOFF_NOT_AUTHORIZED" };
   }
