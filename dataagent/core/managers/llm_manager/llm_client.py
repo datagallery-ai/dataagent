@@ -41,7 +41,7 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from loguru import logger
@@ -744,6 +744,8 @@ class _AStreamState:
         "reasoning_parts",
         "chunk_count",
         "has_interrupted",
+        "saw_done",
+        "has_parse_error",
     )
 
     def __init__(self) -> None:
@@ -755,6 +757,8 @@ class _AStreamState:
         self.reasoning_parts: list[str] = []
         self.chunk_count: int = 0
         self.has_interrupted: bool = False
+        self.saw_done: bool = False
+        self.has_parse_error: bool = False
 
 
 class LLMClient:
@@ -1323,14 +1327,19 @@ class LLMClient:
         return bool(delta.get("content") or delta.get("reasoning_content") or delta.get("tool_calls"))
 
     @staticmethod
-    def _parse_sse_line(line: str) -> dict[str, Any] | None:
-        """解析单行 SSE：取 ``data:`` 负载，``[DONE]`` 与非 data 行返回 None。"""
+    def _extract_sse_payload(line: str) -> Optional[str]:  # noqa: UP045
+        """Return the payload of one SSE data line, or ``None`` for non-data lines."""
         if not line:
             return None
         stripped = line.strip()
         if not stripped or not stripped.startswith("data:"):
             return None
-        payload = stripped[len("data:") :].strip()
+        return stripped[len("data:") :].strip()
+
+    @staticmethod
+    def _parse_sse_line(line: str) -> dict[str, Any] | None:
+        """解析单行 SSE：取 ``data:`` 负载，``[DONE]`` 与非 data 行返回 None。"""
+        payload = LLMClient._extract_sse_payload(line)
         if not payload or payload == "[DONE]":
             return None
         try:
@@ -1359,6 +1368,25 @@ class LLMClient:
     def _astream_has_emitted_output(state: _AStreamState) -> bool:
         """Whether the stream has already emitted content/reasoning/tool-call output."""
         return bool(state.content_parts or state.reasoning_parts or state.by_index)
+
+    @staticmethod
+    def _astream_has_complete_tool_calls(by_index: dict[int, dict[str, str]]) -> bool:
+        """Return whether every accumulated tool call is safe to finalize after ``[DONE]``."""
+        if not by_index:
+            return False
+        for part in by_index.values():
+            tool_call_id = str(part.get("id", "")).strip()
+            name = str(part.get("name", "")).strip()
+            raw_args = part.get("arguments", "")
+            if not tool_call_id or not name or not isinstance(raw_args, str) or not raw_args.strip():
+                return False
+            try:
+                args = json.loads(raw_args)
+            except (json.JSONDecodeError, TypeError):
+                return False
+            if not isinstance(args, dict):
+                return False
+        return True
 
     @staticmethod
     def _apply_delta_tool_call_deltas(
@@ -1702,6 +1730,32 @@ class LLMClient:
             return False
         return _should_retry_stream_error(mapped, attempt=attempt, max_attempts=max_attempts)
 
+    def _astream_try_synthesize_finish_reason(self, state: _AStreamState) -> bool:
+        """Synthesize a guarded finish reason for complete text or tool calls followed by DONE."""
+        has_text = any(part.strip() for part in state.content_parts)
+        if not state.saw_done or state.has_parse_error:
+            return False
+        if state.by_index:
+            if not self._astream_has_complete_tool_calls(state.by_index):
+                return False
+            state.finish_reason = "tool_calls"
+        elif has_text:
+            state.finish_reason = "stop"
+        else:
+            return False
+        logger.warning(
+            "stream.finish_reason.synthesized synthesized_finish_reason={} reason={} content_len={} "
+            "reasoning_len={} tool_call_count={} chunk_count={} model={}",
+            state.finish_reason,
+            "done_without_finish_reason",
+            len("".join(state.content_parts)),
+            len("".join(state.reasoning_parts)),
+            len(state.by_index),
+            state.chunk_count,
+            self._model,
+        )
+        return True
+
     def _astream_finish_error(self, state: _AStreamState) -> LLMCallError | None:
         """Return an :class:`LLMCallError` if the stream ended interrupted/truncated, else None."""
         if state.has_interrupted:
@@ -1790,7 +1844,7 @@ class LLMClient:
                 msg = self._astream_parse_line(line, messages, state)
                 if msg is not None:
                     yield msg
-            if not state.finish_reason:
+            if not state.finish_reason and not self._astream_try_synthesize_finish_reason(state):
                 state.has_interrupted = True
         finally:
             try:
@@ -1805,8 +1859,14 @@ class LLMClient:
         state: _AStreamState,
     ) -> LLMClientMessage | None:
         """Parse one SSE line into a chunk message, updating stream state."""
+        payload = self._extract_sse_payload(line)
+        if payload == "[DONE]":
+            state.saw_done = True
+            return None
         chunk = self._parse_sse_line(line)
         if chunk is None:
+            if payload:
+                state.has_parse_error = True
             return None
         state.chunk_count += 1
         if self._is_meaningful_stream_chunk(chunk):

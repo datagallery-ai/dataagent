@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from dataagent.core.managers.llm_manager import llm_client as llm_client_module
 from dataagent.core.managers.llm_manager.llm_client import (
     LLMCallError,
     LLMClient,
@@ -134,6 +135,31 @@ def _ok_response_json(content="ok", tool_calls=None, usage=None):
         "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
         "usage": usage or {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     }
+
+
+async def _collect_mock_sse(lines: list[str], *, num_retries: int = 0) -> list:
+    """Collect one mocked HTTP SSE response through the public ``LLMClient.astream`` path."""
+    response_body = ("\n\n".join(lines) + "\n\n").encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=response_body, request=request
+        )
+
+    async_client_class = httpx.AsyncClient
+
+    def client_factory(**kwargs):  # noqa: ANN003
+        kwargs.pop("verify", None)
+        return async_client_class(transport=httpx.MockTransport(handler), **kwargs)
+
+    with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", side_effect=client_factory):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=num_retries)
+        return [chunk async for chunk in client.astream([{"role": "user", "content": "hi"}])]
+
+
+def _sse_data(payload: dict) -> str:
+    """Encode one JSON object as a single SSE data line."""
+    return f"data: {json.dumps(payload)}"
 
 
 class TestAinvokeRetryBehavior:
@@ -345,6 +371,232 @@ class TestAstreamAcloseDoesNotMask:
                     pass
             assert ei.value.category == LLMErrorCategory.AUTH
         assert mock_client.aclose.await_count == 1
+
+
+class TestAstreamDoneWithoutFinishReason:
+    """Compatibility behavior for providers that send ``[DONE]`` without ``finish_reason``."""
+
+    @pytest.mark.asyncio
+    async def test_text_then_done_returns_normally_with_synthesized_warning(self, monkeypatch):
+        """A clean DONE after text should synthesize stop and avoid stream_interrupted."""
+        warnings: list[tuple[str, tuple]] = []
+        monkeypatch.setattr(
+            llm_client_module.logger,
+            "warning",
+            lambda message, *args: warnings.append((message, args)),
+        )
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "partial answer"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        chunks = await _collect_mock_sse(lines)
+
+        assert "".join(chunk.content for chunk in chunks) == "partial answer"
+        assert any(
+            message.startswith("stream.finish_reason.synthesized") and args[0] == "stop" for message, args in warnings
+        )
+
+    @pytest.mark.asyncio
+    async def test_complete_tool_calls_then_done_return_normally(self, monkeypatch):
+        """DONE should synthesize tool_calls when every accumulated call is complete."""
+        warnings: list[tuple[str, tuple]] = []
+        monkeypatch.setattr(
+            llm_client_module.logger,
+            "warning",
+            lambda message, *args: warnings.append((message, args)),
+        )
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {"name": "write_file", "arguments": '{"path":'},
+                                    },
+                                    {
+                                        "index": 1,
+                                        "id": "call_2",
+                                        "function": {"name": "lookup", "arguments": '{"query":'},
+                                    },
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {"index": 0, "function": {"arguments": '"/tmp/x"}'}},
+                                    {"index": 1, "function": {"arguments": '"weather"}'}},
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        chunks = await _collect_mock_sse(lines)
+        final_chunks = [chunk for chunk in chunks if chunk.tool_calls or chunk.invalid_tool_calls]
+
+        assert len(final_chunks) == 1
+        assert final_chunks[0].tool_calls == [
+            {"id": "call_1", "name": "write_file", "args": {"path": "/tmp/x"}, "type": "tool_call"},
+            {"id": "call_2", "name": "lookup", "args": {"query": "weather"}, "type": "tool_call"},
+        ]
+        assert final_chunks[0].invalid_tool_calls == []
+        assert any(
+            message.startswith("stream.finish_reason.synthesized") and args[0] == "tool_calls"
+            for message, args in warnings
+        )
+
+    @pytest.mark.asyncio
+    async def test_text_then_direct_eof_remains_interrupted(self):
+        """A clean transport EOF without DONE must not be normalized to success."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "partial answer"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            )
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_done_without_text_remains_interrupted(self):
+        """DONE alone must not turn an empty response into a successful call."""
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(["data: [DONE]"])
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_done_with_partial_tool_call_remains_interrupted(self):
+        """DONE must not authorize execution of a potentially truncated tool call."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {"name": "lookup", "arguments": '{"query":"weather"}'},
+                                    },
+                                    {
+                                        "index": 1,
+                                        "id": "call_2",
+                                        "function": {"name": "write_file", "arguments": '{"path":"/tmp/x"'},
+                                    },
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_call", "case"),
+        [
+            ({"index": 0, "function": {"name": "lookup", "arguments": "{}"}}, "missing id"),
+            ({"index": 0, "id": "call_1", "function": {"arguments": "{}"}}, "missing name"),
+            (
+                {"index": 0, "id": "call_1", "function": {"name": "lookup", "arguments": "[]"}},
+                "non-object arguments",
+            ),
+        ],
+    )
+    async def test_done_with_incomplete_tool_call_shape_remains_interrupted(self, tool_call, case):
+        """DONE must not authorize a tool call with missing identity or non-object arguments."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"tool_calls": [tool_call]},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED, case
+
+    @pytest.mark.asyncio
+    async def test_done_after_malformed_data_remains_interrupted(self):
+        """A malformed SSE data frame must prevent finish-reason synthesis."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "partial answer"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: {broken",
+            "data: [DONE]",
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
 
 
 class TestNonStreamPayloadStripsStream:
