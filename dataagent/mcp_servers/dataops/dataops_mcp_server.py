@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import argparse
 import binascii
+import csv
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
@@ -82,6 +84,11 @@ class DataOpsClient:
         self._exec_user = str(exec_user or "").strip()
         self._engine = str(engine or "").strip()
         self._timeout_sec = max(1, int(timeout_sec))
+
+    @property
+    def timeout_sec(self) -> int:
+        """Public read-only view of the configured HTTP timeout."""
+        return self._timeout_sec
 
     @property
     def base_url(self) -> str:
@@ -207,17 +214,8 @@ class DataOpsClient:
         url = f"{self._base_url}{path}"
         body_str = json.dumps(body, ensure_ascii=False)
         body_bytes = body_str.encode("utf-8")
-        # Reconstruct a reproducible curl command for debugging
-        curl_parts = ["curl", "-X", "POST", url]
-        for k, v in headers.items():
-            curl_parts.extend(["-H", f"{k}: {v}"])
-        curl_parts.extend(["-d", json.dumps(body, ensure_ascii=False, indent=2)])
-        LOGGER.info("DataOps curl: {}".format(" ".join(curl_parts)))
+        LOGGER.info(f"[dataops_mcp_server] → dataops POST {path} body={body_str[:4000]}")
 
-        # httpx forwards header names verbatim (no title-casing), unlike
-        # urllib / http.client whose email.Message layer mangles keys like
-        # "openApiSign" -> "Openapisign", breaking case-sensitive upstream
-        # auth lookup.
         try:
             response = httpx.post(
                 url,
@@ -228,13 +226,30 @@ class DataOpsClient:
             payload = response.text
         except httpx.HTTPError as exc:
             raise ValueError(f"DataOps unreachable at {self._base_url}: {exc}") from exc
+
+        LOGGER.info(f"[dataops_mcp_server] ← dataops response status={response.status_code} body={payload[:4000]}")
+
         if response.status_code >= 400:
             detail = payload.strip()
             raise ValueError(detail or f"DataOps HTTP error: {response.status_code}")
+
         try:
             return json.loads(payload)
         except json.JSONDecodeError as exc:
             raise ValueError(f"DataOps returned non-JSON payload: {payload[:500]}") from exc
+
+    def _debug_curl(self, path: str, body: dict[str, Any]) -> None:
+        """Log the equivalent curl command at debug level for reproduction."""
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            **self._build_auth_headers(),
+        }
+        url = f"{self._base_url}{path}"
+        curl_parts = ["curl", "-X", "POST", url]
+        for k, v in headers.items():
+            curl_parts.extend(["-H", f"{k}: {v}"])
+        curl_parts.extend(["-d", json.dumps(body, ensure_ascii=False, indent=2)])
+        LOGGER.debug("DataOps curl: {}".format(" ".join(curl_parts)))
 
 
 def _response_body(payload: Any) -> Any:
@@ -244,6 +259,116 @@ def _response_body(payload: Any) -> Any:
     for key in ("body", "data"):
         if key in payload:
             return payload[key]
+    return payload
+
+
+def _resolve_obs_target(file_info: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    """Extract (url, headers) from a V3 OBS fileInfo block.
+
+    Mirrors the resolution used in ``dataops_fetch_obs_log``: nested-scheme
+    puts the real HTTP headers under ``headers.headers`` while ``url`` and
+    ``method`` sit at the outer level. We pick the inner dict when present
+    so synthetic keys don't leak into the outbound HTTP request.
+    """
+    outer_headers = file_info.get("headers") or {}
+    if not isinstance(outer_headers, dict):
+        outer_headers = {}
+    inner_headers = outer_headers.get("headers")
+    if not isinstance(inner_headers, dict):
+        inner_headers = None
+    url = str(file_info.get("url") or "").strip() or str(outer_headers.get("url") or "").strip()
+    headers = inner_headers if inner_headers is not None else outer_headers
+    if not isinstance(headers, dict):
+        headers = {}
+    return url, {str(k): str(v) for k, v in headers.items() if k not in {"url", "method"}}
+
+
+def _download_and_parse_obs_file(
+    file_info: dict[str, Any],
+    *,
+    timeout_sec: int,
+) -> dict[str, Any]:
+    """Download the OBS result referenced by ``file_info`` and parse it.
+
+    Returns a dict with one of:
+      - ``{"data": [...], "row_count": N, "format": "csv", "status_code": 200}``
+      - ``{"error": "...", "status_code": int|None}``
+    """
+    url, headers = _resolve_obs_target(file_info)
+    if not url:
+        return {"error": "fileInfo has no url", "status_code": None}
+    if not headers:
+        return {"error": "fileInfo has no http headers", "status_code": None}
+    result_path = str(file_info.get("resultPath") or "")
+    try:
+        response = httpx.get(url, headers=headers, timeout=timeout_sec)
+    except httpx.HTTPError as exc:
+        return {"error": f"Failed to fetch OBS file: {exc}", "status_code": None}
+    if response.status_code >= 400:
+        return {
+            "error": f"OBS returned HTTP {response.status_code}: {response.text[:500]}",
+            "status_code": response.status_code,
+        }
+
+    lowered = result_path.lower()
+    if lowered.endswith(".csv"):
+        try:
+            text = response.content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = response.content.decode("utf-8", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        rows = [dict(row) for row in reader]
+        return {"data": rows, "row_count": len(rows), "format": "csv", "status_code": response.status_code}
+    if lowered.endswith(".json"):
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError as exc:
+            return {"error": f"OBS returned invalid JSON: {exc}", "status_code": response.status_code}
+        if isinstance(payload, list):
+            return {"data": payload, "row_count": len(payload), "format": "json", "status_code": response.status_code}
+        return {"data": payload, "row_count": 1, "format": "json", "status_code": response.status_code}
+
+    # Unknown suffix: return the raw body so the caller can still decide.
+    return {
+        "data": response.text,
+        "row_count": None,
+        "format": "raw",
+        "status_code": response.status_code,
+    }
+
+
+def _enrich_completed_payload_with_obs_file(
+    payload: dict[str, Any],
+    raw_result: dict[str, Any],
+    *,
+    timeout_sec: int,
+) -> dict[str, Any]:
+    """If ``raw_result`` contains a SELECT ``fileInfo``, download+parse and attach.
+
+    The original ``fileInfo`` block is preserved on the payload so the tool
+    layer can re-fetch if needed; the parsed rows live under ``data``.
+    """
+    file_info = raw_result.get("fileInfo") or raw_result.get("file_info") or {}
+    if not isinstance(file_info, dict) or not file_info:
+        return payload
+
+    parsed = _download_and_parse_obs_file(file_info, timeout_sec=timeout_sec)
+    payload["fileInfo"] = file_info
+    if "error" in parsed:
+        payload["data_download_error"] = parsed["error"]
+        LOGGER.warning(
+            "[dataops_mcp_server] OBS file download/parse failed url={} error={}".format(
+                _resolve_obs_target(file_info)[0],
+                parsed["error"],
+            )
+        )
+        return payload
+    payload["data"] = parsed.get("data")
+    payload["data_meta"] = {
+        "format": parsed.get("format"),
+        "row_count": parsed.get("row_count"),
+        "result_path": str(file_info.get("resultPath") or ""),
+    }
     return payload
 
 
@@ -338,40 +463,69 @@ def create_server(*, host: str, port: int, client: DataOpsClient) -> FastMCP:
         CREATE TABLE statements also go through adHoc/create now — we no
         longer route them to /v3/dataAssets/create.
         """
-        del allocation
+        LOGGER.info(
+            f"[dataops_mcp_server] → submit_job envelope={json.dumps(envelope, ensure_ascii=False, default=str)[:4000]}"
+            f" allocation={json.dumps(allocation, ensure_ascii=False, default=str)[:4000]}"
+        )
         sql = str(envelope.get("command") or "").strip()
         if not sql:
-            return {"status": "failed", "error": "envelope.command is empty", "exit_code": 1}
+            result = {"status": "failed", "error": "envelope.command is empty", "exit_code": 1}
+            LOGGER.info(
+                f"[dataops_mcp_server] ← "
+                f"submit_job response={json.dumps(result, ensure_ascii=False, default=str)[:4000]}"
+            )
+            return result
 
         try:
             job_id = client.submit(sql)
         except Exception as exc:
             LOGGER.warning(f"submit_job failed sql_excerpt={sql[:200]!r} error={exc}")
-            return {"status": "failed", "error": str(exc), "exit_code": 1}
+            result = {"status": "failed", "error": str(exc), "exit_code": 1}
+            LOGGER.info(
+                f"[dataops_mcp_server] ← "
+                f"submit_job response={json.dumps(result, ensure_ascii=False, default=str)[:4000]}"
+            )
+            return result
         LOGGER.info(f"submit_job job_id={job_id}")
-        return {"status": "running", "job_id": job_id}
+        result = {"status": "running", "job_id": job_id}
+        LOGGER.info(
+            f"[dataops_mcp_server] ← submit_job response={json.dumps(result, ensure_ascii=False, default=str)[:4000]}"
+        )
+        return result
 
     @server.tool()
     def poll_job(job_id: str) -> dict[str, Any]:
         """Query the current DataOps adHoc status once."""
+        LOGGER.info(f"[dataops_mcp_server] → poll_job job_id={job_id}")
         try:
             raw_result = client.query(job_id)
             payload = _status_payload(job_id, raw_result)
         except ValueError as exc:
             payload = {"status": "failed", "job_id": job_id, "error": str(exc), "exit_code": 1}
-        LOGGER.info("poll_job job_id={} status={}".format(job_id, payload.get("status")))
+        LOGGER.info(
+            f"[dataops_mcp_server] ← poll_job response={json.dumps(payload, ensure_ascii=False, default=str)[:4000]}"
+        )
         return payload
 
     @server.tool()
     def collect_job(job_id: str) -> dict[str, Any]:
         """Collect terminal validation details from DataOps adHoc/query."""
+        LOGGER.info(f"[dataops_mcp_server] → collect_job job_id={job_id}")
         try:
             result = client.query(job_id)
             payload = _status_payload(job_id, result)
         except ValueError as exc:
-            return {"status": "failed", "job_id": job_id, "error": str(exc), "exit_code": 1}
+            payload = {"status": "failed", "job_id": job_id, "error": str(exc), "exit_code": 1}
         if payload["status"] == "completed":
             payload["summary"] = "SQL validated successfully by DataOps"
+            payload = _enrich_completed_payload_with_obs_file(
+                payload,
+                result,
+                timeout_sec=client.timeout_sec,
+            )
+        LOGGER.info(
+            f"[dataops_mcp_server] ← collect_job response={json.dumps(payload, ensure_ascii=False, default=str)[:8000]}"
+        )
         return payload
 
     @server.tool()
@@ -391,19 +545,25 @@ def create_server(*, host: str, port: int, client: DataOpsClient) -> FastMCP:
         When a job fails, the query result contains a ``logFileInfo`` field with
         a pre-signed OBS URL. This tool downloads and returns the log content.
         """
+        LOGGER.info(f"[dataops_mcp_server] → get_job_log job_id={job_id}")
         try:
             log_result = client.get_job_log(job_id)
             if "error" in log_result:
-                return {"status": "error", "job_id": job_id, "error": log_result["error"]}
-            return {
-                "status": "success",
-                "job_id": job_id,
-                "log_content": log_result.get("log_content", ""),
-            }
+                result = {"status": "error", "job_id": job_id, "error": log_result["error"]}
+            else:
+                result = {
+                    "status": "success",
+                    "job_id": job_id,
+                    "log_content": log_result.get("log_content", ""),
+                }
         except ValueError as exc:
-            return {"status": "error", "job_id": job_id, "error": str(exc), "exit_code": 1}
+            result = {"status": "error", "job_id": job_id, "error": str(exc), "exit_code": 1}
         except Exception as exc:
-            return {"status": "error", "job_id": job_id, "error": f"get_job_log failed: {exc}", "exit_code": 1}
+            result = {"status": "error", "job_id": job_id, "error": f"get_job_log failed: {exc}", "exit_code": 1}
+        LOGGER.info(
+            f"[dataops_mcp_server] ← get_job_log response={json.dumps(result, ensure_ascii=False, default=str)[:4000]}"
+        )
+        return result
 
     return server
 

@@ -544,6 +544,8 @@ def _job_result_from_payload(payload: dict[str, Any], job_id: str, agent_id: str
     original_msg = safe.get("original_msg")
     if original_msg is None:
         original_msg = safe.get("logFileInfo") or safe.get("raw_result")
+    _data = safe.get("data") if isinstance(safe.get("data"), list) else None
+    _data_meta = safe.get("data_meta") if isinstance(safe.get("data_meta"), dict) else None
     return JobResult(
         job_id=str(safe.get("job_id") or job_id),
         agent_id=str(safe.get("agent_id") or agent_id),
@@ -557,6 +559,8 @@ def _job_result_from_payload(payload: dict[str, Any], job_id: str, agent_id: str
         workspace_rel_path=str(safe.get("workspace_rel_path") or ""),
         outputs=safe.get("outputs") if isinstance(safe.get("outputs"), list) else [],
         metrics=safe.get("metrics") if isinstance(safe.get("metrics"), dict) else {},
+        data=safe.get("data") if isinstance(safe.get("data"), list) else None,
+        data_meta=safe.get("data_meta") if isinstance(safe.get("data_meta"), dict) else None,
     )
 
 
