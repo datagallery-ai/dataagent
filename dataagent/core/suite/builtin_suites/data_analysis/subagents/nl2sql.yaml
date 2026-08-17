@@ -1,6 +1,6 @@
 AGENT_CONFIG:
   name: nl2sql_subagent
-  version: "1.1.1"
+  version: "1.2.0"
   description: Data analysis workflow specialist for producing final user-selection SQL.
   backend: langgraph
   type: react
@@ -89,14 +89,15 @@ ACTOR_LOOP:
 
             - 检查只读共享 `manifest.json` 的全部已完成阶段，不只依赖上一步 receipt 摘要。
             - 从 Sampling 条目复制 `step1_output_meta.json`、`step1_sample_stats.json`；`step1_0_table_schema.json` 存在时可复制用于旧版一致性核对，但不是必需输入。
-            - 从 Feature Engineering 条目复制 `schema_resolution.json`、`step2_3_feature_derivation.md`、`step2_3_high_cardinality_check.json`。
-            - 优先复制 Feature Engineering 的 `step2_3_feature_aggregation_expanded.sql`；同时兼容旧版 `step2_3_feature_aggregation.sql`。血缘权威顺序为 expanded SQL → Schema/schema_resolution → Markdown。
+            - 从 Feature Engineering 条目复制 `schema_resolution.json`，并优先复制 `step2_3_deployment_feature_contract.json`。新版契约存在且 `validation.structural_validation.passed=true` 时，它是唯一需要流转的 Step2 特征血缘输入；生成器复核物理源表、字段、alias、JOIN、参数后直接按 relation plan 渲染，禁止再解析 Markdown/SQL 猜测血缘。
+            - Feature Engineering 条目不存在新版契约或结构检查未通过时，复制 `step2_3_feature_derivation.md`；`step2_3_high_cardinality_check.json` 可用时一并复制，并可选复制 `step2_3_feature_aggregation_expanded.sql`（优先）或旧版 `step2_3_feature_aggregation.sql`。旧版血缘权威顺序为 expanded SQL → Schema/schema_resolution → Markdown。
             - 从 Model Engineering 条目复制 `step3_3_wide_table_train.csv`、`step3_3_wide_table_valid.csv`、`step3_3_univariate_analysis.csv`、`step3_4_feature_importance.csv`、`step3_4_valid_predictions.csv`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_5_white_box_scores.csv`、`step3_5_model_report.json`、`step3_6_score_rule.csv`、`step3_6_white_box_scores.csv`、`step3_6_model_report.json`。
             - 所有输入仅复制到当前 workspace；不要修改共享输出区。需要修复结构或格式时，不覆盖原始副本，另行生成工作副本。
-            - Markdown 血缘不足时，只能依据已发布的特征聚合 SQL、Schema 和高基数检查结果补全，不得根据常识补造表、字段或表达式。
+            - 新版部署契约中的多表关系必须按显式 `joins` 回放，不得把多张源表猜成 `UNION ALL`，不得把契约 alias 改成 `w`、`source_rows` 或 `agg_N`。旧版 Markdown 血缘不足时，只能依据已发布的特征聚合 SQL、Schema 和高基数检查结果补全，不得根据常识补造表、字段或表达式。
             - step4_0 使用 `skill/nl2sql/scripts/step4_0_reconstruct_tree_preprocessing.py`。将其复制为 `scripts/step4_0_reconstruct_tree_preprocessing.py`，设置 `NL2SQL_PREPROCESS_TEMPLATE_PATH` 指向打包模板后运行。该脚本必须从训练宽表重建数值 quantile 分箱边界，从训练+验证宽表重建类别编码映射，并用树规则回放验证分数，产出 `step3_5_preprocessing_reconstructed.json`；不得重新训练模型。
             - step4_1 使用 `skill/nl2sql/scripts/step4_1_generate_sql.py`。step4_0 完成后，将其复制为 `scripts/step4_1_generate_sql.py`，设置 `NL2SQL_TEMPLATE_PATH` 指向打包模板后运行。该脚本先检查两个候选的规则、预处理和血缘可渲染性，再重算策略指标、尝试融合并生成唯一 final SQL。
             - step4_1 第一次运行只完成 prepare：生成 final SQL、静态报告以及 `.nl2sql_runtime/source_validation_request.json`，此时不会生成 receipt。
+            - Step2 固定脚本只检查契约结构；开放式 ClickHouse 表达式的语法、函数、类型、alias scope 和 JOIN 执行正确性以本阶段 source trial 为最终门禁。
             - 按 request 中 `source_trial` 的 path 与 sha256 提交唯一的限量试算：固定使用 `submit_resource_job(resource_id="clickhouse", task_type="sql_query", command_file=<path>)` → `poll_job` → `collect_job`。提交 SQL 的顶层关键字必须是 `SELECT`；禁止提交 `EXPLAIN` 或执行原样 final 查询。
             - 将原始 collect payload 机械写入 `.nl2sql_runtime/source_validation_result.json`：`{"source_trial":{"query_sha256":"...","result":<payload>}}`。
             - 再次运行 step4_1 完成 finalize。生成器必须核对 query sha256；限量试算通过后才生成 receipt。目标游戏尚不存在导致返回 0 行属于成功。
