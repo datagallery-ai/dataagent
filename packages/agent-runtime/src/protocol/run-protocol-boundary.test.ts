@@ -1165,6 +1165,53 @@ describe("createRunProtocolBoundary", () => {
     expect(boundary.protocolRuntime.getState("run-agent-handoff").phase).toBe("query_planning");
   });
 
+  it("rejects a model-requested handoff to the active protocol without restarting analysis", async () => {
+    const boundary = await createRunProtocolBoundary({
+      runId: "run-same-protocol-handoff",
+      userInput: "分析订单",
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      explicitProtocol: { protocolId: "data-analysis", protocolVersion: "1" },
+      initialContextPackageRef: { packageId: "context-same-protocol-handoff", revision: 0 },
+      tools: {},
+      projectContext: () => ({ packageId: "context-same-protocol-handoff", revision: 0 })
+    });
+    const segmentId = boundary.segmentId;
+    const stateBefore = boundary.protocolRuntime.getState("run-same-protocol-handoff", segmentId);
+
+    await expect(boundary.actionRouter.execute({
+      runId: "run-same-protocol-handoff",
+      segmentId,
+      actionId: "handoff-same-protocol",
+      actionName: "protocol.handoff.propose",
+      input: {
+        targetProtocolId: "data-analysis",
+        targetProtocolVersion: "1",
+        reasonCodes: ["MODEL_REQUESTED"]
+      }
+    })).rejects.toThrow("PROTOCOL_HANDOFF_SAME_PROTOCOL");
+
+    const stateAfter = boundary.protocolRuntime.getState("run-same-protocol-handoff", segmentId);
+    expect(boundary.segmentId).toBe(segmentId);
+    expect(stateAfter).toMatchObject({
+      protocolId: stateBefore.protocolId,
+      protocolVersion: stateBefore.protocolVersion,
+      segmentId: stateBefore.segmentId,
+      phase: stateBefore.phase,
+      status: stateBefore.status,
+      contextPackageRef: stateBefore.contextPackageRef,
+      completionRejections: stateBefore.completionRejections,
+      domain: stateBefore.domain
+    });
+    expect(stateAfter.actions).toEqual([
+      ...stateBefore.actions,
+      expect.objectContaining({
+        actionId: "handoff-same-protocol",
+        actionName: "protocol.handoff.propose",
+        status: "succeeded"
+      })
+    ]);
+  });
+
   it("rejects a model-requested handoff that would abandon incomplete data-analysis goals", async () => {
     const boundary = await createRunProtocolBoundary({
       runId: "run-handoff-gate",

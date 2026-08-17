@@ -80,6 +80,46 @@ describe("ProtocolHandoffCoordinator", () => {
     ]);
   });
 
+  it("rejects a handoff to the active protocol without replacing its segment state", () => {
+    const store = new InMemoryProtocolStateStore();
+    const registry = new ProtocolRegistry();
+    registry.register(createDefinition("data-analysis"));
+    const current = new ProtocolRuntime(createDefinition("data-analysis"), store).start({
+      runId: "run-same-protocol",
+      segmentId: "run-same-protocol:segment:1",
+      contextPackageRef: { packageId: "context-same-protocol", revision: 4 }
+    });
+    const coordinator = new ProtocolHandoffCoordinator(registry, store);
+
+    expect(() => coordinator.handoff({
+      runId: current.runId,
+      segmentId: current.segmentId,
+      expectedRevision: current.revision,
+      authorizedProtocolIds: ["general-task", "data-analysis"],
+      target: { protocolId: "data-analysis", protocolVersion: "1" },
+      reasonCodes: ["MODEL_REQUESTED"]
+    })).toThrow("PROTOCOL_HANDOFF_SAME_PROTOCOL");
+
+    expect(store.get("run-same-protocol")).toMatchObject({
+      protocolId: "data-analysis",
+      protocolVersion: "1",
+      segmentId: current.segmentId,
+      revision: current.revision + 1,
+      phase: current.phase,
+      status: "active",
+      contextPackageRef: current.contextPackageRef,
+      actions: current.actions,
+      completionRejections: current.completionRejections,
+      domain: current.domain
+    });
+    expect(store.pendingEvents("run-same-protocol").map((event) => event.type)).toEqual([
+      "protocol.run.started",
+      "protocol.phase.entered",
+      "protocol.handoff.proposed",
+      "protocol.handoff.rejected"
+    ]);
+  });
+
   it("aborts an untouched misrouted strict segment during an authoritative route correction", () => {
     const store = new InMemoryProtocolStateStore();
     const registry = new ProtocolRegistry();
