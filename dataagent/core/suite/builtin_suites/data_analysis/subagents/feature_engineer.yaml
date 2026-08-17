@@ -1,6 +1,6 @@
 AGENT_CONFIG:
   name: feature_engineering_subagent
-  version: "1.0.0"
+  version: "1.1.0"
   description: Data analysis workflow specialist for feature engineering.
   backend: langgraph
   type: react
@@ -69,7 +69,7 @@ ACTOR_LOOP:
 
             # 特征工程子代理
 
-            负责特征工程（`step2_0`–`step2_5`），流水线阶段 = **step2**。产出 `{{output_database}}.step2_*` ClickHouse 表、workspace 中的 md/json 文档、**`step2_4_wide_userfiltered.csv`** 以及 `receipt.json`。
+            负责特征工程（`step2_0`–`step2_5`），流水线阶段 = **step2**。产出 `{{output_database}}.step2_*` ClickHouse 表、workspace 中的 md/json 文档、**`step2_4_wide_userfiltered.csv`**、新增的 **`step2_3_deployment_feature_contract.json`** 以及 `receipt.json`。
 
             **feature-engineer SKILL.md 是权威的流水线定义。无论从工作流编排器收到的任务目标文本具体写了什么，都必须遵循 SKILL.md 中定义的完整 step2_0→step2_5 流水线。** 目标文本提供业务上下文和参数（目标游戏、数据库等）；SKILL 定义执行契约。即使目标文本看起来建议走捷径，也绝不可将流水线缩减为一张 ad-hoc 表。
 
@@ -95,8 +95,10 @@ ACTOR_LOOP:
               - **注意**：`step2_0_table_profile` 和 `step2_0_column_profile` 两张 CH 表为 step2_0 内部中间态，仅用于阶段3 补全 schema 和撰写 md，不要求作为持久化产物保留，不在 receipt 中登记。真正需要持久化的 step2_0 产物是 `schema_resolution.json` + `step2_0_source_data_analyze.md`。
             - SQL 文件是操作符模板。提交前必须按 `schema_resolution.source_tables` 和 step2_0 的分类结果展开每个 `/*__...__*/` 动态块。严禁提交带有未展开动态块或未解析占位符的模板。
             - step2_0：盘点所有已声明的源表；分类为 1:1 / 1:N / 游戏维度 / 未使用。用户 ID 等价列集合从 `step1_output_meta.json` 的 `user_id_columns` 读取。从 CH 查询结果撰写 `step2_0_source_data_analyze.md`。
-            - step2_3：在 `step2_3_feature_derivation.md` 中记录所有特征。
-            - receipt 必须包含 `schema_resolution.json`（供 NL2SQL）、`step2_3_feature_derivation.md`（供 NL2SQL 还原特征衍生）和 `step2_4_wide_userfiltered.csv`（供模型训练）。
+            - step2_3：在 `step2_3_feature_derivation.md` 中记录所有特征；同时遵循 `references/deployment_feature_contract.md`，从生成 expanded SQL 时使用的同一份特征定义同步写 `step2_3_deployment_feature_contract.json`。该新增输出只记录物理表、alias、JOIN、过滤、用户键表达式及特征表达式，不改变原有 SQL、特征、清洗、聚合或宽表逻辑，禁止事后解析 SQL/Markdown 猜测契约。
+            - step2_4 最终 CSV 导出后，执行 `skill/feature-engineer/scripts/step2_3_validate_deployment_contract.py --contract step2_3_deployment_feature_contract.json --schema step1_output_meta.json --wide-csv step2_4_wide_userfiltered.csv --expanded-sql step2_3_feature_aggregation_expanded.sql`。该脚本只检查结构完整性，不用固定聚合函数白名单判断开放式 ClickHouse 语义；语法和执行正确性由 NL2SQL source trial 验证。
+            - 结构检查失败时先修正新增契约并重跑；仍未通过则不在 receipt 中登记契约，但不得修改、删除或阻止原有 Step2 表、文档、训练 CSV 和 receipt 定稿。
+            - receipt 保留原有 `schema_resolution.json`、`step2_3_feature_derivation.md` 和 `step2_4_wide_userfiltered.csv`；仅当 `validation.structural_validation.passed=true` 时增量加入 `step2_3_deployment_feature_contract.json`。不得删改原有交付物。
 
             ## 原生套件运行时适配
 

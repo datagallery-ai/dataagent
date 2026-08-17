@@ -9,7 +9,8 @@ disable-model-invocation: true
 # Feature Engineering Pipeline（step2_0 → step2_5）
 
 输入：采样阶段传来的 `step1_output_meta.json` + 全部交付表（output_database 内与源表同名）。
-输出：`step2_4_wide_userfiltered.csv`（模型唯一训练数据） + `receipt.json`（仅登记 `schema_resolution.json` + `step2_4_wide_userfiltered.csv` 两个持久化产物）。
+输出：`step2_4_wide_userfiltered.csv`（模型唯一训练数据）以及原有分析产物；增量输出
+`step2_3_deployment_feature_contract.json`，供 NL2SQL 在全量源表上确定性回放特征。
 
 ## 数据操作规则
 
@@ -43,7 +44,7 @@ disable-model-invocation: true
 | step2_0 阶段3 | — | `schema_resolution.json`（补全） |
 | step2_1 | `step2_1_wide_simple` | — |
 | step2_2 | `step2_2_cleaning_report`, `step2_2_wide_cleaned` | `step2_2_cleaning_report.json` |
-| step2_3 | `step2_3_wide_complete` | `step2_3_feature_derivation.md`, `step2_3_high_cardinality_check.json` |
+| step2_3 | `step2_3_wide_complete` | `step2_3_feature_derivation.md`, `step2_3_high_cardinality_check.json`, `step2_3_deployment_feature_contract.json`（新增） |
 | step2_4 | `step2_4_wide_userfiltered` | `step2_4_user_filter_report.json` + **`step2_4_wide_userfiltered.csv`** |
 | step2_5 | — | **`receipt.json`** |
 
@@ -68,6 +69,7 @@ scripts/step2_3_format_gate.md    ← ⛔ 提交前硬门禁
 scripts/step2_3_validation.sql
 scripts/step2_4_user_cleaning.sql
 scripts/step2_4_validation.sql
+导出 step2_4_wide_userfiltered.csv 后执行 scripts/step2_3_validate_deployment_contract.py
 step2_5 → scripts/step2_5_finalize.md → receipt.json
 ```
 
@@ -163,7 +165,7 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 
 执行 `scripts/step2_3_feature_aggregation.sql` → `scripts/step2_3_validation.sql`。
 
-> ⛔ **必须在 todo list 中拆为 7 个独立 item（含 0 号前置检查）**：
+> ⛔ **必须在 todo list 中拆为 8 个独立 item（含 0 号前置检查）**：
 
 | 序号 | todo item | 内容 |
 |------|-----------|------|
@@ -174,6 +176,7 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 | 4 | **⛔ 提交前硬门禁** | `read_file("scripts/step2_3_format_gate.md")` 执行全部 grep。不通过 → 回到 todo 3 |
 | 5 | **SQL 建表 + 后端门禁** | submit 建表 → validation.sql 高基数门禁 |
 | 6 | **写文档** | `step2_3_feature_derivation.md` + `step2_3_high_cardinality_check.json` |
+| 7 | **写部署特征契约** | 从生成 expanded SQL 时使用的同一份特征定义同步写 `step2_3_deployment_feature_contract.json`；不得解析 SQL/Markdown 反推 |
 
 > **已知复发故障**：跳过列表分割、count-only（无 has()）、每个字段只产出 1 个二元特征、`list_detail_info` 的 1:N 表列表字段在聚合 CTE 中透传。
 > **防范**：todo 4 的 `scripts/step2_3_format_gate.md` 包含 6 步 grep 硬门禁，必须全部通过才能 submit。
@@ -188,6 +191,8 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 
 > 详细执行规则（列表分割流程、门禁 grep、正面/反面代码模板）见 `scripts/step2_3_format_gate.md`。
 > 1:N 表列表字段的拆分模板见该文件附录。
+> 部署契约格式、关系 plan 和字段级校验规则见 `references/deployment_feature_contract.md`。这是新增
+> 交付契约，不替代或改变 step2_3 原有 SQL、特征衍生和门禁逻辑。
 
 ---
 
@@ -198,6 +203,10 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 - 依据 step2_0 记录的合法值域过滤年龄/性别不合法用户
 - 门禁验证：`<user_id>` 唯一、`<label>` 0/1、列对账（step2_4 vs step2_3 `system.columns` 列数一致）
 - 写入 `step2_4_user_filter_report.json`，门禁通过后导出 `step2_4_wide_userfiltered.csv`
+- CSV 导出后运行 `scripts/step2_3_validate_deployment_contract.py`。检查器会对账宽表列、源表
+  Schema、alias/字段、关系 plan 与 expanded SQL 哈希，但不使用聚合函数白名单判断开放式
+  SQL 语义。通过时发布新契约；失败时尝试修正新增契约，仍未通过则不登记该契约，但不得
+  阻止原有 Step2 产物和 receipt 定稿。
 
 ---
 
@@ -227,6 +236,8 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
   - [ ] 原列表字段已从 step2_3_wide_complete 中删除（含 `ld_*` 前缀的 1:N 表原始列表字段）
   - [ ] `step2_3_feature_derivation.md` 已写入
   - [ ] `step2_3_high_cardinality_check.json` 已写入（status 以门禁 SQL 结果为依据，非自我评估）
+  - [ ] `step2_3_deployment_feature_contract.json` 与 expanded SQL 由同一份特征定义生成
 - [ ] `step2_4_wide_userfiltered` 已创建，`<label>` 为 0/1，`step2_4_user_filter_report.json` 已写入
 - [ ] **`step2_4_wide_userfiltered.csv`** 已导出
+- [ ] 若发布部署特征契约，其 `validation.structural_validation.passed=true`
 - [ ] 无 `_tmp_*`、`_ft_*`、`fe_` 等非标准前缀残留

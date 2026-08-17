@@ -5,8 +5,8 @@ The final audience query is never executed without bounds:
 * LightGBM is a teacher/reference model, never a deployment candidate.
 * The only deployment candidates are the distilled decision tree, scorecard,
   or a deterministic blend of those two.
-* Feature lineage is normalized from the existing step2 Markdown artifact into
-  ``step2_3_feature_derivation.json`` inside the current NL2SQL workspace.
+* New Step2 runs provide a validated machine-readable deployment feature
+  contract. Historical runs fall back to Markdown/SQL lineage normalization.
 * The emitted SQL targets the full ``source_database``.
 * A separately rendered source-limited SELECT is executed for runtime validation.
 * The unrestricted final SQL is never submitted to ClickHouse.
@@ -56,12 +56,10 @@ TRIAL_MAX_MEMORY_USAGE = int(os.environ.get("NL2SQL_TRIAL_MAX_MEMORY_USAGE", "10
 
 INPUT_NORMALIZATION_WARNINGS: list[str] = []
 
-REQUIRED_INPUTS = (
+CORE_REQUIRED_INPUTS = (
     "step1_output_meta.json",
     "step1_sample_stats.json",
     "schema_resolution.json",
-    "step2_3_feature_derivation.md",
-    "step2_3_high_cardinality_check.json",
     "step3_4_valid_predictions.csv",
     "step3_4_model_report.json",
     "step3_5_rule_card.csv",
@@ -72,6 +70,10 @@ REQUIRED_INPUTS = (
     "step3_6_white_box_scores.csv",
     "step3_6_model_report.json",
 )
+LEGACY_LINEAGE_INPUTS = (
+    "step2_3_feature_derivation.md",
+)
+DEPLOYMENT_FEATURE_CONTRACT = "step2_3_deployment_feature_contract.json"
 
 FORBIDDEN_SQL_PATTERNS = (
     (re.compile(r"\bWITH\b", re.I), "CTE/WITH"),
@@ -154,9 +156,37 @@ def _ensure_executed_generator_artifact() -> Path:
 
 
 def _require_inputs() -> None:
-    missing = [name for name in REQUIRED_INPUTS if not (OUTPUT_DIR / name).is_file()]
+    required = list(CORE_REQUIRED_INPUTS)
+    if not _has_usable_deployment_feature_contract():
+        required.extend(LEGACY_LINEAGE_INPUTS)
+    missing = [name for name in required if not (OUTPUT_DIR / name).is_file()]
     if missing:
         raise SystemExit("Missing NL2SQL input artifacts: " + ", ".join(missing))
+
+
+def _structural_validation(deployment: dict[str, Any]) -> dict[str, Any]:
+    validation = deployment.get("validation")
+    if not isinstance(validation, dict):
+        return {}
+    nested = validation.get("structural_validation")
+    if isinstance(nested, dict):
+        return nested
+    # Compatibility with the first contract draft, before validation scope was
+    # made explicit.
+    return validation
+
+
+def _has_usable_deployment_feature_contract() -> bool:
+    path = OUTPUT_DIR / DEPLOYMENT_FEATURE_CONTRACT
+    if not path.is_file():
+        return False
+    try:
+        deployment = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(deployment, dict) and _structural_validation(deployment).get(
+        "passed"
+    ) is True
 
 
 def _read_json(name: str, *, allow_safe_repairs: bool = False) -> dict[str, Any]:
@@ -975,6 +1005,316 @@ def normalize_feature_derivation(
     return normalized
 
 
+_CONTRACT_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CONTRACT_QUALIFIED_COLUMN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*"
+    r"`?([A-Za-z_][A-Za-z0-9_]*)`?"
+)
+_CONTRACT_PARAMETER_PATTERN = re.compile(
+    r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}"
+)
+def _contract_expression_errors(
+    location: str,
+    expression: Any,
+    aliases: dict[str, str],
+    contract: RuntimeContract,
+) -> list[str]:
+    value = str(expression or "").strip()
+    if not value:
+        return [f"{location}: expression is required"]
+    errors: list[str] = []
+    if ";" in value or "--" in value or "/*" in value or "*/" in value:
+        errors.append(f"{location}: SQL comments and statement delimiters are forbidden")
+    parameters = set(_CONTRACT_PARAMETER_PATTERN.findall(value))
+    unsupported = sorted(parameters - {"target_game"})
+    if unsupported:
+        errors.append(
+            f"{location}: unsupported parameters " + ", ".join(unsupported)
+        )
+    parameter_stripped = _CONTRACT_PARAMETER_PATTERN.sub("", value)
+    if "{{" in parameter_stripped or "}}" in parameter_stripped:
+        errors.append(f"{location}: malformed runtime parameter")
+    code = _strip_sql_comments_and_literals(value)
+    for alias, column in _CONTRACT_QUALIFIED_COLUMN_PATTERN.findall(code):
+        table = aliases.get(alias)
+        if table is None:
+            errors.append(f"{location}: undeclared alias {alias!r}")
+        elif column not in contract.table_columns.get(table, {}):
+            errors.append(f"{location}: unknown source column {table}.{column}")
+    return errors
+
+
+def _deployment_contract_aliases(
+    plan_id: str,
+    plan: dict[str, Any],
+    contract: RuntimeContract,
+) -> tuple[dict[str, str], list[str]]:
+    errors: list[str] = []
+    source = plan.get("source")
+    if not isinstance(source, dict):
+        return {}, [f"relation_plans.{plan_id}.source must be an object"]
+    table = str(source.get("table") or "").strip()
+    alias = str(source.get("alias") or "").strip()
+    if table not in contract.table_columns:
+        errors.append(f"relation_plans.{plan_id}: unknown source table {table!r}")
+    if not _CONTRACT_IDENTIFIER_PATTERN.fullmatch(alias):
+        errors.append(f"relation_plans.{plan_id}: unsafe source alias {alias!r}")
+    aliases = {alias: table} if alias else {}
+    joins = plan.get("joins", [])
+    if not isinstance(joins, list):
+        return aliases, [*errors, f"relation_plans.{plan_id}.joins must be a list"]
+    for index, join in enumerate(joins):
+        if not isinstance(join, dict):
+            errors.append(f"relation_plans.{plan_id}.joins[{index}] must be an object")
+            continue
+        join_type = str(join.get("type") or "").upper()
+        join_table = str(join.get("table") or "").strip()
+        join_alias = str(join.get("alias") or "").strip()
+        if join_type not in {"LEFT", "INNER", "CROSS"}:
+            errors.append(
+                f"relation_plans.{plan_id}.joins[{index}]: unsupported type {join_type!r}"
+            )
+        if join_table not in contract.table_columns:
+            errors.append(
+                f"relation_plans.{plan_id}.joins[{index}]: unknown table {join_table!r}"
+            )
+        if not _CONTRACT_IDENTIFIER_PATTERN.fullmatch(join_alias):
+            errors.append(
+                f"relation_plans.{plan_id}.joins[{index}]: unsafe alias {join_alias!r}"
+            )
+        elif join_alias in aliases:
+            errors.append(f"relation_plans.{plan_id}: duplicate alias {join_alias!r}")
+        else:
+            aliases[join_alias] = join_table
+        on_expression = str(join.get("on") or "").strip()
+        if join_type == "CROSS" and on_expression:
+            errors.append(
+                f"relation_plans.{plan_id}.joins[{index}]: CROSS join must not define on"
+            )
+        if join_type != "CROSS" and not on_expression:
+            errors.append(
+                f"relation_plans.{plan_id}.joins[{index}]: non-CROSS join requires on"
+            )
+    return aliases, errors
+
+
+def load_deployment_feature_contract(
+    contract: RuntimeContract,
+) -> dict[str, Any]:
+    """Load and validate the machine-readable Step2 deployment feature contract."""
+    deployment = _read_json(DEPLOYMENT_FEATURE_CONTRACT)
+    errors: list[str] = []
+    if deployment.get("contract_version") != 1:
+        errors.append("contract_version must equal 1")
+    if deployment.get("source_artifact") != "step2_3_feature_aggregation_expanded.sql":
+        errors.append("source_artifact must identify the Step2 expanded SQL")
+    validation = _structural_validation(deployment)
+    if validation.get("passed") is not True:
+        errors.append("Step2 structural validation did not pass")
+    entity = deployment.get("entity")
+    if not isinstance(entity, dict):
+        errors.append("entity must be an object")
+        entity = {}
+    if entity.get("grain") != "user":
+        errors.append("entity.grain must equal 'user'")
+    if str(entity.get("entity_key") or "") != contract.user_id:
+        errors.append("entity.entity_key does not match schema_resolution user id")
+    if not str(entity.get("label_column") or "").strip():
+        errors.append("entity.label_column is required")
+    base_plan_id = str(entity.get("base_relation_plan") or "")
+
+    plans = deployment.get("relation_plans")
+    if not isinstance(plans, dict) or not plans:
+        errors.append("relation_plans must be a non-empty object")
+        plans = {}
+    features = deployment.get("features")
+    if not isinstance(features, dict) or not features:
+        errors.append("features must be a non-empty object")
+        features = {}
+    if validation:
+        if validation.get("source_artifact") != deployment.get("source_artifact"):
+            errors.append("validation.source_artifact does not match the contract")
+        if validation.get("feature_count") != len(features):
+            errors.append("validation.feature_count does not match features")
+        if validation.get("relation_plan_count") != len(plans):
+            errors.append("validation.relation_plan_count does not match relation_plans")
+        for digest_name in ("source_artifact_sha256", "wide_csv_header_sha256"):
+            digest = str(validation.get(digest_name) or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                errors.append(f"validation.{digest_name} is missing or invalid")
+
+    plan_aliases: dict[str, dict[str, str]] = {}
+    entity_plan_ids: list[str] = []
+    for raw_plan_id, raw_plan in plans.items():
+        plan_id = str(raw_plan_id)
+        if not _CONTRACT_IDENTIFIER_PATTERN.fullmatch(plan_id):
+            errors.append(f"unsafe relation plan id {plan_id!r}")
+        if not isinstance(raw_plan, dict):
+            errors.append(f"relation_plans.{plan_id} must be an object")
+            continue
+        kind = str(raw_plan.get("kind") or "")
+        if kind not in {"entity", "user_aggregation", "scalar"}:
+            errors.append(f"relation_plans.{plan_id}: unsupported kind {kind!r}")
+        if kind == "entity":
+            entity_plan_ids.append(plan_id)
+        aliases, alias_errors = _deployment_contract_aliases(
+            plan_id, raw_plan, contract
+        )
+        plan_aliases[plan_id] = aliases
+        errors.extend(alias_errors)
+        source = raw_plan.get("source")
+        visible_aliases = (
+            {str(source.get("alias")): str(source.get("table"))}
+            if isinstance(source, dict) and source.get("alias")
+            else {}
+        )
+        for index, join in enumerate(raw_plan.get("joins", [])):
+            if isinstance(join, dict) and join.get("alias"):
+                visible_aliases[str(join["alias"])] = str(join.get("table") or "")
+            if isinstance(join, dict) and join.get("on"):
+                errors.extend(
+                    _contract_expression_errors(
+                        f"relation_plans.{plan_id}.joins[{index}].on",
+                        join["on"],
+                        visible_aliases,
+                        contract,
+                    )
+                )
+        filters = raw_plan.get("filters", [])
+        if not isinstance(filters, list):
+            errors.append(f"relation_plans.{plan_id}.filters must be a list")
+            filters = []
+        for index, filter_expression in enumerate(filters):
+            errors.extend(
+                _contract_expression_errors(
+                    f"relation_plans.{plan_id}.filters[{index}]",
+                    filter_expression,
+                    aliases,
+                    contract,
+                )
+            )
+        if kind in {"entity", "user_aggregation"}:
+            errors.extend(
+                _contract_expression_errors(
+                    f"relation_plans.{plan_id}.entity_key_expression",
+                    raw_plan.get("entity_key_expression"),
+                    aliases,
+                    contract,
+                )
+            )
+    if entity_plan_ids != [base_plan_id]:
+        errors.append(
+            "exactly one entity plan must exist and match entity.base_relation_plan"
+        )
+
+    for raw_feature, raw_spec in features.items():
+        feature = str(raw_feature)
+        if not _CONTRACT_IDENTIFIER_PATTERN.fullmatch(feature):
+            errors.append(f"features contains unsafe output name {feature!r}")
+        if not isinstance(raw_spec, dict):
+            errors.append(f"features.{feature} must be an object")
+            continue
+        plan_id = str(raw_spec.get("relation_plan") or "")
+        if plan_id not in plans:
+            errors.append(f"features.{feature}: unknown relation plan {plan_id!r}")
+            continue
+        expression = str(raw_spec.get("expression") or "")
+        errors.extend(
+            _contract_expression_errors(
+                f"features.{feature}.expression",
+                expression,
+                plan_aliases.get(plan_id, {}),
+                contract,
+            )
+        )
+        refs = set(
+            _CONTRACT_QUALIFIED_COLUMN_PATTERN.findall(
+                _strip_sql_comments_and_literals(expression)
+            )
+        )
+        raw_source_columns = raw_spec.get("source_columns")
+        if not isinstance(raw_source_columns, list):
+            errors.append(f"features.{feature}.source_columns must be a list")
+            raw_source_columns = []
+        declared_refs: set[tuple[str, str]] = set()
+        for index, source_column in enumerate(raw_source_columns):
+            if not isinstance(source_column, dict):
+                errors.append(
+                    f"features.{feature}.source_columns[{index}] must be an object"
+                )
+                continue
+            alias = str(source_column.get("alias") or "")
+            column = str(source_column.get("column") or "")
+            declared_refs.add((alias, column))
+            table = plan_aliases.get(plan_id, {}).get(alias)
+            if table is None:
+                errors.append(f"features.{feature}: undeclared source alias {alias!r}")
+            elif column not in contract.table_columns.get(table, {}):
+                errors.append(f"features.{feature}: unknown source column {table}.{column}")
+        missing_refs = sorted(refs - declared_refs)
+        if missing_refs:
+            errors.append(
+                f"features.{feature}: source_columns does not cover "
+                + ", ".join(f"{alias}.{column}" for alias, column in missing_refs)
+            )
+        extra_refs = sorted(declared_refs - refs)
+        if extra_refs:
+            errors.append(
+                f"features.{feature}: source_columns contains references absent from expression "
+                + ", ".join(f"{alias}.{column}" for alias, column in extra_refs)
+            )
+        null_policy = raw_spec.get("null_policy")
+        if not isinstance(null_policy, dict) or null_policy.get("kind") not in {
+            "preserve",
+            "fill",
+        }:
+            errors.append(f"features.{feature}: invalid null_policy")
+        elif null_policy.get("kind") == "fill" and "value" not in null_policy:
+            errors.append(f"features.{feature}: fill null_policy requires value")
+
+    if errors:
+        raise SystemExit(
+            "Invalid Step2 deployment feature contract: "
+            + " | ".join(sorted(set(errors)))
+        )
+
+    normalized_features: list[dict[str, Any]] = []
+    for feature in sorted(features):
+        spec = features[feature]
+        plan_id = str(spec["relation_plan"])
+        aliases = plan_aliases[plan_id]
+        refs = [
+            {**item, "table": aliases[str(item["alias"])]}
+            for item in spec.get("source_columns", [])
+        ]
+        normalized_features.append(
+            {
+                "feature": feature,
+                "feature_kind": plans[plan_id]["kind"],
+                "relation_plan": plan_id,
+                "source_tables": list(dict.fromkeys(item["table"] for item in refs)),
+                "source_columns": [str(item["column"]) for item in refs],
+                "source_column_refs": refs,
+                "sql_expression": spec["expression"],
+                "output_type": spec.get("output_type"),
+                "null_policy": spec["null_policy"],
+                "renderable": True,
+                "diagnostics": [],
+            }
+        )
+    normalized = {
+        "version": 2,
+        "source": DEPLOYMENT_FEATURE_CONTRACT,
+        "source_artifact": deployment.get("source_artifact"),
+        "entity": entity,
+        "relation_plans": plans,
+        "features": normalized_features,
+        "validation": deployment.get("validation"),
+    }
+    _write_json(OUTPUT_DIR / "step2_3_feature_derivation.json", normalized)
+    return deployment
+
+
 def _lineage_index(lineage: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         str(item["feature"]): item
@@ -1311,6 +1651,231 @@ def _source_relation(
     if not trial_mode:
         return qualified
     return f"(SELECT * FROM {qualified} LIMIT {TRIAL_ROWS_PER_TABLE})"
+
+
+def _render_deployment_expression(value: Any, contract: RuntimeContract) -> str:
+    expression = str(value or "").strip()
+    expression = re.sub(
+        r"\{\{\s*target_game\s*\}\}",
+        lambda _match: _sql_string_literal(contract.target_game),
+        expression,
+    )
+    if "{{" in expression or "}}" in expression:
+        raise ValueError(f"Unresolved deployment-contract parameter: {value}")
+    return expression
+
+
+def _render_deployment_from(
+    plan: dict[str, Any],
+    contract: RuntimeContract,
+    *,
+    trial_mode: bool,
+) -> list[str]:
+    source = plan["source"]
+    lines = [
+        "FROM "
+        + _source_relation(contract, str(source["table"]), trial_mode=trial_mode)
+        + " AS "
+        + _quote_identifier(str(source["alias"]))
+    ]
+    for join in plan.get("joins", []):
+        join_type = str(join["type"]).upper()
+        line = (
+            f"{join_type} JOIN "
+            + _source_relation(contract, str(join["table"]), trial_mode=trial_mode)
+            + " AS "
+            + _quote_identifier(str(join["alias"]))
+        )
+        if join_type != "CROSS":
+            line += " ON " + _render_deployment_expression(join["on"], contract)
+        lines.append(line)
+    return lines
+
+
+def _deployment_null_wrapped(expression: str, spec: dict[str, Any]) -> str:
+    policy = spec["null_policy"]
+    if policy["kind"] == "preserve":
+        return expression
+    value = policy.get("value")
+    if value is None:
+        literal = "NULL"
+    elif isinstance(value, bool):
+        literal = "1" if value else "0"
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(float(value)):
+            raise ValueError("Deployment-contract fill value must be finite")
+        literal = str(value)
+    elif isinstance(value, str):
+        literal = _sql_string_literal(value)
+    else:
+        raise ValueError(f"Unsupported deployment-contract fill value: {value!r}")
+    return f"coalesce({expression}, {literal})"
+
+
+def render_feature_subquery_from_deployment_contract(
+    required_features: set[str],
+    tree_features: set[str],
+    deployment: dict[str, Any],
+    contract: RuntimeContract,
+    tree_preprocessing: dict[str, Any],
+    *,
+    trial_mode: bool = False,
+) -> tuple[str, dict[str, Any]]:
+    """Render required features from the validated Step2 deployment contract."""
+    plans = deployment["relation_plans"]
+    feature_specs = deployment["features"]
+    missing = sorted(required_features - set(feature_specs))
+    if missing:
+        raise ValueError(
+            "features absent from Step2 deployment contract: " + ", ".join(missing)
+        )
+    base_plan_id = str(deployment["entity"]["base_relation_plan"])
+    base_plan = plans[base_plan_id]
+    base_key = _render_deployment_expression(
+        base_plan["entity_key_expression"], contract
+    )
+    grouped: dict[str, list[str]] = {}
+    for feature in sorted(required_features):
+        grouped.setdefault(str(feature_specs[feature]["relation_plan"]), []).append(feature)
+
+    select_lines = [
+        f"      {base_key} AS {_quote_identifier('user_id')}"
+    ]
+    for feature in grouped.get(base_plan_id, []):
+        expression = _render_deployment_expression(
+            feature_specs[feature]["expression"], contract
+        )
+        select_lines.append(
+            "      "
+            + _deployment_null_wrapped(expression, feature_specs[feature])
+            + " AS "
+            + _quote_identifier(feature)
+        )
+
+    join_blocks: list[str] = []
+    for plan_id in sorted(set(grouped) - {base_plan_id}):
+        plan = plans[plan_id]
+        kind = str(plan["kind"])
+        plan_alias = "plan_" + plan_id
+        plan_features = grouped[plan_id]
+        projections: list[str] = []
+        if kind == "user_aggregation":
+            key_expression = _render_deployment_expression(
+                plan["entity_key_expression"], contract
+            )
+            projections.append(
+                f"        {key_expression} AS {_quote_identifier('__join_key')}"
+            )
+        elif kind != "scalar":
+            raise ValueError(
+                f"Non-base relation plan {plan_id!r} has unsupported kind {kind!r}"
+            )
+        for feature in plan_features:
+            expression = _render_deployment_expression(
+                feature_specs[feature]["expression"], contract
+            )
+            projections.append(
+                "        " + expression + " AS " + _quote_identifier(feature)
+            )
+            reference = f"{plan_alias}.{_quote_identifier(feature)}"
+            select_lines.append(
+                "      "
+                + _deployment_null_wrapped(reference, feature_specs[feature])
+                + " AS "
+                + _quote_identifier(feature)
+            )
+        block = [
+            "    " + ("LEFT JOIN (" if kind == "user_aggregation" else "CROSS JOIN ("),
+            "      SELECT",
+            ",\n".join(projections),
+            *["      " + line for line in _render_deployment_from(plan, contract, trial_mode=trial_mode)],
+        ]
+        filters = plan.get("filters", [])
+        if filters:
+            block.append(
+                "      WHERE "
+                + " AND ".join(
+                    f"({_render_deployment_expression(item, contract)})"
+                    for item in filters
+                )
+            )
+        if kind == "user_aggregation":
+            block.append(f"      GROUP BY {key_expression}")
+        block.append("    ) AS " + plan_alias)
+        if kind == "user_aggregation":
+            block.append(
+                "      ON toString("
+                + base_key
+                + ") = toString("
+                + plan_alias
+                + "."
+                + _quote_identifier("__join_key")
+                + ")"
+            )
+        join_blocks.append("\n".join(block))
+
+    feature_sql_lines = [
+        "    SELECT",
+        ",\n".join(select_lines),
+        *["    " + line for line in _render_deployment_from(base_plan, contract, trial_mode=trial_mode)],
+    ]
+    feature_sql_lines.extend(join_blocks)
+    base_filters = base_plan.get("filters", [])
+    if base_filters:
+        feature_sql_lines.append(
+            "    WHERE "
+            + " AND ".join(
+                f"({_render_deployment_expression(item, contract)})"
+                for item in base_filters
+            )
+        )
+    feature_sql = "\n".join(feature_sql_lines)
+
+    lineage_rows: list[dict[str, Any]] = []
+    for feature in sorted(required_features):
+        spec = feature_specs[feature]
+        plan_id = str(spec["relation_plan"])
+        aliases, _errors = _deployment_contract_aliases(
+            plan_id, plans[plan_id], contract
+        )
+        refs = spec.get("source_columns", [])
+        lineage_rows.append(
+            {
+                "feature": feature,
+                "feature_kind": plans[plan_id]["kind"],
+                "relation_plan": plan_id,
+                "source_tables": list(
+                    dict.fromkeys(
+                        aliases[str(item["alias"])] for item in refs
+                    )
+                ),
+                "source_columns": [str(item["column"]) for item in refs],
+                "source_column_refs": refs,
+                "sql_expression": _render_deployment_expression(
+                    spec["expression"], contract
+                ),
+                "null_policy": spec["null_policy"],
+            }
+        )
+    feature_sql, encoded_report = _wrap_tree_preprocessing(
+        feature_sql,
+        required_features,
+        tree_features,
+        tree_preprocessing,
+    )
+    report = {
+        "lineage_source": DEPLOYMENT_FEATURE_CONTRACT,
+        "deployment_contract_version": deployment["contract_version"],
+        "deployment_contract_validation": deployment["validation"],
+        "required_feature_count": len(required_features),
+        "resolved_feature_count": len(required_features),
+        "feature_coverage": 1.0,
+        "features": lineage_rows,
+        "tree_encoded_features": encoded_report,
+        "tree_preprocessing_validation": tree_preprocessing.get("validation"),
+        "trial_mode": trial_mode,
+    }
+    return feature_sql, report
 
 
 def _dimension_expression_for_entry(
@@ -2462,9 +3027,14 @@ def main() -> None:
     _ensure_executed_generator_artifact()
     contract = load_runtime_contract()
     generator_provenance = _generator_provenance()
-    high_cardinality_check = _read_json(
-        "step2_3_high_cardinality_check.json",
-        allow_safe_repairs=True,
+    high_cardinality_path = OUTPUT_DIR / "step2_3_high_cardinality_check.json"
+    high_cardinality_check = (
+        _read_json(
+            "step2_3_high_cardinality_check.json",
+            allow_safe_repairs=True,
+        )
+        if high_cardinality_path.is_file()
+        else {"status": "not_transferred_when_deployment_contract_is_available"}
     )
     upstream_reports = {
         "lightgbm_teacher": _read_json("step3_4_model_report.json"),
@@ -2472,7 +3042,42 @@ def main() -> None:
         "scorecard": _read_json("step3_6_model_report.json"),
     }
     tree_preprocessing = _read_json("step3_5_preprocessing_reconstructed.json")
-    lineage = normalize_feature_derivation(contract, high_cardinality_check)
+    deployment_contract: dict[str, Any] | None = None
+    if _has_usable_deployment_feature_contract():
+        deployment_contract = load_deployment_feature_contract(contract)
+        lineage = None
+    else:
+        if (OUTPUT_DIR / DEPLOYMENT_FEATURE_CONTRACT).is_file():
+            INPUT_NORMALIZATION_WARNINGS.append(
+                "step2_3_deployment_feature_contract.json: structural validation "
+                "did not pass; used legacy lineage fallback"
+            )
+        lineage = normalize_feature_derivation(contract, high_cardinality_check)
+
+    def render_features(
+        required_features: set[str],
+        tree_features: set[str],
+        *,
+        trial_mode: bool = False,
+    ) -> tuple[str, dict[str, Any]]:
+        if deployment_contract is not None:
+            return render_feature_subquery_from_deployment_contract(
+                required_features,
+                tree_features,
+                deployment_contract,
+                contract,
+                tree_preprocessing,
+                trial_mode=trial_mode,
+            )
+        assert lineage is not None
+        return render_feature_subquery(
+            required_features,
+            tree_features,
+            lineage,
+            contract,
+            tree_preprocessing,
+            trial_mode=trial_mode,
+        )
     tree = build_tree_candidate(OUTPUT_DIR / "step3_5_rule_card.csv")
     scorecard = build_scorecard_candidate(OUTPUT_DIR / "step3_6_score_rule.csv")
     apply_deployment_contract(tree, scorecard, tree_preprocessing)
@@ -2489,19 +3094,13 @@ def main() -> None:
             set(candidate.features) if candidate.name == "decision_tree" else set()
         )
         try:
-            final_rendering = render_feature_subquery(
+            final_rendering = render_features(
                 set(candidate.features),
                 candidate_tree_features,
-                lineage,
-                contract,
-                tree_preprocessing,
             )
-            trial_rendering = render_feature_subquery(
+            trial_rendering = render_features(
                 set(candidate.features),
                 candidate_tree_features,
-                lineage,
-                contract,
-                tree_preprocessing,
                 trial_mode=True,
             )
         except ValueError as exc:
@@ -2523,19 +3122,13 @@ def main() -> None:
     else:
         required_features = set(tree.features) | set(scorecard.features)
         try:
-            feature_subquery, feature_report = render_feature_subquery(
+            feature_subquery, feature_report = render_features(
                 required_features,
                 set(tree.features),
-                lineage,
-                contract,
-                tree_preprocessing,
             )
-            trial_feature_subquery, _trial_feature_report = render_feature_subquery(
+            trial_feature_subquery, _trial_feature_report = render_features(
                 required_features,
                 set(tree.features),
-                lineage,
-                contract,
-                tree_preprocessing,
                 trial_mode=True,
             )
         except ValueError as exc:

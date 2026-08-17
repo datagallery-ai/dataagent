@@ -58,22 +58,25 @@ decision_tree_scorecard_fusion
 ### Feature Engineering
 
 - `schema_resolution.json`
-- `step2_3_feature_derivation.md`
-- `step2_3_high_cardinality_check.json`
-- `step2_3_feature_aggregation_expanded.sql`（优先的实际表达式输入）
-- `step2_3_feature_aggregation.sql`（旧版兼容 fallback）
+- `step2_3_deployment_feature_contract.json`（新版首选且唯一需要流转的特征血缘输入）
+- `step2_3_feature_derivation.md`（契约缺失时的旧版兼容输入）
+- `step2_3_high_cardinality_check.json`（契约缺失时的旧版兼容输入）
+- `step2_3_feature_aggregation_expanded.sql` / `step2_3_feature_aggregation.sql`（旧版兼容时可选）
 
 用途：
 
 - 从 `schema_resolution.json` 获取用户表、用户 ID 和经过验证的关联键。
-- 将 `step2_3_feature_derivation.md` 在当前 workspace 中标准化为
-  `step2_3_feature_derivation.json`。
-- `step2_3_high_cardinality_check.json` 用于审计分箱、映射和列表特征处理。
-- 血缘权威顺序为 expanded SQL → Schema/schema_resolution → Markdown。Markdown 信息不足时，
-  只能使用已发布的聚合 SQL、Schema
-  和高基数检查结果补全血缘；不得根据常识补造表、字段或表达式。
+- 新版契约存在且 `validation.structural_validation.passed=true` 时，必须复核其源表、字段、
+  alias、JOIN 和参数，并直接按
+  `relation_plans` 渲染；不得再从 Markdown 或 expanded SQL 猜测血缘。
+- 新版契约按物理 SQL scope 记录多表 JOIN，因此不得把多个 `source_tables` 推断成
+  `UNION ALL`，也不得改写契约中的 alias。
+- 新版契约不存在或结构检查未通过时，将 `step2_3_feature_derivation.md` 标准化为
+  `step2_3_feature_derivation.json`，并按 expanded SQL → Schema/schema_resolution → Markdown
+  的旧版权威顺序兼容历史轨迹。不得根据常识补造表、字段或表达式。
 
-后续 SQL renderer 只读取生成后的 `step2_3_feature_derivation.json`，不直接自由解释 Markdown。
+两条路径都会生成 `step2_3_feature_derivation.json` 作为本阶段审计产物；新版路径的 SQL renderer
+直接读取已经再次校验的部署契约，不自由解释 Markdown。
 
 ### Model Engineering
 
@@ -152,6 +155,7 @@ LightGBM 教师参照：
 静态校验通过后，执行生成器输出的源库限量 `SELECT` 试算 SQL。试算 SQL 在每张物理源表
 内部添加 `LIMIT`，再设置时间、线程、读取行数、读取字节和内存上限；禁止只在 final SQL
 外层添加 LIMIT。该试算用于验证真实源库中的表、字段、函数、类型、别名和 JOIN。
+它是开放式 ClickHouse 表达式语法与执行语义的权威门禁；Step2 固定脚本只检查契约结构。
 
 使用生成器第一次运行产生的 `.nl2sql_runtime/source_validation_request.json`：
 
