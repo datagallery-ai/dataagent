@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
 from dataagent.interface.rest_api.service import DataAgentService
@@ -25,6 +25,8 @@ from dataagent.interface.rest_api.service import DataAgentService
 
 class DataAgentQueryRequest(BaseModel):
     """DataAgent query request."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
     stream: bool = False
