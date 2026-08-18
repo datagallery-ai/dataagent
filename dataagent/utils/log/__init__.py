@@ -20,6 +20,8 @@ lives in ``dataagent.utils.log.dataagent_logger`` to avoid colliding with the co
 __all__ = [
     "DataAgentLogger",
     "LoggerConfig",
+    "dataagent_log_context",
+    "get_log_context",
     "init_logger",
     "get_logger",
     "reconfigure",
@@ -34,6 +36,8 @@ from .dataagent_logger import (
     DataAgentLogger,
     LoggerConfig,
     build_session_log_path,
+    dataagent_log_context,
+    get_log_context,
     get_logger,
     init_logger,
     reconfigure,
