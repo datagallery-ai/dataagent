@@ -103,7 +103,6 @@ class BaseNL2SQLNode(BaseNode):
                         message=f"Model output format error: JSON parsing failed after 3 attempts: {detail}",
                         detail=detail,
                     ) from exc
-        return None
 
     def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
         """Persist the (system, user, AI) prompt triple to the node's context-dump file."""

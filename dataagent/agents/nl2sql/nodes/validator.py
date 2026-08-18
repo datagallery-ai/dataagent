@@ -15,6 +15,9 @@ import json
 import re
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
@@ -119,12 +122,6 @@ class ValidatorNode(BaseNL2SQLNode):
             return [str(e)]
 
     def _validate_with_sqlglot(self, sql: str) -> list[str]:
-        try:
-            import sqlglot
-            from sqlglot import exp
-        except ImportError:
-            logger.warning("Skip SQLGlot validation because SQLGlot is not installed.")
-            return []
         try:
             parsed = sqlglot.parse_one(sql, read=self.dialect, error_level=sqlglot.errors.ErrorLevel.RAISE)
             ALLOWED = (exp.Select, exp.Union, exp.Except, exp.Intersect)

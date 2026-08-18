@@ -380,9 +380,7 @@ class ConfigManager:
             return value
 
         try:
-            result = interpolate_value(config_dict)
-            if result is None:
-                logger.warning("Variable interpolation returned None")
+            interpolate_value(config_dict)
         except Exception as e:
             logger.error(f"Failed to process variable interpolation: {e}")
             raise
