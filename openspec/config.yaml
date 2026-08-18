@@ -34,6 +34,7 @@ operations:
       - 保持实现与已批准的 proposal、specs、design 一致
       - 实现完先验证功能是否符合 specs：优先 `uv run pytest` 跑相关用例，再按需扩大范围
       - 再检查实现是否过复杂、是否有多余抽象
+      - 类内方法按大序排列：`__init__` / `__str__`（及其它 dunder）→ `@staticmethod` → `@classmethod` → 普通实例方法；每组内公有在前（不以下划线开头），`_xxx` 在后
       - 最后运行 `uv run ruff check .` 和 `uv run ruff format .`
   archive:
     guidance:

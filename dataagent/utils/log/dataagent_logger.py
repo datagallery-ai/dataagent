@@ -18,16 +18,90 @@ may be generated in the same package directory.
 """
 
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger as _loguru_logger
 
 from dataagent.utils.constants import TZ_CN
 from dataagent.utils.runtime_paths import dataagent_home, resolve_user_root
+
+_LOG_CONTEXT_KEYS = (
+    "trace_id",
+    "request_id",
+    "user_id",
+    "session_id",
+    "run_id",
+    "sub_id",
+    "task_id",
+    "workspace",
+    "agent_name",
+)
+_FORMAT_CONTEXT_KEYS = ("trace_id", "session_id", "workspace")
+_DEFAULT_CONTEXT_FORMAT = "trace_id={extra[trace_id]} session={extra[session_id]} workspace={extra[workspace]}"
+
+_log_context_var: ContextVar[dict[str, Any] | None] = ContextVar(
+    "dataagent_log_context",
+    default=None,
+)
+
+
+def get_log_context() -> dict[str, Any]:
+    """Return a copy of the current logging context."""
+    return dict(_log_context_var.get() or {})
+
+
+@contextmanager
+def dataagent_log_context(**fields: Any) -> Iterator[dict[str, Any]]:
+    """Bind request/session/task fields into a concurrency-safe logging context."""
+    current = dict(_log_context_var.get() or {})
+    updates = {key: value for key, value in fields.items() if key in _LOG_CONTEXT_KEYS and value is not None}
+    if "trace_id" not in current and "trace_id" not in updates:
+        updates["trace_id"] = uuid4().hex
+    current.update(updates)
+    token = _log_context_var.set(current)
+    try:
+        yield dict(current)
+    finally:
+        _log_context_var.reset(token)
+
+
+def _patch_log_record(record: dict[str, Any]) -> None:
+    """Inject ContextVar fields into every Loguru record."""
+    extra = record.setdefault("extra", {})
+    for key, value in (_log_context_var.get() or {}).items():
+        if key not in extra:
+            extra[key] = value
+    for key in _FORMAT_CONTEXT_KEYS:
+        extra.setdefault(key, "")
+
+
+def _default_format_string(process_name: str) -> str:
+    """Return the production log format that always includes grepable context."""
+    context = _DEFAULT_CONTEXT_FORMAT
+    if process_name and process_name != "main":
+        return (
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level: <8}</level> | "
+            f"<magenta>{process_name}</magenta> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+            f"{context} | "
+            "<level>{message}</level>\n"
+        )
+    return (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+        f"{context} | "
+        "<level>{message}</level>\n"
+    )
 
 
 def _cn_format(record: dict) -> str:
@@ -63,6 +137,7 @@ class LoggerConfig:
     process_name: str = "main"
     redirect_stdout_stderr: bool = False
     file_path_explicit: bool = False
+    enqueue: bool = True
 
 
 class DataAgentLogger:
@@ -106,26 +181,12 @@ class DataAgentLogger:
 
         format_string = effective_config.format_string
         if format_string is None:
-            if effective_config.json_logs:
-                format_string = "{message}"
-            else:
-                if process_name and process_name != "main":
-                    format_string = (
-                        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-                        "<level>{level: <8}</level> | "
-                        f"<magenta>{process_name}</magenta> | "
-                        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                        "<level>{message}</level>\n"
-                    )
-                else:
-                    format_string = (
-                        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-                        "<level>{level: <8}</level> | "
-                        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                        "<level>{message}</level>\n"
-                    )
+            format_string = "{message}" if effective_config.json_logs else _default_format_string(process_name)
 
         format_callable = format_string if effective_config.json_logs else _make_format(format_string)
+
+        # Keep ContextVar fields on every record; production sinks never dump locals.
+        _loguru_logger.configure(patcher=_patch_log_record)
 
         if effective_config.console:
             _loguru_logger.add(
@@ -134,7 +195,7 @@ class DataAgentLogger:
                 format=format_callable,
                 colorize=True,
                 backtrace=True,
-                diagnose=True,
+                diagnose=False,
             )
 
         if file_path:
@@ -151,9 +212,9 @@ class DataAgentLogger:
                     retention=effective_config.retention,
                     compression=effective_config.compression,
                     encoding="utf-8",
-                    enqueue=True,
+                    enqueue=effective_config.enqueue,
                     backtrace=True,
-                    diagnose=True,
+                    diagnose=False,
                     serialize=effective_config.json_logs,
                 )
             except OSError as e:
@@ -166,7 +227,7 @@ class DataAgentLogger:
                         format=format_callable,
                         colorize=True,
                         backtrace=True,
-                        diagnose=True,
+                        diagnose=False,
                     )
                     _loguru_logger.warning(f"无法写入日志文件 {file_path}: {e}，已强制启用控制台输出")
                 cls._config = replace(effective_config, file_path=None)
