@@ -200,7 +200,16 @@ class LocalToolWrapper(BaseTool):
         """
         if self.name not in SUBMIT_JOB_TOOLS:
             return context
-        base = build_base_job_envelope(self.name, kwargs)
+        # Resolve parent_tool_call_id from the sub-agent runtime context set by
+        # the executor.  This allows the envelope (and downstream otel_config)
+        # to carry the exact tool_call_id that launched the sub-agent.
+        parent_tool_call_id = ""
+        from dataagent.actions.tools.local_tool.tools import get_subagent_runtime_context
+
+        subagent_ctx = get_subagent_runtime_context()
+        if isinstance(subagent_ctx, dict):
+            parent_tool_call_id = str(subagent_ctx.get("tool_call_id") or "")
+        base = build_base_job_envelope(self.name, kwargs, parent_tool_call_id=parent_tool_call_id)
         if base is None:
             return context
         candidate = dict(context.job_envelope) if context.job_envelope else dict(base)

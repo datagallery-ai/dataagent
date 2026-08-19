@@ -59,6 +59,7 @@ class LocalFlexAdapter:
         reuse_workspace: bool = False,
         timeout_sec: int = DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC,
         job_service: Any = None,
+        otel_config: dict[str, Any] | None = None,
     ) -> JobResult:
         """Execute one subagent job synchronously inside a JobService worker thread.
 
@@ -76,6 +77,11 @@ class LocalFlexAdapter:
             reuse_workspace: When true, hydrate messages/state from the workspace.
             timeout_sec: Subprocess timeout in seconds.
             job_service: Optional job service used to register the child process group.
+            otel_config: Pre-captured OTel config from the submit-time round.
+                When provided, used instead of reading ``runtime.otel_recorder``
+                at execution time.  This is critical for Job-path sub-agents
+                because the main agent's ``_current_round_span_id`` may have
+                advanced by the time the job worker thread runs.
         """
         started_at = time.monotonic()
         emit_event(
@@ -115,9 +121,14 @@ class LocalFlexAdapter:
         sandbox = runtime.sandbox
         resolved_job_service = job_service if job_service is not None else getattr(runtime, "job_service", None)
 
-        # Propagate OTel config to the sub-agent so it creates its own OtelEventRecorder
-        parent_otel_recorder = getattr(runtime, "otel_recorder", None)
-        otel_config = parent_otel_recorder.otel_config if parent_otel_recorder is not None else None
+        # Propagate OTel config to the sub-agent so it creates its own OtelEventRecorder.
+        # Prefer the pre-captured otel_config (snapshotted at submit time) because
+        # the main agent's _current_round_span_id may have advanced by the time
+        # this worker thread runs.  Fall back to reading round_otel_config live
+        # only when no snapshot was provided (e.g. direct adapter usage).
+        if otel_config is None:
+            parent_otel_recorder = getattr(runtime, "otel_recorder", None)
+            otel_config = parent_otel_recorder.round_otel_config if parent_otel_recorder is not None else None
 
         def _on_child_started(pgid: int) -> None:
             if resolved_job_service is not None:

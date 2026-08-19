@@ -550,7 +550,7 @@ class LangChainChatModelAdapter:
         """规范化输入并同步调用模型。"""
         recorder = self._get_otel_recorder()
         if recorder:
-            recorder.record_llm_start(model=self._llm_perf_name)
+            recorder.record_llm_start(model=self._llm_perf_name, messages=self._serialize_otel_input(chat_input))
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="invoke") as h:
             resp = self._invoke_inner(chat_input, kwargs)
             self._fill_llm_extra(h, resp)
@@ -567,7 +567,7 @@ class LangChainChatModelAdapter:
         """规范化输入并异步调用模型。"""
         recorder = self._get_otel_recorder()
         if recorder:
-            recorder.record_llm_start(model=self._llm_perf_name)
+            recorder.record_llm_start(model=self._llm_perf_name, messages=self._serialize_otel_input(chat_input))
         with get_current_collector().measure("llm", self._llm_perf_name, call_mode="ainvoke") as h:
             norm_input = self._normalize_input_for_langchain(chat_input)
             resp = await self._ainvoke_normalized(norm_input, kwargs)
@@ -585,7 +585,7 @@ class LangChainChatModelAdapter:
         """规范化输入并优先使用底层流式能力；不支持时回退到一次性调用。"""
         recorder = self._get_otel_recorder()
         if recorder:
-            recorder.record_llm_start(model=self._llm_perf_name)
+            recorder.record_llm_start(model=self._llm_perf_name, messages=self._serialize_otel_input(chat_input))
         norm_input = self._normalize_input_for_langchain(chat_input)
         raw_fn = getattr(self._raw, "astream", None)
 
@@ -627,14 +627,14 @@ class LangChainChatModelAdapter:
             log_llm_done("LLM stream finished", final_resp, rid=rid)
             self._fill_llm_extra(h, final_resp)
             h["chunk_count"] = chunk_count
-        if recorder:
-            recorder.record_llm_end(
-                usage=final_resp.usage_metadata,
-                finish_reason=self._infer_finish_reason(final_resp),
-                content=final_resp.content,
-                reasoning_content=final_resp.reasoning_content,
-            )
-        yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
+            if recorder:
+                recorder.record_llm_end(
+                    usage=final_resp.usage_metadata,
+                    finish_reason=self._infer_finish_reason(final_resp),
+                    content=final_resp.content,
+                    reasoning_content=final_resp.reasoning_content,
+                )
+            yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LangChainChatModelAdapter:
         """绑定工具，委托底层 bind_tools。"""
@@ -643,6 +643,19 @@ class LangChainChatModelAdapter:
             new_raw = fn(tools, **kwargs)
             return LangChainChatModelAdapter(new_raw, self._config)
         return self
+
+    def _serialize_otel_input(self, chat_input: Any) -> Any:
+        """Serialize the LLM input for OTel trajectory recording.
+
+        Converts LangChain Message objects to OpenAI-style dicts so the
+        recorder can store them as plain JSON.  Returns ``None`` on failure
+        so that recording degrades gracefully without affecting the LLM call.
+        """
+        try:
+            return type(self).messages_to_openai_dicts(chat_input)
+        except Exception:
+            logger.debug("Failed to serialize LLM input for OTel recording.")
+            return None
 
     def _stream_out_step(
         self, accumulated: _StreamAccum | None, out: Any

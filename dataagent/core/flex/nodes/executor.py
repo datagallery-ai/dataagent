@@ -340,6 +340,15 @@ class Executor(BaseNode):
             otel_recorder=otel_recorder,
         )
 
+        # OTel: persist events for this round to disk (incremental flush).
+        # This ensures completed-round data survives even if the process is
+        # killed (e.g. sub-agent timeout) before the final flush().
+        if otel_recorder is not None:
+            try:
+                otel_recorder.record_round_end()
+            except Exception as exc:
+                logger.warning("OTel record_round_end failed: %s", exc)
+
         for tool_call in message.tool_calls:
             tool_call_id = str(tool_call["id"])
             execution = parallel_results[tool_call_id]
@@ -928,6 +937,19 @@ class Executor(BaseNode):
                 sqlite_path_for_shell = db_path_val.strip()
         set_user_sqlite_path(sqlite_path_for_shell)
 
+        # Propagate OTel config to sub-agent tools (both Tool-path and Job-path).
+        # Use round_otel_config so the sub-agent's parent_span_id points to the
+        # current round's span (not the entire agent run), enabling consumers to
+        # trace which round triggered a sub-agent.
+        _otel_recorder = getattr(runtime, "otel_recorder", None) if runtime is not None else None
+        _otel_config = _otel_recorder.round_otel_config if _otel_recorder is not None else None
+        # Inject tool_call_id into otel_config so that the sub-agent trajectory
+        # records which specific tool call launched it.  This makes it possible
+        # to distinguish multiple sub-agents launched in the same round.
+        if _otel_config is not None and tool_call_id:
+            _otel_config = dict(_otel_config)
+            _otel_config["parent_tool_call_id"] = tool_call_id
+
         context_token = set_subagent_runtime_context(
             user_id=user_id,
             session_id=session_id,
@@ -938,6 +960,7 @@ class Executor(BaseNode):
             tool_call_id=tool_call_id,
             agent_config=agent_cfg,
             parent_workspace=getattr(runtime, "workspace_dir", None),
+            otel_config=_otel_config,
         )
         return _ToolCallExecutionSetup(
             tool_name=tool_name,

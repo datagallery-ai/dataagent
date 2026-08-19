@@ -188,6 +188,20 @@ class AgentService:
         reused = bool(resolved_workspace_rel_path)
         job_id = JobService.new_job_id()
 
+        # Snapshot OTel config at submit time so the sub-agent's parent_span_id
+        # points to the round that called submit_subagent, not a later round.
+        # Without this, the main agent's _current_round_span_id advances between
+        # submit and execution, causing parent_span_id mismatch.
+        _otel_recorder = getattr(self.runtime, "otel_recorder", None)
+        _otel_config = _otel_recorder.round_otel_config if _otel_recorder is not None else None
+        # Inject parent_tool_call_id into otel_config so that the sub-agent
+        # trajectory records which specific tool call launched it.  This makes
+        # it possible to distinguish multiple sub-agents launched in the same
+        # round (each from a different submit_subagent tool call).
+        if _otel_config is not None and resolved_parent_tool_call_id:
+            _otel_config = dict(_otel_config)
+            _otel_config["parent_tool_call_id"] = resolved_parent_tool_call_id
+
         def emit(event: dict[str, Any]) -> None:
             event_job_id = str(event.get("job_id") or "")
             if event_job_id:
@@ -208,6 +222,7 @@ class AgentService:
                 reuse_workspace=reused,
                 timeout_sec=resolved_timeout_sec,
                 job_service=self.job_service,
+                otel_config=_otel_config,
             )
 
         metadata = {

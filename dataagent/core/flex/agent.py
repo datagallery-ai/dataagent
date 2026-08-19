@@ -297,6 +297,63 @@ class FlexAgent(BaseAgent):
         )
 
     @staticmethod
+    def _inject_otel_config_from_yaml(state: dict[str, Any], agent_config: dict[str, Any] | None) -> None:
+        """Inject ``__otel_config`` from YAML ``OTEL_CONFIG`` when not already present.
+
+        This allows OTel tracing to be enabled purely via YAML configuration
+        without modifying ``initial_state`` in code.  When ``state`` already
+        carries a ``__otel_config`` (e.g. injected by a parent agent or
+        external caller), the YAML config is silently skipped so that
+        programmatic overrides always take precedence.
+
+        OTel tracing is **disabled by default**.  To enable it, set
+        ``enabled: true`` explicitly in YAML or in the programmatic
+        ``__otel_config`` dict.
+
+        ``output_dir`` is optional — when omitted, it defaults to
+        ``<workspace>/.otel/`` (derived from ``state["workspace"]`` at
+        recorder creation time inside :meth:`OtelEventRecorder.from_state`).
+
+        YAML example (minimal)::
+
+            OTEL_CONFIG:
+              enabled: true
+
+        YAML example (full)::
+
+            OTEL_CONFIG:
+              enabled: true
+              output_dir: "/path/to/otel_output"
+              parent_trace_id: "0123abcd..."    # optional
+              parent_span_id: "4567efgh..."     # optional
+              provider_name: "dataagent"        # optional
+
+        Fields such as ``session_id``, ``sub_id``, ``run_id``, and ``role`` are
+        **not** part of ``OTEL_CONFIG`` — they are already inferred from
+        ``initial_state`` by :meth:`OtelEventRecorder.from_state`.
+
+        Args:
+            state: The agent's ``initial_state`` dict (mutated in-place).
+            agent_config: The top-level agent config dict (``self.config``).
+        """
+        if not isinstance(state, dict):
+            return
+        # Programmatic override always wins
+        if state.get("__otel_config"):
+            return
+        yaml_otel = (agent_config or {}).get("OTEL_CONFIG")
+        if not isinstance(yaml_otel, dict) or not yaml_otel:
+            return
+        # Pass YAML keys through verbatim; do NOT auto-set enabled=True.
+        # The user must explicitly write `enabled: true` to activate tracing.
+        state["__otel_config"] = dict(yaml_otel)
+        logger.debug(
+            "[FlexAgent] Injected __otel_config from YAML OTEL_CONFIG: enabled=%s, output_dir=%s",
+            yaml_otel.get("enabled", False),
+            yaml_otel.get("output_dir", "<workspace/.otel>"),
+        )
+
+    @staticmethod
     def _create_otel_recorder(initial_state: dict[str, Any]) -> Any:
         """Create an OTel event recorder from ``initial_state["__otel_config"]``.
 
@@ -433,7 +490,8 @@ class FlexAgent(BaseAgent):
         self._refresh_workspace_runtime_context(initial_state, runtime)
         logger.trace(f"[FlexAgent] runtime updated: workspace={runtime.workspace_dir}, hierarchy={runtime.hierarchy}")
 
-        # OTel: create event recorder from initial_state["__otel_config"] and bind to runtime
+        # OTel: inject from YAML when not already present, then create recorder
+        self._inject_otel_config_from_yaml(initial_state, self.config)
         otel_recorder = self._create_otel_recorder(initial_state)
         if otel_recorder is not None:
             runtime.otel_recorder = otel_recorder
@@ -595,7 +653,9 @@ class FlexAgent(BaseAgent):
             if str(context_state.get("user_query") or "").strip():
                 runtime.reset_flex_planner_user_sync()
 
-        # OTel: create event recorder from initial_state and bind to runtime
+        # OTel: inject from YAML when not already present, then create recorder
+        if isinstance(context_state, dict):
+            self._inject_otel_config_from_yaml(context_state, self.config)
         otel_recorder = self._create_otel_recorder(context_state) if isinstance(context_state, dict) else None
         if otel_recorder is not None:
             runtime.otel_recorder = otel_recorder
@@ -649,7 +709,9 @@ class FlexAgent(BaseAgent):
         # Per-call runtime for astream (same pattern as chat())
         runtime = self._create_call_runtime()
 
-        # OTel: create event recorder from initial_state and bind to runtime
+        # OTel: inject from YAML when not already present, then create recorder
+        if isinstance(initial_state, dict):
+            self._inject_otel_config_from_yaml(initial_state, self.config)
         otel_recorder = self._create_otel_recorder(initial_state) if isinstance(initial_state, dict) else None
         if otel_recorder is not None:
             runtime.otel_recorder = otel_recorder
