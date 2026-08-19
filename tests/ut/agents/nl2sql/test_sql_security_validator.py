@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,37 +26,35 @@ def _config_manager() -> ConfigManager:
 
 
 @pytest.mark.asyncio
-async def test_validator_security_switch_defaults_to_enabled() -> None:
-    """Omitting sql_security_enabled should run check_sql, not the weak sqlglot path."""
+async def test_validator_always_runs_security_check() -> None:
+    """Validator should always run the deterministic SQL security check."""
     node = ValidatorNode(config_manager=_config_manager(), db_explain=False)
-    node._validate_with_sqlglot = Mock(return_value=[])
     candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
 
     result = await node._validate_syntax(candidates, {})
 
-    node._validate_with_sqlglot.assert_not_called()
     assert result[0].get("score", 1) == 0
     assert candidates[0].security_checked is True
     assert candidates[0].security_violations[0].get("rule_id", "") == "FUNCTION-001"
 
 
 @pytest.mark.asyncio
-async def test_validator_explicit_false_uses_weak_sqlglot_check() -> None:
-    """Explicit sql_security_enabled=false should keep the legacy sqlglot validator."""
+async def test_validator_explicit_false_cannot_disable_security() -> None:
+    """A stale false setting should not restore the weak SQLGlot-only path."""
     node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=False)
     candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
 
     result = await node._validate_syntax(candidates, {})
 
-    assert result[0].get("score", 0) == 1
-    assert candidates[0].security_checked is False
-    assert candidates[0].security_violations == []
+    assert result[0].get("score", 1) == 0
+    assert candidates[0].security_checked is True
+    assert candidates[0].security_violations[0].get("rule_id", "") == "FUNCTION-001"
 
 
 @pytest.mark.asyncio
 async def test_validator_records_candidate_security_violations() -> None:
     """Validator should attach structured violations to each blocked candidate."""
-    node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=True)
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False)
     candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
 
     result = await node._validate_syntax(candidates, {"orders": {"columns": {"id": {}}}})
@@ -71,19 +69,16 @@ async def test_validator_records_candidate_security_violations() -> None:
 @pytest.mark.asyncio
 async def test_validator_security_check_replaces_legacy_sqlglot_parse() -> None:
     """Enabled security validation should parse each candidate only through the security module."""
-    node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=True)
-    node._validate_with_sqlglot = Mock(return_value=[])
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False)
     candidates = [Result(id=0, sql="SELECT id FROM orders WHERE id = 1")]
 
     await node._validate_syntax(candidates, {"orders": {"columns": {"id": {}}}})
-
-    node._validate_with_sqlglot.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_validator_skips_explain_for_security_blocked_candidate() -> None:
     """Validator should never EXPLAIN a candidate blocked by the security module."""
-    node = ValidatorNode(config_manager=_config_manager(), db_explain=True, sql_security_enabled=True)
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=True)
     node._validate_with_db_explain = AsyncMock(return_value=[])
     candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
 
@@ -95,7 +90,7 @@ async def test_validator_skips_explain_for_security_blocked_candidate() -> None:
 @pytest.mark.asyncio
 async def test_validator_checks_all_generated_candidates_independently() -> None:
     """Multi-candidate validation should retain a safe candidate while marking blocked siblings."""
-    node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=True)
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False)
     candidates = [
         Result(id=0, sql="SELECT current_setting('search_path')"),
         Result(id=1, sql="SELECT id FROM orders WHERE id = 1"),

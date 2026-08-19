@@ -25,7 +25,7 @@ def _candidate(candidate_id: int, sql: str, score: float, *, blocked: bool = Fal
 @pytest.mark.asyncio
 async def test_reflector_selects_safe_candidate_before_scoring() -> None:
     """Reflector should never select a blocked candidate with a higher score."""
-    node = ReflectorNode(threshold=0.5, sql_security_enabled=True)
+    node = ReflectorNode(threshold=0.5)
     state = get_default_state("question")
     state["validation_results"] = [
         _candidate(0, "SELECT current_setting('x')", 1.0, blocked=True),
@@ -43,7 +43,7 @@ async def test_reflector_selects_safe_candidate_before_scoring() -> None:
 @pytest.mark.asyncio
 async def test_reflector_raises_security_error_when_all_candidates_blocked_after_retries() -> None:
     """Reflector should fail closed when no safe candidate remains after retries."""
-    node = ReflectorNode(threshold=0.9, sql_security_enabled=True)
+    node = ReflectorNode(threshold=0.9)
     state = get_default_state("question", ref_retries=0)
     state["validation_results"] = [_candidate(0, "SELECT current_setting('x')", 0.0, blocked=True)]
 
@@ -57,7 +57,7 @@ async def test_reflector_raises_security_error_when_all_candidates_blocked_after
 @pytest.mark.asyncio
 async def test_reflector_rejects_candidate_without_security_proof() -> None:
     """A resume or custom start must not bypass Validator by supplying an unchecked candidate."""
-    node = ReflectorNode(threshold=0.0, sql_security_enabled=True)
+    node = ReflectorNode(threshold=0.0)
     state = get_default_state("question", ref_retries=0)
     state["validation_results"] = [Result(id=0, sql="SELECT id FROM orders", score=1.0)]
 
@@ -66,13 +66,11 @@ async def test_reflector_rejects_candidate_without_security_proof() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reflector_preserves_unchecked_candidates_when_security_disabled() -> None:
-    """The default-off switch should preserve Reflector's pre-security candidate behavior."""
-    node = ReflectorNode(threshold=0.0)
+async def test_reflector_explicit_false_cannot_bypass_security() -> None:
+    """A stale false setting should not allow an unchecked candidate through Reflector."""
+    node = ReflectorNode(threshold=0.0, sql_security_enabled=False)
     state = get_default_state("question", ref_retries=0)
     state["validation_results"] = [Result(id=0, sql="SELECT id FROM orders", score=1.0)]
 
-    result = await node._aprocess(state)
-
-    assert result["proceed"] is True
-    assert result["sql"] == "SELECT id FROM orders"
+    with pytest.raises(SQLSecurityValidationError):
+        await node._aprocess(state)
