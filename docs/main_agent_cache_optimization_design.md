@@ -806,11 +806,11 @@ bp0 测试：`test_bp0_system_always_gets_cc`、`test_bp0_survives_compression_s
 
 | 限制 | 影响 | issue |
 |------|------|-------|
-| `provider` 字段未传到 `LLMClient` | Anthropic provider-only 配置失效（当前主 Agent 不用 Anthropic，不爆发） | [#25](https://gitcode.com/datagallery/dataagent/issues/25) |
-| `_apply_cache_control_with_anchors` 浅拷贝污染 list content | list content 消息（多模态/历史回放）被永久打上 cc 标记 | [#26](https://gitcode.com/datagallery/dataagent/issues/26) |
-| 缓存常量未在 `constants.py` 集中 | 维护成本 | [#28](https://gitcode.com/datagallery/dataagent/issues/28) |
+| `provider` 字段未传到 `LLMClient` | Anthropic provider-only 配置失效（当前主 Agent 不用 Anthropic，不爆发） | [#25](/datagallery/dataagent/issues/25) |
+| `_apply_cache_control_with_anchors` 浅拷贝污染 list content | list content 消息（多模态/历史回放）被永久打上 cc 标记 | [#26](/datagallery/dataagent/issues/26) |
+| 缓存常量未在 `constants.py` 集中 | 维护成本 | [#28](/datagallery/dataagent/issues/28) |
 | 命中率分母未区分 Anthropic vs OpenAI/DeepSeek 语义 | Anthropic 命中率虚高 | （未单独建 issue，§1.6.4 已警示） |
-| `executor._max_tool_result_length` 双源配置 | reconfig 后不同步 | [#36](https://gitcode.com/datagallery/dataagent/issues/36) |
+| `executor._max_tool_result_length` 双源配置 | reconfig 后不同步 | [#36](/datagallery/dataagent/issues/36) |
 | DeepSeek `prompt_cache_hit_tokens` 路径无单测 | 回归风险 | （建议补测，§7.1） |
 | ~~自部署端点不支持 list content 格式~~ | ~~vLLM-served Qwen 30B 等将 list content 路由到 VL 模型导致失败~~ | ✅ 已修（`enable_cache_control` 开关 + `DATAAGENT_CACHE_CONTROL=0`，见 §2.5.1） |
 
@@ -957,12 +957,11 @@ bash /home/qianlong/workspace/scripts/run_perf.sh --runs 3
 
 | Issue | 标题 | 0623 状态 | 对性能的影响 |
 |-------|------|-----------|-------------|
-| [#11](https://gitcode.com/datagallery/dataagent/issues/11) | 主 Agent Prompt Cache 优化（D1-D4 + StableUser 移除 + bp0 System 断点） | ✅ 已修 | 命中率 +6~11 pp（large），时延 −47~56% |
-| [#14](https://gitcode.com/datagallery/dataagent/issues/14) | build_messages 兜底截断 max_tool_result_length | ✅ 已修（两分支都有，via `2056c20`） | 不构成分支差异，但修复了 8192 硬编码截断 bug |
-| [#7](https://gitcode.com/datagallery/dataagent/issues/7) / [#8](https://gitcode.com/datagallery/dataagent/issues/8) | Planner 复杂任务不生成 plan / Plan-Mandatory 强制 | ✅ 已修 | LLM 调用 −19~28%，create_plan 调用 +28~125%（净收益正） |
-| [#12](https://gitcode.com/datagallery/dataagent/issues/12) | NL2SQL selector 循环回归（b33ac71 误回退 b576b53） | ✅ 已修 | nl2sql_sub_agent_tool 调用 −28%（Qwen），间接减少 bash fallback −39~44% |
-| [#29](https://gitcode.com/datagallery/dataagent/issues/29) | NL2SQL 节点空集合未防御（4 处 max()/IndexError） | ✅ 已修 | 避免崩溃 retry，间接减少 LLM 调用 |
-| [#41](https://gitcode.com/datagallery/dataagent/issues/41) | 主 Agent 默认可绕过 NL2SQL 直接 bash sqlite3 | ❌ 未修（两分支都存在） | 不构成分支差异；0623 因 #12 修复间接减少 bash 调用 |
+| [#14](/datagallery/dataagent/issues/14) | build_messages 兜底截断 max_tool_result_length | ✅ 已修（两分支都有，via `2056c20`） | 不构成分支差异，但修复了 8192 硬编码截断 bug |
+| [#7](/datagallery/dataagent/issues/7) / [#8](/datagallery/dataagent/issues/8) | Planner 复杂任务不生成 plan / Plan-Mandatory 强制 | ✅ 已修 | LLM 调用 −19~28%，create_plan 调用 +28~125%（净收益正） |
+| [#12](/datagallery/dataagent/issues/12) | NL2SQL selector 循环回归（b33ac71 误回退 b576b53） | ✅ 已修 | nl2sql_sub_agent_tool 调用 −28%（Qwen），间接减少 bash fallback −39~44% |
+| [#29](/datagallery/dataagent/issues/29) | NL2SQL 节点空集合未防御（4 处 max()/IndexError） | ✅ 已修 | 避免崩溃 retry，间接减少 LLM 调用 |
+| [#41](/datagallery/dataagent/issues/41) | 主 Agent 默认可绕过 NL2SQL 直接 bash sqlite3 | ❌ 未修（两分支都存在） | 不构成分支差异；0623 因 #12 修复间接减少 bash 调用 |
 | D6（System 字节稳定） | runtime_environment 从 User 移到 System | ✅ 已修（0623）/ ❌ 未修（compare） | D6 stable=True vs False，连锁影响 bp0 命中率，是 large scenario 命中率差异的主要根因 |
 
 ### 10.9 是否达成最终优化目标

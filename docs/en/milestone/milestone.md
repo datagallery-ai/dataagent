@@ -7,12 +7,6 @@ hide:
 
 # DataAgent Milestone
 
-<p style="text-align: center;">
-  <img alt="Status" src="https://img.shields.io/badge/Status-In_Progress-FF6B35?style=flat-square">
-  <img alt="Period" src="https://img.shields.io/badge/Period-2026.06--2026.08-4A90D9?style=flat-square">
-  <img alt="Progress" src="https://img.shields.io/badge/Progress-0%25-9E9E9E?style=flat-square">
-</p>
-
 </div>
 
 ---

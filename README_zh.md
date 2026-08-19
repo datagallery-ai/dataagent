@@ -3,18 +3,6 @@
 <p align="center">
   中文 · <a href="README.md">English</a>
 </p>
-
-<!-- Badges -->
-<p align="center">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
-  <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
-  <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
-</p>
-
----
-
 <h2>Data + AI Agent 企业级数据任务解决方案</h2>
 
 > 🚀 **DataAgent** 是面向 **Data + AI** 场景的新一代企业级智能数据平台，以 Agent 范式重构数据工程全链路。深度融合 NL2SQL、统一语义层与多智能体协同，在**金融问数、AI for Science**等核心场景实现端到端的数据分析与特征挖掘闭环。
@@ -76,7 +64,7 @@ uv run mkdocs serve -f docs/mkdocs.yml -a 0.0.0.0:8000
 ### 1️⃣ 克隆项目
 
 ```bash
-git clone https://gitcode.com/datagallery/DataAgent.git
+git clone https://xxxxxx.com/datagallery/DataAgent.git
 cd DataAgent
 ```
 

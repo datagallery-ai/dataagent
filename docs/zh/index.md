@@ -7,13 +7,6 @@ hide:
 
 # 🚀 DataAgent
 
-<p style="text-align: center;">
-  <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/Python-3.11+-blue.svg"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
-  <a href="https://github.com/langchain-ai/langgraph"><img alt="LangGraph" src="https://img.shields.io/badge/LangGraph-1.1.3-red.svg"></a>
-  <img alt="GaussVector" src="https://img.shields.io/badge/GaussVector-semantic%20layer-blue.svg">
-</p>
-
 </div>
 
 ---
@@ -47,10 +40,10 @@ hide:
 
 ## 🚀 快速入口
 
-- [安装部署](installation/installation.md)
-- [快速开始](quick_start/quick_start.md)
-- [功能特性](function/function.md)
-- [应用案例](case/case.md)
+[安装部署](installation/installation.md)
+[快速开始](quick_start/quick_start.md)
+[功能特性](function/function.md)
+[应用案例](case/case.md)
 
 ## 📚 文档大纲
 
