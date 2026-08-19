@@ -71,7 +71,13 @@ def test_check_sql_rejects_database_commands(sql: str) -> None:
 
 def test_check_sql_rejects_dangerous_metadata_function() -> None:
     """Security checker should reject database metadata functions."""
-    result = check_sql("SELECT current_setting('search_path')", dialect="postgres", schema={})
+    schema = {"orders": {"columns": {"id": {}}}}
+
+    result = check_sql(
+        "SELECT current_setting('search_path') FROM orders WHERE id = 1",
+        dialect="postgres",
+        schema=schema,
+    )
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["FUNCTION-001"]
@@ -80,18 +86,20 @@ def test_check_sql_rejects_dangerous_metadata_function() -> None:
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT SUM(1), COUNT(*), AVG(1), MAX(1), MIN(1)",
+        "SELECT SUM(1), COUNT(*), AVG(1), MAX(1), MIN(1) FROM orders WHERE id = 1",
         "SELECT COUNT(DISTINCT status) FROM orders WHERE id = 1",
-        "SELECT NULLIF(1, 0), NVL(NULL, 0), COALESCE(NULL, 0)",
-        "SELECT ROUND(1.2), CEIL(1.2), CEILING(1.2), FLOOR(1.2), ABS(-1)",
-        "SELECT CAST('1' AS INTEGER), '1'::INTEGER, TO_NUMBER('1', '9'), TO_CHAR(CURRENT_DATE, 'YYYY')",
-        "SELECT TO_DATE('2024-01-01', 'YYYY-MM-DD'), HEX('a')",
-        "SELECT CONCAT('a', 'b'), CONCAT_WS('-', 'a', 'b'), SUBSTR('abc', 1, 2)",
-        "SELECT UPPER('a'), LOWER('A'), LENGTH('a'), LENGTHB('a')",
-        "SELECT TRIM(' a '), LTRIM(' a'), RTRIM('a '), REPLACE('a', 'a', 'b')",
-        "SELECT LPAD('1', 2, '0'), RPAD('1', 2, '0'), INSTR('abc', 'b')",
-        "SELECT NOW(), CURRENT_DATE, CURRENT_TIMESTAMP, EXTRACT(YEAR FROM CURRENT_DATE)",
-        "SELECT DATE_TRUNC('day', CURRENT_TIMESTAMP), CASE WHEN 1 = 1 THEN 1 ELSE 0 END",
+        "SELECT NULLIF(1, 0), NVL(NULL, 0), COALESCE(NULL, 0) FROM orders WHERE id = 1",
+        "SELECT ROUND(1.2), CEIL(1.2), CEILING(1.2), FLOOR(1.2), ABS(-1) FROM orders WHERE id = 1",
+        "SELECT CAST('1' AS INTEGER), '1'::INTEGER, TO_NUMBER('1', '9'), "
+        "TO_CHAR(CURRENT_DATE, 'YYYY') FROM orders WHERE id = 1",
+        "SELECT TO_DATE('2024-01-01', 'YYYY-MM-DD'), HEX('a') FROM orders WHERE id = 1",
+        "SELECT CONCAT('a', 'b'), CONCAT_WS('-', 'a', 'b'), SUBSTR('abc', 1, 2) FROM orders WHERE id = 1",
+        "SELECT UPPER('a'), LOWER('A'), LENGTH('a'), LENGTHB('a') FROM orders WHERE id = 1",
+        "SELECT TRIM(' a '), LTRIM(' a'), RTRIM('a '), REPLACE('a', 'a', 'b') FROM orders WHERE id = 1",
+        "SELECT LPAD('1', 2, '0'), RPAD('1', 2, '0'), INSTR('abc', 'b') FROM orders WHERE id = 1",
+        "SELECT NOW(), CURRENT_DATE, CURRENT_TIMESTAMP, EXTRACT(YEAR FROM CURRENT_DATE) FROM orders WHERE id = 1",
+        "SELECT DATE_TRUNC('day', CURRENT_TIMESTAMP), CASE WHEN 1 = 1 THEN 1 ELSE 0 END FROM orders WHERE id = 1",
+        "SELECT generate_series(1, 2) FROM orders WHERE id = 1",
     ],
 )
 def test_check_sql_allows_whitelisted_functions(sql: str) -> None:
@@ -106,29 +114,30 @@ def test_check_sql_allows_whitelisted_functions(sql: str) -> None:
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT MD5('a')",
-        "SELECT jsonb_array_elements('[1,2]'::jsonb)",
-        "SELECT generate_series(1, 2)",
-        "SELECT repeat('a', 2)",
-        "SELECT IFNULL(NULL, 0)",
-        "SELECT SUBSTRING('abc' FROM 1 FOR 2)",
-        "SELECT POSITION('b' IN 'abc')",
-        "SELECT STRPOS('abc', 'b')",
-        "SELECT DATE_PART('year', CURRENT_DATE)",
-        "SELECT IF(1 = 1, 1, 0)",
-        'SELECT "SUM"(1)',
-        "SELECT CURRENT_USER",
-        "SELECT SESSION_USER",
-        "SELECT CURRENT_SCHEMA",
-        "SELECT CURRENT_CATALOG",
-        "SELECT CURRENT_TIME",
-        "SELECT LOCALTIME",
-        "SELECT 1 ORDER BY random()",
+        "SELECT MD5('a') FROM orders WHERE id = 1",
+        "SELECT jsonb_array_elements('[1,2]'::jsonb) FROM orders WHERE id = 1",
+        "SELECT repeat('a', 2) FROM orders WHERE id = 1",
+        "SELECT IFNULL(NULL, 0) FROM orders WHERE id = 1",
+        "SELECT SUBSTRING('abc' FROM 1 FOR 2) FROM orders WHERE id = 1",
+        "SELECT POSITION('b' IN 'abc') FROM orders WHERE id = 1",
+        "SELECT STRPOS('abc', 'b') FROM orders WHERE id = 1",
+        "SELECT DATE_PART('year', CURRENT_DATE) FROM orders WHERE id = 1",
+        "SELECT IF(1 = 1, 1, 0) FROM orders WHERE id = 1",
+        'SELECT "SUM"(1) FROM orders WHERE id = 1',
+        "SELECT CURRENT_USER FROM orders WHERE id = 1",
+        "SELECT SESSION_USER FROM orders WHERE id = 1",
+        "SELECT CURRENT_SCHEMA FROM orders WHERE id = 1",
+        "SELECT CURRENT_CATALOG FROM orders WHERE id = 1",
+        "SELECT CURRENT_TIME FROM orders WHERE id = 1",
+        "SELECT LOCALTIME FROM orders WHERE id = 1",
+        "SELECT 1 FROM orders WHERE id = 1 ORDER BY random()",
     ],
 )
 def test_check_sql_rejects_functions_outside_whitelist(sql: str) -> None:
     """Security checker should reject any function spelling absent from the whitelist."""
-    result = check_sql(sql, dialect="postgres", schema={})
+    schema = {"orders": {"columns": {"id": {}}}}
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["FUNCTION-001"]
@@ -136,10 +145,26 @@ def test_check_sql_rejects_functions_outside_whitelist(sql: str) -> None:
 
 def test_check_sql_rejects_qualified_whitelisted_function() -> None:
     """Function namespaces should not bypass the fixed function whitelist."""
-    result = check_sql("SELECT pg_catalog.COALESCE(NULL, 0)", dialect="postgres", schema={})
+    schema = {"orders": {"columns": {"id": {}}}}
+
+    result = check_sql(
+        "SELECT pg_catalog.COALESCE(NULL, 0) FROM orders WHERE id = 1",
+        dialect="postgres",
+        schema=schema,
+    )
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["FUNCTION-001"]
+
+
+def test_check_sql_allows_generate_series_joined_to_modeled_table() -> None:
+    """The generate_series table function should remain subject to the semantic-table requirement."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = "SELECT orders.id FROM orders CROSS JOIN generate_series(1, 2) AS value WHERE orders.id = 1"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
 
 
 def test_check_sql_allows_semantic_schema_table_and_column() -> None:
@@ -175,9 +200,45 @@ def test_check_sql_allows_quoted_business_column_named_user() -> None:
 
 def test_check_sql_allows_dangerous_text_as_plain_data() -> None:
     """Dangerous names in string literals and aliases should not be treated as executable calls."""
-    result = check_sql("SELECT 'pg_sleep' AS label", dialect="postgres", schema={})
+    schema = {"orders": {"columns": {"id": {}}}}
+
+    result = check_sql("SELECT 'pg_sleep' AS label FROM orders WHERE id = 1", dialect="postgres", schema=schema)
 
     assert result.blocked is False
+
+
+def test_check_sql_allows_qualified_cte_column_named_current_time() -> None:
+    """A qualified CTE column should not be confused with the CURRENT_TIME context function."""
+    schema = {"orders": {"columns": {"id": {}, "time": {}}}}
+    sql = (
+        "WITH aligned_periods AS ("
+        "SELECT time AS current_time FROM orders WHERE id = 1"
+        ") SELECT aligned_periods.current_time FROM aligned_periods ORDER BY aligned_periods.current_time"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'No table like sys config' AS message",
+        'SELECT "No table like sys config" AS message',
+        "SELECT 1",
+        "SELECT NOW()",
+        "SELECT generate_series(1, 2)",
+    ],
+)
+def test_check_sql_rejects_query_without_semantic_table(sql: str) -> None:
+    """NL2SQL candidates should reference at least one modeled business table."""
+    schema = {"orders": {"columns": {"id": {}}}}
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-003"]
 
 
 def test_check_sql_rejects_table_missing_from_semantic_schema() -> None:
@@ -255,6 +316,22 @@ def test_check_sql_allows_cross_join_with_modeled_sources() -> None:
     assert result.blocked is False
 
 
+def test_check_sql_allows_comma_separated_cross_join() -> None:
+    """Security checker should allow comma-separated sources as an implicit CROSS JOIN."""
+    schema = {
+        "orders": {"columns": {"id": {"value_type": "integer"}}},
+        "customers": {"columns": {"id": {"value_type": "integer"}}},
+    }
+
+    result = check_sql(
+        "SELECT orders.id FROM orders, customers WHERE orders.id = 1",
+        dialect="postgres",
+        schema=schema,
+    )
+
+    assert result.blocked is False
+
+
 @pytest.mark.parametrize(
     "join_sql",
     [
@@ -308,13 +385,121 @@ def test_check_sql_allows_whitelisted_null_predicates(condition: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "condition",
+    [
+        "name LIKE 'A%'",
+        "name LIKE '%term%'",
+        "name NOT LIKE '_temp%'",
+        "name LIKE '*'",
+        "name LIKE 'mobile_game%'",
+        "name LIKE '%game%'",
+    ],
+)
+def test_check_sql_allows_like_with_literal_search_text(condition: str) -> None:
+    """LIKE patterns should contain literal search text in addition to optional wildcards."""
+    schema = {"orders": {"columns": {"id": {}, "name": {}}}}
+
+    result = check_sql(f"SELECT id FROM orders WHERE {condition}", dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "name LIKE '%'",
+        "name LIKE '_'",
+        "name LIKE '%%'",
+        "name LIKE '%_%'",
+        "name LIKE pattern",
+    ],
+)
+def test_check_sql_rejects_like_without_literal_search_text(condition: str) -> None:
+    """LIKE should reject wildcard-only and non-literal patterns."""
+    schema = {"orders": {"columns": {"id": {}, "name": {}, "pattern": {}}}}
+
+    result = check_sql(f"SELECT id FROM orders WHERE {condition}", dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SYNTAX-001"]
+
+
+@pytest.mark.parametrize("operator", ["UNION", "UNION ALL"])
+def test_check_sql_allows_union_with_filtered_business_branches(operator: str) -> None:
+    """UNION variants should compose independently filtered read-only SELECT branches."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = f"SELECT id FROM orders WHERE id = 1 {operator} SELECT id FROM orders WHERE id = 2 ORDER BY id"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+def test_check_sql_allows_union_all_literal_cte_joined_to_business_table() -> None:
+    """Literal UNION ALL CTEs should be allowed when the complete query reads a modeled business table."""
+    schema = {"orders": {"columns": {"id": {}, "status": {}}}}
+    sql = (
+        "WITH statuses AS (SELECT 'paid' AS status UNION ALL SELECT 'pending') "
+        "SELECT orders.id FROM orders JOIN statuses ON orders.status = statuses.status WHERE orders.id = 1"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+def test_check_sql_allows_union_all_single_row_aggregate_branches() -> None:
+    """UNION ALL should preserve the full-table exemption for single-row aggregate branches."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = "SELECT COUNT(*) FROM orders UNION ALL SELECT COUNT(*) FROM orders"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+def test_check_sql_rejects_union_all_with_unfiltered_business_branch() -> None:
+    """Every UNION ALL branch that reads business rows should retain a filter or another resource exemption."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = "SELECT id FROM orders WHERE id = 1 UNION ALL SELECT id FROM orders"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["RESOURCE-009"]
+
+
+@pytest.mark.parametrize("operator", ["UNION", "UNION ALL"])
+@pytest.mark.parametrize(
+    ("right_projection", "rule_id"),
+    [
+        ("MD5(status)", "FUNCTION-001"),
+        ("password", "SCHEMA-002"),
+    ],
+)
+def test_check_sql_recursively_checks_every_union_branch(
+    operator: str,
+    right_projection: str,
+    rule_id: str,
+) -> None:
+    """A safe UNION branch should not hide a violation in another branch."""
+    schema = {"orders": {"columns": {"id": {}, "status": {}}}}
+    sql = f"SELECT id FROM orders WHERE id = 1 {operator} SELECT {right_projection} FROM orders WHERE id = 2"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert rule_id in [violation.rule_id for violation in result.violations]
+
+
+@pytest.mark.parametrize(
     "sql",
     [
-        "SELECT 1 UNION SELECT 2",
         "SELECT 1 EXCEPT SELECT 2",
         "SELECT 1 INTERSECT SELECT 2",
         "SELECT amount IS TRUE FROM orders WHERE id = 1",
-        "SELECT id FROM orders WHERE name LIKE 'A%'",
+        "SELECT id FROM orders WHERE name ILIKE 'A%'",
+        "SELECT id FROM orders WHERE name LIKE 'A!_%' ESCAPE '!'",
         "SELECT id FROM orders WHERE amount BETWEEN 1 AND 10",
         "SELECT SUM(amount) OVER (PARTITION BY id) FROM orders WHERE id = 1",
         "SELECT id FROM orders WHERE id > 0 LIMIT 10 OFFSET 1",
@@ -326,7 +511,8 @@ def test_check_sql_allows_whitelisted_null_predicates(condition: str) -> None:
         "SELECT orders.id FROM orders CROSS JOIN LATERAL (SELECT orders.id) AS item WHERE orders.id = 1",
         "SELECT orders.id FROM orders CROSS JOIN customers ON orders.customer_id = customers.id WHERE orders.id = 1",
         "SELECT orders.id FROM orders SEMI JOIN customers ON orders.customer_id = customers.id WHERE orders.id = 1",
-        "SELECT orders.id FROM orders LEFT INNER JOIN customers ON orders.customer_id = customers.id WHERE orders.id = 1",
+        "SELECT orders.id FROM orders LEFT INNER JOIN customers "
+        "ON orders.customer_id = customers.id WHERE orders.id = 1",
         "SELECT orders.id FROM orders RIGHT CROSS JOIN customers WHERE orders.id = 1",
         "SELECT a.id FROM a NATURAL JOIN b WHERE a.id = 1",
         "SELECT DISTINCT ON (customer_id) customer_id FROM orders WHERE customer_id = 1",
@@ -389,13 +575,15 @@ def test_check_sql_rejects_unbounded_resource_functions(sql: str, rule_id: str) 
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT lpad('x', 4194304, 'y')",
-        "SELECT rpad('x', 4194304, 'y')",
+        "SELECT lpad('x', 4194304, 'y') FROM orders WHERE id = 1",
+        "SELECT rpad('x', 4194304, 'y') FROM orders WHERE id = 1",
     ],
 )
 def test_check_sql_allows_resource_function_thresholds(sql: str) -> None:
     """Resource functions should remain allowed at their documented inclusive thresholds."""
-    result = check_sql(sql, dialect="postgres", schema={})
+    schema = {"orders": {"columns": {"id": {}}}}
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
 
     assert result.blocked is False
 
@@ -424,7 +612,6 @@ def test_check_sql_rejects_sql_text_over_byte_limit() -> None:
     ("sql", "rule_id"),
     [
         ("SELECT a.id FROM a JOIN b WHERE a.id = 1", "RESOURCE-007"),
-        ("SELECT a.id FROM a, b WHERE a.id = 1", "RESOURCE-007"),
         ("SELECT a.id FROM a JOIN b ON 1 = 1 WHERE a.id = 1", "RESOURCE-007"),
         ("SELECT id FROM orders WHERE id = 1 OR TRUE", "RESOURCE-008"),
         ("SELECT id FROM orders", "RESOURCE-009"),
