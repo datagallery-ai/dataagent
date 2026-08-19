@@ -139,8 +139,10 @@ class DataAgent:
         # 出站 mTLS：把 certificate: 段（插值后）下发为进程环境变量，供深层出站点统一读取。
         import os
 
+        from dataagent.common_utils.internal_cert_password import apply_sqlrule_cert_password_env
         from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING, apply_certificate_config
 
+        apply_sqlrule_cert_password_env(agent_config_manager.get("CORE.perceptor.user_sql_rules"))
         apply_certificate_config(
             agent_config_manager.get("certificate"),
             preserve_existing_on_missing=os.getenv(ENV_PRESERVE_ON_MISSING) == "1",

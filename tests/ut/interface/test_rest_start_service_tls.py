@@ -12,16 +12,29 @@
 
 from __future__ import annotations
 
+import os
 import ssl
 from pathlib import Path
 
 import pytest
 
 from dataagent.interface.rest_api.start_service import (
+    ENV_INBOUND_SERVER_KEY_PASSWORD,
     _parse_inbound_mode,
     build_ssl_kwargs,
     load_certificate_config,
 )
+
+_OUTBOUND_ENV = "DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD"
+
+
+@pytest.fixture(autouse=True)
+def _clear_key_password_env():
+    os.environ.pop(ENV_INBOUND_SERVER_KEY_PASSWORD, None)
+    os.environ.pop(_OUTBOUND_ENV, None)
+    yield
+    os.environ.pop(ENV_INBOUND_SERVER_KEY_PASSWORD, None)
+    os.environ.pop(_OUTBOUND_ENV, None)
 
 
 def _write_config(tmp_path: Path, body: str) -> str:
@@ -100,6 +113,7 @@ certificate:
     assert kwargs["ssl_keyfile"] == server_key
     assert kwargs["ssl_ca_certs"] == ca_cert
     assert kwargs["ssl_cert_reqs"] == int(ssl.CERT_REQUIRED)
+    assert "ssl_keyfile_password" not in kwargs
 
 
 def test_inbound_enabled_false_keeps_http(tmp_path):
@@ -260,3 +274,42 @@ certificate:
     )
     with pytest.raises(ValueError, match="missing: ca_cert_file"):
         build_ssl_kwargs(config)
+
+
+def test_inbound_passes_server_key_password_from_env(tmp_path, monkeypatch):
+    server_cert, server_key, ca_cert = _pem_pair(tmp_path)
+    monkeypatch.setenv("DATAAGENT_INBOUND_SERVER_KEY_PASSWORD", "inbound-secret")
+    config = _write_config(
+        tmp_path,
+        f"""
+certificate:
+  server_cert_file: {server_cert}
+  server_key_file: {server_key}
+  ca_cert_file: {ca_cert}
+""",
+    )
+    kwargs = build_ssl_kwargs(config)
+    assert kwargs["ssl_keyfile_password"] == "inbound-secret"
+
+
+def test_build_ssl_kwargs_only_reads_env(tmp_path, monkeypatch):
+    from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
+
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    server_cert, server_key, ca_cert = _pem_pair(tmp_path)
+    config = _write_config(
+        tmp_path,
+        f"""
+CORE:
+  perceptor:
+    user_sql_rules: "sql_rules_business_twin"
+certificate:
+  server_cert_file: {server_cert}
+  server_key_file: {server_key}
+  ca_cert_file: {ca_cert}
+""",
+    )
+    kwargs = build_ssl_kwargs(config)
+    assert "ssl_keyfile_password" not in kwargs
+    assert calls["init"] == 0
+    assert calls["query"] == 0

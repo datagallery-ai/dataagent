@@ -34,6 +34,7 @@ from loguru import logger
 ENV_CA_FILE = "DATAAGENT_OUTBOUND_CA_FILE"
 ENV_CLIENT_CERT = "DATAAGENT_OUTBOUND_CLIENT_CERT"
 ENV_CLIENT_KEY = "DATAAGENT_OUTBOUND_CLIENT_KEY"
+ENV_CLIENT_KEY_PASSWORD = "DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD"
 ENV_CIPHERS = "DATAAGENT_OUTBOUND_CIPHERS"
 ENV_MODE = "DATAAGENT_OUTBOUND_MODE"
 ENV_SSL_SERVICES = "DATAAGENT_OUTBOUND_SSL_SERVICES"
@@ -163,7 +164,8 @@ def apply_certificate_config(
     """把 ``certificate:`` 段下发为 ``DATAAGENT_OUTBOUND_*``；出站开启时缺材料立即报错。
 
     ``None`` / ``{}`` 与整段不写相同：默认出站开 + mode 3。``preserve_existing_on_missing``
-    为真时保持现有 env，不套默认、不校验证件。
+    为真时保持现有 env，不套默认、不校验证件。私钥口令只读
+    ``DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD``，不在此写入或内传。
     """
     if not isinstance(certificate, Mapping) or not certificate:
         if preserve_existing_on_missing:
@@ -253,7 +255,8 @@ def _build_context() -> ssl.SSLContext:
         ctx.verify_mode = ssl.CERT_REQUIRED
 
     if present_client_cert:
-        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key)
+        pw = (os.getenv(ENV_CLIENT_KEY_PASSWORD) or "").strip() or None
+        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key, password=pw)
 
     if ciphers:
         ctx.set_ciphers(ciphers)
