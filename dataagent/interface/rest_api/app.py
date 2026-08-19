@@ -103,9 +103,9 @@ async def health_check():
     if service is None or not service.is_ready():
         return JSONResponse(
             status_code=503,
-            content={"status": "not_ready", "service": "DataAgent Service"},
+            content={"status": "not_ready"},
         )
-    return {"status": "ok", "service": "DataAgent Service"}
+    return {"status": "ok"}
 
 
 @app.post("/api/agent/query")
