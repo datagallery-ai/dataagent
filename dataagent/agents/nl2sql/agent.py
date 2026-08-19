@@ -201,7 +201,11 @@ class NL2SQLAgent(BaseAgent):
         except NL2SQLError as exc:
             return {"error": exc.to_dict()}
         except Exception as exc:
-            return {"error": {"message": str(exc), "type": exc.__class__.__name__}}
+            logger.exception(
+                "Unexpected NL2SQL chat API error: {}",
+                {"message": str(exc), "type": exc.__class__.__name__},
+            )
+            return {"error": {"message": "internal error"}}
 
     def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
         """Stream NL2SQL workflow via LangGraph native astream."""
@@ -275,7 +279,11 @@ class NL2SQLAgent(BaseAgent):
             except NL2SQLError as exc:
                 yield {"error": exc.to_dict()}
             except Exception as exc:
-                yield {"error": {"message": str(exc), "type": exc.__class__.__name__}}
+                logger.exception(
+                    "Unexpected NL2SQL astream API error: {}",
+                    {"message": str(exc), "type": exc.__class__.__name__},
+                )
+                yield {"error": {"message": "internal error"}}
 
         return _gen()
 

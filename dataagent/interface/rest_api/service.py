@@ -126,7 +126,11 @@ class DataAgentService:
                 initial_state = {"session_id": request.get("session_id")}
                 return self._format_result(await self._agent.chat(query, initial_state=initial_state, **request))
         except Exception as exc:
-            return self._format_error(str(exc))
+            logger.exception(
+                "Unexpected DataAgent query error: {}",
+                {"message": str(exc), "type": exc.__class__.__name__},
+            )
+            return self._format_error("internal error")
 
     async def stream_query(self, query: str):
         """Stream one DataAgent query as message/result events."""
@@ -196,7 +200,11 @@ class DataAgentService:
             else:
                 yield {"event": "result", "data": self._format_error("Agent returned an empty stream result")}
         except Exception as exc:
-            yield {"event": "result", "data": self._format_error(str(exc))}
+            logger.exception(
+                "Unexpected DataAgent stream error: {}",
+                {"message": str(exc), "type": exc.__class__.__name__},
+            )
+            yield {"event": "result", "data": self._format_error("internal error")}
 
     def _format_result(self, state: Any) -> dict[str, Any]:
         """Format final agent state for the REST API."""
