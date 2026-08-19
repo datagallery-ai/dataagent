@@ -20,9 +20,11 @@ import uvicorn
 import yaml
 from loguru import logger
 
+from dataagent.common_utils.internal_cert_password import apply_sqlrule_cert_password_env
 from dataagent.config.config_manager import ConfigManager
 
 _CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
+ENV_INBOUND_SERVER_KEY_PASSWORD = "DATAAGENT_INBOUND_SERVER_KEY_PASSWORD"
 
 # inbound_certificate_mode -> ssl 客户端校验策略。0 与 2 实现等价（均为 CERT_NONE）。
 _CERT_MODE_TO_SSL: dict[int, int] = {
@@ -81,6 +83,17 @@ def _parse_inbound_mode(raw: Any) -> int:
     if mode not in _CERT_MODE_TO_SSL:
         raise ValueError(f"Unsupported inbound_certificate_mode={mode}; expected one of {sorted(_CERT_MODE_TO_SSL)}")
     return mode
+
+
+def _user_sql_rules(config_path: str) -> Any:
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except OSError:
+        return None
+    core = cfg.get("CORE") if isinstance(cfg, dict) else None
+    perceptor = core.get("perceptor") if isinstance(core, dict) else None
+    return perceptor.get("user_sql_rules") if isinstance(perceptor, dict) else None
 
 
 def load_certificate_config(config_path: str) -> dict[str, Any]:
@@ -154,6 +167,9 @@ def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
     cipher_suites = cert.get("inbound_cipher_suites")
     if cipher_suites:
         ssl_kwargs["ssl_ciphers"] = cipher_suites
+    pw = (os.getenv(ENV_INBOUND_SERVER_KEY_PASSWORD) or "").strip() or None
+    if pw:
+        ssl_kwargs["ssl_keyfile_password"] = pw
     return ssl_kwargs
 
 
@@ -164,6 +180,7 @@ def main() -> None:
     os.environ[_CONFIG_ENV_NAME] = config_path
     logger.info(f"Using DataAgent config: {config_path}")
 
+    apply_sqlrule_cert_password_env(_user_sql_rules(config_path))
     ssl_kwargs = build_ssl_kwargs(config_path)
     scheme = "https" if ssl_kwargs else "http"
     logger.info(f"Starting DataAgent service on {scheme}://{args.host}:{args.port} with {args.workers} worker(s)")
