@@ -28,12 +28,12 @@ def _config_manager(config: dict) -> ConfigManager:
     return manager
 
 
-def test_default_yaml_disables_sql_security() -> None:
-    """Bundled NL2SQL configuration should explicitly default security to off."""
+def test_default_yaml_omits_sql_security_switch() -> None:
+    """Bundled NL2SQL configuration should not expose a SQL-security switch."""
     config_path = Path("dataagent/agents/nl2sql/nl2sql_agent.yaml")
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
-    assert config.get("CORE", {}).get("validator", {}).get("sql_security_enabled") is False
+    assert "sql_security_enabled" not in config.get("CORE", {}).get("validator", {})
 
 
 def test_from_config_keeps_generator_decoupled_from_sql_security() -> None:
@@ -42,7 +42,7 @@ def test_from_config_keeps_generator_decoupled_from_sql_security() -> None:
         "CORE": {
             "perceptor": {},
             "generator": {},
-            "validator": {"sql_security_enabled": True},
+            "validator": {},
             "reflector": {},
         },
         "DATABASE": {"dialect": "postgres"},
@@ -55,17 +55,17 @@ def test_from_config_keeps_generator_decoupled_from_sql_security() -> None:
     reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
     assert agent.sql_security_enabled is True
     assert not hasattr(generator, "defer_sql_output")
-    assert validator.sql_security_enabled is True
-    assert reflector.sql_security_enabled is True
+    assert not hasattr(validator, "sql_security_enabled")
+    assert not hasattr(reflector, "sql_security_enabled")
 
 
-def test_from_config_requires_reflector_when_security_enabled() -> None:
-    """Agent construction should reject a security workflow without Reflector."""
+def test_from_config_requires_reflector_when_validator_is_configured() -> None:
+    """Agent construction should reject a secured Validator workflow without Reflector."""
     config = {
         "CORE": {
             "perceptor": {},
             "generator": {},
-            "validator": {"sql_security_enabled": True},
+            "validator": {},
         },
         "DATABASE": {"dialect": "postgres"},
     }
@@ -74,8 +74,8 @@ def test_from_config_requires_reflector_when_security_enabled() -> None:
         NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
 
 
-def test_from_config_defaults_sql_security_enabled_when_key_omitted() -> None:
-    """Omitting sql_security_enabled should enable check_sql and wire Reflector."""
+def test_from_config_forces_sql_security_for_validator_workflow() -> None:
+    """Validator and Reflector should always use the SQL security path."""
     config = {
         "CORE": {
             "perceptor": {},
@@ -91,27 +91,23 @@ def test_from_config_defaults_sql_security_enabled_when_key_omitted() -> None:
     validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
     reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
     assert agent.sql_security_enabled is True
-    assert validator.sql_security_enabled is True
-    assert reflector.sql_security_enabled is True
+    assert not hasattr(validator, "sql_security_enabled")
+    assert not hasattr(reflector, "sql_security_enabled")
 
 
-def test_from_config_omitted_security_without_reflector_disables_gate() -> None:
-    """Default-on security must stay off when YAML has no reflector, without raising."""
+def test_from_config_explicit_false_without_reflector_still_fails() -> None:
+    """A stale false setting must not restore a Validator workflow without Reflector."""
     config = {
         "CORE": {
             "perceptor": {},
             "generator": {},
-            "validator": {},
+            "validator": {"sql_security_enabled": False},
         },
         "DATABASE": {"dialect": "postgres"},
     }
 
-    agent = NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
-
-    validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
-    assert agent.sql_security_enabled is False
-    assert validator.sql_security_enabled is False
-    assert not any(isinstance(node, ReflectorNode) for node in agent.nodes)
+    with pytest.raises(ValueError, match="reflector"):
+        NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
 
 
 def test_from_config_minimal_core_without_reflector_succeeds() -> None:
@@ -128,8 +124,8 @@ def test_from_config_minimal_core_without_reflector_succeeds() -> None:
     assert not any(isinstance(node, ReflectorNode) for node in agent.nodes)
 
 
-def test_from_config_explicit_false_keeps_security_disabled() -> None:
-    """Explicit sql_security_enabled=false should stay on the weak validator path."""
+def test_from_config_explicit_false_cannot_disable_security() -> None:
+    """A stale sql_security_enabled=false setting should be ignored."""
     config = {
         "CORE": {
             "perceptor": {},
@@ -144,9 +140,9 @@ def test_from_config_explicit_false_keeps_security_disabled() -> None:
 
     validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
     reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
-    assert agent.sql_security_enabled is False
-    assert validator.sql_security_enabled is False
-    assert reflector.sql_security_enabled is False
+    assert agent.sql_security_enabled is True
+    assert not hasattr(validator, "sql_security_enabled")
+    assert not hasattr(reflector, "sql_security_enabled")
 
 
 @pytest.mark.parametrize(
@@ -157,7 +153,7 @@ def test_from_config_explicit_false_keeps_security_disabled() -> None:
     ],
 )
 def test_0930_scenario_yaml_omits_security_key_but_has_reflector(relpath: str) -> None:
-    """0930 scenario YAML without the key will inherit Python default True and already has reflector."""
+    """0930 scenario YAML should omit the removed switch and retain Reflector."""
     config = yaml.safe_load(Path(relpath).read_text(encoding="utf-8"))
     core = config.get("CORE", {})
     assert "sql_security_enabled" not in (core.get("validator") or {})

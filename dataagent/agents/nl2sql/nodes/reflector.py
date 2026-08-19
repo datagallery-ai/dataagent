@@ -25,14 +25,13 @@ class ReflectorNode(BaseNL2SQLNode):
     def __init__(self, **kwargs):
         super().__init__(name="reflector", **kwargs)
         self.threshold = self.config.get("threshold", DEFAULT_NL2SQL_REFLECTOR_THRESHOLD)
-        self.sql_security_enabled = self.config.get("sql_security_enabled", False)
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
         safe_results = [
             result
             for result in state["validation_results"]
-            if not result.security_violations and (result.security_checked or not self.sql_security_enabled)
+            if not result.security_violations and result.security_checked
         ]
         if not safe_results and state["ref_retries"] <= 0:
             rule_id_set = set()
