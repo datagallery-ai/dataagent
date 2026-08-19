@@ -155,10 +155,10 @@ def add_prefix_to_md_images(md_content, prefix_url):
 
     Example:
         >>> md_content = "![描述](images/chart.png)"
-        >>> prefix_url = "http://8.92.9.183/static/"
+        >>> prefix_url = "http://<ip>:<port>/static/"
         >>> result = add_prefix_to_md_images(md_content, prefix_url)
         >>> print(result)
-        ![描述](http://8.92.9.183/static/images/chart.png)
+        ![描述](http://<ip>:<port> /static/images/chart.png)
     """
 
     # 使用正则表达式匹配Markdown图片语法

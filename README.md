@@ -3,18 +3,6 @@
 <p align="center">
   <a href="README_zh.md">中文</a> · English
 </p>
-
-<!-- Badges -->
-<p align="center">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
-  <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
-  <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
-</p>
-
----
-
 <h2>Data + AI Agent: Enterprise Data Task Solution</h2>
 
 > 🚀 **DataAgent** is a next-generation enterprise data intelligence platform for **Data + AI** scenarios, reimagining the entire data engineering pipeline through the Agent paradigm. Deeply integrating NL2SQL, unified semantic layers, and multi-agent collaboration, it delivers end-to-end data analysis and feature mining across **financial risk control, AI for Science**, and other core domains.
@@ -76,7 +64,7 @@ uv run mkdocs serve -f docs/mkdocs.yml
 ### 1️⃣ Clone the project
 
 ```bash
-git clone https://gitcode.com/datagallery/DataAgent.git
+git clone https://xxxxxx.com/datagallery/DataAgent.git
 cd DataAgent
 ```
 

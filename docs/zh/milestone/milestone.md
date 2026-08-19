@@ -6,13 +6,6 @@ hide:
 <div style="text-align: center;" markdown>
 
 # DataAgent 里程碑
-
-<p style="text-align: center;">
-  <img alt="Status" src="https://img.shields.io/badge/Status-进行中-FF6B35?style=flat-square">
-  <img alt="Period" src="https://img.shields.io/badge/周期-2026.06--2026.08-4A90D9?style=flat-square">
-  <img alt="Progress" src="https://img.shields.io/badge/进度-0%25-9E9E9E?style=flat-square">
-</p>
-
 </div>
 
 ---
