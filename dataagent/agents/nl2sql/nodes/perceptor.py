@@ -170,6 +170,7 @@ class PerceptorNode(BaseNL2SQLNode):
         ]:
             state[attr] = await asyncio.to_thread(self._load_prompt, key)
         if not state.get("schema_str", "").strip():
+            logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
             if self.schema_mode == _SCHEMA_MODE_LINKING:
                 question = state.get("question", "").strip()
                 schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
