@@ -421,7 +421,29 @@ async def test_health_returns_503_when_service_not_ready():
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/health", timeout=1.0)
         assert resp.status_code == 503
-        assert resp.json()["status"] == "not_ready"
+        assert resp.json() == {"status": "not_ready"}
+    finally:
+        rest_app._data_agent_service = previous
+
+
+class _ReadyService:
+    def is_ready(self) -> bool:
+        return True
+
+
+@pytest.mark.asyncio
+async def test_health_returns_ok_without_component_name():
+    """Probe body is status only; do not echo the product name."""
+    from dataagent.interface.rest_api import app as rest_app
+
+    previous = rest_app._data_agent_service
+    rest_app._data_agent_service = _ReadyService()
+    try:
+        transport = ASGITransport(app=rest_app.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/health", timeout=1.0)
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
     finally:
         rest_app._data_agent_service = previous
 
