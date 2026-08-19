@@ -40,6 +40,7 @@ _ALLOWED_FUNCTIONS = frozenset(
         "date_trunc",
         "extract",
         "floor",
+        "generate_series",
         "hex",
         "instr",
         "length",
@@ -115,18 +116,17 @@ _FORBIDDEN_QUERY_TYPES = _resolve_expression_types(
     (
         "Array",
         "Between",
+        "Escape",
         "Except",
         "Fetch",
         "ILike",
         "Intersect",
         "Lateral",
-        "Like",
         "Offset",
         "RegexpLike",
         "RLike",
         "SimilarTo",
         "TableSample",
-        "Union",
         "Values",
         "Window",
     )
@@ -183,8 +183,11 @@ def check_allowed_functions(
 
 def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolation]:
     """Reject query operators and clauses outside the fixed query syntax allowlist."""
-    if not isinstance(statement, exp.Select):
-        return [SecurityViolation("SYNTAX-001", "Only SELECT query roots are in the syntax allowlist.")]
+    if not isinstance(statement, (exp.Select, exp.Union)):
+        return [SecurityViolation("SYNTAX-001", "Only SELECT and UNION query roots are in the syntax allowlist.")]
+    for union in statement.find_all(exp.Union):
+        if any(union.args.get(name) for name in ("by_name", "side", "kind", "on")):
+            return [SecurityViolation("SYNTAX-001", "UNION modifier is not in the syntax allowlist.")]
     forbidden = statement.find(*_FORBIDDEN_QUERY_TYPES)
     if forbidden is not None:
         return [SecurityViolation("SYNTAX-001", f"SQL syntax is not in the allowlist: {type(forbidden).__name__}.")]
@@ -209,6 +212,13 @@ def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolat
     for predicate in statement.find_all(exp.Is):
         if not isinstance(predicate.expression, exp.Null):
             return [SecurityViolation("SYNTAX-001", "Only IS NULL and IS NOT NULL predicates are allowed.")]
+    for predicate in statement.find_all(exp.Like):
+        pattern = predicate.expression
+        if not isinstance(pattern, exp.Literal) or not pattern.is_string:
+            return [SecurityViolation("SYNTAX-001", "LIKE pattern must be a string literal.")]
+        pattern_value = str(pattern.this)
+        if pattern_value and not pattern_value.strip("%_"):
+            return [SecurityViolation("SYNTAX-001", "LIKE pattern must contain non-wildcard text.")]
     for join in statement.find_all(exp.Join):
         if not _is_allowed_join_type(join):
             return [SecurityViolation("SYNTAX-001", "JOIN type is not in the allowlist.")]
@@ -270,14 +280,18 @@ def check_semantic_schema(
 
     normalized_schema = {_normalize_identifier(table_name): table_meta for table_name, table_meta in schema.items()}
     allowed_tables = set(normalized_schema)
+    has_base_relation = False
     for scope in traverse_scope(statement):
         for source in scope.sources.values():
             if not _is_base_relation(source):
                 continue
+            has_base_relation = True
             matches = _matching_schema_tables(source, allowed_tables)
             if len(matches) != 1:
                 message = f"Source table is not allowed: {source.sql(dialect=dialect)}."
                 return [SecurityViolation("SCHEMA-001", message)]
+    if not has_base_relation:
+        return [SecurityViolation("SCHEMA-003", "Query must reference at least one semantic schema table.")]
     try:
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
@@ -331,14 +345,19 @@ def _check_join_shapes(statement: exp.Expression) -> list[SecurityViolation]:
     for join in statement.find_all(exp.Join):
         if not _is_allowed_join_type(join):
             continue
-        if str(join.args.get("kind") or "").upper() == "CROSS":
+        if str(join.args.get("kind") or "").upper() == "CROSS" or _is_comma_join(join):
             continue
         condition = join.args.get("on")
         if condition is None and not join.args.get("using"):
-            return [SecurityViolation("RESOURCE-007", "JOIN requires ON or USING unless it is an explicit CROSS JOIN.")]
+            return [SecurityViolation("RESOURCE-007", "JOIN requires ON or USING unless it is a CROSS JOIN.")]
         if condition is not None and _constant_boolean(condition) is True:
             return [SecurityViolation("RESOURCE-007", "JOIN condition must not be always true.")]
     return []
+
+
+def _is_comma_join(join: exp.Join) -> bool:
+    # SQLGlot emits comma-separated sources without the pivots argument added by explicit JOIN parsing.
+    return "pivots" not in join.args
 
 
 def _is_allowed_join_type(join: exp.Join) -> bool:
@@ -354,6 +373,8 @@ def _is_allowed_join_type(join: exp.Join) -> bool:
 def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
     if not isinstance(statement, (exp.Select, exp.Union, exp.Except, exp.Intersect)):
         return False
+    if isinstance(statement, exp.Union):
+        return _union_returns_unfiltered_rows(statement)
     scopes = traverse_scope(statement)
     if not any(any(_is_base_relation(source) for source in scope.sources.values()) for scope in scopes):
         return False
@@ -377,6 +398,70 @@ def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
     if isinstance(statement, exp.Select):
         return not all(isinstance(expression.unnest(), exp.Exists) for expression in statement.expressions)
     return True
+
+
+def _union_returns_unfiltered_rows(statement: exp.Union) -> bool:
+    if statement.args.get("limit") is not None or statement.find(exp.TableSample):
+        return False
+    scope_by_expression = {}
+    for scope in traverse_scope(statement):
+        scope_by_expression.update({id(scope.expression): scope})
+    for branch in _union_select_branches(statement):
+        scope = scope_by_expression.get(id(branch))
+        if scope is None or not _scope_contains_base_relation(scope):
+            continue
+        if _scope_contains_row_restriction(scope) or _scope_is_single_row_aggregate(scope):
+            continue
+        if all(isinstance(expression.unnest(), exp.Exists) for expression in branch.expressions):
+            continue
+        return True
+    return False
+
+
+def _union_select_branches(statement: exp.Union) -> list[exp.Select]:
+    branches = []
+    pending = [statement.this, statement.expression]
+    while pending:
+        expression = pending.pop().unnest()
+        if isinstance(expression, exp.Union):
+            pending.extend((expression.this, expression.expression))
+        elif isinstance(expression, exp.Select):
+            branches.append(expression)
+    return branches
+
+
+def _scope_contains_base_relation(scope: Any) -> bool:
+    for _, source in scope.selected_sources.values():
+        if _is_base_relation(source):
+            return True
+        if hasattr(source, "selected_sources") and _scope_contains_base_relation(source):
+            return True
+    return False
+
+
+def _scope_contains_row_restriction(scope: Any) -> bool:
+    expression = scope.expression
+    if isinstance(expression, exp.Select) and any(
+        expression.args.get(name) is not None for name in ("where", "having", "limit")
+    ):
+        return True
+    for _, source in scope.selected_sources.values():
+        if hasattr(source, "selected_sources") and (
+            _scope_contains_row_restriction(source) or _scope_is_single_row_aggregate(source)
+        ):
+            return True
+    return False
+
+
+def _scope_is_single_row_aggregate(scope: Any) -> bool:
+    expression = scope.expression
+    return bool(
+        isinstance(expression, exp.Select)
+        and expression.args.get("group") is None
+        and expression.find(exp.AggFunc)
+        and not expression.find(exp.Window)
+        and all(column.find_ancestor(exp.AggFunc) is not None for column in scope.columns)
+    )
 
 
 def _constant_boolean(expression: exp.Expression) -> Optional[bool]:
