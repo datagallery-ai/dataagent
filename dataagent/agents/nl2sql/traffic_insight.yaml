@@ -35,9 +35,8 @@ SEMANTIC_LAYER:
     recall:
       column_eq_page_size: 200
       column_eq_max_offset: 100000
-      max_candidate_tables: 200
       hybrid_batch_size: 50
-      max_llm_table_families: 20
+      candidate_table_families_limit: 150
       exclude_table_prefix: ["dim"]
 
 # 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径。
