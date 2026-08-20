@@ -12,29 +12,16 @@
 
 from __future__ import annotations
 
-import os
 import ssl
 from pathlib import Path
 
 import pytest
 
 from dataagent.interface.rest_api.start_service import (
-    ENV_INBOUND_SERVER_KEY_PASSWORD,
     _parse_inbound_mode,
     build_ssl_kwargs,
     load_certificate_config,
 )
-
-_OUTBOUND_ENV = "DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD"
-
-
-@pytest.fixture(autouse=True)
-def _clear_key_password_env():
-    os.environ.pop(ENV_INBOUND_SERVER_KEY_PASSWORD, None)
-    os.environ.pop(_OUTBOUND_ENV, None)
-    yield
-    os.environ.pop(ENV_INBOUND_SERVER_KEY_PASSWORD, None)
-    os.environ.pop(_OUTBOUND_ENV, None)
 
 
 def _write_config(tmp_path: Path, body: str) -> str:
@@ -276,9 +263,12 @@ certificate:
         build_ssl_kwargs(config)
 
 
-def test_inbound_passes_server_key_password_from_env(tmp_path, monkeypatch):
+def test_inbound_encrypted_passes_internal_password_to_uvicorn(tmp_path, monkeypatch):
+    from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
+    from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
+
+    install_fake_internal_cert(monkeypatch, "from-om")
     server_cert, server_key, ca_cert = _pem_pair(tmp_path)
-    monkeypatch.setenv("DATAAGENT_INBOUND_SERVER_KEY_PASSWORD", "inbound-secret")
     config = _write_config(
         tmp_path,
         f"""
@@ -288,11 +278,17 @@ certificate:
   ca_cert_file: {ca_cert}
 """,
     )
-    kwargs = build_ssl_kwargs(config)
-    assert kwargs["ssl_keyfile_password"] == "inbound-secret"
+    cert = load_certificate_config(config)
+    kwargs = build_ssl_kwargs(
+        config,
+        certificate=cert,
+        key_password=resolve_cert_key_passwords(cert).get("inbound"),
+    )
+    assert kwargs["ssl_keyfile_password"] == "from-om"
 
 
-def test_build_ssl_kwargs_only_reads_env(tmp_path, monkeypatch):
+def test_inbound_encrypted_false_omits_uvicorn_password(tmp_path, monkeypatch):
+    from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
     from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
 
     calls = install_fake_internal_cert(monkeypatch, "from-om")
@@ -300,16 +296,20 @@ def test_build_ssl_kwargs_only_reads_env(tmp_path, monkeypatch):
     config = _write_config(
         tmp_path,
         f"""
-CORE:
-  perceptor:
-    user_sql_rules: "sql_rules_business_twin"
 certificate:
+  inbound_encrypted: false
+  outbound_encrypted: false
   server_cert_file: {server_cert}
   server_key_file: {server_key}
   ca_cert_file: {ca_cert}
 """,
     )
-    kwargs = build_ssl_kwargs(config)
+    cert = load_certificate_config(config)
+    kwargs = build_ssl_kwargs(
+        config,
+        certificate=cert,
+        key_password=resolve_cert_key_passwords(cert).get("inbound"),
+    )
     assert "ssl_keyfile_password" not in kwargs
     assert calls["init"] == 0
     assert calls["query"] == 0

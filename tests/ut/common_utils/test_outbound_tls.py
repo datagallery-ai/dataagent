@@ -23,11 +23,9 @@ _OUTBOUND_ENV_KEYS = (
     outbound_tls.ENV_CA_FILE,
     outbound_tls.ENV_CLIENT_CERT,
     outbound_tls.ENV_CLIENT_KEY,
-    outbound_tls.ENV_CLIENT_KEY_PASSWORD,
     outbound_tls.ENV_CIPHERS,
     outbound_tls.ENV_MODE,
     outbound_tls.ENV_SSL_SERVICES,
-    "DATAAGENT_INBOUND_SERVER_KEY_PASSWORD",
 )
 
 
@@ -435,14 +433,11 @@ def test_apply_certificate_config_falls_back_to_shared_ca(_cert_files):
     assert os.environ[outbound_tls.ENV_CA_FILE] == _cert_files["ca"]
 
 
-def test_outbound_passes_client_key_password_from_env(monkeypatch, _cert_files):
-    monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
-    monkeypatch.setenv(outbound_tls.ENV_MODE, "3")
-    monkeypatch.setenv(outbound_tls.ENV_CA_FILE, _cert_files["ca"])
-    monkeypatch.setenv(outbound_tls.ENV_CLIENT_CERT, _cert_files["cert"])
-    monkeypatch.setenv(outbound_tls.ENV_CLIENT_KEY, _cert_files["key"])
-    monkeypatch.setenv(outbound_tls.ENV_CLIENT_KEY_PASSWORD, "outbound-secret")
+def test_outbound_encrypted_passes_internal_password(monkeypatch, _cert_files):
+    from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
+    from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
 
+    install_fake_internal_cert(monkeypatch, "from-om")
     seen: dict[str, object] = {}
     real_load = ssl.SSLContext.load_cert_chain
 
@@ -451,29 +446,50 @@ def test_outbound_passes_client_key_password_from_env(monkeypatch, _cert_files):
         return real_load(self, certfile, keyfile, password=None)
 
     monkeypatch.setattr(ssl.SSLContext, "load_cert_chain", _capture)
+    cert = {
+        "outbound_ssl_services": ["llm"],
+        "outbound_certificate_mode": 3,
+        "ca_cert_file": _cert_files["ca"],
+        "client_cert_file": _cert_files["cert"],
+        "client_key_file": _cert_files["key"],
+    }
+    outbound_tls.apply_certificate_config(
+        cert,
+        key_password=resolve_cert_key_passwords(cert).get("outbound"),
+    )
     ctx = outbound_tls.httpx_verify()
     assert isinstance(ctx, ssl.SSLContext)
-    assert seen["password"] == "outbound-secret"
+    assert seen["password"] == "from-om"
 
 
-def test_apply_certificate_config_does_not_write_or_clear_key_password(_cert_files):
-    os.environ[outbound_tls.ENV_CLIENT_KEY_PASSWORD] = "keep-me"
+def test_outbound_encrypted_false_omits_password(monkeypatch, _cert_files):
+    from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
+    from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
+
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    seen: dict[str, object] = {}
+    real_load = ssl.SSLContext.load_cert_chain
+
+    def _capture(self, certfile, keyfile=None, password=None):
+        seen["password"] = password
+        return real_load(self, certfile, keyfile, password=None)
+
+    monkeypatch.setattr(ssl.SSLContext, "load_cert_chain", _capture)
+    cert = {
+        "inbound_encrypted": False,
+        "outbound_encrypted": False,
+        "outbound_ssl_services": ["llm"],
+        "outbound_certificate_mode": 3,
+        "ca_cert_file": _cert_files["ca"],
+        "client_cert_file": _cert_files["cert"],
+        "client_key_file": _cert_files["key"],
+    }
     outbound_tls.apply_certificate_config(
-        {
-            "outbound_ssl_services": ["llm"],
-            "outbound_certificate_mode": 3,
-            "ca_cert_file": _cert_files["ca"],
-            "client_cert_file": _cert_files["cert"],
-            "client_key_file": _cert_files["key"],
-        }
+        cert,
+        key_password=resolve_cert_key_passwords(cert).get("outbound"),
     )
-    assert os.environ[outbound_tls.ENV_CLIENT_KEY_PASSWORD] == "keep-me"
-
-
-def test_outbound_tls_does_not_import_internal_package():
-    import inspect
-
-    source = inspect.getsource(outbound_tls)
-    assert "internal_cert_password" not in source
-    assert "framework_om" not in source
-    assert "framework_starter" not in source
+    ctx = outbound_tls.httpx_verify()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert seen["password"] is None
+    assert calls["init"] == 0
+    assert calls["query"] == 0

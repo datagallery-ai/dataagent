@@ -42,6 +42,9 @@ SEMANTIC_LAYER:
       max_llm_table_families: 20
       exclude_table_prefix: ["dim"]
 
-# certificate: 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径；
-#   要关请显式 inbound_enabled: false / outbound_enabled: false。
+# 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径。
+# 校验/CI 无内部包，须显式关闭 encrypted，避免 from_config 调 framework_om。
+certificate:
+  inbound_encrypted: false
+  outbound_encrypted: false
 

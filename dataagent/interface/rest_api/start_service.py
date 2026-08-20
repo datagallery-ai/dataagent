@@ -20,11 +20,10 @@ import uvicorn
 import yaml
 from loguru import logger
 
-from dataagent.common_utils.internal_cert_password import apply_sqlrule_cert_password_env
+from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
 from dataagent.config.config_manager import ConfigManager
 
 _CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
-ENV_INBOUND_SERVER_KEY_PASSWORD = "DATAAGENT_INBOUND_SERVER_KEY_PASSWORD"
 
 # inbound_certificate_mode -> ssl 客户端校验策略。0 与 2 实现等价（均为 CERT_NONE）。
 _CERT_MODE_TO_SSL: dict[int, int] = {
@@ -85,17 +84,6 @@ def _parse_inbound_mode(raw: Any) -> int:
     return mode
 
 
-def _user_sql_rules(config_path: str) -> Any:
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-    except OSError:
-        return None
-    core = cfg.get("CORE") if isinstance(cfg, dict) else None
-    perceptor = core.get("perceptor") if isinstance(core, dict) else None
-    return perceptor.get("user_sql_rules") if isinstance(perceptor, dict) else None
-
-
 def load_certificate_config(config_path: str) -> dict[str, Any]:
     """Load the interpolated ``certificate`` section from a DataAgent YAML config."""
     try:
@@ -121,14 +109,20 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
+def build_ssl_kwargs(
+    config_path: str,
+    certificate: dict[str, Any] | None = None,
+    *,
+    key_password: str | None = None,
+) -> dict[str, Any]:
     """Build uvicorn TLS kwargs from ``certificate``; empty dict means plain HTTP.
 
     整段不写或 ``certificate: {}`` 视为入站默认开启且 mode 3；缺服务端证/CA 报错。
     ``inbound_certificate_mode: true`` 也当成 mode 3，不得 ``int(True)==1``。
     仅显式 ``inbound_enabled: false`` 才走纯 HTTP，且不校验证件文件。
+    私钥口令只经 ``key_password``（内部包结果）传给 ``ssl_keyfile_password``。
     """
-    cert = load_certificate_config(config_path)
+    cert = certificate if certificate is not None else load_certificate_config(config_path)
     if not _bool_enabled(cert.get("inbound_enabled"), default=True):
         return {}
 
@@ -167,7 +161,7 @@ def build_ssl_kwargs(config_path: str) -> dict[str, Any]:
     cipher_suites = cert.get("inbound_cipher_suites")
     if cipher_suites:
         ssl_kwargs["ssl_ciphers"] = cipher_suites
-    pw = (os.getenv(ENV_INBOUND_SERVER_KEY_PASSWORD) or "").strip() or None
+    pw = str(key_password).strip() if key_password else None
     if pw:
         ssl_kwargs["ssl_keyfile_password"] = pw
     return ssl_kwargs
@@ -180,8 +174,12 @@ def main() -> None:
     os.environ[_CONFIG_ENV_NAME] = config_path
     logger.info(f"Using DataAgent config: {config_path}")
 
-    apply_sqlrule_cert_password_env(_user_sql_rules(config_path))
-    ssl_kwargs = build_ssl_kwargs(config_path)
+    cert = load_certificate_config(config_path)
+    ssl_kwargs = build_ssl_kwargs(
+        config_path,
+        certificate=cert,
+        key_password=resolve_cert_key_passwords(cert).get("inbound"),
+    )
     scheme = "https" if ssl_kwargs else "http"
     logger.info(f"Starting DataAgent service on {scheme}://{args.host}:{args.port} with {args.workers} worker(s)")
     if ssl_kwargs:

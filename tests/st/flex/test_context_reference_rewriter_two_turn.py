@@ -415,6 +415,8 @@ MODEL:
 certificate:
   outbound_enabled: false
   inbound_enabled: false
+  inbound_encrypted: false
+  outbound_encrypted: false
 """,
         encoding="utf-8",
     )
