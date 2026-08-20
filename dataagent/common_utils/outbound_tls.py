@@ -26,7 +26,6 @@ from __future__ import annotations
 import os
 import ssl
 from collections.abc import Mapping
-from functools import lru_cache
 from typing import Any
 
 from loguru import logger
@@ -34,7 +33,6 @@ from loguru import logger
 ENV_CA_FILE = "DATAAGENT_OUTBOUND_CA_FILE"
 ENV_CLIENT_CERT = "DATAAGENT_OUTBOUND_CLIENT_CERT"
 ENV_CLIENT_KEY = "DATAAGENT_OUTBOUND_CLIENT_KEY"
-ENV_CLIENT_KEY_PASSWORD = "DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD"
 ENV_CIPHERS = "DATAAGENT_OUTBOUND_CIPHERS"
 ENV_MODE = "DATAAGENT_OUTBOUND_MODE"
 ENV_SSL_SERVICES = "DATAAGENT_OUTBOUND_SSL_SERVICES"
@@ -160,18 +158,21 @@ def apply_certificate_config(
     certificate: Mapping[str, Any] | None,
     *,
     preserve_existing_on_missing: bool = False,
+    key_password: str | None = None,
 ) -> None:
     """把 ``certificate:`` 段下发为 ``DATAAGENT_OUTBOUND_*``；出站开启时缺材料立即报错。
 
     ``None`` / ``{}`` 与整段不写相同：默认出站开 + mode 3。``preserve_existing_on_missing``
-    为真时保持现有 env，不套默认、不校验证件。私钥口令只读
-    ``DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD``，不在此写入或内传。
+    为真时保持现有 env，不套默认、不校验证件。私钥口令只经 ``key_password``
+    （内部包结果）直传 ``load_cert_chain``，不进 env。
     """
     if not isinstance(certificate, Mapping) or not certificate:
         if preserve_existing_on_missing:
             reset_cache()
             return
         certificate = {}
+
+    password = str(key_password).strip() if key_password else None
 
     services = _resolve_ssl_services(certificate)
     mode = _parse_outbound_mode(certificate.get("outbound_certificate_mode", _DEFAULT_MODE))
@@ -206,6 +207,8 @@ def apply_certificate_config(
         _set_env(env_name, value)
 
     reset_cache()
+    if services:
+        _store_context(_make_context(password=password))
 
 
 def outbound_ssl_enabled(service: str) -> bool:
@@ -221,9 +224,16 @@ def _mode() -> int:
     return _parse_outbound_mode(os.getenv(ENV_MODE))
 
 
-@lru_cache(maxsize=1)
-def _build_context() -> ssl.SSLContext:
-    """构造（并缓存）出站 TLS 材料，不判断服务开关。"""
+_cached_ctx: ssl.SSLContext | None = None
+
+
+def _store_context(ctx: ssl.SSLContext) -> None:
+    global _cached_ctx
+    _cached_ctx = ctx
+
+
+def _make_context(*, password: str | None = None) -> ssl.SSLContext:
+    """构造出站 TLS 材料；口令仅经参数传入 ``load_cert_chain``。"""
     mode = _mode()
     verify_server, present_client_cert = _OUTBOUND_CERT_MODE[mode]
     ca_file = (os.getenv(ENV_CA_FILE) or "").strip()
@@ -255,8 +265,7 @@ def _build_context() -> ssl.SSLContext:
         ctx.verify_mode = ssl.CERT_REQUIRED
 
     if present_client_cert:
-        pw = (os.getenv(ENV_CLIENT_KEY_PASSWORD) or "").strip() or None
-        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key, password=pw)
+        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key, password=password)
 
     if ciphers:
         ctx.set_ciphers(ciphers)
@@ -279,9 +288,15 @@ def httpx_verify(service: str = "llm"):
     ``service`` 默认 ``llm``；Semantic Layer 传 ``semantic_layer``；CloudCore SQL 传 ``cloud_core``。
     客户端证书已注入 ``SSLContext``，httpx 不应再传 ``cert=``。
     """
-    return _build_context() if outbound_ssl_enabled(service) else True
+    if not outbound_ssl_enabled(service):
+        return True
+    global _cached_ctx
+    if _cached_ctx is None:
+        _cached_ctx = _make_context()
+    return _cached_ctx
 
 
 def reset_cache() -> None:
     """清空 ``SSLContext`` 缓存（配置/环境变量变更或测试用）。"""
-    _build_context.cache_clear()
+    global _cached_ctx
+    _cached_ctx = None

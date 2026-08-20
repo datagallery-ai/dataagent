@@ -10,23 +10,39 @@
 # ============================================================================
 from __future__ import annotations
 
-import os
+import sys
 from collections.abc import Mapping
 
-_SQLRULES = frozenset({"sql_rules_business_twin", "sql_rules_traffic_insight"})
-ENV_INBOUND_SERVER_KEY_PASSWORD = "DATAAGENT_INBOUND_SERVER_KEY_PASSWORD"
-ENV_OUTBOUND_CLIENT_KEY_PASSWORD = "DATAAGENT_OUTBOUND_CLIENT_KEY_PASSWORD"
+
+def _encrypted(raw: object) -> bool:
+    """``inbound_encrypted`` / ``outbound_encrypted``：缺省 / None 为开；显式 false/0/off/no 为关。"""
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "off", "no"}
+    return bool(raw)
 
 
-def apply_sqlrule_cert_password_env(user_sql_rules: object = None) -> None:
-    """sqlrule 场景下：口令 env 未设置时从内部包写入，已在（含空白）则跳过。"""
-    if str(user_sql_rules or "").strip() not in _SQLRULES:
-        return
-    if ENV_INBOUND_SERVER_KEY_PASSWORD in os.environ or ENV_OUTBOUND_CLIENT_KEY_PASSWORD in os.environ:
-        return
+def resolve_cert_key_passwords(certificate: object = None) -> dict:
+    """按 inbound/outbound_encrypted 决定是否取内部口令；缺省开启。
+
+    返回 ``{"inbound": pw}`` / ``{"outbound": pw}``，只表示要不要给对应 TLS 带 password。
+    不读取 YAML 口令字段。
+    """
+    cert = certificate if isinstance(certificate, Mapping) else {}
+    inbound = _encrypted(cert.get("inbound_encrypted"))
+    outbound = _encrypted(cert.get("outbound_encrypted"))
+    if not inbound and not outbound:
+        return {}
     pw = require_internal_cert_password()
-    os.environ[ENV_INBOUND_SERVER_KEY_PASSWORD] = pw
-    os.environ[ENV_OUTBOUND_CLIENT_KEY_PASSWORD] = pw
+    passwords: dict[str, str] = {}
+    if inbound:
+        passwords["inbound"] = pw
+    if outbound:
+        passwords["outbound"] = pw
+    return passwords
 
 
 def require_internal_cert_password() -> str:
@@ -34,7 +50,14 @@ def require_internal_cert_password() -> str:
     from framework_om import CertManager
     from framework_starter import FrameworkStarter
 
-    FrameworkStarter.init_framework()
+    original_argv = sys.argv[:]
+    if "-processType" not in original_argv:
+        sys.argv.extend(["-processType", "nl2sql"])
+    try:
+        FrameworkStarter.init_framework()
+    finally:
+        sys.argv = original_argv
+
     cert_info = CertManager.query_cert_info()
     raw = getattr(cert_info, "encryptKeyFilePwdContent", None)
     if raw is None and isinstance(cert_info, Mapping):

@@ -37,11 +37,13 @@ SEMANTIC_LAYER:
     table_selection:
       mode: "business_family"
 
-# certificate:
-#   # 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径；
-#   # 要关请显式 inbound_enabled: false / outbound_enabled: false。
-#   # inbound_enabled / outbound_enabled 省略 = true
-#   # outbound_ssl_services 省略 = [llm, semantic_layer, cloud_core]；[] = 出站全关
+# 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径。
+# 校验/CI 无内部包，须显式关闭 encrypted，避免 from_config 调 framework_om。
+certificate:
+  inbound_encrypted: false
+  outbound_encrypted: false
+#   inbound_enabled / outbound_enabled 省略 = true
+#   outbound_ssl_services 省略 = [llm, semantic_layer, cloud_core]；[] = 出站全关
 #   server_cert_file: /etc/dataagent/certs/server.crt
 #   server_key_file: /etc/dataagent/certs/server.key
 #   ca_cert_file: /etc/dataagent/certs/ca.crt
