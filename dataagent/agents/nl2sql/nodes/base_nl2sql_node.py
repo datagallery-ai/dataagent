@@ -25,7 +25,6 @@ from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, TZ_CN
-from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import logger
 
 _TYPE_LABELS = {
@@ -49,7 +48,7 @@ class BaseNL2SQLNode(BaseNode):
         self._config_manager = config_manager
         self._nl2sql_context_dump_dir: Path | None = None
         self._context_dump_seq: list[int] = [0]
-        self._context_dump_enabled: bool = get_env_bool("DATAAGENT_CONTEXT_DUMP")
+        self._context_dump_enabled: bool = False
 
     @property
     def db(self):
