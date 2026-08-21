@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""内部取证契约：inbound/outbound_encrypted 各自缺省开启，false 关闭。"""
+"""内部取证契约：enabled 关则不取口令；仅实际用私钥且 encrypted 开才调内部包。"""
 
 from __future__ import annotations
 
@@ -113,3 +113,57 @@ def test_existing_process_type_argv_not_extended(monkeypatch):
     resolve_cert_key_passwords()
     assert calls["argv"] == ["prog", "-processType", "KEEP"]
     assert sys.argv == ["prog", "-processType", "KEEP"]
+
+
+def test_enabled_off_skips_internal_even_if_encrypted_default_or_true():
+    """两侧 enabled 关且 encrypted 开时不得 import 内部包（缺包也不应 ImportError）。"""
+    assert (
+        resolve_cert_key_passwords(
+            {
+                "inbound_enabled": False,
+                "outbound_enabled": False,
+                "inbound_encrypted": True,
+                "outbound_encrypted": True,
+            }
+        )
+        == {}
+    )
+
+
+def test_enabled_on_encrypted_on_still_fetches_passwords(monkeypatch):
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    passwords = resolve_cert_key_passwords(
+        {
+            "inbound_enabled": True,
+            "outbound_enabled": True,
+            "inbound_encrypted": True,
+            "outbound_encrypted": True,
+        }
+    )
+    assert passwords["inbound"] == "from-om"
+    assert passwords["outbound"] == "from-om"
+    assert calls["query"] == 1
+
+
+def test_inbound_enabled_false_outbound_still_follows_encrypted(monkeypatch):
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    passwords = resolve_cert_key_passwords({"inbound_enabled": False})
+    assert "inbound" not in passwords
+    assert passwords["outbound"] == "from-om"
+    assert calls["query"] == 1
+
+
+def test_outbound_enabled_false_inbound_still_follows_encrypted(monkeypatch):
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    passwords = resolve_cert_key_passwords({"outbound_enabled": False})
+    assert passwords["inbound"] == "from-om"
+    assert "outbound" not in passwords
+    assert calls["query"] == 1
+
+
+def test_inbound_certificate_mode_is_not_master_switch(monkeypatch):
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    passwords = resolve_cert_key_passwords({"inbound_certificate_mode": 0})
+    assert passwords["inbound"] == "from-om"
+    assert passwords["outbound"] == "from-om"
+    assert calls["query"] == 1

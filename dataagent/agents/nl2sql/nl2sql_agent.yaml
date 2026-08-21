@@ -52,7 +52,7 @@ SEMANTIC_LAYER:
   timeout: 30
 
 # 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径。
-# 校验/CI 无内部包，须显式关闭 encrypted，避免 from_config 调 framework_om。
+# encrypted 省略或 true = 私钥口令走内部包；CI/ST 夹具应关 *_enabled，不要把生产样例写成 false。
 certificate:
-  inbound_encrypted: false
-  outbound_encrypted: false
+  inbound_encrypted: true
+  outbound_encrypted: true

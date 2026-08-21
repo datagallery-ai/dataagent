@@ -102,10 +102,10 @@ def test_scenario_yaml_and_sql_rules_use_business_twin_name() -> None:
     assert config["DATABASE"]["config"]["path"] == ""
     assert config["CORE"]["perceptor"]["user_sql_rules"] == "sql_rules_business_twin"
     assert "business_twin" in config["SEMANTIC_LAYER"]
-    # 校验路径无 framework_om：仓库 YAML 显式关 encrypted，不得省略（缺省会调内部包）。
+    # 生产样例写 encrypted: true，避免「样例关加密」被当成安全默认。
     cert = config.get("certificate") or {}
-    assert cert.get("inbound_encrypted") is False
-    assert cert.get("outbound_encrypted") is False
+    assert cert.get("inbound_encrypted") is True
+    assert cert.get("outbound_encrypted") is True
     assert (nl2sql_dir / "prompts" / "user" / "sql_rules_business_twin.md").is_file()
 
 
