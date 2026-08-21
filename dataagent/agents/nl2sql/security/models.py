@@ -12,7 +12,10 @@
 # ============================================================================
 """Result models shared by the independent SQL security module."""
 
+# ruff: noqa: UP045
+
 from dataclasses import dataclass, field
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class SecurityCheckResult:
     """Contain all violations found for one SQL candidate."""
 
     violations: list[SecurityViolation] = field(default_factory=list)
+    normalized_sql: Optional[str] = None
 
     @property
     def blocked(self) -> bool:

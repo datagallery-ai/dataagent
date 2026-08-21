@@ -288,14 +288,23 @@ def check_semantic_schema(
             has_base_relation = True
             matches = _matching_schema_tables(source, allowed_tables)
             if len(matches) != 1:
-                message = f"Source table is not allowed: {source.sql(dialect=dialect)}."
+                message = (
+                    "Source table cannot be resolved uniquely in the provided semantic schema: "
+                    f"{source.sql(dialect=dialect)}. Use exactly one modeled table and check its "
+                    "table qualifier or alias."
+                )
                 return [SecurityViolation("SCHEMA-001", message)]
     if not has_base_relation:
-        return [SecurityViolation("SCHEMA-003", "Query must reference at least one semantic schema table.")]
+        message = (
+            "Query does not reference a table from the provided semantic schema. Regenerate it with at least one "
+            "modeled business table and use only that table's exposed columns."
+        )
+        return [SecurityViolation("SCHEMA-003", message)]
     try:
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
-        return [SecurityViolation("SCHEMA-002", f"Source column is not allowed or is ambiguous: {exc}")]
+        message = _schema_column_resolution_message(str(exc))
+        return [SecurityViolation("SCHEMA-002", message)]
     for scope in traverse_scope(qualified):
         for column in scope.columns:
             source = scope.sources.get(column.table)
@@ -306,8 +315,17 @@ def check_semantic_schema(
                     for column_name in normalized_schema.get(table_name, {}).get("columns", {})
                 }
                 if _normalize_identifier(column.name) not in allowed_columns:
-                    return [SecurityViolation("SCHEMA-002", f"Source column is not allowed: {column.sql()}.")]
+                    message = _schema_column_resolution_message(column.sql())
+                    return [SecurityViolation("SCHEMA-002", message)]
     return []
+
+
+def _schema_column_resolution_message(detail: str) -> str:
+    return (
+        "Source column is missing from the provided semantic schema or cannot be resolved unambiguously: "
+        f"{detail.rstrip('.')}. Ensure the column exists under the referenced table in the provided semantic schema; "
+        "then check the table or CTE alias and qualify the column with its unique source."
+    )
 
 
 def _function_name(node: exp.Func) -> str:
