@@ -418,13 +418,13 @@ rest_api:
 #     server_key_file:  /etc/dataagent/certs/server.key
 #     ca_cert_file:     /etc/dataagent/certs/ca.crt       # 入站校验客户端；出站未单独配置时也可复用
 #     outbound_ca_cert_file: /etc/dataagent/certs/outbound-ca.crt
-#     outbound_certificate_mode: 3  # 0=不校验 1/2=校验服务端 3=双向 mTLS
+#     outbound_certificate_mode: 3  # 0=不验 1=验链 2=不验+出示证 3=双向 mTLS
 #     outbound_cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
 #     # 出站开关：写入服务名才启用；outbound_enabled: false 可强制全关
 #     outbound_ssl_services:
 #       - llm
 #       - semantic_layer
-#     # client_cert_file: /etc/dataagent/certs/client.crt  # mode=3 时必填
+#     # client_cert_file: /etc/dataagent/certs/client.crt  # mode=2/3 时必填
 #     # client_key_file:  /etc/dataagent/certs/client.key
 #
 # 迁移提示：旧 certificate_mode / cipher_suites 已拆分为 inbound_/outbound_ 字段。
