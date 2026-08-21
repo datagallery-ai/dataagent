@@ -144,14 +144,46 @@ def test_llm_mode0_no_verify(monkeypatch):
     assert ctx.verify_mode == ssl.CERT_NONE
 
 
+def _spy_load_cert_chain(monkeypatch):
+    """记录 SSLContext.load_cert_chain 调用，并仍执行真实加载。"""
+    calls: list[tuple[tuple, dict]] = []
+    original = ssl.SSLContext.load_cert_chain
+
+    def _wrapped(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ssl.SSLContext, "load_cert_chain", _wrapped)
+    return calls
+
+
 def test_llm_mode1_treats_as_server_verify_only(monkeypatch, _cert_files):
     monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
     monkeypatch.setenv(outbound_tls.ENV_MODE, "1")
     monkeypatch.setenv(outbound_tls.ENV_CA_FILE, _cert_files["ca"])
+    monkeypatch.setenv(outbound_tls.ENV_CLIENT_CERT, _cert_files["cert"])
+    monkeypatch.setenv(outbound_tls.ENV_CLIENT_KEY, _cert_files["key"])
+    calls = _spy_load_cert_chain(monkeypatch)
 
     ctx = outbound_tls.httpx_verify()
     assert ctx.check_hostname is True
     assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert calls == []
+
+
+def test_llm_mode2_skip_verify_but_presents_client_cert(monkeypatch, _cert_files):
+    monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
+    monkeypatch.setenv(outbound_tls.ENV_MODE, "2")
+    monkeypatch.setenv(outbound_tls.ENV_CLIENT_CERT, _cert_files["cert"])
+    monkeypatch.setenv(outbound_tls.ENV_CLIENT_KEY, _cert_files["key"])
+    calls = _spy_load_cert_chain(monkeypatch)
+
+    ctx = outbound_tls.httpx_verify()
+    assert ctx.check_hostname is False
+    assert ctx.verify_mode == ssl.CERT_NONE
+    assert calls
+    assert calls[0][1]["certfile"] == _cert_files["cert"]
+    assert calls[0][1]["keyfile"] == _cert_files["key"]
 
 
 def test_unknown_mode_raises(monkeypatch):
@@ -189,7 +221,7 @@ def test_mode3_missing_ca_file_raises(monkeypatch):
 
 def test_invalid_cipher_raises(monkeypatch, _cert_files):
     monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
-    monkeypatch.setenv(outbound_tls.ENV_MODE, "2")
+    monkeypatch.setenv(outbound_tls.ENV_MODE, "1")
     monkeypatch.setenv(outbound_tls.ENV_CA_FILE, _cert_files["ca"])
     monkeypatch.setenv(outbound_tls.ENV_CIPHERS, "NOT-A-REAL-CIPHER")
     with pytest.raises(ssl.SSLError):
@@ -241,7 +273,7 @@ def test_apply_certificate_config_downfeeds_env(monkeypatch):
     outbound_tls.apply_certificate_config(
         {
             "outbound_ssl_services": ["llm", "metavisor"],
-            "outbound_certificate_mode": 2,
+            "outbound_certificate_mode": 1,
             "outbound_cipher_suites": "ECDHE-RSA-AES128-GCM-SHA256",
         }
     )
@@ -249,7 +281,7 @@ def test_apply_certificate_config_downfeeds_env(monkeypatch):
     assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm,metavisor"
     assert outbound_tls.ENV_CA_FILE not in os.environ
     assert outbound_tls.ENV_CLIENT_CERT not in os.environ
-    assert os.environ[outbound_tls.ENV_MODE] == "2"
+    assert os.environ[outbound_tls.ENV_MODE] == "1"
     assert os.environ[outbound_tls.ENV_CIPHERS] == "ECDHE-RSA-AES128-GCM-SHA256"
 
 
@@ -276,6 +308,16 @@ def test_apply_certificate_config_mode3_missing_client_errors():
             {
                 "outbound_ssl_services": ["llm"],
                 "outbound_certificate_mode": 3,
+            }
+        )
+
+
+def test_apply_certificate_config_mode2_missing_client_errors():
+    with pytest.raises(ValueError, match="missing: client_cert_file, client_key_file"):
+        outbound_tls.apply_certificate_config(
+            {
+                "outbound_ssl_services": ["llm"],
+                "outbound_certificate_mode": 2,
             }
         )
 
@@ -378,7 +420,7 @@ def test_apply_certificate_config_empty_services_disables_inherited_tls(monkeypa
 
 
 def test_apply_certificate_config_defaults_all_known_services(monkeypatch):
-    outbound_tls.apply_certificate_config({"outbound_certificate_mode": 2})
+    outbound_tls.apply_certificate_config({"outbound_certificate_mode": 1})
 
     assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm,semantic_layer,cloud_core"
     assert outbound_tls.outbound_ssl_enabled("llm") is True
@@ -425,12 +467,28 @@ def test_apply_certificate_config_falls_back_to_shared_ca(_cert_files):
     outbound_tls.apply_certificate_config(
         {
             "outbound_ssl_services": ["llm"],
-            "outbound_certificate_mode": 2,
+            "outbound_certificate_mode": 1,
             "ca_cert_file": _cert_files["ca"],
         }
     )
 
     assert os.environ[outbound_tls.ENV_CA_FILE] == _cert_files["ca"]
+
+
+def test_apply_certificate_config_mode2_downfeeds_client_paths(_cert_files):
+    outbound_tls.apply_certificate_config(
+        {
+            "outbound_ssl_services": ["llm"],
+            "outbound_certificate_mode": 2,
+            "client_cert_file": _cert_files["cert"],
+            "client_key_file": _cert_files["key"],
+        }
+    )
+
+    assert os.environ[outbound_tls.ENV_SSL_SERVICES] == "llm"
+    assert os.environ[outbound_tls.ENV_CLIENT_CERT] == _cert_files["cert"]
+    assert os.environ[outbound_tls.ENV_CLIENT_KEY] == _cert_files["key"]
+    assert os.environ[outbound_tls.ENV_MODE] == "2"
 
 
 def test_outbound_encrypted_passes_internal_password(monkeypatch, _cert_files):

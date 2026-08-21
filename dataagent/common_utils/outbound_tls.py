@@ -43,11 +43,15 @@ _DEFAULT_OUTBOUND_SERVICES = ("llm", "semantic_layer", "cloud_core")
 _MODE_TRUE_ALIASES = frozenset({"true"})
 _MODE_FALSE_ALIASES = frozenset({"false"})
 
-# outbound_certificate_mode -> (校验服务端, 出示客户端证书)。1 与 2 实现等价。
+# outbound_certificate_mode -> (校验服务端, 出示客户端证书)。
+# 0: 不验、不出示证（curl -k）
+# 1: 验链+hostname、不出示证
+# 2: 不验、出示证（curl -vk --cert --key；等价 Go InsecureSkipVerify + load_cert_chain）
+# 3: 验链+hostname + 出示证
 _OUTBOUND_CERT_MODE: dict[int, tuple[bool, bool]] = {
     0: (False, False),
     1: (True, False),
-    2: (True, False),
+    2: (False, True),
     3: (True, True),
 }
 
