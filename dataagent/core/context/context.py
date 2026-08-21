@@ -617,7 +617,7 @@ class Context:
         Return all recorded data object paths in this context.
 
         Returns:
-            dict[str, tuple[str, str]]: {path: (graph_node_label, md5_hex)} for each data object's
+            dict[str, tuple[str, str]]: {path: (graph_node_label, sha256_hex)} for each data object's
                 latest IR in the lineage
         """
         return self._nav.get_recorded_files()
