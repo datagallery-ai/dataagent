@@ -34,7 +34,7 @@ from typing import Any
 from loguru import logger
 
 from dataagent.core.context.context import Context
-from dataagent.core.context.utils_context_filesystem import lineage_path_key, md5_file
+from dataagent.core.context.utils_context_filesystem import lineage_path_key, sha256_file
 from dataagent.utils.constants import (
     DEFAULT_IR_COLUMN_SAMPLE_ROWS,
     DEFAULT_IR_COLUMN_UNIQUE_SAMPLES,
@@ -465,7 +465,7 @@ class ResultIRConverter:
 
         context_recorded_files = context.get_recorded_files()
         path_key = lineage_path_key(p=str(p))
-        if path_key in context_recorded_files and md5_file(p=str(p)) == context_recorded_files[path_key][1]:
+        if path_key in context_recorded_files and sha256_file(p=str(p)) == context_recorded_files[path_key][1]:
             context.add_edge_manually(
                 from_node=action_node_label, to_node=context_recorded_files[path_key][0], edge_type="refers_to"
             )

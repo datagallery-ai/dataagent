@@ -150,18 +150,18 @@ def lineage_path_key(*, p: str) -> str:
         return str(expanded)
 
 
-def md5_file(*, p: str, chunk_size: int = 1024 * 1024) -> str:
+def sha256_file(*, p: str, chunk_size: int = 1024 * 1024) -> str:
     """
-    Compute md5 of a file with streaming reads.
+    Compute SHA-256 of a file with streaming reads.
 
     Args:
         p (str): the path to the file
         chunk_size (int): the size of the chunk to read (Default: `1024 * 1024`)
 
     Returns:
-        str, the md5 of the file
+        str, the SHA-256 hex digest of the file
     """
-    h = hashlib.md5()
+    h = hashlib.sha256()
     with Path(p).open("rb") as f:
         for chunk in iter(lambda: f.read(chunk_size), b""):
             h.update(chunk)
