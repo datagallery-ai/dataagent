@@ -56,12 +56,15 @@ from dataagent.utils.constants import (
     DEFAULT_LLM_STREAM_TIMEOUT,
 )
 
-_CREDENTIAL_SK_RE = re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b")
-_CREDENTIAL_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._\-+/=]{32,}\b")
+# ASCII-word lookaround instead of \b: CJK is \w, so \b misses 「连接」+ sk-/Bearer/key.
+_CREDENTIAL_SK_RE = re.compile(r"(?<![A-Za-z0-9_])sk-(?:proj-)?[A-Za-z0-9]{20,}(?![A-Za-z0-9_])")
+_CREDENTIAL_BEARER_RE = re.compile(r"(?<![A-Za-z0-9_])Bearer\s+[A-Za-z0-9._\-+/=]{32,}(?![A-Za-z0-9._\-+/=])")
 _CREDENTIAL_ASSIGN_RE = re.compile(
-    r"(?i)\b(api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|password|passwd|pwd)"
-    r"\b\s*[:=]\s*(?:sk-(?:proj-)?[A-Za-z0-9]{20,}|[A-Za-z0-9._\-+/=]{32,})"
+    r"(?i)(?<![A-Za-z0-9_])(api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|password|passwd|pwd)"
+    r"(?![A-Za-z0-9_])(?:\\?[\"'])?\s*[:=：＝]\s*(?:\\?[\"'])?"
+    r"(?:sk-(?:proj-)?[A-Za-z0-9]{20,}|[A-Za-z0-9._\-+/=]{32,})"
 )
+_JSON_STRING_ESCAPE_RE = re.compile(r'\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})')
 
 
 def _scan_payload_for_credentials(payload: Mapping[str, Any]) -> str | None:
@@ -70,6 +73,7 @@ def _scan_payload_for_credentials(payload: Mapping[str, Any]) -> str | None:
         blob = json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         blob = str(payload)
+    blob = _JSON_STRING_ESCAPE_RE.sub(" ", blob)
     if _CREDENTIAL_SK_RE.search(blob):
         return "credential-like pattern matched: sk-*"
     if _CREDENTIAL_BEARER_RE.search(blob):
@@ -1789,7 +1793,10 @@ class LLMClient:
             if not state.finish_reason:
                 state.has_interrupted = True
         finally:
-            await client.aclose()
+            try:
+                await client.aclose()
+            except Exception:
+                logger.warning("Failed to close httpx client after stream", exc_info=True)
 
     def _astream_parse_line(
         self,

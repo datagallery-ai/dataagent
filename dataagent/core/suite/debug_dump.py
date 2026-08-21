@@ -25,6 +25,53 @@ from loguru import logger
 from dataagent.utils.constants import MERGED_CONFIG_TOP_LEVEL_KEY_ORDER
 from dataagent.utils.runtime_paths import resolve_layout_dir
 
+_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "password",
+        "passwd",
+        "secret",
+        "secret_key",
+        "access_token",
+        "private_key",
+        "authorization",
+        "token",
+    }
+)
+_SENSITIVE_SUFFIXES = ("_api_key", "_password", "_secret", "_token")
+
+
+def _is_sensitive_key(key: object) -> bool:
+    """Return True when a mapping key should have its string value redacted."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return lowered in _SENSITIVE_KEYS or lowered.endswith(_SENSITIVE_SUFFIXES)
+
+
+def _redact_secret_text(value: str) -> str:
+    """Mask a secret while keeping the original string length."""
+    length = len(value)
+    if length <= 8:
+        return "*" * length
+    return f"{value[:4]}{'*' * (length - 8)}{value[-4:]}"
+
+
+def _redact_value(value: Any, *, sensitive: bool) -> Any:
+    """Recursively redact nested mappings/lists; only string secrets are masked."""
+    if isinstance(value, Mapping):
+        return {key: _redact_value(item, sensitive=_is_sensitive_key(key)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item, sensitive=sensitive) for item in value]
+    if sensitive and isinstance(value, str):
+        return _redact_secret_text(value)
+    return value
+
+
+def _redact_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a redacted copy of ``settings`` without mutating the original."""
+    return {key: _redact_value(item, sensitive=_is_sensitive_key(key)) for key, item in settings.items()}
+
 
 def _iter_top_level_keys_for_display(settings: Mapping[str, Any]) -> list[str]:
     """
@@ -52,6 +99,9 @@ def format_settings_yaml(settings: Mapping[str, Any]) -> str:
     """
     Serialize settings with a blank line between each top-level configuration key.
 
+    Sensitive string fields are redacted before dump. The original ``settings``
+    mapping is not mutated.
+
     Top-level sections are emitted in :data:`MERGED_CONFIG_TOP_LEVEL_KEY_ORDER` when present;
     any other keys keep their original order from ``settings``.
 
@@ -61,10 +111,11 @@ def format_settings_yaml(settings: Mapping[str, Any]) -> str:
     Returns:
         YAML text suitable for writing to ``dataagent_config_*.yaml``.
     """
+    redacted = _redact_settings(settings)
     parts: list[str] = []
     for key in _iter_top_level_keys_for_display(settings):
         chunk = yaml.safe_dump(
-            {key: settings[key]},
+            {key: redacted[key]},
             allow_unicode=True,
             sort_keys=False,
             default_flow_style=False,

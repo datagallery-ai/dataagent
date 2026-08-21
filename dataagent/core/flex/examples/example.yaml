@@ -409,23 +409,25 @@ rest_api:
 
 # ===== 证书通信（mTLS）=====
 # 入站(REST API 服务端) 与出站（LLM / Semantic Layer）共用同一段 certificate:，
-# 统一写在 --config 指定的 YAML 文件里，示例：
+# 统一写在 --config 指定的 YAML 文件里；两侧均默认关闭，需显式开启。示例：
 #   certificate:
-#     inbound_enabled: true         # 只驱动入站 REST TLS；关闭则入站回退 HTTP
-#     server_cert_file: /etc/dataagent/certs/server.crt   # 入站服务端证书
+#     inbound_enabled: true         # 入站 REST TLS；未写/false 则 HTTP
+#     inbound_certificate_mode: 3   # 0/2=不校验客户端 1=可选 3=强制客户端证
+#     inbound_cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+#     server_cert_file: /etc/dataagent/certs/server.crt
 #     server_key_file:  /etc/dataagent/certs/server.key
-#     ca_cert_file:     /etc/dataagent/certs/ca.crt       # 入站校验对方客户端证书的 CA；出站未单独配置时也会复用
-#     outbound_ca_cert_file: /etc/dataagent/certs/outbound-ca.crt  # 出站校验服务端证书的 CA
-#     cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
-#     certificate_mode: 3           # 入站/出站统一：0=不校验 1=可选(出站按单向) 2=单向 3=双向(mTLS)
-#     # 出站 mTLS 开关列表：当前支持 llm、semantic_layer
+#     ca_cert_file:     /etc/dataagent/certs/ca.crt       # 入站校验客户端；出站未单独配置时也可复用
+#     outbound_ca_cert_file: /etc/dataagent/certs/outbound-ca.crt
+#     outbound_certificate_mode: 3  # 0=不校验 1/2=校验服务端 3=双向 mTLS
+#     outbound_cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+#     # 出站开关：写入服务名才启用；outbound_enabled: false 可强制全关
 #     outbound_ssl_services:
 #       - llm
 #       - semantic_layer
-#     # client_cert_file: /etc/dataagent/certs/client.crt  # 出站 mTLS 客户端证书；certificate_mode=3 时必填
+#     # client_cert_file: /etc/dataagent/certs/client.crt  # mode=3 时必填
 #     # client_key_file:  /etc/dataagent/certs/client.key
 #
-# 迁移提示：入站 REST 使用 inbound_enabled；出站需显式把服务名加入 outbound_ssl_services。
+# 迁移提示：旧 certificate_mode / cipher_suites 已拆分为 inbound_/outbound_ 字段。
 # SEMANTIC_LAYER.verify_ssl 已废弃；Semantic Layer 出站请使用 semantic_layer。
 # 未 opt-in 的出站服务对 httpx 返回 False（与 LLM 一致）。
 #

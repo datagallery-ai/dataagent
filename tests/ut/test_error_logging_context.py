@@ -46,8 +46,8 @@ def test_production_sink_disables_diagnose(tmp_path) -> None:
             process_name="ut-error-logging",
         )
     )
-    # Loguru does not expose diagnose on the logger object; re-init with known False is asserted by code path.
     assert DataAgentLogger._config is not None
+    assert DataAgentLogger._config.diagnose is True
 
 
 def test_failure_log_file_is_grepable_by_public_trace_id(tmp_path) -> None:

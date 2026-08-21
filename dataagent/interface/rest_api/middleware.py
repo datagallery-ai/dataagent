@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""REST ingress middleware: body limit, TTFB timeout, IP rate limit, concurrency queue."""
+"""REST ingress middleware: body limit, request timeout, IP rate limit, concurrency queue."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import anyio
 import yaml
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -38,17 +37,18 @@ from dataagent.utils.log import logger
 request_id_var: ContextVar[str] = ContextVar("dataagent_request_id", default="")
 _PROBE_PATHS = frozenset({"/health"})
 _DOWNSTREAM_EXECUTION_SCOPE_KEY = "dataagent_downstream_execution"
+_DOWNSTREAM_CANCEL_REQUESTED_KEY = "dataagent_downstream_cancel_requested"
 
 
 @dataclass(frozen=True)
 class RestApiLimits:
-    """Ingress limits. ``request_timeout_seconds`` is TTFB only (not SSE body length)."""
+    """Ingress limits. ``request_timeout_seconds`` caps the whole request, including SSE body."""
 
     max_body_bytes: int = 1_048_576
-    request_timeout_seconds: float = 120.0
+    request_timeout_seconds: float = 600.0
     rate_limit_per_minute: int = 60
     max_concurrency: int = 16
-    queue_timeout_seconds: float = 5.0
+    queue_timeout_seconds: float = 15.0
 
 
 DEFAULT_REST_API_LIMITS = RestApiLimits()
@@ -129,12 +129,12 @@ def get_request_id() -> str:
 class _DownstreamExecution:
     """Cancellation handle and completion signal for one downstream ASGI request."""
 
-    cancel_scope: anyio.CancelScope
     done: asyncio.Event
+    task: asyncio.Task[Any]
 
 
 class _TrackedDownstreamApp:
-    """Expose the actual downstream ASGI task so request timeouts can cancel it."""
+    """Run the downstream app in its own Task so request timeouts can cancel it."""
 
     def __init__(self, app: Any) -> None:
         self._app = app
@@ -142,22 +142,44 @@ class _TrackedDownstreamApp:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Track the current downstream task for the lifetime of one ASGI request."""
         done = asyncio.Event()
-        with anyio.CancelScope() as cancel_scope:
-            execution = _DownstreamExecution(cancel_scope=cancel_scope, done=done)
-            scope[_DOWNSTREAM_EXECUTION_SCOPE_KEY] = execution
-            try:
-                await self._app(scope, receive, send)
-            finally:
-                done.set()
-                if scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY) is execution:
-                    scope.pop(_DOWNSTREAM_EXECUTION_SCOPE_KEY, None)
+        # Dedicated Task: anyio.CancelScope.cancel() does not interrupt asyncio.Event.wait(),
+        # and wait_for(call_next) only cancels Starlette's waiter, not the hung app.
+        task = asyncio.create_task(self._app(scope, receive, send))
+        execution = _DownstreamExecution(done=done, task=task)
+        scope[_DOWNSTREAM_EXECUTION_SCOPE_KEY] = execution
+        if scope.get(_DOWNSTREAM_CANCEL_REQUESTED_KEY):
+            task.cancel()
+        try:
+            await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            done.set()
+            if scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY) is execution:
+                scope.pop(_DOWNSTREAM_EXECUTION_SCOPE_KEY, None)
+
+
+async def _cancel_downstream(scope: Scope) -> None:
+    """Cancel and join the downstream ASGI task (not Starlette's call_next waiter)."""
+    scope[_DOWNSTREAM_CANCEL_REQUESTED_KEY] = True
+    execution = scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY)
+    if not isinstance(execution, _DownstreamExecution):
+        await asyncio.sleep(0)
+        execution = scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY)
+        if not isinstance(execution, _DownstreamExecution):
+            return
+    task = execution.task
+    if not task.done() and task is not asyncio.current_task():
+        task.cancel()
+    await execution.done.wait()
 
 
 class SecurityLimitsMiddleware(BaseHTTPMiddleware):
     """P0 ingress limits + access audit.
 
     Semaphore is held until the response body finishes (SSE included).
-    ``request_timeout_seconds`` is TTFB only.
+    ``request_timeout_seconds`` is a wall-clock cap from middleware entry through SSE body.
     """
 
     def __init__(self, app: Any, limits: RestApiLimits):
@@ -179,15 +201,6 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
         if path not in _PROBE_PATHS:
             receive = self._wrap_receive_with_body_limit(scope, receive)
         await super().__call__(scope, receive, send)
-
-    @staticmethod
-    async def _cancel_downstream(scope: Scope) -> None:
-        """Cancel and join the actual downstream ASGI task for one timed-out request."""
-        execution = scope.get(_DOWNSTREAM_EXECUTION_SCOPE_KEY)
-        if not isinstance(execution, _DownstreamExecution):
-            return
-        execution.cancel_scope.cancel()
-        await execution.done.wait()
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Apply body/rate/concurrency limits, then forward with request id."""
@@ -218,10 +231,14 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
                     )
                 acquired = True
 
+            deadline = started + self.limits.request_timeout_seconds
             try:
-                response = await asyncio.wait_for(call_next(request), timeout=self.limits.request_timeout_seconds)
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    raise TimeoutError
+                response = await asyncio.wait_for(call_next(request), timeout=remaining)
             except TimeoutError:
-                await self._cancel_downstream(request.scope)
+                await _cancel_downstream(request.scope)
                 if acquired:
                     self._semaphore.release()
                     acquired = False
@@ -247,7 +264,11 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
 
             body_iterator = getattr(response, "body_iterator", None)
             if body_iterator is not None and acquired:
-                response.body_iterator = self._hold_slot_until_body_ends(body_iterator)
+                response.body_iterator = self._hold_slot_until_body_ends(
+                    body_iterator,
+                    deadline=deadline,
+                    scope=request.scope,
+                )
                 acquired = False
             elif acquired:
                 self._semaphore.release()
@@ -316,13 +337,33 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
 
         return limited_receive
 
-    async def _hold_slot_until_body_ends(self, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
-        """Keep the concurrency slot until the response body completes."""
+    async def _hold_slot_until_body_ends(
+        self,
+        iterator: AsyncIterator[Any],
+        *,
+        deadline: float,
+        scope: Scope,
+    ) -> AsyncIterator[Any]:
+        """Keep the concurrency slot until the body ends or the request deadline hits."""
         aiter = iterator.__aiter__()
+        timed_out = False
         try:
-            async for chunk in aiter:
+            while True:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                try:
+                    chunk = await asyncio.wait_for(aiter.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+                except TimeoutError:
+                    timed_out = True
+                    break
                 yield chunk
         finally:
+            if timed_out:
+                await _cancel_downstream(scope)
             close = getattr(aiter, "aclose", None)
             if callable(close):
                 with contextlib.suppress(Exception):
@@ -350,10 +391,7 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP from X-Forwarded-For or the socket peer."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip() or "unknown"
+    """Return the socket peer IP. Ignore forwarded headers."""
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
