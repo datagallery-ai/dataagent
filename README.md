@@ -158,12 +158,12 @@ WORKSPACE:
 
 ### 🔐 Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DEEPSEEK_API_KEY` | DeepSeek API Key | `sk-xxx` |
-| `DEEPSEEK_BASE_URL` | DeepSeek API Base URL | `https://api.deepseek.com` |
-| `BAILIAN_API_KEY` | Alibaba Cloud Bailian API Key | `sk-xxx` |
-| `OPENAI_API_KEY` | OpenAI API Key | `sk-xxx` |
+| Variable | Description | Example                  |
+|----------|-------------|--------------------------|
+| `DEEPSEEK_API_KEY` | DeepSeek API Key | `sk-xxx`                 |
+| `DEEPSEEK_BASE_URL` | DeepSeek API Base URL | `https://xxx.xxxxxx.xxx` |
+| `BAILIAN_API_KEY` | Alibaba Cloud Bailian API Key | `sk-xxx`                 |
+| `OPENAI_API_KEY` | OpenAI API Key | `sk-xxx`                 |
 
 > 📌 For more configuration, refer to `.env.example`
 

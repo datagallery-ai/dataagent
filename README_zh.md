@@ -158,12 +158,12 @@ WORKSPACE:
 
 ### 🔐 环境变量
 
-| 变量 | 说明 | 示例 |
-|------|------|------|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | `sk-xxx` |
-| `DEEPSEEK_BASE_URL` | DeepSeek API 地址 | `https://api.deepseek.com` |
-| `BAILIAN_API_KEY` | 阿里云百炼 API 密钥 | `sk-xxx` |
-| `OPENAI_API_KEY` | OpenAI API 密钥 | `sk-xxx` |
+| 变量 | 说明 | 示例                       |
+|------|------|--------------------------|
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | `sk-xxx`                 |
+| `DEEPSEEK_BASE_URL` | DeepSeek API 地址 | `https://xxx.xxxxxx.xxx` |
+| `BAILIAN_API_KEY` | 阿里云百炼 API 密钥 | `sk-xxx`                 |
+| `OPENAI_API_KEY` | OpenAI API 密钥 | `sk-xxx`                 |
 
 > 📌 更多配置请参考 `.env.example`
 
