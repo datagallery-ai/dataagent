@@ -318,6 +318,35 @@ class TestAstreamRepetitionRetry:
         assert calls["n"] == 2
 
 
+class TestAstreamAcloseDoesNotMask:
+    """``_astream_iter`` 的 ``aclose`` 失败不得盖住 HTTP/解析等业务异常。"""
+
+    @pytest.mark.asyncio
+    async def test_aclose_error_does_not_mask_http_status_error(self):
+        """业务侧 401 后 ``aclose`` 再抛，调用方仍应看到 mapped AUTH，而不是 close 错误。"""
+        resp = MagicMock(status_code=401)
+        resp.json.return_value = {"error": {"message": "invalid key"}}
+        resp.text = '{"error": {"message": "invalid key"}}'
+        resp.is_error = True
+        http_exc = httpx.HTTPStatusError("401", request=MagicMock(), response=resp)
+
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(side_effect=http_exc)
+        mock_client.aclose = AsyncMock(side_effect=RuntimeError("aclose failed"))
+
+        with patch(
+            "dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            client = LLMClient(model="test-model", api_base="http://test", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                async for _ in client.astream([{"role": "user", "content": "hi"}]):
+                    pass
+            assert ei.value.category == LLMErrorCategory.AUTH
+        assert mock_client.aclose.await_count == 1
+
+
 class TestNonStreamPayloadStripsStream:
     """_build_payload(stream=False)：覆盖 extra_body 透传的 stream，并显式写 stream=False。"""
 

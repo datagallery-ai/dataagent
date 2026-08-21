@@ -7,16 +7,12 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 # ============================================================================
 """出站 mTLS 证书能力。
 
-证书材料仍统一来自 ``certificate:`` 段。REST 入站由 ``certificate.inbound_enabled`` 控制；
-出站请求仅当 ``outbound_ssl_services`` 包含对应服务名时启用 mTLS。
-
-当前支持的出站服务名：``llm``、``semantic_layer``。
-未列入的服务对 httpx 返回 ``False``（不校验、不出示客户端证书），与 LLM 未 opt-in 行为一致。
+证书材料来自 ``certificate:`` 段。出站默认关闭；仅当 ``outbound_ssl_services``
+包含对应服务名时启用。可用 ``outbound_enabled: false`` 强制关闭。校验策略用
+``outbound_certificate_mode``（缺省 3）。
 """
 
 from __future__ import annotations
@@ -39,13 +35,29 @@ ENV_PRESERVE_ON_MISSING = "DATAAGENT_OUTBOUND_TLS_PRESERVE_ON_MISSING"
 
 _DEFAULT_MODE = 3
 
-# 客户端角色的 certificate_mode：值为 (校验服务端, 出示客户端证书)。
+# outbound_certificate_mode -> (校验服务端, 出示客户端证书)。1 与 2 实现等价。
 _OUTBOUND_CERT_MODE: dict[int, tuple[bool, bool]] = {
     0: (False, False),
     1: (True, False),
     2: (True, False),
     3: (True, True),
 }
+
+
+def _flag_enabled(value: Any, *, default: bool = False) -> bool:
+    """开关：未写/None 用 default；显式 false/0/off/no 为关。"""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "on", "yes"}:
+            return True
+        if text in {"0", "false", "off", "no"}:
+            return False
+        return default
+    return bool(value)
 
 
 def _normalize_services(value: Any) -> str:
@@ -58,6 +70,27 @@ def _normalize_services(value: Any) -> str:
     else:
         parts = [str(value)]
     return ",".join(part.strip().lower() for part in parts if part and part.strip())
+
+
+def _resolve_ssl_services(certificate: Mapping[str, Any]) -> str:
+    # 显式 outbound_enabled: false 强制关闭；否则仅靠 outbound_ssl_services opt-in。
+    if "outbound_enabled" in certificate and not _flag_enabled(certificate.get("outbound_enabled"), default=False):
+        return ""
+    return _normalize_services(certificate.get("outbound_ssl_services"))
+
+
+def _parse_outbound_mode(raw: Any) -> int:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return _DEFAULT_MODE
+    try:
+        mode = int(str(raw).strip())
+    except ValueError:
+        mode = -1
+    if mode not in _OUTBOUND_CERT_MODE:
+        raise ValueError(
+            f"Unsupported outbound_certificate_mode={raw!r}; expected one of {sorted(_OUTBOUND_CERT_MODE)}"
+        )
+    return mode
 
 
 def _set_env(name: str, value: Any) -> None:
@@ -77,29 +110,47 @@ def apply_certificate_config(
     *,
     preserve_existing_on_missing: bool = False,
 ) -> None:
-    """把 ``certificate:`` 段（插值后）下发为 ``DATAAGENT_OUTBOUND_*`` 进程环境变量。
-
-    出站客户端证书必须由 ``client_cert_file``/``client_key_file`` 显式配置，不复用
-    入站服务端证书。出站开关由 ``outbound_ssl_services`` 列表控制；下发后清空
-    SSLContext 缓存以便重新生效。
-
-    ``certificate`` 缺省时默认清空已有进程环境，避免同进程内不同 agent 串用 TLS
-    身份。子 agent 继承主 agent 出站 TLS 时需显式传入
-    ``preserve_existing_on_missing=True``。
-    """
-    if not isinstance(certificate, Mapping):
+    """把 ``certificate:`` 段下发为 ``DATAAGENT_OUTBOUND_*``；出站开启时缺材料立即报错。"""
+    if not isinstance(certificate, Mapping) or not certificate:
         if not preserve_existing_on_missing:
             _clear_env()
         reset_cache()
         return
 
+    services = _resolve_ssl_services(certificate)
+    mode = _parse_outbound_mode(certificate.get("outbound_certificate_mode", _DEFAULT_MODE))
+    ca_file = certificate.get("outbound_ca_cert_file") or certificate.get("ca_cert_file")
+    client_cert = certificate.get("client_cert_file")
+    client_key = certificate.get("client_key_file")
+    ciphers = certificate.get("outbound_cipher_suites")
+
+    if services:
+        _, present_client_cert = _OUTBOUND_CERT_MODE[mode]
+        missing: list[str] = []
+        if present_client_cert:
+            if not client_cert:
+                missing.append("client_cert_file")
+            if not client_key:
+                missing.append("client_key_file")
+        if missing:
+            raise ValueError(
+                f"outbound TLS enabled (outbound_certificate_mode={mode}) but missing: {', '.join(missing)}"
+            )
+        for label, path in (
+            ("outbound_ca_cert_file/ca_cert_file", ca_file),
+            ("client_cert_file", client_cert),
+            ("client_key_file", client_key),
+        ):
+            if path and not os.path.isfile(str(path)):
+                raise FileNotFoundError(f"certificate.{label} not found: {path}")
+
     mapping = {
-        ENV_SSL_SERVICES: _normalize_services(certificate.get("outbound_ssl_services")),
-        ENV_CA_FILE: certificate.get("outbound_ca_cert_file") or certificate.get("ca_cert_file"),
-        ENV_CLIENT_CERT: certificate.get("client_cert_file"),
-        ENV_CLIENT_KEY: certificate.get("client_key_file"),
-        ENV_CIPHERS: certificate.get("cipher_suites"),
-        ENV_MODE: certificate.get("certificate_mode"),
+        ENV_SSL_SERVICES: services,
+        ENV_CA_FILE: ca_file,
+        ENV_CLIENT_CERT: client_cert,
+        ENV_CLIENT_KEY: client_key,
+        ENV_CIPHERS: ciphers,
+        ENV_MODE: mode,
     }
     for env_name, value in mapping.items():
         _set_env(env_name, value)
@@ -117,25 +168,12 @@ def outbound_ssl_enabled(service: str) -> bool:
 
 
 def _mode() -> int:
-    raw = os.getenv(ENV_MODE)
-    if raw is None or not str(raw).strip():
-        return _DEFAULT_MODE
-    try:
-        mode = int(str(raw).strip())
-    except ValueError:
-        mode = -1
-    if mode not in _OUTBOUND_CERT_MODE:
-        raise ValueError(f"Unsupported certificate_mode={raw}; expected one of {sorted(_OUTBOUND_CERT_MODE)}")
-    return mode
+    return _parse_outbound_mode(os.getenv(ENV_MODE))
 
 
 @lru_cache(maxsize=1)
 def _build_context() -> ssl.SSLContext:
-    """构造（并缓存）出站 TLS 材料，不判断任何开关。
-
-    缓存的原因：调用方（如 httpx 版 LLMClient）每次请求新建 client，若每请求都重建
-    上下文并 ``load_cert_chain`` 读盘，开销显著。配置变更需调用 :func:`reset_cache`。
-    """
+    """构造（并缓存）出站 TLS 材料，不判断服务开关。"""
     mode = _mode()
     verify_server, present_client_cert = _OUTBOUND_CERT_MODE[mode]
     ca_file = (os.getenv(ENV_CA_FILE) or "").strip()
@@ -146,7 +184,6 @@ def _build_context() -> ssl.SSLContext:
     ctx = ssl.create_default_context(cafile=ca_file or None if verify_server else None)
 
     if not verify_server:
-        # 不校验服务端：必须先关 check_hostname 再设 CERT_NONE。
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     else:
@@ -156,8 +193,8 @@ def _build_context() -> ssl.SSLContext:
     if present_client_cert:
         if not (client_cert and client_key):
             raise ValueError(
-                f"certificate_mode={mode} (mutual TLS) requires client cert/key; "
-                f"set {ENV_CLIENT_CERT} and {ENV_CLIENT_KEY}"
+                f"outbound TLS enabled (outbound_certificate_mode={mode}) but missing: "
+                "client_cert_file, client_key_file"
             )
         for label, path in ((ENV_CLIENT_CERT, client_cert), (ENV_CLIENT_KEY, client_key)):
             if not os.path.isfile(path):
@@ -177,12 +214,10 @@ def _build_context() -> ssl.SSLContext:
 
 
 def httpx_verify(service: str = "llm"):
-    """httpx 的 ``verify`` 取值：启用返回 ``SSLContext``，未启用返回 ``False``。
+    """httpx 的 ``verify``：启用返回 ``SSLContext``，未启用返回 ``False``。
 
-    ``service`` 默认 ``llm``，保持既有调用方兼容。Semantic Layer 出站请传
-    ``semantic_layer``。未在 ``outbound_ssl_services`` 中 opt-in 时返回 ``False``。
-
-    注意：客户端证书已注入 ``SSLContext``，httpx 不应再额外传 ``cert=``。
+    ``service`` 默认 ``llm``；Semantic Layer 传 ``semantic_layer``。
+    客户端证书已注入 ``SSLContext``，httpx 不应再传 ``cert=``。
     """
     return _build_context() if outbound_ssl_enabled(service) else False
 

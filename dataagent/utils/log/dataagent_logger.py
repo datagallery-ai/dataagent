@@ -31,6 +31,7 @@ from uuid import uuid4
 from loguru import logger as _loguru_logger
 
 from dataagent.utils.constants import TZ_CN
+from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.runtime_paths import dataagent_home, resolve_user_root
 
 _LOG_CONTEXT_KEYS = (
@@ -138,6 +139,7 @@ class LoggerConfig:
     redirect_stdout_stderr: bool = False
     file_path_explicit: bool = False
     enqueue: bool = True
+    diagnose: bool = True
 
 
 class DataAgentLogger:
@@ -174,6 +176,7 @@ class DataAgentLogger:
             process_name=process_name,
             file_path=file_path,
             file_path_explicit=effective_config.file_path_explicit or effective_config.file_path is not None,
+            diagnose=get_env_bool("DATAAGENT_LOG_DIAGNOSE", default=effective_config.diagnose),
         )
         cls._config = effective_config
 
@@ -185,7 +188,7 @@ class DataAgentLogger:
 
         format_callable = format_string if effective_config.json_logs else _make_format(format_string)
 
-        # Keep ContextVar fields on every record; production sinks never dump locals.
+        # Keep ContextVar fields on every record. diagnose defaults on; DATAAGENT_LOG_DIAGNOSE can disable.
         _loguru_logger.configure(patcher=_patch_log_record)
 
         if effective_config.console:
@@ -195,7 +198,7 @@ class DataAgentLogger:
                 format=format_callable,
                 colorize=True,
                 backtrace=True,
-                diagnose=False,
+                diagnose=effective_config.diagnose,
             )
 
         if file_path:
@@ -214,7 +217,7 @@ class DataAgentLogger:
                     encoding="utf-8",
                     enqueue=effective_config.enqueue,
                     backtrace=True,
-                    diagnose=False,
+                    diagnose=effective_config.diagnose,
                     serialize=effective_config.json_logs,
                 )
             except OSError as e:
@@ -227,7 +230,7 @@ class DataAgentLogger:
                         format=format_callable,
                         colorize=True,
                         backtrace=True,
-                        diagnose=False,
+                        diagnose=effective_config.diagnose,
                     )
                     _loguru_logger.warning(f"无法写入日志文件 {file_path}: {e}，已强制启用控制台输出")
                 cls._config = replace(effective_config, file_path=None)

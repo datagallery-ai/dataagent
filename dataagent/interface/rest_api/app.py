@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
 from dataagent.interface.rest_api.service import DataAgentService
@@ -26,6 +26,7 @@ from dataagent.interface.rest_api.service import DataAgentService
 class DataAgentQueryRequest(BaseModel):
     """DataAgent query request."""
 
+    model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1)
     stream: bool = False
 
@@ -72,7 +73,13 @@ async def stream_agent_events(query: str, service: DataAgentService) -> AsyncGen
             yield sse_event("message", data)
 
 
-app = FastAPI(title="DataAgent Service", version="1.0.0")
+app = FastAPI(
+    title="DataAgent Service",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 _middleware_installed = False
 
 
@@ -101,9 +108,9 @@ async def health_check():
     if service is None or not service.is_ready():
         return JSONResponse(
             status_code=503,
-            content={"status": "not_ready", "service": "DataAgent Service"},
+            content={"status": "not_ready"},
         )
-    return {"status": "ok", "service": "DataAgent Service"}
+    return {"status": "ok"}
 
 
 @app.post("/api/agent/query")
