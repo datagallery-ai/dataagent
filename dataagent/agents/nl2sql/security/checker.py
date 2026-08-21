@@ -12,14 +12,16 @@
 # ============================================================================
 """SQLGlot-based security checker with no model or database calls."""
 
-from typing import Any
+from typing import Any, cast
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, OptimizeError
+from sqlglot.expressions.core import Expression
 from sqlglot.optimizer.qualify import qualify
 
 from dataagent.agents.nl2sql.security.models import SecurityCheckResult, SecurityViolation
+from dataagent.agents.nl2sql.security.semantic_resolver import normalize_semantic_column_references
 
 
 def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityCheckResult:
@@ -46,6 +48,13 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
     statement = executable[0]
     if any(not select.expressions for select in statement.find_all(exp.Select)):
         return SecurityCheckResult([SecurityViolation("SQL-001", "Every SELECT must contain a projection.")])
+    normalized_sql = normalize_semantic_column_references(statement, sql=sql, dialect=dialect, schema=schema)
+    if normalized_sql is not None:
+        try:
+            statement = cast(Any, sqlglot.parse_one(normalized_sql, read=dialect, error_level=ErrorLevel.RAISE))
+        except Exception as exc:
+            return SecurityCheckResult([SecurityViolation("SQL-001", f"SQL normalization failed: {exc}")])
+        sql = normalized_sql
     violations = _check_read_only_structure(statement)
     if violations:
         return SecurityCheckResult(violations)
@@ -57,15 +66,15 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
         return SecurityCheckResult(violations)
     violations.extend(check_allowed_functions(statement, sql=sql, dialect=dialect))
     violations.extend(check_semantic_schema(statement, dialect=dialect, schema=schema))
-    return SecurityCheckResult(violations)
+    return SecurityCheckResult(violations, normalized_sql=normalized_sql if not violations else None)
 
 
 def qualify_with_semantic_schema(
-    statement: exp.Expression,
+    statement: Expression,
     *,
     dialect: str,
     schema: dict[str, Any],
-) -> exp.Expression:
+) -> Expression:
     """Qualify table aliases, columns, and stars using semantic metadata."""
     sqlglot_schema: dict[str, Any] = {}
     for table_name, table_meta in schema.items():
@@ -96,7 +105,7 @@ def _insert_sqlglot_schema(target: dict[str, Any], table_name: str, columns: dic
         current.update({parts[-1]: columns})
 
 
-def _check_read_only_structure(statement: exp.Expression) -> list[SecurityViolation]:
+def _check_read_only_structure(statement: Expression) -> list[SecurityViolation]:
     forbidden_names = (
         "Insert",
         "Update",

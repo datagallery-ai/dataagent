@@ -78,6 +78,8 @@ class ValidatorNode(BaseNL2SQLNode):
                 from dataagent.agents.nl2sql.security import check_sql
 
                 security_result = check_sql(gr.sql, dialect=self.dialect, schema=schema)
+                if security_result.normalized_sql is not None:
+                    gr.sql = security_result.normalized_sql
                 gr.security_checked = True
                 gr.security_violations = [violation.to_dict() for violation in security_result.violations]
                 issues = [f"{violation.rule_id}: {violation.message}" for violation in security_result.violations]
