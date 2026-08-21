@@ -41,11 +41,9 @@ TOOLS:
     - module: "tests.st.concurrency.slow_tools"
       function: "slow_tool_agent_b"
 
-# 测试夹具：无证书材料，显式关闭出站 mTLS，避免默认 mode 3 缺文件失败。
-# CI 无 framework_om，校验路径必须显式关闭 encrypted，避免 from_config 调内部包。
+# 测试夹具：无证书材料，显式关闭两侧 TLS，避免默认 mode 3 缺文件失败。
+# inbound_enabled / outbound_enabled 关则不取口令、不调内部包（CI 无 framework_om）。
 certificate:
   outbound_enabled: false
   inbound_enabled: false
-  inbound_encrypted: false
-  outbound_encrypted: false
 
