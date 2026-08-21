@@ -221,6 +221,104 @@ def test_check_sql_allows_qualified_cte_column_named_current_time() -> None:
     assert result.blocked is False
 
 
+@pytest.mark.parametrize("qualifier", ["", "aligned_periods."])
+def test_check_sql_resolves_cte_column_named_like_context_function(qualifier: str) -> None:
+    """Qualified and unqualified CTE columns should use the same semantic resolution path."""
+    schema = {"orders": {"columns": {"id": {}, "time": {}}}}
+    sql = (
+        "WITH aligned_periods AS ("
+        "SELECT time AS current_time FROM orders WHERE id = 1"
+        f") SELECT {qualifier}current_time FROM aligned_periods ORDER BY {qualifier}current_time"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    if not qualifier:
+        assert result.normalized_sql is not None
+        assert result.normalized_sql == sql.replace("current_time", '"current_time"')
+
+
+def test_check_sql_resolves_base_column_named_like_context_function() -> None:
+    """A modeled base column should disambiguate a bare context-function-shaped name."""
+    schema = {"orders": {"columns": {"id": {}, "current_time": {}}}}
+
+    result = check_sql("SELECT current_time FROM orders WHERE id = 1", dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.normalized_sql == 'SELECT "current_time" FROM orders WHERE id = 1'
+
+
+def test_check_sql_semantic_normalization_preserves_other_source_syntax() -> None:
+    """Semantic qualification should not rewrite unrelated allowed function or cast spellings."""
+    schema = {"orders": {"columns": {"id": {}, "current_time": {}}}}
+    sql = "SELECT current_time, NVL(NULL, 0), INSTR('abc', 'b'), '1'::INTEGER FROM orders WHERE id=1"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.normalized_sql == (
+        "SELECT \"current_time\", NVL(NULL, 0), INSTR('abc', 'b'), '1'::INTEGER FROM orders WHERE id=1"
+    )
+
+
+@pytest.mark.parametrize(
+    "projection",
+    [
+        "time AS current_time",
+        "SUM(id) AS current_time",
+    ],
+)
+def test_check_sql_resolves_order_by_output_alias(projection: str) -> None:
+    """ORDER BY should safely resolve a keyword-shaped output alias without changing its meaning."""
+    schema = {"orders": {"columns": {"id": {}, "time": {}}}}
+    sql = f"SELECT {projection} FROM orders WHERE id = 1 ORDER BY current_time"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.normalized_sql is not None
+    assert result.normalized_sql.endswith('ORDER BY "current_time"')
+
+
+def test_check_sql_rejects_ambiguous_column_named_like_context_function() -> None:
+    """A bare context-function-shaped name should fail closed when multiple sources expose it."""
+    schema = {
+        "orders": {"columns": {"id": {}, "current_time": {}}},
+        "events": {"columns": {"id": {}, "current_time": {}}},
+    }
+    sql = "SELECT current_time FROM orders CROSS JOIN events WHERE orders.id = events.id"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["FUNCTION-001"]
+
+
+def test_check_sql_rejects_explicit_context_function_when_same_named_column_exists() -> None:
+    """Explicit call syntax should preserve function intent even when a source exposes the same name."""
+    schema = {"orders": {"columns": {"id": {}, "current_time": {}}}}
+
+    result = check_sql("SELECT CURRENT_TIME() FROM orders WHERE id = 1", dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["FUNCTION-001"]
+
+
+def test_check_sql_resolves_other_context_function_shaped_column_names() -> None:
+    """Semantic disambiguation should apply to context-function names without per-name exceptions."""
+    schema = {"orders": {"columns": {"id": {}, "role_name": {}}}}
+    sql = (
+        "WITH roles AS ("
+        "SELECT role_name AS current_user FROM orders WHERE id = 1"
+        ") SELECT current_user FROM roles ORDER BY current_user"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
 @pytest.mark.parametrize(
     "sql",
     [
@@ -239,6 +337,8 @@ def test_check_sql_rejects_query_without_semantic_table(sql: str) -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-003"]
+    assert "modeled business table" in result.violations[0].message
+    assert "exposed columns" in result.violations[0].message
 
 
 def test_check_sql_rejects_table_missing_from_semantic_schema() -> None:
@@ -247,6 +347,8 @@ def test_check_sql_rejects_table_missing_from_semantic_schema() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-001"]
+    assert "provided semantic schema" in result.violations[0].message
+    assert "table qualifier or alias" in result.violations[0].message
 
 
 def test_check_sql_checks_base_table_shadowed_by_cte_name() -> None:
@@ -267,6 +369,26 @@ def test_check_sql_rejects_column_missing_from_semantic_schema() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
+    assert "exists under the referenced table" in result.violations[0].message
+    assert "table or CTE alias" in result.violations[0].message
+
+
+def test_check_sql_explains_how_to_fix_ambiguous_source_column() -> None:
+    """A column-resolution issue should tell Reflector how to repair the source reference."""
+    schema = {
+        "orders": {"columns": {"id": {}}},
+        "customers": {"columns": {"id": {}}},
+    }
+
+    result = check_sql(
+        "SELECT id FROM orders CROSS JOIN customers WHERE orders.id = customers.id",
+        dialect="postgres",
+        schema=schema,
+    )
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
+    assert "qualify the column with its unique source" in result.violations[0].message
 
 
 def test_check_sql_allows_unqualified_unique_semantic_table() -> None:

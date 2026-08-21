@@ -76,6 +76,28 @@ async def test_validator_security_check_replaces_legacy_sqlglot_parse() -> None:
 
 
 @pytest.mark.asyncio
+async def test_validator_uses_semantically_normalized_sql() -> None:
+    """Validator should retain the safe quoted form produced by semantic identifier resolution."""
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False)
+    candidates = [
+        Result(
+            id=0,
+            sql=(
+                "WITH aligned_periods AS ("
+                "SELECT time AS current_time FROM orders WHERE id = 1"
+                ") SELECT current_time FROM aligned_periods ORDER BY current_time"
+            ),
+        )
+    ]
+    schema = {"orders": {"columns": {"id": {}, "time": {}}}}
+
+    result = await node._validate_syntax(candidates, schema)
+
+    assert result[0].get("score", 0) == 1
+    assert candidates[0].sql.count('"current_time"') == 3
+
+
+@pytest.mark.asyncio
 async def test_validator_skips_explain_for_security_blocked_candidate() -> None:
     """Validator should never EXPLAIN a candidate blocked by the security module."""
     node = ValidatorNode(config_manager=_config_manager(), db_explain=True)
