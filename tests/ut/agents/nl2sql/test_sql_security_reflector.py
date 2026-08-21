@@ -10,6 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import json
+from unittest.mock import AsyncMock
+
 import pytest
 
 from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
@@ -74,3 +77,22 @@ async def test_reflector_explicit_false_cannot_bypass_security() -> None:
 
     with pytest.raises(SQLSecurityValidationError):
         await node._aprocess(state)
+
+
+@pytest.mark.asyncio
+async def test_reflector_receives_actionable_security_issue_without_rewriting_it() -> None:
+    """Reflector should receive the detailed Validator issue as repair guidance."""
+    issue = (
+        "SCHEMA-002: Ensure the column exists under the referenced table; "
+        "then check the table or CTE alias and qualify the column with its unique source."
+    )
+    candidate = Result(id=0, sql="SELECT missing_column FROM orders", prompt="schema prompt", issues=[issue])
+    node = ReflectorNode(threshold=0.9)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "sql": "SELECT orders.id FROM orders"}])
+
+    fixed_sql = await node._fix_sql([candidate])
+
+    context = node.execute_with_llm_json.await_args.args[0]
+    cases = json.loads(context.get("cases", "[]"))
+    assert cases[0].get("issues", []) == [issue]
+    assert fixed_sql == ["SELECT orders.id FROM orders"]
