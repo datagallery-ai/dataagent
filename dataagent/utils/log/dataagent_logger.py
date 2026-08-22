@@ -24,6 +24,7 @@ The log directory is node-local (not a multi-host NFS share).
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import fcntl
 import os
@@ -51,13 +52,18 @@ _MAX_LOG_ID_LEN = 128
 # Strip ASCII controls (incl. \n \r \t and ANSI ESC 0x1b) so untrusted ids cannot
 # forge log lines via injected line breaks or escape sequences.
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+_LOG_DIR_MODE = 0o700
+_ACTIVE_LOG_MODE = 0o600
+_ARCHIVED_LOG_MODE = 0o400
 _RETENTION_LOCK_NAME = ".retention.lock"
 _ACTIVE_PREFIX = "main"
 _TS = r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{6}(?:\.\d+)?"
 # Active: main.<pid>.log
 _ACTIVE_RE = re.compile(rf"^{_ACTIVE_PREFIX}\.(?P<pid>\d+)\.log$")
-# Loguru rename then zip: main.<pid>.<ts>.log[.zip]
-_ROTATED_RE = re.compile(rf"^{_ACTIVE_PREFIX}\.(?P<pid>\d+)\.(?P<ts>{_TS})\.log(?:\.zip)?$")
+# Rotated raw: main.<pid>.<ts>.log
+_ROTATED_RAW_RE = re.compile(rf"^{_ACTIVE_PREFIX}\.(?P<pid>\d+)\.(?P<ts>{_TS})\.log$")
+# Current and legacy archives: main.<pid>.<ts>.log.(zip|gz|tar|tar.gz)
+_ROTATED_ARCHIVE_RE = re.compile(rf"^{_ACTIVE_PREFIX}\.(?P<pid>\d+)\.(?P<ts>{_TS})\.log\.(?:zip|gz|tar(?:\.gz)?)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +76,7 @@ class SessionLogContext:
 
 _NO_SESSION = SessionLogContext()
 _session_context_var: ContextVar[SessionLogContext] = ContextVar("dataagent_log_session", default=_NO_SESSION)
+_active_log_files: set[tuple[int, Path]] = set()
 
 
 def build_log_filename(*, pid: int | None = None) -> str:
@@ -78,8 +85,8 @@ def build_log_filename(*, pid: int | None = None) -> str:
 
 
 def is_managed_log_filename(name: str) -> bool:
-    """True for ``main.<pid>.log`` and Loguru-rotated/zipped siblings only."""
-    return bool(_ACTIVE_RE.fullmatch(name) or _ROTATED_RE.fullmatch(name))
+    """True for active logs, rotated raw logs, and supported archives."""
+    return bool(_ACTIVE_RE.fullmatch(name) or _ROTATED_RAW_RE.fullmatch(name) or _ROTATED_ARCHIVE_RE.fullmatch(name))
 
 
 def is_live_active_log_file(path: Path) -> bool:
@@ -141,9 +148,38 @@ def _safe_unlink(path: Path) -> None:
         path.unlink()
 
 
+def _open_path_with_mode(path: str, flags: int, mode: int) -> int:
+    """Open a log-related path without following symlinks and enforce its mode."""
+    descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), mode)
+    try:
+        os.fchmod(descriptor, mode)
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _active_log_file_opener(path: str, flags: int) -> int:
+    """Open an active log or lock file with owner-only read/write access."""
+    return _open_path_with_mode(path, flags, _ACTIVE_LOG_MODE)
+
+
+def _set_path_mode(path: Path, mode: int, flags: int = os.O_RDONLY) -> None:
+    """Set an existing log-related path to an exact mode through its descriptor."""
+    descriptor = _open_path_with_mode(str(path), flags, mode)
+    os.close(descriptor)
+
+
+def _ensure_log_directory(path: Path) -> None:
+    """Create the log directory if needed and enforce owner-only access."""
+    path.mkdir(parents=True, mode=_LOG_DIR_MODE, exist_ok=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    _set_path_mode(path, _LOG_DIR_MODE, directory_flags)
+
+
 def _is_rotated_raw_name(name: str) -> bool:
-    """True for uncompressed Loguru renames: ``main.<pid>.<ts>.log`` (not ``.zip``)."""
-    return bool(_ROTATED_RE.fullmatch(name) and not name.endswith(".zip"))
+    """True for uncompressed Loguru renames: ``main.<pid>.<ts>.log``."""
+    return bool(_ROTATED_RAW_RE.fullmatch(name))
 
 
 def _is_prunable_history(path: Path) -> bool:
@@ -153,7 +189,7 @@ def _is_prunable_history(path: Path) -> bool:
         return False
     if _ACTIVE_RE.fullmatch(name):
         return True  # dead-PID leftover active file
-    return bool(_ROTATED_RE.fullmatch(name))  # zip or raw rotated
+    return bool(_ROTATED_RAW_RE.fullmatch(name) or _ROTATED_ARCHIVE_RE.fullmatch(name))
 
 
 def _history_files(log_dir: Path) -> list[Path]:
@@ -184,8 +220,12 @@ def _zip_rotated_raw(raw: Path) -> Path | None:
         return None
     zip_path = Path(f"{raw}.zip")
     if not zip_path.exists():
+        creation_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        descriptor = _open_path_with_mode(str(zip_path), creation_flags, _ACTIVE_LOG_MODE)
+        os.close(descriptor)
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.write(raw, arcname=raw.name)
+    _set_path_mode(zip_path, _ARCHIVED_LOG_MODE)
     _safe_unlink(raw)
     return zip_path if zip_path.exists() else None
 
@@ -202,6 +242,28 @@ def _reconcile_rotated_raws(log_dir: Path) -> None:
         except (OSError, ValueError):
             # Keep raw; prune will still count it toward global N.
             continue
+
+
+def _enforce_managed_log_permissions(log_dir: Path) -> None:
+    """Set live active logs to 0600 and completed or archived logs to 0400."""
+    for path in log_dir.iterdir():
+        if path.is_file() and is_managed_log_filename(path.name):
+            mode = _ACTIVE_LOG_MODE if is_live_active_log_file(path) else _ARCHIVED_LOG_MODE
+            _set_path_mode(path, mode)
+
+
+def _finalize_active_logs_for_pid(pid: int | None = None) -> None:
+    """Mark tracked active logs for one process as completed and read-only."""
+    target_pid = os.getpid() if pid is None else pid
+    for active_pid, path in tuple(_active_log_files):
+        if active_pid != target_pid:
+            continue
+        with contextlib.suppress(FileNotFoundError, OSError):
+            _set_path_mode(path, _ARCHIVED_LOG_MODE)
+        _active_log_files.discard((active_pid, path))
+
+
+atexit.register(_finalize_active_logs_for_pid)
 
 
 def prune_log_history(log_dir: Path, retention_count: int) -> None:
@@ -229,7 +291,12 @@ def prune_log_history(log_dir: Path, retention_count: int) -> None:
 @contextlib.contextmanager
 def _retention_lock(log_dir: Path):
     """Linux-only exclusive flock on ``{log_dir}/.retention.lock`` (node-local)."""
-    with open(log_dir / _RETENTION_LOCK_NAME, "a+", encoding="utf-8") as lock_file:
+    with open(
+        log_dir / _RETENTION_LOCK_NAME,
+        "a+",
+        encoding="utf-8",
+        opener=_active_log_file_opener,
+    ) as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
             yield
@@ -240,10 +307,11 @@ def _retention_lock(log_dir: Path):
 def enforce_log_retention(log_dir: str | Path, retention_count: int) -> None:
     """Directory-global retention under the cross-process lock (startup / tests)."""
     directory = Path(log_dir)
-    directory.mkdir(parents=True, exist_ok=True)
+    _ensure_log_directory(directory)
     with _retention_lock(directory):
         _reconcile_rotated_raws(directory)
         prune_log_history(directory, retention_count)
+        _enforce_managed_log_permissions(directory)
 
 
 def compress_rotated_and_prune(path_in: str | Path, *, log_dir: Path, retention_count: int) -> None:
@@ -318,6 +386,7 @@ class DataAgentLogger:
         cls._config = effective_config
 
         _loguru_logger.remove()
+        _finalize_active_logs_for_pid()
         _loguru_logger.configure(patcher=_patch_record)
 
         format_string = effective_config.format_string
@@ -347,7 +416,6 @@ class DataAgentLogger:
         if log_path:
             try:
                 log_dir = Path(log_path)
-                log_dir.mkdir(parents=True, exist_ok=True)
                 # Startup prune only (same-PID leftovers may append; dead PIDs are history).
                 enforce_log_retention(log_dir, effective_config.retention_count)
                 active_file = log_dir / build_log_filename()
@@ -368,10 +436,12 @@ class DataAgentLogger:
                     retention=None,
                     compression=_compress,
                     encoding="utf-8",
+                    opener=_active_log_file_opener,
                     enqueue=True,
                     backtrace=True,
                     diagnose=effective_config.diagnose,
                 )
+                _active_log_files.add((os.getpid(), active_file))
             except OSError as e:
                 if effective_config.console:
                     _loguru_logger.warning(f"无法写入日志目录 {log_path}: {e}，已回退到控制台输出")

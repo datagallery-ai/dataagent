@@ -17,6 +17,9 @@ from __future__ import annotations
 import asyncio
 import multiprocessing
 import os
+import stat
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -43,6 +46,7 @@ def _reset_logger_state():
     from loguru import logger as _loguru_logger
 
     _loguru_logger.remove()
+    logmod._finalize_active_logs_for_pid()
 
 
 def _active(log_dir: Path) -> Path:
@@ -165,6 +169,75 @@ def test_rotation_defaults_override_and_zip_openable(tmp_path: Path, monkeypatch
         with zipfile.ZipFile(zpath, "r") as zf:
             assert zf.testzip() is None
             assert zf.namelist()
+
+
+def test_log_permissions_follow_active_history_and_directory_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Directory, active logs, and history use 0700, 0600, and 0400."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir(mode=0o755)
+    active = _active(log_dir)
+    active.write_text("existing-active\n", encoding="utf-8")
+    active.chmod(0o644)
+    completed_log = log_dir / "main.99999.log"
+    completed_log.write_text("completed-log", encoding="utf-8")
+    completed_log.chmod(0o600)
+    existing_history = log_dir / "main.99999.2020-01-01_00-00-00_000000.log.zip"
+    existing_history.write_text("existing-history", encoding="utf-8")
+    existing_history.chmod(0o644)
+    legacy_gzip = log_dir / "main.99998.2020-01-01_00-00-00_000001.log.gz"
+    legacy_gzip.write_text("legacy-gzip", encoding="utf-8")
+    legacy_gzip.chmod(0o600)
+    legacy_tar = log_dir / "main.99997.2020-01-01_00-00-00_000002.log.tar"
+    legacy_tar.write_text("legacy-tar", encoding="utf-8")
+    legacy_tar.chmod(0o644)
+
+    monkeypatch.setenv("DATAAGENT_LOG_PATH", str(log_dir))
+    monkeypatch.setenv("DATAAGENT_LOG_ROTATION", "1 KB")
+    monkeypatch.setenv("DATAAGENT_LOG_CONSOLE", "false")
+    monkeypatch.setenv("DATAAGENT_LOG_RETENTION_COUNT", "100")
+    previous_umask = os.umask(0)
+    try:
+        logmod.reconfigure(logmod.build_config_from_env())
+        logger = logmod.get_logger()
+        for _ in range(30):
+            logger.info("x" * 512)
+        _complete()
+    finally:
+        os.umask(previous_umask)
+
+    managed_logs = [path for path in log_dir.iterdir() if logmod.is_managed_log_filename(path.name)]
+    history = [path for path in managed_logs if not logmod.is_live_active_log_file(path)]
+    assert stat.S_IMODE(log_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(active.stat().st_mode) == 0o600
+    assert any(path.suffix == ".zip" for path in history)
+    assert {legacy_gzip, legacy_tar}.issubset(history)
+    assert history
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o400 for path in history)
+    assert stat.S_IMODE((log_dir / ".retention.lock").stat().st_mode) == 0o600
+
+    logmod._finalize_active_logs_for_pid()
+    assert stat.S_IMODE(active.stat().st_mode) == 0o400
+
+
+def test_active_log_becomes_readonly_on_normal_process_exit(tmp_path: Path) -> None:
+    """A normally exiting process finalizes its last active log to 0400."""
+    log_dir = tmp_path / "logs"
+    env = os.environ.copy()
+    env.update(DATAAGENT_LOG_PATH=str(log_dir), DATAAGENT_LOG_CONSOLE="false")
+    script = (
+        "import os; "
+        "from dataagent.utils.log import get_logger; "
+        "get_logger().info('exit permission probe'); "
+        "print(os.getpid())"
+    )
+
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True)
+    active = log_dir / f"main.{int(result.stdout.strip())}.log"
+
+    assert stat.S_IMODE(log_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(active.stat().st_mode) == 0o400
 
 
 def test_global_retention_keeps_n_across_pids(tmp_path: Path) -> None:
