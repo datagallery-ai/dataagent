@@ -14,7 +14,7 @@ import asyncio
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import truncate
+from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256, truncate
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.utils.constants import DEFAULT_NL2SQL_PREVIEW_LIMIT
@@ -54,7 +54,15 @@ class ExecutorNode(BaseNL2SQLNode):
         state["validation_results"].clear()
         result_preview = "\n".join(p)
         message = f"=== Executor ===\n{result_preview}"
-        logger.info(message)
+        safe_summaries = [
+            (
+                f"candidate_id={result.id} sql_sha256={sql_sha256(result.sql)} "
+                f"row_count={len(result.rows) if result.rows is not None else 0} "
+                f"error_code={'EXECUTION_ERROR' if result.error else 'NONE'}"
+            )
+            for result in state["execution_results"]
+        ]
+        logger.info("=== Executor ===\n{}", "\n".join(safe_summaries))
         state["stream_message"] = message
         return state
 
