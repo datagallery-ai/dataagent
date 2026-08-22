@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
+from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SELECTOR_THRESHOLD
 from dataagent.utils.log import logger
@@ -28,10 +29,13 @@ class SelectorNode(BaseNL2SQLNode):
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
         best = None
+        p = ""
+        shortcut_vote_count = None
         if self.shortcut >= 0:
             best, vote = self._vote(state["execution_results"])
             if best:
                 best.confidence = 1.0
+                shortcut_vote_count = vote
                 p = f"Shortcut with {vote} votes: {best.sql}"
         if not best:
             res = [
@@ -61,16 +65,33 @@ class SelectorNode(BaseNL2SQLNode):
             best = max(state["execution_results"], key=lambda e: (e.confidence, e.score))
             p = "\n".join([f"Score: {e.confidence:.2f}, Issues: {e.issues}" for e in state["execution_results"]])
         message = f"=== Selector ===\n{p}"
-        logger.info(message)
+        candidate_summaries = [
+            (
+                f"candidate_id={e.id} sql_sha256={sql_sha256(e.sql)} "
+                f"row_count={len(e.rows) if e.rows is not None else 0} "
+                f"confidence={e.confidence:.2f} "
+                f"error_code={'EXECUTION_ERROR' if e.error else 'NONE'}"
+            )
+            for e in state["execution_results"]
+        ]
+        if shortcut_vote_count is not None:
+            candidate_summaries.append(f"shortcut_vote_count={shortcut_vote_count}")
+        logger.info("=== Selector ===\n{}", "\n".join(candidate_summaries))
         state["stream_message"] = message
         if best.confidence >= self.threshold or state["sel_retries"] <= 0:
             state["sql"], state["confidence"] = best.sql, best.confidence
             state["columns"], state["rows"], state["rows_preview"] = best.columns, best.rows, best.rows_preview
             p = f"{state['sql']}\n{state['rows_preview']}"
-            if best.rows and len(best.rows) > len(best.rows_preview):
+            if best.rows and best.rows_preview is not None and len(best.rows) > len(best.rows_preview):
                 p += f" ... and {len(best.rows) - len(best.rows_preview)} more rows"
             message = f"=== Final Result ===\n{p}"
-            logger.info(message)
+            logger.info(
+                "=== Final Result ===\nsql_sha256={} row_count={} confidence={:.2f} error_code={}",
+                sql_sha256(best.sql),
+                len(best.rows) if best.rows is not None else 0,
+                best.confidence,
+                "EXECUTION_ERROR" if best.error else "NONE",
+            )
             state["stream_message"] = message
             return state
         state["ref_retries"] = self._get_agent_config("CORE.reflector.ref_retries", DEFAULT_NL2SQL_REF_RETRIES)
