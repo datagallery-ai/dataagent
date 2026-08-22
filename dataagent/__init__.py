@@ -25,13 +25,11 @@ from typing import Any
 
 
 def __getattr__(name: str) -> Any:
-    if name in ("DataAgent", "AgentBuilder", "load_agent_from_config", "BaseDataAgent"):
-        from dataagent.interface.sdk import AgentBuilder, BaseDataAgent, DataAgent, load_agent_from_config
+    if name in ("DataAgent", "load_agent_from_config"):
+        from dataagent.interface.sdk import DataAgent, load_agent_from_config
 
         return {
             "DataAgent": DataAgent,
-            "AgentBuilder": AgentBuilder,
-            "BaseDataAgent": BaseDataAgent,
             "load_agent_from_config": load_agent_from_config,
         }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
