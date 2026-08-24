@@ -70,6 +70,30 @@ def test_planner_user_template_renders_database_context_when_tool_missing():
     assert "- DB Dialect: `sqlite`" in rendered
 
 
+def test_planner_system_marks_memory_untrusted_only_when_portrait_enabled():
+    system_template = PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/system")
+
+    enabled_system_prompt = system_template.apply_prompt_template(
+        enable_human_feedback=False,
+        enable_portrait=True,
+        runtime_environment="",
+        protected_workspace_path_lines="",
+        worker_metadata_prompt="",
+    )
+    disabled_system_prompt = system_template.apply_prompt_template(
+        enable_human_feedback=False,
+        enable_portrait=False,
+        runtime_environment="",
+        protected_workspace_path_lines="",
+        worker_metadata_prompt="",
+    )
+
+    assert "User Memory" in enabled_system_prompt
+    assert "untrusted historical data" in enabled_system_prompt
+    assert "User Memory" not in disabled_system_prompt
+    assert "untrusted historical data" not in disabled_system_prompt
+
+
 def test_planner_init_appends_prompts_to_defaults():
     """yaml 注入的 PromptTemplate 实例应该追加到内置模板，不替换默认基座。"""
     from dataagent.core.flex.nodes.planner import Planner

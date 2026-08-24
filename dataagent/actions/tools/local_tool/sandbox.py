@@ -37,6 +37,7 @@ import functools
 import shutil
 import subprocess
 import sys
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -52,6 +53,23 @@ from dataagent.utils.env_utils import set_env
 # ---------------------------------------------------------------------------
 
 _SANDBOX_L0_SYSTEM_ROOTS: tuple[str, ...] = ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc")
+_SANDBOX_PROTECTED_WRITABLE_ROOTS: tuple[str, ...] = (
+    *_SANDBOX_L0_SYSTEM_ROOTS,
+    "/boot",
+    "/dev",
+    "/opt",
+    "/proc",
+    "/root",
+    "/run",
+    "/sys",
+    "/var",
+)
+_SANDBOX_TRUSTED_TEMP_ROOTS: tuple[str, ...] = ("/tmp", "/private/tmp", "/private/var/folders")
+
+
+class UnsafeWorkspaceError(ValueError):
+    """Raised when a workspace would expose a protected host path as writable."""
+
 
 # Host OS 配置：若 symlink 指向 L0 外（如 WSL ``/etc/resolv.conf`` → ``/mnt/wsl/...``），
 # 需单独 bind 解析后的目录，而非硬编码平台路径。
@@ -219,6 +237,22 @@ def build_workspace_mount_lists(
         allow_read_roots: 业务额外开放的只读路径（白名单）。
         skill_aliases: 技能名 → 路径，挂为只读。
     """
+    resolved_workspace = resolved_workspace.expanduser().resolve()
+    platform_temp_root = Path(tempfile.gettempdir()).resolve()
+    is_trusted_platform_temp = any(
+        _is_under_path(platform_temp_root, Path(root)) for root in _SANDBOX_TRUSTED_TEMP_ROOTS
+    )
+    is_platform_temp = is_trusted_platform_temp and _is_under_path(resolved_workspace, platform_temp_root)
+    is_protected_system_path = resolved_workspace == Path("/") or any(
+        _is_under_path(resolved_workspace, Path(root)) for root in _SANDBOX_PROTECTED_WRITABLE_ROOTS
+    )
+    default_dataagent_home = Path.home().absolute() / ".dataagent"
+    is_default_dataagent_workspace = (
+        resolved_workspace == default_dataagent_home or default_dataagent_home in resolved_workspace.parents
+    )
+    if is_protected_system_path and not (is_platform_temp or is_default_dataagent_workspace):
+        raise UnsafeWorkspaceError(f"workspace cannot be a protected system path: {resolved_workspace}")
+
     home = Path.home()
     skill_paths = list(dict.fromkeys((skill_aliases or {}).values()))
 

@@ -291,6 +291,29 @@ class TestBuildWorkspaceMountLists:
         readonly_binds, writable_binds = build_workspace_mount_lists(resolved_workspace=ws)
         assert str(ws) in writable_binds
 
+    @pytest.mark.parametrize(
+        "workspace",
+        [
+            "/",
+            "/etc",
+            "/usr",
+            "/var",
+            "/root/other",
+        ],
+    )
+    def test_rejects_protected_system_workspace(self, workspace: str):
+        with pytest.raises(ValueError, match="protected system path"):
+            build_workspace_mount_lists(resolved_workspace=Path(workspace))
+
+    def test_allows_root_default_dataagent_workspace(self, monkeypatch: pytest.MonkeyPatch):
+        _patch_home(monkeypatch, Path("/root"))
+        workspace = Path("/root/.dataagent/user/session")
+
+        with patch("dataagent.actions.tools.local_tool.sandbox._existing_paths", return_value=[]):
+            _, writable_binds = build_workspace_mount_lists(resolved_workspace=workspace)
+
+        assert str(workspace) in writable_binds
+
     def test_l0_system_paths_always_in_readonly(self, tmp_path: Path):
         ws = tmp_path / "ws"
         ws.mkdir()

@@ -12,6 +12,7 @@
 # ============================================================================
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -159,6 +160,33 @@ def test_build_memory_str_loads_snapshot_from_custom_workspace(tmp_path, monkeyp
     result = _build_memory_str(state, runtime=runtime)
     assert "graded students" in result
     assert not (tmp_path / "home" / "anonymous" / "s1").exists()
+
+
+def test_snapshot_writer_enforces_schema_and_total_size_limit(tmp_path) -> None:
+    workspace = tmp_path / "ws"
+
+    from dataagent.core.flex.hooks.portraiter import (
+        _MAX_SNAPSHOT_TOTAL_LENGTH,
+        _memory_content_length,
+        _save_snapshot,
+    )
+
+    _save_snapshot(
+        "u1",
+        "s1",
+        {
+            "session_summary": "s" * 10_000,
+            "goals": ["g" * 1000] * 20 + [{"nested": "instruction"}],
+            "constraints": ["c" * 1000] * 20,
+            "unknown": "x" * 10_000,
+        },
+        workspace=workspace,
+    )
+    snapshot = json.loads((workspace / ".memory" / "snapshot.json").read_text(encoding="utf-8"))
+
+    assert "unknown" not in snapshot
+    assert all(isinstance(item, str) for item in snapshot["goals"])
+    assert _memory_content_length(snapshot) <= _MAX_SNAPSHOT_TOTAL_LENGTH
 
 
 def test_resolve_history_persistence_context_reads_runtime_config() -> None:

@@ -13,11 +13,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import networkx as nx
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -30,6 +32,90 @@ from dataagent.utils.parsing_utils import extract_action_payloads, parse_action_
 from dataagent.utils.runtime_paths import resolve_layout_dir
 
 MAX_TOOL_RESULT_LENGTH = DEFAULT_MAX_TOOL_RESULT_LENGTH
+
+
+def _private_relative_parts(path: Path, root: Path) -> tuple[Path, Path, tuple[str, ...]]:
+    root = root.expanduser().absolute()
+    path = path.expanduser().absolute()
+    try:
+        relative_parts = path.relative_to(root).parts
+    except ValueError as exc:
+        raise OSError(f"private path escapes its root: {path}") from exc
+    if any(part in {"", ".", ".."} for part in relative_parts):
+        raise OSError(f"private path has an unsafe component: {path}")
+    return path, root, relative_parts
+
+
+def _open_private_directory_fd(directory: Path, *, root: Path) -> int:
+    """Open/create *directory* via directory FDs anchored at *root* (caller closes)."""
+    directory, root, relative_parts = _private_relative_parts(directory, root)
+
+    if root.is_symlink():
+        raise OSError(f"private directory root cannot be a symlink: {root}")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    current_fd = os.open(root, directory_flags, 0o700)
+    try:
+        for part in relative_parts:
+            with suppress(FileExistsError):
+                os.mkdir(part, 0o700, dir_fd=current_fd)
+            next_fd = os.open(part, directory_flags, 0o700, dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = next_fd
+            if hasattr(os, "fchmod"):
+                os.fchmod(current_fd, 0o700)
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def ensure_private_directory(directory: Path, *, root: Path) -> Path:
+    """Create a mode-0700 directory below *root* without following symlinks."""
+    directory, root, _ = _private_relative_parts(directory, root)
+    if os.name == "posix":
+        directory_fd = _open_private_directory_fd(directory, root=root)
+        os.close(directory_fd)
+        return directory
+
+    if root.is_symlink():  # pragma: no cover - Windows fallback
+        raise OSError(f"private directory root cannot be a symlink: {root}")
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory.chmod(0o700)
+    return directory
+
+
+def open_private_text_file(file_path: Path, *, append: bool = False, root: Path | None = None) -> TextIO:
+    """Open a mode-0600 text file, optionally anchored beneath *root* with openat."""
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    parent_fd: int | None = None
+    try:
+        if os.name == "posix" and root is not None:
+            file_path, root, relative_parts = _private_relative_parts(file_path, root)
+            if not relative_parts:
+                raise OSError(f"private file path is missing a filename: {file_path}")
+            parent = root.joinpath(*relative_parts[:-1])
+            parent_fd = _open_private_directory_fd(parent, root=root)
+            fd = os.open(relative_parts[-1], flags, 0o600, dir_fd=parent_fd)
+        elif os.name == "posix":
+            parent_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            parent_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            parent_fd = os.open(file_path.parent, parent_flags, 0o700)
+            fd = os.open(file_path.name, flags, 0o600, dir_fd=parent_fd)
+        else:  # pragma: no cover - Windows fallback without dir_fd support
+            fd = os.open(file_path, flags, 0o600)
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "a" if append else "w", encoding="utf-8")
+    except Exception:
+        os.close(fd)
+        raise
 
 
 def write_result_to_workspace(
@@ -389,8 +475,6 @@ def _compute_final_breakpoints(
     这样 dump 文件标注的断点与实际 LLM 请求一致：当 cache_control 被禁用时，
     dump 不标注任何 bp，避免误导调试者以为 cache_control 生效。
     """
-    import os
-
     # L1: 环境变量全局逃生
     if os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0":
         return {}
@@ -521,6 +605,7 @@ def dump_prompt_to_file(
     compress_token_limit: int | None = None,
     compress_message_cnt: int | None = None,
     enable_cache_control: bool | None = None,
+    private_root: Path | None = None,
 ) -> Path:
     """
     将 prepare_prompt 返回的消息列表以可读格式写入文件。
@@ -538,6 +623,7 @@ def dump_prompt_to_file(
             ``MODEL.<name>.params.enable_cache_control``）。与 ``DATAAGENT_CACHE_CONTROL``
             环境变量共同决定 dump 是否标注断点：任一禁用则不标注，避免 dump 显示
             实际 LLM 请求中不存在的断点（见 §2.5.1）。
+        private_root: 若提供，使用目录 FD 将创建和写入锚定在该根目录下。
 
     Returns:
         写入的文件路径。
@@ -549,8 +635,6 @@ def dump_prompt_to_file(
         ToolMessage: "TOOL",
     }
     separator = "=" * 80
-
-    import os
 
     # 检测 cache_control 是否被显式禁用（用于 dump header 显示）
     cc_disabled = os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0" or enable_cache_control is False
@@ -566,10 +650,10 @@ def dump_prompt_to_file(
         else {}
     )
 
-    mode = "a" if append else "w"
-    file_path.parent.mkdir(parents=True, exist_ok=True)
+    if private_root is None:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with file_path.open(mode, encoding="utf-8") as f:
+    with open_private_text_file(file_path, append=append, root=private_root) as f:
         f.write(f"{separator}\n")
         f.write(
             f"  Prompt Dump  |  {datetime.now(tz=TZ_CN).strftime('%Y-%m-%d %H:%M:%S')}  |  {len(messages)} messages\n"
