@@ -14,7 +14,7 @@
 
 本文件集中管理所有跨模块使用的可配置常量，按功能分类排列：
   - 压缩与LLM调用：消息压缩阈值、LLM 重试退避、Flex Pruner
-  - 工具执行与并发控制：工具超时、文件限制、结果截断、沙箱、并发度、Swarm Worker metadata / messages 简易裁剪
+  - 工具执行与并发控制：文件限制、结果截断、沙箱、并发度、Swarm Worker metadata / messages 简易裁剪
   - NL2SQL与IR与知识图谱：NL2SQL 各阶段参数、IR 转换/消费者、Bioinfo Skill、内置工具注册
   - UI渲染与可视化：Rich 渲染器、Context 轨迹图
   - 数据库与运行时探测：连接探测、进程等待、CPU 采样
@@ -90,13 +90,6 @@ ENABLE_LLM_PORTRAIT: bool = False
 # ============================================================================
 # 工具执行与并发控制
 # ============================================================================
-
-# ── 工具调用超时 ─────────────────────────────────────────────────────────────
-# 当前定义位置: dataagent/actions/tools/local_tool/tools.py
-# 建议 YAML 路径: TOOLS.*_timeout
-
-DEFAULT_BASH_TIMEOUT: int = 600
-"""Bash 工具命令执行的默认超时（秒）。"""
 
 # ── 文件工具限制 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/tools.py
@@ -394,7 +387,6 @@ MERGED_CONFIG_TOP_LEVEL_KEY_ORDER: tuple[str, ...] = (
     "METAVISOR",
     "ONTOLOGY",
     "CONTEXT",
-    "BASH_TOOL_WHITELIST",
 )
 """合并后 Agent 配置 YAML 的顶层段推荐输出顺序；未列出的 key 保持 ``settings`` 原有顺序追加在末尾。"""
 
@@ -414,11 +406,6 @@ COMPRESSION_DEFAULTS: dict[str, int | float] = {
     "message_cnt": DEFAULT_COMPRESS_MESSAGE_CNT,
     "fold_temperature": DEFAULT_COMPRESS_FOLD_TEMPERATURE,
     "max_retries": DEFAULT_COMPRESS_MAX_RETRIES,
-}
-
-# 工具超时全套
-TOOL_TIMEOUT_DEFAULTS: dict[str, int] = {
-    "bash": DEFAULT_BASH_TIMEOUT,
 }
 
 # 文件工具限制全套

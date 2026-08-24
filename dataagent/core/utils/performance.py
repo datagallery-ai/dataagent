@@ -59,9 +59,9 @@ __all__ = [
 import contextlib
 import contextvars
 import functools
+import hashlib
 import json
 import os
-import re
 import threading
 import time
 import uuid
@@ -180,6 +180,24 @@ def performance_enabled_from_env() -> bool:
     return get_env_bool(_ENV_SWITCH, default=False)
 
 
+def safe_id_component(value: Any, *, field: str) -> str:
+    """Return a path-safe ``run_id`` / ``sub_id`` that cannot collide with a legal value.
+
+    ``sanitize_path_component`` needs a fallback, and a constant one (``"0"``) would make an
+    illegal id land on the same file and directory as the legal id ``0``. Deriving the
+    fallback from the raw value keeps distinct rejected ids in distinct files, and the raw
+    value is still recorded in the jsonl footer so the mapping stays auditable.
+    """
+    from dataagent.utils.runtime_paths import sanitize_path_component
+
+    raw = "" if value is None else str(value)
+    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:8]
+    safe = sanitize_path_component(raw, fallback=f"invalid-{digest}")
+    if safe != raw.strip():
+        logger.warning(f"[perf] {field}={raw!r} is not path-safe; using {safe!r} for the jsonl path")
+    return safe
+
+
 def _resolve_jsonl_path(
     *,
     user_id: str,
@@ -193,26 +211,20 @@ def _resolve_jsonl_path(
 
     路径只在启用时由 collector 调用，失败直接抛出由上层捕获。
     """
-    _validate_path_id(run_id, "run_id")
-    _validate_path_id(sub_id, "sub_id")
-    from dataagent.utils.runtime_paths import resolve_flex_performance_dir
+    from dataagent.utils.runtime_paths import is_resolved_within, resolve_flex_performance_dir
 
+    safe_run_id = safe_id_component(run_id, field="run_id")
+    safe_sub_id = safe_id_component(sub_id, field="sub_id")
     base = resolve_flex_performance_dir(
         user_id=user_id,
         session_id=session_id,
         workspace=workspace,
         config=config,
     )
-    return base / f"Run{run_id}_Sub{sub_id}.{os.getpid()}.jsonl"
-
-
-_PATH_ID_RE: re.Pattern[str] = re.compile(r"\A[A-Za-z0-9._-]*\Z")
-
-
-def _validate_path_id(value: str, field: str) -> None:
-    """校验拼入文件名的标识符只含安全字符；不通过则抛 ``ValueError``。"""
-    if not _PATH_ID_RE.match(value):
-        raise ValueError(f"invalid {field} for performance path: {value!r}")
+    path = (base / f"Run{safe_run_id}_Sub{safe_sub_id}.{os.getpid()}.jsonl").resolve()
+    if not is_resolved_within(path, base):
+        raise ValueError(f"performance jsonl path escaped {base}")
+    return path
 
 
 class PerformanceCollector:
@@ -237,8 +249,10 @@ class PerformanceCollector:
         self.enabled = bool(enabled)
         self.user_id: str = str(user_id or "anonymous")
         self.session_id: str = str(session_id or "default_session")
-        self.run_id: str = str(run_id) if run_id is not None and str(run_id) else uuid.uuid4().hex
-        self.sub_id: str = str(sub_id) if sub_id is not None and str(sub_id) else "0"
+        self.raw_run_id: str = str(run_id) if run_id is not None and str(run_id) else uuid.uuid4().hex
+        self.raw_sub_id: str = str(sub_id) if sub_id is not None and str(sub_id) else "0"
+        self.run_id: str = safe_id_component(self.raw_run_id, field="run_id")
+        self.sub_id: str = safe_id_component(self.raw_sub_id, field="sub_id")
         self.backend: str = str(backend or "")
         self.started_at: str = _now_iso()
         self._lock = threading.Lock()
@@ -459,6 +473,8 @@ class PerformanceCollector:
                 "session_id": self.session_id,
                 "run_id": self.run_id,
                 "sub_id": self.sub_id,
+                "raw_run_id": self.raw_run_id,
+                "raw_sub_id": self.raw_sub_id,
                 "pid": os.getpid(),
                 "backend": self.backend,
                 "started_at": self.started_at,

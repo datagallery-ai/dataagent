@@ -50,11 +50,12 @@ def _is_sensitive_key(key: object) -> bool:
 
 
 def _redact_secret_text(value: str) -> str:
-    """Mask a secret while keeping the original string length."""
-    length = len(value)
-    if length <= 8:
-        return "*" * length
-    return f"{value[:4]}{'*' * (length - 8)}{value[-4:]}"
+    """Mask a secret: blank → ``<empty>``, ≤4 → ``***``, else keep length and last 4."""
+    if not value.strip():
+        return "<empty>"
+    if len(value) <= 4:
+        return "***"
+    return "*" * (len(value) - 4) + value[-4:]
 
 
 def _redact_value(value: Any, *, sensitive: bool) -> Any:

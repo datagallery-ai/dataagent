@@ -43,11 +43,24 @@ def test_from_package_relative_raises_value_error_on_missing():
         PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/__no_such_namespace__/__no_such_message__")
 
 
+def test_prompt_template_rejects_attribute_escape():
+    tmpl = PromptTemplate.from_string("{{ ''.__class__.__mro__ }}")
+    with pytest.raises(ValueError):
+        tmpl.apply_prompt_template()
+
+
 def test_build_prompt_rejects_relative_path():
     from dataagent.config.config_manager import build_prompt
 
     with pytest.raises(ValueError, match="absolute"):
         build_prompt({"path": "prompts/relative_only.md"})
+
+
+def test_build_prompt_rejects_dotdot_in_absolute_path():
+    from dataagent.config.config_manager import build_prompt
+
+    with pytest.raises(ValueError, match=r"\.\."):
+        build_prompt({"path": "/tmp/foo/../etc/passwd"})
 
 
 def test_build_prompt_reads_file_with_absolute_path(tmp_path):

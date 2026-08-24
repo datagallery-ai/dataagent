@@ -58,10 +58,10 @@ def test_dump_merged_config_uses_custom_runtime_dump_dir(tmp_path) -> None:
 
 
 def test_format_settings_yaml_redacts_long_api_key_keeping_length_and_edges() -> None:
-    """Long secrets keep first/last 4 chars; middle is stars; total length is unchanged."""
+    """Long secrets keep only the last 4 chars; the rest is stars; total length is unchanged."""
     raw = "sk-SECRETKEY1234567890"
     text = format_settings_yaml({"MODEL": {"api_key": raw}})
-    redacted = "sk-S**************7890"
+    redacted = "******************7890"
     assert len(raw) == 22
     assert len(redacted) == 22
     assert redacted in text
@@ -71,26 +71,34 @@ def test_format_settings_yaml_redacts_long_api_key_keeping_length_and_edges() ->
 def test_format_settings_yaml_redacts_long_password_keeping_length() -> None:
     raw = "supersecretpassword"
     text = format_settings_yaml({"SEMANTIC_LAYER": {"password": raw}})
-    redacted = "supe***********word"
+    redacted = "***************word"
     assert len(raw) == len(redacted) == 19
     assert redacted in text
     assert raw not in text
 
 
-def test_format_settings_yaml_masks_short_secrets_entirely() -> None:
-    """Values of length <= 8 become all stars and keep the original length."""
+def test_format_settings_yaml_masks_short_secrets_keeping_length() -> None:
+    """Short values keep their length and the last 4 chars; 4 chars or fewer are fully hidden."""
     text = format_settings_yaml(
         {
             "AUTH": {
                 "token": "abcd1234",
                 "passwd": "short",
+                "secret": "abcd",
             }
         }
     )
-    assert "********" in text
-    assert "*****" in text
+    assert "****1234" in text
+    assert "*hort" in text
+    assert "'***'" in text
     assert "abcd1234" not in text
     assert "short" not in text
+
+
+def test_format_settings_yaml_marks_empty_secret_as_empty() -> None:
+    """A blank secret must stay visibly blank so an unset key is not mistaken for a set one."""
+    text = format_settings_yaml({"AUTH": {"api_key": "", "password": "   "}})
+    assert text.count("<empty>") == 2
 
 
 def test_format_settings_yaml_redacts_nested_and_suffixed_keys() -> None:
@@ -105,9 +113,9 @@ def test_format_settings_yaml_redacts_nested_and_suffixed_keys() -> None:
         "HOOKS": {"client_secret": raw_secret, "Authorization": "BearerTokenValueXX"},
     }
     text = format_settings_yaml(settings)
-    assert "sk-S**************7890" in text
-    assert "clie***********ue99" in text
-    assert "Bear**********ueXX" in text
+    assert "******************7890" in text
+    assert "***************ue99" in text
+    assert "**************ueXX" in text
     assert raw_key not in text
     assert raw_secret not in text
     assert "BearerTokenValueXX" not in text
@@ -130,6 +138,6 @@ def test_dump_merged_config_writes_redacted_secrets_without_mutating_input(tmp_p
     target = dump_merged_config(settings, workspace=workspace)
     assert target is not None
     content = target.read_text(encoding="utf-8")
-    assert "sk-S**************7890" in content
+    assert "******************7890" in content
     assert raw not in content
     assert settings["MODEL"]["api_key"] == raw

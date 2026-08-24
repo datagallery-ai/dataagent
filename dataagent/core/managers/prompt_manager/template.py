@@ -24,7 +24,8 @@ __all__ = ["PROMPT_MD_PREFIX", "PromptTemplate"]
 from collections.abc import Mapping
 from pathlib import Path
 
-from jinja2 import Environment, TemplateSyntaxError, UndefinedError  # type: ignore[import-not-found]
+from jinja2 import TemplateSyntaxError, UndefinedError  # type: ignore[import-not-found]
+from jinja2.sandbox import SandboxedEnvironment  # type: ignore[import-not-found]
 
 from dataagent.utils.runtime_paths import dataagent_package_path
 
@@ -38,7 +39,7 @@ class PromptTemplate:
     def __init__(self, content: str, partials: Mapping[str, PromptTemplate] | None = None):
         self.content = content
         self._partials = dict(partials or {})
-        self._jinja_env = Environment()
+        self._jinja_env = SandboxedEnvironment()
         self._template = None
 
     def __str__(self) -> str:

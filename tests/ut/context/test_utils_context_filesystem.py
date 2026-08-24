@@ -36,3 +36,13 @@ def test_sha256_file_implementation_is_not_md5():
     source = inspect.getsource(fs.sha256_file)
     assert "sha256" in source
     assert "md5" not in source.lower()
+
+
+def test_extract_file_paths_ignores_absolute_path_outside_workspace(tmp_path: Path):
+    secret = tmp_path / "outside" / "secret.csv"
+    secret.parent.mkdir()
+    secret.write_text("id\n1\n", encoding="utf-8")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    result = fs.extract_file_paths_from_query(query=f"please read {secret}", roots=[workspace])
+    assert result == {"Table": [], "File": []}

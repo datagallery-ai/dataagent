@@ -51,13 +51,6 @@ POST_WORKFLOW: []
 #       enable_cache_control: false
 # 详见 docs/main_agent_cache_optimization_design.md §2.5.1
 
-# Bash 工具命令白名单（可选）
-# 配置后仅允许 bash 工具执行列表中声明的命令，未配置则不限制。
-# 示例：
-# BASH_TOOL_WHITELIST:
-#   - ls
-#   - cat
-
 HOOKS:
   agent:
     pre:
