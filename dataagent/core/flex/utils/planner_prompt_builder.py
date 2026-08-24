@@ -218,6 +218,7 @@ def _build_planner_system_and_user_messages(
     system_prompt_variables = {
         "enable_human_feedback": enable_human_feedback,
         **kwargs,
+        "enable_portrait": bool(state.get("enable_portrait", False)),
     }
     system_message = build_system_message(
         system_prompt,

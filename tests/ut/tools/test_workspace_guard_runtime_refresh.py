@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from dataagent.actions.tools.local_tool.sandbox import BubblewrapSandbox, NoopSandbox
+from dataagent.actions.tools.local_tool.sandbox import BubblewrapSandbox, NoopSandbox, UnsafeWorkspaceError
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 FLEX_AGENT_PATH = WORKSPACE_ROOT / "dataagent" / "core" / "flex" / "agent.py"
@@ -113,6 +113,23 @@ def test_refresh_workspace_runtime_context_sandbox_enabled_env_falls_back_when_b
         agent._refresh_workspace_runtime_context({"user_id": "user-123", "workspace": str(workspace)}, runtime)
 
     assert isinstance(runtime.sandbox, NoopSandbox)
+
+
+def test_langgraph_stream_prepare_propagates_unsafe_workspace(monkeypatch: pytest.MonkeyPatch):
+    flex_agent_module = _load_module("flex_agent_runtime_refresh_unsafe_stream_test", FLEX_AGENT_PATH)
+    agent = object.__new__(flex_agent_module.FlexAgent)
+    agent.config = {"AGENT_CONFIG": {}}
+    runtime = SimpleNamespace(update_from_state=lambda _state: None)
+
+    monkeypatch.setattr(agent, "_bind_workflow_runtime", lambda _runtime: None)
+
+    def _reject_workspace(_state, _runtime):
+        raise UnsafeWorkspaceError("protected workspace")
+
+    monkeypatch.setattr(agent, "_refresh_workspace_runtime_context", _reject_workspace)
+
+    with pytest.raises(UnsafeWorkspaceError, match="protected workspace"):
+        agent._prepare_context_for_langgraph_stream({"workspace": "/etc"}, runtime)
 
 
 @pytest.mark.asyncio

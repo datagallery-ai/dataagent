@@ -23,6 +23,7 @@ from loguru import logger
 from dataagent.actions.environment import from_config as env_from_config
 from dataagent.actions.tools.local_tool.sandbox import (
     SandboxPolicy,
+    UnsafeWorkspaceError,
     build_workspace_mount_lists,
     create_sandbox,
 )
@@ -553,6 +554,8 @@ class FlexAgent(BaseAgent):
             try:
                 self._refresh_workspace_runtime_context(initial_state, runtime)
                 self._ensure_context_with_query(initial_state, runtime)
+            except UnsafeWorkspaceError:
+                raise
             except Exception as e:  # pragma: no cover - 仅兜底日志
                 logger.debug(f"Context initialization skipped in astream (openjiuwen): {e}")
             if str(initial_state.get("user_query") or "").strip():
@@ -836,6 +839,8 @@ class FlexAgent(BaseAgent):
                 query_text = str(input_val.get("user_query", "") or "")
                 call_context.register_query(query=query_text, additional_files=[])
             # 注意：不再将 Context 塞入 input_val，避免 LangGraph checkpoint 序列化失败
+        except UnsafeWorkspaceError:
+            raise
         except Exception as e:
             logger.debug(f"Context initialization skipped in langgraph stream prepare: {e}")
 

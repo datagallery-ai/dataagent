@@ -18,12 +18,12 @@ class _Runtime:
         return self._config
 
 
-def _state(tmp_workspace, *, sub_id: int, content: str) -> dict[str, Any]:
+def _state(tmp_workspace, *, sub_id: int, content: str, run_id: Any = 0) -> dict[str, Any]:
     return {
         "messages": [HumanMessage(content=content)],
         "user_id": "u",
         "session_id": "s",
-        "run_id": 0,
+        "run_id": run_id,
         "sub_id": sub_id,
         "workspace": str(tmp_workspace),
         "curr_iter": 0,
@@ -53,6 +53,24 @@ def test_context_dump_separates_main_and_subagent_when_memory_dir_is_shared(monk
     assert subagent_dump.is_file()
     assert "main planner prompt" in main_dump.read_text(encoding="utf-8")
     assert "document recall subagent prompt" in subagent_dump.read_text(encoding="utf-8")
+    assert main_dump.stat().st_mode & 0o777 == 0o600
+    assert main_dump.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_context_dump_normalizes_run_id_and_rejects_traversal(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("DATAAGENT_CONTEXT_DUMP", "1")
+    runtime = _Runtime({"WORKSPACE_POLICY": {"layout": {"session_memory_dir": ".memory"}}})
+    messages = [HumanMessage(content="planner prompt")]
+
+    _dump_context_prompt_if_enabled(messages, _state(tmp_path, sub_id=0, content="", run_id="7"), runtime)
+    _dump_context_prompt_if_enabled(
+        messages,
+        _state(tmp_path, sub_id=0, content="", run_id="../../../../attacker"),
+        runtime,
+    )
+
+    assert (tmp_path / ".memory" / "context_dump" / "run_7" / "round_0.txt").is_file()
+    assert not (tmp_path / "attacker" / "round_0.txt").exists()
 
 
 def test_planner_does_not_load_portrait_memory_when_state_requests_it(monkeypatch, tmp_path) -> None:
