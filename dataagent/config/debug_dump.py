@@ -53,6 +53,8 @@ def _redact_secret_text(value: str) -> str:
     """Mask a secret: blank → ``<empty>``, ≤4 → ``***``, else keep length and last 4."""
     if not value.strip():
         return "<empty>"
+    if value.strip() == "EMPTY":
+        return value
     if len(value) <= 4:
         return "***"
     return "*" * (len(value) - 4) + value[-4:]

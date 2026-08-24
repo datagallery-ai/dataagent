@@ -143,8 +143,8 @@ def test_resolve_llm_config_entry_missing_api_key(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
     monkeypatch.delenv("BAILIAN_API_KEY", raising=False)
 
-    with pytest.raises(ValueError, match="Missing API key"):
-        resolve_llm_config_entry(model_section=_model_section(), entry={"name": "chat_model"})
+    flat = resolve_llm_config_entry(model_section=_model_section(), entry={"name": "chat_model"})
+    assert flat["api_key"] == "EMPTY"
 
 
 def _qwen_model_section() -> dict:

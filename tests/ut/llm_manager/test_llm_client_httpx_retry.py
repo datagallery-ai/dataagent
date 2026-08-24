@@ -86,6 +86,14 @@ class TestMapHttpException:
         mapped = map_httpx_exception(exc, model="m")
         assert mapped.category == LLMErrorCategory.AUTH
 
+    def test_empty_key_401_is_missing_api_key(self):
+        resp = MagicMock(status_code=401)
+        resp.json.return_value = {"error": {"message": "unauthorized"}}
+        resp.text = "unauthorized"
+        exc = httpx.HTTPStatusError("401", request=MagicMock(), response=resp)
+        with pytest.raises(ValueError, match="Missing API key"):
+            map_httpx_exception(exc, model="m", api_key="EMPTY")
+
 
 class TestResolveMaxAttempts:
     """_resolve_max_attempts: num_retries → max_attempts 解析（通过 LLMClient 实例）。"""

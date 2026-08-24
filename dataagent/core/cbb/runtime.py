@@ -265,18 +265,24 @@ class Runtime:
         :class:`~dataagent.core.managers.llm_manager.llm_config.LLMConfig`（与 env value 中的调用参数分离）。
         """
         if name not in self._llms:
+            from dataagent.core.managers.llm_manager.llm_client import (
+                _normalize_api_key,
+                llm_adapter_from_env_cfg,
+            )
+
             llm_cfg = self.env.llm_configs.get(name)
             missing_keys: list[str] = []
             if not isinstance(llm_cfg, dict):
                 missing_keys.extend(_REQUIRED_LLM_CONFIG_KEYS)
             else:
+                llm_cfg = dict(llm_cfg)
+                llm_cfg["api_key"] = _normalize_api_key(llm_cfg.get("api_key"))
                 for key in _REQUIRED_LLM_CONFIG_KEYS:
                     if not llm_cfg.get(key):
                         missing_keys.append(key)
             if missing_keys:
                 missing = ", ".join(missing_keys)
                 raise RuntimeError(f"runtime.llm({name!r}) is missing required LLM config keys: {missing}")
-            from dataagent.core.managers.llm_manager.llm_client import llm_adapter_from_env_cfg
 
             self._llms[name] = llm_adapter_from_env_cfg(
                 llm_cfg,

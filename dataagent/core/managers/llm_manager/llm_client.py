@@ -451,6 +451,7 @@ def map_httpx_exception(
     *,
     model: str | None = None,
     api_base: str | None = None,
+    api_key: str | None = None,
 ) -> LLMCallError:
     """将 httpx（或其它）异常映射为 ``LLMCallError``；已是 ``LLMCallError`` 则原样返回。"""
     if isinstance(exc, LLMCallError):
@@ -460,6 +461,10 @@ def map_httpx_exception(
 
     if isinstance(exc, httpx.HTTPStatusError):
         status_code = exc.response.status_code
+        if status_code in (401, 403) and api_key is not None and _normalize_api_key(api_key) == "EMPTY":
+            raise ValueError(
+                f"Missing API key for model {model!r}. Set MODEL params.api_key or a provider API key in .env."
+            )
         category = _category_for_status(status_code)
         return LLMCallError(
             category,
@@ -508,6 +513,14 @@ class LLMClientMessage:
     raw: Any = None
 
 
+def _normalize_api_key(value: Any) -> str:
+    """None / 空 / 纯空白 → ``EMPTY``；否则 strip。``EMPTY`` 表示无鉴权占位，不是密钥。"""
+    if value is None:
+        return "EMPTY"
+    stripped = str(value).strip()
+    return stripped or "EMPTY"
+
+
 def _resolve_core_endpoint(
     *,
     name: str,
@@ -529,11 +542,7 @@ def _resolve_core_endpoint(
         api_key = str(param_api_key).strip()
     else:
         api_key = os.getenv(f"{provider_env}_API_KEY")
-    if not api_key:
-        raise ValueError(
-            f"Missing API key for '{name}'. Set MODEL.{name}.params.api_key or {provider_env}_API_KEY in .env."
-        )
-    return str(api_base), str(api_key)
+    return str(api_base), _normalize_api_key(api_key)
 
 
 # ── 重复检测辅助函数 ────────────────────────────────────────────────────────────
@@ -1502,12 +1511,12 @@ class LLMClient:
             params["base_url"] = params.pop("api_base")
         model = params.pop("model", None)
         base_url = params.pop("base_url", None)
-        api_key = params.pop("api_key", None)
+        api_key = _normalize_api_key(params.pop("api_key", None))
         provider = params.pop("provider", None)
         if not model:
             raise ValueError("LLM config must include top-level 'model'")
-        if not base_url or not api_key:
-            raise ValueError("LLM config must include base_url and api_key")
+        if not base_url:
+            raise ValueError("LLM config must include base_url")
         timeout = params.pop("timeout", None)
         num_retries = params.pop("num_retries", None)
         params.pop("custom_llm_provider", None)
@@ -1635,7 +1644,7 @@ class LLMClient:
                 )
                 continue
             except Exception as e:
-                mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base)
+                mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base, api_key=self._api_key)
                 if self._astream_can_retry(mapped, stream_state, attempt, max_attempts):
                     await self._astream_retry_with_backoff(
                         attempt,
@@ -1891,9 +1900,10 @@ class LLMClient:
     def _headers(self) -> dict[str, str]:
         """Build the Authorization + Content-Type request headers."""
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        if str(self._api_key).strip() != "EMPTY":
+            headers["Authorization"] = f"Bearer {self._api_key}"
         # 请求头覆盖 httpx Client 默认 Accept-Encoding。
         if self._disable_response_compression:
             headers["Accept-Encoding"] = "identity"
@@ -2086,7 +2096,7 @@ class LLMClient:
                 )
                 time.sleep(delay)
             except Exception as e:
-                mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base)
+                mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base, api_key=self._api_key)
                 if attempt < max_attempts and mapped.category in _RETRYABLE_CATEGORIES:
                     delay = _retry_backoff_seconds(attempt)
                     logger.debug(
@@ -2132,7 +2142,7 @@ class LLMClient:
                 )
                 await asyncio.sleep(delay)
             except Exception as e:
-                mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base)
+                mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base, api_key=self._api_key)
                 if attempt < max_attempts and mapped.category in _RETRYABLE_CATEGORIES:
                     delay = _retry_backoff_seconds(attempt)
                     logger.debug(

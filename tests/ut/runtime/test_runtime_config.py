@@ -64,7 +64,6 @@ class TestRuntimeConfig:
         ("llm_config", "expected_missing"),
         [
             ({"api_key": "plaintext-secret", "model": "model-1"}, "api_base"),
-            ({"api_base": "https://llm.example.com/v1", "model": "model-1"}, "api_key"),
             (None, "model, api_base, api_key"),
         ],
     )
