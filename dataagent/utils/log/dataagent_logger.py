@@ -45,6 +45,12 @@ from dataagent.utils.runtime_paths import dataagent_home
 
 DEFAULT_LOG_ROTATION = "100 MB"
 DEFAULT_LOG_RETENTION_COUNT = 20
+# Bound length of sanitized session/run identifiers embedded into each log line.
+# Generous enough for uuid4 + prefixes; long enough to keep logs readable.
+_MAX_LOG_ID_LEN = 128
+# Strip ASCII controls (incl. \n \r \t and ANSI ESC 0x1b) so untrusted ids cannot
+# forge log lines via injected line breaks or escape sequences.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 _RETENTION_LOCK_NAME = ".retention.lock"
 _ACTIVE_PREFIX = "main"
 _TS = r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{6}(?:\.\d+)?"
@@ -108,7 +114,7 @@ def build_config_from_env(process_name: str | None = None) -> LoggerConfig:
         rotation=get_env("DATAAGENT_LOG_ROTATION", default=DEFAULT_LOG_ROTATION) or DEFAULT_LOG_ROTATION,
         retention_count=_parse_retention_count(get_env("DATAAGENT_LOG_RETENTION_COUNT")),
         process_name=process,
-        diagnose=get_env_bool("DATAAGENT_LOG_DIAGNOSE", default=True),
+        diagnose=get_env_bool("DATAAGENT_LOG_DIAGNOSE", default=False),
     )
 
 
@@ -276,7 +282,7 @@ class LoggerConfig:
     rotation: str = DEFAULT_LOG_ROTATION
     retention_count: int = DEFAULT_LOG_RETENTION_COUNT
     process_name: str = "main"
-    diagnose: bool = True
+    diagnose: bool = False
     redirect_stdout_stderr: bool = False
     # Legacy construct/attr compatibility (br_release_930); ignored by file routing/sink.
     file_path: str | None = None
@@ -498,10 +504,31 @@ def setup_subprocess_logging(process_name: str):
     return get_logger(process_name)
 
 
+def _sanitize_log_id(value: object) -> str | None:
+    """Return ``value`` as a single, capped log line for the ``session=`` token.
+
+    Drops ASCII control characters (covers ``\\n``, ``\\r``, ``\\t``, ANSI ESC)
+    and truncates to ``_MAX_LOG_ID_LEN``. ``None``/empty passthrough is preserved
+    so the patcher can fall back to ``"-"``.
+    """
+    if value is None:
+        return None
+    cleaned = _CONTROL_CHARS_RE.sub("", str(value)).strip()
+    if not cleaned:
+        return None
+    return cleaned[:_MAX_LOG_ID_LEN]
+
+
 def set_session_log_context(session_id: str, run_id: int = 0) -> Token[SessionLogContext]:
-    """Bind session/run for the current Context; return a reset token."""
+    """Bind session/run for the current Context; return a reset token.
+
+    ``session_id`` is sanitized (control chars stripped, length-capped) before
+    storage so hostile ids cannot forge extra log lines via injected ``\n``/``\r``
+    or ANSI escapes. Sanitization happens at the single chokepoint where external
+    identifiers enter the log extra, keeping the patcher/formatter pure.
+    """
     ctx = SessionLogContext(
-        session_id=str(session_id) if session_id is not None else None,
+        session_id=_sanitize_log_id(session_id),
         run_id=int(run_id or 0),
     )
     return _session_context_var.set(ctx)
