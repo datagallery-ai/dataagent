@@ -321,7 +321,7 @@ class SchemaValidator:
                 original_value=value,
                 corrected_value=new_value,
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError, OSError):
             if is_required:
                 return None, ValidationWarning(
                     param_name=param_name,
@@ -365,7 +365,7 @@ class SchemaValidator:
 
         schema_params = {p.name for p in schema.parameters}
 
-        logger.debug(f"[SchemaValidator] Validating tool '{tool_name}' with args: {tool_args}")
+        logger.debug(f"[SchemaValidator] Validating tool '{tool_name}' with param keys: {list(tool_args.keys())}")
 
         # ============================================================
         # 步骤1: 截断多余参数
