@@ -36,7 +36,12 @@ class GovernanceConfig:
         self._injectors_by_tool = {name: list(rules) for name, rules in (injectors_by_tool or {}).items()}
 
     def is_tool_invisible(self, tool_name: str) -> bool:
-        """Return whether ``tool_name`` should be hidden from LLM-visible tools."""
+        """Return whether ``tool_name`` is hidden from LLM-visible tools.
+
+        ``Runtime.get_tools_for_llm()`` omits these tools from ``bind_tools``.
+        Executor also rejects planner tool calls for these names. Internal
+        ``runtime.call_tool()`` is not blocked.
+        """
         return str(tool_name or "").strip() in self._invisible_tools
 
     def policies_for(self, tool_name: str) -> list[GovernanceRule]:

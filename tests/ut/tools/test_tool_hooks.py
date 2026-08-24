@@ -317,6 +317,56 @@ def test_runtime_get_tools_for_llm_filters_governance_invisible_tools():
 
 
 @pytest.mark.asyncio
+async def test_executor_rejects_invisible_tool_but_runtime_call_tool_still_runs(tmp_path: Path):
+    """LLM tool calls for GOVERNANCE.invisibility tools fail; runtime.call_tool still runs."""
+    call_count = 0
+
+    async def call_tool(name: str, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return ToolResult(success=True, data="ok")
+
+    workspace = _workspace_dir(tmp_path)
+    runtime = _make_runtime(
+        call_tool=call_tool,
+        tool=SimpleNamespace(pre_hooks=[], post_hooks=[]),
+        workspace=workspace,
+        governance=build_governance_config({"invisibility": ["hidden_tool"]}),
+    )
+    executor = Executor("executor")
+
+    execution = await executor._execute_tool_call_impl(
+        tool_call={"name": "hidden_tool", "args": {"job_id": "x"}, "id": "tc-invisible"},
+        workspace=workspace,
+        user_id=None,
+        session_id=None,
+        sub_id=None,
+        runtime=runtime,
+    )
+
+    assert call_count == 0
+    assert execution.success is False
+    assert "invisibility" in (execution.error_text or "")
+    assert execution.error_type == ErrorType.VALIDATION_ERROR.value
+    assert execution.retry_info.get("retriable") is False
+
+    result = await runtime.call_tool("hidden_tool", job_id="x")
+    assert call_count == 1
+    assert result.success is True
+
+    visible_execution = await executor._execute_tool_call_impl(
+        tool_call={"name": "visible_tool", "args": {}, "id": "tc-visible"},
+        workspace=workspace,
+        user_id=None,
+        session_id=None,
+        sub_id=None,
+        runtime=runtime,
+    )
+    assert visible_execution.success is True
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_tool_manager_loads_governance_hooks_from_config(tmp_path: Path):
     """ToolManager distributes GOVERNANCE rules to tools by applies_to."""
     workspace = _workspace_dir(tmp_path)

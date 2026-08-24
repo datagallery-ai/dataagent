@@ -596,6 +596,39 @@ class Executor(BaseNode):
             )
         return results
 
+    def _blocked_execution_for_invisible_tool(
+        self, tool_call: Any, *, runtime: Any = None
+    ) -> NormalizedToolExecution | None:
+        """Return a failed execution when GOVERNANCE.invisibility hides this LLM tool call.
+
+        Only Executor-handled planner tool calls are rejected. Internal
+        ``runtime.call_tool()`` is not checked here.
+
+        Args:
+            tool_call: LangChain tool-call dict with ``name`` / ``args`` / ``id``.
+            runtime: Per-invocation Runtime; ``env.governance`` is read when present.
+
+        Returns:
+            Failed ``NormalizedToolExecution`` when the tool is invisible; otherwise None.
+        """
+        governance = getattr(getattr(runtime, "env", None), "governance", None)
+        if governance is None or not hasattr(governance, "is_tool_invisible"):
+            return None
+        tool_name = str(tool_call["name"] or "").strip()
+        if not governance.is_tool_invisible(tool_name):
+            return None
+        raw_args = tool_call.get("args", {})
+        tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        return NormalizedToolExecution(
+            tool_name=tool_name,
+            tool_call_id=str(tool_call["id"]),
+            tool_args=tool_args,
+            success=False,
+            error_text=(f"Tool {tool_name!r} is blocked by GOVERNANCE.invisibility and cannot be invoked."),
+            error_type=ErrorType.VALIDATION_ERROR.value,
+            retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
+        )
+
     def _build_invalid_tool_messages(self, invalid_tool_calls: Sequence[Any], writer) -> list[ToolMessage]:
         tool_messages: list[ToolMessage] = []
         for invalid_tool in invalid_tool_calls:
@@ -651,6 +684,9 @@ class Executor(BaseNode):
         run_id: int | None = None,
         runtime: Any,
     ) -> NormalizedToolExecution:
+        blocked = self._blocked_execution_for_invisible_tool(tool_call, runtime=runtime)
+        if blocked is not None:
+            return blocked
         setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, run_id, runtime)
         tool_args, backfill_changes = self._validate_and_backfill_args(
             tool_name=setup.tool_name,
