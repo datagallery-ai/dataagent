@@ -38,7 +38,14 @@ def test_llm_config_string_representations_do_not_expose_client_params() -> None
     assert "internal.example" not in repr(config)
 
     assert config.client_params()["api_key"] == "sk-sensitive-secret"
-    assert config.to_dict()["api_key"] == "sk-sensitive-secret"
+
+    dumped = config.to_dict()
+    assert dumped["api_key"] == "sk-s***********cret"
+    assert dumped["headers"]["Authorization"] == "Bear************oken"
+    assert "sk-sensitive-secret" not in str(dumped)
+    assert "private-token" not in str(dumped)
+    assert config.to_dict(redact=False)["api_key"] == "sk-sensitive-secret"
+    assert config.to_dict(redact=False)["headers"]["Authorization"] == "Bearer private-token"
 
 
 def test_from_llm_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:

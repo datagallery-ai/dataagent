@@ -10,7 +10,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
+
+_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "password",
+        "passwd",
+        "secret",
+        "secret_key",
+        "access_token",
+        "private_key",
+        "authorization",
+        "token",
+    }
+)
+_SENSITIVE_SUFFIXES = ("_api_key", "_password", "_secret", "_token")
+
+
+def _is_sensitive_key(key: object) -> bool:
+    """Return True when a mapping key should have its string value redacted."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return lowered in _SENSITIVE_KEYS or lowered.endswith(_SENSITIVE_SUFFIXES)
+
+
+def _redact_secret_text(value: str) -> str:
+    """Mask a secret while keeping the original string length."""
+    length = len(value)
+    if length <= 8:
+        return "*" * length
+    return f"{value[:4]}{'*' * (length - 8)}{value[-4:]}"
+
+
+def _redact_value(value: Any, *, sensitive: bool) -> Any:
+    """Recursively redact nested mappings/lists; only string secrets are masked."""
+    if isinstance(value, Mapping):
+        return {key: _redact_value(item, sensitive=_is_sensitive_key(key)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(item, sensitive=sensitive) for item in value]
+    if sensitive and isinstance(value, str):
+        return _redact_secret_text(value)
+    return value
+
+
+def _redact_mapping(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a redacted copy of ``settings`` without mutating the original."""
+    return {key: _redact_value(item, sensitive=_is_sensitive_key(key)) for key, item in settings.items()}
 
 
 class LLMConfig:
@@ -61,14 +109,20 @@ class LLMConfig:
             raise ValueError("name, provider, model_type参数是必需的")
         return cls(**config)
 
-    def to_dict(self) -> dict:
-        """获取所有参数（必需参数+额外参数）"""
+    def to_dict(self, *, redact: bool = True) -> dict:
+        """Serialize config. Sensitive values are redacted by default.
+
+        Do not pass the result to loggers or REST responses: even redacted
+        output may still reveal configuration shape. Use ``redact=False``
+        only for trusted in-process reconstruction.
+        """
         result = {
             "name": self.name,
             "provider": self.provider,
             "model_type": self.model_type,
         }
-        result.update(self.client_params())
+        params = dict(self.client_params() or {})
+        result.update(_redact_mapping(params) if redact else params)
         return result
 
     def client_params(self) -> dict:
