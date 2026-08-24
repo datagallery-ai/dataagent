@@ -484,6 +484,20 @@ def test_retention_count_invalid_fail_fast(monkeypatch: pytest.MonkeyPatch) -> N
             logmod.build_config_from_env()
 
 
+def test_console_level_defaults_warning_and_env_can_restore_info(monkeypatch: pytest.MonkeyPatch) -> None:
+    """终端默认 WARNING，避免 INFO 刷屏；DATAAGENT_LOG_LEVEL 仍可显式调回 INFO。"""
+    from dataagent.utils.log.config import LogConfig
+
+    monkeypatch.delenv("DATAAGENT_LOG_LEVEL", raising=False)
+    assert logmod.LoggerConfig().console_level == "WARNING"
+    assert logmod.build_config_from_env().console_level == "WARNING"
+    assert LogConfig.get_env_config().get("level") == "WARNING"
+
+    monkeypatch.setenv("DATAAGENT_LOG_LEVEL", "INFO")
+    assert logmod.build_config_from_env().console_level == "INFO"
+    assert LogConfig.get_env_config().get("level") == "INFO"
+
+
 def test_get_env_config_ignores_dataagent_log_file(monkeypatch: pytest.MonkeyPatch) -> None:
     """旧 LOG_FILE 视为不存在：get_env_config 不读、不返回该键。"""
     from dataagent.utils.log.config import LogConfig
