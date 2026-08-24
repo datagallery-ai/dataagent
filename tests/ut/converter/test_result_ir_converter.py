@@ -762,7 +762,7 @@ class TestReadFilePipeline:
         assert ir.path == resolved
 
     def test_read_file_existing_file_adds_refers_to_only(self, context: Context, tmp_path: Path):
-        """再次 read_file 同一文件（MD5 不变）→ 仅 refers_to，不新建节点。"""
+        """再次 read_file 同一文件（SHA-256 不变）→ 仅 refers_to，不新建节点。"""
         f = tmp_path / "notes.txt"
         f.write_text("hello world", encoding="utf-8")
         resolved = str(f.resolve())
@@ -806,7 +806,7 @@ class TestReadFilePipeline:
         assert traj.get_edge_data(second_action, file_label, {}).get("edge_type") == "refers_to"
 
     def test_read_file_modified_content_creates_new_node(self, context: Context, tmp_path: Path):
-        """同路径但内容变更（MD5 不同）→ 注册新版本 FileNode。"""
+        """同路径但内容变更（SHA-256 不同）→ 注册新版本 FileNode。"""
         f = tmp_path / "notes.txt"
         f.write_text("version one", encoding="utf-8")
         resolved = str(f.resolve())
