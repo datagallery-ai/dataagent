@@ -28,11 +28,13 @@ Pipeline 2（文件 IR）：通过 workspace 快照差集发现新增/变更文�
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from dataagent.config.allow_paths import effective_workspace_allow_paths
 from dataagent.core.context.context import Context
 from dataagent.core.context.utils_context_filesystem import lineage_path_key, sha256_file
 from dataagent.utils.constants import (
@@ -51,10 +53,83 @@ from dataagent.utils.converter.ir_converter_constants import (
 from dataagent.utils.messages_utils import write_result_to_workspace
 
 
-def _safe_read_file(path: Path, max_chars: int = DEFAULT_IR_MAX_FILE_CHARS) -> str:
-    """安全读取文件内容，限制最大字符数。"""
+def _is_under_allowed_roots(path: Path, roots: Sequence[Path]) -> bool:
+    """Return True when resolved ``path`` is under one of ``roots`` (inclusive)."""
+    if not roots:
+        return False
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        resolved = path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _allowed_ir_roots(workspace: Path | None, context: Context) -> list[Path]:
+    """Collect IR sandbox roots: workspace + ``WORKSPACE.allow_path``.
+
+    Workspace comes from the convert() argument, falling back to
+    ``context.state.workspace``. Allow-path entries come from
+    ``context.state.config`` via ``effective_workspace_allow_paths``.
+    """
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(raw: Path | str | None) -> None:
+        if raw is None:
+            return
+        text = str(raw).strip()
+        if not text:
+            return
+        try:
+            resolved = Path(text).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            return
+        key = str(resolved)
+        if key in seen:
+            return
+        seen.add(key)
+        roots.append(resolved)
+
+    ws = workspace
+    if ws is None:
+        ctx_ws = getattr(getattr(context, "state", None), "workspace", None)
+        if ctx_ws:
+            ws = Path(str(ctx_ws))
+    _add(ws)
+
+    config = getattr(getattr(context, "state", None), "config", None)
+    if isinstance(config, Mapping):
+        try:
+            for item in effective_workspace_allow_paths(config):
+                _add(item)
+        except (TypeError, ValueError) as e:
+            logger.debug(f"IR converter: skip invalid WORKSPACE.allow_path: {e}")
+    return roots
+
+
+def _safe_read_file(
+    path: Path,
+    max_chars: int = DEFAULT_IR_MAX_FILE_CHARS,
+    *,
+    allowed_roots: Sequence[Path] | None = None,
+) -> str:
+    """安全读取文件内容，限制最大字符数。路径必须落在 allowed_roots 内。"""
+    roots = list(allowed_roots or ())
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return f"[unable to read file: {path}]"
+    if not _is_under_allowed_roots(resolved, roots):
+        logger.warning(f"IR converter: skip read outside allowed roots: {resolved}")
+        return f"[unable to read file: {path}]"
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
         if len(text) > max_chars:
             text = text[:max_chars] + f"\n... [truncated, total {len(text)} chars]"
         return text
@@ -143,7 +218,11 @@ def _find_dataframes(obj: Any, prefix: str = "result") -> list[tuple[str, Any]]:
     return found
 
 
-def _to_existing_file_path(raw_path: str, workspace: Path | None) -> str | None:
+def _to_existing_file_path(
+    raw_path: str,
+    workspace: Path | None,
+    allowed_roots: Sequence[Path] | None = None,
+) -> str | None:
     if not raw_path or not isinstance(raw_path, str):
         return None
     text = raw_path.strip()
@@ -154,6 +233,10 @@ def _to_existing_file_path(raw_path: str, workspace: Path | None) -> str | None:
     if text.startswith(("http://", "https://", "data:")):
         return None
 
+    roots = list(allowed_roots or ())
+    if not roots:
+        return None
+
     base = Path(text).expanduser()
     candidates = [base]
     if workspace and not base.is_absolute():
@@ -162,15 +245,19 @@ def _to_existing_file_path(raw_path: str, workspace: Path | None) -> str | None:
     for cand in candidates:
         try:
             resolved = cand.resolve()
-            if resolved.is_file():
+            if resolved.is_file() and _is_under_allowed_roots(resolved, roots):
                 return str(resolved)
         except (OSError, RuntimeError, ValueError):
             continue
     return None
 
 
-def _extract_file_paths_from_args(tool_args: dict[str, Any], workspace: Path | None) -> set[str]:
-    """递归扫描参数中的 str / list[str]，提取存在的文件路径（绝对路径）。"""
+def _extract_file_paths_from_args(
+    tool_args: dict[str, Any],
+    workspace: Path | None,
+    allowed_roots: Sequence[Path] | None = None,
+) -> set[str]:
+    """递归扫描参数中的 str / list[str]，提取存在且落在沙箱内的文件路径。"""
     found: set[str] = set()
 
     def walk(obj: Any) -> None:
@@ -187,7 +274,7 @@ def _extract_file_paths_from_args(tool_args: dict[str, Any], workspace: Path | N
         if not isinstance(obj, str):
             return
 
-        normalized = _to_existing_file_path(obj, workspace)
+        normalized = _to_existing_file_path(obj, workspace, allowed_roots)
         if normalized:
             found.add(normalized)
 
@@ -268,6 +355,7 @@ class ResultIRConverter:
         传给Pipeline 2 跳过，避免重复建节点。
         """
         workspace_path = Path(workspace) if workspace else None
+        allowed_roots = _allowed_ir_roots(workspace_path, context)
 
         content_created, content_paths = cls._content_pipeline(
             context,
@@ -284,9 +372,18 @@ class ResultIRConverter:
             _get_known_data_paths(context).update(content_paths)
 
         file_created = cls._file_pipeline(
-            context, tool_name, tool_args, action_node_label, workspace_path, pre_existing_files, content_paths
+            context,
+            tool_name,
+            tool_args,
+            action_node_label,
+            workspace_path,
+            pre_existing_files,
+            content_paths,
+            allowed_roots,
         )
-        file_newly_read = cls._read_file_pipeline(context, tool_name, tool_args, action_node_label)
+        file_newly_read = cls._read_file_pipeline(
+            context, tool_name, tool_args, action_node_label, workspace_path, allowed_roots
+        )
         return content_created + file_created + file_newly_read
 
     @classmethod
@@ -375,6 +472,7 @@ class ResultIRConverter:
         workspace: Path | None,
         pre_existing_files: dict[str, float] | None,
         content_paths: set[str],
+        allowed_roots: Sequence[Path],
     ) -> list[str]:
         """文件Pipeline：workspace 变更文件 + 参数引用文件，共同补齐文件类 IR。"""
         created: list[str] = []
@@ -394,6 +492,13 @@ class ResultIRConverter:
 
             for fpath in changed_files:
                 p = Path(fpath)
+                try:
+                    resolved = p.resolve()
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if not _is_under_allowed_roots(resolved, allowed_roots):
+                    logger.warning(f"IR converter: skip snapshot file outside allowed roots: {resolved}")
+                    continue
                 ext = p.suffix.lower()
 
                 if ext in TABLE_FILE_EXTS:
@@ -403,7 +508,7 @@ class ResultIRConverter:
                         context,
                         action_node_label,
                         tool_name,
-                        script_content=_safe_read_file(p),
+                        script_content=_safe_read_file(p, allowed_roots=allowed_roots),
                         script_type=EXT_SCRIPT_TYPE_MAP[ext],
                         path=fpath,
                     )
@@ -416,7 +521,7 @@ class ResultIRConverter:
 
         # Step B: 参数引用文件补录（例如 write_file / file_saver 的 path）
         # 按扩展名分流，与 Step A / read_file 一致，避免 .csv 被误建成 FileNode。
-        arg_paths = _extract_file_paths_from_args(tool_args, workspace)
+        arg_paths = _extract_file_paths_from_args(tool_args, workspace, allowed_roots)
         for fpath in sorted(arg_paths):
             if fpath in known_paths:
                 continue
@@ -429,7 +534,7 @@ class ResultIRConverter:
                     context,
                     action_node_label,
                     tool_name,
-                    script_content=_safe_read_file(p),
+                    script_content=_safe_read_file(p, allowed_roots=allowed_roots),
                     script_type=EXT_SCRIPT_TYPE_MAP[ext],
                     path=fpath,
                 )
@@ -450,18 +555,22 @@ class ResultIRConverter:
         tool_name: str,
         tool_args: dict[str, Any],
         action_node_label: str,
+        workspace: Path | None,
+        allowed_roots: Sequence[Path],
     ) -> list[str]:
         """read_file校验：校验read file工具读取的文件是否存在context中"""
         if tool_name != "read_file":
             return []
 
         path = tool_args.get("path")
-        if not path:
+        if not path or not isinstance(path, str):
             return []
 
-        p = Path(path).expanduser()
-        if not p.exists() or not p.is_file():
+        normalized = _to_existing_file_path(path, workspace, allowed_roots)
+        if not normalized:
             return []
+
+        p = Path(normalized)
 
         context_recorded_files = context.get_recorded_files()
         path_key = lineage_path_key(p=str(p))
@@ -479,12 +588,12 @@ class ResultIRConverter:
                 context,
                 action_node_label,
                 tool_name,
-                script_content=_safe_read_file(p),
+                script_content=_safe_read_file(p, allowed_roots=allowed_roots),
                 script_type=EXT_SCRIPT_TYPE_MAP[ext],
                 path=str(p),
             )
         else:
-            label = cls._register_file_node(context, action_node_label, tool_name, path=path)
+            label = cls._register_file_node(context, action_node_label, tool_name, path=str(p))
 
         if label:
             return [label]
