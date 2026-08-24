@@ -755,6 +755,7 @@ class TestReadFilePipeline:
             tool_args={"path": resolved},
             result="hello world",
             action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
         )
         file_labels = _labels_of(created, "File")
         assert len(file_labels) == 1
@@ -774,6 +775,7 @@ class TestReadFilePipeline:
             tool_args={"path": resolved},
             result="hello world",
             action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
         )
         file_label = _labels_of(first, "File")[0]
 
@@ -798,6 +800,7 @@ class TestReadFilePipeline:
             tool_args={"path": resolved},
             result="hello world",
             action_node_label=second_action,
+            workspace=str(tmp_path),
         )
         assert len(created) == 0
 
@@ -818,6 +821,7 @@ class TestReadFilePipeline:
             tool_args={"path": resolved},
             result="version one",
             action_node_label=ACTION_LABEL,
+            workspace=str(tmp_path),
         )
 
         f.write_text("version two", encoding="utf-8")
@@ -841,5 +845,113 @@ class TestReadFilePipeline:
             tool_args={"path": resolved},
             result="version two",
             action_node_label="Action(read_modified)",
+            workspace=str(tmp_path),
         )
         assert len(_labels_of(created, "File")) == 1
+
+
+class TestIRPathSandbox:
+    """IR 注册必须落在 workspace / WORKSPACE.allow_path 内，越界路径丢弃且不读内容。"""
+
+    SECRET = "IR_SANDBOX_SECRET_PAYLOAD"
+
+    def _assert_secret_not_in_graph(self, context: Context) -> None:
+        traj = context.get_trajectory()
+        for label in traj.nodes:
+            if not str(label).startswith("Script("):
+                continue
+            ir = cast(ScriptNode, context.get_IR_from_node(graph_node_label=str(label)))
+            assert self.SECRET not in (ir.script_content or "")
+
+    def test_absolute_path_outside_workspace_is_discarded(self, context: Context, tmp_path: Path):
+        """绝对路径在 workspace 外（脚本扩展名）→ 不建节点、图谱中无文件内容。"""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "secret.py"
+        secret.write_text(f"TOKEN={self.SECRET}\n", encoding="utf-8")
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="write_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": str(secret.resolve()), "content": f"TOKEN={self.SECRET}\n"},
+            result={"status": "ok"},
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+            pre_existing_files=None,
+        )
+        assert _labels_of(created, "Script") == []
+        assert _labels_of(created, "File") == []
+        assert _labels_of(created, "Table") == []
+        self._assert_secret_not_in_graph(context)
+
+    def test_relative_path_escaping_workspace_is_discarded(self, context: Context, tmp_path: Path):
+        """相对路径 ../outside/secret.py → 丢弃。"""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "secret.py"
+        secret.write_text(f"TOKEN={self.SECRET}\n", encoding="utf-8")
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="write_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": "../outside/secret.py", "content": f"TOKEN={self.SECRET}\n"},
+            result={"status": "ok"},
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+            pre_existing_files=None,
+        )
+        assert created == []
+        self._assert_secret_not_in_graph(context)
+
+    def test_allow_path_file_is_still_registered(self, context: Context, tmp_path: Path):
+        """WORKSPACE.allow_path 内的文件仍可注册为 ScriptNode。"""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        allow_root = tmp_path / "allow"
+        allow_root.mkdir()
+        allowed = allow_root / "ok.py"
+        allowed.write_text("print(1)\n", encoding="utf-8")
+        context.state.config = {"WORKSPACE": {"allow_path": [str(allow_root.resolve())]}}
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="write_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": str(allowed.resolve()), "content": "print(1)\n"},
+            result={"status": "ok"},
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+            pre_existing_files=None,
+        )
+        scripts = _labels_of(created, "Script")
+        assert len(scripts) == 1
+        ir = cast(ScriptNode, context.get_IR_from_node(graph_node_label=scripts[0]))
+        assert ir.path == str(allowed.resolve())
+        assert "print(1)" in (ir.script_content or "")
+
+    def test_read_file_outside_workspace_is_not_registered(self, context: Context, tmp_path: Path):
+        """read_file 指向 workspace 外文件 → 不注册。"""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        secret = outside / "notes.txt"
+        secret.write_text(self.SECRET, encoding="utf-8")
+
+        created = ResultIRConverter.convert(
+            context=context,
+            tool_name="read_file",
+            tool_call_id="test_action_001",
+            tool_args={"path": str(secret.resolve())},
+            result=self.SECRET,
+            action_node_label=ACTION_LABEL,
+            workspace=str(workspace),
+        )
+        assert created == []
+        assert _labels_of(created, "File") == []
