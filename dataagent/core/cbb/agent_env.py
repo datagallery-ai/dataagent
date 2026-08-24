@@ -53,8 +53,6 @@ class Env:
     environment_description: str = ""
     # 工具并发数上限：None 表示不限制（使用 CPU 自动计算）；整数表示取 min(自动值, 此值)
     max_concurrency: int | None = None
-    # bash 工具命令白名单：None 表示不限制；list[str] 表示仅允许列出的命令（如 ["ls", "cat", "grep"]）
-    bash_tool_whitelist: list[str] | None = None
     # ── CONTEXT 压缩参数（YAML CONTEXT.* 可覆盖，None 表示使用 constants 默认值） ──
     compress_token_limit: int | None = None
     compress_message_cnt: int | None = None

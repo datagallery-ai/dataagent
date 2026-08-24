@@ -163,11 +163,6 @@ class Runtime:
         return self._runtime_environment
 
     @property
-    def bash_tool_whitelist(self) -> list[str] | None:
-        """bash 工具命令白名单，None 表示不限制。"""
-        return getattr(self.env, "bash_tool_whitelist", None)
-
-    @property
     def tool_manager(self):
         """The per-Agent ToolManager instance (if available)."""
         return getattr(self.env, "tool_manager", None)
@@ -345,13 +340,4 @@ class Runtime:
         from dataagent.core.cbb.runtime_env import format_runtime_environment_section
 
         prompt = format_runtime_environment_section(self.runtime_environment)
-        whitelist = self.bash_tool_whitelist
-        if whitelist:
-            commands = ", ".join(f"`{cmd}`" for cmd in sorted(whitelist))
-            prompt += (
-                f"\n## Bash allowed whitelist\n"
-                f"Only allowed to execute the following shell commands, \
-                    when calling the bash tool, the first command in the command parameter must be in this list: "
-                f"{commands}\n"
-            )
         return prompt

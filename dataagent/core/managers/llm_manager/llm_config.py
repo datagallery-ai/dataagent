@@ -10,55 +10,99 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from collections.abc import Mapping
 from typing import Any, Literal
+from urllib.parse import quote, urlsplit, urlunsplit
 
 _SENSITIVE_KEYS = frozenset(
     {
         "api_key",
-        "password",
-        "passwd",
-        "secret",
-        "secret_key",
-        "access_token",
-        "private_key",
+        "apikey",
+        "api_secret",
         "authorization",
+        "bearer",
+        "password",
+        "secret",
         "token",
+        "access_token",
+        "refresh_token",
     }
 )
-_SENSITIVE_SUFFIXES = ("_api_key", "_password", "_secret", "_token")
+_SENSITIVE_SUFFIXES = ("_api_key", "_token", "_secret", "_password", "_key")
+_URL_KEYS = frozenset({"base_url", "api_base", "url", "endpoint"})
 
 
-def _is_sensitive_key(key: object) -> bool:
-    """Return True when a mapping key should have its string value redacted."""
-    if not isinstance(key, str):
-        return False
-    lowered = key.lower()
-    return lowered in _SENSITIVE_KEYS or lowered.endswith(_SENSITIVE_SUFFIXES)
+def _mask_secret(value: Any) -> Any:
+    """Mask a secret: blank → ``<empty>``, ≤4 → ``***``, else keep length and last 4."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return "***"
+    if not value.strip():
+        return "<empty>"
+    if len(value) <= 4:
+        return "***"
+    return "*" * (len(value) - 4) + value[-4:]
 
 
-def _redact_secret_text(value: str) -> str:
-    """Mask a secret while keeping the original string length."""
-    length = len(value)
-    if length <= 8:
-        return "*" * length
-    return f"{value[:4]}{'*' * (length - 8)}{value[-4:]}"
+def _normalize_key(key: Any) -> str:
+    """Fold key spelling variants (``X-Api-Key``, ``api-key``) onto one form."""
+    return str(key).strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def _redact_value(value: Any, *, sensitive: bool) -> Any:
-    """Recursively redact nested mappings/lists; only string secrets are masked."""
-    if isinstance(value, Mapping):
-        return {key: _redact_value(item, sensitive=_is_sensitive_key(key)) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact_value(item, sensitive=sensitive) for item in value]
-    if sensitive and isinstance(value, str):
-        return _redact_secret_text(value)
-    return value
+def _is_sensitive_key(key: Any) -> bool:
+    """Return True when the value under ``key`` must never be exported verbatim."""
+    normalized = _normalize_key(key)
+    if normalized in _SENSITIVE_KEYS or normalized.endswith(_SENSITIVE_SUFFIXES):
+        return True
+    return "authorization" in normalized
 
 
-def _redact_mapping(settings: Mapping[str, Any]) -> dict[str, Any]:
-    """Return a redacted copy of ``settings`` without mutating the original."""
-    return {key: _redact_value(item, sensitive=_is_sensitive_key(key)) for key, item in settings.items()}
+def _redact_url_userinfo(value: str) -> str:
+    """Mask only the password in a URL; username, host, port, path and query stay visible."""
+    parts = urlsplit(value)
+    if not parts.username and not parts.password:
+        return value
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    userinfo = quote(parts.username or "", safe="")
+    if parts.password is not None:
+        userinfo = f"{userinfo}:{_mask_secret(parts.password)}"
+    netloc = f"{userinfo}@{host}" if host else userinfo
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _redact_sequence(values: Any, *, sensitive: bool) -> list[Any]:
+    """Redact list/tuple items so secrets nested in ``default_headers`` are covered too."""
+    redacted: list[Any] = []
+    for item in values:
+        if isinstance(item, dict):
+            redacted.append(_redact_mapping(item))
+        elif isinstance(item, (list, tuple)):
+            redacted.append(_redact_sequence(item, sensitive=sensitive))
+        elif sensitive:
+            redacted.append(_mask_secret(item))
+        else:
+            redacted.append(item)
+    return redacted
+
+
+def _redact_mapping(params: dict[str, Any]) -> dict[str, Any]:
+    """Return a redacted copy of ``params`` for export; never used for client construction."""
+    redacted: dict[str, Any] = {}
+    for key, value in params.items():
+        sensitive = _is_sensitive_key(key)
+        if isinstance(value, dict):
+            redacted[key] = _redact_mapping(value)
+        elif isinstance(value, (list, tuple)):
+            redacted[key] = _redact_sequence(value, sensitive=sensitive)
+        elif sensitive:
+            redacted[key] = _mask_secret(value)
+        elif _normalize_key(key) in _URL_KEYS and isinstance(value, str):
+            redacted[key] = _redact_url_userinfo(value)
+        else:
+            redacted[key] = value
+    return redacted
 
 
 class LLMConfig:
@@ -110,11 +154,9 @@ class LLMConfig:
         return cls(**config)
 
     def to_dict(self, *, redact: bool = True) -> dict:
-        """Serialize config. Sensitive values are redacted by default.
+        """导出配置；默认脱敏。内部建连请用 ``client_params()`` 或 ``redact=False``。
 
-        Do not pass the result to loggers or REST responses: even redacted
-        output may still reveal configuration shape. Use ``redact=False``
-        only for trusted in-process reconstruction.
+        ``redact=False`` 仅用于可信进程内重建，不要把结果交给日志或 REST。
         """
         result = {
             "name": self.name,

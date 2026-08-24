@@ -27,14 +27,13 @@ from dataagent.core.managers.action_manager.base import ToolResult
 from dataagent.utils.messages_utils import MAX_TOOL_RESULT_LENGTH
 
 
-def _make_runtime(*, call_tool, workspace, tool_manager=None, bash_tool_whitelist=None, agent_config=None):
+def _make_runtime(*, call_tool, workspace, tool_manager=None, agent_config=None):
     """Build a minimal runtime with a call_tool async callable.
 
     Args:
         call_tool: Async callable invoked for each tool.
         workspace: Isolated directory for sandbox and IR workspace snapshots (use pytest ``tmp_path``).
         tool_manager: Optional tool manager for schema lookup.
-        bash_tool_whitelist: Optional bash command whitelist.
         agent_config: Per-Agent config dict for helper tests.
     """
     ws = str(Path(workspace).resolve())
@@ -48,7 +47,6 @@ def _make_runtime(*, call_tool, workspace, tool_manager=None, bash_tool_whitelis
     return SimpleNamespace(
         call_tool=call_tool,
         tool_manager=tool_manager,
-        bash_tool_whitelist=bash_tool_whitelist,
         sandbox=NoopSandbox(workspace_root=ws),
         workspace_dir=ws,
         get_all_config=get_all_config,
@@ -197,7 +195,6 @@ async def test_executor_aprocess_uses_runtime_call_tool(monkeypatch, tmp_path):
     runtime = SimpleNamespace(
         call_tool=fake_call_tool,
         tool_manager=None,
-        bash_tool_whitelist=None,
         sandbox=NoopSandbox(workspace_root=ws),
         workspace_dir=ws,
         config_manager=None,

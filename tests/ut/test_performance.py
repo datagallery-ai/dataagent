@@ -91,6 +91,14 @@ def test_path_is_process_isolated(perf_home: Path) -> None:
     assert ".performance" in collector.jsonl_path.parts
 
 
+def test_traversal_run_id_stays_under_performance_dir(perf_home: Path) -> None:
+    collector = _active_collector(run_id="foo/../../../etc/x", sub_id="1")
+    assert collector.jsonl_path is not None
+    assert collector.jsonl_path.resolve().is_relative_to((perf_home / "u" / "s").resolve())
+    assert ".." not in collector.jsonl_path.parts
+    assert "/" not in collector.jsonl_path.name
+
+
 def test_bind_agent_performance_reads_sub_id_from_state(perf_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Agent binding must preserve the trajectory sub id in the collector identity."""
     monkeypatch.setenv("DATAAGENT_PERFORMANCE_ENABLED", "1")

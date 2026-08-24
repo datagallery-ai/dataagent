@@ -133,7 +133,14 @@ class TrajectoryEditor:
         self._ctx.state.node_counts["Query"] += 1
         self._ctx.state.initial_pt = query_node
         self._ctx.state.current_pt.add(query_node)
-        file_paths = extract_file_paths_from_query(query=query)
+        roots: list[str] = []
+        if self._ctx.state.workspace:
+            roots.append(str(self._ctx.state.workspace))
+        if self._ctx.state.config:
+            from dataagent.config.allow_paths import effective_workspace_allow_paths
+
+            roots.extend(effective_workspace_allow_paths(self._ctx.state.config))
+        file_paths = extract_file_paths_from_query(query=query, roots=roots)
         node_labels: list[str] = []
         for file_path in file_paths.get("File", []):
             node_label = self.register_node(

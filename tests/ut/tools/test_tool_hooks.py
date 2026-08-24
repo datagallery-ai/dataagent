@@ -48,7 +48,6 @@ def _make_runtime(*, call_tool, tool=None, workspace: str, tool_manager=None):
         env=SimpleNamespace(),
         sandbox=NoopSandbox(workspace_root=workspace),
         workspace_dir=workspace,
-        bash_tool_whitelist=None,
         get_all_config=lambda: {},
         config_manager=None,
     )

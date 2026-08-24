@@ -12,7 +12,6 @@
 # ============================================================================
 import asyncio
 import json
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,33 +72,6 @@ class _ToolCallExecutionSetup:
     tool_call_id: str
     metadata: dict[str, Any]
     guard_token: Any
-
-
-_BASH_COMMAND_SEPARATORS = re.compile(r"[;&|\n]")
-# Allow arithmetic expansion ($((...))), but reject syntax that can execute nested commands.
-_NESTED_BASH_COMMAND = re.compile(r"\$\((?!\()|`|[<>]\(")
-_VARIABLE_ASSIGNMENT = re.compile(r"^[a-zA-Z_]\w*=")
-
-
-def _extract_base_commands(command_str: str) -> list[str]:
-    """从 bash 命令字符串中提取所有基础命令名（不含参数）。
-
-    按 ``;``, ``&&``, ``||``, ``|``, 换行 拆分命令段，
-    取每段的首个非变量赋值词作为命令名（含路径时取 basename）。
-    """
-    segments = _BASH_COMMAND_SEPARATORS.split(command_str)
-    commands: list[str] = []
-    for seg in segments:
-        seg = seg.strip()
-        if not seg:
-            continue
-        words = seg.split()
-        for word in words:
-            if _VARIABLE_ASSIGNMENT.match(word):
-                continue
-            commands.append(word.rsplit("/", 1)[-1])
-            break
-    return commands
 
 
 class Executor(BaseNode):
@@ -348,7 +320,6 @@ class Executor(BaseNode):
         )
         if backfill_changes:
             setup.metadata["backfill_changes"] = backfill_changes
-        self._check_bash_whitelist(setup.tool_name, tool_args, setup.tool_call_id, runtime)
 
         pre_hooks, post_hooks = self._resolve_tool_hooks(runtime, setup.tool_name)
         hook_inv = self._build_tool_hook_invocation(
@@ -659,64 +630,6 @@ class Executor(BaseNode):
         backfill_changes = [change.to_dict() for change in backfill_result.changes] if backfill_result.changes else None
 
         return backfill_result.backfilled_args, backfill_changes
-
-    def _check_bash_whitelist(
-        self,
-        tool_name: str,
-        tool_args: dict[str, Any],
-        tool_call_id: str,
-        runtime: Any,
-    ) -> None:
-        """校验 bash 工具的命令是否在白名单内。
-
-        仅对 ``tool_name == "bash"`` 且配置了白名单时生效。
-        校验失败时抛出 ``ParamsValueError``（被归类为不可重试的 VALIDATION_ERROR）。
-
-        Raises:
-            ParamsValueError: 命令不在白名单中
-        """
-        if tool_name != "bash" or runtime is None:
-            return
-
-        whitelist: list[str] | None = getattr(runtime, "bash_tool_whitelist", None)
-        if whitelist is None:
-            return
-
-        command_str = str(tool_args.get("command", ""))
-        if not command_str.strip():
-            return
-
-        if _NESTED_BASH_COMMAND.search(command_str):
-            allowed_hint = ", ".join(sorted(whitelist))
-            raise ParamsValueError(
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                errors=[],
-                message=(
-                    "Bash command whitelist validation failed: "
-                    "nested command syntax is not allowed.\n"
-                    f"Allowed commands: [{allowed_hint}]\n"
-                    "Hint: Reconstruct the bash call without command or process substitution."
-                ),
-            )
-
-        base_commands = _extract_base_commands(command_str)
-        disallowed = [cmd for cmd in base_commands if cmd not in whitelist]
-        if not disallowed:
-            return
-
-        allowed_hint = ", ".join(sorted(whitelist))
-        raise ParamsValueError(
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            errors=[],
-            message=(
-                f"Bash command whitelist validation failed: "
-                f"command(s) {disallowed!r} not in allowed list.\n"
-                f"Allowed commands: [{allowed_hint}]\n"
-                f"Hint: Reconstruct the bash call using only allowed commands."
-            ),
-        )
 
     async def _invoke_manager_tool_async(
         self, tool_name: str, tool_args: dict[str, Any], runtime: Any = None

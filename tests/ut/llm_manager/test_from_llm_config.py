@@ -38,14 +38,28 @@ def test_llm_config_string_representations_do_not_expose_client_params() -> None
     assert "internal.example" not in repr(config)
 
     assert config.client_params()["api_key"] == "sk-sensitive-secret"
-
-    dumped = config.to_dict()
-    assert dumped["api_key"] == "sk-s***********cret"
-    assert dumped["headers"]["Authorization"] == "Bear************oken"
-    assert "sk-sensitive-secret" not in str(dumped)
-    assert "private-token" not in str(dumped)
+    redacted = config.to_dict()
+    assert redacted["api_key"] != "sk-sensitive-secret"
+    assert "sk-sensitive-secret" not in str(redacted)
+    assert "password" not in str(redacted.get("base_url", ""))
+    assert "private-token" not in str(redacted.get("headers", {}))
     assert config.to_dict(redact=False)["api_key"] == "sk-sensitive-secret"
     assert config.to_dict(redact=False)["headers"]["Authorization"] == "Bearer private-token"
+
+
+def test_llm_config_to_dict_redacts_hyphen_keys_nested_lists_and_empty() -> None:
+    exported = _make_config(
+        **{"x-api-key": "sk-hyphen-secret-value"},
+        default_headers=[{"x-api-key": "sk-list-nested-secret"}],
+        api_key="",
+        base_url="https://svc-account:hunter2secret@llm.internal.example/v1",
+    ).to_dict()
+
+    assert set(exported["x-api-key"][:-4]) == {"*"}
+    assert "sk-list-nested-secret" not in str(exported)
+    assert exported["api_key"] == "<empty>"
+    assert "svc-account" in exported["base_url"]
+    assert "hunter2secret" not in exported["base_url"]
 
 
 def test_from_llm_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:

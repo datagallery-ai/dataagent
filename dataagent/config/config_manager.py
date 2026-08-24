@@ -397,7 +397,8 @@ def build_prompt(spec: dict[str, Any]) -> Any:
     仅在 flex 加载节点配置时由 ``build_prompt_append`` / ``dataagent.core.flex.agent`` 调用。
     spec 必须恰好包含 ``path`` 或 ``content`` 之一（互斥）：
 
-    - ``path``：**绝对路径**字符串（允许 ``~/...``，会先 ``expanduser``）；**不支持**相对路径。
+    - ``path``：**绝对路径**字符串（允许 ``~/...``，会先 ``expanduser``）；**不支持**相对路径，
+      且展开后不得含 ``..`` 组件。任意绝对路径均可加载（产品定制契约）。
     - ``content``：直接作为追加 prompt 正文（Jinja2 模板）。
 
     Returns:
@@ -419,7 +420,9 @@ def build_prompt(spec: dict[str, Any]) -> Any:
                 "prompt_template 'path' must be an absolute path (or ~/...); "
                 f"relative paths are not allowed: {spec['path']!r}"
             )
-        return PromptTemplate.from_file(str(path))
+        if ".." in path.parts:
+            raise ValueError(f"prompt_template 'path' must not contain '..': {spec['path']!r}")
+        return PromptTemplate.from_file(str(path.resolve()))
     return PromptTemplate.from_string(spec["content"])
 
 

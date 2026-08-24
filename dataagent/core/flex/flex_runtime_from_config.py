@@ -272,12 +272,6 @@ def build_agent_env_from_flex_config(
 
     llm_configs = build_llm_configs_from_flex_config(config)
 
-    # bash 工具命令白名单：YAML 中 BASH_TOOL_WHITELIST 列表，未配置则为 None（不限制）
-    bash_tool_whitelist: list[str] | None = None
-    raw_whitelist = config.get("BASH_TOOL_WHITELIST")
-    if raw_whitelist is not None and isinstance(raw_whitelist, list):
-        bash_tool_whitelist = [str(cmd).strip() for cmd in raw_whitelist if str(cmd).strip()]
-
     # Phase 2: Create per-Agent ToolManager and initialize from config
     from dataagent.core.managers.action_manager.manager import ToolManager
 
@@ -316,7 +310,6 @@ def build_agent_env_from_flex_config(
         instructions=instructions,
         token_limit=token_limit,
         max_concurrency=max_concurrency,
-        bash_tool_whitelist=bash_tool_whitelist,
         tool_manager=agent_tm,
         config_manager=config_manager,
         compress_token_limit=compress_token_limit,

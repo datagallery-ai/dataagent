@@ -12,11 +12,14 @@
 # ============================================================================
 import hashlib
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd  # pyright: ignore[reportMissingTypeStubs]
+from loguru import logger
 
 from dataagent.utils.converter.ir_converter_constants import TABLE_FILE_EXTS
+from dataagent.utils.runtime_paths import is_resolved_within_any
 
 # 匹配形如 /tests/e2e/test_data_engineering_workflow.py:72-77 的引用，必须以 / 或者 ~ 开头，行号可选
 PATH_LIKE = re.compile(r'(?P<path>(?:/|~)[^\s\'"]+?\.[\w-]+)(?::\d+(?:-\d+)?)?')
@@ -25,16 +28,25 @@ PATH_LIKE = re.compile(r'(?P<path>(?:/|~)[^\s\'"]+?\.[\w-]+)(?::\d+(?:-\d+)?)?')
 WINDOWS_PATH_LIKE = re.compile(r'(?P<path>[A-Za-z]:(?:\\|/)[^\s\'"]+?\.[\w-]+)(?::\d+(?:-\d+)?)?')
 
 
-def extract_file_paths_from_query(*, query: str) -> dict[str, list[str]]:
+def extract_file_paths_from_query(
+    *,
+    query: str,
+    roots: Sequence[str | Path] | None = None,
+) -> dict[str, list[str]]:
     """
     Extract file paths from query.
 
+    Only paths that resolve inside ``roots`` (workspace / mounted allow_path) are
+    probed with ``exists``. Absolute paths outside those roots are ignored.
+
     Args:
         query (str): query string
+        roots: allowed filesystem roots; empty/None means do not probe
 
     Returns:
         list[str], list of file paths extracted from query
     """
+    allowed = [Path(root).expanduser().resolve() for root in (roots or []) if str(root).strip()]
     candidates: set[str] = set()
 
     for m in PATH_LIKE.finditer(query):
@@ -43,15 +55,27 @@ def extract_file_paths_from_query(*, query: str) -> dict[str, list[str]]:
     for m in WINDOWS_PATH_LIKE.finditer(query):
         candidates.add(m.group("path").rstrip("),.;}]'\""))
 
+    if candidates and not allowed:
+        logger.warning(
+            "extract_file_paths_from_query received no allowed roots; "
+            f"skipping filesystem probe for {len(candidates)} path-like candidate(s)."
+        )
+
     out_table_paths = []
     out_file_paths = []
     for c in candidates:
         p = Path(c).expanduser()
-        if p.suffix and p.exists() and p.is_file():  # keep only file-like candidates
-            if p.suffix.lower() in TABLE_FILE_EXTS:
-                out_table_paths.append(str(p))
+        try:
+            resolved = p.resolve()
+        except OSError:
+            continue
+        if not allowed or not is_resolved_within_any(resolved, allowed):
+            continue
+        if resolved.suffix and resolved.exists() and resolved.is_file():
+            if resolved.suffix.lower() in TABLE_FILE_EXTS:
+                out_table_paths.append(str(resolved))
             else:
-                out_file_paths.append(str(p))
+                out_file_paths.append(str(resolved))
 
     return {"Table": sorted(set(out_table_paths)), "File": sorted(set(out_file_paths))}
 
