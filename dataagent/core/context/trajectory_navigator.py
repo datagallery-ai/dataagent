@@ -19,7 +19,7 @@ import networkx as nx
 from networkx.classes.digraph import DiGraph
 
 from dataagent.core.context.context_ir import ActionNode, DataNode, IRManager, StateNode
-from dataagent.core.context.utils_context_filesystem import md5_file
+from dataagent.core.context.utils_context_filesystem import sha256_file
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -219,14 +219,14 @@ class TrajectoryNavigator:
 
     def get_recorded_files(self, *, text_file_only: bool = False) -> dict[str, tuple[str, str]]:
         """
-        Return {path: md5} for each data object's latest IR in the lineage.
-        MD5 is computed from the latest IR's path_backup when available.
+        Return {path: sha256} for each data object's latest IR in the lineage.
+        SHA-256 is computed from the latest IR's path_backup when available.
 
         Args:
             text_file_only (bool): whether to only show text files (Default: `False`)
 
         Returns:
-            dict[str, tuple[str, str]]: {path: (graph_node_label, md5_hex)}
+            dict[str, tuple[str, str]]: {path: (graph_node_label, sha256_hex)}
         """
         from dataagent.core.context.utils_context_filesystem import lineage_path_key
 
@@ -246,7 +246,7 @@ class TrajectoryNavigator:
                 continue
 
             graph_node_label = f"{data_ir.__class__.__name__.replace('Node', '')}({data_ir.label})"
-            out[path_key] = (graph_node_label, md5_file(p=str(p)))
+            out[path_key] = (graph_node_label, sha256_file(p=str(p)))
 
         return out
 
