@@ -28,6 +28,7 @@ from dataagent.core.managers.llm_manager.adapters import LLMResponse, normalize_
 from dataagent.core.managers.llm_manager.llm_client import LLMCallError
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.utils.compression_utils import infer_state_and_unpack_ir
+from dataagent.utils.constants import ENABLE_LLM_PORTRAIT
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.formatting_utils import format_tool_calls_for_display
 from dataagent.utils.messages_utils import parse_actions_to_ai_message, record_message
@@ -229,7 +230,7 @@ class Planner(BaseNode):
         workspace = runtime.workspace_dir
 
         extra: dict[str, Any] = {}
-        if state.get("enable_portrait"):
+        if ENABLE_LLM_PORTRAIT and state.get("enable_portrait"):
             memory_str = _build_memory_str(state, runtime=runtime)
             if memory_str:
                 extra["memory"] = memory_str

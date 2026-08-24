@@ -36,6 +36,8 @@ from dataagent.utils.constants import (
     MAX_ITER_TO_RECURSION_FACTOR,
 )
 
+_REQUIRED_LLM_CONFIG_KEYS = ("model", "api_base", "api_key")
+
 if TYPE_CHECKING:
     from dataagent.config.config_manager import ConfigManager
     from dataagent.core.managers.action_manager.base import BaseTool, ToolResult
@@ -269,11 +271,16 @@ class Runtime:
         """
         if name not in self._llms:
             llm_cfg = self.env.llm_configs.get(name)
-            if not isinstance(llm_cfg, dict) or not llm_cfg.get("api_base"):
-                raise RuntimeError(
-                    f"runtime.llm({name!r}) requires env.llm_configs[{name!r}] with api_base/api_key "
-                    f"(resolved at agent init). Missing or incomplete entry: {llm_cfg!r}"
-                )
+            missing_keys: list[str] = []
+            if not isinstance(llm_cfg, dict):
+                missing_keys.extend(_REQUIRED_LLM_CONFIG_KEYS)
+            else:
+                for key in _REQUIRED_LLM_CONFIG_KEYS:
+                    if not llm_cfg.get(key):
+                        missing_keys.append(key)
+            if missing_keys:
+                missing = ", ".join(missing_keys)
+                raise RuntimeError(f"runtime.llm({name!r}) is missing required LLM config keys: {missing}")
             from dataagent.core.managers.llm_manager.llm_client import llm_adapter_from_env_cfg
 
             self._llms[name] = llm_adapter_from_env_cfg(

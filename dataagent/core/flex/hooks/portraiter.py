@@ -36,6 +36,7 @@ from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.hooks.agent_turn import is_job_workspace_subagent, is_subagent
 from dataagent.core.flex.hooks.history_writer import save_messages
 from dataagent.core.flex.workflow.state import FlexState
+from dataagent.utils.constants import ENABLE_LLM_PORTRAIT
 from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir, resolve_user_root
 
 # ── 路径 ────────────────────────────────────────────────────────────────────
@@ -336,7 +337,7 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
-    """Agent 级别 post-hook：默认落盘 ``messages.json``；仅在 ``enable_portrait`` 时用 LLM 更新画像文件。
+    """Agent 级别 post-hook：落盘 ``messages.json``；当前版本固定关闭 LLM 画像更新。
 
     产物路径（session 级随 ``WORKSPACE.path`` + layout；用户级固定在 home）：
     - ``~/.dataagent/{user_id}/.memory/profile.json``
@@ -372,6 +373,10 @@ def portraiter(state: FlexState, runtime: Runtime) -> FlexState:
 
     if is_subagent(state):
         logger.debug("[portraiter] job subagent: messages persisted, skipping portrait update")
+        return state
+
+    if not ENABLE_LLM_PORTRAIT:
+        logger.debug("[portraiter] skipped: LLM portrait feature is disabled")
         return state
 
     if not state.get("enable_portrait"):

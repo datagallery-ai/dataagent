@@ -138,14 +138,14 @@ AGENT_CONFIG:
   max_iter: 50                         # 最大迭代次数，不设则不限制
   token_limit: 100000                  # token 上限，不设则不限制
   enable_human_feedback: false         # 是否启用 HITL 人机协同，默认 false
-  enable_portrait: false               # 是否启用用户画像记忆，默认 false
+  enable_portrait: false               # 当前版本固定关闭，配置为 true 也不会启用
 ```
 
 **代码行为**：
 - `type` 决定 `select_engine()` 的引擎选择，可选 `react`（`dataagent.core.flex.agent.FlexAgent`）或 `nl2sql`（`dataagent.agents.nl2sql.agent.NL2SQLAgent`）
 - `max_iter` 非空时写入 `FlexRouter`，超出限制时抛出 `LimitReachedError`，返回当前 state 并追加终止消息
 - `enable_human_feedback=true` 会创建 `HumanFeedbackNode` 并注册 `request_human_feedback` 工具
-- `enable_portrait=true` 会通过 portraiter hook 将用户特征写入 Memory
+- portraiter hook 仅持久化会话消息；LLM 用户画像与 snapshot/profile 注入当前固定关闭
 
 ---
 

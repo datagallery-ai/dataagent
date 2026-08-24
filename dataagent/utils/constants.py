@@ -84,6 +84,9 @@ DEFAULT_LLM_RETRY_POLICY: dict[str, int] = {
 DEFAULT_PRUNER_TOKEN_LIMIT: int = DEFAULT_COMPRESS_TOKEN_LIMIT
 """Flex Pruner 在规划器 pre-hook 中触发消息压缩的 token 阈值。"""
 
+ENABLE_LLM_PORTRAIT: bool = False
+"""LLM 任务画像与 snapshot/profile 提示词注入总开关；当前版本固定关闭。"""
+
 # ============================================================================
 # 工具执行与并发控制
 # ============================================================================

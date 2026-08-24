@@ -59,3 +59,26 @@ class TestRuntimeConfig:
         runtime = Runtime(_minimal_env())
         with pytest.raises(RuntimeError, match="config_manager"):
             runtime.get_config("DATABASE.db_id")
+
+    @pytest.mark.parametrize(
+        ("llm_config", "expected_missing"),
+        [
+            ({"api_key": "plaintext-secret", "model": "model-1"}, "api_base"),
+            ({"api_base": "https://llm.example.com/v1", "model": "model-1"}, "api_key"),
+            (None, "model, api_base, api_key"),
+        ],
+    )
+    def test_llm_missing_config_error_does_not_expose_values(self, llm_config, expected_missing):
+        """Missing LLM settings report only the logical name and missing keys."""
+        env = _minimal_env()
+        env.llm_configs = {"planner": llm_config}
+        runtime = Runtime(env)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            runtime.llm("planner")
+
+        message = str(exc_info.value)
+        assert "planner" in message
+        assert expected_missing in message
+        assert "plaintext-secret" not in message
+        assert "https://llm.example.com/v1" not in message

@@ -29,11 +29,34 @@ _BUILTIN_LOCAL_TOOL_CATALOG: dict[str, dict[str, str]] = {}
 
 def _builtin_local_tool_specs_from_constants() -> list[dict[str, Any]]:
     """Resolve DEFAULT_BUILTIN_LOCAL_TOOLS against the catalog (intersection by tool name)."""
+    return _builtin_local_tool_specs(DEFAULT_BUILTIN_LOCAL_TOOLS, "DEFAULT_BUILTIN_LOCAL_TOOLS")
+
+
+def _builtin_local_tool_name(entry: Any) -> str:
+    """Extract only the requested builtin name from one YAML entry."""
+    if isinstance(entry, str):
+        return entry.strip()
+    if not isinstance(entry, Mapping):
+        return ""
+    name = entry.get("name") or entry.get("function")
+    return name.strip() if isinstance(name, str) else ""
+
+
+def _builtin_local_tool_specs(entries: Sequence[Any], source: str) -> list[dict[str, Any]]:
+    """Resolve requested names to canonical catalog entries and skip all other values."""
     specs: list[dict[str, Any]] = []
-    for name in DEFAULT_BUILTIN_LOCAL_TOOLS:
+    seen: set[str] = set()
+    for raw_entry in entries:
+        name = _builtin_local_tool_name(raw_entry)
+        if not name:
+            logger.warning("{}: invalid builtin tool entry skipped", source)
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
         entry = _BUILTIN_LOCAL_TOOL_CATALOG.get(name)
         if entry is None:
-            logger.warning("DEFAULT_BUILTIN_LOCAL_TOOLS: unknown tool name {!r}, skipped", name)
+            logger.warning("{}: unknown builtin tool name {!r}, skipped", source, name)
             continue
         specs.append(dict(entry))
     return specs
@@ -325,12 +348,15 @@ class ToolManager:
         return ToolExecutionContext(config_manager=self.config_manager)
 
     def _register_builtin_local_tools(self, tools_config: Mapping[str, Any] | None) -> None:
-        """Register builtin local tools: constants catalog ∩ DEFAULT_BUILTIN_LOCAL_TOOLS; YAML may override."""
+        """Register only canonical catalog tools selected by defaults or YAML names."""
         specs = _builtin_local_tool_specs_from_constants()
         if isinstance(tools_config, Mapping) and "builtin" in tools_config:
             raw = tools_config.get("builtin")
             if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
-                specs = list(raw)
+                specs = _builtin_local_tool_specs(raw, "TOOLS.builtin")
+            else:
+                logger.warning("TOOLS.builtin must be a list of catalog tool names; no builtin tools registered")
+                specs = []
         self._register_local_tools(specs)
 
     def _register_local_tools(self, tools: list[dict[str, Any]]):

@@ -27,7 +27,7 @@ class FlexState(BaseState):
     run_id: int
     sub_id: int
     workspace: Path
-    enable_portrait: bool = False  # LLM 用户画像 / snapshot·profile；与 messages.json 持久化无关
+    enable_portrait: bool = False  # 当前版本固定为 False；messages.json 持久化不受影响
 
     # Human-in-the-Loop (HITL) fields
     enable_human_feedback: bool = False  # Global switch for HITL
