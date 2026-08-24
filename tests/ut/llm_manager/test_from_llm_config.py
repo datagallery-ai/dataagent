@@ -126,8 +126,9 @@ def test_from_llm_config_missing_base_url(monkeypatch: pytest.MonkeyPatch) -> No
 def test_from_llm_config_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
     monkeypatch.delenv("QWEN3_CODER_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="API key"):
-        LLMClient.from_llm_config(_make_config())
+    client = LLMClient.from_llm_config(_make_config())
+    assert client._api_key == "EMPTY"
+    assert "Authorization" not in client._headers()
 
 
 def test_llm_manager_create_llm_uses_llm_client(monkeypatch: pytest.MonkeyPatch) -> None:

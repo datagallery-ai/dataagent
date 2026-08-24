@@ -25,7 +25,7 @@ from typing import Any
 from dataagent.core.cbb.agent_env import Env as AgentEnv
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.utils.hitl_config import resolve_scenario_instructions
-from dataagent.core.managers.llm_manager.llm_client import _apply_cache_defaults
+from dataagent.core.managers.llm_manager.llm_client import _apply_cache_defaults, _normalize_api_key
 
 # YAML 合并阶段使用、不写入 env.llm_configs 值的键
 _LLM_YAML_ONLY_KEYS = frozenset({"name", "provider", "model_type", "section", "params"})
@@ -81,11 +81,7 @@ def resolve_llm_config_entry(
         api_key = str(param_api_key).strip()
     else:
         api_key = os.getenv(f"{provider}_API_KEY")
-    if not api_key:
-        raise ValueError(
-            f"Missing API key for model {model_key!r}. "
-            f"Set MODEL.{model_key}.params.api_key or {provider}_API_KEY in .env."
-        )
+    api_key = _normalize_api_key(api_key)
 
     flat: dict[str, Any] = {
         "model": str(model_name),
