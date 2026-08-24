@@ -56,7 +56,8 @@ Design notes:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -81,6 +82,7 @@ LayoutSegment = Literal[
 ]
 
 _LAYOUT_SEGMENT_NAMES: frozenset[str] = frozenset(DEFAULT_WORKSPACE_LAYOUT.keys())
+_SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +123,36 @@ def validate_user_id(user_id: str) -> str:
     if any(part in resolved_user_id for part in ("..", "/", "\\")):
         raise ValueError("user_id must not contain '..', '/' or '\\'.")
     return resolved_user_id
+
+
+def sanitize_path_component(value: Any, *, fallback: str) -> str:
+    """Return a single path-safe name, or ``fallback`` when the value is unsafe."""
+    text = "" if value is None else str(value).strip()
+    if not text or text in {".", ".."} or not _SAFE_PATH_COMPONENT.fullmatch(text):
+        return fallback
+    return text
+
+
+def contains_path_traversal(value: str | Path) -> bool:
+    """Return True when ``value`` contains a ``..`` segment or a NUL byte."""
+    text = str(value)
+    if "\x00" in text:
+        return True
+    return any(part == ".." for part in Path(text).parts)
+
+
+def is_resolved_within(path: Path, root: Path) -> bool:
+    """Return True when ``path`` resolves inside ``root``."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def is_resolved_within_any(path: Path, roots: Sequence[str | Path]) -> bool:
+    """Return True when ``path`` resolves inside any of ``roots``."""
+    return any(is_resolved_within(path, Path(root)) for root in roots)
 
 
 def resolve_user_root(*, user_id: str | None = None, config: Mapping[str, Any] | None = None) -> Path:

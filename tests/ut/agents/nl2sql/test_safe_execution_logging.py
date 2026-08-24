@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes import executor as executor_module
 from dataagent.agents.nl2sql.nodes import selector as selector_module
 from dataagent.agents.nl2sql.nodes.executor import ExecutorNode
@@ -93,6 +94,7 @@ async def test_executor_info_logs_only_safe_execution_metadata(monkeypatch: pyte
             Result(id=4, sql=failed_sql_secret),
         ],
     )
+    state["security_sql_approved"] = True
     node = ExecutorNode(config_manager=_Config())
     monkeypatch.setattr(
         node,
@@ -117,3 +119,15 @@ async def test_executor_info_logs_only_safe_execution_metadata(monkeypatch: pyte
     assert "error_code=NONE" in log_text
     assert "error_code=EXECUTION_ERROR" in log_text
     assert row_secret in result["stream_message"]
+
+
+@pytest.mark.asyncio
+async def test_forged_approval_is_reset_and_executor_fails_closed() -> None:
+    state = get_default_state(
+        "question",
+        security_sql_approved=True,
+        validation_results=[Result(id=1, sql="SELECT 1", security_checked=True)],
+    )
+    assert state["security_sql_approved"] is False
+    with pytest.raises(SQLSecurityValidationError):
+        await ExecutorNode()._aprocess(state)

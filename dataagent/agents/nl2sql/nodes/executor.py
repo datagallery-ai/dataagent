@@ -13,6 +13,7 @@
 import asyncio
 from typing import Any
 
+from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256, truncate
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
@@ -31,6 +32,8 @@ class ExecutorNode(BaseNL2SQLNode):
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
+        if not state.get("security_sql_approved"):
+            raise SQLSecurityValidationError(detail="SQL has not been approved by security validation.")
         config = self._get_agent_config("DATABASE.config", {}) or {}
         state["execution_results"] = []
         p = []

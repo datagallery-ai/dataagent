@@ -46,26 +46,31 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
     if not isinstance(executable[0], allowed):
         return SecurityCheckResult([SecurityViolation("SQL-001", "Only read-only SELECT queries are allowed.")])
     statement = executable[0]
-    if any(not select.expressions for select in statement.find_all(exp.Select)):
-        return SecurityCheckResult([SecurityViolation("SQL-001", "Every SELECT must contain a projection.")])
-    normalized_sql = normalize_semantic_column_references(statement, sql=sql, dialect=dialect, schema=schema)
-    if normalized_sql is not None:
-        try:
-            statement = cast(Any, sqlglot.parse_one(normalized_sql, read=dialect, error_level=ErrorLevel.RAISE))
-        except Exception as exc:
-            return SecurityCheckResult([SecurityViolation("SQL-001", f"SQL normalization failed: {exc}")])
-        sql = normalized_sql
-    violations = _check_read_only_structure(statement)
-    if violations:
-        return SecurityCheckResult(violations)
-    violations.extend(check_resource_usage(statement))
-    if violations:
-        return SecurityCheckResult(violations)
-    violations.extend(check_allowed_query_syntax(statement))
-    if violations:
-        return SecurityCheckResult(violations)
-    violations.extend(check_allowed_functions(statement, sql=sql, dialect=dialect))
-    violations.extend(check_semantic_schema(statement, dialect=dialect, schema=schema))
+    try:
+        if any(not select.expressions for select in statement.find_all(exp.Select)):
+            return SecurityCheckResult([SecurityViolation("SQL-001", "Every SELECT must contain a projection.")])
+        normalized_sql = normalize_semantic_column_references(statement, sql=sql, dialect=dialect, schema=schema)
+        if normalized_sql is not None:
+            try:
+                statement = cast(Any, sqlglot.parse_one(normalized_sql, read=dialect, error_level=ErrorLevel.RAISE))
+            except Exception as exc:
+                return SecurityCheckResult([SecurityViolation("SQL-001", f"SQL normalization failed: {exc}")])
+            sql = normalized_sql
+        violations = _check_read_only_structure(statement)
+        if violations:
+            return SecurityCheckResult(violations)
+        violations.extend(check_resource_usage(statement))
+        if violations:
+            return SecurityCheckResult(violations)
+        violations.extend(check_allowed_query_syntax(statement))
+        if violations:
+            return SecurityCheckResult(violations)
+        violations.extend(check_allowed_functions(statement, sql=sql, dialect=dialect))
+        violations.extend(check_semantic_schema(statement, dialect=dialect, schema=schema))
+    except RecursionError:
+        return SecurityCheckResult(
+            [SecurityViolation("RESOURCE-002", "SQL boolean expression exceeds evaluation depth.")]
+        )
     return SecurityCheckResult(violations, normalized_sql=normalized_sql if not violations else None)
 
 

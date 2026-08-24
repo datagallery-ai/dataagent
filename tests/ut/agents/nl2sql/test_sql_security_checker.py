@@ -820,3 +820,24 @@ def test_check_sql_allows_filtered_base_reads_inside_query_tree(sql: str) -> Non
     result = check_sql(sql, dialect="postgres", schema=schema)
 
     assert result.blocked is False
+
+
+def test_flat_and_chain_is_resource_008() -> None:
+    cond = " AND ".join(["1=1"] * 1200)
+    result = check_sql(
+        f"SELECT id FROM orders WHERE {cond}",
+        dialect="postgres",
+        schema={"orders": {"columns": {"id": {}}}},
+    )
+    assert result.blocked is True
+    assert "RESOURCE-008" in [item.rule_id for item in result.violations]
+
+
+def test_deeply_nested_boolean_fails_closed() -> None:
+    cond = "(" * 2000 + "1=1" + ")" * 2000
+    result = check_sql(
+        f"SELECT id FROM orders WHERE {cond}",
+        dialect="postgres",
+        schema={"orders": {"columns": {"id": {}}}},
+    )
+    assert result.blocked is True

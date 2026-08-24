@@ -262,7 +262,11 @@ def check_resource_usage(statement: exp.Expression) -> list[SecurityViolation]:
     if violations:
         return violations
     for clause in (*statement.find_all(exp.Where), *statement.find_all(exp.Having)):
-        if _constant_boolean(clause.this) is True:
+        try:
+            always_true = _constant_boolean(clause.this) is True
+        except RecursionError:
+            return [SecurityViolation("RESOURCE-002", "SQL boolean expression exceeds evaluation depth.")]
+        if always_true:
             return [SecurityViolation("RESOURCE-008", "WHERE or HAVING condition is always true.")]
     if _returns_unfiltered_rows(statement):
         return [SecurityViolation("RESOURCE-009", "Unfiltered row query requires WHERE, HAVING, LIMIT, or FETCH.")]
@@ -368,8 +372,13 @@ def _check_join_shapes(statement: exp.Expression) -> list[SecurityViolation]:
         condition = join.args.get("on")
         if condition is None and not join.args.get("using"):
             return [SecurityViolation("RESOURCE-007", "JOIN requires ON or USING unless it is a CROSS JOIN.")]
-        if condition is not None and _constant_boolean(condition) is True:
-            return [SecurityViolation("RESOURCE-007", "JOIN condition must not be always true.")]
+        if condition is not None:
+            try:
+                always_true = _constant_boolean(condition) is True
+            except RecursionError:
+                return [SecurityViolation("RESOURCE-002", "SQL boolean expression exceeds evaluation depth.")]
+            if always_true:
+                return [SecurityViolation("RESOURCE-007", "JOIN condition must not be always true.")]
     return []
 
 
@@ -485,41 +494,78 @@ def _scope_is_single_row_aggregate(scope: Any) -> bool:
 
 
 def _constant_boolean(expression: exp.Expression) -> Optional[bool]:
-    expression = expression.unnest()
-    if isinstance(expression, exp.Boolean):
-        return bool(expression.this)
-    if isinstance(expression, exp.Not):
-        value = _constant_boolean(expression.this)
-        return None if value is None else not value
-    if isinstance(expression, exp.And):
-        left, right = _constant_boolean(expression.this), _constant_boolean(expression.expression)
-        if left is False or right is False:
-            return False
-        return True if left is True and right is True else None
-    if isinstance(expression, exp.Or):
-        left, right = _constant_boolean(expression.this), _constant_boolean(expression.expression)
-        if left is True or right is True:
-            return True
-        return False if left is False and right is False else None
     comparison_types = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
-    if isinstance(expression, comparison_types):
-        left, right = _literal_value(expression.this), _literal_value(expression.expression)
-        if left is None or right is None:
-            return None
-        if isinstance(expression, exp.EQ):
-            return left == right
-        if isinstance(expression, exp.NEQ):
-            return left != right
-        if type(left) is not type(right):
-            return None
-        if isinstance(expression, exp.GT):
-            return left > right
-        if isinstance(expression, exp.GTE):
-            return left >= right
-        if isinstance(expression, exp.LT):
-            return left < right
-        return left <= right
-    return None
+    stack: list[exp.Expression] = [expression.unnest()]
+    values: dict[int, Optional[bool]] = {}
+
+    while stack:
+        node = stack[-1]
+        node_id = id(node)
+        if node_id in values:
+            stack.pop()
+            continue
+        if isinstance(node, exp.Boolean):
+            values[node_id] = bool(node.this)
+            stack.pop()
+            continue
+        if isinstance(node, exp.Not):
+            child = node.this.unnest()
+            if id(child) not in values:
+                stack.append(child)
+                continue
+            child_value = values[id(child)]
+            values[node_id] = None if child_value is None else (not child_value)
+            stack.pop()
+            continue
+        if isinstance(node, (exp.And, exp.Or)):
+            left = node.this.unnest()
+            right = node.expression.unnest()
+            if id(left) not in values:
+                stack.append(left)
+                continue
+            if id(right) not in values:
+                stack.append(right)
+                continue
+            left_value, right_value = values[id(left)], values[id(right)]
+            if isinstance(node, exp.And):
+                if left_value is False or right_value is False:
+                    values[node_id] = False
+                elif left_value is True and right_value is True:
+                    values[node_id] = True
+                else:
+                    values[node_id] = None
+            elif left_value is True or right_value is True:
+                values[node_id] = True
+            elif left_value is False and right_value is False:
+                values[node_id] = False
+            else:
+                values[node_id] = None
+            stack.pop()
+            continue
+        if isinstance(node, comparison_types):
+            left, right = _literal_value(node.this), _literal_value(node.expression)
+            if left is None or right is None:
+                values[node_id] = None
+            elif isinstance(node, exp.EQ):
+                values[node_id] = left == right
+            elif isinstance(node, exp.NEQ):
+                values[node_id] = left != right
+            elif type(left) is not type(right):
+                values[node_id] = None
+            elif isinstance(node, exp.GT):
+                values[node_id] = left > right
+            elif isinstance(node, exp.GTE):
+                values[node_id] = left >= right
+            elif isinstance(node, exp.LT):
+                values[node_id] = left < right
+            else:
+                values[node_id] = left <= right
+            stack.pop()
+            continue
+        values[node_id] = None
+        stack.pop()
+
+    return values[id(expression.unnest())]
 
 
 def _literal_value(expression: exp.Expression) -> Optional[Any]:
