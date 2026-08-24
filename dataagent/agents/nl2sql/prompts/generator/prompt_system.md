@@ -11,6 +11,7 @@ Try to diversify the candidate SQL queries. If the question can be interpreted i
 {% if dialect != "postgres" %}
 3. Any table or column name that contains spaces or matches a SQL reserved keyword MUST be enclosed in backticks (`).
 {% endif %}
+4. Respond with ONLY the SQL query, enclosed in a ```sql``` block. Do not include any explanation, comments, or step-by-step reasoning outside the code block.
 
 # Output
 Before generation, please think through the steps of how to write.

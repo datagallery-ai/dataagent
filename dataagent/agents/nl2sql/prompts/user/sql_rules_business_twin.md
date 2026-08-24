@@ -2,19 +2,15 @@
 
 ## Step 0: Classify the Query Type (MANDATORY - Apply First)
 
-Before applying any other rules, first classify the user question into exactly one of the following types:
+Before applying any other rules, first determine whether the compared items are time periods or dimension values, then classify the user question into exactly one of the following types:
 
-- **Type A (Ordinary metric query)**: Use when the question has no 同比, 环比, 对比, 与...对比, 保障提升率, or similar comparison/improvement wording.
+- **Type A (Ordinary or same-period dimension comparison query)**: Use for ordinary metric queries and for comparisons between dimension values, groups, categories, or states that share the same time filter. Use Type A even when the question contains 对比, 提升, 差异, or a comparison formula, as long as it does not compare two different time periods.
 
-- **Type B (Comparison query)**: Use when the question has 同比, 环比, 对比, 与前一天对比, 与上周对比, or similar comparison wording.
-  - If the question asks 同比/环比/对比 of 保障提升率, use Type B and use the Type C assurance_improvement_rate expression as the metric_expression.
-
-- **Type C (Assurance improvement rate query)**: Use when the question asks 保障提升率, 保障效果提升率, 质差保障提升率, or asks for the change from 保障签约用户质差未保障 to 保障签约用户质差保障/质差保障中.
-  - This is a same-period state-change query, not a time comparison query.
+- **Type B (Time-period comparison query)**: Use only when the question compares two different time periods, such as 同比, 环比, 与前一天对比, 与上周对比, or 与去年同期对比. The word 对比 alone is not sufficient to select Type B.
 
 **Then apply only the rules for the selected type.**
 
-## 1. Type A: Ordinary Metric Query
+## 1. Type A: Ordinary or Same-Period Dimension Comparison Query
 
 ### Rules:
 
@@ -26,18 +22,11 @@ Before applying any other rules, first classify the user question into exactly o
 - All metric fields must be aggregated using SUM() (or appropriate aggregate functions) across all dimensions not explicitly involved in the query, and MUST NOT appear in the GROUP BY clause.
 - A time range alone does not make time an output dimension; only an explicit time granularity or time-series request does.
 - Use HAVING for filtering aggregated metric results (with the same expression as SELECT). Use WHERE only for pre-aggregation row filtering when explicitly requested.
+- When the user provides a formula comparing multiple values of the same dimension within one time window, follow the formula exactly, use one shared time filter, and calculate each value with conditional aggregation. Do not create current-period/comparison-period CTEs or apply Type B SQL shapes.
 
-### Self-Check Before Generating
+## 2. Type B: Time-Period Comparison Query
 
-Before you output SQL, verify:
-
-- [ ] Do SELECT and GROUP BY contain exactly the dimensions involved in the user question?
-- [ ] Are all metric fields aggregated and absent from GROUP BY?
-- [ ] **If the user mentioned any time granularity keyword, is `time` included in SELECT and GROUP BY?**
-
-## 2. Type B: Comparison Query
-
-First classify the comparison into exactly one subtype. A question containing two time ranges does not by itself request a time-series output.
+Type B applies only after Step 0 identifies a comparison between two different time periods. Then classify the time comparison into exactly one subtype. A question containing two time ranges does not by itself request a time-series output.
 
 ### Type B1: Whole-period comparison
 
@@ -50,11 +39,11 @@ Rules:
 - If there are no involved non-time dimensions, each CTE returns one row and the final SELECT combines those two scalar rows with CROSS JOIN.
 - If involved non-time dimensions exist, use FULL OUTER JOIN only on those dimensions so values present in only one period are preserved. Never include `time` in that JOIN.
 - For 同比/环比 or explicit rate wording, calculate `(current_value::numeric - comparison_value::numeric) / NULLIF(comparison_value::numeric, 0) AS change_rate` after the two whole-period values are produced.
-- For plain 对比 without rate wording, return the current and comparison values without adding `change_rate`.
+- For a plain time-period 对比 without rate wording, return the current and comparison values without adding `change_rate`.
 
 ### Type B2: Independent time-series comparison
 
-Use Type B2 when the question explicitly requests a time granularity, time-series trend, hourly/daily detail, or separate values for each time bucket, but does not use 同比/环比 wording and does not request a difference, growth amount, change rate, or another calculation between corresponding buckets.
+Use Type B2 when two different time periods are compared and the question explicitly requests a time granularity, time-series trend, hourly/daily detail, or separate values for each time bucket, but does not use 同比/环比 wording and does not request a difference, growth amount, change rate, or another calculation between corresponding buckets of those periods.
 
 This is the default SQL shape for time-series comparison.
 
@@ -92,7 +81,7 @@ GROUP BY time
 
 ### Type B3: Per-bucket calculated comparison
 
-Use Type B3 only when the question requests a time-series breakdown and either uses 同比/环比 wording or explicitly requests a difference, growth amount, change rate, or another calculation between corresponding time buckets.
+Use Type B3 only when two different time periods are compared, the question requests a time-series breakdown, and it either uses 同比/环比 wording or explicitly requests a difference, growth amount, change rate, or another calculation between corresponding buckets of those periods.
 
 Rules:
 - Never JOIN different periods on raw `time` because their absolute timestamps are different.
@@ -110,7 +99,7 @@ Rules:
 ### Time boundaries shared by all Type B subtypes
 
 - Identify the current period and comparison period from the user question.
-- Build all time boundaries according to Section 4.
+- Build all time boundaries according to Section 3.
 - If the user explicitly gives both absolute periods, build each period directly from its own stated boundaries; do not invent an offset between them.
 - Otherwise, build the current period first and derive the comparison period by applying the requested comparison offset to the timestamp boundaries before epoch conversion.
 
@@ -128,55 +117,7 @@ Important:
 - Do not replace comparison_time_filter with a complete calendar period unless the user explicitly asks for a complete historical period.
 - The Type B3 `bucket_index` calculation is not a time boundary and is the only permitted relative numeric epoch calculation.
 
-## 3. Type C: Assurance Improvement Rate Query
-
-保障提升率 is the change rate from the baseline state "保障签约用户质差未保障" to the improved state "保障签约用户质差保障/质差保障中".
-
-Enum mapping:
-- Baseline state: guarantee_group = 2
-- Improved state: guarantee_group = 3
-
-Formula:
-- assurance_improvement_rate = (improved_value - baseline_value) / NULLIF(baseline_value, 0)
-
-### Rules:
-- Use the same time_filter and other_filters for both states.
-- Use the same metric_expression for both states.
-- Only change the guarantee_group filter: baseline CTE uses guarantee_group = 3, improved CTE uses guarantee_group = 4.
-- Do not SELECT or GROUP BY guarantee_group for this query type unless the user explicitly asks to list guarantee_group itself.
-- If the question names a metric, use that metric's normal aggregation/formula as metric_expression.
-- If the question only asks 保障提升率 without naming a metric, measure both states by user/count metric when available, preferring SUM(total_subs_count::numeric), then SUM(exp_subs_count::numeric), otherwise COUNT(*).
-- If output has involved non-time dimensions, both CTEs SELECT and GROUP BY those same dimensions, and final SELECT joins on exactly those dimensions.
-- Time granularity rule: "xx时间粒度/颗粒度" = "aggregate by xx time interval" → "time" in SELECT/GROUP BY (both CTEs) + JOIN on "time" (final SELECT)
-
-Required SQL Shape:
-
-WITH baseline_state AS (
-    SELECT
-        metric_expression AS baseline_value
-    FROM table_name
-    WHERE
-        time_filter
-        AND other_filters
-        AND guarantee_group = 3
-),
-improved_state AS (
-    SELECT
-        metric_expression AS improved_value
-    FROM table_name
-    WHERE
-        time_filter
-        AND other_filters
-        AND guarantee_group = 4
-)
-SELECT
-    bs.baseline_value,
-    isv.improved_value,
-    (isv.improved_value::numeric - bs.baseline_value::numeric)
-        / NULLIF(bs.baseline_value::numeric, 0) AS assurance_improvement_rate
-FROM baseline_state bs, improved_state isv
-
-## 4. Time Windows Rules
+## 3. Time Windows Rules
 
 All time filters:
 - time stores Unix epoch seconds and represents bucket start.
@@ -250,7 +191,7 @@ Comparison examples:
   time >= EXTRACT(EPOCH FROM (date_trunc('month', NOW()) - INTERVAL '1 month'))::bigint
   AND time < EXTRACT(EPOCH FROM (NOW() - INTERVAL '1 month'))::bigint
 
-## 5. General Rules
+## 4. General Rules
 
 - Use only tables and columns in Database Schema.
 - Schema example: values are authoritative for enum/literal values.
@@ -266,7 +207,5 @@ Comparison examples:
 - If a column has `relation_formula` in its description, use that formula to compute the metric.
 - When returning dimension members that are filtered, ranked, or ordered by a metric, SELECT must include both the involved dimensions and the computed metric value. Reuse exactly the same aggregate or formula expression in SELECT and HAVING/ORDER BY; do not return only the dimensions. If the user explicitly asks only for the count of qualifying members, return the count only.
 - **MANDATORY: All division operations MUST use NUMERIC arithmetic. Integer division is NOT allowed. Always cast at least one operand (prefer the numerator) to NUMERIC, e.g., `SUM(metric)::numeric / NULLIF(...)`.**
-- No Chinese aliases are allowed in generated SQL.
+- **STRICTLY FORBIDDEN: Chinese aliases are NOT allowed in generated SQL. All aliases MUST use ASCII characters and English naming. Violations will be rejected.**
 
-# Output
-Respond with ONLY the SQL query, enclosed in a ```sql``` block. Do not include any explanation, comments, or step-by-step reasoning outside the code block.
