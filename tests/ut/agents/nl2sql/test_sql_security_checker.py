@@ -591,6 +591,17 @@ def test_check_sql_rejects_union_all_with_unfiltered_business_branch() -> None:
     assert [violation.rule_id for violation in result.violations] == ["RESOURCE-009"]
 
 
+def test_check_sql_does_not_mask_unfiltered_union_branch_with_tablesample() -> None:
+    """A TABLESAMPLE on one UNION branch must not mask an unfiltered read in another."""
+    schema = {"huge": {"columns": {"id": {}}}, "t": {"columns": {"id": {}}}}
+    sql = "SELECT * FROM huge UNION SELECT id FROM t TABLESAMPLE SYSTEM (1)"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["RESOURCE-009"]
+
+
 @pytest.mark.parametrize("operator", ["UNION", "UNION ALL"])
 @pytest.mark.parametrize(
     ("right_projection", "rule_id"),

@@ -61,6 +61,7 @@ import contextvars
 import functools
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -192,6 +193,8 @@ def _resolve_jsonl_path(
 
     路径只在启用时由 collector 调用，失败直接抛出由上层捕获。
     """
+    _validate_path_id(run_id, "run_id")
+    _validate_path_id(sub_id, "sub_id")
     from dataagent.utils.runtime_paths import resolve_flex_performance_dir
 
     base = resolve_flex_performance_dir(
@@ -201,6 +204,15 @@ def _resolve_jsonl_path(
         config=config,
     )
     return base / f"Run{run_id}_Sub{sub_id}.{os.getpid()}.jsonl"
+
+
+_PATH_ID_RE: re.Pattern[str] = re.compile(r"\A[A-Za-z0-9._-]*\Z")
+
+
+def _validate_path_id(value: str, field: str) -> None:
+    """校验拼入文件名的标识符只含安全字符；不通过则抛 ``ValueError``。"""
+    if not _PATH_ID_RE.match(value):
+        raise ValueError(f"invalid {field} for performance path: {value!r}")
 
 
 class PerformanceCollector:

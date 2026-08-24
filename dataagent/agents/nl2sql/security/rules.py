@@ -419,7 +419,7 @@ def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
 
 
 def _union_returns_unfiltered_rows(statement: exp.Union) -> bool:
-    if statement.args.get("limit") is not None or statement.find(exp.TableSample):
+    if statement.args.get("limit") is not None:
         return False
     scope_by_expression = {}
     for scope in traverse_scope(statement):
@@ -464,6 +464,8 @@ def _scope_contains_row_restriction(scope: Any) -> bool:
     ):
         return True
     for _, source in scope.selected_sources.values():
+        if isinstance(source, exp.Table) and source.args.get("sample") is not None:
+            return True
         if hasattr(source, "selected_sources") and (
             _scope_contains_row_restriction(source) or _scope_is_single_row_aggregate(source)
         ):
