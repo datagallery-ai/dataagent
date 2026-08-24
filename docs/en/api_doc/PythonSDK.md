@@ -138,14 +138,14 @@ AGENT_CONFIG:
   max_iter: 50                           # Max iterations, unlimited if unset
   token_limit: 100000                    # Token limit, unlimited if unset
   enable_human_feedback: false           # Enable HITL human-in-the-loop, default false
-  enable_portrait: false                 # Enable user portrait memory, default false
+  enable_portrait: false                 # Fixed off in this version; true is ignored
 ```
 
 **Code Behavior**:
 - `type` determines engine selection in `select_engine()`: `react` → `dataagent.core.flex.agent.FlexAgent`, `nl2sql` → `dataagent.agents.nl2sql.agent.NL2SQLAgent`
 - `max_iter` when set is written to `FlexRouter`; exceeding it raises `LimitReachedError`, returning current state with a termination message appended
 - `enable_human_feedback=true` creates `HumanFeedbackNode` and registers the `request_human_feedback` tool
-- `enable_portrait=true` writes user characteristics to Memory via portraiter hook
+- The portraiter hook only persists session messages; LLM portraits and snapshot/profile injection are disabled
 
 ---
 

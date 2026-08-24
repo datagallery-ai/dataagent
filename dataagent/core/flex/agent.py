@@ -40,6 +40,7 @@ from dataagent.core.flex.workflow.router import FlexRouter, LimitReachedError
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
 from dataagent.core.utils.performance import callable_perf_name, get_current_collector, make_perf_state_holder
+from dataagent.utils.constants import ENABLE_LLM_PORTRAIT
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.import_utils import import_class
 
@@ -332,10 +333,7 @@ class FlexAgent(BaseAgent):
         terminal_mode = agent_config.get("terminal_mode", True)
 
         initial_state.setdefault("terminal_mode", terminal_mode)
-        initial_state.setdefault(
-            "enable_portrait",
-            bool(agent_config.get("enable_portrait", False)),
-        )
+        initial_state["enable_portrait"] = ENABLE_LLM_PORTRAIT
 
         # 对齐 _get_or_init_context 的兜底逻辑：会话持久化需要非空的 user_id / session_id
         initial_state.setdefault("user_id", self.config.get("USER_ID", "anonymous"))
@@ -824,10 +822,7 @@ class FlexAgent(BaseAgent):
             terminal_mode = agent_config.get("terminal_mode", False)
 
             input_val.setdefault("terminal_mode", terminal_mode)
-            input_val.setdefault(
-                "enable_portrait",
-                bool(agent_config.get("enable_portrait", False)),
-            )
+            input_val["enable_portrait"] = ENABLE_LLM_PORTRAIT
             input_val.setdefault("user_id", self.config.get("USER_ID", "anonymous"))
             input_val.setdefault("session_id", self.config.get("SESSION_ID", "default_session"))
 
@@ -897,13 +892,14 @@ class FlexAgent(BaseAgent):
         **``model``**：引用当前 YAML 里 **``MODEL`` 已声明的槽名**（如 ``qwen3``），语义同节点 ``chat_model``；
         校验与合并见 :func:`dataagent.core.flex.flex_runtime_from_config._merge_hook_llm_configs`。
 
-        **需要 LLM 的 hook**（如 ``portraiter``、``pruner``）须满足其一，否则运行期 ``runtime.llm("pruner")`` 等会缺配置：
+        **需要 LLM 的 hook**（如 ``pruner``）须满足以下条件之一，
+        否则运行期 ``runtime.llm("pruner")`` 等会缺配置：
 
         - 在 ``MODEL`` 下保留 **与 hook ``name`` 同名** 的槽（例如 ``MODEL.pruner``），或
         - 使用 **字典** 并写 ``model: <MODEL 槽名>``（推荐在只声明 ``qwen3`` 时用 ``model: qwen3``）。
 
         **字符串项**（如 ``- pruner``）不会触发 ``_merge_hook_llm_configs``；若 ``MODEL`` 仅有 ``qwen3`` 而无
-        ``pruner``/``portraiter`` 槽，**不要**对依赖 LLM 的 hook 使用字符串简写。
+        ``pruner`` 槽，**不要**对依赖 LLM 的 hook 使用字符串简写。
 
         项类型：
 
@@ -922,10 +918,6 @@ class FlexAgent(BaseAgent):
         示例（仅 ``MODEL.qwen3`` 时）::
 
             HOOKS:
-              agent:
-                post:
-                  - name: portraiter
-                    model: qwen3
               nodes:
                 executor:
                   post:

@@ -14,6 +14,7 @@ import pytest
 
 from dataagent.actions.tools import BaseTool, ToolResult
 from dataagent.core.managers.action_manager import ToolSchema
+from dataagent.core.managers.action_manager import manager as manager_module
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.action_manager.schemas import ParameterSchema
 
@@ -124,6 +125,67 @@ async def test_register_local_tools_falls_back_to_docstring_without_yaml_descrip
         ]
     )
     assert "计算两个数的和" in tm.get("add_numbers").description
+    await tm.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_builtin_tools_only_use_catalog_entries(monkeypatch: pytest.MonkeyPatch):
+    """YAML builtin entries select catalog tools but cannot replace their import targets."""
+    monkeypatch.setattr(
+        manager_module,
+        "_BUILTIN_LOCAL_TOOL_CATALOG",
+        {
+            "add_numbers": {
+                "name": "add_numbers",
+                "function": "add_numbers",
+                "module": "tests.ut.tools.test_local_tools",
+            }
+        },
+    )
+    tm = ToolManager()
+
+    tm.init_from_config(
+        {
+            "TOOLS": {
+                "builtin": [
+                    {
+                        "name": "add_numbers",
+                        "function": "unexpected_function",
+                        "module": "unexpected.module",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert tm.exists("add_numbers")
+    assert tm.get("add_numbers").func is add_numbers
+    assert not tm.exists("not_in_catalog")
+    await tm.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_builtin_tools_skip_functions_not_in_catalog(monkeypatch: pytest.MonkeyPatch):
+    """A callable importable from YAML is not a builtin unless its requested name is catalogued."""
+    monkeypatch.setattr(manager_module, "_BUILTIN_LOCAL_TOOL_CATALOG", {})
+    tm = ToolManager()
+
+    tm.init_from_config(
+        {
+            "TOOLS": {
+                "builtin": [
+                    {
+                        "name": "not_in_catalog",
+                        "function": "add_numbers",
+                        "module": "tests.ut.tools.test_local_tools",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert not tm.exists("add_numbers")
+    assert not tm.exists("not_in_catalog")
     await tm.cleanup()
 
 

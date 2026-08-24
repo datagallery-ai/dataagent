@@ -16,7 +16,7 @@
 - **router 增量写**：每个路由节点执行完后调用 ``save_messages``（不依赖 ``enable_portrait``），
   崩溃时已执行轮次的消息不丢失。（见 ``FlexRouter._write_message_history``）
 - **全量覆写**（``save_messages``）：由 ``portraiter`` 在 workflow 结束时再写一遍，
-  保证文件与最终 state 完全一致（``enable_portrait`` 仅控制是否再走 LLM 更新画像文件）。
+  保证文件与最终 state 完全一致；当前版本不会调用 LLM 更新画像文件。
 
 读取时用 ``load_messages``，底层复用 ``dataagent.core.context.message_history`` 的清洗逻辑。
 

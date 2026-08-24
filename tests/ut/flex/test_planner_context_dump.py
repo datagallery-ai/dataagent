@@ -5,7 +5,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from dataagent.core.flex.nodes.planner import _dump_context_prompt_if_enabled
+from dataagent.core.flex.nodes import planner as planner_module
+from dataagent.core.flex.nodes.planner import Planner, _dump_context_prompt_if_enabled
 
 
 class _Runtime:
@@ -52,3 +53,29 @@ def test_context_dump_separates_main_and_subagent_when_memory_dir_is_shared(monk
     assert subagent_dump.is_file()
     assert "main planner prompt" in main_dump.read_text(encoding="utf-8")
     assert "document recall subagent prompt" in subagent_dump.read_text(encoding="utf-8")
+
+
+def test_planner_does_not_load_portrait_memory_when_state_requests_it(monkeypatch, tmp_path) -> None:
+    """A state value cannot re-enable LLM-generated snapshot or profile prompt injection."""
+    planner = object.__new__(Planner)
+    planner.system_prompt = object()
+    planner.user_prompt = object()
+    captured: dict[str, Any] = {}
+
+    def fail_if_memory_is_loaded(*args, **kwargs):
+        raise AssertionError("portrait memory must remain disabled")
+
+    def capture_prompt(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(planner_module, "_build_memory_str", fail_if_memory_is_loaded)
+    monkeypatch.setattr(planner_module, "prepare_flex_planner_prompt", capture_prompt)
+
+    planner._prepare_messages_to_process(
+        {"enable_portrait": True},
+        object(),
+        SimpleNamespace(workspace_dir=tmp_path),
+    )
+
+    assert "memory" not in captured
