@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextvars import Token
@@ -217,8 +218,18 @@ class NL2SQLAgent(BaseAgent):
                 input_state = kw.get("input")
                 if isinstance(input_state, dict):
                     question = str(input_state.get("question") or input_state.get("user_query", ""))
+                    overrides = {k: v for k, v in input_state.items() if k not in ("question", "user_query")}
+                    native_state = get_default_state(
+                        question=question,
+                        **{**self.state_defaults, **overrides},
+                    )
+                    kw["input"] = native_state
+                    self._distribute_context_dump_dir(
+                        dict(input_state),
+                        session_id=input_state.get("session_id"),
+                    )
                     async for item in self._yield_context_stream(
-                        state=input_state,
+                        state=native_state,
                         question=question,
                         session_id=input_state.get("session_id"),
                         stream=self.workflow_backend.astream({}, **kw),
@@ -384,21 +395,45 @@ class NL2SQLAgent(BaseAgent):
         run_id: Any,
     ) -> Path:
         """Create and return the next per-run NL2SQL context-dump directory."""
-        from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir
+        from dataagent.utils.runtime_paths import (
+            contains_path_traversal,
+            is_resolved_within,
+            resolve_flex_session_memory_dir,
+            sanitize_path_component,
+        )
 
+        if workspace is not None and contains_path_traversal(workspace):
+            raise ValueError("workspace must not contain path traversal segments.")
+        raw_session_id = "" if session_id is None else str(session_id)
+        session_digest = hashlib.sha256(raw_session_id.encode("utf-8", errors="replace")).hexdigest()[:8]
+        safe_session_id = sanitize_path_component(raw_session_id, fallback=f"invalid-{session_digest}")
+        if safe_session_id != raw_session_id.strip():
+            logger.warning(
+                f"NL2SQL context dump: session_id={raw_session_id!r} is not path-safe; using {safe_session_id} instead"
+            )
+        raw_run_id = "" if run_id is None else str(run_id)
+        digest = hashlib.sha256(raw_run_id.encode("utf-8", errors="replace")).hexdigest()[:8]
+        # fallback must be derived from the raw value so illegal run_id does not collide with legal 0
+        safe_run_id = sanitize_path_component(raw_run_id, fallback=f"invalid-{digest}")
+        if safe_run_id != raw_run_id.strip():
+            logger.warning(
+                f"NL2SQL context dump: run_id={raw_run_id!r} is not path-safe; using run_{safe_run_id} instead"
+            )
         memory_dir = resolve_flex_session_memory_dir(
             user_id=user_id,
-            session_id=session_id,
+            session_id=safe_session_id,
             workspace=workspace,
             config=self.config,
-        )
-        base_dir = memory_dir / "context_dump" / f"run_{run_id}"
+        ).resolve()
+        base_dir = memory_dir / "context_dump" / f"run_{safe_run_id}"
         existing = (
             [path.name for path in base_dir.iterdir() if path.is_dir() and path.name.startswith("nl2sql_")]
             if base_dir.is_dir()
             else []
         )
-        dump_dir = base_dir / f"nl2sql_{len(existing) + 1:02d}"
+        dump_dir = (base_dir / f"nl2sql_{len(existing) + 1:02d}").resolve()
+        if not is_resolved_within(dump_dir, memory_dir):
+            raise ValueError("context dump directory escaped the session memory root.")
         dump_dir.mkdir(parents=True, exist_ok=True)
         return dump_dir
 

@@ -11,6 +11,7 @@
 # limitations under the License.
 # ============================================================================
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -158,3 +159,17 @@ def test_0930_scenario_yaml_omits_security_key_but_has_reflector(relpath: str) -
     core = config.get("CORE", {})
     assert "sql_security_enabled" not in (core.get("validator") or {})
     assert "reflector" in core
+
+
+def test_unsafe_session_id_dump_stays_under_user_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("DATAAGENT_FLEX_PERSISTENCE_ROOT", raising=False)
+    dump_dir = NL2SQLAgent._create_context_dump_dir(
+        SimpleNamespace(config={}),
+        user_id="anonymous",
+        session_id="../escaped",
+        workspace=None,
+        run_id=0,
+    )
+    assert dump_dir.resolve().is_relative_to((tmp_path / "anonymous").resolve())
+    assert "escaped" not in dump_dir.parts

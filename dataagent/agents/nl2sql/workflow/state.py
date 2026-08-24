@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from dataagent.core.cbb.base_state import BaseState
@@ -75,6 +75,23 @@ class NL2SQLState(BaseState):
     stream_message: str
 
 
+def _reset_result_security(results: Any) -> list[Any]:
+    """Return copies of ``results`` with the security verdict cleared."""
+    cleaned: list[Any] = []
+    for item in results or []:
+        if isinstance(item, Result):
+            reset_result = replace(item, security_checked=False, security_violations=[])
+            cleaned.append(reset_result)
+        elif isinstance(item, dict):
+            reset = dict(item)
+            reset["security_checked"] = False
+            reset["security_violations"] = []
+            cleaned.append(reset)
+        else:
+            cleaned.append(item)
+    return cleaned
+
+
 def get_default_state(question: str, **override) -> NL2SQLState:
     """Return a fresh NL2SQLState with default field values."""
     default_state = {
@@ -102,4 +119,8 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "stream_message": "",
     }
     default_state.update(override)
+    default_state["security_sql_approved"] = False
+    default_state["validation_results"] = _reset_result_security(default_state.get("validation_results"))
+    default_state["generation_results"] = _reset_result_security(default_state.get("generation_results"))
+    default_state["execution_results"] = _reset_result_security(default_state.get("execution_results"))
     return default_state
