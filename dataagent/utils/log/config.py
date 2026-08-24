@@ -32,7 +32,7 @@ class LogConfig:
         """从环境变量获取配置"""
         console_raw = get_env("DATAAGENT_LOG_CONSOLE", default="true")
         return {
-            "level": get_env("DATAAGENT_LOG_LEVEL", default="INFO"),
+            "level": get_env("DATAAGENT_LOG_LEVEL", default="WARNING"),
             "console": (console_raw or "true").lower() == "true",
             "rotation": get_env("DATAAGENT_LOG_ROTATION", default="100 MB"),
             "retention": get_env("DATAAGENT_LOG_RETENTION", default="7 days"),

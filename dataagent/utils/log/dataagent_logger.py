@@ -114,7 +114,7 @@ def build_config_from_env(process_name: str | None = None) -> LoggerConfig:
     console_raw = get_env("DATAAGENT_LOG_CONSOLE", default="true")
     process = process_name or get_env("DATAAGENT_LOG_PROCESS_NAME") or "main"
     return LoggerConfig(
-        console_level=get_env("DATAAGENT_LOG_LEVEL", default="INFO") or "INFO",
+        console_level=get_env("DATAAGENT_LOG_LEVEL", default="WARNING") or "WARNING",
         file_level=get_env("DATAAGENT_LOG_FILE_LEVEL", default="TRACE") or "TRACE",
         log_path=get_env("DATAAGENT_LOG_PATH"),
         console=(console_raw or "true").lower() == "true",
@@ -342,7 +342,7 @@ def _patch_record(record: Any) -> None:
 class LoggerConfig:
     """Structured logger configuration for per-process ``main.<pid>.log`` files."""
 
-    console_level: str = "INFO"
+    console_level: str = "WARNING"
     file_level: str = "TRACE"
     log_path: str | None = None
     console: bool = True
