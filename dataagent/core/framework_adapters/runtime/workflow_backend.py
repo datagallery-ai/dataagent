@@ -106,6 +106,11 @@ class LangGraphWorkflowBackend:
         - 需要 checkpointer 参与
         - 输入使用 Command(resume=message)
         - config.configurable.thread_id 使用 checkpoint_id
+
+        安全说明：
+        - checkpoint_id 在本层直接映射为 thread_id，无归属校验
+        - 调用方必须确保 checkpoint_id 与当前用户 session 绑定
+        - 禁止将本函数暴露给不可信的外部调用
         """
         from langgraph.types import Command  # type: ignore[import-not-found]
 
@@ -121,7 +126,15 @@ class LangGraphWorkflowBackend:
         return await compiled.ainvoke(Command(resume=message), config=run_config)
 
     def astream_resume(self, *, checkpoint_id: str, message: str, **kwargs: Any) -> AsyncIterator[Any]:
-        """LangGraph 流式恢复（需要 checkpointer，输入使用 Command(resume=message)）。"""
+        """
+        LangGraph 流式恢复（需要 checkpointer，输入使用 Command(resume=message)）。
+
+        安全说明：
+        - checkpoint_id 在本层直接映射为 thread_id，无归属校验
+        - 调用方必须确保 checkpoint_id 与当前用户 session 绑定
+        - 禁止将本函数暴露给不可信的外部调用（如未鉴权的 REST 端点）
+        - 若未来需要暴露，必须将 thread_id 与登录用户+session 绑定，禁止客户端覆盖 config.thread_id
+        """
         from langgraph.types import Command  # type: ignore[import-not-found]
 
         store = kwargs.pop("store", None)

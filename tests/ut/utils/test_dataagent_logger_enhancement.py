@@ -100,6 +100,49 @@ def test_main_pid_file_shared_across_requests(tmp_path: Path, monkeypatch: pytes
     assert list(log_dir.glob("main.*.log")) == [_active(log_dir)]
 
 
+def test_session_id_sanitized_for_log_injection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control chars and oversize session_id must not be able to forge log lines."""
+    log_dir = tmp_path / "logs"
+    monkeypatch.setenv("DATAAGENT_LOG_PATH", str(log_dir))
+    monkeypatch.setenv("DATAAGENT_LOG_CONSOLE", "false")
+    logmod.reconfigure(logmod.build_config_from_env())
+    logger = logmod.get_logger()
+
+    hostile = "user1\n[INFO] Fake Log\rESC=\x1b[31mX\x1b[0m"
+    token = logmod.set_session_log_context(hostile, 7)
+    try:
+        logger.info("legit")
+        assert logmod._session_context_var.get().session_id == "user1[INFO] Fake LogESC=[31mX[0m"
+    finally:
+        logmod.reset_session_log_context(token)
+
+    long_id = "x" * 500
+    token = logmod.set_session_log_context(long_id, 8)
+    try:
+        assert logmod._session_context_var.get().session_id == "x" * logmod._MAX_LOG_ID_LEN
+        logger.info("long")
+    finally:
+        logmod.reset_session_log_context(token)
+
+    for only_ctrl in ("\n\r\t", "\x1b"):
+        token = logmod.set_session_log_context(only_ctrl, 0)
+        try:
+            assert logmod._session_context_var.get().session_id is None
+        finally:
+            logmod.reset_session_log_context(token)
+
+    _complete()
+    text = _active(log_dir).read_text(encoding="utf-8")
+    # Sanitized id is one contiguous token — no broken-into-extra-line forgery.
+    assert "user1[INFO] Fake LogESC=[31mX[0m" in text
+    # Real loguru-formatted lines always render the level segment "<level>[INFO]</level>".
+    # A forged line planted via injected \n would lack the surrounding timestamp/level chrome
+    # and start with a literal "[INFO]" produced from the session_id payload.
+    for line in text.splitlines():
+        assert not line.startswith("[INFO]"), line
+    assert "session=-" in text
+
+
 def test_rotation_defaults_override_and_zip_openable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATAAGENT_LOG_ROTATION", raising=False)
     assert logmod.build_config_from_env().rotation == "100 MB"
@@ -386,15 +429,15 @@ def _handler_backtrace_flags() -> list[bool]:
 
 def test_diagnose_defaults_true_and_env_can_disable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATAAGENT_LOG_DIAGNOSE", raising=False)
-    assert logmod.LoggerConfig().diagnose is True
-    assert logmod.build_config_from_env().diagnose is True
+    assert logmod.LoggerConfig().diagnose is False
+    assert logmod.build_config_from_env().diagnose is False
 
     monkeypatch.setenv("DATAAGENT_LOG_PATH", str(tmp_path / "logs-default"))
     monkeypatch.setenv("DATAAGENT_LOG_CONSOLE", "true")
     logmod.reconfigure(logmod.build_config_from_env())
     default_flags = _handler_diagnose_flags()
     assert default_flags
-    assert all(default_flags)
+    assert not any(default_flags), "diagnose should be False by default for security"
     assert all(_handler_backtrace_flags())
 
     for raw in ("false", "0", "no"):
