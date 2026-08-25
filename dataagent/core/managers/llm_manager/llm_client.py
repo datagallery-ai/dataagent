@@ -514,11 +514,13 @@ class LLMClientMessage:
 
 
 def _normalize_api_key(value: Any) -> str:
-    """None / 空 / 纯空白 → ``EMPTY``；否则 strip。``EMPTY`` 表示无鉴权占位，不是密钥。"""
+    """None / 空 / 纯空白 / ``$env{...}`` → ``EMPTY``；否则 strip。``EMPTY`` 表示无鉴权占位，不是密钥。"""
     if value is None:
         return "EMPTY"
     stripped = str(value).strip()
-    return stripped or "EMPTY"
+    if not stripped or (stripped.startswith("$env{") and stripped.endswith("}")):
+        return "EMPTY"
+    return stripped
 
 
 def _resolve_core_endpoint(
@@ -526,9 +528,8 @@ def _resolve_core_endpoint(
     name: str,
     provider_env: str,
     param_base_url: Any,
-    param_api_key: Any,
 ) -> tuple[str, str]:
-    """解析 api_base / api_key：优先显式参数，回退环境变量 ``{PROVIDER}_BASE_URL`` / ``{PROVIDER}_API_KEY``。"""
+    """解析 api_base：URL 可回退 ``{PROVIDER}_BASE_URL``。api_key 固定 ``EMPTY``（忽略 YAML / environ）。"""
     if param_base_url and str(param_base_url).strip():
         api_base = str(param_base_url).strip()
     else:
@@ -538,11 +539,7 @@ def _resolve_core_endpoint(
             f"Missing URL for '{name}'. Set MODEL.{name}.params.base_url or {provider_env}_BASE_URL in .env."
         )
 
-    if param_api_key and str(param_api_key).strip():
-        api_key = str(param_api_key).strip()
-    else:
-        api_key = os.getenv(f"{provider_env}_API_KEY")
-    return str(api_base), _normalize_api_key(api_key)
+    return str(api_base), _normalize_api_key(None)
 
 
 # ── 重复检测辅助函数 ────────────────────────────────────────────────────────────
@@ -1467,11 +1464,11 @@ class LLMClient:
         if not provider_env:
             raise ValueError(f"Missing provider for '{config.name}'.")
 
+        params.pop("api_key", None)
         api_base, api_key = _resolve_core_endpoint(
             name=config.name,
             provider_env=provider_env,
             param_base_url=params.pop("base_url", None) or params.pop("api_base", None),
-            param_api_key=params.pop("api_key", None),
         )
         timeout = params.pop("timeout", None)
         num_retries = params.pop("num_retries", None)

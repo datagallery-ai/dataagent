@@ -63,6 +63,7 @@ def test_llm_config_to_dict_redacts_hyphen_keys_nested_lists_and_empty() -> None
 
 
 def test_from_llm_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BASE_URL 仍可读 env；API key 不再从 environ 回落。"""
     monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-test")
 
@@ -71,35 +72,53 @@ def test_from_llm_config_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None
     assert isinstance(client, LLMClient)
     assert client._model == "deepseek-v3.2"
     assert client._api_base == "https://example.invalid/v1"
-    assert client._api_key == "sk-test"
+    assert client._api_key == "EMPTY"
     assert client._extra_body.get("enable_thinking") is True
     assert client._extra_body.get("temperature") == 0.0
     assert "custom_llm_provider" not in client._extra_body
 
 
 def test_from_llm_config_params_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """params 中的 base_url / api_key 优先于 env。"""
+    """params.base_url 仍以 YAML 为准；params.api_key 与 environ 均忽略，落 EMPTY。"""
     monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://from-env/v1")
     monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-env")
 
     client = LLMClient.from_llm_config(_make_config(base_url="https://from-yaml/v1", api_key="sk-yaml"))
 
     assert client._api_base == "https://from-yaml/v1"
-    assert client._api_key == "sk-yaml"
+    assert client._api_key == "EMPTY"
     assert client._extra_body.get("temperature") == 0.0
     assert "base_url" not in client._extra_body
     assert "api_key" not in client._extra_body
 
 
+def test_from_llm_config_ignores_provider_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """即使进程里已有 {PROVIDER}_API_KEY，未在 YAML 配 key 也必须落 EMPTY。"""
+    monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-must-not-be-used")
+    client = LLMClient.from_llm_config(_make_config())
+    assert client._api_key == "EMPTY"
+    assert "Authorization" not in client._headers()
+
+
+def test_from_llm_config_env_ref_api_key_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """YAML 写 ``$env{...}`` 的 api_key 当未配置，不从 environ 取值。"""
+    monkeypatch.setenv("QWEN3_CODER_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("QWEN3_CODER_API_KEY", "sk-must-not-be-used")
+    client = LLMClient.from_llm_config(_make_config(api_key="$env{QWEN3_CODER_API_KEY}"))
+    assert client._api_key == "EMPTY"
+    assert "Authorization" not in client._headers()
+
+
 def test_from_llm_config_reads_params_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """未配置 .env 时，可从 YAML params 读取 base_url / api_key（quickstart 场景）。"""
+    """未配置 .env 时仍可读 YAML base_url；params.api_key 忽略，落 EMPTY。"""
     monkeypatch.delenv("QWEN3_CODER_BASE_URL", raising=False)
     monkeypatch.delenv("QWEN3_CODER_API_KEY", raising=False)
 
     client = LLMClient.from_llm_config(_make_config(base_url="https://from-yaml/v1", api_key="sk-yaml"))
 
     assert client._api_base == "https://from-yaml/v1"
-    assert client._api_key == "sk-yaml"
+    assert client._api_key == "EMPTY"
 
 
 def test_from_llm_config_missing_model(monkeypatch: pytest.MonkeyPatch) -> None:

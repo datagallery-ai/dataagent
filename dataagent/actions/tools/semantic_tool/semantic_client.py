@@ -22,7 +22,6 @@ from urllib.parse import quote
 import httpx
 from loguru import logger
 
-from dataagent.actions.tools.semantic_tool.auth import get_semantic_layer_auth
 from dataagent.common_utils.outbound_tls import httpx_verify
 from dataagent.utils.constants import (
     DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT,
@@ -95,16 +94,13 @@ class SemanticServiceClient:
         self,
         base_url: str,
         *,
-        auth: tuple[str, str] | None = None,
         timeout: float = 30.0,
     ) -> None:
         """Create a client for the configured semantic-service base URL."""
         self.base_url = normalize_semantic_base_url(base_url)
         self.timeout = timeout
-        self.auth = auth
         self.client = httpx.Client(
             timeout=timeout,
-            auth=auth,
             headers={"Accept": "application/json"},
             verify=httpx_verify("semantic_layer"),
         )
@@ -116,13 +112,11 @@ class SemanticServiceClient:
         if not raw_base_url:
             raise ValueError("validation error: SEMANTIC_LAYER.base_url must be configured")
 
-        auth = get_semantic_layer_auth(config_manager)
-
         timeout = _as_float(
             config_manager.get("SEMANTIC_LAYER.timeout", 30.0),
             30.0,
         )
-        return cls(str(raw_base_url), auth=auth, timeout=timeout)
+        return cls(str(raw_base_url), timeout=timeout)
 
     def get_table_list(self, database_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT) -> list:
         """Get tables under a semantic database."""

@@ -23,6 +23,28 @@ import yaml
 from dataagent.config.config_manager import ConfigManager
 from dataagent.utils.runtime_paths import dataagent_package_path
 
+
+def test_interpolate_config_skips_api_key_env_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``$env{*_API_KEY}`` 不得从 environ 取值；URL 类 ``$env{}`` 仍解析。"""
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-must-not-be-used")
+    cm = ConfigManager()
+    result = cm.interpolate_config(
+        {
+            "MODEL": {
+                "chat": {
+                    "params": {
+                        "base_url": "$env{DEEPSEEK_BASE_URL}",
+                        "api_key": "$env{DEEPSEEK_API_KEY}",
+                    }
+                }
+            }
+        }
+    )
+    assert result["MODEL"]["chat"]["params"]["base_url"] == "https://llm.example/v1"
+    assert result["MODEL"]["chat"]["params"]["api_key"] == ""
+
+
 DEFAULT_CONFIG = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
 
 

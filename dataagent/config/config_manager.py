@@ -22,7 +22,7 @@ from typing import Any
 import yaml
 
 from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
-from dataagent.utils.env_file_loader import load_env_file
+from dataagent.utils.env_file_loader import is_api_key_env_name, load_env_file
 from dataagent.utils.log import logger
 
 env_path = Path(os.getcwd()) / ".env"
@@ -344,6 +344,9 @@ class ConfigManager:
 
             result = value
             for var_name in matches:
+                if is_api_key_env_name(var_name):
+                    result = result.replace(f"$env{{{var_name}}}", "")
+                    continue
                 env_value = os.getenv(var_name)
                 if env_value is None:
                     raise ValueError(

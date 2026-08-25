@@ -48,8 +48,6 @@ DATABASE:
     path: ""  # replace with actual .sqlite path
 SEMANTIC_LAYER:
   base_url: ""  # replace with actual semantic service port
-  username: null
-  password: null
   timeout: 30
 
 # 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径。

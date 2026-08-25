@@ -30,8 +30,6 @@ DATABASE:
     explain_url: "https://"  # 出站走 outbound_tls（httpx_verify("cloud_core")）；填完整 https 地址
 SEMANTIC_LAYER:
   base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
-  username: null
-  password: null
   timeout: 30
   traffic_insight:
     recall:

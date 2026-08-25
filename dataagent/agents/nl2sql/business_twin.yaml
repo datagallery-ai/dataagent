@@ -30,8 +30,6 @@ DATABASE:
     explain_url: "https://"  # 出站走 outbound_tls（httpx_verify("cloud_core")）；填完整 https 地址
 SEMANTIC_LAYER:
   base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
-  username: null                       # 未启用认证时保持 null；启用认证时填写
-  password: null                       # 未启用认证时保持 null；启用认证时填写
   timeout: 30                           # 可按服务端表数量和响应耗时调整
   business_twin:
     table_selection:
