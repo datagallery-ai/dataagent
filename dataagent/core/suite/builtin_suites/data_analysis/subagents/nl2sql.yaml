@@ -99,6 +99,7 @@ ACTOR_LOOP:
             - step4_1 第一次运行只完成 prepare：生成 final SQL、静态报告以及 `.nl2sql_runtime/source_validation_request.json`，此时不会生成 receipt。
             - Step2 固定脚本只检查契约结构；开放式 ClickHouse 表达式的语法、函数、类型、alias scope 和 JOIN 执行正确性以本阶段 source trial 为最终门禁。
             - 按 request 中 `source_trial` 的 path 与 sha256 提交唯一的限量试算：固定使用 `submit_resource_job(resource_id="clickhouse", task_type="sql_query", command_file=<path>)` → `poll_job` → `collect_job`。提交 SQL 的顶层关键字必须是 `SELECT`；禁止提交 `EXPLAIN` 或执行原样 final 查询。
+            - 试算生成器会按实际物理关系次数动态分配总读取预算，默认每个关系最多读取 128 行，并使用 ClickHouse `read_overflow_mode='break'` 在达到读取上限时返回部分结果。不得把每表行数恢复为 10000，不得对相同 sha256 的资源限额失败试算原样重复提交。
             - 将原始 collect payload 机械写入 `.nl2sql_runtime/source_validation_result.json`：`{"source_trial":{"query_sha256":"...","result":<payload>}}`。
             - 再次运行 step4_1 完成 finalize。生成器必须核对 query sha256；限量试算通过后才生成 receipt。目标游戏尚不存在导致返回 0 行属于成功。
             - ClickHouse 返回语法、未知字段、函数、类型或 JOIN 错误时，修改发生问题的工作副本并从该步重跑。资源限额错误单独记录，不能冒充 SQL 语法错误。

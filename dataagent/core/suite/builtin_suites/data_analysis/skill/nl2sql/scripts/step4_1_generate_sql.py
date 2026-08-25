@@ -47,12 +47,14 @@ SOURCE_VALIDATION_RESULT_PATH = Path(
         str(RUNTIME_DIR / "source_validation_result.json"),
     )
 ).resolve()
-TRIAL_ROWS_PER_TABLE = int(os.environ.get("NL2SQL_TRIAL_ROWS_PER_TABLE", "10000"))
+TRIAL_ROWS_PER_TABLE = int(os.environ.get("NL2SQL_TRIAL_ROWS_PER_TABLE", "128"))
 TRIAL_OUTPUT_ROWS = int(os.environ.get("NL2SQL_TRIAL_OUTPUT_ROWS", "10"))
 TRIAL_MAX_EXECUTION_TIME = int(os.environ.get("NL2SQL_TRIAL_MAX_EXECUTION_TIME", "30"))
 TRIAL_MAX_ROWS_TO_READ = int(os.environ.get("NL2SQL_TRIAL_MAX_ROWS_TO_READ", "100000"))
 TRIAL_MAX_BYTES_TO_READ = int(os.environ.get("NL2SQL_TRIAL_MAX_BYTES_TO_READ", "500000000"))
 TRIAL_MAX_MEMORY_USAGE = int(os.environ.get("NL2SQL_TRIAL_MAX_MEMORY_USAGE", "1000000000"))
+TRIAL_READ_SAFETY_FACTOR = int(os.environ.get("NL2SQL_TRIAL_READ_SAFETY_FACTOR", "4"))
+TRIAL_SOURCE_LIMIT_PLACEHOLDER = "__NL2SQL_TRIAL_SOURCE_ROWS__"
 
 INPUT_NORMALIZATION_WARNINGS: list[str] = []
 
@@ -1650,7 +1652,7 @@ def _source_relation(
     qualified = _qualified_table(contract.source_database, table)
     if not trial_mode:
         return qualified
-    return f"(SELECT * FROM {qualified} LIMIT {TRIAL_ROWS_PER_TABLE})"
+    return f"(SELECT * FROM {qualified} LIMIT {TRIAL_SOURCE_LIMIT_PLACEHOLDER})"
 
 
 def _render_deployment_expression(value: Any, contract: RuntimeContract) -> str:
@@ -2763,25 +2765,67 @@ def render_final_sql(
     )
 
 
+def _apply_trial_source_row_budget(trial_scoring_sql: str) -> tuple[str, dict[str, int]]:
+    source_relation_count = trial_scoring_sql.count(TRIAL_SOURCE_LIMIT_PLACEHOLDER)
+    if TRIAL_ROWS_PER_TABLE <= 0:
+        raise ValueError("NL2SQL_TRIAL_ROWS_PER_TABLE must be positive")
+    if TRIAL_MAX_ROWS_TO_READ <= 0:
+        raise ValueError("NL2SQL_TRIAL_MAX_ROWS_TO_READ must be positive")
+    if TRIAL_READ_SAFETY_FACTOR <= 0:
+        raise ValueError("NL2SQL_TRIAL_READ_SAFETY_FACTOR must be positive")
+
+    safe_total_rows = max(1, TRIAL_MAX_ROWS_TO_READ // TRIAL_READ_SAFETY_FACTOR)
+    if source_relation_count > safe_total_rows:
+        raise ValueError(
+            "Source-trial relation count exceeds the safe ClickHouse row budget: "
+            f"relations={source_relation_count}, budget={safe_total_rows}"
+        )
+    rows_per_relation = min(
+        TRIAL_ROWS_PER_TABLE,
+        max(1, safe_total_rows // max(1, source_relation_count)),
+    )
+    bounded_sql = trial_scoring_sql.replace(
+        TRIAL_SOURCE_LIMIT_PLACEHOLDER,
+        str(rows_per_relation),
+    )
+    return bounded_sql, {
+        "source_relation_count": source_relation_count,
+        "rows_per_relation": rows_per_relation,
+        "nominal_source_rows": source_relation_count * rows_per_relation,
+        "safe_total_rows": safe_total_rows,
+    }
+
+
 def render_source_trial_sql(trial_scoring_sql: str) -> str:
     """Wrap the scoring SQL into a resource-bounded ClickHouse trial query.
 
-    Strips a trailing semicolon from ``trial_scoring_sql``, wraps it as a
-    subquery aliased ``__nl2sql_trial``, and appends a row limit plus a
-    ``SETTINGS`` clause capping execution time, threads, rows, bytes, and memory.
+    Allocates a safe total row budget across every physical source relation,
+    wraps the scoring SQL as ``__nl2sql_trial``, and applies ClickHouse limits.
+    Reaching the read cap returns a partial smoke-test result instead of failing.
     """
+    bounded_scoring_sql, budget = _apply_trial_source_row_budget(trial_scoring_sql)
+    max_block_size = max(1, budget["rows_per_relation"])
     settings = (
         f"max_execution_time = {TRIAL_MAX_EXECUTION_TIME}, "
         f"max_threads = 2, "
+        f"max_block_size = {max_block_size}, "
         f"max_rows_to_read = {TRIAL_MAX_ROWS_TO_READ}, "
+        "read_overflow_mode = 'break', "
         f"max_bytes_to_read = {TRIAL_MAX_BYTES_TO_READ}, "
         f"max_memory_usage = {TRIAL_MAX_MEMORY_USAGE}"
     )
     return "\n".join(
         [
             "SELECT *",
+            (
+                "/* bounded source trial: "
+                f"relations={budget['source_relation_count']}, "
+                f"rows_per_relation={budget['rows_per_relation']}, "
+                f"nominal_rows={budget['nominal_source_rows']}, "
+                f"safe_budget={budget['safe_total_rows']} */"
+            ),
             "FROM (",
-            trial_scoring_sql.strip().rstrip(";"),
+            bounded_scoring_sql.strip().rstrip(";"),
             ") AS __nl2sql_trial",
             f"LIMIT {TRIAL_OUTPUT_ROWS}",
             f"SETTINGS {settings}",
