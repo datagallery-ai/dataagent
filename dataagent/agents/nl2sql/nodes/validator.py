@@ -15,6 +15,9 @@ import json
 import re
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
@@ -29,6 +32,7 @@ class ValidatorNode(BaseNL2SQLNode):
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
         self.read_only = kwargs.pop("read_only", True)
+        self.sql_security_enabled = kwargs.pop("sql_security_enabled", True)
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
@@ -71,16 +75,21 @@ class ValidatorNode(BaseNL2SQLNode):
         return res
 
     async def _validate_syntax(self, gen_res: list[Result], schema: dict) -> list[dict[str, Any]]:
-        from dataagent.agents.nl2sql.security import check_sql
-
         res = []
         for gr in gen_res:
-            security_result = check_sql(gr.sql, dialect=self.dialect, schema=schema)
-            if security_result.normalized_sql is not None:
-                gr.sql = security_result.normalized_sql
-            gr.security_checked = True
-            gr.security_violations = [violation.to_dict() for violation in security_result.violations]
-            issues = [f"{violation.rule_id}: {violation.message}" for violation in security_result.violations]
+            if self.sql_security_enabled:
+                from dataagent.agents.nl2sql.security import check_sql
+
+                security_result = check_sql(gr.sql, dialect=self.dialect, schema=schema)
+                if security_result.normalized_sql is not None:
+                    gr.sql = security_result.normalized_sql
+                gr.security_checked = True
+                gr.security_violations = [violation.to_dict() for violation in security_result.violations]
+                issues = [f"{violation.rule_id}: {violation.message}" for violation in security_result.violations]
+            else:
+                gr.security_checked = False
+                gr.security_violations = []
+                issues = self._validate_with_sqlglot(gr.sql)
             if self.keyword_match:
                 issues += self._validate_with_keyword_match(gr.sql)
             if self.db_explain and not issues:
@@ -111,6 +120,17 @@ class ValidatorNode(BaseNL2SQLNode):
             with build_sql_service(self.engine, config) as explain_service:
                 res = explain_service.explain(sql)
             return [res] if res else []
+        except Exception as e:
+            return [str(e)]
+
+    def _validate_with_sqlglot(self, sql: str) -> list[str]:
+        try:
+            parsed = sqlglot.parse_one(sql, read=self.dialect, error_level=sqlglot.errors.ErrorLevel.RAISE)
+            allowed_expressions = (exp.Select, exp.Union, exp.Except, exp.Intersect)
+            forbidden_expressions = (exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Merge)
+            if self.read_only and (not isinstance(parsed, allowed_expressions) or parsed.find(forbidden_expressions)):
+                return ["Only read-only statements are allowed. Write operations are forbidden."]
+            return []
         except Exception as e:
             return [str(e)]
 

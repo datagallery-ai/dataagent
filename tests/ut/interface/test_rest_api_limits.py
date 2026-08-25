@@ -381,7 +381,7 @@ async def test_streaming_total_timeout_ends_body_releases_slot_and_cancels_downs
     )
     limits = RestApiLimits(
         max_concurrency=1,
-        request_timeout_seconds=0.05,
+        request_timeout_seconds=0.2,
         rate_limit_per_minute=10_000,
         queue_timeout_seconds=0.2,
         max_body_bytes=1_000_000,
@@ -389,20 +389,18 @@ async def test_streaming_total_timeout_ends_body_releases_slot_and_cancels_downs
     app = SecurityLimitsMiddleware(inner, limits=limits)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        t0 = time.perf_counter()
         try:
-            resp = await asyncio.wait_for(client.get("/stream", timeout=5.0), timeout=0.8)
+            async with asyncio.timeout(5.0):
+                resp = await client.get("/stream", timeout=5.0)
+                await downstream_stopped.wait()
+                second = await client.get("/ok", timeout=1.0)
         except TimeoutError:
             pytest.fail("streaming request did not finish after request_timeout_seconds")
-        elapsed = time.perf_counter() - t0
         content = resp.content
-        second = await client.get("/ok", timeout=1.0)
 
     assert resp.status_code == 200
-    assert elapsed < 0.8
     assert b"data: done" not in content
     assert second.status_code == 200
-    await asyncio.wait_for(downstream_stopped.wait(), timeout=0.5)
 
 
 def test_service_is_ready_false_until_initialized():

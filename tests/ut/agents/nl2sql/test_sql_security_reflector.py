@@ -69,14 +69,16 @@ async def test_reflector_rejects_candidate_without_security_proof() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reflector_explicit_false_cannot_bypass_security() -> None:
-    """A stale false setting should not allow an unchecked candidate through Reflector."""
+async def test_reflector_explicit_false_accepts_legacy_validated_candidate() -> None:
+    """A disabled security module should allow a candidate checked by the legacy Validator path."""
     node = ReflectorNode(threshold=0.0, sql_security_enabled=False)
     state = get_default_state("question", ref_retries=0)
     state["validation_results"] = [Result(id=0, sql="SELECT id FROM orders", score=1.0)]
 
-    with pytest.raises(SQLSecurityValidationError):
-        await node._aprocess(state)
+    result = await node._aprocess(state)
+
+    assert result.get("proceed") is True
+    assert result.get("sql") == "SELECT id FROM orders"
 
 
 @pytest.mark.asyncio

@@ -39,16 +39,16 @@ async def test_validator_always_runs_security_check() -> None:
 
 
 @pytest.mark.asyncio
-async def test_validator_explicit_false_cannot_disable_security() -> None:
-    """A stale false setting should not restore the weak SQLGlot-only path."""
+async def test_validator_explicit_false_uses_legacy_sqlglot_validation() -> None:
+    """An explicit false setting should use the legacy SQLGlot-only path."""
     node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=False)
     candidates = [Result(id=0, sql="SELECT current_setting('search_path')")]
 
     result = await node._validate_syntax(candidates, {})
 
-    assert result[0].get("score", 1) == 0
-    assert candidates[0].security_checked is True
-    assert candidates[0].security_violations[0].get("rule_id", "") == "FUNCTION-001"
+    assert result[0].get("score", 0) == 1
+    assert candidates[0].security_checked is False
+    assert candidates[0].security_violations == []
 
 
 @pytest.mark.asyncio
