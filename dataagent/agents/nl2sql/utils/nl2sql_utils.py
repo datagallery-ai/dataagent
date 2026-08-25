@@ -10,17 +10,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import hashlib
+import json
 import re
-from typing import Any
+from collections.abc import Awaitable, Callable
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Literal, cast
+
+import sqlglot
+from sqlglot import exp
 
 from dataagent.agents.nl2sql.errors import LLMOutputParseError
+from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH
+from dataagent.utils.log import logger
 
 # 匹配未被单引号包裹的 ${...} 模板（如 ${starttime, -5, yyyyMMdd}）
 _PLACEHOLDER_BRACE = re.compile(r"(?<!\')\$\{[^}]+\}(?!')")
 # 匹配未被单引号包裹的 $var 模板（如 $date）；排除 ${...} 中的 $
 _PLACEHOLDER_SIMPLE = re.compile(r"(?<!\')\$(?!\{)[a-zA-Z_][a-zA-Z0-9_]*(?!')")
+_DIMENSION_CONFIG_DIR = Path(__file__).resolve().parents[1] / "prompts" / "generator"
+_DIMENSION_CONFIG_FILES = {
+    "business_twin": "business_twin_dimensions.json",
+    "traffic_insight": "traffic_insight_dimensions.json",
+}
+_Strategy = Literal["prompt", "skeleton", "icl", "dc"]
 
 
 def sql_sha256(sql: str) -> str:
@@ -241,3 +257,138 @@ def schema_to_ddl(schema_ir, joins=None, relation_catalog=None):
             table_stmt = f"-- {table_info['description']}\n" + table_stmt
         ddl_blocks.append(table_stmt)
     return "\n\n".join(ddl_blocks)
+
+
+@lru_cache(maxsize=2)
+def load_dimension_mappings(scenario: str) -> dict[str, dict[str, str]]:
+    """Load one scenario's packaged fact-to-dimension mappings."""
+    filename = _DIMENSION_CONFIG_FILES.get(str(scenario or ""))
+    if filename is None:
+        return {}
+    path = _DIMENSION_CONFIG_DIR / filename
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        dimensions = payload["dimensions"]
+        required = {"dimension_table", "key_column", "value_column"}
+        if payload.get("scenario") != scenario or not isinstance(dimensions, dict):
+            raise ValueError("scenario or dimensions is invalid")
+        if any(not isinstance(item, dict) or not required.issubset(item) for item in dimensions.values()):
+            raise ValueError("dimension mapping fields are incomplete")
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid NL2SQL dimension config: {path}: {exc}") from exc
+    return cast(dict[str, dict[str, str]], dimensions)
+
+
+def selected_dimensions(sql: str, mappings: dict[str, dict[str, str]], dialect: str) -> list[str]:
+    """Return mapped standalone columns from the final SELECT projection."""
+    statement = sqlglot.parse_one(sql, read=dialect)
+    if not isinstance(statement, exp.Select):
+        return []
+    selected = []
+    for projection in statement.expressions:
+        expression = projection.this if isinstance(projection, exp.Alias) else projection
+        expression = expression.unnest()
+        if isinstance(expression, exp.Column) and expression.name in mappings:
+            selected.append(expression.name)
+    return list(dict.fromkeys(selected))
+
+
+async def _process_dimension_candidate(
+    result: tuple[str, str, str],
+    mappings: dict[str, dict[str, str]],
+    dialect: str,
+    execute_with_llm: Callable[[dict[str, str], str], Awaitable[str]],
+) -> tuple[str, str, str, list[str], bool]:
+    sql, prompt, strategy = result
+    try:
+        dimensions = selected_dimensions(sql, mappings, dialect)
+    except sqlglot.errors.SqlglotError as exc:
+        logger.warning(f"Generator dimension detection failed: {exc}")
+        return sql, prompt, strategy, [], True
+    if not dimensions:
+        return sql, prompt, strategy, [], False
+    context = {
+        "dialect": dialect,
+        "sql": sql,
+        "mappings": json.dumps(
+            {name: mappings[name] for name in dimensions},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
+    try:
+        rewritten = sql_parser(await execute_with_llm(context, "dimension_join_"))[-1]
+        sqlglot.parse_one(rewritten, read=dialect)
+    except Exception as exc:
+        logger.warning(f"Generator dimension rewrite failed: {exc}")
+        return sql, prompt, strategy, dimensions, True
+    return rewritten, prompt, strategy, dimensions, False
+
+
+def _add_dimension_context(
+    state: NL2SQLState,
+    dimensions: list[str],
+    mappings: dict[str, dict[str, str]],
+) -> str:
+    fact_table = next(iter(state["schema"]), "")
+    dimension_tables = {}
+    rule_lines = ["## Required Dimension Value Mappings"]
+    for name in dimensions:
+        mapping = mappings[name]
+        table = mapping["dimension_table"]
+        key = mapping["key_column"]
+        value = mapping["value_column"]
+        table_meta = state["schema"].setdefault(
+            table,
+            {"description": "Dimension value lookup table", "columns": {}},
+        )
+        for column in (key, value):
+            table_meta["columns"].setdefault(column, {"description": "", "value_type": ""})
+        dimension_tables[table] = table_meta
+        if fact_table:
+            join = (f"{fact_table}.{name}", f"{table}.{key}")
+            if join not in state["joins"]:
+                state["joins"].append(join)
+        rule_lines.append(
+            f"- When `{name}` is projected, use `{table}.{value}` through "
+            f"`LEFT JOIN {table} ON <fact>.{name} = {table}.{key}`. "
+            "This is a required display-value lookup, not extra business logic; "
+            "WHERE/HAVING predicates remain on the fact key."
+        )
+    schema_context = "## Dimension Lookup Schema\n" + schema_to_ddl(dimension_tables)
+    rules_context = "\n".join(rule_lines)
+    state["schema_str"] = f"{state['schema_str']}\n\n{schema_context}".strip()
+    state["sql_rules"] = f"{state['sql_rules']}\n\n{rules_context}".strip()
+    return f"{schema_context}\n\n{rules_context}"
+
+
+async def process_dimension_joins(
+    results: list[tuple[str, str, str]],
+    state: NL2SQLState,
+    *,
+    scenario: str,
+    dialect: str,
+    execute_with_llm: Callable[[dict[str, str], str], Awaitable[str]],
+) -> list[Result]:
+    """Rewrite mapped projected dimensions and prepare downstream validation context."""
+    mappings = load_dimension_mappings(str(scenario or ""))
+    if mappings:
+        processed = list(
+            await asyncio.gather(
+                *(_process_dimension_candidate(result, mappings, dialect, execute_with_llm) for result in results)
+            )
+        )
+    else:
+        processed = [(*result, [], False) for result in results]
+    dimensions = list(dict.fromkeys(name for result in processed for name in result[3]))
+    dimension_context = _add_dimension_context(state, dimensions, mappings) if dimensions else ""
+    return [
+        Result(
+            id=index,
+            sql=sql,
+            prompt=f"{prompt}\n\n{dimension_context}" if dimension_context else prompt,
+            strategy=cast(_Strategy, strategy),
+            need_ref=need_ref,
+        )
+        for index, (sql, prompt, strategy, _, need_ref) in enumerate(processed)
+    ]

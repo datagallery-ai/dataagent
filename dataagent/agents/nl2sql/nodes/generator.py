@@ -14,8 +14,8 @@ import asyncio
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser
-from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
+from dataagent.agents.nl2sql.utils.nl2sql_utils import process_dimension_joins, sql_parser
+from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import DEFAULT_NL2SQL_NUM_SAMPLES, DEFAULT_NL2SQL_NUM_WORKERS, NL2SQL_PROMPT_PREFIX
@@ -110,8 +110,15 @@ class GeneratorNode(BaseNL2SQLNode):
             if failures:
                 raise error from failures[0]
             raise error
-        for i, (sql, prompt, strategy) in enumerate(results):
-            state["generation_results"].append(Result(id=i, sql=sql, prompt=prompt, strategy=strategy))
+        state["generation_results"].extend(
+            await process_dimension_joins(
+                results,
+                state,
+                scenario=self._get_agent_config("DATABASE.perceptor_type", ""),
+                dialect=self.dialect,
+                execute_with_llm=self.execute_with_llm,
+            )
+        )
         state["sql"] = state["generation_results"][0].sql
         p = "\n".join([f"[{s.strategy}]\n{s.sql}" for s in state["generation_results"]])
         message = f"=== Generator ===\n{p}"
