@@ -33,6 +33,7 @@ def _model_section(**params: object) -> dict:
 
 
 def test_resolve_llm_config_entry_reads_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BASE_URL 仍可读 env；API key 不再从 environ 回落。"""
     monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
     monkeypatch.setenv("BAILIAN_API_KEY", "sk-env")
 
@@ -43,10 +44,11 @@ def test_resolve_llm_config_entry_reads_env_vars(monkeypatch: pytest.MonkeyPatch
 
     assert flat["model"] == "deepseek-v4-flash"
     assert flat["api_base"] == "https://from-env/v1"
-    assert flat["api_key"] == "sk-env"
+    assert flat["api_key"] == "EMPTY"
 
 
 def test_resolve_llm_config_entry_params_override_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """params.base_url 仍以 YAML 为准；params.api_key 忽略，落 EMPTY。"""
     monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
     monkeypatch.setenv("BAILIAN_API_KEY", "sk-env")
 
@@ -59,11 +61,11 @@ def test_resolve_llm_config_entry_params_override_env(monkeypatch: pytest.Monkey
     )
 
     assert flat["api_base"] == "https://from-yaml/v1"
-    assert flat["api_key"] == "sk-yaml"
+    assert flat["api_key"] == "EMPTY"
 
 
 def test_resolve_llm_config_entry_reads_params_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """未配置 .env 时，可从 params 读取 base_url / api_key（quickstart 场景）。"""
+    """未配置 .env 时仍可读 params.base_url；params.api_key 忽略，落 EMPTY。"""
     monkeypatch.delenv("BAILIAN_BASE_URL", raising=False)
     monkeypatch.delenv("BAILIAN_API_KEY", raising=False)
 
@@ -76,7 +78,7 @@ def test_resolve_llm_config_entry_reads_params_without_env(monkeypatch: pytest.M
     )
 
     assert flat["api_base"] == "https://from-yaml/v1"
-    assert flat["api_key"] == "sk-yaml"
+    assert flat["api_key"] == "EMPTY"
 
 
 def test_resolve_llm_config_entry_missing_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +119,7 @@ def test_build_llm_configs_registers_suite_prefixed_hook(monkeypatch: pytest.Mon
     llm_configs = build_llm_configs_from_flex_config(config)
     assert hook_name in llm_configs
     assert llm_configs[hook_name]["model"] == "deepseek-v4-flash"
-    assert llm_configs[hook_name]["api_key"] == "sk-env"
+    assert llm_configs[hook_name]["api_key"] == "EMPTY"
 
 
 def test_build_llm_configs_registers_builtin_hook_with_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -141,9 +143,20 @@ def test_build_llm_configs_hook_model_collision_raises(monkeypatch: pytest.Monke
 
 def test_resolve_llm_config_entry_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
-    monkeypatch.delenv("BAILIAN_API_KEY", raising=False)
+    monkeypatch.setenv("BAILIAN_API_KEY", "sk-must-not-be-used")
 
     flat = resolve_llm_config_entry(model_section=_model_section(), entry={"name": "chat_model"})
+    assert flat["api_key"] == "EMPTY"
+
+
+def test_resolve_llm_config_entry_env_ref_api_key_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BAILIAN_BASE_URL", "https://from-env/v1")
+    monkeypatch.setenv("BAILIAN_API_KEY", "sk-must-not-be-used")
+
+    flat = resolve_llm_config_entry(
+        model_section=_model_section(api_key="$env{BAILIAN_API_KEY}"),
+        entry={"name": "chat_model"},
+    )
     assert flat["api_key"] == "EMPTY"
 
 

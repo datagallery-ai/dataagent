@@ -51,12 +51,20 @@ class QuotedParseResult(NamedTuple):
     next_index: int
 
 
+def is_api_key_env_name(name: str) -> bool:
+    """True when ``name`` is an API-key-class env var (``API_KEY`` / ``*_API_KEY``)."""
+    upper = name.strip().upper()
+    return upper == "API_KEY" or upper.endswith("_API_KEY")
+
+
 def load_env_file(path: Path | str, *, override: bool = False, encoding: str = "utf-8") -> bool:
     """Parse a ``.env`` file and set variables in ``os.environ``.
 
     Existing environment variables are kept when ``override`` is ``False``.
-    Variable references ``${NAME}`` and ``${NAME:-default}`` are expanded using
-    earlier entries in the same file, then the current process environment.
+    ``API_KEY`` / ``*_API_KEY`` assignments are parsed but never written to
+    ``os.environ``. Variable references ``${NAME}`` and ``${NAME:-default}``
+    are expanded using earlier entries in the same file, then the current
+    process environment.
 
     Args:
         path: Path to the env file.
@@ -77,6 +85,8 @@ def load_env_file(path: Path | str, *, override: bool = False, encoding: str = "
         return False
 
     for key, value in resolved.items():
+        if is_api_key_env_name(key):
+            continue
         if key in os.environ and not override:
             continue
         if value is not None:

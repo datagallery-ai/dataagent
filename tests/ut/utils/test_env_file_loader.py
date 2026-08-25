@@ -72,8 +72,23 @@ def test_load_env_file_project_style(tmp_path: Path, isolated_env: set[str]) -> 
 
     assert load_env_file(env_file) is True
     assert os.environ["DATAAGENT_LOG_LEVEL"] == "INFO"
-    assert os.environ["TAVILY_API_KEY"] == ""
+    assert "TAVILY_API_KEY" not in os.environ
     assert os.environ["DEPLOY_ZONE"] == ""
+
+
+def test_load_env_file_does_not_export_api_key_values(tmp_path: Path, isolated_env: set[str]) -> None:
+    """``*_API_KEY`` 不得从 .env 写入 ``os.environ``，其它键仍导出。"""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        'DATAAGENT_LOG_LEVEL="INFO"\nDEEPSEEK_API_KEY="sk-secret"\nTAVILY_API_KEY="tvly-secret"\n',
+        encoding="utf-8",
+    )
+    isolated_env.update({"DEEPSEEK_API_KEY", "TAVILY_API_KEY"})
+
+    assert load_env_file(env_file) is True
+    assert os.environ["DATAAGENT_LOG_LEVEL"] == "INFO"
+    assert "DEEPSEEK_API_KEY" not in os.environ
+    assert "TAVILY_API_KEY" not in os.environ
 
 
 def test_load_env_file_does_not_override_existing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,12 +158,12 @@ def test_load_env_file_matches_python_dotenv(tmp_path: Path, monkeypatch: pytest
     from dotenv import load_dotenv
 
     cases = [
-        'DATAAGENT_LOG_LEVEL="INFO"\nTAVILY_API_KEY="" # comment\n',
+        'DATAAGENT_LOG_LEVEL="INFO"\nDEPLOY_ZONE="internal"\n',
         "A=hello\nB=${A}\nC=${X:-default}\n",
         'export FOO="bar"\nQUOT=\'a\\\'b\'\nESC="line1\\nline2"\n',
         "EMPTY_KEY\nKEY=value\n",
     ]
-    keys = ["DATAAGENT_LOG_LEVEL", "TAVILY_API_KEY", "A", "B", "C", "FOO", "QUOT", "ESC", "KEY"]
+    keys = ["DATAAGENT_LOG_LEVEL", "DEPLOY_ZONE", "A", "B", "C", "FOO", "QUOT", "ESC", "KEY"]
 
     for content in cases:
         for key in keys:

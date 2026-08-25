@@ -145,8 +145,6 @@ def test_from_config_does_not_read_verify_ssl(monkeypatch) -> None:
             }
             return values.get(key, default)
 
-    monkeypatch.setattr(semantic_client, "get_semantic_layer_auth", lambda _cm: ("u", "p"))
-
     def _fake_client(*args: Any, **kwargs: Any) -> _FakeClient:
         captured.update(kwargs)
         return _FakeClient()
@@ -156,7 +154,7 @@ def test_from_config_does_not_read_verify_ssl(monkeypatch) -> None:
 
     client = SemanticServiceClient.from_config(_CM())
     assert client.timeout == 12.0
-    assert client.auth == ("u", "p")
+    assert captured.get("auth") is None
     assert "verify" in captured
     assert captured["verify"] is False
     assert not hasattr(client, "verify")
