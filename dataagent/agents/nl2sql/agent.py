@@ -70,7 +70,9 @@ class NL2SQLAgent(BaseAgent):
         self.router = router
         self.nodes = nodes
         self.config_manager = config_manager
-        self.sql_security_enabled = any(isinstance(node, ValidatorNode) for node in self.nodes)
+        self.sql_security_enabled = any(
+            isinstance(node, ValidatorNode) and node.sql_security_enabled for node in self.nodes
+        )
         self._context_recording_enabled = True
         for node in self.nodes:
             node.add_post_hook(partial(NL2SQLContextRecorder.record_action_hook, node_name=node.name))
@@ -118,8 +120,10 @@ class NL2SQLAgent(BaseAgent):
         """Build an NL2SQL agent from its YAML-compatible configuration."""
         core_cfg = config.get("CORE", {})
         db_cfg = config.get("DATABASE", {})
-        if "validator" in core_cfg and "reflector" not in core_cfg:
-            raise ValueError("CORE.reflector is required when CORE.validator is configured.")
+        validator_cfg = core_cfg.get("validator", {}) or {}
+        security_enabled = "validator" in core_cfg and bool(validator_cfg.get("sql_security_enabled", True))
+        if security_enabled and "reflector" not in core_cfg:
+            raise ValueError("CORE.reflector is required when CORE.validator.sql_security_enabled is true.")
         perceptor_cls = cls._perceptor_class(db_cfg)
         node_chain = [
             ("perceptor", perceptor_cls, {}),
@@ -137,6 +141,8 @@ class NL2SQLAgent(BaseAgent):
                 break
             enabled_nodes.append(name)
             node_cfg = dict(core_cfg.get(name, {}) or {})
+            if name in {"validator", "reflector"}:
+                node_cfg.update({"sql_security_enabled": security_enabled})
             for state_key, state_value in default_state.items():
                 state_defaults[state_key] = node_cfg.get(state_key, state_value)
             if config_manager is not None:

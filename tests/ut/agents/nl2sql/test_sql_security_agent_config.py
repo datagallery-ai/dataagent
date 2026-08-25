@@ -29,12 +29,12 @@ def _config_manager(config: dict) -> ConfigManager:
     return manager
 
 
-def test_default_yaml_omits_sql_security_switch() -> None:
-    """Bundled NL2SQL configuration should not expose a SQL-security switch."""
+def test_default_yaml_enables_sql_security() -> None:
+    """Bundled NL2SQL configuration should enable SQL security by default."""
     config_path = Path("dataagent/agents/nl2sql/nl2sql_agent.yaml")
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
-    assert "sql_security_enabled" not in config.get("CORE", {}).get("validator", {})
+    assert config.get("CORE", {}).get("validator", {}).get("sql_security_enabled") is True
 
 
 def test_from_config_keeps_generator_decoupled_from_sql_security() -> None:
@@ -56,8 +56,8 @@ def test_from_config_keeps_generator_decoupled_from_sql_security() -> None:
     reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
     assert agent.sql_security_enabled is True
     assert not hasattr(generator, "defer_sql_output")
-    assert not hasattr(validator, "sql_security_enabled")
-    assert not hasattr(reflector, "sql_security_enabled")
+    assert validator.sql_security_enabled is True
+    assert reflector.sql_security_enabled is True
 
 
 def test_from_config_requires_reflector_when_validator_is_configured() -> None:
@@ -75,8 +75,8 @@ def test_from_config_requires_reflector_when_validator_is_configured() -> None:
         NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
 
 
-def test_from_config_forces_sql_security_for_validator_workflow() -> None:
-    """Validator and Reflector should always use the SQL security path."""
+def test_from_config_defaults_sql_security_on_for_validator_workflow() -> None:
+    """Validator and Reflector should default to the SQL security path."""
     config = {
         "CORE": {
             "perceptor": {},
@@ -92,12 +92,12 @@ def test_from_config_forces_sql_security_for_validator_workflow() -> None:
     validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
     reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
     assert agent.sql_security_enabled is True
-    assert not hasattr(validator, "sql_security_enabled")
-    assert not hasattr(reflector, "sql_security_enabled")
+    assert validator.sql_security_enabled is True
+    assert reflector.sql_security_enabled is True
 
 
-def test_from_config_explicit_false_without_reflector_still_fails() -> None:
-    """A stale false setting must not restore a Validator workflow without Reflector."""
+def test_from_config_explicit_false_without_reflector_succeeds() -> None:
+    """Disabling SQL security should allow the legacy Validator-only workflow."""
     config = {
         "CORE": {
             "perceptor": {},
@@ -107,8 +107,12 @@ def test_from_config_explicit_false_without_reflector_still_fails() -> None:
         "DATABASE": {"dialect": "postgres"},
     }
 
-    with pytest.raises(ValueError, match="reflector"):
-        NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
+    agent = NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
+
+    validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
+    assert agent.sql_security_enabled is False
+    assert validator.sql_security_enabled is False
+    assert not any(isinstance(node, ReflectorNode) for node in agent.nodes)
 
 
 def test_from_config_minimal_core_without_reflector_succeeds() -> None:
@@ -125,8 +129,8 @@ def test_from_config_minimal_core_without_reflector_succeeds() -> None:
     assert not any(isinstance(node, ReflectorNode) for node in agent.nodes)
 
 
-def test_from_config_explicit_false_cannot_disable_security() -> None:
-    """A stale sql_security_enabled=false setting should be ignored."""
+def test_from_config_explicit_false_disables_security() -> None:
+    """An explicit false setting should disable SQL security across the workflow."""
     config = {
         "CORE": {
             "perceptor": {},
@@ -141,9 +145,9 @@ def test_from_config_explicit_false_cannot_disable_security() -> None:
 
     validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
     reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
-    assert agent.sql_security_enabled is True
-    assert not hasattr(validator, "sql_security_enabled")
-    assert not hasattr(reflector, "sql_security_enabled")
+    assert agent.sql_security_enabled is False
+    assert validator.sql_security_enabled is False
+    assert reflector.sql_security_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -153,12 +157,20 @@ def test_from_config_explicit_false_cannot_disable_security() -> None:
         "dataagent/agents/nl2sql/traffic_insight.yaml",
     ],
 )
-def test_0930_scenario_yaml_omits_security_key_but_has_reflector(relpath: str) -> None:
-    """0930 scenario YAML should omit the removed switch and retain Reflector."""
+def test_0930_scenario_yaml_inherits_enabled_security_default(relpath: str) -> None:
+    """0930 scenario YAML should inherit enabled SQL security when the key is omitted."""
     config = yaml.safe_load(Path(relpath).read_text(encoding="utf-8"))
     core = config.get("CORE", {})
     assert "sql_security_enabled" not in (core.get("validator") or {})
     assert "reflector" in core
+
+    agent = NL2SQLAgent.from_config(config, config_manager=_config_manager(config))
+
+    validator = next(node for node in agent.nodes if isinstance(node, ValidatorNode))
+    reflector = next(node for node in agent.nodes if isinstance(node, ReflectorNode))
+    assert agent.sql_security_enabled is True
+    assert validator.sql_security_enabled is True
+    assert reflector.sql_security_enabled is True
 
 
 def test_unsafe_session_id_dump_stays_under_user_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
