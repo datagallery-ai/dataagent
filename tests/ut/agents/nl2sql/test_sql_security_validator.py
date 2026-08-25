@@ -21,7 +21,7 @@ from dataagent.config.config_manager import ConfigManager
 
 def _config_manager() -> ConfigManager:
     manager = ConfigManager()
-    manager.settings = {"DATABASE": {"dialect": "postgres", "engine": "gaussvector", "config": {}}}
+    manager.settings = {"DATABASE": {"dialect": "postgres", "engine": "sqlite", "config": {}}}
     return manager
 
 

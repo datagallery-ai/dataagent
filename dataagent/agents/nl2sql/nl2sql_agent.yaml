@@ -42,7 +42,7 @@ CORE:
 DATABASE:
   db_id: ""
   dialect: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
-  engine: null  # specify when different from dialect (e.g. "cloud_core", "gaussvector")
+  engine: null  # specify when different from dialect (e.g. "cloud_core")
   perceptor_type: null  # optional scenario perceptor: "traffic_insight" or "business_twin"
   config:
     path: ""  # replace with actual .sqlite path

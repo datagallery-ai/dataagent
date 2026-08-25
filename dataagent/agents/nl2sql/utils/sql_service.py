@@ -25,19 +25,6 @@ _CLOUD_CORE_TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=1800.0, poo
 
 
 @dataclass
-class GaussVectorConfig:
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
-
-    def to_conn_kwargs(self) -> dict[str, Any]:
-        """Return connection kwargs for the SQL driver."""
-        return self.__dict__.copy()
-
-
-@dataclass
 class SQLiteConfig:
     path: str
 
@@ -132,22 +119,6 @@ class BaseService(SqlService, ABC):
     @abstractmethod
     def _handle_explain_error(self, e: Exception) -> str:
         pass
-
-
-class GaussVectorService(BaseService):
-    def __init__(self, config: GaussVectorConfig):
-        super().__init__()
-        self.config = config
-
-    def _get_conn(self):
-        if self._conn is None:
-            import psycopg2
-
-            self._conn = psycopg2.connect(**self.config.to_conn_kwargs())
-        return self._conn
-
-    def _handle_explain_error(self, e: Exception) -> str:
-        return str(e)
 
 
 class SQLiteService(BaseService):
@@ -307,8 +278,6 @@ class SparkService(SqlService):
 def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | CloudCoreService:
     """Construct a SQL service implementation for the given engine."""
     try:
-        if engine == "gaussvector":
-            return GaussVectorService(GaussVectorConfig(**config))
         if engine in {"sqlite", "sqlite3"}:
             return SQLiteService(SQLiteConfig(**config))
         if engine == "cloud_core":
