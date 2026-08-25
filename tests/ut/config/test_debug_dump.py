@@ -130,6 +130,20 @@ def test_format_settings_yaml_leaves_non_string_secrets_unchanged() -> None:
     assert "null" in text or "none" in text.lower()
 
 
+def test_format_settings_yaml_redacts_hyphenated_and_spaced_secret_keys() -> None:
+    """Hyphen / space keys fold onto the same sensitive names as underscored ones."""
+    raw = "sk-SECRETKEY1234567890"
+    text = format_settings_yaml(
+        {
+            "MODEL": {"X-Api-Key": raw, "client-secret": "clientsecretvalue99", "api key": "spacedsecretkey12"},
+        }
+    )
+    assert raw not in text
+    assert "clientsecretvalue99" not in text
+    assert "spacedsecretkey12" not in text
+    assert "******************7890" in text
+
+
 def test_dump_merged_config_writes_redacted_secrets_without_mutating_input(tmp_path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()

@@ -39,6 +39,8 @@ request_id_var: ContextVar[str] = ContextVar("dataagent_request_id", default="")
 _PROBE_PATHS = frozenset({"/health"})
 _DOWNSTREAM_EXECUTION_SCOPE_KEY = "dataagent_downstream_execution"
 _DOWNSTREAM_CANCEL_REQUESTED_KEY = "dataagent_downstream_cancel_requested"
+# Cap distinct peer IPs in the sliding window. Does not change the per-IP threshold.
+_MAX_RATE_LIMIT_CLIENTS = 4096
 
 
 @dataclass(frozen=True)
@@ -382,6 +384,9 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
                 for ip in stale:
                     self._hits.pop(ip, None)
                 self._hits_last_cleanup = now
+            if client_ip not in self._hits and len(self._hits) >= _MAX_RATE_LIMIT_CLIENTS:
+                oldest_ip = min(self._hits, key=lambda ip: self._hits[ip][-1] if self._hits[ip] else 0.0)
+                self._hits.pop(oldest_ip, None)
             hits = self._hits[client_ip]
             while hits and now - hits[0] > window:
                 hits.popleft()

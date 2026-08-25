@@ -171,7 +171,7 @@ def resolve_session_root(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Return the fixed per-session root under DataAgent home."""
-    session_value = str(session_id or "default_session")
+    session_value = sanitize_path_component(session_id, fallback="default_session")
     return (resolve_user_root(user_id=user_id, config=config) / session_value).resolve()
 
 
