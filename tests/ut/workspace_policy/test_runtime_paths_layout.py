@@ -22,6 +22,7 @@ from dataagent.utils.runtime_paths import (
     resolve_job_subagents_root,
     resolve_jobs_root,
     resolve_layout_dir,
+    resolve_session_root,
     resolve_worker_root,
     resolve_workspace_layout,
 )
@@ -123,3 +124,15 @@ def test_resolve_effective_workspace_root_unchanged(monkeypatch, tmp_path: Path)
 
     got_default = resolve_effective_workspace_root(config=None, session_id="s1", user_id="u1")
     assert got_default == (tmp_path / "home" / "u1" / "s1").resolve()
+
+
+def test_resolve_session_root_sanitizes_traversal_keeps_uuid(monkeypatch, tmp_path: Path) -> None:
+    """session_id is one path component; uuid / alnum stay, traversal falls back."""
+    monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
+    user_root = (tmp_path / "home" / "u1").resolve()
+    uuid_sid = "550e8400-e29b-41d4-a716-446655440000"
+    assert resolve_session_root(session_id=uuid_sid, user_id="u1") == user_root / uuid_sid
+    assert resolve_session_root(session_id="abc123", user_id="u1") == user_root / "abc123"
+    escaped = resolve_session_root(session_id="../etc", user_id="u1")
+    assert escaped == user_root / "default_session"
+    assert escaped.is_relative_to(user_root)

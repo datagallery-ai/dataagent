@@ -476,3 +476,19 @@ def test_format_nl2sql_omits_fingerprint_when_sql_empty():
     payload = result["result"]
     assert payload["sql"] == ""
     assert "sql_fingerprint" not in payload
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_hits_evicts_oldest_when_over_cap(monkeypatch):
+    """Distinct-IP bookkeeping is capped; the per-IP threshold itself is unchanged."""
+    monkeypatch.setattr("dataagent.interface.rest_api.middleware._MAX_RATE_LIMIT_CLIENTS", 2)
+    app = SecurityLimitsMiddleware(lambda *_a, **_k: None, limits=RestApiLimits(rate_limit_per_minute=60))
+    assert await app._check_rate_limit("10.0.0.1") is None
+    assert await app._check_rate_limit("10.0.0.2") is None
+    assert await app._check_rate_limit("10.0.0.3") is None
+    assert set(app._hits) == {"10.0.0.2", "10.0.0.3"}
+    for _ in range(59):
+        assert await app._check_rate_limit("10.0.0.3") is None
+    limited = await app._check_rate_limit("10.0.0.3")
+    assert limited is not None
+    assert limited.status_code == 429

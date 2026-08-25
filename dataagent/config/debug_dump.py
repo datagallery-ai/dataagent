@@ -45,8 +45,8 @@ def _is_sensitive_key(key: object) -> bool:
     """Return True when a mapping key should have its string value redacted."""
     if not isinstance(key, str):
         return False
-    lowered = key.lower()
-    return lowered in _SENSITIVE_KEYS or lowered.endswith(_SENSITIVE_SUFFIXES)
+    normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized in _SENSITIVE_KEYS or normalized.endswith(_SENSITIVE_SUFFIXES)
 
 
 def _redact_secret_text(value: str) -> str:

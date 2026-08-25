@@ -1749,14 +1749,14 @@ class LLMClient:
         """Log the stream retry reason and sleep for the exponential backoff delay."""
         delay = _retry_backoff_seconds(attempt)
         logger.warning(
-            "astream.retry attempt={}/{} model={} category={} status_code={} detail={} snippet={} backoff={:.3f}s",
+            "astream.retry attempt={}/{} model={} category={} status_code={} detail={} snippet_len={} backoff={:.3f}s",
             attempt + 1,
             max_attempts,
             self._model,
             category,
             status_code,
             detail,
-            snippet,
+            len(snippet),
             delay,
         )
         await asyncio.sleep(delay)
@@ -1860,11 +1860,11 @@ class LLMClient:
         """Whether a repetition error should be retried (false when attempts exhausted)."""
         if attempt >= max_attempts:
             logger.error(
-                "astream.repetition_exhausted model={} detection={} detail={} snippet={}",
+                "astream.repetition_exhausted model={} detection={} detail={} snippet_len={}",
                 self._model,
                 e.detection_type,
                 e.detail,
-                e.content_snippet[:200],
+                len(e.content_snippet),
             )
             return False
         return True
@@ -2076,22 +2076,22 @@ class LLMClient:
             except LLMRepetitionError as e:
                 if attempt >= max_attempts:
                     logger.error(
-                        "llm.repetition_exhausted model={} detection={} detail={} snippet={}",
+                        "llm.repetition_exhausted model={} detection={} detail={} snippet_len={}",
                         self._model,
                         e.detection_type,
                         e.detail,
-                        e.content_snippet[:200],
+                        len(e.content_snippet),
                     )
                     raise
                 delay = _retry_backoff_seconds(attempt)
                 logger.warning(
-                    "llm.repetition_retry attempt={}/{} model={} detection={} detail={} snippet={} backoff={:.3f}s",
+                    "llm.repetition_retry attempt={}/{} model={} detection={} detail={} snippet_len={} backoff={:.3f}s",
                     attempt + 1,
                     max_attempts,
                     self._model,
                     e.detection_type,
                     e.detail,
-                    e.content_snippet[:200],
+                    len(e.content_snippet),
                     delay,
                 )
                 time.sleep(delay)
@@ -2122,22 +2122,22 @@ class LLMClient:
             except LLMRepetitionError as e:
                 if attempt >= max_attempts:
                     logger.error(
-                        "llm.repetition_exhausted model={} detection={} detail={} snippet={}",
+                        "llm.repetition_exhausted model={} detection={} detail={} snippet_len={}",
                         self._model,
                         e.detection_type,
                         e.detail,
-                        e.content_snippet[:200],
+                        len(e.content_snippet),
                     )
                     raise
                 delay = _retry_backoff_seconds(attempt)
                 logger.warning(
-                    "llm.repetition_retry attempt={}/{} model={} detection={} detail={} snippet={} backoff={:.3f}s",
+                    "llm.repetition_retry attempt={}/{} model={} detection={} detail={} snippet_len={} backoff={:.3f}s",
                     attempt + 1,
                     max_attempts,
                     self._model,
                     e.detection_type,
                     e.detail,
-                    e.content_snippet[:200],
+                    len(e.content_snippet),
                     delay,
                 )
                 await asyncio.sleep(delay)

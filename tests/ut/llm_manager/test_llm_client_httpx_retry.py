@@ -591,3 +591,23 @@ class TestNonStreamJsonDecodeDiagnostics:
             disable_response_compression=False,
         )
         assert "Accept-Encoding" not in client._headers()
+
+
+def test_with_transient_retry_logs_omit_content_snippet_body():
+    """Repetition retry logs must not write LLM body; the exception payload is unchanged."""
+    secret = "sk-SUPER-SECRET-BODY-SHOULD-NOT-APPEAR-IN-LOGS"
+    err = LLMRepetitionError("ngram", "repeat detected", content_snippet=secret, model="m")
+    recorded: list[str] = []
+
+    def _record(message, *args, **_kwargs):
+        recorded.append(" ".join([str(message), *(str(arg) for arg in args)]))
+
+    client = LLMClient(model="m", api_base="http://t", api_key="k")
+    with (
+        patch("dataagent.core.managers.llm_manager.llm_client.logger.error", side_effect=_record),
+        patch("dataagent.core.managers.llm_manager.llm_client.logger.warning", side_effect=_record),
+        pytest.raises(LLMRepetitionError),
+    ):
+        client._with_transient_retry(lambda: (_ for _ in ()).throw(err), max_attempts=0)
+    assert secret not in "\n".join(recorded)
+    assert err.content_snippet == secret
