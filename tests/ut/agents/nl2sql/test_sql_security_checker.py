@@ -92,7 +92,8 @@ def test_check_sql_rejects_dangerous_metadata_function() -> None:
         "SELECT ROUND(1.2), CEIL(1.2), CEILING(1.2), FLOOR(1.2), ABS(-1) FROM orders WHERE id = 1",
         "SELECT CAST('1' AS INTEGER), '1'::INTEGER, TO_NUMBER('1', '9'), "
         "TO_CHAR(CURRENT_DATE, 'YYYY') FROM orders WHERE id = 1",
-        "SELECT TO_DATE('2024-01-01', 'YYYY-MM-DD'), HEX('a') FROM orders WHERE id = 1",
+        "SELECT TO_DATE('2024-01-01', 'YYYY-MM-DD'), "
+        "TO_TIMESTAMP('2024-01-01', 'YYYY-MM-DD'), HEX('a') FROM orders WHERE id = 1",
         "SELECT CONCAT('a', 'b'), CONCAT_WS('-', 'a', 'b'), SUBSTR('abc', 1, 2) FROM orders WHERE id = 1",
         "SELECT UPPER('a'), LOWER('A'), LENGTH('a'), LENGTHB('a') FROM orders WHERE id = 1",
         "SELECT TRIM(' a '), LTRIM(' a'), RTRIM('a '), REPLACE('a', 'a', 'b') FROM orders WHERE id = 1",
@@ -742,15 +743,15 @@ def test_check_sql_rejects_sql_text_over_byte_limit() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sql", "rule_id"),
+    ("sql", "rule_id", "message"),
     [
-        ("SELECT a.id FROM a JOIN b WHERE a.id = 1", "RESOURCE-007"),
-        ("SELECT a.id FROM a JOIN b ON 1 = 1 WHERE a.id = 1", "RESOURCE-007"),
-        ("SELECT id FROM orders WHERE id = 1 OR TRUE", "RESOURCE-008"),
-        ("SELECT id FROM orders", "RESOURCE-009"),
+        ("SELECT a.id FROM a JOIN b WHERE a.id = 1", "RESOURCE-007", "JOIN requires ON or USING"),
+        ("SELECT a.id FROM a JOIN b ON TRUE WHERE a.id = 1", "RESOURCE-007", "Use CROSS JOIN"),
+        ("SELECT id FROM orders WHERE id = 1 OR TRUE", "RESOURCE-008", "condition is always true"),
+        ("SELECT id FROM orders", "RESOURCE-009", "Unfiltered row query"),
     ],
 )
-def test_check_sql_rejects_high_confidence_query_shapes(sql: str, rule_id: str) -> None:
+def test_check_sql_rejects_high_confidence_query_shapes(sql: str, rule_id: str, message: str) -> None:
     """Security checker should reject high-confidence resource abuse shapes."""
     schema = {
         "a": {"columns": {"id": {}}},
@@ -762,6 +763,7 @@ def test_check_sql_rejects_high_confidence_query_shapes(sql: str, rule_id: str) 
 
     assert result.blocked is True
     assert rule_id in [violation.rule_id for violation in result.violations]
+    assert message in result.violations[0].message
 
 
 @pytest.mark.parametrize(

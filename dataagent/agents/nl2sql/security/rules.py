@@ -62,6 +62,7 @@ _ALLOWED_FUNCTIONS = frozenset(
         "to_char",
         "to_date",
         "to_number",
+        "to_timestamp",
         "trim",
         "upper",
     }
@@ -378,7 +379,8 @@ def _check_join_shapes(statement: exp.Expression) -> list[SecurityViolation]:
             except RecursionError:
                 return [SecurityViolation("RESOURCE-002", "SQL boolean expression exceeds evaluation depth.")]
             if always_true:
-                return [SecurityViolation("RESOURCE-007", "JOIN condition must not be always true.")]
+                message = "JOIN condition must not be always true. Use CROSS JOIN when a Cartesian product is intended."
+                return [SecurityViolation("RESOURCE-007", message)]
     return []
 
 
