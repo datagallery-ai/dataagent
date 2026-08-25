@@ -24,6 +24,9 @@ from dataagent.common_utils.internal_cert_password import resolve_cert_key_passw
 from dataagent.config.config_manager import ConfigManager
 
 _CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
+_DEFAULT_INBOUND_CIPHER_SUITES = "ECDHE+AESGCM:ECDHE+CHACHA20"
+_INBOUND_TLS_PROTOCOL = ssl.PROTOCOL_TLS_SERVER
+_MINIMUM_INBOUND_TLS_VERSION = ssl.TLSVersion.TLSv1_2
 
 # inbound_certificate_mode -> ssl 客户端校验策略。0 与 2 实现等价（均为 CERT_NONE）。
 _CERT_MODE_TO_SSL: dict[int, int] = {
@@ -142,6 +145,10 @@ def build_ssl_kwargs(
     if missing:
         raise ValueError(f"inbound TLS enabled (inbound_certificate_mode={mode}) but missing: {', '.join(missing)}")
 
+    tls_context = ssl.SSLContext(_INBOUND_TLS_PROTOCOL)
+    if tls_context.minimum_version < _MINIMUM_INBOUND_TLS_VERSION:
+        raise RuntimeError("inbound TLS requires TLS 1.2 or newer; the current Python SSL defaults are unsafe")
+
     path_checks = (
         ("server_cert_file", server_cert),
         ("server_key_file", server_key),
@@ -155,12 +162,11 @@ def build_ssl_kwargs(
         "ssl_certfile": server_cert,
         "ssl_keyfile": server_key,
         "ssl_cert_reqs": int(cert_reqs),
+        "ssl_version": _INBOUND_TLS_PROTOCOL,
     }
     if ca_cert:
         ssl_kwargs["ssl_ca_certs"] = ca_cert
-    cipher_suites = cert.get("inbound_cipher_suites")
-    if cipher_suites:
-        ssl_kwargs["ssl_ciphers"] = cipher_suites
+    ssl_kwargs["ssl_ciphers"] = cert.get("inbound_cipher_suites") or _DEFAULT_INBOUND_CIPHER_SUITES
     pw = str(key_password).strip() if key_password else None
     if pw:
         ssl_kwargs["ssl_keyfile_password"] = pw
@@ -183,7 +189,7 @@ def main() -> None:
     scheme = "https" if ssl_kwargs else "http"
     logger.info(f"Starting DataAgent service on {scheme}://{args.host}:{args.port} with {args.workers} worker(s)")
     if ssl_kwargs:
-        logger.info(f"TLS enabled (ssl_cert_reqs={ssl_kwargs['ssl_cert_reqs']})")
+        logger.info(f"TLS 1.2/1.3 enabled (ssl_cert_reqs={ssl_kwargs.get('ssl_cert_reqs')})")
 
     uvicorn.run(
         "dataagent.interface.rest_api.app:create_app",

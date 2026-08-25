@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ssl
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -100,7 +101,23 @@ certificate:
     assert kwargs["ssl_keyfile"] == server_key
     assert kwargs["ssl_ca_certs"] == ca_cert
     assert kwargs["ssl_cert_reqs"] == int(ssl.CERT_REQUIRED)
+    assert kwargs["ssl_version"] == ssl.PROTOCOL_TLS_SERVER
+    assert kwargs["ssl_ciphers"] == "ECDHE+AESGCM:ECDHE+CHACHA20"
+    assert ssl.SSLContext(kwargs.get("ssl_version")).minimum_version >= ssl.TLSVersion.TLSv1_2
     assert "ssl_keyfile_password" not in kwargs
+
+
+def test_inbound_rejects_unsafe_runtime_tls_default(monkeypatch):
+    unsafe_context = SimpleNamespace(minimum_version=ssl.TLSVersion.TLSv1_1)
+    monkeypatch.setattr(ssl, "SSLContext", lambda _protocol: unsafe_context)
+    certificate = {
+        "inbound_certificate_mode": 2,
+        "server_cert_file": "/unused/server.crt",
+        "server_key_file": "/unused/server.key",
+    }
+
+    with pytest.raises(RuntimeError, match="requires TLS 1.2 or newer"):
+        build_ssl_kwargs("unused.yaml", certificate=certificate)
 
 
 def test_inbound_enabled_false_keeps_http(tmp_path):
