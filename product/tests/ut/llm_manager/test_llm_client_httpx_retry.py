@@ -1,0 +1,837 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+"""httpx 定制 chat client 的重试 / 异常映射 / 重复检测单元测试。"""
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+from dataagent.core.managers.llm_manager import llm_client as llm_client_module
+from dataagent.core.managers.llm_manager.llm_client import (
+    LLMCallError,
+    LLMClient,
+    LLMErrorCategory,
+    LLMRepetitionError,
+    map_httpx_exception,
+)
+from dataagent.utils.constants import (
+    DEFAULT_LLM_MAX_RETRIES,
+    DEFAULT_LLM_NON_STREAM_TIMEOUT,
+    DEFAULT_LLM_STREAM_TIMEOUT,
+)
+
+
+class TestMapHttpException:
+    """map_httpx_exception: httpx 异常 → LLMCallError 映射。"""
+
+    def test_already_llm_call_error_unchanged(self):
+        original = LLMCallError(LLMErrorCategory.AUTH, "bad key")
+        assert map_httpx_exception(original) is original
+
+    def test_rate_limit_429(self):
+        resp = MagicMock(status_code=429)
+        resp.json.return_value = {"error": {"message": "quota exceeded"}}
+        resp.text = '{"error": {"message": "quota exceeded"}}'
+        exc = httpx.HTTPStatusError("429", request=MagicMock(), response=resp)
+        mapped = map_httpx_exception(exc, model="deepseek-chat", api_base="https://api.example/v1")
+        assert mapped.category == LLMErrorCategory.RATE_LIMIT
+        assert mapped.status_code == 429
+        rendered = str(mapped)
+        assert "[429 rate_limit]" in rendered
+        assert "deepseek-chat" in rendered
+
+    def test_not_found_404(self):
+        resp = MagicMock(status_code=404)
+        resp.json.return_value = {"error": {"message": "model not found"}}
+        resp.text = '{"error": {"message": "model not found"}}'
+        exc = httpx.HTTPStatusError("404", request=MagicMock(), response=resp)
+        mapped = map_httpx_exception(exc, model="qwen-plus", api_base="https://dashscope/v1")
+        assert mapped.category == LLMErrorCategory.NOT_FOUND
+        assert mapped.request_url == "https://dashscope/v1/chat/completions"
+
+    def test_server_error_500(self):
+        resp = MagicMock(status_code=503)
+        resp.json.return_value = {}
+        resp.text = "Service Unavailable"
+        exc = httpx.HTTPStatusError("503", request=MagicMock(), response=resp)
+        mapped = map_httpx_exception(exc, model="m")
+        assert mapped.category == LLMErrorCategory.SERVER_ERROR
+
+    def test_timeout(self):
+        exc = httpx.TimeoutException("read timeout")
+        mapped = map_httpx_exception(exc, model="m")
+        assert mapped.category == LLMErrorCategory.TIMEOUT
+
+    def test_connection_error(self):
+        exc = httpx.ConnectError("connection refused")
+        mapped = map_httpx_exception(exc, model="m")
+        assert mapped.category == LLMErrorCategory.CONNECTION
+
+    def test_auth_401(self):
+        resp = MagicMock(status_code=401)
+        resp.json.return_value = {"error": {"message": "invalid api key"}}
+        resp.text = '{"error": {"message": "invalid api key"}}'
+        exc = httpx.HTTPStatusError("401", request=MagicMock(), response=resp)
+        mapped = map_httpx_exception(exc, model="m")
+        assert mapped.category == LLMErrorCategory.AUTH
+
+
+class TestResolveMaxAttempts:
+    """_resolve_max_attempts: num_retries → max_attempts 解析（通过 LLMClient 实例）。"""
+
+    def test_defaults(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        assert client._resolve_max_attempts({}) == DEFAULT_LLM_MAX_RETRIES
+
+    def test_explicit_num_retries(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=5)
+        assert client._resolve_max_attempts({}) == 5
+
+    def test_per_call_override(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        assert client._resolve_max_attempts({"num_retries": 7}) == 7
+
+
+class TestResolveTimeout:
+    """_resolve_timeout: kwargs > YAML/client ``_timeout`` > 流式/非流式默认。"""
+
+    def test_no_config_non_stream_defaults_to_300(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        resolved = client._resolve_timeout({}, default=DEFAULT_LLM_NON_STREAM_TIMEOUT)
+        assert resolved == httpx.Timeout(DEFAULT_LLM_NON_STREAM_TIMEOUT)
+
+    def test_no_config_stream_defaults_to_60(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        resolved = client._resolve_timeout({}, default=DEFAULT_LLM_STREAM_TIMEOUT)
+        assert resolved == httpx.Timeout(DEFAULT_LLM_STREAM_TIMEOUT)
+
+    def test_yaml_timeout_wins_over_path_default(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", timeout=45.0)
+        assert client._resolve_timeout({}, default=DEFAULT_LLM_NON_STREAM_TIMEOUT) == httpx.Timeout(45.0)
+        assert client._resolve_timeout({}, default=DEFAULT_LLM_STREAM_TIMEOUT) == httpx.Timeout(45.0)
+
+    def test_kwargs_timeout_wins_over_yaml_and_default(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", timeout=45.0)
+        assert client._resolve_timeout({"timeout": 9.0}, default=DEFAULT_LLM_NON_STREAM_TIMEOUT) == httpx.Timeout(9.0)
+        assert client._resolve_timeout({"timeout": 9.0}, default=DEFAULT_LLM_STREAM_TIMEOUT) == httpx.Timeout(9.0)
+
+
+def _ok_response_json(content="ok", tool_calls=None, usage=None):
+    """构造一个 OpenAI 兼容的成功响应 JSON dict。"""
+    msg = {"content": content, "reasoning_content": "", "tool_calls": tool_calls or []}
+    return {
+        "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
+        "usage": usage or {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+
+async def _collect_mock_sse(lines: list[str], *, num_retries: int = 0) -> list:
+    """Collect one mocked HTTP SSE response through the public ``LLMClient.astream`` path."""
+    response_body = ("\n\n".join(lines) + "\n\n").encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=response_body, request=request
+        )
+
+    async_client_class = httpx.AsyncClient
+
+    def client_factory(**kwargs):  # noqa: ANN003
+        kwargs.pop("verify", None)
+        return async_client_class(transport=httpx.MockTransport(handler), **kwargs)
+
+    with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", side_effect=client_factory):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=num_retries)
+        return [chunk async for chunk in client.astream([{"role": "user", "content": "hi"}])]
+
+
+def _sse_data(payload: dict) -> str:
+    """Encode one JSON object as a single SSE data line."""
+    return f"data: {json.dumps(payload)}"
+
+
+class TestAinvokeRetryBehavior:
+    """LLMClient.ainvoke 重试行为（mock httpx.AsyncClient）。"""
+
+    @pytest.mark.asyncio
+    async def test_auth_error_single_call(self):
+        """401 不可重试，单次调用后抛出 LLMCallError(AUTH)。"""
+        resp = MagicMock(status_code=401)
+        resp.json.return_value = {"error": {"message": "invalid key"}}
+        resp.text = '{"error": {"message": "invalid key"}}'
+        resp.is_error = True
+        exc = httpx.HTTPStatusError("401", request=MagicMock(), response=resp)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=exc)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="test-model", api_base="http://test", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+            assert ei.value.category == LLMErrorCategory.AUTH
+        assert mock_client.post.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_server_error_retries_then_succeeds(self):
+        """503 可重试，重试后成功返回内容。"""
+        ok_json = _ok_response_json("recovered")
+
+        mock_resp_ok = MagicMock()
+        mock_resp_ok.is_error = False
+        mock_resp_ok.headers = {"content-type": "application/json"}
+        mock_resp_ok.content = json.dumps(ok_json).encode()
+        mock_resp_ok.json.return_value = ok_json
+        mock_resp_ok.raise_for_status = MagicMock()
+
+        resp_503 = MagicMock(status_code=503)
+        resp_503.json.return_value = {}
+        resp_503.text = "Service Unavailable"
+        resp_503.is_error = True
+        exc_503 = httpx.HTTPStatusError("503", request=MagicMock(), response=resp_503)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[exc_503, mock_resp_ok])
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with (
+            patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client),
+            patch("dataagent.core.managers.llm_manager.llm_client.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            client = LLMClient(model="test-model", api_base="http://test", api_key="k", num_retries=2)
+            out = await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert out.content == "recovered"
+        assert mock_client.post.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_connection_error_retries(self):
+        """httpx.ConnectError 可重试。"""
+        ok_json = _ok_response_json("ok-after-retry")
+
+        mock_resp_ok = MagicMock()
+        mock_resp_ok.is_error = False
+        mock_resp_ok.headers = {"content-type": "application/json"}
+        mock_resp_ok.content = json.dumps(ok_json).encode()
+        mock_resp_ok.json.return_value = ok_json
+        mock_resp_ok.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[httpx.ConnectError("refused"), mock_resp_ok])
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with (
+            patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client),
+            patch("dataagent.core.managers.llm_manager.llm_client.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=2)
+            out = await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert out.content == "ok-after-retry"
+        assert mock_client.post.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_metrics_extracted_from_usage(self):
+        """ainvoke 返回的 usage_metadata 应含缓存子字段（input_cache_read_tokens 等）。"""
+        ok_json = _ok_response_json(
+            "ok",
+            usage={
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+                "prompt_tokens_details": {"cached_tokens": 80, "cache_creation_tokens": 20},
+                "completion_tokens_details": {"reasoning_tokens": 30},
+            },
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.is_error = False
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.content = json.dumps(ok_json).encode()
+        mock_resp.json.return_value = ok_json
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            out = await client.ainvoke([{"role": "user", "content": "hi"}])
+
+        assert out.usage_metadata["input_tokens"] == 100
+        assert out.usage_metadata["input_cache_read_tokens"] == 80
+        assert out.usage_metadata["input_cache_creation_tokens"] == 20
+        assert out.usage_metadata["output_reasoning_tokens"] == 30
+
+    @pytest.mark.asyncio
+    async def test_deepseek_prompt_cache_hit_tokens_fallback(self):
+        """DeepSeek 格式：usage.prompt_cache_hit_tokens 顶层字段 fallback。"""
+        ok_json = _ok_response_json(
+            "ok",
+            usage={
+                "prompt_tokens": 200,
+                "completion_tokens": 10,
+                "total_tokens": 210,
+                "prompt_cache_hit_tokens": 150,
+            },
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.is_error = False
+        mock_resp.headers = {"content-type": "application/json"}
+        mock_resp.content = json.dumps(ok_json).encode()
+        mock_resp.json.return_value = ok_json
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="deepseek-chat", api_base="http://t", api_key="k")
+            out = await client.ainvoke([{"role": "user", "content": "hi"}])
+
+        assert out.usage_metadata["input_cache_read_tokens"] == 150
+
+
+class TestAstreamRepetitionRetry:
+    """astream 捕获 LLMRepetitionError 后用 ``e.category`` 进入退避重试(回归 guard)。
+
+    回归: 加 docstring 时曾误删 ``LLMRepetitionError.__init__`` 中的
+    ``self.category = LLMErrorCategory.REPETITION_DETECTED``，使 astream 重试链路
+    ``_astream_retry_with_backoff(category=e.category, ...)`` 抛 AttributeError 而非重试。
+    """
+
+    @pytest.mark.asyncio
+    async def test_astream_repetition_error_uses_category_for_retry(self):
+        err = LLMRepetitionError("ngram", "repeat detected", content_snippet="abc", model="m")
+        calls = {"n": 0}
+
+        async def _fake_iter(self, **kwargs):  # noqa: ANN001
+            # async generator that always raises LLMRepetitionError on first advance
+            calls["n"] += 1
+            raise err
+            yield  # pragma: no cover  force async generator
+
+        with (
+            patch.object(LLMClient, "_astream_iter", _fake_iter),
+            patch("dataagent.core.managers.llm_manager.llm_client.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=1)
+            # num_retries=1 → max_attempts=1: attempt 0 重试(access e.category),
+            # attempt 1 重试次数耗尽 → 重新抛出 LLMRepetitionError(非 AttributeError)
+            with pytest.raises(LLMRepetitionError):
+                async for _ in client.astream([{"role": "user", "content": "hi"}]):
+                    pass
+        # 两次 attempt: 第一次进入重试(用到 e.category), 第二次耗尽重抛
+        assert calls["n"] == 2
+
+
+class TestAstreamAcloseDoesNotMask:
+    """``_astream_iter`` 的 ``aclose`` 失败不得盖住 HTTP/解析等业务异常。"""
+
+    @pytest.mark.asyncio
+    async def test_aclose_error_does_not_mask_http_status_error(self):
+        """业务侧 401 后 ``aclose`` 再抛，调用方仍应看到 mapped AUTH，而不是 close 错误。"""
+        resp = MagicMock(status_code=401)
+        resp.json.return_value = {"error": {"message": "invalid key"}}
+        resp.text = '{"error": {"message": "invalid key"}}'
+        resp.is_error = True
+        http_exc = httpx.HTTPStatusError("401", request=MagicMock(), response=resp)
+
+        mock_client = AsyncMock()
+        mock_client.build_request = MagicMock(return_value=MagicMock())
+        mock_client.send = AsyncMock(side_effect=http_exc)
+        mock_client.aclose = AsyncMock(side_effect=RuntimeError("aclose failed"))
+
+        with patch(
+            "dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            client = LLMClient(model="test-model", api_base="http://test", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                async for _ in client.astream([{"role": "user", "content": "hi"}]):
+                    pass
+            assert ei.value.category == LLMErrorCategory.AUTH
+        assert mock_client.aclose.await_count == 1
+
+
+class TestAstreamDoneWithoutFinishReason:
+    """Compatibility behavior for providers that send ``[DONE]`` without ``finish_reason``."""
+
+    @pytest.mark.asyncio
+    async def test_text_then_done_returns_normally_with_synthesized_warning(self, monkeypatch):
+        """A clean DONE after text should synthesize stop and avoid stream_interrupted."""
+        warnings: list[tuple[str, tuple]] = []
+        monkeypatch.setattr(
+            llm_client_module.logger,
+            "warning",
+            lambda message, *args: warnings.append((message, args)),
+        )
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "partial answer"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        chunks = await _collect_mock_sse(lines)
+
+        assert "".join(chunk.content for chunk in chunks) == "partial answer"
+        assert any(
+            message.startswith("stream.finish_reason.synthesized") and args[0] == "stop" for message, args in warnings
+        )
+
+    @pytest.mark.asyncio
+    async def test_complete_tool_calls_then_done_return_normally(self, monkeypatch):
+        """DONE should synthesize tool_calls when every accumulated call is complete."""
+        warnings: list[tuple[str, tuple]] = []
+        monkeypatch.setattr(
+            llm_client_module.logger,
+            "warning",
+            lambda message, *args: warnings.append((message, args)),
+        )
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {"name": "write_file", "arguments": '{"path":'},
+                                    },
+                                    {
+                                        "index": 1,
+                                        "id": "call_2",
+                                        "function": {"name": "lookup", "arguments": '{"query":'},
+                                    },
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {"index": 0, "function": {"arguments": '"/tmp/x"}'}},
+                                    {"index": 1, "function": {"arguments": '"weather"}'}},
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        chunks = await _collect_mock_sse(lines)
+        final_chunks = [chunk for chunk in chunks if chunk.tool_calls or chunk.invalid_tool_calls]
+
+        assert len(final_chunks) == 1
+        assert final_chunks[0].tool_calls == [
+            {"id": "call_1", "name": "write_file", "args": {"path": "/tmp/x"}, "type": "tool_call"},
+            {"id": "call_2", "name": "lookup", "args": {"query": "weather"}, "type": "tool_call"},
+        ]
+        assert final_chunks[0].invalid_tool_calls == []
+        assert any(
+            message.startswith("stream.finish_reason.synthesized") and args[0] == "tool_calls"
+            for message, args in warnings
+        )
+
+    @pytest.mark.asyncio
+    async def test_text_then_direct_eof_remains_interrupted(self):
+        """A clean transport EOF without DONE must not be normalized to success."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "partial answer"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            )
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_done_without_text_remains_interrupted(self):
+        """DONE alone must not turn an empty response into a successful call."""
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(["data: [DONE]"])
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+    @pytest.mark.asyncio
+    async def test_done_with_partial_tool_call_remains_interrupted(self):
+        """DONE must not authorize execution of a potentially truncated tool call."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {"name": "lookup", "arguments": '{"query":"weather"}'},
+                                    },
+                                    {
+                                        "index": 1,
+                                        "id": "call_2",
+                                        "function": {"name": "write_file", "arguments": '{"path":"/tmp/x"'},
+                                    },
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_call", "case"),
+        [
+            ({"index": 0, "function": {"name": "lookup", "arguments": "{}"}}, "missing id"),
+            ({"index": 0, "id": "call_1", "function": {"arguments": "{}"}}, "missing name"),
+            (
+                {"index": 0, "id": "call_1", "function": {"name": "lookup", "arguments": "[]"}},
+                "non-object arguments",
+            ),
+        ],
+    )
+    async def test_done_with_incomplete_tool_call_shape_remains_interrupted(self, tool_call, case):
+        """DONE must not authorize a tool call with missing identity or non-object arguments."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"tool_calls": [tool_call]},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED, case
+
+    @pytest.mark.asyncio
+    async def test_done_after_malformed_data_remains_interrupted(self):
+        """A malformed SSE data frame must prevent finish-reason synthesis."""
+        lines = [
+            _sse_data(
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "partial answer"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            ),
+            "data: {broken",
+            "data: [DONE]",
+        ]
+
+        with pytest.raises(LLMCallError) as error_info:
+            await _collect_mock_sse(lines)
+
+        assert error_info.value.category == LLMErrorCategory.STREAM_INTERRUPTED
+
+
+class TestNonStreamPayloadStripsStream:
+    """_build_payload(stream=False)：覆盖 extra_body 透传的 stream，并显式写 stream=False。"""
+
+    def test_extra_body_stream_true_overridden_for_non_stream(self):
+        client = LLMClient(
+            model="m",
+            api_base="http://t",
+            api_key="k",
+            extra_body={"stream": True, "stream_options": {"include_usage": True}, "temperature": 0.1},
+        )
+        payload = client._build_payload([{"role": "user", "content": "hi"}], {}, stream=False)
+        assert payload["stream"] is False
+        assert "stream_options" not in payload
+        assert payload["temperature"] == 0.1
+
+    def test_per_call_stream_kwarg_overridden_for_non_stream(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k")
+        payload = client._build_payload([{"role": "user", "content": "hi"}], {"stream": True}, stream=False)
+        assert payload["stream"] is False
+
+    def test_stream_true_kept_for_stream(self):
+        client = LLMClient(model="m", api_base="http://t", api_key="k", extra_body={"stream": True})
+        payload = client._build_payload([{"role": "user", "content": "hi"}], {}, stream=True)
+        assert payload["stream"] is True
+        assert payload["stream_options"]["include_usage"] is True
+
+
+class TestNonStreamSSEDetection:
+    """invoke/ainvoke 收到 SSE 流式响应时抛出 RESPONSE_INVALID 而非裸 JSONDecodeError。"""
+
+    @staticmethod
+    def _sse_response(content_type="text/event-stream"):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": content_type}
+        resp.content = b'data: {"id":"chatcmpl-x","object":"chat.completion.chunk"}\n\n'
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", "data:", 0)
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_sse_content_type_raises_response_invalid(self):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=self._sse_response())
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "SSE" in ei.value.message
+        # RESPONSE_INVALID 不可重试：重试无法修复配置问题
+        assert mock_client.post.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_sse_body_without_content_type_raises(self):
+        """有些网关不回 text/event-stream 头，靠响应体前缀 data: 识别。"""
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=self._sse_response(content_type="application/octet-stream"))
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_sse_comment_line_prefix_raises(self):
+        """SSE 流以注释行（: keep-alive）开头时也应识别。"""
+        resp = self._sse_response(content_type="application/octet-stream")
+        resp.content = b': keep-alive\n\ndata: {"id":"chatcmpl-x"}\n\n'
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_normal_json_response_not_misjudged(self):
+        """真实 headers/content 的正常 JSON 响应不应被 SSE 检测误判。"""
+        ok_json = _ok_response_json("plain-ok")
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = json.dumps(ok_json).encode()
+        resp.json.return_value = ok_json
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=resp)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            out = await client.ainvoke([{"role": "user", "content": "hi"}])
+        assert out.content == "plain-ok"
+
+    def test_invoke_sse_raises_response_invalid(self):
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=self._sse_response())
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+        assert mock_client.post.call_count == 1
+
+
+class TestNonStreamJsonDecodeDiagnostics:
+    """非流式 JSON 解析失败诊断；YAML 参数可关闭响应压缩。"""
+
+    def test_invoke_mangled_gzip_points_to_yaml_param(self):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b"\x1f\xef\xbf\xbd" + b"rest"
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", doc="", pos=0)
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+
+        err = ei.value
+        assert err.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "response-compression" in err.message
+        assert "params.disable_response_compression=true" in err.message
+        assert "body_prefix_hex=" in err.message
+        assert mock_client.post.call_count == 1
+
+    def test_invoke_raw_gzip_reports_unicode_decode_error(self):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b"\x1f\x8b" + b"rest"
+        resp.json.side_effect = UnicodeDecodeError("utf-8", resp.content, 1, 2, "invalid start byte")
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+
+        err = ei.value
+        assert err.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "response-compression" in err.message
+        assert "decoding_failed encoding=utf-8" in err.message
+        assert "pos=1-2" in err.message
+        assert mock_client.post.call_count == 1
+
+    def test_invoke_plain_bad_json_not_compression(self):
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = b"not-json-at-all"
+        resp.json.side_effect = json.JSONDecodeError("Expecting value", "not-json-at-all", 0)
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(model="m", api_base="http://t", api_key="k")
+            with pytest.raises(LLMCallError) as ei:
+                client.invoke([{"role": "user", "content": "hi"}])
+
+        assert ei.value.category == LLMErrorCategory.RESPONSE_INVALID
+        assert "response-compression" not in ei.value.message
+        assert mock_client.post.call_count == 1
+
+    def test_config_true_sets_accept_encoding_identity(self):
+        ok_json = _ok_response_json("ok")
+        resp = MagicMock()
+        resp.is_error = False
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        resp.headers = {"content-type": "application/json"}
+        resp.content = json.dumps(ok_json).encode()
+        resp.json.return_value = ok_json
+
+        mock_client = MagicMock()
+        mock_client.post = MagicMock(return_value=resp)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+
+        with patch("dataagent.core.managers.llm_manager.llm_client.httpx.Client", return_value=mock_client):
+            client = LLMClient(
+                model="m",
+                api_base="http://t",
+                api_key="k",
+                disable_response_compression=True,
+            )
+            out = client.invoke([{"role": "user", "content": "hi"}])
+
+        assert out.content == "ok"
+        assert mock_client.post.call_args.kwargs["headers"].get("Accept-Encoding") == "identity"
+
+    def test_config_false_does_not_set_identity(self):
+        client = LLMClient(
+            model="m",
+            api_base="http://t",
+            api_key="k",
+            disable_response_compression=False,
+        )
+        assert "Accept-Encoding" not in client._headers()

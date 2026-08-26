@@ -1,0 +1,49 @@
+# DataAgent 日志配置示例
+LOGGING:
+  level: "INFO"                    # 日志级别: TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL
+  console: true                    # 是否输出到控制台
+  file_path: "/tmp/dataagent/dataagent.log" # 日志文件路径，设为 null 则不写文件
+  rotation: "100 MB"               # 文件轮转大小
+  retention: "7 days"              # 日志保留时间
+  compression: "zip"               # 压缩格式: zip, gz, bz2, xz
+  json_logs: false                 # 是否使用JSON格式输出
+  
+  # 自定义日志格式 (可选)
+  format: "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>"
+
+# 不同环境的配置
+environments:
+  # 开发环境
+  development:
+    LOGGING:
+      level: "DEBUG"
+      console: true
+      json_logs: false
+      file_path: "/tmp/dataagent/dev_dataagent.log"
+      format: "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> | <level>{message}</level>"
+  
+  # 生产环境
+  production:
+    LOGGING:
+      level: "INFO"
+      console: false
+      json_logs: true
+      file_path: "/var/log/dataagent/dataagent.log"
+      rotation: "500 MB"
+      retention: "30 days"
+      compression: "gz"
+  
+  # 测试环境
+  testing:
+    LOGGING:
+      level: "WARNING"
+      console: true
+      file_path: "/tmp/dataagent_test.log"
+      retention: "1 day"
+
+# 环境变量配置说明
+# 可以通过以下环境变量覆盖配置：
+# DATAAGENT_LOG_LEVEL=DEBUG
+# DATAAGENT_LOG_FILE=/path/to/dataagent.log
+# DATAAGENT_LOG_CONSOLE=true
+# DATAAGENT_LOG_JSON=false

@@ -1,0 +1,59 @@
+# Data Analysis Suite 的生产入口。
+#
+# 启动：
+#   uv run -m dataagent --config dataagent/core/flex/examples/test_example_suite.yaml
+#
+# 启用后注册 Data Analysis workflow tools、四个 Job 子 Agent、Skills 与 Governance。
+
+AGENT_CONFIG:
+  name: "Data Analysis Agent"
+  type: "react"
+  debug: true
+  max_iter: 4000
+  # 生产入口可显式开启 Job 子 Agent 的只读产物发布区；未配置时默认关闭。
+  subagent_output_sharing: true
+  repetition_leniency: 5000.0
+  
+
+SUITE:
+  include:
+    - data_analysis
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "deepseek"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+
+SCENARIO:
+  chat:
+    input: |
+      Analyze the supplied data and identify the target user audience.
+    task: "执行多阶段数据分析工作流"
+    instructions: "Use the Data Analysis Suite workflow tools to coordinate the analysis. When a subagent step fails and you want to retry while reusing its workspace: call search_workspaces (and optionally inspect_workspace), pick the matching workspace_rel_path (e.g. subagents/{id}), then call advance_data_analysis_workflow(action='retry_current_step', ...) followed by advance_data_analysis_workflow(action='submit_current_step', workspace_rel_path=..., timeout_sec=3600). Do not call submit_subagent directly while the workflow is active. Omit workspace_rel_path only if a fresh workspace is preferred."
+
+OVERRIDE_KEYS:
+  - HOOKS
+
+ACTOR_LOOP:
+  - node: executor
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断，由 truncator hook 接管
+
+HOOKS:
+  agent:
+    pre:
+      - name: context_reference_rewriter
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - dataagent.core.flex.hooks.pruner_v2.pruner
+    executor:
+      pre:
+      post:
+
+PRE_WORKFLOW: []
+POST_WORKFLOW: []

@@ -1,0 +1,25 @@
+AGENT_CONFIG:
+  name: "Attribution Analysis Agent"
+  version: "1.0"
+  description: "CRB / RCAEval RE1 / MMM 归因分析评测"
+  backend: "langgraph"
+  type: "react"
+  terminal_mode: false
+  debug: false
+  enable_portrait: false
+  max_iter: 100
+  relevant_skills_limit: 1
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "http"
+    params:
+      model: "$env{MODEL_FOR_TESTING_ANALYSIS_ATTRIBUTION_SKILL}"
+      temperature: 0.0
+      timeout: 6000
+
+TOOLS:
+  skills:
+    builtin:
+      - attribution-analysis

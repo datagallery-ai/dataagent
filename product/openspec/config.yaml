@@ -1,0 +1,43 @@
+schema: spec-driven
+
+context: |
+  DataAgent 是 Python 3.11+ 的企业级数据智能体框架，使用 uv 管理依赖。
+  核心运行链路是：YAML 配置合并 -> DataAgent.from_config -> Flex/ReAct 规划执行 -> 工具调用。
+  公共入口包括 Python SDK、REST 和 CLI。
+  核心代码位于 dataagent/，测试位于 tests/。
+  架构背景位于 docs/zh/design_doc/，功能与接口文档位于 docs/zh/function/ 和 docs/zh/api_doc/。
+  修改前阅读对应代码、测试和设计文档。现状以代码与测试为准；目标行为写在 specs，不要把未落地实现写进当前行为。
+  实现保持最小改动，但不以一次性补丁绕过现有结构；禁止过度设计；不为假想调用方做过度向后兼容。
+  OpenSpec 制品（proposal / specs / design / tasks）使用中文。
+
+rules:
+  proposal:
+    - 明确问题、范围、非目标和受影响能力域
+    - 仅在确实破坏公共 API、YAML 或持久化契约时说明兼容影响；不为假想调用方编迁移或回滚方案
+  specs:
+    - 只描述可观察、可验证的行为；可以写配置键、公共 API、可测状态字段。不要写函数级步骤或私有调用链。
+    - 每项需求使用 SHALL 或 MUST，并至少包含一个 WHEN/THEN 场景
+    - 修改现有行为时优先更新已有能力域，避免创建语义重复的规格
+  design:
+    - 引用相关代码入口、现有设计文档和测试锚点
+    - 优先沿用现有模块边界，选能干净解决问题的最简单做法；不为尚未发生的需求预留抽象；不用一次性补丁绕过应有结构；不夹带无关重构
+    - 说明关键取舍、异常处理和测试策略
+  tasks:
+    - 任务应可独立完成和验证，并能追溯到具体需求
+    - 行为变更必须包含测试任务，公共接口变更必须包含文档任务
+
+operations:
+  apply:
+    guidance:
+      - 文档与代码不一致时先更新变更文档，再用代码对齐；禁止用一次性补丁绕过结构
+      - 使用当前工作区的 uv 环境；若在 `.worktrees/` 下则用该 worktree 环境，不要复用仓库根 venv
+      - 保持实现与已批准的 proposal、specs、design 一致
+      - 实现完先验证功能是否符合 specs：优先 `uv run pytest` 跑相关用例，再按需扩大范围
+      - 再检查实现是否过复杂、是否有多余抽象
+      - 类内方法按大序排列：`__init__` / `__str__`（及其它 dunder）→ `@staticmethod` → `@classmethod` → 普通实例方法；每组内公有在前（不以下划线开头），`_xxx` 在后
+      - 最后运行 `uv run ruff check .` 和 `uv run ruff format .`
+  archive:
+    guidance:
+      - 归档前确认任务、代码、测试、文档和主规格一致；不要把未实现行为写进主规格
+      - 使用 openspec validate --all --strict 完成最终校验
+      - "提交用【MR类型】行 `类型: 概括`（英文冒号）；MR 四节为【MR类型】【问题背景】【具体方案】【主要文件】；未跑测试不写已通过"

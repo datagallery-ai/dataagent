@@ -1,0 +1,183 @@
+AGENT_CONFIG:
+  name: nl2sql_subagent
+  version: "1.2.0"
+  description: Data analysis workflow specialist for producing final user-selection SQL.
+  backend: langgraph
+  type: react
+  max_iter: 4000
+  repetition_leniency: 100.0
+
+MODEL:
+  chat_model:
+    model_type: chat
+    provider: deepseek
+    params:
+      model: deepseek-v4-flash
+      temperature: 0.7
+
+SCENARIO:
+  chat:
+    instructions: Complete only the assigned NL2SQL workflow step and produce a valid receipt.json.
+
+OVERRIDE_KEYS:
+  - ACTOR_LOOP
+  - HOOKS
+
+HOOKS:
+  agent:
+    pre:
+      - name: context_reference_rewriter
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - dataagent.core.flex.hooks.pruner_v2.pruner
+    executor:
+      pre:
+      post:
+
+PRE_WORKFLOW: []
+ACTOR_LOOP:
+  - node: planner
+    module: dataagent.core.flex.nodes.planner.Planner
+    chat_model: {name: chat_model}
+    prompt_template:
+      system:
+        - content: |
+            # DataAnalysis 子代理基线
+
+            你是一个在数据分析工作流中运行的专业子代理。
+
+            - 只关注主代理分配的目标，不要越界。
+            - 每个步骤至少产出一个持久化物件（本地文件或供下游使用的 ClickHouse 表），工作流会拒绝空的产物列表。
+            - 当前任务工作区是你可以创建、修改、复制或移动文件的唯一位置。所有最终产物必须写入此处。
+            - 禁止在 `.metadata/`、其他 `subagents/<session>` 目录或只读共享输出区下创建、修改、复制或移动文件。平台会在完成后将验收通过的产物发布到共享输出区。
+            - 如果输入路径、前序步骤产物、任务指令或脚本默认值指向了其他输出目录，将该路径视为只读输入，将所有生成的输出重定向到当前任务工作区。
+            - 在当前任务工作区写入 `receipt.json`，仅包含两个顶层字段：`summary` 和 `artifacts`。
+            - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
+            - 每个 `receipt.json` 产物条目使用以下格式之一：
+              - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
+              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<output_database>/<table>","name":"<output_database>.<table>"}`。仅用于为下游创建的表。
+            - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
+            - 如果无法完成目标，请说明阻塞原因，不要编造回执。
+
+            ## 原生套件运行时适配
+
+            - 前序阶段的本地产物发布在只读共享输出区中。检查其 `manifest.json`，选择相关的已完成阶段，仅读取其已发布的产物。
+            - 禁止在该共享输出区中创建、修改、复制或移动文件。仅在当前阶段需要时，将上游本地文件复制到当前任务工作区作为本地输入。
+
+            # NL2SQL 子代理
+
+            负责 NL2SQL step4（`step4_0 + step4_1`）。
+
+            ## 硬性规则
+
+            - 本阶段只交付一条面向全量 `source_database` 的最终 SQL；不执行未经限量的完整最终查询。
+            - LightGBM 只作为教师模型参照。最终策略只能是决策树、评分卡或两者融合。
+            - 禁止读取 `step3_4_lgb_model.pkl`，禁止生成 LightGBM 或近似 LightGBM SQL。
+            - 共享输出区中的上游原件只读；打包的预处理重建脚本和 SQL 生成器是职责独立的初始模板，禁止直接修改。必须复制到当前 workspace 后按顺序运行，允许按任务需要修改发生问题的对应工作副本。
+            - 禁止手写策略选择报告、特征血缘报告、SQL 验证报告和 receipt。
+            - 允许在当前 workspace 创建、修改并执行本地 Python 脚本，也允许使用 `python -c` 或 Python here-doc。
+            - 需要归一化上游输入时，保留共享区原件或其原始副本，在当前 workspace 生成供固定生成器读取的工作副本，并记录归一化依据。
+            - 不得改写模型规则、验证标签、预测分数或策略指标。修复后从相应步骤重新生成 SQL、报告和 receipt，保持产物一致。
+            - 最终 SQL 不得引用采样 `output_database`、训练宽表或 `label`。
+            - 最终 SQL 不得使用 CTE/`WITH`、`MODE() WITHIN GROUP`、`TRY_TO_NUMERIC`、`INTERVAL` 或 `LIMIT`；该限制不适用于 `.nl2sql_runtime` 中的限量试算 SQL。
+            - 设置 `OUTPUT_DIR` 和 `SQL_DIR` 后，先执行 step4_0 预处理重建，再执行 step4_1 SQL 生成。
+
+            ## 执行流程
+
+            - 检查只读共享 `manifest.json` 的全部已完成阶段，不只依赖上一步 receipt 摘要。
+            - 从 Sampling 条目复制 `step1_output_meta.json`、`step1_sample_stats.json`；`step1_0_table_schema.json` 存在时可复制用于旧版一致性核对，但不是必需输入。
+            - 从 Feature Engineering 条目复制 `schema_resolution.json`，并优先复制 `step2_3_deployment_feature_contract.json`。新版契约存在且 `validation.structural_validation.passed=true` 时，它是唯一需要流转的 Step2 特征血缘输入；生成器复核物理源表、字段、alias、JOIN、参数后直接按 relation plan 渲染，禁止再解析 Markdown/SQL 猜测血缘。
+            - Feature Engineering 条目不存在新版契约或结构检查未通过时，复制 `step2_3_feature_derivation.md`；`step2_3_high_cardinality_check.json` 可用时一并复制，并可选复制 `step2_3_feature_aggregation_expanded.sql`（优先）或旧版 `step2_3_feature_aggregation.sql`。旧版血缘权威顺序为 expanded SQL → Schema/schema_resolution → Markdown。
+            - 从 Model Engineering 条目复制 `step3_3_wide_table_train.csv`、`step3_3_wide_table_valid.csv`、`step3_3_univariate_analysis.csv`、`step3_4_feature_importance.csv`、`step3_4_valid_predictions.csv`、`step3_4_model_report.json`、`step3_5_rule_card.csv`、`step3_5_white_box_scores.csv`、`step3_5_model_report.json`、`step3_6_score_rule.csv`、`step3_6_white_box_scores.csv`、`step3_6_model_report.json`。
+            - 所有输入仅复制到当前 workspace；不要修改共享输出区。需要修复结构或格式时，不覆盖原始副本，另行生成工作副本。
+            - 新版部署契约中的多表关系必须按显式 `joins` 回放，不得把多张源表猜成 `UNION ALL`，不得把契约 alias 改成 `w`、`source_rows` 或 `agg_N`。旧版 Markdown 血缘不足时，只能依据已发布的特征聚合 SQL、Schema 和高基数检查结果补全，不得根据常识补造表、字段或表达式。
+            - step4_0 使用 `skill/nl2sql/scripts/step4_0_reconstruct_tree_preprocessing.py`。将其复制为 `scripts/step4_0_reconstruct_tree_preprocessing.py`，设置 `NL2SQL_PREPROCESS_TEMPLATE_PATH` 指向打包模板后运行。该脚本必须从训练宽表重建数值 quantile 分箱边界，从训练+验证宽表重建类别编码映射，并用树规则回放验证分数，产出 `step3_5_preprocessing_reconstructed.json`；不得重新训练模型。
+            - step4_1 使用 `skill/nl2sql/scripts/step4_1_generate_sql.py`。step4_0 完成后，将其复制为 `scripts/step4_1_generate_sql.py`，设置 `NL2SQL_TEMPLATE_PATH` 指向打包模板后运行。该脚本先检查两个候选的规则、预处理和血缘可渲染性，再重算策略指标、尝试融合并生成唯一 final SQL。
+            - step4_1 第一次运行只完成 prepare：生成 final SQL、静态报告以及 `.nl2sql_runtime/source_validation_request.json`，此时不会生成 receipt。
+            - Step2 固定脚本只检查契约结构；开放式 ClickHouse 表达式的语法、函数、类型、alias scope 和 JOIN 执行正确性以本阶段 source trial 为最终门禁。
+            - 按 request 中 `source_trial` 的 path 与 sha256 提交唯一的限量试算：固定使用 `submit_resource_job(resource_id="clickhouse", task_type="sql_query", command_file=<path>)` → `poll_job` → `collect_job`。提交 SQL 的顶层关键字必须是 `SELECT`；禁止提交 `EXPLAIN` 或执行原样 final 查询。
+            - 将原始 collect payload 机械写入 `.nl2sql_runtime/source_validation_result.json`：`{"source_trial":{"query_sha256":"...","result":<payload>}}`。
+            - 再次运行 step4_1 完成 finalize。生成器必须核对 query sha256；限量试算通过后才生成 receipt。目标游戏尚不存在导致返回 0 行属于成功。
+            - ClickHouse 返回语法、未知字段、函数、类型或 JOIN 错误时，修改发生问题的工作副本并从该步重跑。资源限额错误单独记录，不能冒充 SQL 语法错误。
+            - 某一步初始运行失败或结果不满足输入、预处理回放、策略、血缘、静态校验或 ClickHouse 验证要求时，修改发生问题的工作副本并从该步重跑；不得修改打包模板。
+            - 修改 step4_0 工作副本时可设置 `NL2SQL_PREPROCESS_CHANGE_REASON`；修改 step4_1 工作副本时可设置 `NL2SQL_GENERATOR_CHANGE_REASON`。两个脚本记录模板与工作副本 SHA-256、修改状态和原因；缺失原因只记 warning。
+            - 只有 `step3_5_preprocessing_reconstructed.json` 验证通过且覆盖全部树规则特征时，决策树才是可部署候选。否则继续选择可部署评分卡，不得因模型质量门槛停止流程。
+
+            ## 产物
+
+            - 只产出 `step2_3_feature_derivation.json`、`step3_5_preprocessing_reconstructed.json`、`sql/step4_1_final.sql`、`step4_1_strategy_selection.json`、`step4_1_feature_lineage_report.json`、`step4_1_sql_validation_report.json`、`scripts/step4_0_reconstruct_tree_preprocessing.py`、`scripts/step4_1_generate_sql.py` 和 `receipt.json`。
+            - 不产出决策树、评分卡或 LightGBM 候选 SQL，不产出 `step4_1_join_assumptions.md`。
+            - 报告必须明确 `full_database_execution_performed=false`，并包含通过的 `source_trial_validation`。
+
+            ## 原生套件运行时适配
+
+            - 只读共享区中的文件必须先复制到当前 workspace，再由生成器工作副本读取。
+            - 两步脚本和 ClickHouse 限量试算完成后检查规定产物存在，并提交 step4_1 finalize 生成的 `receipt.json`；`.nl2sql_runtime` 不登记为最终产物。
+  - node: executor
+    module: dataagent.core.flex.nodes.executor.Executor
+    max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
+POST_WORKFLOW: []
+
+TOOLS:
+  local_functions:
+    - module: dataagent.actions.tools.local_tool.tools
+      function: bash
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.tools
+      function: read_file
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: submit_resource_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: poll_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: collect_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+    - module: dataagent.actions.tools.local_tool.job_tools
+      function: cancel_job
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
+  skills:
+    custom_dirs:
+      - core/suite/builtin_suites/data_analysis/skill
+
+RESOURCES:
+  - id: clickhouse
+    name: ClickHouse Query Pool
+    category: executable
+    transport: {type: mcp, url: http://127.0.0.1:8766/mcp}
+    operations: {submit: submit_job, poll: poll_job, collect: collect_job, cancel: cancel_job}
+    capacity: {total: 8, unit: query}
+    consumption: {sql_query: 1, "*": 1}
+
+GOVERNANCE:
+  invisibility: [start_data_analysis_workflow, advance_data_analysis_workflow, control_data_analysis_workflow, inspect_data_analysis_workflow, submit_subagent, poll_subagent, collect_subagent, cancel_subagent]
+  policies:
+    - id: data_analysis_forbid_external_python
+      applies_to: [submit_resource_job]
+      address: dataagent.core.suite.builtin_suites.data_analysis.governance.resource_job_guard.data_analysis_forbid_external_python_policy
+
+CONTEXT:
+  recent_turns: 100000   # 基本永不触发历史 IR 替换

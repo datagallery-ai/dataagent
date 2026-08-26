@@ -1,0 +1,48 @@
+AGENT_CONFIG:
+  name: "DDL Hook Test"
+  version: "1.0"
+  description: "DDL Hook Test"
+  backend: "langgraph"
+  type: "react"
+  debug: true
+
+MODEL:
+  chat_model:
+    provider: "anthropic"
+    model_type: "chat"
+    params:
+      model: "Qwen3.6-Plus"
+      temperature: 0.7
+      enable_thinking: true
+
+SCENARIO:
+  chat:
+    instructions: |
+      You are a helpful assistant that can help with DDL operations.
+      You can write files in the local filesystem.
+      You can also read and edit files in the local filesystem.
+      You can write DDL like the prompt example.
+      After writing the DDL, call
+      the appropriate file write or edit tool to validate whether the DDL is
+      legal, then fix it if validation reports any issue.
+
+TOOLS:
+  local_functions:
+    # 可替换为de_agent下封装的write_file工具
+    - name: "write_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "write_file"
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post
+
+  builtin:
+    - name: "read_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "read_file"
+    - name: "edit_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "edit_file"
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post

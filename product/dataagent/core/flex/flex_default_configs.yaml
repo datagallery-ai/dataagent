@@ -1,0 +1,95 @@
+# Flex Agent 默认配置（兜底 default 层）
+# 合并顺序：本文件 → 激活 Suite → 用户 YAML（仅用户写出的 key）→ .env 环境变量
+# list 型配置（HOOKS、TOOLS 等）与用户/Suite 跨层追加并存（高优在前），非整段替换
+# ConfigManager.merge_configs() 同样使用 merge_layers：list 追加、dict/标量覆盖
+
+
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 8192
+
+POST_WORKFLOW: []
+
+# ── 上下文压缩与 IR 转换参数（均可通过用户 YAML 覆盖） ──
+# compress_token_limit: 消息 token 超过此值 1.2 倍时触发 LLM 折叠压缩
+# compress_message_cnt: 消息数量超过此值时触发压缩
+# file_node_threshold: IR 转换中长文本落盘为 FileNode 的最小字符阈值
+# 示例：
+# CONTEXT:
+#   compress_token_limit: 32768
+#   compress_message_cnt: 200
+#   file_node_threshold: 500
+
+# ── LLM 输出重复检测（AGENT_CONFIG） ──
+# repetition_leniency: 宽松系数，越大越松；省略则用代码默认 1.0
+# 示例：
+# AGENT_CONFIG:
+#   repetition_leniency: 3.0
+
+# ── cache_control 显式缓存开关（MODEL.<name>.params） ──
+# enable_cache_control: 控制 _add_cc 是否将 string content 转为 list-of-dicts
+# （多模态格式）以注入 cache_control 断点。自部署端点（vLLM-served Qwen 30B 等）
+# 不支持 list content，需设为 false。
+# - 省略（None）：自动探测（Qwen/Claude/百炼 deepseek-v3.2 等开，其余关）
+# - true：强制启用（即使模型不在支持列表）
+# - false：强制禁用（避免 list content 转换）
+# 环境变量 DATAAGENT_CACHE_CONTROL=0 可全局禁用（优先级最高，运维逃生用）
+# 示例：
+# MODEL:
+#   qwen30b_local:
+#     provider: OPENAI
+#     params:
+#       model: qwen30b
+#       enable_cache_control: false
+# 详见 docs/main_agent_cache_optimization_design.md §2.5.1
+
+# Bash 工具命令白名单（可选）
+# 配置后仅允许 bash 工具执行列表中声明的命令，未配置则不限制。
+# 示例：
+# BASH_TOOL_WHITELIST:
+#   - ls
+#   - cat
+
+# ── Skill 目录配置（可通过用户 YAML 覆盖） ──
+# TOOLS.skills.custom_dirs: 一个或多个额外 Skill 目录路径。
+# - 默认 `actions/skills` 仍会自动扫描，无需在 YAML 中配置
+# - 相对路径按 dataagent 包内路径解析
+# - 绝对路径按原样扫描
+# 示例：
+# TOOLS:
+#   skills:
+#     custom_dirs:
+#       - /abs/path/to/custom_skills
+
+HOOKS:
+  agent:
+    pre:
+      - name: context_reference_rewriter
+    post:
+      - name: portraiter
+  nodes:
+    planner:
+      pre:
+        - name: pruner
+    executor:
+      pre:
+      post:
+
+WORKSPACE_POLICY:
+  layout:
+    session_memory_dir: ".memory"
+    context_dir: ".context"
+    performance_dir: ".performance"
+    workers_dir: "workers"
+    subagents_dir: "subagents"
+    jobs_dir: "jobs"
+    runtime_dump_dir: ".runtime"
+    tool_outputs_dir: ".dataagent/tool_outputs"

@@ -1,0 +1,107 @@
+# NL2SQL + DataOps SQL Validation 端到端示例
+#
+# 用途：演示如何在 de_agent 完成 8 类质量自检之后，主动调用
+#       dataops_validate_sql_with_log_analysis 工具，让 DataOps MCP server 校验生成的 SQL，
+#       校验失败时自动通过子 Agent 拉取 OBS 调度日志并给出结构化分析。
+#
+# 工作流：
+#   1. de_agent 调用 nl2sql_run_full_pipeline 生成 SQL
+#   2. de_agent 自己执行 8 类质量自检
+#   3. de_agent 自检通过后，调用 dataops_validate_sql_with_log_analysis 进行语法/语义校验 + 失败日志分析
+#   4. 校验失败 → 根据 log_analysis.suggestions 修正 → 重新自检 → 再次校验
+#
+# 启动顺序：
+#   1. 启动 DataOps MCP server：`cd dataagent/mcp_servers/dataops && ./start_dataops_mcp.sh`
+#   2. 确认 .env 配置正确（DATAOPS_BASE_URL, DATAOPS_APPID, DATAOPS_SECRET_KEY 等）
+#   3. 运行 Agent
+
+AGENT_CONFIG:
+  name: "NL2SQL + DataOps Validation"
+  version: "1.0"
+  description: "NL2SQL with explicit DataOps SQL validation after quality self-check"
+  backend: "langgraph"
+  type: "react"
+  debug: true
+
+MODEL:
+  chat_model:
+    provider: "bailian"
+    model_type: "chat"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+
+SCENARIO:
+  chat:
+    instructions: |
+      你是一个 NL2SQL 助手。用户的自然语言问题会被提供给你，你需要将其转换为 SQL 查询并执行。
+
+      工作流程：
+      1. 调用 nl2sql_run_full_pipeline 工具执行完整的 NL2SQL 流程
+      2. 工具返回 SQL 后，自己做 8 类质量自检（空值判断、表名、字段名、条件、稳定排序、JOIN 类型、业务逻辑、口径冻结一致性）
+      3. 自检通过后，调用 dataops_validate_sql_with_log_analysis 工具让 DataOps adHoc 接口做最终校验并自动分析失败日志
+         - 如果 yaml 中未声明 dataops resource（默认情况），工具自动跳过校验，返回 passed=true
+         - 只有声明了 dataops resource 并配置了 DATAOPS_MCP_URL 环境变量时才会真正提交校验
+      4. 校验失败 + 返回 log_analysis 时，按 log_analysis 中的 suggestions 修正后重新走第 1-3 步
+         - ⚠️ 不要用 bash/curl 拉 log_file_info 里的 OBS URL——日志已在 log_analysis 里被 sub-agent 总结过；若需原始日志，请调用 dataops_fetch_obs_log 工具（与 dataops_validate_tool 同一个 module），它会做大小限制并返回结构化结果，避免自己拼接 curl 绕过安全策略。
+      5. 校验通过后（或校验被跳过），把 SQL 与结果返回给用户
+
+# ── RESOURCES（MCP server 声明）──────────────────────────────────────────────
+# DataOps MCP server 默认关闭（不挂载）。要启用 DataOps SQL 校验：
+#   1. 启动 DataOps MCP server：`cd dataagent/mcp_servers/dataops && ./start_dataops_mcp.sh`
+#   2. .env 配置：DATAOPS_BASE_URL, DATAOPS_APPID, DATAOPS_SECRET_KEY, DATAOPS_SERVICE_INSTANCE_ID 等
+#   3. 设置环境变量 DATAOPS_MCP_URL=http://127.0.0.1:8767/mcp
+#   4. 取消下方 RESOURCES 块的注释，让 yaml 声明 dataops resource
+#
+# 不启用时：dataops_validate_sql 工具会检测到 catalog 中无 dataops resource，
+# 自动跳过校验（返回 passed=true, skipped=true）。
+#
+# RESOURCES:
+#   - id: dataops
+#     name: "DataOps AdHoc SQL Validator"
+#     category: executable
+#     transport:
+#       type: mcp
+#       url: $env{DATAOPS_MCP_URL}
+#     operations:
+#       submit: submit_job
+#       poll: poll_job
+#       collect: collect_job
+#       cancel: cancel_job
+#     capacity:
+#       total: 4
+#       unit: slot
+#     consumption:
+#       sql_validate: 1
+#       "*": 1
+
+# ── TOOLS（NL2SQL pipeline + 独立 DataOps 校验工具）──────────────────────────
+TOOLS:
+  local_functions:
+    # NL2SQL 完整流程工具（不再挂 DataOps hook）
+    - module: "dataagent.actions.tools.local_tool.nl2sql_tools"
+      function: "nl2sql_run_full_pipeline"
+      config:
+        llm_model: chat_model
+        description: "执行完整的 NL2SQL 流程，将自然语言转换为 SQL 并执行。该工具会依次执行 Coordinator → Perceptor → Generator → Validator → Reflector → Executor → Selector 节点。"
+
+    # 独立 DataOps 校验工具：de_agent 在 8 类自检通过后主动调用
+    # 默认使用带日志分析的版本（自动启动 sub-agent 解析 OBS 调度日志），
+    # 失败时返回 log_analysis/log_analysis_summary，避免主 Agent 用 bash/curl 自己拼。
+    - module: "dataagent.actions.tools.local_tool.dataops_validate_tool"
+      function: "dataops_validate_sql_with_log_analysis"
+      config:
+        description: "对生成的 SQL 调用 DataOps adHoc 接口做最终校验。失败时自动通过子 Agent 拉取 OBS 调度日志并给出结构化分析（error_type / location / suggestions）。返回 {passed, error?, job_id, log_analysis?, log_analysis_summary?, log_file_info?}。"
+
+DATABASE:
+  db_id: "superhero"
+  dialect: "sqlite"
+  config:
+    path: ""
+
+METAVISOR:
+  metavisor_url: "http://8.92.9.151:41000"
+  valuematch_url: "http://8.92.9.151:8000"
+
+SWARM:
+  enable: false

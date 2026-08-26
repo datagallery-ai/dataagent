@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataAgent Session Report — {{ session_id }}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f5f5;
+    --card-bg: #fff;
+    --text: #333;
+    --text-secondary: #666;
+    --border: #e0e0e0;
+    --accent: #4a90d9;
+    --error: #e74c3c;
+    --warning: #f39c12;
+    --success: #27ae60;
+    --shadow: 0 1px 3px rgba(0,0,0,.08);
+    --radius: 8px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }
+  .container { max-width:1580px; margin:0 auto; padding:20px; }
+  header { background:var(--card-bg); border-radius:var(--radius); padding:20px 28px; margin-bottom:20px; box-shadow:var(--shadow); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+  header h1 { font-size:1.4rem; font-weight:600; }
+  header .meta { font-size:.82rem; color:var(--text-secondary); }
+  .dashboard { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:20px; }
+  .stat-card { background:var(--card-bg); border-radius:var(--radius); padding:18px 20px; box-shadow:var(--shadow); text-align:center; }
+  .stat-card .value { font-size:2rem; font-weight:700; }
+  .stat-card .label { font-size:.8rem; color:var(--text-secondary); margin-top:4px; }
+  .stat-card.error .value { color:var(--error); }
+  .stat-card.warning .value { color:var(--warning); }
+  .stat-card.success .value { color:var(--success); }
+  .tabs { display:flex; gap:0; margin-bottom:0; }
+  .tab-btn { padding:10px 24px; border:1px solid var(--border); background:var(--bg); cursor:pointer; font-size:.9rem; border-radius:var(--radius) var(--radius) 0 0; border-bottom:none; margin-right:-1px; }
+  .tab-btn.active { background:var(--card-bg); font-weight:600; }
+  .tab-content { display:none; background:var(--card-bg); border-radius:0 var(--radius) var(--radius) var(--radius); border:1px solid var(--border); padding:24px; box-shadow:var(--shadow); }
+  .tab-content.active { display:block; }
+  .report-layout { display:grid; grid-template-columns:180px minmax(0,1fr); gap:18px; align-items:start; }
+  .report-main { min-width:0; }
+  .report-index { position:sticky; top:20px; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px 10px; max-height:calc(100vh - 40px); overflow-y:auto; }
+  .index-title { padding:0 10px 10px; margin-bottom:6px; border-bottom:1px solid var(--border); color:var(--text-secondary); font-size:.68rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+  .index-nav { display:flex; flex-direction:column; gap:2px; }
+  .index-link { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; color:var(--text-secondary); font-size:.78rem; line-height:1.25; text-decoration:none; transition:background .15s ease,color .15s ease,transform .15s ease; }
+  .index-link::before { content:''; width:5px; height:5px; border-radius:50%; background:#cbd5e1; flex-shrink:0; transition:background .15s ease,box-shadow .15s ease; }
+  .index-link:hover { color:var(--accent); background:#f4f8fc; transform:translateX(2px); }
+  .index-link.active { color:#1f5f9f; background:#eaf3fc; font-weight:600; }
+  .index-link.active::before { background:var(--accent); box-shadow:0 0 0 3px rgba(74,144,217,.16); }
+  .index-link[hidden] { display:none; }
+  .index-subnav { display:flex; flex-direction:column; gap:1px; margin:2px 0 5px 17px; padding-left:8px; border-left:1px solid #dbe5ef; }
+  .index-sublink { padding:5px 8px; font-size:.7rem; color:#7b8794; }
+  .index-sublink::before { width:4px; height:4px; background:#d7dee7; }
+  .index-sublink .index-run { color:#6d28d9; font-family:"SF Mono",Monaco,Menlo,monospace; font-weight:700; flex-shrink:0; }
+  .index-query-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .index-sublink.active { color:#55309b; background:#f3f0ff; }
+  .index-sublink.active::before { background:#7c3aed; box-shadow:0 0 0 3px rgba(124,58,237,.13); }
+  .section[id] { scroll-margin-top:20px; }
+  .timeline-entry[id] { scroll-margin-top:20px; }
+  .section { margin-bottom:28px; }
+  .section h2 { font-size:1.1rem; margin-bottom:14px; padding-bottom:8px; border-bottom:2px solid var(--accent); }
+  .chart-wrap { position:relative; max-height:400px; margin-bottom:16px; }
+  .chart-wrap canvas { max-height:400px; }
+  .chart-row { display:grid; grid-template-columns:2fr 1fr; gap:24px; }
+  @media (max-width:1100px) {
+    .report-layout { display:block; }
+    .report-index { position:sticky; top:0; z-index:20; max-height:none; margin-bottom:12px; padding:8px 10px; border-radius:0 0 var(--radius) var(--radius); overflow-x:auto; overflow-y:hidden; }
+    .index-title { display:none; }
+    .index-nav { flex-direction:row; width:max-content; }
+    .index-subnav { flex-direction:row; margin:0; padding:0 0 0 4px; border-left:0; }
+    .index-link { white-space:nowrap; padding:7px 10px; }
+    .index-sublink { max-width:210px; }
+    .index-link:hover { transform:none; }
+    .section[id] { scroll-margin-top:58px; }
+    .timeline-entry[id] { scroll-margin-top:58px; }
+  }
+  @media (max-width:900px) { .chart-row { grid-template-columns:1fr; } }
+  table { width:100%; border-collapse:collapse; font-size:.88rem; }
+  th, td { padding:8px 12px; text-align:left; border-bottom:1px solid var(--border); }
+  th { background:#fafafa; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap; }
+  th:hover { background:#f0f0f0; }
+  tr:hover { background:#fafafa; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:.75rem; font-weight:600; }
+  .badge-error { background:#fde8e8; color:var(--error); }
+  .badge-warning { background:#fef3cd; color:var(--warning); }
+  .badge-info { background:#dbeafe; color:var(--accent); }
+  .badge-query { background:#ede9fe; color:#6d28d9; }
+  .search-bar { margin-bottom:16px; display:flex; gap:8px; }
+  .search-bar input { flex:1; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); font-size:.88rem; }
+  .search-bar select { padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); font-size:.88rem; }
+  .trajectory-search { align-items:center; flex-wrap:wrap; }
+  .trajectory-search input { min-width:260px; }
+  .trajectory-search button { padding:7px 12px; border:1px solid var(--border); border-radius:var(--radius); background:#fff; color:var(--text-secondary); cursor:pointer; font-size:.78rem; }
+  .trajectory-search button:hover { color:var(--accent); border-color:#9bc4eb; background:#f4f8fc; }
+  .trajectory-search .only-match-toggle { display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:7px 10px; border:1px solid var(--border); border-radius:var(--radius); background:#fff; color:var(--text-secondary); font-size:.78rem; white-space:nowrap; cursor:pointer; }
+  .trajectory-search .only-match-toggle:hover { color:var(--accent); border-color:#9bc4eb; background:#f4f8fc; }
+  .trajectory-search .only-match-toggle input { flex:0 0 auto; min-width:0; width:14px; height:14px; margin:0; }
+  .trajectory-search .search-count { color:var(--text-secondary); font-size:.78rem; min-width:90px; }
+  .trajectory-search .search-help { color:#8a94a3; font-size:.72rem; flex-basis:100%; }
+  .log-entry { border:1px solid var(--border); border-radius:var(--radius); margin-bottom:8px; overflow:hidden; }
+  .log-entry.log-filter-hidden, .log-entry.log-page-hidden { display:none; }
+  .log-entry .summary { display:flex; align-items:center; gap:12px; padding:10px 14px; cursor:pointer; font-size:.85rem; }
+  .log-entry .summary:hover { background:#fafafa; }
+  .log-entry .summary .ts { white-space:nowrap; color:var(--text-secondary); font-family:monospace; font-size:.8rem; min-width:160px; }
+  .log-entry .summary .loc { color:var(--accent); font-family:monospace; font-size:.8rem; white-space:nowrap; }
+  .log-entry .summary .msg { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .log-entry .detail { display:none; padding:12px 14px; background:#fafafa; border-top:1px solid var(--border); font-family:monospace; font-size:.82rem; white-space:pre-wrap; word-break:break-all; }
+  .log-entry.open .detail { display:block; }
+  .log-entry.level-ERROR { border-left:4px solid var(--error); }
+  .log-entry.level-WARNING { border-left:4px solid var(--warning); }
+  .empty-state { text-align:center; padding:40px; color:var(--text-secondary); }
+  .timeline-entry { display:flex; gap:12px; padding:8px 0; font-size:.84rem; border-bottom:1px solid #f0f0f0; align-items:flex-start; }
+  .timeline-entry.search-match { background:#fffdf0; border-left:4px solid #facc15; padding-left:8px; }
+  .timeline-entry.search-current { background:#eaf3fc; border-left-color:var(--accent); }
+  .timeline-entry.search-hidden { display:none; }
+  .timeline-entry .tl-type { min-width:76px; flex-shrink:0; }
+  .tl-body { flex:1; min-width:0; }
+  .tl-time-col { min-width:76px; font-size:.76rem; color:var(--text-secondary); font-family:monospace; text-align:right; flex-shrink:0; }
+  .tl-latency-col { min-width:58px; font-size:.72rem; color:var(--text-secondary); font-family:monospace; text-align:right; flex-shrink:0; }
+  .tl-action-header { display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none; padding:4px 0; }
+  .tl-action-header:hover { color:var(--accent); }
+  .tl-subagent-link { margin-left:auto; font-size:.72rem; }
+  .tl-subagent-note { margin-top:6px; color:var(--text-secondary); font-size:.74rem; }
+  .tl-subagent-candidates { margin-top:6px; color:var(--text-secondary); font-size:.72rem; }
+  .tl-toggle { font-family:monospace; font-size:.9rem; width:18px; text-align:center; flex-shrink:0; color:var(--accent); }
+  .tl-action-detail { display:none; margin-top:8px; }
+  .tl-action-detail.open { display:block; }
+  .tl-detail-block { margin-bottom:10px; }
+  .tl-detail-block .tl-detail-label { font-size:.75rem; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:4px; letter-spacing:.5px; }
+  .tl-json { background:#f8f8f8; border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-family:"SF Mono",Monaco,Menlo,monospace; font-size:.8rem; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto; line-height:1.4; }
+  .tl-output { background:#fafdf7; border:1px solid #d4e8c0; border-radius:6px; padding:10px 14px; font-size:.82rem; white-space:pre-wrap; word-break:break-word; max-height:300px; overflow-y:auto; line-height:1.5; }
+  .tl-output-error { background:#fef8f8; border-color:#f0d0d0; }
+  .tl-datanodes { display:flex; flex-wrap:wrap; gap:6px; }
+  .dn-chip { display:inline-flex; align-items:center; gap:6px; background:#f5f7fa; border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:.78rem; }
+  .dn-chip code { font-size:.76rem; color:var(--text-secondary); max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .context-commit { border:1px solid var(--border); border-radius:var(--radius); margin-bottom:10px; overflow:hidden; }
+  .context-commit .commit-header { display:flex; align-items:center; gap:12px; padding:8px 14px; background:#fafafa; cursor:pointer; font-size:.84rem; border-bottom:1px solid var(--border); }
+  .context-commit .commit-header:hover { background:#f0f0f0; }
+  .context-commit .commit-body { display:none; padding:12px 14px; }
+  .context-commit.open .commit-body { display:block; }
+  .commit-hash { font-family:monospace; font-size:.78rem; color:var(--accent); min-width:70px; }
+  .commit-type { font-size:.78rem; }
+  .commit-summary { font-size:.82rem; color:var(--text-secondary); flex:1; }
+  .commit-stats { font-size:.78rem; color:var(--text-secondary); white-space:nowrap; }
+  .msg-diff { font-size:.82rem; padding:6px 0; border-bottom:1px solid #f5f5f5; }
+  .msg-diff.added { color:#27ae60; }
+  .msg-diff .msg-role { font-weight:600; min-width:90px; display:inline-block; }
+  .msg-diff .msg-preview { color:var(--text-secondary); }
+  .tl-state-content { font-size:.84rem; line-height:1.6; }
+  .tl-state-content p { margin:4px 0; }
+  .tl-state-content code { background:#f0f0f0; padding:1px 5px; border-radius:3px; font-size:.82rem; }
+  .tl-state-content pre { background:#f8f8f8; border:1px solid var(--border); border-radius:6px; padding:8px 12px; overflow-x:auto; font-size:.8rem; }
+  .tl-state-content ul, .tl-state-content ol { padding-left:20px; margin:4px 0; }
+  .tl-state-fields { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+  .tl-state-field { min-width:0; border:1px solid #ead9af; border-radius:6px; background:#fffdf7; padding:8px 10px; }
+  .tl-state-field-label { margin-bottom:4px; color:#9a6700; font-size:.68rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; }
+  .tl-state-field-value { color:#4a4335; font-size:.78rem; line-height:1.5; white-space:pre-wrap; word-break:break-word; }
+  .tl-state-field-value code { color:inherit; font-size:.75rem; white-space:pre-wrap; word-break:break-word; }
+  .failed-output { max-width:500px; white-space:pre-wrap; word-break:break-word; font-size:.8rem; line-height:1.5; }
+  .error-highlight .hl-error { color:var(--error); font-weight:600; background:#fde8e8; padding:0 2px; border-radius:2px; }
+  .error-highlight .hl-warn { color:var(--warning); background:#fef3cd; padding:0 2px; border-radius:2px; }
+  .param-cell { min-width:180px; }
+  .tl-param-rows { background:#f8f8f8; border:1px solid var(--border); border-radius:6px; padding:8px 12px; }
+  .tl-param-rows .param-row:last-child { border-bottom:none; }
+  .tl-param-rows .param-key { min-width:80px; }
+  .param-row { display:flex; gap:6px; padding:2px 0; font-size:.8rem; align-items:baseline; }
+  .param-row:not(:last-child) { border-bottom:1px solid #f5f5f5; }
+  .param-key { color:var(--accent); font-weight:600; white-space:nowrap; min-width:60px; }
+  .param-key::after { content:':'; }
+  .param-val { flex:1; min-width:0; }
+  .param-val code { font-size:.76rem; white-space:pre-wrap; word-break:break-all; }
+  footer { text-align:center; padding:16px; color:var(--text-secondary); font-size:.78rem; }
+  .expand-all { font-size:.82rem; color:var(--accent); cursor:pointer; margin-left:12px; }
+  .match-src { font-size:.68rem; color:var(--text-secondary); background:#f0f0f0; padding:1px 5px; border-radius:8px; white-space:nowrap; }
+  .match-mode { font-size:.72rem; color:var(--accent); background:#e8f0fe; padding:1px 8px; border-radius:10px; white-space:nowrap; cursor:help; }
+  .pagination { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:12px; color:var(--text-secondary); font-size:.8rem; flex-wrap:wrap; }
+  .pagination button, .pagination select { padding:5px 9px; border:1px solid var(--border); border-radius:6px; background:#fff; color:var(--text-secondary); }
+  .pagination button { cursor:pointer; }
+  .pagination button:disabled { cursor:not-allowed; opacity:.45; }
+  .tr-expand { display:inline; }
+  .tr-toggle { display:inline; padding:0; border:0; border-bottom:1px dashed var(--accent); background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; }
+  .tr-expand:hover { background:#f0f4ff; }
+  .tr-toggle:focus { outline:2px solid #bfdbfe; outline-offset:2px; }
+  .tr-dots { color:var(--accent); font-weight:bold; }
+  .tr-full { white-space:pre-wrap; word-break:break-word; }
+  .tr-full[hidden], .tr-short[hidden] { display:none; }
+  .tr-label { color:var(--accent); font-size:.72rem; margin-left:6px; white-space:nowrap; }
+  .tr-label-close { display:none; }
+  .tr-expand.tr-expanded .tr-label-open { display:none; }
+  .tr-expand.tr-expanded .tr-label-close { display:inline; }
+  .duration-badge { font-size:.82rem; color:var(--accent); background:#e8f0fe; padding:2px 10px; border-radius:12px; }
+  .timing-coverage { font-size:.72rem; color:var(--text-secondary); background:#f1f5f9; padding:2px 8px; border-radius:10px; font-weight:500; }
+  .perf-note { padding:10px 14px; margin-bottom:16px; border-left:3px solid var(--accent); background:#f4f8fc; color:var(--text-secondary); font-size:.8rem; }
+  .perf-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+  .perf-card { position:relative; overflow:hidden; border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:linear-gradient(145deg,#fff,#f8fafc); }
+  .perf-card::before { content:''; position:absolute; inset:0 auto 0 0; width:3px; background:var(--accent); }
+  .perf-card .perf-value { font-size:1.35rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  .perf-card .perf-label { margin-top:3px; color:var(--text-secondary); font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; }
+  .perf-card .perf-sub { margin-top:4px; color:#8a94a3; font-size:.68rem; }
+  .perf-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:8px; }
+  .perf-table-wrap table { min-width:760px; }
+  .perf-table-wrap th { position:sticky; top:0; z-index:1; }
+  .metric-good { color:var(--success); font-weight:600; }
+  .metric-bad { color:var(--error); font-weight:600; }
+  .deep-link { color:var(--accent); text-decoration:none; font-weight:600; cursor:pointer; }
+  .deep-link:hover { text-decoration:underline; }
+  .timeline-entry.link-target, tr.link-target { animation:targetPulse 1.8s ease-out; }
+  @keyframes targetPulse { 0% { background:#dbeafe; } 100% { background:transparent; } }
+  .quality-strip { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .quality-chip { padding:3px 8px; border:1px solid var(--border); border-radius:999px; color:var(--text-secondary); font-size:.7rem; }
+  .time-chart { height:440px; }
+  .token-chart { height:340px; }
+  .pie-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+  .pie-card { border:1px solid var(--border); border-radius:8px; padding:12px; min-height:330px; }
+  .pie-card .chart-wrap { height:290px; margin:0; }
+  .component-filter { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px; }
+  .component-filter button { border:1px solid var(--border); border-radius:999px; padding:5px 12px; background:#fff; color:var(--text-secondary); cursor:pointer; font-size:.76rem; }
+  .component-filter button.active { background:#eaf3fc; border-color:#9bc4eb; color:#1f5f9f; font-weight:600; }
+  .run-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px; }
+  .run-tab-btn { border:1px solid var(--border); border-radius:6px; padding:6px 13px; background:#fff; color:var(--text-secondary); cursor:pointer; font-size:.76rem; font-family:"SF Mono",Monaco,Menlo,monospace; }
+  .run-tab-btn.active { background:#eaf3fc; border-color:#9bc4eb; color:#1f5f9f; font-weight:700; }
+  .run-panel { display:none; }
+  .run-panel.active { display:block; }
+  .run-chart-scroll { max-height:720px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px; }
+  .run-chart { position:relative; margin:0; max-height:none; }
+  .run-chart canvas { max-height:none; }
+  .percentage-cell { min-width:120px; }
+  .percentage-track { display:flex; align-items:center; gap:8px; }
+  .percentage-bar { width:72px; height:6px; border-radius:999px; background:#e8edf3; overflow:hidden; flex-shrink:0; }
+  .percentage-fill { display:block; height:100%; background:var(--accent); border-radius:inherit; }
+  .anomaly-row td:first-child { border-left:3px solid var(--warning); }
+  .mono { font-family:"SF Mono",Monaco,Menlo,monospace; font-variant-numeric:tabular-nums; }
+  @media (max-width:900px) { .pie-grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div>
+    <h1>DataAgent Session Report</h1>
+    <div class="meta">Session: <strong>{{ session_id }}</strong> &nbsp;|&nbsp; User: <strong>{{ user_id }}</strong> &nbsp;|&nbsp; Generated: {{ generated_at }}
+    {% if logs.session_duration_seconds %}<br>Duration: <span class="duration-badge">{{ "%.1f"|format(logs.session_duration_seconds / 60) }} min</span> ({{ logs._start_str }} — {{ logs._end_str }}){% endif %}
+    </div>
+  </div>
+</header>
+
+<div class="dashboard">
+  <div class="stat-card">
+    <div class="value">{{ trajectory.turn_count }}</div>
+    <div class="label">Turns</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ trajectory.total_rounds }}</div>
+    <div class="label">Runs</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ trajectory.total_actions }}</div>
+    <div class="label">Tool Calls</div>
+  </div>
+  <div class="stat-card">
+    <div class="value">{{ subagents.subagent_count | default(0) }}</div>
+    <div class="label">Subagents</div>
+  </div>
+  <div class="stat-card error">
+    <div class="value">{{ trajectory.failed_actions | length }}</div>
+    <div class="label">Tool Failures</div>
+  </div>
+  <div class="stat-card error">
+    <div class="value">{{ logs.error_count }}</div>
+    <div class="label">Log Errors</div>
+  </div>
+  <div class="stat-card warning">
+    <div class="value">{{ logs.warning_count }}</div>
+    <div class="label">Log Warnings</div>
+  </div>
+</div>
+
+<div class="report-layout">
+<aside class="report-index" aria-label="Report index">
+  <div class="index-title">Report Index</div>
+  <nav class="index-nav">
+    <a class="index-link active" data-index-tab="trajectory" href="#section-tool-stats">Tool Statistics</a>
+    <a class="index-link" data-index-tab="trajectory" href="#section-node-types">Node Types</a>
+    {% if trajectory.failed_actions %}
+    <a class="index-link" data-index-tab="trajectory" href="#section-failed-actions">Failed Actions</a>
+    {% endif %}
+    <a class="index-link" data-index-tab="trajectory" href="#section-queries">Queries</a>
+    <a class="index-link" data-index-tab="trajectory" href="#section-timeline">Timeline</a>
+    <div class="index-subnav">
+      {% for t in trajectory.timeline if t.node_type == 'Query' %}
+      <a class="index-link index-sublink" data-index-tab="trajectory" href="#{{ t.anchor_id }}" title="Run {{ t.run_id }}: {{ t.query }}">
+        <span class="index-run">R{{ t.run_id }}</span>
+        <span class="index-query-label">{{ t.query }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% if trajectory.messages_context %}
+    <a class="index-link" data-index-tab="trajectory" href="#section-context-growth">Context Growth</a>
+    {% endif %}
+    <a class="index-link" data-index-tab="time" href="#section-time-overview" hidden>Time Overview</a>
+    <a class="index-link" data-index-tab="time" href="#section-time-timeline" hidden>Event Timeline</a>
+    <a class="index-link" data-index-tab="time" href="#section-time-runs" hidden>Runs & Processes</a>
+    <a class="index-link" data-index-tab="time" href="#section-time-components" hidden>Components</a>
+    <a class="index-link" data-index-tab="time" href="#section-time-turns" hidden>Derived Turns</a>
+    <a class="index-link" data-index-tab="time" href="#section-time-slow" hidden>Slow & Failed</a>
+    <a class="index-link" data-index-tab="subagents" href="#section-subagent-overview" hidden>Subagent Overview</a>
+    <a class="index-link" data-index-tab="subagents" href="#section-subagent-sessions" hidden>Subagent Sessions</a>
+    <a class="index-link" data-index-tab="token" href="#section-token-overview" hidden>Token Overview</a>
+    <a class="index-link" data-index-tab="token" href="#section-token-growth" hidden>Token Growth</a>
+    <a class="index-link" data-index-tab="token" href="#section-token-groups" hidden>Models & Callers</a>
+    <a class="index-link" data-index-tab="token" href="#section-token-turns" hidden>Turn Detail</a>
+    <a class="index-link" data-index-tab="token" href="#section-token-anomalies" hidden>Anomalies</a>
+    <a class="index-link" data-index-tab="logs" href="#section-logs" hidden>Log Diagnostics</a>
+  </nav>
+</aside>
+
+<div class="report-main">
+<div class="tabs">
+  <button class="tab-btn active" data-tab="trajectory" onclick="switchTab('trajectory')">Trajectory</button>
+  <button class="tab-btn" data-tab="time" onclick="switchTab('time')">Time</button>
+  <button class="tab-btn" data-tab="token" onclick="switchTab('token')">Tokens</button>
+  <button class="tab-btn" data-tab="subagents" onclick="switchTab('subagents')">Subagents</button>
+  <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">Logs</button>
+</div>
+
+<!-- ==== Trajectory Tab ==== -->
+<div id="tab-trajectory" class="tab-content active">
+  {% if trajectory.error %}
+    <div class="empty-state">Trajectory analysis failed: {{ trajectory.error }}</div>
+  {% else %}
+  <div class="section" id="section-tool-stats">
+    <h2>Tool Call Statistics</h2>
+    <div class="chart-row">
+      <div class="chart-wrap"><canvas id="toolBarChart"></canvas></div>
+      <div class="chart-wrap"><canvas id="successPieChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="section" id="section-node-types">
+    <h2>Node Type Distribution</h2>
+    <div class="chart-wrap" style="max-height:300px"><canvas id="nodeTypeChart"></canvas></div>
+  </div>
+
+  {% if trajectory.failed_actions %}
+  <div class="section" id="section-failed-actions">
+    <h2>Failed Actions <span style="font-weight:400;font-size:.85rem;color:var(--text-secondary)">({{ trajectory.failed_actions | length }})</span></h2>
+    <div class="search-bar">
+      <input type="text" id="failSearch" placeholder="Filter failed actions..." oninput="filterTable('failTable','failSearch')">
+    </div>
+    <div style="overflow-x:auto;">
+      <table id="failTable">
+        <thead>
+          <tr>
+            <th onclick="sortTable('failTable',0)">Tool</th>
+            <th onclick="sortTable('failTable',1)">Run</th>
+            <th>Params</th>
+            <th>Output</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fa in trajectory.failed_actions %}
+          <tr>
+            <td><a class="deep-link" href="#{{ fa.anchor_id }}" data-target-tab="trajectory"><span class="badge badge-error">{{ fa.tool }}</span></a></td>
+            <td>{{ fa.run_id }}</td>
+            <td class="param-cell">
+              {% for pl in fa.param_lines %}
+              <div class="param-row"><span class="param-key">{{ pl.key }}</span><span class="param-val"><code>{{ pl.value | truncate_exp(120) }}</code></span></div>
+              {% endfor %}
+            </td>
+            <td class="failed-output error-highlight">{{ fa.output | truncate_exp(1000) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="section" id="section-queries">
+    <h2>Queries</h2>
+    <table>
+      <thead><tr><th>Run</th><th>Query</th></tr></thead>
+      <tbody>
+        {% for q in trajectory.queries %}
+        <tr><td>{{ q.run_id }}</td><td>{{ q.query | truncate_exp(500) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section" id="section-timeline">
+    <h2>Timeline
+      {% if trajectory._timing_coverage is defined %}
+      <span class="timing-coverage" title="Trusted timestamps only. State: {{ trajectory._timing_coverage.states }}/{{ trajectory._timing_coverage.state_total }}, Action: {{ trajectory._timing_coverage.actions }}/{{ trajectory._timing_coverage.action_total }}">timed {{ trajectory._timing_coverage.timed }}/{{ trajectory._timing_coverage.total }}</span>
+      {% endif %}
+    </h2>
+    <div class="search-bar trajectory-search">
+      <input type="search" id="trajectorySearch" placeholder="Search timeline, including collapsed params/output/state..." oninput="searchTrajectory()" onkeydown="handleTrajectorySearchKey(event)">
+      <button type="button" onclick="jumpTrajectoryMatch(-1)">Prev</button>
+      <button type="button" onclick="jumpTrajectoryMatch(1)">Next</button>
+      <button type="button" onclick="clearTrajectorySearch()">Clear</button>
+      <label class="only-match-toggle">
+        <input type="checkbox" id="trajectorySearchOnly" onchange="searchTrajectory()"> Only matches
+      </label>
+      <span class="search-count" id="trajectorySearchCount">0 matches</span>
+      <span class="search-help">Matches use the full Timeline DOM text, including collapsed Action details and expandable long text.</span>
+    </div>
+    {% for t in trajectory.timeline %}
+    <div class="timeline-entry"{% if t.anchor_id %} id="{{ t.anchor_id }}"{% endif %}>
+      <span class="tl-type">
+        {% if t.node_type == 'Action' %}
+          <span class="badge {% if t.success %}badge-info{% else %}badge-error{% endif %}">Action</span>
+        {% elif t.node_type == 'State' %}
+          <span class="badge badge-warning">State</span>
+        {% elif t.node_type == 'Query' %}
+          <span class="badge badge-query">Query</span>
+        {% else %}
+          <span class="badge badge-info">{{ t.node_type }}</span>
+        {% endif %}
+      </span>
+      <div class="tl-body">
+        {% if t.node_type == 'Action' %}
+          <div class="tl-action-header" onclick="toggleActionDetail(this, event)">
+            <span class="tl-toggle">+</span>
+            <strong>{{ t.action }}</strong>
+            {% if not t.success %}<span class="badge badge-error">failed</span>{% endif %}
+            {% if t.subagent_match %}
+            <a class="deep-link tl-subagent-link" href="#{{ t.subagent_match.anchor_id }}" data-target-tab="subagents">
+              <span class="badge badge-info">subagent</span>
+              {{ t.subagent_match.display_name }}
+            </a>
+            {% endif %}
+          </div>
+          <div class="tl-action-detail">
+            {% if t.subagent_match %}
+            <div class="tl-detail-block">
+              <div class="tl-detail-label">Subagent Match</div>
+              <div class="tl-subagent-note">
+                Linked to <a class="deep-link" href="#{{ t.subagent_match.anchor_id }}" data-target-tab="subagents">{{ t.subagent_match.display_name }}</a>
+                by whitelisted launcher action.
+              </div>
+            </div>
+            {% endif %}
+            <div class="tl-detail-block">
+              <div class="tl-detail-label">Params</div>
+              <div class="tl-param-rows">
+                {% for key, val in t.params.items() %}
+                <div class="param-row"><span class="param-key">{{ key }}</span><span class="param-val"><code>{{ val | tojson | truncate_exp(200) }}</code></span></div>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="tl-detail-block">
+              <div class="tl-detail-label">Output</div>
+              <div class="tl-output{% if not t.success %} tl-output-error{% endif %}">{{ t.output | e }}</div>
+            </div>
+            {% if t.data_nodes %}
+            <div class="tl-detail-block">
+              <div class="tl-detail-label">Data Nodes ({{ t.data_nodes | length }})</div>
+              <div class="tl-datanodes">
+                {% for dn in t.data_nodes %}
+                <span class="dn-chip" title="{{ dn.get('path', dn.get('label', '')) | e }}">
+                  <span class="badge badge-info">{{ dn.node_type }}</span>
+                  {% if dn.path %}<code>{{ dn.path | truncate(80) }}</code>{% elif dn.label %}<code>{{ dn.label | truncate(80) }}</code>{% endif %}
+                </span>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+          </div>
+        {% elif t.node_type == 'State' %}
+          {% if t.reasoning_content %}
+          <div class="tl-state-fields">
+            <div class="tl-state-field">
+              <div class="tl-state-field-label">Reasoning Content</div>
+              <div class="tl-state-field-value">{{ t.reasoning_content | truncate_exp(2000) }}</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if t.content %}
+          <div class="tl-state-fields">
+            <div class="tl-state-field">
+              <div class="tl-state-field-label">Content</div>
+              <div class="tl-state-content state-md">{{ t.content }}</div>
+            </div>
+          </div>
+          {% endif %}
+          {% if t.state_details %}
+          <div class="tl-state-fields">
+            <div class="tl-state-field">
+              <div class="tl-state-field-label">State Fields</div>
+              <div class="tl-state-field-value"><code>{{ t.state_details | tojson(indent=2) }}</code></div>
+            </div>
+          </div>
+          {% endif %}
+        {% elif t.node_type == 'Query' %}
+          <div>{{ t.query }}</div>
+        {% else %}
+          <div>{{ t.description }}</div>
+        {% endif %}
+      </div>
+      <span class="tl-time-col" title="{{ t._time_source|default('') }}">{% if t._time_str %}{{ t._time_str }}{% endif %}</span>
+      <span class="tl-latency-col" title="{% if t.node_type == 'State' %}Time since previous turn{% elif t.node_type == 'Action' and t._latency_str %}Time since parent State{% endif %}">{% if t._latency_str %}+{{ t._latency_str }}{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if trajectory.messages_context %}
+  <div class="section" id="section-context-growth">
+    <h2>Context Growth <span style="font-weight:400;font-size:.85rem;color:var(--text-secondary)">(git-style round-by-round diff)</span></h2>
+    <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:12px;">
+      Each round adds messages to the LLM context window. Total messages: <strong>{{ trajectory.messages_context | sum(attribute='added_count') }}</strong> across <strong>{{ trajectory.messages_context | length }}</strong> rounds.
+      {% set compressed = trajectory.messages_context | selectattr('type', 'equalto', 'llm_response') | selectattr('content', 'equalto', '') | list %}
+      {% if compressed %}<span class="badge badge-warning">{{ compressed | length }} compressed</span>{% endif %}
+    </p>
+    {% for commit in trajectory.messages_context %}
+    <div class="context-commit">
+      <div class="commit-header" onclick="this.parentElement.classList.toggle('open')">
+        <span class="commit-hash">{{ '%06d' % commit.round }}</span>
+        <span class="badge {% if commit.type == 'query' %}badge-info{% else %}badge-warning{% endif %} commit-type">{{ commit.type }}</span>
+        <span class="commit-summary">
+          {% if commit.type == 'query' %}
+            Query: {{ commit.content | truncate_exp(120) }}
+          {% elif commit.tool_calls %}
+            {{ commit.content | truncate_exp(80) }} &mdash; {{ commit.tool_calls | length }} tool call(s)
+          {% else %}
+            {{ commit.content | truncate_exp(80) }}
+          {% endif %}
+        </span>
+        <span class="commit-stats">+{{ commit.added_count }} msg ({{ commit.cumulative }} total)</span>
+      </div>
+      <div class="commit-body">
+        {% if commit.type == 'query' %}
+        <div class="msg-diff added"><span class="msg-role">Query:</span> <span class="msg-preview">{{ commit.content | truncate_exp(600) }}</span></div>
+        {% endif %}
+        {% if commit.tool_calls %}
+        {% for tc in commit.tool_calls %}
+        <div class="msg-diff added"><span class="msg-role">ToolCall:</span> <code>{{ tc.name }}</code> <span class="msg-preview">{{ tc.args | tojson | truncate_exp(200) }}</span></div>
+        {% endfor %}
+        {% endif %}
+        {% for tr in commit.tool_results %}
+        <div class="msg-diff added"><span class="msg-role">ToolResult:</span> <code>{{ tr.name }}</code> <span class="msg-preview">{{ tr.content | truncate_exp(300) }}</span></div>
+        {% endfor %}
+        {% if commit.content and commit.type == 'llm_response' and not commit.tool_calls %}
+        <div class="msg-diff added"><span class="msg-role">Response:</span> <span class="msg-preview">{{ commit.content | truncate_exp(600) }}</span></div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+
+<!-- ==== Time Tab ==== -->
+<div id="tab-time" class="tab-content">
+  {% if time_analysis.error %}
+    <div class="empty-state">{{ time_analysis.error }}</div>
+  {% else %}
+  <div class="section" id="section-time-overview">
+    <h2>Time Overview</h2>
+    <div class="perf-note">{{ time_analysis.scope_note }}</div>
+    <div class="perf-grid">
+      <div class="perf-card"><div class="perf-value">{{ time_analysis.overview.wall_duration }}</div><div class="perf-label">Wall Clock</div><div class="perf-sub">{{ time_analysis.overview.start_time }} → {{ time_analysis.overview.end_time }}</div></div>
+      <div class="perf-card"><div class="perf-value">{{ time_analysis.overview.active_duration }}</div><div class="perf-label">Active Time</div><div class="perf-sub">union of measured intervals</div></div>
+      <div class="perf-card"><div class="perf-value">{{ time_analysis.overview.run_count }}</div><div class="perf-label">Runs</div><div class="perf-sub">{{ time_analysis.overview.process_count }} process(es)</div></div>
+      <div class="perf-card"><div class="perf-value">{{ time_analysis.overview.event_count }}</div><div class="perf-label">Measured Events</div><div class="perf-sub">all event kinds</div></div>
+      <div class="perf-card"><div class="perf-value">{{ time_analysis.overview.failed_count }}</div><div class="perf-label">Failed Events</div><div class="perf-sub">{{ time_analysis.overview.event_count }} events</div></div>
+    </div>
+    <div class="pie-grid">
+      <div class="pie-card"><div class="chart-wrap"><canvas id="timeHookPie"></canvas></div></div>
+      <div class="pie-card"><div class="chart-wrap"><canvas id="timeLlmPie"></canvas></div></div>
+      <div class="pie-card"><div class="chart-wrap"><canvas id="timeNodePie"></canvas></div></div>
+      <div class="pie-card"><div class="chart-wrap"><canvas id="timeToolPie"></canvas></div></div>
+    </div>
+    <div class="quality-strip">
+      <span class="quality-chip">{{ time_analysis.quality.file_count }} source file(s)</span>
+      <span class="quality-chip">{{ time_analysis.quality.flush_count }} complete flush(es)</span>
+      <span class="quality-chip">{{ time_analysis.quality.malformed_count }} malformed line(s)</span>
+      <span class="quality-chip">{{ time_analysis.quality.missing_timestamp_count }} missing timestamp(s)</span>
+      {% if time_analysis.quality.incomplete_files %}<span class="quality-chip metric-bad">{{ time_analysis.quality.incomplete_files | length }} incomplete file(s)</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="section" id="section-time-timeline">
+    <h2>Measured Event Timeline <span class="timing-coverage">real UTC intervals</span></h2>
+    <div class="run-tabs">
+      {% for run in time_analysis.timeline_runs %}
+      <button type="button" class="run-tab-btn{% if loop.first %} active{% endif %}" data-run="{{ run.run_id }}" onclick="switchRunPanel('timeline', this.dataset.run, this)">Run {{ run.run_id }} <span style="opacity:.65">({{ run.event_count }})</span></button>
+      {% endfor %}
+    </div>
+    {% for run in time_analysis.timeline_runs %}
+    <div class="run-panel timeline-run-panel{% if loop.first %} active{% endif %}" data-run="{{ run.run_id }}">
+      {% if run.event_count %}
+      <div class="run-chart-scroll">
+        <div class="run-chart" style="height:{{ run.height }}px"><canvas id="performanceTimelineChart-{{ loop.index0 }}" data-run="{{ run.run_id }}"></canvas></div>
+      </div>
+      {% else %}<div class="empty-state">No LLM, Tool, or long Pruner events in this run.</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="section" id="section-time-runs">
+    <h2>Runs & Processes</h2>
+    <div class="perf-table-wrap"><table>
+      <thead><tr><th>Run</th><th>PID</th><th>Status</th><th>Wall</th><th>Active</th><th>Turns</th><th>Events</th><th>Failures</th></tr></thead>
+      <tbody>{% for row in time_analysis.runs %}<tr>
+        <td class="mono">{{ row.run_id }}</td><td class="mono">{{ row.pids }}</td><td>{% if row.complete %}<span class="metric-good">complete</span>{% else %}<span class="metric-bad">partial</span>{% endif %}</td>
+        <td>{{ row.wall_duration }}</td><td>{{ row.active_duration }}</td><td>{{ row.turn_count }}</td><td>{{ row.event_count }}</td><td>{{ row.failed_count }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+
+  <div class="section" id="section-time-components">
+    <h2>Component Latency</h2>
+    <div class="component-filter" aria-label="Filter components by kind">
+      <button type="button" class="active" data-kind="all" onclick="filterTimeComponents('all', this)">All</button>
+      <button type="button" data-kind="hook" onclick="filterTimeComponents('hook', this)">Hook</button>
+      <button type="button" data-kind="llm" onclick="filterTimeComponents('llm', this)">LLM</button>
+      <button type="button" data-kind="node" onclick="filterTimeComponents('node', this)">Node</button>
+      <button type="button" data-kind="tool" onclick="filterTimeComponents('tool', this)">Tool</button>
+    </div>
+    <div class="perf-table-wrap"><table id="timeComponentTable">
+      <thead><tr><th onclick="sortTable('timeComponentTable',0)">Kind</th><th onclick="sortTable('timeComponentTable',1)">Component</th><th>Calls</th><th>Total Work</th><th>Share in Kind</th><th>Average</th><th>P50</th><th>P95</th><th>Max</th><th>Failures</th></tr></thead>
+      <tbody>{% for row in time_analysis.components %}<tr data-kind="{{ row.kind }}"><td><span class="badge badge-info">{{ row.kind }}</span></td><td>{{ row.name }}</td><td>{{ row.count }}</td><td>{{ row.total_duration }}</td><td class="percentage-cell"><div class="percentage-track"><span class="percentage-bar"><span class="percentage-fill" style="width:{{ row.kind_share }}%"></span></span><strong>{{ "%.1f"|format(row.kind_share) }}%</strong></div></td><td>{{ row.avg_duration }}</td><td>{{ row.p50_duration }}</td><td>{{ row.p95_duration }}</td><td>{{ row.max_duration }}</td><td>{{ row.failures }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+
+  <div class="section" id="section-time-turns">
+    <h2>Derived Turns <span class="timing-coverage">LLM boundaries</span></h2>
+    <div class="perf-note">Tool batches are assigned after one LLM completion and before the next LLM starts. Parallel tools share one wall-clock interval.</div>
+    <div class="run-tabs">
+      {% for run in time_analysis.runs %}
+      <button type="button" class="run-tab-btn{% if loop.first %} active{% endif %}" data-run="{{ run.run_id }}" onclick="switchRunPanel('turns', this.dataset.run, this)">Run {{ run.run_id }}</button>
+      {% endfor %}
+    </div>
+    {% for run in time_analysis.runs %}
+    <div class="run-panel turns-run-panel{% if loop.first %} active{% endif %}" data-run="{{ run.run_id }}">
+      <div class="perf-table-wrap"><table>
+        <thead><tr><th>Turn</th><th>Start</th><th>LLM</th><th>LLM Time</th><th>Tools</th><th>Tool Wall</th><th>Blocking Tool</th><th>Critical Path</th><th>Overhead</th><th>Turn Wall</th></tr></thead>
+        <tbody>{% for row in time_analysis.turns_by_run.get(run.run_id, []) %}<tr><td>{{ row.turn }}</td><td class="mono">{{ row.start_time }}</td><td>{{ row.llm }}</td><td>{{ row.llm_duration }}</td><td>{{ row.tool_count }}</td><td>{{ row.tool_wall_duration }}</td><td>{% if row.target_anchor %}<a class="deep-link" href="#{{ row.target_anchor }}" data-target-tab="trajectory">{{ row.blocking_tool }}</a>{% else %}{{ row.blocking_tool or "—" }}{% endif %}</td><td>{{ row.critical_path_duration }}</td><td>{{ row.orchestration_overhead_duration }}</td><td>{{ row.turn_duration }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="section" id="section-time-slow">
+    <h2>Slowest Events & Failures</h2>
+    <div class="perf-table-wrap"><table>
+      <thead><tr><th>Run</th><th>Start</th><th>Kind</th><th>Name</th><th>Duration</th><th>Caller / ID</th><th>Status</th></tr></thead>
+      <tbody>{% for row in time_analysis.slow_events %}<tr><td>{{ row.run_id }}</td><td class="mono">{{ row.start_time }}</td><td>{{ row.kind }}</td><td>{% if row.target_anchor %}<a class="deep-link" href="#{{ row.target_anchor }}" data-target-tab="trajectory">{{ row.name }}</a>{% else %}{{ row.name }}{% endif %}</td><td>{{ row.duration }}</td><td class="mono">{{ row.caller or row.tool_call_id }}</td><td>{% if row.success %}<span class="metric-good">ok</span>{% else %}<span class="metric-bad">{{ row.error_type or "failed" }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ==== Token Tab ==== -->
+<div id="tab-token" class="tab-content">
+  {% if token_analysis.error %}
+    <div class="empty-state">{{ token_analysis.error }}</div>
+  {% else %}
+  <div class="section" id="section-token-overview">
+    <h2>Token Overview</h2>
+    <div class="perf-grid">
+      <div class="perf-card"><div class="perf-value">{{ "{:,}".format(token_analysis.overview.total_tokens) }}</div><div class="perf-label">Total Tokens</div><div class="perf-sub">{{ token_analysis.overview.calls }} LLM calls</div></div>
+      <div class="perf-card"><div class="perf-value">{{ "{:,}".format(token_analysis.overview.input_tokens) }}</div><div class="perf-label">Input Tokens</div><div class="perf-sub">{{ token_analysis.overview.input_output_ratio }}× output</div></div>
+      <div class="perf-card"><div class="perf-value">{{ "{:,}".format(token_analysis.overview.output_tokens) }}</div><div class="perf-label">Output Tokens</div><div class="perf-sub">{{ token_analysis.overview.tokens_per_call | round(0) | int }} tokens / call</div></div>
+      <div class="perf-card"><div class="perf-value">{{ token_analysis.overview.weighted_tps }}</div><div class="perf-label">Weighted tok/s</div><div class="perf-sub">total output / LLM seconds</div></div>
+      <div class="perf-card"><div class="perf-value">{{ token_analysis.overview.tool_calls }}</div><div class="perf-label">Requested Tools</div><div class="perf-sub">{{ token_analysis.overview.invalid_tool_calls }} invalid</div></div>
+      <div class="perf-card"><div class="perf-value">{{ token_analysis.overview.missing_usage_calls }}</div><div class="perf-label">Missing Usage</div><div class="perf-sub">{{ token_analysis.overview.failures }} failed LLM calls</div></div>
+    </div>
+  </div>
+
+  <div class="section" id="section-token-growth">
+    <h2>Token Growth by Turn</h2>
+    <div class="chart-row">
+      <div class="chart-wrap token-chart"><canvas id="tokenTurnChart"></canvas></div>
+      <div class="chart-wrap token-chart"><canvas id="tokenCumulativeChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="section" id="section-token-groups">
+    <h2>Models & Callers</h2>
+    <div class="chart-wrap token-chart"><canvas id="tokenModelChart"></canvas></div>
+    <div class="perf-table-wrap"><table>
+      <thead><tr><th>Model</th><th>Calls</th><th>Input</th><th>Output</th><th>Total</th><th>Tokens/Call</th><th>Weighted tok/s</th><th>Errors</th></tr></thead>
+      <tbody>{% for row in token_analysis.models %}<tr><td>{{ row.model }}</td><td>{{ row.calls }}</td><td>{{ "{:,}".format(row.input_tokens) }}</td><td>{{ "{:,}".format(row.output_tokens) }}</td><td>{{ "{:,}".format(row.total_tokens) }}</td><td>{{ row.tokens_per_call | round(0) | int }}</td><td>{{ row.weighted_tps }}</td><td>{{ row.failures }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="perf-table-wrap" style="margin-top:14px"><table>
+      <thead><tr><th>Caller</th><th>Calls</th><th>Input</th><th>Output</th><th>Total</th><th>Weighted tok/s</th><th>Tool Calls</th></tr></thead>
+      <tbody>{% for row in token_analysis.callers %}<tr><td>{{ row.caller }}</td><td>{{ row.calls }}</td><td>{{ "{:,}".format(row.input_tokens) }}</td><td>{{ "{:,}".format(row.output_tokens) }}</td><td>{{ "{:,}".format(row.total_tokens) }}</td><td>{{ row.weighted_tps }}</td><td>{{ row.tool_calls }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+
+  <div class="section" id="section-token-turns">
+    <h2>Turn Detail</h2>
+    <div class="perf-table-wrap"><table>
+      <thead><tr><th>Run</th><th>Turn</th><th>Model</th><th>Input</th><th>Δ Input</th><th>Output</th><th>Total</th><th>Cumulative</th><th>tok/s</th><th>Tools</th><th>Content / Reasoning chars</th></tr></thead>
+      <tbody>{% for row in token_analysis.turns %}<tr><td>{{ row.run_id }}</td><td>{{ row.turn }}</td><td>{{ row.model }}</td><td>{{ "{:,}".format(row.input_tokens) }}</td><td class="{% if row.input_delta < 0 %}metric-bad{% endif %}">{{ "{:+,}".format(row.input_delta) }}</td><td>{{ "{:,}".format(row.output_tokens) }}</td><td>{{ "{:,}".format(row.total_tokens) }}</td><td>{{ "{:,}".format(row.cumulative_tokens) }}</td><td>{{ row.tokens_per_sec }}</td><td>{{ row.tool_call_count }}</td><td>{{ row.content_len }} / {{ row.reasoning_len }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+
+  <div class="section" id="section-token-anomalies">
+    <h2>Anomalies & Reconciliation</h2>
+    {% if token_analysis.anomalies %}
+    <div class="perf-table-wrap"><table>
+      <thead><tr><th>Run</th><th>Turn</th><th>Type</th><th>Finding</th><th>Input</th><th>Output</th><th>tok/s</th></tr></thead>
+      <tbody>{% for row in token_analysis.anomalies %}<tr class="anomaly-row"><td>{{ row.run_id }}</td><td>{{ row.turn }}</td><td><span class="badge badge-warning">{{ row.code }}</span></td><td>{{ row.message }}</td><td>{{ row.input_tokens }}</td><td>{{ row.output_tokens }}</td><td>{{ row.tokens_per_sec }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}<div class="empty-state">No token anomalies detected.</div>{% endif %}
+    <div class="perf-table-wrap" style="margin-top:14px"><table>
+      <thead><tr><th>Metric</th><th>All Events</th><th>Completed Files</th><th>Flush Summary</th><th>Final State Messages</th><th>Footer Match</th><th>State Match</th></tr></thead>
+      <tbody>{% for row in token_analysis.reconciliation %}<tr><td>{{ row.metric }}</td><td>{{ "{:,}".format(row.all_events) }}</td><td>{{ "{:,}".format(row.complete_events) }}</td><td>{{ "{:,}".format(row.footer) }}</td><td>{{ "{:,}".format(row.state_messages) }}</td><td class="{{ 'metric-good' if row.footer_match else 'metric-bad' }}">{{ row.footer_match }}</td><td class="{{ 'metric-good' if row.state_match else 'metric-bad' }}">{{ row.state_match }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ==== Subagents Tab ==== -->
+<div id="tab-subagents" class="tab-content">
+  {% if subagents.error %}
+    <div class="empty-state">{{ subagents.error }}</div>
+  {% else %}
+  <div class="section" id="section-subagent-overview">
+    <h2>Subagent Overview</h2>
+    <div class="perf-grid">
+      <div class="perf-card"><div class="perf-value">{{ subagents.summary.discovered }}</div><div class="perf-label">Discovered</div><div class="perf-sub">independent session roots</div></div>
+      <div class="perf-card"><div class="perf-value">{{ subagents.summary.total_turns }}</div><div class="perf-label">Total Turns</div><div class="perf-sub">across subagents</div></div>
+      <div class="perf-card"><div class="perf-value">{{ subagents.summary.total_tokens_display }}</div><div class="perf-label">Total Tokens</div><div class="perf-sub">recorded LLM usage</div></div>
+      <div class="perf-card"><div class="perf-value">{{ subagents.summary.total_duration }}</div><div class="perf-label">Known Runtime</div><div class="perf-sub">{{ subagents.summary.known_durations }} measured session(s)</div></div>
+    </div>
+    <div class="perf-note">
+      Discovery is rule-based. A sibling directory is treated as a subagent when it matches
+      <code>subagent_&lt;session-id&gt;_&lt;sub-id&gt;</code> and contains
+      <code>.context/</code>.
+    </div>
+  </div>
+
+  <div class="section" id="section-subagent-sessions">
+    <h2>Subagent Sessions <span style="font-weight:400;font-size:.85rem;color:var(--text-secondary)">({{ subagents.subagent_count }})</span></h2>
+    {% if subagents.subagents %}
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Subagent</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Duration</th>
+            <th>Turns</th>
+            <th>Total Tokens</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in subagents.subagents %}
+          <tr{% if item.anchor_id %} id="{{ item.anchor_id }}"{% endif %}>
+            <td>
+              <a class="deep-link" href="{{ item.report_href }}">{{ item.display_name or ("Sub " ~ item.sub_id) }}</a>
+              {% if item.report_exists %}
+              <span class="badge badge-info">exists</span>
+              {% else %}
+              <span class="badge badge-warning">pending</span>
+              {% endif %}
+              {% if item.config_name %}<div style="font-size:.74rem;color:var(--text-secondary)">yaml: <code>{{ item.config_name }}</code></div>{% endif %}
+              {% if item.last_query %}<div style="font-size:.74rem;color:var(--text-secondary)" title="{{ item.last_query }}">{{ item.last_query | truncate_exp(90) }}</div>{% endif %}
+              <div class="mono" style="font-size:.72rem;color:var(--text-secondary)">{{ item.session_id }}</div>
+            </td>
+            <td class="mono">{{ item.start_time }}</td>
+            <td class="mono">{{ item.end_time }}</td>
+            <td>{{ item.duration }}</td>
+            <td>{{ item.turn_count }}</td>
+            <td title="{{ item.token_status }}">{{ item.total_tokens_display }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      No subagent session roots were discovered. This report only scans sibling directories whose names encode the parent
+      session token.
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- ==== Logs Tab ==== -->
+<div id="tab-logs" class="tab-content">
+  {% if logs.error is defined and logs.error.startswith("Log directory") or logs.error is defined and logs.error.startswith("No .log") %}
+    <div class="empty-state">{{ logs.error }}</div>
+  {% else %}
+  <div class="section" id="section-logs">
+    <div class="search-bar">
+      <input type="text" id="logSearch" placeholder="Search log messages..." oninput="filterLogs()">
+      <select id="logLevel" onchange="filterLogs()">
+        <option value="all">All Levels</option>
+        <option value="ERROR">ERROR</option>
+        <option value="WARNING">WARNING</option>
+      </select>
+      <span style="font-size:.82rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">
+        <span class="badge badge-error">{{ logs.error_count }} errors</span>
+        <span class="badge badge-warning">{{ logs.warning_count }} warnings</span>
+        <span class="match-mode" title="{% if logs.match_mode == 'session_local' %}Session-local logs: {{ logs.matched_log_files | join(', ') }}{% elif logs.match_mode == 'intersection' %}{{ logs.matched_log_files | join(', ') }}{% else %}session_id not found in any log file{% endif %}">{% if logs.match_mode == 'session_local' %}local log{% elif logs.match_mode == 'intersection' %}{{ logs.matched_log_files | length }} file(s){% else %}time only{% endif %}</span>
+        <span id="logPageSummary" class="match-src"></span>
+        <span class="expand-all" onclick="toggleAllLogs()">Expand All</span>
+      </span>
+    </div>
+    <div id="logList">
+      {% for entry in logs.errors %}
+      <div class="log-entry level-ERROR" data-level="ERROR" data-msg="{{ entry.message | lower }}">
+        <div class="summary" onclick="this.parentElement.classList.toggle('open')">
+          <span class="badge badge-error">ERROR</span>
+          <span class="ts">{{ entry.timestamp_str }}</span>
+          <span class="loc">{{ entry.name }}:{{ entry.function }}:{{ entry.line_no }}</span>
+          <span class="msg">{{ entry.message | truncate_exp(200) }}</span>
+          <span class="match-src" title="Match: {{ entry.get('match_type', '?') }}">{{ entry.get('match_type', '') }}</span>
+        </div>
+        <div class="detail">Match: {{ entry.get('match_type', '?') }} | {{ entry.message }}
+File: {{ entry.file }}</div>
+      </div>
+      {% endfor %}
+      {% for entry in logs.warnings %}
+      <div class="log-entry level-WARNING" data-level="WARNING" data-msg="{{ entry.message | lower }}">
+        <div class="summary" onclick="this.parentElement.classList.toggle('open')">
+          <span class="badge badge-warning">WARN</span>
+          <span class="ts">{{ entry.timestamp_str }}</span>
+          <span class="loc">{{ entry.name }}:{{ entry.function }}:{{ entry.line_no }}</span>
+          <span class="msg">{{ entry.message | truncate_exp(200) }}</span>
+          <span class="match-src" title="Match: {{ entry.get('match_type', '?') }}">{{ entry.get('match_type', '') }}</span>
+        </div>
+        <div class="detail">Match: {{ entry.get('match_type', '?') }} | {{ entry.message }}
+File: {{ entry.file }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="pagination" id="logPagination">
+      <span>Rows per page</span>
+      <select id="logPageSize" onchange="filterLogs()">
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+      </select>
+      <button type="button" id="logPrevPage" onclick="changeLogPage(-1)">Prev</button>
+      <span id="logPageIndicator">Page 1 / 1</span>
+      <button type="button" id="logNextPage" onclick="changeLogPage(1)">Next</button>
+    </div>
+    {% if not logs.session_id_in_logs and logs.match_mode == 'time_window_only' %}
+    <p style="font-size:.8rem;color:var(--warning);margin-bottom:8px;">Session ID not found in log files — using time window only. Results may include entries from other sessions within the same time range.</p>
+    {% endif %}
+    {% if logs.errors | length == 0 and logs.warnings | length == 0 %}
+    <div class="empty-state">No errors or warnings found in log files.</div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+</div>
+</div>
+
+<footer>DataAgent Analyzer &mdash; Generated at {{ generated_at }}</footer>
+</div>
+
+<script>
+// ---- Delegated long-text expansion, safe inside clickable parent rows ----
+document.addEventListener('click', function(event) {
+  const toggle = event.target.closest('.tr-toggle');
+  if (!toggle) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const container = toggle.closest('.tr-expand');
+  const shortText = container.querySelector('.tr-short');
+  const fullText = container.querySelector('.tr-full');
+  const expanded = container.classList.toggle('tr-expanded');
+  shortText.hidden = expanded;
+  fullText.hidden = !expanded;
+  toggle.setAttribute('aria-expanded', String(expanded));
+});
+
+// ---- Cross-tab deep links ----
+document.addEventListener('click', function(event) {
+  const link = event.target.closest('[data-target-tab]');
+  if (!link) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const targetId = link.getAttribute('href').slice(1);
+  switchTab(link.dataset.targetTab);
+  requestAnimationFrame(() => {
+    const target = document.getElementById(targetId);
+    focusReportTarget(target);
+  });
+});
+
+// ---- Action detail toggle ----
+function toggleActionDetail(header, event) {
+  if (event?.target?.closest('a, button, input, select, textarea')) return;
+  const detail = header.nextElementSibling;
+  const toggle = header.querySelector('.tl-toggle');
+  const isOpen = detail.classList.toggle('open');
+  toggle.textContent = isOpen ? '−' : '+';
+}
+
+function focusReportTarget(target) {
+  if (!target) return;
+  if (target.classList.contains('timeline-entry')) {
+    focusTimelineEntry(target);
+    return;
+  }
+  target.scrollIntoView({block:'center'});
+  target.classList.remove('link-target');
+  void target.offsetWidth;
+  target.classList.add('link-target');
+  if (target.id) history.replaceState(null, '', `#${target.id}`);
+}
+
+function focusTimelineEntry(target) {
+  if (!target) return;
+  target.classList.remove('search-hidden');
+  target.scrollIntoView({block:'center'});
+  target.classList.remove('link-target');
+  void target.offsetWidth;
+  target.classList.add('link-target');
+  const header = target.querySelector('.tl-action-header');
+  const detail = target.querySelector('.tl-action-detail');
+  if (header && detail && !detail.classList.contains('open')) toggleActionDetail(header, null);
+  if (target.id) history.replaceState(null, '', `#${target.id}`);
+}
+
+// ---- Trajectory search over collapsed Timeline content ----
+let trajectoryMatches = [];
+let trajectoryMatchIndex = -1;
+
+function timelineEntries() {
+  return Array.from(document.querySelectorAll('#section-timeline .timeline-entry'));
+}
+
+function setTrajectorySearchCount(total, current) {
+  const count = document.getElementById('trajectorySearchCount');
+  if (!count) return;
+  count.textContent = total ? `${current + 1}/${total} matches` : '0 matches';
+}
+
+function clearTrajectoryMatchState() {
+  timelineEntries().forEach(entry => {
+    entry.classList.remove('search-match', 'search-current', 'search-hidden');
+  });
+  trajectoryMatches = [];
+  trajectoryMatchIndex = -1;
+  setTrajectorySearchCount(0, -1);
+}
+
+function searchTrajectory() {
+  const input = document.getElementById('trajectorySearch');
+  const onlyMatches = document.getElementById('trajectorySearchOnly')?.checked;
+  const query = (input?.value || '').trim().toLowerCase();
+  clearTrajectoryMatchState();
+  if (!query) return;
+
+  const entries = timelineEntries();
+  trajectoryMatches = entries.filter(entry => entry.textContent.toLowerCase().includes(query));
+  entries.forEach(entry => {
+    const matched = trajectoryMatches.includes(entry);
+    entry.classList.toggle('search-match', matched);
+    if (onlyMatches && !matched) entry.classList.add('search-hidden');
+  });
+  if (!trajectoryMatches.length) {
+    setTrajectorySearchCount(0, -1);
+    return;
+  }
+  trajectoryMatchIndex = 0;
+  setTrajectorySearchCount(trajectoryMatches.length, trajectoryMatchIndex);
+  focusTrajectoryMatch();
+}
+
+function focusTrajectoryMatch() {
+  timelineEntries().forEach(entry => entry.classList.remove('search-current'));
+  const target = trajectoryMatches[trajectoryMatchIndex];
+  if (!target) return;
+  target.classList.add('search-current');
+  setTrajectorySearchCount(trajectoryMatches.length, trajectoryMatchIndex);
+  focusTimelineEntry(target);
+}
+
+function jumpTrajectoryMatch(delta) {
+  if (!trajectoryMatches.length) {
+    searchTrajectory();
+  }
+  if (!trajectoryMatches.length) return;
+  trajectoryMatchIndex = (
+    trajectoryMatchIndex + delta + trajectoryMatches.length
+  ) % trajectoryMatches.length;
+  focusTrajectoryMatch();
+}
+
+function clearTrajectorySearch() {
+  const input = document.getElementById('trajectorySearch');
+  if (input) input.value = '';
+  const onlyMatches = document.getElementById('trajectorySearchOnly');
+  if (onlyMatches) onlyMatches.checked = false;
+  clearTrajectoryMatchState();
+}
+
+function handleTrajectorySearchKey(event) {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  jumpTrajectoryMatch(event.shiftKey ? -1 : 1);
+}
+
+// ---- Markdown rendering for State entries ----
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof marked !== 'undefined') {
+    marked.setOptions({ breaks: true, gfm: true });
+    document.querySelectorAll('.state-md').forEach(el => {
+      el.innerHTML = marked.parse(el.textContent || '');
+    });
+  }
+  // Highlight error keywords in output
+  highlightErrorKeywords();
+});
+
+// ---- Error keyword highlighting ----
+function highlightErrorKeywords() {
+  const patterns = [
+    /\b(error|failed|failure|exception|traceback|timeout|refused|denied|unauthorized|forbidden|invalid|not found|missing|broken|crash|killed|oom)\b/gi,
+    /\b(错误|失败|异常|超时|拒绝|未授权|无效|未找到|缺失|崩溃)\b/gi
+  ];
+  document.querySelectorAll('.error-highlight').forEach(el => {
+    let html = el.innerHTML;
+    // Only process text nodes, skip if already has hl spans
+    if (html.includes('hl-error')) return;
+    patterns.forEach(re => {
+      html = html.replace(re, '<span class="hl-error">$1</span>');
+    });
+    el.innerHTML = html;
+  });
+}
+
+// ---- Tab switching ----
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector(`#tab-${name}`).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    if (b.dataset.tab === name) b.classList.add('active');
+  });
+  updateIndexForTab(name);
+  requestAnimationFrame(() => {
+    if (name === 'time') {
+      const activeRun = document.querySelector('#section-time-timeline .run-tab-btn.active');
+      if (activeRun) createPerformanceTimeline(activeRun.dataset.run);
+    }
+    document.querySelectorAll(`#tab-${name} canvas`).forEach(canvas => {
+      if (typeof Chart === 'undefined') return;
+      const chart = Chart.getChart(canvas);
+      if (chart) chart.resize();
+    });
+  });
+}
+
+// ---- Responsive report index and scroll position tracking ----
+let indexObserver;
+
+function setActiveIndex(targetId) {
+  document.querySelectorAll('.index-link').forEach(link => {
+    const active = link.getAttribute('href') === `#${targetId}`;
+    link.classList.toggle('active', active);
+    if (active) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  });
+}
+
+function observeActiveSections(tabName) {
+  if (indexObserver) indexObserver.disconnect();
+  const links = Array.from(document.querySelectorAll(`.index-link[data-index-tab="${tabName}"]:not([hidden])`));
+  const sections = links
+    .map(link => document.querySelector(link.getAttribute('href')))
+    .filter(Boolean);
+  if (!sections.length || typeof IntersectionObserver === 'undefined') return;
+
+  indexObserver = new IntersectionObserver(entries => {
+    const visible = entries
+      .filter(entry => entry.isIntersecting)
+      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    const visibleQueries = visible.filter(entry =>
+      entry.target.classList.contains('timeline-entry')
+    );
+    const candidates = visibleQueries.length ? visibleQueries : visible;
+    if (candidates.length) setActiveIndex(candidates[0].target.id);
+  }, { rootMargin: '0px 0px -75% 0px', threshold: 0 });
+  sections.forEach(section => indexObserver.observe(section));
+}
+
+function updateIndexForTab(name) {
+  const visibleLinks = [];
+  document.querySelectorAll('.index-link').forEach(link => {
+    link.hidden = link.dataset.indexTab !== name;
+    if (!link.hidden) visibleLinks.push(link);
+  });
+  if (visibleLinks.length) {
+    setActiveIndex(visibleLinks[0].getAttribute('href').slice(1));
+  }
+  observeActiveSections(name);
+}
+
+document.addEventListener('click', function(event) {
+  const link = event.target.closest('.index-link');
+  if (!link) return;
+  event.preventDefault();
+  const tabName = link.dataset.indexTab;
+  const targetId = link.getAttribute('href').slice(1);
+  switchTab(tabName);
+  requestAnimationFrame(() => {
+    const target = document.getElementById(targetId);
+    if (target) target.scrollIntoView({ block: 'start' });
+    setActiveIndex(targetId);
+    history.replaceState(null, '', `#${targetId}`);
+  });
+});
+
+// ---- Table filtering ----
+function filterTable(tableId, inputId) {
+  const q = document.getElementById(inputId).value.toLowerCase();
+  document.querySelectorAll(`#${tableId} tbody tr`).forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+// ---- Table sorting ----
+function sortTable(tableId, colIdx) {
+  const table = document.getElementById(tableId);
+  const tbody = table.querySelector('tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const dir = table.dataset.sortDir === 'asc' ? -1 : 1;
+  table.dataset.sortDir = dir === 1 ? 'asc' : 'desc';
+  rows.sort((a,b) => {
+    const ca = a.children[colIdx]?.textContent.trim() || '';
+    const cb = b.children[colIdx]?.textContent.trim() || '';
+    return ca.localeCompare(cb) * dir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function filterTimeComponents(kind, button) {
+  document.querySelectorAll('#timeComponentTable tbody tr').forEach(row => {
+    row.style.display = kind === 'all' || row.dataset.kind === kind ? '' : 'none';
+  });
+  document.querySelectorAll('.component-filter button').forEach(item => item.classList.remove('active'));
+  button.classList.add('active');
+}
+
+const performanceTimelineCharts = {};
+let performanceTimelineByRun = {};
+
+function switchRunPanel(group, runId, button) {
+  const section = button.closest('.section');
+  section.querySelectorAll(`.${group}-run-panel`).forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.run === runId);
+  });
+  button.parentElement.querySelectorAll('.run-tab-btn').forEach(item => item.classList.remove('active'));
+  button.classList.add('active');
+  if (group === 'timeline') {
+    requestAnimationFrame(() => createPerformanceTimeline(runId));
+  }
+}
+
+const percentageLabelsPlugin = {
+  id: 'percentageLabels',
+  afterDatasetsDraw(chart, _args, options) {
+    if (!options || options.display !== true) return;
+    const ctx = chart.ctx;
+    const threshold = options.threshold ?? 3;
+    ctx.save();
+    ctx.font = '600 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      const meta = chart.getDatasetMeta(datasetIndex);
+      meta.data.forEach((element, dataIndex) => {
+        const value = Number(dataset.data[dataIndex] || 0);
+        let total = 0;
+        if (chart.config.type === 'doughnut' || options.mode === 'dataset') {
+          total = dataset.data.reduce((sum, item) => sum + Number(item || 0), 0);
+        } else {
+          total = chart.data.datasets.reduce(
+            (sum, item) => sum + Number(item.data[dataIndex] || 0), 0
+          );
+        }
+        const percentage = total > 0 ? value / total * 100 : 0;
+        if (!value || percentage < threshold) return;
+        let position = element.tooltipPosition();
+        if (options.position === 'segmentCenter') {
+          const props = element.getProps(['x', 'y', 'base'], true);
+          position = chart.options.indexAxis === 'y'
+            ? {x:(props.base + props.x) / 2, y:props.y}
+            : {x:props.x, y:(props.base + props.y) / 2};
+        }
+        ctx.fillStyle = chart.config.type === 'doughnut' ? '#fff' : '#233142';
+        ctx.fillText(`${percentage.toFixed(1)}%`, position.x, position.y);
+      });
+    });
+    ctx.restore();
+  }
+};
+if (typeof Chart !== 'undefined') {
+  Chart.register(percentageLabelsPlugin);
+}
+
+function createPerformanceTimeline(runId) {
+  if (typeof Chart === 'undefined') return;
+  if (performanceTimelineCharts[runId]) {
+    performanceTimelineCharts[runId].resize();
+    return;
+  }
+  const canvas = Array.from(document.querySelectorAll('#section-time-timeline canvas'))
+    .find(item => item.dataset.run === runId);
+  const shown = performanceTimelineByRun[runId] || [];
+  if (!canvas || !shown.length) return;
+  const kindColors = {llm:'#8e44ad',tool:'#27ae60',hook:'#f39c12'};
+  performanceTimelineCharts[runId] = new Chart(canvas, {
+    type:'bar',
+    data:{
+      labels:shown.map(x=>`${x.kind} · ${x.name}`),
+      datasets:[{label:'Measured interval',data:shown.map(x=>[x.start_ms,x.start_ms+x.elapsed_ms]),backgroundColor:shown.map(x=>x.success ? (kindColors[x.kind] || '#95a5a6') : '#e74c3c'),borderRadius:3,borderSkipped:false}]
+    },
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        percentageLabels:{display:false},
+        tooltip:{callbacks:{label:ctx=>`${shown[ctx.dataIndex].start_time} · ${shown[ctx.dataIndex].duration}`}}
+      },
+      scales:{x:{title:{display:true,text:'Milliseconds since Run start'}},y:{ticks:{autoSkip:false,font:{size:9}}}}
+    }
+  });
+}
+
+// ---- Log filtering ----
+let logCurrentPage = 1;
+
+function filterLogs() {
+  const q = document.getElementById('logSearch').value.toLowerCase();
+  const level = document.getElementById('logLevel').value;
+  document.querySelectorAll('#logList .log-entry').forEach(el => {
+    const matchLevel = level === 'all' || el.dataset.level === level;
+    const matchMsg = !q || el.dataset.msg.includes(q);
+    el.classList.toggle('log-filter-hidden', !(matchLevel && matchMsg));
+  });
+  logCurrentPage = 1;
+  applyLogPagination();
+}
+
+function changeLogPage(delta) {
+  logCurrentPage += delta;
+  applyLogPagination();
+}
+
+function applyLogPagination() {
+  const pageSizeEl = document.getElementById('logPageSize');
+  const pageSize = pageSizeEl ? Number(pageSizeEl.value || 100) : 100;
+  const allEntries = Array.from(document.querySelectorAll('#logList .log-entry'));
+  const visibleEntries = allEntries.filter(el => !el.classList.contains('log-filter-hidden'));
+  const pageCount = Math.max(1, Math.ceil(visibleEntries.length / pageSize));
+  logCurrentPage = Math.min(Math.max(logCurrentPage, 1), pageCount);
+  const start = (logCurrentPage - 1) * pageSize;
+  const end = start + pageSize;
+  allEntries.forEach(el => el.classList.add('log-page-hidden'));
+  visibleEntries.forEach((el, index) => {
+    el.classList.toggle('log-page-hidden', index < start || index >= end);
+  });
+  const pageIndicator = document.getElementById('logPageIndicator');
+  const pageSummary = document.getElementById('logPageSummary');
+  const prev = document.getElementById('logPrevPage');
+  const next = document.getElementById('logNextPage');
+  if (pageIndicator) pageIndicator.textContent = `Page ${logCurrentPage} / ${pageCount}`;
+  if (pageSummary) pageSummary.textContent = `${visibleEntries.length} matched`;
+  if (prev) prev.disabled = logCurrentPage <= 1;
+  if (next) next.disabled = logCurrentPage >= pageCount;
+}
+
+// ---- Expand/collapse all logs ----
+function toggleAllLogs() {
+  const entries = document.querySelectorAll('#logList .log-entry:not(.log-filter-hidden):not(.log-page-hidden)');
+  const anyClosed = Array.from(entries).some(e => !e.classList.contains('open'));
+  entries.forEach(e => { if (anyClosed) e.classList.add('open'); else e.classList.remove('open'); });
+}
+
+// ---- Charts ----
+document.addEventListener('DOMContentLoaded', function() {
+  updateIndexForTab('trajectory');
+  applyLogPagination();
+  if (typeof Chart === 'undefined') return;
+  const colors = ['#4a90d9','#e74c3c','#f39c12','#27ae60','#8e44ad','#1abc9c','#e67e22','#2c3e50','#95a5a6','#16a085'];
+
+  {% if not trajectory.error %}
+  // Tool call bar chart
+  const toolStats = {{ trajectory.tool_stats | tojson }};
+  if (toolStats.length > 0) {
+    new Chart(document.getElementById('toolBarChart'), {
+      type: 'bar',
+      data: {
+        labels: toolStats.map(t => t.tool),
+        datasets: [
+          { label: 'Success', data: toolStats.map(t => t.calls - t.failures), backgroundColor: colors[3], borderRadius: 4 },
+          { label: 'Failures', data: toolStats.map(t => t.failures), backgroundColor: 'rgba(231,76,60,0.75)', borderRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position:'top' },
+          percentageLabels: { display:false },
+          tooltip: { callbacks: {
+            footer: ctx => ctx[0].dataset.label === 'Failures'
+              ? 'Total: ' + toolStats[ctx[0].dataIndex].calls + ' calls, ' + toolStats[ctx[0].dataIndex].failures + ' failed'
+              : 'Total: ' + toolStats[ctx[0].dataIndex].calls + ' calls'
+          }}
+        },
+        scales: {
+          y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Count' } },
+          x: { stacked: true, ticks: { maxRotation: 45 } }
+        }
+      }
+    });
+  }
+
+  // Success pie chart
+  const totalSuccess = toolStats.reduce((s,t) => s + t.calls - t.failures, 0);
+  const totalFail = toolStats.reduce((s,t) => s + t.failures, 0);
+  if (totalSuccess + totalFail > 0) {
+    new Chart(document.getElementById('successPieChart'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Success','Failed'],
+        datasets: [{ data: [totalSuccess, totalFail], backgroundColor: [colors[3], colors[1]], borderWidth: 0 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position:'bottom' },
+          title: { display:true, text:'Tool Call Success Rate' },
+          percentageLabels: { display:false }
+        }
+      }
+    });
+  }
+
+  // Node type distribution
+  const nodeTypes = {{ trajectory.node_type_counts | tojson }};
+  const ntLabels = Object.keys(nodeTypes);
+  if (ntLabels.length > 0) {
+    new Chart(document.getElementById('nodeTypeChart'), {
+      type: 'bar',
+      data: {
+        labels: ntLabels,
+        datasets: [{ label: 'Count', data: Object.values(nodeTypes), backgroundColor: colors.slice(0, ntLabels.length), borderRadius: 4 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: {
+          legend: { display: false },
+          percentageLabels: { display:false }
+        },
+        scales: { x: { beginAtZero: true, title: { display:true, text:'Count' } } }
+      }
+    });
+  }
+  {% endif %}
+
+  {% if not time_analysis.error %}
+  const timeBreakdowns = {{ time_analysis.breakdowns | tojson }};
+  const pieDefinitions = [
+    ['hook', 'timeHookPie', 'Hook Time Composition'],
+    ['llm', 'timeLlmPie', 'LLM Time Composition'],
+    ['node', 'timeNodePie', 'Node Time Composition'],
+    ['tool', 'timeToolPie', 'Tool Time Composition']
+  ];
+  pieDefinitions.forEach(([kind, canvasId, title]) => {
+    const rows = timeBreakdowns[kind] || [];
+    if (!rows.length) return;
+    const total = rows.reduce((sum,row)=>sum+row.total_ms,0);
+    new Chart(document.getElementById(canvasId), {
+      type:'doughnut',
+      data:{labels:rows.map(x=>`${x.name} · ${(x.total_ms / total * 100).toFixed(1)}%`),datasets:[{data:rows.map(x=>x.total_ms),backgroundColor:rows.map((_,index)=>colors[index % colors.length]),borderWidth:1,borderColor:'#fff'}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{
+        title:{display:true,text:title},
+        legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}},
+        percentageLabels:{display:true,mode:'dataset',threshold:1},
+        tooltip:{callbacks:{label:ctx=>`${rows[ctx.dataIndex].name}: ${(ctx.raw / 1000).toFixed(2)} s · ${(ctx.raw / total * 100).toFixed(1)}% · ${rows[ctx.dataIndex].count} event(s)`}}
+      }}
+    });
+  });
+  performanceTimelineByRun = {{ time_analysis.timeline_by_run | tojson }};
+  {% endif %}
+
+  {% if not token_analysis.error %}
+  const tokenTurns = {{ token_analysis.turns | tojson }};
+  const turnLabels = tokenTurns.map(x=>`R${x.run_id} T${x.turn}`);
+  if (tokenTurns.length) {
+    new Chart(document.getElementById('tokenTurnChart'), {
+      type:'bar',
+      data:{labels:turnLabels,datasets:[
+        {label:'Input',data:tokenTurns.map(x=>x.input_tokens),backgroundColor:'#4a90d9'},
+        {label:'Output',data:tokenTurns.map(x=>x.output_tokens),backgroundColor:'#27ae60'}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:'Tokens per Turn'},percentageLabels:{display:false}},scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}}}
+    });
+    new Chart(document.getElementById('tokenCumulativeChart'), {
+      type:'line',
+      data:{labels:turnLabels,datasets:[{label:'Cumulative tokens',data:tokenTurns.map(x=>x.cumulative_tokens),borderColor:'#8e44ad',backgroundColor:'rgba(142,68,173,.12)',fill:true,tension:.25}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{title:{display:true,text:'Cumulative LLM Traffic'}},scales:{y:{beginAtZero:true}}}
+    });
+  }
+  const tokenModels = {{ token_analysis.models | tojson }};
+  if (tokenModels.length) {
+    new Chart(document.getElementById('tokenModelChart'), {
+      type:'bar',
+      data:{labels:tokenModels.map(x=>x.model),datasets:[
+        {label:'Input',data:tokenModels.map(x=>x.input_tokens),backgroundColor:'#4a90d9'},
+        {label:'Output',data:tokenModels.map(x=>x.output_tokens),backgroundColor:'#27ae60'}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{percentageLabels:{display:true,mode:'category',threshold:1,position:'segmentCenter'}},scales:{x:{stacked:true,beginAtZero:true},y:{stacked:true}}}
+    });
+  }
+  {% endif %}
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,521 @@
+# DataAgent Flex Agent 全量配置参考
+#
+# 用途：展示所有可配置项及常见可选值；实际项目请按需删减，勿直接用于生产。
+#
+# 配置合并（ConfigManager.reload → merge_layers）：
+#   1. flex_default_configs.yaml（default 层，最低优先级）
+#   2. 激活的 Suite 层（若有 SUITE.include，按 priority 从低到高）
+#   3. 本文件用户实际写出的 key（user 层，最高优先级）
+#   4. .env / 环境变量（LLM 密钥等，维持现网，高于 YAML 合并结果）
+#
+# 合并语义（与旧版 _deep_merge 的差异，启用 Suite 后全局生效）：
+#   - dict / 标量：高优先级层覆盖低层
+#   - list（TOOLS.*、HOOKS 槽位、SUBAGENT_CONFIGS、RESOURCES、prompt_template.system/user 等）：
+#     跨层追加，高优在前；用户层不能通过写 list 清空下层已合并项
+#   - ACTOR_LOOP / PRE_WORKFLOW / POST_WORKFLOW：按 node 结构合并（用户可新增 node；Suite 不可）
+#   - OVERRIDE_KEYS：用户 YAML 顶层列表；列出的 top-level key 在 merge 后以用户值整段覆盖（不追加、不保留 default/Suite 同 key 内容）
+#     典型场景：ACTOR_LOOP 使用与 default 不同的 node 名（如 nl2sql_react 而非 planner），须 override 否则会多出 default 节点。
+#     示例：
+#       OVERRIDE_KEYS:
+#         - ACTOR_LOOP
+#       ACTOR_LOOP:
+#         - node: "nl2sql_react"
+#           module: "dataagent.core.flex.nodes.planner.Planner"
+#           chat_model:
+#             name: "qwen3"
+#         - node: "executor"
+#           module: "dataagent.core.flex.nodes.executor.Executor"
+#           max_concurrency: 5
+#     完整可参考：dataagent/core/flex/examples/ueg.yaml
+#
+# 变量插值（config_manager 在加载后解析）：
+#   - yaml.xxxxxxx                       引用yaml文件内的配置项
+#   - ${MODEL.chat_model.params.model}   引用同文件内其它配置项
+#   - $env{DEEPSEEK_API_KEY}             引用环境变量（未设置则启动失败）
+#
+# 入口：
+#   DataAgent.from_config("dataagent/core/flex/examples/example.yaml")
+#
+# 顶层 enable_human_feedback 与 AGENT_CONFIG.enable_human_feedback 等价（ToolManager 两处都会读）。
+
+# ── 跨会话召回（cross_session_recall hook 读取，可选） ───────────────────────
+CROSS_SESSION_RECALL:
+  enable: true
+  top_k: 3
+  max_chars_per_session: 1500
+
+# ── 工具专用顶层键（可选） ───────────────────────────────────────────────────
+# TAVILY_API_KEY: $env{TAVILY_API_KEY}             # MCP 搜索工具 env 注入
+
+# ── 工作区（可选） ───────────────────────────────────────────────────────────
+# path / allow_path 非空时须为绝对路径（允许 ~/...）；相对路径会在加载时报错。
+WORKSPACE:
+  path: "/tmp/dataagent_workspace"   # Agent 工作目录；空/null 则走运行时默认
+  target_path: "/tmp/dataagent_output"  # 部分 schema 导出工具写入目录（search_udf_functions 等）
+  allow_path:                    # sub_agent_tool / SUBAGENT_CONFIGS 运行期可访问的额外绝对路径白名单
+    - "$env{PWD}/dataagent/core/flex/examples"
+
+# ── Session 框架目录布局（可选）────────────────────────────────────────────
+# 与 WORKSPACE.path 配合：框架落盘根为 {workspace}，下列键为相对路径段名（禁止绝对路径 / ..）。
+# 未写出的键使用 flex_default_configs.yaml 默认值；仅覆盖需要改的键即可。
+WORKSPACE_POLICY:
+  layout:
+    session_memory_dir: ".memory"               # 会话级 memory：messages.json、snapshot.json、context_dump 等
+    context_dir: ".context"                     # Context 轨迹：Run*_Sub*.json/meta、HTML 可视化、backup、*_summary.md
+    performance_dir: ".performance"             # 性能采集 jsonl（需 DATAAGENT_PERFORMANCE_ENABLED=1）
+    workers_dir: "workers"                      # Swarm / sub_agent 持久化：{workspace}/workers/{sub_id}/
+    subagents_dir: "subagents"                  # Job 异步 subagent：{workspace}/<subagents_dir>/{id}/
+    jobs_dir: "jobs"                            # Job 元数据：{workspace}/<jobs_dir>/{job_id}/
+    runtime_dump_dir: ".runtime"                # 合并配置 debug dump（dataagent_config_*.yaml）
+    tool_outputs_dir: ".dataagent/tool_outputs" # 工具超长结果落盘目录
+
+# SUBAGENT_CONFIGS: 非空时隐式注册 sub_agent_tool（勿在 TOOLS.local_functions 声明）
+# SUBAGENT_CONFIGS:
+#   - path: "/abs/path/to/subagent.yaml"
+
+# ── Agent 主配置 ─────────────────────────────────────────────────────────────
+AGENT_CONFIG:
+  name: "Example Agent"
+  version: "1.0"
+  description: "全量配置示例 Agent"
+  # backend: 工作流/LLM 适配后端
+  #   - langgraph（默认）
+  #   - openjiuwen
+  backend: "langgraph"
+  # type: Agent 引擎类型（DataAgent.select_engine 分流）
+  #   - react（默认，Flex Agent）
+  #   - nl2sql（NL2SQL 专用流水线，需 CORE 段）
+  type: "react"
+  debug: true                   # 调试模式，默认 true
+  enable_human_feedback: false  # HITL：启用 HITL 功能， 触发条件见 SCENARIO.chat.human_feedback_conditions
+  terminal_mode: true           # chat() 下终端交互模式，默认 true
+  enable_portrait: false        # 启用 portraiter hook 的 LLM 用户画像
+  # Actor 最大轮次（curr_iter）；null/省略 = 业务不限制。
+  # 图引擎 recursion_limit：未配 max_iter 时默认 DEFAULT_WORKFLOW_RECURSION_LIMIT(200)；
+  # 配了则取 max(200, max_iter*MAX_ITER_TO_RECURSION_FACTOR(10))，见 dataagent.utils.constants。
+  max_iter: null
+  token_limit: null             # token 上限；null/省略 = 不限制
+  hierarchy: "MAIN"             # 运行时层级标识（如子 Agent 为 SUB）
+  relevant_skills_limit: null   # planner skill 选择上限；0 = 禁用 LLM 选 skill
+  # repetition_leniency: LLM/tool 输出重复检测宽松系数（越大越松；省略=1.0）
+  # 次数类阈值 × 系数，多样性阈值 ÷ 系数。长 JSON tool args 误报时可调到 3.0
+  repetition_leniency: 1.0
+
+# 与 AGENT_CONFIG.enable_human_feedback 等效，ToolManager 也会读顶层键
+# enable_human_feedback: false
+
+# 启用 suite功能，并激活 example_suite
+SUITE:
+  include:
+    - example_suite
+
+# ── 运行模式（通常由 DataAgent.select_engine 注入，一般无需手写） ─────────────
+# 决定 SCENARIO 下取哪一段 instructions。
+# mode: "chat"
+
+# ── 模型配置 ─────────────────────────────────────────────────────────────────
+# 键名即 MODEL 槽位；节点 chat_model.name / hook model 引用这些键。
+# provider 用于读取环境变量 {PROVIDER}_BASE_URL / {PROVIDER}_API_KEY
+# 常见 provider: bailian | deepseek | openai | local | embedding 等
+MODEL:
+  chat_model:
+    model_type: "chat"          # chat | embedding
+    provider: "bailian"
+    tool_call_mode: "native"    # native | structured
+    params:
+      model: "deepseek-v3.2"
+      temperature: 0.7
+      enable_thinking: true     # 部分模型支持思考链
+      # base_url: "https://..." # 非空时覆盖 {PROVIDER}_BASE_URL
+      # api_key: "sk-xxx"       # 非生产推荐；通常走 {PROVIDER}_API_KEY 环境变量
+      timeout: 300
+      # enable_cache_control: false  # 自部署端点（vLLM Qwen 30B 等）不支持 list content 时禁用
+      # disable_response_compression: true  # 自部署端点响应压缩异常时禁用 gzip
+  text_embedding:
+    name: "text_embedding"      # 可选显式 name，默认同键名
+    model_type: "embedding"
+    provider: "bailian"
+    params:
+      model: "text-embedding-v4"
+
+  # 意图理解专用模型
+  intent_llm:
+    provider: "deepseek"
+    model_type: "chat"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+      base_url: "https://api.deepseek.com"
+      api_key: "xxxxxxxxxxx"  # 从环境变量 DEEPSEEK_API_KEY 读取
+
+# ── 意图模板（可选，配合 intent_understanding hook） ────────────────────────
+INTENT_TEMPLATE:
+  fields: [dataset, metric, time_range]
+  template: |
+    分析数据集 {{ dataset }} 中 {{ metric }} 在 {{ time_range }} 的趋势。
+  example: |
+    示例：分析数据集 sales 中 revenue 在 2025 年 的趋势。
+
+# ── 场景 / 指令（可选） ─────────────────────────────────────────────────────
+# 按 mode（或任意子键）组织；build_agent_env 会提取 instructions 注入 env。
+# structured_instructions 可写在 SCENARIO 顶层（reward_utils 读取）或 chat 子键下（data_engineering 示例）。
+SCENARIO:
+  # 顶层 structured_instructions（reward 约束图用）
+  structured_instructions:
+    - "tool_a -> tool_b"
+  # personal: "场景人设描述（自定义键，按需使用）"
+  chat:
+    input: "用户输入描述"
+    task: "Agent 要完成的目标"
+    instructions: |
+      在此注入先验知识、行为约束、工具使用顺序等
+    # human_feedback_conditions: 可选；可配 str 或者 list
+    # human_feedback_conditions:
+    #   - "调用xxx工具之前"
+    #   - "调用yyy工具之前"
+
+# ── 工作流节点 ───────────────────────────────────────────────────────────────
+# 默认由 flex_default_configs.yaml 提供 PRE/ACTOR/POST；用户 YAML 可 patch 已有 node（同名合并）。
+# 若需自定义 node 名或整段替换 workflow，声明 OVERRIDE_KEYS（见文件头说明；示例见 ueg.yaml）：
+OVERRIDE_KEYS:
+  - ACTOR_LOOP
+# 每个节点必填: node, module；可选: chat_model, prompt_template, 及节点专有参数。
+PRE_WORKFLOW: []
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"        # 引用 MODEL.chat_model
+    # prompt_template: 与 node/module/chat_model 同级
+    # 每个 message_type（system/user）支持单条或列表；每条二选一 path 或 content；path 须绝对路径或 ~/...
+    prompt_template:
+      system:
+        - content: |
+            追加到 planner system prompt 的 Jinja2 片段1（可选）。
+        - content: |
+            追加到 planner system prompt 的 Jinja2 片段2（可选）。
+        # 以下 path 须为真实存在的绝对路径；示例占位请勿直接启用
+        # - path: "/tmp/prompt_test/planner_system1.md"
+        # - path: "/tmp/prompt_test/planner_system2.md"
+      user:
+        - content: |
+            追加到 planner user prompt 的 Jinja2 片段（可选）。
+        - path: "/tmp/prompt_test/user_extra.md"   # 须先创建该文件
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 8192  # 工具结果截断长度，默认 8192
+    max_concurrency: 5            # 工具并发上限（可选，正整数）
+
+POST_WORKFLOW: []
+
+# ── Hook（可选，默认见 flex_default_configs.yaml） ───────────────────────────
+# 内置 hook name: pruner | portraiter | pre_metadata_tracker | post_metadata_tracker | cross_session_recall
+# 带 model 的 hook 项须为字典：name + model（引用 MODEL 槽位）
+HOOKS:
+  agent:
+    post:
+      - name: portraiter
+      # - dataagent.core.flex.hooks.portraiter.portraiter # 与以上 name: portraiter 等价
+  nodes:
+    planner:
+      pre:
+        - name: pruner
+        # - dataagent.core.flex.hooks.pruner.pruner # 与以上 name: pruner 等价
+        # - name: cross_session_recall
+        #   model: chat_model
+        - name: intent_understanding
+          model: intent_llm
+    executor:
+      pre: []
+      post: []
+
+# ── 工具（可选） ─────────────────────────────────────────────────────────────
+TOOLS:
+  # builtin: 覆盖内置 local tool 注册列表（高级，一般省略）
+  # builtin: []
+
+  # skills: 显式 allowlist；省略某来源 = 禁用该来源 skill
+  skills:
+    builtin:
+      - pdf
+      # - docx
+    custom_dirs:
+      - /abs/path/to/custom_skills
+
+  local_functions:
+  # sub_agent_tool 由 SUBAGENT_CONFIGS 隐式注册，勿在 local_functions 中声明。
+    - module: "dataagent.actions.tools.local_tool.tools"
+      function: "natural_language_to_sql"   # function 与 name 二选一；name 可覆盖注册名
+      name: "natural_language_to_sql"
+      category: "general"
+      description: |
+        工具描述（可选，覆盖函数 docstring）。
+      config:                      # 传给 register_local_tool 的额外参数
+        llm_model: "chat_model"
+      #  可选，单次 tool call 的 pre/post（见 hooks/examples/example_hooks.py）
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.example_hooks.pre_hook1
+          - dataagent.actions.tools.hooks.examples.example_hooks.pre_hook2
+        post:
+          - dataagent.actions.tools.hooks.examples.example_hooks.post_hook1
+          - dataagent.actions.tools.hooks.examples.example_hooks.post_hook2
+
+    # semantic-service 工具示例：语义层表清单
+    - module: "dataagent.actions.tools.semantic_tool.basic_retrieval"
+      function: "list_semantic_layer_tables"
+      name: "list_semantic_layer_tables"
+      category: "semantic"
+
+    # semantic-service 工具示例：NL2SQL 表/列语义召回
+    - module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "search_tables_and_columns"
+      name: "search_tables_and_columns"
+      category: "semantic"
+
+  mcp_servers:
+    - server_id: "nl2sql"
+      transport_type: "stdio"      # stdio | sse | ...
+      config:
+        command: "python"
+        args: ["-m", "dataagent.actions.tools.mcp_tool.nl2sql"]
+        env: {}
+        cwd: null
+      description: "nl2sql mcp server"
+      # 该 server 下所有 discovered 工具共用以下 hooks
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.example_hooks.audit_pre
+        post:
+          - dataagent.actions.tools.hooks.examples.example_hooks.audit_post
+
+  # A2A Agent 注册
+  A2A:
+    - my_a2a_agent:
+        base_url: "http://127.0.0.1:8080"
+        auth_token: null
+        timeout: 30
+        # 该 agent 下所有 discovered 工具共用以下 hooks
+        hooks:
+          pre:
+            - dataagent.actions.tools.hooks.examples.example_hooks.audit_pre
+          post:
+            - dataagent.actions.tools.hooks.examples.example_hooks.audit_post
+
+# ── Gym 环境（可选，FlexAgent.from_config 初始化 ENV） ───────────────────────
+# 单环境 dict 或多环境 list（合并为 CompoundEnv）。
+# module 必填；其余字段传给 Env.__init__。
+ENV:
+  - module: "dataagent.actions.gym.ArithmeticEnv"
+  # - module: "dataagent.actions.gym.SQLiteEnv"
+  #   db_path: "/abs/path/to/db.sqlite"
+
+# ── Context 轨迹 / 消息压缩 / 历史（可选） ─────────────────────────────────
+# 本段统一使用顶层键 CONTEXT（与代码 runtime.get_config("CONTEXT.*") 一致）。
+#
+# Planner 每轮 pre-step 相关开关（三者可组合；默认全 false = 最轻量）：
+#
+#   enable_state_inference  enable_profiling  enable_summary   效果
+#   ───────────────────────  ────────────────  ───────────────  ─────────────────────────────────────────
+#   false                    false             *                默认：无额外 LLM；StateNode 仅写入模型原始输出
+#   false                    true              *                仅为 File/Table 等 DataNode 生成 description
+#   true                     false             false            每轮 state 推断；无 data_lineage、无 IR 解包
+#   true                     false             true             同上；且首轮无 past_state 时注入跨 run graph_summary
+#   true                     true              false            完整链路：DataNode profiling → state 推断 → 按需 IR 解包
+#   true                     true              true             同上；且首轮无 past_state 时注入跨 run graph_summary
+#
+# 依赖关系：
+#   - enable_summary 仅在 enable_state_inference=true 且当前轮尚无 past_state（ReAct 第一轮）时生效
+#   - IR 解包（[IR Unpacked] HumanMessage）依赖 enable_profiling=true；仅开 state_inference 不会解包
+#   - profiling / state 推断 / state_update 的 LLM 调用走 llm_manager.get_default_llm()，与 planner 主模型独立
+#
+# 与消息压缩独立（不共用上述开关）：
+#   - compress_* + HOOKS.nodes.planner.pre 挂 pruner：超阈值时折叠 state.messages
+CONTEXT:
+  # ── 状态推断（planner 每轮 pre-step，默认 false） ──
+  enable_state_inference: false # true 时调用 infer_state_and_unpack_ir，写入 7 维 StateNode
+  enable_summary: false         # 首轮无 past_state 时，是否注入历史 run 的 graph_summary
+  enable_profiling: false       # 是否启用数据对象IR profiling功能
+  # ── 消息历史压缩（需 HOOKS.nodes.planner.pre 挂 pruner） ──
+  compress_token_limit: 32768   # 消息 token 超 1.2 倍时触发 LLM 折叠
+  compress_message_cnt: 200     # 消息条数超阈值时触发压缩
+  # ── IR 转换 ──
+  file_node_threshold: 500      # 工具输出超长时落盘为 FileNode，供 data_lineage / IR 解包
+  # vis:                        # constants 中预留的可视化参数，当前代码未接入
+  #   node_size_dot: 20
+
+# ── Bash 工具命令白名单（可选，未配置则不限制） ─────────────────────────────
+BASH_TOOL_WHITELIST:
+  - ls
+  - cat
+  - pwd
+
+# ── Swarm / 子 Agent 并发（可选） ───────────────────────────────────────────
+SWARM:
+  enable: false
+  worker_max_concurrent: 2      # 非负整数；省略/null = 不限制
+
+# ── 数据库（NL2SQL / SQL 工具，可选） ───────────────────────────────────────
+DATABASE:
+  db_id: "superhero"
+  dialect: "sqlite"              # sqlite | mysql | hive | postgres
+  engine: null      # 如 udn
+  config:
+    path: "/abs/path/to/superhero.sqlite"
+
+# ── NL2SQL 专用流水线（type: nl2sql 时使用，按顺序启用节点） ─────────────────
+CORE:
+  coordinator:
+    chat_model_name: "chat_model"  # NL2SQL 节点可选；覆盖默认 LLM 槽位
+  perceptor:
+    top_k: 10                   # schema linking 候选表数量
+    user_schema: null           # templates/nl2sql/perceptor/ 下 .md 文件名
+    user_evidence: null
+    user_sql_rules: "sql_rules_bird"
+    user_few_shot_examples: null
+  generator:
+    strategies: ["prompt"]        # prompt | icl | skeleton | dc
+    num_workers: 1
+    num_samples: 3
+  validator:
+    db_explain: true
+    keyword_match: false
+    metadata_match: false
+  reflector:
+    threshold: 0.9
+  executor:
+    limit: -1                   # -1 = 全部
+    preview_limit: 5
+  selector:
+    threshold: 0.9
+
+# ── 企业语义引擎服务（semantic_tool，可选） ─────────────────────────────────
+SEMANTIC_LAYER:
+  base_url: "http://{hostip}:{port}"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                      # 未启用认证时保持 null；启用认证时填写
+  password: null                      # 未启用认证时保持 null；启用认证时填写
+  timeout: 30                           # 可按服务端表数量和响应耗时调整
+
+# ===== REST API 入站限制（勿复用 TOOLS/LLM 的 timeout/max_concurrency）=====
+# 由 dataagent.interface.rest_api 读取；未配置时使用代码内默认值。
+rest_api:
+  max_body_bytes: 1048576             # 请求体上限（字节）
+  request_timeout_seconds: 120        # 单请求处理超时
+  rate_limit_per_minute: 60           # 按客户端 IP 的每分钟请求上限
+  max_concurrency: 16                 # 全局 in-flight 上限
+  queue_timeout_seconds: 5            # 获取并发名额的排队超时
+
+# ===== 证书通信（mTLS）=====
+# 入站(REST API 服务端) 与出站（LLM / Semantic Layer）共用同一段 certificate:，
+# 统一写在 --config 指定的 YAML 文件里；两侧均默认关闭，需显式开启。示例：
+#   certificate:
+#     inbound_enabled: true         # 入站 REST TLS；未写/false 则 HTTP
+#     inbound_certificate_mode: 3   # 0/2=不校验客户端 1=可选 3=强制客户端证
+#     inbound_cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+#     server_cert_file: /etc/dataagent/certs/server.crt
+#     server_key_file:  /etc/dataagent/certs/server.key
+#     ca_cert_file:     /etc/dataagent/certs/ca.crt       # 入站校验客户端；出站未单独配置时也可复用
+#     outbound_ca_cert_file: /etc/dataagent/certs/outbound-ca.crt
+#     outbound_certificate_mode: 3  # 0=不验 1=验链 2=不验+出示证 3=双向 mTLS
+#     outbound_cipher_suites: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+#     # 出站开关：写入服务名才启用；outbound_enabled: false 可强制全关
+#     outbound_ssl_services:
+#       - llm
+#       - semantic_layer
+#     # client_cert_file: /etc/dataagent/certs/client.crt  # mode=2/3 时必填
+#     # client_key_file:  /etc/dataagent/certs/client.key
+#
+# 迁移提示：旧 certificate_mode / cipher_suites 已拆分为 inbound_/outbound_ 字段。
+# SEMANTIC_LAYER.verify_ssl 已废弃；Semantic Layer 出站请使用 semantic_layer。
+# 未 opt-in 的出站服务对 httpx 返回 False（与 LLM 一致）。
+#
+# 入站自测（对方需带客户端证书）：
+#   curl --cert client.crt --key client.key --cacert ca.crt https://HOST:PORT/health
+#
+# 出站：配置 certificate 时会自动下发为以下进程环境变量（一般无需手动设置；YAML 会覆盖旧值）：
+#   DATAAGENT_OUTBOUND_CA_FILE / DATAAGENT_OUTBOUND_CLIENT_CERT / DATAAGENT_OUTBOUND_CLIENT_KEY
+#   DATAAGENT_OUTBOUND_CIPHERS / DATAAGENT_OUTBOUND_MODE
+#   DATAAGENT_OUTBOUND_SSL_SERVICES
+
+
+# ── 计算资源 RESOURCES（可选，Resource Job ）────────────────────────
+# 非空时隐式注册 resource 五工具（与 subagent 四工具可并存，勿在 TOOLS.local_functions 声明）：
+#   list_resources
+#   submit_resource_job / poll_job / collect_job / cancel_job
+#
+# 与 SUBAGENT_CONFIGS 独立触发：可只配 RESOURCES、只配 SUBAGENT_CONFIGS、或两者同时非空。
+# 合并语义：与 SUBAGENT_CONFIGS 相同，Suite resources/resources.yaml 与用户 YAML list append，
+# 高优先级在前；合并后 resource id 全局唯一（重复 id → reload 报错）。
+#
+# LLM 典型用法：
+#   1. list_resources                          — 查看 id、capacity、used/available
+#   2. submit_resource_job(command, task_type, resource_id=...)  — 异步提交命令/脚本
+#   3. poll_job(job_id) → collect_job(job_id)  — 轮询与取结果
+#   4. cancel_job(job_id)                      — 取消长任务
+#
+# 字段说明（每条 list 项）：
+#   id / name / category     — 稳定标识；category: executable | non-executable（暂不支持 non-executable）
+#   transport                — executable 必填：type: local | mcp
+#   operations               — executable 必填：submit/poll/collect/cancel 映射（local 用 sandbox.*；mcp 用远端 tool 名）
+#   capacity / consumption   — 最多能同时跑几个任务；每种任务占几个名额
+#     consumption 的 key 就是 submit 时的 type；"*": 1 表示「其它没写明的 type 都按 1 个算」
+#
+# 注意：
+#   - 多条 resource 均支持同一 type 时，submit 必须显式传 resource_id
+#   - MCP pool 须先启动对应 MCP 服务；未启动时 submit 返回连接 ERROR，不崩溃
+#   - 本文件已 SUITE.include: example_suite 时，Suite 已贡献 RESOURCES（含 local / MCP 示例）；
+#     请勿再 uncomment 下面示例中的相同 id，否则会 id 冲突。独立 Agent（无 Suite）时可启用最小 local 示例。
+#   - 完整 MCP / ClickHouse 示例见：dataagent/core/suite/builtin_suites/example_suite/resources/resources.yaml
+#
+# RESOURCES:
+#   # ── 最小 local 示例（无 Suite 时取消注释即可用）────────────────────────────
+#   - id: local
+#     name: Local Sandbox
+#     category: executable
+#     transport:
+#       type: local
+#     operations:
+#       submit: sandbox.submit
+#       poll: sandbox.poll
+#       collect: sandbox.collect
+#       cancel: sandbox.cancel
+#     capacity:
+#       total: 8
+#       unit: slot
+#     consumption:
+#       "*": 1                      # 任何 type 的 submit，都占 1 个名额
+#
+#   # ── MCP 计算池示例（须外部 MCP + 可选 secret_ref，生产按环境改 url）────────
+#   - id: compute_pool
+#     name: Remote Compute Pool
+#     category: executable
+#     transport:
+#       type: mcp
+#       url: http://127.0.0.1:8765/mcp
+#       headers:
+#         Authorization:
+#           secret_ref: env:COMPUTE_TOKEN
+#     operations:
+#       submit: submit_job
+#       poll: poll_job
+#       collect: collect_job
+#       cancel: cancel_job
+#     capacity:
+#       total: 8
+#       unit: slot
+#     consumption:
+#       remote: 1                   # 任务类型名叫 remote 的，占 1 个名额（名字可自定义，和下面 key 一致即可）
+
+# ===== OTel trajectory tracing — produces <workspace>/.otel/trajectory.json =====
+# compatible with evo-eval's DataAgentInstrumentor.replay_events_from_file().
+#
+# enabled defaults to false — set it to true explicitly to activate tracing.
+# output_dir defaults to <workspace>/.otel/ when omitted.
+OTEL_CONFIG:
+  enabled: true
+  # output_dir: "/abs/path/to/otel_output"  # optional; defaults to <workspace>/.otel/
+  # parent_trace_id: ""   # optional: link to an external trace
+  # parent_span_id: ""    # optional: link to an external span
+  # provider_name: "dataagent"  # optional: defaults to "dataagent"

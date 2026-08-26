@@ -1,0 +1,53 @@
+AGENT_CONFIG:
+  name: "NL2SQL Agent"
+  backend: "langgraph"
+  type: "nl2sql"
+MODEL:
+  deepseek:
+    model_type: "chat"
+    provider: "deepseek"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+      extra_body: # for bailian/glm, extra_body={"enable_thinking":False}
+        thinking:
+          type: "disabled"
+CORE:
+  perceptor:
+    schema_mode: "full_schema"  # "full_schema", "schema_linking"
+    user_schema: null  # name of .md file under templates/nl2sql/user/
+    user_evidence: null
+    user_sql_rules: "sql_rules_bird"
+    user_few_shot_examples: null
+  generator:  # total number of candidate SQLs = num_workers * (num_samples * prompt + icl + skeleton + dc)
+    strategies: ["prompt"]  # "prompt", "icl", "skeleton", "dc"
+    num_workers: 1  # parallelization for each strategy, **VERY EXPENSIVE**
+    num_samples: 1  # number of SQLs to generate in "prompt" strategy
+  validator:
+    sql_security_enabled: false  # enable deterministic SQLGlot security checks; default off
+    read_only: true  # allow only read-only queries
+    db_explain: true  # use `EXPLAIN` to validate SQL schema and syntax
+    keyword_match: false  # ban SQL that contains certain keywords
+    metadata_match: false  # validate SQL schema, fallback option of db_explain
+  reflector:
+    threshold: 0.9  # reflector confidence threshold, 0.0 - 1.0
+    ref_retries: 2  # retry generator-validator-reflector
+  executor:
+    limit: -1  # -1: all; >0: save only the first N rows
+    preview_limit: 5  # -1: all; >0: preview only the first N rows
+  selector:
+    shortcut: -1  # -1: disabled; >0: select the most popular result if votes reaches N
+    threshold: 0.9  # selector confidence threshold, 0.0 - 1.0
+    sel_retries: 1  # retry generator-...-selector
+DATABASE:
+  db_id: ""
+  dialect: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
+  engine: null  # specify when different from dialect (e.g. "cloud_core", "gaussvector")
+  perceptor_type: null  # optional scenario perceptor: "traffic_insight" or "business_twin"
+  config:
+    path: ""  # replace with actual .sqlite path
+SEMANTIC_LAYER:
+  base_url: ""  # replace with actual semantic service port
+  username: null
+  password: null
+  timeout: 30

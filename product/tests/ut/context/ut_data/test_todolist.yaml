@@ -1,0 +1,15 @@
+PRE_WORKFLOW:
+  - name: "load_data"
+    params:
+      path: "/data/input.csv"
+      format: "csv"
+
+POST_WORKFLOW:
+  - name: "save_results"
+    params:
+      path: "/data/output.csv"
+      overwrite: true
+  - name: "notify"
+    params:
+      message: "流程已完成"
+      level: "info"
