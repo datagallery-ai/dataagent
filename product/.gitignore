@@ -1,6 +1,11 @@
+# 本目录嵌在 DataFoundry 的 product/ 下，不保留独立 .git。
+# 忽略规则仍对本目录生效；根仓库 .gitignore 也有一份 product/ 防护。
+
 qa_*
 filtered*
 *.pid
+*.sqlite
+!tests/e2e/bio_lab/data/bio_lab.sqlite
 
 # evaluation
 evaluation/data/

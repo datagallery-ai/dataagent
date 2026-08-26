@@ -24,3 +24,33 @@ storage/
 !.env.example
 *.tsbuildinfo
 docs/public/assets/
+
+# product/ 是嵌入的 Python DataAgent，不保留嵌套 .git。
+# 下列规则防止在 DataFoundry 根目录开发时把产品本地产物提交进来。
+product/.venv/
+product/.venv-docs/
+product/.env
+product/.env.*
+!product/.env.example
+!product/**/.env.example
+product/**/__pycache__/
+product/**/*.py[cod]
+product/.pytest_cache/
+product/.ruff_cache/
+product/.mypy_cache/
+product/.coverage
+product/.coverage.*
+product/htmlcov/
+product/output/
+product/run_logs/
+product/.workspaces/
+product/uv.lock
+product/evaluation/data/
+product/evaluation/out/
+product/tests/artifacts/
+product/site/
+product/**/*.sqlite
+!product/tests/e2e/bio_lab/data/bio_lab.sqlite
+product/**/*.pid
+product/qa_*
+product/filtered*
