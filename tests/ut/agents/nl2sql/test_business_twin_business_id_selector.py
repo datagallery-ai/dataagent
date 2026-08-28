@@ -97,6 +97,18 @@ def test_column_only_routes(question: str, columns: list[str], expected: str) ->
     assert selector.select_business_twin_business_id(question, columns) == expected
 
 
+@pytest.mark.parametrize(
+    ("columns", "expected"),
+    [
+        (["mos_sec3_users"], "dw1745159009"),
+        (["mos_sec1_users", "term_brand"], "dw1745159018"),
+        (["mos_sec2_users", "default5qi_group"], "dw1745159019"),
+    ],
+)
+def test_normalizes_physical_distribution_metrics(columns: list[str], expected: str) -> None:
+    assert selector.select_business_twin_business_id("查询MOS分段用户数", columns) == expected
+
+
 def test_ignores_duplicate_temporal_and_unknown_columns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
