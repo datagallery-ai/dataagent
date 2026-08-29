@@ -13,6 +13,7 @@
 
 import re
 from collections.abc import Collection, Mapping, Sequence
+from fnmatch import fnmatchcase
 from typing import Any
 
 from dataagent.agents.nl2sql.utils.business_twin_business_id_catalog import (
@@ -37,13 +38,20 @@ _MOS_TRIGGER_DIMENSIONS = frozenset(_BUSINESS_RULES["mos_analysis"]["trigger_dim
 _ORDINARY_RULES = _BUSINESS_RULES["ordinary_experience"]
 _ORDINARY_EXTENDED_METRICS = frozenset(_ORDINARY_RULES["extended_metrics"])
 _ORDINARY_LOAD_DIMENSIONS = frozenset(_ORDINARY_RULES["load_dimensions"])
+_WILDCARD_METRIC_FIELDS = tuple(field for field in _METRIC_FIELDS if "*" in field)
+
+
+def _canonicalize_column(field: str) -> str:
+    if field in _METRIC_FIELDS or field in _DIMENSION_FIELDS:
+        return field
+    return next((pattern for pattern in _WILDCARD_METRIC_FIELDS if fnmatchcase(field, pattern)), field)
 
 
 def _normalize_columns(payload: object) -> tuple[frozenset[str], frozenset[str]]:
     if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
         raise ValueError("业务孪生字段抽取结果必须是字符串数组")
 
-    unique = tuple(dict.fromkeys(item.strip() for item in payload if item.strip()))
+    unique = tuple(dict.fromkeys(_canonicalize_column(item.strip()) for item in payload if item.strip()))
     valid: list[str] = []
     unknown: list[str] = []
     for field in unique:
