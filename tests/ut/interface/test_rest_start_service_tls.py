@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import ssl
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -103,13 +102,24 @@ certificate:
     assert kwargs["ssl_cert_reqs"] == int(ssl.CERT_REQUIRED)
     assert kwargs["ssl_version"] == ssl.PROTOCOL_TLS_SERVER
     assert kwargs["ssl_ciphers"] == "ECDHE+AESGCM:ECDHE+CHACHA20"
-    assert ssl.SSLContext(kwargs.get("ssl_version")).minimum_version >= ssl.TLSVersion.TLSv1_2
     assert "ssl_keyfile_password" not in kwargs
 
 
 def test_inbound_rejects_unsafe_runtime_tls_default(monkeypatch):
-    unsafe_context = SimpleNamespace(minimum_version=ssl.TLSVersion.TLSv1_1)
-    monkeypatch.setattr(ssl, "SSLContext", lambda _protocol: unsafe_context)
+    """无法把最低协议设成 TLS 1.2 时才拒绝；未显式设置（哨兵）不得误报。"""
+
+    class _CannotEnableTls12:
+        minimum_version = ssl.TLSVersion.TLSv1_2
+
+        def __init__(self, _protocol: int) -> None:
+            pass
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if name == "minimum_version":
+                raise ValueError("TLS 1.2 is not available")
+            object.__setattr__(self, name, value)
+
+    monkeypatch.setattr(ssl, "SSLContext", _CannotEnableTls12)
     certificate = {
         "inbound_certificate_mode": 2,
         "server_cert_file": "/unused/server.crt",

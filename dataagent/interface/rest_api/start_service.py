@@ -146,8 +146,12 @@ def build_ssl_kwargs(
         raise ValueError(f"inbound TLS enabled (inbound_certificate_mode={mode}) but missing: {', '.join(missing)}")
 
     tls_context = ssl.SSLContext(_INBOUND_TLS_PROTOCOL)
-    if tls_context.minimum_version < _MINIMUM_INBOUND_TLS_VERSION:
-        raise RuntimeError("inbound TLS requires TLS 1.2 or newer; the current Python SSL defaults are unsafe")
+    try:
+        tls_context.minimum_version = _MINIMUM_INBOUND_TLS_VERSION
+    except (ValueError, OSError) as exc:
+        raise RuntimeError(
+            "inbound TLS requires TLS 1.2 or newer; the current Python SSL runtime cannot enable it"
+        ) from exc
 
     path_checks = (
         ("server_cert_file", server_cert),
