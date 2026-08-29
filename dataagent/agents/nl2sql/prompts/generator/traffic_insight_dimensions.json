@@ -1,0 +1,275 @@
+{
+  "scenario": "traffic_insight",
+  "dimensions": {
+    "age_range": {
+      "dimension_table": "dim_age_range",
+      "key_column": "age_range_key",
+      "value_column": "age_range_value"
+    },
+    "apn": {
+      "dimension_table": "dim_apn",
+      "key_column": "apn_key",
+      "value_column": "apn_value"
+    },
+    "app": {
+      "dimension_table": "dim_app",
+      "key_column": "app_key",
+      "value_column": "app_value"
+    },
+    "appcate": {
+      "dimension_table": "dim_appcate",
+      "key_column": "appcate_key",
+      "value_column": "appcate_value"
+    },
+    "application": {
+      "dimension_table": "dim_app",
+      "key_column": "app_key",
+      "value_column": "app_value"
+    },
+    "block_reason": {
+      "dimension_table": "dim_block_reason",
+      "key_column": "block_reason_key",
+      "value_column": "block_reason_value"
+    },
+    "browser": {
+      "dimension_table": "dim_browser",
+      "key_column": "browser_key",
+      "value_column": "browser_value"
+    },
+    "bwsection": {
+      "dimension_table": "dim_bwsection",
+      "key_column": "bwsection_key",
+      "value_column": "bwsection_value"
+    },
+    "cell": {
+      "dimension_table": "dim_cell",
+      "key_column": "cell_key",
+      "value_column": "cell_value"
+    },
+    "contype": {
+      "dimension_table": "dim_contype",
+      "key_column": "contype_key",
+      "value_column": "contype_value"
+    },
+    "country": {
+      "dimension_table": "dim_country",
+      "key_column": "country_key",
+      "value_column": "country_value"
+    },
+    "encryption": {
+      "dimension_table": "dim_encryption",
+      "key_column": "encryption_key",
+      "value_column": "encryption_value"
+    },
+    "experience_category": {
+      "dimension_table": "dim_experience",
+      "key_column": "experience_key",
+      "value_column": "experience_value"
+    },
+    "free_rgsid": {
+      "dimension_table": "dim_free_rgsid",
+      "key_column": "free_rgsid_key",
+      "value_column": "free_rgsid_value"
+    },
+    "gender": {
+      "dimension_table": "dim_gender",
+      "key_column": "gender_key",
+      "value_column": "gender_value"
+    },
+    "http_version": {
+      "dimension_table": "dim_http_version",
+      "key_column": "http_version_key",
+      "value_column": "http_version_value"
+    },
+    "ip_protocol": {
+      "dimension_table": "dim_ip_protocol",
+      "key_column": "ip_protocol_key",
+      "value_column": "ip_protocol_value"
+    },
+    "ip_version": {
+      "dimension_table": "dim_ip_version",
+      "key_column": "ip_version_key",
+      "value_column": "ip_version_value"
+    },
+    "lai": {
+      "dimension_table": "dim_lai",
+      "key_column": "lai_key",
+      "value_column": "lai_value"
+    },
+    "ne": {
+      "dimension_table": "dim_ne",
+      "key_column": "ne_key",
+      "value_column": "ne_value"
+    },
+    "ne_group": {
+      "dimension_table": "dim_ne_group",
+      "key_column": "ne_group_key",
+      "value_column": "ne_group_value"
+    },
+    "network_type": {
+      "dimension_table": "dim_network_type",
+      "key_column": "network_type_key",
+      "value_column": "network_type_value"
+    },
+    "offline_rg": {
+      "dimension_table": "dim_offline_rg",
+      "key_column": "offline_rg_key",
+      "value_column": "offline_rg_value"
+    },
+    "offline_rgsid": {
+      "dimension_table": "dim_offline_rgsid",
+      "key_column": "offline_rgsid_key",
+      "value_column": "offline_rgsid_value"
+    },
+    "online_rg": {
+      "dimension_table": "dim_online_rg",
+      "key_column": "online_rg_key",
+      "value_column": "online_rg_value"
+    },
+    "online_rgsid": {
+      "dimension_table": "dim_online_rgsid",
+      "key_column": "online_rgsid_key",
+      "value_column": "online_rgsid_value"
+    },
+    "operator": {
+      "dimension_table": "dim_operator",
+      "key_column": "operator_key",
+      "value_column": "operator_value"
+    },
+    "quic": {
+      "dimension_table": "dim_quic",
+      "key_column": "quic_key",
+      "value_column": "quic_value"
+    },
+    "rai": {
+      "dimension_table": "dim_rai",
+      "key_column": "rai_key",
+      "value_column": "rai_value"
+    },
+    "rat": {
+      "dimension_table": "dim_rat",
+      "key_column": "rat_key",
+      "value_column": "rat_value"
+    },
+    "region": {
+      "dimension_table": "dim_region",
+      "key_column": "region_key",
+      "value_column": "region_value"
+    },
+    "rg_group": {
+      "dimension_table": "dim_rg_group",
+      "key_column": "rg_group_key",
+      "value_column": "rg_group_value"
+    },
+    "rule": {
+      "dimension_table": "dim_rule",
+      "key_column": "rule_key",
+      "value_column": "rule_value"
+    },
+    "rule_base": {
+      "dimension_table": "dim_rule_base",
+      "key_column": "rule_base_key",
+      "value_column": "rule_base_value"
+    },
+    "service_package": {
+      "dimension_table": "dim_service_package",
+      "key_column": "service_package_key",
+      "value_column": "service_package_value"
+    },
+    "servicename": {
+      "dimension_table": "dim_servicename",
+      "key_column": "servicename_key",
+      "value_column": "servicename_value"
+    },
+    "subapp": {
+      "dimension_table": "dim_subapp",
+      "key_column": "subapp_key",
+      "value_column": "subapp_value"
+    },
+    "subscriber": {
+      "dimension_table": "dim_subscriber",
+      "key_column": "subscriber_key",
+      "value_column": "sisdn"
+    },
+    "tai": {
+      "dimension_table": "dim_tai",
+      "key_column": "tai_key",
+      "value_column": "tai_value"
+    },
+    "term_group": {
+      "dimension_table": "dim_term_group",
+      "key_column": "term_group_key",
+      "value_column": "term_group_value"
+    },
+    "term_migration": {
+      "dimension_table": "dim_term_migration",
+      "key_column": "term_migration_key",
+      "value_column": "term_migration_value"
+    },
+    "term_model": {
+      "dimension_table": "dim_term_model",
+      "key_column": "term_model_key",
+      "value_column": "term_model_value"
+    },
+    "term_os": {
+      "dimension_table": "dim_term_os",
+      "key_column": "term_os_key",
+      "value_column": "term_os_value"
+    },
+    "term_type": {
+      "dimension_table": "dim_term_type",
+      "key_column": "term_type_key",
+      "value_column": "term_type_value"
+    },
+    "term_vendor": {
+      "dimension_table": "dim_term_vendor",
+      "key_column": "term_vendor_key",
+      "value_column": "term_vendor_value"
+    },
+    "tethering": {
+      "dimension_table": "dim_tethering",
+      "key_column": "tethering_key",
+      "value_column": "tethering_value"
+    },
+    "user_group": {
+      "dimension_table": "dim_user_group",
+      "key_column": "user_group_key",
+      "value_column": "user_group_value"
+    },
+    "user_migration": {
+      "dimension_table": "dim_user_migration",
+      "key_column": "user_migration_key",
+      "value_column": "user_migration_value"
+    },
+    "user_segment": {
+      "dimension_table": "dim_user_segment",
+      "key_column": "user_segment_key",
+      "value_column": "user_segment_value"
+    },
+    "vlsection": {
+      "dimension_table": "dim_vlsection",
+      "key_column": "vlsection_key",
+      "value_column": "vlsection_value"
+    },
+    "voip_app": {
+      "dimension_table": "dim_app",
+      "key_column": "app_key",
+      "value_column": "app_value"
+    },
+    "voip_topsubs": {
+      "dimension_table": "dim_subscriber",
+      "key_column": "subscriber_key",
+      "value_column": "msisdn"
+    },
+    "voip_user_segment": {
+      "dimension_table": "dim_user_segment",
+      "key_column": "user_segment_key",
+      "value_column": "user_segment_value"
+    },
+    "website": {
+      "dimension_table": "dim_website",
+      "key_column": "website_key",
+      "value_column": "website_value"
+    }
+  }
+}

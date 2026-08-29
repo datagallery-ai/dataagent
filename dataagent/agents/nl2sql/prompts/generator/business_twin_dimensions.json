@@ -1,0 +1,85 @@
+{
+  "scenario": "business_twin",
+  "dimensions": {
+    "guarantee_group": {
+      "dimension_table": "dim_exp_guarantee",
+      "key_column": "guarantee_id",
+      "value_column": "guarantee_name"
+    },
+    "crh_group": {
+      "dimension_table": "dim_crh_group",
+      "key_column": "crh_group",
+      "value_column": "crh_group_value"
+    },
+    "default5qi_group": {
+      "dimension_table": "dim_exp_default5qi_group",
+      "key_column": "default5qi_group",
+      "value_column": "default5qi_group_name"
+    },
+    "term_brand": {
+      "dimension_table": "dim_exp_term_brand",
+      "key_column": "term_brand",
+      "value_column": "term_brand_value"
+    },
+    "custom_group": {
+      "dimension_table": "dim_exp_custom_group",
+      "key_column": "custom_group",
+      "value_column": "custom_group_name"
+    },
+    "app_id": {
+      "dimension_table": "dim_exp_app",
+      "key_column": "app_id",
+      "value_column": "app_value"
+    },
+    "sub_app_id": {
+      "dimension_table": "dim_exp_subapp",
+      "key_column": "sub_app_id",
+      "value_column": "sub_app_value"
+    },
+    "city": {
+      "dimension_table": "dim_exp_city",
+      "key_column": "city_key",
+      "value_column": "city_value"
+    },
+    "county": {
+      "dimension_table": "dim_exp_county",
+      "key_column": "county_key",
+      "value_column": "county_value"
+    },
+    "cell_ul_group": {
+      "dimension_table": "dim_exp_cell_ul_group",
+      "key_column": "cell_group",
+      "value_column": "cell_group_value"
+    },
+    "cell_dl_group": {
+      "dimension_table": "dim_exp_cell_dl_group",
+      "key_column": "cell_group",
+      "value_column": "cell_group_value"
+    },
+    "ne_name": {
+      "dimension_table": "dim_exp_ne",
+      "key_column": "ne_name",
+      "value_column": "ne_value"
+    },
+    "info_indicate": {
+      "dimension_table": "dim_exp_info_indicate",
+      "key_column": "info_indicate",
+      "value_column": "info_indicate_value"
+    },
+    "crh_station_id": {
+      "dimension_table": "dim_crh_station",
+      "key_column": "crh_station_key",
+      "value_column": "crh_station_value"
+    },
+    "crh_section_id": {
+      "dimension_table": "dim_crh_section",
+      "key_column": "crh_section_key",
+      "value_column": "crh_section_value"
+    },
+    "crh_railway_id": {
+      "dimension_table": "dim_crh_railway",
+      "key_column": "crh_railway_key",
+      "value_column": "crh_railway_value"
+    }
+  }
+}
