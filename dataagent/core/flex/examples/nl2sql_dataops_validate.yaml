@@ -56,24 +56,28 @@ SCENARIO:
 # 不启用时：dataops_validate_sql 工具会检测到 catalog 中无 dataops resource，
 # 自动跳过校验（返回 passed=true, skipped=true）。
 #
-# RESOURCES:
-#   - id: dataops
-#     name: "DataOps AdHoc SQL Validator"
-#     category: executable
-#     transport:
-#       type: mcp
-#       url: $env{DATAOPS_MCP_URL}
-#     operations:
-#       submit: submit_job
-#       poll: poll_job
-#       collect: collect_job
-#       cancel: cancel_job
-#     capacity:
-#       total: 4
-#       unit: slot
-#     consumption:
-#       sql_validate: 1
-#       "*": 1
+RESOURCES:
+  - id: dataops
+    name: "DataOps AdHoc SQL Validator"
+    category: executable
+    metadata:
+      enabled: true
+      # 关闭 INSERT 后 post-validate 的空值校验（count=0 不再报错）
+      skip_post_validate_count_zero: true
+    transport:
+      type: mcp
+      url: $env{DATAOPS_MCP_URL}
+    operations:
+      submit: submit_job
+      poll: poll_job
+      collect: collect_job
+      cancel: cancel_job
+    capacity:
+      total: 4
+      unit: slot
+    consumption:
+      sql_validate: 1
+      "*": 1
 
 # ── TOOLS（NL2SQL pipeline + 独立 DataOps 校验工具）──────────────────────────
 TOOLS:

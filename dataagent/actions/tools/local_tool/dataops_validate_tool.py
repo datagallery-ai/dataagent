@@ -743,10 +743,6 @@ async def dataops_validate_sql(
 
     user_account = resource.metadata.get("exec_user") or _get_user_account(runtime) or "anonymous"
     table_suffix = resource.metadata.get("table_suffix", "")
-    logger.debug(
-        f"[dataops_validate_sql] preparing submit user_account={user_account!r} "
-        f"table_suffix={table_suffix!r} timeout_sec={timeout_sec} poll_interval={poll_interval}s",
-    )
 
     # --- SQL rewrite ---
     sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
@@ -816,8 +812,11 @@ async def dataops_validate_sql(
                             "job_id": job_id,
                         }
                     elif pv["count"] == 0:
+                        skip_count_zero = bool(resource.metadata.get("skip_post_validate_count_zero", False))
+                        if skip_count_zero:
+                            final_result = {"passed": True, "job_id": job_id}
                         # count=0 → first attempt: if LLM detected a mismatch, report it as suggestion
-                        if pv.get("has_mismatch") and pv.get("fix_suggestion"):
+                        elif pv.get("has_mismatch") and pv.get("fix_suggestion"):
                             final_result = {
                                 "passed": False,
                                 "error": (

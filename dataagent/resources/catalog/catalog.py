@@ -21,7 +21,9 @@ from dataagent.resources.catalog.models import Resource
 from dataagent.resources.drivers.bindings import TRANSPORT_TYPES
 
 RESOURCE_CATEGORIES = frozenset({"executable", "non-executable"})
-RESOURCE_FIELDS = frozenset({"id", "name", "category", "transport", "operations", "capacity", "consumption"})
+RESOURCE_FIELDS = frozenset(
+    {"id", "name", "category", "transport", "operations", "capacity", "consumption", "metadata"}
+)
 RESOURCE_OPERATIONS = frozenset({"submit", "poll", "collect", "cancel"})
 
 
@@ -144,7 +146,7 @@ def resources_from_list(items: list[Any]) -> list[Resource]:
                 consumption={str(key): int(value) for key, value in raw["consumption"].items()},
                 operations={str(key): str(value) for key, value in (raw.get("operations") or {}).items()},
                 transport=dict(raw.get("transport") or {}),
-                metadata={"source": f"RESOURCES.{resource_id}"},
+                metadata=dict(raw.get("metadata") or {}),
             )
         )
     return out
