@@ -19,7 +19,8 @@ from typing import Any
 import yaml
 from loguru import logger
 
-from dataagent.core.managers.action_manager.base import BaseTool, ToolError, ToolResult, ToolType
+from dataagent.core.errors import DataAgentError
+from dataagent.core.managers.action_manager.base import BaseTool, ToolResult, ToolType
 from dataagent.core.managers.action_manager.registry import ToolRegistry
 from dataagent.core.managers.action_manager.schemas import ToolSchema
 from dataagent.governance import attach_governance_hooks_to_tool, build_governance_config
@@ -693,7 +694,11 @@ class ToolManager:
         if self._try_lazy_discover_mcp(name) and name in self._tool_instances:
             return self._tool_instances[name]
 
-        raise ToolError(f"Tool '{name}' not found")
+        raise DataAgentError(
+            source="tool",
+            component="tool",
+            fact=f"Tool '{name}' not found",
+        )
 
     def exists(self, name: str) -> bool:
         """检查工具是否存在"""
@@ -717,7 +722,11 @@ class ToolManager:
         if await self._try_lazy_discover_mcp_async(name) and name in self._tool_instances:
             return self._tool_instances[name]
 
-        raise ToolError(f"Tool '{name}' not found")
+        raise DataAgentError(
+            source="tool",
+            component="tool",
+            fact=f"Tool '{name}' not found",
+        )
 
     async def acall(self, name: str, **kwargs) -> ToolResult:
         """调用工具（异步版本，支持懒加载）"""
@@ -732,16 +741,8 @@ class ToolManager:
             # 在线程中显式挂载一个事件循环，避免 "There is no current event loop"。
             result = await asyncio.to_thread(call_sync_with_event_loop, tool.call, **kwargs)
 
-        # 当工具返回失败结果时，抛出 ToolError 以触发调用方的重试逻辑
         if isinstance(result, ToolResult) and not result.success:
-            from dataagent.core.managers.action_manager.base import ErrorType
-
-            raise ToolError(
-                message=result.error or "Tool execution failed",
-                error_type=result.error_type or ErrorType.UNKNOWN,
-                retriable=result.retriable,
-                max_retries=result.max_retries,
-            )
+            raise result.error or DataAgentError(source="tool", component="tool")
         return result
 
     def list_tools(self, category: str | None = None, tool_type: ToolType | None = None) -> list[str]:
@@ -816,7 +817,7 @@ class ToolManager:
     def get_schema(self, name: str) -> ToolSchema:
         """获取工具Schema"""
         if name not in self._tool_schemas:
-            raise ToolError(f"Schema for tool '{name}' not found")
+            raise DataAgentError(source="config", fact=f"Schema for tool '{name}' not found", component="tool")
         return self._tool_schemas[name]
 
     def get_langchain_tool(self, name: str):
@@ -840,7 +841,11 @@ class ToolManager:
     def get_tool_info(self, name: str) -> dict[str, Any]:
         """获取工具详细信息"""
         if name not in self._tool_instances:
-            raise ToolError(f"Tool '{name}' not found")
+            raise DataAgentError(
+                source="tool",
+                component="tool",
+                fact=f"Tool '{name}' not found",
+            )
 
         tool = self._tool_instances[name]
         schema = self._tool_schemas[name]

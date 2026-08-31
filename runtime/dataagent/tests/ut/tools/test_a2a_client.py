@@ -21,7 +21,7 @@ import pytest
 
 from dataagent.actions.tools import a2a
 from dataagent.actions.tools.a2a import A2AClientWrapper, A2AToolWrapper, AgentConfig
-from dataagent.core.managers.action_manager.base import ErrorType, ToolError
+from dataagent.core.errors import DataAgentError
 
 
 class _FakeA2AClient:
@@ -79,17 +79,16 @@ async def test_call_tool_reports_rejected_bearer_token_as_authentication_error(
         )
     )
 
-    with pytest.raises(ToolError) as exc_info:
+    with pytest.raises(DataAgentError) as exc_info:
         await wrapper.call_tool("chat", {"message": "hello"})
 
     error = exc_info.value
-    assert error.error_type == ErrorType.AUTHENTICATION_ERROR
-    assert error.retriable is False
-    assert error.max_retries == 0
-    assert "A2A authentication failed for agent 'protected_agent'" in str(error)
-    assert "HTTP 401 Unauthorized" in str(error)
-    assert "Check TOOLS.A2A auth_token" in str(error)
-    assert "wrong-secret-token" not in str(error)
+    assert error.source == "tool"
+    assert "A2A authentication failed for agent 'protected_agent'" in error.fact
+    assert "HTTP 401 Unauthorized" in error.fact
+    assert "Check TOOLS.A2A auth_token" in error.fact
+    assert "wrong-secret-token" not in error.fact
+    assert "wrong-secret-token" not in str(error.to_dict())
 
 
 @pytest.mark.asyncio
@@ -97,11 +96,10 @@ async def test_tool_wrapper_preserves_authentication_error_policy(monkeypatch: p
     """The A2A tool wrapper should preserve auth type and retry policy from the client."""
 
     async def _reject_call(self: A2AClientWrapper, tool_name: str, parameters: dict[str, Any]) -> dict[str, Any]:
-        raise ToolError(
-            f"A2A authentication failed while calling '{tool_name}'",
-            error_type=ErrorType.AUTHENTICATION_ERROR,
-            retriable=False,
-            max_retries=0,
+        raise DataAgentError(
+            source="config",
+            fact=f"A2A authentication failed while calling '{tool_name}'",
+            component="tool",
         )
 
     monkeypatch.setattr(A2AClientWrapper, "call_tool", _reject_call)
@@ -123,6 +121,47 @@ async def test_tool_wrapper_preserves_authentication_error_policy(monkeypatch: p
     result = await tool.acall(message="hello")
 
     assert result.success is False
-    assert result.error_type == ErrorType.AUTHENTICATION_ERROR
-    assert result.retriable is False
-    assert result.max_retries == 0
+    assert result.error is not None and result.error.source == "config"
+
+
+class _FailedTaskA2AClient:
+    async def __aenter__(self) -> _FailedTaskA2AClient:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        return None
+
+    def send_message(self, _request: Any):
+        async def _responses():
+            from a2a.types.a2a_pb2 import StreamResponse, TaskState
+
+            response = StreamResponse()
+            response.task.id = "task-failed"
+            response.task.status.state = TaskState.TASK_STATE_FAILED
+            if response.task.status.message.parts:
+                response.task.status.message.parts[0].text = "remote agent failed"
+            else:
+                part = response.task.status.message.parts.add()
+                part.text = "remote agent failed"
+            yield response
+
+        return _responses()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_promotes_remote_failed_task_to_dataagent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_create_client(*, agent: str, client_config: Any):
+        return _FailedTaskA2AClient()
+
+    monkeypatch.setattr(a2a, "create_client", _fake_create_client)
+    wrapper = A2AClientWrapper(AgentConfig(agent_id="remote", base_url="http://127.0.0.1:9999"))
+
+    with pytest.raises(DataAgentError) as exc_info:
+        await wrapper.call_tool("chat", {"message": "hello"})
+
+    error = exc_info.value
+    assert error.source == "tool"
+    assert error.source == "tool"
+    assert "FAILED" in error.fact or "failed" in error.fact.lower()

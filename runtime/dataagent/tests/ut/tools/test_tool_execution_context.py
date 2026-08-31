@@ -16,7 +16,6 @@ import pytest
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.config.config_manager import ConfigManager
-from dataagent.core.managers.action_manager.base import ToolError
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.action_manager.schemas import ToolSchema
 
@@ -86,7 +85,7 @@ class TestToolExecutionContextInjection:
         """Config-only tool fails when ToolExecutionContext has no ConfigManager."""
         tm = ToolManager()
         tm.register_local_tool(read_db_id_no_context, name="read_db_id_no_context", category="test")
-        with pytest.raises(ToolError, match="has no attribute 'get'"):
+        with pytest.raises(AttributeError, match="has no attribute 'get'"):
             await tm.acall("read_db_id_no_context", query="x")
         await tm.cleanup()
 

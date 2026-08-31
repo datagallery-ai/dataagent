@@ -5,16 +5,12 @@
 # limitations under the License.
 # ============================================================================
 __all__ = [
-    # 核心类和管理器
     "ToolManager",
     "BaseTool",
     "ToolResult",
-    "ToolError",
     "ToolSchema",
     "ToolType",
-    "ErrorType",
-    "classify_exception",
-    # MCP和A2A类
+    "tool_failure",
     "MCPToolWrapper",
     "MCPToolRegistry",
     "A2AClientWrapper",
@@ -26,11 +22,9 @@ from dataagent.actions.tools.a2a import A2AClientWrapper, A2AToolRegistry, A2ATo
 from dataagent.actions.tools.mcp import MCPToolRegistry, MCPToolWrapper
 from dataagent.core.managers.action_manager import (
     BaseTool,
-    ErrorType,
-    ToolError,
     ToolManager,
     ToolResult,
     ToolSchema,
     ToolType,
-    classify_exception,
+    tool_failure,
 )

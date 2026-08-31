@@ -21,10 +21,13 @@ from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.job_tools import (
     cancel_job,
     collect_job,
+    collect_subagent,
     poll_job,
     poll_subagent,
     submit_resource_job,
@@ -32,6 +35,7 @@ from dataagent.actions.tools.local_tool.job_tools import (
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.agents.registry import AgentRegistry
 from dataagent.core.agents.service import AgentService
+from dataagent.core.errors import DataAgentError
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
@@ -149,9 +153,9 @@ def test_poll_job_rejects_subagent_job_id(tmp_path: Path) -> None:
         allocation={"agent": {"pool": "local"}},
         metadata={"subagent_session_id": "sub-1"},
     )
-    denied = poll_job(job_id=handle["job_id"], _tool_context=ctx)
-    assert denied["status"] == "ERROR"
-    assert "poll_subagent" in denied["message"]
+    with pytest.raises(DataAgentError) as caught:
+        poll_job(job_id=handle["job_id"], _tool_context=ctx)
+    assert "poll_subagent" in caught.value.fact
 
 
 def test_poll_subagent_rejects_resource_job_id(tmp_path: Path) -> None:
@@ -163,9 +167,9 @@ def test_poll_subagent_rejects_resource_job_id(tmp_path: Path) -> None:
         resource_id="local",
         _tool_context=ctx,
     )
-    denied = poll_subagent(job_id=str(submit_payload["job_id"]), _tool_context=ctx)
-    assert denied["status"] == "ERROR"
-    assert "poll_job" in denied["message"]
+    with pytest.raises(DataAgentError) as caught:
+        poll_subagent(job_id=str(submit_payload["job_id"]), _tool_context=ctx)
+    assert "poll_job" in caught.value.fact
 
 
 def test_cancel_job_tool_terminates_running_resource_job(tmp_path: Path) -> None:
@@ -198,3 +202,97 @@ def test_cancel_job_tool_terminates_running_resource_job(tmp_path: Path) -> None
     cancel_payload = cancel_job(job_id=job_id, _tool_context=ctx)
     assert cancel_payload["status"] == "cancelled"
     assert _wait_until_terminal(coordinator.job_service, job_id) == "cancelled"
+
+
+def test_collect_subagent_raises_from_dict_on_failed_status(monkeypatch) -> None:
+    from dataagent.actions.tools.local_tool import job_tools
+
+    monkeypatch.setattr(job_tools, "_require_job_kind", lambda **_kwargs: None)
+    wire_error = DataAgentError(
+        fact="worker crashed；sub_id=3",
+        source="tool",
+        component="subagent",
+        trace_id="trace-collect",
+    ).to_dict()
+    runtime = SimpleNamespace(
+        ensure_job_services=lambda: SimpleNamespace(
+            collect=lambda job_id: {
+                "job_id": job_id,
+                "status": "failed",
+                "summary": "boom",
+                "error": wire_error,
+            }
+        )
+    )
+    ctx = ToolExecutionContext(runtime=runtime)
+
+    with pytest.raises(DataAgentError) as caught:
+        collect_subagent("job-failed", _tool_context=ctx)
+
+    assert caught.value.source == "tool"
+    assert caught.value.component == "subagent"
+    assert caught.value.fact == "worker crashed；sub_id=3"
+    assert "sub_id=3" in caught.value.fact
+    assert "locator" not in caught.value.to_dict()
+
+
+def test_collect_job_raises_on_failed_status(monkeypatch) -> None:
+    from dataagent.actions.tools.local_tool import job_tools
+
+    monkeypatch.setattr(job_tools, "_require_job_kind", lambda **_kwargs: None)
+    monkeypatch.setattr(job_tools, "_enrich_resource_collect_payload", lambda payload: payload)
+    runtime = SimpleNamespace(
+        ensure_resource_coordinator=lambda: SimpleNamespace(
+            collect=lambda job_id: {
+                "job_id": job_id,
+                "status": "failed",
+                "summary": "resource boom",
+                "error": "command failed",
+            }
+        )
+    )
+    ctx = ToolExecutionContext(runtime=runtime)
+
+    with pytest.raises(DataAgentError) as caught:
+        collect_job("job-failed", _tool_context=ctx)
+
+    assert caught.value.source == "tool"
+    assert "resource boom" in caught.value.fact or "command failed" in caught.value.fact
+
+
+def test_poll_job_raises_on_tool_status_error(monkeypatch) -> None:
+    from dataagent.actions.tools.local_tool import job_tools
+
+    monkeypatch.setattr(job_tools, "_require_job_kind", lambda **_kwargs: None)
+    runtime = SimpleNamespace(
+        ensure_resource_coordinator=lambda: SimpleNamespace(
+            poll=lambda **_kwargs: {"status": "ERROR", "message": "store unreadable"}
+        )
+    )
+    ctx = ToolExecutionContext(runtime=runtime)
+
+    with pytest.raises(DataAgentError) as caught:
+        poll_job("job-x", _tool_context=ctx)
+
+    assert caught.value.source == "tool"
+    assert caught.value.component == "job"
+    assert "store unreadable" in caught.value.fact
+
+
+def test_cancel_job_raises_on_tool_status_error(monkeypatch) -> None:
+    from dataagent.actions.tools.local_tool import job_tools
+
+    monkeypatch.setattr(job_tools, "_require_job_kind", lambda **_kwargs: None)
+    runtime = SimpleNamespace(
+        ensure_resource_coordinator=lambda: SimpleNamespace(
+            cancel=lambda **_kwargs: {"status": "ERROR", "message": "cancel backend failed"}
+        )
+    )
+    ctx = ToolExecutionContext(runtime=runtime)
+
+    with pytest.raises(DataAgentError) as caught:
+        cancel_job("job-x", _tool_context=ctx)
+
+    assert caught.value.source == "tool"
+    assert caught.value.component == "job"
+    assert "cancel backend failed" in caught.value.fact

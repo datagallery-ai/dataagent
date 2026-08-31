@@ -24,10 +24,11 @@ from typing import Any
 from loguru import logger  # type: ignore[reportMissingImports]
 
 from dataagent.core.context.message_history import deserialize_message, serialize_message
+from dataagent.core.errors import DataAgentError
 from dataagent.core.swarm.worker_memory import strip_subagent_runtime_fields
-from dataagent.core.swarm.worker_result import synthesize_worker_result
+from dataagent.core.swarm.worker_result import synthesize_worker_result, worker_session_id
 from dataagent.interface.sdk.agent import DataAgent
-from dataagent.utils.log import LoggerConfig, reconfigure
+from dataagent.utils.log import LoggerConfig, dataagent_log_context, reconfigure
 from dataagent.utils.runtime_paths import SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root, validate_user_id
 
 
@@ -61,67 +62,91 @@ def main() -> int:
         default=None,
         help="Optional JSON file containing parent-prepared initial_state.",
     )
+    parser.add_argument(
+        "--trace-id",
+        dest="trace_id",
+        default=None,
+        help="Optional shared trace id from the parent process.",
+    )
 
     args = parser.parse_args()
+    parent_session_id = str(args.session_id or "default_session")
+    sub_id = int(args.sub_id)
+    trace_id = str(args.trace_id or "").strip() or None
 
-    try:
-        query = args.query
-        config_path = args.config
-        user_id = args.user_id
-        session_id = args.session_id
-        sub_id = args.sub_id
+    with dataagent_log_context(
+        session_id=worker_session_id(parent_session_id, sub_id),
+        user_id=str(args.user_id or "anonymous"),
+        sub_id=sub_id,
+        trace_id=trace_id,
+        agent_name="subagent",
+    ):
+        try:
+            if not Path(args.config).is_file():
+                raise FileNotFoundError(f"Config YAML not found: {args.config}")
 
-        if not Path(config_path).is_file():
-            raise FileNotFoundError(f"Config YAML not found: {config_path}")
-
-        # 子 agent 运行期间的 print/误写 stdout 全部走 stderr，stdout 仅用于最终协议 JSON。
-        with redirect_stdout(sys.stderr):
-            result = asyncio.run(
-                _run_agent(
-                    query,
-                    config_path,
-                    user_id=user_id,
-                    session_id=session_id,
-                    sub_id=sub_id,
-                    initial_state_file=args.initial_state_file,
+            with redirect_stdout(sys.stderr):
+                result = asyncio.run(
+                    _run_agent(
+                        args.query,
+                        args.config,
+                        user_id=args.user_id,
+                        session_id=args.session_id,
+                        sub_id=sub_id,
+                        initial_state_file=args.initial_state_file,
+                    )
                 )
+            resumed = _initial_state_file_has_messages(args.initial_state_file)
+            worker_result = synthesize_worker_result(
+                final_state=result,
+                sub_id=sub_id,
+                parent_session_id=parent_session_id,
+                resumed=resumed,
             )
-        parent_session_id = str(session_id or "default_session")
-        resumed = _initial_state_file_has_messages(args.initial_state_file)
-        worker_result = synthesize_worker_result(
-            final_state=result,
-            sub_id=sub_id,
-            parent_session_id=parent_session_id,
-            resumed=resumed,
-        )
-        jsonable_result = _to_jsonable(result)
-
-        payload = {
-            "error": None,
-            "worker_result": worker_result.to_dict(),
-            "worker_persistence": {
-                "messages": _to_jsonable((result or {}).get("messages", [])) if isinstance(result, dict) else [],
-                "state": _build_worker_persistence_state(jsonable_result=jsonable_result),
-            },
-            "subagent_final_state": json.dumps(jsonable_result, ensure_ascii=False)
-            if isinstance(jsonable_result, dict)
-            else str(jsonable_result),
-            "assistant_reply": worker_result.final_answer,
-            "sub_id": sub_id,
-        }
-        sys.stdout.write(json.dumps(payload, ensure_ascii=False))
-        sys.stdout.flush()
-        return 0
-    except Exception as exc:
-        logger.error(f"sub_agent_entry failed: {exc}")
-        error_payload = {
-            "error": str(exc),
-            "subagent_final_state": "",
-            "assistant_reply": f"子 Agent 执行失败：{exc}",
-        }
-        sys.stdout.write(json.dumps(error_payload, ensure_ascii=False))
-        sys.stdout.flush()
-        return 1
+            jsonable_result = _to_jsonable(result)
+            payload = {
+                "worker_result": worker_result.to_dict(),
+                "worker_persistence": {
+                    "messages": _to_jsonable((result or {}).get("messages", [])) if isinstance(result, dict) else [],
+                    "state": _build_worker_persistence_state(jsonable_result=jsonable_result),
+                },
+                "subagent_final_state": json.dumps(jsonable_result, ensure_ascii=False)
+                if isinstance(jsonable_result, dict)
+                else str(jsonable_result),
+                "assistant_reply": worker_result.final_answer,
+                "sub_id": sub_id,
+            }
+            sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+            sys.stdout.flush()
+            return 0
+        except Exception as exc:
+            error = DataAgentError.from_exception(exc, component="subagent", trace_id=trace_id)
+            fact = error.fact
+            extra = f"sub_id={sub_id}"
+            if extra not in fact:
+                fact = f"{fact}；{extra}"
+            error = DataAgentError(
+                source=error.source,
+                component=error.component,
+                fact=fact,
+                trace_id=error.trace_id,
+            )
+            logger.exception(
+                "sub_agent_entry failed source={} trace_id={}",
+                error.source,
+                error.trace_id,
+            )
+            failed = synthesize_worker_result(
+                final_state={},
+                sub_id=sub_id,
+                parent_session_id=parent_session_id,
+                status="failed",
+                error=error,
+            )
+            payload = {"worker_result": failed.to_dict(), "sub_id": sub_id}
+            sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+            sys.stdout.flush()
+            return 1
 
 
 def _resolve_subagent_identity(
@@ -207,24 +232,14 @@ def _initial_state_file_has_messages(initial_state_file: str | None) -> bool:
 
 
 def _build_worker_persistence_state(*, jsonable_result: Any) -> dict[str, Any]:
-    """Build the state snapshot persisted by the parent for debugging and reuse.
-
-    The snapshot keeps the child agent's JSON-compatible final graph state only.
-    Conversation history is stored in ``messages.json`` by the parent; this payload
-    omits ``messages`` and strips volatile runtime identity keys so reuse never
-    resurrects stale ``run_id`` values from disk.
-    """
+    """Build the state snapshot persisted by the parent for debugging and reuse."""
     state = dict(jsonable_result) if isinstance(jsonable_result, dict) else {"result": jsonable_result}
     state.pop("messages", None)
     return strip_subagent_runtime_fields(state)
 
 
 def _to_jsonable(obj: Any) -> Any:
-    """Best-effort conversion to JSON-serializable types.
-
-    NL2SQL state contains tuples and dataclasses (e.g. Result). We convert them so
-    parent process can always parse and inspect the subagent return payload.
-    """
+    """Best-effort conversion to JSON-serializable types."""
     try:
         import dataclasses
     except Exception:  # pragma: no cover
@@ -250,7 +265,6 @@ def _to_jsonable(obj: Any) -> Any:
         except Exception:
             converted = str(obj)
     elif dataclasses is not None and dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        # Ensure we pass a dataclass *instance* into asdict().
         converted = {str(k): _to_jsonable(v) for k, v in dataclasses.asdict(obj).items()}
     else:
         converted = str(obj)

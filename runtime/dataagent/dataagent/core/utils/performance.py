@@ -70,6 +70,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
+import httpx
+
+from dataagent.core.managers.action_manager.base import classify_exception
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import logger
 
@@ -657,6 +660,27 @@ def bind_current_collector(collector: PerformanceCollector | None) -> Iterator[P
         reset_current_collector(token)
 
 
+def _http_status_of(exc: Exception) -> int | None:
+    """Return HTTP status only from exceptions that carry one; do not parse fact."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return int(exc.response.status_code)
+    return None
+
+
+def _perf_fields_from_exception(exc: Exception) -> tuple[str, dict[str, Any]]:
+    """Map classify_exception / ErrorPolicy into collector fields."""
+    error_type, policy = classify_exception(exc)
+    retry_info: dict[str, Any] = {
+        "error_type": error_type.value,
+        "retriable": policy.retriable,
+        "max_retries": policy.max_retries,
+    }
+    status = _http_status_of(exc)
+    if status is not None:
+        retry_info["http_status"] = status
+    return error_type.value, retry_info
+
+
 def measure_tool(fn: Any) -> Any:
     """装饰异步工具调用，将工具执行结果记录为 performance event。"""
 
@@ -670,17 +694,17 @@ def measure_tool(fn: Any) -> Any:
         ) as h:
             ex = await fn(self, tool_call, *args, **kwargs)
             meta = getattr(ex, "metadata", None) or {}
+            success = bool(getattr(ex, "success", True))
             h.update(
                 tool_call_id=getattr(ex, "tool_call_id", h.get("tool_call_id")),
                 source=meta.get("source") if isinstance(meta, Mapping) else None,
-                success=bool(getattr(ex, "success", True)),
+                success=success,
             )
-            err = getattr(ex, "error_type", None)
-            if err:
-                h["error_type"] = err
-            retry = getattr(ex, "retry_info", None)
-            if retry:
-                h["retry_info"] = dict(retry) if isinstance(retry, Mapping) else retry
+            error = getattr(ex, "error", None)
+            if not success and isinstance(error, Exception):
+                err_t, retry_info = _perf_fields_from_exception(error)
+                h["error_type"] = err_t
+                h["retry_info"] = retry_info
             return ex
 
     return aw

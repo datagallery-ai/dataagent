@@ -22,16 +22,11 @@ from pathlib import Path
 from typing import Any
 
 from dataagent.core.context.context import ContextFactory
+from dataagent.core.errors import DataAgentError
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.utils.log import logger
 
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.DOTALL | re.IGNORECASE)
-_PUBLIC_ERROR_FIELD_TYPES = {
-    "code": str,
-    "http_status": int,
-    "component": str,
-    "retryable": bool,
-}
 
 
 class DataAgentService:
@@ -103,6 +98,8 @@ class DataAgentService:
             raise ValueError("DataAgent service requires --config.")
         try:
             self._agent = DataAgent.from_config(self.config_path)
+        except DataAgentError:
+            raise
         except Exception as exc:
             raise RuntimeError("DataAgent.from_config raised an exception") from exc
         if self._agent is None:
@@ -115,22 +112,15 @@ class DataAgentService:
 
     async def query(self, query: str) -> Any:
         """Run one DataAgent query."""
-        try:
-            if self._agent is None:
-                self.initialize()
-            if self._agent is None:
-                return self._format_error("DataAgent service is not initialized.")
-            with self._request_scope() as request:
-                if not request:
-                    return self._format_result(await self._agent.chat(query))
-                initial_state = {"session_id": request.get("session_id")}
-                return self._format_result(await self._agent.chat(query, initial_state=initial_state, **request))
-        except Exception as exc:
-            logger.exception(
-                "Unexpected DataAgent query error: {}",
-                {"message": str(exc), "type": exc.__class__.__name__},
-            )
-            return self._format_error("internal error")
+        if self._agent is None:
+            self.initialize()
+        if self._agent is None:
+            raise DataAgentError.from_exception(RuntimeError("DataAgent service is not initialized."), component="rest")
+        with self._request_scope() as request:
+            if not request:
+                return self._format_result(await self._agent.chat(query))
+            initial_state = {"session_id": request.get("session_id")}
+            return self._format_result(await self._agent.chat(query, initial_state=initial_state, **request))
 
     async def stream_query(self, query: str):
         """Stream one DataAgent query as message/result events."""
@@ -159,8 +149,7 @@ class DataAgentService:
                     )
                 async for item in stream:
                     if isinstance(item, dict) and "error" in item:
-                        yield {"event": "result", "data": self._normalize_error_payload(item.get("error"))}
-                        return
+                        raise self._coerce_error(item.get("error"))
 
                     if isinstance(item, tuple) and len(item) == 3:
                         _, stream_mode, data = item
@@ -198,27 +187,37 @@ class DataAgentService:
             if result_state:
                 yield {"event": "result", "data": self._format_result(result_state)}
             else:
-                yield {"event": "result", "data": self._format_error("Agent returned an empty stream result")}
-        except Exception as exc:
+                raise DataAgentError.from_exception(
+                    RuntimeError("Agent returned an empty stream result"),
+                    component="rest",
+                )
+        except DataAgentError as exc:
             logger.exception(
-                "Unexpected DataAgent stream error: {}",
-                {"message": str(exc), "type": exc.__class__.__name__},
+                "REST stream failed source={} trace_id={}",
+                exc.source,
+                exc.trace_id,
             )
-            yield {"event": "result", "data": self._format_error("internal error")}
+            yield {"event": "result", "data": {"result": exc.to_dict()}}
+        except Exception as exc:
+            error = DataAgentError.from_exception(exc, component="rest")
+            logger.exception(
+                "REST stream failed source={} trace_id={}",
+                error.source,
+                error.trace_id,
+            )
+            yield {"event": "result", "data": {"result": error.to_dict()}}
 
     def _format_result(self, state: Any) -> dict[str, Any]:
         """Format final agent state for the REST API."""
-
         if not isinstance(state, dict):
-            return self._format_error("Agent returned an invalid result")
-        if isinstance(state.get("error"), dict):
-            return self._normalize_error_payload(state["error"])
+            raise DataAgentError.from_exception(RuntimeError("Agent returned an invalid result"), component="rest")
+
+        if state.get("error") not in (None, "", {}):
+            raise self._coerce_error(state.get("error"))
         if state.get("success") is False:
             message = state.get("message")
             message = message if isinstance(message, str) and message.strip() else "Agent failed"
-            return self._format_error(message)
-        if state.get("error"):
-            return self._format_error("Agent failed")
+            raise DataAgentError.from_exception(RuntimeError(message), component="rest")
 
         if self._agent_type() == "nl2sql":
             return {"result": self._format_nl2sql_result(state)}
@@ -233,7 +232,7 @@ class DataAgentService:
             content = ""
 
         if not content:
-            return self._format_error("Agent returned an empty result")
+            raise DataAgentError.from_exception(RuntimeError("Agent returned an empty result"), component="rest")
         match = _ANSWER_TAG_RE.search(content)
         sql = match.group(1).strip() if match else ""
         payload = {
@@ -276,7 +275,6 @@ class DataAgentService:
             "success": True,
             "message": message,
             "candidates": candidates,
-            # Backward-compatible flat fields for existing clients.
             "sql": sql,
             "confidence": state.get("confidence"),
             "columns": state.get("columns"),
@@ -287,34 +285,29 @@ class DataAgentService:
             payload["sql_fingerprint"] = hash_sql(sql)
         return payload
 
-    def _format_error(self, message: str) -> dict[str, Any]:
-        """Format base agent error payload."""
-        return {
-            "result": {
-                "success": False,
-                "code": self._agent_error_code(),
-                "message": message,
-                "http_status": 500,
-                "component": "agent",
-                "retryable": False,
-            }
-        }
+    def _coerce_error(self, error: Any) -> DataAgentError:
+        """Turn a leftover state/stream error payload into DataAgentError."""
+        if isinstance(error, DataAgentError):
+            return error
+        if isinstance(error, dict) and error.get("source"):
+            return DataAgentError.from_dict(error)
+        fact = self._unstructured_error_fact(error)
+        if not fact:
+            return DataAgentError.from_exception(RuntimeError("Agent failed"), component="rest")
+        component = "nl2sql" if self._agent_type() == "nl2sql" else "rest"
+        return DataAgentError(source="tool", component=component, fact=fact)
 
-    def _normalize_error_payload(self, error: Any) -> dict[str, Any]:
-        """Normalize agent stream error payloads."""
+    @staticmethod
+    def _unstructured_error_fact(error: Any) -> str:
+        """Extract a public fact from a string or unstructured error payload."""
+        if isinstance(error, str):
+            return error.strip()
         if isinstance(error, dict):
-            message = error.get("message")
-            payload = self._format_error(message if isinstance(message, str) else "Agent failed")
-            for field, expected_type in _PUBLIC_ERROR_FIELD_TYPES.items():
-                value = error.get(field)
-                if isinstance(value, expected_type) and not (expected_type is int and isinstance(value, bool)):
-                    payload["result"][field] = value
-            return payload
-        return self._format_error(str(error))
-
-    def _agent_error_code(self) -> str:
-        """Return the fallback agent error code."""
-        return "WORKFLOW-AGENT-001" if self._agent_type() == "nl2sql" else "REACT-AGENT-001"
+            for key in ("fact", "message", "error"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return ""
 
     def _agent_type(self) -> str:
         """Return current SDK agent type."""

@@ -42,6 +42,7 @@ from dataagent.actions.tools.local_tool.sandbox import WorkspaceAccessError, get
 from dataagent.actions.tools.local_tool.sql_reader import load_table
 from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING
 from dataagent.core.context.message_history import serialize_message
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.swarm.swarm_config import swarm_enabled
 from dataagent.core.swarm.worker_lock import acquire_worker_lock, release_worker_lock
@@ -56,7 +57,7 @@ from dataagent.core.swarm.worker_metadata import compute_next_worker_run_id, ups
 from dataagent.core.swarm.worker_result import (
     build_busy_result,
     build_timeout_result,
-    worker_result_from_payload,
+    parse_subagent_stdout,
 )
 from dataagent.core.swarm.worker_result import (
     worker_session_id as compute_worker_session_id,
@@ -78,6 +79,7 @@ from dataagent.utils.constants import (
 )
 from dataagent.utils.fix_md_image_path import fix_markdown_image_paths, load_images_as_json
 from dataagent.utils.formatting_utils import get_available_chinese_font
+from dataagent.utils.log.dataagent_logger import get_log_context
 from dataagent.utils.runtime_paths import dataagent_package_root, resolve_session_root, resolve_user_root
 
 _subagent_runtime_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
@@ -137,198 +139,43 @@ class _SubagentCompletedOutcome:
     raw_stdout_for_llm: str | None = None
 
 
-def _synthetic_worker_result_dict(
+def _failed_worker_result_dict(
     *,
     sub_id: int,
     parent_session_id: str,
-    status: str,
-    final_answer: str,
-    error: str | None,
-    resumed: bool = False,
-    artifacts: list[str] | None = None,
-    tool_calls_count: int = 0,
-    iteration_count: int = 0,
+    message: str,
+    source: str = "tool",
+    status: str = "failed",
 ) -> dict[str, Any]:
-    """Build a JSON-serializable ``worker_result``-shaped dict for ToolMessage payloads."""
+    """Build a failed ``worker_result`` dict with structured public error."""
+    error = DataAgentError(
+        source=source,
+        fact=f"{message}；sub_id={int(sub_id)}",
+        component="subagent",
+    )
     sid = int(sub_id)
     return {
         "sub_id": sid,
         "parent_session_id": parent_session_id,
         "worker_session_id": compute_worker_session_id(parent_session_id, sid),
         "status": status,
-        "final_answer": final_answer,
-        "artifacts": list(artifacts or []),
-        "tool_calls_count": int(tool_calls_count),
-        "iteration_count": int(iteration_count),
-        "error": error,
-        "resumed": bool(resumed),
+        "final_answer": "",
+        "artifacts": [],
+        "tool_calls_count": 0,
+        "iteration_count": 0,
+        "error": error.to_dict(),
+        "resumed": False,
     }
 
 
 def _coerce_flex_state_dict_from_payload(raw: Any) -> dict[str, Any] | None:
-    """Parse ``subagent_final_state`` / legacy ``original_msg`` into a Flex final-state dict."""
+    """Parse ``subagent_final_state`` into a Flex final-state dict."""
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
         structured = _extract_structured_json(raw)
         return structured if isinstance(structured, dict) else None
     return None
-
-
-def _subagent_completed_outcome_when_stdout_not_json(
-    *,
-    stripped: str,
-    rc: int,
-    stderr: str,
-    worker_sub_id: int,
-    resolved_session_id: str,
-) -> _SubagentCompletedOutcome:
-    """Return an outcome when the child wrote empty or non-JSON stdout."""
-    if rc != 0:
-        msg = f"子 Agent 子进程异常退出（code={rc}）。"
-        if stderr:
-            msg += f"\n错误输出：\n{stderr}"
-        wr = _synthetic_worker_result_dict(
-            sub_id=worker_sub_id,
-            parent_session_id=resolved_session_id,
-            status="failed",
-            final_answer="",
-            error=msg,
-        )
-        return _SubagentCompletedOutcome(wr, None, msg, worker_sub_id)
-    if stripped:
-        logger.warning("sub_agent stdout is not valid JSON; forwarding raw stdout to the model.")
-        hint = "子 Agent stdout 不是合法 JSON；原始输出见工具结果正文。"
-        wr = _synthetic_worker_result_dict(
-            sub_id=worker_sub_id,
-            parent_session_id=resolved_session_id,
-            status="failed",
-            final_answer="",
-            error="invalid_subagent_stdout_json",
-        )
-        return _SubagentCompletedOutcome(wr, None, hint, worker_sub_id, raw_stdout_for_llm=stripped)
-    msg = "子 Agent 执行完成，但未返回任何内容。"
-    wr = _synthetic_worker_result_dict(
-        sub_id=worker_sub_id,
-        parent_session_id=resolved_session_id,
-        status="failed",
-        final_answer="",
-        error=msg,
-    )
-    return _SubagentCompletedOutcome(wr, None, msg, worker_sub_id)
-
-
-def _subagent_completed_outcome_when_top_level_not_object(
-    *,
-    stripped: str,
-    worker_sub_id: int,
-    resolved_session_id: str,
-) -> _SubagentCompletedOutcome:
-    """Return an outcome when parsed JSON exists but its top-level value is not an object."""
-    logger.warning("sub_agent stdout JSON is not an object; forwarding raw stdout to the model.")
-    hint = "子 Agent stdout JSON 顶层不是对象；原始输出见工具结果正文。"
-    wr = _synthetic_worker_result_dict(
-        sub_id=worker_sub_id,
-        parent_session_id=resolved_session_id,
-        status="failed",
-        final_answer="",
-        error="invalid_subagent_stdout_shape",
-    )
-    return _SubagentCompletedOutcome(wr, None, hint, worker_sub_id, raw_stdout_for_llm=stripped)
-
-
-def _subagent_completed_outcome_when_payload_error(
-    *,
-    parsed: dict[str, Any],
-    resolved_user_id: str,
-    resolved_session_id: str,
-    worker_sub_id: int,
-    cfg_path: Path,
-    query: str,
-    last_run_id_executed: int,
-) -> _SubagentCompletedOutcome:
-    """Return an outcome when the child payload reports a top-level ``error`` field."""
-    err = parsed.get("error")
-    msg = parsed.get("assistant_reply") or parsed.get("frontend_msg") or f"子 Agent 执行失败：{err}"
-    failed_result = _synthetic_worker_result_dict(
-        sub_id=worker_sub_id,
-        parent_session_id=resolved_session_id,
-        status="failed",
-        final_answer="",
-        error=str(err),
-    )
-    if swarm_enabled(_subagent_agent_config()):
-        upsert_worker_metadata(
-            user_id=resolved_user_id,
-            parent_session_id=resolved_session_id,
-            worker_session_id=failed_result["worker_session_id"],
-            sub_id=worker_sub_id,
-            config_path=os.fspath(cfg_path),
-            query=query,
-            worker_result=failed_result,
-            status="failed",
-            error=str(err),
-            last_run_id_executed=int(last_run_id_executed),
-        )
-    return _SubagentCompletedOutcome(failed_result, None, msg, worker_sub_id)
-
-
-def _subagent_completed_outcome_from_worker_result_branch(
-    *,
-    parsed: dict[str, Any],
-    worker_result_payload: dict[str, Any],
-    resolved_user_id: str,
-    resolved_session_id: str,
-    worker_sub_id: int,
-    cfg_path: Path,
-    query: str,
-    last_run_id_executed: int,
-) -> _SubagentCompletedOutcome:
-    """Return an outcome when the child included a structured ``worker_result`` object."""
-    worker_result = worker_result_from_payload(worker_result_payload)
-    flex_raw = parsed.get("subagent_final_state")
-    if flex_raw is None:
-        flex_raw = parsed.get("original_msg", "")
-    flex_state = _coerce_flex_state_dict_from_payload(flex_raw)
-    assistant_reply = (
-        str(parsed.get("assistant_reply") or parsed.get("frontend_msg") or "").strip() or worker_result.final_answer
-    )
-    wr_dict = worker_result.to_dict()
-    _apply_worker_persistence(
-        user_id=resolved_user_id,
-        parent_session_id=resolved_session_id,
-        sub_id=worker_sub_id,
-        worker_session_id=worker_result.worker_session_id,
-        config_path=os.fspath(cfg_path),
-        query=query,
-        worker_result=wr_dict,
-        worker_persistence=parsed.get("worker_persistence"),
-        last_run_id_executed=int(last_run_id_executed),
-    )
-    return _SubagentCompletedOutcome(wr_dict, flex_state, assistant_reply, int(worker_result.sub_id))
-
-
-def _subagent_completed_outcome_synthetic_success(
-    *,
-    parsed: dict[str, Any],
-    worker_sub_id: int,
-    resolved_session_id: str,
-) -> _SubagentCompletedOutcome:
-    """Return a success-shaped outcome when no ``worker_result`` object is present."""
-    assistant_reply = str(parsed.get("assistant_reply") or parsed.get("frontend_msg") or "").strip()
-    flex_raw = parsed.get("subagent_final_state")
-    if flex_raw is None:
-        flex_raw = parsed.get("original_msg", "")
-    flex_state = _coerce_flex_state_dict_from_payload(flex_raw)
-    wr = _synthetic_worker_result_dict(
-        sub_id=worker_sub_id,
-        parent_session_id=resolved_session_id,
-        status="success",
-        final_answer=assistant_reply,
-        error=None,
-        resumed=False,
-    )
-    return _SubagentCompletedOutcome(wr, flex_state, assistant_reply or wr["final_answer"], worker_sub_id)
 
 
 def _handle_subagent_completed(
@@ -343,87 +190,109 @@ def _handle_subagent_completed(
 ) -> _SubagentCompletedOutcome:
     """Parse child stdout JSON, persist swarm assets when applicable, return structured outcome.
 
-    Internal keys mirror the subprocess protocol (``worker_result``, ``subagent_final_state``,
-    ``assistant_reply``). ``original_msg`` / ``frontend_msg`` are assigned only in
-    ``sub_agent_tool`` for ``LocalToolWrapper`` / Executor consumption.
+    Timeout is classified by the caller via ``TimeoutError`` / ``timed_out`` before this
+    function runs. Stderr is logged for diagnosis and never used to guess error codes.
     """
-    stdout = completed.get("stdout") or ""
     stderr = completed.get("stderr") or ""
-    rc = int(completed.get("returncode") or 0)
-    stripped = stdout.strip()
-
-    # Log captured sub-agent stderr to main agent's logger for visibility
-    if stderr.strip():
+    if str(stderr).strip():
         logger.debug(f"[subagent:{worker_sub_id}] stderr captured ({len(stderr)} chars)")
-        for line in stderr.strip().splitlines()[:30]:
+        for line in str(stderr).strip().splitlines()[:30]:
             logger.debug(f"[subagent:{worker_sub_id}] {line}")
-        truncated = stderr.strip().splitlines()
+        truncated = str(stderr).strip().splitlines()
         if len(truncated) > 30:
             logger.debug(f"[subagent:{worker_sub_id}] ... ({len(truncated) - 30} more lines omitted)")
 
-    parsed: Any = None
-    if stripped:
-        try:
-            parsed = json.loads(stripped)
-        except Exception:
-            parsed = None
-
-    if parsed is None:
-        return _subagent_completed_outcome_when_stdout_not_json(
-            stripped=stripped,
-            rc=rc,
-            stderr=stderr,
-            worker_sub_id=worker_sub_id,
-            resolved_session_id=resolved_session_id,
+    if completed.get("timed_out"):
+        timeout = int(completed.get("timeout") or 1)
+        timeout_result = build_timeout_result(
+            sub_id=worker_sub_id,
+            parent_session_id=resolved_session_id,
+            timeout=timeout,
+        )
+        wr_dict = timeout_result.to_dict()
+        if swarm_enabled(_subagent_agent_config()):
+            upsert_worker_metadata(
+                user_id=resolved_user_id,
+                parent_session_id=resolved_session_id,
+                worker_session_id=timeout_result.worker_session_id,
+                sub_id=worker_sub_id,
+                config_path=os.fspath(cfg_path),
+                query=query,
+                worker_result=wr_dict,
+                status="timeout",
+                error=timeout_result.error.fact if timeout_result.error else None,
+                last_run_id_executed=int(last_run_id_executed),
+            )
+        return _SubagentCompletedOutcome(
+            wr_dict,
+            None,
+            timeout_result.error.fact if timeout_result.error else "timeout",
+            worker_sub_id,
         )
 
-    if not isinstance(parsed, dict):
-        return _subagent_completed_outcome_when_top_level_not_object(
-            stripped=stripped,
-            worker_sub_id=worker_sub_id,
-            resolved_session_id=resolved_session_id,
-        )
-
-    if parsed.get("error"):
-        return _subagent_completed_outcome_when_payload_error(
-            parsed=parsed,
-            resolved_user_id=resolved_user_id,
-            resolved_session_id=resolved_session_id,
-            worker_sub_id=worker_sub_id,
-            cfg_path=cfg_path,
+    parsed = parse_subagent_stdout(
+        str(completed.get("stdout") or ""),
+        sub_id=worker_sub_id,
+        parent_session_id=resolved_session_id,
+        returncode=int(completed.get("returncode") or 0),
+    )
+    wr_dict = parsed.worker_result.to_dict()
+    persistence = None
+    stdout = str(completed.get("stdout") or "").strip()
+    if stdout:
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            raw = json.loads(stdout)
+            if isinstance(raw, dict):
+                persistence = raw.get("worker_persistence")
+    if parsed.from_child_payload:
+        _apply_worker_persistence(
+            user_id=resolved_user_id,
+            parent_session_id=resolved_session_id,
+            sub_id=worker_sub_id,
+            worker_session_id=parsed.worker_result.worker_session_id,
+            config_path=os.fspath(cfg_path),
             query=query,
-            last_run_id_executed=last_run_id_executed,
+            worker_result=wr_dict,
+            worker_persistence=persistence,
+            last_run_id_executed=int(last_run_id_executed),
+        )
+        return _SubagentCompletedOutcome(
+            wr_dict,
+            _coerce_flex_state_dict_from_payload(parsed.flex_raw),
+            parsed.assistant_reply,
+            int(parsed.worker_result.sub_id),
         )
 
-    worker_result_payload = parsed.get("worker_result")
-    if isinstance(worker_result_payload, dict):
-        return _subagent_completed_outcome_from_worker_result_branch(
-            parsed=parsed,
-            worker_result_payload=worker_result_payload,
-            resolved_user_id=resolved_user_id,
-            resolved_session_id=resolved_session_id,
-            worker_sub_id=worker_sub_id,
-            cfg_path=cfg_path,
-            query=query,
-            last_run_id_executed=last_run_id_executed,
-        )
-
-    return _subagent_completed_outcome_synthetic_success(
-        parsed=parsed,
-        worker_sub_id=worker_sub_id,
-        resolved_session_id=resolved_session_id,
+    return _SubagentCompletedOutcome(
+        wr_dict,
+        None,
+        parsed.assistant_reply or (parsed.worker_result.error.fact if parsed.worker_result.error else "failed"),
+        worker_sub_id,
+        raw_stdout_for_llm=parsed.raw_stdout,
     )
 
 
 def _subagent_outcome_to_public_tool_dict(outcome: _SubagentCompletedOutcome) -> dict[str, Any]:
-    """Map internal parse outcome to the Executor-facing ``sub_agent_tool`` return dict."""
+    """Map internal parse outcome to the Executor-facing ``sub_agent_tool`` return dict.
+
+    Failed worker results raise ``DataAgentError`` so LocalToolWrapper produces a failed ToolResult.
+    """
+    worker_result = outcome.worker_result if isinstance(outcome.worker_result, dict) else None
+    if worker_result is not None and worker_result.get("status") != "success":
+        raw_error = worker_result.get("error")
+        if isinstance(raw_error, dict):
+            raise DataAgentError.from_dict(raw_error)
+        raise DataAgentError(
+            source="tool",
+            component="subagent",
+            fact="子 Agent 失败但缺少 error",
+        )
     if outcome.raw_stdout_for_llm is not None:
-        return {
-            "original_msg": outcome.raw_stdout_for_llm,
-            "frontend_msg": outcome.assistant_reply,
-            "state": outcome.flex_state,
-            "sub_id": outcome.sub_id,
-        }
+        raise DataAgentError(
+            source="internal",
+            fact=str(outcome.assistant_reply or "invalid subagent stdout"),
+            component="subagent",
+        )
     return {
         "original_msg": outcome.worker_result,
         "frontend_msg": outcome.assistant_reply or str(outcome.worker_result.get("final_answer") or ""),
@@ -1278,24 +1147,25 @@ async def nl2sql_sub_agent_tool(
         Path(temp_config_path).unlink(missing_ok=True)
 
     worker_payload = res.get("original_msg")
-    if isinstance(worker_payload, dict) and worker_payload.get("error"):
-        err = worker_payload.get("error")
-        return {
-            "original_msg": f"nl2sql_sub_agent_tool 工具执行失败：{err}",
-            "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{err}",
-        }
+    if isinstance(worker_payload, dict) and worker_payload.get("status") != "success":
+        raw_error = worker_payload.get("error")
+        if isinstance(raw_error, dict):
+            raise DataAgentError.from_dict(raw_error)
+        raise DataAgentError(source="tool", component="subagent")
 
     sub_state = res.get("state")
     if not isinstance(sub_state, dict):
-        logger.warning(
+        raise RuntimeError(
             f"nl2sql_sub_agent_tool: expected dict state from sub_agent_tool, got {type(sub_state).__name__}"
         )
-        return res
     if sub_state.get("error"):
-        return {
-            "original_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
-            "frontend_msg": f"nl2sql_sub_agent_tool 工具执行失败：{sub_state['error']}",
-        }
+        sql = str(sub_state.get("sql") or "")
+        db_error = str(sub_state["error"])
+        raise DataAgentError(
+            source="tool",
+            component="nl2sql",
+            fact=f"选中 SQL 执行失败：{db_error}；sql={sql}",
+        )
 
     uid = str(getattr(runtime, "user_id", None) or "anonymous")
     sid = str(getattr(runtime, "session_id", None) or "default_session")
@@ -1322,6 +1192,12 @@ async def nl2sql_sub_agent_tool(
         except Exception:
             logger.warning("SQL cannot be reformatted.")
 
+    if not sql:
+        raise DataAgentError(
+            source="tool",
+            component="nl2sql",
+            fact="子 Agent 未生成 SQL",
+        )
     columns = sub_state.get("columns") or []
     rows = sub_state.get("rows") or []
 
@@ -1425,6 +1301,8 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
             "--initial-state-file",
             str(initial_state_file),
         ]
+        parent_trace_id = get_log_context().get("trace_id") or uuid.uuid4().hex
+        cmd.extend(["--trace-id", str(parent_trace_id)])
         completed = await _run_subprocess_async(
             cmd,
             timeout=timeout,
@@ -1449,18 +1327,6 @@ async def _sub_agent_run_subprocess_and_collect_outcome(
                 initial_state_file.parent.rmdir()
 
 
-def _sub_agent_tool_busy_payload(*, worker_sub_id: int, resolved_session_id: str) -> dict[str, Any]:
-    """Build the standard tool dict when this worker id is already executing elsewhere."""
-    busy_result = build_busy_result(sub_id=worker_sub_id, parent_session_id=resolved_session_id)
-    busy_msg = f"subagent {worker_sub_id} 正在运行，本次未启动新的子进程；请创建新的 subagent 执行该任务"
-    return {
-        "original_msg": busy_result.to_dict(),
-        "frontend_msg": busy_msg,
-        "state": None,
-        "sub_id": worker_sub_id,
-    }
-
-
 def _sub_agent_tool_timeout_payload(
     *,
     worker_sub_id: int,
@@ -1482,9 +1348,9 @@ def _sub_agent_tool_timeout_payload(
             sub_id=worker_sub_id,
             config_path=os.fspath(cfg_path),
             query=query,
-            worker_result=timeout_result,
+            worker_result=timeout_result.to_dict(),
             status="timeout",
-            error=timeout_result.error,
+            error=timeout_result.error.fact if timeout_result.error else None,
             last_run_id_executed=int(next_run_id),
         )
     msg = f"子 Agent 执行超时（>{timeout} 秒），已终止子进程。"
@@ -1504,12 +1370,11 @@ def _sub_agent_tool_startup_failure_payload(
 ) -> dict[str, Any]:
     """Build the tool dict when the sub-agent subprocess fails to run or is interrupted."""
     msg = f"子 Agent 启动失败：{exc}"
-    wr = _synthetic_worker_result_dict(
+    wr = _failed_worker_result_dict(
         sub_id=worker_sub_id,
         parent_session_id=resolved_session_id,
-        status="failed",
-        final_answer="",
-        error=str(exc),
+        source="tool",
+        message=str(exc),
     )
     return {
         "original_msg": wr,
@@ -1598,7 +1463,8 @@ async def sub_agent_tool(
             **worker_path_kwargs,
         )
         if lock is None:
-            return _sub_agent_tool_busy_payload(worker_sub_id=worker_sub_id, resolved_session_id=resolved_session_id)
+            busy_result = build_busy_result(sub_id=worker_sub_id, parent_session_id=resolved_session_id)
+            raise busy_result.error or DataAgentError(source="tool", component="subagent")
 
     try:
         outcome = await _sub_agent_run_subprocess_and_collect_outcome(
@@ -1617,7 +1483,7 @@ async def sub_agent_tool(
         )
         return _subagent_outcome_to_public_tool_dict(outcome)
     except TimeoutError:
-        return _sub_agent_tool_timeout_payload(
+        _sub_agent_tool_timeout_payload(
             worker_sub_id=worker_sub_id,
             resolved_session_id=resolved_session_id,
             resolved_user_id=resolved_user_id,
@@ -1627,12 +1493,21 @@ async def sub_agent_tool(
             swarm_on=swarm_on,
             next_run_id=next_run_id,
         )
+        raise
+    except DataAgentError:
+        raise
     except Exception as e:  # pragma: no cover - 极端系统错误
-        return _sub_agent_tool_startup_failure_payload(
+        payload = _sub_agent_tool_startup_failure_payload(
             worker_sub_id=worker_sub_id,
             resolved_session_id=resolved_session_id,
             exc=e,
         )
+        error_payload = (
+            payload.get("original_msg", {}).get("error") if isinstance(payload.get("original_msg"), dict) else None
+        )
+        if isinstance(error_payload, dict):
+            raise DataAgentError.from_dict(error_payload) from e
+        raise DataAgentError(source="tool", component="subagent") from e
     finally:
         if lock is not None:
             release_worker_lock(lock)

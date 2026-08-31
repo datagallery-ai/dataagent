@@ -14,16 +14,14 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import httpx
-
-from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient, SemanticServiceError
-from dataagent.agents.nl2sql.errors import SchemaNotFoundError, SemanticServiceCallError
+from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     iter_semantic_column_payloads,
     schema_to_ddl,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import (
     DEFAULT_NL2SQL_SCHEMA_TOP_K,
@@ -61,8 +59,14 @@ class PerceptorNode(BaseNL2SQLNode):
         if self._semantic_client is None:
             try:
                 self._semantic_client = SemanticServiceClient.from_config(self._config_manager)
+            except DataAgentError:
+                raise
             except (AttributeError, ValueError) as exc:
-                raise SemanticServiceCallError(detail=str(exc)) from exc
+                raise DataAgentError(
+                    source="config",
+                    component="nl2sql",
+                    fact="SEMANTIC_LAYER.base_url 未配置",
+                ) from exc
         return self._semantic_client
 
     def schema_linking(self, keywords: list[str] | None) -> tuple[dict, list[tuple[str, str]]]:
@@ -153,12 +157,14 @@ class PerceptorNode(BaseNL2SQLNode):
     def _call_semantic_service(self, func, *args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except SemanticServiceError as exc:
-            raise SemanticServiceCallError(detail=self._semantic_service_error_detail(exc)) from exc
-        except httpx.HTTPError as exc:
-            raise SemanticServiceCallError(detail=str(exc)) from exc
+        except DataAgentError:
+            raise
         except ValueError as exc:
-            raise SemanticServiceCallError(detail=str(exc)) from exc
+            raise DataAgentError(
+                source="tool",
+                component="nl2sql",
+                fact=str(exc),
+            ) from exc
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
@@ -175,7 +181,11 @@ class PerceptorNode(BaseNL2SQLNode):
                 question = state.get("question", "").strip()
                 schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
                 if not schema:
-                    raise SchemaNotFoundError(detail=f"schema_mode={self.schema_mode}")
+                    raise DataAgentError(
+                        source="config",
+                        fact=f"schema_mode={self.schema_mode}",
+                        component="nl2sql",
+                    )
             else:
                 schema, joins = await asyncio.to_thread(self.full_schema)
             state["schema"] = schema
@@ -238,11 +248,3 @@ class PerceptorNode(BaseNL2SQLNode):
         context = {"question": question}
         res = await self.execute_with_llm_json(context, action="keyword_extraction_")
         return res["keywords"]
-
-    def _semantic_service_error_detail(self, exc: SemanticServiceError) -> str:
-        parts = [f"method={exc.method}", f"path={exc.path}", f"status_code={exc.status_code}"]
-        if exc.error_code:
-            parts.append(f"error_code={exc.error_code}")
-        if exc.error_message:
-            parts.append(f"error_message={exc.error_message}")
-        return ", ".join(parts)

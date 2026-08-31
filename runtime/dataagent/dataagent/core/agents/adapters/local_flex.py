@@ -26,6 +26,7 @@ from dataagent.core.agents.subagent_subprocess_runner import (
     SubagentSubprocessRunner,
     derive_job_sub_id,
 )
+from dataagent.core.errors import DataAgentError
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.workspace.publish import (
     ensure_subagent_output_root,
@@ -165,7 +166,7 @@ class LocalFlexAdapter:
                 agent_id=spec.id,
                 status="failed",
                 summary=f"Agent failed: {exc}",
-                error=str(exc),
+                error=DataAgentError.from_exception(exc, component="job").to_dict(),
                 subagent_session_id=subagent_session_id,
                 workspace_rel_path=workspace_rel_path,
                 metrics={"duration_ms": int((time.monotonic() - started_at) * 1000)},
@@ -201,7 +202,7 @@ class LocalFlexAdapter:
                     frontend_msg=outcome.frontend_msg,
                     state=outcome.state,
                     status="failed",
-                    error=str(exc),
+                    error=DataAgentError.from_exception(exc, component="job").to_dict(),
                 )
 
         emit_event(

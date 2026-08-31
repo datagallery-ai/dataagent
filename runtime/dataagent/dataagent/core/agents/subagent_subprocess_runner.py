@@ -35,11 +35,14 @@ from dataagent.actions.tools.local_tool.sandbox import Sandbox, get_current_sand
 from dataagent.actions.tools.local_tool.tools import (
     _coerce_flex_state_dict_from_payload,
     _run_subprocess_async,
-    _synthetic_worker_result_dict,
 )
 from dataagent.core.context.message_history import read_messages_file, serialize_message
-from dataagent.core.swarm.worker_result import worker_result_from_payload
+from dataagent.core.swarm.worker_result import (
+    build_timeout_result,
+    parse_subagent_stdout,
+)
 from dataagent.core.utils.subprocess import terminate_process_tree_async
+from dataagent.utils.log.dataagent_logger import get_log_context
 from dataagent.utils.runtime_paths import FLEX_PERSISTENCE_ROOT_ENV, SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root
 
 _CANCEL_POLL_INTERVAL_SEC = 0.2
@@ -53,7 +56,7 @@ class JobSubagentOutcome:
     frontend_msg: str
     state: dict[str, Any] | None
     status: str
-    error: str = ""
+    error: str | dict[str, Any] = ""
 
 
 class SubagentSubprocessRunner:
@@ -145,6 +148,8 @@ class SubagentSubprocessRunner:
                 "--initial-state-file",
                 str(initial_state_file),
             ]
+            parent_trace_id = get_log_context().get("trace_id") or uuid.uuid4().hex
+            cmd.extend(["--trace-id", str(parent_trace_id)])
             completed = await self._run_with_cancel(
                 cmd=cmd,
                 timeout=timeout,
@@ -159,6 +164,7 @@ class SubagentSubprocessRunner:
                 completed=completed,
                 parent_session_id=parent_session_id,
                 worker_sub_id=sub_id,
+                timeout=timeout,
             )
         finally:
             from dataagent.actions.tools.local_tool.sandbox import reset_current_sandbox
@@ -193,7 +199,7 @@ class SubagentSubprocessRunner:
                     tool_call_id=tool_call_id,
                 )
             except TimeoutError:
-                return {"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1}
+                return {"stdout": "", "stderr": "", "returncode": -1, "timed_out": True}
 
         return await _run_cancellable_subprocess_async(
             cmd=cmd,
@@ -280,7 +286,7 @@ async def _wait_cancellable_communicate(
                 communicate_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await communicate_task
-                return {"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1}
+                return {"stdout": "", "stderr": "", "returncode": -1, "timed_out": True}
             await asyncio.sleep(_CANCEL_POLL_INTERVAL_SEC)
         stdout_bytes, stderr_bytes = communicate_task.result()
     except asyncio.CancelledError:
@@ -351,7 +357,7 @@ async def _wait_cancellable_with_progress(
                 drain_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await drain_task
-                return {"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1}
+                return {"stdout": "", "stderr": "", "returncode": -1, "timed_out": True}
             await asyncio.sleep(_CANCEL_POLL_INTERVAL_SEC)
         await drain_task
     except asyncio.CancelledError:
@@ -444,103 +450,45 @@ def _parse_job_subagent_completed(
     completed: dict[str, Any],
     parent_session_id: str,
     worker_sub_id: int,
+    timeout: int = 1,
 ) -> JobSubagentOutcome:
-    """Parse child stdout JSON without SWARM persistence side effects."""
-    if int(completed.get("returncode") or 0) != 0 and not str(completed.get("stdout") or "").strip():
-        message = str(completed.get("stderr") or "subagent subprocess failed").strip()
-        failed = _synthetic_worker_result_dict(
+    """Parse child stdout JSON without SWARM persistence side effects.
+
+    Timeout must be marked on ``completed`` before this function runs; stderr text
+    is never used to classify timeout vs failure.
+    """
+    if completed.get("timed_out"):
+        worker_result = build_timeout_result(
             sub_id=worker_sub_id,
             parent_session_id=parent_session_id,
-            status="failed",
-            final_answer="",
-            error=message,
+            timeout=timeout,
         )
-        return JobSubagentOutcome(
-            original_msg=failed,
-            frontend_msg=message,
-            state=None,
-            status="failed",
-            error=message,
-        )
-
-    stdout = completed.get("stdout") or ""
-    stripped = stdout.strip()
-    parsed: Any = None
-    if stripped:
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError:
-            parsed = None
-
-    if parsed is None:
-        rc = int(completed.get("returncode") or 0)
-        hint = stripped or str(completed.get("stderr") or "subagent stdout was not valid JSON")
-        status = "failed" if rc != 0 else "completed"
-        return JobSubagentOutcome(
-            original_msg=hint,
-            frontend_msg=hint,
-            state=None,
-            status=status,
-            error="" if status == "completed" else hint,
-        )
-
-    if not isinstance(parsed, dict):
-        hint = stripped
-        return JobSubagentOutcome(original_msg=hint, frontend_msg=hint, state=None, status="completed")
-
-    if parsed.get("error"):
-        err = str(parsed.get("error"))
-        msg = str(parsed.get("assistant_reply") or parsed.get("frontend_msg") or f"子 Agent 执行失败：{err}")
-        failed = _synthetic_worker_result_dict(
-            sub_id=worker_sub_id,
-            parent_session_id=parent_session_id,
-            status="failed",
-            final_answer="",
-            error=err,
-        )
-        return JobSubagentOutcome(
-            original_msg=failed,
-            frontend_msg=msg,
-            state=None,
-            status="failed",
-            error=err,
-        )
-
-    worker_result_payload = parsed.get("worker_result")
-    if isinstance(worker_result_payload, dict):
-        worker_result = worker_result_from_payload(worker_result_payload)
-        flex_raw = parsed.get("subagent_final_state")
-        if flex_raw is None:
-            flex_raw = parsed.get("original_msg", "")
-        flex_state = _coerce_flex_state_dict_from_payload(flex_raw)
-        assistant_reply = (
-            str(parsed.get("assistant_reply") or parsed.get("frontend_msg") or "").strip() or worker_result.final_answer
-        )
+        message = worker_result.error.fact if worker_result.error else "timeout"
         return JobSubagentOutcome(
             original_msg=worker_result.to_dict(),
-            frontend_msg=assistant_reply,
-            state=flex_state,
-            status="completed",
+            frontend_msg=message,
+            state=None,
+            status="timed_out",
+            error=worker_result.error.to_dict() if worker_result.error else message,
         )
 
-    assistant_reply = str(parsed.get("assistant_reply") or parsed.get("frontend_msg") or "").strip()
-    flex_raw = parsed.get("subagent_final_state")
-    if flex_raw is None:
-        flex_raw = parsed.get("original_msg", "")
-    flex_state = _coerce_flex_state_dict_from_payload(flex_raw)
-    wr = _synthetic_worker_result_dict(
+    parsed = parse_subagent_stdout(
+        str(completed.get("stdout") or ""),
         sub_id=worker_sub_id,
         parent_session_id=parent_session_id,
-        status="success",
-        final_answer=assistant_reply,
-        error=None,
-        resumed=False,
+        returncode=int(completed.get("returncode") or 0),
     )
+    worker_result = parsed.worker_result
+    status = "completed" if worker_result.status == "success" else "failed"
+    message = parsed.assistant_reply or worker_result.final_answer
+    if status != "completed":
+        message = worker_result.error.fact if worker_result.error else (parsed.assistant_reply or "failed")
     return JobSubagentOutcome(
-        original_msg=wr,
-        frontend_msg=assistant_reply or wr["final_answer"],
-        state=flex_state,
-        status="completed",
+        original_msg=worker_result.to_dict(),
+        frontend_msg=message,
+        state=_coerce_flex_state_dict_from_payload(parsed.flex_raw),
+        status=status,
+        error="" if status == "completed" else (worker_result.error.to_dict() if worker_result.error else message),
     )
 
 

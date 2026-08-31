@@ -19,9 +19,9 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from dataagent.agents.nl2sql.errors import LLMOutputParseError
 from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
 from dataagent.core.cbb.base_node import BaseNode
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, TZ_CN
@@ -96,12 +96,14 @@ class BaseNL2SQLNode(BaseNode):
         for attempt in range(3):
             try:
                 return json.loads(json_parser(await self.execute_with_llm(context, action)))
-            except (LLMOutputParseError, json.JSONDecodeError) as exc:
+            except (DataAgentError, json.JSONDecodeError) as exc:
                 if attempt == 2:
-                    detail = exc.detail if isinstance(exc, LLMOutputParseError) and exc.detail else str(exc)
-                    raise LLMOutputParseError(
-                        message=f"Model output format error: JSON parsing failed after 3 attempts: {detail}",
-                        detail=detail,
+                    if isinstance(exc, DataAgentError):
+                        raise
+                    raise DataAgentError(
+                        source="internal",
+                        fact=f"Model output format error: JSON parsing failed after 3 attempts: {exc}",
+                        component="nl2sql",
                     ) from exc
         return None
 

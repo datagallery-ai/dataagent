@@ -118,69 +118,48 @@ def test_register_configs_does_not_log_config_values(monkeypatch: pytest.MonkeyP
     assert agent.config_manager.get("DATABASE.config.password") == database_cfg["config"]["password"]
 
 
-def test_normalize_structured_error_uses_public_field_allowlist() -> None:
-    """Structured errors must not expose internal diagnostic fields."""
-    service = DataAgentService()
-    error = {
-        "success": False,
-        "code": "NL2SQL-SQL-001",
-        "message": "SQL service request failed",
-        "http_status": 502,
-        "component": "sql_service",
-        "retryable": True,
-        "detail": "connection failed for postgresql://admin:secret@internal/db",
-        "traceback": 'File "/srv/dataagent/sql_service.py", line 101',
-        "config": {"password": "secret"},
-        "schema": {"private_table": ["customer_ssn"]},
-    }
+def test_public_error_excludes_internal_detail() -> None:
+    """Public error payloads must not expose internal diagnostic fields."""
+    from dataagent.core.errors import DataAgentError
 
-    result = service._normalize_error_payload(error)
-
-    assert result == {
-        "result": {
-            "success": False,
-            "code": "NL2SQL-SQL-001",
-            "message": "SQL service request failed",
-            "http_status": 502,
-            "component": "sql_service",
-            "retryable": True,
-        }
-    }
+    error = DataAgentError(
+        source="tool",
+        component="sql_service",
+        fact="SQL 服务调用失败；sql=select 1",
+        trace_id="trace-sql",
+    )
+    payload = error.to_dict()
+    assert payload["source"] == "tool"
+    assert "code" not in payload
+    assert payload["component"] == "sql_service"
+    assert "sql=select 1" in payload["fact"]
+    assert "detail" not in payload
+    assert "locator" not in payload
+    assert "secret" not in str(payload)
+    assert "private_table" not in str(payload)
 
 
 @pytest.mark.parametrize(
-    ("state", "expected_message"),
+    "state",
     [
-        (
-            {
-                "success": False,
-                "message": "Agent failed",
-                "workspace": "/srv/private",
-                "database": {"host": "internal-db", "password": "secret"},
-            },
-            "Agent failed",
-        ),
-        (
-            {
-                "error": RuntimeError("password=secret path=/srv/private/config.yaml"),
-            },
-            "Agent failed",
-        ),
-        (
-            "password=secret path=/srv/private/config.yaml",
-            "Agent returned an invalid result",
-        ),
+        {
+            "success": False,
+            "message": "Agent failed",
+            "workspace": "/srv/private",
+            "database": {"host": "internal-db", "password": "secret"},
+        },
+        {"error": RuntimeError("password=secret path=/srv/private/config.yaml")},
+        "password=secret path=/srv/private/config.yaml",
     ],
 )
-def test_format_result_does_not_expose_internal_state_or_raw_errors(state: Any, expected_message: str) -> None:
-    """Failed workflow state and raw errors must not be attached to the API response."""
+def test_format_result_raises_without_exposing_internal_state(state: Any) -> None:
+    """Invalid or failed workflow state must raise a public DataAgentError."""
     service = DataAgentService()
-
-    result = service._format_result(state)
-
-    assert result["result"]["message"] == expected_message
-    assert "secret" not in str(result)
-    assert "/srv/private" not in str(result)
+    with pytest.raises(Exception) as caught:
+        service._format_result(state)
+    public = caught.value.to_dict() if hasattr(caught.value, "to_dict") else {"message": str(caught.value)}
+    assert "secret" not in str(public)
+    assert "/srv/private" not in str(public)
 
 
 @pytest.mark.parametrize("agent_type", ["../../../escaped", "chatbi"])

@@ -124,6 +124,90 @@ def test_sub_agent_tool_extracts_structured_json(monkeypatch, tmp_path):
     assert not initial_state_file.parent.exists()
 
 
+def test_sub_agent_tool_passes_parent_trace_id_to_child(monkeypatch, tmp_path):
+    from dataagent.utils.log import dataagent_log_context
+
+    config_file = tmp_path / "sub_agent.yaml"
+    config_file.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    async def _fake_run_subprocess_async(
+        cmd, *, timeout, cwd=None, env=None, progress_callback=None, tool_call_id=None
+    ):
+        captured["cmd"] = cmd
+        sub_id = int(cmd[cmd.index("--sub-id") + 1])
+        return {
+            "stdout": json.dumps(
+                {
+                    "worker_result": {
+                        "sub_id": sub_id,
+                        "parent_session_id": "default_session",
+                        "worker_session_id": f"subagent_default_session_{sub_id}",
+                        "status": "success",
+                        "final_answer": "ok",
+                        "artifacts": [],
+                        "tool_calls_count": 0,
+                        "iteration_count": 0,
+                        "error": None,
+                        "resumed": False,
+                    },
+                    "assistant_reply": "ok",
+                    "sub_id": sub_id,
+                },
+                ensure_ascii=False,
+            ),
+            "stderr": "",
+            "returncode": 0,
+        }
+
+    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools._run_subprocess_async", _fake_run_subprocess_async)
+    with dataagent_log_context(trace_id="parent-trace-abc"):
+        asyncio.run(sub_agent_tool(query="查询本体", config_path=str(config_file), timeout=1))
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--trace-id") + 1] == "parent-trace-abc"
+
+
+def test_sub_agent_tool_always_passes_trace_id_without_log_context(monkeypatch, tmp_path):
+    config_file = tmp_path / "sub_agent.yaml"
+    config_file.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    async def _fake_run_subprocess_async(
+        cmd, *, timeout, cwd=None, env=None, progress_callback=None, tool_call_id=None
+    ):
+        captured["cmd"] = cmd
+        sub_id = int(cmd[cmd.index("--sub-id") + 1])
+        return {
+            "stdout": json.dumps(
+                {
+                    "worker_result": {
+                        "sub_id": sub_id,
+                        "parent_session_id": "default_session",
+                        "worker_session_id": f"subagent_default_session_{sub_id}",
+                        "status": "success",
+                        "final_answer": "ok",
+                        "artifacts": [],
+                        "tool_calls_count": 0,
+                        "iteration_count": 0,
+                        "error": None,
+                        "resumed": False,
+                    },
+                    "assistant_reply": "ok",
+                    "sub_id": sub_id,
+                },
+                ensure_ascii=False,
+            ),
+            "stderr": "",
+            "returncode": 0,
+        }
+
+    monkeypatch.setattr("dataagent.actions.tools.local_tool.tools._run_subprocess_async", _fake_run_subprocess_async)
+    asyncio.run(sub_agent_tool(query="查询本体", config_path=str(config_file), timeout=1))
+    cmd = captured["cmd"]
+    assert "--trace-id" in cmd
+    assert cmd[cmd.index("--trace-id") + 1]
+
+
 def test_sub_agent_tool_uses_contextvar_runtime_context(monkeypatch, tmp_path):
     """通过 set_subagent_runtime_context 注入 user_id / session_id 后，子进程命令应带上对应
     ``--user-id``、``--session-id``。
@@ -419,7 +503,7 @@ def test_sub_agent_tool_swarm_disabled_does_not_create_workers_dir(monkeypatch, 
     assert not workers_root.exists()
 
 
-def test_sub_agent_tool_returns_busy_without_updating_metadata(monkeypatch, tmp_path):
+def test_sub_agent_tool_raises_busy_without_updating_metadata(monkeypatch, tmp_path):
     config_file = tmp_path / "sub_agent.yaml"
     config_file.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "dataagent-home"))
@@ -441,15 +525,18 @@ def test_sub_agent_tool_returns_busy_without_updating_metadata(monkeypatch, tmp_
 
     monkeypatch.setattr("dataagent.actions.tools.local_tool.tools._run_subprocess_async", _should_not_run)
     token = set_subagent_runtime_context(user_id="main-user", session_id="main-session", sub_id=0)
+    from dataagent.core.errors import DataAgentError
+
     try:
-        out = asyncio.run(sub_agent_tool("继续分析", str(config_file), sub_id=123456, timeout=1))
+        with pytest.raises(DataAgentError) as caught:
+            asyncio.run(sub_agent_tool("继续分析", str(config_file), sub_id=123456, timeout=1))
     finally:
         reset_subagent_runtime_context(token)
 
-    assert out["sub_id"] == 123456
-    assert isinstance(out["original_msg"], dict)
-    assert out["original_msg"]["status"] == "failed"
-    assert "create a new subagent" in (out["original_msg"].get("error") or "")
+    assert caught.value.source == "tool"
+    assert caught.value.component == "subagent"
+    assert "123456" in caught.value.fact
+    assert "create a new subagent" in caught.value.fact
     metadata_path = (
         tmp_path / "dataagent-home" / "main-user" / "main-session" / "workers" / "123456" / ".memory" / "metadata.json"
     )
@@ -1190,3 +1277,65 @@ def test_nl2sql_sub_agent_tool_ignores_none_error_field(monkeypatch, tmp_path):
     assert "SQL 文件已保存到" in result["frontend_msg"]
     assert "SELECT 1" in sql_path.read_text(encoding="utf-8")
     assert "value" in csv_path.read_text(encoding="utf-8")
+
+
+def test_sub_agent_entry_propagates_inner_exception(monkeypatch, tmp_path, capsys):
+    from dataagent.actions.tools.local_tool import sub_agent_entry
+    from dataagent.core.errors import DataAgentError
+
+    cfg = tmp_path / "sub.yaml"
+    cfg.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("disk full api_key=sk-secret")
+
+    monkeypatch.setattr(sub_agent_entry, "_run_agent", _boom)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["sub_agent_entry", "--query", "q", "--config", str(cfg), "--sub-id", "9"],
+    )
+
+    rc = sub_agent_entry.main()
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    error = DataAgentError.from_dict(payload["worker_result"]["error"])
+    assert error.source == "internal"
+    assert "sub_id=9" in error.fact
+    assert "RuntimeError" in error.fact
+    assert "disk full" in error.fact
+    assert "sk-secret" not in error.fact
+    assert error.fact != "子 Agent 执行失败"
+
+
+def test_sub_agent_entry_preserves_structured_dataagent_error(monkeypatch, tmp_path, capsys):
+    from dataagent.actions.tools.local_tool import sub_agent_entry
+    from dataagent.core.errors import DataAgentError
+
+    cfg = tmp_path / "sub.yaml"
+    cfg.write_text("AGENT_CONFIG:\n  name: test\n", encoding="utf-8")
+    original = DataAgentError(
+        fact="can't connect to db；sql=select 1",
+        source="tool",
+        component="nl2sql",
+        trace_id="trace-inner",
+    )
+
+    async def _boom(*_args, **_kwargs):
+        raise original
+
+    monkeypatch.setattr(sub_agent_entry, "_run_agent", _boom)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["sub_agent_entry", "--query", "q", "--config", str(cfg), "--sub-id", "4"],
+    )
+
+    rc = sub_agent_entry.main()
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    error = DataAgentError.from_dict(payload["worker_result"]["error"])
+    assert error.source == "tool"
+    assert "can't connect to db" in error.fact
+    assert "sql=select 1" in error.fact
+    assert "sub_id=4" in error.fact

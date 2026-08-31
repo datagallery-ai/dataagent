@@ -14,7 +14,7 @@ import hashlib
 import re
 from typing import Any
 
-from dataagent.agents.nl2sql.errors import LLMOutputParseError
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.constants import DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH
 
 # 匹配未被单引号包裹的 ${...} 模板（如 ${starttime, -5, yyyyMMdd}）
@@ -54,7 +54,7 @@ def sql_parser(content: str) -> list[str]:
     """Extract SQL statements from model output text."""
     m = re.findall(r"```sql\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
-        raise LLMOutputParseError(detail="No SQL found")
+        raise DataAgentError(source="internal", fact="No SQL found", component="nl2sql")
     sqls = []
     for sql in m:
         sql = sql.replace("\xa0", " ").strip().rstrip(";")
@@ -69,7 +69,7 @@ def json_parser(content: str) -> str:
     """Extract a JSON object/array string from model output."""
     m = re.search(r"```json\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
-        raise LLMOutputParseError(detail="No JSON found")
+        raise DataAgentError(source="internal", fact="No JSON found", component="nl2sql")
     return m.group(1).strip()
 
 
@@ -77,7 +77,7 @@ def metadata_parser(text: str) -> list[dict[str, set[str]]]:
     """Parse metadata-match model output into table/column sets."""
     blocks = re.findall(r"<res>\s*(.*?)\s*</res>", text, flags=re.S | re.I)
     if not blocks:
-        raise LLMOutputParseError(detail="No metadata result found")
+        raise DataAgentError(source="internal", fact="No metadata result found", component="nl2sql")
     out: list[dict[str, set[str]]] = []
     try:
         for b in blocks:
@@ -94,7 +94,7 @@ def metadata_parser(text: str) -> list[dict[str, set[str]]]:
                 m[f"{t}.{c}"] = vals
             out.append(m)
     except Exception as exc:
-        raise LLMOutputParseError(detail=str(exc)) from exc
+        raise DataAgentError(source="internal", fact=str(exc), component="nl2sql") from exc
     return out
 
 

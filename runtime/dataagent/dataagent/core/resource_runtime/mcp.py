@@ -196,8 +196,14 @@ async def _async_call_resource_mcp_tool(
 
 
 def normalize_mcp_call_tool_result(payload: Any) -> dict[str, Any]:
-    """Normalize MCP ``call_tool`` results into resource-operation dicts."""
+    """Normalize MCP ``call_tool`` results into resource-operation dicts.
+
+    Protocol-level ``isError`` always wins: a JSON / structured body must not
+    turn a failed MCP call into a completed resource job.
+    """
     if isinstance(payload, CallToolResult):
+        if getattr(payload, "isError", False):
+            return {"status": "error", "error": _summary_from_call_result(payload)}
         structured = getattr(payload, "structuredContent", None)
         if isinstance(structured, dict):
             return dict(structured)
@@ -212,17 +218,16 @@ def normalize_mcp_call_tool_result(payload: Any) -> dict[str, Any]:
                 try:
                     parsed = json.loads(text)
                 except json.JSONDecodeError:
-                    status = "error" if getattr(payload, "isError", False) else "completed"
-                    return {"status": status, "summary": text}
+                    return {"status": "completed", "summary": text}
                 if isinstance(parsed, dict):
                     return parsed
                 return {"status": "completed", "result": parsed}
-        if getattr(payload, "isError", False):
-            return {"status": "error", "error": _summary_from_call_result(payload)}
         dumped = payload.model_dump() if hasattr(payload, "model_dump") else {"result": str(payload)}
         return dumped if isinstance(dumped, dict) else {"result": dumped}
 
     if isinstance(payload, dict):
+        if payload.get("isError"):
+            return {"status": "error", "error": _summary_from_mapping(payload)}
         structured = payload.get("structuredContent")
         if isinstance(structured, dict):
             return dict(structured)
@@ -237,11 +242,8 @@ def normalize_mcp_call_tool_result(payload: Any) -> dict[str, Any]:
                 try:
                     parsed = json.loads(text)
                 except json.JSONDecodeError:
-                    status = "error" if payload.get("isError") else "completed"
-                    return {"status": status, "summary": text}
+                    return {"status": "completed", "summary": text}
                 return parsed if isinstance(parsed, dict) else {"status": "completed", "result": parsed}
-        if payload.get("isError"):
-            return {"status": "error", "error": _summary_from_mapping(payload)}
         return dict(payload)
     return {"status": "completed", "result": payload}
 

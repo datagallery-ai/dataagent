@@ -30,11 +30,12 @@ import json
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.core.errors import DataAgentError
 from dataagent.core.jobs.envelope import (
     DEFAULT_RESOURCE_JOB_TIMEOUT_SEC,
     envelope_from_tool_context,
@@ -53,6 +54,40 @@ from dataagent.utils.constants import (
 
 _RESOURCE_JOB_KIND = "resource"
 _SUBAGENT_JOB_KIND = "subagent"
+
+
+def _raise_job_tool_error(message: str) -> NoReturn:
+    """Raise a tool-level job failure so Executor records a ToolMessage error."""
+    raise DataAgentError(source="tool", component="job", fact=message)
+
+
+def _raise_if_tool_status_error(payload: dict[str, Any]) -> dict[str, Any]:
+    """Raise when a coordinator/service payload is a tool-level ``status=ERROR`` dict."""
+    if str(payload.get("status") or "").strip().upper() == "ERROR":
+        _raise_job_tool_error(str(payload.get("message") or "job tool failed"))
+    return payload
+
+
+def _raise_if_job_collect_failed(payload: dict[str, Any], *, tool_name: str) -> dict[str, Any]:
+    """Raise when a collect payload is not a completed job result."""
+    _raise_if_tool_status_error(payload)
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "completed":
+        return payload
+    raw_error = payload.get("error")
+    if isinstance(raw_error, dict) and raw_error.get("source"):
+        raise DataAgentError.from_dict(raw_error)
+    fact = str(
+        payload.get("summary")
+        or payload.get("message")
+        or (raw_error if isinstance(raw_error, str) and raw_error else "")
+        or f"Job collect status is {status or 'unknown'}"
+    )
+    raise DataAgentError(
+        source="tool",
+        component="job",
+        fact=f"{fact}；tool={tool_name} status={status} job_id={payload.get('job_id')}",
+    )
 
 
 def _job_kind_from_status(status: dict[str, Any]) -> str:
@@ -125,12 +160,12 @@ def _map_cancel_tool_result(job_id: str, payload: dict[str, Any]) -> dict[str, A
         payload: Snapshot dict returned by the job service / coordinator.
 
     Returns:
-        The original payload, or ``{"status": "ERROR", "message": ...}`` when the
-        job does not exist.
+        The original payload, or raises when the job does not exist.
     """
+    _raise_if_tool_status_error(payload)
     if str(payload.get("status") or "").strip().lower() != "not_found":
         return payload
-    return {"status": "ERROR", "message": f"job_id {job_id} not found"}
+    _raise_job_tool_error(f"job_id {job_id} not found")
 
 
 def _require_job_kind(
@@ -140,8 +175,8 @@ def _require_job_kind(
     expected_kind: str,
     tool_name: str,
     alternate_tool: str,
-) -> dict[str, Any] | None:
-    """Return an ERROR payload when ``job_id`` does not belong to ``expected_kind``.
+) -> None:
+    """Raise when ``job_id`` does not belong to ``expected_kind``.
 
     Args:
         runtime: Active runtime exposing job services.
@@ -151,19 +186,17 @@ def _require_job_kind(
         alternate_tool: Suggested counterpart tool for the other track.
 
     Returns:
-        ERROR dict when the track mismatches; otherwise ``None``.
+        ``None`` when the track matches or the job is missing.
     """
     job_kind, error = _read_job_kind(runtime, job_id)
     if error is not None:
-        return error
+        _raise_if_tool_status_error(error)
+        return None
     if job_kind is None:
         return None
     if job_kind == expected_kind:
         return None
-    return {
-        "status": "ERROR",
-        "message": (f"job_id {job_id} is a {job_kind} job; use {alternate_tool} instead of {tool_name}."),
-    }
+    _raise_job_tool_error(f"job_id {job_id} is a {job_kind} job; use {alternate_tool} instead of {tool_name}.")
 
 
 def _resource_collect_frontend_msg(payload: dict[str, Any]) -> str:
@@ -176,7 +209,8 @@ def _resource_collect_frontend_msg(payload: dict[str, Any]) -> str:
         Multi-line summary string for tool consumers.
     """
     summary = str(payload.get("summary") or "").strip()
-    error = str(payload.get("error") or "").strip()
+    raw_error = payload.get("error")
+    error = str(raw_error.get("fact") or "").strip() if isinstance(raw_error, dict) else str(raw_error or "").strip()
     terminal_status = str(payload.get("status") or "").strip().lower()
     lines: list[str] = []
 
@@ -269,8 +303,7 @@ def _slim_poll_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Slim dict without ``request``, ``allocation``, or nested watch snapshots.
     """
-    if str(snapshot.get("status") or "").strip().upper() == "ERROR":
-        return dict(snapshot)
+    _raise_if_tool_status_error(snapshot)
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     slim: dict[str, Any] = {
         "job_id": snapshot.get("job_id", ""),
@@ -362,7 +395,7 @@ def _poll_with_watch(
     """
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
-        return {"status": "ERROR", "message": "job_id is required"}
+        _raise_job_tool_error("job_id is required")
 
     normalized_limit = max(1, min(POLL_WATCH_MAX_EVENT_LIMIT, int(event_limit or POLL_WATCH_DEFAULT_EVENT_LIMIT)))
     normalized_watch = max(0, min(POLL_WATCH_MAX_WATCH_SEC, int(watch_sec or 0)))
@@ -476,15 +509,17 @@ def submit_subagent(
     """
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "submit_subagent requires a mounted runtime."}
+        _raise_job_tool_error("submit_subagent requires a mounted runtime.")
     agent_service = runtime.ensure_job_services()
     if agent_service is None:
-        return {"status": "ERROR", "message": "submit_subagent requires a resolved parent workspace."}
-    return agent_service.submit(
-        agent_id=str(agent_id or "").strip(),
-        task=str(task or ""),
-        timeout_sec=int(timeout_sec or DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC),
-        job_envelope=envelope_from_tool_context(_tool_context) or None,
+        _raise_job_tool_error("submit_subagent requires a resolved parent workspace.")
+    return _raise_if_tool_status_error(
+        agent_service.submit(
+            agent_id=str(agent_id or "").strip(),
+            task=str(task or ""),
+            timeout_sec=int(timeout_sec or DEFAULT_SUBMIT_SUBAGENT_TIMEOUT_SEC),
+            job_envelope=envelope_from_tool_context(_tool_context) or None,
+        )
     )
 
 
@@ -511,20 +546,18 @@ def poll_subagent(
     """
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "poll_subagent requires a mounted runtime."}
+        _raise_job_tool_error("poll_subagent requires a mounted runtime.")
     agent_service = runtime.ensure_job_services()
     if agent_service is None:
-        return {"status": "ERROR", "message": "poll_subagent requires a resolved parent workspace."}
+        _raise_job_tool_error("poll_subagent requires a resolved parent workspace.")
     normalized_job_id = str(job_id or "").strip()
-    kind_error = _require_job_kind(
+    _require_job_kind(
         runtime=runtime,
         job_id=normalized_job_id,
         expected_kind=_SUBAGENT_JOB_KIND,
         tool_name="poll_subagent",
         alternate_tool="poll_job",
     )
-    if kind_error is not None:
-        return kind_error
     return _poll_with_watch(
         job_id=job_id,
         cursor=cursor,
@@ -546,23 +579,24 @@ def collect_subagent(job_id: str, *, _tool_context: ToolExecutionContext) -> dic
     """
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
-        return {"status": "ERROR", "message": "job_id is required"}
+        _raise_job_tool_error("job_id is required")
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "collect_subagent requires a mounted runtime."}
+        _raise_job_tool_error("collect_subagent requires a mounted runtime.")
     agent_service = runtime.ensure_job_services()
     if agent_service is None:
-        return {"status": "ERROR", "message": "collect_subagent requires a resolved parent workspace."}
-    kind_error = _require_job_kind(
+        _raise_job_tool_error("collect_subagent requires a resolved parent workspace.")
+    _require_job_kind(
         runtime=runtime,
         job_id=normalized_job_id,
         expected_kind=_SUBAGENT_JOB_KIND,
         tool_name="collect_subagent",
         alternate_tool="collect_job",
     )
-    if kind_error is not None:
-        return kind_error
-    return agent_service.collect(job_id=normalized_job_id)
+    return _raise_if_job_collect_failed(
+        agent_service.collect(job_id=normalized_job_id),
+        tool_name="collect_subagent",
+    )
 
 
 def cancel_subagent(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str, Any]:
@@ -574,22 +608,20 @@ def cancel_subagent(job_id: str, *, _tool_context: ToolExecutionContext) -> dict
     """
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
-        return {"status": "ERROR", "message": "job_id is required"}
+        _raise_job_tool_error("job_id is required")
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "cancel_subagent requires a mounted runtime."}
+        _raise_job_tool_error("cancel_subagent requires a mounted runtime.")
     agent_service = runtime.ensure_job_services()
     if agent_service is None:
-        return {"status": "ERROR", "message": "cancel_subagent requires a resolved parent workspace."}
-    kind_error = _require_job_kind(
+        _raise_job_tool_error("cancel_subagent requires a resolved parent workspace.")
+    _require_job_kind(
         runtime=runtime,
         job_id=normalized_job_id,
         expected_kind=_SUBAGENT_JOB_KIND,
         tool_name="cancel_subagent",
         alternate_tool="cancel_job",
     )
-    if kind_error is not None:
-        return kind_error
     return _map_cancel_tool_result(
         normalized_job_id,
         agent_service.cancel(job_id=normalized_job_id),
@@ -645,49 +677,47 @@ def submit_resource_job(
     command_str = str(command or "").strip()
     command_file_str = str(command_file or "").strip()
     if command_str and command_file_str:
-        return {
-            "status": "ERROR",
-            "message": "submit_resource_job: command and command_file are mutually exclusive. Provide one or the other.",
-        }
+        _raise_job_tool_error(
+            "submit_resource_job: command and command_file are mutually exclusive. Provide one or the other."
+        )
 
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "submit_resource_job requires a mounted runtime."}
+        _raise_job_tool_error("submit_resource_job requires a mounted runtime.")
 
     if command_file_str:
         workspace_dir = getattr(runtime, "workspace_dir", None)
         if not workspace_dir:
-            return {"status": "ERROR", "message": "submit_resource_job cannot resolve workspace_dir for command_file."}
+            _raise_job_tool_error("submit_resource_job cannot resolve workspace_dir for command_file.")
         resolved_path = _resolve_workspace_file(command_file_str, Path(str(workspace_dir)))
         if resolved_path is None:
-            return {
-                "status": "ERROR",
-                "message": f"command_file must point to a file inside the workspace: {command_file_str}",
-            }
+            _raise_job_tool_error(f"command_file must point to a file inside the workspace: {command_file_str}")
         try:
             command_str = resolved_path.read_text(encoding="utf-8").strip()
         except OSError as exc:
-            return {"status": "ERROR", "message": f"Failed to read command_file: {exc}"}
+            _raise_job_tool_error(f"Failed to read command_file: {exc}")
         if not command_str:
-            return {"status": "ERROR", "message": "command_file is empty; write the command content to the file first."}
+            _raise_job_tool_error("command_file is empty; write the command content to the file first.")
 
     if not command_str:
-        return {"status": "ERROR", "message": "submit_resource_job requires command or command_file."}
+        _raise_job_tool_error("submit_resource_job requires command or command_file.")
 
     coordinator = runtime.ensure_resource_coordinator()
     if coordinator is None:
-        return {"status": "ERROR", "message": "submit_resource_job requires RESOURCES configuration."}
-    return coordinator.submit_job(
-        resource_id=str(resource_id or "").strip(),
-        command=command_str,
-        task_type=str(task_type or "resource").strip() or "resource",
-        timeout_sec=int(timeout_sec or DEFAULT_RESOURCE_JOB_TIMEOUT_SEC),
-        script_artifact=script_artifact,
-        inputs=inputs,
-        outputs=outputs,
-        receipt_ids=receipt_ids,
-        out_kind=str(out_kind or "").strip(),
-        job_envelope=envelope_from_tool_context(_tool_context) or None,
+        _raise_job_tool_error("submit_resource_job requires RESOURCES configuration.")
+    return _raise_if_tool_status_error(
+        coordinator.submit_job(
+            resource_id=str(resource_id or "").strip(),
+            command=command_str,
+            task_type=str(task_type or "resource").strip() or "resource",
+            timeout_sec=int(timeout_sec or DEFAULT_RESOURCE_JOB_TIMEOUT_SEC),
+            script_artifact=script_artifact,
+            inputs=inputs,
+            outputs=outputs,
+            receipt_ids=receipt_ids,
+            out_kind=str(out_kind or "").strip(),
+            job_envelope=envelope_from_tool_context(_tool_context) or None,
+        )
     )
 
 
@@ -714,20 +744,18 @@ def poll_job(
     """
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "poll_job requires a mounted runtime."}
+        _raise_job_tool_error("poll_job requires a mounted runtime.")
     coordinator = runtime.ensure_resource_coordinator()
     if coordinator is None:
-        return {"status": "ERROR", "message": "poll_job requires RESOURCES configuration."}
+        _raise_job_tool_error("poll_job requires RESOURCES configuration.")
     normalized_job_id = str(job_id or "").strip()
-    kind_error = _require_job_kind(
+    _require_job_kind(
         runtime=runtime,
         job_id=normalized_job_id,
         expected_kind=_RESOURCE_JOB_KIND,
         tool_name="poll_job",
         alternate_tool="poll_subagent",
     )
-    if kind_error is not None:
-        return kind_error
     return _poll_with_watch(
         job_id=job_id,
         cursor=cursor,
@@ -749,23 +777,24 @@ def collect_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str
     """
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
-        return {"status": "ERROR", "message": "job_id is required"}
+        _raise_job_tool_error("job_id is required")
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "collect_job requires a mounted runtime."}
+        _raise_job_tool_error("collect_job requires a mounted runtime.")
     coordinator = runtime.ensure_resource_coordinator()
     if coordinator is None:
-        return {"status": "ERROR", "message": "collect_job requires RESOURCES configuration."}
-    kind_error = _require_job_kind(
+        _raise_job_tool_error("collect_job requires RESOURCES configuration.")
+    _require_job_kind(
         runtime=runtime,
         job_id=normalized_job_id,
         expected_kind=_RESOURCE_JOB_KIND,
         tool_name="collect_job",
         alternate_tool="collect_subagent",
     )
-    if kind_error is not None:
-        return kind_error
-    return _enrich_resource_collect_payload(coordinator.collect(job_id=normalized_job_id))
+    return _raise_if_job_collect_failed(
+        _enrich_resource_collect_payload(coordinator.collect(job_id=normalized_job_id)),
+        tool_name="collect_job",
+    )
 
 
 def cancel_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str, Any]:
@@ -777,22 +806,20 @@ def cancel_job(job_id: str, *, _tool_context: ToolExecutionContext) -> dict[str,
     """
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
-        return {"status": "ERROR", "message": "job_id is required"}
+        _raise_job_tool_error("job_id is required")
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "cancel_job requires a mounted runtime."}
+        _raise_job_tool_error("cancel_job requires a mounted runtime.")
     coordinator = runtime.ensure_resource_coordinator()
     if coordinator is None:
-        return {"status": "ERROR", "message": "cancel_job requires RESOURCES configuration."}
-    kind_error = _require_job_kind(
+        _raise_job_tool_error("cancel_job requires RESOURCES configuration.")
+    _require_job_kind(
         runtime=runtime,
         job_id=normalized_job_id,
         expected_kind=_RESOURCE_JOB_KIND,
         tool_name="cancel_job",
         alternate_tool="cancel_subagent",
     )
-    if kind_error is not None:
-        return kind_error
     return _map_cancel_tool_result(
         normalized_job_id,
         coordinator.cancel(job_id=normalized_job_id),
@@ -811,8 +838,8 @@ def list_resources(*, _tool_context: ToolExecutionContext) -> dict[str, Any]:
     """
     runtime = _tool_context.runtime
     if runtime is None:
-        return {"status": "ERROR", "message": "list_resources requires a mounted runtime."}
+        _raise_job_tool_error("list_resources requires a mounted runtime.")
     coordinator = runtime.ensure_resource_coordinator()
     if coordinator is None:
-        return {"status": "ERROR", "message": "list_resources requires RESOURCES configuration."}
-    return coordinator.list_resources()
+        _raise_job_tool_error("list_resources requires RESOURCES configuration.")
+    return _raise_if_tool_status_error(coordinator.list_resources())

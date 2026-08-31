@@ -17,8 +17,12 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.request import Request, urlopen
 
-from dataagent.agents.nl2sql.errors import SQLServiceError
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, DEFAULT_NL2SQL_SQLITE_TIMEOUT
+
+
+def _sql_infra_error(exc: BaseException | str) -> DataAgentError:
+    return DataAgentError(source="tool", fact=str(exc), component="nl2sql")
 
 
 @dataclass
@@ -107,7 +111,7 @@ class BaseService(SqlService, ABC):
             conn = self._get_conn()
             cursor = conn.cursor()
         except Exception as e:
-            raise SQLServiceError(detail=str(e)) from e
+            raise _sql_infra_error(e) from e
         try:
             cursor.execute(f"EXPLAIN {sql}")
             cursor.fetchall()
@@ -116,7 +120,7 @@ class BaseService(SqlService, ABC):
             try:
                 return self._handle_explain_error(e)
             except Exception as exc:
-                raise SQLServiceError(detail=str(exc)) from exc
+                raise _sql_infra_error(exc) from exc
 
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         """Execute SQL using the underlying driver connection."""
@@ -125,7 +129,7 @@ class BaseService(SqlService, ABC):
             self._before_execute(conn)
             cursor = conn.cursor()
         except Exception as e:
-            raise SQLServiceError(detail=str(e)) from e
+            raise _sql_infra_error(e) from e
         try:
             cursor.execute(sql)
             return [desc[0] for desc in cursor.description], cursor.fetchall(), None
@@ -253,7 +257,7 @@ class CloudCoreService(SqlService):
                 return None
             return result.get("message", "Unknown error")
         except Exception as e:
-            raise SQLServiceError(detail=str(e)) from e
+            raise _sql_infra_error(e) from e
 
     def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
         """Execute SQL against the cloud-core business-twin HTTP endpoint."""
@@ -271,7 +275,7 @@ class CloudCoreService(SqlService):
             rows = [tuple(row.get(col) for col in columns) for row in rows_data]
             return columns, rows, None
         except Exception as e:
-            raise SQLServiceError(detail=str(e)) from e
+            raise _sql_infra_error(e) from e
 
 
 class SparkService(SqlService):
@@ -336,5 +340,5 @@ def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | Clou
         if engine in {"hive", "spark"}:
             return SparkService(SparkConfig(**config))
     except Exception as e:
-        raise SQLServiceError(detail=str(e)) from e
-    raise SQLServiceError(detail=f"Unsupported database engine: {engine}")
+        raise _sql_infra_error(e) from e
+    raise _sql_infra_error(f"Unsupported database engine: {engine}")

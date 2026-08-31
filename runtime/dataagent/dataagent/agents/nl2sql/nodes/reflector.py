@@ -13,10 +13,10 @@
 import json
 from typing import Any
 
-from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import quote_sql_placeholders
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.constants import DEFAULT_NL2SQL_REFLECTOR_THRESHOLD
 from dataagent.utils.log import logger
 
@@ -43,7 +43,7 @@ class ReflectorNode(BaseNL2SQLNode):
                         rule_id_set.add(rule_id)
             rule_ids = sorted(rule_id_set)
             detail = f"Blocked by SQL security rules: {', '.join(rule_ids)}" if rule_ids else "No safe SQL candidate."
-            raise SQLSecurityValidationError(detail=detail)
+            raise DataAgentError(source="constraint", component="nl2sql", fact=detail)
         best = max(safe_results or state["validation_results"], key=lambda result: result.score)
         if safe_results and ((best.score >= self.threshold and not best.need_ref) or state["ref_retries"] <= 0):
             state["validation_results"] = safe_results

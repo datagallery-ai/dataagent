@@ -44,6 +44,7 @@ class NL2SQLState(BaseState):
     columns: list[str] | None
     rows: list[tuple[Any, ...]] | None
     rows_preview: list[tuple[str, ...]] | None
+    error: str | None
 
     # perceptor
     keywords: list[str]
@@ -85,6 +86,7 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "columns": None,
         "rows": None,
         "rows_preview": None,
+        "error": None,
         "keywords": [],
         "schema": {},
         "joins": [],

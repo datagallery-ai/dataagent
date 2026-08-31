@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from dataagent.actions.tools.local_tool.sandbox import create_sandbox
 from dataagent.config import ConfigManager
 from dataagent.core.cbb.base_agent import BaseAgent
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.suite.debug_dump import dump_merged_config
 from dataagent.core.workspace.lock import (
@@ -28,7 +29,7 @@ from dataagent.core.workspace.lock import (
     acquire_workspace_lock,
     release_workspace_lock,
 )
-from dataagent.utils.log import logger, setup_session_log
+from dataagent.utils.log import dataagent_log_context, logger, setup_session_log
 from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
 
 if TYPE_CHECKING:
@@ -225,15 +226,38 @@ class DataAgent:
             self._release_session_workspace_lock(lock)
             raise
 
-        async def _locked_astream() -> AsyncIterator[Any]:
-            """Hold the session workspace lock for the full stream lifetime."""
-            try:
-                async for item in self._chat_agent.astream(*args, **kwargs):
-                    yield item
-            finally:
-                self._release_session_workspace_lock(lock)
+        async def _bound_astream() -> AsyncIterator[Any]:
+            """Hold the session workspace lock and bind log context for the stream."""
+            with dataagent_log_context(
+                session_id=str(initial_state.get("session_id", "")),
+                user_id=str(initial_state.get("user_id", "anonymous")),
+                workspace=str(initial_state.get("workspace") or workspace or ""),
+                agent_name=str(self.type),
+                run_id=initial_state.get("run_id"),
+                sub_id=initial_state.get("sub_id"),
+            ):
+                try:
+                    async for item in self._chat_agent.astream(*args, **kwargs):
+                        yield item
+                except DataAgentError as exc:
+                    logger.exception(
+                        "astream failed source={} trace_id={}",
+                        exc.source,
+                        exc.trace_id,
+                    )
+                    raise
+                except Exception as exc:
+                    error = DataAgentError.from_exception(exc, component="sdk")
+                    logger.exception(
+                        "astream failed source={} trace_id={}",
+                        error.source,
+                        error.trace_id,
+                    )
+                    raise error from exc
+                finally:
+                    self._release_session_workspace_lock(lock)
 
-        return _locked_astream()
+        return _bound_astream()
 
     def select_engine(self, config: Any):
         """根据后端类型创建具体实现（固定使用 SCENARIO.chat）。"""
@@ -298,26 +322,46 @@ class DataAgent:
             session_id=str(initial_state.get("session_id", session_id)),
         )
         lock: WorkspaceLockHandle | None = None
-        try:
-            self._ensure_workspace(initial_state)
-            lock = self._acquire_session_workspace_lock(initial_state)
-            self._touch_workspace_catalog(initial_state)
-            self._dump_runtime_config(initial_state)
-            extra: dict[str, Any] = {}
-            if checkpoint_id:
-                extra["checkpoint_id"] = checkpoint_id
-            response = await self._chat_agent.chat(
-                user_query,
-                session_id=initial_state["session_id"],
-                initial_state=initial_state,
-                **extra,
-            )
-            return response
-        except Exception as e:
-            logger.error(f"Chat failed: {e}")
-            return {"error": str(e), "final_answer": f"抱歉，处理您的请求时出现错误：{str(e)}"}
-        finally:
-            self._release_session_workspace_lock(lock)
+        with dataagent_log_context(
+            session_id=str(initial_state.get("session_id", session_id)),
+            user_id=str(initial_state.get("user_id", "anonymous")),
+            workspace=str(initial_state.get("workspace") or workspace or ""),
+            agent_name=str(self.type),
+            run_id=initial_state.get("run_id"),
+            sub_id=initial_state.get("sub_id"),
+        ):
+            try:
+                self._ensure_workspace(initial_state)
+                lock = self._acquire_session_workspace_lock(initial_state)
+                self._touch_workspace_catalog(initial_state)
+                self._dump_runtime_config(initial_state)
+                extra: dict[str, Any] = {}
+                if checkpoint_id:
+                    extra["checkpoint_id"] = checkpoint_id
+                return await self._chat_agent.chat(
+                    user_query,
+                    session_id=initial_state["session_id"],
+                    initial_state=initial_state,
+                    **extra,
+                )
+            except DataAgentError as exc:
+                logger.exception(
+                    "Chat failed source={} trace_id={}",
+                    exc.source,
+                    exc.trace_id,
+                )
+                raise
+            except Exception as exc:
+                error = DataAgentError.from_exception(exc, component="sdk")
+                logger.exception(
+                    "Chat failed source={} component={} trace_id={}",
+                    error.source,
+                    error.component,
+                    error.trace_id,
+                )
+                raise error from exc
+            finally:
+                self._release_session_workspace_lock(lock)
 
     def build_agent_graph(self, mode: str = "chat") -> BaseAgent:
         """Pre-build the agent workflow graph (only ``chat`` is supported)."""

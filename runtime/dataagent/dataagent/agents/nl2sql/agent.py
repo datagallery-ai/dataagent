@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, Optional, cast
 
 from dataagent.agents.nl2sql.context_recorder import NL2SQLContextRecorder
-from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes import (
     BaseNL2SQLNode,
     BusinessTwinPerceptorNode,
@@ -161,40 +160,17 @@ class NL2SQLAgent(BaseAgent):
 
     async def chat(self, message: str, initial_state: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """Run one NL2SQL chat turn."""
-        try:
-            checkpoint_id: str | None = kwargs.pop("checkpoint_id", None)
-            session_id: str | None = kwargs.pop("session_id", None)
-            init = initial_state or kwargs.pop("initial_state", None) or {}
-            if checkpoint_id:
-                recorder, token = self._start_context_recorder(state=init, question=message, session_id=session_id)
-                final_state: Optional[dict[str, Any]] = None
-                completed = False
-                try:
-                    final_state = await self.workflow_backend.resume(
-                        checkpoint_id=str(checkpoint_id), message=message, session_id=session_id, **kwargs
-                    )
-                    completed = True
-                    return final_state
-                finally:
-                    self._finish_context_recorder(
-                        recorder=recorder,
-                        token=token,
-                        final_state=final_state,
-                        completed=completed,
-                    )
-            if not session_id:
-                session_id = str(uuid.uuid4())
-            state = get_default_state(question=message, **{**self.state_defaults, **(init or {})})
-            self._distribute_context_dump_dir(init, session_id=session_id)
-            latest, flush_provider = make_perf_state_holder(state)
-            recorder, token = self._start_context_recorder(state=state, question=message, session_id=session_id)
-            final_state = None
+        checkpoint_id: str | None = kwargs.pop("checkpoint_id", None)
+        session_id: str | None = kwargs.pop("session_id", None)
+        init = initial_state or kwargs.pop("initial_state", None) or {}
+        if checkpoint_id:
+            recorder, token = self._start_context_recorder(state=init, question=message, session_id=session_id)
+            final_state: Optional[dict[str, Any]] = None
             completed = False
             try:
-                with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
-                    final_state = await self.workflow_backend.ainvoke(state)
-                    if isinstance(final_state, dict):
-                        latest["state"] = final_state
+                final_state = await self.workflow_backend.resume(
+                    checkpoint_id=str(checkpoint_id), message=message, session_id=session_id, **kwargs
+                )
                 completed = True
                 return final_state
             finally:
@@ -204,92 +180,97 @@ class NL2SQLAgent(BaseAgent):
                     final_state=final_state,
                     completed=completed,
                 )
-        except NL2SQLError as exc:
-            return {"error": exc.to_dict()}
-        except Exception as exc:
-            logger.exception(
-                "Unexpected NL2SQL chat API error: {}",
-                {"message": str(exc), "type": exc.__class__.__name__},
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        state = get_default_state(question=message, **{**self.state_defaults, **(init or {})})
+        self._distribute_context_dump_dir(init, session_id=session_id)
+        latest, flush_provider = make_perf_state_holder(state)
+        recorder, token = self._start_context_recorder(state=state, question=message, session_id=session_id)
+        final_state = None
+        completed = False
+        try:
+            with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
+                final_state = await self.workflow_backend.ainvoke(state)
+                if isinstance(final_state, dict):
+                    latest["state"] = final_state
+            completed = True
+            return final_state
+        finally:
+            self._finish_context_recorder(
+                recorder=recorder,
+                token=token,
+                final_state=final_state,
+                completed=completed,
             )
-            return {"error": {"message": "internal error"}}
 
     def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
         """Stream NL2SQL workflow via LangGraph native astream."""
 
         async def _gen() -> AsyncGenerator[Any, None]:
-            try:
-                kw = dict(kwargs)
+            kw = dict(kwargs)
 
-                input_state = kw.get("input")
-                if isinstance(input_state, dict):
-                    question = str(input_state.get("question") or input_state.get("user_query", ""))
-                    async for item in self._yield_context_stream(
-                        state=input_state,
-                        question=question,
-                        session_id=input_state.get("session_id"),
-                        stream=self.workflow_backend.astream({}, **kw),
-                    ):
-                        yield item
-                    return
-
-                initial_state = kw.pop("initial_state", None)
-                start_at = kw.pop("start_at", None)
-                checkpoint_id = kw.pop("checkpoint_id", None)
-                message = kw.pop("message", None)
-                session_id = kw.pop("session_id", None)
-                stream_mode = kw.pop("stream_mode", ["updates", "custom", "values"])
-
-                if checkpoint_id:
-                    perf_state: dict[str, Any] = dict(initial_state) if isinstance(initial_state, dict) else {}
-                    if session_id:
-                        perf_state.setdefault("session_id", session_id)
-                    async for item in self._yield_context_stream(
-                        state=perf_state,
-                        question=str(message or ""),
-                        session_id=session_id,
-                        stream=self.workflow_backend.astream_resume(
-                            checkpoint_id=str(checkpoint_id),
-                            message=str(message or ""),
-                            session_id=session_id,
-                            stream_mode=stream_mode,
-                            **kw,
-                        ),
-                    ):
-                        yield item
-                    return
-
-                if args and isinstance(args[0], dict) and initial_state is None:
-                    initial_state = args[0]
-                if not isinstance(initial_state, dict):
-                    initial_state = {}
-                if args and not isinstance(args[0], dict) and message is None:
-                    message = args[0]
-                if not session_id:
-                    session_id = str(uuid.uuid4())
-
-                question = str(message or initial_state.pop("question", None) or initial_state.pop("user_query", ""))
-                initial_state.setdefault("session_id", session_id)
-                state = get_default_state(question=question, **{**self.state_defaults, **(initial_state or {})})
+            input_state = kw.get("input")
+            if isinstance(input_state, dict):
+                question = str(input_state.get("question") or input_state.get("user_query", ""))
                 async for item in self._yield_context_stream(
-                    state=state,
+                    state=input_state,
                     question=question,
+                    session_id=input_state.get("session_id"),
+                    stream=self.workflow_backend.astream({}, **kw),
+                ):
+                    yield item
+                return
+
+            initial_state = kw.pop("initial_state", None)
+            start_at = kw.pop("start_at", None)
+            checkpoint_id = kw.pop("checkpoint_id", None)
+            message = kw.pop("message", None)
+            session_id = kw.pop("session_id", None)
+            stream_mode = kw.pop("stream_mode", ["updates", "custom", "values"])
+
+            if checkpoint_id:
+                perf_state: dict[str, Any] = dict(initial_state) if isinstance(initial_state, dict) else {}
+                if session_id:
+                    perf_state.setdefault("session_id", session_id)
+                async for item in self._yield_context_stream(
+                    state=perf_state,
+                    question=str(message or ""),
                     session_id=session_id,
-                    stream=self.workflow_backend.astream(
-                        cast(dict[str, Any], state),
-                        start_at=start_at,
+                    stream=self.workflow_backend.astream_resume(
+                        checkpoint_id=str(checkpoint_id),
+                        message=str(message or ""),
+                        session_id=session_id,
                         stream_mode=stream_mode,
                         **kw,
                     ),
                 ):
                     yield item
-            except NL2SQLError as exc:
-                yield {"error": exc.to_dict()}
-            except Exception as exc:
-                logger.exception(
-                    "Unexpected NL2SQL astream API error: {}",
-                    {"message": str(exc), "type": exc.__class__.__name__},
-                )
-                yield {"error": {"message": "internal error"}}
+                return
+
+            if args and isinstance(args[0], dict) and initial_state is None:
+                initial_state = args[0]
+            if not isinstance(initial_state, dict):
+                initial_state = {}
+            if args and not isinstance(args[0], dict) and message is None:
+                message = args[0]
+            if not session_id:
+                session_id = str(uuid.uuid4())
+
+            question = str(message or initial_state.pop("question", None) or initial_state.pop("user_query", ""))
+            initial_state.setdefault("session_id", session_id)
+            state = get_default_state(question=question, **{**self.state_defaults, **(initial_state or {})})
+            async for item in self._yield_context_stream(
+                state=state,
+                question=question,
+                session_id=session_id,
+                stream=self.workflow_backend.astream(
+                    cast(dict[str, Any], state),
+                    start_at=start_at,
+                    stream_mode=stream_mode,
+                    **kw,
+                ),
+            ):
+                yield item
 
         return _gen()
 

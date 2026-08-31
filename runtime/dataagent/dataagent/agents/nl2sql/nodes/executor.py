@@ -17,6 +17,7 @@ from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256, truncate
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.constants import DEFAULT_NL2SQL_PREVIEW_LIMIT
 from dataagent.utils.log import logger
 
@@ -73,5 +74,12 @@ class ExecutorNode(BaseNL2SQLNode):
                 try:
                     outputs.append(service.execute(sql))
                 except Exception as e:
-                    outputs.append((None, None, str(e)))
+                    outputs.append((None, None, _candidate_error_text(e)))
         return outputs
+
+
+def _candidate_error_text(exc: Exception) -> str:
+    """Keep going to Selector; surface a readable error instead of stopping the workflow."""
+    if isinstance(exc, DataAgentError):
+        return exc.fact
+    return str(exc)

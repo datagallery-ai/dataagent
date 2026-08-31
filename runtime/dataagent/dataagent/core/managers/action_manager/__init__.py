@@ -9,12 +9,12 @@ __all__ = [
     "ToolRegistry",
     "BaseTool",
     "ToolResult",
-    "ToolError",
     "ToolType",
     "ErrorType",
     "ErrorPolicy",
     "DEFAULT_RETRY_POLICY",
     "classify_exception",
+    "tool_failure",
     "ToolSchema",
     "ParameterSchema",
     "ParameterType",
@@ -25,10 +25,10 @@ from dataagent.core.managers.action_manager.base import (
     BaseTool,
     ErrorPolicy,
     ErrorType,
-    ToolError,
     ToolResult,
     ToolType,
     classify_exception,
+    tool_failure,
 )
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.action_manager.registry import ToolRegistry

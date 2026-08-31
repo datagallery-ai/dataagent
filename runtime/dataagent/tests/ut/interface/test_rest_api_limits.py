@@ -82,12 +82,22 @@ def test_middleware_rejects_oversized_body_and_rate_limits():
     oversized = client.post("/api/agent/query", content=b"x" * 20, headers={"content-length": "20"})
     assert oversized.status_code == 413
     assert oversized.headers.get("x-request-id")
+    oversized_payload = oversized.json()["result"]
+    assert "detail" not in oversized.json()
+    assert oversized_payload["source"] == "config"
+    assert "code" not in oversized_payload
+    assert "http_status" not in oversized_payload
+    assert "请求体过大" in oversized_payload["fact"]
 
     client = TestClient(_app(RestApiLimits(rate_limit_per_minute=1, max_body_bytes=1_000_000)))
     assert client.post("/api/agent/query", json={"q": 1}).status_code == 200
     limited = client.post("/api/agent/query", json={"q": 2})
     assert limited.status_code == 429
     assert limited.headers.get("x-request-id")
+    assert "detail" not in limited.json()
+    assert limited.json()["result"]["source"] == "constraint"
+    assert "code" not in limited.json()["result"]
+    assert "http_status" not in limited.json()["result"]
 
 
 def _http_request(*, client: tuple[str, int] | None, forwarded_for: str | None = None) -> Request:
@@ -136,7 +146,7 @@ def test_rate_limit_key_ignores_forged_x_forwarded_for():
 
 @pytest.mark.asyncio
 async def test_middleware_meters_body_without_or_understated_content_length():
-    """Missing / understated Content-Length must still 413 (DoS bypass)."""
+    """Missing / understated Content-Length must still be rejected (DoS bypass)."""
     limits = RestApiLimits(max_body_bytes=10, rate_limit_per_minute=10_000, max_concurrency=8)
     body = b"x" * 20
 
@@ -356,7 +366,10 @@ async def test_nonstreaming_timeout_returns_504():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/slow", timeout=2.0)
     assert resp.status_code == 504
-    assert resp.json()["detail"] == "Request timed out"
+    assert "detail" not in resp.json()
+    payload = resp.json()["result"]
+    assert payload["source"] == "constraint"
+    assert "请求等待响应超时" in payload["fact"]
 
 
 @pytest.mark.asyncio

@@ -36,16 +36,13 @@ from dataagent.actions.tools.local_tool.tools import (
 )
 from dataagent.actions.tools.schema_validator import ParamsValueError, SchemaValidator
 from dataagent.core.cbb.base_node import BaseNode
+from dataagent.core.errors import DataAgentError
 from dataagent.core.flex.utils.context_from_state import get_context_for_flex_state
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.context import get_stream_writer
 from dataagent.core.managers.action_manager import ToolResult
 from dataagent.core.managers.action_manager.base import (
-    DEFAULT_RETRY_POLICY,
-    ERROR_POLICIES,
     ErrorPolicy,
-    ErrorType,
-    ToolError,
     classify_exception,
 )
 from dataagent.core.swarm.swarm_config import swarm_enabled, swarm_worker_max_concurrent
@@ -67,8 +64,7 @@ class NormalizedToolExecution:
     original_msg: str | None = None
     frontend_msg: str | None = None
     error_text: str | None = None
-    error_type: str = ""  # ErrorType 枚举值
-    retry_info: dict = field(default_factory=dict)  # {"attempt": 1, "max_retries": 3}
+    error: DataAgentError | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -85,6 +81,7 @@ class _ToolCallExecutionSetup:
     context_token: Any
 
 
+_JOB_FAILURE_STATUSES = frozenset({"failed", "timed_out", "cancelled", "unknown", "not_found"})
 _BASH_COMMAND_SEPARATORS = re.compile(r"[;&|\n]")
 # Allow arithmetic expansion ($((...))), but reject syntax that can execute nested commands.
 _NESTED_BASH_COMMAND = re.compile(r"\$\((?!\()|`|[<>]\(")
@@ -143,8 +140,7 @@ class Executor(BaseNode):
             message = f"{prefix} {message}"
         execution.success = False
         execution.error_text = message
-        execution.error_type = ErrorType.VALIDATION_ERROR.value
-        execution.retry_info = {"attempt": 0, "max_retries": 0, "retriable": False}
+        execution.error = DataAgentError(source="config", fact=message, component="tool")
         return execution
 
     def reconfig(self, **kwargs):
@@ -163,20 +159,38 @@ class Executor(BaseNode):
             if yaml_max_concurrency is not None and yaml_max_concurrency > 0:
                 self._concurrency.update_max_concurrency(yaml_max_concurrency)
 
-    def _classify_error(self, error: Exception) -> ErrorPolicy:
-        """根据错误类型和启发式规则分类错误（使用统一分类函数）"""
-        if isinstance(error, ToolError):
-            return ERROR_POLICIES.get(error.error_type, DEFAULT_RETRY_POLICY)
+    def _normalize_error(self, error: Exception) -> DataAgentError:
+        """Convert any exception into a structured DataAgentError."""
+        if isinstance(error, DataAgentError):
+            return error
+        if isinstance(error, ParamsValueError):
+            wrapped = DataAgentError(
+                source="tool",
+                component="tool",
+                fact=error.message or str(error) or "Parameter validation failed",
+            )
+            wrapped.__cause__ = error
+            return wrapped
+        return DataAgentError.from_exception(error, component="tool")
 
+    def _retry_policy_for(self, error: Exception) -> ErrorPolicy:
+        """Retry policy from the raw exception type and HTTP status."""
         _, policy = classify_exception(error)
         return policy
 
+    def _max_retries_for(self, error: Exception) -> int:
+        return self._retry_policy_for(error).max_retries
+
+    def _should_retry(self, error: Exception) -> bool:
+        """Retry only raw retryable exceptions; display DAE does not enter retry."""
+        if isinstance(error, DataAgentError):
+            return False
+        return self._max_retries_for(error) > 0
+
     def _calculate_backoff(self, policy: ErrorPolicy, attempt: int) -> float:
-        """计算退避时间"""
         if policy.backoff_type == "exponential":
             return policy.backoff_base * (2**attempt)
-        else:  # fixed
-            return policy.backoff_base
+        return policy.backoff_base
 
     def _reset_context(self, context_token, guard_token) -> None:
         """清理运行时 context 和 sandbox"""
@@ -445,15 +459,14 @@ class Executor(BaseNode):
                 try:
                     execution = await task
                 except Exception as exc:
-                    policy = self._classify_error(exc)
+                    err = self._normalize_error(exc)
                     execution = NormalizedToolExecution(
                         tool_name=str(tool_spec["name"]),
                         tool_call_id=tool_call_id,
                         tool_args=dict(tool_spec["args"]),
                         success=False,
-                        error_text=str(exc),
-                        error_type=policy.error_type.value,
-                        retry_info={"attempt": 0, "max_retries": policy.max_retries, "retriable": policy.retriable},
+                        error_text=err.actor_text(),
+                        error=err,
                         metadata={"workspace": workspace},
                     )
 
@@ -543,8 +556,14 @@ class Executor(BaseNode):
                         f"duplicate sub_id {sub_id} in the same executor round; "
                         "create a new subagent for concurrent work instead of reusing this worker."
                     ),
-                    error_type=ErrorType.VALIDATION_ERROR.value,
-                    retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
+                    error=DataAgentError(
+                        source="tool",
+                        component="tool",
+                        fact=(
+                            f"duplicate sub_id {sub_id} in the same executor round; "
+                            "create a new subagent for concurrent work instead of reusing this worker."
+                        ),
+                    ),
                 )
         return results
 
@@ -582,17 +601,21 @@ class Executor(BaseNode):
             if scheduled <= limit:
                 continue
             args = tool_call.get("args", {})
+            message = (
+                f"parallel sub_agent_tool limit exceeded for this round "
+                f"(SWARM.worker_max_concurrent={max_concurrent}); reduce concurrency or sequence calls."
+            )
             results[tool_call_id] = NormalizedToolExecution(
                 tool_name="sub_agent_tool",
                 tool_call_id=tool_call_id,
                 tool_args=dict(args) if isinstance(args, dict) else {},
                 success=False,
-                error_text=(
-                    f"parallel sub_agent_tool limit exceeded for this round "
-                    f"(SWARM.worker_max_concurrent={max_concurrent}); reduce concurrency or sequence calls."
+                error_text=message,
+                error=DataAgentError(
+                    source="constraint",
+                    component="tool",
+                    fact=message,
                 ),
-                error_type=ErrorType.VALIDATION_ERROR.value,
-                retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
             )
         return results
 
@@ -619,14 +642,18 @@ class Executor(BaseNode):
             return None
         raw_args = tool_call.get("args", {})
         tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
+        message = f"Tool {tool_name!r} is blocked by GOVERNANCE.invisibility and cannot be invoked."
         return NormalizedToolExecution(
             tool_name=tool_name,
             tool_call_id=str(tool_call["id"]),
             tool_args=tool_args,
             success=False,
-            error_text=(f"Tool {tool_name!r} is blocked by GOVERNANCE.invisibility and cannot be invoked."),
-            error_type=ErrorType.VALIDATION_ERROR.value,
-            retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
+            error_text=message,
+            error=DataAgentError(
+                source="constraint",
+                component="tool",
+                fact=message,
+            ),
         )
 
     def _build_invalid_tool_messages(self, invalid_tool_calls: Sequence[Any], writer) -> list[ToolMessage]:
@@ -644,7 +671,7 @@ class Executor(BaseNode):
             writer({"type": "break"})
             tool_messages.append(
                 ToolMessage(
-                    content=f"Error: Invalid tool call - {error_msg}",
+                    content=str(error_msg),
                     tool_call_id=str(invalid_tool["id"]),
                     name=tool_name,
                     status="error",
@@ -688,15 +715,29 @@ class Executor(BaseNode):
         if blocked is not None:
             return blocked
         setup = self._setup_tool_call_execution(tool_call, workspace, user_id, session_id, sub_id, run_id, runtime)
-        tool_args, backfill_changes = self._validate_and_backfill_args(
-            tool_name=setup.tool_name,
-            tool_args=setup.tool_args,
-            tool_call_id=setup.tool_call_id,
-            runtime=runtime,
-        )
-        if backfill_changes:
-            setup.metadata["backfill_changes"] = backfill_changes
-        self._check_bash_whitelist(setup.tool_name, tool_args, setup.tool_call_id, runtime)
+        try:
+            tool_args, backfill_changes = self._validate_and_backfill_args(
+                tool_name=setup.tool_name,
+                tool_args=setup.tool_args,
+                tool_call_id=setup.tool_call_id,
+                runtime=runtime,
+            )
+            if backfill_changes:
+                setup.metadata["backfill_changes"] = backfill_changes
+            self._check_bash_whitelist(setup.tool_name, tool_args, setup.tool_call_id, runtime)
+        except ParamsValueError as exc:
+            self._finalize_tool_progress_safe(setup.progress_finalize)
+            self._reset_context(setup.context_token, setup.guard_token)
+            err = self._normalize_error(exc)
+            return NormalizedToolExecution(
+                tool_name=setup.tool_name,
+                tool_call_id=setup.tool_call_id,
+                tool_args=setup.tool_args,
+                success=False,
+                error_text=err.actor_text(),
+                error=err,
+                metadata=setup.metadata,
+            )
 
         pre_hooks, post_hooks = self._resolve_tool_hooks(runtime, setup.tool_name)
         hook_inv = self._build_tool_hook_invocation(
@@ -716,8 +757,6 @@ class Executor(BaseNode):
 
         execution: NormalizedToolExecution | None = None
         tool_result: ToolResult | None = None
-        policy = DEFAULT_RETRY_POLICY
-        last_error_type = ErrorType.UNKNOWN
 
         try:
             tool_result = await self._invoke_manager_tool_async(setup.tool_name, tool_args, runtime=runtime)
@@ -730,43 +769,31 @@ class Executor(BaseNode):
                 metadata={**setup.metadata, "source": "tool_manager"},
             )
         except Exception as exc:
-            last_error = exc
-            policy = self._classify_error(exc)
-            last_error_type = policy.error_type
-            final_max_retries = policy.max_retries
-
-            retry_result, last_error, last_error_type, final_max_retries = await self._retry_tool_execution(
-                tool_name=setup.tool_name,
-                tool_args=tool_args,
-                tool_call_id=setup.tool_call_id,
-                context_token=setup.context_token,
-                guard_token=setup.guard_token,
-                policy=policy,
-                last_error=last_error,
-                last_error_type=last_error_type,
-                final_max_retries=final_max_retries,
-                metadata=setup.metadata,
-                runtime=runtime,
-            )
+            last_error = self._normalize_error(exc)
+            retry_result = None
+            if self._should_retry(exc):
+                retry_result, last_error = await self._retry_tool_execution(
+                    tool_name=setup.tool_name,
+                    tool_args=tool_args,
+                    tool_call_id=setup.tool_call_id,
+                    context_token=setup.context_token,
+                    guard_token=setup.guard_token,
+                    last_error=exc,
+                    metadata=setup.metadata,
+                    runtime=runtime,
+                )
             if retry_result is not None:
                 execution = retry_result
             else:
-                logger.debug(
-                    f"[Executor] Tool '{setup.tool_name}' failed after {policy.max_retries} retries: {last_error}"
-                )
+                logger.debug(f"[Executor] Tool '{setup.tool_name}' failed after retries: {last_error}")
                 self._reset_context(setup.context_token, setup.guard_token)
                 execution = NormalizedToolExecution(
                     tool_name=setup.tool_name,
                     tool_call_id=setup.tool_call_id,
                     tool_args=tool_args,
                     success=False,
-                    error_text=str(last_error),
-                    error_type=last_error_type.value,
-                    retry_info={
-                        "attempt": policy.max_retries,
-                        "max_retries": final_max_retries,
-                        "retriable": policy.retriable,
-                    },
+                    error_text=last_error.actor_text(),
+                    error=last_error,
                     metadata=setup.metadata,
                 )
 
@@ -831,8 +858,7 @@ class Executor(BaseNode):
             tool_args=tool_args,
             success=False,
             error_text=message,
-            error_type=ErrorType.VALIDATION_ERROR.value,
-            retry_info={"attempt": 0, "max_retries": 0, "retriable": False},
+            error=DataAgentError(source="config", fact=message, component="tool"),
             metadata=setup.metadata,
         )
 
@@ -855,31 +881,20 @@ class Executor(BaseNode):
         tool_call_id: str,
         context_token: Any,
         guard_token: Any,
-        policy: ErrorPolicy,
         last_error: Exception,
-        last_error_type: ErrorType,
-        final_max_retries: int,
         metadata: dict[str, Any],
         runtime: Any = None,
-    ) -> tuple[NormalizedToolExecution | None, Exception, ErrorType, int]:
-        """按退避策略重试工具执行。
+    ) -> tuple[NormalizedToolExecution | None, DataAgentError]:
+        """Retry tool execution when Flex policy allows retries for this error."""
+        current = last_error
+        max_retries = self._max_retries_for(current)
+        if max_retries <= 0:
+            return None, self._normalize_error(current)
 
-        Returns:
-            (result, last_error, last_error_type, final_max_retries)
-            其中 result 非 None 表示重试成功，调用方应直接返回。
-        """
-        _last_error = last_error
-        _last_error_type = last_error_type
-        _final_max_retries = final_max_retries
-
-        for attempt in range(1, policy.max_retries + 1):
-            if not policy.retriable:
-                break
-
-            backoff = self._calculate_backoff(policy, attempt - 1)
-            logger.debug(f"[Executor] Retry {attempt}/{policy.max_retries} for '{tool_name}' after {backoff}s backoff")
+        for attempt in range(1, max_retries + 1):
+            backoff = self._calculate_backoff(self._retry_policy_for(current), attempt - 1)
+            logger.debug(f"[Executor] Retry {attempt}/{max_retries} for '{tool_name}' after {backoff}s backoff")
             await asyncio.sleep(backoff)
-
             try:
                 result = await self._invoke_manager_tool_async(tool_name, tool_args, runtime=runtime)
                 self._reset_context(context_token, guard_token)
@@ -890,22 +905,15 @@ class Executor(BaseNode):
                         tool_args=tool_args,
                         result=result,
                         metadata={**metadata, "source": "tool_manager", "retry_attempt": attempt},
-                        error_type=_last_error_type.value,
-                        retry_info={"attempt": attempt, "max_retries": policy.max_retries},
                     ),
-                    _last_error,
-                    _last_error_type,
-                    _final_max_retries,
+                    self._normalize_error(current),
                 )
             except Exception as retry_exc:
-                _last_error = retry_exc
-                new_policy = self._classify_error(retry_exc)
-                _last_error_type = new_policy.error_type
-                if not new_policy.retriable or attempt >= new_policy.max_retries:
-                    _final_max_retries = new_policy.max_retries
+                current = retry_exc
+                max_retries = self._max_retries_for(current)
+                if attempt >= max_retries or not self._should_retry(current):
                     break
-
-        return None, _last_error, _last_error_type, _final_max_retries
+        return None, self._normalize_error(current)
 
     def _setup_tool_call_execution(
         self,
@@ -1006,26 +1014,6 @@ class Executor(BaseNode):
             metadata=metadata,
             guard_token=guard_token,
             context_token=context_token,
-        )
-
-    async def _try_execute_tool(
-        self,
-        tool_name: str,
-        tool_args: dict[str, Any],
-        tool_call_id: str,
-        metadata: dict[str, Any],
-        context_token: Any,
-        guard_token: Any,
-        runtime: Any = None,
-    ) -> NormalizedToolExecution:
-        result = await self._invoke_manager_tool_async(tool_name, tool_args, runtime=runtime)
-        self._reset_context(context_token, guard_token)
-        return self._normalize_tool_execution(
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            tool_args=tool_args,
-            result=result,
-            metadata={**metadata, "source": "tool_manager"},
         )
 
     def _validate_and_backfill_args(
@@ -1146,23 +1134,19 @@ class Executor(BaseNode):
         tool_args: dict[str, Any],
         result: Any,
         metadata: dict[str, Any],
-        error_type: str = "",
-        retry_info: dict | None = None,
     ) -> NormalizedToolExecution:
         if isinstance(result, ToolResult):
-            merged_metadata = {**metadata, **result.metadata}
+            merged_metadata = {**metadata, **(result.metadata or {})}
             if not result.success:
-                err_type = error_type or (result.error_type.value if result.error_type else "")
-                retry = retry_info or {}
+                err = result.error or DataAgentError(source="tool", component="tool")
                 return NormalizedToolExecution(
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
                     tool_args=tool_args,
                     success=False,
                     raw_result=result.data,
-                    error_text=result.error or f"Tool '{tool_name}' failed with unknown error.",
-                    error_type=err_type,
-                    retry_info=retry,
+                    error_text=err.actor_text(),
+                    error=err,
                     metadata=merged_metadata,
                 )
             return self._normalize_payload(
@@ -1205,8 +1189,7 @@ class Executor(BaseNode):
         normalized_raw_result = raw_result
         success = True
         error_text: str | None = None
-        error_type: str = ""
-        retry_info: dict = {}
+        structured_error: DataAgentError | None = None
 
         if isinstance(parsed_result, dict):
             normalized_raw_result = parsed_result.get("data", parsed_result)
@@ -1218,30 +1201,47 @@ class Executor(BaseNode):
                 frontend_msg = self._stringify_tool_value(frontend_value)
             output_text = original_msg or frontend_msg or output_text
 
+            job_status = str(parsed_result.get("status") or "").strip().lower()
+            if parsed_result.get("job_id") and job_status in _JOB_FAILURE_STATUSES:
+                success = False
+                raw_error = parsed_result.get("error")
+                if isinstance(raw_error, dict) and raw_error.get("source"):
+                    try:
+                        structured_error = DataAgentError.from_dict(raw_error)
+                    except (ValueError, KeyError):
+                        structured_error = None
+                if structured_error is None:
+                    structured_error = DataAgentError(
+                        source="tool",
+                        component="job",
+                        fact=str(
+                            parsed_result.get("summary")
+                            or parsed_result.get("message")
+                            or (raw_error if isinstance(raw_error, str) and raw_error else "")
+                            or f"Job collect status is {job_status or 'unknown'}"
+                        ),
+                    )
+                error_text = structured_error.actor_text()
+                original_msg = structured_error.actor_text()
+                output_text = original_msg
             inner_data = parsed_result.get("data")
-            if isinstance(inner_data, dict):
+            if isinstance(inner_data, dict) and structured_error is None:
                 exit_code = inner_data.get("exit_code")
                 if isinstance(exit_code, int) and exit_code != 0:
                     success = False
                     stderr = inner_data.get("stderr", "")
                     stdout = inner_data.get("stdout", "")
-
-                    # 构建错误消息
                     parts = [f"Command exited with code {exit_code}"]
                     if stderr:
                         parts.append(f"[stderr]\n{stderr}")
                     if stdout:
                         parts.append(f"[stdout]\n{stdout}")
                     error_text = "\n".join(parts)
-
-                    # 根据错误消息分类错误
-                    error_msg = stderr or stdout or error_text
-                    error_type_enum, error_policy = classify_exception(OSError(error_msg))
-                    error_type = error_type_enum.value
-                    retry_info = {
-                        "max_retries": error_policy.max_retries,
-                        "retriable": error_policy.retriable,
-                    }
+                    structured_error = DataAgentError(
+                        source="tool",
+                        component="tool",
+                        fact=f"Command exited with code {exit_code}",
+                    )
 
         return NormalizedToolExecution(
             tool_name=tool_name,
@@ -1253,8 +1253,7 @@ class Executor(BaseNode):
             original_msg=original_msg,
             frontend_msg=frontend_msg,
             error_text=error_text,
-            error_type=error_type,
-            retry_info=retry_info,
+            error=structured_error,
             metadata=metadata,
         )
 
@@ -1290,24 +1289,11 @@ class Executor(BaseNode):
             error_str = execution.error_text or f"Tool '{tool_name}' failed with unknown error."
             logger.trace(f"[{self.name}] tool '{tool_name}' (call_id={execution.tool_call_id}) FAILED:\n{error_str}")
 
-            # 构建带错误类型和重试信息的错误消息
-            retry_info_str = ""
-            if execution.retry_info:
-                attempt = execution.retry_info.get("attempt", 0)
-                max_retries = execution.retry_info.get("max_retries", 0)
-                retry_info_str = f"\n错误类型: {execution.error_type or 'unknown'}"
-                if attempt > 0:
-                    retry_info_str += f"\n已重试: {attempt}/{max_retries} 次"
-                elif max_retries > 0:
-                    retry_info_str += f"\n最大重试次数: {max_retries}"
-                if not execution.retry_info.get("retriable", False):
-                    retry_info_str += " (不可重试)"
-
             writer(
                 {
                     "type": "output_msg",
                     "node_name": self.name,
-                    "content": f"**❌ {tool_name} 工具执行失败:**\n\n{error_str}{retry_info_str}\n\n",
+                    "content": f"**❌ {tool_name} 工具执行失败:**\n\n{error_str}\n\n",
                 }
             )
             writer({"type": "break"})
@@ -1333,24 +1319,10 @@ class Executor(BaseNode):
         tool_name = execution.tool_name
         tool_call_id = execution.tool_call_id
         if not execution.success:
-            error_str = execution.error_text or f"Tool '{tool_name}' failed with unknown error."
-
-            # 构建带结构化信息的错误消息
-            retry_info_str = ""
-            if execution.retry_info:
-                attempt = execution.retry_info.get("attempt", 0)
-                max_retries = execution.retry_info.get("max_retries", 0)
-                if attempt > 0:
-                    retry_info_str = f" (已重试 {attempt}/{max_retries} 次)"
-                elif max_retries > 0:
-                    retry_info_str = f" (最大重试次数: {max_retries})"
-
-            content = f"Error executing {tool_name}: {error_str}"
-            if execution.error_type:
-                content += f"\n错误类型: {execution.error_type}"
-            if retry_info_str:
-                content += retry_info_str
-
+            if execution.error is not None:
+                content = execution.error.actor_text()
+            else:
+                content = execution.error_text or f"Tool '{tool_name}' failed with unknown error."
             return ToolMessage(
                 content=content,
                 tool_call_id=tool_call_id,
