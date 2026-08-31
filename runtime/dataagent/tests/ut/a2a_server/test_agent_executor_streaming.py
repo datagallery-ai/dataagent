@@ -265,8 +265,8 @@ async def test_execute_agent_astream_natural_language_error_words_do_not_fail():
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_astream_structured_error_marks_failed():
-    """Test that structured error signals in state cause failure."""
+async def test_execute_agent_astream_structured_error_stays_completed():
+    """Direct A2A chat keeps COMPLETED when state carries an error field."""
     chunks = [
         ("values", {"error": "Something went wrong", "messages": []}),
     ]
@@ -285,12 +285,12 @@ async def test_execute_agent_astream_structured_error_marks_failed():
     )
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
-    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_astream_structured_errors_list_marks_failed():
-    """Test that state['errors'] (list) causes failure."""
+async def test_execute_agent_astream_structured_errors_list_stays_completed():
+    """Direct A2A chat keeps COMPLETED when state carries an errors list."""
     chunks = [
         ("values", {"errors": ["Validation error", "Timeout error"], "messages": []}),
     ]
@@ -309,12 +309,12 @@ async def test_execute_agent_astream_structured_errors_list_marks_failed():
     )
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
-    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_astream_status_error_marks_failed():
-    """Test that state['status'] = 'error' causes failure."""
+async def test_execute_agent_astream_status_error_stays_completed():
+    """Direct A2A chat keeps COMPLETED when state['status'] is 'error'."""
     chunks = [("values", {"status": "error", "messages": [SimpleNamespace(content="partial result")]})]
     executor = DataAgentExecutor(agent=FakeAgent(chunks=chunks))
 
@@ -331,12 +331,12 @@ async def test_execute_agent_astream_status_error_marks_failed():
     )
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
-    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_astream_exception_in_state_marks_failed():
-    """Test that state['exception'] causes failure."""
+async def test_execute_agent_astream_exception_in_state_stays_completed():
+    """Direct A2A chat keeps COMPLETED when state carries an exception field."""
     chunks = [("values", {"exception": "ValueError: invalid value", "messages": []})]
     executor = DataAgentExecutor(agent=FakeAgent(chunks=chunks))
 
@@ -353,12 +353,12 @@ async def test_execute_agent_astream_exception_in_state_marks_failed():
     )
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
-    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_astream_message_metadata_error_marks_failed():
-    """Test that last message metadata error causes failure."""
+async def test_execute_agent_astream_message_metadata_error_stays_completed():
+    """Direct A2A chat keeps COMPLETED when the last message metadata has error=True."""
     chunks = [
         (
             "values",
@@ -380,7 +380,7 @@ async def test_execute_agent_astream_message_metadata_error_marks_failed():
     )
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
-    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
 
 
 @pytest.mark.asyncio
@@ -459,65 +459,8 @@ async def test_execute_agent_astream_unexpected_exception_marks_failed():
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
     assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
-    assert "stream broke" in status_events[-1].status.message.parts[0].text
-
-
-def test_has_error_final_state_with_error_field():
-    """Test _has_error_final_state detects top-level error field."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    assert executor._has_error_final_state({"error": "Something went wrong"}) is True
-
-
-def test_has_error_final_state_with_errors_list():
-    """Test _has_error_final_state detects errors list."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    assert executor._has_error_final_state({"errors": ["error1", "error2"]}) is True
-
-
-def test_has_error_final_state_with_exception():
-    """Test _has_error_final_state detects exception field."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    assert executor._has_error_final_state({"exception": "ValueError"}) is True
-
-
-def test_has_error_final_state_with_status_error():
-    """Test _has_error_final_state detects status='error'."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    assert executor._has_error_final_state({"status": "error"}) is True
-
-
-def test_has_error_final_state_with_status_failed():
-    """Test _has_error_final_state detects status='failed'."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    assert executor._has_error_final_state({"status": "failed"}) is True
-
-
-def test_has_error_final_state_with_message_metadata_error():
-    """Test _has_error_final_state detects error in message metadata."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    state = {"messages": [{"content": "result", "additional_kwargs": {"error": True}}]}
-    assert executor._has_error_final_state(state) is True
-
-
-def test_has_error_final_state_with_response_metadata_error():
-    """Test _has_error_final_state detects error in response_metadata."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    state = {"messages": [{"content": "result", "response_metadata": {"error": "some error"}}]}
-    assert executor._has_error_final_state(state) is True
-
-
-def test_has_error_final_state_no_error():
-    """Test _has_error_final_state returns False for normal responses."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    state = {"messages": [{"content": "No errors found in the dataset."}]}
-    assert executor._has_error_final_state(state) is False
-
-
-def test_has_error_final_state_natural_language_failed():
-    """Test that natural language containing 'failed' is NOT detected as error."""
-    executor = DataAgentExecutor(agent=SimpleNamespace())
-    state = {"messages": [{"content": "The failed_count column is 0."}]}
-    assert executor._has_error_final_state(state) is False
+    assert "[internal/" in status_events[-1].status.message.parts[0].text
+    assert "trace_id=" in status_events[-1].status.message.parts[0].text
 
 
 def test_unpack_stream_chunk_formats():
@@ -579,20 +522,31 @@ def test_extract_chunk_text_handles_common_formats():
     assert executor._extract_chunk_text((0, "custom", {"token": "t"})) == "t"
 
 
-def test_has_error_response_string_machine_formatted():
-    """Test _has_error_response_string only matches machine-formatted prefixes."""
+@pytest.mark.asyncio
+async def test_execute_empty_input_fails_with_input_code_and_trace_id():
+    class EmptyInputContext:
+        task_id = "t-empty"
+        context_id = "c-empty"
+        current_task = None
+        message = None
+        metadata = {}
+
+        def get_user_input(self):
+            return ""
+
     executor = DataAgentExecutor(agent=SimpleNamespace())
-
-    # Machine-formatted errors (should match)
-    assert executor._has_error_response_string("Error: something went wrong") is True
-    assert executor._has_error_response_string("Agent execution failed: timeout") is True
-
-    # Natural language with error/failed words (should NOT match)
-    assert executor._has_error_response_string("No errors found in the data") is False
-    assert executor._has_error_response_string("The failed_count column is 0") is False
-    assert executor._has_error_response_string("This analysis error rate is low") is False
-    assert executor._has_error_response_string("The hypothesis failed to be rejected") is False
-
-    # Empty and edge cases
-    assert executor._has_error_response_string("") is False
-    assert executor._has_error_response_string(None) is False
+    queue = FakeEventQueue()
+    await executor.execute(EmptyInputContext(), queue)
+    failed = [
+        e for e in queue.events if getattr(getattr(e, "status", None), "state", None) == TaskState.TASK_STATE_FAILED
+    ]
+    if not failed:
+        failed = [
+            e
+            for e in queue.events
+            if int(getattr(getattr(e, "status", None), "state", 0) or 0) == int(TaskState.TASK_STATE_FAILED)
+        ]
+    assert failed
+    text = failed[-1].status.message.parts[0].text
+    assert "[config/a2a]" in text
+    assert "trace_id=" in text

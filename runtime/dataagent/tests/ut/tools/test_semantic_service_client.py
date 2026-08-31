@@ -107,7 +107,7 @@ def test_client_uses_semantic_v1_paths_for_metadata_apis(monkeypatch) -> None:
     assert headers == {"Content-Type": "application/json"}
 
 
-def test_http_error_exposes_semantic_service_error_fields(monkeypatch) -> None:
+def test_http_error_raises_http_status_error(monkeypatch) -> None:
     fake_client = _FakeClient()
     fake_client._next_response = _FakeResponse(
         {"errorCode": "METAVISOR-400-00-002", "errorMessage": "sql is required"},
@@ -121,22 +121,29 @@ def test_http_error_exposes_semantic_service_error_fields(monkeypatch) -> None:
 
     client = SemanticServiceClient("http://semantic.local:41000")
 
-    with pytest.raises(semantic_client.SemanticServiceError) as exc_info:
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
         client.search_fulltext("订单")
 
     err = exc_info.value
-    assert isinstance(err, httpx.HTTPError)
-    assert err.status_code == 400
-    assert err.error_code == "METAVISOR-400-00-002"
-    assert err.error_message == "sql is required"
-    assert err.method == "GET"
-    assert err.path == "search/fulltext"
-    error_text = str(err)
-    assert "response_url='http://semantic.local:41000/api/semantic/v1/search/fulltext'" in error_text
-    assert "response_reason='Bad Request'" in error_text
-    assert "'Set-Cookie': '***REDACTED***'" in error_text
-    assert "'X-Request-ID': 'request-123'" in error_text
-    assert 'response_body=\'{"errorCode":"METAVISOR-400-00-002","errorMessage":"sql is required"}\'' in error_text
+    assert err.response.status_code == 400
+    assert "session=secret" not in str(err)
+
+
+def test_from_config_missing_base_url_exposes_config_key() -> None:
+    from dataagent.core.errors import DataAgentError
+
+    class _CM:
+        def get(self, key: str, default=None):
+            return default
+
+    with pytest.raises(DataAgentError) as caught:
+        SemanticServiceClient.from_config(_CM())
+
+    err = caught.value
+    assert err.source == "config"
+    assert "SEMANTIC_LAYER.base_url" in err.fact
+    assert "SEMANTIC_LAYER.base_url" in err.actor_text()
+    assert "secret" not in err.actor_text()
 
 
 def test_from_config_does_not_read_verify_ssl(monkeypatch) -> None:

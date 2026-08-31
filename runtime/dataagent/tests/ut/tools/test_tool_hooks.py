@@ -29,7 +29,7 @@ from dataagent.actions.tools.hooks.base import (
 from dataagent.actions.tools.hooks.config import load_tool_hooks_from_config
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.flex.nodes.executor import Executor
-from dataagent.core.managers.action_manager.base import ErrorType, ToolResult
+from dataagent.core.managers.action_manager.base import ToolResult
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.utils.performance import PerformanceCollector, bind_current_collector
 from dataagent.governance import attach_governance_hooks_to_tool, build_governance_config
@@ -136,7 +136,7 @@ async def test_pre_hook_failure_skips_call_tool(tmp_path: Path):
     async def call_tool(name: str, **kwargs):
         nonlocal call_count
         call_count += 1
-        return ToolResult(success=True, data="ok")
+        return ToolResult(data="ok")
 
     async def failing_pre(inv: ToolHookInvocation) -> ToolPreHookOutcome:
         raise ValueError("blocked by pre-hook")
@@ -158,8 +158,8 @@ async def test_pre_hook_failure_skips_call_tool(tmp_path: Path):
     assert call_count == 0
     assert execution.success is False
     assert "pre-hook" in execution.error_text
-    assert execution.error_type == ErrorType.VALIDATION_ERROR.value
-    assert execution.retry_info.get("retriable") is False
+    assert execution.error is not None
+    assert execution.error.source == "config"
 
 
 @pytest.mark.asyncio
@@ -200,7 +200,7 @@ async def test_post_hook_failure_marks_execution_failed(tmp_path: Path):
     """Post-hook failure after successful tool marks execution as failed."""
 
     async def call_tool(name: str, **kwargs):
-        return ToolResult(success=True, data="ok")
+        return ToolResult(data="ok")
 
     async def failing_post(inv: ToolHookInvocation) -> ToolPreHookOutcome:
         raise ValueError("post failed")
@@ -228,7 +228,7 @@ async def test_executor_aprocess_builds_error_tool_message_on_pre_hook_failure(t
     """End-to-end through _aprocess: pre-hook failure yields error ToolMessage."""
 
     async def call_tool(name: str, **kwargs):
-        return ToolResult(success=True, data="ok")
+        return ToolResult(data="ok")
 
     async def failing_pre(inv: ToolHookInvocation) -> ToolPreHookOutcome:
         raise ValueError("pre block")
@@ -276,7 +276,7 @@ async def test_pre_hook_can_mutate_tool_args(tmp_path: Path):
 
     async def call_tool(name: str, **kwargs):
         seen.update(kwargs)
-        return ToolResult(success=True, data="ok")
+        return ToolResult(data="ok")
 
     async def inject_pre(inv: ToolHookInvocation) -> ToolPreHookOutcome:
         inv.tool_args["_secret"] = "from-pre-hook"
@@ -324,7 +324,7 @@ async def test_executor_rejects_invisible_tool_but_runtime_call_tool_still_runs(
     async def call_tool(name: str, **kwargs):
         nonlocal call_count
         call_count += 1
-        return ToolResult(success=True, data="ok")
+        return ToolResult(data="ok")
 
     workspace = _workspace_dir(tmp_path)
     runtime = _make_runtime(
@@ -347,8 +347,11 @@ async def test_executor_rejects_invisible_tool_but_runtime_call_tool_still_runs(
     assert call_count == 0
     assert execution.success is False
     assert "invisibility" in (execution.error_text or "")
-    assert execution.error_type == ErrorType.VALIDATION_ERROR.value
-    assert execution.retry_info.get("retriable") is False
+    assert execution.error is not None
+    assert execution.error.source == "constraint"
+    assert execution.error.component == "tool"
+    assert "invisibility" in execution.error.fact
+    assert set(execution.error.to_dict()) == {"source", "component", "fact", "trace_id"}
 
     result = await runtime.call_tool("hidden_tool", job_id="x")
     assert call_count == 1
@@ -418,7 +421,7 @@ async def test_governance_injector_rejects_visible_args(tmp_path: Path):
     """Injector may only add underscore-prefixed internal args."""
 
     async def call_tool(name: str, **kwargs):
-        return ToolResult(success=True, data="ok")
+        return ToolResult(data="ok")
 
     workspace = _workspace_dir(tmp_path)
     governance = build_governance_config(

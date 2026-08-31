@@ -12,10 +12,13 @@
 # ============================================================================
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import json
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.messages import AIMessage
+
+from dataagent.core.errors import DataAgentError
 
 
 @dataclass
@@ -37,12 +40,27 @@ class WorkerResult:
     artifacts: list[str]
     tool_calls_count: int
     iteration_count: int
-    error: str | None
+    error: DataAgentError | None
     resumed: bool
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the dataclass to a JSON-serializable dictionary."""
-        return asdict(self)
+        if self.status == "success" and self.error is not None:
+            raise ValueError("successful worker_result must not include error")
+        if self.status != "success" and self.error is None:
+            raise ValueError("failed worker_result must include structured error")
+        return {
+            "sub_id": self.sub_id,
+            "parent_session_id": self.parent_session_id,
+            "worker_session_id": self.worker_session_id,
+            "status": self.status,
+            "final_answer": self.final_answer,
+            "artifacts": list(self.artifacts),
+            "tool_calls_count": self.tool_calls_count,
+            "iteration_count": self.iteration_count,
+            "error": None if self.error is None else self.error.to_dict(),
+            "resumed": self.resumed,
+        }
 
 
 def worker_session_id(parent_session_id: str, sub_id: int) -> str:
@@ -52,16 +70,72 @@ def worker_session_id(parent_session_id: str, sub_id: int) -> str:
 
 def worker_result_from_payload(payload: dict[str, Any]) -> WorkerResult:
     """Parse a child-process ``worker_result`` payload into ``WorkerResult``."""
+    required = {
+        "sub_id",
+        "parent_session_id",
+        "worker_session_id",
+        "status",
+        "final_answer",
+        "artifacts",
+        "tool_calls_count",
+        "iteration_count",
+        "error",
+        "resumed",
+    }
+    if not isinstance(payload, dict) or not required.issubset(payload):
+        raise DataAgentError(
+            source="internal",
+            component="subagent",
+            fact="worker_result 缺少必要字段",
+        )
+    status = str(payload.get("status") or "")
+    if status not in {"success", "failed", "timeout"}:
+        raise DataAgentError(
+            source="internal",
+            component="subagent",
+            fact=f"worker_result 非法 status={status}",
+        )
+    raw_error = payload.get("error")
+    error: DataAgentError | None
+    if raw_error is None:
+        error = None
+    elif isinstance(raw_error, dict):
+        try:
+            error = DataAgentError.from_dict(raw_error)
+        except Exception as exc:
+            raise DataAgentError(
+                source="internal",
+                component="subagent",
+                fact="worker_result error 无法还原",
+            ) from exc
+    else:
+        raise DataAgentError(
+            source="internal",
+            component="subagent",
+            fact="worker_result error 必须是对象或 null",
+        )
+    if status == "success" and error is not None:
+        raise DataAgentError(
+            source="internal",
+            component="subagent",
+            fact="worker_result success 不应带 error",
+        )
+    if status != "success" and error is None:
+        raise DataAgentError(
+            source="internal",
+            component="subagent",
+            fact="worker_result 失败但缺少 error",
+        )
     return WorkerResult(
         sub_id=int(payload.get("sub_id", 0) or 0),
         parent_session_id=str(payload.get("parent_session_id") or ""),
         worker_session_id=str(payload.get("worker_session_id") or ""),
-        status=str(payload.get("status") or "failed"),
+        status=status,
         final_answer=str(payload.get("final_answer") or ""),
         artifacts=[str(item) for item in payload.get("artifacts") or []],
         tool_calls_count=int(payload.get("tool_calls_count", 0) or 0),
         iteration_count=int(payload.get("iteration_count", 0) or 0),
-        error=None if payload.get("error") is None else str(payload.get("error")),
+        error=error,
         resumed=bool(payload.get("resumed", False)),
     )
 
@@ -72,7 +146,7 @@ def synthesize_worker_result(
     sub_id: int,
     parent_session_id: str,
     status: str = "success",
-    error: str | None = None,
+    error: DataAgentError | None = None,
     resumed: bool = False,
 ) -> WorkerResult:
     """Synthesize ``WorkerResult`` from a subagent ``final_state``.
@@ -127,14 +201,23 @@ def build_busy_result(*, sub_id: int, parent_session_id: str) -> WorkerResult:
         artifacts=[],
         tool_calls_count=0,
         iteration_count=0,
-        error=msg,
+        error=DataAgentError(
+            source="tool",
+            component="subagent",
+            fact=msg,
+        ),
         resumed=False,
     )
 
 
 def build_timeout_result(*, sub_id: int, parent_session_id: str, timeout: int) -> WorkerResult:
     """Return the result written when the parent kills a timed-out worker."""
-    msg = f"subagent {sub_id} timed out after {timeout} seconds"
+    error = DataAgentError(
+        source="constraint",
+        component="subagent",
+        fact=f"子 Agent {sub_id} 超时（{timeout}s）",
+    )
+    error.__cause__ = TimeoutError()
     return WorkerResult(
         sub_id=int(sub_id),
         parent_session_id=parent_session_id,
@@ -144,7 +227,95 @@ def build_timeout_result(*, sub_id: int, parent_session_id: str, timeout: int) -
         artifacts=[],
         tool_calls_count=0,
         iteration_count=0,
-        error=msg,
+        error=error,
+        resumed=False,
+    )
+
+
+@dataclass(frozen=True)
+class ParsedSubagentStdout:
+    """Pure parse of child stdout JSON. Timeout must be decided by the caller."""
+
+    worker_result: WorkerResult
+    flex_raw: Any = None
+    assistant_reply: str = ""
+    raw_stdout: str | None = None
+    from_child_payload: bool = False
+
+
+def parse_subagent_stdout(
+    stdout: str,
+    *,
+    sub_id: int,
+    parent_session_id: str,
+    returncode: int = 0,
+) -> ParsedSubagentStdout:
+    """Parse child-process stdout into a worker result without inspecting stderr."""
+    stripped = (stdout or "").strip()
+    if not stripped:
+        error = DataAgentError(
+            source="tool",
+            fact="subagent produced empty stdout",
+            component="subagent",
+        )
+        return ParsedSubagentStdout(_failed_worker_result(sub_id, parent_session_id, error))
+
+    try:
+        parsed: Any = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if not isinstance(parsed, dict):
+        source = "internal" if int(returncode or 0) == 0 else "tool"
+        error = DataAgentError(
+            source=source,
+            fact=f"invalid_subagent_stdout；sub_id={sub_id}",
+            component="subagent",
+        )
+        return ParsedSubagentStdout(
+            _failed_worker_result(sub_id, parent_session_id, error),
+            raw_stdout=stripped if int(returncode or 0) == 0 else None,
+        )
+
+    if parsed.get("error") and not isinstance(parsed.get("worker_result"), dict):
+        error = DataAgentError(
+            source="internal",
+            fact=f"legacy top-level error rejected: {parsed.get('error')}",
+            component="subagent",
+        )
+        return ParsedSubagentStdout(_failed_worker_result(sub_id, parent_session_id, error))
+
+    worker_result_payload = parsed.get("worker_result")
+    if isinstance(worker_result_payload, dict):
+        worker_result = worker_result_from_payload(worker_result_payload)
+        assistant_reply = str(parsed.get("assistant_reply") or "").strip() or worker_result.final_answer
+        return ParsedSubagentStdout(
+            worker_result,
+            flex_raw=parsed.get("subagent_final_state"),
+            assistant_reply=assistant_reply,
+            from_child_payload=True,
+        )
+
+    error = DataAgentError(
+        source="internal",
+        fact="missing worker_result",
+        component="subagent",
+    )
+    return ParsedSubagentStdout(_failed_worker_result(sub_id, parent_session_id, error))
+
+
+def _failed_worker_result(sub_id: int, parent_session_id: str, error: DataAgentError) -> WorkerResult:
+    sid = int(sub_id)
+    return WorkerResult(
+        sub_id=sid,
+        parent_session_id=parent_session_id,
+        worker_session_id=worker_session_id(parent_session_id, sid),
+        status="failed",
+        final_answer="",
+        artifacts=[],
+        tool_calls_count=0,
+        iteration_count=0,
+        error=error,
         resumed=False,
     )
 

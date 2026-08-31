@@ -31,15 +31,14 @@ from a2a.client import create_client
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.client import ClientConfig
 from a2a.helpers import new_text_message
-from a2a.types.a2a_pb2 import AgentCard, Role, SendMessageRequest
+from a2a.types.a2a_pb2 import AgentCard, Role, SendMessageRequest, TaskState
 
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.action_manager.base import (
     BaseTool,
-    ErrorType,
-    ToolError,
     ToolResult,
     ToolType,
-    classify_exception,
+    tool_failure,
 )
 from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
 
@@ -80,16 +79,56 @@ class A2AClientWrapper:
 
     def __init__(self, config: AgentConfig):
         if not A2A_AVAILABLE:
-            raise ToolError("a2a-sdk is required for A2A tools. Install with: pip install a2a-sdk>=1.0.0")
+            raise DataAgentError(
+                source="tool",
+                fact="a2a-sdk is required for A2A tools. Install with: pip install a2a-sdk>=1.0.0",
+                component="tool",
+            )
 
         self.config = config
         self._agent_card: AgentCard | None = None
 
     @staticmethod
-    async def _extract_result_text_from_stream(responses) -> str:
+    def _status_message_text(status: Any) -> str:
+        message = getattr(status, "message", None)
+        if message is None:
+            return ""
+        parts = getattr(message, "parts", None) or []
+        return "".join(str(part.text) for part in parts if getattr(part, "text", None))
+
+    @classmethod
+    def _failed_task_error(cls, status: Any, *, tool_name: str, agent_id: str) -> DataAgentError | None:
+        if int(getattr(status, "state", 0) or 0) != int(TaskState.TASK_STATE_FAILED):
+            return None
+        remote_text = cls._status_message_text(status).strip()
+        fact = remote_text or f"A2A remote task FAILED for agent '{agent_id}' tool '{tool_name}'"
+        return DataAgentError(
+            source="tool",
+            component="tool",
+            fact=fact,
+        )
+
+    @classmethod
+    async def _extract_result_text_from_stream(
+        cls,
+        responses,
+        *,
+        tool_name: str = "",
+        agent_id: str = "",
+    ) -> str:
         """Extract result text from a2a-sdk 1.0 StreamResponse async iterator."""
         result_text = ""
+        failed_error: DataAgentError | None = None
         async for response in responses:
+            if response.HasField("task") and response.task.HasField("status"):
+                failed_error = (
+                    cls._failed_task_error(response.task.status, tool_name=tool_name, agent_id=agent_id) or failed_error
+                )
+            if response.HasField("status_update") and response.status_update.HasField("status"):
+                failed_error = (
+                    cls._failed_task_error(response.status_update.status, tool_name=tool_name, agent_id=agent_id)
+                    or failed_error
+                )
             # Task-level artifacts
             if response.HasField("task") and response.task.artifacts:
                 for artifact in response.task.artifacts:
@@ -106,6 +145,8 @@ class A2AClientWrapper:
                 for part in response.message.parts:
                     if part.text:
                         result_text += part.text
+        if failed_error is not None:
+            raise failed_error
         return result_text
 
     async def close(self):
@@ -141,24 +182,31 @@ class A2AClientWrapper:
             )
             async with client:
                 responses = client.send_message(request)
-                result_text = await self._extract_result_text_from_stream(responses)
+                result_text = await self._extract_result_text_from_stream(
+                    responses,
+                    tool_name=tool_name,
+                    agent_id=self.config.agent_id,
+                )
                 return result_text if result_text else str(responses)
+        except DataAgentError:
+            raise
         except Exception as e:
             http_status = _extract_http_status(e)
             if http_status is not None and http_status[0] in (401, 403):
                 status_code, reason = http_status
                 status_text = f"HTTP {status_code} {reason}".strip()
-                raise ToolError(
-                    (
+                raise DataAgentError(
+                    source="tool",
+                    component="tool",
+                    fact=(
                         f"A2A authentication failed for agent '{self.config.agent_id}' while calling tool "
                         f"'{tool_name}': the remote service rejected the configured Bearer token ({status_text}). "
                         "Check TOOLS.A2A auth_token."
                     ),
-                    error_type=ErrorType.AUTHENTICATION_ERROR,
-                    retriable=False,
-                    max_retries=0,
                 ) from e
-            raise ToolError(f"Error during tool call '{tool_name}': {e}") from e
+            raise DataAgentError(
+                source="tool", fact=f"Error during tool call '{tool_name}': {e}", component="tool"
+            ) from e
         finally:
             await httpx_client.aclose()
 
@@ -208,7 +256,7 @@ class A2AClientWrapper:
             return all_tools
 
         except Exception as e:
-            raise ToolError(f"Error during tool listing: {e}") from e
+            raise DataAgentError(source="tool", fact=f"Error during tool listing: {e}", component="tool") from e
 
     async def discover_capabilities(self) -> dict[str, Any]:
         """Discover the agent's capabilities."""
@@ -228,7 +276,7 @@ class A2AClientWrapper:
             return capabilities
 
         except Exception as e:
-            raise ToolError(f"Error during capability discovery: {e}") from e
+            raise DataAgentError(source="tool", fact=f"Error during capability discovery: {e}", component="tool") from e
 
     async def _get_agent_card(self) -> AgentCard:
         """Fetch and cache the AgentCard via A2ACardResolver."""
@@ -271,7 +319,10 @@ class A2AToolWrapper(BaseTool):
         try:
             is_valid, error = self.validate_input(**kwargs)
             if not is_valid:
-                return ToolResult(success=False, error=f"Invalid input parameters for A2A tool '{self.name}': {error}")
+                return tool_failure(
+                    fact=f"Invalid input parameters for A2A tool '{self.name}': {error}",
+                    component="tool",
+                )
 
             result_data = None
 
@@ -313,7 +364,6 @@ class A2AToolWrapper(BaseTool):
                 result_data = asyncio.run(run_with_temp_client())
 
             return ToolResult(
-                success=True,
                 data=result_data,
                 metadata={
                     "tool_type": "a2a_tool",
@@ -331,7 +381,10 @@ class A2AToolWrapper(BaseTool):
         try:
             is_valid, error = self.validate_input(**kwargs)
             if not is_valid:
-                return ToolResult(success=False, error=f"Invalid input parameters for A2A tool '{self.name}': {error}")
+                return tool_failure(
+                    fact=f"Invalid input parameters for A2A tool '{self.name}': {error}",
+                    component="tool",
+                )
 
             # Always create fresh client to avoid connection state issues
             temp_client = A2AClientWrapper(self.a2a_client.config)
@@ -339,7 +392,6 @@ class A2AToolWrapper(BaseTool):
                 result_data = await temp_client.call_tool(self.remote_tool_name, kwargs)
 
                 return ToolResult(
-                    success=True,
                     data=result_data,
                     metadata={
                         "tool_type": "a2a_tool",
@@ -385,27 +437,11 @@ class A2AToolWrapper(BaseTool):
         return ToolSchema(self.name, self.description, parameters, "a2a_tool")
 
     def _build_failure_result(self, exc: Exception) -> ToolResult:
-        """Convert an A2A exception into a failed tool result without losing retry semantics."""
-        if isinstance(exc, ToolError):
-            error_type = exc.error_type
-            retriable = exc.retriable
-            max_retries = exc.max_retries
-        else:
-            error_type, policy = classify_exception(exc)
-            retriable = policy.retriable
-            max_retries = policy.max_retries
-        return ToolResult(
-            success=False,
-            error=str(exc),
-            metadata={
-                "tool_type": "a2a_tool",
-                "error_type": type(exc).__name__,
-                "agent_id": self.a2a_client.config.agent_id,
-            },
-            error_type=error_type,
-            retriable=retriable,
-            max_retries=max_retries,
-        )
+        if isinstance(exc, DataAgentError):
+            return ToolResult(
+                error=exc, metadata={"tool_type": "a2a_tool", "agent_id": self.a2a_client.config.agent_id}
+            )
+        raise exc
 
     def _json_type_to_python_type(self, json_type: str) -> type:
         """Map JSON Schema types to Python types."""
@@ -452,12 +488,12 @@ class A2AToolRegistry:
     async def list_agent_tools(self, agent_id: str) -> list[A2AToolWrapper]:
         """List raw A2A tools from an agent — caller (ToolManager) wraps them into per-Agent instances."""
         if agent_id not in self._clients:
-            raise ToolError(f"Agent '{agent_id}' not registered")
+            raise DataAgentError(source="tool", fact=f"Agent '{agent_id}' not registered", component="tool")
 
         client = self._clients[agent_id]
 
         if not await client.ping():
-            raise ToolError(f"Agent '{agent_id}' is not reachable")
+            raise DataAgentError(source="tool", fact=f"Agent '{agent_id}' is not reachable", component="tool")
 
         tools_list = await client.list_tools()
         return [A2AToolWrapper(client, tool_def["name"], tool_def) for tool_def in tools_list]

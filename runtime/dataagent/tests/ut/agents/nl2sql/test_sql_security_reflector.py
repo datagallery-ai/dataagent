@@ -15,9 +15,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes.reflector import ReflectorNode
 from dataagent.agents.nl2sql.workflow.state import Result, get_default_state
+from dataagent.core.errors import DataAgentError
 
 
 def _candidate(candidate_id: int, sql: str, score: float, *, blocked: bool = False) -> Result:
@@ -50,11 +50,13 @@ async def test_reflector_raises_security_error_when_all_candidates_blocked_after
     state = get_default_state("question", ref_retries=0)
     state["validation_results"] = [_candidate(0, "SELECT current_setting('x')", 0.0, blocked=True)]
 
-    with pytest.raises(SQLSecurityValidationError) as error:
+    with pytest.raises(DataAgentError) as error:
         await node._aprocess(state)
 
-    assert error.value.code == "NL2SQL-SEC-001"
-    assert "current_setting" not in str(error.value.detail)
+    assert error.value.source == "constraint"
+    assert error.value.component == "nl2sql"
+    assert "Blocked by SQL security rules" in error.value.fact
+    assert "current_setting" not in error.value.fact
 
 
 @pytest.mark.asyncio
@@ -64,7 +66,7 @@ async def test_reflector_rejects_candidate_without_security_proof() -> None:
     state = get_default_state("question", ref_retries=0)
     state["validation_results"] = [Result(id=0, sql="SELECT id FROM orders", score=1.0)]
 
-    with pytest.raises(SQLSecurityValidationError):
+    with pytest.raises(DataAgentError):
         await node._aprocess(state)
 
 

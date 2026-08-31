@@ -82,19 +82,23 @@ class GeneratorNode(BaseNL2SQLNode):
         results = []
         if self.num_workers * len(self.strategies) <= 0:
             raise ValueError("max_workers must be greater than 0")
+
+        async def _run_named(strategy: str):
+            try:
+                return strategy, await self.run_strategy(strategy, settings.copy(), context), None
+            except Exception as exc:
+                return strategy, None, exc
+
         tasks = [
-            asyncio.create_task(self.run_strategy(strategy, settings.copy(), context))
-            for strategy in self.strategies
-            for _ in range(self.num_workers)
+            asyncio.create_task(_run_named(strategy)) for strategy in self.strategies for _ in range(self.num_workers)
         ]
-        failures: list[Exception] = []
+        failures: list[tuple[str, Exception]] = []
         try:
             for task in asyncio.as_completed(tasks):
-                try:
-                    res = await task
-                except Exception as exc:
-                    failures.append(exc)
-                    logger.warning(f"Generator strategy task failed: {exc}")
+                strategy, res, exc = await task
+                if exc is not None:
+                    failures.append((strategy, exc))
+                    logger.warning(f"Generator strategy {strategy} failed: {exc}")
                 else:
                     results.extend(res)
         except asyncio.CancelledError:
@@ -104,12 +108,28 @@ class GeneratorNode(BaseNL2SQLNode):
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
         if not results:
-            if len(failures) == len(tasks):
-                raise failures[0]
-            error = RuntimeError("Generator produced no SQL candidates.")
-            if failures:
-                raise error from failures[0]
-            raise error
+            from dataagent.core.errors import DataAgentError
+
+            last_strategy, last_exc = failures[-1] if failures else ("", None)
+            if isinstance(last_exc, DataAgentError):
+                fact = last_exc.fact
+                if last_strategy and last_strategy not in fact:
+                    fact = f"{fact}；strategy={last_strategy}"
+                raise DataAgentError(
+                    source=last_exc.source,
+                    component=last_exc.component,
+                    fact=fact,
+                    trace_id=last_exc.trace_id,
+                ) from last_exc
+            inner = DataAgentError.from_exception(last_exc, component="nl2sql") if last_exc is not None else None
+            fact = inner.fact if inner is not None else "模型调用失败"
+            if last_strategy:
+                fact = f"{fact}；strategy={last_strategy}"
+            raise DataAgentError(
+                fact=fact,
+                source="llm",
+                component="nl2sql",
+            ) from last_exc
         for i, (sql, prompt, strategy) in enumerate(results):
             state["generation_results"].append(Result(id=i, sql=sql, prompt=prompt, strategy=strategy))
         state["sql"] = state["generation_results"][0].sql

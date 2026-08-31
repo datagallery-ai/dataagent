@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox, reset_current_sandbox, set_current_sandbox
 from dataagent.actions.tools.semantic_tool import search_tables_with_schema
-from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceError
+from dataagent.core.errors import DataAgentError
 from dataagent.core.flex.hooks.semantic_retrieve import semantic_retrieve_context_loader
 
 
@@ -67,12 +67,10 @@ class _EmptySemanticClient:
 class _FailingSemanticClient:
     def semantic_retrieve(self, query: str) -> dict[str, Any]:
         """Raise the terminal semantic-service error returned to the parent agent."""
-        raise SemanticServiceError(
-            method="POST",
-            path="semantic/retrieve",
-            status_code=503,
-            error_code="SEMANTIC-503",
-            error_message="semantic service is unavailable",
+        raise DataAgentError(
+            source="tool",
+            component="semantic-service",
+            fact="语义服务 HTTP 503：POST semantic/retrieve；semantic service is unavailable",
         )
 
 
@@ -252,12 +250,8 @@ def test_semantic_retrieve_context_loader_returns_only_semantic_service_error(mo
     assert isinstance(messages, list)
     assert isinstance(messages[-1], AIMessage)
     final_message = messages[-1].content
-    assert final_message.startswith(
-        "Semantic metadata retrieval did not return usable tables; this metadata recall agent was stopped.\n\n"
-        "SemanticServiceError: internal semantic service error"
-    )
-    assert "method=POST" in final_message
-    assert "error_message=semantic service is unavailable" in final_message
+    assert "Semantic metadata retrieval did not return usable tables" in final_message
+    assert "semantic" in final_message.lower()
     assert "Traceback" not in final_message
 
 

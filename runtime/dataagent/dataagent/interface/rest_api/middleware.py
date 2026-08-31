@@ -32,7 +32,8 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import Message, Receive, Scope, Send
 
 from dataagent.config.config_manager import ConfigManager
-from dataagent.utils.log import logger
+from dataagent.core.errors import DataAgentError
+from dataagent.utils.log import dataagent_log_context, logger
 
 request_id_var: ContextVar[str] = ContextVar("dataagent_request_id", default="")
 _PROBE_PATHS = frozenset({"/health"})
@@ -125,6 +126,27 @@ def get_request_id() -> str:
     return request_id_var.get()
 
 
+def _public_error_response(
+    request_id: str,
+    *,
+    source: str,
+    fact: str,
+    status_code: int,
+) -> JSONResponse:
+    """Serialize a limit/ingress failure with the public DataAgentError contract."""
+    error = DataAgentError(
+        source=source,
+        component="rest",
+        fact=fact,
+        trace_id=request_id,
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content={"result": error.to_dict()},
+        headers={"X-Request-Id": request_id},
+    )
+
+
 @dataclass(frozen=True)
 class _DownstreamExecution:
     """Cancellation handle and completion signal for one downstream ASGI request."""
@@ -211,76 +233,78 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         is_probe = path in _PROBE_PATHS
         acquired = False
-        try:
-            if not is_probe:
-                body_error = self._check_content_length(request)
-                if body_error is not None:
-                    body_error.headers["X-Request-Id"] = request_id
-                    return body_error
-                rate_error = await self._check_rate_limit(client_ip)
-                if rate_error is not None:
-                    rate_error.headers["X-Request-Id"] = request_id
-                    return rate_error
-                try:
-                    await asyncio.wait_for(self._semaphore.acquire(), timeout=self.limits.queue_timeout_seconds)
-                except TimeoutError:
-                    return JSONResponse(
-                        status_code=503,
-                        content={"detail": "Server busy; concurrency queue timeout"},
-                        headers={"X-Request-Id": request_id},
-                    )
-                acquired = True
-
-            deadline = started + self.limits.request_timeout_seconds
+        with dataagent_log_context(request_id=request_id, trace_id=request_id):
             try:
-                remaining = deadline - time.perf_counter()
-                if remaining <= 0:
-                    raise TimeoutError
-                response = await asyncio.wait_for(call_next(request), timeout=remaining)
-            except TimeoutError:
-                await _cancel_downstream(request.scope)
-                if acquired:
+                if not is_probe:
+                    body_error = self._check_content_length(request, request_id)
+                    if body_error is not None:
+                        return body_error
+                    rate_error = await self._check_rate_limit(client_ip, request_id)
+                    if rate_error is not None:
+                        return rate_error
+                    try:
+                        await asyncio.wait_for(self._semaphore.acquire(), timeout=self.limits.queue_timeout_seconds)
+                    except TimeoutError:
+                        return _public_error_response(
+                            request_id,
+                            source="constraint",
+                            fact="并发队列等待超时",
+                            status_code=503,
+                        )
+                    acquired = True
+
+                deadline = started + self.limits.request_timeout_seconds
+                try:
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    response = await asyncio.wait_for(call_next(request), timeout=remaining)
+                except TimeoutError:
+                    await _cancel_downstream(request.scope)
+                    if acquired:
+                        self._semaphore.release()
+                        acquired = False
+                    response = _public_error_response(
+                        request_id,
+                        source="constraint",
+                        fact="请求等待响应超时",
+                        status_code=504,
+                    )
+                    self._log_access(request_id, client_ip, path, response, started)
+                    return response
+
+                if request.scope.get("dataagent_body_too_large"):
+                    if acquired:
+                        self._semaphore.release()
+                        acquired = False
+                    response = _public_error_response(
+                        request_id,
+                        source="config",
+                        fact=f"请求体过大（上限 {self.limits.max_body_bytes} 字节）",
+                        status_code=413,
+                    )
+                    self._log_access(request_id, client_ip, path, response, started)
+                    return response
+
+                body_iterator = getattr(response, "body_iterator", None)
+                if body_iterator is not None and acquired:
+                    response.body_iterator = self._hold_slot_until_body_ends(
+                        body_iterator,
+                        deadline=deadline,
+                        scope=request.scope,
+                    )
+                    acquired = False
+                elif acquired:
                     self._semaphore.release()
                     acquired = False
-                response = JSONResponse(
-                    status_code=504,
-                    content={"detail": "Request timed out"},
-                    headers={"X-Request-Id": request_id},
-                )
+
+                response.headers["X-Request-Id"] = request_id
                 self._log_access(request_id, client_ip, path, response, started)
                 return response
-
-            if request.scope.get("dataagent_body_too_large"):
+            finally:
                 if acquired:
                     self._semaphore.release()
-                    acquired = False
-                response = JSONResponse(
-                    status_code=413,
-                    content={"detail": f"Request body exceeds {self.limits.max_body_bytes} bytes"},
-                    headers={"X-Request-Id": request_id},
-                )
-                self._log_access(request_id, client_ip, path, response, started)
-                return response
-
-            body_iterator = getattr(response, "body_iterator", None)
-            if body_iterator is not None and acquired:
-                response.body_iterator = self._hold_slot_until_body_ends(
-                    body_iterator,
-                    deadline=deadline,
-                    scope=request.scope,
-                )
-                acquired = False
-            elif acquired:
-                self._semaphore.release()
-                acquired = False
-
-            response.headers["X-Request-Id"] = request_id
-            self._log_access(request_id, client_ip, path, response, started)
-            return response
-        finally:
-            if acquired:
-                self._semaphore.release()
-            request_id_var.reset(token)
+                request_id_var.reset(token)
 
     def _log_access(
         self,
@@ -300,7 +324,7 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
             (time.perf_counter() - started) * 1000,
         )
 
-    def _check_content_length(self, request: Request) -> Response | None:
+    def _check_content_length(self, request: Request, request_id: str) -> Response | None:
         """Reject oversized or invalid Content-Length before reading the body."""
         max_bytes = self.limits.max_body_bytes
         content_length = request.headers.get("content-length")
@@ -308,12 +332,19 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
             return None
         try:
             if int(content_length) > max_bytes:
-                return JSONResponse(
+                return _public_error_response(
+                    request_id,
+                    source="config",
+                    fact=f"请求体过大（上限 {max_bytes} 字节）",
                     status_code=413,
-                    content={"detail": f"Request body exceeds {max_bytes} bytes"},
                 )
         except ValueError:
-            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+            return _public_error_response(
+                request_id,
+                source="config",
+                fact="Content-Length 无效",
+                status_code=400,
+            )
         return None
 
     def _wrap_receive_with_body_limit(self, scope: Scope, receive: Receive) -> Receive:
@@ -370,7 +401,7 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
                     await close()
             self._semaphore.release()
 
-    async def _check_rate_limit(self, client_ip: str) -> Response | None:
+    async def _check_rate_limit(self, client_ip: str, request_id: str) -> Response | None:
         """Return 429 if ``client_ip`` exceeds the per-minute hit window."""
         now = time.monotonic()
         window = 60.0
@@ -385,7 +416,12 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
             while hits and now - hits[0] > window:
                 hits.popleft()
             if len(hits) >= limit:
-                return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+                return _public_error_response(
+                    request_id,
+                    source="constraint",
+                    fact="请求过于频繁",
+                    status_code=429,
+                )
             hits.append(now)
         return None
 

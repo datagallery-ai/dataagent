@@ -73,7 +73,7 @@ class JobResult:
     agent_id: str
     status: str
     summary: str = ""
-    error: str = ""
+    error: str | dict[str, Any] = ""
     original_msg: Any = None
     frontend_msg: str = ""
     state: dict[str, Any] | None = None

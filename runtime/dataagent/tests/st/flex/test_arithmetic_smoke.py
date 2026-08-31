@@ -100,11 +100,19 @@ def test_st_arithmetic_yaml_with_mock_llm(
     async def _fake_invoke_manager_tool_async(
         _self: Executor, tool_name: str, tool_args: dict[str, Any], runtime: Any = None
     ) -> ToolResult:
+        from dataagent.core.errors import DataAgentError
+
         if tool_name == "multiply":
-            return ToolResult(success=True, data=int(tool_args["a"]) * int(tool_args["b"]))
+            return ToolResult(data=int(tool_args["a"]) * int(tool_args["b"]))
         if tool_name == "add":
-            return ToolResult(success=True, data=int(tool_args["a"]) + int(tool_args["b"]))
-        return ToolResult(success=False, error=f"unexpected tool: {tool_name}")
+            return ToolResult(data=int(tool_args["a"]) + int(tool_args["b"]))
+        return ToolResult(
+            error=DataAgentError(
+                source="tool",
+                fact=f"unexpected tool: {tool_name}",
+                component="tool",
+            )
+        )
 
     monkeypatch.setattr(Executor, "_invoke_manager_tool_async", _fake_invoke_manager_tool_async, raising=True)
 

@@ -14,10 +14,10 @@ import asyncio
 import re
 from typing import Any, Optional
 
-from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.log import logger
 
 _DIMENSION_METADATA = {
@@ -315,16 +315,25 @@ class BusinessTwinPerceptorNode(PerceptorNode):
     async def _select_tables_by_business_family(self, question: str) -> list[str]:
         business_ids = await self._select_business_ids(question)
         if not business_ids:
-            raise NL2SQLError("Business ID selection returned no valid result")
+            raise DataAgentError(
+                source="config",
+                fact="Business ID selection returned no valid result",
+                component="nl2sql",
+            )
         catalog = await asyncio.to_thread(self._full_table_catalog)
         families = self._build_table_family_candidates(catalog, business_ids)
         if not families:
-            raise NL2SQLError(
-                "Business-twin table family catalog is empty",
-                detail=f"No table family matched business IDs: {', '.join(business_ids)}",
+            raise DataAgentError(
+                source="config",
+                fact=f"Business-twin table family catalog is empty；business_ids={', '.join(business_ids)}",
+                component="nl2sql",
             )
         selection = await self._select_table_family(question, families)
         table = self._resolve_table_family_selection(selection, families)
         if not table:
-            raise NL2SQLError("Business-twin table family selection returned no valid table")
+            raise DataAgentError(
+                source="config",
+                fact="Business-twin table family selection returned no valid table",
+                component="nl2sql",
+            )
         return [table]

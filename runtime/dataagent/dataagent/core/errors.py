@@ -203,14 +203,6 @@ class DataAgentError(Exception):
         )
 
     @classmethod
-    def from_timeout_dict(cls, payload: Mapping[str, Any]) -> DataAgentError:
-        """Restore a timeout wire payload and keep TimeoutError as ``__cause__``."""
-        error = cls.from_dict(payload)
-        if not isinstance(error.__cause__, TimeoutError):
-            error.__cause__ = TimeoutError()
-        return error
-
-    @classmethod
     def from_exception(
         cls,
         exc: Exception,

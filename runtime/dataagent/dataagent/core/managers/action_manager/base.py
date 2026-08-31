@@ -11,9 +11,13 @@
 # limitations under the License.
 # ============================================================================
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any
+
+import httpx
+
+from dataagent.core.errors import DataAgentError
 
 if TYPE_CHECKING:
     from dataagent.core.managers.action_manager.schemas import ToolSchema
@@ -31,14 +35,14 @@ class ToolType(Enum):
 class ErrorType(StrEnum):
     """错误类型枚举，用于分类错误并决定重试策略"""
 
-    VALIDATION_ERROR = "validation_error"  # 参数 schema 校验失败
-    AUTHENTICATION_ERROR = "authentication_error"  # 认证凭据缺失或无效
-    RATE_LIMIT = "rate_limit"  # 限流/配额耗尽
-    TIMEOUT = "timeout"  # 工具执行超时
-    NETWORK_ERROR = "network_error"  # 网络问题（MCP/A2A）
-    INTERNAL_ERROR = "internal_error"  # 工具内部异常
-    FILE_NOT_FOUND = "file_not_found"  # 文件/路径不存在
-    UNKNOWN = "unknown"  # 未知错误
+    VALIDATION_ERROR = "validation_error"
+    AUTHENTICATION_ERROR = "authentication_error"
+    RATE_LIMIT = "rate_limit"
+    TIMEOUT = "timeout"
+    NETWORK_ERROR = "network_error"
+    INTERNAL_ERROR = "internal_error"
+    FILE_NOT_FOUND = "file_not_found"
+    UNKNOWN = "unknown"
 
 
 @dataclass
@@ -48,11 +52,10 @@ class ErrorPolicy:
     error_type: ErrorType
     retriable: bool
     max_retries: int
-    backoff_base: float = 1.0  # 退避基数（秒）
-    backoff_type: str = "exponential"  # exponential 或 fixed
+    backoff_base: float = 1.0
+    backoff_type: str = "exponential"
 
 
-# 默认重试策略表
 ERROR_POLICIES: dict[ErrorType, ErrorPolicy] = {
     ErrorType.VALIDATION_ERROR: ErrorPolicy(ErrorType.VALIDATION_ERROR, retriable=False, max_retries=0),
     ErrorType.AUTHENTICATION_ERROR: ErrorPolicy(ErrorType.AUTHENTICATION_ERROR, retriable=False, max_retries=0),
@@ -78,60 +81,22 @@ DEFAULT_RETRY_POLICY = ERROR_POLICIES[ErrorType.UNKNOWN]
 
 
 def classify_exception(exc: Exception) -> tuple[ErrorType, ErrorPolicy]:
-    """统一错误分类函数，根据异常类型和消息内容分类错误。
-
-    Args:
-        exc: 待分类的异常对象
-
-    Returns:
-        (ErrorType, ErrorPolicy) 元组，包含错误类型和对应的重试策略
-
-    Raises:
-        TypeError: 当 exc 为 None 时抛出
-
-    Examples:
-        >>> exc = TimeoutError("Request timed out")
-        >>> err_type, policy = classify_exception(exc)
-        >>> print(err_type)
-        ErrorType.TIMEOUT
-    """
+    """Classify an exception by type and HTTP status. Do not scan fact or messages."""
     if exc is None:
         raise TypeError("classify_exception received None, expected an Exception")
-    exc_type = type(exc).__name__.lower()
-    exc_msg = str(exc).lower()  # 大小写不敏感匹配
 
-    # 错误分类规则（按优先级顺序匹配）
-    if "timeout" in exc_type or "timeout" in exc_msg or "timed out" in exc_msg or "deadline" in exc_msg:
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
         return (ErrorType.TIMEOUT, ERROR_POLICIES[ErrorType.TIMEOUT])
-    if (
-        "authentication" in exc_msg
-        or "unauthorized" in exc_msg
-        or "invalid bearer token" in exc_msg
-        or "http 401" in exc_msg
-        or "error 401" in exc_msg
-    ):
-        return (ErrorType.AUTHENTICATION_ERROR, ERROR_POLICIES[ErrorType.AUTHENTICATION_ERROR])
-    if "rate limit" in exc_msg or "quota" in exc_msg or "too many" in exc_msg or "429" in exc_msg:
-        return (ErrorType.RATE_LIMIT, ERROR_POLICIES[ErrorType.RATE_LIMIT])
-    if (
-        "file not found" in exc_msg
-        or "no such file" in exc_msg
-        or "does not exist" in exc_msg
-        or "command not found" in exc_msg
-    ):
-        return (ErrorType.FILE_NOT_FOUND, ERROR_POLICIES[ErrorType.FILE_NOT_FOUND])
-    if (
-        "network" in exc_type
-        or "network" in exc_msg
-        or "connection" in exc_msg
-        or "dns" in exc_msg
-        or "refused" in exc_msg
-        or "unreachable" in exc_msg
-    ):
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        if status_code == 401:
+            return (ErrorType.AUTHENTICATION_ERROR, ERROR_POLICIES[ErrorType.AUTHENTICATION_ERROR])
+        if status_code == 429:
+            return (ErrorType.RATE_LIMIT, ERROR_POLICIES[ErrorType.RATE_LIMIT])
+        return (ErrorType.UNKNOWN, DEFAULT_RETRY_POLICY)
+    if isinstance(exc, (ConnectionError, httpx.RequestError)):
         return (ErrorType.NETWORK_ERROR, ERROR_POLICIES[ErrorType.NETWORK_ERROR])
-    if "internal" in exc_msg or "unexpected" in exc_msg or "assertion" in exc_msg or "panic" in exc_msg:
-        return (ErrorType.INTERNAL_ERROR, ERROR_POLICIES[ErrorType.INTERNAL_ERROR])
-    if "validation" in exc_msg or "invalid" in exc_msg or "schema" in exc_msg or "param" in exc_msg:
+    if type(exc).__name__ == "ParamsValueError":
         return (ErrorType.VALIDATION_ERROR, ERROR_POLICIES[ErrorType.VALIDATION_ERROR])
 
     return (ErrorType.UNKNOWN, DEFAULT_RETRY_POLICY)
@@ -139,49 +104,33 @@ def classify_exception(exc: Exception) -> tuple[ErrorType, ErrorPolicy]:
 
 @dataclass
 class ToolResult:
-    """工具执行结果"""
+    """工具执行结果；``error is None`` 表示成功。"""
 
-    success: bool
     data: Any = None
-    error: str | None = None
-    metadata: dict[str, Any] = None
-    error_type: ErrorType | None = None  # 错误类型
-    retriable: bool | None = None  # 是否可重试
-    max_retries: int = 0  # 最大重试次数
+    error: DataAgentError | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+    @property
+    def success(self) -> bool:
+        return self.error is None
 
 
-class ToolError(Exception):
-    """工具错误，支持错误分类和重试信息"""
-
-    def __init__(
-        self,
-        message: str,
-        error_type: ErrorType = ErrorType.UNKNOWN,
-        retriable: bool | None = None,
-        max_retries: int | None = None,
-        **kwargs,
-    ):
-        self.message = message
-        self.error_type = error_type
-        # 如果没有显式指定 retriable，从策略推断
-        if retriable is None:
-            self.retriable = ERROR_POLICIES.get(error_type, DEFAULT_RETRY_POLICY).retriable
-        else:
-            self.retriable = retriable
-        # 如果没有显式指定 max_retries，从策略推断
-        if max_retries is None:
-            self.max_retries = ERROR_POLICIES.get(error_type, DEFAULT_RETRY_POLICY).max_retries
-        else:
-            self.max_retries = max_retries
-        self.kwargs = kwargs
-        super().__init__(message)
-
-    def __str__(self):
-        return self.message
+def tool_failure(
+    *,
+    fact: str | None = None,
+    source: str = "tool",
+    component: str = "tool",
+    metadata: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Build a failed ToolResult with a structured DataAgentError."""
+    return ToolResult(
+        error=DataAgentError(
+            source=source,
+            fact=fact,
+            component=component,
+        ),
+        metadata=metadata or {},
+    )
 
 
 class BaseTool(ABC):
@@ -214,8 +163,7 @@ class BaseTool(ABC):
             result = self.call(**kwargs)
             if result.success:
                 return result.data
-
-            raise ToolError(result.error)
+            raise result.error or DataAgentError(source="tool", component="tool")
 
         return StructuredTool.from_function(
             func=tool_func,

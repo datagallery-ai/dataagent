@@ -20,21 +20,19 @@ from typing import Any
 from a2a.helpers import (
     new_task,
     new_text_artifact,
-    new_text_message,
     new_text_status_update_event,
 )
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types.a2a_pb2 import (
-    Role,
     TaskArtifactUpdateEvent,
     TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
 )
 from loguru import logger
 
+from dataagent.core.errors import DataAgentError
 from dataagent.interface.sdk.agent import DataAgent
+from dataagent.utils.log import dataagent_log_context
 
 _A2A_STREAMING_METADATA_KEY = "dataagent_streaming"
 
@@ -72,67 +70,78 @@ class DataAgentExecutor(AgentExecutor):
         await event_queue.enqueue_event(task)
 
         user_text = _extract_text_from_context(context)
-        if not user_text:
-            await self._fail_with_message(event_queue, context, "No user message provided.")
-            return
-
-        cancel_event = asyncio.Event()
-        self._cancellation_events[context.task_id] = cancel_event
-
         session_id = context.context_id or context.task_id or f"a2a-{uuid.uuid4().hex[:12]}"
-        session_lock = await self._get_session_lock(session_id)
+        with dataagent_log_context(session_id=session_id, agent_name="a2a", request_id=context.task_id):
+            if not user_text:
+                error = DataAgentError(source="config", component="a2a")
+                await self._emit_failed(
+                    event_queue,
+                    context.task_id,
+                    context.context_id,
+                    f"{error.actor_text()} trace_id={error.trace_id}",
+                )
+                return
 
-        try:
-            async with session_lock:
+            cancel_event = asyncio.Event()
+            self._cancellation_events[context.task_id] = cancel_event
+            session_lock = await self._get_session_lock(session_id)
+
+            try:
+                async with session_lock:
+                    await event_queue.enqueue_event(
+                        new_text_status_update_event(
+                            task_id=context.task_id,
+                            context_id=context.context_id,
+                            state=TaskState.TASK_STATE_WORKING,
+                            text="Processing request...",
+                        )
+                    )
+
+                    if _is_streaming_request(context):
+                        await self._execute_agent_astream(
+                            user_text=user_text,
+                            session_id=session_id,
+                            task_id=context.task_id,
+                            context_id=context.context_id,
+                            event_queue=event_queue,
+                            cancel_event=cancel_event,
+                        )
+                    else:
+                        await self._execute_agent_chat(
+                            user_text=user_text,
+                            session_id=session_id,
+                            task_id=context.task_id,
+                            context_id=context.context_id,
+                            event_queue=event_queue,
+                            cancel_event=cancel_event,
+                        )
+
+            except asyncio.CancelledError:
                 await event_queue.enqueue_event(
                     new_text_status_update_event(
                         task_id=context.task_id,
                         context_id=context.context_id,
-                        state=TaskState.TASK_STATE_WORKING,
-                        text="Processing request...",
+                        state=TaskState.TASK_STATE_CANCELED,
+                        text="Task was canceled.",
                     )
                 )
-
-                if _is_streaming_request(context):
-                    await self._execute_agent_astream(
-                        user_text=user_text,
-                        session_id=session_id,
+            except Exception as e:
+                error = e if isinstance(e, DataAgentError) else DataAgentError.from_exception(e, component="a2a")
+                logger.exception(
+                    "DataAgent execution failed source={} trace_id={}",
+                    error.source,
+                    error.trace_id,
+                )
+                await event_queue.enqueue_event(
+                    new_text_status_update_event(
                         task_id=context.task_id,
                         context_id=context.context_id,
-                        event_queue=event_queue,
-                        cancel_event=cancel_event,
+                        state=TaskState.TASK_STATE_FAILED,
+                        text=f"{error.actor_text()} trace_id={error.trace_id}",
                     )
-                else:
-                    await self._execute_agent_chat(
-                        user_text=user_text,
-                        session_id=session_id,
-                        task_id=context.task_id,
-                        context_id=context.context_id,
-                        event_queue=event_queue,
-                        cancel_event=cancel_event,
-                    )
-
-        except asyncio.CancelledError:
-            await event_queue.enqueue_event(
-                new_text_status_update_event(
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    state=TaskState.TASK_STATE_CANCELED,
-                    text="Task was canceled.",
                 )
-            )
-        except Exception as e:
-            logger.error(f"DataAgent execution failed: {e}")
-            await event_queue.enqueue_event(
-                new_text_status_update_event(
-                    task_id=context.task_id,
-                    context_id=context.context_id,
-                    state=TaskState.TASK_STATE_FAILED,
-                    text=f"Error: {str(e)}",
-                )
-            )
-        finally:
-            self._cancellation_events.pop(context.task_id, None)
+            finally:
+                self._cancellation_events.pop(context.task_id, None)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Request cancellation of an ongoing task."""
@@ -202,10 +211,6 @@ class DataAgentExecutor(AgentExecutor):
     ) -> None:
         """Convert a DataAgent final state into A2A artifact and terminal status events."""
         final_text = fallback_text.strip() if fallback_text else _extract_final_answer(final_state).strip()
-        if isinstance(final_state, dict) and self._has_error_final_state(final_state):
-            await self._emit_failed(event_queue, task_id, context_id, final_text or "Agent execution failed")
-            return
-
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
                 task_id=task_id,
@@ -309,8 +314,13 @@ class DataAgentExecutor(AgentExecutor):
             await self._emit_canceled(event_queue, task_id, context_id)
             return
         except Exception as e:
-            logger.error(f"Streaming execution failed: {e}")
-            await self._emit_failed(event_queue, task_id, context_id, f"Error: {str(e)}")
+            error = e if isinstance(e, DataAgentError) else DataAgentError.from_exception(e, component="a2a")
+            logger.exception(
+                "Streaming execution failed source={} trace_id={}",
+                error.source,
+                error.trace_id,
+            )
+            await self._emit_failed(event_queue, task_id, context_id, f"{error.actor_text()} trace_id={error.trace_id}")
 
     async def _execute_agent_chat(
         self,
@@ -344,8 +354,13 @@ class DataAgentExecutor(AgentExecutor):
             await self._emit_canceled(event_queue, task_id, context_id)
             return
         except Exception as e:
-            logger.error(f"Chat execution failed: {e}")
-            await self._emit_failed(event_queue, task_id, context_id, f"Error: {str(e)}")
+            error = e if isinstance(e, DataAgentError) else DataAgentError.from_exception(e, component="a2a")
+            logger.exception(
+                "Chat execution failed source={} trace_id={}",
+                error.source,
+                error.trace_id,
+            )
+            await self._emit_failed(event_queue, task_id, context_id, f"{error.actor_text()} trace_id={error.trace_id}")
 
     def _clean_chunk_text(self, text: str) -> str:
         """Clean up chunk text by removing common prefixes and formatting.
@@ -589,73 +604,6 @@ class DataAgentExecutor(AgentExecutor):
 
         return ""
 
-    def _has_error_final_state(self, state: dict[str, Any]) -> bool:
-        """Check if the final state indicates an error using structured signals.
-
-        This avoids false positives from natural language that may legitimately
-        contain words like "error" or "failed".
-
-        Error signals checked:
-        - Top-level: state["error"], state["errors"], state["exception"]
-        - Status: state["status"] in {"error", "failed"}
-        - Message metadata: last_message.additional_kwargs["error"]
-        - Message metadata: last_message.response_metadata["error"]
-
-        Args:
-            state: The final state dict from values/updates streaming.
-
-        Returns:
-            True if structured error signal found, False otherwise.
-        """
-        if not isinstance(state, dict):
-            return False
-
-        # Check top-level error fields
-        if state.get("error") or state.get("errors") or state.get("exception"):
-            return True
-
-        # Check status field
-        status = str(state.get("status") or "").lower()
-        if status in {"error", "failed"}:
-            return True
-
-        # Check message metadata for error signals
-        messages = state.get("messages") or []
-        if messages:
-            last_msg = messages[-1]
-            if isinstance(last_msg, dict):
-                additional_kwargs = last_msg.get("additional_kwargs") or {}
-                response_metadata = last_msg.get("response_metadata") or {}
-            else:
-                additional_kwargs = getattr(last_msg, "additional_kwargs", {}) or {}
-                response_metadata = getattr(last_msg, "response_metadata", {}) or {}
-
-            if additional_kwargs.get("error") or response_metadata.get("error"):
-                return True
-
-        return False
-
-    def _has_error_response_string(self, text: str) -> bool:
-        """Check if text contains a machine-formatted error prefix.
-
-        This method is kept for backward compatibility but should be avoided
-        in the normal success/failure decision path. Prefer _has_error_final_state()
-        for structured error detection.
-
-        Only matches machine-formatted error prefixes like:
-        - "Error:"
-        - "Agent execution failed:"
-
-        Args:
-            text: Text to check.
-
-        Returns:
-            True if machine-formatted error prefix found.
-        """
-        if not isinstance(text, str):
-            return False
-        return text.startswith("Error:") or text.startswith("Agent execution failed:")
-
     async def _emit_working(
         self,
         event_queue: EventQueue,
@@ -679,66 +627,6 @@ class DataAgentExecutor(AgentExecutor):
                 text=text,
             )
         )
-
-    async def _fail_with_message(
-        self,
-        event_queue: EventQueue,
-        context: RequestContext,
-        message: str,
-    ) -> None:
-        """Publish a failed status event with the given message."""
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=context.task_id,
-                context_id=context.context_id,
-                status=TaskStatus(
-                    state=TaskState.TASK_STATE_FAILED,
-                    message=new_text_message(
-                        text=message,
-                        role=Role.ROLE_AGENT,
-                        task_id=context.task_id,
-                        context_id=context.context_id,
-                    ),
-                ),
-            )
-        )
-
-    def _has_error_response(self, response: Any) -> bool:
-        """Check if the response contains an error.
-
-        Errors can be in two places:
-        1. Top-level: response.get("error") - from DataAgent.chat() exception handling
-        2. Nested: response["messages"][-1].additional_kwargs.get("error") - from FlexAgent planner
-        """
-        if not isinstance(response, dict):
-            return False
-
-        if "error" in response:
-            return True
-
-        if response.get("messages"):
-            last_msg = response["messages"][-1]
-            if isinstance(last_msg, dict):
-                return bool(last_msg.get("additional_kwargs", {}).get("error"))
-            return bool(getattr(last_msg, "additional_kwargs", {}).get("error"))
-
-        return False
-
-    def _extract_error_message(self, response: Any) -> str:
-        """Extract the error message from a response."""
-        if not isinstance(response, dict):
-            return str(response)
-
-        if "error" in response:
-            return str(response.get("error"))
-
-        if response.get("messages"):
-            last_msg = response["messages"][-1]
-            if isinstance(last_msg, dict):
-                return str(last_msg.get("content", str(response)))
-            return str(getattr(last_msg, "content", str(response)))
-
-        return str(response)
 
     async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
         """Get or create a per-session Lock for FIFO task serialization."""

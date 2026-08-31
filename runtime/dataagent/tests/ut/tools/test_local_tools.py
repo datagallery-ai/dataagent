@@ -14,6 +14,8 @@ import pytest
 import yaml
 
 from dataagent.actions.tools import BaseTool, ToolResult
+from dataagent.actions.tools.local import LocalToolWrapper
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.action_manager import ToolSchema
 from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.core.managers.action_manager.schemas import ParameterSchema
@@ -60,6 +62,29 @@ async def test_local_tool_register_by_sdk():
 
 
 @pytest.mark.asyncio
+async def test_local_tool_preserves_timeout_error() -> None:
+    def boom() -> None:
+        raise TimeoutError("deadline")
+
+    tm = ToolManager()
+    tm.register_local_tool(boom, name="boom", category="test")
+    try:
+        with pytest.raises(TimeoutError, match="deadline"):
+            await tm.acall("boom")
+    finally:
+        await tm.cleanup()
+
+
+def test_local_tool_invalid_input_uses_tool_source_and_locator() -> None:
+    wrapper = LocalToolWrapper(add_numbers, name="add_numbers", category="test")
+    result = wrapper.call()
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.source == "tool"
+    assert "add_numbers" in result.error.fact
+
+
+@pytest.mark.asyncio
 async def test_local_tool_register_by_class():
     class AddNumbers(BaseTool):
         def __init__(self, name: str, category: str, description: str, **kwargs):
@@ -71,7 +96,7 @@ async def test_local_tool_register_by_class():
             )
 
         def call(self, **kwargs):
-            return ToolResult(success=True, data=kwargs["a"] + kwargs["b"])
+            return ToolResult(data=kwargs["a"] + kwargs["b"])
 
     tool_manager.register_local_tool(AddNumbers, name="add_numbers", category="test")
     assert tool_manager.exists("add_numbers")

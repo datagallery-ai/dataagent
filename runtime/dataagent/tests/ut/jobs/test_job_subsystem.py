@@ -305,11 +305,15 @@ def test_job_service_cancel_unknown_job_id_does_not_persist(tmp_path):
 
 
 def test_map_cancel_tool_result_converts_not_found_to_error():
-    """Tool-facing cancel maps store not_found into an ERROR payload."""
+    """Tool-facing cancel maps store not_found into DataAgentError."""
     from dataagent.actions.tools.local_tool.job_tools import _map_cancel_tool_result
+    from dataagent.core.errors import DataAgentError
 
-    mapped = _map_cancel_tool_result("1000", {"job_id": "1000", "status": "not_found"})
-    assert mapped == {"status": "ERROR", "message": "job_id 1000 not found"}
+    with pytest.raises(DataAgentError) as caught:
+        _map_cancel_tool_result("1000", {"job_id": "1000", "status": "not_found"})
+    assert caught.value.source == "tool"
+    assert caught.value.component == "job"
+    assert "1000" in caught.value.fact
 
     passthrough = _map_cancel_tool_result("j1", {"job_id": "j1", "status": "cancelled"})
     assert passthrough["status"] == "cancelled"

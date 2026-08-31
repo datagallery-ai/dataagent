@@ -30,14 +30,20 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
+from dataagent.actions.tools.schema_validator import ParamsValueError
 from dataagent.core.cbb.base_node import BaseNode
+from dataagent.core.errors import DataAgentError
 from dataagent.core.flex.agent import FlexAgent
+from dataagent.core.flex.nodes.executor import NormalizedToolExecution
+from dataagent.core.managers.action_manager.base import ErrorType
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.llm_manager.adapters import LangChainChatModelAdapter
 from dataagent.core.utils.performance import (
     PerformanceCollector,
+    _perf_fields_from_exception,
     bind_current_collector,
     measure_tool,
 )
@@ -135,42 +141,68 @@ def test_multiple_collectors_dont_bleed_under_concurrent_runs(tmp_path: Path, pe
     assert len(collector_two.events) == 50
 
 
-class _FakeExecution:
-    """Stand-in for ``NormalizedToolExecution`` for decorator tests."""
+def _execution(
+    *,
+    success: bool,
+    tool_call_id: str = "call-1",
+    error: DataAgentError | Exception | None = None,
+    output_text: str = "",
+    source: str = "tool_manager",
+) -> NormalizedToolExecution:
+    return NormalizedToolExecution(
+        tool_name="search",
+        tool_call_id=tool_call_id,
+        tool_args={},
+        success=success,
+        output_text=output_text,
+        error=error if isinstance(error, DataAgentError) else None,
+        metadata={"source": source},
+    )
 
-    def __init__(
-        self,
-        *,
-        success: bool,
-        tool_call_id: str = "call-1",
-        error_type: str | None = None,
-        frontend_msg: Any = None,
-        output_text: str | None = None,
-        raw_result: Any = None,
-        retry_info: Any = None,
-        source: str = "tool_manager",
-    ) -> None:
-        self.success = success
-        self.tool_call_id = tool_call_id
-        self.error_type = error_type
-        self.frontend_msg = frontend_msg
-        self.output_text = output_text
-        self.raw_result = raw_result
-        self.retry_info = retry_info
-        self.metadata = {"source": source}
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://example.com")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+def test_perf_fields_follow_classify_exception_type_and_http_status() -> None:
+    err_t, retry = _perf_fields_from_exception(TimeoutError())
+    assert err_t == ErrorType.TIMEOUT.value
+    assert retry == {"error_type": "timeout", "retriable": True, "max_retries": 1}
+
+    err_t, retry = _perf_fields_from_exception(_http_status_error(401))
+    assert err_t == ErrorType.AUTHENTICATION_ERROR.value
+    assert retry["http_status"] == 401
+    assert retry["retriable"] is False
+    assert retry["max_retries"] == 0
+
+    err_t, retry = _perf_fields_from_exception(_http_status_error(429))
+    assert err_t == ErrorType.RATE_LIMIT.value
+    assert retry["http_status"] == 429
+    assert retry["max_retries"] == 3
+
+    params = ParamsValueError(tool_name="search", tool_call_id="c1", errors=[], message="bad args")
+    err_t, retry = _perf_fields_from_exception(params)
+    assert err_t == ErrorType.VALIDATION_ERROR.value
+    assert "http_status" not in retry
+
+    err_t, retry = _perf_fields_from_exception(Exception("timeout 429"))
+    assert err_t == ErrorType.UNKNOWN.value
+    assert "http_status" not in retry
 
 
 def test_tool_failure_promotes_to_top_level_success(tmp_path: Path, perf_home: Path) -> None:
-    """tool 返回 success=False 时，事件顶层 success 必须为 False，error_type 必须同步到顶层。"""
+    """失败事件顶层 success=False；分类来自 classify_exception，不读旧字段。"""
     collector = _make_collector(tmp_path)
 
     class _Owner:
         @measure_tool
-        async def run(self, tool_call: Any) -> _FakeExecution:
-            return _FakeExecution(
+        async def run(self, tool_call: Any) -> NormalizedToolExecution:
+            return _execution(
                 success=False,
                 tool_call_id="call-abc",
-                error_type="ParamsValueError",
+                error=DataAgentError(source="tool", component="tool", fact="bad args"),
                 output_text="bad args",
             )
 
@@ -181,15 +213,66 @@ def test_tool_failure_promotes_to_top_level_success(tmp_path: Path, perf_home: P
     assert len(events) == 1
     ev = events[0]
     assert ev["success"] is False
-    assert ev["error_type"] == "ParamsValueError"
-    # extras 不应再保留冗余的 success / error_type
+    assert ev["error_type"] == ErrorType.UNKNOWN.value
+    assert ev["extra"]["retry_info"] == {
+        "error_type": "unknown",
+        "retriable": True,
+        "max_retries": 1,
+    }
     assert "success" not in ev["extra"]
     assert "error_type" not in ev["extra"]
-    # 但其它链路字段仍在；工具入参/输出摘要不进入性能事件。
     assert ev["extra"]["tool_call_id"] == "call-abc"
     assert ev["extra"]["source"] == "tool_manager"
     assert "args_summary" not in ev["extra"]
     assert "output_summary" not in ev["extra"]
+    assert "error_type" not in NormalizedToolExecution.__dataclass_fields__
+    assert "retry_info" not in NormalizedToolExecution.__dataclass_fields__
+
+
+def test_measure_tool_classifies_raw_timeout_on_real_execution(tmp_path: Path, perf_home: Path) -> None:
+    collector = _make_collector(tmp_path)
+
+    class _Owner:
+        @measure_tool
+        async def run(self, tool_call: Any) -> NormalizedToolExecution:
+            execution = _execution(
+                success=False,
+                tool_call_id="call-timeout",
+                error=DataAgentError(source="tool", component="tool", fact="请求等待响应超时"),
+            )
+            execution.error = TimeoutError()  # classify the raw type, not fact
+            return execution
+
+    with bind_current_collector(collector):
+        asyncio.run(_Owner().run({"name": "search", "id": "call-timeout", "args": {}}))
+
+    ev = next(e for e in collector.events if e["kind"] == "tool")
+    assert ev["error_type"] == ErrorType.TIMEOUT.value
+    assert ev["extra"]["retry_info"]["max_retries"] == 1
+    assert "http_status" not in ev["extra"]["retry_info"]
+
+
+def test_measure_tool_classifies_http_401_on_real_execution(tmp_path: Path, perf_home: Path) -> None:
+    collector = _make_collector(tmp_path)
+
+    class _Owner:
+        @measure_tool
+        async def run(self, tool_call: Any) -> NormalizedToolExecution:
+            execution = _execution(
+                success=False,
+                tool_call_id="call-401",
+                error=DataAgentError(source="tool", component="tool", fact="HTTP 401 unauthorized"),
+            )
+            execution.error = _http_status_error(401)
+            return execution
+
+    with bind_current_collector(collector):
+        asyncio.run(_Owner().run({"name": "search", "id": "call-401", "args": {}}))
+
+    ev = next(e for e in collector.events if e["kind"] == "tool")
+    assert ev["error_type"] == ErrorType.AUTHENTICATION_ERROR.value
+    assert ev["extra"]["retry_info"]["http_status"] == 401
+    assert ev["extra"]["retry_info"]["max_retries"] == 0
 
 
 def test_tool_success_keeps_top_level_true(tmp_path: Path, perf_home: Path) -> None:
@@ -197,8 +280,8 @@ def test_tool_success_keeps_top_level_true(tmp_path: Path, perf_home: Path) -> N
 
     class _Owner:
         @measure_tool
-        async def run(self, tool_call: Any) -> _FakeExecution:
-            return _FakeExecution(success=True, output_text="ok")
+        async def run(self, tool_call: Any) -> NormalizedToolExecution:
+            return _execution(success=True, output_text="ok")
 
     with bind_current_collector(collector):
         asyncio.run(_Owner().run({"name": "search", "id": "c1", "args": {}}))
@@ -206,6 +289,7 @@ def test_tool_success_keeps_top_level_true(tmp_path: Path, perf_home: Path) -> N
     ev = next(e for e in collector.events if e["kind"] == "tool")
     assert ev["success"] is True
     assert "error_type" not in ev
+    assert "retry_info" not in ev["extra"]
     assert "success" not in ev["extra"]
 
 
@@ -276,10 +360,10 @@ def test_llm_called_inside_tool_is_recorded_with_tool_caller(
 
     class _Owner:
         @measure_tool
-        async def run(self, tool_call: Any) -> _FakeExecution:
+        async def run(self, tool_call: Any) -> NormalizedToolExecution:
             llm = llm_manager.get_default_llm()
             response = llm.invoke([{"role": "user", "content": "run semantic check"}])
-            return _FakeExecution(success=True, output_text=response.content)
+            return _execution(success=True, output_text=response.content)
 
     with bind_current_collector(collector):
         asyncio.run(_Owner().run({"name": "semantic_tool", "id": "call-llm", "args": {}}))
@@ -584,8 +668,8 @@ def test_measure_tool_excludes_tool_payload_summaries(tmp_path: Path, perf_home:
 
     class _Owner:
         @measure_tool
-        async def run(self, tool_call: Any) -> _FakeExecution:
-            return _FakeExecution(success=True, output_text="SUPER_SECRET_OUTPUT")
+        async def run(self, tool_call: Any) -> NormalizedToolExecution:
+            return _execution(success=True, output_text="SUPER_SECRET_OUTPUT")
 
     with bind_current_collector(collector):
         asyncio.run(

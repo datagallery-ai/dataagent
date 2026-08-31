@@ -30,17 +30,23 @@ import pytest
 import yaml
 from langchain_core.messages import HumanMessage
 
+from dataagent.actions.tools.local_tool.job_tools import _raise_if_job_collect_failed
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox, reset_current_sandbox, set_current_sandbox
 from dataagent.core.agents.service import AgentService
 from dataagent.core.agents.subagent_subprocess_runner import (
     _load_job_workspace_hydrate_state,
+    _parse_job_subagent_completed,
     _prepare_job_initial_state_file,
     _run_cancellable_subprocess_async,
 )
+from dataagent.core.errors import DataAgentError
 from dataagent.core.flex.hooks.history_writer import save_messages
+from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
+from dataagent.core.managers.action_manager.base import ErrorType, classify_exception
+from dataagent.core.swarm.worker_result import build_timeout_result, parse_subagent_stdout
 
 
 @pytest.mark.asyncio
@@ -93,7 +99,99 @@ async def test_cancellable_subprocess_honours_timeout():
         reset_current_sandbox(token)
     elapsed = time.monotonic() - started
     assert elapsed < 5.0
-    assert "timed out" in str(completed.get("stderr") or "").lower()
+    assert completed.get("timed_out") is True
+
+
+def test_job_timeout_flag_maps_to_subagent_002() -> None:
+    timeout_wr = build_timeout_result(sub_id=7, parent_session_id="parent", timeout=30)
+    outcome = _parse_job_subagent_completed(
+        completed={"stdout": "", "stderr": "unrelated", "returncode": -1, "timed_out": True},
+        parent_session_id="parent",
+        worker_sub_id=7,
+        timeout=30,
+    )
+    assert outcome.original_msg["error"]["source"] == "constraint"
+    assert "http_status" not in outcome.original_msg["error"]
+    assert outcome.original_msg["status"] == "timeout"
+    assert isinstance(outcome.error, dict)
+    assert outcome.error["source"] == "constraint"
+    assert outcome.error["component"] == "subagent"
+    assert outcome.error["trace_id"]
+    assert timeout_wr.error.source == "constraint"
+    assert "7" in timeout_wr.error.fact
+    assert "30" in timeout_wr.error.fact
+    restored = DataAgentError.from_dict(timeout_wr.to_dict()["error"])
+    assert "7" in restored.fact
+    assert "30" in restored.fact
+    assert "locator" not in timeout_wr.to_dict()["error"]
+
+
+def test_job_timeout_collect_does_not_synthesize_cause_for_retry() -> None:
+    """Subprocess timed_out restores four fields only; retry does not use a synthetic cause."""
+    outcome = _parse_job_subagent_completed(
+        completed={"stdout": "", "stderr": "unrelated", "returncode": -1, "timed_out": True},
+        parent_session_id="parent",
+        worker_sub_id=7,
+        timeout=30,
+    )
+    assert outcome.status == "timed_out"
+    assert isinstance(outcome.error, dict)
+
+    with pytest.raises(DataAgentError) as caught:
+        _raise_if_job_collect_failed(
+            {
+                "status": outcome.status,
+                "error": outcome.error,
+                "job_id": "job-timeout",
+                "summary": outcome.frontend_msg,
+            },
+            tool_name="collect_subagent",
+        )
+
+    error = caught.value
+    assert not isinstance(error.__cause__, TimeoutError)
+    assert classify_exception(error)[0] == ErrorType.UNKNOWN
+    executor = Executor("executor")
+    policy = executor._retry_policy_for(error)
+    assert policy.error_type == ErrorType.UNKNOWN
+    assert executor._should_retry(error) is False
+
+
+def test_job_does_not_classify_timeout_from_stderr_text() -> None:
+    outcome = _parse_job_subagent_completed(
+        completed={"stdout": "", "stderr": "subagent subprocess timed out", "returncode": -1},
+        parent_session_id="parent",
+        worker_sub_id=7,
+        timeout=30,
+    )
+    assert outcome.original_msg["error"]["source"] == "tool"
+    assert outcome.original_msg["error"]["component"] == "subagent"
+
+
+def test_swarm_and_job_share_stdout_parser() -> None:
+    parsed = parse_subagent_stdout(
+        json.dumps(
+            {
+                "worker_result": {
+                    "sub_id": 3,
+                    "parent_session_id": "p",
+                    "worker_session_id": "subagent_p_3",
+                    "status": "success",
+                    "final_answer": "ok",
+                    "artifacts": [],
+                    "tool_calls_count": 0,
+                    "iteration_count": 0,
+                    "error": None,
+                    "resumed": False,
+                }
+            }
+        ),
+        sub_id=3,
+        parent_session_id="p",
+    )
+    assert parsed.worker_result is not None
+    assert parsed.worker_result.status == "success"
+    assert parsed.worker_result.final_answer == "ok"
 
 
 def test_prepare_job_initial_state_file_hydrates_prior_messages(tmp_path):

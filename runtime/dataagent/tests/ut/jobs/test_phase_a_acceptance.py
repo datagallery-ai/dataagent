@@ -263,6 +263,11 @@ def test_ac07b_non_completed_collect_is_structured_without_fake_business_fields(
     assert timed_out["subagent_session_id"] == slow_handle["subagent_session_id"]
     assert timed_out["workspace_rel_path"] == slow_handle["workspace_rel_path"]
     assert timed_out.get("original_msg") in (None, "")
+    assert timed_out["error"]["source"] == "constraint"
+    assert "http_status" not in timed_out["error"]
+    assert "code" not in timed_out["error"]
+    assert "locator" not in timed_out["error"]
+    assert "1" in timed_out["error"]["fact"]
 
 
 def test_ac08_cancel_running_job(tmp_path):
@@ -377,7 +382,13 @@ async def test_ac14_subprocess_uses_parent_session_id_in_cmd(monkeypatch, tmp_pa
         captured["env"] = dict(_kwargs["env"])
         return {
             "returncode": 0,
-            "stdout": '{"assistant_reply":"ok","original_msg":{"final_answer":"1"},"subagent_final_state":{"k":"v"}}',
+            "stdout": (
+                '{"assistant_reply":"ok","subagent_final_state":{"k":"v"},'
+                '"worker_result":{"sub_id":7,"parent_session_id":"parent_sess_xyz",'
+                '"worker_session_id":"subagent_parent_sess_xyz_7","status":"success",'
+                '"final_answer":"1","artifacts":[],"tool_calls_count":0,'
+                '"iteration_count":0,"error":null,"resumed":false}}'
+            ),
             "stderr": "",
         }
 
@@ -407,10 +418,16 @@ async def test_ac14_subprocess_uses_parent_session_id_in_cmd(monkeypatch, tmp_pa
 
 
 def test_ac15_stdout_parser_matches_collect_contract():
-    """AC-15: stdout parser produces collect-compatible fields."""
+    """AC-15: stdout parser produces collect-compatible fields from worker_result."""
     completed = {
         "returncode": 0,
-        "stdout": ('{"assistant_reply":"done","original_msg":{"final_answer":"1"},"subagent_final_state":{"k":"v"}}'),
+        "stdout": (
+            '{"assistant_reply":"done","subagent_final_state":{"k":"v"},'
+            '"worker_result":{"sub_id":1,"parent_session_id":"parent",'
+            '"worker_session_id":"subagent_parent_1","status":"success",'
+            '"final_answer":"1","artifacts":[],"tool_calls_count":0,'
+            '"iteration_count":0,"error":null,"resumed":false}}'
+        ),
         "stderr": "",
     }
     outcome = _parse_job_subagent_completed(
@@ -421,6 +438,7 @@ def test_ac15_stdout_parser_matches_collect_contract():
     assert isinstance(outcome, JobSubagentOutcome)
     assert outcome.frontend_msg == "done"
     assert isinstance(outcome.original_msg, dict)
+    assert outcome.original_msg["status"] == "success"
     assert outcome.state == {"k": "v"}
     assert outcome.status == "completed"
 

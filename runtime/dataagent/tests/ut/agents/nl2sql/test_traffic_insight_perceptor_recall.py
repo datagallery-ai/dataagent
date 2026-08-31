@@ -8,7 +8,6 @@ import pytest
 import yaml
 
 from dataagent.agents.nl2sql.agent import NL2SQLAgent
-from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.business_twin_perceptor import BusinessTwinPerceptorNode
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.nodes.traffic_insight_perceptor import TrafficInsightPerceptorNode
@@ -25,6 +24,7 @@ from dataagent.agents.nl2sql.utils.traffic_insight_table_recall import (
     select_tables_from_field_hits,
     tables_missing_from_hybrid_columns,
 )
+from dataagent.core.errors import DataAgentError
 
 
 class _ConfigManager:
@@ -365,7 +365,7 @@ def test_hybrid_missing_after_retry_raises(monkeypatch: pytest.MonkeyPatch) -> N
         ]
 
     client.hybrid_table_columns = fake_hybrid
-    with pytest.raises(NL2SQLError, match="did not return all requested tables"):
+    with pytest.raises(DataAgentError, match="did not return all requested tables"):
         node._hybrid_columns_for_tables(["db.cell_1h", "db.missing_1h"])
 
 
@@ -535,5 +535,5 @@ def test_perceptor_all_field_eq_miss_raises(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(node, "execute_with_llm_json", fake_llm)
     client.search_basic = fake_search_basic
 
-    with pytest.raises(NL2SQLError, match="all field EQ searches returned no tables"):
+    with pytest.raises(DataAgentError, match="all field EQ searches returned no tables"):
         asyncio.run(node._select_traffic_insight_table("按小区查下行流量"))

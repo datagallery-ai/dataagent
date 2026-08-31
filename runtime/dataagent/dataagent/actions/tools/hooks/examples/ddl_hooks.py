@@ -20,7 +20,7 @@ from pathlib import Path
 from loguru import logger
 
 from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolPostHookOutcome
-from dataagent.core.managers.action_manager.base import ErrorType
+from dataagent.core.errors import DataAgentError
 
 
 async def ddl_post(inv: ToolHookInvocation) -> ToolPostHookOutcome:
@@ -90,8 +90,7 @@ async def ddl_post(inv: ToolHookInvocation) -> ToolPostHookOutcome:
         )
         inv.execution.success = False
         inv.execution.error_text = reason
-        inv.execution.error_type = ErrorType.VALIDATION_ERROR.value
-        inv.execution.retry_info = {"attempt": 0, "max_retries": 0, "retriable": False}
+        inv.execution.error = DataAgentError(source="config", fact=reason, component="tool")
         return ToolPostHookOutcome()
 
     is_valid, reason = _ddl_validator(sql_text)
@@ -113,8 +112,7 @@ async def ddl_post(inv: ToolHookInvocation) -> ToolPostHookOutcome:
     )
     inv.execution.success = False
     inv.execution.error_text = reason
-    inv.execution.error_type = ErrorType.VALIDATION_ERROR.value
-    inv.execution.retry_info = {"attempt": 0, "max_retries": 0, "retriable": False}
+    inv.execution.error = DataAgentError(source="config", fact=reason, component="tool")
     return ToolPostHookOutcome()
 
 

@@ -81,6 +81,7 @@ class SelectorNode(BaseNL2SQLNode):
         if best.confidence >= self.threshold or state["sel_retries"] <= 0:
             state["sql"], state["confidence"] = best.sql, best.confidence
             state["columns"], state["rows"], state["rows_preview"] = best.columns, best.rows, best.rows_preview
+            state["error"] = best.error
             p = f"{state['sql']}\n{state['rows_preview']}"
             if best.rows and best.rows_preview is not None and len(best.rows) > len(best.rows_preview):
                 p += f" ... and {len(best.rows) - len(best.rows_preview)} more rows"

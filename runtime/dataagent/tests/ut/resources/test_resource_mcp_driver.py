@@ -22,6 +22,7 @@ from dataagent.core.resource_runtime.mcp import (
     mcp_server_config_from_binding,
     normalize_mcp_call_tool_result,
 )
+from dataagent.core.resource_runtime.runner import job_status
 from dataagent.resources.drivers.mcp_resource import (
     resolve_mcp_transport,
     resolve_secret_ref,
@@ -105,6 +106,40 @@ def test_normalize_mcp_call_tool_result_uses_structured_content():
     )
     normalized = normalize_mcp_call_tool_result(payload)
     assert normalized == {"status": "completed", "summary": "done"}
+
+
+def test_normalize_mcp_is_error_json_object_is_failed():
+    """isError=True wins even when content is a JSON object that looks successful."""
+    payload = CallToolResult(
+        content=[TextContent(type="text", text='{"ok": true, "rows": [1]}')],
+        isError=True,
+    )
+    normalized = normalize_mcp_call_tool_result(payload)
+    assert normalized["status"] == "error"
+    assert job_status(normalized, cancelled=False) == "failed"
+
+
+def test_normalize_mcp_is_error_json_scalar_is_failed():
+    """isError=True wins even when content is a JSON scalar."""
+    payload = CallToolResult(
+        content=[TextContent(type="text", text="42")],
+        isError=True,
+    )
+    normalized = normalize_mcp_call_tool_result(payload)
+    assert normalized["status"] == "error"
+    assert job_status(normalized, cancelled=False) == "failed"
+
+
+def test_normalize_mcp_is_error_structured_content_is_failed():
+    """isError=True wins even when structuredContent claims completed."""
+    payload = CallToolResult(
+        content=[TextContent(type="text", text="ignored")],
+        structuredContent={"status": "completed", "rows": [1]},
+        isError=True,
+    )
+    normalized = normalize_mcp_call_tool_result(payload)
+    assert normalized["status"] == "error"
+    assert job_status(normalized, cancelled=False) == "failed"
 
 
 def test_format_mcp_call_exception_marks_unreachable_errors():

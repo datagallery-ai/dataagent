@@ -18,8 +18,9 @@ from dataclasses import replace
 from typing import get_type_hints
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.core.errors import DataAgentError
 from dataagent.core.jobs.envelope import SUBMIT_JOB_TOOLS, build_base_job_envelope, finalize_job_envelope
-from dataagent.core.managers.action_manager.base import BaseTool, ErrorType, ToolResult, ToolType, classify_exception
+from dataagent.core.managers.action_manager.base import BaseTool, ToolResult, ToolType, tool_failure
 from dataagent.core.managers.action_manager.schemas import ToolSchema
 
 
@@ -61,19 +62,17 @@ class LocalToolWrapper(BaseTool):
     def call(self, **kwargs) -> ToolResult:
         """执行本地函数"""
         try:
-            # 验证参数
             is_valid, error = self.validate_input(**kwargs)
             if not is_valid:
-                return ToolResult(
-                    success=False,
-                    error=f"Invalid input parameters for tool '{self.name}': {error}",
-                    error_type=ErrorType.VALIDATION_ERROR,
+                return tool_failure(
+                    fact=f"Invalid input parameters for tool '{self.name}': {error}",
+                    component="tool",
                 )
 
             if inspect.iscoroutinefunction(self.func):
-                return ToolResult(
-                    success=False,
-                    error=f"Async local tool '{self.name}' must be called via acall().",
+                return tool_failure(
+                    fact=f"Async local tool '{self.name}' must be called via acall().",
+                    component="tool",
                     metadata={"tool_type": "local_function", "function_name": self.func.__name__},
                 )
 
@@ -82,20 +81,13 @@ class LocalToolWrapper(BaseTool):
                 return inject_err
 
             result = self.func(**kwargs)
-
             return ToolResult(
-                success=True, data=result, metadata={"tool_type": "local_function", "function_name": self.func.__name__}
+                data=result, metadata={"tool_type": "local_function", "function_name": self.func.__name__}
             )
-
-        except Exception as e:
-            error_type, policy = classify_exception(e)
+        except DataAgentError as e:
             return ToolResult(
-                success=False,
-                error=str(e),
-                metadata={"tool_type": "local_function", "error_type": type(e).__name__},
-                error_type=error_type,
-                retriable=policy.retriable,
-                max_retries=policy.max_retries,
+                error=e,
+                metadata={"tool_type": "local_function"},
             )
 
     async def acall(self, **kwargs) -> ToolResult:
@@ -103,10 +95,9 @@ class LocalToolWrapper(BaseTool):
         try:
             is_valid, error = self.validate_input(**kwargs)
             if not is_valid:
-                return ToolResult(
-                    success=False,
-                    error=f"Invalid input parameters for tool '{self.name}': {error}",
-                    error_type=ErrorType.VALIDATION_ERROR,
+                return tool_failure(
+                    fact=f"Invalid input parameters for tool '{self.name}': {error}",
+                    component="tool",
                 )
 
             inject_err = self._inject_tool_context(kwargs)
@@ -119,17 +110,12 @@ class LocalToolWrapper(BaseTool):
                 result = await asyncio.to_thread(self.func, **kwargs)
 
             return ToolResult(
-                success=True, data=result, metadata={"tool_type": "local_function", "function_name": self.func.__name__}
+                data=result, metadata={"tool_type": "local_function", "function_name": self.func.__name__}
             )
-        except Exception as e:
-            error_type, policy = classify_exception(e)
+        except DataAgentError as e:
             return ToolResult(
-                success=False,
-                error=str(e),
-                metadata={"tool_type": "local_function", "error_type": type(e).__name__},
-                error_type=error_type,
-                retriable=policy.retriable,
-                max_retries=policy.max_retries,
+                error=e,
+                metadata={"tool_type": "local_function"},
             )
 
     def _tool_per_call_config(self) -> dict:
@@ -162,27 +148,26 @@ class LocalToolWrapper(BaseTool):
         if "_tool_context" not in self._signature.parameters:
             return None
         if self.tool_context is None:
-            return ToolResult(
-                success=False,
-                error=(
+            return tool_failure(
+                fact=(
                     f"Tool '{self.name}' requires _tool_context but ToolManager did not provide ToolExecutionContext."
                 ),
+                component="tool",
                 metadata={"tool_type": "local_function", "function_name": self.func.__name__},
             )
         try:
             injected_context = self._build_injected_tool_context()
             injected_context = self._attach_job_envelope(injected_context, kwargs)
         except ValueError as exc:
-            return ToolResult(
-                success=False,
-                error=str(exc),
-                error_type=ErrorType.VALIDATION_ERROR,
+            return tool_failure(
+                fact=str(exc),
+                component="tool",
                 metadata={"tool_type": "local_function", "function_name": self.func.__name__},
             )
         except Exception as exc:
-            return ToolResult(
-                success=False,
-                error=str(exc),
+            return tool_failure(
+                fact=str(exc),
+                component="tool",
                 metadata={"tool_type": "local_function", "function_name": self.func.__name__},
             )
         kwargs["_tool_context"] = injected_context

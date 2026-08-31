@@ -26,6 +26,7 @@ from typing import Any, ClassVar
 
 from loguru import logger
 
+from dataagent.core.errors import DataAgentError
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import TERMINAL_STATUSES, JobResult, JobSnapshot
 from dataagent.core.utils.subprocess import terminate_process_group, terminate_processes_with_cwd_under
@@ -141,7 +142,13 @@ class JobService:
                 status = self.store.read_status(job_id)
                 if str(status.get("status") or "").strip().lower() in TERMINAL_STATUSES:
                     return
-                error = "job_deadline_exceeded"
+                timeout_error = DataAgentError(
+                    source="constraint",
+                    component="job",
+                    fact=f"Job 执行超时（{normalized_timeout}s）",
+                )
+                timeout_error.__cause__ = TimeoutError()
+                error = timeout_error.to_dict()
                 metadata = status.get("metadata") if isinstance(status.get("metadata"), dict) else {}
                 result = JobResult(
                     job_id=job_id,
@@ -161,7 +168,7 @@ class JobService:
                         "job_id": job_id,
                         "agent_id": agent_id,
                         "status": "timed_out",
-                        "reason": error,
+                        "reason": error.get("source"),
                         "parent_tool_call_id": parent_tool_call_id,
                     },
                     event_sink=event_sink,
@@ -211,18 +218,19 @@ class JobService:
                         event_sink=event_sink,
                     )
             except Exception as exc:
+                error = DataAgentError.from_exception(exc, component="job").to_dict()
                 result = JobResult(
                     job_id=job_id,
                     agent_id=agent_id,
                     status="failed",
-                    error=str(exc),
+                    error=error,
                     summary=f"Agent job failed: {exc}",
                 )
                 with terminal_lock:
                     if timed_out_event.is_set():
                         return
                     self.store.write_result(result)
-                    self.store.write_status(job_id, {"status": "failed", "error": str(exc)})
+                    self.store.write_status(job_id, {"status": "failed", "error": error})
                     self._record_event(
                         job_id,
                         {
@@ -454,15 +462,20 @@ class JobService:
                 continue
             agent_id = str(status.get("agent_id") or "")
             message = "Job runner is not active in this process; marking the persisted job as failed."
+            error = DataAgentError(
+                source="internal",
+                component="job",
+                fact=message,
+            ).to_dict()
             result = JobResult(
                 job_id=job_id,
                 agent_id=agent_id,
                 status="failed",
                 summary=message,
-                error="orphaned_job_runner",
+                error=error,
             )
             self.store.write_result(result)
-            self.store.write_status(job_id, {"status": "failed", "error": result.error})
+            self.store.write_status(job_id, {"status": "failed", "error": error})
             self.store.append_event(
                 job_id,
                 {
@@ -470,7 +483,7 @@ class JobService:
                     "job_id": job_id,
                     "agent_id": agent_id,
                     "status": "failed",
-                    "reason": result.error,
+                    "reason": error.get("source"),
                 },
             )
 
@@ -539,6 +552,12 @@ def _optional_positive_timeout(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _coerce_job_error(value: Any) -> str | dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return str(value or "")
+
+
 def _job_result_from_payload(payload: dict[str, Any], job_id: str, agent_id: str) -> JobResult:
     safe = payload if isinstance(payload, dict) else {}
     original_msg = safe.get("original_msg")
@@ -551,7 +570,7 @@ def _job_result_from_payload(payload: dict[str, Any], job_id: str, agent_id: str
         agent_id=str(safe.get("agent_id") or agent_id),
         status=str(safe.get("status") or "completed"),
         summary=str(safe.get("summary") or safe.get("frontend_msg") or ""),
-        error=str(safe.get("error") or ""),
+        error=_coerce_job_error(safe.get("error")),
         original_msg=original_msg,
         frontend_msg=str(safe.get("frontend_msg") or ""),
         state=safe.get("state") if isinstance(safe.get("state"), dict) else None,

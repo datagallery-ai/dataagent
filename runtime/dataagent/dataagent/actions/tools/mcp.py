@@ -27,21 +27,26 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, ImageContent, TextContent
 from mcp.types import Tool as MCPTool
 
+from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.action_manager.base import (
     BaseTool,
-    ErrorType,
-    ToolError,
     ToolResult,
     ToolType,
-    classify_exception,
+    tool_failure,
 )
 from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
 
 
-def _classify_exception(exc: Exception) -> ErrorType:
-    """根据异常类型分类错误（保持向后兼容，内部委托给统一函数）"""
-    err_type, _ = classify_exception(exc)
-    return err_type
+def _mcp_call_error_fact(tool_name: str, response: CallToolResult) -> str:
+    """Build a locatable fact from an MCP ``CallToolResult`` with ``isError``."""
+    parts: list[str] = []
+    content = getattr(response, "content", None)
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, TextContent) and str(item.text or "").strip():
+                parts.append(str(item.text).strip())
+    detail = "\n".join(parts) if parts else "MCP tool call failed"
+    return f"MCP tool '{tool_name}' failed: {detail}"
 
 
 @dataclass
@@ -180,7 +185,9 @@ class MCPClientWrapper:
         except Exception as e:
             # 清理部分初始化的资源
             await self._cleanup_on_error()
-            raise ToolError(f"Failed to connect to MCP server '{self.config.server_id}': {e}") from e
+            raise DataAgentError(
+                source="tool", fact=f"Failed to connect to MCP server '{self.config.server_id}': {e}", component="tool"
+            ) from e
         self._connected = True
 
     async def disconnect(self):
@@ -211,7 +218,11 @@ class MCPClientWrapper:
         try:
             return await self._execute_with_connection(_operation)
         except Exception as e:
-            raise ToolError(f"Failed to list tools from MCP server '{self.config.server_id}': {e}") from e
+            raise DataAgentError(
+                source="tool",
+                fact=f"Failed to list tools from MCP server '{self.config.server_id}': {e}",
+                component="tool",
+            ) from e
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
         """调用MCP工具"""
@@ -222,7 +233,11 @@ class MCPClientWrapper:
         try:
             return await self._execute_with_connection(_operation)
         except Exception as e:
-            raise ToolError(f"Failed to call tool '{name}' on MCP server '{self.config.server_id}': {e}") from e
+            raise DataAgentError(
+                source="tool",
+                fact=f"Failed to call tool '{name}' on MCP server '{self.config.server_id}': {e}",
+                component="tool",
+            ) from e
 
     async def ping(self) -> bool:
         """检查连接状态"""
@@ -232,24 +247,6 @@ class MCPClientWrapper:
             return True
         except Exception:
             return False
-
-    async def _ensure_connected(self):
-        """确保连接已建立，如果没有则自动连接"""
-        if not self._connected or not self._session:
-            await self.connect()
-
-    async def _with_retry(self, operation, max_retries: int = 2):
-        """带重试机制的操作执行"""
-        for attempt in range(max_retries + 1):
-            try:
-                await self._ensure_connected()
-                return await operation()
-            except Exception as e:
-                if attempt < max_retries:
-                    # 重连并重试
-                    await self.disconnect()
-                    continue
-                raise e
 
     def _get_connection_lock(self) -> asyncio.Lock:
         """Return an ``asyncio.Lock`` bound to the currently running event loop.
@@ -368,7 +365,9 @@ class MCPToolWrapper(BaseTool):
             # 验证输入参数
             is_valid, error = self.get_schema().validate_input(kwargs)
             if not is_valid:
-                return ToolResult(success=False, error=f"Invalid input parameters for MCP tool '{self.name}': {error}")
+                return tool_failure(
+                    fact=f"Invalid input parameters for MCP tool '{self.name}': {error}", component="tool"
+                )
             # 异步调用MCP工具
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -383,7 +382,6 @@ class MCPToolWrapper(BaseTool):
                 result_data = asyncio.run(self._async_call(**kwargs))
 
             return ToolResult(
-                success=True,
                 data=result_data,
                 metadata={
                     "tool_type": "mcp_tool",
@@ -393,18 +391,14 @@ class MCPToolWrapper(BaseTool):
                 },
             )
 
-        except Exception as e:
-            error_type = _classify_exception(e)
+        except DataAgentError as e:
             return ToolResult(
-                success=False,
-                error=str(e),
+                error=e,
                 metadata={
                     "tool_type": "mcp_tool",
-                    "error_type": type(e).__name__,
                     "server_id": self.mcp_client.config.server_id,
                     "tool_name": self.mcp_tool.name,
                 },
-                error_type=error_type,
             )
 
     def get_schema(self) -> ToolSchema:
@@ -436,6 +430,12 @@ class MCPToolWrapper(BaseTool):
         """异步调用MCP工具 - 使用持久化连接"""
         # 直接调用MCP工具，连接管理由MCPClientWrapper处理
         response = await self.mcp_client.call_tool(self.mcp_tool.name, kwargs)
+        if getattr(response, "isError", False):
+            raise DataAgentError(
+                source="tool",
+                fact=_mcp_call_error_fact(self.mcp_tool.name, response),
+                component="tool",
+            )
 
         # 处理官方MCP库的响应格式
         if hasattr(response, "content") and response.content:
@@ -489,7 +489,7 @@ class MCPToolRegistry:
             description: 服务器描述
         """
         if transport_type not in {"stdio", "sse", "streamable_http"}:
-            raise ToolError(f"Unsupported transport type: {transport_type}")
+            raise DataAgentError(source="tool", fact=f"Unsupported transport type: {transport_type}", component="tool")
 
         server_config = MCPServerConfig(
             server_id=server_id,
@@ -505,7 +505,7 @@ class MCPToolRegistry:
     async def list_server_tools(self, server_id: str) -> list[MCPToolWrapper]:
         """List raw MCP tools from a server — caller (ToolManager) wraps them into per-Agent instances."""
         if server_id not in self._clients:
-            raise ToolError(f"MCP server '{server_id}' not registered")
+            raise DataAgentError(source="tool", fact=f"MCP server '{server_id}' not registered", component="tool")
 
         client = self._clients[server_id]
         mcp_tools = await client.list_tools()

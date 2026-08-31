@@ -15,10 +15,11 @@ import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI
+from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from dataagent.core.errors import DataAgentError
 from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
 from dataagent.interface.rest_api.service import DataAgentService
 
@@ -38,20 +39,8 @@ _CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
 def get_data_agent_service() -> DataAgentService:
     """Return the singleton DataAgent service."""
     if _data_agent_service is None:
-        raise RuntimeError("DataAgent service is not initialized.")
+        raise HTTPException(status_code=503, detail="DataAgent service unavailable")
     return _data_agent_service
-
-
-def agent_error_payload(result: Any) -> dict[str, Any] | None:
-    """Return an agent error payload when result carries one."""
-    if not isinstance(result, dict):
-        return None
-    payload = result.get("result")
-    if not isinstance(payload, dict):
-        return None
-    if payload.get("success") is False:
-        return payload
-    return None
 
 
 def sse_event(event: str, data: Any) -> str:
@@ -66,7 +55,7 @@ async def stream_agent_events(query: str, service: DataAgentService) -> AsyncGen
         data = item.get("data")
         if event is None:
             continue
-        if event == "result":
+        if event in ("result", "error"):
             yield sse_event("result", data)
             continue
         if event == "message":
@@ -122,8 +111,10 @@ async def query_agent(
     if request.stream:
         return StreamingResponse(stream_agent_events(request.query, service), media_type="text/event-stream")
 
-    result = await service.query(request.query)
-    payload = agent_error_payload(result)
-    if payload is not None:
-        return JSONResponse(status_code=int(payload.get("http_status", 500)), content=result)
-    return result
+    try:
+        return await service.query(request.query)
+    except DataAgentError as exc:
+        return JSONResponse(status_code=200, content={"result": exc.to_dict()})
+    except Exception as exc:
+        error = DataAgentError.from_exception(exc, component="rest")
+        return JSONResponse(status_code=200, content={"result": error.to_dict()})

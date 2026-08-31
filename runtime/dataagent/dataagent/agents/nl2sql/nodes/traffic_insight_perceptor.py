@@ -18,7 +18,6 @@ import asyncio
 from datetime import date
 from typing import Any, Optional, cast
 
-from dataagent.agents.nl2sql.errors import NL2SQLError, SemanticServiceCallError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.utils.traffic_insight_field_normalizer import (
@@ -42,6 +41,7 @@ from dataagent.agents.nl2sql.utils.traffic_insight_table_recall import (
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.core.cbb.base_state import BaseState
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.log import logger
 
 
@@ -81,9 +81,10 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         table = await self._select_traffic_insight_table(question)
         schema = await asyncio.to_thread(self._schema_for_selected_table, table)
         if not schema:
-            raise NL2SQLError(
-                "Traffic Insight schema assembly returned empty schema",
-                detail=f"table={table}",
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact=f"Traffic Insight schema assembly returned empty schema；table={table}",
             )
         bare = next(iter(schema))
         columns = schema[bare].get("columns") or {}
@@ -104,7 +105,11 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         try:
             assert_need_fields(need_d, need_m)
         except ValueError as exc:
-            raise NL2SQLError("Traffic Insight field set is empty", detail=str(exc)) from exc
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact=f"Traffic Insight field set is empty；{exc}",
+            ) from exc
 
         candidates, recall_mode = await asyncio.to_thread(
             self._recall_tables_by_field_eq,
@@ -117,9 +122,13 @@ class TrafficInsightPerceptorNode(PerceptorNode):
             len(candidates),
         )
         if not candidates:
-            raise NL2SQLError(
-                "Traffic Insight table recall returned no tables after field EQ select",
-                detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; mode={recall_mode}",
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact=(
+                    "Traffic Insight table recall returned no tables after field EQ select；"
+                    f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; mode={recall_mode}"
+                ),
             )
 
         families = build_families_from_tables(candidates, exclude_prefixes=self._exclude_prefixes)
@@ -128,9 +137,13 @@ class TrafficInsightPerceptorNode(PerceptorNode):
             len(families),
         )
         if not families:
-            raise NL2SQLError(
-                "Traffic Insight table family catalog is empty",
-                detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; candidate_tables={len(candidates)}",
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact=(
+                    "Traffic Insight table family catalog is empty；"
+                    f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; candidate_tables={len(candidates)}"
+                ),
             )
 
         rep_tables = [family["representative_table"] for family in families]
@@ -142,9 +155,10 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         try:
             covered = apply_coverage_filter(families, columns_map, need_d=need_d, need_m=need_m)
         except ValueError as exc:
-            raise NL2SQLError(
-                "Traffic Insight hybrid columns incomplete for family enrich",
-                detail=str(exc),
+            raise DataAgentError(
+                source="tool",
+                component="nl2sql",
+                fact=f"Traffic Insight hybrid columns incomplete for family enrich；{exc}",
             ) from exc
         ranked = rank_and_truncate_families(
             covered,
@@ -159,15 +173,23 @@ class TrafficInsightPerceptorNode(PerceptorNode):
             ranked_names,
         )
         if not ranked:
-            raise NL2SQLError(
-                "Traffic Insight table family catalog is empty after column enrich",
-                detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}",
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact=(
+                    "Traffic Insight table family catalog is empty after column enrich；"
+                    f"need_d={sorted(need_d)}; need_m={sorted(need_m)}"
+                ),
             )
 
         selection = await self._select_traffic_insight_table_family(question, ranked)
         table = resolve_family_selection(selection, ranked)
         if not table:
-            raise NL2SQLError("Traffic Insight table family selection returned no valid table")
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact="Traffic Insight table family selection returned no valid table",
+            )
         logger.info(
             "Traffic Insight perceptor step=resolve_table selection={} table={}",
             selection,
@@ -181,7 +203,11 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         try:
             normalized = normalize_traffic_insight_fields(payload)
         except (TypeError, ValueError) as exc:
-            raise NL2SQLError("Traffic Insight field extraction returned invalid fields", detail=str(exc)) from exc
+            raise DataAgentError(
+                source="llm",
+                component="nl2sql",
+                fact=f"Traffic Insight field extraction returned invalid fields；{exc}",
+            ) from exc
         logger.info(
             "Traffic Insight perceptor step=classify_fields need_d={} need_m={}",
             sorted(normalized["need_d"]),
@@ -232,9 +258,11 @@ class TrafficInsightPerceptorNode(PerceptorNode):
                 any_field_hit = True
 
         if fields and not any_field_hit:
-            raise NL2SQLError(
-                "Traffic Insight all field EQ searches returned no tables",
-                detail=(
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact=(
+                    "Traffic Insight all field EQ searches returned no tables；"
                     f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; "
                     f"db_id={self.db or ''}; catalog/backend mismatch or wrong DATABASE.db_id likely"
                 ),
@@ -282,9 +310,13 @@ class TrafficInsightPerceptorNode(PerceptorNode):
                 break
             offset += page_size
         else:
-            raise NL2SQLError(
-                "Traffic Insight column EQ pagination exceeded safety offset",
-                detail=f"field={field}; offset={offset}; page_size={page_size}; max_offset={max_offset}",
+            raise DataAgentError(
+                source="constraint",
+                component="nl2sql",
+                fact=(
+                    "Traffic Insight column EQ pagination exceeded safety offset；"
+                    f"field={field}; offset={offset}; page_size={page_size}; max_offset={max_offset}"
+                ),
             )
         return sum(1 for fields in table_to_fields.values() if field in fields)
 
@@ -344,9 +376,10 @@ class TrafficInsightPerceptorNode(PerceptorNode):
                 )
 
         if pending:
-            raise NL2SQLError(
-                "Traffic Insight hybrid/table-columns did not return all requested tables",
-                detail=f"missing={pending}",
+            raise DataAgentError(
+                source="tool",
+                component="nl2sql",
+                fact=f"Traffic Insight hybrid/table-columns did not return all requested tables；missing={pending}",
             )
         return merged
 
@@ -359,7 +392,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         try:
             # Use the same single-call contract as other perceptors: default limit, no offset loop.
             columns_info = self._get_table_columns_info(table_name)
-        except SemanticServiceCallError as exc:
+        except DataAgentError as exc:
             logger.warning(
                 "Traffic Insight perceptor step=supplement_values failed table={} detail={}",
                 table_name,

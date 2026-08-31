@@ -21,6 +21,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from dataagent.actions.tools.local_tool.sandbox import NoopSandbox
 from dataagent.core.context.context import ContextFactory
+from dataagent.core.errors import DataAgentError
 from dataagent.core.flex.nodes import executor as executor_module
 from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import ToolResult
@@ -68,7 +69,7 @@ def _wrap_tools_as_call_tool(tools: dict):
             result = await asyncio.to_thread(func, **kwargs)
         if isinstance(result, ToolResult):
             return result
-        return ToolResult(success=True, data=result)
+        return ToolResult(data=result)
 
     return call_tool
 
@@ -182,12 +183,11 @@ async def test_executor_aprocess_uses_runtime_call_tool(monkeypatch, tmp_path):
     async def fake_call_tool(name: str, **kwargs):
         if name == "ok_tool":
             return ToolResult(
-                success=True,
                 data={"original_msg": "ok body", "frontend_msg": "ok ui", "data": {"value": kwargs["value"]}},
                 metadata={"source": "fake"},
             )
         if name == "bad_tool":
-            return ToolResult(success=False, error="boom")
+            return ToolResult(error=DataAgentError(source="tool", fact="boom", component="tool"))
         raise RuntimeError("unexpected tool")
 
     monkeypatch.setattr(executor_module, "record_message", fake_record_message)
@@ -217,7 +217,8 @@ async def test_executor_aprocess_uses_runtime_call_tool(monkeypatch, tmp_path):
 
     assert state_updates["messages"][1].content == "ok body"
     assert state_updates["messages"][1].status == "success"
-    assert "Error executing bad_tool: boom" in str(state_updates["messages"][2].content)
+    assert "[tool/tool]" in str(state_updates["messages"][2].content)
+    assert "boom" in str(state_updates["messages"][2].content)
     assert state_updates["messages"][2].status == "error"
     assert recorded_messages == [("ok-call", "success"), ("bad-call", "error")]
     assert convert_calls == [{"value": 3}]
@@ -385,7 +386,8 @@ async def test_executor_rejects_duplicate_explicit_subagent_sub_id(monkeypatch, 
     tool_messages = _tool_messages_only(state_updates)
     assert calls == []
     assert [msg.status for msg in tool_messages] == ["error", "error"]
-    assert all("duplicate sub_id" in str(msg.content) for msg in tool_messages)
+    assert all("[tool/tool]" in str(msg.content) for msg in tool_messages)
+    assert all("duplicate sub_id 123456" in str(msg.content) for msg in tool_messages)
     assert recorded_messages == [
         ("subagent-1", "error", str(tool_messages[0].content)),
         ("subagent-2", "error", str(tool_messages[1].content)),
@@ -431,8 +433,9 @@ async def test_executor_enforces_swarm_worker_max_concurrent(monkeypatch, tmp_pa
     tool_messages = _tool_messages_only(state_updates)
     assert len(tool_messages) == 3
     assert calls == ["a", "b"]
-    assert [msg.status for msg in tool_messages] == ["success", "success", "error"]
+    assert "[constraint/tool]" in str(tool_messages[2].content)
     assert "parallel sub_agent_tool limit exceeded" in str(tool_messages[2].content)
+    assert "worker_max_concurrent=2" in str(tool_messages[2].content)
 
 
 @pytest.mark.asyncio
@@ -784,4 +787,137 @@ async def test_executor_visible_result_plain_string(monkeypatch, tmp_path):
     )
 
     await executor.aprocess(_build_state(message, workspace=ws), runtime=runtime)
-    assert convert_calls == ["plain tool output"]
+
+
+def test_build_tool_message_includes_locator_fact() -> None:
+    executor = Executor("executor")
+    error = DataAgentError(
+        source="tool",
+        component="subagent",
+        fact="already running; create a new subagent；sub_id=7",
+    )
+    from dataagent.core.flex.nodes.executor import NormalizedToolExecution
+
+    execution = NormalizedToolExecution(
+        tool_name="sub_agent_tool",
+        tool_call_id="c1",
+        tool_args={},
+        success=False,
+        error=error,
+    )
+    message = executor._build_tool_message(execution)
+    assert message.status == "error"
+    assert message.content.startswith("[tool/subagent]")
+    assert "already running" in message.content
+    assert "sub_id=7" in message.content
+
+
+def test_build_tool_message_includes_nl2sql_sql_and_db_error() -> None:
+    executor = Executor("executor")
+    error = DataAgentError(
+        source="tool",
+        component="nl2sql",
+        fact="选中 SQL 执行失败：no such table: missing；sql=select * from missing",
+    )
+    from dataagent.core.flex.nodes.executor import NormalizedToolExecution
+
+    execution = NormalizedToolExecution(
+        tool_name="nl2sql_sub_agent_tool",
+        tool_call_id="c1",
+        tool_args={},
+        success=False,
+        error=error,
+    )
+    message = executor._build_tool_message(execution)
+    assert message.status == "error"
+    assert message.content.startswith("[tool/nl2sql]")
+    assert "no such table: missing" in message.content
+    assert "sql=select * from missing" in message.content
+
+
+def test_subagent_timeout_retries_once() -> None:
+    executor = Executor("executor")
+    error = TimeoutError("子 Agent 7 超时（30s）")
+    assert executor._max_retries_for(error) == 1
+    assert executor._retry_policy_for(error).backoff_base == 2.0
+    assert executor._should_retry(error) is True
+
+
+def test_failed_job_result_becomes_error_tool_message_without_wire_detail() -> None:
+    executor = Executor("executor")
+    wire_error = DataAgentError(
+        fact="worker crashed；sub_id=7",
+        source="tool",
+        component="subagent",
+        trace_id="trace-job",
+    ).to_dict()
+    payload = {
+        "job_id": "job-failed",
+        "agent_id": "arith",
+        "status": "failed",
+        "summary": "boom",
+        "error": wire_error,
+    }
+
+    execution = executor._normalize_tool_execution(
+        tool_name="collect_subagent",
+        tool_call_id="c1",
+        tool_args={"job_id": "job-failed"},
+        result=ToolResult(data=payload),
+        metadata={},
+    )
+    message = executor._build_tool_message(execution)
+
+    assert execution.success is False
+    assert message.status == "error"
+    assert "sk-super-secret" not in message.content
+    assert "detail" not in message.content
+    assert "worker crashed" in message.content
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_in_progress_job_payload_stays_success_tool_message(status: str) -> None:
+    executor = Executor("executor")
+    payload = {
+        "job_id": "job-active",
+        "agent_id": "arith",
+        "status": status,
+        "message": "Resource job queued. Use poll_job with this job_id.",
+    }
+
+    execution = executor._normalize_tool_execution(
+        tool_name="submit_resource_job",
+        tool_call_id="c1",
+        tool_args={"command": "echo"},
+        result=ToolResult(data=payload),
+        metadata={},
+    )
+    message = executor._build_tool_message(execution)
+
+    assert execution.success is True
+    assert message.status == "success"
+    assert "job-active" in message.content
+
+
+@pytest.mark.parametrize("status", ["failed", "timed_out", "cancelled"])
+def test_terminal_job_failure_payload_becomes_error_tool_message(status: str) -> None:
+    executor = Executor("executor")
+    payload = {
+        "job_id": "job-terminal",
+        "agent_id": "arith",
+        "status": status,
+        "summary": f"job {status}",
+    }
+
+    execution = executor._normalize_tool_execution(
+        tool_name="poll_job",
+        tool_call_id="c1",
+        tool_args={"job_id": "job-terminal"},
+        result=ToolResult(data=payload),
+        metadata={},
+    )
+    message = executor._build_tool_message(execution)
+
+    assert execution.success is False
+    assert message.status == "error"
+    assert status in message.content or f"job {status}" in message.content

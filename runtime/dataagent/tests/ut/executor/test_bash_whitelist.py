@@ -104,7 +104,6 @@ class TestBashWhitelistInExecutor:
 
             assert name == "bash"
             return ToolResult(
-                success=True,
                 data={"original_msg": "ok", "frontend_msg": "ok", "data": {"exit_code": 0}},
             )
 
@@ -152,7 +151,7 @@ class TestBashWhitelistInExecutor:
             acall_count += 1
             from dataagent.core.managers.action_manager.base import ToolResult
 
-            return ToolResult(success=True, data={"original_msg": "ok", "frontend_msg": "ok"})
+            return ToolResult(data={"original_msg": "ok", "frontend_msg": "ok"})
 
         runtime = StubRuntime(whitelist=["ls", "echo"])
         runtime._call_tool_fn = fake_call_tool
@@ -190,7 +189,6 @@ class TestBashWhitelistInExecutor:
 
             assert name == "bash"
             return ToolResult(
-                success=True,
                 data={"original_msg": "ok", "frontend_msg": "ok", "data": {"exit_code": 0}},
             )
 
@@ -228,7 +226,7 @@ class TestBashWhitelistInExecutor:
             acall_count += 1
             from dataagent.core.managers.action_manager.base import ToolResult
 
-            return ToolResult(success=True, data={"original_msg": "ok"})
+            return ToolResult(data={"original_msg": "ok"})
 
         # cat is allowed, but grep is NOT in the whitelist
         runtime = StubRuntime(whitelist=["ls", "cat", "echo"])
@@ -267,7 +265,6 @@ class TestBashWhitelistInExecutor:
             from dataagent.core.managers.action_manager.base import ToolResult
 
             return ToolResult(
-                success=True,
                 data={"original_msg": f"result from {name}", "frontend_msg": "ok"},
             )
 
@@ -305,7 +302,6 @@ class TestBashWhitelistInExecutor:
             from dataagent.core.managers.action_manager.base import ToolResult
 
             return ToolResult(
-                success=True,
                 data={"original_msg": "ok", "frontend_msg": "ok"},
             )
 
