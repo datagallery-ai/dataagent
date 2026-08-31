@@ -1,0 +1,1080 @@
+{
+  "common": {
+    "backToWorkspace": "Back to workspace",
+    "back": "Back",
+    "close": "Close",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "actions": "Actions",
+    "copy": "Copy",
+    "copied": "Copied",
+    "name": "Name",
+    "description": "Description",
+    "notes": "Notes",
+    "ready": "Ready",
+    "notStarted": "Not started",
+    "running": "Running",
+    "waiting": "Waiting",
+    "completed": "Completed",
+    "failed": "Failed",
+    "canceled": "Canceled",
+    "idle": "Idle",
+    "connected": "Connected",
+    "unavailable": "Unavailable",
+    "notTested": "Not tested",
+    "oldest": "Oldest",
+    "newest": "Newest",
+    "pinned": "Pinned",
+    "enable": "Enable",
+    "disable": "Disable",
+    "loading": "Loading…",
+    "edit": "Edit",
+    "upload": "Upload",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "search": "Search",
+    "yes": "Yes",
+    "no": "No",
+    "saving": "Saving...",
+    "download": "Download",
+    "test": "Test",
+    "browse": "Browse",
+    "reset": "Reset",
+    "parsing": "Parsing...",
+    "uploading": "Uploading..."
+  },
+  "language": {
+    "switchToEnglish": "Switch to English",
+    "switchToChinese": "Switch to Chinese",
+    "englishShort": "EN",
+    "chineseShort": "中"
+  },
+  "sidebar": {
+    "brand": "DataFoundry",
+    "sessionCount": "{{count}} sessions",
+    "workspaceResources": "Workspace Resources",
+    "newTask": "New data task",
+    "searchConversations": "Search conversations",
+    "sessions": "Sessions",
+    "history": "History",
+    "noMatchingSessions": "No matching sessions.",
+    "collapseToRail": "Collapse to workspace rail",
+    "expandToSidebar": "Expand to persistent sidebar",
+    "expandRail": "Expand workspace rail",
+    "railLabel": "Workspace rail",
+    "sessionActions": "Session actions: {{title}}",
+    "resizeSidebar": "Resize workspace sidebar"
+  },
+  "resources": {
+    "dataSources": "Data Sources",
+    "dataLink": "Data Link",
+    "knowledge": "Knowledge",
+    "agentTools": "Agent Tools",
+    "models": "Models",
+    "assets": "Assets",
+    "backendUnsupported": "Backend unsupported",
+    "mcpUnsupported": "MCP unsupported",
+    "skillsUnsupported": "Skills unsupported",
+    "dataSource": "Data source",
+    "mcp": "MCP",
+    "skills": "Skills"
+  },
+  "session": {
+    "defaultTitle": "New data task",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "share": "Share",
+    "rename": "Rename",
+    "delete": "Delete",
+    "sharingDisabled": "Sharing awaits backend support"
+  },
+  "userBar": {
+    "currentUser": "Current user",
+    "settings": "Settings",
+    "signOut": "Sign out"
+  },
+  "chat": {
+    "openConsole": "Console",
+    "initializingSession": "Initializing session…",
+    "answer": "Answer",
+    "answering": "Answering",
+    "thinking": "Thinking",
+    "generating": "Generating",
+    "waitingForInput": "Waiting for input",
+    "collaborating": "Collaborating",
+    "toolCalls": "Tool calls",
+    "copyMessage": "Copy this message",
+    "copiedMessage": "Copied",
+    "addedToClipboard": "Added to clipboard",
+    "resizeConsole": "Resize task console",
+    "workProcess": "Work process",
+    "stepCount": "{{count}} step",
+    "stepCountPlural": "{{count}} steps",
+    "toolCount": "{{count}} tool · {{elapsed}}",
+    "toolCountPlural": "{{count}} tools · {{elapsed}}",
+    "expandStep": "Expand step",
+    "collapseStep": "Collapse step",
+    "viewStepDetails": "View step details in the task console"
+  },
+  "tools": {
+    "list_data_sources": "List data sources",
+    "inspect_schema": "Inspect schema",
+    "preview_table": "Preview data",
+    "run_sql_readonly": "Run query",
+    "retrieve_knowledge": "Retrieve knowledge",
+    "read_file": "Read file",
+    "edit_file": "Edit file",
+    "write_file": "Write file",
+    "list_files": "Browse files",
+    "grep": "Search files",
+    "mkdir": "Create directory",
+    "file_stat": "Get file info",
+    "execute_command": "Run command",
+    "promote_workspace_file": "Promote workspace file",
+    "task_write": "Write task",
+    "task_update": "Update task",
+    "task_complete": "Complete task",
+    "task_check": "Check task",
+    "ask_user": "Waiting for confirmation",
+    "submit_plan": "Submit plan",
+    "runTool": "Run tool"
+  },
+  "chatInput": {
+    "placeholder": "Ask a data question…",
+    "model": "Model",
+    "modelList": "Model list",
+    "selectModel": "Select model",
+    "enableLlmFirst": "Enable an LLM in the configuration panel first.",
+    "modelNotTested": "This model has not passed a connection test",
+    "modelNotTestedHint": "This model has not passed a connection test. Run \"Test connection\" in the model configuration.",
+    "modelBlocked": "Model \"{{name}}\" has not passed a connection test. Open the model configuration and run \"Test connection\" before using it.",
+    "datasourceBlocked": "Data source \"{{name}}\" has not passed a connection test. Open the data source configuration and run \"Test connection\" before using it.",
+    "manageModelConfig": "Manage model configuration…",
+    "sendNow": "Send now",
+    "sendQueuedNow": "Send queued prompt now",
+    "editQueued": "Edit queued prompt",
+    "deleteQueued": "Delete queued prompt",
+    "saveQueued": "Save",
+    "cancelQueued": "Cancel",
+    "dropFiles": "Drop files here to upload",
+    "sessionBusyTitle": "This chat is busy on another device",
+    "sessionBusyBody": "Only one active run is allowed per chat. You can wait in queue, interrupt the other run and send, or cancel.",
+    "sessionBusyPreview": "Other device is working on: {{preview}}",
+    "sessionBusyWait": "Wait in queue",
+    "sessionBusyWaiting": "Queued…",
+    "sessionBusyInterrupt": "Interrupt and send",
+    "sessionBusyInterrupting": "Interrupting…",
+    "sessionBusyDismiss": "Cancel send",
+    "sessionRemoteBusyBanner": "This chat is running on another device. You will be asked how to proceed before sending.",
+    "localQueuedNotice": "A run is still in progress, so your message was added to the send queue."
+  },
+  "sessionConfig": {
+    "agentToolsSettings": "Agent Tools session settings",
+    "locked": "Locked",
+    "currentChat": "Current chat",
+    "lockedHelp": "Data source and knowledge selections are locked after the first message in this chat.",
+    "scopeHelp": "Controls resources for this chat only. Manage global resources from Workspace Resources on the left.",
+    "agentToolsScopeHelp": "Controls MCP servers and Skills for this chat only.",
+    "noConfigurationYet": "No configuration yet. Add one from Workspace Resources on the left.",
+    "noConfigurationShort": "No configuration yet."
+  },
+  "console": {
+    "title": "Task Console",
+    "close": "Close Task Console",
+    "tabs": {
+      "overview": "Overview",
+      "trace": "Trace",
+      "outputs": "Outputs",
+      "details": "Details"
+    },
+    "sections": {
+      "summary": "Summary",
+      "progress": "Progress",
+      "outputs": "Outputs",
+      "outputsSession": "Outputs (session)"
+    },
+    "traceDag": {
+      "title": "Trace DAG",
+      "open": "Open Trace DAG"
+    },
+    "empty": {
+      "noStepSelected": "No step selected",
+      "noStepSelectedDescription": "Select a step from the center tool card or Trace timeline to inspect duration, action details, and output lineage.",
+      "goToOverview": "Go to Overview",
+      "noStepsYet": "No steps yet",
+      "noStepsYetDescription": "After you send a question, process steps appear here in order. Parallel tools are grouped under one step.",
+      "noOutputs": "No outputs yet",
+      "noOutputsDescription": "SQL, datasets, charts, and reports appear here after a question. Preview an item in a popup, or Cite it on the right to select table/text or the whole artifact."
+    },
+    "outputsHintExport": "Preview any output in a popup, or Cite it on the right to select a part or the whole.",
+    "outputsHint": "Preview any output in a popup, or Cite it on the right.",
+    "outputsHintBackend": "Preview and download require the backend artifact API.",
+    "preview": "Preview",
+    "previewTitle": "Preview this output in a popup over the page",
+    "previewDialogLabel": "Preview: {{title}}",
+    "cite": "Cite",
+    "citeTitle": "Open on the right to select table/text for citation, or cite the whole artifact",
+    "seeOutputsTab": "See the Outputs tab for the full list.",
+    "metricOutputs": "Outputs",
+    "metricItems": "{{count}} items",
+    "currentQuestion": "Current question",
+    "startPrompt": "Send a question to start dataFoundry.",
+    "steps": "Steps",
+    "stepsSession": "Steps (session)",
+    "successRate": "Success rate",
+    "tokenCost": "Token / Cost",
+    "toolCallsMeta": "{{count}} tool calls",
+    "itemsMeta": "items",
+    "toolDistribution": "Tool distribution",
+    "dataTrail": "Data trail",
+    "stepDetails": "Step details · Step {{n}}",
+    "versionHistory": "Version history",
+    "noVersionsYet": "No versions yet",
+    "addToProject": "Add to project",
+    "adding": "Adding…",
+    "addedToProject": "Added to project",
+    "viewSource": "View source",
+    "download": "Download",
+    "downloading": "Downloading",
+    "downloadingEllipsis": "Downloading…",
+    "downloadFile": "Download file",
+    "downloadCsv": "Download CSV",
+    "downloadXlsx": "Download XLSX",
+    "preparingCsv": "Preparing CSV…",
+    "preparingXlsx": "Preparing XLSX…",
+    "backgroundExportXlsx": "Background export XLSX",
+    "submitting": "Submitting…",
+    "downloadOutput": "Download output",
+    "downloadOutputFile": "Download output file",
+    "reference": "Reference",
+    "referenced": "Added to the chat input as a reference",
+    "referenceWhole": "Reference whole",
+    "referenceWholeHint": "Select a table region or text to reference just that part, or use “Reference whole” for the entire artifact.",
+    "pageConsole": "Console",
+    "closePage": "Close {{title}}",
+    "noViewableDetails": "This output does not include viewable details yet.",
+    "previewUnsupported": "Preview data is empty or unsupported.",
+    "dataPoints": "Data points",
+    "dataPointsSelect": "Data points (select to reference)",
+    "scannedRowsMeta": "Scanned {{rows}} rows",
+    "hideHistory": "Hide history",
+    "historyCount": "History ({{count}})",
+    "viewVersionHistory": "View version history",
+    "moreActions": "More actions",
+    "mention": "@ Mention",
+    "noFile": "No file",
+    "failedToAddToProject": "Failed to add to project",
+    "failedToLoadVersionHistory": "Failed to load version history",
+    "openFullReport": "Open to view full report",
+    "toolCalls": "Tool calls",
+    "usage": "Usage",
+    "toolDetails": "Tool details",
+    "outputLineage": "Output lineage",
+    "reasoning": "Reasoning",
+    "actionDetails": "Action details",
+    "workspaceMetadata": "Workspace metadata",
+    "sandboxOutput": "Sandbox output",
+    "resultPreview": "Result preview",
+    "htmlPreview": "HTML preview",
+    "rendered": "Rendered",
+    "source": "Source",
+    "collapse": "Collapse",
+    "expandContent": "Expand content",
+    "noDetails": "No details",
+    "loadingPreview": "Loading preview...",
+    "noContentSelected": "No content selected",
+    "noContentSelectedDescription": "Select a visible output to inspect the full SQL, dataset, chart, or report.",
+    "noActionSelected": "No action selected",
+    "noActionSelectedDescription": "Select a data action to inspect its parameters, observations, and outputs.",
+    "noProcessStepSelected": "No step selected",
+    "noProcessStepSelectedDescription": "Select a process step to inspect batch duration, child tools, and output lineage.",
+    "stepNoOutputsYet": "This step has not directly produced outputs yet.",
+    "actionNoOutputs": "This action did not directly produce outputs.",
+    "noChartData": "No chart data",
+    "noChartDataDescription": "The backend declared a chart artifact but has not reported points/series preview data yet.",
+    "searchResultTable": "Search result table",
+    "exportFilteredResult": "Export the current filtered / sorted result",
+    "sourceStepNotLinked": "Source step not linked",
+    "failedToLoadPreview": "Failed to load preview"
+  },
+  "jobs": {
+    "queued": "Queued",
+    "schemaSync": "Schema sync",
+    "indexRebuild": "Index rebuild"
+  },
+  "assets": {
+    "title": "Assets",
+    "description": "Reusable workspace assets for future data tasks and @ mentions.",
+    "panelTitle": "Workspace File Assets",
+    "panelHelp": "Manage reusable workspace files for later @file selection or run_config.fileIds injection. These are separate from chat attachments.",
+    "needSession": "Open a chat session to enable workspace file upload.",
+    "needSessionError": "Select or open a chat session before uploading workspace files.",
+    "needSessionTitle": "Select or open a chat session before uploading",
+    "loadFailed": "Failed to load file assets",
+    "uploadFailed": "Upload failed",
+    "downloadFailed": "Download failed",
+    "deleteFailed": "Delete failed",
+    "deleteConfirm": "Delete workspace file \"{{name}}\"? This cannot be undone.",
+    "loading": "Loading...",
+    "empty": "No reusable workspace files yet. Upload a file to add one.",
+    "fileCount": "{{count}} files"
+  },
+  "configPanel": {
+    "workspaceConfiguration": "Workspace configuration",
+    "chooseDataSource": "Choose data source",
+    "pickAdapter": "Pick one backend-enabled adapter",
+    "dataSourceBrowser": "Data source browser",
+    "browseSchema": "Browse schema and data preview",
+    "backToList": "Back to {{panel}} list",
+    "noDataSources": "No data sources configured.",
+    "noToolsYet": "No tools yet. Test the connection first to refresh the manifest.",
+    "loading": "Loading configuration from REST API...",
+    "configuredDataSources": "Configured data sources",
+    "configuredDataSourcesHelp": "Browse configured sources, sync schema, and open table-level previews.",
+    "addDataSource": "Add data source",
+    "startFromGallery": "Start from the adapter gallery to create one.",
+    "workspaceDefault": "Workspace default",
+    "disabledByDefault": "Disabled by default",
+    "secretSaved": "Secret saved",
+    "testConnection": "Test connection",
+    "testing": "Testing...",
+    "syncSchema": "Sync schema",
+    "reindex": "Reindex",
+    "validateSemantics": "Validate semantics",
+    "createItem": "Create configuration item",
+    "importSkill": "Import Skill",
+    "unsavedChanges": "Unsaved changes",
+    "enterName": "Enter {{kind}} name",
+    "shortDescription": "Short description",
+    "configurationId": "Configuration ID",
+    "configurationDetails": "Configuration details",
+    "packageInformation": "Package information",
+    "uploadDocument": "Upload document",
+    "uploadDocumentHelp": "Upload a text document (.txt, .md, .csv, .tsv, .json, .yaml) or PDF (.pdf) for vectorization and retrieval.",
+    "chooseFile": "Choose file",
+    "uploading": "Uploading...",
+    "configuredKnowledgeBases": "Configured knowledge bases",
+    "configuredKnowledgeBasesHelp": "Upload documents to vectorize, browse indexed files, and edit retrieval settings.",
+    "addKnowledgeBase": "Add knowledge base",
+    "noKnowledgeBases": "No knowledge bases configured.",
+    "startKnowledgeBase": "Create a knowledge base, then upload text or PDF files to vectorize.",
+    "uploadAndVectorize": "Upload & vectorize",
+    "viewDocuments": "View files",
+    "knowledgeDocuments": "Knowledge documents",
+    "browseKnowledgeDocuments": "Browse uploaded documents and upload more for vectorization",
+    "knowledgeDocumentsHelp": "Files uploaded to this knowledge base are chunked and indexed for retrieval.",
+    "noKnowledgeDocuments": "No documents uploaded yet.",
+    "noKnowledgeDocumentsHelp": "Upload a .txt or .pdf file to vectorize it into this knowledge base.",
+    "knowledgeFilename": "Filename",
+    "knowledgeMimeType": "Type",
+    "knowledgeStatus": "Status",
+    "knowledgeDocStatus": {
+      "ready": "Ready",
+      "failed": "Failed",
+      "indexing": "Indexing",
+      "parsing": "Parsing",
+      "uploaded": "Uploaded"
+    },
+    "knowledgeLoadFailed": "Failed to load documents",
+    "knowledgeUploadFailed": "Failed to upload document",
+    "knowledgeReindexFailed": "Reindex failed",
+    "knowledgeDeleteFailed": "Failed to delete document",
+    "knowledgeRetryFailed": "Failed to retry document indexing",
+    "knowledgeRetry": "Retry",
+    "knowledgeDeleteConfirm": "Delete this document permanently?",
+    "indexStatusLabel": "Index: {{status}}",
+    "configuredMcpServers": "Configured MCP servers",
+    "configuredMcpServersHelp": "Test connections to refresh tool manifests, and edit server settings.",
+    "addMcpServer": "Add MCP",
+    "noMcpServers": "No MCP servers configured.",
+    "startMcpServer": "Add an MCP server connection to expose tools to the agent.",
+    "configuredSkills": "Configured skills",
+    "configuredSkillsHelp": "Import Skill packages, validate semantics, and edit package settings.",
+    "addSkill": "Import Skill",
+    "noSkills": "No skills configured.",
+    "startSkill": "Import a SKILL.md or .zip package to get started.",
+    "configuredModels": "Configured models",
+    "configuredModelsHelp": "Test model profiles and manage which LLM runs use by default.",
+    "addModel": "Add model",
+    "noModels": "No model profiles configured.",
+    "startModel": "Add an LLM profile so data tasks can call a model.",
+    "serverEnvVars": "Server environment variables",
+    "builtinBadge": "Built-in",
+    "kindDb": "Data source",
+    "kindKb": "Knowledge",
+    "kindMcp": "MCP",
+    "kindModel": "Model",
+    "kindSkill": "Skill",
+    "titles": {
+      "db": "Data Sources",
+      "kb": "Knowledge",
+      "mcp": "Agent Tools",
+      "skill": "Agent Tools",
+      "llm": "Models"
+    },
+    "detailTitles": {
+      "db": "Data source details",
+      "kb": "Knowledge base details",
+      "mcp": "MCP server details",
+      "skill": "Skill package details",
+      "llm": "Model profile details"
+    },
+    "descriptions": {
+      "db": "Manage databases and connection profiles.",
+      "kb": "Manage documents, indexes and retrieval settings for workspace knowledge.",
+      "mcp": "Manage MCP server connections. Tests refresh the cached tools manifest.",
+      "skill": "Import SKILL.md or .zip packages. Runtime payloads reference skill ids only.",
+      "llm": "Manage LLM model profiles. Runs reference activeLlmProfileId through run_config."
+    },
+    "addLabels": {
+      "db": "Add data source",
+      "kb": "Add knowledge base",
+      "mcp": "Add MCP",
+      "skill": "Import Skill",
+      "llm": "Add model"
+    },
+    "browseSchemaAndData": "Browse schema and data",
+    "secretKeepPlaceholder": "Saved (leave blank to keep unchanged)",
+    "builtinItem": "Built-in configuration item",
+    "customItem": "Custom configuration item",
+    "availableByDefault": "Available by default in the workspace",
+    "chooseLocalFile": "Choose local file",
+    "uploadedFile": "Uploaded: {{name}}",
+    "customConfigurationItem": "Custom configuration item",
+    "customDataSource": "Custom data source",
+    "datasourceSuffix": "{{label}} datasource",
+    "saveFailed": "Save failed",
+    "createFailed": "Create failed",
+    "deleteFailed": "Delete failed",
+    "testFailed": "Test failed",
+    "schemaSyncFailed": "Schema sync failed",
+    "reindexFailed": "Reindex failed",
+    "uploadFailed": "Upload failed",
+    "replaceSkillFailed": "Failed to replace Skill",
+    "validationFailed": "Validation failed",
+    "loadToolsFailed": "Unable to load tools manifest",
+    "uploadKnowledgeFailed": "Failed to upload knowledge document",
+    "uploadDatasourceFailed": "Failed to upload datasource file",
+    "notesDb": "Data sources are registered through the REST API. Credentials are stored in secretRef and never returned in reads. Connection tests and schema sync update connectionStatus.",
+    "notesKb": "Knowledge documents and indexes are managed through the REST API. Runs retrieve by run_config.enabledKnowledgeIds.",
+    "notesMcp": "MCP servers are registered through the REST API. Connection tests refresh toolManifest and healthStatus.",
+    "notesLlm": "Model profiles are managed through the REST API. Runs switch with run_config.activeLlmProfileId.",
+    "notesSkillBuiltin": "Built-in Skills are provided by the server. Runs send only the skill id.",
+    "notesSkillCustom": "Custom Skills are uploaded through multipart REST. Package content is stored server-side.",
+    "uploadSkillPackage": "Upload Skill package",
+    "uploadSkillPackageHelp": "Supports SKILL.md (with YAML frontmatter) or a .zip package. Create/replace uploads through REST API.",
+    "chooseAnotherFile": "Choose another file",
+    "selectedFile": "Selected: {{name}}",
+    "skillNotesTitle": "Skill package notes",
+    "skillNotesStructure": "Standard structure: directory contains SKILL.md (YAML frontmatter + instructions)",
+    "skillNotesContract": "Backend contract: POST /api/v1/skills multipart upload; runs send only activeSkillId, not package content",
+    "skillNotesBuiltin": "Built-in Skills are provided by the server; the frontend only shows metadata",
+    "skillNotesCustom": "Custom Skills are uploaded through REST multipart; AG-UI context carries only the skill id",
+    "mcpNotesTitle": "MCP connection notes",
+    "mcpNotesRemote": "Remote services commonly use SSE / Streamable HTTP URLs, for example https://host/mcp",
+    "mcpNotesPersist": "Configuration is persisted through POST /api/v1/mcp-servers; tokens are stored in secretRef",
+    "mcpNotesRuns": "Runs use run_config.enabledMcpServerIds to mount MCP tools",
+    "llmNotesTitle": "AG-UI / dataFoundry alignment notes",
+    "llmNotesEnv": "Server env: LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY, LLM_MODEL",
+    "llmNotesPersist": "Model profiles are managed through POST /api/v1/model-profiles; API keys are stored in secretRef",
+    "llmNotesRuns": "Runs switch models through run_config.activeLlmProfileId",
+    "llmNotesBuiltin": "The Server default item is read-only and maps to LLM configuration from server env",
+    "noToolsManifest": "No tools yet. Test the connection first to refresh the manifest.",
+    "tabMcp": "MCP",
+    "tabSkills": "Skills",
+    "toolsManifest": "Tools Manifest",
+    "testSucceeded": "Test succeeded",
+    "testSkipped": "Test skipped",
+    "testFailedTitle": "Test failed",
+    "testCompleted": "Connection test completed.",
+    "testProbeUnavailable": "Connectivity probe is not available for this resource type.",
+    "testModelLabel": "Model: {{model}}",
+    "testDurationLabel": "Duration: {{ms}} ms",
+    "testResponseLabel": "Response: {{response}}",
+    "testStatusLabel": "Status: {{status}}",
+    "providerConfigMissing": "Model provider configuration is incomplete for \"{{profile}}\". Check the API key, base URL, and model name.",
+    "mcpConfigInvalid": "MCP server configuration is incomplete. Check the URL/command and transport.",
+    "mcpStdioRequired": "MCP stdio transport requires a command.",
+    "revisionConflict": "Configuration was updated while testing. Refresh and try again.",
+    "resourceDeleted": "This configuration was deleted while testing. Refresh and try again."
+  },
+  "welcome": {
+    "title": "Data Analysis Workbench",
+    "subtitle": "Ask in natural language. The agent can inspect schemas, run read-only SQL, and show the full trace in the console.",
+    "chipSql": "SQL Query",
+    "chipSchema": "Schema Check",
+    "chipTrace": "Data Trace",
+    "useThisPrompt": "Use this prompt",
+    "footerBeforeAt": "Ask directly in the input below, or use",
+    "footerAfterAt": "to select a datasource.",
+    "inspectSchema": "Inspect Schema",
+    "inspectSchemaDesc": "List tables and fields for the active datasource",
+    "inspectSchemaPrompt": "Show the tables in the datasource and summarize the main fields for each table",
+    "runSql": "Run SQL Query",
+    "runSqlDesc": "Generate and run read-only SQL from natural language",
+    "runSqlPrompt": "Query total orders in the last 30 days, grouped by date",
+    "analyzeTrends": "Analyze Trends",
+    "analyzeTrendsDesc": "Explore metric changes and anomalies",
+    "analyzeTrendsPrompt": "Analyze monthly sales trends and identify the months with the largest swings"
+  },
+  "schema": {
+    "copyTableName": "Copy table name",
+    "preview": "preview",
+    "previewHelp": "Preview tables and fields available to this conversation.",
+    "loading": "Loading schema...",
+    "loadFailed": "Failed to load schema",
+    "sampleAvailable": "Sample available",
+    "empty": "No tables or fields available.",
+    "pasteHint": "Copied table and field names can be pasted into the chat input.",
+    "rows": "{{count}} rows"
+  },
+  "guide": {
+    "open": "Open quick start guide",
+    "dialog": "Quick start guide",
+    "close": "Close quick start guide",
+    "badge": "Quick start",
+    "stepOf": "Step {{current}} of {{total}}",
+    "back": "Back",
+    "skip": "Skip",
+    "next": "Next",
+    "finish": "Finish",
+    "useThisQuery": "Use this query",
+    "waitingForSend": "Waiting for send",
+    "openDatasourceConfig": "Open datasource config",
+    "openModelConfig": "Open model config",
+    "welcome": {
+      "title": "Start with the workspace map",
+      "body": "Left is where you configure resources, middle is where you ask the data question, and right is where you watch the task run and review outputs."
+    },
+    "resources": {
+      "title": "Understand workspace resources",
+      "body": "The left panel covers Data Sources, Knowledge, Agent Tools / MCP, Skills, Models, and Assets / Files. These are the building blocks the agent can use for each task."
+    },
+    "datasource": {
+      "title": "Confirm the datasource",
+      "bodyReady": "A datasource is ready: {{id}}. This is what the agent will query for the first task.",
+      "bodyMissing": "Add or enable a datasource before running the sample task. Open datasource config, create and test the connection, then return to this guide. The demo datasource is the fastest path when it is available."
+    },
+    "model": {
+      "titleReady": "Confirm the model",
+      "titleMissing": "Connect a model",
+      "bodyReady": "A model profile is available. The model understands the request, helps generate SQL, and summarizes the result.",
+      "bodyMissing": "Quick start needs an enabled LLM profile. Open model configuration, create and test a profile, then return to this guide."
+    },
+    "query": {
+      "title": "Use a sample query",
+      "body": "Start with this sample query: {{prompt}}"
+    },
+    "send": {
+      "title": "Send the task",
+      "bodyReady": "The task has started. The agent will inspect the datasource and run a read-only query.",
+      "bodyWaiting": "Review the sample task in the chat input, then click the send arrow. This step unlocks after the run starts."
+    },
+    "console": {
+      "titleRunning": "Watch the run",
+      "titleIdle": "Open the run console",
+      "body": "The Task Console shows run status, steps, tool calls, traces, and generated outputs while the task is running."
+    },
+    "output": {
+      "titleFailed": "Check the failed run",
+      "titleReady": "Review the result",
+      "bodyFailed": "The run failed. Check the model and datasource configuration, then try the sample task again.",
+      "bodyReady": "When the run completes, review the answer and outputs here. You can ask a follow-up question or inspect the trace."
+    }
+  },
+  "gallery": {
+    "title": "Choose a datasource type",
+    "help": "Select one of the backend-enabled adapters. The next step renders the exact connection fields returned by the datasource type schema.",
+    "searchAria": "Search datasource types",
+    "searchPlaceholder": "Search database, engine, file...",
+    "empty": "No datasource types match your search.",
+    "defaultDescription": "Backend-enabled datasource adapter."
+  },
+  "datasourceCategories": {
+    "local-files": {
+      "title": "Local files",
+      "description": "Embedded, local, and uploaded tabular files."
+    },
+    "relational": {
+      "title": "Relational databases",
+      "description": "Classic OLTP and enterprise SQL databases."
+    },
+    "warehouse": {
+      "title": "Warehouses and lakehouse",
+      "description": "Analytical stores and cloud SQL warehouses."
+    },
+    "compatible-cn": {
+      "title": "Compatible and China-local engines",
+      "description": "PostgreSQL/MySQL-compatible analytical and domestic engines."
+    },
+    "query-engine": {
+      "title": "Query engines",
+      "description": "Federated SQL and compute engines."
+    },
+    "nosql-search": {
+      "title": "NoSQL and search",
+      "description": "Collection, keyspace, and index-as-table mappings."
+    },
+    "other": {
+      "title": "Other sources",
+      "description": "Specialized adapters and file-backed sources."
+    }
+  },
+  "explorer": {
+    "noStats": "No stats",
+    "rows": "{{count}} rows",
+    "columnsMeta": "{{count}} columns · {{stats}}",
+    "noticeMongodb": "MongoDB collections are exposed as table-like objects for simple readonly SELECT previews.",
+    "noticeRedis": "Redis keyspace is exposed through a redis_keys pseudo table.",
+    "noticeSearch": "Search indexes are exposed as table-like objects from mappings.",
+    "loadSchemaFailed": "Failed to load schema",
+    "previewApiUnavailable": "Datasource row preview API is not available yet.",
+    "untested": "untested",
+    "searchPlaceholder": "Search tables or fields",
+    "noMatchingObjects": "No matching objects.",
+    "loadSchemaHint": "Load schema to browse tables, collections, indexes, or pseudo tables.",
+    "noObjectSelected": "No object selected",
+    "tabColumns": "Columns",
+    "tabData": "Data",
+    "tabInfo": "Info",
+    "column": "Column",
+    "type": "Type",
+    "nullable": "Nullable",
+    "description": "Description",
+    "previewHint": "Row preview uses the planned datasource table preview REST endpoint and respects sample/masking policy.",
+    "loadingPreview": "Loading preview...",
+    "loadRows": "Load 50 rows",
+    "previewEndpointPending": "Backend endpoint pending: GET /api/v1/datasources/:id/tables/:table/preview",
+    "totalRows": "{{count}} total rows",
+    "totalUnknown": "Total unknown",
+    "moreRows": " · more rows available",
+    "previewEmpty": "Select a table and load a preview when the backend endpoint is available.",
+    "infoDatasourceId": "Datasource ID",
+    "infoType": "Type",
+    "infoConnection": "Connection",
+    "infoStatus": "Status",
+    "infoEnabled": "Enabled by default",
+    "infoSelectedObject": "Selected object",
+    "infoSampleAvailable": "Sample available",
+    "infoInspectedAt": "Inspected at"
+  },
+  "dataLink": {
+    "title": "Data Link",
+    "subtitle": "Datalink MCP workspace",
+    "nodesEdges": "{{nodes}} nodes, {{edges}} edges",
+    "mcpSettings": "MCP settings",
+    "server": "Server",
+    "noServer": "No datalink server",
+    "tables": "Tables",
+    "entities": "Entities",
+    "columns": "Columns",
+    "edges": "Edges",
+    "visible": "Visible",
+    "entry": "Entry",
+    "searchEntry": "Search {{mode}}s",
+    "noEntries": "No entries",
+    "loading": "Loading data link",
+    "noVisibleNodes": "No visible nodes",
+    "inspector": "Inspector",
+    "focus": "Focus",
+    "backToRoot": "Back to root",
+    "confidence": "Confidence",
+    "noServerSelected": "No server selected",
+    "endpoint": "Endpoint",
+    "emptyTitle": "No datalink MCP server detected.",
+    "openMcpSettings": "Open MCP settings",
+    "explore": "Explore",
+    "exploring": "Exploring...",
+    "balanced": "Balanced",
+    "joinPaths": "Join paths",
+    "schemaFocus": "Schema",
+    "dataProfile": "Data profile",
+    "addTable": "Add Table",
+    "adding": "Adding...",
+    "addTableAction": "Add table",
+    "sourcePlaceholder": "Source path or connection string",
+    "tablePlaceholder": "Table",
+    "schemaPlaceholder": "Schema",
+    "maintain": "Maintain",
+    "selectTable": "Select table",
+    "removeTable": "Remove table",
+    "removing": "Removing...",
+    "rebuild": "Rebuild",
+    "rebuilding": "Rebuilding...",
+    "confirmRemoveTable": "Remove this table from the data link?",
+    "confirmRebuild": "Rebuild the full data link?",
+    "loadServersFailed": "Failed to load datalink servers",
+    "loadGraphFailed": "Failed to load data link"
+  },
+  "configFields": {
+    "db": {
+      "datasourceId": {
+        "label": "Data source ID",
+        "placeholder": "my-dataset",
+        "helpText": "Stable identifier forwarded to the Agent (forwardedProps.datasourceId)."
+      },
+      "type": {
+        "label": "Data source type",
+        "helpText": "Implemented: DuckDB / SQLite / CSV / Excel / PostgreSQL / MySQL / ClickHouse. Disabled extension types are marked pending backend."
+      },
+      "mode": {
+        "label": "Access mode",
+        "helpText": "The backend currently supports read-only queries only (run_sql_readonly)."
+      },
+      "filePath": {
+        "label": "File path",
+        "placeholder": "Upload a local file, or paste an existing server path",
+        "helpText": "Choose a local DuckDB / SQLite / CSV / Excel / Access file to upload. The server stores it under your workspace and fills this path automatically. You can still paste an existing server-readable path if you already have one."
+      },
+      "connectionString": {
+        "label": "ODBC connection string",
+        "placeholder": "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=/data/sales.accdb;",
+        "helpText": "Optional for Access. When set, overrides building the ODBC string from the file path."
+      },
+      "host": {
+        "label": "Host",
+        "placeholder": "127.0.0.1"
+      },
+      "port": {
+        "label": "Port",
+        "placeholder": "5432"
+      },
+      "database": {
+        "label": "Database",
+        "placeholder": "analytics"
+      },
+      "schema": {
+        "label": "Schema",
+        "placeholder": "public"
+      },
+      "username": {
+        "label": "Username",
+        "placeholder": "readonly_user"
+      },
+      "password": {
+        "label": "Password",
+        "placeholder": "••••••",
+        "helpText": "Stored in secretRef; read APIs never return plaintext."
+      },
+      "secure": {
+        "label": "HTTPS"
+      },
+      "projectId": {
+        "label": "Project ID",
+        "placeholder": "my-gcp-project"
+      },
+      "dataset": {
+        "label": "Dataset",
+        "placeholder": "analytics"
+      },
+      "credentialsJson": {
+        "label": "Credentials JSON",
+        "placeholder": "{ ... }"
+      },
+      "account": {
+        "label": "Account",
+        "placeholder": "xy12345.us-east-1"
+      },
+      "warehouse": {
+        "label": "Warehouse",
+        "placeholder": "COMPUTE_WH"
+      },
+      "tableAllowlist": {
+        "label": "Table allowlist",
+        "placeholder": "orders, customers",
+        "helpText": "Comma-separated. Leave empty to allow all tables."
+      },
+      "refreshIntervalSec": {
+        "label": "Schema refresh interval (seconds)",
+        "placeholder": "3600"
+      },
+      "denyWrite": {
+        "label": "Deny writes",
+        "helpText": "The backend currently enforces read-only access; this policy switch is pending."
+      },
+      "maskFields": {
+        "label": "Masked fields",
+        "placeholder": "phone, email",
+        "helpText": "Comma-separated field names to mask in query results."
+      },
+      "allowSample": {
+        "label": "Allow sampling"
+      },
+      "maxSampleRows": {
+        "label": "Max sample rows",
+        "placeholder": "100"
+      },
+      "maxRows": {
+        "label": "Max returned rows",
+        "placeholder": "10000"
+      },
+      "timeoutMs": {
+        "label": "Query timeout (ms)",
+        "placeholder": "30000"
+      }
+    },
+    "kb": {
+      "indexName": {
+        "label": "Index name",
+        "placeholder": "metrics-docs"
+      },
+      "scope": {
+        "label": "Scope"
+      },
+      "retrievalTopK": {
+        "label": "Retrieval Top K",
+        "placeholder": "5"
+      },
+      "scoreThreshold": {
+        "label": "Score threshold",
+        "placeholder": "0.2",
+        "helpText": "Default filtering threshold for knowledge search and retrieve_knowledge."
+      },
+      "embeddingProvider": {
+        "label": "Embedding Provider"
+      },
+      "embeddingModel": {
+        "label": "Embedding Model",
+        "placeholder": "text-embedding-v4"
+      },
+      "embeddingBaseUrl": {
+        "label": "Embedding Base URL",
+        "placeholder": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      },
+      "embeddingApiKey": {
+        "label": "Embedding API Key",
+        "placeholder": "sk-...",
+        "helpText": "Stored in secretRef. Falls back to server EMBEDDING_* environment variables when unset."
+      },
+      "vectorStore": {
+        "label": "Vector store type"
+      },
+      "rerankEnabled": {
+        "label": "Enable rerank"
+      },
+      "rerankModel": {
+        "label": "Rerank Model",
+        "placeholder": "gte-rerank"
+      },
+      "citationRequired": {
+        "label": "Require citations",
+        "helpText": "Answers must include KB citations."
+      },
+      "chunkSize": {
+        "label": "Chunk size",
+        "placeholder": "1600"
+      },
+      "chunkOverlap": {
+        "label": "Chunk overlap",
+        "placeholder": "200"
+      },
+      "graphRagEnabled": {
+        "label": "GraphRAG"
+      }
+    },
+    "mcp": {
+      "transport": {
+        "label": "Transport",
+        "helpText": "Remote MCP commonly uses SSE or Streamable HTTP; stdio uses a local launch command."
+      },
+      "serverUrl": {
+        "label": "Endpoint / launch command",
+        "placeholder": "https://example.com/mcp/sse",
+        "helpText": "For remote transports, enter the MCP service URL. For stdio, a full launch command can be used as fallback."
+      },
+      "apiUrl": {
+        "label": "Data API endpoint",
+        "placeholder": "https://example.com",
+        "helpText": "Used by the DataLink workspace graph. Leave empty for MCP-only services."
+      },
+      "command": {
+        "label": "Executable",
+        "placeholder": "/usr/bin/npx",
+        "helpText": "In stdio mode, command + args are preferred. Leave empty to fall back to the full command above."
+      },
+      "args": {
+        "label": "Launch arguments",
+        "placeholder": "-y @modelcontextprotocol/server-filesystem /data",
+        "helpText": "Space-separated; written to the backend args array."
+      },
+      "cwd": {
+        "label": "Working directory",
+        "placeholder": "/home/agent/workspace"
+      },
+      "env": {
+        "label": "Environment variables (JSON)",
+        "helpText": "JSON object with string keys and values."
+      },
+      "authType": {
+        "label": "Authentication method"
+      },
+      "apiKey": {
+        "label": "Token / API Key",
+        "placeholder": "••••••",
+        "helpText": "Stored in secretRef for Bearer authentication."
+      },
+      "toolAllowlist": {
+        "label": "Tool allowlist",
+        "placeholder": "search, fetch_page",
+        "helpText": "Comma-separated. Leave empty to allow all tools in the manifest."
+      },
+      "timeoutMs": {
+        "label": "Per-tool timeout (ms)",
+        "placeholder": "30000"
+      }
+    },
+    "llm": {
+      "provider": {
+        "label": "Provider",
+        "helpText": "All chat models use the OpenAI-compatible /chat/completions path."
+      },
+      "baseUrl": {
+        "label": "Base URL",
+        "placeholder": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "helpText": "OpenAI-compatible Chat Completions base URL (without /chat/completions)."
+      },
+      "apiKey": {
+        "label": "API Key",
+        "placeholder": "sk-...",
+        "helpText": "Stored in secretRef; never sent through AG-UI during runs."
+      },
+      "modelName": {
+        "label": "Model Name",
+        "placeholder": "qwen-plus",
+        "helpText": "Chat model id (for example gpt-4o, qwen-plus, deepseek-chat)."
+      },
+      "fallbackProfileId": {
+        "label": "Fallback Profile",
+        "placeholder": "None",
+        "helpText": "Fallback chain used when the primary profile fails."
+      },
+      "timeoutMs": {
+        "label": "Timeout (ms)",
+        "placeholder": "300000",
+        "helpText": "Whole-run timeout for multi-step agent tasks (not just a single LLM call). Use 300000–600000 for deep analysis."
+      },
+      "temperature": {
+        "label": "Temperature",
+        "placeholder": "0.2"
+      },
+      "maxTokens": {
+        "label": "Max Tokens",
+        "placeholder": "4096"
+      },
+      "topP": {
+        "label": "Top P",
+        "placeholder": "1.0"
+      },
+      "frequencyPenalty": {
+        "label": "Frequency Penalty",
+        "placeholder": "0"
+      },
+      "presencePenalty": {
+        "label": "Presence Penalty",
+        "placeholder": "0"
+      },
+      "reasoningModel": {
+        "label": "Reasoning Model"
+      },
+      "contextLength": {
+        "label": "Context Length",
+        "placeholder": "128000"
+      }
+    },
+    "skill": {
+      "packageFileName": {
+        "label": "Package file"
+      },
+      "packageFormat": {
+        "label": "Format"
+      },
+      "packageVersion": {
+        "label": "Version"
+      },
+      "allowedTools": {
+        "label": "Allowed tools"
+      },
+      "defaultDbIds": {
+        "label": "Default data sources",
+        "placeholder": "sales-db, analytics-pg",
+        "helpText": "Comma-separated datasource ids. Added automatically to the run when the skill matches."
+      },
+      "defaultKbIds": {
+        "label": "Default knowledge bases",
+        "placeholder": "metrics-docs"
+      },
+      "defaultMcpIds": {
+        "label": "Default MCP",
+        "placeholder": "notion"
+      },
+      "modelProfileId": {
+        "label": "Default model profile",
+        "placeholder": "qwen-plus-default"
+      }
+    }
+  },
+  "configOptions": {
+    "db": {
+      "mode": {
+        "readonly": "Read-only (currently the only supported mode)"
+      },
+      "type": {
+        "duckdb": "DuckDB (file)",
+        "sqlite": "SQLite (file)",
+        "csv": "CSV file",
+        "xlsx": "Excel file"
+      }
+    },
+    "kb": {
+      "scope": {
+        "personal": "Personal",
+        "workspace": "Workspace",
+        "project": "Project"
+      },
+      "embeddingProvider": {
+        "bailian": "Bailian DashScope (bailian)",
+        "openai-compatible": "OpenAI compatible",
+        "openai": "OpenAI"
+      },
+      "vectorStore": {
+        "local-sqlite": "Local SQLite (current default)",
+        "chroma": "Chroma",
+        "milvus": "Milvus",
+        "pgvector": "pgvector",
+        "elasticsearch": "Elasticsearch"
+      }
+    },
+    "mcp": {
+      "transport": {
+        "sse": "SSE (Server-Sent Events)",
+        "streamable-http": "Streamable HTTP",
+        "stdio": "stdio (local command)"
+      },
+      "authType": {
+        "none": "No authentication",
+        "bearer": "Bearer Token",
+        "custom-header": "Custom header (pending backend)"
+      }
+    },
+    "llm": {
+      "provider": {
+        "openai-compatible": "OpenAI compatible (LLM_PROVIDER=openai-compatible)"
+      },
+      "fallbackProfileId": {
+        "__none__": "None"
+      }
+    }
+  },
+  "steps": {
+    "inspect": "Schema",
+    "query": "Query",
+    "transform": "Transform",
+    "fetch": "Fetch",
+    "visualize": "Visualize",
+    "knowledge": "Knowledge",
+    "other": "Data operation",
+    "stepMeta": "Step {{n}} · {{kind}}",
+    "stepMetaTools": "Step {{n}} · {{kind}} · {{count}} tool calls"
+  }
+}

@@ -1,0 +1,486 @@
+@import "tailwindcss";
+
+:root {
+  /* Codex-style neutral workbench palette */
+  --primary: #0d0d0d;
+  --primary-light: #3a3a3a;
+  --accent: #737373;
+  --surface: #ffffff;
+  --surface-subtle: #f7f7f8;
+  --border: #ececf0;
+  --foreground: #0d0d0d;
+  /* Text hierarchy — use --text-* (not --muted) so CopilotKit's [data-copilotkit] scope
+     cannot override secondary copy colors (it redefines --muted as a surface tone). */
+  --text-secondary: #4d4d4d;
+  --text-tertiary: #8a8a99;
+  --muted: var(--text-secondary);
+  --muted-light: var(--text-tertiary);
+  --muted-foreground: var(--text-secondary);
+  --code-bg: #171717;
+
+  /* Semantic step tones — muted, low-chroma jewel palette for a restrained feel */
+  --step-inspect: #4d6f96;
+  --step-query: #74628f;
+  --step-transform: #3f827f;
+  --step-fetch: #3f769b;
+  --step-visualize: #635c8e;
+  --step-knowledge: #3f7480;
+  --step-success: #3f7d63;
+  --step-warning: #9a6a30;
+  --step-error: #a24f49;
+  --step-glow: rgb(13 13 13 / 0.08);
+
+  --radius-card: 0.625rem;
+  --shadow-card: 0 1px 1px rgb(13 13 13 / 0.02);
+  --shadow-card-hover: 0 2px 8px rgb(13 13 13 / 0.04);
+
+  /* Overlay scrollbars — hidden until the scroll container is hovered/focused */
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: rgb(13 13 13 / 0.16);
+  --scrollbar-thumb-hover: rgb(13 13 13 / 0.28);
+
+  /* Local system stacks — avoid next/font/google (Turbopack + offline CDN failures).
+     Include CJK-capable faces so zh-CN copy does not fall back to missing-glyph boxes
+     on Linux/WSL environments that ship WenQuanYi / Noto CJK. */
+  --font-inter: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC",
+    "WenQuanYi Micro Hei", sans-serif; /* CJK_FALLBACK_STACK_V1 */
+  --font-fira-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+}
+
+@theme inline {
+  --color-background: var(--surface-subtle);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-light: var(--primary-light);
+  --color-accent: var(--accent);
+  --color-surface: var(--surface);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-border: var(--border);
+  --color-muted: var(--text-secondary);
+  --color-muted-light: var(--text-tertiary);
+  --color-code-bg: var(--code-bg);
+  --color-step-inspect: var(--step-inspect);
+  --color-step-query: var(--step-query);
+  --color-step-transform: var(--step-transform);
+  --color-step-fetch: var(--step-fetch);
+  --color-step-visualize: var(--step-visualize);
+  --color-step-knowledge: var(--step-knowledge);
+  --color-step-success: var(--step-success);
+  --color-step-warning: var(--step-warning);
+  --color-step-error: var(--step-error);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-fira-code);
+}
+
+body {
+  background: var(--surface-subtle);
+  color: var(--foreground);
+  font-family: var(--font-inter);
+}
+
+/* macOS / VS Code–style overlay scrollbars: hidden by default, visible on hover/focus */
+@supports (scrollbar-width: thin) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  *:hover,
+  *:focus-within {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
+  [data-chat-column]:not(:hover) * {
+    scrollbar-color: transparent transparent;
+  }
+
+  .scrollbar-always {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.15s ease;
+}
+
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+[data-chat-column]:not(:hover) *::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.scrollbar-always::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+/* CopilotKit stick-to-bottom reserves a gutter on both edges; match app overlay scrollbars. */
+[data-copilotkit] .cpk\:overflow-y-auto {
+  scrollbar-gutter: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}
+
+nextjs-portal {
+  display: none;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes step-border-pulse {
+  0%,
+  100% {
+    box-shadow: var(--shadow-card);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--step-glow),
+      var(--shadow-card-hover);
+  }
+}
+
+@keyframes guide-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes account-menu-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.account-menu-popover-in {
+  animation: account-menu-popover-in 140ms ease-out;
+}
+
+@keyframes auth-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.auth-card-in {
+  animation: auth-card-in 220ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-card-in {
+    animation: none;
+  }
+}
+
+@keyframes collapsed-sidebar-preview-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.group:hover .collapsed-sidebar-preview-in,
+.group:focus-within .collapsed-sidebar-preview-in {
+  animation: collapsed-sidebar-preview-in 160ms ease-out;
+}
+
+@keyframes guide-highlight-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 9999px rgb(15 15 15 / 0.18),
+      0 0 0 0 rgb(13 13 13 / 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 0 9999px rgb(15 15 15 / 0.18),
+      0 0 0 6px rgb(13 13 13 / 0.08);
+  }
+}
+
+.step-enter {
+  animation: step-in 0.28s ease-out both;
+}
+
+.step-streaming {
+  animation:
+    step-in 0.28s ease-out both,
+    step-border-pulse 2.2s ease-in-out infinite;
+}
+
+.caret-blink {
+  animation: caret-blink 1s step-end infinite;
+}
+
+.guide-popover-in {
+  animation: guide-popover-in 0.18s ease-out both;
+}
+
+.guide-highlight-pulse {
+  animation: guide-highlight-pulse 1.8s ease-in-out infinite;
+}
+
+.step-chevron {
+  transition: transform 0.2s ease;
+}
+
+.step-chevron[data-expanded="true"] {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-enter,
+  .step-streaming,
+  .caret-blink,
+  .guide-popover-in,
+  .guide-highlight-pulse {
+    animation: none;
+  }
+
+  .step-chevron {
+    transition: none;
+  }
+}
+
+/* CopilotKit preflight resets [data-copilotkit] button — restore HITL choice styling */
+[data-copilotkit] button.hitl-choice-option {
+  appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  border: 1px solid var(--border);
+  background-color: var(--surface-subtle);
+  color: var(--foreground);
+}
+
+[data-copilotkit] button.hitl-choice-option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  background-color: color-mix(in srgb, var(--primary-light) 8%, var(--surface-subtle));
+  box-shadow: var(--shadow-card-hover);
+}
+
+[data-copilotkit] button.hitl-choice-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-light) 45%, transparent);
+}
+
+/* CopilotKit preflight resets [data-copilotkit] button — restore HITL secondary actions */
+[data-copilotkit] button.hitl-action-btn-secondary {
+  appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  color: var(--foreground);
+}
+
+[data-copilotkit] button.hitl-action-btn-secondary:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary-light) 40%, var(--border));
+  background-color: var(--surface-subtle);
+}
+
+[data-copilotkit] button.hitl-action-btn-secondary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-light) 50%, transparent);
+}
+
+/* CopilotKit preflight resets [data-copilotkit] button — restore chat model picker label */
+[data-copilotkit] button.chat-model-picker {
+  appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  color: var(--foreground);
+}
+
+[data-copilotkit] button.chat-model-picker:hover:not(:disabled) {
+  color: var(--primary);
+}
+
+[data-copilotkit] button.chat-model-picker-footer {
+  appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  color: var(--foreground);
+}
+
+[data-copilotkit] button.chat-model-picker-footer:hover:not(:disabled) {
+  color: var(--primary);
+}
+
+/* CopilotKit preflight resets [data-copilotkit] button — restore reasoning header label */
+[data-copilotkit] button.chat-reasoning-header {
+  appearance: none;
+  box-sizing: border-box;
+  margin: 0;
+  color: var(--foreground);
+}
+
+[data-copilotkit] button.chat-reasoning-header:hover:not(:disabled) {
+  color: var(--primary);
+}
+
+[data-copilotkit] button.chat-reasoning-header span[class*="rounded-full"] {
+  background-color: var(--primary-light);
+}
+
+/* CopilotKit intelligence pill — strengthen in-progress label/icon contrast */
+[data-copilotkit] .chat-intelligence-indicator .cpk-intelligence-indicator__content {
+  color: var(--primary);
+}
+
+[data-copilotkit] .chat-intelligence-indicator[data-status="finished"] .cpk-intelligence-indicator__content {
+  color: var(--text-tertiary);
+}
+
+[data-copilotkit] .chat-intelligence-indicator .cpk-intelligence-indicator__label {
+  color: inherit;
+}
+
+/* CopilotKit stream cursor between assistant turns */
+[data-copilotkit] .chat-stream-cursor {
+  background-color: var(--primary-light);
+}
+
+/* Inline assistant loading row (avatar + pill dots) */
+[data-copilotkit] .chat-assistant-loading-pill {
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  background-color: var(--surface-subtle);
+}
+
+.chat-assistant-loading-dot {
+  background-color: var(--primary-light);
+  animation: chat-loading-dot 1.2s ease-in-out infinite;
+}
+
+.chat-assistant-loading-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat-assistant-loading-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes chat-loading-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+}
+
+/* Sidebar session running indicator — dual counter-rotating orbits */
+.session-sidebar-running-icon {
+  color: var(--primary-light);
+}
+
+.session-sidebar-running-orbit {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: session-sidebar-running-orbit 1.15s linear infinite;
+}
+
+.session-sidebar-running-orbit-inner {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: session-sidebar-running-orbit-reverse 0.95s linear infinite;
+}
+
+@keyframes session-sidebar-running-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes session-sidebar-running-orbit-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-assistant-loading-dot {
+    animation: none;
+    opacity: 0.85;
+  }
+
+  .session-sidebar-running-orbit,
+  .session-sidebar-running-orbit-inner {
+    animation: none;
+  }
+}

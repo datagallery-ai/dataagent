@@ -1,0 +1,38 @@
+{
+  "name": "@datafoundry/api",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@ag-ui/client": "^0.0.57",
+    "@ag-ui/mastra": "^1.0.3",
+    "@copilotkit/runtime": "0.0.0-mme-ag-ui-0-0-46-20260227141603",
+    "@datafoundry/agent-runtime": "0.2.0",
+    "@datafoundry/contracts": "0.2.0",
+    "@datafoundry/data-gateway": "0.2.0",
+    "@datafoundry/files": "0.2.0",
+    "@datafoundry/knowledge": "0.2.0",
+    "@datafoundry/metadata": "0.2.0",
+    "@datafoundry/skills": "0.2.0",
+    "@mastra/core": "^1.46.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "argon2": "^0.44.0",
+    "busboy": "^1.6.0",
+    "dotenv": "^17.2.1",
+    "js-yaml": "^5.0.0",
+    "nodemailer": "^9.0.3",
+    "unpdf": "^1.6.2",
+    "write-excel-file": "^4.1.1",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

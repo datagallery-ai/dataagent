@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   inkscape:export-ydpi="193.27"
+   inkscape:export-xdpi="193.27"
+   inkscape:version="1.0beta1 (32d4812, 2019-09-19)"
+   sodipodi:docname="presto-icon.svg"
+   version="1.1"
+   id="Layer_1"
+   x="0px"
+   y="0px"
+   viewBox="0 0 500 428.2624"
+   enable-background="new 0 0 320 102.667"
+   xml:space="preserve"
+   width="500"
+   height="428.26239">
+  <sodipodi:namedview
+     inkscape:current-layer="Layer_1"
+     inkscape:window-maximized="0"
+     inkscape:window-y="475"
+     inkscape:window-x="208"
+     inkscape:cy="560"
+     inkscape:cx="399.99996"
+     inkscape:zoom="0.35"
+     showgrid="false"
+     id="namedview37"
+     inkscape:window-height="907"
+     inkscape:window-width="1600"
+     inkscape:pageshadow="2"
+     inkscape:pageopacity="0"
+     guidetolerance="10"
+     gridtolerance="10"
+     objecttolerance="10"
+     borderopacity="1"
+     inkscape:document-rotation="0"
+     bordercolor="#666666"
+     pagecolor="#ffffff" />
+  <metadata
+     id="metadata71">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <defs
+     id="defs69" />
+  <g
+     id="g62"
+     transform="matrix(5.0302202,0,0,5.0302202,-1096.2445,-9.7772194)">
+    <g
+       id="g46">
+      <circle
+         style="fill:#5b87da"
+         r="4.6329999"
+         id="ellipse16"
+         cy="6.5830002"
+         cx="272.97"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,75.2889,194.9389)" />
+      <circle
+         style="fill:#5b87da"
+         r="5.1469998"
+         id="ellipse18"
+         cy="19.312"
+         cx="285.70001"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,70.0236,207.6766)" />
+      <ellipse
+         style="fill:#5b87da"
+         id="ellipse20"
+         ry="5.6599998"
+         rx="5.6609998"
+         cy="32.042"
+         cx="298.42899"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,64.7566,220.4137)" />
+      <ellipse
+         style="fill:#5b87da"
+         id="ellipse22"
+         ry="6.1739998"
+         rx="6.1750002"
+         cy="44.771999"
+         cx="311.159"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,59.4777,233.1359)" />
+      <circle
+         style="fill:#1edcff"
+         r="4.119"
+         id="ellipse24"
+         cy="6.5830002"
+         cx="247.511"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,67.8322,176.9367)" />
+      <circle
+         style="fill:#1edcff"
+         r="4.6329999"
+         id="ellipse26"
+         cy="19.312"
+         cx="260.23999"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,62.5669,189.6742)" />
+      <circle
+         style="fill:#1edcff"
+         r="5.1469998"
+         id="ellipse28"
+         cy="32.042"
+         cx="272.97"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,57.2882,202.3964)" />
+      <circle
+         style="fill:#1edcff"
+         r="5.6609998"
+         id="ellipse30"
+         cy="44.771999"
+         cx="285.70001"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,52.0167,215.1274)" />
+      <ellipse
+         style="fill:#1edcff"
+         id="ellipse32"
+         ry="6.1739998"
+         rx="6.1750002"
+         cy="57.500999"
+         cx="298.42899"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,46.7535,227.8705)" />
+      <circle
+         r="3.605"
+         id="ellipse34"
+         cy="6.5819998"
+         cx="222.052"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,60.3907,158.9503)" />
+      <circle
+         r="4.119"
+         id="ellipse36"
+         cy="19.312"
+         cx="234.782"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,55.1036,171.664)" />
+      <circle
+         r="4.6329999"
+         id="ellipse38"
+         cy="32.042"
+         cx="247.511"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,49.8433,184.4092)" />
+      <circle
+         r="5.1469998"
+         id="ellipse40"
+         cy="44.771"
+         cx="260.241"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,44.5704,197.1387)" />
+      <ellipse
+         id="ellipse42"
+         ry="5.6599998"
+         rx="5.6609998"
+         cy="57.500999"
+         cx="272.97"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,39.2976,209.8698)" />
+      <ellipse
+         id="ellipse44"
+         ry="6.1739998"
+         rx="6.1750002"
+         cy="70.231003"
+         cx="285.70001"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,34.0145,222.5829)" />
+    </g>
+    <g
+       id="g60">
+      <circle
+         style="fill:#5b87da"
+         r="4.119"
+         id="ellipse48"
+         cy="57.500999"
+         cx="247.51199"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,31.8295,191.8493)" />
+      <circle
+         style="fill:#5b87da"
+         r="4.119"
+         id="ellipse50"
+         cy="70.230003"
+         cx="234.783"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,19.101,186.5767)" />
+      <circle
+         style="fill:#5b87da"
+         r="4.119"
+         id="ellipse52"
+         cy="82.959"
+         cx="222.05299"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,6.3767,181.3135)" />
+      <circle
+         style="fill:#5b87da"
+         r="4.119"
+         id="ellipse54"
+         cy="82.959999"
+         cx="247.51199"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,13.8286,199.3076)" />
+      <circle
+         style="fill:#5b87da"
+         r="4.119"
+         id="ellipse56"
+         cy="82.960999"
+         cx="272.97"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,21.2889,217.318)" />
+      <circle
+         style="fill:#5b87da"
+         r="4.119"
+         id="ellipse58"
+         cy="70.230003"
+         cx="260.241"
+         transform="matrix(0.7071,-0.7071,0.7071,0.7071,26.5569,204.578)" />
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,16 @@
+{
+  "name": "@datafoundry/providers",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit false"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.73",
+    "@datafoundry/contracts": "0.2.0"
+  }
+}

@@ -1,0 +1,1080 @@
+{
+  "common": {
+    "backToWorkspace": "返回工作区",
+    "back": "返回",
+    "close": "关闭",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "actions": "操作",
+    "copy": "复制",
+    "copied": "已复制",
+    "name": "名称",
+    "description": "描述",
+    "notes": "说明",
+    "ready": "就绪",
+    "notStarted": "未开始",
+    "running": "运行中",
+    "waiting": "等待中",
+    "completed": "已完成",
+    "failed": "失败",
+    "canceled": "已取消",
+    "idle": "空闲",
+    "connected": "已连接",
+    "unavailable": "不可用",
+    "notTested": "未测试",
+    "oldest": "最早",
+    "newest": "最新",
+    "pinned": "已置顶",
+    "enable": "启用",
+    "disable": "禁用",
+    "loading": "加载中…",
+    "edit": "编辑",
+    "upload": "上传",
+    "refresh": "刷新",
+    "refreshing": "刷新中…",
+    "search": "搜索",
+    "yes": "是",
+    "no": "否",
+    "saving": "保存中…",
+    "download": "下载",
+    "test": "测试",
+    "browse": "浏览",
+    "reset": "重置",
+    "parsing": "解析中…",
+    "uploading": "上传中…"
+  },
+  "language": {
+    "switchToEnglish": "切换到英文",
+    "switchToChinese": "切换到中文",
+    "englishShort": "EN",
+    "chineseShort": "中"
+  },
+  "sidebar": {
+    "brand": "DataFoundry",
+    "sessionCount": "{{count}} 个会话",
+    "workspaceResources": "工作区资源",
+    "newTask": "新建数据任务",
+    "searchConversations": "搜索会话",
+    "sessions": "会话",
+    "history": "历史",
+    "noMatchingSessions": "没有匹配的会话。",
+    "collapseToRail": "折叠为工作区侧栏",
+    "expandToSidebar": "展开为固定侧栏",
+    "expandRail": "展开工作区侧栏",
+    "railLabel": "工作区侧栏",
+    "sessionActions": "会话操作：{{title}}",
+    "resizeSidebar": "调整工作区侧栏宽度"
+  },
+  "resources": {
+    "dataSources": "数据源",
+    "dataLink": "Data Link",
+    "knowledge": "知识库",
+    "agentTools": "Agent 工具",
+    "models": "模型",
+    "assets": "资源文件",
+    "backendUnsupported": "后端暂不支持",
+    "mcpUnsupported": "MCP 暂不支持",
+    "skillsUnsupported": "Skills 暂不支持",
+    "dataSource": "数据源",
+    "mcp": "MCP",
+    "skills": "Skills"
+  },
+  "session": {
+    "defaultTitle": "新数据任务",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "share": "分享",
+    "rename": "重命名",
+    "delete": "删除",
+    "sharingDisabled": "分享功能等待后端支持"
+  },
+  "userBar": {
+    "currentUser": "当前用户",
+    "settings": "设置",
+    "signOut": "退出登录"
+  },
+  "chat": {
+    "openConsole": "控制台",
+    "initializingSession": "正在初始化会话…",
+    "answer": "回答",
+    "answering": "回答中",
+    "thinking": "思考中",
+    "generating": "生成中",
+    "waitingForInput": "等待输入",
+    "collaborating": "协作中",
+    "toolCalls": "工具调用",
+    "copyMessage": "复制此消息",
+    "copiedMessage": "已复制",
+    "addedToClipboard": "已添加到剪贴板",
+    "resizeConsole": "调整任务控制台宽度",
+    "workProcess": "工作过程",
+    "stepCount": "{{count}} 步",
+    "stepCountPlural": "{{count}} 步",
+    "toolCount": "{{count}} 个工具 · {{elapsed}}",
+    "toolCountPlural": "{{count}} 个工具 · {{elapsed}}",
+    "expandStep": "展开步骤",
+    "collapseStep": "收起步骤",
+    "viewStepDetails": "在任务控制台查看步骤详情"
+  },
+  "tools": {
+    "list_data_sources": "列出数据源",
+    "inspect_schema": "检查 Schema",
+    "preview_table": "预览数据",
+    "run_sql_readonly": "运行查询",
+    "retrieve_knowledge": "检索知识库",
+    "read_file": "读取文件",
+    "edit_file": "编辑文件",
+    "write_file": "写入文件",
+    "list_files": "浏览文件",
+    "grep": "搜索文件",
+    "mkdir": "创建目录",
+    "file_stat": "查看文件信息",
+    "execute_command": "运行命令",
+    "promote_workspace_file": "提升工作区文件",
+    "task_write": "写入任务",
+    "task_update": "更新任务",
+    "task_complete": "完成任务",
+    "task_check": "检查任务",
+    "ask_user": "等待确认",
+    "submit_plan": "提交计划",
+    "runTool": "运行工具"
+  },
+  "chatInput": {
+    "placeholder": "输入数据问题…",
+    "model": "模型",
+    "modelList": "模型列表",
+    "selectModel": "选择模型",
+    "enableLlmFirst": "请先在配置面板中启用 LLM。",
+    "modelNotTested": "该模型尚未通过连接测试",
+    "modelNotTestedHint": "该模型尚未通过连接测试。请在模型配置中运行「测试连接」。",
+    "modelBlocked": "模型「{{name}}」尚未通过连接测试。请打开模型配置并运行「测试连接」后再使用。",
+    "datasourceBlocked": "数据源「{{name}}」尚未通过连接测试。请打开数据源配置并运行「测试连接」后再使用。",
+    "manageModelConfig": "管理模型配置…",
+    "sendNow": "立即发送",
+    "sendQueuedNow": "立即发送排队消息",
+    "editQueued": "编辑排队消息",
+    "deleteQueued": "删除排队消息",
+    "saveQueued": "保存",
+    "cancelQueued": "取消",
+    "dropFiles": "将文件拖放到此处上传",
+    "sessionBusyTitle": "会话正在其他端运行",
+    "sessionBusyBody": "同一对话同时只能有一个进行中的任务。你可以排队等待、中断对方任务后发送，或取消本次发送。",
+    "sessionBusyPreview": "对方正在处理：{{preview}}",
+    "sessionBusyWait": "排队等待",
+    "sessionBusyWaiting": "已加入队列…",
+    "sessionBusyInterrupt": "中断并发送",
+    "sessionBusyInterrupting": "正在中断…",
+    "sessionBusyDismiss": "取消发送",
+    "sessionRemoteBusyBanner": "此对话正在其他端运行中，发送新消息前会提示你选择处理方式。",
+    "localQueuedNotice": "当前任务未完成，消息已加入发送队列。"
+  },
+  "sessionConfig": {
+    "agentToolsSettings": "Agent 工具会话设置",
+    "locked": "已锁定",
+    "currentChat": "当前对话",
+    "lockedHelp": "数据源与知识库选择在本对话首条消息发送后将锁定。",
+    "scopeHelp": "仅控制本对话使用的资源。全局资源请从左侧工作区资源管理。",
+    "agentToolsScopeHelp": "仅控制本对话使用的 MCP 服务器与 Skills。",
+    "noConfigurationYet": "尚未配置。请从左侧工作区资源添加。",
+    "noConfigurationShort": "尚未配置。"
+  },
+  "console": {
+    "title": "任务控制台",
+    "close": "关闭任务控制台",
+    "tabs": {
+      "overview": "概览",
+      "trace": "追踪",
+      "outputs": "输出",
+      "details": "详情"
+    },
+    "sections": {
+      "summary": "摘要",
+      "progress": "进度",
+      "outputs": "输出",
+      "outputsSession": "输出（会话）"
+    },
+    "traceDag": {
+      "title": "追踪 DAG",
+      "open": "打开追踪 DAG"
+    },
+    "empty": {
+      "noStepSelected": "未选择步骤",
+      "noStepSelectedDescription": "从中间工具卡片或追踪时间线中选择一个步骤，查看耗时、操作详情与输出来源。",
+      "goToOverview": "查看概览",
+      "noStepsYet": "暂无步骤",
+      "noStepsYetDescription": "发送问题后，处理步骤会按顺序显示在这里。并行工具会合并到同一步骤下。",
+      "noOutputs": "暂无输出",
+      "noOutputsDescription": "提问后，SQL、数据集、图表与报告会显示在这里。可在弹窗中预览，或通过「引用」在右侧打开以选中表格/文本或引用全部。"
+    },
+    "outputsHintExport": "可在弹窗中预览任意输出，或通过「引用」在右侧打开以选中部分或引用全部。",
+    "outputsHint": "可在弹窗中预览任意输出，或通过「引用」在右侧打开。",
+    "outputsHintBackend": "预览与下载需要后端产物 API。",
+    "preview": "预览",
+    "previewTitle": "在页面浮层弹窗中预览此输出",
+    "previewDialogLabel": "预览：{{title}}",
+    "cite": "引用",
+    "citeTitle": "在右侧打开，可选中表格/文本引用，也可引用全部",
+    "seeOutputsTab": "完整列表请见「输出」标签页。",
+    "metricOutputs": "输出",
+    "metricItems": "{{count}} 项",
+    "currentQuestion": "当前问题",
+    "startPrompt": "发送问题以启动 DataFoundry。",
+    "steps": "步骤",
+    "stepsSession": "步骤（会话）",
+    "successRate": "成功率",
+    "tokenCost": "Token / 费用",
+    "toolCallsMeta": "{{count}} 次工具调用",
+    "itemsMeta": "项",
+    "toolDistribution": "工具分布",
+    "dataTrail": "数据轨迹",
+    "stepDetails": "步骤详情 · 步骤 {{n}}",
+    "versionHistory": "版本历史",
+    "noVersionsYet": "暂无版本",
+    "addToProject": "添加到项目",
+    "adding": "添加中…",
+    "addedToProject": "已添加到项目",
+    "viewSource": "查看来源",
+    "download": "下载",
+    "downloading": "下载中",
+    "downloadingEllipsis": "下载中…",
+    "downloadFile": "下载文件",
+    "downloadCsv": "下载 CSV",
+    "downloadXlsx": "下载 XLSX",
+    "preparingCsv": "正在准备 CSV…",
+    "preparingXlsx": "正在准备 XLSX…",
+    "backgroundExportXlsx": "后台导出 XLSX",
+    "submitting": "提交中…",
+    "downloadOutput": "下载输出",
+    "downloadOutputFile": "下载输出文件",
+    "reference": "引用",
+    "referenced": "已添加到聊天输入作为引用",
+    "referenceWhole": "引用全部",
+    "referenceWholeHint": "选择表格区域或文本以引用该部分，或使用「引用全部」引用整个产物。",
+    "pageConsole": "控制台",
+    "closePage": "关闭 {{title}}",
+    "noViewableDetails": "此输出尚无可查看的详情。",
+    "previewUnsupported": "预览数据为空或不支持。",
+    "dataPoints": "数据点",
+    "dataPointsSelect": "数据点（选择以引用）",
+    "scannedRowsMeta": "已扫描 {{rows}} 行",
+    "hideHistory": "隐藏历史",
+    "historyCount": "历史（{{count}}）",
+    "viewVersionHistory": "查看版本历史",
+    "moreActions": "更多操作",
+    "mention": "@ 提及",
+    "noFile": "无文件",
+    "failedToAddToProject": "添加到项目失败",
+    "failedToLoadVersionHistory": "加载版本历史失败",
+    "openFullReport": "打开以查看完整报告",
+    "toolCalls": "工具调用",
+    "usage": "用量",
+    "toolDetails": "工具详情",
+    "outputLineage": "输出来源",
+    "reasoning": "推理",
+    "actionDetails": "操作详情",
+    "workspaceMetadata": "工作区元数据",
+    "sandboxOutput": "沙箱输出",
+    "resultPreview": "结果预览",
+    "htmlPreview": "HTML 预览",
+    "rendered": "渲染",
+    "source": "源码",
+    "collapse": "收起",
+    "expandContent": "展开内容",
+    "noDetails": "暂无详情",
+    "loadingPreview": "正在加载预览…",
+    "noContentSelected": "未选择内容",
+    "noContentSelectedDescription": "选择一项可见输出，查看完整 SQL、数据集、图表或报告。",
+    "noActionSelected": "未选择操作",
+    "noActionSelectedDescription": "选择一项数据操作，查看参数、观察结果与输出。",
+    "noProcessStepSelected": "未选择步骤",
+    "noProcessStepSelectedDescription": "选择一个处理步骤，查看批次耗时、子工具与输出来源。",
+    "stepNoOutputsYet": "此步骤尚未直接产生输出。",
+    "actionNoOutputs": "此操作未直接产生输出。",
+    "noChartData": "暂无图表数据",
+    "noChartDataDescription": "后端声明了图表产物，但尚未返回点/序列预览数据。",
+    "searchResultTable": "搜索结果表",
+    "exportFilteredResult": "导出当前筛选 / 排序结果",
+    "sourceStepNotLinked": "未关联来源步骤",
+    "failedToLoadPreview": "加载预览失败"
+  },
+  "jobs": {
+    "queued": "排队中",
+    "schemaSync": "Schema 同步",
+    "indexRebuild": "索引重建"
+  },
+  "assets": {
+    "title": "资源文件",
+    "description": "可复用的工作区资源，供后续数据任务与 @ 引用使用。",
+    "panelTitle": "工作区文件资源",
+    "panelHelp": "管理工作区可复用文件，供后续 @file 选择或 run_config.fileIds 注入。它们与聊天附件相互独立。",
+    "needSession": "请打开一个聊天会话以启用工作区文件上传。",
+    "needSessionError": "请先选择或打开聊天会话，再上传工作区文件。",
+    "needSessionTitle": "请先选择或打开聊天会话再上传",
+    "loadFailed": "加载文件资源失败",
+    "uploadFailed": "上传失败",
+    "downloadFailed": "下载失败",
+    "deleteFailed": "删除失败",
+    "deleteConfirm": "删除工作区文件「{{name}}」？此操作不可撤销。",
+    "loading": "加载中…",
+    "empty": "暂无可复用的工作区文件。上传文件以添加。",
+    "fileCount": "{{count}} 个文件"
+  },
+  "configPanel": {
+    "workspaceConfiguration": "工作区配置",
+    "chooseDataSource": "选择数据源",
+    "pickAdapter": "选择一个已启用后端的适配器",
+    "dataSourceBrowser": "数据源浏览器",
+    "browseSchema": "浏览 schema 与数据预览",
+    "backToList": "返回{{panel}}列表",
+    "noDataSources": "尚未配置数据源。",
+    "noToolsYet": "暂无工具。请先测试连接以刷新清单。",
+    "loading": "正在从 REST API 加载配置…",
+    "configuredDataSources": "已配置的数据源",
+    "configuredDataSourcesHelp": "浏览已配置数据源、同步 schema，并打开表级预览。",
+    "addDataSource": "添加数据源",
+    "startFromGallery": "从适配器图库开始创建。",
+    "workspaceDefault": "工作区默认",
+    "disabledByDefault": "默认禁用",
+    "secretSaved": "密钥已保存",
+    "testConnection": "测试连接",
+    "testing": "测试中…",
+    "syncSchema": "同步 schema",
+    "reindex": "重建索引",
+    "validateSemantics": "校验语义",
+    "createItem": "创建配置项",
+    "importSkill": "导入 Skill",
+    "unsavedChanges": "有未保存的更改",
+    "enterName": "输入{{kind}}名称",
+    "shortDescription": "简短描述",
+    "configurationId": "配置 ID",
+    "configurationDetails": "配置详情",
+    "packageInformation": "包信息",
+    "uploadDocument": "上传文档",
+    "uploadDocumentHelp": "上传文本文档（.txt / .md / .csv / .tsv / .json / .yaml）或 PDF（.pdf）以进行向量化与检索。",
+    "chooseFile": "选择文件",
+    "uploading": "上传中...",
+    "configuredKnowledgeBases": "已配置的知识库",
+    "configuredKnowledgeBasesHelp": "上传文档进行向量化、浏览已索引文件，并编辑检索设置。",
+    "addKnowledgeBase": "添加知识库",
+    "noKnowledgeBases": "尚未配置知识库。",
+    "startKnowledgeBase": "先创建知识库，再上传文本或 PDF 文件进行向量化。",
+    "uploadAndVectorize": "上传并向量化",
+    "viewDocuments": "查看文件",
+    "knowledgeDocuments": "知识库文档",
+    "browseKnowledgeDocuments": "浏览已上传文档，并继续上传以向量化",
+    "knowledgeDocumentsHelp": "上传到该知识库的文件会被切分并索引，供检索使用。",
+    "noKnowledgeDocuments": "尚未上传文档。",
+    "noKnowledgeDocumentsHelp": "上传 .txt 或 .pdf 文件以向量化到此知识库。",
+    "knowledgeFilename": "文件名",
+    "knowledgeMimeType": "类型",
+    "knowledgeStatus": "状态",
+    "knowledgeDocStatus": {
+      "ready": "就绪",
+      "failed": "失败",
+      "indexing": "索引中",
+      "parsing": "解析中",
+      "uploaded": "已上传"
+    },
+    "knowledgeLoadFailed": "加载文档失败",
+    "knowledgeUploadFailed": "上传文档失败",
+    "knowledgeReindexFailed": "重建索引失败",
+    "knowledgeDeleteFailed": "删除文档失败",
+    "knowledgeRetryFailed": "重试向量化失败",
+    "knowledgeRetry": "重试",
+    "knowledgeDeleteConfirm": "确定永久删除该文档？",
+    "indexStatusLabel": "索引：{{status}}",
+    "configuredMcpServers": "已配置的 MCP 服务器",
+    "configuredMcpServersHelp": "测试连接以刷新工具清单，并编辑服务器设置。",
+    "addMcpServer": "添加 MCP",
+    "noMcpServers": "尚未配置 MCP 服务器。",
+    "startMcpServer": "添加 MCP 服务器连接，以便向 Agent 暴露工具。",
+    "configuredSkills": "已配置的 Skills",
+    "configuredSkillsHelp": "导入 Skill 包、校验语义，并编辑包设置。",
+    "addSkill": "导入 Skill",
+    "noSkills": "尚未配置 Skill。",
+    "startSkill": "导入 SKILL.md 或 .zip 包以开始。",
+    "configuredModels": "已配置的模型",
+    "configuredModelsHelp": "测试模型配置，并管理运行时默认使用的 LLM。",
+    "addModel": "添加模型",
+    "noModels": "尚未配置模型。",
+    "startModel": "添加 LLM 配置，以便数据任务可以调用模型。",
+    "serverEnvVars": "服务端环境变量",
+    "builtinBadge": "内置",
+    "kindDb": "数据源",
+    "kindKb": "知识库",
+    "kindMcp": "MCP",
+    "kindModel": "模型",
+    "kindSkill": "Skill",
+    "titles": {
+      "db": "数据源",
+      "kb": "知识库",
+      "mcp": "Agent 工具",
+      "skill": "Agent 工具",
+      "llm": "模型"
+    },
+    "detailTitles": {
+      "db": "数据源详情",
+      "kb": "知识库详情",
+      "mcp": "MCP 服务器详情",
+      "skill": "Skill 包详情",
+      "llm": "模型配置详情"
+    },
+    "descriptions": {
+      "db": "管理数据库与连接配置。",
+      "kb": "管理工作区知识库的文档、索引与检索设置。",
+      "mcp": "管理 MCP 服务器连接。测试会刷新缓存的工具清单。",
+      "skill": "导入 SKILL.md 或 .zip 包。运行时仅引用 skill id。",
+      "llm": "管理 LLM 模型配置。运行通过 run_config 引用 activeLlmProfileId。"
+    },
+    "addLabels": {
+      "db": "添加数据源",
+      "kb": "添加知识库",
+      "mcp": "添加 MCP",
+      "skill": "导入 Skill",
+      "llm": "添加模型"
+    },
+    "browseSchemaAndData": "浏览 schema 与数据",
+    "secretKeepPlaceholder": "已保存（留空则保持不变）",
+    "builtinItem": "内置配置项",
+    "customItem": "自定义配置项",
+    "availableByDefault": "默认在工作区可用",
+    "chooseLocalFile": "选择本地文件",
+    "uploadedFile": "已上传：{{name}}",
+    "customConfigurationItem": "自定义配置项",
+    "customDataSource": "自定义数据源",
+    "datasourceSuffix": "{{label}} 数据源",
+    "saveFailed": "保存失败",
+    "createFailed": "创建失败",
+    "deleteFailed": "删除失败",
+    "testFailed": "测试失败",
+    "schemaSyncFailed": "Schema 同步失败",
+    "reindexFailed": "重建索引失败",
+    "uploadFailed": "上传失败",
+    "replaceSkillFailed": "替换 Skill 失败",
+    "validationFailed": "校验失败",
+    "loadToolsFailed": "无法加载工具清单",
+    "uploadKnowledgeFailed": "上传知识库文档失败",
+    "uploadDatasourceFailed": "上传数据源文件失败",
+    "notesDb": "数据源通过 REST API 注册。凭据保存在 secretRef 中，读取接口不会返回明文。连接测试与 schema 同步会更新 connectionStatus。",
+    "notesKb": "知识库文档与索引通过 REST API 管理。运行时通过 run_config.enabledKnowledgeIds 检索。",
+    "notesMcp": "MCP 服务器通过 REST API 注册。连接测试会刷新 toolManifest 与 healthStatus。",
+    "notesLlm": "模型配置通过 REST API 管理。运行时通过 run_config.activeLlmProfileId 切换。",
+    "notesSkillBuiltin": "内置 Skill 由服务端提供。运行时只发送 skill id。",
+    "notesSkillCustom": "自定义 Skill 通过 multipart REST 上传。包内容保存在服务端。",
+    "uploadSkillPackage": "上传 Skill 包",
+    "uploadSkillPackageHelp": "支持带 YAML frontmatter 的 SKILL.md，或 .zip 包。创建/替换通过 REST API 上传。",
+    "chooseAnotherFile": "选择其他文件",
+    "selectedFile": "已选择：{{name}}",
+    "skillNotesTitle": "Skill 包说明",
+    "skillNotesStructure": "标准结构：目录中包含 SKILL.md（YAML frontmatter + 说明）",
+    "skillNotesContract": "后端约定：POST /api/v1/skills multipart 上传；运行时只发送 activeSkillId，不发送包内容",
+    "skillNotesBuiltin": "内置 Skill 由服务端提供；前端仅展示元数据",
+    "skillNotesCustom": "自定义 Skill 通过 REST multipart 上传；AG-UI 上下文只携带 skill id",
+    "mcpNotesTitle": "MCP 连接说明",
+    "mcpNotesRemote": "远程服务通常使用 SSE / Streamable HTTP URL，例如 https://host/mcp",
+    "mcpNotesPersist": "配置通过 POST /api/v1/mcp-servers 持久化；令牌保存在 secretRef",
+    "mcpNotesRuns": "运行时通过 run_config.enabledMcpServerIds 挂载 MCP 工具",
+    "llmNotesTitle": "AG-UI / dataFoundry 对齐说明",
+    "llmNotesEnv": "服务端环境变量：LLM_PROVIDER、LLM_BASE_URL、LLM_API_KEY、LLM_MODEL",
+    "llmNotesPersist": "模型配置通过 POST /api/v1/model-profiles 管理；API Key 保存在 secretRef",
+    "llmNotesRuns": "运行时通过 run_config.activeLlmProfileId 切换模型",
+    "llmNotesBuiltin": "服务端默认项只读，对应服务端环境变量中的 LLM 配置",
+    "noToolsManifest": "暂无工具。请先测试连接以刷新清单。",
+    "tabMcp": "MCP",
+    "tabSkills": "Skills",
+    "toolsManifest": "工具清单",
+    "testSucceeded": "测试成功",
+    "testSkipped": "已跳过测试",
+    "testFailedTitle": "测试失败",
+    "testCompleted": "连接测试已完成。",
+    "testProbeUnavailable": "该资源类型暂不支持连通性探测。",
+    "testModelLabel": "模型：{{model}}",
+    "testDurationLabel": "耗时：{{ms}} ms",
+    "testResponseLabel": "响应：{{response}}",
+    "testStatusLabel": "状态：{{status}}",
+    "providerConfigMissing": "模型提供方配置不完整：「{{profile}}」。请检查 API Key、Base URL 与模型名称。",
+    "mcpConfigInvalid": "MCP 服务器配置不完整。请检查 URL/命令与传输方式。",
+    "mcpStdioRequired": "MCP stdio 传输需要提供命令。",
+    "revisionConflict": "测试期间配置已被更新。请刷新后重试。",
+    "resourceDeleted": "测试期间该配置已被删除。请刷新后重试。"
+  },
+  "welcome": {
+    "title": "数据分析工作台",
+    "subtitle": "用自然语言提问。Agent 可检查 Schema、执行只读 SQL，并在控制台展示完整追踪。",
+    "chipSql": "SQL 查询",
+    "chipSchema": "Schema 检查",
+    "chipTrace": "数据追踪",
+    "useThisPrompt": "使用此提示",
+    "footerBeforeAt": "也可直接在下方输入框提问，或用",
+    "footerAfterAt": "选择数据源。",
+    "inspectSchema": "查看 Schema",
+    "inspectSchemaDesc": "列出当前数据源的表与字段",
+    "inspectSchemaPrompt": "展示数据源中的表，并总结每张表的主要字段",
+    "runSql": "运行 SQL 查询",
+    "runSqlDesc": "用自然语言生成并执行只读 SQL",
+    "runSqlPrompt": "查询最近 30 天的订单总量，按日期分组",
+    "analyzeTrends": "分析趋势",
+    "analyzeTrendsDesc": "探索指标变化与异常",
+    "analyzeTrendsPrompt": "分析月度销售趋势，并找出波动最大的月份"
+  },
+  "schema": {
+    "copyTableName": "复制表名",
+    "preview": "预览",
+    "previewHelp": "预览当前对话可用的表与字段。",
+    "loading": "正在加载 schema…",
+    "loadFailed": "加载 schema 失败",
+    "sampleAvailable": "可采样",
+    "empty": "暂无可用的表或字段。",
+    "pasteHint": "复制的表名与字段名可粘贴到聊天输入框。",
+    "rows": "{{count}} 行"
+  },
+  "guide": {
+    "open": "打开快速入门",
+    "dialog": "快速入门",
+    "close": "关闭快速入门",
+    "badge": "快速入门",
+    "stepOf": "第 {{current}} / {{total}} 步",
+    "back": "上一步",
+    "skip": "跳过",
+    "next": "下一步",
+    "finish": "完成",
+    "useThisQuery": "使用此查询",
+    "waitingForSend": "等待发送",
+    "openDatasourceConfig": "打开数据源配置",
+    "openModelConfig": "打开模型配置",
+    "welcome": {
+      "title": "先看清工作区布局",
+      "body": "左侧配置资源，中间提出数据问题，右侧查看任务运行过程与输出结果。"
+    },
+    "resources": {
+      "title": "了解工作区资源",
+      "body": "左侧面板包含数据源、知识库、Agent 工具 / MCP、Skills、模型与资源文件。这些是 Agent 执行任务时可使用的基础能力。"
+    },
+    "datasource": {
+      "title": "确认数据源",
+      "bodyReady": "数据源已就绪：{{id}}。首次任务将基于它进行查询。",
+      "bodyMissing": "运行示例任务前，请先添加或启用数据源。打开数据源配置，创建并测试连接，然后返回本引导。若有演示数据源，这是最快路径。"
+    },
+    "model": {
+      "titleReady": "确认模型",
+      "titleMissing": "连接模型",
+      "bodyReady": "已有可用模型配置。模型会理解问题、协助生成 SQL，并总结结果。",
+      "bodyMissing": "快速入门需要已启用的 LLM 配置。打开模型配置，创建并测试一个配置，然后返回本引导。"
+    },
+    "query": {
+      "title": "使用示例问题",
+      "body": "先从这条示例问题开始：{{prompt}}"
+    },
+    "send": {
+      "title": "发送任务",
+      "bodyReady": "任务已开始。Agent 将检查数据源并执行只读查询。",
+      "bodyWaiting": "请在输入框中确认示例任务，然后点击发送箭头。任务开始后，本步骤才会解锁。"
+    },
+    "console": {
+      "titleRunning": "观察运行过程",
+      "titleIdle": "打开运行控制台",
+      "body": "任务控制台会展示运行状态、步骤、工具调用、追踪与生成的输出。"
+    },
+    "output": {
+      "titleFailed": "检查失败的运行",
+      "titleReady": "查看结果",
+      "bodyFailed": "运行失败。请检查模型与数据源配置，然后重试示例任务。",
+      "bodyReady": "运行完成后，可在此查看回答与输出。你也可以继续追问，或检查追踪详情。"
+    }
+  },
+  "gallery": {
+    "title": "选择数据源类型",
+    "help": "选择一个后端已启用的适配器。下一步会根据该类型的 schema 渲染对应连接字段。",
+    "searchAria": "搜索数据源类型",
+    "searchPlaceholder": "搜索数据库、引擎、文件…",
+    "empty": "没有匹配的数据源类型。",
+    "defaultDescription": "后端已启用的数据源适配器。"
+  },
+  "datasourceCategories": {
+    "local-files": {
+      "title": "本地文件",
+      "description": "嵌入式、本地与上传的表格文件。"
+    },
+    "relational": {
+      "title": "关系型数据库",
+      "description": "经典 OLTP 与企业级 SQL 数据库。"
+    },
+    "warehouse": {
+      "title": "数仓与湖仓",
+      "description": "分析型存储与云 SQL 数仓。"
+    },
+    "compatible-cn": {
+      "title": "兼容与国产引擎",
+      "description": "PostgreSQL/MySQL 兼容分析引擎与国产数据库。"
+    },
+    "query-engine": {
+      "title": "查询引擎",
+      "description": "联邦 SQL 与计算引擎。"
+    },
+    "nosql-search": {
+      "title": "NoSQL 与搜索",
+      "description": "集合、键空间与索引映射为表。"
+    },
+    "other": {
+      "title": "其他来源",
+      "description": "专用适配器与文件型数据源。"
+    }
+  },
+  "explorer": {
+    "noStats": "暂无统计",
+    "rows": "{{count}} 行",
+    "columnsMeta": "{{count}} 列 · {{stats}}",
+    "noticeMongodb": "MongoDB 集合会以类表对象暴露，便于只读 SELECT 预览。",
+    "noticeRedis": "Redis 键空间通过 redis_keys 伪表暴露。",
+    "noticeSearch": "搜索索引会根据 mapping 以类表对象暴露。",
+    "loadSchemaFailed": "加载 schema 失败",
+    "previewApiUnavailable": "数据源行预览 API 尚未可用。",
+    "untested": "未测试",
+    "searchPlaceholder": "搜索表或字段",
+    "noMatchingObjects": "没有匹配的对象。",
+    "loadSchemaHint": "加载 schema 后可浏览表、集合、索引或伪表。",
+    "noObjectSelected": "未选择对象",
+    "tabColumns": "列",
+    "tabData": "数据",
+    "tabInfo": "信息",
+    "column": "列",
+    "type": "类型",
+    "nullable": "可空",
+    "description": "描述",
+    "previewHint": "行预览使用计划中的数据源表预览 REST 接口，并遵循采样/脱敏策略。",
+    "loadingPreview": "正在加载预览…",
+    "loadRows": "加载 50 行",
+    "previewEndpointPending": "后端接口待实现：GET /api/v1/datasources/:id/tables/:table/preview",
+    "totalRows": "共 {{count}} 行",
+    "totalUnknown": "总数未知",
+    "moreRows": " · 还有更多行",
+    "previewEmpty": "选择一张表，并在后端接口可用时加载预览。",
+    "infoDatasourceId": "数据源 ID",
+    "infoType": "类型",
+    "infoConnection": "连接",
+    "infoStatus": "状态",
+    "infoEnabled": "默认启用",
+    "infoSelectedObject": "当前对象",
+    "infoSampleAvailable": "可采样",
+    "infoInspectedAt": "探查时间"
+  },
+  "dataLink": {
+    "title": "数据链接",
+    "subtitle": "Datalink MCP 工作区",
+    "nodesEdges": "{{nodes}} 个节点，{{edges}} 条边",
+    "mcpSettings": "MCP 设置",
+    "server": "服务器",
+    "noServer": "暂无 datalink 服务器",
+    "tables": "表",
+    "entities": "实体",
+    "columns": "列",
+    "edges": "边",
+    "visible": "可见",
+    "entry": "入口",
+    "searchEntry": "搜索{{mode}}",
+    "noEntries": "暂无入口",
+    "loading": "正在加载数据链接",
+    "noVisibleNodes": "没有可见节点",
+    "inspector": "检查器",
+    "focus": "聚焦",
+    "backToRoot": "返回根节点",
+    "confidence": "置信度",
+    "noServerSelected": "未选择服务器",
+    "endpoint": "端点",
+    "emptyTitle": "未检测到 datalink MCP 服务器。",
+    "openMcpSettings": "打开 MCP 设置",
+    "explore": "探索",
+    "exploring": "探索中…",
+    "balanced": "均衡",
+    "joinPaths": "关联路径",
+    "schemaFocus": "Schema",
+    "dataProfile": "数据画像",
+    "addTable": "添加表",
+    "adding": "添加中…",
+    "addTableAction": "添加表",
+    "sourcePlaceholder": "源路径或连接字符串",
+    "tablePlaceholder": "表名",
+    "schemaPlaceholder": "Schema",
+    "maintain": "维护",
+    "selectTable": "选择表",
+    "removeTable": "移除表",
+    "removing": "移除中…",
+    "rebuild": "重建",
+    "rebuilding": "重建中…",
+    "confirmRemoveTable": "从数据链接中移除此表？",
+    "confirmRebuild": "重建完整数据链接？",
+    "loadServersFailed": "加载 datalink 服务器失败",
+    "loadGraphFailed": "加载数据链接失败"
+  },
+  "configFields": {
+    "db": {
+      "datasourceId": {
+        "label": "数据源 ID",
+        "placeholder": "my-dataset",
+        "helpText": "转发给 Agent 的稳定标识（forwardedProps.datasourceId）。"
+      },
+      "type": {
+        "label": "数据源类型",
+        "helpText": "已实现：DuckDB / SQLite / CSV / Excel / PostgreSQL / MySQL / ClickHouse。禁用的扩展类型标记为后端待支持。"
+      },
+      "mode": {
+        "label": "访问模式",
+        "helpText": "后端当前仅支持只读查询（run_sql_readonly）。"
+      },
+      "filePath": {
+        "label": "文件路径",
+        "placeholder": "上传本地文件，或粘贴已有服务端路径",
+        "helpText": "选择本地 DuckDB / SQLite / CSV / Excel / Access 文件上传。服务端会存入工作区并自动填充路径。也可粘贴已有可读服务端路径。"
+      },
+      "connectionString": {
+        "label": "ODBC 连接字符串",
+        "placeholder": "Driver={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=/data/sales.accdb;",
+        "helpText": "Access 可选。设置后将覆盖由文件路径构建的 ODBC 字符串。"
+      },
+      "host": {
+        "label": "主机",
+        "placeholder": "127.0.0.1"
+      },
+      "port": {
+        "label": "端口",
+        "placeholder": "5432"
+      },
+      "database": {
+        "label": "数据库",
+        "placeholder": "analytics"
+      },
+      "schema": {
+        "label": "Schema",
+        "placeholder": "public"
+      },
+      "username": {
+        "label": "用户名",
+        "placeholder": "readonly_user"
+      },
+      "password": {
+        "label": "密码",
+        "placeholder": "••••••",
+        "helpText": "保存在 secretRef；读取 API 从不返回明文。"
+      },
+      "secure": {
+        "label": "HTTPS"
+      },
+      "projectId": {
+        "label": "项目 ID",
+        "placeholder": "my-gcp-project"
+      },
+      "dataset": {
+        "label": "数据集",
+        "placeholder": "analytics"
+      },
+      "credentialsJson": {
+        "label": "凭据 JSON",
+        "placeholder": "{ ... }"
+      },
+      "account": {
+        "label": "账号",
+        "placeholder": "xy12345.us-east-1"
+      },
+      "warehouse": {
+        "label": "Warehouse",
+        "placeholder": "COMPUTE_WH"
+      },
+      "tableAllowlist": {
+        "label": "表白名单",
+        "placeholder": "orders, customers",
+        "helpText": "逗号分隔。留空表示允许全部表。"
+      },
+      "refreshIntervalSec": {
+        "label": "Schema 刷新间隔（秒）",
+        "placeholder": "3600"
+      },
+      "denyWrite": {
+        "label": "禁止写入",
+        "helpText": "后端当前强制只读；此策略开关待启用。"
+      },
+      "maskFields": {
+        "label": "脱敏字段",
+        "placeholder": "phone, email",
+        "helpText": "逗号分隔的结果脱敏字段名。"
+      },
+      "allowSample": {
+        "label": "允许采样"
+      },
+      "maxSampleRows": {
+        "label": "最大采样行数",
+        "placeholder": "100"
+      },
+      "maxRows": {
+        "label": "最大返回行数",
+        "placeholder": "10000"
+      },
+      "timeoutMs": {
+        "label": "查询超时（毫秒）",
+        "placeholder": "30000"
+      }
+    },
+    "kb": {
+      "indexName": {
+        "label": "索引名称",
+        "placeholder": "metrics-docs"
+      },
+      "scope": {
+        "label": "范围"
+      },
+      "retrievalTopK": {
+        "label": "检索 Top K",
+        "placeholder": "5"
+      },
+      "scoreThreshold": {
+        "label": "分数阈值",
+        "placeholder": "0.2",
+        "helpText": "知识搜索与 retrieve_knowledge 的默认过滤阈值。"
+      },
+      "embeddingProvider": {
+        "label": "Embedding 提供方"
+      },
+      "embeddingModel": {
+        "label": "Embedding 模型",
+        "placeholder": "text-embedding-v4"
+      },
+      "embeddingBaseUrl": {
+        "label": "Embedding Base URL",
+        "placeholder": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      },
+      "embeddingApiKey": {
+        "label": "Embedding API Key",
+        "placeholder": "sk-...",
+        "helpText": "保存在 secretRef。未设置时回退到服务端 EMBEDDING_* 环境变量。"
+      },
+      "vectorStore": {
+        "label": "向量库类型"
+      },
+      "rerankEnabled": {
+        "label": "启用重排序"
+      },
+      "rerankModel": {
+        "label": "重排序模型",
+        "placeholder": "gte-rerank"
+      },
+      "citationRequired": {
+        "label": "要求引用",
+        "helpText": "回答必须包含知识库引用。"
+      },
+      "chunkSize": {
+        "label": "分块大小",
+        "placeholder": "1600"
+      },
+      "chunkOverlap": {
+        "label": "分块重叠",
+        "placeholder": "200"
+      },
+      "graphRagEnabled": {
+        "label": "GraphRAG"
+      }
+    },
+    "mcp": {
+      "transport": {
+        "label": "传输方式",
+        "helpText": "远程 MCP 常用 SSE 或 Streamable HTTP；stdio 使用本地启动命令。"
+      },
+      "serverUrl": {
+        "label": "端点 / 启动命令",
+        "placeholder": "https://example.com/mcp/sse",
+        "helpText": "远程传输填写 MCP 服务 URL。stdio 可回退使用完整启动命令。"
+      },
+      "apiUrl": {
+        "label": "数据 API 端点",
+        "placeholder": "https://example.com",
+        "helpText": "供 DataLink 工作区图使用。纯 MCP 服务可留空。"
+      },
+      "command": {
+        "label": "可执行文件",
+        "placeholder": "/usr/bin/npx",
+        "helpText": "stdio 模式下优先使用 command + args。留空则回退到上方完整命令。"
+      },
+      "args": {
+        "label": "启动参数",
+        "placeholder": "-y @modelcontextprotocol/server-filesystem /data",
+        "helpText": "空格分隔；写入后端 args 数组。"
+      },
+      "cwd": {
+        "label": "工作目录",
+        "placeholder": "/home/agent/workspace"
+      },
+      "env": {
+        "label": "环境变量（JSON）",
+        "helpText": "键值均为字符串的 JSON 对象。"
+      },
+      "authType": {
+        "label": "认证方式"
+      },
+      "apiKey": {
+        "label": "Token / API Key",
+        "placeholder": "••••••",
+        "helpText": "Bearer 认证时保存在 secretRef。"
+      },
+      "toolAllowlist": {
+        "label": "工具白名单",
+        "placeholder": "search, fetch_page",
+        "helpText": "逗号分隔。留空表示允许清单中全部工具。"
+      },
+      "timeoutMs": {
+        "label": "单工具超时（毫秒）",
+        "placeholder": "30000"
+      }
+    },
+    "llm": {
+      "provider": {
+        "label": "提供方",
+        "helpText": "所有对话模型均使用 OpenAI 兼容的 /chat/completions 路径。"
+      },
+      "baseUrl": {
+        "label": "Base URL",
+        "placeholder": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "helpText": "OpenAI 兼容 Chat Completions 的 base URL（不含 /chat/completions）。"
+      },
+      "apiKey": {
+        "label": "API Key",
+        "placeholder": "sk-...",
+        "helpText": "保存在 secretRef；运行时不会通过 AG-UI 发送。"
+      },
+      "modelName": {
+        "label": "模型名称",
+        "placeholder": "qwen-plus",
+        "helpText": "对话模型 id（例如 gpt-4o、qwen-plus、deepseek-chat）。"
+      },
+      "fallbackProfileId": {
+        "label": "回退配置",
+        "placeholder": "无",
+        "helpText": "主配置失败时使用的回退链。"
+      },
+      "timeoutMs": {
+        "label": "超时（毫秒）",
+        "placeholder": "300000",
+        "helpText": "多步 Agent 任务的整轮超时（不仅是单次 LLM 调用）。深度分析建议 300000–600000。"
+      },
+      "temperature": {
+        "label": "Temperature",
+        "placeholder": "0.2"
+      },
+      "maxTokens": {
+        "label": "Max Tokens",
+        "placeholder": "4096"
+      },
+      "topP": {
+        "label": "Top P",
+        "placeholder": "1.0"
+      },
+      "frequencyPenalty": {
+        "label": "Frequency Penalty",
+        "placeholder": "0"
+      },
+      "presencePenalty": {
+        "label": "Presence Penalty",
+        "placeholder": "0"
+      },
+      "reasoningModel": {
+        "label": "推理模型"
+      },
+      "contextLength": {
+        "label": "上下文长度",
+        "placeholder": "128000"
+      }
+    },
+    "skill": {
+      "packageFileName": {
+        "label": "包文件"
+      },
+      "packageFormat": {
+        "label": "格式"
+      },
+      "packageVersion": {
+        "label": "版本"
+      },
+      "allowedTools": {
+        "label": "允许的工具"
+      },
+      "defaultDbIds": {
+        "label": "默认数据源",
+        "placeholder": "sales-db, analytics-pg",
+        "helpText": "逗号分隔的数据源 id。Skill 匹配时自动加入运行。"
+      },
+      "defaultKbIds": {
+        "label": "默认知识库",
+        "placeholder": "metrics-docs"
+      },
+      "defaultMcpIds": {
+        "label": "默认 MCP",
+        "placeholder": "notion"
+      },
+      "modelProfileId": {
+        "label": "默认模型配置",
+        "placeholder": "qwen-plus-default"
+      }
+    }
+  },
+  "configOptions": {
+    "db": {
+      "mode": {
+        "readonly": "只读（当前唯一支持的模式）"
+      },
+      "type": {
+        "duckdb": "DuckDB（文件）",
+        "sqlite": "SQLite（文件）",
+        "csv": "CSV 文件",
+        "xlsx": "Excel 文件"
+      }
+    },
+    "kb": {
+      "scope": {
+        "personal": "个人",
+        "workspace": "工作区",
+        "project": "项目"
+      },
+      "embeddingProvider": {
+        "bailian": "百炼 DashScope（bailian）",
+        "openai-compatible": "OpenAI 兼容",
+        "openai": "OpenAI"
+      },
+      "vectorStore": {
+        "local-sqlite": "本地 SQLite（当前默认）",
+        "chroma": "Chroma",
+        "milvus": "Milvus",
+        "pgvector": "pgvector",
+        "elasticsearch": "Elasticsearch"
+      }
+    },
+    "mcp": {
+      "transport": {
+        "sse": "SSE（Server-Sent Events）",
+        "streamable-http": "Streamable HTTP",
+        "stdio": "stdio（本地命令）"
+      },
+      "authType": {
+        "none": "无认证",
+        "bearer": "Bearer Token",
+        "custom-header": "自定义请求头（后端待支持）"
+      }
+    },
+    "llm": {
+      "provider": {
+        "openai-compatible": "OpenAI 兼容（LLM_PROVIDER=openai-compatible）"
+      },
+      "fallbackProfileId": {
+        "__none__": "无"
+      }
+    }
+  },
+  "steps": {
+    "inspect": "Schema",
+    "query": "查询",
+    "transform": "转换",
+    "fetch": "取数",
+    "visualize": "可视化",
+    "knowledge": "知识",
+    "other": "数据操作",
+    "stepMeta": "步骤 {{n}} · {{kind}}",
+    "stepMetaTools": "步骤 {{n}} · {{kind}} · {{count}} 次工具调用"
+  }
+}

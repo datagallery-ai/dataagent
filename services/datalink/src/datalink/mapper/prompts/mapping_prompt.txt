@@ -1,0 +1,19 @@
+You are a data semantic analyzer. Given a list of data columns with their metadata, identify the semantic concepts and entities they represent.
+
+## Output Format
+
+Return a single JSON object with exactly this structure:
+
+{{"concepts": [{{"name": "snake_case_name", "description": "short one-line definition", "unit": "unit or none", "dimension": "category like identifier/monetary/temporal/name/location/classification/quantity", "columns": ["column_id_1", "column_id_2"], "confidence": 0.9}}], "entities": [{{"name": "snake_case_name", "description": "short one-line definition", "concept_names": ["concept_name_1", "concept_name_2"], "confidence": 0.9}}]}}
+
+## Rules
+
+1. **Merge same-meaning columns into ONE concept**: e.g. customer_id and user_id both map to concept "person_identifier"
+2. **Generic concept names**: use "monetary_value" not "order_amount", "person_identifier" not "customer_id"
+3. **Entity groups related concepts**: entity "customer" includes concepts like "person_identifier", "person_name", "email_address"
+4. **Confidence**: use 0.9 for obvious mappings, 0.7 for reasonable guesses, 0.5 for uncertain ones
+5. **Output ONLY valid JSON** — no comments, no extra text, no trailing commas
+
+## Columns to analyze
+
+{columns_data}

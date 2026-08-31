@@ -1,0 +1,97 @@
+site_name: DataFoundry
+site_description: Governed data-agent workbench for enterprise data tasks.
+site_url: https://datagallery-lab.github.io/datafoundry/
+repo_name: datagallery-lab/datafoundry
+repo_url: https://github.com/datagallery-lab/datafoundry
+edit_uri: edit/main/docs/
+
+exclude_docs: |
+  README.md
+  assets/readme/tui-demo.mp4
+  en/README.md
+  zh/README.md
+
+not_in_nav: |
+  zh/*.md
+  zh/**/*.md
+
+theme:
+  name: material
+  icon:
+    logo: material/database
+  language: en
+  palette:
+    - scheme: default
+      primary: white
+      accent: blue
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/language-switcher.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/datagallery-lab/datafoundry
+  alternate:
+    - name: English
+      link: en/
+      lang: en
+    - name: 简体中文
+      link: zh/
+      lang: zh
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - en/index.md
+      - Product overview: en/overview.md
+      - Quick start: en/quick-start.md
+      - Capabilities: en/capabilities.md
+      - Guides:
+          - Web workbench: en/guides/web-workbench.md
+          - TUI: en/guides/tui.md
+          - Data sources: en/guides/data-sources.md
+          - DataLink: en/guides/datalink.md
+      - Examples:
+          - DTC growth operating review: en/examples/dtc-growth-demo.md
+  - Developer Guide:
+      - Architecture:
+          - Overview: en/architecture/overview.md
+      - Security: en/security.md
+  - API Reference:
+      - REST API: en/reference/rest-api.md
+      - Configuration API: en/reference/configuration-api.md
+      - Agent Runtime: en/reference/agent-runtime.md
+      - Supported data sources: en/reference/supported-datasources.md
+  - Release Notes:
+      - v0.2.0: en/releases/v0.2.0.md
+  - Community:
+      - en/community/index.md
+      - Contact us: en/community/contact-us.md
+      - Contributing: en/community/contributing.md
+      - Scenario cases: en/community/scenario-cases.md
+      - Collaboration policy: en/community/collaboration-policy.md
