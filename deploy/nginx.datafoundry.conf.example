@@ -1,0 +1,99 @@
+# DataFoundry production / test reverse proxy
+#
+# Next keeps `compress: false` so AG-UI SSE (`/api/copilotkit`) is never gzip-
+# buffered. Terminate TLS and compress static assets here instead.
+#
+# Usage sketch:
+#   upstream web  -> next start :3000
+#   upstream api  -> node API   :8787
+#   browser       -> this nginx :443 (or :80)
+
+upstream datafoundry_web {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+upstream datafoundry_api {
+    server 127.0.0.1:8787;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # HTML + JS/CSS: compress aggressively for production first paint.
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_types
+        text/plain
+        text/css
+        text/javascript
+        application/javascript
+        application/json
+        application/xml
+        image/svg+xml;
+    gzip_vary on;
+
+    # Prefer brotli when the nginx brotli module is available.
+    # brotli on;
+    # brotli_comp_level 5;
+    # brotli_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    # Liveness: process is up (may still be initializing).
+    location = /healthz {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_pass http://datafoundry_api;
+    }
+
+    # Readiness: Mastra + builtin resources finished; safe to send traffic.
+    location = /ready {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_pass http://datafoundry_api;
+    }
+
+    # Long-cache fingerprinted Next assets.
+    location /_next/static/ {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_pass http://datafoundry_web;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # CopilotKit / AG-UI SSE: never buffer or compress at the proxy.
+    location /api/copilotkit {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 3600s;
+        proxy_pass http://datafoundry_web;
+    }
+
+    # Same-origin BFF for password-mode cookies (Next proxies to API).
+    location /api/ {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://datafoundry_web;
+    }
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://datafoundry_web;
+    }
+}

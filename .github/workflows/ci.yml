@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+  SKIP_POSTINSTALL_BUILD: "1"
+
+jobs:
+  build-and-web-tests:
+    name: Build and Web Tests
+    if: github.repository == 'datagallery-lab/datafoundry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript workspaces
+        run: npm run build
+
+      - name: Run package unit tests
+        run: npm run test:packages
+
+      - name: Run Web tests
+        run: npm run test:web
+
+      - name: Run TUI unit tests
+        run: npm --workspace @datafoundry/tui test
+
+      - name: Build Web application
+        run: npm run build:web
+
+  core-smoke-tests:
+    name: Core Smoke Tests
+    if: github.repository == 'datagallery-lab/datafoundry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AUTH_PUBLIC_BASE_URL: http://127.0.0.1:3000
+      AUTH_REGISTRATION_MODE: open
+      AUTH_EMAIL_DELIVERY: test
+      AUTH_SESSION_SECRET: ci-auth-session-secret-with-32-bytes!!
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript workspaces
+        run: npm run build
+
+      - name: Run formal auth foundation tests
+        run: npm run test:auth-foundation
+
+      - name: Enforce password-only cutover
+        run: npm run test:password-only
+
+      - name: Generate built-in demo fixture
+        env:
+          SKIP_DTC_GROWTH_REGISTER: "1"
+        run: node scripts/seed-dtc-growth-demo.mjs
+
+      - name: Run authentication regression
+        run: node scripts/smoke-auth.mjs
+
+      - name: Run TUI/Web auth sharing regression
+        run: npm run smoke:tui-auth-sharing
+
+      - name: Run conversation memory regression
+        run: node scripts/smoke-conversation-memory.mjs
+
+      - name: Run configuration API regression
+        run: node scripts/smoke-config-api.mjs
+
+      - name: Run file and workspace regression
+        run: node scripts/smoke-files.mjs
+
+      - name: Run read-only SQL regression
+        run: node scripts/smoke-sql-readonly.mjs
+
+      - name: Run data gateway regression
+        run: node scripts/smoke-data-gateway.mjs
+
+      - name: Run AG-UI stream regression
+        run: node scripts/smoke-agui-stream.mjs
+
+      - name: Run evidence selection regression
+        run: node scripts/test-evidence-selection.mjs
+
+      - name: Run built-in DTC Growth regression
+        run: node --test scripts/test-builtin-dtc-growth-datasource.mjs
+
+  native-deploy-smoke:
+    name: Native Deploy Smoke
+    if: github.repository == 'datagallery-lab/datafoundry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deployment unit tests
+        run: npm run test:deploy
+
+      - name: Run native deployment smoke
+        run: npm run smoke:native-deploy
+
+      - name: Upload redacted deployment logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-deploy-logs
+          path: storage/logs/
+          if-no-files-found: ignore
+
+  docs:
+    name: Docs
+    if: github.repository == 'datagallery-lab/datafoundry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install documentation dependencies
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Check documentation links and secrets
+        run: npm run smoke:docs
+
+      - name: Build documentation in strict mode
+        run: npm run docs:build

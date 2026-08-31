@@ -1,0 +1,15 @@
+{
+  "name": "@datafoundry/contracts",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit false"
+  },
+  "dependencies": {
+    "@ag-ui/core": "^0.0.57"
+  }
+}

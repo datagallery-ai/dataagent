@@ -1,210 +1,289 @@
-<h1 align="center">🚀 DataAgent</h1>
+<h1 align="center">DataFoundry</h1>
 
 <p align="center">
-  <a href="README_zh.md">中文</a> · English
+  An enterprise-grade Data Agent workbench — it reads business definitions through unified semantics, runs complex multi-table, multi-step analysis inside read-only boundaries,<br />
+  and keeps every step auditable and replayable, turning one question into a trustworthy analysis.
 </p>
 
-<!-- Badges -->
 <p align="center">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
-  <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
-  <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/openJiuwen-0.1.14-purple" alt="openJiuwen">
-  <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
+  <strong>28 datasource types out of the box · Enterprise semantics & context · Self-hosted · Multi-model · Fully auditable</strong>
+</p>
+
+<p align="center">
+  <strong>English</strong> · <a href="README_zh.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="#-formal-deploy"><strong>Quick Start</strong></a>
+  ·
+  <a href="https://datagallery-lab.github.io/datafoundry/"><strong>Docs</strong></a>
+  ·
+  <a href="docs/en/reference/supported-datasources.md"><strong>Supported Data Sources</strong></a>
+  ·
+  <a href="#️-roadmap"><strong>Roadmap</strong></a>
+  ·
+  <a href="#-contributing"><strong>Contributing</strong></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0" />
+  <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/self--hostable-local%20first-2ea44f" alt="Self-hostable" />
+  <img src="https://img.shields.io/badge/PRs-welcome-ff69b4" alt="PRs welcome" />
+  <img src="https://img.shields.io/badge/status-early%20but%20usable-orange" alt="Status" />
+  <br />
+  <a href="https://github.com/mastra-ai/mastra"><img src="https://img.shields.io/badge/Mastra-agent%20runtime-111827" alt="Mastra agent runtime" /></a>
+  <a href="https://github.com/ag-ui-protocol/ag-ui"><img src="https://img.shields.io/badge/AG--UI-event%20stream-6f42c1" alt="AG-UI event stream" /></a>
+  <a href="https://github.com/vadimdemedes/ink"><img src="https://img.shields.io/badge/Ink-terminal%20UI-0f766e" alt="Ink terminal UI" /></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/readme/gui-demo.gif" alt="DataFoundry Web workbench demo" width="100%">
 </p>
 
 ---
 
-<h2>Data + AI Agent: Enterprise Data Task Solution</h2>
+## 🤔 What Is DataFoundry
 
-> 🚀 **DataAgent** is a next-generation enterprise data intelligence platform for **Data + AI** scenarios, reimagining the entire data engineering pipeline through the Agent paradigm. Deeply integrating NL2SQL, unified semantic layers, and multi-agent collaboration, it delivers end-to-end data analysis and feature mining across **financial risk control, AI for Science**, and other core domains.
+When teams let AI query enterprise databases, the real worry is never "can the model write SQL." It is: **does it understand business definitions? Could it mutate production data? Could credentials leak into context? Can a conclusion be verified after the fact?**
 
-## 🌟 Why DataAgent
+Most tools reduce the problem to `prompt → SQL → answer` — impressive in a demo, dead on arrival in the enterprise. DataFoundry takes a different path: **it puts the agent inside a semantic, policy-aware, evidence-preserving data task system**, upgrading natural-language analytics into controllable, trustworthy, verifiable data work.
 
-### 🏆 Scenario Advantages
+## ✨ Core Capabilities
 
-| Scenario | Traditional Approach | The DataAgent Edge | Typical Applications |
-|----------|---------------------|-------------------|-------------------|
-| 📊 **Financial Q&A** | Business request → data team queue → manual SQL → manual verification; T+1 is the norm for a single metric query | NL2SQL four-stage pipeline (Perception→Generation→Validation→Reflection), natural language to instant answers. Semantic metric mapping, **74%+ execution accuracy on BIRD DEV benchmark, sub-second response** | ✅ Enterprise financial analytics assistant |
-| 🔬 **AI for Science** | Multi-source scientific data scattered everywhere; cross-database correlation requires manual exports; literature and data cannot be jointly queried | Multi-source federated queries + structured/unstructured joint retrieval, **natural-language-driven scientific data exploration** | ✅ Scientific data exploration platform |
+- 🗄️ **28 datasource types, ready out of the box** — From PostgreSQL, MySQL, Snowflake, BigQuery, and ClickHouse to MongoDB, Redis, and Elasticsearch: connect your existing data stack quickly, cut integration cost, and get the agent into real business analysis faster.
+- 🧠 **Enterprise semantics and context organization** — Manage schema, metric definitions, and field relationships in one place, so terms like "GMV" and "retention" resolve to enterprise-approved tables, fields, and definitions — fewer guessed fields, wrong joins, and definition drift, and fundamentally better accuracy.
+- 🏠 **Self-hosted deployment and multi-model support** — Run it inside your own boundary so data never leaves; on the model side, any OpenAI-compatible provider works (Qwen, DeepSeek, GPT, ...), letting you balance security, cost, latency, and quality per scenario.
+- 🔒 **Safe by default, auditable throughout** — Read-only queries, credential isolation, field masking, row limits, and timeouts by default; SQL, tool calls, and event streams are fully persisted and replayable, so every conclusion is backed by evidence.
+- 🧩 **Deep optimization for complex data tasks** — Built for multi-table, multi-field, long-horizon analysis and multi-step reasoning: complex questions get decomposed, verified, and converged into trustworthy conclusions, materialized as tables, charts, and reports the team can reuse.
 
-### ⚡ Core Capabilities
+## 🆕 What's New In v0.2.0
 
-| Capability | Description |
-|------------|-------------|
-| 🧠 **NL2SQL Intelligent Engine** | Four-stage pipeline: Perceptor→Generator→Validator→Reflector; multi-strategy fusion: Prompt / ICL / Skeleton / DC; supports SQLite / MySQL / PostgreSQL / Hive; **74%+ execution accuracy on BIRD benchmark** |
-| 🔬 **Automated Feature Engineering** | Agents autonomously explore relationships across hundreds of tables, auto-discover latent feature combinations with importance ranking and visualization — **10x+ efficiency boost** |
-| 🏭 **Full-Pipeline Data Factory** | Data ingestion→Schema perception→Feature mining→Model training→Report generation — **one YAML config runs the complete data engineering pipeline** |
-| 🧩 **Unified Semantic Layer** | Prioritizes GaussVector as an enhanced vector retrieval foundation in the semantic layer, turning tables, columns, metric definitions, and business descriptions into retrievable schema signals for NL2SQL and multi-source semantic alignment |
-| 🔌 **Plugin Tool Ecosystem** | Local functions / MCP (stdio+sse) / A2A — three tool types with unified registration and invocation. Auto-discovery and on-demand loading. Built-in data analysis SKILLs |
-| 📡 **Native Multi-Agent Collaboration** | Full A2A 1.0 protocol support: automatic agent discovery, capability mapping, standardized communication. Naturally supports distributed collaboration for complex business tasks |
-| 🧩 **YAML as Agent** | Model, tools, memory, workflow, scenario prompts — all declaratively orchestrated. **From idea to running Agent in minutes** |
-| 🛡️ **Enterprise Security Sandbox** | Workspace isolation + path whitelisting + full audit trail, meeting financial-grade compliance requirements |
-| ⚡ **Out of the Box** | 20+ industry scenario example configs — **zero code to start, up and running in minutes** |
+DataFoundry 0.2 turns the first usable workbench into a more complete, stateful data-agent workflow:
 
-## 📋 Environment Requirements
+- **Branchable, concurrent analysis** — Keep multiple sessions running, queue follow-up prompts, restore completed work, and branch from an earlier question or checkpoint without overwriting the original path.
+- **Evidence-first follow-ups** — Reference a complete output or a selected table/text region in the next question; resolved evidence is carried into the governed run context with diagnostics.
+- **Semantic trace and DataLink integration** — Inspect checkpoint-backed run structure in a semantic Trace DAG. Connect an external DataLink service to map tables and columns to business concepts, entities, joinable paths, and confidence-scored relationships for stronger agent grounding.
+- **Reusable outputs and workspace assets** — Preview and export tables, charts, reports, SQL, and files; upload files into an active session, then promote supported files for reuse across sessions.
+- **Production-facing Web foundation** — Built-in password authentication, same-origin API proxying, bilingual UI, model connection tests, onboarding, and an auto-provisioned DTC growth analysis case.
 
-| Dependency | Version |
-|------------|---------|
-| 🐍 **Python** | >= 3.11 |
-| 📦 **Package Manager** | uv (recommended) or pip |
+See the [v0.2.0 release notes](docs/en/releases/v0.2.0.md) for the complete capability and documentation audit.
+
+## 🚀 Formal deploy
+
+Formal mode has two paths (do **not** run `npm run dev`). Docker / Compose is not provided in this release.
+
+### Recommended: Ubuntu / Debian one-click
+
+`./deploy.sh` generates configuration, installs dependencies, builds (Web, API, and TUI), and starts Web + API as a detached background process — closing the terminal does not stop the stack. The TUI is built and ready but is a foreground client: start it in another terminal with `./deploy.sh tui` (or `npm run start:tui`); it does **not** stay running with the stack. DataLink is an **external** component (not started by deploy) — connect it later via MCP in the Web UI if needed. No model key is required during deploy — create and enable a model profile in the Web UI after login. Does **not** support native Windows / macOS.
+
+```bash
+git clone https://github.com/datagallery-lab/datafoundry.git
+cd datafoundry
+./deploy.sh
+```
+
+If a complete `.env` already exists, interactive deploy skips the configuration questions. To change ports or the public URL (secrets are preserved; `.env` is backed up first):
+
+```bash
+./deploy.sh deploy --reconfigure
+```
+
+Common management commands:
+
+```bash
+./deploy.sh status
+./deploy.sh start
+./deploy.sh stop
+./deploy.sh logs
+./deploy.sh doctor
+./deploy.sh tui      # optional: foreground TUI client (API must already be up)
+```
+
+Open `http://127.0.0.1:3000/login`, register or sign in, create an OpenAI-compatible model profile, then go to `/data-tasks`. For remote hosts set `AUTH_PUBLIC_BASE_URL`. Re-running `./deploy.sh deploy` uses a maintenance window (stop the managed process group before install/build).
+
+### Windows / macOS / other: manual npm
+
+On native Windows, macOS, or other non-Ubuntu/Debian hosts, use manual npm. Install and run in the same environment; on Windows, do not share `node_modules` between Windows and WSL.
+
+```bash
+git clone https://github.com/datagallery-lab/datafoundry.git
+cd datafoundry
+npm install
+cp .env.example .env
+cp apps/web/.env.example apps/web/.env.local
+```
+
+Configure any OpenAI-compatible model in the root `.env`, plus auth for formal test or real production (sample defaults lean formal test):
+
+```bash
+LLM_PROVIDER=openai-compatible
+LLM_MODEL=qwen-plus                # or deepseek-chat, gpt-4o, ...
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_KEY=replace-with-your-key
+
+AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
+AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000   # real production: https://your.domain
+AUTH_REGISTRATION_MODE=open
+AUTH_EMAIL_DELIVERY=test                     # real production: smtp + AUTH_SMTP_*
+```
+
+`apps/web/.env.local`:
+
+```bash
+NEXT_PUBLIC_AGENT_RUNTIME_URL=
+NEXT_PUBLIC_CONFIG_API_URL=
+API_PROXY_TARGET=http://127.0.0.1:8787
+```
+
+Build and start:
+
+```bash
+npm run build
+npm run build:web
+npm run start        # Web :3000 + API :8787
+```
+
+Open `http://127.0.0.1:3000/login`, register or sign in, go to `/data-tasks`, and ask:
+
+```text
+Show me the tables in this datasource and explain the main fields of each.
+```
+
+You will see the full chain: schema inspection → read-only SQL → SQL audit → table output → replayable run history.
+
+For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.datafoundry.conf.example`](deploy/nginx.datafoundry.conf.example) (gzip/brotli static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE).
+
+> Full steps, the two-environment matrix, and optional external DataLink notes: [Quick Start](docs/en/quick-start.md). Contributor hot-reload (`npm run dev`) is appendix-only. Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
+
+
+## 🆚 How It Differs From Coding Agents And SQL Chatbots
+
+Coding agents change code, SQL chatbots answer questions, DataFoundry runs data tasks — three different operating objects, risk boundaries, and outputs:
+
+| | Works on | Main risk | Output |
+| --- | --- | --- | --- |
+| Coding agent | Repos, tests, PRs | Breaking code | Patch, commit, PR |
+| SQL chatbot | Prompt, SQL, answer | Wrong tables, unsafe access, leaked credentials, no replay | A SQL snippet or an answer |
+| **DataFoundry** | Datasources, files, knowledge, tools, task state | Production data boundaries, business semantics, audit evidence | **Replayable data tasks** + SQL audit + tables / charts / reports |
+
+On data tasks specifically, DataFoundry's core advantages over a general-purpose coding agent are:
+
+- **Accuracy, from data constraints** — Pointed at a database, a coding agent tends to guess tables, fields, and definitions; DataFoundry enforces schema-first analysis and constrains query paths through Data Gateway, cutting guessed fields and wrong joins.
+- **Safety, from controlled execution** — Coding agents run commands and write files: powerful, but high-risk against enterprise data. DataFoundry defaults to read-only SQL, credential isolation, field masking, row limits, timeouts, and audit — built for real data environments.
+- **Speed, from a converging task path** — Not because the model reasons faster, but because datasource selection, schema caching, context budgeting, tool policy, and the artifact pipeline eliminate wasted attempts, so analysis converges on results sooner.
+- **Complex tasks, from data-workflow design** — Coding agents excel at code engineering; DataFoundry is built for analysis across many tables, fields, and metrics plus knowledge bases, files, and report outputs, chaining "query, verify, explain, materialize" into one complete flow.
+- **Adoption, from an enterprise runtime** — This is not a demo: the Web workbench, TUI, REST API, CopilotKit / AG-UI, Data Gateway, Skills, MCP, Files, Artifacts, and Metadata combine into an operating foundation for data agents.
+
+## ⚙️ How A Data Task Runs
+
+```text
+Ask → Align semantics → Execute under control → Materialize output → Replay & review
+```
+
+1. **Define the task** — Pick datasources, files, knowledge, and tools, then describe the business question in natural language.
+2. **Align meaning with structure** — The agent inspects schema and available context first, grounding terms like "GMV" or "retention" in real tables and fields.
+3. **Execute under control** — Data Gateway runs queries inside a read-only boundary with SQL guardrails, row limits, timeouts, and masking; every SQL statement leaves an audit record.
+4. **Materialize output** — Results become tables, charts, reports, or files — assets the team can cite.
+5. **Replay and review** — Web, TUI, and API share one run history, so every step's evidence is always one click away.
+
+<p align="center">
+  <img src="docs/assets/readme/runtime-flow.png" alt="DataFoundry runtime flow" width="100%">
+</p>
+
+## 🖥️ More Than A Chat Box
+
+The **Web workbench** fits day-to-day analysis and demos, the **TUI** fits terminals and remote servers, and the **API / CopilotKit / AG-UI** path lets you embed the same trusted runtime into your own product.
+
+<p align="center">
+  <a href="docs/assets/readme/tui-demo.mp4">
+    <img src="docs/assets/readme/tui-demo.gif" alt="DataFoundry TUI demo" width="100%">
+  </a>
+</p>
+
+## 🗄️ Bring Your Data Stack, No Rebuild
+
+Connect through Data Gateway adapters: the built-in DTC Growth Review case works out of the box; DuckDB, SQLite, CSV, Excel, PostgreSQL, and MySQL fit local trials; cloud warehouses, search engines, and NoSQL systems plug in with their own services and credentials.
+
+<p align="center">
+  <img src="docs/assets/readme/database-wall.png" alt="Supported DataFoundry data sources" width="100%">
+</p>
+
+See the full list in [Supported Data Sources](docs/en/reference/supported-datasources.md).
+
+## 🛡️ Security Boundary
+
+- The model only receives governed context; datasource credentials, model API keys, and MCP tokens never enter `messages`, `context`, or `forwardedProps`.
+- All datasource access goes through Data Gateway — read-only by default, with SQL guardrails, row limits, timeouts, and field masking.
+- SQL audit logs, tool-call records, and event streams are fully persisted for after-the-fact review.
+- Production-grade multi-tenant auth, centralized secret management, monitoring, and deployment operations require a dedicated design for your environment — see [Security](docs/en/security.md).
+
+## 🗺️ Roadmap
+
+- [x] **Governed data-task workbench** — Web and TUI share one TypeScript agent runtime, CopilotKit / AG-UI event stream, replayable run history, SQL audit trail, and unified asset layer.
+- [x] **Safe data access foundation** — Datasource registration, connection testing, schema introspection, table preview, read-only SQL, masking, knowledge imports, MCP resources, skill packages, and model configuration.
+- [ ] **Unified semantic layer** — Durable metrics, entities, relationships, lineage, and policies, moving agents from "guessing fields" to "understanding business definitions" and from one-off SQL to a governable data operating layer.
+- [ ] **Autonomous analyst loops** — Agents that plan investigations, run controlled experiments, critique findings, and converge on evidence-backed conclusions.
+- [ ] **Evaluation and reliability lab** — NL2SQL, retrieval, tool-use, and end-to-end task benchmarks with regression gates and failure forensics.
+- [ ] **Enterprise control plane** — Identity, RBAC, approvals, audit export, policy-as-code, and cost limits.
+
+Roadmap discussions are welcome in issues and discussions.
 
 ## 📚 Documentation
 
-Full documentation lives under [`docs/`](docs/) ([中文](docs/zh/) · [English](docs/en/)). Build and preview locally:
-
-```bash
-uv sync --extra mkdoc
-uv run mkdocs serve -f docs/mkdocs.yml
-```
-
-| Document | Description |
+| Goal | Read |
 | --- | --- |
-| 📖 [Installation](docs/en/installation/installation.md) | Install with `uv` / pip, environment variables, and verification |
-| 📖 [Quick Start](docs/en/quick_start/quick_start.md) | Run an end-to-end DataAgent workflow in minutes |
-| 🗄️ [Database Installation](docs/en/installation_doc/database_install/database_install.md) | Deploy PostgreSQL, MySQL; prioritize GaussVector integration, import scenario data, and connect Semantic Service |
-| ⚙️ [Features](docs/en/function/function.md) | Core capabilities, modules, tools, and model support |
-| 🧩 [Semantic Service](docs/en/semantic_service/semantic-service-user-guide.md) | Semantic Service enriched metadata for NL2SQL, prioritizing GaussVector-oriented semantic-layer indexing, candidate schema recall, and schema perception enhancement |
-| 🔗 [openJiuwen](docs/en/openJiuwen/openJiuwen-user-guide.md) | openJiuwen integration and usage guide |
-| 🏗️ [Architecture](docs/en/design_doc/design_doc.md) | System architecture; context, planning engine, and action modules |
-| 📡 [API Design](docs/en/api_doc/api_doc.md) | A2A northbound interface and Python SDK |
-| 📋 [Application Cases](docs/en/case/case.md) | Build a dedicated NL2SQL Agent; build a data analysis Agent |
-| 📝 [Notes](docs/en/explain/explain.md) | Development, testing, and documentation maintenance |
-| 🗓️ [Milestone](docs/en/milestone/milestone.md) | Release planning and roadmap |
+| Run the local demo | [Quick Start](docs/en/quick-start.md) |
+| Understand positioning and scope | [Overview](docs/en/overview.md) · [Capabilities](docs/en/capabilities.md) |
+| Use the Web / TUI | [Web workbench guide](docs/en/guides/web-workbench.md) · [TUI guide](docs/en/guides/tui.md) |
+| Connect data sources | [Data sources guide](docs/en/guides/data-sources.md) · [Supported data sources](docs/en/reference/supported-datasources.md) |
+| Integrate via API and runtime | [REST API](docs/en/reference/rest-api.md) · [Agent Runtime & AG-UI](docs/en/reference/agent-runtime.md) |
+| Understand architecture and security | [Architecture overview](docs/en/architecture/overview.md) · [Security](docs/en/security.md) |
 
-## 🚴 Installation
+## 🤝 Contributing
 
-### 1️⃣ Clone the project
+DataFoundry moves quickly, so small, well-scoped PRs are the easiest to merge:
 
-```bash
-git clone https://gitcode.com/datagallery/DataAgent.git
-cd DataAgent
-```
+1. Open an issue or discussion first for behavioral, protocol, datasource-adapter, or agent-policy changes.
+2. Keep each PR focused on one runtime boundary or feature area.
+3. Run `npm run build` plus the targeted smoke checks for what you touched (e.g. `npm run smoke:data-gateway`).
+4. Update docs when a change affects setup, APIs, datasource configuration, or user-visible output.
+5. Do not commit credentials, local databases, generated storage, or private benchmark data.
 
-### 2️⃣ Install dependencies (uv recommended)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-```bash
-# Install dependencies
-uv sync
+## 💬 Community
 
-# Activate virtual environment
-source .venv/bin/activate  # Linux / macOS
-.venv\Scripts\activate     # Windows
-```
+Join the DataFoundry community to discuss the product, roadmap, and real-world adoption with us. Issues and discussions are always welcome too.
 
-### 3️⃣ Or use pip
+<table align="center">
+  <tr>
+    <td align="center"><strong>Slack Community</strong></td>
+    <td align="center"><strong>QQ Group</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataFoundry Slack community QR code" width="300"></td>
+    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataFoundry QQ group QR code" width="220"></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://join.slack.com/t/datafoundry-7bb8405/shared_invite/zt-42qikc65e-DwA~8ltIri_WYWWpRMjCFQ"><strong>Join Slack</strong></a></td>
+    <td align="center"><strong>Group ID</strong><br><code>1048076064</code></td>
+  </tr>
+</table>
 
-```bash
-pip install -e .
-```
+## 🙏 Acknowledgements
 
-### 4️⃣ Configure environment variables
+DataFoundry is inspired by and built with ideas from excellent open-source projects and communities:
 
-```bash
-# Copy environment template
-cp .env.example .env
-
-# Edit .env file with your actual configuration values
-```
-
-## ⚡ Quick Start
-
-### 🎮 Interactive quick start
-
-```bash
-uv run -m dataagent quickstart
-```
-
-Follow the prompts to enter model configuration and start chatting with the Agent!
-
-### 📁 Start with config file
-
-```bash
-# Terminal interactive mode
-uv run -m dataagent --config dataagent/core/flex/examples/quickstart.yaml
-```
-
-### 🔍 Config check
-
-```bash
-# Check environment variable references in config
-uv run -m dataagent config check dataagent/core/flex/examples/quickstart.yaml
-```
-
-## 📖 Usage
-
-### 🐍 Python SDK
-
-```python
-from dataagent import DataAgent
-
-agent = DataAgent.from_config("path/to/config.yaml")
-
-# Single-turn conversation
-response = await agent.chat("Analyze sales data trends for the past week")
-print(response)
-
-# Streaming conversation
-async for chunk in agent.astream(input={"user_query": "Generate user report"}):
-    print(chunk, end="", flush=True)
-```
-
-### 📝 YAML Config Example
-
-```yaml
-AGENT_CONFIG:
-  name: "My Data Agent"
-  version: "1.0"
-  description: "Data Analysis Agent"
-  backend: "langgraph"
-  type: "react"
-
-MODEL:
-  chat_model:
-    provider: "deepseek"
-    model_type: "chat"
-    params:
-      model: "deepseek-chat"
-      temperature: 0.7
-      base_url: "$env{DEEPSEEK_BASE_URL}"
-      api_key: "$env{DEEPSEEK_API_KEY}"
-
-WORKSPACE:
-  path: "/tmp/dataagent_workspace"
-  allow_path:
-    - "/tmp/dataagent_workspace"
-```
-
-### 🌐 A2A 1.0 Server Mode
-
-```bash
-# Start A2A server
-uv run -m dataagent serve-a2a \
-  --config path/to/config.yaml \
-  --host 0.0.0.0 \
-  --port 9999 \
-  --auth-token your_token
-
-# Service endpoints
-# ├── 🌟 AgentCard: http://localhost:9999/.well-known/agent.json
-# ├── 📡 JSON-RPC:  http://localhost:9999/a2a/jsonrpc
-# └── 🔌 REST:      http://localhost:9999/a2a/rest
-```
-
-## ⚙️ Configuration
-
-### 🔐 Environment Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DEEPSEEK_API_KEY` | DeepSeek API Key | `sk-xxx` |
-| `DEEPSEEK_BASE_URL` | DeepSeek API Base URL | `https://api.deepseek.com` |
-| `BAILIAN_API_KEY` | Alibaba Cloud Bailian API Key | `sk-xxx` |
-| `OPENAI_API_KEY` | OpenAI API Key | `sk-xxx` |
-
-> 📌 For more configuration, refer to `.env.example`
+- Thanks to the [LINUX DO](https://linux.do/) community for their support and discussions.
+- [Mastra](https://github.com/mastra-ai/mastra) for agent runtime patterns.
+- [AG-UI](https://github.com/ag-ui-protocol/ag-ui) for event stream protocol design.
+- [CopilotKit](https://github.com/CopilotKit/CopilotKit) for agent-native UX patterns.
+- [Ink](https://github.com/vadimdemedes/ink) for terminal UI foundations.
+- [MCP](https://modelcontextprotocol.io) for the tool ecosystem and integration model.
 
 ## 📄 License
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
+Apache License 2.0. See [LICENSE](LICENSE).
+
+> DataFoundry is under active development. Current code, public docs, and passing smoke checks are the source of truth.

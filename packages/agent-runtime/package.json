@@ -1,0 +1,27 @@
+{
+  "name": "@datafoundry/agent-runtime",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit false"
+  },
+  "dependencies": {
+    "@ag-ui/core": "^0.0.57",
+    "@mastra/core": "^1.46.0",
+    "@mastra/libsql": "^1.14.0",
+    "@mastra/memory": "^1.21.0",
+    "@datafoundry/artifacts": "0.2.0",
+    "@datafoundry/contracts": "0.2.0",
+    "@datafoundry/data-gateway": "0.2.0",
+    "@datafoundry/files": "0.2.0",
+    "@datafoundry/knowledge": "0.2.0",
+    "@datafoundry/providers": "0.2.0",
+    "@datafoundry/skills": "0.2.0",
+    "node-sql-parser": "^5.4.0",
+    "zod": "^4.2.1"
+  }
+}
