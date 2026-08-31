@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Traffic Insight NL2SQL Perceptor: column EQ recall → hybrid rank → one table → columns-info DDL."""
+"""Traffic Insight NL2SQL Perceptor: EQ → max need-hit → hybrid enrich → min extras → one table."""
 
 from __future__ import annotations
 
@@ -27,17 +27,18 @@ from dataagent.agents.nl2sql.utils.traffic_insight_field_normalizer import (
 )
 from dataagent.agents.nl2sql.utils.traffic_insight_table_recall import (
     add_tables_to_field_index,
-    apply_coverage_filter,
     build_families_from_tables,
+    enrich_families_with_columns,
     enrich_schema_example_values_from_columns_info,
     extract_tables_from_column_search,
     format_traffic_insight_table_family_prompt_context,
     parse_hybrid_table_columns,
     qualify_table_name,
-    rank_and_truncate_families,
-    rank_tables_from_field_index,
     resolve_family_selection,
     schema_from_hybrid_columns,
+    select_families_by_max_need_hits,
+    select_families_by_min_extra_fields_converged,
+    tables_from_field_index,
     tables_missing_from_hybrid_columns,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
@@ -46,7 +47,7 @@ from dataagent.utils.log import logger
 
 
 class TrafficInsightPerceptorNode(PerceptorNode):
-    """Perceptor for traffic insight: no table-list; EQ recall + hybrid rank; final columns-info."""
+    """Perceptor for traffic insight: EQ index → max need-hit families → hybrid enrich → DDL."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -54,14 +55,12 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         recall_cfg: dict = insight_cfg.get("recall", {}) or {}
         self._column_eq_page_size = int(recall_cfg.get("column_eq_page_size", 200))
         self._column_eq_max_offset = int(recall_cfg.get("column_eq_max_offset", 100_000))
-        self._max_candidate_tables = int(recall_cfg.get("max_candidate_tables", 200))
-        # Prompt-size gate after enrich+rank only; never truncate families before hybrid columns.
-        self._max_llm_table_families = int(recall_cfg.get("max_llm_table_families", 20))
         prefixes = recall_cfg.get("exclude_table_prefix", ["dim"])
         if isinstance(prefixes, str):
             prefixes = [prefixes]
         self._exclude_prefixes = tuple(str(p) for p in (prefixes or ["dim"]))
         self._hybrid_batch_size = int(recall_cfg.get("hybrid_batch_size", 50))
+        self._candidate_table_families_limit = int(recall_cfg.get("candidate_table_families_limit", 200))
 
     async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
         state = cast(NL2SQLState, state)
@@ -78,6 +77,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
 
     async def _traffic_insight_schema_linking(self, question: str) -> tuple[dict[str, Any], list]:
         """Select one fact table; build schema via hybrid columns + optional values."""
+        logger.info(f"load schema linking for question: {question}")
         table = await self._select_traffic_insight_table(question)
         schema = await asyncio.to_thread(self._schema_for_selected_table, table)
         if not schema:
@@ -106,13 +106,14 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         except ValueError as exc:
             raise NL2SQLError("Traffic Insight field set is empty", detail=str(exc)) from exc
 
-        candidates, recall_mode = await asyncio.to_thread(
+        table_to_fields, recall_mode = await asyncio.to_thread(
             self._recall_tables_by_field_eq,
             need_d,
             need_m,
         )
+        candidates = tables_from_field_index(table_to_fields)
         logger.info(
-            "Traffic Insight perceptor step=rank_table_hits mode={} count={}",
+            "Traffic Insight perceptor step=field_eq_index mode={} tables={}",
             recall_mode,
             len(candidates),
         )
@@ -133,39 +134,54 @@ class TrafficInsightPerceptorNode(PerceptorNode):
                 detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; candidate_tables={len(candidates)}",
             )
 
-        rep_tables = [family["representative_table"] for family in families]
+        selected = select_families_by_max_need_hits(families, table_to_fields)
+        logger.info(
+            "Traffic Insight perceptor step=select_max_need_hit_families count={}",
+            len(selected),
+        )
+        if not selected:
+            raise NL2SQLError(
+                "Traffic Insight table family catalog is empty after max need-hit select",
+                detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; families={len(families)}",
+            )
+
+        rep_tables = [family["representative_table"] for family in selected]
         columns_map = await asyncio.to_thread(self._hybrid_columns_for_tables, rep_tables)
         logger.info(
             "Traffic Insight perceptor step=fetch_hybrid_cols rep_tables={}",
             len(rep_tables),
         )
         try:
-            covered = apply_coverage_filter(families, columns_map, need_d=need_d, need_m=need_m)
+            enriched = enrich_families_with_columns(selected, columns_map)
         except ValueError as exc:
             raise NL2SQLError(
                 "Traffic Insight hybrid columns incomplete for family enrich",
                 detail=str(exc),
             ) from exc
-        ranked = rank_and_truncate_families(
-            covered,
-            need_d=need_d,
-            need_m=need_m,
-            max_llm_table_families=self._max_llm_table_families,
-        )
-        ranked_names = [family["family_name"] for family in ranked]
-        logger.info(
-            "Traffic Insight perceptor step=rank_coverage count={} families={}",
-            len(ranked),
-            ranked_names,
-        )
-        if not ranked:
+        if not enriched:
             raise NL2SQLError(
                 "Traffic Insight table family catalog is empty after column enrich",
                 detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}",
             )
 
-        selection = await self._select_traffic_insight_table_family(question, ranked)
-        table = resolve_family_selection(selection, ranked)
+        narrowed = select_families_by_min_extra_fields_converged(
+            enriched,
+            need_d=need_d,
+            need_m=need_m,
+            limit=self._candidate_table_families_limit,
+        )
+        logger.info(
+            "Traffic Insight perceptor step=select_min_extra_families count={}",
+            len(narrowed),
+        )
+        if not narrowed:
+            raise NL2SQLError(
+                "Traffic Insight table family catalog is empty after min-extra select",
+                detail=f"need_d={sorted(need_d)}; need_m={sorted(need_m)}; enriched={len(enriched)}",
+            )
+
+        selection = await self._select_traffic_insight_table_family(question, narrowed)
+        table = resolve_family_selection(selection, narrowed)
         if not table:
             raise NL2SQLError("Traffic Insight table family selection returned no valid table")
         logger.info(
@@ -194,10 +210,11 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         question: str,
         families: list[dict[str, Any]],
     ) -> Optional[dict[str, str]]:  # noqa: UP045
+        table_families_info = format_traffic_insight_table_family_prompt_context(families)
         parsed = await self.execute_with_llm_json(
             {
                 "question": question,
-                "tables": format_traffic_insight_table_family_prompt_context(families),
+                "tables": table_families_info,
             },
             action="filter_traffic_insight_table_family_",
         )
@@ -208,8 +225,8 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         granularity = str(parsed.get("granularity") or "").strip()
         return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
 
-    def _recall_tables_by_field_eq(self, need_d: set[str], need_m: set[str]) -> tuple[list[str], str]:
-        """Algorithm B: paginate EQ → stream into table→fields index → hit-count rank."""
+    def _recall_tables_by_field_eq(self, need_d: set[str], need_m: set[str]) -> tuple[dict[str, set[str]], str]:
+        """Paginate EQ searches into ``table → {hit fields}``; no table-level rank truncation."""
         fields = sorted((need_d or set()) | (need_m or set()))
         table_to_fields: dict[str, set[str]] = {}
         any_field_hit = False
@@ -240,11 +257,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
                 ),
             )
 
-        return rank_tables_from_field_index(
-            table_to_fields,
-            need_field_count=len(fields),
-            max_candidate_tables=self._max_candidate_tables,
-        )
+        return table_to_fields, "field_eq_index"
 
     def _stream_field_eq_into_index(self, field: str, table_to_fields: dict[str, set[str]]) -> int:
         """Page search/basic; fold each page into inverted index immediately (no per-field full set)."""

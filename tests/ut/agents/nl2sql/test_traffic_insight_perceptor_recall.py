@@ -18,11 +18,17 @@ from dataagent.agents.nl2sql.utils.traffic_insight_field_normalizer import (
     normalize_traffic_insight_fields,
 )
 from dataagent.agents.nl2sql.utils.traffic_insight_table_recall import (
-    apply_coverage_filter,
     build_families_from_tables,
+    build_field_index_from_hits,
+    enrich_families_with_columns,
     enrich_schema_example_values_from_columns_info,
+    format_traffic_insight_table_family_prompt_context,
     normalize_example_values,
-    select_tables_from_field_hits,
+    normalize_family_table_description,
+    select_families_by_max_need_hits,
+    select_families_by_min_extra_fields,
+    select_families_by_min_extra_fields_converged,
+    tables_from_field_index,
     tables_missing_from_hybrid_columns,
 )
 
@@ -104,8 +110,8 @@ def test_normalize_allows_metrics_only() -> None:
     assert_need_fields(need["need_d"], need["need_m"])
 
 
-def test_select_tables_ranks_full_hits_first() -> None:
-    tables, mode = select_tables_from_field_hits(
+def test_field_index_excludes_dim_and_keeps_all_hits() -> None:
+    index = build_field_index_from_hits(
         {
             "cell": {"db.appcate_cell_1h", "db.other_1h", "db.dim_cell"},
             "appcate": {"db.appcate_cell_1h", "db.appcate_city_1h"},
@@ -113,33 +119,36 @@ def test_select_tables_ranks_full_hits_first() -> None:
         },
         need_d={"cell", "appcate"},
         need_m={"downlink_volume"},
-        max_candidate_tables=10,
     )
-    assert mode == "field_hit_count_rank"
-    assert tables[0] == "db.appcate_cell_1h"
+    tables = tables_from_field_index(index)
     assert "db.dim_cell" not in tables
-    assert tables == ["db.appcate_cell_1h", "db.appcate_city_1h", "db.other_1h"]
+    assert set(tables) == {"db.appcate_cell_1h", "db.appcate_city_1h", "db.other_1h"}
+    assert index["db.appcate_cell_1h"] == {"cell", "appcate", "downlink_volume"}
 
 
-def test_select_tables_partial_hits_ranked_by_score() -> None:
-    tables, mode = select_tables_from_field_hits(
+def test_select_families_keeps_max_need_hit_tier_with_ties() -> None:
+    index = build_field_index_from_hits(
         {
-            "cell": {"db.appcate_cell_1h", "db.cell_city_1h"},
-            "appcate": {"db.appcate_city_1h"},
-            "downlink_volume": {"db.appcate_cell_1h", "db.appcate_city_1h"},
-            "subs_count": {"db.appcate_cell_1h"},
+            "cell": {"db.appcate_cell_1h", "db.cell_city_1h", "db.wide_cell_appcate_1h"},
+            "appcate": {"db.appcate_city_1h", "db.appcate_cell_1h", "db.wide_cell_appcate_1h"},
+            "downlink_volume": {
+                "db.appcate_cell_1h",
+                "db.appcate_city_1h",
+                "db.wide_cell_appcate_1h",
+            },
+            "subs_count": {"db.appcate_cell_1h", "db.wide_cell_appcate_1h"},
         },
         need_d={"cell", "appcate"},
         need_m={"downlink_volume", "subs_count"},
-        max_candidate_tables=10,
     )
-    assert mode == "field_hit_count_rank"
-    # appcate_cell hits 3; appcate_city hits 2; cell_city hits 1
-    assert tables[0] == "db.appcate_cell_1h"
-    assert tables[1] == "db.appcate_city_1h"
+    # appcate_cell / wide_cell_appcate hit 4; appcate_city hits 2; cell_city hits 1
+    families = build_families_from_tables(tables_from_field_index(index))
+    selected = select_families_by_max_need_hits(families, index)
+    names = {family["family_name"] for family in selected}
+    assert names == {"appcate_cell", "wide_cell_appcate"}
 
 
-def test_soft_coverage_keeps_partial_families() -> None:
+def test_enrich_keeps_partial_families_without_ranking() -> None:
     families = build_families_from_tables(["db.appcate_cell_1h"])
     columns_map = {
         "appcate_cell_1h": {
@@ -163,14 +172,184 @@ def test_soft_coverage_keeps_partial_families() -> None:
             "bare_name": "appcate_cell_1h",
         },
     }
-    covered = apply_coverage_filter(
+    enriched = enrich_families_with_columns(families, columns_map)
+    assert len(enriched) == 1
+    assert enriched[0]["family_name"] == "appcate_cell"
+    assert "cell" in enriched[0]["dimensions"]
+    assert "downlink_volume" in enriched[0]["metrics"]
+
+
+def test_format_prompt_context_dims_and_metrics_with_hybrid_description() -> None:
+    families = [
+        {
+            "family_name": "appcate_cell",
+            "dimensions": ["cell", "appcate"],
+            "metrics": ["downlink_volume"],
+            "available_granularities": ["1h"],
+            "column_meta": {
+                "description": "按 1 小时粒度存储基于应用大类、小区维度的下行流量与用户数统计指标数据",
+                "columns": {
+                    "cell": {"description": "小区标识", "value_type": "string"},
+                    "appcate": {"description": "应用大类", "value_type": "string"},
+                    "downlink_volume": {"description": "下行流量", "value_type": "long"},
+                },
+            },
+        },
+        {
+            "family_name": "appcate_cell_network_type",
+            "dimensions": ["cell", "appcate", "network_type"],
+            "metrics": ["downlink_volume", "subs_count"],
+            "available_granularities": ["1h"],
+            "column_meta": {
+                "description": "按 1 小时粒度存储基于应用大类、小区、网络类型维度的下行流量与用户数统计指标数据",
+                "columns": {
+                    "cell": {"description": "小区标识", "value_type": "string"},
+                    "appcate": {"description": "", "value_type": "string"},
+                    "network_type": {"description": "网络类型", "value_type": "string"},
+                    "downlink_volume": {"description": "下行流量", "value_type": "long"},
+                    "subs_count": {"description": "", "value_type": "long"},
+                },
+            },
+        },
+    ]
+    text = format_traffic_insight_table_family_prompt_context(families)
+    assert "## 维度和指标说明" in text
+    assert "- `cell`（小区标识）" in text
+    assert "- `appcate`（应用大类）" in text
+    assert "- `downlink_volume`（下行流量）" in text
+    assert "- `network_type`（网络类型）" in text
+    assert "- `subs_count`" in text
+    assert "- 表簇说明：存储基于应用大类、小区维度的下行流量与用户数统计指标数据" in text
+    assert "- 表簇说明：存储基于应用大类、小区、网络类型维度的下行流量与用户数统计指标数据" in text
+    assert "（）" not in text
+    assert "## 维度说明" not in text
+
+
+def test_normalize_family_table_description_strips_granularity_prefix() -> None:
+    suffix = "存储基于接入制式、小区维度的流量统计指标数据，涵盖上下行流量、连接数、用户数等核心指标"
+    assert normalize_family_table_description(f"按 5 分钟粒度{suffix}") == suffix
+    assert normalize_family_table_description(f"按 1 小时粒度{suffix}") == suffix
+    assert normalize_family_table_description(f"按 1 天粒度{suffix}") == suffix
+    assert normalize_family_table_description("") == ""
+
+
+def test_select_families_by_min_extra_fields_top2_tiers() -> None:
+    need_d = {"cell", "appcate"}
+    need_m = {"downlink_volume"}
+    families = [
+        {
+            "family_name": "narrow",
+            "dimensions": ["cell", "appcate"],
+            "metrics": ["downlink_volume"],
+        },
+        {
+            "family_name": "wide_one_extra_dim",
+            "dimensions": ["cell", "appcate", "city"],
+            "metrics": ["downlink_volume"],
+        },
+        {
+            "family_name": "also_narrow",
+            "dimensions": ["appcate", "cell"],
+            "metrics": ["downlink_volume"],
+        },
+        {
+            "family_name": "wide_one_extra_metric",
+            "dimensions": ["cell", "appcate"],
+            "metrics": ["downlink_volume", "subs_count"],
+        },
+        {
+            "family_name": "wider_two_extras",
+            "dimensions": ["cell", "appcate", "city"],
+            "metrics": ["downlink_volume", "subs_count"],
+        },
+    ]
+    # extras: narrow/also_narrow=0; wide_*=1; wider_two_extras=2 → top2 tiers {0,1}
+    kept = select_families_by_min_extra_fields(families, need_d=need_d, need_m=need_m, top_n=2)
+    assert {family["family_name"] for family in kept} == {
+        "narrow",
+        "also_narrow",
+        "wide_one_extra_dim",
+        "wide_one_extra_metric",
+    }
+
+
+def test_select_families_by_min_extra_fields_top5_keeps_all_distinct_tiers() -> None:
+    need_d = {"cell", "appcate"}
+    need_m = {"downlink_volume"}
+    families = [
+        {"family_name": "narrow", "dimensions": ["cell", "appcate"], "metrics": ["downlink_volume"]},
+        {
+            "family_name": "wide_one_extra_dim",
+            "dimensions": ["cell", "appcate", "city"],
+            "metrics": ["downlink_volume"],
+        },
+        {"family_name": "also_narrow", "dimensions": ["appcate", "cell"], "metrics": ["downlink_volume"]},
+        {
+            "family_name": "wide_one_extra_metric",
+            "dimensions": ["cell", "appcate"],
+            "metrics": ["downlink_volume", "subs_count"],
+        },
+        {
+            "family_name": "wider_two_extras",
+            "dimensions": ["cell", "appcate", "city"],
+            "metrics": ["downlink_volume", "subs_count"],
+        },
+    ]
+    kept = select_families_by_min_extra_fields(families, need_d=need_d, need_m=need_m, top_n=5)
+    assert {family["family_name"] for family in kept} == {
+        "narrow",
+        "also_narrow",
+        "wide_one_extra_dim",
+        "wide_one_extra_metric",
+        "wider_two_extras",
+    }
+
+
+def _families_with_extra(extra: int, count: int, *, prefix: str = "family") -> list[dict[str, Any]]:
+    families: list[dict[str, Any]] = []
+    for idx in range(count):
+        dims = ["cell", "appcate"]
+        metrics = ["downlink_volume"]
+        for _ in range(extra):
+            dims.append(f"extra_dim_{idx}")
+        families.append(
+            {
+                "family_name": f"{prefix}_{extra}_{idx:03d}",
+                "dimensions": dims,
+                "metrics": metrics,
+            }
+        )
+    return families
+
+
+def test_select_families_by_min_extra_fields_converged_reduces_top_n() -> None:
+    need_d = {"cell", "appcate"}
+    need_m = {"downlink_volume"}
+    families = _families_with_extra(0, 120, prefix="tier0") + _families_with_extra(1, 120, prefix="tier1")
+    kept = select_families_by_min_extra_fields_converged(
         families,
-        columns_map,
-        need_d={"cell", "appcate"},
-        need_m={"downlink_volume", "subs_count"},
+        need_d=need_d,
+        need_m=need_m,
+        top_n=5,
+        limit=200,
     )
-    assert len(covered) == 1
-    assert covered[0]["family_name"] == "appcate_cell"
+    assert len(kept) == 120
+    assert all(family["family_name"].startswith("tier0_") for family in kept)
+
+
+def test_select_families_by_min_extra_fields_converged_truncates_at_top1() -> None:
+    need_d = {"cell", "appcate"}
+    need_m = {"downlink_volume"}
+    families = _families_with_extra(0, 250, prefix="tier0")
+    kept = select_families_by_min_extra_fields_converged(
+        families,
+        need_d=need_d,
+        need_m=need_m,
+        top_n=5,
+        limit=200,
+    )
+    assert len(kept) == 200
+    assert [family["family_name"] for family in kept] == sorted(f["family_name"] for f in kept)
 
 
 def test_tables_missing_from_hybrid_columns() -> None:
@@ -398,9 +577,10 @@ def test_column_eq_pagination_streams_into_index(monkeypatch: pytest.MonkeyPatch
     }
 
 
-def test_perceptor_soft_recall_and_resolve_with_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_perceptor_max_need_hit_families_and_resolve_with_mocks(monkeypatch: pytest.MonkeyPatch) -> None:
     node = TrafficInsightPerceptorNode(config_manager=_ConfigManager())
     client = _attach_semantic(node, monkeypatch)
+    hybrid_requests: list[list[str]] = []
 
     async def fake_llm(context: dict[str, Any], action: str = "") -> Any:
         if action == "filter_traffic_insight_fields_":
@@ -426,6 +606,7 @@ def test_perceptor_soft_recall_and_resolve_with_mocks(monkeypatch: pytest.Monkey
         return field_tables[field]
 
     def fake_hybrid(tables: list[str]) -> list[dict[str, Any]]:
+        hybrid_requests.append(list(tables))
         out = []
         for qualified in tables:
             bare = qualified.rsplit(".", 1)[-1]
@@ -448,6 +629,70 @@ def test_perceptor_soft_recall_and_resolve_with_mocks(monkeypatch: pytest.Monkey
 
     table = asyncio.run(node._select_traffic_insight_table("各小区应用大类下行流量和用户数按小时"))
     assert table in {"appcate_cell_1h", "db.appcate_cell_1h"}
+    # Only max need-hit family (appcate_cell hits 3) should be hybrid-fetched; lower tiers dropped.
+    requested_bares = {name.rsplit(".", 1)[-1] for chunk in hybrid_requests for name in chunk}
+    assert requested_bares == {"appcate_cell_1h"}
+
+
+def test_perceptor_min_extra_top5_keeps_more_tiers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Max-hit families with extras 0, 1, and 2 all reach LLM₂ under default top5."""
+    node = TrafficInsightPerceptorNode(config_manager=_ConfigManager())
+    client = _attach_semantic(node, monkeypatch)
+    llm2_tables_blob: list[str] = []
+
+    async def fake_llm(context: dict[str, Any], action: str = "") -> Any:
+        if action == "filter_traffic_insight_fields_":
+            return ["cell", "appcate", "downlink_volume"]
+        if action == "filter_traffic_insight_table_family_":
+            llm2_tables_blob.append(str(context.get("tables") or ""))
+            return {"family_name": "appcate_cell", "granularity": "1h"}
+        raise AssertionError(action)
+
+    field_tables = {
+        "cell": _column_search(
+            [("db", "appcate_cell_1h"), ("db", "wide_appcate_cell_1h"), ("db", "wider_appcate_cell_1h")]
+        ),
+        "appcate": _column_search(
+            [("db", "appcate_cell_1h"), ("db", "wide_appcate_cell_1h"), ("db", "wider_appcate_cell_1h")]
+        ),
+        "downlink_volume": _column_search(
+            [("db", "appcate_cell_1h"), ("db", "wide_appcate_cell_1h"), ("db", "wider_appcate_cell_1h")]
+        ),
+    }
+
+    def fake_search_basic(payload: dict[str, Any]) -> dict[str, Any]:
+        return field_tables[_field_from_payload(payload)]
+
+    def fake_hybrid(tables: list[str]) -> list[dict[str, Any]]:
+        out = []
+        for qualified in tables:
+            bare = qualified.rsplit(".", 1)[-1]
+            if bare.startswith("wider_"):
+                cols = ["cell", "appcate", "network_type", "ip_version", "downlink_volume", "subs_count"]
+            elif bare.startswith("wide_"):
+                cols = ["cell", "appcate", "network_type", "downlink_volume"]
+            else:
+                cols = ["cell", "appcate", "downlink_volume"]
+            out.append(
+                {
+                    "db": "db",
+                    "table": bare,
+                    "description": "",
+                    "columns": [{"columnNameEn": name, "description": "", "valueType": "string"} for name in cols],
+                }
+            )
+        return out
+
+    monkeypatch.setattr(node, "execute_with_llm_json", fake_llm)
+    client.search_basic = fake_search_basic
+    client.hybrid_table_columns = fake_hybrid
+
+    table = asyncio.run(node._select_traffic_insight_table("各小区应用大类下行流量"))
+    assert "appcate_cell_1h" in table
+    assert len(llm2_tables_blob) == 1
+    assert "`appcate_cell`" in llm2_tables_blob[0]
+    assert "`wide_appcate_cell`" in llm2_tables_blob[0]
+    assert "`wider_appcate_cell`" in llm2_tables_blob[0]
 
 
 def test_perceptor_need_d_empty_continues_with_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
