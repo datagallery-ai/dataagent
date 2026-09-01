@@ -17,9 +17,24 @@ disable-model-invocation: true
 | 步骤 | ClickHouse 访问方式 | 本地文件 |
 |------|-------------------|---------|
 | **step2_0 ~ step2_3** | 仅 `submit_resource_job` / `poll_job` / `cancel_job` / `collect_job`<br>**严禁 Bash 连接 ClickHouse**<br>**严禁导出中间 CSV**（所有表数据必须留在 CH）<br>长 SQL 用 `command_file` 提交，禁止直接传 `command` | 仅 `.md`、`.json` 分析产物 |
-| **step2_4** | 同上执行 SQL 建表和校验<br>**校验通过后**允许 Bash 连接 CH 导出最终宽表 | `.json` + **`step2_4_wide_userfiltered.csv`** |
+| **step2_4** | 建表和校验仍只用 MCP。CSV 导出见下方**导出方式优先级** | `.json` + **`step2_4_wide_userfiltered.csv`** |
 
 **表结构与字段含义**：通过 step2_0 的数据画像直接从 ClickHouse 分析源数据推断，列角色初始信息来自 `step1_output_meta.json` 中的表类型。不依赖外部语义检索服务。
+
+### CSV 导出方式优先级（step2_4 校验通过后）
+
+顺序不可颠倒。细节与反面案例见 `scripts/step2_4_export_csv.md`（独立 todo，必须 `read_file`）。
+
+1. **默认导出接口（必须先用）**：ClickHouse MCP 资源 `resource_id="clickhouse"` 的
+   `submit_resource_job` 分批 `SELECT` → `poll_job` → `collect_job`，再用本地 Python
+   把已收集的行写入 `step2_4_wide_userfiltered.csv`。**不要** `curl` 直连 `:8123`。
+   MCP server 已持有 ClickHouse 凭据，Agent 侧不需要密码。
+2. **首次认证失败立即切换**：若仍尝试了 HTTP/`curl`/驱动直连且返回 401/403/ClickHouse 516
+   / Authentication failed，**立刻**回到第 1 条 MCP 方案。禁止继续直连，禁止花费时间搜索凭据。
+3. **运行环境预置连接信息（仅直连兜底）**：直连只允许读取已注入的环境变量
+   `CH_HOST` / `CH_PORT` / `CH_USER` / `CH_PASSWORD`（兼容 `CLICKHOUSE_*`）。
+   `CH_PASSWORD` 未设置或为空 → 直连不可用，直接走第 1 条。
+   凭据由本机 `.env` 或 `~/.bashrc` 注入进程环境，禁止写入代码或 Suite YAML，禁止扫描磁盘/进程/数据库。
 
 ## 工具使用规则
 
@@ -31,6 +46,29 @@ disable-model-invocation: true
   - `command` 和 `command_file` 互斥，只能选其一。
 
 **脚本路径映射**：本文档中所有 `scripts/` 前缀指向 SKILL 包内的 `skill/feature-engineer/scripts/` 目录，不要假定工作区根目录下存在 `scripts/` 目录。
+
+## 进度标记（减少上下文切换）
+
+每个大阶段以及 step2_3 每个 todo 完成时，立刻覆盖写入对应文件，便于中断后 `cat` 恢复，禁止凭对话记忆回忆「做到哪了」。
+
+| 文件 | 何时写入 |
+|------|----------|
+| `progress_step2_0.txt` | step2_0 阶段 3 完成（含 `gate_data_verified.txt`） |
+| `progress_step2_1.txt` | `step2_1_wide_simple` 校验通过 |
+| `progress_step2_2.txt` | `step2_2_wide_cleaned` 与 cleaning_report 门禁通过 |
+| `progress_step2_3.txt` | step2_3 **每个** todo 完成时更新（含 todo 序号） |
+| `progress_step2_4.txt` | CSV 导出且契约检查跑完 |
+
+格式（纯文本，四行）：
+
+```text
+status=done
+todo=<序号或 all>
+updated=<ISO-8601>
+summary=<一句：已产出哪些表/文件>
+```
+
+进入任一步前先 `cat progress_step2_*.txt 2>/dev/null`；已 `status=done` 的阶段不要重做，从第一个未完成阶段继续。
 
 ---
 
@@ -66,9 +104,11 @@ scripts/step2_2_feature_cleaning.sql
 scripts/step2_2_validation.sql
 scripts/step2_3_feature_aggregation.sql
 scripts/step2_3_format_gate.md    ← ⛔ 提交前硬门禁
+scripts/step2_3_string_cast.md    ← ⛔ 残留 String 先采样再 CAST
 scripts/step2_3_validation.sql
 scripts/step2_4_user_cleaning.sql
 scripts/step2_4_validation.sql
+scripts/step2_4_export_csv.md    ← ⛔ 独立门禁 todo（MCP 优先导出，禁止凭据搜索）
 导出 step2_4_wide_userfiltered.csv 后执行 scripts/step2_3_validate_deployment_contract.py
 step2_5 → scripts/step2_5_finalize.md → receipt.json
 ```
@@ -131,7 +171,7 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 
 ## step2_1：1:1 初步合表
 
-执行 `scripts/step2_1_simple_merge.sql` → `scripts/step2_1_validation.sql`。以 `<user_table>` 为基表 LEFT JOIN 所有 1:1 表。
+执行 `scripts/step2_1_simple_merge.sql` → `scripts/step2_1_validation.sql`。以 `<user_table>` 为基表 LEFT JOIN 所有 1:1 表。超过一个 JOIN 时写成嵌套子查询（每层 1 个 JOIN），避免 ClickHouse 23.8 `Missing columns: '<user_id>'`。
 
 **执行流程：**
 1. 读取 `schema_resolution.json` 的 `key_validation`，检查 `max_duplication_factor`
@@ -165,7 +205,7 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 
 执行 `scripts/step2_3_feature_aggregation.sql` → `scripts/step2_3_validation.sql`。
 
-> ⛔ **必须在 todo list 中拆为 8 个独立 item（含 0 号前置检查）**：
+> ⛔ **必须在 todo list 中拆为 9 个独立 item（含 0 号前置检查）**：
 
 | 序号 | todo item | 内容 |
 |------|-----------|------|
@@ -174,12 +214,13 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 | 2 | **1:N 聚合** | 写 CTE 聚合 SQL。**检查该表的列表字段，在 CTE 内完成 splitByChar 二元展开**（见下方规则） |
 | 3 | **列表字段分割** | 对每个字段执行 splitByChar + has() 二元展开 + 删除原字段 |
 | 4 | **⛔ 提交前硬门禁** | `read_file("scripts/step2_3_format_gate.md")` 执行全部 grep。不通过 → 回到 todo 3 |
-| 5 | **SQL 建表 + 后端门禁** | submit 建表 → validation.sql 高基数门禁 |
+| 4b | **⛔ String 转换** | `read_file("scripts/step2_3_string_cast.md")`：城市列必须分级为 `{col}_tier`，**宽表禁止 `city` 原列**（过拟合）；其余残留 String **先采样**再 CAST（纯数字→Float64，逗号列表→length+is_empty，其他→LowCardinality(String)）。禁止未采样使用 `parseDateTimeBestEffort` |
+| 5 | **SQL 建表 + 后端门禁** | submit 建表 → validation.sql：高基数门禁（不得残留 `String`/`Nullable(String)`，保护列除外）+ **城市原列门禁**（不得残留 `city` / `*城市*`，只留 `{col}_tier`） |
 | 6 | **写文档** | `step2_3_feature_derivation.md` + `step2_3_high_cardinality_check.json` |
 | 7 | **写部署特征契约** | 从生成 expanded SQL 时使用的同一份特征定义同步写 `step2_3_deployment_feature_contract.json`；不得解析 SQL/Markdown 反推 |
 
-> **已知复发故障**：跳过列表分割、count-only（无 has()）、每个字段只产出 1 个二元特征、`list_detail_info` 的 1:N 表列表字段在聚合 CTE 中透传。
-> **防范**：todo 4 的 `scripts/step2_3_format_gate.md` 包含 6 步 grep 硬门禁，必须全部通过才能 submit。
+> **已知复发故障**：跳过列表分割、count-only（无 has()）、每个字段只产出 1 个二元特征、`list_detail_info` 的 1:N 表列表字段在聚合 CTE 中透传、**ClickHouse 23.8 扁平多 LEFT JOIN 报 Missing columns: 'usid'**、**残留高基数 String 未转换**。
+> **防范**：todo 4 的 `scripts/step2_3_format_gate.md` 与 todo 4b 的 `scripts/step2_3_string_cast.md` 必须全部通过才能 submit。
 
 ### 关键规则速查
 
@@ -187,9 +228,12 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 - **GROUP BY**：ClickHouse 要求 `GROUP BY` 直接引用原生列名，**禁止 `GROUP BY toString(col)` 等函数包装**
 - **超前清洗**：1:N 表聚合前从 `step2_2_cleaning_report` 查询 DROP 字段并排除
 - **缺失值**：原始缺失保留 NULL，不以 0/均值/空字符串填充
-- **字符串高基数门禁**：`step2_3_validation.sql` 检查 `system.columns`，残留 String 高基数列 → 阻塞。**禁止自我评估绕过门禁**
+- **字符串转换（submit 前）**：`#`/`^` 列表走 splitByChar。列名像城市（`city` / `*城市*`）必须按 `references/city_tier_map.json` 生成 `{col}_tier`（一线/新一线/二线/三线/三线及以下），**宽表禁止 `city` 原列（过拟合）**，用 `scripts/step2_3_city_tier_sql.py` 出 SQL。`北京市` 与 `北京` 同级；**县名不升市**。禁止只做 LowCardinality 保地名。其余 String 按 `scripts/step2_3_string_cast.md` **先采样 200 行再 CAST**：纯数字 → `toFloat64OrNull`；逗号列表 → `*_list_length` + `*_is_empty`；其他 → `LowCardinality(String)`。禁止未采样提交 `parseDateTimeBestEffort`。
+- **字符串高基数门禁**：`step2_3_validation.sql` 检查 `system.columns`，残留 `String` / `Nullable(String)`（保护列除外）→ 阻塞。`LowCardinality(String)` 为合法落点（版本等），**不能**用来保留 `city` 原列。**禁止自我评估绕过门禁**
+- **城市原列门禁（过拟合）**：`step2_3_wide_complete` 与 `step2_4_wide_userfiltered.csv` 不得出现 `city` / `city_name` / `*城市*` 原列，只保留 `{col}_tier`。validation.sql 第三条查询命中 → 失败；CSV 表头由 `step2_3_validate_deployment_contract.py` 再拦一次。
+- **ClickHouse 23.8 多 JOIN**：同一 FROM 中不得有两个及以上 LEFT/INNER/CROSS JOIN。必须嵌套子查询，每层恰好 1 个 JOIN，ON 用表别名限定 `<user_id>`。禁止 `USING`。若报 `Missing columns: 'usid'`（或其它用户键），**不要**创建 `step2_3_test*` / 物化诊断表，立刻按 `scripts/step2_3_format_gate.md` 附录改写成嵌套 JOIN 后重提这一条 CREATE。
 
-> 详细执行规则（列表分割流程、门禁 grep、正面/反面代码模板）见 `scripts/step2_3_format_gate.md`。
+> 详细执行规则（列表分割、嵌套 JOIN、残留 String 采样 CAST）见 `scripts/step2_3_format_gate.md` 与 `scripts/step2_3_string_cast.md`。
 > 1:N 表列表字段的拆分模板见该文件附录。
 > 部署契约格式、关系 plan 和字段级校验规则见 `references/deployment_feature_contract.md`。这是新增
 > 交付契约，不替代或改变 step2_3 原有 SQL、特征衍生和门禁逻辑。
@@ -202,7 +246,9 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
 
 - 依据 step2_0 记录的合法值域过滤年龄/性别不合法用户
 - 门禁验证：`<user_id>` 唯一、`<label>` 0/1、列对账（step2_4 vs step2_3 `system.columns` 列数一致）
-- 写入 `step2_4_user_filter_report.json`，门禁通过后导出 `step2_4_wide_userfiltered.csv`
+- 写入 `step2_4_user_filter_report.json`
+- **门禁通过后** `read_file("scripts/step2_4_export_csv.md")`，按上文「CSV 导出方式优先级」导出
+  `step2_4_wide_userfiltered.csv`。独立 todo，不可跳过。
 - CSV 导出后运行 `scripts/step2_3_validate_deployment_contract.py`。检查器会对账宽表列、源表
   Schema、alias/字段、关系 plan 与 expanded SQL 哈希，但不使用聚合函数白名单判断开放式
   SQL 语义。通过时发布新契约；失败时尝试修正新增契约，仍未通过则不登记该契约，但不得
@@ -231,13 +277,17 @@ step2_5 → scripts/step2_5_finalize.md → receipt.json
   - [ ] `step2_2_cleaning_report.json` 已写入
 - [ ] `step2_3_wide_complete` 已创建：
   - [ ] **提交前硬门禁通过**：grep splitByChar 命中数 ≥ 待分割字段数
-  - [ ] 高基数门禁 `system.columns` 查询返回 0 行
+  - [ ] 高基数门禁 `system.columns` 查询返回 0 行（无残留 `String`/`Nullable(String)`，保护列除外）
+  - [ ] 残留 String 已按采样结果转换（city_tier / numeric / comma_list / LowCardinality），有 `string_cast_plan.txt`
+  - [ ] 若存在城市列：宽表与 CSV **只有** `{col}_tier`，**没有** `city` 原列（过拟合）
+  - [ ] 已写入 `progress_step2_3.txt`
   - [ ] `## 列表字段检测结果` 中**全量 delimiter 字段**（含 1:N 表如 `list_detail_info`）已执行 splitByChar
   - [ ] 原列表字段已从 step2_3_wide_complete 中删除（含 `ld_*` 前缀的 1:N 表原始列表字段）
   - [ ] `step2_3_feature_derivation.md` 已写入
   - [ ] `step2_3_high_cardinality_check.json` 已写入（status 以门禁 SQL 结果为依据，非自我评估）
   - [ ] `step2_3_deployment_feature_contract.json` 与 expanded SQL 由同一份特征定义生成
+  - [ ] JOIN 为嵌套 1-JOIN-per-layer（`step2_3_check_join_nesting.py` 通过），无 `step2_3_test*` 诊断表
 - [ ] `step2_4_wide_userfiltered` 已创建，`<label>` 为 0/1，`step2_4_user_filter_report.json` 已写入
-- [ ] **`step2_4_wide_userfiltered.csv`** 已导出
+- [ ] **`step2_4_wide_userfiltered.csv`** 已按 `scripts/step2_4_export_csv.md` 导出（MCP 优先，未做凭据搜索）
 - [ ] 若发布部署特征契约，其 `validation.structural_validation.passed=true`
 - [ ] 无 `_tmp_*`、`_ft_*`、`fe_` 等非标准前缀残留

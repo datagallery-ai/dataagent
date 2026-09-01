@@ -9,14 +9,16 @@
 > - 061349/0728-5：每个字段只产出 1 个二元特征（`_sandbox` 但无 `_益智`、`_动作`），高频词项全部丢失
 > - 0728-?：`list_detail_info` 的 10 个列表字段在 ld_agg CTE 中仅被当作普通列透传——splitByChar 完全未触发。根因：agent 的列表分割思维模型只覆盖 `user_info` 表，没有遍历 1:N 表的聚合 CTE
 > - root cause：agent 生成到「有 has()」就停止，不生成全量 top-N 词项
+> - **ClickHouse 23.8 多 LEFT JOIN**：扁平 `FROM w LEFT JOIN a ... LEFT JOIN b` 反复报 `Missing columns: 'usid'`（列实际存在）。诊断耗时约 40 分钟并创建 step2_3_test* / 物化 agg 表无效。根因是旧版本列解析限制。**立刻改写为每层恰好 1 个 JOIN 的嵌套子查询**，禁止 USING、禁止再建诊断表。
 >
 > **执行顺序（严格）：**
 > 1. `read_file("scripts/step2_3_feature_aggregation.sql")` — 刷新合并 SQL 模板记忆
 > 2. **先查询词项频次**：对每个待分割字段，通过 ClickHouse `submit_resource_job` 查询 Top-10 词项（见步骤 1.5）
 > 3. 按模板规范生成 `step2_3_feature_aggregation_expanded.sql`（含 1:N 聚合 + 列表分割[二元展开] + 游戏维度 JOIN）
-> 4. 立即执行以下 grep 硬门禁，不通过 → 回到步骤 2 修改 SQL → 重新 grep
-> 5. grep 全部通过后执行 validation.sql 高基数门禁
-> 6. **全部通过后**才能标记此 todo 为完成
+> 4. 立即执行以下 grep / 脚本硬门禁，不通过 → 回到步骤 2 修改 SQL → 重新检查
+> 5. 执行 `scripts/step2_3_string_cast.md`：城市列 → `{col}_tier` 并删除原列（过拟合）；其余残留 String 先采样再 CAST
+> 6. 门禁全部通过后执行 validation.sql（高基数 + **城市原列**）
+> 7. **全部通过后**才能标记此 todo 为完成
 
 ---
 
@@ -29,7 +31,7 @@ read_file("scripts/step2_3_feature_aggregation.sql")
 模板包含 `step2_3_wide_complete` 的唯一合法 SQL 结构：
 - `/*__DERIVATION_CTES__*/` — 1:N 聚合 CTE + 列表词项统计 CTE
 - `/*__DERIVED_SELECT_COLUMNS__*/` — 聚合列 + 列表二元特征列（`has(splitByChar(...), 'term')`）
-- `/*__DERIVATION_JOIN_BLOCKS__*/` — 游戏维度 JOIN
+- `/*__DERIVATION_JOIN_BLOCKS__*/` — 嵌套 JOIN（每层恰好 1 个 LEFT/CROSS JOIN；含游戏维度）
 - `/*__CLEANING_EXCEPT_CLAUSE__*/` — 从 `step2_2_cleaning_report WHERE recommendation='DROP'` 查询展开
 
 ---
@@ -229,10 +231,12 @@ done < cte_names.txt
 ### 步骤 2f0：⛔ 单 SQL 约束 — 禁止中间表流水线
 
 > step2_3 必须在 **1 个 SQL** 中完成全部聚合 + 分割 + JOIN。禁止以下反模式：
-> - 创建临时实体表（如 `CREATE TABLE step2_3_with_ld`）再从中取数
+> - 创建临时实体表（如 `CREATE TABLE step2_3_with_ld`、`step2_3_test*`、`dev_agg` 诊断表）再从中取数
 > - 多 SQL 管道链（如 m1 → m2 → m3 → m4 → m5 串联提交）
+> - **同一 FROM 子句多个 LEFT/INNER/CROSS JOIN**（ClickHouse 23.8 会误报 `Missing columns: 'usid'`）
+> - `USING (usid)`（23.8 报 Multiple USING）
 >
-> 正确模式：1 条 `CREATE OR REPLACE TABLE step2_3_wide_complete AS SELECT w.* EXCEPT (...) ... FROM step2_2_wide_cleaned w LEFT JOIN ...`
+> 正确模式：1 条 `CREATE OR REPLACE TABLE step2_3_wide_complete AS ...`，JOIN 写成**嵌套子查询，每层恰好 1 个 JOIN**（见附录「ClickHouse 23.8 嵌套 JOIN」）。
 
 **2f0a. 检查 SQL 是否为单条 CREATE：**
 
@@ -330,9 +334,44 @@ done < dim_tables.txt
 
 ---
 
+### 步骤 2i：⛔ ClickHouse 23.8 JOIN 嵌套硬门禁
+
+> 扁平多 JOIN 会在 23.8 上循环报 `Missing columns: 'usid'`。收到该错误时**不要**建 `step2_3_test*`，**立刻**按附录改成每层 1 个 JOIN。
+
+对刚写入的 `step2_3_feature_aggregation_expanded.sql` 执行：
+
+```bash
+python skill/feature-engineer/scripts/step2_3_check_join_nesting.py step2_3_feature_aggregation_expanded.sql
+```
+
+- exit 0 → 通过
+- 非 0 → **门禁不通过。** 按报错把每个 FROM 改成至多 1 个 JOIN 的嵌套子查询后重跑。禁止 USING，禁止诊断表。
+
+---
+
+### 步骤 2j：⛔ 城市原列不得进入宽表（过拟合）
+
+地名会过拟合。`step2_3_wide_complete` / CSV 只允许 `{col}_tier`，禁止 `city` / `city_name` / `*城市*` 原列。
+
+`string_cast_plan.txt` 中规则为 `city_tier` 的列名必须同时满足：
+
+1. 最外层 `SELECT` 用 `EXCEPT ({col}, ...)` 丢掉原列
+2. 出现 `{col}_tier`（由 `step2_3_city_tier_sql.py` 生成，禁止手写截断版 IN 列表）
+3. 建表后 `step2_3_validation.sql` **第三条**查询返回 0 行
+
+CSV 导出后可用：
+
+```bash
+python skill/feature-engineer/scripts/step2_3_city_tier_sql.py --check-csv step2_4_wide_userfiltered.csv
+```
+
+exit 非 0 → 表头仍有 `city` 原列，门禁失败。
+
+---
+
 ### 门禁通过后的下一步
 
-全部 8 步（2b + 2c + 2d + 2e + 2f0a + 2f0b + 2f + 2g + 2h）通过后 → submit SQL 建表 → 执行 `step2_3_validation.sql` 门禁。
+全部步骤（2b + 2c + 2d + 2e + 2f0a + 2f0b + 2f + 2g + 2h + **2i** + **2j**）通过后 → submit SQL 建表 → 执行 `step2_3_validation.sql` 门禁（含城市原列查询）。
 
 ---
 
@@ -386,3 +425,40 @@ ld_agg AS (
     GROUP BY usid
 )
 ```
+
+---
+
+## 附录：ClickHouse 23.8 嵌套 JOIN（Missing columns: 'usid'）
+
+> **已知限制**：23.8 在同一 FROM 中多个 LEFT JOIN 引用同一键列时列解析失败，物化真实表也一样。
+> 验证过的解法只有：**每层子查询恰好 1 个 JOIN**。CROSS JOIN 维度表单独一层。
+
+**反面（禁止，会报 Missing columns: 'usid'）：**
+
+```sql
+SELECT w.* EXCEPT (...), a.x, b.y, d.z
+FROM step2_2_wide_cleaned AS w
+LEFT JOIN cte_a AS a ON w.usid = a.usid
+LEFT JOIN cte_b AS b ON w.usid = b.usid
+CROSS JOIN game_dim AS d
+```
+
+**正面（必须）：**
+
+```sql
+SELECT j2.*, d.z
+FROM (
+    SELECT j1.*, b.y
+    FROM (
+        SELECT w.* EXCEPT (...), a.x
+        FROM {{output_database}}.step2_2_wide_cleaned AS w
+        LEFT JOIN cte_a AS a ON w.<user_id> = a.<user_id>
+    ) AS j1
+    LEFT JOIN cte_b AS b ON j1.<user_id> = b.<user_id>
+) AS j2
+CROSS JOIN game_dim AS d
+```
+
+维度 CTE 内部若要拼多张维表，同样每层只 JOIN 一次，禁止 `FROM gi LEFT JOIN gf ... LEFT JOIN gb`。
+
+收到 `Missing columns: '<user_id>'` 时：禁止 `step2_3_test*`、禁止 `USING`、禁止继续扁平重试；按本附录改写后重新 submit 这一条 CREATE。
