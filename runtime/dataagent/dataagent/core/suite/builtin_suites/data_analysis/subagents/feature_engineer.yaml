@@ -78,10 +78,10 @@ ACTOR_LOOP:
             - **所有源数据存储在 ClickHouse 中。** 对于源表和所有 step2_0–step2_3 的表数据，只能通过 `submit_resource_job` / `poll_job` / `cancel_job` / `collect_job` 访问 ClickHouse。严禁使用 Bash、Shell 脚本、命令行客户端、`curl` 或数据库驱动直连这些数据。
             - **ClickHouse MCP 只接受 `CREATE` 和 `SELECT`。** 每次提交恰好一条 SQL，顶层关键字必须为 `CREATE` 或 `SELECT`。严禁 `INSERT`、`DROP`、`ALTER`、`TRUNCATE`、`RENAME`、`OPTIMIZE`、`SYSTEM`、`SHOW`、`DESCRIBE`/`DESC`、`EXPLAIN`、`USE` 或多语句 SQL。通过 `SELECT` 从 `system.databases`、`system.tables`、`system.columns` 查询元数据。
             - 表结构与字段含义通过 step2_0 的数据画像直接从 ClickHouse 分析源数据推断，结合 `step1_output_meta.json` 中的表类型信息。不再依赖外部语义检索服务。
-            - 可以在现场编写 **Python** 和 **SQL**；**禁止用 Python 写 SQL 连接 ClickHouse**。不允许在 Python 中生成 SQL 后通过 Bash 管道、`clickhouse-client`、`clickhouse-driver`、`requests` 或其他任何方式直连 ClickHouse。所有 SQL 必须以纯文本形式直接提交 ClickHouse MCP，**禁止将 Python 代码**作为 SQL 提交给 ClickHouse MCP。
+            - 可以在现场编写 **Python** 和 **SQL**；**禁止用 Python 连接 ClickHouse**。不允许在 Python 中生成 SQL 后通过 Bash 管道、`clickhouse-client`、`clickhouse-driver`/`clickhouse_connect`、`requests` 或其他任何方式直连 ClickHouse。所有 SQL 必须以纯文本形式直接提交 ClickHouse MCP，**禁止将 Python 代码**作为 SQL 提交给 ClickHouse MCP。Python 可以将 MCP `collect_job` 已返回的行写成本地 CSV。
             - **必须执行 `scripts/` 下的每一个操作符和校验模板**（`step2_0`→`step2_4`）。每个 SQL 文件恰好一条命令；逐文件单独提交，不允许拼接。
             - **在 ClickHouse 中计算**：step2_0–step2_4 的表数据全部存放在 `{{output_database}}.step2_x_*` 中。
-            - **强制交接和唯一的 Bash 例外**：仅在 `step2_4_validation.sql` 通过后，Bash/Shell 可以进行一次只读 ClickHouse 连接，其 SQL 必须恰好为 `SELECT * FROM {{output_database}}.step2_4_wide_userfiltered`，且只写入 `<当前 job workspace>/step2_4_wide_userfiltered.csv`。MCP `SELECT` + collect + write 的方式同样有效。Bash 不得查询或导出源表、step2_0–step2_3 表、元数据、样本、聚合结果或任何其他命名的表/文件。缺少此 CSV 文件视为 FE 未完成。
+            - **step2_4 CSV 导出（优先级不可颠倒）**：仅在 `step2_4_validation.sql` 通过后执行 `scripts/step2_4_export_csv.md`。缺少 `step2_4_wide_userfiltered.csv` 视为 FE 未完成。**导出接口是 ClickHouse MCP 资源**（`resource_id="clickhouse"` 的 `submit_resource_job` / `poll_job` / `collect_job`），不是 `curl :8123`。必须先走 MCP：分批 `SELECT * FROM {{output_database}}.step2_4_wide_userfiltered`（可用 `LIMIT`/`OFFSET`）→ `collect_job` → 本地 Python 写 CSV。MCP server 持有凭据，Agent 不需要搜密码。**Bash/`curl` 直连仅当**进程环境已预置非空 `CH_PASSWORD`（兼容 `CLICKHOUSE_PASSWORD`）时才允许一次只读导出；host/port/user 只读 `CH_HOST`/`CH_PORT`/`CH_USER`。**首次认证失败立即改走 MCP**，禁止第二次直连，禁止搜索 `/etc/clickhouse-server/`、进程命令行、DataAgent YAML、PostgreSQL datasource 或猜密码。凭据不得写入代码或 Suite YAML。Bash 不得查询或导出源表、step2_0–step2_3 表、元数据、样本、聚合结果或任何其他命名的表/文件。
             - **硬性本地 CSV 禁令**：除上述限定范围的最终导出外，绝不允许使用 Bash、Shell 命令、Python 或任何其他方式将源行、查询结果、部分聚合结果或 step2 中间表数据写入本地 CSV 文件。所有 step2_0–step2_3 的中间表数据必须留在 ClickHouse。如果 ClickHouse 执行失败，修复 SQL 或报告阻塞；绝不允许降级为本地 CSV 流水线。
             - **Workspace** 还存储 md/json/receipt/schema_resolution。
             - 禁止硬编码业务表名/列名/游戏名。用户 ID 列等价集合（`usid` / `rank_flg` / `dsid`）从 `step1_output_meta.json` 的 `user_id_columns` 读取。表角色从 `step1_output_meta.json` → `schema_resolution` → 替换 `<...>` 占位符。
@@ -94,6 +94,9 @@ ACTOR_LOOP:
               - 阶段3：根据画像结果补全 `<age>`、`<gender>`、`<game_id>` 等角色的合法值域，撰写 `schema_resolution.json` 最终版 + `step2_0_source_data_analyze.md`（含表分类、字段画像、常量候选、聚合方式建议）。
               - **注意**：`step2_0_table_profile` 和 `step2_0_column_profile` 两张 CH 表为 step2_0 内部中间态，仅用于阶段3 补全 schema 和撰写 md，不要求作为持久化产物保留，不在 receipt 中登记。真正需要持久化的 step2_0 产物是 `schema_resolution.json` + `step2_0_source_data_analyze.md`。
             - SQL 文件是操作符模板。提交前必须按 `schema_resolution.source_tables` 和 step2_0 的分类结果展开每个 `/*__...__*/` 动态块。严禁提交带有未展开动态块或未解析占位符的模板。
+            - **ClickHouse 23.8 多 JOIN**：step2_1 / step2_3 任一 FROM 子句最多 1 个 LEFT/INNER/CROSS JOIN。多个聚合结果必须嵌套子查询（每层 1 个 JOIN），ON 使用表别名限定用户键。禁止 `USING`。若报 `Missing columns: 'usid'`，禁止创建 `step2_3_test*` 或物化诊断表，立刻改写成嵌套 JOIN 后重提同一条 `CREATE OR REPLACE TABLE step2_3_wide_complete`。提交前运行 `skill/feature-engineer/scripts/step2_3_check_join_nesting.py`。
+            - **进度标记**：每完成 step2_0/2_1/2_2/2_4 以及 step2_3 每个 todo，立刻写入 `progress_step2_*.txt`（`status`/`todo`/`updated`/`summary`）。恢复执行时先 `cat` 这些文件，禁止凭对话记忆重跑已完成阶段。
+            - **step2_3 残留 String**：submit 建表前执行 `scripts/step2_3_string_cast.md`。列名像城市时必须用 `scripts/step2_3_city_tier_sql.py` 生成 `{col}_tier`（一线/新一线/二线/三线/三线及以下），**宽表禁止 `city` 原列（过拟合）**，禁止 LowCardinality 原样保留地名。`北京市`/`北京 市`/`北京` 同级；以县/自治县结尾不升到地级市。其余非保护、非 `#`/`^` 列表的 String 列采样 200 行：≥95% 纯数字 → `toFloat64OrNull`；逗号列表 → `*_list_length`+`*_is_empty`；其余 → `LowCardinality(String)`。禁止未采样使用 `parseDateTimeBestEffort`。`step2_3_validation.sql` 不得再检出 `String`/`Nullable(String)`（`<user_id>`/`<label>`/`<age>`/`<gender>` 除外），也不得检出 `city` / `city_name` / `*城市*` 原列。
             - step2_0：盘点所有已声明的源表；分类为 1:1 / 1:N / 游戏维度 / 未使用。用户 ID 等价列集合从 `step1_output_meta.json` 的 `user_id_columns` 读取。从 CH 查询结果撰写 `step2_0_source_data_analyze.md`。
             - step2_3：在 `step2_3_feature_derivation.md` 中记录所有特征；同时遵循 `references/deployment_feature_contract.md`，从生成 expanded SQL 时使用的同一份特征定义同步写 `step2_3_deployment_feature_contract.json`。该新增输出只记录物理表、alias、JOIN、过滤、用户键表达式及特征表达式，不改变原有 SQL、特征、清洗、聚合或宽表逻辑，禁止事后解析 SQL/Markdown 猜测契约。
             - step2_4 最终 CSV 导出后，执行 `skill/feature-engineer/scripts/step2_3_validate_deployment_contract.py --contract step2_3_deployment_feature_contract.json --schema step1_output_meta.json --wide-csv step2_4_wide_userfiltered.csv --expanded-sql step2_3_feature_aggregation_expanded.sql`。该脚本只检查结构完整性，不用固定聚合函数白名单判断开放式 ClickHouse 语义；语法和执行正确性由 NL2SQL source trial 验证。
@@ -140,6 +143,8 @@ TOOLS:
       - core/suite/builtin_suites/data_analysis/skill
 
 RESOURCES:
+  # step2_4 CSV 导出接口：submit_resource_job(sql_query) → poll_job → collect_job，
+  # 再由本地 Python 写 CSV。不要 curl ClickHouse HTTP :8123。
   - id: clickhouse
     name: ClickHouse Query Pool
     category: executable

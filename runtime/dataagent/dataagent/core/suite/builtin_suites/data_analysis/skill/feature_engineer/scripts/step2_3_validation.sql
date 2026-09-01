@@ -13,8 +13,9 @@ SELECT
 FROM {{output_database}}.step2_3_wide_complete;
 
 -- step2_3 字符串高基数门禁（独立提交，单条 SELECT）
--- 检查 step2_3_wide_complete 中是否残留未处理的 String 高基数列。
--- 如果返回任何行，说明有高基数字符串字段未被分箱/分割，门禁失败，阻塞不通过。
+-- 检查 step2_3_wide_complete 中是否残留未转换的 String / Nullable(String)。
+-- LowCardinality(String) 是允许的落点（版本等非数值分类）。城市原列不行：必须只留 *_tier。
+-- 如果返回任何行，门禁失败，阻塞不通过。
 --
 -- ⛔ 展开规范：agent 必须在 submit 此文件前，从 step2_0_source_data_analyze.md 的
 --    ## 列表字段检测结果 表格中提取 list_delimiter != null 的全部字段名，
@@ -30,11 +31,39 @@ SELECT
     CASE
         WHEN name IN (/*__LIST_FIELD_NAMES__*/)
         THEN 'CRITICAL: LIST FIELD NOT SPLIT — splitByChar missing. Original field leaked to CSV'
-        ELSE 'String column survived step2_3 — binning/splitting required'
+        WHEN type IN ('String', 'Nullable(String)')
+        THEN 'String survived step2_3 — sample then cast: numeric→Float64, comma-list→length+is_empty, else LowCardinality(String)'
+        ELSE 'Non-LowCardinality string type survived step2_3'
     END AS diagnosis
 FROM system.columns
 WHERE database = '{{output_database}}'
   AND table = 'step2_3_wide_complete'
-  AND type LIKE 'String%'
+  AND (
+        type IN ('String', 'Nullable(String)')
+        OR (
+            position(type, 'String') > 0
+            AND position(type, 'LowCardinality') = 0
+        )
+      )
   AND name NOT IN ('<user_id>', '<label>', '<age>', '<gender>')
+FORMAT TSVWithNames;
+
+-- step2_3 城市原列门禁（独立提交，单条 SELECT）
+-- 地名会过拟合。step2_3_wide_complete / 最终 CSV 只允许 {col}_tier，
+-- 禁止残留 city / city_name / *城市* 原列（即使已是 LowCardinality(String)）。
+-- 如果返回任何行，门禁失败，阻塞不通过。
+
+SELECT
+    name AS column_name,
+    type,
+    'CRITICAL: raw city column leaked — overfitting. EXCEPT the original column and keep only {col}_tier' AS diagnosis
+FROM system.columns
+WHERE database = '{{output_database}}'
+  AND table = 'step2_3_wide_complete'
+  AND name NOT LIKE '%_tier'
+  AND NOT match(name, '(?i)cityhash|hash_city')
+  AND (
+        match(name, '(?i)(^|_)(city|city_name|reside_city|user_city)(_|$)')
+        OR position(name, '城市') > 0
+      )
 FORMAT TSVWithNames;

@@ -7,9 +7,16 @@ import csv
 import hashlib
 import json
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from step2_3_city_tier_sql import raw_city_columns  # noqa: E402
 
 
 ALLOWED_PLAN_KINDS = {"entity", "user_aggregation", "scalar"}
@@ -321,6 +328,14 @@ def validate_contract(
                 errors.append(f"features.{feature}: fill null policy requires value")
         if not str(raw_feature.get("output_type") or "").strip():
             errors.append(f"features.{feature}: output_type is required")
+
+    leaked_city = raw_city_columns([str(name) for name in csv_columns])
+    if leaked_city:
+        errors.append(
+            "wide CSV still contains raw city column(s) "
+            + ", ".join(leaked_city)
+            + "; only {col}_tier is allowed (overfitting)"
+        )
 
     csv_set = set(csv_columns)
     excluded = {entity_key, label_column}

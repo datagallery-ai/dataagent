@@ -10,6 +10,10 @@
 --
 -- ⛔ 禁止逐列显式 SELECT。必须使用 `u.*` 取基表字段，禁止写成 u.usid, u.label, u.age, ...。
 --   使用 u.* 时 <label> 自然紧随 <user_id> 处于第 2 列——无需 label 重排修正之旅。
+--
+-- !!! ClickHouse 23.8：同一 FROM 中多个 LEFT JOIN 会误报 Missing columns: '<user_id>'。
+-- /*__ONE_TO_ONE_JOIN_BLOCKS__*/ 超过 1 个 JOIN 时必须改成嵌套子查询（每层恰好 1 个 JOIN），
+-- 禁止 USING，禁止为该错误创建诊断表。
 
 CREATE OR REPLACE TABLE {{output_database}}.step2_1_wide_simple
 ENGINE = MergeTree
