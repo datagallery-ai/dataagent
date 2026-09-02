@@ -101,6 +101,9 @@ def test_check_sql_rejects_dangerous_metadata_function() -> None:
         "SELECT NOW(), CURRENT_DATE, CURRENT_TIMESTAMP, EXTRACT(YEAR FROM CURRENT_DATE) FROM orders WHERE id = 1",
         "SELECT DATE_TRUNC('day', CURRENT_TIMESTAMP), CASE WHEN 1 = 1 THEN 1 ELSE 0 END FROM orders WHERE id = 1",
         "SELECT generate_series(1, 2) FROM orders WHERE id = 1",
+        "SELECT LAG(status) OVER (PARTITION BY id ORDER BY id) FROM orders WHERE id = 1",
+        "SELECT ROW_NUMBER() OVER (PARTITION BY status ORDER BY id) FROM orders WHERE id = 1",
+        "SELECT SUM(id) OVER (PARTITION BY status ORDER BY id) FROM orders WHERE id = 1",
     ],
 )
 def test_check_sql_allows_whitelisted_functions(sql: str) -> None:
@@ -132,6 +135,7 @@ def test_check_sql_allows_whitelisted_functions(sql: str) -> None:
         "SELECT CURRENT_TIME FROM orders WHERE id = 1",
         "SELECT LOCALTIME FROM orders WHERE id = 1",
         "SELECT 1 FROM orders WHERE id = 1 ORDER BY random()",
+        "SELECT LEAD(id) OVER (ORDER BY id) FROM orders WHERE id = 1",
     ],
 )
 def test_check_sql_rejects_functions_outside_whitelist(sql: str) -> None:
@@ -156,6 +160,30 @@ def test_check_sql_rejects_qualified_whitelisted_function() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["FUNCTION-001"]
+
+
+def test_check_sql_allows_ranked_low_mos_query() -> None:
+    """Window support should allow the reported filtered ROW_NUMBER query."""
+    table_name = "fact_dw1745159007_000000000001b9c4_metric_1d"
+    columns = dict.fromkeys(("cell_id", "time", "avg_qoe", "mos_times", "city", "guarantee_group"), {})
+    schema = {table_name: {"columns": columns}}
+    sql = (
+        "WITH cell_avg_mos AS ("
+        "SELECT cell_id, time, SUM(avg_qoe)::numeric / SUM(mos_times) AS avg_mos "
+        f"FROM {table_name} WHERE city = 320200 AND guarantee_group = 3 "
+        "AND time >= EXTRACT(EPOCH FROM (date_trunc('month', NOW()) - INTERVAL '1 month'))::bigint "
+        "AND time < EXTRACT(EPOCH FROM date_trunc('month', NOW()))::bigint GROUP BY cell_id, time), "
+        "low_mos_cells AS (SELECT time, COUNT(*) AS low_mos_count FROM cell_avg_mos "
+        "WHERE avg_mos < 40 GROUP BY time), ranked_cells AS ("
+        "SELECT c.cell_id, c.time, l.low_mos_count, "
+        "ROW_NUMBER() OVER (PARTITION BY c.time ORDER BY l.low_mos_count DESC) AS rn "
+        "FROM cell_avg_mos c JOIN low_mos_cells l ON c.time = l.time WHERE c.avg_mos < 40) "
+        "SELECT cell_id FROM ranked_cells WHERE rn <= 20 ORDER BY time, low_mos_count DESC"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
 
 
 def test_check_sql_allows_generate_series_joined_to_modeled_table() -> None:
@@ -390,6 +418,37 @@ def test_check_sql_explains_how_to_fix_ambiguous_source_column() -> None:
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
     assert "qualify the column with its unique source" in result.violations[0].message
+
+
+def test_check_sql_explains_wrong_cte_column_qualifier() -> None:
+    """A wrong CTE qualifier should identify the unique CTE that exposes the requested column."""
+    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
+    sql = (
+        "WITH current_period AS (SELECT SUM(amount) AS current_total FROM orders WHERE id = 1), "
+        "comparison_period AS (SELECT SUM(amount) AS comparison_total FROM orders WHERE id = 1) "
+        "SELECT cp.current_total, cp.comparison_total "
+        "FROM current_period cp CROSS JOIN comparison_period"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
+    assert "not exposed by CTE alias 'cp' (CTE 'current_period')" in result.violations[0].message
+    assert "comparison_period.comparison_total" in result.violations[0].message
+
+
+def test_check_sql_keeps_generic_hint_when_no_cte_exposes_column() -> None:
+    """A missing derived column should not invent an alternative CTE reference."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = "WITH recent AS (SELECT id FROM orders WHERE id = 1) SELECT r.missing FROM recent r"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
+    assert "exists under the referenced table" in result.violations[0].message
+    assert "not exposed by CTE alias" not in result.violations[0].message
 
 
 def test_check_sql_allows_unqualified_unique_semantic_table() -> None:
@@ -635,7 +694,6 @@ def test_check_sql_recursively_checks_every_union_branch(
         "SELECT id FROM orders WHERE name ILIKE 'A%'",
         "SELECT id FROM orders WHERE name LIKE 'A!_%' ESCAPE '!'",
         "SELECT id FROM orders WHERE amount BETWEEN 1 AND 10",
-        "SELECT SUM(amount) OVER (PARTITION BY id) FROM orders WHERE id = 1",
         "SELECT id FROM orders WHERE id > 0 LIMIT 10 OFFSET 1",
         "SELECT id FROM orders FETCH FIRST 10 ROWS ONLY",
         "SELECT id FROM orders TABLESAMPLE SYSTEM (10)",
@@ -787,6 +845,96 @@ def test_check_sql_allows_documented_query_shapes(sql: str) -> None:
     result = check_sql(sql, dialect="postgres", schema=schema)
 
     assert result.blocked is False
+
+
+def test_check_sql_allows_on_true_join_between_single_row_aggregate_ctes() -> None:
+    """ON TRUE should be safe when both CTE sources are guaranteed to return at most one row."""
+    table_name = "fact_dw1745159016_0000000000000020_metric_1d"
+    columns = dict.fromkeys(("trigger_assurance_users", "term_brand", "time"), {})
+    schema = {table_name: {"columns": columns}}
+    sql = (
+        "WITH current_period AS ("
+        "SELECT SUM(trigger_assurance_users) AS current_value "
+        f"FROM {table_name} WHERE term_brand = 1 AND time >= 100 AND time < 200"
+        "), comparison_period AS ("
+        "SELECT SUM(trigger_assurance_users) AS comparison_value "
+        f"FROM {table_name} WHERE term_brand = 1 AND time >= 0 AND time < 100"
+        ") SELECT cp.current_value, cpm.comparison_value, "
+        "(cp.current_value::numeric - cpm.comparison_value::numeric) "
+        "/ NULLIF(cpm.comparison_value::numeric, 0) AS change_rate "
+        "FROM current_period cp FULL OUTER JOIN comparison_period cpm ON TRUE"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+def test_check_sql_rejects_on_true_when_aggregate_belongs_to_nested_select() -> None:
+    """A scalar aggregate nested in a row-returning CTE must not make that CTE single-row."""
+    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
+    sql = (
+        "WITH row_period AS ("
+        "SELECT (SELECT SUM(i.amount) FROM orders i WHERE i.id = 1) AS current_value "
+        "FROM orders o WHERE o.id > 0"
+        "), grouped_period AS ("
+        "SELECT id, SUM(amount) AS comparison_value FROM orders WHERE id > 0 GROUP BY id"
+        ") SELECT rp.current_value, gp.comparison_value "
+        "FROM row_period rp FULL OUTER JOIN grouped_period gp ON TRUE"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["RESOURCE-007"]
+
+
+def test_check_sql_allows_on_true_join_with_one_single_row_aggregate_cte() -> None:
+    """One proven single-row CTE should prevent multiplicative ON TRUE expansion."""
+    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
+    sql = (
+        "WITH grouped_period AS ("
+        "SELECT id, SUM(amount) AS current_value FROM orders WHERE id > 0 GROUP BY id"
+        "), comparison_period AS ("
+        "SELECT SUM(amount) AS comparison_value FROM orders WHERE id = 2"
+        ") SELECT gp.current_value, cp.comparison_value "
+        "FROM grouped_period gp FULL OUTER JOIN comparison_period cp ON TRUE"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+def test_check_sql_allows_on_true_join_between_table_and_single_row_aggregate_cte() -> None:
+    """A single-row aggregate CTE should be safe to attach to filtered base rows with ON TRUE."""
+    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
+    sql = (
+        "WITH totals AS (SELECT SUM(amount) AS total FROM orders WHERE id > 0) "
+        "SELECT o.id, t.total FROM orders o JOIN totals t ON TRUE WHERE o.id > 0"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+
+
+def test_check_sql_rejects_on_true_join_when_aggregate_cte_expands_rows() -> None:
+    """A set-returning projection must not make an aggregate CTE look single-row."""
+    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
+    sql = (
+        "WITH expanded_period AS ("
+        "SELECT SUM(amount) AS current_value, generate_series(1, 100) AS position FROM orders WHERE id > 0"
+        "), grouped_period AS ("
+        "SELECT id, SUM(amount) AS comparison_value FROM orders WHERE id > 0 GROUP BY id"
+        ") SELECT ep.current_value, gp.comparison_value "
+        "FROM expanded_period ep FULL OUTER JOIN grouped_period gp ON TRUE"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["RESOURCE-007"]
 
 
 @pytest.mark.parametrize(
