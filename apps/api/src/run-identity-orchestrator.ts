@@ -2,6 +2,7 @@ import type { BaseEvent, RunAgentInput } from "@ag-ui/client";
 import { type MetadataStore, type RunEventWriter } from "@datafoundry/metadata";
 
 import type { InteractionResume } from "./interaction-runtime-adapter.js";
+import { RUNTIME_BOUND_EVENT } from "./runtime/types.js";
 import {
   createRunRequestFingerprint,
   resolveExistingRun,
@@ -87,6 +88,15 @@ export const resolveRunIdentity = (input: ResolveRunIdentityInput): RunIdentityR
     if (!resume) {
       throw new Error(`INTERACTION_RESUME_REQUIRED:${runId}`);
     }
+    if (!hasRuntimeBoundEvent(input.runEventWriter, input.userId, runId)) {
+      input.metadataStore.runs.updateStatus({
+        user_id: input.userId,
+        run_id: runId,
+        status: "failed",
+        error_message: "LEGACY_RUNTIME_SUSPEND_UNRECOVERABLE"
+      });
+      throw new Error("LEGACY_RUNTIME_SUSPEND_UNRECOVERABLE");
+    }
     if (existingRun?.session_id !== sessionId) {
       throw new Error(`RUN_SESSION_MISMATCH:${runId}`);
     }
@@ -147,3 +157,13 @@ export const resolveRunIdentity = (input: ResolveRunIdentityInput): RunIdentityR
     ...(selectedDatasourceId ? { selectedDatasourceId } : {})
   };
 };
+
+const hasRuntimeBoundEvent = (
+  runEventWriter: RunEventWriter,
+  userId: string,
+  runId: string
+): boolean =>
+  runEventWriter.replay({ user_id: userId, run_id: runId }).some((envelope) => {
+    const event = envelope.event as { name?: string; type?: string };
+    return event.type === "CUSTOM" && event.name === RUNTIME_BOUND_EVENT;
+  });

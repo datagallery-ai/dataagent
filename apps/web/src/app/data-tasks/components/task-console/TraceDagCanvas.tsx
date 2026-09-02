@@ -179,7 +179,7 @@ export function TraceDagCanvas({
       <TraceDagCanvasState
         tone="empty"
         title="No trace graph nodes yet"
-        subtitle="Run a task to generate checkpoints."
+        subtitle="Semantic trace is not enabled for the current runtime. Older sessions can still replay existing graphs."
       />
     );
   }

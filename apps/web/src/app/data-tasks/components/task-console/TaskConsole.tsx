@@ -23,6 +23,7 @@ import type {
 } from "../../data-task-state";
 import type { JobDto } from "../../../../lib/config-api";
 import { configApi } from "../../../../lib/config-api";
+import { getRuntimeCapabilities } from "../../../../lib/config-api/capabilities";
 import { dataStepKindForTool, dataStepLabel, hasCapability, toolDisplayTitle } from "../../data-task-state";
 import { artifactExportClient } from "../../artifact-export-client";
 import {
@@ -924,8 +925,16 @@ function DeliverablesZone({
       <ConsoleSection title={t("console.sections.outputs")} badge={badge}>
         {artifacts.length === 0 ? (
           <EmptyState
-            title={t("console.empty.noOutputs")}
-            description={t("console.empty.noOutputsDescription")}
+            title={
+              getRuntimeCapabilities().dataTools
+                ? t("console.empty.noOutputs")
+                : t("console.empty.runtimeDataToolsDisabled")
+            }
+            description={
+              getRuntimeCapabilities().dataTools
+                ? t("console.empty.noOutputsDescription")
+                : t("console.empty.runtimeDataToolsDisabledDescription")
+            }
           />
         ) : (
           <div className="grid gap-3">

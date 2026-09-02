@@ -5,6 +5,7 @@ import type { MetadataStore } from "@datafoundry/metadata";
 import { createHash, randomUUID } from "node:crypto";
 
 export type InteractionInterrupt = {
+  type?: "agent_interrupt" | "mastra_suspend";
   args: unknown;
   resumeSchema: unknown;
   runId: string;
@@ -28,7 +29,7 @@ export class InteractionRuntimeAdapter {
   ) {}
 
   /**
-   * Convert Mastra's interrupt event into the stable application interaction event.
+   * Convert a runtime interrupt event into the stable application interaction event.
    * Returns both the parsed interrupt (for TOOL_CALL_START persistence) and the
    * `interaction.requested` CUSTOM event.
    */
@@ -123,7 +124,7 @@ export const buildHitlToolCallStartEvent = (interrupt: InteractionInterrupt): Ba
 
 /**
  * Pair with {@link buildHitlToolCallStartEvent} before the transport-only RUN_FINISHED.
- * Mastra's on_interrupt path never emits TOOL_CALL_END; without it, AbstractAgent
+ * Some runtimes emit only on_interrupt; without TOOL_CALL_END, AbstractAgent
  * verifyEvents rejects RUN_FINISHED while the tool call is still active.
  */
 export const buildHitlToolCallEndEvent = (interrupt: InteractionInterrupt): BaseEvent =>
@@ -172,7 +173,7 @@ export function buildHitlSuspendBridgeEvents(input: {
   return events;
 }
 
-/** Extract a Mastra resume command from an AG-UI run request. */
+/** Extract a HITL resume command from an AG-UI run request. */
 export const extractInteractionResume = (input: RunAgentInput): InteractionResume | undefined => {
   if (!isRecord(input.forwardedProps) || !isRecord(input.forwardedProps.command)) {
     return undefined;
@@ -205,7 +206,7 @@ const readInterruptEventValue = (
     return customEvent.value;
   }
   return {
-    type: "mastra_suspend",
+    type: interrupt.type ?? "agent_interrupt",
     args: interrupt.args,
     resumeSchema: interrupt.resumeSchema,
     runId: interrupt.runId,
@@ -215,11 +216,11 @@ const readInterruptEventValue = (
   };
 };
 
-const parseInterruptValue = (value: unknown): InteractionInterrupt => {
+export const parseInterruptValue = (value: unknown): InteractionInterrupt => {
   const parsed = typeof value === "string" ? parseJson(value) : value;
   if (
     !isRecord(parsed)
-    || parsed.type !== "mastra_suspend"
+    || (parsed.type !== "agent_interrupt" && parsed.type !== "mastra_suspend")
     || typeof parsed.toolCallId !== "string"
     || typeof parsed.toolName !== "string"
     || typeof parsed.runId !== "string"
@@ -230,6 +231,7 @@ const parseInterruptValue = (value: unknown): InteractionInterrupt => {
     throw new Error(`UNSUPPORTED_INTERACTION_TOOL:${parsed.toolName}`);
   }
   return {
+    type: parsed.type,
     args: parsed.args,
     resumeSchema: parsed.resumeSchema,
     runId: parsed.runId,

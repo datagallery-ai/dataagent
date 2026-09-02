@@ -107,6 +107,8 @@ workspace defaults
 - 文件、知识库、Skill 和 MCP 工具由后端策略筛选。
 - 事件流可用于展示和回放，不携带敏感明文。
 
+第一版控制面已改为对接独立 Deep Agents runtime。客户端仍走 `POST /api/copilotkit`。Runtime 实现方请阅读 [Deep Agents Runtime 接入契约](deep-agents-runtime.md) 与 [v1 能力边界](deep-agents-runtime-boundary.md)。
+
 ## 延伸阅读
 
 - 配置资源：[配置 API 参考](configuration-api.md)

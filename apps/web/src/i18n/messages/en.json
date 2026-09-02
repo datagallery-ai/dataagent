@@ -205,7 +205,11 @@
       "noStepsYet": "No steps yet",
       "noStepsYetDescription": "After you send a question, process steps appear here in order. Parallel tools are grouped under one step.",
       "noOutputs": "No outputs yet",
-      "noOutputsDescription": "SQL, datasets, charts, and reports appear here after a question. Preview an item in a popup, or Cite it on the right to select table/text or the whole artifact."
+      "noOutputsDescription": "SQL, datasets, charts, and reports appear here after a question. Preview an item in a popup, or Cite it on the right to select table/text or the whole artifact.",
+      "runtimeDataToolsDisabled": "Data outputs are not enabled in this version",
+      "runtimeDataToolsDisabledDescription": "The control plane now talks to an independent agent runtime. Data queries, SQL audit, and artifacts are not connected yet. Chat, built-in tool steps, and human approval still work.",
+      "runtimeTraceDisabled": "Semantic trace is not enabled in this version",
+      "runtimeTraceDisabledDescription": "Older sessions can still replay existing traces. New runs do not produce a semantic DAG."
     },
     "outputsHintExport": "Preview any output in a popup, or Cite it on the right to select a part or the whole.",
     "outputsHint": "Preview any output in a popup, or Cite it on the right.",

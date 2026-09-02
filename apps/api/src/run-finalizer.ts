@@ -74,6 +74,19 @@ export class RunFinalizer {
     this.input.emit(input.terminalEvent);
   }
 
+  async finish(input: { terminalEvent: BaseEvent }): Promise<void> {
+    await this.flushCompletedMemoryWithTimeout();
+    await this.syncSessionOutputs().catch(() => undefined);
+    this.input.metadataStore.runs.updateStatus({
+      user_id: this.input.userId,
+      run_id: this.input.runId,
+      status: "completed"
+    });
+    this.input.emit(createRunStatusDelta("completed", { runId: this.input.runId }));
+    await this.input.destroyWorkspace().catch(() => undefined);
+    this.input.emit(input.terminalEvent);
+  }
+
   async complete(input: {
     goalRuntime?: GoalRuntimeAdapter | undefined;
     terminalDecision?: ProtocolCompletionDecision | undefined;

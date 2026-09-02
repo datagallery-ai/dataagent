@@ -26,6 +26,13 @@ test("prints actual configured endpoints", () => {
   assert.match(output, /http:\/\/127\.0\.0\.1:3310/);
 });
 
+test("prints the Deep Agents runtime endpoint when enabled", () => {
+  const config = resolveStackRuntimeConfig({ RUNTIME_SERVICE_PORT: "8791" });
+  assert.equal(config.RUNTIME_PORT, "8791");
+  const output = formatStackEndpoints(config, { startApi: true, startWeb: false, startRuntime: true });
+  assert.match(output, /http:\/\/127\.0\.0\.1:8791/);
+});
+
 test("rejects invalid ports", () => {
   assert.throws(() => resolveStackRuntimeConfig({ WEB_PORT: "70000" }), /WEB_PORT/);
 });

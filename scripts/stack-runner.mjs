@@ -35,6 +35,22 @@ export async function runStack({ mode, args = [] }) {
   }
 
   const children = [];
+  const startRuntime = startApi && !args.includes("--no-runtime") && !runtimeConfig.RUNTIME_SERVICE_URL;
+  if (startRuntime) {
+    if (mode === "development") {
+      freePort(Number(runtimeConfig.RUNTIME_PORT));
+    }
+    const runtimeProcess = spawnDeepagentsRuntime(runtimeConfig, process.env);
+    if (runtimeProcess) {
+      children.push(runtimeProcess);
+      runtimeConfig.RUNTIME_SERVICE_URL = `http://${runtimeConfig.RUNTIME_HOST}:${runtimeConfig.RUNTIME_PORT}`;
+      await waitForRuntimeHealth(
+        runtimeConfig.RUNTIME_SERVICE_URL,
+        process.env.RUNTIME_SERVICE_TOKEN,
+      );
+    }
+  }
+
   if (startApi) {
     const command =
       mode === "development"
@@ -60,7 +76,11 @@ export async function runStack({ mode, args = [] }) {
     throw new Error("Nothing to start. Use --api and/or --web.");
   }
 
-  console.log(formatStackEndpoints(runtimeConfig, { startApi, startWeb }));
+  console.log(formatStackEndpoints(runtimeConfig, {
+    startApi,
+    startWeb,
+    startRuntime: Boolean(runtimeConfig.RUNTIME_SERVICE_URL) && startApi && !args.includes("--no-runtime"),
+  }));
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
@@ -87,15 +107,53 @@ function loadRootEnv() {
   if (existsSync(envPath)) loadEnvFile(envPath);
 }
 
-function spawnProcess(label, command, args, env) {
+function spawnProcess(label, command, args, env, cwd = root) {
   const child = spawn(command, args, {
-    cwd: root,
+    cwd,
     stdio: "inherit",
     env,
     shell: process.platform === "win32",
   });
   child.on("error", (error) => console.error(`[stack] Unable to start ${label}: ${error.message}`));
   return { child, label };
+}
+
+async function waitForRuntimeHealth(url, token, timeoutMs = 180000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const response = await fetch(`${url}/health`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // process still starting or uv is syncing
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  console.warn(`[stack] Deep Agents runtime did not become healthy at ${url}; API will still start.`);
+  return false;
+}
+
+function spawnDeepagentsRuntime(config, env) {
+  const serviceDir = join(root, "services", "deepagents-runtime");
+  if (!existsSync(join(serviceDir, "pyproject.toml"))) {
+    console.warn("[stack] Deep Agents runtime package missing; API will use the in-process stub.");
+    return null;
+  }
+  return spawnProcess(
+    "Deep Agents Runtime",
+    "uv",
+    ["run", "deepagents-runtime"],
+    {
+      ...env,
+      RUNTIME_HOST: config.RUNTIME_HOST,
+      RUNTIME_PORT: config.RUNTIME_PORT,
+    },
+    serviceDir,
+  );
 }
 
 function freePort(port) {

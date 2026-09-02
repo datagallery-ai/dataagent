@@ -42,7 +42,7 @@ export function resolveCheckpointResumeSeed(input: {
   };
 }
 
-function checkpointIdFromRunInput(runInput: RunAgentInput): string | undefined {
+export function checkpointIdFromRunInput(runInput: RunAgentInput): string | undefined {
   const forwardedProps = recordValue(runInput.forwardedProps);
   const state = recordValue(runInput.state);
   return stringValue(forwardedProps?.checkpointId) ??

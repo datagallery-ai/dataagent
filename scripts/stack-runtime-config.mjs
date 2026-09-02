@@ -7,11 +7,15 @@ function port(value, fallback, name) {
 }
 
 export function resolveStackRuntimeConfig(env = process.env) {
+  const runtimeUrl = env.RUNTIME_SERVICE_URL?.trim();
   return {
     API_HOST: env.API_HOST?.trim() || "127.0.0.1",
     API_PORT: port(env.API_PORT, 8787, "API_PORT"),
     WEB_HOST: env.WEB_HOST?.trim() || "127.0.0.1",
-    WEB_PORT: port(env.WEB_PORT, 3000, "WEB_PORT")
+    WEB_PORT: port(env.WEB_PORT, 3000, "WEB_PORT"),
+    RUNTIME_HOST: env.RUNTIME_HOST?.trim() || env.RUNTIME_SERVICE_HOST?.trim() || "127.0.0.1",
+    RUNTIME_PORT: port(env.RUNTIME_PORT || env.RUNTIME_SERVICE_PORT, 8790, "RUNTIME_PORT"),
+    ...(runtimeUrl ? { RUNTIME_SERVICE_URL: runtimeUrl.replace(/\/+$/, "") } : {})
   };
 }
 
@@ -23,5 +27,8 @@ export function formatStackEndpoints(config, enabled) {
   const lines = ["DataFoundry endpoints:"];
   if (enabled.startWeb) lines.push(`  Web: http://127.0.0.1:${config.WEB_PORT}`);
   if (enabled.startApi) lines.push(`  API: http://${config.API_HOST}:${config.API_PORT}`);
+  if (enabled.startRuntime) {
+    lines.push(`  Runtime: ${config.RUNTIME_SERVICE_URL || `http://${config.RUNTIME_HOST}:${config.RUNTIME_PORT}`}`);
+  }
   return lines.join("\n");
 }

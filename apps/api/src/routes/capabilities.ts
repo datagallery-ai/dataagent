@@ -10,6 +10,8 @@ const CAPABILITIES = {
   "conversation.memory": true,
   "conversation.title": true,
   "interaction.resume": true,
+  "runtime.dataTools": false,
+  "runtime.traceDag": false,
   "datasource.fieldMasking": true,
   "datasource.extendedTypes": true,
   "datasource.introspectionPolicy": true,
@@ -22,12 +24,12 @@ const CAPABILITIES = {
   "kb.scope": true,
   "llm.advancedSampling": true,
   "llm.samplingParams": true,
-  knowledge: true,
-  mcp: true,
+  knowledge: false,
+  mcp: false,
   "mcp.stdio": true,
   "mcp.toolPolicy": true,
   "skill.resourceBinding": true,
-  skills: true
+  skills: false
 };
 
 export const handleCapabilitiesRequest = (method: string | undefined): ConfigApiResponse => {

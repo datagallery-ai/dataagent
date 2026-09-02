@@ -121,7 +121,7 @@ npm run start:web
 The browser reaches REST and CopilotKit SSE through the same-origin Next BFF. Probes:
 
 - `GET /healthz` — process liveness
-- `GET /ready` — Mastra and builtin resources ready (response includes `startup_ms` / `phases`)
+- `GET /ready` — control plane ready (response includes `startup_ms` / `phases` / `runtime`). REST and history replay still work when the runtime is unavailable.
 
 Reverse-proxy sample: [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; leave the SSE path uncompressed and unbuffered. Contributor hot-reload: [Quick start appendix](../quick-start.md).
 

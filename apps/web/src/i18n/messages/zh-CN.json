@@ -205,7 +205,11 @@
       "noStepsYet": "暂无步骤",
       "noStepsYetDescription": "发送问题后，处理步骤会按顺序显示在这里。并行工具会合并到同一步骤下。",
       "noOutputs": "暂无输出",
-      "noOutputsDescription": "提问后，SQL、数据集、图表与报告会显示在这里。可在弹窗中预览，或通过「引用」在右侧打开以选中表格/文本或引用全部。"
+      "noOutputsDescription": "提问后，SQL、数据集、图表与报告会显示在这里。可在弹窗中预览，或通过「引用」在右侧打开以选中表格/文本或引用全部。",
+      "runtimeDataToolsDisabled": "本版本未启用数据产出",
+      "runtimeDataToolsDisabledDescription": "当前已接入独立 Agent Runtime，数据查询、SQL 审计与 artifact 尚未接入。对话、工具步骤与人工确认仍然可用。",
+      "runtimeTraceDisabled": "语义 Trace 本版本未启用",
+      "runtimeTraceDisabledDescription": "历史会话仍可回放已有 Trace；新运行不会生成语义 DAG。"
     },
     "outputsHintExport": "可在弹窗中预览任意输出，或通过「引用」在右侧打开以选中部分或引用全部。",
     "outputsHint": "可在弹窗中预览任意输出，或通过「引用」在右侧打开。",

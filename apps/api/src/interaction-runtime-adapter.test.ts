@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildHitlSuspendBridgeEvents,
+  parseInterruptValue,
   type HitlToolCallBoundaryState,
   type InteractionInterrupt
 } from "./interaction-runtime-adapter.js";
@@ -106,5 +107,22 @@ describe("buildHitlSuspendBridgeEvents", () => {
 
     expect(events.map((event) => event.type)).toEqual([EventType.CUSTOM]);
     expect(events[0]).toBe(interactionEvent);
+  });
+});
+
+describe("parseInterruptValue", () => {
+  it("accepts agent_interrupt and legacy mastra_suspend payloads", () => {
+    expect(parseInterruptValue({
+      type: "agent_interrupt",
+      toolCallId: "c1",
+      toolName: "ask_user",
+      runId: "run-1"
+    }).type).toBe("agent_interrupt");
+    expect(parseInterruptValue({
+      type: "mastra_suspend",
+      toolCallId: "c1",
+      toolName: "submit_plan",
+      runId: "run-1"
+    }).toolName).toBe("submit_plan");
   });
 });

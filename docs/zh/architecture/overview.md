@@ -125,7 +125,7 @@ npm run start:web
 浏览器经 Next 同源 BFF 访问 REST 与 CopilotKit SSE。探针区分：
 
 - `GET /healthz`：进程存活
-- `GET /ready`：Mastra 与 builtin 资源就绪（响应含 `startup_ms` / `phases`）
+- `GET /ready`：控制面就绪（响应含 `startup_ms` / `phases` / `runtime`）。runtime 不可用时 REST 与历史回放仍可服务。
 
 反代样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径不压缩、不缓冲。贡献者热更新见 [快速开始附录](../quick-start.md)。
 

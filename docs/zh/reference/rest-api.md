@@ -72,7 +72,7 @@ Web v1 不暴露 workspace 切换；自建集成除非自行管理 workspace 路
 | Method | Path | 用途 |
 | --- | --- | --- |
 | GET | `/healthz` | 进程存活（liveness）。 |
-| GET | `/ready` | 就绪探针：Mastra / builtin 初始化完成；响应含 `startup_ms` 与 `phases`。 |
+| GET | `/ready` | 控制面就绪探针；响应含 `startup_ms`、`phases` 与独立 runtime 健康状态。 |
 | GET | `/api/v1/capabilities` | 读取后端能力开关。 |
 | GET | `/api/v1/me` | 读取当前身份。 |
 
