@@ -43,6 +43,7 @@ _ALLOWED_FUNCTIONS = frozenset(
         "generate_series",
         "hex",
         "instr",
+        "lag",
         "length",
         "lengthb",
         "lower",
@@ -55,6 +56,7 @@ _ALLOWED_FUNCTIONS = frozenset(
         "nvl",
         "replace",
         "round",
+        "row_number",
         "rpad",
         "rtrim",
         "substr",
@@ -129,7 +131,6 @@ _FORBIDDEN_QUERY_TYPES = _resolve_expression_types(
         "SimilarTo",
         "TableSample",
         "Values",
-        "Window",
     )
 )
 
@@ -308,7 +309,9 @@ def check_semantic_schema(
     try:
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
-        message = _schema_column_resolution_message(str(exc))
+        detail = str(exc)
+        hint = _wrong_cte_qualifier_hint(statement, detail)
+        message = _schema_column_resolution_message(detail, hint)
         return [SecurityViolation("SCHEMA-002", message)]
     for scope in traverse_scope(qualified):
         for column in scope.columns:
@@ -325,12 +328,66 @@ def check_semantic_schema(
     return []
 
 
-def _schema_column_resolution_message(detail: str) -> str:
-    return (
+def _schema_column_resolution_message(detail: str, hint: str = "") -> str:
+    message = (
         "Source column is missing from the provided semantic schema or cannot be resolved unambiguously: "
-        f"{detail.rstrip('.')}. Ensure the column exists under the referenced table in the provided semantic schema; "
-        "then check the table or CTE alias and qualify the column with its unique source."
+        f"{detail.rstrip('.')}."
     )
+    if hint:
+        return f"{message} {hint}"
+    return (
+        f"{message} Ensure the column exists under the referenced table in the provided semantic schema; then check "
+        "the table or CTE alias and qualify the column with its unique source."
+    )
+
+
+def _wrong_cte_qualifier_hint(statement: exp.Expression, detail: str) -> str:
+    prefix = "Unknown column:"
+    normalized_detail = detail.strip().rstrip(".")
+    if not normalized_detail.startswith(prefix):
+        return ""
+    unknown_column = normalized_detail.removeprefix(prefix).strip().strip("'\"`")
+    normalized_unknown = _normalize_identifier(unknown_column)
+    for scope in traverse_scope(statement):
+        selected_sources = scope.selected_sources
+        for column in scope.columns:
+            if not column.table or _normalize_identifier(column.name) != normalized_unknown:
+                continue
+            source_entry = selected_sources.get(column.table)
+            if source_entry is None:
+                continue
+            source_node, source_scope = source_entry
+            if not getattr(source_scope, "is_cte", False):
+                continue
+            source_outputs = {_normalize_identifier(name) for name in source_scope.expression.named_selects}
+            if normalized_unknown in source_outputs:
+                continue
+            candidates = []
+            for candidate_alias, candidate_entry in selected_sources.items():
+                if candidate_alias == column.table:
+                    continue
+                candidate_node, candidate_scope = candidate_entry
+                if not getattr(candidate_scope, "is_cte", False):
+                    continue
+                outputs = {_normalize_identifier(name) for name in candidate_scope.expression.named_selects}
+                if normalized_unknown in outputs:
+                    candidates.append((candidate_alias, candidate_node))
+            if len(candidates) != 1:
+                continue
+            candidate_alias, candidate_node = candidates[0]
+            source_name = source_node.name if isinstance(source_node, exp.Table) else column.table
+            candidate_name = candidate_node.name if isinstance(candidate_node, exp.Table) else candidate_alias
+            source_label = f"CTE '{source_name}'"
+            if column.table != source_name:
+                source_label = f"CTE alias '{column.table}' (CTE '{source_name}')"
+            candidate_label = f"CTE alias '{candidate_alias}' (CTE '{candidate_name}')"
+            if candidate_alias == candidate_name:
+                candidate_label = f"CTE '{candidate_name}'"
+            return (
+                f"Column '{column.name}' is not exposed by {source_label}; it is exposed by {candidate_label}. "
+                f"Reference it as '{candidate_alias}.{column.name}'."
+            )
+    return ""
 
 
 def _function_name(node: exp.Func) -> str:
@@ -378,7 +435,7 @@ def _check_join_shapes(statement: exp.Expression) -> list[SecurityViolation]:
                 always_true = _constant_boolean(condition) is True
             except RecursionError:
                 return [SecurityViolation("RESOURCE-002", "SQL boolean expression exceeds evaluation depth.")]
-            if always_true:
+            if always_true and not _join_has_single_row_source(statement, join):
                 message = "JOIN condition must not be always true. Use CROSS JOIN when a Cartesian product is intended."
                 return [SecurityViolation("RESOURCE-007", message)]
     return []
@@ -486,13 +543,46 @@ def _scope_contains_row_restriction(scope: Any) -> bool:
 
 def _scope_is_single_row_aggregate(scope: Any) -> bool:
     expression = scope.expression
-    return bool(
-        isinstance(expression, exp.Select)
-        and expression.args.get("group") is None
-        and expression.find(exp.AggFunc)
-        and not expression.find(exp.Window)
-        and all(column.find_ancestor(exp.AggFunc) is not None for column in scope.columns)
-    )
+    if (
+        not isinstance(expression, exp.Select)
+        or expression.args.get("group") is not None
+        or expression.find(exp.Window)
+    ):
+        return False
+    has_aggregate = False
+    for projection in expression.expressions:
+        for function in projection.find_all(exp.Func):
+            if function.find_ancestor(exp.Select) is expression and _function_name(function) == "generate_series":
+                return False
+        for aggregate in projection.find_all(exp.AggFunc):
+            if aggregate.find_ancestor(exp.Select) is expression:
+                has_aggregate = True
+        for column in projection.find_all(exp.Column, exp.Star):
+            if column.find_ancestor(exp.Select) is not expression:
+                continue
+            aggregate_filter = column.find_ancestor(exp.Filter)
+            if column.find_ancestor(exp.AggFunc) is None and not (
+                aggregate_filter is not None and isinstance(aggregate_filter.this, exp.AggFunc)
+            ):
+                return False
+    return has_aggregate
+
+
+def _join_has_single_row_source(statement: exp.Expression, join: exp.Join) -> bool:
+    select = join.find_ancestor(exp.Select)
+    if select is None or len(select.args.get("joins") or []) != 1:
+        return False
+    from_clause = select.args.get("from_")
+    if not isinstance(from_clause, exp.From) or from_clause.this is None:
+        return False
+    scope = next((item for item in traverse_scope(statement) if item.expression is select), None)
+    if scope is None:
+        return False
+    left_source = scope.sources.get(from_clause.this.alias_or_name)
+    right_source = scope.sources.get(join.this.alias_or_name)
+    left_is_single_row = hasattr(left_source, "selected_sources") and _scope_is_single_row_aggregate(left_source)
+    right_is_single_row = hasattr(right_source, "selected_sources") and _scope_is_single_row_aggregate(right_source)
+    return left_is_single_row or right_is_single_row
 
 
 def _constant_boolean(expression: exp.Expression) -> Optional[bool]:
