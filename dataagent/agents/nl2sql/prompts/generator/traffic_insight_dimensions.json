@@ -186,11 +186,6 @@
       "key_column": "subapp_key",
       "value_column": "subapp_value"
     },
-    "subscriber": {
-      "dimension_table": "dim_subscriber",
-      "key_column": "subscriber_key",
-      "value_column": "sisdn"
-    },
     "tai": {
       "dimension_table": "dim_tai",
       "key_column": "tai_key",
@@ -255,11 +250,6 @@
       "dimension_table": "dim_app",
       "key_column": "app_key",
       "value_column": "app_value"
-    },
-    "voip_topsubs": {
-      "dimension_table": "dim_subscriber",
-      "key_column": "subscriber_key",
-      "value_column": "msisdn"
     },
     "voip_user_segment": {
       "dimension_table": "dim_user_segment",
