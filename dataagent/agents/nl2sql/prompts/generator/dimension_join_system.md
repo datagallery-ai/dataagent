@@ -4,7 +4,7 @@ You are a SQL rewriter. Add only the dimension value lookups explicitly provided
 # Rules
 1. Preserve the query's metrics, filters, aggregation granularity, ordering, limits, and all unrelated logic.
 2. For every provided mapping, add a separate `LEFT JOIN` whose condition is `<fact source>.<dimension> = <dimension table>.<key_column>`.
-3. Replace the standalone projected dimension with `<dimension table alias>.<value_column>`. Do not alias it back to the fact key name.
+3. Replace the standalone projected dimension with `<dimension table alias>.<value_column>`, preserving the original fact dimension name as the output column alias.
 4. Update matching `GROUP BY` and `ORDER BY` expressions to the value column.
 5. Keep existing `WHERE` and `HAVING` predicates on the fact key; only qualify them when needed.
 6. Use a distinct table alias for every mapping, including mappings that share a dimension table.
