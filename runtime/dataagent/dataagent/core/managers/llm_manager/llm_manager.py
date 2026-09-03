@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from typing import Any, cast
+from typing import Any
 
 from loguru import logger
 
@@ -98,18 +98,9 @@ class LLMManager:
 
     def get_default_llm(self) -> ChatModel:
         """获取默认 Chat LLM"""
-        from dataagent.core.framework_adapters.runtime.context import get_current_runtime
-
-        rt = get_current_runtime()
-        if rt is not None:
-            llm_getter = getattr(rt, "llm", None)
-            if callable(llm_getter):
-                try:
-                    return cast(ChatModel, llm_getter("planner"))
-                except RuntimeError:
-                    logger.debug("runtime.llm('planner') unavailable, fallback to cached chat llm")
         for rec in self.llm_cache.values():
-            llm_config, llm_instance = rec["llm_config"], rec["llm_instance"]
-            if llm_config.model_type == "chat" and llm_instance is not None:
+            llm_config = rec.get("llm_config")
+            llm_instance = rec.get("llm_instance")
+            if getattr(llm_config, "model_type", None) == "chat" and llm_instance is not None:
                 return llm_instance
         raise RuntimeError("Default LLM not found.")

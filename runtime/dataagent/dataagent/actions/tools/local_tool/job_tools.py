@@ -501,7 +501,7 @@ def submit_subagent(
     ``subagents/{id}``). Omit it to allocate a fresh workspace.
 
     Args:
-        agent_id: Registered specialist id from ``SUBAGENT_CONFIGS``.
+        agent_id: Registered specialist id from ``SUBAGENTS``.
         task: Task description forwarded to the subagent.
         timeout_sec: Job timeout in seconds.
         workspace_rel_path: Optional relative path under the parent workspace for reuse.

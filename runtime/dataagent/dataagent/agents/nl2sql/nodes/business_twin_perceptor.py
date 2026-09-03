@@ -12,7 +12,7 @@
 # ============================================================================
 import asyncio
 import re
-from typing import Any, Optional
+from typing import Any
 
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
@@ -303,7 +303,7 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         self,
         question: str,
         families: list[dict[str, Any]],
-    ) -> Optional[dict[str, str]]:  # noqa: UP045
+    ) -> dict[str, str] | None:
         parsed = await self.execute_with_llm_json(
             {"question": question, "tables": self._format_table_family_prompt_context(families)},
             action="filter_business_twin_table_family_",

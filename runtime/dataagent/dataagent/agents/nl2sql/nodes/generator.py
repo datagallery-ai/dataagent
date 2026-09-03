@@ -11,12 +11,14 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
+import json
 from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
-from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import DEFAULT_NL2SQL_NUM_SAMPLES, DEFAULT_NL2SQL_NUM_WORKERS, NL2SQL_PROMPT_PREFIX
 from dataagent.utils.log import logger
@@ -37,8 +39,11 @@ class GeneratorNode(BaseNL2SQLNode):
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/generator/{strategy}_user"
         ).apply_prompt_template(**context)
-        prompts = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        content = (await llm_manager.get_default_llm().ainvoke(prompts)).content
+        response = await self.model.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        raw_content = response.content
+        content = (
+            raw_content if isinstance(raw_content, str) else json.dumps(raw_content, ensure_ascii=False, default=str)
+        )
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
         expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
         sqls = sql_parser(content)[-expected_num_sql:]

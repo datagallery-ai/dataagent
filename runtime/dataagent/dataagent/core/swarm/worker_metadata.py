@@ -39,7 +39,7 @@ class WorkerMetadata:
     leaving full history in ``messages.json``. Artifact paths accumulate across
     invocations up to ``MAX_WORKER_METADATA_ARTIFACTS``.
 
-    Field ``last_run_id`` stores the Flex ``run_id`` used by the **last completed**
+    Field ``last_run_id`` stores the legacy agent ``run_id`` used by the **last completed**
     subprocess ``chat()`` for this worker (assigned by the parent, not read back
     from ``subagent_state.json``). Busy paths skip metadata updates entirely.
     """
@@ -93,7 +93,7 @@ def compute_next_worker_run_id(
     sub_id: int,
     reuse_worker_state: bool,
 ) -> int:
-    """Return the Flex ``run_id`` seed for the next subprocess ``chat()`` invocation.
+    """Return the legacy agent ``run_id`` seed for the next subprocess ``chat()`` invocation.
 
     Fresh worker folders (including reuse-miss reassignments) always start at
     ``0``. When ``reuse_worker_state`` is true, the next id is

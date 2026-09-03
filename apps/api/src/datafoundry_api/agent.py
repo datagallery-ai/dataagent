@@ -1,154 +1,114 @@
+"""Bind the repository DataAgent runtime to the AG-UI transport."""
+
 from __future__ import annotations
 
+from asyncio import Lock
+from collections.abc import AsyncIterator, Mapping
+from pathlib import Path
 from typing import Any
 
-from datafoundry_api.settings import Settings
+from ag_ui_langgraph import LangGraphAgent
+from dataagent import DataAgent
+from dataagent.utils.runtime_paths import validate_session_id, validate_user_id
+from langgraph.store.base import BaseStore
+from langgraph.types import Checkpointer
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are DataFoundry's assistant. "
-    "Data warehouse tools, knowledge retrieval, and skill packages are not connected in this runtime version. "
-    "You may converse, use built-in planning/todo/filesystem tools, and ask the user questions when you need confirmation."
-)
-
-
-def last_human_content(messages: list[Any]) -> str:
-    for message in reversed(messages):
-        kind = getattr(message, "type", None) or (message.get("role") if isinstance(message, dict) else None)
-        if kind in {"human", "user"}:
-            content = getattr(message, "content", None) if not isinstance(message, dict) else message.get("content")
-            return content if isinstance(content, str) else str(content or "")
-    return ""
+from datafoundry_api.model_profiles import RuntimeModelSelection
 
 
-class ScriptedChatModel:
-    def __init__(self, responses: list[Any] | None = None) -> None:
-        self._responses = list(responses or [])
-        self._index = 0
-        self._bound: Any = None
-
-    @property
-    def _llm_type(self) -> str:
-        return "deepagents-scripted"
-
-    def bind_tools(self, tools: Any, **kwargs: Any) -> ScriptedChatModel:
-        clone = ScriptedChatModel(self._responses)
-        clone._index = self._index
-        clone._bound = tools
-        return clone
-
-    def _next_message(self, messages: list[Any]) -> Any:
-        from langchain_core.messages import AIMessage
-
-        if self._responses:
-            message = self._responses[min(self._index, len(self._responses) - 1)]
-            self._index += 1
-            return message
-        text = last_human_content(messages)
-        return AIMessage(content=f"这是 Deep Agents SDK 的回复：{text or '你好'}")
-
-    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        messages = input if isinstance(input, list) else [input]
-        return self._next_message(messages)
-
-    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        return self.invoke(input, config=config, **kwargs)
+class AgentScopeError(ValueError):
+    """Raised when a client-provided user or thread identifier is unsafe."""
 
 
-def create_chat_model(settings: Settings, *, injected: Any = None) -> Any:
-    if injected is not None:
-        return _as_langchain_model(injected)
-    if settings.fake_model:
-        return _wrap_scripted(ScriptedChatModel())
-    if not settings.llm_api_key:
-        raise RuntimeError("LLM_API_KEY is required unless DEEPAGENTS_RUNTIME_MODEL=fake")
-    from langchain_openai import ChatOpenAI
+class ScopedLangGraphAgent(LangGraphAgent):
+    """Keep the public AG-UI thread id while scoping checkpoint ids by user."""
 
-    kwargs: dict[str, Any] = {"model": settings.llm_model, "api_key": settings.llm_api_key}
-    if settings.llm_base_url:
-        kwargs["base_url"] = settings.llm_base_url
-    return ChatOpenAI(**kwargs)
+    def __init__(self, *, user_id: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._user_id = user_id
 
-
-def create_runtime_agent(settings: Settings, *, model: Any = None, checkpointer: Any = None) -> Any:
-    from deepagents import create_deep_agent
-    from deepagents_runtime import (
-        extra_backend,
-        extra_interrupt_on,
-        extra_middleware,
-        extra_skills,
-        extra_subagents,
-        extra_system_prompt,
-        extra_tools,
-    )
-
-    return create_deep_agent(
-        model=create_chat_model(settings, injected=model),
-        system_prompt=extra_system_prompt(DEFAULT_SYSTEM_PROMPT),
-        tools=extra_tools(),
-        middleware=extra_middleware(),
-        subagents=extra_subagents(),
-        skills=extra_skills(),
-        backend=extra_backend(),
-        interrupt_on=extra_interrupt_on(),
-        checkpointer=checkpointer,
-        name="dataFoundry",
-    )
+    async def run(self, input: Any) -> AsyncIterator[Any]:
+        """Run with a user-scoped checkpoint thread and restore public event ids."""
+        client_thread_id = input.thread_id
+        scoped_thread_id = f"datafoundry:user:{self._user_id}:thread:{client_thread_id}"
+        scoped_input = input.model_copy(update={"thread_id": scoped_thread_id})
+        async for event in super().run(scoped_input):
+            if getattr(event, "thread_id", None) == scoped_thread_id and hasattr(event, "model_copy"):
+                event = event.model_copy(update={"thread_id": client_thread_id})
+            yield event
 
 
-def _as_langchain_model(model: Any) -> Any:
-    from langchain_core.language_models.chat_models import BaseChatModel
+class DataAgentRuntime:
+    """Create isolated DataAgent graphs for authenticated users and threads."""
 
-    if isinstance(model, BaseChatModel):
-        return model
-    if isinstance(model, ScriptedChatModel):
-        return _wrap_scripted(model)
-    return model
+    def __init__(
+        self,
+        config_path: Path,
+        *,
+        checkpointer: Checkpointer,
+        store: BaseStore,
+    ) -> None:
+        self._config_path = config_path.expanduser().resolve()
+        self._checkpointer = checkpointer
+        self._store = store
+        self._data_agent: DataAgent | None = None
+        self._profile_agents: dict[str, DataAgent] = {}
+        self._lock = Lock()
 
+    async def agent_for(
+        self,
+        user_id: str,
+        thread_id: str,
+        model_selection: RuntimeModelSelection | None = None,
+    ) -> LangGraphAgent:
+        """Return a fresh AG-UI adapter backed by the user's cached thread graph."""
+        try:
+            resolved_user_id = validate_user_id(user_id)
+            resolved_thread_id = validate_session_id(thread_id)
+        except ValueError as exc:
+            raise AgentScopeError(str(exc)) from exc
+        data_agent = await self._data_agent_for_model(resolved_user_id, model_selection)
+        graph = await data_agent.build_agent_graph(
+            user_id=resolved_user_id,
+            session_id=resolved_thread_id,
+        )
+        return ScopedLangGraphAgent(
+            user_id=resolved_user_id,
+            name="dataFoundry",
+            description=data_agent.description(),
+            graph=graph,
+        )
 
-def _wrap_scripted(scripted: ScriptedChatModel) -> Any:
-    from langchain_core.language_models.chat_models import BaseChatModel
-    from langchain_core.messages import AIMessage
-    from langchain_core.outputs import ChatGeneration, ChatResult
-    from pydantic import PrivateAttr
+    async def _data_agent_for_model(
+        self,
+        user_id: str,
+        selection: RuntimeModelSelection | None,
+    ) -> DataAgent:
+        base_agent = await self._load_data_agent()
+        if selection is None or selection.model_slots is None:
+            return base_agent
+        cache_key = f"{user_id}:{selection.cache_key}"
+        async with self._lock:
+            cached = self._profile_agents.get(cache_key)
+            if cached is not None:
+                return cached
+            config = base_agent.config.copy()
+            model_slots = {
+                name: dict(slot) if isinstance(slot, Mapping) else slot for name, slot in selection.model_slots.items()
+            }
+            config.set("MODEL", model_slots)
+            config.set("AGENT_CONFIG.primary_model", selection.primary_model_name)
+            configured = DataAgent(config, checkpointer=self._checkpointer, store=self._store)
+            self._profile_agents[cache_key] = configured
+            return configured
 
-    class BoundScriptedChatModel(BaseChatModel):
-        _inner: ScriptedChatModel = PrivateAttr()
-
-        def __init__(self, inner: ScriptedChatModel) -> None:
-            super().__init__()
-            self._inner = inner
-
-        @property
-        def _llm_type(self) -> str:
-            return "deepagents-scripted"
-
-        def bind_tools(self, tools: Any, **kwargs: Any) -> BoundScriptedChatModel:
-            return BoundScriptedChatModel(self._inner.bind_tools(tools, **kwargs))
-
-        def _generate(self, messages: list[Any], stop: Any = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
-            message = self._inner._next_message(messages)
-            if not isinstance(message, AIMessage):
-                message = AIMessage(content=str(message))
-            return ChatResult(generations=[ChatGeneration(message=message)])
-
-        async def _agenerate(
-            self, messages: list[Any], stop: Any = None, run_manager: Any = None, **kwargs: Any
-        ) -> ChatResult:
-            return self._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
-
-        def _stream(self, messages: list[Any], stop: Any = None, run_manager: Any = None, **kwargs: Any):
-            from langchain_core.messages import AIMessageChunk
-            from langchain_core.outputs import ChatGenerationChunk
-
-            message = self._inner._next_message(messages)
-            text = message.content if isinstance(getattr(message, "content", None), str) else str(message)
-            chunk = ChatGenerationChunk(message=AIMessageChunk(content=text, id=getattr(message, "id", None)))
-            if run_manager:
-                run_manager.on_llm_new_token(text, chunk=chunk)
-            yield chunk
-
-        async def _astream(self, messages: list[Any], stop: Any = None, run_manager: Any = None, **kwargs: Any):
-            for chunk in self._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
-                yield chunk
-
-    return BoundScriptedChatModel(scripted)
+    async def _load_data_agent(self) -> DataAgent:
+        if self._data_agent is None:
+            async with self._lock:
+                if self._data_agent is None:
+                    self._data_agent = DataAgent.from_config(
+                        self._config_path,
+                        checkpointer=self._checkpointer,
+                        store=self._store,
+                    )
+        return self._data_agent

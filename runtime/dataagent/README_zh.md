@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
   <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
   <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/openJiuwen-0.1.14-purple" alt="openJiuwen">
+  <img src="https://img.shields.io/badge/Deep%20Agents-0.7.5-purple" alt="Deep Agents">
   <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
 </p>
 
@@ -39,7 +39,7 @@
 | 🧩 **统一语义层** | 优先支持 GaussVector 作为语义层增强向量检索底座，将表、字段、指标口径和业务描述沉淀为可检索的 schema 线索，支撑 NL2SQL 与多源查询的语义对齐 |
 | 🔌 **插件化工具体系** | 本地函数 / MCP (stdio+sse) / A2A 三类工具统一注册与调用机制，工具自动发现、按需加载；内置数据分析等 SKILL |
 | 📡 **多 Agent 协同原生** | 完整 A2A 1.0 协议支持，Agent 间自动能力发现、能力映射、标准化通信，天然支持复杂业务的分布式协作 |
-| 🧩 **YAML 即 Agent** | 模型、工具、记忆、工作流、场景提示词全部声明式编排，**分钟级从想法到可运行 Agent** |
+| 🧩 **YAML 即 Agent** | 模型、工具、工作区、Skills、Middleware、Subagents 与场景提示词全部声明式配置，**分钟级从想法到可运行 Agent** |
 | 🛡️ **企业级安全沙箱** | Workspace 隔离 + 路径白名单 + 全链路操作审计，满足金融级安全合规要求 |
 | ⚡ **开箱即用** | 20+ 行业场景示例配置，**零代码启动，分钟级上手** |
 
@@ -66,7 +66,6 @@ uv run mkdocs serve -f docs/mkdocs.yml -a 0.0.0.0:8000
 | 🗄️ [数据库安装指导](docs/zh/installation_doc/database_install/database_install.md) | 部署 PostgreSQL、MySQL；优先支持 GaussVector 接入，导入场景数据并接入 Semantic Service |
 | ⚙️ [功能特性](docs/zh/function/function.md) | 核心能力、模块划分、工具与模型支持 |
 | 🧩 [Semantic Service](docs/zh/semantic_service/semantic-service-user-guide.md) | 面向 NL2SQL 的语义服务增强元数据，优先围绕 GaussVector 提供语义层索引、候选表字段召回与 schema 感知增强 |
-| 🔗 [openJiuwen](docs/zh/openJiuwen/openJiuwen-user-guide.md) | openJiuwen 集成与使用说明 |
 | 🏗️ [架构文档](docs/zh/design_doc/design_doc.md) | 系统架构；context、规划引擎、action 等模块设计 |
 | 📡 [接口设计](docs/zh/api_doc/api_doc.md) | A2A 北向服务接口与 Python SDK |
 | 📋 [应用案例](docs/zh/case/case.md) | 构建 NL2SQL 专用 Agent、构建数据分析 Agent |
@@ -122,14 +121,14 @@ uv run -m dataagent quickstart
 
 ```bash
 # 终端交互模式
-uv run -m dataagent --config dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent --config dataagent/examples/quickstart.yaml
 ```
 
 ### 🔍 配置检查
 
 ```bash
 # 检查配置文件中的环境变量引用
-uv run -m dataagent config check dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent config check dataagent/examples/quickstart.yaml
 ```
 
 ## 📖 使用方法

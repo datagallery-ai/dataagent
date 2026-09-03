@@ -24,15 +24,15 @@ from loguru import logger  # type: ignore[reportMissingImports]
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
-from dataagent.actions.tools.local_tool.tools import _resolve_bound_llm_model_name, sub_agent_tool
-from dataagent.utils.constants import DEFAULT_SUBAGENT_TOOL_TIMEOUT
+from dataagent.actions.tools.local_tool.subagent_process import _resolve_bound_llm_model_name, invoke_subagent_process
+from dataagent.utils.constants import DEFAULT_SUBAGENT_PROCESS_TIMEOUT
 from dataagent.utils.runtime_paths import dataagent_package_root
 
 
 async def document_recall_tool(
     query: str,
     document_paths: str | None = None,
-    timeout: int = DEFAULT_SUBAGENT_TOOL_TIMEOUT,
+    timeout: int = DEFAULT_SUBAGENT_PROCESS_TIMEOUT,
     *,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
@@ -105,11 +105,11 @@ async def document_recall_tool(
         temp_config_path = temp_file.name
 
     try:
-        res = await sub_agent_tool(query=enhanced_query, config_path=temp_config_path, timeout=timeout)
+        res = await invoke_subagent_process(query=enhanced_query, config_path=temp_config_path, timeout=timeout)
     finally:
         Path(temp_config_path).unlink(missing_ok=True)
 
-    # sub_agent_tool 返回 {"original_msg": <worker_result>, "state": <flex state dict>, ...}
+    # invoke_subagent_process 返回 {"original_msg": <worker_result>, "state": <agent state dict>, ...}
     # state 包含完整的 messages 列表，需提取最后一条 AIMessage 的 content 作为干净结果
     return _extract_recall_result_from_state(res)
 
@@ -133,28 +133,20 @@ def _build_document_recall_sub_agent_config(
             runtime_model_copy = copy.deepcopy(runtime_model)
             runtime_params = runtime_model_copy.get("params")
             if isinstance(runtime_params, dict):
-                runtime_params["temperature"] = 0.0
-            temp_config["MODEL"] = {
-                bound_llm_model_name: runtime_model_copy,
-            }
-            # 同步更新 ACTOR_LOOP 中 planner 的 chat_model.name
-            actor_loop = temp_config.get("ACTOR_LOOP")
-            if isinstance(actor_loop, list):
-                for node_cfg in actor_loop:
-                    if not isinstance(node_cfg, dict):
-                        continue
-                    chat_model = node_cfg.get("chat_model")
-                    if isinstance(chat_model, dict):
-                        chat_model["name"] = bound_llm_model_name
+                runtime_params.update({"temperature": 0.0})
+            temp_config.update({"MODEL": {bound_llm_model_name: runtime_model_copy}})
+            agent_config = temp_config.get("AGENT_CONFIG")
+            if isinstance(agent_config, dict):
+                agent_config.update({"primary_model": bound_llm_model_name})
 
     # 直接使用主 Agent 的 workspace 配置覆盖，不保留子 YAML 中的 WORKSPACE
     ws: dict[str, Any] = {"path": str(workspace_root.resolve())}
     if allow_read_roots:
         ws["allow_path"] = [str(p) for p in allow_read_roots]
-    temp_config["WORKSPACE"] = ws
+    temp_config.update({"WORKSPACE": ws})
 
     # 注入唯一 recall_id，供 subagent 工具做并发隔离：每次调用使用独立子目录
-    temp_config["DOCUMENT_RECALL"] = {"run_id": recall_id}
+    temp_config.update({"DOCUMENT_RECALL": {"run_id": recall_id}})
 
     return temp_config
 
@@ -193,10 +185,10 @@ def _find_ai_msg_in_strings(messages: list[Any]) -> str | None:
 
 
 def _extract_recall_result_from_state(res: dict[str, Any]) -> dict[str, Any]:
-    """从 sub_agent_tool 返回的结果中提取召回结果。
+    """从 invoke_subagent_process 返回的结果中提取召回结果。
 
-    sub_agent_tool 返回 {"original_msg":..., "frontend_msg": ..., "state": <state dict>, "sub_id": ...}，
-    其中 state 是完整的 Flex graph 最终状态（包含 messages 列表），original_msg 是 worker_result 结构体。
+    invoke_subagent_process 返回 {"original_msg":..., "frontend_msg": ..., "state": <state dict>, "sub_id": ...}，
+    其中 state 是完整的 agent graph 最终状态（包含 messages 列表），original_msg 是 worker_result 结构体。
 
     返回格式：
     {
@@ -216,7 +208,7 @@ def _extract_recall_result_from_state(res: dict[str, Any]) -> dict[str, Any]:
         err_msg = f"文档召回 Agent 执行失败：{original_msg['error']}"
         return {"original_msg": err_msg, "frontend_msg": err_msg}
 
-    # 从 state 字段获取完整的 Flex graph 最终状态（包含 messages）
+    # 从 state 字段获取完整的 agent graph 最终状态（包含 messages）
     state = res.get("state")
     if not isinstance(state, dict):
         logger.warning("document_recall_tool: state 不可用，回退为文本化输出")

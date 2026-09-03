@@ -15,105 +15,105 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
+from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.messages import ToolMessage
+from langgraph.types import Command
 from loguru import logger
 
-from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolPostHookOutcome
-from dataagent.core.errors import DataAgentError
 
+async def ddl_post(request: ToolCallRequest, result: ToolMessage | Command) -> ToolMessage | Command | None:
+    """Validate direct ``write_file`` DDL content after a successful tool call.
 
-async def ddl_post(inv: ToolHookInvocation) -> ToolPostHookOutcome:
-    """Validate generated DDL files after successful write tools.
+    The native file backend owns file I/O, so this compatibility hook validates
+    the content supplied to ``write_file`` rather than reaching into a separate
+    agent runtime workspace.
 
     Args:
-        inv: Per-call context with ``execution`` set; ``tool_args`` may contain a file path.
+        request: Native LangChain request for the completed tool call.
+        result: Native tool result or state command returned by LangChain.
 
     Returns:
-        Empty outcome; validation failures are written back to ``inv.execution``.
+        An error ``ToolMessage`` for invalid DDL, otherwise ``None``.
     """
-    if inv.execution is None:
-        logger.debug(
-            "[post_hook] ddl_post skip. tool={} call_id={} reason=no_execution",
-            inv.tool_name,
-            inv.tool_call_id,
-        )
-        return ToolPostHookOutcome()
+    if not isinstance(result, ToolMessage):
+        return None
 
-    if not inv.execution.success:
+    tool_call = request.tool_call
+    tool_name = str(tool_call.get("name", "")).strip()
+    tool_call_id = str(tool_call.get("id") or result.tool_call_id)
+    if result.status != "success":
         logger.debug(
-            "[post_hook] ddl_post skip. tool={} call_id={} reason=tool_failed error={}",
-            inv.tool_name,
-            inv.tool_call_id,
-            inv.execution.error_text,
+            "[post_hook] ddl_post skip. tool={} call_id={} reason=tool_failed",
+            tool_name,
+            tool_call_id,
         )
-        return ToolPostHookOutcome()
+        return None
 
-    if "path" not in inv.tool_args:
+    tool_args = tool_call.get("args", {})
+    if not isinstance(tool_args, dict):
         logger.debug(
-            "[post_hook] ddl_post skip. tool={} call_id={} reason=no_path",
-            inv.tool_name,
-            inv.tool_call_id,
+            "[post_hook] ddl_post skip. tool={} call_id={} reason=invalid_tool_args",
+            tool_name,
+            tool_call_id,
         )
-        return ToolPostHookOutcome()
+        return None
 
-    path_value = inv.tool_args["path"]
+    path_value = tool_args.get("file_path")
+    if not isinstance(path_value, str):
+        path_value = tool_args.get("path")
     if not isinstance(path_value, str):
         logger.debug(
             "[post_hook] ddl_post skip. tool={} call_id={} reason=invalid_path_type type={}",
-            inv.tool_name,
-            inv.tool_call_id,
+            tool_name,
+            tool_call_id,
             type(path_value).__name__,
         )
-        return ToolPostHookOutcome()
+        return None
 
-    ddl_path = Path(path_value)
     ddl_file_name_re = re.compile(r"^create_.+\.sql$", re.IGNORECASE)
-    if not ddl_file_name_re.fullmatch(ddl_path.name):
+    file_name = path_value.rsplit("/", 1)[-1]
+    if not ddl_file_name_re.fullmatch(file_name):
         logger.debug(
             "[post_hook] ddl_post skip. tool={} call_id={} path={} reason=filename_not_matched_ddl_file",
-            inv.tool_name,
-            inv.tool_call_id,
-            ddl_path,
+            tool_name,
+            tool_call_id,
+            path_value,
         )
-        return ToolPostHookOutcome()
+        return None
 
-    try:
-        sql_text = ddl_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        reason = f"读取DDL文件失败：{exc}"
-        logger.exception(
-            "[post_hook] ddl_post read failed. tool={} call_id={} path={}",
-            inv.tool_name,
-            inv.tool_call_id,
-            ddl_path,
+    sql_text = tool_args.get("content")
+    if not isinstance(sql_text, str):
+        logger.debug(
+            "[post_hook] ddl_post skip. tool={} call_id={} reason=no_write_content",
+            tool_name,
+            tool_call_id,
         )
-        inv.execution.success = False
-        inv.execution.error_text = reason
-        inv.execution.error = DataAgentError(source="config", fact=reason, component="tool")
-        return ToolPostHookOutcome()
+        return None
 
     is_valid, reason = _ddl_validator(sql_text)
     if is_valid:
         logger.debug(
             "[post_hook] ddl_post valid. tool={} call_id={} path={}",
-            inv.tool_name,
-            inv.tool_call_id,
-            ddl_path,
+            tool_name,
+            tool_call_id,
+            path_value,
         )
-        return ToolPostHookOutcome()
+        return None
 
     logger.debug(
         "[post_hook] ddl_post invalid. tool={} call_id={} path={} reason={}",
-        inv.tool_name,
-        inv.tool_call_id,
-        ddl_path,
+        tool_name,
+        tool_call_id,
+        path_value,
         reason,
     )
-    inv.execution.success = False
-    inv.execution.error_text = reason
-    inv.execution.error = DataAgentError(source="config", fact=reason, component="tool")
-    return ToolPostHookOutcome()
+    return ToolMessage(
+        content=reason,
+        name=result.name or tool_name or None,
+        tool_call_id=result.tool_call_id,
+        status="error",
+    )
 
 
 def _ddl_validator(sql_text: str) -> tuple[bool, str]:
@@ -170,8 +170,7 @@ def _validate_table_ddl(sql_text: str) -> list[str]:
 
     # 表名规则校验
     table_matches = [
-        match.group("table").rsplit(".", 1)[-1].strip("`\"")
-        for match in table_name_extract_re.finditer(sql_text)
+        match.group("table").rsplit(".", 1)[-1].strip('`"') for match in table_name_extract_re.finditer(sql_text)
     ]
     for table_name in table_matches:
         if not table_name_valid_re.fullmatch(table_name):
@@ -307,9 +306,7 @@ def _validate_field_ddl(sql_text: str) -> list[str]:
 
     for match_info in field_comment_matches:
         if not field_name_valid_re.fullmatch(match_info["name"]):
-            reasons.append(
-                f"DDL 中字段'{match_info['name']}'不符合命名规则，只能包含小写字母、数字或下划线"
-            )
+            reasons.append(f"DDL 中字段'{match_info['name']}'不符合命名规则，只能包含小写字母、数字或下划线")
         reasons.extend(
             _validate_comment_text(
                 f"DDL 中字段'{match_info['name']}'的COMMENT",

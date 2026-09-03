@@ -10,21 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""DataAgent 核心运行时层。L1 可从本包导入 ``ReActAgent``（懒加载）。"""
+"""DataAgent core runtime package."""
 
-from __future__ import annotations
-
-__all__ = ["ReActAgent"]
-
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from dataagent.core.interface import ReActAgent
-
-
-def __getattr__(name: str) -> Any:
-    if name == "ReActDataAgent":
-        from dataagent.core.interface import ReActAgent
-
-        return ReActAgent
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__: list[str] = []

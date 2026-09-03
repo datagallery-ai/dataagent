@@ -32,8 +32,8 @@ from dataagent.actions.tools.local_tool.agent_status_handler import (
     reset_subagent_status,
 )
 from dataagent.actions.tools.local_tool.sandbox import Sandbox, get_current_sandbox, set_current_sandbox
-from dataagent.actions.tools.local_tool.tools import (
-    _coerce_flex_state_dict_from_payload,
+from dataagent.actions.tools.local_tool.subagent_process import (
+    _coerce_agent_state_dict_from_payload,
     _run_subprocess_async,
 )
 from dataagent.core.context.message_history import read_messages_file, serialize_message
@@ -43,7 +43,7 @@ from dataagent.core.swarm.worker_result import (
 )
 from dataagent.core.utils.subprocess import terminate_process_tree_async
 from dataagent.utils.log.dataagent_logger import get_log_context
-from dataagent.utils.runtime_paths import FLEX_PERSISTENCE_ROOT_ENV, SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root
+from dataagent.utils.runtime_paths import PERSISTENCE_ROOT_ENV, SUBAGENT_OUTPUT_DIR_ENV, resolve_user_root
 
 _CANCEL_POLL_INTERVAL_SEC = 0.2
 
@@ -122,7 +122,7 @@ class SubagentSubprocessRunner:
                 otel_config=otel_config,
             )
             env = dict(os.environ)
-            env[FLEX_PERSISTENCE_ROOT_ENV] = str(resolved_workspace)
+            env[PERSISTENCE_ROOT_ENV] = str(resolved_workspace)
             if subagent_output_dir is not None:
                 env[SUBAGENT_OUTPUT_DIR_ENV] = str(Path(subagent_output_dir).expanduser().resolve())
             sub_agent_session_id = f"subagent_{parent_session_id}_{sub_id}"
@@ -486,7 +486,7 @@ def _parse_job_subagent_completed(
     return JobSubagentOutcome(
         original_msg=worker_result.to_dict(),
         frontend_msg=message,
-        state=_coerce_flex_state_dict_from_payload(parsed.flex_raw),
+        state=_coerce_agent_state_dict_from_payload(parsed.final_state_raw),
         status=status,
         error="" if status == "completed" else (worker_result.error.to_dict() if worker_result.error else message),
     )

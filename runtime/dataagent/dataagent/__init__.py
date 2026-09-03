@@ -25,13 +25,14 @@ from typing import Any
 
 
 def __getattr__(name: str) -> Any:
-    if name in ("DataAgent", "AgentBuilder", "load_agent_from_config", "BaseDataAgent"):
-        from dataagent.interface.sdk import AgentBuilder, BaseDataAgent, DataAgent, load_agent_from_config
+    """Lazily expose the supported public SDK symbols."""
+    if name in ("DataAgent", "load_agent_from_config"):
+        from dataagent.interface.sdk import DataAgent, load_agent_from_config
 
-        return {
+        exported = {
             "DataAgent": DataAgent,
-            "AgentBuilder": AgentBuilder,
-            "BaseDataAgent": BaseDataAgent,
             "load_agent_from_config": load_agent_from_config,
-        }[name]
+        }.get(name)
+        if exported is not None:
+            return exported
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

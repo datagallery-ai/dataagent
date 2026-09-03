@@ -10,23 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Per-tool-call pre/post hooks (Flex Executor)."""
+"""Native LangChain tool-hook implementations addressable from YAML."""
 
-from dataagent.actions.tools.hooks.base import (
-    ToolHookInvocation,
-    ToolHookRunner,
-    ToolPostHookOutcome,
-    ToolPreHookOutcome,
-)
-from dataagent.actions.tools.hooks.config import ToolHookLists, load_tool_hooks_from_config
-
-# Example hooks live under ``dataagent.actions.tools.hooks.examples`` (see example.yaml).
-
-__all__ = [
-    "ToolHookInvocation",
-    "ToolHookRunner",
-    "ToolHookLists",
-    "ToolPreHookOutcome",
-    "ToolPostHookOutcome",
-    "load_tool_hooks_from_config",
-]
+__all__: list[str] = []

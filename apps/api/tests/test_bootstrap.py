@@ -17,19 +17,27 @@ def test_capabilities_disable_deferred_features(client) -> None:
     assert caps["skills"] is False
     assert caps["files"] is False
     assert caps["artifact.list"] is False
+    assert caps["llm.advancedSampling"] is False
+    assert caps["llm.samplingParams"] is True
 
 
-def test_workspace_and_run_defaults_are_empty(client) -> None:
+def test_workspace_and_run_defaults_include_server_model(client) -> None:
     register_and_login(client)
     workspace = client.get("/api/v1/workspace-config")
     assert workspace.status_code == 200
-    assert workspace.json()["data"] == {
-        "datasources": [],
-        "knowledgeBases": [],
-        "mcpServers": [],
-        "modelProfiles": [],
-        "skills": [],
-    }
+    workspace_data = workspace.json().get("data", {})
+    assert workspace_data.get("datasources") == []
+    assert workspace_data.get("knowledgeBases") == []
+    assert workspace_data.get("mcpServers") == []
+    assert workspace_data.get("skills") == []
+    profiles = workspace_data.get("modelProfiles", [])
+    assert len(profiles) == 1
+    server_default = profiles[0]
+    assert server_default.get("id") == "server-default"
+    assert server_default.get("modelName") == "test-model"
+    assert server_default.get("hasSecret") is True
+    assert server_default.get("connectionStatus") == "untested"
+    assert "llmEnvFingerprint" not in server_default
 
     defaults = client.get("/api/v1/run-defaults")
     assert defaults.status_code == 200

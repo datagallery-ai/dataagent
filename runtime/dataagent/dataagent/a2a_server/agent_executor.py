@@ -254,7 +254,7 @@ class DataAgentExecutor(AgentExecutor):
 
         try:
             # Use DataAgent's high-level astream path. Passing only initial_state keeps
-            # Flex and NL2SQL on their shared SDK contract instead of mixing it with
+            # Native Deep Agents and NL2SQL share this SDK contract; do not mix it with
             # LangGraph's native input=... path.
             stream_response = self._agent.astream(
                 session_id=session_id,
@@ -365,7 +365,7 @@ class DataAgentExecutor(AgentExecutor):
     def _clean_chunk_text(self, text: str) -> str:
         """Clean up chunk text by removing common prefixes and formatting.
 
-        FlexAgent streaming often includes prefixes like '**planner:**' which
+        Historical agent streams may include prefixes such as '**planner:**'; these
         should be stripped for cleaner output.
 
         Args:
@@ -388,7 +388,7 @@ class DataAgentExecutor(AgentExecutor):
         return text
 
     def _extract_chunk_text(self, chunk: Any) -> str:
-        """Extract text content from various FlexAgent chunk formats.
+        """Extract text content from supported LangGraph chunk formats.
 
         Handles:
         - dict with 'content' or 'text' key
@@ -504,7 +504,7 @@ class DataAgentExecutor(AgentExecutor):
     def _unpack_stream_chunk(self, chunk: Any) -> tuple[str, Any]:
         """Unpack a streaming chunk to extract mode and data.
 
-        Handles various chunk formats from FlexAgent/LangGraph:
+        Handles supported LangGraph streaming chunk formats:
         - tuple (mode, data)
         - tuple (_, mode, data)
         - dict with 'type' or 'mode' key

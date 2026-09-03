@@ -39,9 +39,8 @@ from dataagent.core.agents.subagent_subprocess_runner import (
     _prepare_job_initial_state_file,
     _run_cancellable_subprocess_async,
 )
+from dataagent.core.context.message_history import write_messages_file
 from dataagent.core.errors import DataAgentError
-from dataagent.core.flex.hooks.history_writer import save_messages
-from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
@@ -151,10 +150,6 @@ def test_job_timeout_collect_does_not_synthesize_cause_for_retry() -> None:
     error = caught.value
     assert not isinstance(error.__cause__, TimeoutError)
     assert classify_exception(error)[0] == ErrorType.UNKNOWN
-    executor = Executor("executor")
-    policy = executor._retry_policy_for(error)
-    assert policy.error_type == ErrorType.UNKNOWN
-    assert executor._should_retry(error) is False
 
 
 def test_job_does_not_classify_timeout_from_stderr_text() -> None:
@@ -198,7 +193,7 @@ def test_prepare_job_initial_state_file_hydrates_prior_messages(tmp_path):
     """Reused workspaces must load prior ``messages.json`` into the initial state file."""
     workspace = tmp_path / "subagents" / "sess-1"
     workspace.mkdir(parents=True)
-    save_messages("u1", "sess-1", [HumanMessage(content="prior turn")], workspace=workspace)
+    write_messages_file(workspace / ".memory" / "messages.json", [HumanMessage(content="prior turn")])
 
     state_path = _prepare_job_initial_state_file(
         workspace_dir=workspace,
@@ -317,6 +312,7 @@ def test_job_service_cancel_kills_registered_child_process(tmp_path):
     assert child_proc.poll() is not None
 
 
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="cwd process sweep is Linux /proc specific")
 def test_job_service_cancel_kills_orphans_by_subagent_workspace_cwd(tmp_path):
     """cancel() must kill orphans whose cwd is under the subagent workspace."""
     parent_ws = tmp_path / "parent"
@@ -365,6 +361,7 @@ def test_job_service_cancel_kills_orphans_by_subagent_workspace_cwd(tmp_path):
     assert service.poll(handle["job_id"]).status == "cancelled"
 
 
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="cwd process sweep is Linux /proc specific")
 def test_terminate_processes_with_cwd_under_only_targets_subtree(tmp_path):
     """cwd sweep must hit the scoped workspace and leave sibling cwd processes alone."""
     from dataagent.core.utils.subprocess import terminate_processes_with_cwd_under
@@ -504,7 +501,7 @@ def test_agent_service_reuse_passes_hydrate_flag_to_runner(tmp_path, monkeypatch
             )()
 
     monkeypatch.setattr(
-        "dataagent.core.agents.adapters.local_flex.SubagentSubprocessRunner",
+        "dataagent.core.agents.adapters.local_subagent.SubagentSubprocessRunner",
         lambda *args, **kwargs: _RecordingRunner(),
     )
 
@@ -518,7 +515,7 @@ def test_agent_service_reuse_passes_hydrate_flag_to_runner(tmp_path, monkeypatch
 
     from dataagent.core.agents.registry import AgentRegistry
 
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
     job_service = JobService(FileJobStore(parent_ws))
     runtime = SimpleNamespace(
         workspace_dir=parent_ws,

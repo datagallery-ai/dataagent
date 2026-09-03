@@ -5,8 +5,6 @@
 # limitations under the License.
 # ============================================================================
 __all__ = [
-    "ToolManager",
-    "ToolRegistry",
     "BaseTool",
     "ToolResult",
     "ToolType",
@@ -30,6 +28,4 @@ from dataagent.core.managers.action_manager.base import (
     classify_exception,
     tool_failure,
 )
-from dataagent.core.managers.action_manager.manager import ToolManager
-from dataagent.core.managers.action_manager.registry import ToolRegistry
 from dataagent.core.managers.action_manager.schemas import ParameterSchema, ParameterType, ToolSchema

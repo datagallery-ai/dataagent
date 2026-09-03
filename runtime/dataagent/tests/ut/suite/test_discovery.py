@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dataagent.config.config_manager import ConfigManager
 from dataagent.core.suite.discovery import discover_suite_index, scan_suite_paths
 from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
 
@@ -30,24 +29,6 @@ def test_scan_suite_paths_user_and_builtin_suites() -> None:
     assert paths[-1] == builtin_suites
     assert dataagent_package_path("suites") not in paths
     assert not any(".dataagent" in str(p) and "suites" in str(p) for p in paths if p != paths[0])
-
-
-def test_reload_without_suite_skips_discovery(monkeypatch) -> None:
-    called = {"discover": False}
-
-    def _fake_discover(**_kwargs):
-        called["discover"] = True
-        return {}
-
-    monkeypatch.setattr("dataagent.core.suite.discovery.discover_suite_index", _fake_discover)
-    default = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
-    cm = ConfigManager()
-    cm.reload(
-        str(dataagent_package_path("core", "flex", "examples", "test_subagent_tool.yaml")),
-        str(default),
-    )
-    assert called["discover"] is False
-    assert cm.activated_suites == []
 
 
 def _install_invalid_hooks_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, hook_spec: str) -> Path:
@@ -94,7 +75,7 @@ def test_discover_accepts_suite_with_framework_hook_path(tmp_path: Path, monkeyp
     hooks_doc = {
         "HOOKS": {
             "agent": {
-                "post": ["dataagent.core.flex.hooks.organize_workspace.organize_workspace"],
+                "post": ["dataagent.core.deepagents.hooks.invocation.invoke_hook"],
             }
         }
     }

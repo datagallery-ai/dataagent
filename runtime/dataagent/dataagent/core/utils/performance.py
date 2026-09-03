@@ -15,7 +15,7 @@
 * **开关**：是否启用仅由环境变量 ``DATAAGENT_PERFORMANCE_ENABLED`` 决定；``1`` 视为开启，其它一律视为关闭。
 * **进程隔离**：启用后落盘路径固定为
   ``{workspace}/.performance/Run{run_id}_Sub{sub_id}.{pid}.jsonl``，
-  其中 ``workspace`` 由 ``dataagent.utils.runtime_paths.resolve_flex_performance_dir``
+  其中 ``workspace`` 由 ``dataagent.utils.runtime_paths.resolve_performance_dir``
   根据运行时 workspace 或 ``user_id``/``session_id`` 决定。不同进程天然写入不同文件，
   避免共享句柄/行错乱。
 * **单一路径契约**：调用方不再传入任何路径参数；路径只能通过 ``user_id``/
@@ -195,9 +195,9 @@ def _resolve_jsonl_path(
 
     路径只在启用时由 collector 调用，失败直接抛出由上层捕获。
     """
-    from dataagent.utils.runtime_paths import resolve_flex_performance_dir
+    from dataagent.utils.runtime_paths import resolve_performance_dir
 
-    base = resolve_flex_performance_dir(
+    base = resolve_performance_dir(
         user_id=user_id,
         session_id=session_id,
         workspace=workspace,

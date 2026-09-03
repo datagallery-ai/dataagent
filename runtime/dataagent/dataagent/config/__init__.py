@@ -15,7 +15,7 @@
 Create an isolated :class:`ConfigManager` per Agent or script::
 
     cm = ConfigManager()
-    cm.reload("agent.yaml", default_config_path="flex_default_configs.yaml")
+    cm.reload("agent.yaml")
 
 Agent runtime must use ``agent.config``, ``runtime.config_manager``, or
 ``ToolExecutionContext`` — not module-level configuration singletons.
@@ -24,10 +24,9 @@ Agent runtime must use ``agent.config``, ``runtime.config_manager``, or
 __all__ = [
     "ConfigManager",
     "create_config_manager",
-    "build_prompt",
 ]
 
-from dataagent.config.config_manager import ConfigManager, build_prompt
+from dataagent.config.config_manager import ConfigManager
 
 
 def create_config_manager(config_path=None):

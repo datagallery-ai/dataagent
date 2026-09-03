@@ -25,7 +25,7 @@ from dataagent.utils.runtime_paths import dataagent_package_path
 
 def test_run_config_dryrun_prints_merged_yaml(tmp_path: Path) -> None:
     """Dryrun reloads config and emits merged YAML via logger."""
-    config_path = dataagent_package_path("core", "flex", "examples", "arithmetic.yaml")
+    config_path = dataagent_package_path("examples", "quickstart.yaml")
     messages: list[str] = []
     sink_id = logger.add(messages.append, level="INFO")
     try:
@@ -35,12 +35,12 @@ def test_run_config_dryrun_prints_merged_yaml(tmp_path: Path) -> None:
 
     merged_text = "\n".join(messages)
     assert "AGENT_CONFIG:" in merged_text
-    assert "arithmetic agent" in merged_text
+    assert "Quickstart Agent" in merged_text
 
 
 def test_run_config_dryrun_writes_timestamped_file(tmp_path: Path) -> None:
     """Dryrun with config_output writes dataagent_config_<timestamp>.yaml under the directory."""
-    config_path = dataagent_package_path("core", "flex", "examples", "arithmetic.yaml")
+    config_path = dataagent_package_path("examples", "quickstart.yaml")
     messages: list[str] = []
     sink_id = logger.add(messages.append, level="INFO")
     try:
@@ -57,7 +57,7 @@ def test_run_config_dryrun_writes_timestamped_file(tmp_path: Path) -> None:
 
 def test_cli_dryrun_exits_without_starting_terminal_mode(tmp_path: Path) -> None:
     """``python -m dataagent --config ... --dryrun`` completes successfully."""
-    config_path = dataagent_package_path("core", "flex", "examples", "arithmetic.yaml")
+    config_path = dataagent_package_path("examples", "quickstart.yaml")
     repo_root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
         [

@@ -65,7 +65,7 @@ from typing import Any, Literal
 from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
 from dataagent.utils.env_utils import get_env
 
-FLEX_PERSISTENCE_ROOT_ENV = "DATAAGENT_FLEX_PERSISTENCE_ROOT"
+PERSISTENCE_ROOT_ENV = "DATAAGENT_PERSISTENCE_ROOT"
 SUBAGENT_OUTPUT_DIR_ENV = "DATAAGENT_SUBAGENT_OUTPUT_DIR"
 
 LayoutSegment = Literal[
@@ -123,6 +123,16 @@ def validate_user_id(user_id: str) -> str:
     return resolved_user_id
 
 
+def validate_session_id(session_id: str) -> str:
+    """Normalize a session id and reject path traversal characters."""
+    resolved_session_id = str(session_id).strip()
+    if not resolved_session_id:
+        raise ValueError("session_id must not be empty.")
+    if any(part in resolved_session_id for part in ("..", "/", "\\")):
+        raise ValueError("session_id must not contain '..', '/' or '\\'.")
+    return resolved_session_id
+
+
 def resolve_user_root(*, user_id: str | None = None, config: Mapping[str, Any] | None = None) -> Path:
     """Return the fixed per-user root under DataAgent home."""
     resolved_user_id = (
@@ -139,7 +149,7 @@ def resolve_session_root(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Return the fixed per-session root under DataAgent home."""
-    session_value = str(session_id or "default_session")
+    session_value = validate_session_id(str(session_id or "default_session"))
     return (resolve_user_root(user_id=user_id, config=config) / session_value).resolve()
 
 
@@ -204,21 +214,21 @@ def resolve_jobs_root(
     return (parent_root / layout.jobs_dir).resolve()
 
 
-def resolve_flex_storage_root(
+def resolve_agent_storage_root(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
     workspace: str | Path | None = None,
     config: Mapping[str, Any] | None = None,
 ) -> Path:
-    """Return the root for Flex session artifacts (``.memory``, ``.context``).
+    """Return the root for agent session artifacts such as ``.memory`` and ``.context``.
 
-    Job-path subagent subprocesses set ``DATAAGENT_FLEX_PERSISTENCE_ROOT`` to
+    Job-path subagent subprocesses set ``DATAAGENT_PERSISTENCE_ROOT`` to
     ``{parent_ws}/<subagents_dir>/{id}/``. When unset, an explicit ``workspace`` under
     the configured ``subagents_dir`` is used; otherwise fall back to
     ``resolve_session_framework_workspace``.
     """
-    env_root = get_env(FLEX_PERSISTENCE_ROOT_ENV)
+    env_root = get_env(PERSISTENCE_ROOT_ENV)
     if env_root and str(env_root).strip():
         return Path(env_root).expanduser().resolve()
     if workspace is not None and str(workspace).strip():
@@ -233,12 +243,12 @@ def resolve_flex_storage_root(
     )
 
 
-def _is_job_flex_root(root: Path, *, config: Mapping[str, Any] | None = None) -> bool:
+def _is_job_subagent_root(root: Path, *, config: Mapping[str, Any] | None = None) -> bool:
     """Return True when ``root`` is a job-path subagent persistence directory."""
-    return is_job_subagent_workspace(root, config=config) or bool(get_env(FLEX_PERSISTENCE_ROOT_ENV))
+    return is_job_subagent_workspace(root, config=config) or bool(get_env(PERSISTENCE_ROOT_ENV))
 
 
-def resolve_flex_session_memory_dir(
+def resolve_session_memory_dir(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -246,18 +256,18 @@ def resolve_flex_session_memory_dir(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Resolve session memory directory (layout segment or job-path ``.memory``)."""
-    root = resolve_flex_storage_root(
+    root = resolve_agent_storage_root(
         user_id=user_id,
         session_id=session_id,
         workspace=workspace,
         config=config,
     )
-    if _is_job_flex_root(root, config=config):
+    if _is_job_subagent_root(root, config=config):
         return root / ".memory"
     return resolve_layout_dir(root, "session_memory_dir", config=config)
 
 
-def resolve_flex_context_dir(
+def resolve_context_dir(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -265,18 +275,18 @@ def resolve_flex_context_dir(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Resolve context directory (layout segment or job-path ``.context``)."""
-    root = resolve_flex_storage_root(
+    root = resolve_agent_storage_root(
         user_id=user_id,
         session_id=session_id,
         workspace=workspace,
         config=config,
     )
-    if _is_job_flex_root(root, config=config):
+    if _is_job_subagent_root(root, config=config):
         return root / ".context"
     return resolve_layout_dir(root, "context_dir", config=config)
 
 
-def resolve_flex_performance_dir(
+def resolve_performance_dir(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -284,13 +294,13 @@ def resolve_flex_performance_dir(
     config: Mapping[str, Any] | None = None,
 ) -> Path:
     """Resolve performance directory (layout segment or job-path ``.performance``)."""
-    root = resolve_flex_storage_root(
+    root = resolve_agent_storage_root(
         user_id=user_id,
         session_id=session_id,
         workspace=workspace,
         config=config,
     )
-    if _is_job_flex_root(root, config=config):
+    if _is_job_subagent_root(root, config=config):
         return root / ".performance"
     return resolve_layout_dir(root, "performance_dir", config=config)
 

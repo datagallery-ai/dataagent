@@ -26,9 +26,9 @@ class WorkerResult:
     """Structured subagent result returned from child process to parent agent.
 
     The parent process stores this in worker metadata and surfaces it as the
-    ``original_msg`` payload on ``sub_agent_tool`` for the planner ToolMessage.
+    ``original_msg`` payload on subagent process for the planner ToolMessage.
 
-    ``iteration_count`` reflects Planner completion steps (Flex ``curr_iter`` when
+    ``iteration_count`` reflects planner completion steps (legacy ``curr_iter`` when
     present), not swarm ``run_id``.
     """
 
@@ -162,7 +162,7 @@ def synthesize_worker_result(
     The optional state key ``summary`` is treated only as a fallback text source
     for ``final_answer`` when no higher-priority answer fields are present.
 
-    ``iteration_count`` is planner completion steps: Flex ``curr_iter`` when that
+    ``iteration_count`` is planner completion steps: legacy ``curr_iter`` when that
     key is present, otherwise legacy ``iteration_count`` / ``iterations``. Swarm
     ``run_id`` is never used (it is the worker run ordinal, not planner depth).
     """
@@ -237,7 +237,7 @@ class ParsedSubagentStdout:
     """Pure parse of child stdout JSON. Timeout must be decided by the caller."""
 
     worker_result: WorkerResult
-    flex_raw: Any = None
+    final_state_raw: Any = None
     assistant_reply: str = ""
     raw_stdout: str | None = None
     from_child_payload: bool = False
@@ -291,7 +291,7 @@ def parse_subagent_stdout(
         assistant_reply = str(parsed.get("assistant_reply") or "").strip() or worker_result.final_answer
         return ParsedSubagentStdout(
             worker_result,
-            flex_raw=parsed.get("subagent_final_state"),
+            final_state_raw=parsed.get("subagent_final_state"),
             assistant_reply=assistant_reply,
             from_child_payload=True,
         )
@@ -395,9 +395,9 @@ def _count_tool_calls(state: dict[str, Any]) -> int:
 def _count_iterations(state: dict[str, Any]) -> int:
     """Return planner completion steps from subagent final graph state.
 
-    Prefer Flex/React ``curr_iter`` (incremented once per Planner node completion)
+    Prefer legacy ``curr_iter`` (incremented once per Planner node completion)
     when that key exists on ``state``. Otherwise fall back to explicit
-    ``iteration_count`` or ``iterations`` for non-Flex backends.
+    ``iteration_count`` or ``iterations`` for current backends.
 
     Never uses ``run_id``: that field records swarm worker invocation ordinal,
     not how many Planner rounds ran inside one subprocess.

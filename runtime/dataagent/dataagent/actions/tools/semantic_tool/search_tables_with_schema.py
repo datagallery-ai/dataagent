@@ -20,7 +20,7 @@ import json
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -204,8 +204,8 @@ def search_tables_with_semantic_retrieve(*, _tool_context: ToolExecutionContext)
 def read_semantic_retrieve_context_cache(
     query: str,
     *,
-    workspace_root: Optional[Path],  # noqa: UP045
-) -> Optional[dict[str, Any]]:  # noqa: UP045
+    workspace_root: Path | None,
+) -> dict[str, Any] | None:
     """Read semantic retrieve context cache for the query without calling semantic-service."""
     query_text = str(query or "").strip()
     if workspace_root is None or not query_text:
@@ -228,10 +228,10 @@ def get_semantic_retrieve_context(
     query: str,
     *,
     client: SemanticServiceClient,
-    workspace_root: Optional[Path] = None,  # noqa: UP045
+    workspace_root: Path | None = None,
     run_id: Any = None,
     sub_id: Any = None,
-    source: str = "semantic_retrieve_context_loader",
+    source: str = "search_tables_with_semantic_retrieve",
 ) -> dict[str, Any]:
     """Return cached semantic retrieve context, or call semantic-service and save it under workspace ``.semantic``."""
     query_text = str(query or "").strip()
@@ -584,7 +584,7 @@ def _get_workspace_path(workspace_root: Path | None = None) -> tuple[Path, str]:
     return output_path, current_time
 
 
-def _get_semantic_path(workspace_root: Optional[Path] = None) -> tuple[Path, str]:  # noqa: UP045
+def _get_semantic_path(workspace_root: Path | None = None) -> tuple[Path, str]:
     """获取 .semantic 目录路径和时间戳。"""
     if workspace_root is None:
         guard = get_current_sandbox()
@@ -601,11 +601,11 @@ def _save_semantic_retrieve_diagnostic(
     result: Any,
     query: str,
     *,
-    workspace_root: Optional[Path] = None,  # noqa: UP045
+    workspace_root: Path | None = None,
     source: str = "search_tables_with_semantic_retrieve",
     run_id: Any = None,
     sub_id: Any = None,
-) -> Optional[Path]:  # noqa: UP045
+) -> Path | None:
     """Save semantic retrieve diagnostic payload when the service returns it."""
     if not isinstance(result, dict):
         return None
@@ -645,8 +645,8 @@ def _semantic_retrieve_cache_path(workspace_root: Path, query: str) -> Path:
 def _save_semantic_retrieve_cache(
     payload: dict[str, Any],
     *,
-    workspace_root: Optional[Path],  # noqa: UP045
-) -> Optional[Path]:  # noqa: UP045
+    workspace_root: Path | None,
+) -> Path | None:
     """Persist semantic retrieve context under workspace .semantic for later reuse."""
     if workspace_root is None:
         return None

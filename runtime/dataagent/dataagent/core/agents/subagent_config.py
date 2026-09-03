@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Shared helpers for resolving ``SUBAGENT_CONFIGS`` yaml entries."""
+"""Shared helpers for resolving canonical ``SUBAGENTS`` YAML entries."""
 
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ import yaml
 
 
 def resolve_subagent_config_path(raw_path: Any) -> Path:
-    """Resolve and validate one ``SUBAGENT_CONFIGS`` entry path (absolute only).
+    """Resolve and validate one ``SUBAGENTS`` entry path (absolute only).
 
     Args:
-        raw_path: Path string from a ``SUBAGENT_CONFIGS`` mapping entry.
+        raw_path: Path string from a ``SUBAGENTS`` mapping entry.
 
     Returns:
         Expanded absolute path to the subagent yaml file.
@@ -34,12 +34,10 @@ def resolve_subagent_config_path(raw_path: Any) -> Path:
         ValueError: When the path is empty or relative.
     """
     if raw_path is None or not str(raw_path).strip():
-        raise ValueError("SUBAGENT_CONFIGS entry requires non-empty 'path'")
+        raise ValueError("SUBAGENTS entry requires non-empty 'path'")
     path = Path(str(raw_path).strip()).expanduser()
     if not path.is_absolute():
-        raise ValueError(
-            f"SUBAGENT_CONFIGS path must be absolute (or ~/...); relative paths are not allowed: {raw_path!r}"
-        )
+        raise ValueError(f"SUBAGENTS path must be absolute (or ~/...); relative paths are not allowed: {raw_path!r}")
     return path
 
 
@@ -57,18 +55,18 @@ def load_subagent_catalog_metadata(path: Path) -> tuple[str, str]:
         ValueError: When required yaml sections or fields are absent.
     """
     if not path.is_file():
-        raise FileNotFoundError(f"SUBAGENT_CONFIGS path does not exist or is not a file: {path}")
+        raise FileNotFoundError(f"SUBAGENTS path does not exist or is not a file: {path}")
     with open(path, encoding="utf-8") as handle:
         payload = yaml.safe_load(handle) or {}
     if not isinstance(payload, Mapping):
-        raise ValueError(f"SUBAGENT_CONFIGS yaml root must be a mapping: {path}")
+        raise ValueError(f"SUBAGENTS yaml root must be a mapping: {path}")
     agent_cfg = payload.get("AGENT_CONFIG")
     if not isinstance(agent_cfg, Mapping):
-        raise ValueError(f"SUBAGENT_CONFIGS yaml must contain AGENT_CONFIG section: {path}")
+        raise ValueError(f"SUBAGENTS yaml must contain AGENT_CONFIG section: {path}")
     name = str(agent_cfg.get("name") or "").strip()
     description = str(agent_cfg.get("description") or "").strip()
     if not name:
-        raise ValueError(f"SUBAGENT_CONFIGS yaml missing AGENT_CONFIG.name: {path}")
+        raise ValueError(f"SUBAGENTS yaml missing AGENT_CONFIG.name: {path}")
     if not description:
-        raise ValueError(f"SUBAGENT_CONFIGS yaml missing AGENT_CONFIG.description: {path}")
+        raise ValueError(f"SUBAGENTS yaml missing AGENT_CONFIG.description: {path}")
     return name, description

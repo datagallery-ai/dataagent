@@ -19,7 +19,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.core.agents.adapters.local_flex import LocalFlexAdapter
+from dataagent.core.agents.adapters.local_subagent import LocalSubagentAdapter
 from dataagent.core.agents.registry import AgentRegistry, AgentResolution, AgentSpec
 from dataagent.core.agents.subagent_session import SubagentWorkspaceSession, resolve_subagent_workspace_session
 from dataagent.core.jobs.envelope import (
@@ -46,13 +46,13 @@ class AgentService:
         registry: AgentRegistry,
         job_service: JobService,
         runtime: Any,
-        adapter: LocalFlexAdapter | None = None,
+        adapter: LocalSubagentAdapter | None = None,
     ) -> None:
         """Bind registry, job service, runtime, and optional adapter."""
         self.registry = registry
         self.job_service = job_service
         self.runtime = runtime
-        self._adapter = adapter or LocalFlexAdapter()
+        self._adapter = adapter or LocalSubagentAdapter()
 
     def submit(
         self,

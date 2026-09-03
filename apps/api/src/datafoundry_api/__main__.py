@@ -8,8 +8,8 @@ from datafoundry_api.settings import Settings
 
 
 def main() -> None:
+    """Start the DataFoundry API with the embedded DataAgent runtime."""
     settings = Settings.from_env()
-    os.environ.setdefault("DEEPAGENTS_RUNTIME_MODEL", "fake" if settings.fake_model else "live")
     uvicorn.run(
         "datafoundry_api.app:create_app",
         host=settings.host,

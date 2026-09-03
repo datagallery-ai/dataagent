@@ -12,6 +12,6 @@
 # ============================================================================
 """Agent adapters for Job-path subagent execution."""
 
-from dataagent.core.agents.adapters.local_flex import LocalFlexAdapter
+from dataagent.core.agents.adapters.local_subagent import LocalSubagentAdapter
 
-__all__ = ["LocalFlexAdapter"]
+__all__ = ["LocalSubagentAdapter"]

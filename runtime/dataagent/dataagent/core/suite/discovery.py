@@ -268,14 +268,10 @@ def _validate_suite_hooks_node(node: Any, *, suite_name: str, path: str) -> None
 
 def _validate_suite_hook_item(item: Any, *, suite_name: str, path: str) -> None:
     """Validate one Suite hook list entry (string or dict with ``name``)."""
-    from dataagent.core.flex.hooks.registry import BUILTIN_HOOK_REGISTRY
-
     if isinstance(item, str):
         spec = item.strip()
         if not spec:
             raise ValueError(f"{path}: empty hook spec")
-        if spec in BUILTIN_HOOK_REGISTRY:
-            raise ValueError(f"{path}: builtin short name {spec!r} is not allowed in Suite hooks")
         if spec.startswith(f"{suite_name}."):
             raise ValueError(f"{path}: must not include suite name prefix {suite_name!r}")
         _validate_suite_hook_dotted_path(spec, path=path)
@@ -284,8 +280,6 @@ def _validate_suite_hook_item(item: Any, *, suite_name: str, path: str) -> None:
         raw_name = str(item.get("name") or "").strip()
         if not raw_name:
             raise ValueError(f"{path}: hook dict missing non-empty 'name'")
-        if raw_name in BUILTIN_HOOK_REGISTRY:
-            raise ValueError(f"{path}: builtin short name {raw_name!r} is not allowed in Suite hooks")
         if raw_name.startswith(f"{suite_name}."):
             raise ValueError(f"{path}: must not include suite name prefix {suite_name!r}")
         _validate_suite_hook_dotted_path(raw_name, path=path)

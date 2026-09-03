@@ -28,7 +28,7 @@ from dataagent.core.context.utils_context_filesystem import is_text_file, lineag
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.core.utils.performance import attribute_calls
-from dataagent.utils.runtime_paths import resolve_flex_context_dir
+from dataagent.utils.runtime_paths import resolve_context_dir
 
 
 @dataclass
@@ -201,7 +201,7 @@ class DataNode(BaseIR):
             if p.exists() and p.is_file():
                 node_type = self.__class__.__name__.replace("Node", "")
                 backup_path = (
-                    resolve_flex_context_dir(
+                    resolve_context_dir(
                         user_id=self.user_id,
                         session_id=self.session_id,
                         workspace=self.workspace_root,

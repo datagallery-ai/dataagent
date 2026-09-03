@@ -74,16 +74,3 @@ TOOLS:
     - name: "get_join_relations"
       module: "dataagent.actions.tools.semantic_tool.get_join_relations"
       function: "get_join_relations"
-
-PRE_WORKFLOW: []
-
-ACTOR_LOOP:
-  - node: "planner"
-    module: "dataagent.core.flex.nodes.planner.Planner"
-    chat_model:
-      name: "chat_model"
-
-  - node: "executor"
-    module: "dataagent.core.flex.nodes.executor.Executor"
-
-POST_WORKFLOW: []

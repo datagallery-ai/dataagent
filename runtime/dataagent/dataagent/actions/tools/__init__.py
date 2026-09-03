@@ -4,27 +4,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-__all__ = [
-    "ToolManager",
-    "BaseTool",
-    "ToolResult",
-    "ToolSchema",
-    "ToolType",
-    "tool_failure",
-    "MCPToolWrapper",
-    "MCPToolRegistry",
-    "A2AClientWrapper",
-    "A2AToolWrapper",
-    "A2AToolRegistry",
-]
+"""Tool entry types shared by native and retained migration-stage integrations."""
 
-from dataagent.actions.tools.a2a import A2AClientWrapper, A2AToolRegistry, A2AToolWrapper
-from dataagent.actions.tools.mcp import MCPToolRegistry, MCPToolWrapper
-from dataagent.core.managers.action_manager import (
-    BaseTool,
-    ToolManager,
-    ToolResult,
-    ToolSchema,
-    ToolType,
-    tool_failure,
-)
+from dataagent.actions.tools.context import ToolExecutionContext
+
+__all__ = ["ToolExecutionContext"]

@@ -128,6 +128,8 @@ class AuthService:
         )
 
     def authenticate(self, session_token: str | None) -> Identity:
+        if self.settings.auth_disabled:
+            return _local_preview_identity()
         if not session_token:
             raise AuthError(401, "UNAUTHORIZED", "Authentication required.")
         session = self.store.fetchone(
@@ -154,6 +156,8 @@ class AuthService:
         )
 
     def validate_csrf(self, identity: Identity, csrf_token: str | None) -> None:
+        if self.settings.auth_disabled:
+            return
         if not csrf_token:
             raise AuthError(403, "CSRF_INVALID", "CSRF token is required.")
         if self._hash_token(csrf_token) != identity.csrf_token_hash:
@@ -198,7 +202,21 @@ class AuthService:
 
 
 def identity_from_request(request: Request, auth: AuthService) -> Identity:
+    """Resolve the request identity, including the guarded local-preview identity."""
     return auth.authenticate(request.cookies.get(SESSION_COOKIE))
+
+
+def _local_preview_identity() -> Identity:
+    return Identity(
+        user_id="local-preview",
+        email="local-preview@localhost",
+        display_name="Local Preview",
+        workspace_id="local-preview-workspace",
+        workspace_name="Local Preview Workspace",
+        session_id="local-preview-session",
+        csrf_token_hash="",
+        expires_at=(_now() + WEB_SESSION_TTL).isoformat(),
+    )
 
 
 def attach_auth_cookies(

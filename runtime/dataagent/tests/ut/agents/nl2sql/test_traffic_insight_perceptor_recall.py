@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 import yaml
 
-from dataagent.agents.nl2sql.agent import NL2SQLAgent
+from dataagent.agents.nl2sql.agent import _resolve_perceptor_class
 from dataagent.agents.nl2sql.nodes.business_twin_perceptor import BusinessTwinPerceptorNode
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.nodes.traffic_insight_perceptor import TrafficInsightPerceptorNode
@@ -81,7 +81,7 @@ def _field_from_payload(payload: dict[str, Any]) -> str:
 def test_perceptor_class_selects_configured_scenario(
     database_config: dict[str, str], expected: type[PerceptorNode]
 ) -> None:
-    assert NL2SQLAgent._perceptor_class(database_config) is expected
+    assert _resolve_perceptor_class(database_config) is expected
 
 
 def test_traffic_insight_config_wires_perceptor_dialect_and_execution_service() -> None:
@@ -89,7 +89,7 @@ def test_traffic_insight_config_wires_perceptor_dialect_and_execution_service() 
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     database_config = config["DATABASE"]
 
-    assert NL2SQLAgent._perceptor_class(database_config) is TrafficInsightPerceptorNode
+    assert _resolve_perceptor_class(database_config) is TrafficInsightPerceptorNode
     assert database_config["dialect"] == "postgres"
     assert database_config["perceptor_type"] == "traffic_insight"
     assert isinstance(build_sql_service(database_config["engine"], database_config["config"]), CloudCoreService)

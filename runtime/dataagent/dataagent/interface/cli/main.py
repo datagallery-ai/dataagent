@@ -12,6 +12,7 @@
 # ============================================================================
 import argparse
 import asyncio
+import copy
 import os
 import re
 import sys
@@ -70,7 +71,6 @@ except ImportError:
 
 
 from dataagent.config import ConfigManager
-from dataagent.core.suite.debug_dump import format_settings_yaml, write_merged_config_to_dir
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.interface.sdk.loader import load_agent_from_config
 from dataagent.utils.log import logger
@@ -117,6 +117,32 @@ def _flatten_dict(data: dict, prefix: str = "") -> dict[str, object]:
     return items
 
 
+def _merge_config_mappings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Merge configuration mappings without activating Suite extensions."""
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_config_mappings(result.get(key, {}), value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def _format_settings_yaml(settings: dict[str, Any]) -> str:
+    """Serialize merged settings for CLI display."""
+    return yaml.safe_dump(settings, allow_unicode=True, sort_keys=False)
+
+
+def _write_merged_config_to_dir(settings: dict[str, Any], output_dir: str | Path) -> Path:
+    """Write merged settings to a timestamped YAML file."""
+    directory = Path(output_dir).expanduser().resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+    output_path = directory / f"dataagent_config_{timestamp}.yaml"
+    output_path.write_text(_format_settings_yaml(settings), encoding="utf-8")
+    return output_path
+
+
 def _resolve_env_refs(value: str, path: str) -> tuple[str, list[str]]:
     pattern = r"\$env\{([^}]+)\}"
     matches = re.findall(pattern, value)
@@ -147,8 +173,7 @@ def run_config_check(config_path: str | Path, default_config_path: str | None = 
         if default_config_path:
             default_file = resolve_config_path(default_config_path)
             default_data = _load_yaml(default_file)
-            cm = ConfigManager()
-            config_data = cm.merge_configs(default_data, config_data)
+            config_data = _merge_config_mappings(default_data, config_data)
     except Exception as e:
         logger.error(f"读取 YAML 失败: {e}")
         return 2
@@ -174,42 +199,31 @@ def run_config_check(config_path: str | Path, default_config_path: str | None = 
     return exit_code
 
 
-def _resolve_default_config_path() -> str | None:
-    """Return the packaged default flex config path when present."""
-    candidate = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
-    if candidate.exists():
-        return str(candidate)
-    return None
-
-
 def run_config_dryrun(
     config_path: str | Path,
     *,
     config_output: str | Path | None = None,
 ) -> None:
     """
-    Merge configuration via ``ConfigManager.reload`` and print the result without starting Agent.
+    Load effective configuration, including Suites, and print it without starting an Agent.
 
     Args:
         config_path: User YAML configuration path.
         config_output: Optional directory to write ``dataagent_config_<timestamp>.yaml``.
 
     Raises:
-        Exception: Propagates ``reload()`` failures (same as normal Agent startup).
+        Exception: Propagates configuration loading failures (same as normal Agent startup).
     """
     config_file = resolve_config_path(config_path)
-    default_config_path = _resolve_default_config_path()
     config_manager = ConfigManager()
-    config_manager.reload(str(config_file), default_config_path=default_config_path)
-    if config_manager.get("AGENT_CONFIG.type") is None:
-        config_manager.set("AGENT_CONFIG.type", "react")
+    config_manager.reload(str(config_file), default_config_path=None)
 
-    merged_yaml = format_settings_yaml(config_manager.get_all()).rstrip("\n")
+    merged_yaml = _format_settings_yaml(config_manager.get_all()).rstrip("\n")
     logger.info("")
     logger.opt(raw=True).info("{}\n", merged_yaml)
 
     if config_output is not None:
-        written_path = write_merged_config_to_dir(
+        written_path = _write_merged_config_to_dir(
             config_manager.get_all(),
             output_dir=config_output,
         )
@@ -228,7 +242,7 @@ def load_agent_from_config_path(config_path: str | Path) -> DataAgent:
     config_file = resolve_config_path(config_path)
     logger.debug(f"正在加载配置文件: {config_file}")
     agent = load_agent_from_config(str(config_file))
-    logger.debug(f"Agent '{agent.name}' 加载成功！")
+    logger.debug("Agent '{}' 加载成功！", agent.name())
     return agent
 
 
@@ -303,7 +317,7 @@ async def _run_terminal_chat_loop(
         get_user_input: 无参异步可调用对象，每次返回一行或多行用户输入
         enable_portrait: 是否开启 LLM 用户画像（snapshot/profile、Planner 注入）；``messages.json`` 在有
             ``user_id``/``session_id`` 时默认读写，不依赖本开关。
-        user_id: 显式用户 ID；未传则与 Flex 一致由配置 ``USER_ID`` 兜底（默认 anonymous）
+        user_id: 显式用户 ID；未传则由配置 ``USER_ID`` 兜底（默认 anonymous）
         session_id: 显式会话 ID；未传则本进程内生成 ``时间戳_uuid``，多轮共用。
     """
     import datetime
@@ -320,7 +334,7 @@ async def _run_terminal_chat_loop(
         session_id_resolved = datetime.datetime.now(tz=TZ_CN).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
 
     run_id = 0
-    stream_enabled = bool(getattr(getattr(agent, "_chat_agent", None), "debug", False))
+    stream_enabled = agent.is_debug_enabled()
     skip_display = stream_enabled and RICH_AVAILABLE
     try:
         while True:
@@ -342,7 +356,7 @@ async def _run_terminal_chat_loop(
                     "run_id": run_id,
                     "session_id": session_id_resolved,
                 }
-                # 仅 CLI 显式开启时写入；否则由 FlexAgent 从 AGENT_CONFIG.enable_portrait 注入
+                # 仅 CLI 显式开启时写入；保留该字段供待迁移画像能力使用。
                 if enable_portrait:
                     initial_state["enable_portrait"] = True
                 if uid is not None:
@@ -447,14 +461,12 @@ async def run_quickstart() -> None:
     uv run -m dataagent quickstart
     """
     try:
-        quickstart_config = dataagent_package_path("core", "flex", "examples", "quickstart.yaml")
+        quickstart_config = dataagent_package_path("examples", "quickstart.yaml")
         config_file = resolve_config_path(str(quickstart_config))
-        quickstart_config = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
-        default_config = resolve_config_path(str(quickstart_config))
 
         logger.trace(f"正在加载 Quickstart 示例配置文件: {config_file}")
         quickstart_cm = ConfigManager()
-        quickstart_cm.reload(str(config_file), str(default_config))
+        quickstart_cm.reload(str(config_file), default_config_path=None)
 
         cur_chat_model = quickstart_cm.get("MODEL.chat_model.params.model") or ""
         new_chat_model = input(
@@ -612,16 +624,16 @@ def main():
         epilog="""
 示例用法:
   # 终端交互模式
-  python -m dataagent --config dataagent/core/flex/examples/data_analyst_agent.yaml
+  python -m dataagent --config dataagent/examples/quickstart.yaml
 
   # 指定用户与会话 ID（messages.json 默认续接；LLM 画像加 --portrait）
   python -m dataagent --config path/to.yaml --user alice --session 20260101_my_session --portrait
 
   # Web服务模式
-  python -m dataagent serve --config dataagent/core/flex/examples/data_analyst_agent.yaml
+  python -m dataagent serve --config dataagent/examples/quickstart.yaml
 
   # 指定服务地址和端口
-  python -m dataagent serve --config dataagent/core/flex/examples/data_analyst_agent.yaml --host 0.0.0.0 --port 8080
+  python -m dataagent serve --config dataagent/examples/quickstart.yaml --host 0.0.0.0 --port 8080
 
   # A2A 1.0 协议服务模式
   python -m dataagent serve-a2a --config path/to/config.yaml
@@ -647,7 +659,7 @@ def main():
     quickstart_parser.add_argument(
         "--config",
         "-c",
-        help="示例配置文件路径 (默认使用 dataagent/core/flex/examples/quickstart.yaml)",
+        help="示例配置文件路径 (默认使用 dataagent/examples/quickstart.yaml)",
     )
 
     # config 子命令

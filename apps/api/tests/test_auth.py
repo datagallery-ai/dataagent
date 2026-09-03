@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from conftest import register_and_login
+from conftest import CsrfTestClient, register_and_login
+
+from datafoundry_api.app import create_app
+from datafoundry_api.settings import Settings
 
 
 def test_auth_status_is_public(client) -> None:
@@ -49,6 +52,23 @@ def test_me_requires_session(client) -> None:
     response = client.get("/api/v1/me")
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_local_auth_bypass_exposes_preview_identity_without_cookies(auth_env: dict[str, str]) -> None:
+    auth_env["AUTH_DISABLED"] = "true"
+    app = create_app(Settings.from_env(auth_env))
+
+    with CsrfTestClient(app) as client:
+        me = client.get("/api/v1/me")
+        logout = client.post("/api/v1/auth/logout")
+
+    assert me.status_code == 200
+    assert me.json().get("data", {}).get("user") == {
+        "id": "local-preview",
+        "email": "local-preview@localhost",
+        "displayName": "Local Preview",
+    }
+    assert logout.status_code == 200
 
 
 def test_logout_requires_csrf(client) -> None:

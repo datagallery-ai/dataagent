@@ -10,11 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Runtime: per-invocation context for galatea-style agents.
+"""Runtime context retained for pending legacy feature migration.
 
 Wraps an ``Env`` instance and provides:
-- **LLM**：``runtime.llm(name)`` 按 ``name`` 查 ``env.llm_configs``（flex 在 Agent 初始化时由
-  :mod:`dataagent.core.flex.flex_runtime_from_config` 写入），懒加载
+- **LLM**：``runtime.llm(name)`` 按 ``name`` 查 ``env.llm_configs``，懒加载
   :func:`~dataagent.core.managers.llm_manager.llm_client.llm_adapter_from_env_cfg` 并缓存。
   ``name`` 与配置里 ``llm_configs`` 的键一致（多为节点名，或 ``MODEL`` 槽位如 ``portraiter``）。
 - Cancellation check via an optional ``threading.Event`` on the ``Env``
@@ -29,14 +28,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from dataagent.actions.tools.local_tool.sandbox import Sandbox
 from dataagent.core.cbb.agent_env import Env
-from dataagent.utils.constants import (
-    DEFAULT_WORKFLOW_RECURSION_LIMIT,
-    MAX_ITER_TO_RECURSION_FACTOR,
-)
 
 if TYPE_CHECKING:
     from dataagent.config.config_manager import ConfigManager
@@ -94,20 +89,17 @@ class Runtime:
         self._sandbox: Sandbox | None = None
         env_workspace = getattr(env, "workspace_dir", None)
         self._workspace_dir = Path(env_workspace).expanduser().resolve() if env_workspace is not None else None
-        # Flex：本轮是否尚未在 Planner 中写入与 LLM 一致的用户模板 Human
-        # 见 dataagent.core.flex.utils.planner_prompt_builder.sync_flex_planner_user_human_to_state
-        self._flex_planner_user_sync_pending: bool = False
         self._cache: dict[str, Any] = {}  # 通用缓存，供各模块使用
         # Subagent 实时进度回调（CLI 侧 StreamRenderer 通过延迟绑定注入）
         self.on_subagent_progress: Callable[[str, str], None] | None = None
         self._runtime_environment: dict[str, Any] | None = None  # 运行环境信息
-        # 与 Flex state / ContextFactory 对齐的会话四元组（由 update_from_state 刷新）
+        # 与 ContextFactory 对齐的会话四元组（由 update_from_state 刷新）
         self.user_id: str = "anonymous"
         self.session_id: str = "default_session"
         self.run_id: int = 0
         self.sub_id: int = 0
-        self.user_query: Optional[str] = None  # noqa: UP045
-        self.parent_user_query: Optional[str] = None  # noqa: UP045
+        self.user_query: str | None = None
+        self.parent_user_query: str | None = None
         self._job_stack_workspace: Path | None = None
         self._job_service: Any = None
         self._agent_service: Any = None
@@ -115,7 +107,7 @@ class Runtime:
         self._resource_stack_workspace: Path | None = None
         self._resource_coordinator: Any = None
         self._services_lock = RLock()
-        # OTel event recorder — set by FlexAgent.chat() when __otel_config is present
+        # Retained until the pending job subsystem is migrated.
         self.otel_recorder: Any = None
 
     @property
@@ -149,14 +141,6 @@ class Runtime:
     def instructions(self) -> str:
         """场景级自定义指令，由 YAML SCENARIO.{mode}.instructions 写入，默认为空串。"""
         return str(getattr(self.env, "instructions", "") or "")
-
-    @property
-    def flex_planner_user_sync_pending(self) -> bool:
-        """
-        Planner 是否仍需将本轮用户 Human 与 LLM 模板对齐（见 ``dataagent.core.flex.utils.
-        planner_prompt_builder.sync_flex_planner_user_human_to_state``）。
-        """
-        return self._flex_planner_user_sync_pending
 
     @property
     def runtime_environment(self) -> dict[str, Any]:
@@ -214,24 +198,9 @@ class Runtime:
         if cm is None:
             raise RuntimeError(
                 "Runtime has no per-Agent config_manager bound on env. "
-                "Ensure build_agent_env_from_flex_config passes config_manager."
+                "Ensure the pending runtime adapter passes config_manager."
             )
         return cm
-
-    @staticmethod
-    def resolve_recursion_limit_from_max_iter(max_iter: int | None) -> int:
-        """Derive LangGraph/openjiuwen recursion_limit from ``max_iter``.
-
-        - ``max_iter is None``: ``DEFAULT_WORKFLOW_RECURSION_LIMIT``
-        - otherwise: ``max(DEFAULT, max_iter * MAX_ITER_TO_RECURSION_FACTOR)``
-        """
-        if max_iter is None:
-            return DEFAULT_WORKFLOW_RECURSION_LIMIT
-        return max(DEFAULT_WORKFLOW_RECURSION_LIMIT, int(max_iter) * MAX_ITER_TO_RECURSION_FACTOR)
-
-    def resolve_workflow_recursion_limit(self) -> int:
-        """Derive graph engine recursion_limit from this Runtime's ``max_iter``."""
-        return self.resolve_recursion_limit_from_max_iter(self.max_iter)
 
     def ensure_job_services(self) -> Any:
         """Bind Job/Agent services to the current ``workspace_dir``.
@@ -321,26 +290,14 @@ class Runtime:
         """Bind the sandbox for the current runtime invocation."""
         self._sandbox = sandbox
 
-    def reset_flex_planner_user_sync(self) -> None:
-        """新用户轮次且 ``user_query`` 非空时由 FlexAgent 调用；与 ``state`` 字典上的魔法键无关。"""
-        self._flex_planner_user_sync_pending = True
-
-    def clear_flex_planner_user_sync_pending(self) -> None:
-        """在 Planner 中已追加对齐后的 ``HumanMessage`` 后调用，清除 pending。"""
-        self._flex_planner_user_sync_pending = False
-
     def update_from_state(self, state: dict[str, Any]) -> None:
         """在每次调用前，将 state 中的 workspace 与会话标识同步到本 Runtime。
 
-        flex 节点通过 ``aprocess(state, runtime)`` 中的 ``runtime`` 参数获取当前工作目录，
-        与 galatea 的 ``_process(state, runtime)`` 一致。
-        hierarchy 由 ``build_agent_env_from_flex_config``（见 flex_runtime_from_config）写入 env，不经 state。
-
         ``user_id`` / ``session_id`` / ``run_id`` / ``sub_id`` 与 LangGraph state 键名一致；
-        缺省或空字符串时与 FlexAgent 兜底值对齐（``anonymous`` / ``default_session`` / ``0`` / ``0``）。
+        缺省或空字符串时使用 ``anonymous`` / ``default_session`` / ``0`` / ``0``。
 
         Args:
-            state: Workflow state dict (Flex / LangGraph).
+            state: Workflow state mapping.
         """
         ws = state.get("workspace")
         if ws:
@@ -365,7 +322,7 @@ class Runtime:
     def llm(self, name: str) -> Any:
         """按 ``name`` 取 ``env.llm_configs[name]``，懒加载并缓存 ``LangChainChatModelAdapter``。
 
-        ``name`` 须为 ``build_llm_configs_from_flex_config`` 写入的键；``logical_name`` 传入工厂以填充适配器侧
+        ``name`` 须为已编译 Agent 配置写入的键；``logical_name`` 传入工厂以填充适配器侧
         :class:`~dataagent.core.managers.llm_manager.llm_config.LLMConfig`（与 env value 中的调用参数分离）。
         """
         if name not in self._llms:
@@ -479,6 +436,6 @@ class Runtime:
         from dataagent.core.agents.registry import AgentRegistry
 
         cm = self.config_manager
-        entries = cm.get("SUBAGENT_CONFIGS") or []
-        self._agent_registry = AgentRegistry.from_subagent_configs(entries)
+        entries = cm.get("SUBAGENTS") or []
+        self._agent_registry = AgentRegistry.from_subagents(entries)
         return self._agent_registry

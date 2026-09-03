@@ -74,11 +74,11 @@ class _AgentStatusHandler:
         pass
 
 
-# ── ReAct (FlexAgent) handler ─────────────────────────────────────────────────
+# ── ReAct status handler ──────────────────────────────────────────────────────
 
 
 class _ReActStatusHandler(_AgentStatusHandler):
-    """FlexAgent (ReAct) — Rich-rendered emoji patterns in stderr."""
+    """ReAct agents using Rich-rendered emoji patterns in stderr."""
 
     _RE_TOOL_START = re.compile(r"(?:▶\s*)?调用工具")
     _RE_TOOL_DONE = re.compile(r"✅\s*([A-Za-z]\w*)\s+完成")

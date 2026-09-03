@@ -20,14 +20,17 @@ Utilities for dynamic importing of classes and modules from string paths.
 import hashlib
 import importlib
 import importlib.util
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 _ALLOWED_CALLABLE_MODULE_PREFIXES = (
     "dataagent.actions.tools.hooks",
-    "dataagent.core.flex.hooks",
-    "dataagent.core.suite.builtin_suites.de_agent.hooks",
+    "dataagent.core.deepagents.hooks",
 )
+_REGISTERED_CALLABLES: dict[str, Callable[..., Any]] = {}
+_REGISTERED_CALLABLES_LOCK = threading.RLock()
 
 
 def _is_allowed_callable_module(module_name: str) -> bool:
@@ -65,7 +68,7 @@ def import_class(class_path: str) -> type[Any]:
         >>> d = OrderedDict()
 
         >>> # Import from nested packages
-        >>> Env = import_class("dataagent.actions.environment.env.Env")
+        >>> Agent = import_class("dataagent.interface.sdk.agent.DataAgent")
     """
     if not class_path or not isinstance(class_path, str):
         raise ValueError(f"Invalid class path: {class_path!r}")
@@ -167,7 +170,34 @@ def import_callable_from_spec(spec: str) -> Any:
     Raises:
         ValueError, ImportError, AttributeError, TypeError: Same as :func:`import_callable`.
     """
+    registered = _get_registered_callable(spec)
+    if registered is not None:
+        return registered
     return import_callable(spec)
+
+
+def register_callable_spec(spec: str, callback: Callable[..., Any]) -> None:
+    """Register a trusted in-memory callable under a normal dotted configuration spec.
+
+    Suite resolution uses this registry to turn a Suite-local Python file into a
+    regular configuration reference before native middleware compilation. The
+    compiler therefore resolves a dotted spec without needing to inspect Suite
+    directories itself.
+    """
+    normalized = str(spec or "").strip()
+    if not normalized or "." not in normalized:
+        raise ValueError(f"Registered callable spec must be dotted, got: {spec!r}")
+    if not callable(callback):
+        raise TypeError(f"Registered callable for {normalized!r} must be callable")
+    with _REGISTERED_CALLABLES_LOCK:
+        _REGISTERED_CALLABLES.update({normalized: callback})
+
+
+def _get_registered_callable(spec: str) -> Callable[..., Any] | None:
+    """Return an in-memory callable registered by configuration resolution."""
+    normalized = str(spec or "").strip()
+    with _REGISTERED_CALLABLES_LOCK:
+        return _REGISTERED_CALLABLES.get(normalized)
 
 
 def import_callable_from_suite_root(relative_spec: str, *, root: Path, suite_name: str) -> Any:
