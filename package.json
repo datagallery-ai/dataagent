@@ -47,7 +47,8 @@
     "node": ">=22"
   },
   "workspaces": [
-    "apps/*",
+    "apps/web",
+    "apps/tui",
     "packages/*"
   ],
   "scripts": {
@@ -56,8 +57,8 @@
     "postinstall": "node scripts/postinstall.mjs",
     "predev:api": "node scripts/ensure-dev-environment.mjs",
     "dev": "node scripts/dev.mjs",
-    "dev:api": "npm --workspace @datafoundry/api run dev",
-    "start:api": "npm --prefix apps/api run start",
+    "dev:api": "uv run --directory apps/api python -m datafoundry_api",
+    "start:api": "uv run --directory apps/api python -m datafoundry_api",
     "dev:web": "npm --workspace @datafoundry/web run dev",
     "build:web": "npm --workspace @datafoundry/web run build",
     "start:web": "npm --prefix apps/web run start",
@@ -65,7 +66,7 @@
     "test:deploy": "node --test scripts/deploy/*.test.mjs scripts/stack-runtime-config.test.mjs",
     "smoke:native-deploy": "node scripts/deploy/smoke-native-deploy.mjs",
     "test:web": "npm --workspace @datafoundry/web run test",
-    "test:packages": "vitest run packages apps/api",
+    "test:packages": "vitest run packages",
     "dev:tui": "npm --workspace @datafoundry/tui run dev",
     "start:tui": "npm --workspace @datafoundry/tui run start --",
     "build:tui": "npm --workspace @datafoundry/tui run build",

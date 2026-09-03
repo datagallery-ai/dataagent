@@ -8,7 +8,11 @@ This reference is for Web, TUI, and other client developers. After reading it, y
 POST /api/copilotkit
 ```
 
-This endpoint starts one agent run and returns an AG-UI event stream. Resource management, file upload, artifact download, and similar actions use `/api/v1/*` REST APIs.
+This endpoint starts one agent run and returns an AG-UI event stream. The request body must be a standard AG-UI `RunAgentInput`; do not wrap it in a CopilotKit `method/params/body` envelope.
+
+The control plane and Deep Agents runtime now run in one Python FastAPI process. Official `ag-ui-langgraph` mounts `create_deep_agent()`. Phase 1 covers auth, bootstrap config, SQLite checkpoints, and text streaming.
+
+`GET /api/v1/capabilities` turns off conversation memory, data tools, knowledge, MCP, skills, files, artifacts, trace, and HITL resume. Clients may still render those panels, but they are not implemented capabilities.
 
 ## Request context
 
@@ -93,12 +97,12 @@ Clients should retain `runId`, `threadId`, tool call IDs, and artifact IDs for d
 
 | Scenario | Client action |
 | --- | --- |
-| User cancel | Call `POST /api/v1/runs/:runId/cancel`; stop button enters canceling state. |
-| Run failure | Show backend error; keep received events and outputs. |
-| Network drop | Read session history with `threadId`, then restore UI state. |
-| Page refresh | Call session and artifact APIs to rebuild conversation, trace, and outputs. |
+| User cancel | Phase 1 has no standalone cancel REST. The Web / TUI stop button should abort the current SSE. |
+| Run failure | Show a standard `RUN_ERROR` or HTTP error; keep received text. |
+| Network drop | You can send another message with the same `threadId`; do not rely on session REST replay. |
+| Page refresh | Phase 1 has no persisted session events or artifact rebuild. |
 
-The backend persists run events; clients do not need to resend full history on the next request.
+The backend stores LangGraph state by `threadId` in a SQLite checkpointer. That is not full session-event replay.
 
 ## Security boundaries
 

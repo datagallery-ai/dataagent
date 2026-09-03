@@ -82,6 +82,8 @@ export type BackendCapabilitiesResponse = {
   mcp?: boolean;
   skills?: boolean;
   files?: boolean;
+  "runtime.dataTools"?: boolean;
+  "runtime.traceDag"?: boolean;
 };
 
 export type FileAssetRefDto = {

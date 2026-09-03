@@ -1813,6 +1813,7 @@ const FILE_ARTIFACT_TOOLS = new Set([
   "write_file",
   "edit_file",
   "execute_command",
+  "execute",
   "publish_artifact",
   "promote_workspace_file",
 ]);
@@ -2240,7 +2241,7 @@ export function resolveToolCallForEvent(
   return findCorrelatedToolCall(liveRun.toolCalls, event.toolName, event.stepId);
 }
 
-const SANDBOX_TOOL_NAMES = new Set(["execute_command"]);
+const SANDBOX_TOOL_NAMES = new Set(["execute_command", "execute"]);
 
 export function resolveWorkspaceMetadataForToolCall(
   liveRun: LiveRun,

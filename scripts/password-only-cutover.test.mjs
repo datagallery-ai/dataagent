@@ -6,7 +6,6 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createMetadataStore } from "../packages/metadata/dist/index.js";
-import { loadPasswordAuthConfig } from "../apps/api/dist/auth/config.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -23,7 +22,7 @@ const FORBIDDEN = [
 ];
 
 const CODE_ROOTS = ["apps", "packages", "scripts"];
-const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json"]);
+const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json", ".py"]);
 const ENV_FILES = [".env.example", "apps/web/.env.example"];
 
 const EXCLUDED_DIR_NAMES = new Set([
@@ -34,6 +33,7 @@ const EXCLUDED_DIR_NAMES = new Set([
   ".git",
   "storage",
   "superpowers",
+  ".venv",
 ]);
 
 /** Paths allowed to mention cutover-forbidden strings (error messages / gate itself). */
@@ -46,8 +46,7 @@ function isAllowlistedSource(relativePath) {
   if (normalized === "scripts/deploy/config.test.mjs") return true;
   if (normalized === "scripts/deploy/config.mjs") return true;
   if (normalized === "apps/tui/src/no-bare-fetch.guard.test.ts") return true;
-  if (normalized === "apps/api/src/auth/config.ts") return true;
-  if (normalized === "apps/api/dist/auth/config.js") return true;
+  if (normalized === "apps/api/src/datafoundry_api/settings.py") return true;
   if (normalized.startsWith("packages/metadata/src/index.ts")) return true;
   if (normalized.startsWith("packages/metadata/dist/index.js")) return true;
   if (normalized.startsWith("docs/")) return true;
@@ -112,38 +111,6 @@ test("product code and scripts have no runnable development auth bypasses", () =
 test("CI workflow does not set DATAFOUNDRY_AUTH_MODE", () => {
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   assert.equal(ci.includes("DATAFOUNDRY_AUTH_MODE"), false);
-});
-
-test("loadPasswordAuthConfig rejects removed auth modes and requires password settings", () => {
-  assert.doesNotThrow(() =>
-    loadPasswordAuthConfig({
-      DATAFOUNDRY_AUTH_MODE: "password",
-      AUTH_SESSION_SECRET: "x".repeat(32),
-      AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-      AUTH_REGISTRATION_MODE: "open",
-      AUTH_EMAIL_DELIVERY: "test",
-    })
-  );
-  assert.throws(
-    () =>
-      loadPasswordAuthConfig({
-        DATAFOUNDRY_AUTH_MODE: "dev",
-        AUTH_SESSION_SECRET: "x".repeat(32),
-        AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-        AUTH_REGISTRATION_MODE: "open",
-        AUTH_EMAIL_DELIVERY: "test",
-      }),
-    /DATAFOUNDRY_AUTH_MODE/
-  );
-  assert.throws(
-    () =>
-      loadPasswordAuthConfig({
-        AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-        AUTH_REGISTRATION_MODE: "open",
-        AUTH_EMAIL_DELIVERY: "test",
-      }),
-    /AUTH_SESSION_SECRET/
-  );
 });
 
 test("fresh metadata schema has no dev_token and no default user", () => {

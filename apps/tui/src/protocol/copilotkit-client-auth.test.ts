@@ -3,6 +3,44 @@ import { describe, it } from "node:test";
 import { CopilotKitClient } from "./copilotkit-client.js";
 
 describe("CopilotKitClient auth transport", () => {
+  it("posts a standard AG-UI RunAgentInput without a CopilotKit envelope", async () => {
+    const bodies: unknown[] = [];
+    const client = new CopilotKitClient({
+      runtimeUrl: "http://127.0.0.1:8787/api/copilotkit",
+      agent: "dataFoundry",
+      fetchImpl: async (input, init) => {
+        bodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return new Response("event: RUN_FINISHED\ndata: {}\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      },
+    });
+
+    await (client as unknown as {
+      postRunAgent: (input: unknown) => Promise<Response>;
+    }).postRunAgent({
+      threadId: "t1",
+      runId: "r1",
+      messages: [{ id: "m1", role: "user", content: "你好" }],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: {},
+    });
+
+    assert.deepEqual(bodies, [{
+      threadId: "t1",
+      runId: "r1",
+      messages: [{ id: "m1", role: "user", content: "你好" }],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: {},
+    }]);
+    assert.equal("method" in (bodies[0] as object), false);
+  });
+
   it("routes AG-UI POST through the injected fetchImpl only", async () => {
     const calls: string[] = [];
     const client = new CopilotKitClient({

@@ -10,7 +10,7 @@ import {
   AskUserPrompt,
   parseInterruptValue,
   SubmitPlanPrompt,
-  type MastraInterrupt,
+  type AgentInterrupt,
 } from "./CollaborationInterruptHandler";
 import {
   removeRestoredInterrupt,
@@ -22,7 +22,7 @@ import {
   usePendingCollaborationInterrupt,
 } from "./pending-collaboration-interrupt";
 
-function toMastraInterrupt(value: unknown): MastraInterrupt | null {
+function toAgentInterrupt(value: unknown): AgentInterrupt | null {
   return parseInterruptValue(value);
 }
 
@@ -56,7 +56,7 @@ export function RestoredInterruptHandler({
     );
   }, [capabilitiesReady, collaborationResponses, livePending?.source, restoredInterrupts]);
 
-  const interrupt = pending ? toMastraInterrupt(pending.interruptEvent) : null;
+  const interrupt = pending ? toAgentInterrupt(pending.interruptEvent) : null;
 
   const canResume =
     capabilitiesReady &&

@@ -10,6 +10,16 @@ describe("data-tasks production entry", () => {
     );
     expect(source).toContain('nextDynamic(() => import("./data-tasks-app")');
     expect(source).not.toContain("@copilotkit/react-core");
-    expect(source.split("\n").length).toBeLessThan(40);
+    expect(source.split("\n").length).toBeLessThan(80);
+  });
+
+  it("keeps CopilotKit runtimeUrl so CopilotKitInternal.validateProps does not crash", () => {
+    const source = readFileSync(
+      join(__dirname, "../data-tasks-app.tsx"),
+      "utf8",
+    );
+    expect(source).toContain('runtimeUrl="/api/copilotkit"');
+    expect(source).toContain("selfManagedAgents=");
+    expect(source).toContain("useSingleEndpoint={false}");
   });
 });

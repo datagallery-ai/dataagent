@@ -15,7 +15,7 @@ These docs are for product trials, customer demos, open-source visitors, and int
 | Use the terminal interface | [TUI guide](guides/tui.md) |
 | Connect your own data sources | [Data sources guide](guides/data-sources.md) |
 | Browse supported data sources | [Supported data sources](reference/supported-datasources.md) |
-| Learn about APIs and integration | [REST API reference](reference/rest-api.md), [Configuration API reference](reference/configuration-api.md), and [Agent Runtime reference](reference/agent-runtime.md) |
+| Learn about APIs and integration | [REST API reference](reference/rest-api.md), [Configuration API reference](reference/configuration-api.md), [Agent Runtime reference](reference/agent-runtime.md), [Deep Agents Runtime contract](reference/deep-agents-runtime.md), and [v1 capability boundary](reference/deep-agents-runtime-boundary.md) |
 | Understand system structure | [Architecture overview](architecture/overview.md) |
 | Review security boundaries | [Security](security.md) |
 

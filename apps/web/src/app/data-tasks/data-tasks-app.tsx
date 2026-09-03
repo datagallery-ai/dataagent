@@ -327,18 +327,18 @@ import {
   translateConfigFieldOptions,
 } from "../../i18n/config-labels";
 import {
-  getAgentRuntimeUrl,
   getBackendCapabilities,
   isResourcePanelSupported,
 } from "../../lib/config-api";
+import { createDataFoundryHttpAgent, syncHttpAgentHeaders } from "../../lib/agui-http-agent";
 
 const runtimeAgentId = "dataFoundry";
 const sessionAgentIdPrefix = `${runtimeAgentId}:session:`;
-const runtimeUrl = getAgentRuntimeUrl();
 
 type CopilotSessionAgentRegistry = {
-  getAgent: (agentId: string) => ({ threadId?: string } & Record<string, unknown>) | undefined;
-  registerProxiedAgent: (params: { agentId: string; runtimeAgentId: string }) => unknown;
+  getAgent: (agentId: string) => ({ threadId?: string; clone?: () => unknown } & Record<string, unknown>) | undefined;
+  addAgent__unsafe_dev_only?: (params: { id: string; agent: unknown }) => unknown;
+  registerProxiedAgent?: (params: { agentId: string; runtimeAgentId: string }) => unknown;
 };
 
 function dataTaskSessionAgentId(threadId: string): string {
@@ -378,6 +378,7 @@ function reportDataFoundryRunError(
 
 function useSessionAgentRegistry(threadIds: readonly string[]): boolean {
   const { copilotkit } = useCopilotKit();
+  const { authHeaders } = useDataTaskIdentity();
   const threadKey = threadIds.join("\n");
   const [generation, setGeneration] = useState(0);
 
@@ -392,10 +393,18 @@ function useSessionAgentRegistry(threadIds: readonly string[]): boolean {
         continue;
       }
       try {
-        registry.registerProxiedAgent({ agentId: localAgentId, runtimeAgentId });
-        const agent = registry.getAgent(localAgentId);
-        if (agent) {
-          agent.threadId = threadId;
+        const agent = createDataFoundryHttpAgent(authHeaders, {
+          agentId: localAgentId,
+          threadId,
+        });
+        if (typeof registry.addAgent__unsafe_dev_only === "function") {
+          registry.addAgent__unsafe_dev_only({ id: localAgentId, agent });
+        } else {
+          registry.registerProxiedAgent?.({ agentId: localAgentId, runtimeAgentId });
+        }
+        const mounted = registry.getAgent(localAgentId);
+        if (mounted) {
+          mounted.threadId = threadId;
         }
         registered = true;
       } catch (error) {
@@ -407,7 +416,7 @@ function useSessionAgentRegistry(threadIds: readonly string[]): boolean {
     if (registered) {
       setGeneration((current) => current + 1);
     }
-  }, [copilotkit, threadKey]);
+  }, [authHeaders, copilotkit, threadKey]);
 
   return useMemo(() => {
     const registry = copilotkit as unknown as CopilotSessionAgentRegistry;
@@ -462,7 +471,7 @@ function StableDataTaskChatInput({
 }) {
   const t = useT();
   const bindings = useDataTaskChatInputBindings();
-  const { agent } = useAgent({ agentId: bindings.agentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const { copilotkit } = useCopilotKit();
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedChatPrompt[]>([]);
   const [draftText, setDraftText] = useState("");
@@ -976,18 +985,28 @@ function DataTasksCopilotShell() {
     {},
   );
   const { authHeaders, scopeKey } = useDataTaskIdentity();
+  const dataFoundryAgent = useMemo(
+    () => createDataFoundryHttpAgent(authHeaders, { agentId: runtimeAgentId }),
+    [scopeKey],
+  );
 
   useEffect(() => {
     setCopilotProperties({});
   }, [scopeKey]);
 
+  useEffect(() => {
+    syncHttpAgentHeaders(dataFoundryAgent, authHeaders);
+  }, [authHeaders, dataFoundryAgent]);
+
   return (
     <CopilotKit
       key={scopeKey}
-      runtimeUrl={runtimeUrl}
       agent={runtimeAgentId}
+      runtimeUrl="/api/copilotkit"
+      useSingleEndpoint={false}
+      credentials="include"
       headers={() => authHeaders}
-      useSingleEndpoint
+      selfManagedAgents={{ [runtimeAgentId]: dataFoundryAgent }}
       showDevConsole={false}
       enableInspector={false}
       properties={copilotProperties}
@@ -1439,7 +1458,7 @@ function DataTaskWorkspace({
     sessions[0] ??
     null;
   const activeThreadId = activeSession?.threadId;
-  const activeAgentId = activeThreadId ? dataTaskSessionAgentId(activeThreadId) : runtimeAgentId;
+  const activeAgentId = runtimeAgentId;
   const sessionThreadIds = useMemo(() => sessions.map((session) => session.threadId), [sessions]);
   const sessionAgentsReady = useSessionAgentRegistry(sessionThreadIds);
   const activeDatasourceId = resolveActiveDatasourceId(
@@ -3098,7 +3117,7 @@ function StepReasoningMessage({
 }: ComponentProps<typeof CopilotChatReasoningMessage>) {
   useAgentMessageRenderGeneration();
   const chatConfig = useCopilotChatConfiguration();
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const allMessages = mergeMessagesForStepContext(
     agent.messages ?? [],
     messages ?? [],
@@ -3119,7 +3138,7 @@ function StepReasoningMessage({
 /** Host pending HITL cards below the user turn when suspend lands before assistant bubble. */
 function StepUserMessage(props: CopilotChatUserMessageProps) {
   const chatConfig = useCopilotChatConfiguration();
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const { copilotkit } = useCopilotKit();
   const bindings = useDataTaskChatInputBindings();
   const branchActions = useContext(ConversationBranchActionsContext);
@@ -3319,7 +3338,7 @@ function StepAssistantMessage({
   useAgentMessageRenderGeneration();
   const t = useT();
   const chatConfig = useCopilotChatConfiguration();
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const liveRunStatus = useContext(ChatRunStatusContext);
   const liveRun = useContext(ChatLiveRunContext);
   const processTimelineCollapse = useContext(ProcessTimelineCollapseContext);
@@ -7508,7 +7527,7 @@ function ProcessToolGroupSync({
   onToolGroupsChange: (groups: ProcessToolGroup[]) => void;
 }) {
   const chatConfig = useCopilotChatConfiguration();
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const messages = agent.messages ?? [];
   const groups = useMemo(
     () => buildProcessToolGroups(messages, liveRun),
@@ -7532,7 +7551,7 @@ function ChatWelcomeOverlay({
   const t = useT();
   const chatConfig = useCopilotChatConfiguration();
   const threadId = chatConfig?.threadId;
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const { isThreadRestoring, isThreadRestored } = useConversationRestoreGate();
   const isRestoringConversation = isThreadRestoring(threadId);
   const hasVisibleMessages = (agent.messages?.length ?? 0) > 0 || liveRunStatus !== "idle";
@@ -7575,7 +7594,7 @@ function PendingBranchRunDispatcher({
   onUserMessageSubmitted: (text: string) => void;
 }) {
   const chatConfig = useCopilotChatConfiguration();
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
+  const { agent } = useAgent({ agentId: runtimeAgentId });
   const { copilotkit } = useCopilotKit();
   const restoredConversation = useConversationBranchSnapshot(chatConfig?.threadId);
   const { isThreadRestoring } = useConversationRestoreGate();
@@ -7618,6 +7637,17 @@ function HiddenSessionChatInput() {
   return null;
 }
 
+function BindHttpAgentThread({ agentId, threadId }: { agentId: string; threadId: string }) {
+  const { copilotkit } = useCopilotKit();
+  useEffect(() => {
+    const agent = copilotkit.getAgent(agentId) as { threadId?: string } | undefined;
+    if (agent) {
+      agent.threadId = threadId;
+    }
+  }, [agentId, copilotkit, threadId]);
+  return null;
+}
+
 function SessionChatRuntime({
   threadId,
   isActive,
@@ -7641,7 +7671,7 @@ function SessionChatRuntime({
   onToolGroupsChange: (groups: ProcessToolGroup[]) => void;
   onUseExamplePrompt: (prompt: string) => void;
 }) {
-  const agentId = dataTaskSessionAgentId(threadId);
+  const agentId = runtimeAgentId;
   const { liveRun } = useLiveRun(threadId);
   const liveRunStatus = liveRun.runStatus;
   const autoScrollMode = useChatAutoScrollMode();
@@ -7654,6 +7684,7 @@ function SessionChatRuntime({
       threadId={threadId}
       hasExplicitThreadId
     >
+      <BindHttpAgentThread agentId={agentId} threadId={threadId} />
       <LiveRunEventSubscriber agentId={agentId} threadId={threadId} />
       <SessionConversationRestore
         agentId={agentId}
@@ -7876,7 +7907,7 @@ function ChatPane({
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <CollaborationResponseBridge />
-        {activeThreadId && sessionAgentsReady ? (
+        {activeThreadId ? (
           <div className="relative flex min-h-0 flex-1 overflow-hidden">
             {chatThreadIds.map((threadId) => {
               const isActive = threadId === activeThreadId;

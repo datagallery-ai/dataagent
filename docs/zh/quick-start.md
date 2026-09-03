@@ -7,13 +7,13 @@
 | **推荐：一键部署** | Ubuntu / Debian | `./deploy.sh`（配置、依赖、构建含 TUI、detached 后台启动 Web/API 与健康检查一次完成） |
 | **手动 npm** | Windows、macOS、其他 Linux，或需要手改环境变量时 | `npm install` → 配置 `.env` → `npm run build` / `build:web` → `npm run start` |
 
-部署完成后在 Web 中配置模型，再用内置 DTC Growth Review 数据源跑通一次分析。本版本**不提供** Docker / Compose。
+部署完成后在 Web 中注册登录，发送一条文本消息即可确认 Deep Agents 流式回复。第一阶段不提供数据源、Knowledge、MCP、Skill 和 Artifact。本版本**不提供** Docker / Compose。
 
 ## 环境要求
 
-- **一键部署**：Ubuntu 或 Debian（x86_64 / aarch64）；Node.js 22（缺失时脚本可在确认后协助安装）
-- **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22 与 npm
-- 可选外置 [DataLink](guides/datalink.md)：需要语义图谱能力时单独运行（一键部署不依赖）
+- **一键部署**：Ubuntu 或 Debian（x86_64 / aarch64）；Node.js 22（缺失时脚本可在确认后协助安装）；Python >= 3.11 与 [uv](https://docs.astral.sh/uv/)
+- **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22、npm、Python >= 3.11 与 uv
+- 可选外置 [DataLink](guides/datalink.md)：需要语义图谱能力时单独运行（一键部署不依赖；当前控制面尚未接入 MCP）
 
 请在同一环境内安装和运行项目。Windows 用户不要在 Windows 和 WSL 之间共用 `node_modules`。
 
@@ -186,7 +186,7 @@ npm run start:web    # :3000
 
 ```bash
 curl http://127.0.0.1:8787/healthz   # 进程存活
-curl http://127.0.0.1:8787/ready     # Mastra / builtin 就绪（含 startup_ms）
+curl http://127.0.0.1:8787/ready     # 控制面与进程内 Deep Agents 就绪
 ```
 
 打开 [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login)（真实生产则打开你的公网域名）注册或登录后进入 `/data-tasks`。
@@ -197,15 +197,17 @@ curl http://127.0.0.1:8787/ready     # Mastra / builtin 就绪（含 startup_ms�
 
 打开 `/data-tasks` 后：
 
-1. 点击「新建数据任务」。
-2. 选择内置 **DTC Growth Review** 数据源。
-3. 在输入框旁选择「服务端默认」或你配置的模型。
-4. 发送第一个问题。
+1. 注册并登录。
+2. 进入数据任务工作台。
+3. 发送第一条消息，例如「你好」。
+4. 确认收到 Deep Agents 的流式文本回复。
+
+第一阶段只保证文本对话。数据源、Knowledge、MCP、Skill、文件和 Artifact 会在 `GET /api/v1/capabilities` 中返回不可用，请不要按旧的数据分析路径验收。
 
 推荐问题：
 
 ```text
-帮我查看数据源里有哪些表，并说明每张表的主要字段。
+你好
 ```
 
 统计问题：

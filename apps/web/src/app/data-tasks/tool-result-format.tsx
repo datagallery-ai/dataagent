@@ -11,6 +11,7 @@ import {
   toolResultObservationText,
   unwrapToolResultPayload,
 } from "./tool-result-normalize";
+import { canonicalizeToolName } from "./tool-name-aliases";
 import {
   codeBlockClass,
   dataTableCellClass,
@@ -522,6 +523,16 @@ function renderWorkspaceObservation(toolName: string, text: string, variant: Too
     );
   }
 
+  const updatedMatch = text.match(/^Updated file (.+)$/u);
+  if (updatedMatch) {
+    return (
+      <div className="grid gap-2">
+        <MetaChips items={[{ label: "Path", value: updatedMatch[1] }]} />
+        <p className="text-xs text-step-success">File written to the workspace.</p>
+      </div>
+    );
+  }
+
   const mkdirMatch = text.match(/^Created directory (.+)$/u);
   if (mkdirMatch) {
     return (
@@ -569,7 +580,7 @@ function renderWorkspaceObservation(toolName: string, text: string, variant: Too
     }
   }
 
-  if (toolName === "list_files") {
+  if (toolName === "list_files" || toolName === "glob") {
     const lines = text.split("\n").filter((line) => line.trim().length > 0);
     if (lines.length > 0) {
       return (
@@ -701,6 +712,7 @@ export function renderFormattedToolResult(
   result: unknown,
   variant: ToolResultVariant,
 ): ReactNode | null {
+  toolName = canonicalizeToolName(toolName);
   const record = parseResultRecord(result);
 
   if (toolName === "list_data_sources" && record) {
@@ -743,6 +755,7 @@ export function renderFormattedToolResult(
     toolName === "write_file" ||
     toolName === "edit_file" ||
     toolName === "list_files" ||
+    toolName === "glob" ||
     toolName === "grep" ||
     toolName === "file_stat" ||
     toolName === "mkdir" ||

@@ -71,6 +71,8 @@ DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追�
 
 ## 🚀 正式态跑通
 
+当前后端是单个 Python FastAPI 进程。Web 和 TUI 仍用现有界面，但会向 `POST /api/copilotkit` 发送标准 AG-UI `RunAgentInput`。第一阶段支持注册 / 登录、启动 REST 和文本流。数据源、Knowledge、MCP、Skill、文件、Artifact、Trace 和 HITL 恢复已由 `GET /api/v1/capabilities` 明确关闭。
+
 正式态有两条路径（都不要跑 `npm run dev`）。本版本不提供 Docker / Compose。
 
 ### 推荐：Ubuntu / Debian 一键部署
@@ -219,8 +221,8 @@ Coding agent 改代码，SQL chatbot 回答问题，DataFoundry 跑数据任务�
 
 ## 🗺️ 路线图
 
-- [x] **受控数据任务工作台** — Web 与 TUI 共用 TypeScript Agent Runtime、CopilotKit / AG-UI 事件流、可回放运行历史、SQL 审计和统一资产层。
-- [x] **安全数据访问底座** — 数据源注册、连接测试、schema 抓取、表预览、只读 SQL、脱敏、知识库导入、MCP 资源、Skill 包和模型配置。
+- [x] **受控数据任务工作台** — Web 与 TUI 共用 Python 控制面、官方 AG-UI / LangGraph 事件流。第一阶段先接入基础 Deep Agents 文本对话。
+- [ ] **安全数据访问底座** — 数据源注册、连接测试、schema 抓取、表预览、只读 SQL、脱敏、知识库导入、MCP 资源、Skill 包和模型配置。当前 Python 控制面尚未接入。
 - [ ] **统一语义层** — 沉淀指标、实体、关联、血缘和策略，让 Agent 从「猜字段」走向「理解业务口径」，从一次性 SQL 走向可治理的数据操作层。
 - [ ] **自主分析循环** — Agent 规划分析、执行受控实验、审视结论，收敛到有证据支撑的结果。
 - [ ] **评测与可靠性实验室** — NL2SQL、检索、工具调用和端到端任务基准，支撑回归门禁和失败分析。

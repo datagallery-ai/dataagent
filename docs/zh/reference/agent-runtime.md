@@ -8,7 +8,13 @@
 POST /api/copilotkit
 ```
 
-这个接口启动一次 Agent run，并返回 AG-UI 事件流。资源管理、文件上传、artifact 下载等动作走 `/api/v1/*` REST API。
+这个接口启动一次 Agent run，并返回 AG-UI 事件流。请求体必须是标准 AG-UI `RunAgentInput`，不要再包一层 CopilotKit `method/params/body` envelope。
+
+当前控制面和 Deep Agents Runtime 运行在同一个 Python FastAPI 进程中，由官方 `ag-ui-langgraph` 直接挂载 `create_deep_agent()` 图。第一阶段只保证认证、启动配置、SQLite checkpoint 和文本流。
+
+`GET /api/v1/capabilities` 会关闭 conversation memory、data tools、knowledge、MCP、skills、files、artifacts、trace 和 HITL resume。客户端仍可以渲染这些面板，但不能把它们当成已实现能力。
+
+资源管理、文件上传、artifact 下载等动作走 `/api/v1/*` REST API。其中未实现的能力会通过 `GET /api/v1/capabilities` 明确关闭。
 
 ## 请求上下文
 
@@ -93,12 +99,12 @@ workspace defaults
 
 | 场景 | 客户端动作 |
 | --- | --- |
-| 用户取消 | 调用 `POST /api/v1/runs/:runId/cancel`，停止按钮进入取消中状态。 |
-| run 失败 | 展示后端错误消息，保留已收到的事件和产出。 |
-| 网络中断 | 用 `threadId` 读取会话历史，再恢复 UI 状态。 |
-| 刷新页面 | 调用会话和 artifact 接口重建对话、追溯和产出。 |
+| 用户取消 | 第一阶段没有独立 cancel REST。Web / TUI 停止按钮应中断当前 SSE。 |
+| run 失败 | 展示标准 `RUN_ERROR` 或 HTTP 错误，保留已收到的文本。 |
+| 网络中断 | 可以继续用同一个 `threadId` 再发一条消息；不要依赖会话 REST 回放。 |
+| 刷新页面 | 第一阶段没有会话事件持久化或 artifact 重建。 |
 
-后端会把 run 事件持久化，客户端不需要把完整历史塞回下一次请求。
+后端用 SQLite checkpointer 按 `threadId` 保存 LangGraph 状态。这不是完整的会话事件回放。
 
 ## 安全边界
 
@@ -106,6 +112,8 @@ workspace defaults
 - 数据源访问经过 Data Gateway。
 - 文件、知识库、Skill 和 MCP 工具由后端策略筛选。
 - 事件流可用于展示和回放，不携带敏感明文。
+
+客户端仍走 `POST /api/copilotkit`，请求体必须是标准 `RunAgentInput`。当前实现说明见 [Deep Agents Runtime](deep-agents-runtime.md) 与 [能力边界](deep-agents-runtime-boundary.md)。
 
 ## 延伸阅读
 

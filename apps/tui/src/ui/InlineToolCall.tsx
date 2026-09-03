@@ -140,6 +140,16 @@ function toolDisplayName(name: string): string {
     query_data: '查询数据',
     publish_artifact: '生成产物',
     promote_workspace_file: '生成文件',
+    write_file: '写入文件',
+    read_file: '读取文件',
+    edit_file: '编辑文件',
+    list_files: '浏览文件',
+    ls: '浏览文件',
+    glob: '匹配文件',
+    grep: '搜索文件',
+    execute_command: '运行命令',
+    execute: '运行命令',
+    task: '委派子任务',
   };
   return displayNames[name] || name;
 }

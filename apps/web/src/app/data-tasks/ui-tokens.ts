@@ -111,6 +111,13 @@ const stepKindTones = {
     bar: "bg-step-knowledge",
     ring: "ring-step-knowledge/20",
   },
+  workspace: {
+    bg: "bg-step-transform/10",
+    border: "border-step-transform/30",
+    text: "text-step-transform",
+    bar: "bg-step-transform",
+    ring: "ring-step-transform/20",
+  },
   other: {
     bg: "bg-surface-subtle",
     border: "border-border",

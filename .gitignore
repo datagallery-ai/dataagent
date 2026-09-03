@@ -2,6 +2,8 @@
 .venv/
 .venv-docs/
 venv/
+__pycache__/
+*.py[cod]
 node_modules/
 **/node_modules/
 dist/

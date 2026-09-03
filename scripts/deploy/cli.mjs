@@ -443,10 +443,10 @@ function createRealDeps(context) {
     },
     async preflight(current, options) {
       if (options?.command === "start") {
-        const apiDist = path.join(root, "apps/api/dist/index.js");
+        const apiProject = path.join(root, "apps/api/pyproject.toml");
         const webBuild = path.join(root, "apps/web/.next/BUILD_ID");
         const webEnvLocal = path.join(root, "apps/web/.env.local");
-        if (!existsSync(apiDist) || !existsSync(webBuild) || !existsSync(webEnvLocal)) {
+        if (!existsSync(apiProject) || !existsSync(webBuild) || !existsSync(webEnvLocal)) {
           throw new Error("请先运行 ./deploy.sh deploy");
         }
         const diskEnv = parseDeploymentEnvironment(current.sourceText ?? "");
@@ -499,6 +499,10 @@ function createRealDeps(context) {
     },
     async installProject() {
       await runCommand("npm", ["ci"], commandOptions());
+      await runCommand("uv", ["sync"], {
+        ...commandOptions(),
+        cwd: path.join(root, "apps/api"),
+      });
     },
     async buildTypeScript() {
       await runCommand("npm", ["run", "build"], commandOptions());

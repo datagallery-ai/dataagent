@@ -376,7 +376,17 @@ export const ENV_VARIABLE_SPECS: EnvVariableSpec[] = [
   },
   { name: "SQL_DEFAULT_LIMIT", required: false, default_value: "100", description: "Default read-only SQL row limit." },
   { name: "SQL_MAX_LIMIT", required: false, default_value: "1000", description: "Maximum read-only SQL row limit." },
-  { name: "SQL_TIMEOUT_MS", required: false, default_value: "10000", description: "Read-only SQL timeout in ms." }
+  { name: "SQL_TIMEOUT_MS", required: false, default_value: "10000", description: "Read-only SQL timeout in ms." },
+  {
+    name: "RUNTIME_SERVICE_URL",
+    required: false,
+    description: "Independent Deep Agents runtime base URL. Empty uses the in-process TypeScript stub."
+  },
+  {
+    name: "RUNTIME_SERVICE_TOKEN",
+    required: false,
+    description: "Optional bearer token for the independent runtime service."
+  }
 ];
 
 export const createEnvConfig = (env: Record<string, string | undefined>): EnvConfig => ({

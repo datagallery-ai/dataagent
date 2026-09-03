@@ -21,9 +21,18 @@ describe("resolveToolStepActionLabel", () => {
     expect(resolveToolStepActionLabel(["read_file"])).toBe("Read file");
   });
 
+  it("maps Deep Agents filesystem tool names to the existing workspace labels", () => {
+    expect(resolveToolStepActionLabel(["ls"])).toBe("Browse files");
+    expect(resolveToolStepActionLabel(["glob"])).toBe("Match files");
+    expect(resolveToolStepActionLabel(["execute"])).toBe("Run command");
+    expect(resolveToolStepActionLabel(["task"])).toBe("Delegate task");
+  });
+
   it("summarizes mixed or unknown tool sets without templated wording", () => {
     expect(resolveToolStepActionLabel(["read_file", "edit_file"])).toBe("Handle files");
     expect(resolveToolStepActionLabel(["list_files", "grep"])).toBe("Operate workspace");
+    expect(resolveToolStepActionLabel(["ls", "grep"])).toBe("Operate workspace");
+    expect(resolveToolStepActionLabel(["write_file", "ls", "read_file"])).toBe("Operate workspace");
     expect(resolveToolStepActionLabel(["unknown_tool", "another_tool"])).toBe("Call 2 tools");
   });
 

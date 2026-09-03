@@ -6,6 +6,7 @@ import {
 } from "./workspace-layout";
 import type { EvidenceRef } from "@datafoundry/contracts";
 import type { TranslateFn } from "../../i18n/types";
+import { canonicalizeToolName, isWorkspaceCanonicalTool } from "./tool-name-aliases";
 
 export type ArtifactKind = "chart" | "csv" | "memo" | "dashboard" | "file";
 export type DataArtifactType = "dataset" | "chart" | "sql" | "report" | "file";
@@ -19,10 +20,8 @@ export type ChartArtifactSeries = {
 /**
  * Tool-agnostic data step kinds. The console is organized around the data-task
  * lifecycle, not around specific SQL tools, so any backend data operation maps
- * to one of these. Today the backend only emits `inspect` (inspect_schema) and
- * `query` (run_sql_readonly); the remaining kinds light up as the backend ships
- * more data tools (see docs/engineering/2026-06-25-backend-requirements.md). Unknown
- * tools degrade to `other` instead of masquerading as a schema inspection.
+ * to one of these. Built-in Deep Agents filesystem tools map to `workspace`
+ * instead of looking like a data operation. Unknown tools degrade to `other`.
  */
 export type DataStepKind =
   | "inspect" // structure / schema inspection
@@ -31,11 +30,13 @@ export type DataStepKind =
   | "fetch" // table / row fetch
   | "visualize" // chart / visualization
   | "knowledge" // RAG / knowledge retrieval
+  | "workspace" // filesystem / sandbox tools
   | "other"; // any other backend data operation
 
 /** Maps a backend tool name to a tool-agnostic data step kind. */
 export function dataStepKindForTool(toolName?: string): DataStepKind {
-  switch (toolName) {
+  const name = toolName ? canonicalizeToolName(toolName) : "";
+  switch (name) {
     case "inspect_schema":
     case "list_data_sources":
       return "inspect";
@@ -46,8 +47,15 @@ export function dataStepKindForTool(toolName?: string): DataStepKind {
     case "retrieve_knowledge":
       return "knowledge";
     default:
-      return "other";
+      return isWorkspaceCanonicalTool(name) ? "workspace" : "other";
   }
+}
+
+/** Shared kind for a group of tool calls — keep workspace/data together when possible. */
+export function dataStepKindForTools(toolNames: Array<string | undefined>): DataStepKind {
+  const kinds = [...new Set(toolNames.map((name) => dataStepKindForTool(name)))];
+  if (kinds.length === 1) return kinds[0] ?? "other";
+  return "other";
 }
 
 /** Short human label for a data step kind (used in trace/console chips). */
@@ -68,6 +76,8 @@ export function dataStepLabel(kind: DataStepKind, t?: TranslateFn): string {
       return "Visualize";
     case "knowledge":
       return "Knowledge";
+    case "workspace":
+      return "Workspace";
     case "other":
       return "Data operation";
   }
@@ -83,11 +93,13 @@ const toolDisplayTitles: Record<string, string> = {
   edit_file: "Edit file",
   write_file: "Write file",
   list_files: "Browse workspace files",
+  glob: "Match files",
   grep: "Search file contents",
   mkdir: "Create directory",
   file_stat: "Get file info",
   execute_command: "Run command",
   promote_workspace_file: "Promote workspace file",
+  task: "Delegate task",
   task_write: "Write task plan",
   task_update: "Update task",
   task_complete: "Complete task",
@@ -105,9 +117,7 @@ export function toolDisplayTitle(toolName?: string, t?: TranslateFn): string {
   if (/[\u4e00-\u9fff]/.test(trimmed)) {
     return trimmed;
   }
-  const lookupName = trimmed.startsWith("mcp__")
-    ? trimmed.split("__").slice(2).join("__")
-    : trimmed;
+  const lookupName = canonicalizeToolName(trimmed);
   if (t) {
     for (const key of [`tools.${lookupName}`, `tools.${trimmed}`]) {
       const translated = t(key);

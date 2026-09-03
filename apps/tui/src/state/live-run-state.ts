@@ -1185,6 +1185,7 @@ const FILE_ARTIFACT_TOOLS = new Set([
   "write_file",
   "edit_file",
   "execute_command",
+  "execute",
   "publish_artifact",
   "promote_workspace_file",
 ]);

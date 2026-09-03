@@ -1,19 +1,20 @@
 # Architecture overview
 
-DataFoundry uses a local-first workbench architecture. Web and TUI are user entry points; the backend unifies Agent Runtime, configuration management, data source access, knowledge retrieval, files, and artifact management.
+DataFoundry uses a local-first workbench architecture. Web and TUI are user entry points. The current backend is a single Python FastAPI process that owns auth, bootstrap REST, and in-process Deep Agents. Datasources, Knowledge, MCP, Skills, files, and artifacts still appear in the module table, but they are not on the phase-1 run path.
 
 ## High-level structure
 
 ```text
 Web workbench / TUI / other clients
-  -> CopilotKit / AG-UI agent run
-  -> REST configuration and resource API
-  -> Agent Runtime
-  -> Data Gateway / Knowledge / MCP / Skill / Files / Artifacts
-  -> Metadata and audit storage
+  -> standard AG-UI RunAgentInput
+  -> Python FastAPI (auth, minimal REST, Deep Agents)
+  -> official ag-ui-langgraph
+  -> create_deep_agent()
 ```
 
 A curated architecture diagram is available in the repository home runtime flow image: [`docs/assets/readme/runtime-flow.png`](../../assets/readme/runtime-flow.png).
+
+Phase 1 clients send a standard AG-UI `RunAgentInput` and consume the text stream only. `GET /api/v1/capabilities` marks conversation memory, data tools, knowledge, MCP, skills, files, artifacts, trace, and HITL resume as unavailable.
 
 ## Main modules
 
@@ -21,8 +22,8 @@ A curated architecture diagram is available in the repository home runtime flow 
 | --- | --- |
 | `apps/web` | Web data task workbench: graphical conversation, resource management, trace, and outputs. |
 | `apps/tui` | Terminal UI: CLI conversation, data source and Skill selection, stats, and outputs. |
-| `apps/api` | Backend HTTP service: `/api/copilotkit` and `/api/v1/*`. |
-| Agent Runtime | Creates DataFoundry, manages tools, run context, and AG-UI events. |
+| `apps/api` | Python FastAPI control plane: `/api/copilotkit`, `/api/v1/*`, and in-process Deep Agents. |
+| Agent Runtime | Official `ag-ui-langgraph` plus Deep Agents. Phase 1 is text chat only. |
 | Data Gateway | Data sources, schema checks, preview, and read-only SQL execution. |
 | Knowledge | Knowledge base documents, chunking, retrieval, and citation boundaries. |
 | MCP | External tool services with allowlist and timeout policy. |
@@ -121,7 +122,7 @@ npm run start:web
 The browser reaches REST and CopilotKit SSE through the same-origin Next BFF. Probes:
 
 - `GET /healthz` — process liveness
-- `GET /ready` — Mastra and builtin resources ready (response includes `startup_ms` / `phases`)
+- `GET /ready` — control plane ready (response includes `runtime.provider=deepagents`). Deep Agents starts in the same process as REST.
 
 Reverse-proxy sample: [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; leave the SSE path uncompressed and unbuffered. Contributor hot-reload: [Quick start appendix](../quick-start.md).
 
