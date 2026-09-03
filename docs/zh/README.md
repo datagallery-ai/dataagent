@@ -18,7 +18,7 @@ DataFoundry 是一个面向数据分析场景的 AI 工作台。它把自然语�
 | 使用终端界面 | [TUI 指南](guides/tui.md) |
 | 连接自己的数据源 | [数据源指南](guides/data-sources.md) |
 | 查看支持的数据源 | [支持的数据源](reference/supported-datasources.md) |
-| 了解 API 和集成方式 | [REST API 参考](reference/rest-api.md)、[配置 API 参考](reference/configuration-api.md) 与 [Agent Runtime 参考](reference/agent-runtime.md) |
+| 了解 API 和集成方式 | [REST API 参考](reference/rest-api.md)、[配置 API 参考](reference/configuration-api.md)、[Agent Runtime 参考](reference/agent-runtime.md)、[Deep Agents Runtime 契约](reference/deep-agents-runtime.md) 与 [v1 能力边界](reference/deep-agents-runtime-boundary.md) |
 | 了解系统结构 | [架构概览](architecture/overview.md) |
 | 检查安全边界 | [安全说明](security.md) |
 

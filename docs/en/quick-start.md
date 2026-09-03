@@ -7,13 +7,13 @@ This guide is for first-time DataFoundry deployers. Formal mode has two paths; *
 | **Recommended: one-click** | Ubuntu / Debian | `./deploy.sh` (config, dependencies, build including TUI, detached Web/API start, and health checks in one flow) |
 | **Manual npm** | Windows, macOS, other Linux, or hand-edited env files | `npm install` → configure `.env` → `npm run build` / `build:web` → `npm run start` |
 
-After deploy, configure a model in the Web UI and run an analysis against the built-in DTC Growth Review data source. Docker / Compose is **not** shipped in this release.
+After deploy, register, sign in, and send a text message to confirm a streaming Deep Agents reply. Phase 1 does not provide datasources, Knowledge, MCP, Skills, or artifacts. Docker / Compose is **not** shipped in this release.
 
 ## Requirements
 
-- **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent)
-- **Manual npm**: Linux, macOS, or Windows; Node.js >= 22 and npm
-- Optional external [DataLink](guides/datalink.md): run it as a separate process if you want semantic graph features (not required for deploy)
+- **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent); Python >= 3.11 and [uv](https://docs.astral.sh/uv/)
+- **Manual npm**: Linux, macOS, or Windows; Node.js >= 22, npm, Python >= 3.11, and uv
+- Optional external [DataLink](guides/datalink.md): run it as a separate process if you want semantic graph features (not required for deploy; the current control plane does not mount MCP)
 
 Install and run the project in the same environment. On Windows, do not share `node_modules` between Windows and WSL.
 
@@ -186,7 +186,7 @@ Checks:
 
 ```bash
 curl http://127.0.0.1:8787/healthz   # process up
-curl http://127.0.0.1:8787/ready     # Mastra / builtins ready (includes startup_ms)
+curl http://127.0.0.1:8787/ready     # control plane and in-process Deep Agents ready
 ```
 
 Open [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login) (or your public origin in real production), register or sign in, then go to `/data-tasks`.
@@ -197,15 +197,17 @@ After changing any `NEXT_PUBLIC_*` value in `apps/web/.env.local`, run `npm run 
 
 On `/data-tasks`:
 
-1. Click **New data task**.
-2. Select the built-in **DTC Growth Review** data source.
-3. Select **Server default** or your configured model next to the input box.
-4. Send your first question.
+1. Register and sign in.
+2. Open the data-task workbench.
+3. Send a first message such as `你好`.
+4. Confirm a streaming Deep Agents text reply.
+
+Phase 1 only guarantees text chat. Datasources, Knowledge, MCP, Skills, files, and artifacts are marked unavailable by `GET /api/v1/capabilities`; do not accept the old analysis path.
 
 Suggested prompt:
 
 ```text
-Show me the tables in this datasource and explain the main fields of each.
+你好
 ```
 
 Aggregation prompt:

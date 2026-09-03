@@ -93,6 +93,17 @@ describe("renderFormattedToolResult", () => {
     );
   });
 
+  it("renders Deep Agents filesystem tool names and observation strings", () => {
+    expect(renderTool("ls", "['/notes/ui-check.md']")).toContain("/notes/ui-check.md");
+    expect(renderTool("glob", "['/notes/sample.md']")).toContain("/notes/sample.md");
+    expect(renderTool("write_file", "Updated file /notes/ui-check.md")).toContain(
+      "/notes/ui-check.md",
+    );
+    expect(renderTool("execute", "Error: this backend does not support execute")).toContain(
+      "does not support execute",
+    );
+  });
+
   it("renders task and collaboration tools", () => {
     expect(renderTool("task_write", toolResultFixtures.task_write)).toContain("Inspect schema");
     expect(renderTool("ask_user", toolResultFixtures.ask_user)).toContain("Waiting for the user");

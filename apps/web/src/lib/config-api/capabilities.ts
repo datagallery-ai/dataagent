@@ -1,7 +1,7 @@
 import type { BackendCapabilitiesResponse } from "./types";
 import type { BackendCapability } from "../../app/data-tasks/data-task-state";
 
-export type RuntimeCapability = "conversationMemory" | "knowledge" | "mcp" | "skills";
+export type RuntimeCapability = "conversationMemory" | "knowledge" | "mcp" | "skills" | "dataTools" | "traceDag";
 
 const DEFAULT_BACKEND_CAPABILITIES: Record<BackendCapability, boolean> = {
   "datasource.server": false,
@@ -22,6 +22,8 @@ const DEFAULT_RUNTIME_CAPABILITIES: Record<RuntimeCapability, boolean> = {
   knowledge: false,
   mcp: false,
   skills: false,
+  dataTools: false,
+  traceDag: false,
 };
 
 let backendCapabilities: Record<BackendCapability, boolean> = {
@@ -53,6 +55,8 @@ export function applyBackendCapabilities(
     knowledge: response.knowledge ?? false,
     mcp: response.mcp ?? false,
     skills: response.skills ?? false,
+    dataTools: response["runtime.dataTools"] ?? false,
+    traceDag: response["runtime.traceDag"] ?? false,
   };
   return backendCapabilities;
 }

@@ -23,24 +23,6 @@ export interface CopilotKitClientConfig {
   onError?: ((error: ClassifiedError) => void) | undefined;
 }
 
-type SingleRouteEnvelope = {
-  method: "agent/run";
-  params: {
-    agentId: string;
-  };
-  body: {
-    threadId: string;
-    runId: string;
-    parentRunId?: string;
-    state: unknown;
-    messages: RunAgentInput["messages"];
-    tools: NonNullable<RunAgentInput["tools"]>;
-    context: NonNullable<RunAgentInput["context"]>;
-    forwardedProps: Record<string, unknown>;
-    resume?: NonNullable<RunAgentInput["resume"]>;
-  };
-};
-
 export class CopilotKitClient {
   private runtimeUrl: string;
   private agent: string;
@@ -237,7 +219,7 @@ export class CopilotKitClient {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },
-        body: JSON.stringify(this.createEnvelope(input)),
+        body: JSON.stringify(input),
         signal: controller.signal,
       }).finally(() => clearTimeout(timeoutId));
     } catch (error) {
@@ -260,33 +242,6 @@ export class CopilotKitClient {
       );
     }
     return response;
-  }
-
-  private createEnvelope(input: RunAgentInput): SingleRouteEnvelope {
-    const body: SingleRouteEnvelope["body"] = {
-      threadId: input.threadId,
-      runId: input.runId,
-      state: input.state ?? {},
-      messages: input.messages,
-      tools: input.tools ?? [],
-      context: input.context ?? [],
-      forwardedProps: input.forwardedProps ?? {},
-    };
-
-    if (input.parentRunId !== undefined) {
-      body.parentRunId = input.parentRunId;
-    }
-    if (input.resume !== undefined) {
-      body.resume = input.resume;
-    }
-
-    return {
-      method: "agent/run",
-      params: {
-        agentId: this.agent,
-      },
-      body,
-    };
   }
 
   private async errorFromResponse(response: Response): Promise<CopilotKitClientError> {

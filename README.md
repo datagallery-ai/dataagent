@@ -71,6 +71,8 @@ See the [v0.2.0 release notes](docs/en/releases/v0.2.0.md) for the complete capa
 
 ## 🚀 Formal deploy
 
+The current backend is a single Python FastAPI process. Web and TUI still use the existing screens, but they send a standard AG-UI `RunAgentInput` to `POST /api/copilotkit`. Phase 1 supports register/login, bootstrap REST, and streaming text chat. Datasources, Knowledge, MCP, Skills, files, artifacts, trace, and HITL resume are closed by `GET /api/v1/capabilities`.
+
 Formal mode has two paths (do **not** run `npm run dev`). Docker / Compose is not provided in this release.
 
 ### Recommended: Ubuntu / Debian one-click
@@ -220,8 +222,8 @@ See the full list in [Supported Data Sources](docs/en/reference/supported-dataso
 
 ## 🗺️ Roadmap
 
-- [x] **Governed data-task workbench** — Web and TUI share one TypeScript agent runtime, CopilotKit / AG-UI event stream, replayable run history, SQL audit trail, and unified asset layer.
-- [x] **Safe data access foundation** — Datasource registration, connection testing, schema introspection, table preview, read-only SQL, masking, knowledge imports, MCP resources, skill packages, and model configuration.
+- [x] **Governed data-task workbench** — Web and TUI share one Python control plane and official AG-UI / LangGraph streaming. Phase 1 connects a baseline Deep Agents chat.
+- [ ] **Safe data access foundation** — Datasource registration, connection testing, schema introspection, table preview, read-only SQL, masking, knowledge imports, MCP resources, skill packages, and model configuration. Not wired into the current Python control plane.
 - [ ] **Unified semantic layer** — Durable metrics, entities, relationships, lineage, and policies, moving agents from "guessing fields" to "understanding business definitions" and from one-off SQL to a governable data operating layer.
 - [ ] **Autonomous analyst loops** — Agents that plan investigations, run controlled experiments, critique findings, and converge on evidence-backed conclusions.
 - [ ] **Evaluation and reliability lab** — NL2SQL, retrieval, tool-use, and end-to-end task benchmarks with regression gates and failure forensics.

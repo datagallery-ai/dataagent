@@ -72,7 +72,7 @@ Web v1 does not expose workspace switching; custom integrations should use the w
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/healthz` | Process liveness. |
-| GET | `/ready` | Readiness: Mastra / builtins finished; response includes `startup_ms` and `phases`. |
+| GET | `/ready` | Control-plane readiness; response includes `startup_ms`, `phases`, and independent runtime health. |
 | GET | `/api/v1/capabilities` | Read backend capability switches. |
 | GET | `/api/v1/me` | Read current identity. |
 

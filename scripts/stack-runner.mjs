@@ -35,12 +35,9 @@ export async function runStack({ mode, args = [] }) {
   }
 
   const children = [];
+
   if (startApi) {
-    const command =
-      mode === "development"
-        ? ["--workspace", "@datafoundry/api", "run", "dev"]
-        : ["--prefix", "apps/api", "run", "start"];
-    children.push(spawnProcess("DataFoundry API", "npm", command, { ...process.env, ...runtimeConfig }));
+    children.push(spawnPythonApi(runtimeConfig, process.env, mode === "development"));
   }
   if (startWeb) {
     const webScript = mode === "development" ? "dev" : "start";
@@ -60,7 +57,10 @@ export async function runStack({ mode, args = [] }) {
     throw new Error("Nothing to start. Use --api and/or --web.");
   }
 
-  console.log(formatStackEndpoints(runtimeConfig, { startApi, startWeb }));
+  console.log(formatStackEndpoints(runtimeConfig, {
+    startApi,
+    startWeb,
+  }));
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
@@ -87,9 +87,24 @@ function loadRootEnv() {
   if (existsSync(envPath)) loadEnvFile(envPath);
 }
 
-function spawnProcess(label, command, args, env) {
+function spawnPythonApi(config, env, reload) {
+  const apiDir = join(root, "apps/api");
+  return spawnProcess(
+    "DataFoundry API",
+    "uv",
+    ["run", "python", "-m", "datafoundry_api"],
+    {
+      ...env,
+      ...config,
+      API_RELOAD: reload ? "1" : "0",
+    },
+    apiDir,
+  );
+}
+
+function spawnProcess(label, command, args, env, cwd = root) {
   const child = spawn(command, args, {
-    cwd: root,
+    cwd,
     stdio: "inherit",
     env,
     shell: process.platform === "win32",

@@ -28,17 +28,20 @@ import {
   setPendingCollaborationInterrupt,
 } from "./pending-collaboration-interrupt";
 
-type MastraInterrupt = {
-  type?: string;
+export type AgentInterrupt = {
+  type?: "agent_interrupt" | "mastra_suspend" | string;
   toolCallId?: string;
   toolName?: "ask_user" | "submit_plan";
   suspendPayload?: Record<string, unknown>;
   args?: Record<string, unknown>;
 };
 
+/** @deprecated Use AgentInterrupt. Kept for replay of Mastra-era sessions. */
+export type MastraInterrupt = AgentInterrupt;
+
 type ChoiceOption = { label: string; value: string; description?: string };
 
-function parseInterruptValue(value: unknown): MastraInterrupt | null {
+export function parseInterruptValue(value: unknown): AgentInterrupt | null {
   const raw =
     typeof value === "string"
       ? (() => {
@@ -50,10 +53,14 @@ function parseInterruptValue(value: unknown): MastraInterrupt | null {
         })()
       : value;
   if (!raw || typeof raw !== "object") return null;
-  return raw as MastraInterrupt;
+  const record = raw as AgentInterrupt;
+  if (record.type && record.type !== "agent_interrupt" && record.type !== "mastra_suspend") {
+    return record.toolCallId && record.toolName ? record : null;
+  }
+  return record;
 }
 
-function readQuestion(interrupt: MastraInterrupt): string {
+function readQuestion(interrupt: AgentInterrupt): string {
   const payload = interrupt.suspendPayload;
   if (payload && typeof payload.question === "string") return payload.question;
   if (interrupt.args && typeof interrupt.args.question === "string") {
@@ -83,7 +90,7 @@ function normalizeOption(item: unknown): ChoiceOption | null {
   return { label, value, description };
 }
 
-function readOptions(interrupt: MastraInterrupt): ChoiceOption[] {
+function readOptions(interrupt: AgentInterrupt): ChoiceOption[] {
   const sources = [interrupt.suspendPayload?.options, interrupt.args?.options];
   for (const raw of sources) {
     if (!Array.isArray(raw)) continue;

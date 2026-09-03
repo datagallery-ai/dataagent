@@ -23,7 +23,8 @@ import type {
 } from "../../data-task-state";
 import type { JobDto } from "../../../../lib/config-api";
 import { configApi } from "../../../../lib/config-api";
-import { dataStepKindForTool, dataStepLabel, hasCapability, toolDisplayTitle } from "../../data-task-state";
+import { getRuntimeCapabilities } from "../../../../lib/config-api/capabilities";
+import { dataStepKindForTool, dataStepKindForTools, dataStepLabel, hasCapability, toolDisplayTitle } from "../../data-task-state";
 import { artifactExportClient } from "../../artifact-export-client";
 import {
   artifactDetailFromPreview,
@@ -632,7 +633,9 @@ function DynamicStepsList({
             const primaryCall = calls[0];
             const primaryEvent = primaryCall ? eventById.get(primaryCall.id) : undefined;
             const rawName = primaryEvent?.toolName ?? primaryCall?.name;
-            const kind = calls.length > 1 ? "other" : dataStepKindForTool(rawName);
+            const kind = dataStepKindForTools(
+              calls.map((call) => eventById.get(call.id)?.toolName ?? call.name),
+            );
             const kindLabel = dataStepLabel(kind, t);
             const tone = stepKindTone(kind);
             const groupDuration =
@@ -924,8 +927,16 @@ function DeliverablesZone({
       <ConsoleSection title={t("console.sections.outputs")} badge={badge}>
         {artifacts.length === 0 ? (
           <EmptyState
-            title={t("console.empty.noOutputs")}
-            description={t("console.empty.noOutputsDescription")}
+            title={
+              getRuntimeCapabilities().dataTools
+                ? t("console.empty.noOutputs")
+                : t("console.empty.runtimeDataToolsDisabled")
+            }
+            description={
+              getRuntimeCapabilities().dataTools
+                ? t("console.empty.noOutputsDescription")
+                : t("console.empty.runtimeDataToolsDisabledDescription")
+            }
           />
         ) : (
           <div className="grid gap-3">

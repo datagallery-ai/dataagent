@@ -1,3 +1,5 @@
+import { canonicalizeToolName } from "./tool-name-aliases";
+
 const toolActionLabels: Record<string, string> = {
   list_data_sources: "List data sources",
   inspect_schema: "Inspect schema",
@@ -8,11 +10,13 @@ const toolActionLabels: Record<string, string> = {
   edit_file: "Edit file",
   write_file: "Write file",
   list_files: "Browse files",
+  glob: "Match files",
   grep: "Search files",
   mkdir: "Create directory",
   file_stat: "Get file info",
   execute_command: "Run command",
   promote_workspace_file: "Promote workspace file",
+  task: "Delegate task",
   task_write: "Write task",
   task_update: "Update task",
   task_complete: "Complete task",
@@ -32,28 +36,22 @@ const dataToolNames = new Set([
 ]);
 const workspaceToolNames = new Set([
   "list_files",
+  "glob",
   "grep",
   "mkdir",
   "file_stat",
   "execute_command",
   "promote_workspace_file",
+  "task",
   "task_write",
   "task_update",
   "task_complete",
   "task_check",
 ]);
 
-/** Strip MCP namespace prefix so `mcp__server__inspect_schema` resolves like `inspect_schema`. */
+/** Strip MCP prefix and map Deep Agents names onto the workbench vocabulary. */
 export function normalizeToolLookupName(toolName: string): string {
-  const trimmed = toolName.trim();
-  if (!trimmed.startsWith("mcp__")) {
-    return trimmed;
-  }
-  const parts = trimmed.split("__");
-  if (parts.length >= 3) {
-    return parts.slice(2).join("__");
-  }
-  return trimmed;
+  return canonicalizeToolName(toolName);
 }
 
 export function isDisplayableToolName(toolName: string): boolean {
@@ -102,7 +100,7 @@ export function resolveToolStepActionLabel(toolNames: string[]): string {
   const normalized = toolNames
     .map((name) => name.trim())
     .filter((name) => isDisplayableToolName(name));
-  const unique = [...new Set(normalized)];
+  const unique = [...new Set(normalized.map((name) => normalizeToolLookupName(name)))];
   if (unique.length === 0) return "Thinking";
   if (unique.length === 1) {
     if (normalized.length > 1) {
@@ -113,7 +111,9 @@ export function resolveToolStepActionLabel(toolNames: string[]): string {
 
   if (unique.every((name) => fileToolNames.has(name))) return "Handle files";
   if (unique.every((name) => dataToolNames.has(name))) return "Analyze data";
-  if (unique.every((name) => workspaceToolNames.has(name))) return "Operate workspace";
+  if (unique.every((name) => workspaceToolNames.has(name) || fileToolNames.has(name))) {
+    return "Operate workspace";
+  }
 
   const firstKnown = unique.find((name) => toolActionLabels[name]);
   if (firstKnown && unique.length === 2) {
