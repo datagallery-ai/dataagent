@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from datafoundry_api.agent import create_runtime_agent
+from datafoundry_api.agent import AgentScopeError, DataAgentRuntime
 from datafoundry_api.auth import (
     AuthService,
     attach_auth_cookies,
@@ -19,6 +22,7 @@ from datafoundry_api.auth import (
 from datafoundry_api.bootstrap import CAPABILITIES, RUN_DEFAULTS, WORKSPACE_CONFIG
 from datafoundry_api.envelopes import error, success
 from datafoundry_api.errors import AuthError
+from datafoundry_api.model_profiles import ModelProfileError, ModelProfileService
 from datafoundry_api.settings import Settings
 from datafoundry_api.store import SqliteStore
 
@@ -39,26 +43,44 @@ CORS_HEADERS = {
     "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-CSRF-Token",
     "Access-Control-Max-Age": "86400",
 }
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Create the control-plane API with an embedded, durable DataAgent runtime."""
     resolved = settings or Settings.from_env()
     store = SqliteStore(resolved.metadata_db_path)
     auth = AuthService(store, resolved)
+    model_profiles = ModelProfileService(store, resolved)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resolved.checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
-        async with AsyncSqliteSaver.from_conn_string(str(resolved.checkpoint_db_path)) as checkpointer:
-            app.state.langgraph_agent = _build_langgraph_agent(resolved, checkpointer)
+        resolved.store_db_path.parent.mkdir(parents=True, exist_ok=True)
+        async with (
+            AsyncSqliteSaver.from_conn_string(str(resolved.checkpoint_db_path)) as checkpointer,
+            AsyncSqliteStore.from_conn_string(str(resolved.store_db_path)) as state_store,
+        ):
+            await checkpointer.setup()
+            await state_store.setup()
+            app.state.agent_runtime = DataAgentRuntime(
+                resolved.dataagent_config_path,
+                checkpointer=checkpointer,
+                store=state_store,
+            )
             app.state.runtime_ready = True
-            yield
-        app.state.runtime_ready = False
+            try:
+                yield
+            finally:
+                app.state.runtime_ready = False
+                app.state.agent_runtime = None
 
     app = FastAPI(title="DataFoundry API", version="0.3.0", lifespan=lifespan)
     app.state.settings = resolved
     app.state.store = store
     app.state.auth = auth
+    app.state.model_profiles = model_profiles
+    app.state.agent_runtime = None
     app.state.runtime_ready = False
 
     @app.middleware("http")
@@ -87,7 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "status": "ready",
                 "control_plane": "ready",
                 "runtime": {
-                    "provider": "deepagents",
+                    "provider": "dataagent",
                     "status": "ok" if app.state.runtime_ready else "starting",
                     "streaming": True,
                 },
@@ -165,12 +187,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return success(CAPABILITIES)
 
     @app.get("/api/v1/workspace-config")
-    async def workspace_config() -> JSONResponse:
-        return success(WORKSPACE_CONFIG)
+    async def workspace_config(request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        workspace = dict(WORKSPACE_CONFIG)
+        workspace["modelProfiles"] = model_profiles.list_profiles(identity)
+        return success(workspace)
 
     @app.get("/api/v1/run-defaults")
-    async def run_defaults() -> JSONResponse:
-        return success(RUN_DEFAULTS)
+    async def run_defaults(request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        defaults = dict(RUN_DEFAULTS)
+        defaults["activeLlmProfileId"] = model_profiles.default_profile_id(identity)
+        return success(defaults)
+
+    @app.get("/api/v1/model-profiles")
+    async def list_model_profiles(request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        return success(model_profiles.list_profiles(identity))
+
+    @app.post("/api/v1/model-profiles")
+    async def create_model_profile(request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        return success(model_profiles.create_profile(identity, await _json_body(request)), status_code=201)
+
+    @app.get("/api/v1/model-profiles/{profile_id}")
+    async def get_model_profile(profile_id: str, request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        return success(model_profiles.get_profile(identity, profile_id))
+
+    @app.patch("/api/v1/model-profiles/{profile_id}")
+    async def patch_model_profile(profile_id: str, request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        return success(model_profiles.patch_profile(identity, profile_id, await _json_body(request)))
+
+    @app.delete("/api/v1/model-profiles/{profile_id}")
+    async def delete_model_profile(profile_id: str, request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        return success(model_profiles.delete_profile(identity, profile_id))
+
+    @app.post("/api/v1/model-profiles/{profile_id}/test")
+    async def test_model_profile(profile_id: str, request: Request) -> JSONResponse:
+        identity = identity_from_request(request, auth)
+        return success(await model_profiles.test_profile(identity, profile_id))
 
     @app.get("/api/v1/datasource-types")
     async def datasource_types() -> JSONResponse:
@@ -195,9 +253,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(_runtime_info())
         if _is_envelope(payload):
             return error("BAD_REQUEST", "Use a standard AG-UI RunAgentInput body.", 400)
-        if not resolved.model_configured:
-            return error("PROVIDER_CONFIG_MISSING", "LLM provider is not configured.", 503)
         try:
+            from ag_ui.core.events import RunErrorEvent
             from ag_ui.core.types import RunAgentInput
             from ag_ui.encoder import EventEncoder
         except ImportError as exc:  # pragma: no cover
@@ -214,12 +271,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except ValueError as exc:
             return error("BAD_REQUEST", str(exc), 400)
-        agent = app.state.langgraph_agent.clone()
+        identity = identity_from_request(request, auth)
+        try:
+            model_selection = model_profiles.resolve_model_selection(
+                identity,
+                _active_model_profile_id(input_data),
+            )
+            agent = await app.state.agent_runtime.agent_for(
+                identity.user_id,
+                input_data.thread_id,
+                model_selection,
+            )
+        except AgentScopeError as exc:
+            return error("BAD_REQUEST", str(exc), 400)
+        except ModelProfileError as exc:
+            return error(exc.code, exc.message, exc.status)
+        except Exception as exc:
+            logger.exception("Failed to initialize DataAgent runtime")
+            return error("RUNTIME_CONFIGURATION_ERROR", str(exc), 503)
         encoder = EventEncoder(accept=request.headers.get("accept"))
 
         async def generate() -> AsyncIterator[str]:
-            async for event in agent.run(input_data):
-                yield encoder.encode(event)
+            if model_selection.run_timeout_ms is None:
+                async for event in agent.run(input_data):
+                    yield encoder.encode(event)
+                return
+            try:
+                async with asyncio.timeout(model_selection.run_timeout_ms / 1000):
+                    async for event in agent.run(input_data):
+                        yield encoder.encode(event)
+            except TimeoutError:
+                yield encoder.encode(
+                    RunErrorEvent(
+                        code="RUN_TIMEOUT",
+                        message=f"Agent run exceeded the configured timeout of {model_selection.run_timeout_ms} ms.",
+                    )
+                )
 
         return StreamingResponse(
             generate(),
@@ -235,18 +322,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def handle_auth_error(_request: Request, exc: AuthError) -> JSONResponse:
         return _auth_error(exc)
 
+    @app.exception_handler(ModelProfileError)
+    async def handle_model_profile_error(_request: Request, exc: ModelProfileError) -> JSONResponse:
+        return error(exc.code, exc.message, exc.status)
+
     @app.api_route("/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     async def not_found(path: str) -> JSONResponse:
         return error("RESOURCE_NOT_FOUND", "Route not found.", 404)
 
     return app
-
-
-def _build_langgraph_agent(settings: Settings, checkpointer: Any) -> Any:
-    from ag_ui_langgraph import LangGraphAgent
-
-    graph = create_runtime_agent(settings, checkpointer=checkpointer)
-    return LangGraphAgent(name="dataFoundry", graph=graph)
 
 
 def _enforce_request_security(request: Request, auth: AuthService) -> None:
@@ -264,6 +348,19 @@ def _runtime_info() -> dict[str, Any]:
     # Keep agents empty so CopilotKit does not replace the local HttpAgent
     # registered via selfManagedAgents with a single-endpoint proxy.
     return {"version": "1.0.0", "agents": {}}
+
+
+def _active_model_profile_id(input_data: Any) -> str | None:
+    forwarded = getattr(input_data, "forwarded_props", None)
+    if not isinstance(forwarded, Mapping):
+        return None
+    run_config = forwarded.get("run_config") or forwarded.get("runConfig")
+    if not isinstance(run_config, Mapping):
+        return None
+    value = run_config.get("activeLlmProfileId") or run_config.get("active_llm_profile_id")
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
 
 
 def _is_envelope(payload: Any) -> bool:
@@ -300,5 +397,3 @@ def _optional_string(body: dict[str, Any], key: str) -> str | None:
 
 def _auth_error(exc: AuthError) -> JSONResponse:
     return error(exc.code, exc.message, exc.status)
-
-

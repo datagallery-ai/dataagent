@@ -36,7 +36,7 @@ SCENARIO:
 
       ### 第二步：制定检索策略
       根据查询类型选择工具组合：
-      - 用户 query 末尾已经预置 `<semantic_retrieve_context>` 块；你必须先使用其中的召回表信息
+      - 你必须先调用 `search_tables_with_semantic_retrieve` 获取语义召回表信息
       - `<semantic_retrieve_context>` 内的表清单格式为：`db.table 描述：表描述`
       - 当你需要补充表字段证据时，你要使用 `get_table_schema` 工具
       - 当你需要检索 UDF 函数信息时，你要使用 `search_udf_function_by_name_keyword` 或 `search_udf_function_by_dsl` 工具
@@ -45,7 +45,7 @@ SCENARIO:
 
       ### 第三步：执行检索
       并行调用选定的工具：
-      - 从 `<semantic_retrieve_context>` 选择候选表，再按需要调用 schema、UDF、Join 关系工具补充证据
+      - 从 `search_tables_with_semantic_retrieve` 结果选择候选表，再按需要调用 schema、UDF、Join 关系工具补充证据
       - `get_table_schema` 传入需要探查 schema 的表名（使用 `db.table` 格式传入）
       - `search_udf_function_by_name_keyword` 传入 UDF 函数名相关的关键词
       - `search_udf_function_by_dsl` 传入 UDF 功能描述和属性名
@@ -96,13 +96,11 @@ SCENARIO:
         - 字符串字段使用 UDF 函数 `!bicoredata.IsEmpty(field)` 判断；不要只写 `field IS NOT NULL`，因为空字符串也应视为空
         - 对 JOIN key，必须在 JOIN 前过滤或归一化空值，避免空 key 造成数据倾斜、错误匹配或无效输出
 
-HOOKS:
-  agent:
-    pre:
-      - semantic_retrieve_context_loader
-
 TOOLS:
   local_functions:
+    - name: "search_tables_with_semantic_retrieve"
+      module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "search_tables_with_semantic_retrieve"
     # 基于 fulltext 粗召回 “metric 指标 + data_column 与 data_table 候补” 的表列检索（思路1）
     # - name: "search_metric_instance"
     #   module: "dataagent.actions.tools.semantic_tool.search_metric_instance"
@@ -127,30 +125,10 @@ TOOLS:
     - name: "get_join_relations"
       module: "dataagent.actions.tools.semantic_tool.get_join_relations"
       function: "get_join_relations"
-  builtin:
-    - name: "bash"
-      module: "dataagent.actions.tools.local_tool.tools"
-      function: "bash"
-    - name: "read_file"
-      module: "dataagent.actions.tools.local_tool.tools"
-      function: "read_file"
-
-BASH_TOOL_WHITELIST:
+SHELL_TOOL_WHITELIST:
   # bash 工具命令白名单
   - cat
   - head
-
-PRE_WORKFLOW: []
-
-ACTOR_LOOP:
-  - node: "planner"
-    module: "dataagent.core.flex.nodes.planner.Planner"
-    chat_model:
-      name: "chat_model"
-
-  - node: "executor"
-    module: "dataagent.core.flex.nodes.executor.Executor"
-    max_tool_result_length: 65536 # 工具结果截断长度默认 8192，数据工程场景改大
 
 CONTEXT:
   # 除以下配置在数据工程场景单独修改外，其他与默认值保持一致
@@ -158,5 +136,3 @@ CONTEXT:
   compress_token_limit: 100000 # 消息 token 超 1.2 倍时触发 LLM 折叠
   # ── IR 转换 ──
   file_node_threshold: 32768 # 工具输出超长时落盘为 FileNode，供 data_lineage / IR 解包
-
-POST_WORKFLOW: []

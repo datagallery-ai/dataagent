@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Python-3.11+-brightgreen" alt="Python">
   <img src="https://img.shields.io/badge/Version-0.1.0-orange" alt="Version">
   <img src="https://img.shields.io/badge/LangGraph-1.1.3-red" alt="LangGraph">
-  <img src="https://img.shields.io/badge/openJiuwen-0.1.14-purple" alt="openJiuwen">
+  <img src="https://img.shields.io/badge/Deep%20Agents-0.7.5-purple" alt="Deep Agents">
   <img src="https://img.shields.io/badge/GaussVector-supported-blue" alt="GaussVector">
 </p>
 
@@ -39,7 +39,7 @@
 | 🧩 **Unified Semantic Layer** | Prioritizes GaussVector as an enhanced vector retrieval foundation in the semantic layer, turning tables, columns, metric definitions, and business descriptions into retrievable schema signals for NL2SQL and multi-source semantic alignment |
 | 🔌 **Plugin Tool Ecosystem** | Local functions / MCP (stdio+sse) / A2A — three tool types with unified registration and invocation. Auto-discovery and on-demand loading. Built-in data analysis SKILLs |
 | 📡 **Native Multi-Agent Collaboration** | Full A2A 1.0 protocol support: automatic agent discovery, capability mapping, standardized communication. Naturally supports distributed collaboration for complex business tasks |
-| 🧩 **YAML as Agent** | Model, tools, memory, workflow, scenario prompts — all declaratively orchestrated. **From idea to running Agent in minutes** |
+| 🧩 **YAML as Agent** | Models, tools, workspace, skills, middleware, subagents, and scenario prompts are declaratively configured. **From idea to running Agent in minutes** |
 | 🛡️ **Enterprise Security Sandbox** | Workspace isolation + path whitelisting + full audit trail, meeting financial-grade compliance requirements |
 | ⚡ **Out of the Box** | 20+ industry scenario example configs — **zero code to start, up and running in minutes** |
 
@@ -66,7 +66,6 @@ uv run mkdocs serve -f docs/mkdocs.yml
 | 🗄️ [Database Installation](docs/en/installation_doc/database_install/database_install.md) | Deploy PostgreSQL, MySQL; prioritize GaussVector integration, import scenario data, and connect Semantic Service |
 | ⚙️ [Features](docs/en/function/function.md) | Core capabilities, modules, tools, and model support |
 | 🧩 [Semantic Service](docs/en/semantic_service/semantic-service-user-guide.md) | Semantic Service enriched metadata for NL2SQL, prioritizing GaussVector-oriented semantic-layer indexing, candidate schema recall, and schema perception enhancement |
-| 🔗 [openJiuwen](docs/en/openJiuwen/openJiuwen-user-guide.md) | openJiuwen integration and usage guide |
 | 🏗️ [Architecture](docs/en/design_doc/design_doc.md) | System architecture; context, planning engine, and action modules |
 | 📡 [API Design](docs/en/api_doc/api_doc.md) | A2A northbound interface and Python SDK |
 | 📋 [Application Cases](docs/en/case/case.md) | Build a dedicated NL2SQL Agent; build a data analysis Agent |
@@ -122,14 +121,14 @@ Follow the prompts to enter model configuration and start chatting with the Agen
 
 ```bash
 # Terminal interactive mode
-uv run -m dataagent --config dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent --config dataagent/examples/quickstart.yaml
 ```
 
 ### 🔍 Config check
 
 ```bash
 # Check environment variable references in config
-uv run -m dataagent config check dataagent/core/flex/examples/quickstart.yaml
+uv run -m dataagent config check dataagent/examples/quickstart.yaml
 ```
 
 ## 📖 Usage

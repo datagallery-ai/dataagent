@@ -179,7 +179,7 @@ def _supports_explicit_cache_control(model: str, provider: str | None = None) ->
 
 
 def _apply_cache_defaults(params: dict[str, Any]) -> None:
-    """兼容 flex_runtime_from_config 的导入；自实现客户端不再需要 litellm 的 custom_llm_provider。"""
+    """Remove the obsolete LiteLLM provider hint from legacy model parameters."""
     params.pop("custom_llm_provider", None)
 
 
@@ -1520,7 +1520,7 @@ class LLMClient:
         compress_message_cnt: int | None = None,
         repetition_leniency: float | None = None,
     ) -> LLMClient:
-        """由 ``env.llm_configs`` 扁平项构造（Flex 输出 ``api_base``，此处对齐为 ``base_url``）。"""
+        """由 ``env.llm_configs`` 扁平项构造（legacy config 输出 ``api_base``，此处对齐为 ``base_url``）。"""
         params = dict(cfg)
         if params.get("base_url") is None and params.get("api_base") is not None:
             params["base_url"] = params.pop("api_base")

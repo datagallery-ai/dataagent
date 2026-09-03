@@ -60,7 +60,7 @@ class ConfigManager:
         Merge two configuration mappings using ``merge_layers``.
 
         Unlike legacy ``_deep_merge``, list-valued keys (``TOOLS.*``, ``HOOKS`` slots,
-        ``SUBAGENT_CONFIGS``, workflow lists, etc.) are **appended** with the override
+        ``SUBAGENTS``, workflow lists, etc.) are **appended** with the override
         layer before the base layer. Dict/scalar keys in the override still win.
 
         When ``override_config`` contains ``OVERRIDE_KEYS``, each listed top-level key
@@ -76,11 +76,12 @@ class ConfigManager:
         from dataagent.core.suite.merge import apply_override_keys, merge_layers, parse_override_keys
         from dataagent.utils.constants import META_OVERRIDE_KEYS
 
-        override = override_config or {}
+        base = ConfigManager._normalize_subagent_alias(base_config or {})
+        override = ConfigManager._normalize_subagent_alias(override_config or {})
         override_keys = parse_override_keys(override)
         user_layer = copy.deepcopy(override)
         user_layer.pop(META_OVERRIDE_KEYS, None)
-        result = merge_layers([base_config or {}, user_layer])
+        result = merge_layers([base, user_layer])
         apply_override_keys(result, user_layer, override_keys)
         result.pop(META_OVERRIDE_KEYS, None)
         return result
@@ -106,14 +107,22 @@ class ConfigManager:
 
     @staticmethod
     def _validate_workspace_yaml_config(config: Mapping[str, Any]) -> None:
-        """Validate ``WORKSPACE.path`` / ``WORKSPACE.allow_path`` after YAML load (non-empty → absolute, ``~/`` OK)."""
+        """Validate native workspace backend, path, and allow-path settings after YAML load."""
         ws = config.get("WORKSPACE")
         if not isinstance(ws, Mapping):
             return
 
+        backend = str(ws.get("backend", "filesystem") or "filesystem").strip().lower()
+        backend_aliases = {"filesystem", "filesystembackend", "state", "statebackend"}
+        if backend not in backend_aliases:
+            allowed = ", ".join(sorted(backend_aliases))
+            raise ValueError(f"WORKSPACE.backend must be one of: {allowed}.")
+
         pv = ws.get("path")
         if pv is not None:
             raw = str(pv).strip()
+            if raw and backend in {"state", "statebackend"}:
+                raise ValueError("WORKSPACE.path cannot be used with WORKSPACE.backend: state.")
             if raw and not Path(raw).expanduser().is_absolute():
                 raise ValueError(
                     "WORKSPACE.path must be an absolute path (or ~/...); relative paths are not allowed in YAML."
@@ -132,6 +141,36 @@ class ConfigManager:
                 raise ValueError(
                     f"WORKSPACE.allow_path entries must be absolute paths; relative path not allowed: {s!r}"
                 )
+
+    @staticmethod
+    def _normalize_subagent_alias(config: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalize deprecated ``SUBAGENT_CONFIGS`` into the canonical ``SUBAGENTS`` key."""
+        result = copy.deepcopy(dict(config))
+        if "SUBAGENT_CONFIGS" not in result:
+            raw_override_keys = result.get("OVERRIDE_KEYS")
+            if isinstance(raw_override_keys, list):
+                result.update(
+                    {
+                        "OVERRIDE_KEYS": [
+                            "SUBAGENTS" if str(item).strip() == "SUBAGENT_CONFIGS" else item
+                            for item in raw_override_keys
+                        ]
+                    }
+                )
+            return result
+        if "SUBAGENTS" in result:
+            raise ValueError("Use only SUBAGENTS; SUBAGENT_CONFIGS is a deprecated alias and cannot appear with it.")
+        result.update({"SUBAGENTS": result.pop("SUBAGENT_CONFIGS")})
+        raw_override_keys = result.get("OVERRIDE_KEYS")
+        if isinstance(raw_override_keys, list):
+            result.update(
+                {
+                    "OVERRIDE_KEYS": [
+                        "SUBAGENTS" if str(item).strip() == "SUBAGENT_CONFIGS" else item for item in raw_override_keys
+                    ]
+                }
+            )
+        return result
 
     @staticmethod
     def _validate_workspace_policy_layout(config: Mapping[str, Any]) -> None:
@@ -158,34 +197,6 @@ class ConfigManager:
                 )
             if ".." in segment_path.parts:
                 raise ValueError(f"WORKSPACE_POLICY.layout.{key} must not contain '..'; got: {raw!r}")
-
-    @staticmethod
-    def _validate_swarm_yaml_config(config: Mapping[str, Any]) -> None:
-        """Validate ``SWARM.worker_max_concurrent`` after YAML load.
-
-        Only ``None``/omitted or a non-negative Python ``int`` is allowed.
-        ``bool`` is rejected because it is a subclass of ``int`` in Python.
-        Strings, floats, and negative integers are rejected.
-        """
-        swarm = config.get("SWARM")
-        if not isinstance(swarm, Mapping):
-            return
-        raw = swarm.get("worker_max_concurrent")
-        if raw is None:
-            return
-        if isinstance(raw, bool):
-            raise ValueError(
-                "SWARM.worker_max_concurrent must be a non-negative integer or omitted/null; "
-                "boolean values are not allowed."
-            )
-        if isinstance(raw, int):
-            if raw < 0:
-                raise ValueError(f"SWARM.worker_max_concurrent must be non-negative, got {raw!r}.")
-            return
-        raise ValueError(
-            "SWARM.worker_max_concurrent must be a non-negative integer or omitted/null; "
-            f"got {type(raw).__name__}: {raw!r}."
-        )
 
     @staticmethod
     def _get_raw_value_from(config: Mapping[str, Any], key: str) -> Any:
@@ -226,102 +237,64 @@ class ConfigManager:
         return result
 
     def reload(self, config_path: str, default_config_path: str | None = None) -> None:
-        """
-        Reload configuration.
+        """Reload effective native configuration, including any requested Suites."""
+        self.reload_native(config_path, default_config_path=default_config_path)
 
-        1. Load default and user YAML (each deep-copied).
-        2. Merge into ``tmp``, interpolate, validate workspace/swarm settings.
-        3. Extract the user merge layer from user-written paths only.
-        4. Discover and activate suites when ``SUITE`` is present.
-        5. ``merge_layers([default, suite layers…, user layer])``, apply ``OVERRIDE_KEYS``, validate, assign settings.
+    def reload_native(self, config_path: str, default_config_path: str | None = None) -> None:
+        """Resolve Suite bundles into configuration layers before native compilation.
+
+        The resulting ``settings`` mapping contains only normal DataAgent
+        configuration sections. Suite filesystem layout and activation metadata
+        stay within this configuration-loading boundary and never reach the
+        Deep Agents compiler.
         """
+        from dataagent.config.suite_resolver import SuiteConfigResolver
+        from dataagent.core.suite.merge import (
+            apply_override_keys,
+            extract_user_layer,
+            merge_layers,
+            parse_override_keys,
+        )
+        from dataagent.utils.constants import META_OVERRIDE_KEYS
+
         with self._lock:
-            from dataagent.core.suite.activation import activate_suites, order_suites_for_merge
-            from dataagent.core.suite.discovery import discover_suite_index
-            from dataagent.core.suite.merge import (
-                apply_override_keys,
-                extract_user_layer,
-                merge_layers,
-                parse_override_keys,
-            )
-            from dataagent.core.suite.suite_layer import build_suite_layers
-            from dataagent.core.suite.validation import validate_merged_config
-            from dataagent.utils.constants import META_OVERRIDE_KEYS
-
-            default_config: dict[str, Any] = {}
-            if default_config_path:
-                default_yaml = Path(default_config_path)
-                try:
-                    with open(default_yaml, encoding="utf-8") as f:
-                        loaded = yaml.safe_load(f) or {}
-                    if isinstance(loaded, dict):
-                        default_config = copy.deepcopy(loaded)
-                    logger.trace(f"Loaded default configuration file: {default_yaml}")
-                except Exception as e:
-                    raise RuntimeError(f"Failed to load default configuration file {default_yaml}") from e
-            else:
-                logger.warning(
-                    "No default configuration file provided, may cause critical errors if using REACT type agent"
-                )
-
-            yaml_file = Path(config_path)
-            resolved_config_path = yaml_file.resolve()
-            try:
-                with open(yaml_file, encoding="utf-8") as f:
-                    user_config = yaml.safe_load(f) or {}
-                user_config = {} if not isinstance(user_config, dict) else copy.deepcopy(user_config)
-                logger.trace(f"Loaded configuration file: {yaml_file}")
-            except Exception as e:
-                raise RuntimeError(f"Failed to load configuration file {yaml_file}: {e}") from e
-
-            user_keys = set(user_config.keys())
-            working: dict[str, Any] = copy.deepcopy(default_config)
-            self._deep_merge(working, user_config)
-
+            default_config = self._load_yaml_mapping(default_config_path) if default_config_path else {}
+            user_config = self._load_yaml_mapping(config_path)
+            default_config = self._normalize_subagent_alias(default_config)
+            user_config = self._normalize_subagent_alias(user_config)
             self._validate_workspace_path_no_config_refs(user_config, default_config)
+
+            working = copy.deepcopy(default_config)
+            self._deep_merge(working, user_config)
             self._process_interpolation(working)
-            self._validate_workspace_yaml_config(working)
-            self._validate_swarm_yaml_config(working)
 
             override_keys = parse_override_keys(user_config)
             user_layer = extract_user_layer(working, user_config)
             user_layer.pop(META_OVERRIDE_KEYS, None)
-            default_actor_nodes = {
-                str(item.get("node")).strip()
-                for item in default_config.get("ACTOR_LOOP", [])
-                if isinstance(item, dict) and item.get("node")
-            }
 
-            suite_layers: list[dict[str, Any]] = []
-            activated_meta: list[dict[str, str]] = []
-            if "SUITE" in user_keys:
+            suite_layers: tuple[dict[str, Any], ...] = ()
+            activated_suites: tuple[dict[str, str], ...] = ()
+            if "SUITE" in user_config:
                 suite_config = user_layer.get("SUITE")
                 if suite_config is None:
                     suite_config = user_config.get("SUITE")
-                index = discover_suite_index(config=working)
-                activated = activate_suites(
-                    suite_config=suite_config if isinstance(suite_config, dict) else None,
-                    index=index,
-                )
-                suite_layers, activated_meta = build_suite_layers(
-                    order_suites_for_merge(activated),
-                    default_actor_nodes=default_actor_nodes,
-                )
-                logger.debug("Activated suites: {}", [m["name"] for m in activated_meta])
+                resolution = SuiteConfigResolver().resolve(suite_config if isinstance(suite_config, Mapping) else None)
+                suite_layers = resolution.layers
+                activated_suites = resolution.activated_suites
+                logger.debug("Activated native Suites: {}", [entry.get("name") for entry in activated_suites])
 
-            layers = [default_config, *suite_layers, user_layer]
-            result = merge_layers(layers)
+            result = merge_layers([default_config, *suite_layers, user_layer])
             result.pop("SUITE", None)
             apply_override_keys(result, user_layer, override_keys)
             result.pop(META_OVERRIDE_KEYS, None)
-
-            validate_merged_config(result, activated_suites=activated_meta)
+            self._process_interpolation(result)
+            self._validate_workspace_yaml_config(result)
             self._validate_workspace_policy_layout(result)
 
-            self.config_path = resolved_config_path
+            self.config_path = Path(config_path).resolve()
             self.settings = result
-            self.activated_suites = activated_meta
-            self.last_reload = datetime.now(timezone(timedelta(hours=8)))  # 东八区
+            self.activated_suites = list(activated_suites)
+            self.last_reload = datetime.now(timezone(timedelta(hours=8)))
 
     def get_all(self) -> dict:
         """
@@ -375,27 +348,6 @@ class ConfigManager:
 
             return value
 
-    def get_activated_suite_root(self, suite_name: str) -> Path:
-        """
-        Return the absolute root directory for one activated Suite.
-
-        Args:
-            suite_name: ``name`` from ``suite.yaml`` (e.g. ``ecommerce_suite``).
-
-        Returns:
-            Resolved absolute Suite root directory.
-
-        Raises:
-            ValueError: ``suite_name`` is empty, or the Suite is not activated.
-        """
-        from dataagent.core.suite.activated_suites import resolve_activated_suite_root
-
-        with self._lock:
-            return resolve_activated_suite_root(
-                suite_name,
-                activated_suites=self.activated_suites,
-            )
-
     def update(self, new_config: dict[str, Any]):
         """
         update config
@@ -411,6 +363,19 @@ class ConfigManager:
                 self._deep_merge(target[key], value)
             else:
                 target[key] = value
+
+    @staticmethod
+    def _load_yaml_mapping(config_path: str) -> dict[str, Any]:
+        path = Path(config_path)
+        try:
+            with open(path, encoding="utf-8") as file:
+                loaded = yaml.safe_load(file) or {}
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load configuration file {path}: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise ValueError(f"Configuration root must be a mapping: {path}")
+        logger.trace(f"Loaded basic configuration file: {path}")
+        return copy.deepcopy(loaded)
 
     def _process_interpolation(self, config_dict: dict) -> None:
         """Process variable interpolation in configuration values"""
@@ -469,64 +434,3 @@ class ConfigManager:
     def _get_raw_value(self, key: str) -> Any:
         """Get raw configuration value from committed ``self.settings``."""
         return self._get_raw_value_from(self.settings, key)
-
-
-def build_prompt(spec: dict[str, Any]) -> Any:
-    """
-    将 yaml ``prompt_template.<message_type>`` 的单条 spec 转为 ``PromptTemplate``。
-
-    仅在 flex 加载节点配置时由 ``build_prompt_append`` / ``dataagent.core.flex.agent`` 调用。
-    spec 必须恰好包含 ``path`` 或 ``content`` 之一（互斥）：
-
-    - ``path``：**绝对路径**字符串（允许 ``~/...``，会先 ``expanduser``）；**不支持**相对路径。
-    - ``content``：直接作为追加 prompt 正文（Jinja2 模板）。
-
-    Returns:
-        ``PromptTemplate`` 仅包含从文件或字符串读入的正文。
-    """
-    # 延迟导入，避免 ``dataagent.config`` 与 ``prompt_manager`` 在包初始化阶段形成环依赖。
-    from dataagent.core.managers.prompt_manager.template import PromptTemplate
-
-    if not isinstance(spec, dict):
-        raise ValueError(f"prompt_template spec must be a mapping, got: {type(spec).__name__}")
-    has_path = "path" in spec and spec["path"] is not None
-    has_content = "content" in spec and spec["content"] is not None
-    if has_path == has_content:
-        raise ValueError(f"prompt_template spec must have exactly one of 'path' or 'content', got: {spec!r}")
-    if has_path:
-        path = Path(str(spec["path"]).strip()).expanduser()
-        if not path.is_absolute():
-            raise ValueError(
-                "prompt_template 'path' must be an absolute path (or ~/...); "
-                f"relative paths are not allowed: {spec['path']!r}"
-            )
-        return PromptTemplate.from_file(str(path))
-    return PromptTemplate.from_string(spec["content"])
-
-
-def build_prompt_append(spec_or_list: Any) -> Any:
-    """
-    将 ``prompt_template.<message_type>`` 的 YAML 值转为单个追加用 ``PromptTemplate``。
-
-    支持单条 spec（dict）或多条 spec 列表（高优条目应排在列表前部）；多条时按顺序拼接正文，
-    段间以空行分隔。
-
-    Args:
-        spec_or_list: 单条 ``{path|content}`` 映射，或非空 spec 列表。
-
-    Returns:
-        合并后的 ``PromptTemplate``，供 Planner ``prompt_appends`` 使用。
-    """
-    from dataagent.core.managers.prompt_manager.template import PromptTemplate
-
-    if isinstance(spec_or_list, list):
-        if not spec_or_list:
-            raise ValueError("prompt_template message_type list must not be empty")
-        parts = [build_prompt(item) for item in spec_or_list]
-        combined = "\n\n".join(part.content for part in parts)
-        return PromptTemplate.from_string(combined)
-    if isinstance(spec_or_list, dict):
-        return build_prompt(spec_or_list)
-    raise ValueError(
-        f"prompt_template message_type must be a mapping or list of mappings, got: {type(spec_or_list).__name__}"
-    )

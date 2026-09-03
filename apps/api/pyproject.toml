@@ -1,7 +1,7 @@
 [project]
 name = "datafoundry-api"
 version = "0.3.0"
-description = "DataFoundry Python control plane and Deep Agents runtime"
+description = "DataFoundry Python control plane and DataAgent runtime"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
@@ -11,10 +11,9 @@ dependencies = [
     "ag-ui-langgraph>=0.0.22",
     "aiosqlite>=0.20.0",
     "argon2-cffi>=23.1.0",
-    "deepagents>=0.3.0",
-    "deepagents-runtime",
+    "cryptography>=44.0.0",
+    "datagallery-dataagent[nl2sql]",
     "fastapi>=0.115.0",
-    "langchain-openai>=0.3.0",
     "langgraph>=0.4.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
     "pydantic-settings>=2.8.0",
@@ -31,7 +30,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-deepagents-runtime = { path = "../../runtime/deepagents", editable = true }
+datagallery-dataagent = { path = "../../runtime/dataagent", editable = true }
 
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple/"

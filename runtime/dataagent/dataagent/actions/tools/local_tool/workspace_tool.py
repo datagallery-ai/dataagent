@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Workspace catalog query tools for Flex subagent directory discovery."""
+"""Workspace catalog query tools retained for pending Job migration."""
 
 from __future__ import annotations
 

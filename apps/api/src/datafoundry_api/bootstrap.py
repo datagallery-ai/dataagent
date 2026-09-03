@@ -24,7 +24,7 @@ CAPABILITIES: dict[str, bool] = {
     "kb.citationPolicy": False,
     "kb.scope": False,
     "llm.advancedSampling": False,
-    "llm.samplingParams": False,
+    "llm.samplingParams": True,
     "knowledge": False,
     "mcp": False,
     "mcp.stdio": False,

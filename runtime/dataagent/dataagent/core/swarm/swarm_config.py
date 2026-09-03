@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Central helpers for YAML ``SWARM`` subtree flags used by Flex subagents."""
+"""Central helpers for the retained YAML ``SWARM`` subtree."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def swarm_enabled(config: Mapping[str, Any] | None = None) -> bool:
 
 
 def swarm_worker_max_concurrent(config: Mapping[str, Any] | None = None) -> int | None:
-    """Return the max parallel ``sub_agent_tool`` calls per executor round, or ``None`` for no cap.
+    """Return the max parallel subagent process calls per executor round, or ``None`` for no cap.
 
     If ``SWARM.worker_max_concurrent`` is **not** set in merged YAML, returns ``None`` so the
     executor does not apply an extra subagent-specific concurrency ceiling (other limits,

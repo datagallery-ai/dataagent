@@ -606,7 +606,7 @@ class TestRunSubprocessAsyncIntegration:
 
     @pytest.mark.asyncio
     async def test_subprocess_with_sandbox(self, tmp_path: Path):
-        from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
+        from dataagent.actions.tools.local_tool.subagent_process import _run_subprocess_async
 
         workspace = tmp_path / "ws"
         workspace.mkdir()
@@ -629,7 +629,7 @@ class TestRunSubprocessAsyncIntegration:
 
     @pytest.mark.asyncio
     async def test_subprocess_sandbox_blocks_home(self, tmp_path: Path):
-        from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
+        from dataagent.actions.tools.local_tool.subagent_process import _run_subprocess_async
 
         workspace = tmp_path / "ws"
         workspace.mkdir()
@@ -653,7 +653,7 @@ class TestRunSubprocessAsyncIntegration:
     @pytest.mark.asyncio
     async def test_subprocess_without_sandbox_passthrough(self, tmp_path: Path):
         """When NoopSandbox is used, commands run without bwrap."""
-        from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
+        from dataagent.actions.tools.local_tool.subagent_process import _run_subprocess_async
 
         sandbox = NoopSandbox(workspace_root=tmp_path)
         token = set_current_sandbox(sandbox)

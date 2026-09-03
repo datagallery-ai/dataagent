@@ -10,466 +10,323 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+"""Public SDK for the native Deep Agents based DataAgent runtime."""
+
+from __future__ import annotations
+
+import os
 import uuid
+from asyncio import Lock
 from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
-from dataagent.actions.tools.local_tool.sandbox import create_sandbox
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
+from langgraph.types import Checkpointer
+
+from dataagent.agents.nl2sql.agent import create_nl2sql_agent
+from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING, apply_certificate_config
 from dataagent.config import ConfigManager
-from dataagent.core.cbb.base_agent import BaseAgent
+from dataagent.core.deepagents import DeepAgentConfigCompiler, create_data_agent
+from dataagent.core.deepagents.config.models import ModelConfigCompiler
+from dataagent.core.deepagents.config.workspace import WorkspaceConfigCompiler
 from dataagent.core.errors import DataAgentError
-from dataagent.core.managers.llm_manager import llm_manager
-from dataagent.core.suite.debug_dump import dump_merged_config
-from dataagent.core.workspace.lock import (
-    MAIN_SESSION_LOCK_TTL_SECONDS,
-    WorkspaceBusyError,
-    WorkspaceLockHandle,
-    acquire_workspace_lock,
-    release_workspace_lock,
-)
-from dataagent.utils.log import dataagent_log_context, logger, setup_session_log
-from dataagent.utils.runtime_paths import dataagent_package_path, resolve_effective_workspace_root
-
-if TYPE_CHECKING:
-    from dataagent.interface.sdk.builder import AgentBuilder
+from dataagent.utils.log import logger
+from dataagent.utils.runtime_paths import validate_session_id, validate_user_id
 
 
 class DataAgent:
-    """DataAgent主类"""
+    """Load legacy YAML and expose a native Deep Agent through the stable SDK."""
 
-    def __init__(self, config: Any):
+    def __init__(
+        self,
+        config: Any,
+        *,
+        checkpointer: Checkpointer | bool | None = None,
+        store: BaseStore | None = None,
+    ) -> None:
         self.config = config.copy()
-        self.backend = config.get("AGENT_CONFIG.backend", "langgraph")
-        # 默认采用 react（即 flex 模式）
-        self.type = config.get("AGENT_CONFIG.type", "react")
-        self.agent_type = config.get("AGENT_CONFIG.agent_type", None)
-
-        # 工具模块初始化
-        self.global_init(self.config)
-
-        self._chat_agent_instance = None
-
-        logger.trace(f"DataAgent initialized with {self.backend} backend")
+        self.backend = "langgraph"
+        self.type = str(config.get("AGENT_CONFIG.type", "react") or "react").strip().lower()
+        self.agent_type = self.type
+        self._checkpointer = checkpointer
+        self._store = store
+        self._chat_agent_instances: dict[tuple[str, str], CompiledStateGraph] = {}
+        self._chat_agent_lock = Lock()
+        logger.trace("DataAgent initialized with native Deep Agents runtime")
 
     def __repr__(self) -> str:
         return f"DataAgent(backend={self.backend}, config_loaded={bool(self.config)})"
 
-    @property
-    def _chat_agent(self):
-        """Lazy initialization of chat agent"""
-        if self._chat_agent_instance is None:
-            self._chat_agent_instance = self.select_engine(self.config)
-        return self._chat_agent_instance
-
-    @staticmethod
-    def _validate_workspace(workspace: Path | str | None) -> Path | None:
-        """校验并规范化代码级 workspace 覆盖路径。"""
-        if workspace is None:
-            return None
-
-        if isinstance(workspace, Path):
-            normalized_path = workspace.expanduser()
-        elif isinstance(workspace, str):
-            stripped_path = workspace.strip()
-            if not stripped_path:
-                raise ValueError("`workspace` 不能为空字符串")
-            try:
-                normalized_path = Path(stripped_path).expanduser()
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"`workspace` 不是合法路径: {workspace!r}") from exc
-        else:
-            raise TypeError("`workspace` 必须是 `str`、`Path` 或 `None`")
-
-        if not normalized_path.is_absolute():
-            normalized_path = normalized_path.resolve(strict=False)
-            logger.trace(f"检测到传入路径为相对路径，实际将被使用的路径为：{normalized_path}")
-
-        if normalized_path.exists() and not normalized_path.is_dir():
-            raise ValueError(f"`workspace` 必须是目录路径，当前为文件: {normalized_path}")
-
-        return normalized_path
-
-    @staticmethod
-    def _ensure_workspace(state: Mapping[str, Any]) -> None:
-        """Authorize and materialize the workspace directory before the run."""
-        workspace_dir = Path(state["workspace"]).expanduser().resolve()
-        create_sandbox(enabled=False, workspace_root=workspace_dir).authorize_write(
-            workspace_dir,
-            source_kind="system_injected",
-            operation="prompt_working_directory",
-        )
-        workspace_dir.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"Default workspace set to {workspace_dir}")
-
-    @staticmethod
-    def _touch_workspace_catalog(state: Mapping[str, Any]) -> None:
-        """Refresh workspace catalog session metadata after workspace materialize."""
-        from dataagent.core.workspace.catalog import safe_touch_catalog
-
-        workspace = str(state.get("workspace") or "").strip()
-        session_id = str(state.get("session_id") or "").strip()
-        if not workspace or not session_id:
-            return
-        safe_touch_catalog(workspace, session_id)
-
-    @staticmethod
-    def _acquire_session_workspace_lock(initial_state: Mapping[str, Any]) -> WorkspaceLockHandle | None:
-        """Acquire the cooperative lock for the main-agent session workspace.
-
-        Wrapped subagents (``nl2sql_sub_agent_tool`` / ``document_recall`` style) share the
-        parent workspace only to write artifacts and skip parent ``messages.json``. They
-        must not take this lock while the parent chat already holds it. Job-path
-        ``submit_subagent`` children still acquire, so a job pointed at the parent
-        workspace is rejected as busy.
-
-        Args:
-            initial_state: State that already contains the resolved ``workspace`` path.
-
-        Returns:
-            Acquired lock handle, or ``None`` when this call is a wrapped subagent
-            that must not contend for the parent session lock.
-
-        Raises:
-            WorkspaceBusyError: When another live owner already holds ``{workspace}/.lock/``.
-            ValueError: When ``workspace`` is missing from ``initial_state``.
-        """
-        from dataagent.core.flex.hooks.agent_turn import should_skip_main_session_history
-
-        if should_skip_main_session_history(initial_state):
-            return None
-        workspace = initial_state.get("workspace")
-        if workspace is None or not str(workspace).strip():
-            raise ValueError("Cannot acquire session workspace lock without a resolved workspace")
-        session_id = str(initial_state.get("session_id") or "").strip() or "unknown_session"
-        handle = acquire_workspace_lock(
-            workspace_root=workspace,
-            owner_kind="main_session",
-            owner_id=session_id,
-            purpose="flex_chat",
-            ttl_seconds=MAIN_SESSION_LOCK_TTL_SECONDS,
-        )
-        if handle is None:
-            busy = WorkspaceBusyError.from_workspace(workspace)
-            logger.warning("{}", busy)
-            raise busy
-        return handle
-
-    @staticmethod
-    def _release_session_workspace_lock(handle: WorkspaceLockHandle | None) -> None:
-        """Release a session workspace lock when one was acquired."""
-        if handle is not None:
-            release_workspace_lock(handle)
-
     @classmethod
-    def from_config(cls, config: str | Path) -> "DataAgent":
-        """从YAML配置文件创建Agent
-
-        加载优先级（后者覆盖前者）：
-        1. 默认配置：core/flex/flex_default_configs.yaml
-        2. 用户指定的 YAML 配置文件
-        3. .env 环境变量配置（最高优先级）
-        """
-
-        # 定位默认配置文件（若不存在则退化为仅加载用户配置）
-        default_config_path: str | None = None
-        candidate = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
-        if candidate.exists():
-            default_config_path = str(candidate)
-
-        # Per-Agent ConfigManager: do not reload into module-level dataagent.config.config_manager.
-        agent_config_manager = ConfigManager()
-        agent_config_manager.reload(str(config), default_config_path=default_config_path)
-
-        # 确保最终配置中 AGENT_CONFIG.type 至少有一个有效默认值，
-        # 与上面的粗读逻辑保持一致（react）
-        if agent_config_manager.get("AGENT_CONFIG.type") is None:
-            agent_config_manager.set("AGENT_CONFIG.type", "react")
-
-        # 出站 mTLS：把 certificate: 段（插值后）下发为进程环境变量，供深层出站点统一读取。
-        import os
-
-        from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING, apply_certificate_config
-
+    def from_config(
+        cls,
+        config: str | Path,
+        *,
+        checkpointer: Checkpointer | bool | None = None,
+        store: BaseStore | None = None,
+    ) -> DataAgent:
+        """Create a DataAgent from an existing YAML configuration file."""
+        config_manager = ConfigManager()
+        config_manager.reload(str(config), default_config_path=None)
         apply_certificate_config(
-            agent_config_manager.get("certificate"),
+            config_manager.get("certificate"),
             preserve_existing_on_missing=os.getenv(ENV_PRESERVE_ON_MISSING) == "1",
         )
+        return cls(config=config_manager, checkpointer=checkpointer, store=store)
 
-        return cls(config=agent_config_manager)
+    def astream(
+        self,
+        input: Any = None,
+        *,
+        initial_state: Mapping[str, Any] | None = None,
+        session_id: str | None = None,
+        checkpoint_id: str | None = None,
+        stream_mode: Any = "values",
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        """Stream native LangGraph events without converting their protocol."""
+        graph_input = self._prepare_stream_input(input, initial_state)
+        session_state = initial_state if initial_state is not None else input if isinstance(input, Mapping) else None
+        resolved_session_id = self._resolve_session_id(session_id, session_state)
+        resolved_user_id = self._resolve_user_id(session_state)
+        run_config = self._build_run_config(resolved_user_id, resolved_session_id, checkpoint_id, config)
 
-    def astream(self, *args, **kwargs):
-        """流式对话；整轮持有 session workspace 锁，busy 时直接失败。"""
-        input_val = kwargs.get("input")
-        # 优先级：显式 kwargs.workspace > input.workspace（input 可能是 LangGraph Command，无 .get）
-        in_ws = input_val.get("workspace") if isinstance(input_val, Mapping) else None
-        workspace = self._validate_workspace(kwargs.get("workspace") or in_ws)
-        initial_state = self._initialize_state(
-            kwargs.get("initial_state"),
-            kwargs.get("session_id"),
-            workspace,
-        )
-        self._ensure_workspace(initial_state)
-        setup_session_log(
-            user_id=str(initial_state.get("user_id", "anonymous")),
-            session_id=str(initial_state.get("session_id", kwargs.get("session_id"))),
-        )
-        kwargs["initial_state"] = initial_state
-        if "workspace" in kwargs:
-            kwargs["workspace"] = workspace
-        lock = self._acquire_session_workspace_lock(initial_state)
-        try:
-            self._touch_workspace_catalog(initial_state)
-            self._dump_runtime_config(initial_state)
-        except Exception:
-            self._release_session_workspace_lock(lock)
-            raise
+        async def _stream() -> AsyncIterator[Any]:
+            try:
+                chat_agent = await self._get_chat_agent(resolved_user_id, resolved_session_id)
+                async for item in chat_agent.astream(
+                    graph_input,
+                    config=run_config,
+                    stream_mode=stream_mode,
+                    **kwargs,
+                ):
+                    yield item
+            except DataAgentError:
+                raise
+            except Exception as exc:
+                raise DataAgentError.from_exception(exc, component="sdk") from exc
 
-        async def _bound_astream() -> AsyncIterator[Any]:
-            """Hold the session workspace lock and bind log context for the stream."""
-            with dataagent_log_context(
-                session_id=str(initial_state.get("session_id", "")),
-                user_id=str(initial_state.get("user_id", "anonymous")),
-                workspace=str(initial_state.get("workspace") or workspace or ""),
-                agent_name=str(self.type),
-                run_id=initial_state.get("run_id"),
-                sub_id=initial_state.get("sub_id"),
-            ):
-                try:
-                    async for item in self._chat_agent.astream(*args, **kwargs):
-                        yield item
-                except DataAgentError as exc:
-                    logger.exception(
-                        "astream failed source={} trace_id={}",
-                        exc.source,
-                        exc.trace_id,
-                    )
-                    raise
-                except Exception as exc:
-                    error = DataAgentError.from_exception(exc, component="sdk")
-                    logger.exception(
-                        "astream failed source={} trace_id={}",
-                        error.source,
-                        error.trace_id,
-                    )
-                    raise error from exc
-                finally:
-                    self._release_session_workspace_lock(lock)
+        return _stream()
 
-        return _bound_astream()
-
-    def select_engine(self, config: Any):
-        """根据后端类型创建具体实现（固定使用 SCENARIO.chat）。"""
-        engine_config = config.get_all() if hasattr(config, "get_all") else dict(config)
-        engine_config["mode"] = "chat"
-        if self.type == "react":
-            from dataagent.core.flex.agent import FlexAgent
-
-            return FlexAgent.from_config(config=engine_config, config_manager=self.config)
-        if self.type == "nl2sql":
-            from dataagent.agents.nl2sql.agent import NL2SQLAgent
-
-            return NL2SQLAgent.from_config(config=engine_config, config_manager=self.config)
-        raise ValueError(f"Unsupported agent type: {self.type}")
-
-    def global_init(self, config: dict[str, Any] | None):
-        """初始化管理器"""
-        # self.config = config.copy() 仍是 ConfigManager
-        # 下文入参 safe_cfg 期望是 dict，但 DataAgent 实际传的是 ConfigManager（即 self.config）
-        # 各个 *Manager.init_from_config() 都要求 dict，所以在这里做一次“规范化”最小改动
-        safe_cfg: dict[str, Any] = {}
-        try:
-            if config is None:
-                safe_cfg = {}
-            elif isinstance(config, Mapping):
-                safe_cfg = dict(config)
-            elif hasattr(config, "get_all") and callable(config.get_all):
-                safe_cfg = config.get_all() or {}
-            elif hasattr(config, "settings") and isinstance(getattr(config, "settings", None), dict):
-                # 浅拷贝足够；只用于初始化读取
-                safe_cfg = dict(config.settings)
-            else:
-                safe_cfg = {}
-        except Exception as e:
-            logger.warning(f"global_init(): failed to normalize config to dict, fallback to empty dict: {e}")
-            safe_cfg = {}
-        llm_manager.init_from_config(safe_cfg)
-        # Tool initialization is now per-Agent, done inside build_agent_env_from_flex_config
+    async def select_engine(
+        self,
+        config: Any,
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CompiledStateGraph:
+        """Compile legacy configuration into a native Deep Agent graph."""
+        raw_config = config.get_all() if hasattr(config, "get_all") else dict(config)
+        config_manager = config if isinstance(config, ConfigManager) else None
+        agent_config = raw_config.get("AGENT_CONFIG", {})
+        configured_type = agent_config.get("type", "react") if isinstance(agent_config, Mapping) else "react"
+        if str(configured_type or "react").strip().lower() == "nl2sql":
+            model_compiler = ModelConfigCompiler(raw_config)
+            models = model_compiler.compile()
+            requested_primary = agent_config.get("primary_model") if isinstance(agent_config, Mapping) else None
+            primary_name = model_compiler.resolve_primary_model_name(
+                models,
+                str(requested_primary).strip() if requested_primary else None,
+            )
+            primary_model = models.get(primary_name)
+            if primary_model is None:
+                raise ValueError(f"Primary model '{primary_name}' is not available.")
+            workspace = WorkspaceConfigCompiler(
+                raw_config,
+                user_id=user_id,
+                session_id=session_id,
+            ).compile()
+            nl2sql_checkpointer = self._checkpointer
+            if nl2sql_checkpointer is None:
+                nl2sql_checkpointer = InMemorySaver()
+            elif nl2sql_checkpointer is False:
+                nl2sql_checkpointer = None
+            return create_nl2sql_agent(
+                raw_config,
+                primary_model,
+                workspace.backend,
+                name=str(agent_config.get("id") or agent_config.get("name") or "nl2sql"),
+                checkpointer=nl2sql_checkpointer,
+                store=self._store,
+                debug=self.is_debug_enabled(),
+            )
+        compiled_config = await DeepAgentConfigCompiler(
+            raw_config,
+            config_manager=config_manager,
+            checkpointer=self._checkpointer,
+            store=self._store,
+            user_id=user_id,
+            session_id=session_id,
+        ).compile()
+        return await create_data_agent(compiled_config)
 
     async def chat(
         self,
         user_query: str,
         session_id: str | None = None,
-        workspace: Path | str | None = None,
-        initial_state: dict[str, Any] | None = None,
+        initial_state: Mapping[str, Any] | None = None,
         checkpoint_id: str | None = None,
+        config: RunnableConfig | None = None,
     ) -> dict[str, Any]:
-        """单轮对话；整轮持有 session workspace 锁，busy 时直接失败。"""
-        # 显式参数 session_id > initial_state 中的 session_id（如 CLI 只传 initial_state）>  新生成
-        if not session_id and isinstance(initial_state, dict):
-            sid = initial_state.get("session_id")
-            if sid is not None and str(sid).strip():
-                session_id = str(sid).strip()
-        if not session_id:
-            # 在外部未传入 session_id 时，生成一个新的 session_id并使用
-            session_id = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
-        workspace = self._validate_workspace(workspace)
-        initial_state = self._initialize_state(initial_state, session_id, workspace)
-        logger.debug(f"当前 workspace：{initial_state['workspace']}")
-        setup_session_log(
-            user_id=str(initial_state.get("user_id", "anonymous")),
-            session_id=str(initial_state.get("session_id", session_id)),
-        )
-        lock: WorkspaceLockHandle | None = None
-        with dataagent_log_context(
-            session_id=str(initial_state.get("session_id", session_id)),
-            user_id=str(initial_state.get("user_id", "anonymous")),
-            workspace=str(initial_state.get("workspace") or workspace or ""),
-            agent_name=str(self.type),
-            run_id=initial_state.get("run_id"),
-            sub_id=initial_state.get("sub_id"),
-        ):
-            try:
-                self._ensure_workspace(initial_state)
-                lock = self._acquire_session_workspace_lock(initial_state)
-                self._touch_workspace_catalog(initial_state)
-                self._dump_runtime_config(initial_state)
-                extra: dict[str, Any] = {}
-                if checkpoint_id:
-                    extra["checkpoint_id"] = checkpoint_id
-                return await self._chat_agent.chat(
-                    user_query,
-                    session_id=initial_state["session_id"],
-                    initial_state=initial_state,
-                    **extra,
-                )
-            except DataAgentError as exc:
-                logger.exception(
-                    "Chat failed source={} trace_id={}",
-                    exc.source,
-                    exc.trace_id,
-                )
-                raise
-            except Exception as exc:
-                error = DataAgentError.from_exception(exc, component="sdk")
-                logger.exception(
-                    "Chat failed source={} component={} trace_id={}",
-                    error.source,
-                    error.component,
-                    error.trace_id,
-                )
-                raise error from exc
-            finally:
-                self._release_session_workspace_lock(lock)
+        """Invoke the native Deep Agent and return its LangGraph state."""
+        resolved_session_id = self._resolve_session_id(session_id, initial_state)
+        resolved_user_id = self._resolve_user_id(initial_state)
+        graph_input = self._prepare_message_state(user_query, initial_state)
+        run_config = self._build_run_config(resolved_user_id, resolved_session_id, checkpoint_id, config)
+        try:
+            chat_agent = await self._get_chat_agent(resolved_user_id, resolved_session_id)
+            return await chat_agent.ainvoke(graph_input, config=run_config)
+        except DataAgentError:
+            raise
+        except Exception as exc:
+            raise DataAgentError.from_exception(exc, component="sdk") from exc
 
-    def build_agent_graph(self, mode: str = "chat") -> BaseAgent:
-        """Pre-build the agent workflow graph (only ``chat`` is supported)."""
+    async def build_agent_graph(
+        self,
+        mode: str = "chat",
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> CompiledStateGraph:
+        """Build and return the native Deep Agent graph."""
         if mode != "chat":
             raise ValueError(f"Unsupported agent graph mode: {mode!r}; only 'chat' is supported")
-        return self._chat_agent
+        resolved_user_id = validate_user_id(user_id or self._configured_user_id())
+        resolved_session_id = validate_session_id(session_id or "default_session")
+        return await self._get_chat_agent(resolved_user_id, resolved_session_id)
 
     def get_agent_info(self) -> dict[str, Any]:
-        """获取Agent信息"""
-        info = {}
-
-        # 从配置中获取基本信息
+        """Return the configured agent metadata."""
         agent_config = self.config.get("AGENT_CONFIG", {})
-        info.update(
-            {
-                "name": agent_config.get("name", "DataPilot Agent"),
-                "version": agent_config.get("version", "1.0"),
-                "description": agent_config.get("description", "数据分析Agent"),
-                "backend": self.backend,
-                "has_config": bool(self.config),
-            }
-        )
-        return info
+        return {
+            "name": agent_config.get("name", "DataAgent"),
+            "version": agent_config.get("version", "1.0"),
+            "description": agent_config.get("description", "DataAgent"),
+            "backend": self.backend,
+            "has_config": bool(self.config),
+        }
+
+    def is_debug_enabled(self) -> bool:
+        """Return whether the configured native agent should emit debug events."""
+        value = self.config.get("AGENT_CONFIG.debug", False)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     def name(self) -> str:
-        """获取Agent名称"""
+        """Return the configured agent name."""
         return str(self.get_agent_info().get("name", ""))
 
     def description(self) -> str:
-        """获取Agent描述"""
-        return self.get_agent_info().get("description", "数据分析Agent")
+        """Return the configured agent description."""
+        return str(self.get_agent_info().get("description", "DataAgent"))
 
     def version(self) -> str:
-        """获取Agent版本"""
-        return self.get_agent_info().get("version", "1.0")
+        """Return the configured agent version."""
+        return str(self.get_agent_info().get("version", "1.0"))
 
-    def update_config(self, new_config: dict[str, Any]):
-        """更新配置"""
+    def update_config(self, new_config: dict[str, Any]) -> None:
+        """Update configuration and rebuild the graph on its next use."""
         self.config.update(new_config)
-        if self._chat_agent_instance:
-            fn = getattr(self._chat_agent, "update_config", None)
-            if callable(fn):
-                fn(new_config)
+        self._chat_agent_instances.clear()
 
-        logger.debug("DataAgent configuration updated")
-
-    def get_node(self, node_name: str):
-        """获取指定节点实例"""
-        if hasattr(self._chat_agent, node_name):
-            return getattr(self._chat_agent, node_name)
-        else:
-            raise ValueError(f"Node '{node_name}' not found")
-
-    def _initialize_state(
-        self,
-        initial_state: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        workspace: Path | str | None = None,
-    ) -> dict[str, Any]:
-        """初始化initial_state"""
-        if initial_state is None:
-            initial_state = {}
-        else:
-            state_workspace = initial_state.get("workspace")
-            normalized_state_workspace = self._validate_workspace(state_workspace)
-            if normalized_state_workspace is not None:
-                initial_state["workspace"] = normalized_state_workspace
-            else:
-                initial_state.pop("workspace", None)
-        if session_id is None:
-            session_id = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
-        defaults = {
-            "messages": [],
-            "complete": False,
-            "user_id": self.config.get("USER_ID", "anonymous"),
-            "session_id": self.config.get("SESSION_ID", session_id),
-            "run_id": self.config.get("RUN_ID", 0),
-            "sub_id": self.config.get("SUB_ID", 0),
-        }
-        for key, default_val in defaults.items():
-            if key not in initial_state:
-                initial_state[key] = default_val
-
-        resolved_workspace = resolve_effective_workspace_root(
-            config=self.config.get_all(),
-            user_id=str(initial_state.get("user_id")),
-            session_id=str(initial_state.get("session_id")),
-            workspace_override=workspace,
+    async def get_node(self, node_name: str) -> Any:
+        """Return a node from the compiled graph description."""
+        chat_agent = await self._get_chat_agent(
+            validate_user_id(self._configured_user_id()),
+            validate_session_id("default_session"),
         )
-        if workspace is not None or "workspace" not in initial_state:
-            initial_state["workspace"] = resolved_workspace
+        node = chat_agent.get_graph().nodes.get(node_name)
+        if node is None:
+            raise ValueError(f"Node '{node_name}' not found")
+        return node
 
-        return initial_state
+    @staticmethod
+    def _build_run_config(
+        user_id: str,
+        session_id: str,
+        checkpoint_id: str | None,
+        base_config: RunnableConfig | None = None,
+    ) -> RunnableConfig:
+        run_config: dict[str, Any] = dict(base_config or {})
+        configured = run_config.get("configurable", {})
+        configurable = dict(configured) if isinstance(configured, Mapping) else {}
+        configurable["thread_id"] = f"{user_id}:{session_id}"
+        if checkpoint_id:
+            configurable["checkpoint_id"] = checkpoint_id
+        run_config["configurable"] = configurable
+        return cast(RunnableConfig, run_config)
 
-    def _dump_runtime_config(self, initial_state: Mapping[str, Any]) -> None:
-        """
-        Persist merged Agent settings under the resolved workspace ``.runtime/`` directory.
+    @staticmethod
+    def _new_session_id() -> str:
+        prefix = datetime.now(tz=timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S_")
+        return prefix + str(uuid.uuid4())
 
-        Invoked on each ``chat()`` / ``astream()`` turn after workspace is materialized.
-        Skipped when only ``from_config`` / ``reload()`` runs without a chat entrypoint.
-        """
-        workspace = initial_state.get("workspace")
-        if workspace is None:
-            return
-        if hasattr(self.config, "get_all") and callable(self.config.get_all):
-            settings = self.config.get_all()
-        elif hasattr(self.config, "settings") and isinstance(getattr(self.config, "settings", None), dict):
-            settings = dict(self.config.settings)
-        else:
-            settings = dict(self.config) if isinstance(self.config, Mapping) else {}
-        dump_merged_config(settings, workspace=workspace)
+    @staticmethod
+    def _prepare_message_state(
+        user_query: str,
+        initial_state: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        messages = list((initial_state or {}).get("messages", []))
+        messages.append(HumanMessage(content=user_query))
+        state = dict(initial_state or {})
+        state.update({"messages": messages})
+        state.pop("session_id", None)
+        state.pop("user_id", None)
+        return state
+
+    @staticmethod
+    def _prepare_stream_input(input: Any, initial_state: Mapping[str, Any] | None) -> Any:
+        if isinstance(input, str):
+            return DataAgent._prepare_message_state(input, initial_state)
+        if input is not None and not isinstance(input, Mapping):
+            return input
+        source = initial_state if initial_state is not None else input
+        state = dict(source or {})
+        user_query = str(state.get("user_query", "")).strip()
+        messages = list(state.get("messages", []))
+        if user_query:
+            messages.append(HumanMessage(content=user_query))
+        if not messages:
+            raise ValueError("astream requires input messages or initial_state.user_query")
+        state.update({"messages": messages})
+        state.pop("session_id", None)
+        state.pop("user_id", None)
+        state.pop("user_query", None)
+        return state
+
+    @staticmethod
+    def _resolve_session_id(session_id: str | None, initial_state: Mapping[str, Any] | None) -> str:
+        if session_id and session_id.strip():
+            return validate_session_id(session_id)
+        initial_session_id = (initial_state or {}).get("session_id")
+        if initial_session_id and str(initial_session_id).strip():
+            return validate_session_id(str(initial_session_id))
+        return validate_session_id(DataAgent._new_session_id())
+
+    def _configured_user_id(self) -> str:
+        configured = self.config.get("USER_ID", "anonymous")
+        return str(configured or "anonymous").strip() or "anonymous"
+
+    def _resolve_user_id(self, initial_state: Mapping[str, Any] | None) -> str:
+        initial_user_id = (initial_state or {}).get("user_id")
+        return validate_user_id(str(initial_user_id or self._configured_user_id()))
+
+    async def _get_chat_agent(self, user_id: str, session_id: str) -> CompiledStateGraph:
+        cache_key = (user_id, session_id)
+        cached = self._chat_agent_instances.get(cache_key)
+        if cached is not None:
+            return cached
+        async with self._chat_agent_lock:
+            cached = self._chat_agent_instances.get(cache_key)
+            if cached is None:
+                cached = await self.select_engine(self.config, user_id=user_id, session_id=session_id)
+                self._chat_agent_instances[cache_key] = cached
+            return cached

@@ -10,20 +10,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Regression tests for stateless REST request resources."""
+"""Regression tests for native REST request session scoping."""
 
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from dataagent.core.context.context import ContextFactory, ContextInitOptions
 from dataagent.interface.rest_api.service import DataAgentService
 
 
 def _nl2sql_service() -> DataAgentService:
-    """Return an NL2SQL service configured without a persistent workspace."""
+    """Return an NL2SQL service using the SDK-managed workspace lifecycle."""
     service = DataAgentService()
     service._cached_agent_type = "nl2sql"
     service._agent = SimpleNamespace(
@@ -48,72 +46,32 @@ def test_request_scope_leaves_configured_workspace_to_sdk_lifecycle(tmp_path: Pa
     assert marker.read_text(encoding="utf-8") == "keep"
 
 
-def test_request_scope_releases_context_and_removes_ephemeral_workspace() -> None:
-    """A stateless REST request must not retain Context or workspace directories."""
-    ContextFactory.clear_context()
+def test_request_scope_assigns_a_distinct_native_session() -> None:
+    """Each stateless NL2SQL REST request should receive a distinct LangGraph session."""
     service = _nl2sql_service()
 
-    with service._request_scope() as request:
-        session_id = str(request.get("session_id"))
-        workspace = Path(request.get("workspace"))
-        ContextFactory.get_context(
-            user_id="anonymous",
-            session_id=session_id,
-            run_id=0,
-            sub_id=0,
-            options=ContextInitOptions(workspace=workspace),
-        )
-        assert workspace.is_dir()
+    session_ids = []
+    for _ in range(16):
+        with service._request_scope() as request:
+            session_ids.append(str(request.get("session_id", "")))
+            assert set(request) == {"session_id"}
 
-    assert not workspace.exists()
-    assert ContextFactory.release_context(user_id="anonymous", session_id=session_id, run_id=0, sub_id=0) == 0
-    ContextFactory.clear_context()
+    assert all(session_ids)
+    assert len(set(session_ids)) == len(session_ids)
 
 
-def test_request_scope_removes_ephemeral_workspace_after_exception() -> None:
-    """The ephemeral workspace must be removed when request processing raises."""
+def test_request_scope_remains_usable_after_exception() -> None:
+    """An exception in one request must not leak or reuse its native session id."""
     service = _nl2sql_service()
-    workspace: Path | None = None
+    failed_session_id = ""
 
     with pytest.raises(RuntimeError, match="request failed"), service._request_scope() as request:
-        workspace = Path(request.get("workspace"))
-        (workspace / "partial.txt").write_text("partial", encoding="utf-8")
+        failed_session_id = str(request.get("session_id", ""))
         raise RuntimeError("request failed")
 
-    assert workspace is not None
-    assert not workspace.exists()
+    with service._request_scope() as request:
+        next_session_id = str(request.get("session_id", ""))
 
-
-@pytest.mark.asyncio
-async def test_concurrent_request_scopes_use_distinct_ephemeral_workspaces() -> None:
-    """Concurrent REST requests must neither share nor retain their ephemeral workspaces."""
-    service = _nl2sql_service()
-    request_count = 16
-    all_entered = asyncio.Event()
-    lock = asyncio.Lock()
-    entered = 0
-    workspaces: list[Path] = []
-    session_ids: list[str] = []
-
-    async def run_one(index: int) -> None:
-        """Hold one request scope open until all concurrent scopes have been created."""
-        nonlocal entered
-        with service._request_scope() as request:
-            workspace = Path(request.get("workspace"))
-            marker = workspace / "marker.txt"
-            marker.write_text(str(index), encoding="utf-8")
-            workspaces.append(workspace)
-            session_ids.append(str(request.get("session_id")))
-            async with lock:
-                entered += 1
-                if entered == request_count:
-                    all_entered.set()
-            await all_entered.wait()
-            assert marker.read_text(encoding="utf-8") == str(index)
-        assert not workspace.exists()
-
-    await asyncio.gather(*(run_one(index) for index in range(request_count)))
-
-    assert len(set(workspaces)) == request_count
-    assert len(set(session_ids)) == request_count
-    assert all(not workspace.exists() for workspace in workspaces)
+    assert failed_session_id
+    assert next_session_id
+    assert next_session_id != failed_session_id

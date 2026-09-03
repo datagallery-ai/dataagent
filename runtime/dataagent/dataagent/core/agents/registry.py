@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Resolve ``SUBAGENT_CONFIGS`` entries to stable ``agent_id`` values."""
+"""Resolve ``SUBAGENTS`` entries to stable ``agent_id`` values."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class AgentResolution:
 
 
 class AgentRegistry:
-    """Map ``agent_id`` to subagent yaml paths from ``SUBAGENT_CONFIGS``."""
+    """Map ``agent_id`` to subagent YAML paths from ``SUBAGENTS``."""
 
     def __init__(self, specs: list[AgentSpec] | None = None) -> None:
         """Create a registry from an optional pre-built spec list."""
@@ -55,12 +55,12 @@ class AgentRegistry:
             self.register(spec)
 
     @classmethod
-    def from_subagent_configs(cls, entries: Sequence[Any]) -> AgentRegistry:
-        """Build a registry from merged ``SUBAGENT_CONFIGS`` entries."""
+    def from_subagents(cls, entries: Sequence[Any]) -> AgentRegistry:
+        """Build a registry from merged ``SUBAGENTS`` entries."""
         registry = cls()
         for entry in entries:
             if not isinstance(entry, Mapping):
-                raise ValueError("SUBAGENT_CONFIGS items must be mappings with 'path'")
+                raise ValueError("SUBAGENTS items must be mappings with 'path'")
             path = resolve_subagent_config_path(entry.get("path"))
             payload = _load_yaml_mapping(path)
             agent_id = resolve_agent_id_from_yaml(path, payload)
@@ -111,7 +111,7 @@ class AgentRegistry:
 
     def list(self) -> list[AgentSpec]:
         """Return all registered specs sorted by id."""
-        return [self._specs[key] for key in sorted(self._specs)]
+        return sorted(self._specs.values(), key=lambda spec: spec.id)
 
     def _agent_ids(self) -> list[str]:
         return sorted(str(spec.id) for spec in self._specs.values() if str(spec.id).strip())
@@ -135,5 +135,5 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as handle:
         payload = yaml.safe_load(handle) or {}
     if not isinstance(payload, Mapping):
-        raise ValueError(f"SUBAGENT_CONFIGS yaml root must be a mapping: {path}")
+        raise ValueError(f"SUBAGENTS yaml root must be a mapping: {path}")
     return dict(payload)

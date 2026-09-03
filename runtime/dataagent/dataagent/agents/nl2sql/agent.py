@@ -1,27 +1,24 @@
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
-# ruff: noqa: UP045
+"""Native LangGraph implementation of the NL2SQL agent and Deep Agents subgraph."""
 
 from __future__ import annotations
 
+import csv
+import json
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
-from contextvars import Token
-from functools import partial
-from pathlib import Path
-from typing import Any, Optional, cast
+from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import asdict
+from io import StringIO
+from typing import Any
 
-from dataagent.agents.nl2sql.context_recorder import NL2SQLContextRecorder
+from deepagents.backends.protocol import BackendProtocol
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
+from langgraph.types import Checkpointer
+
 from dataagent.agents.nl2sql.nodes import (
     BaseNL2SQLNode,
     BusinessTwinPerceptorNode,
@@ -34,372 +31,328 @@ from dataagent.agents.nl2sql.nodes import (
     ValidatorNode,
 )
 from dataagent.agents.nl2sql.workflow.router import NL2SQLRouter
-from dataagent.agents.nl2sql.workflow.state import NL2SQLState, get_default_state
-from dataagent.core.cbb.base_agent import BaseAgent
-from dataagent.core.framework_adapters.runtime.workflow_backend_factory import create_workflow_backend
-from dataagent.core.utils.performance import make_perf_state_holder, update_latest_state_from_stream_item
+from dataagent.agents.nl2sql.workflow.state import (
+    NL2SQLInputState,
+    NL2SQLOutputState,
+    NL2SQLState,
+    NL2SQLStructuredResult,
+    get_default_state,
+)
+from dataagent.core.errors import DataAgentError
 from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SEL_RETRIES
-from dataagent.utils.log import logger
+
+_PIPELINE_NODE_NAMES = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
 
 
-class NL2SQLAgent(BaseAgent):
+class NL2SQLAgent:
+    """Compatibility facade over the canonical native NL2SQL compiled graph."""
+
     def __init__(
         self,
-        *,
-        backend: str,
-        nodes: list[BaseNL2SQLNode],
-        router: NL2SQLRouter,
-        config: Any,
-        state_defaults: dict[str, Any] | None = None,
-        config_manager: Optional[Any] = None,
-    ):
-        """Initialize an NL2SQL agent and attach Context trajectory hooks."""
-        self._config_obj = config
-        cfg_dict = {}
-        try:
-            if isinstance(config, dict):
-                cfg_dict = dict(config)
-            elif hasattr(config, "settings") and isinstance(getattr(config, "settings", None), dict):
-                cfg_dict = dict(config.settings)
-        except Exception:
-            cfg_dict = {}
-        super().__init__(config=cfg_dict)
-        self.backend = backend
-        self.router = router
-        self.nodes = nodes
-        self.config_manager = config_manager
+        graph: CompiledStateGraph,
+        nodes: Sequence[BaseNL2SQLNode],
+        config: Mapping[str, Any],
+    ) -> None:
+        self.graph = graph
+        self.nodes = list(nodes)
+        self.config = dict(config)
+        self.backend = "langgraph"
         self.sql_security_enabled = any(
             isinstance(node, ValidatorNode) and node.sql_security_enabled for node in self.nodes
         )
-        self._context_recording_enabled = True
-        for node in self.nodes:
-            node.add_post_hook(partial(NL2SQLContextRecorder.record_action_hook, node_name=node.name))
-        self.workflow_backend = create_workflow_backend(
-            backend=backend,
-            nodes=list(self.nodes),
-            router=self.router,
-            state_class=NL2SQLState,
-            config=self._config_obj,
-        )
-        self.state_defaults = state_defaults or {}
 
     @staticmethod
-    def _finish_context_recorder(
-        *,
-        recorder: Optional[NL2SQLContextRecorder],
-        token: Optional[Token[Optional[NL2SQLContextRecorder]]],
-        final_state: Optional[Mapping[str, Any]],
-        completed: bool,
-    ) -> None:
-        if recorder is None or token is None:
-            return
-        try:
-            try:
-                recorder.finish(final_state=final_state, completed=completed)
-            except Exception as exc:
-                logger.warning(f"Failed to finish NL2SQL Context recorder: {exc}")
-        finally:
-            try:
-                recorder.reset(token)
-            except Exception as exc:
-                logger.warning(f"Failed to reset NL2SQL Context recorder: {exc}")
-
-    @staticmethod
-    def _perceptor_class(db_cfg: Mapping[str, Any]) -> type[PerceptorNode]:
-        """Select a specialized perceptor for the configured scenario."""
-        perceptor_classes: dict[str, type[PerceptorNode]] = {
-            "business_twin": BusinessTwinPerceptorNode,
-            "traffic_insight": TrafficInsightPerceptorNode,
-        }
-        return perceptor_classes.get(str(db_cfg.get("perceptor_type")), PerceptorNode)
+    def _raw_config(config: Any) -> dict[str, Any]:
+        if hasattr(config, "get_all"):
+            raw = config.get_all()
+        elif isinstance(config, Mapping):
+            raw = dict(config)
+        else:
+            raise TypeError("NL2SQL config must be a mapping or ConfigManager-compatible object.")
+        return dict(raw)
 
     @classmethod
-    def from_config(cls, config: Any, config_manager: Any | None = None) -> NL2SQLAgent:
-        """Build an NL2SQL agent from its YAML-compatible configuration."""
-        core_cfg = config.get("CORE", {})
-        db_cfg = config.get("DATABASE", {})
-        validator_cfg = core_cfg.get("validator", {}) or {}
-        security_enabled = bool(validator_cfg.get("sql_security_enabled", False))
-        if security_enabled and "reflector" not in core_cfg:
-            raise ValueError("CORE.reflector is required when CORE.validator.sql_security_enabled is true.")
-        perceptor_cls = cls._perceptor_class(db_cfg)
-        node_chain = [
-            ("perceptor", perceptor_cls, {}),
-            ("generator", GeneratorNode, {}),
-            ("validator", ValidatorNode, {}),
-            ("reflector", ReflectorNode, {"ref_retries": DEFAULT_NL2SQL_REF_RETRIES}),
-            ("executor", ExecutorNode, {}),
-            ("selector", SelectorNode, {"sel_retries": DEFAULT_NL2SQL_SEL_RETRIES}),
-        ]
-        enabled_nodes: list[str] = []
-        node_instances: list[BaseNL2SQLNode] = []
-        state_defaults: dict[str, Any] = {}
-        for name, node_cls, default_state in node_chain:
-            if name not in core_cfg:
-                break
-            enabled_nodes.append(name)
-            node_cfg = dict(core_cfg.get(name, {}) or {})
-            if name == "reflector" and security_enabled:
-                node_cfg.update({"sql_security_enabled": True})
-            for state_key, state_value in default_state.items():
-                state_defaults[state_key] = node_cfg.get(state_key, state_value)
-            if config_manager is not None:
-                node_cfg["config_manager"] = config_manager
-            node_instances.append(node_cls(**node_cfg))
-        if "generator" not in enabled_nodes:
-            raise ValueError("Perceptor and Generator are required in the yaml.")
-        router = NL2SQLRouter(enabled_nodes)
-        return cls(
-            backend="langgraph",
-            nodes=node_instances,
-            router=router,
-            config=config,
-            state_defaults=state_defaults,
-            config_manager=config_manager,
-        )
-
-    async def chat(self, message: str, initial_state: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
-        """Run one NL2SQL chat turn."""
-        checkpoint_id: str | None = kwargs.pop("checkpoint_id", None)
-        session_id: str | None = kwargs.pop("session_id", None)
-        init = initial_state or kwargs.pop("initial_state", None) or {}
-        if checkpoint_id:
-            recorder, token = self._start_context_recorder(state=init, question=message, session_id=session_id)
-            final_state: Optional[dict[str, Any]] = None
-            completed = False
-            try:
-                final_state = await self.workflow_backend.resume(
-                    checkpoint_id=str(checkpoint_id), message=message, session_id=session_id, **kwargs
-                )
-                completed = True
-                return final_state
-            finally:
-                self._finish_context_recorder(
-                    recorder=recorder,
-                    token=token,
-                    final_state=final_state,
-                    completed=completed,
-                )
-        if not session_id:
-            session_id = str(uuid.uuid4())
-        state = get_default_state(question=message, **{**self.state_defaults, **(init or {})})
-        self._distribute_context_dump_dir(init, session_id=session_id)
-        latest, flush_provider = make_perf_state_holder(state)
-        recorder, token = self._start_context_recorder(state=state, question=message, session_id=session_id)
-        final_state = None
-        completed = False
-        try:
-            with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
-                final_state = await self.workflow_backend.ainvoke(state)
-                if isinstance(final_state, dict):
-                    latest["state"] = final_state
-            completed = True
-            return final_state
-        finally:
-            self._finish_context_recorder(
-                recorder=recorder,
-                token=token,
-                final_state=final_state,
-                completed=completed,
-            )
-
-    def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
-        """Stream NL2SQL workflow via LangGraph native astream."""
-
-        async def _gen() -> AsyncGenerator[Any, None]:
-            kw = dict(kwargs)
-
-            input_state = kw.get("input")
-            if isinstance(input_state, dict):
-                question = str(input_state.get("question") or input_state.get("user_query", ""))
-                async for item in self._yield_context_stream(
-                    state=input_state,
-                    question=question,
-                    session_id=input_state.get("session_id"),
-                    stream=self.workflow_backend.astream({}, **kw),
-                ):
-                    yield item
-                return
-
-            initial_state = kw.pop("initial_state", None)
-            start_at = kw.pop("start_at", None)
-            checkpoint_id = kw.pop("checkpoint_id", None)
-            message = kw.pop("message", None)
-            session_id = kw.pop("session_id", None)
-            stream_mode = kw.pop("stream_mode", ["updates", "custom", "values"])
-
-            if checkpoint_id:
-                perf_state: dict[str, Any] = dict(initial_state) if isinstance(initial_state, dict) else {}
-                if session_id:
-                    perf_state.setdefault("session_id", session_id)
-                async for item in self._yield_context_stream(
-                    state=perf_state,
-                    question=str(message or ""),
-                    session_id=session_id,
-                    stream=self.workflow_backend.astream_resume(
-                        checkpoint_id=str(checkpoint_id),
-                        message=str(message or ""),
-                        session_id=session_id,
-                        stream_mode=stream_mode,
-                        **kw,
-                    ),
-                ):
-                    yield item
-                return
-
-            if args and isinstance(args[0], dict) and initial_state is None:
-                initial_state = args[0]
-            if not isinstance(initial_state, dict):
-                initial_state = {}
-            if args and not isinstance(args[0], dict) and message is None:
-                message = args[0]
-            if not session_id:
-                session_id = str(uuid.uuid4())
-
-            question = str(message or initial_state.pop("question", None) or initial_state.pop("user_query", ""))
-            initial_state.setdefault("session_id", session_id)
-            state = get_default_state(question=question, **{**self.state_defaults, **(initial_state or {})})
-            async for item in self._yield_context_stream(
-                state=state,
-                question=question,
-                session_id=session_id,
-                stream=self.workflow_backend.astream(
-                    cast(dict[str, Any], state),
-                    start_at=start_at,
-                    stream_mode=stream_mode,
-                    **kw,
-                ),
-            ):
-                yield item
-
-        return _gen()
-
-    def _start_context_recorder(
-        self,
+    def from_config(
+        cls,
+        config: Any,
+        config_manager: Any | None = None,
         *,
-        state: Mapping[str, Any],
-        question: str,
-        session_id: Optional[str],
-    ) -> tuple[
-        Optional[NL2SQLContextRecorder],
-        Optional[Token[Optional[NL2SQLContextRecorder]]],
-    ]:
-        if not getattr(self, "_context_recording_enabled", False):
-            return None, None
-        config = self.config if isinstance(getattr(self, "config", None), Mapping) else {}
-        recorder = NL2SQLContextRecorder.create(
-            state=state,
-            question=question,
-            session_id=session_id,
-            config=config,
-            config_manager=getattr(self, "config_manager", None),
-        )
-        if recorder is None:
-            return None, None
-        return recorder, recorder.bind()
+        model: BaseChatModel | None = None,
+        backend: BackendProtocol | None = None,
+    ) -> NL2SQLAgent:
+        """Build the compatibility facade using native LangChain and LangGraph components."""
+        from dataagent.core.deepagents.config.workspace import WorkspaceConfigCompiler
 
-    async def _yield_context_stream(
+        raw_config = cls._raw_config(config_manager or config)
+        _validate_pipeline_config(raw_config)
+        resolved_model = model or _compile_standalone_model(raw_config)
+        resolved_backend = backend or WorkspaceConfigCompiler(raw_config).compile().backend
+        graph, nodes = _build_nl2sql_graph(raw_config, resolved_model, resolved_backend)
+        return cls(graph=graph, nodes=nodes, config=raw_config)
+
+    async def chat(
         self,
+        message: str,
+        initial_state: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Invoke the native NL2SQL graph through the former standalone chat surface."""
+        state = _prepare_standalone_input(message, initial_state)
+        config = _standalone_run_config(kwargs.get("session_id"), kwargs.get("checkpoint_id"))
+        return await self.graph.ainvoke(state, config=config)
+
+    def astream(
+        self,
+        input: Any = None,
         *,
-        state: Mapping[str, Any],
-        question: str,
-        session_id: Optional[str],
-        stream: AsyncIterator[Any],
-    ) -> AsyncGenerator[Any, None]:
-        recorder, token = self._start_context_recorder(state=state, question=question, session_id=session_id)
-        completed = True
-        try:
-            async for item in self._yield_perf_stream(state, stream):
-                yield item
-        except BaseException:
-            completed = False
-            raise
-        finally:
-            self._finish_context_recorder(
-                recorder=recorder,
-                token=token,
-                final_state=None,
-                completed=completed,
-            )
+        initial_state: Mapping[str, Any] | None = None,
+        message: str | None = None,
+        session_id: str | None = None,
+        checkpoint_id: str | None = None,
+        stream_mode: Any = "values",
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        """Stream native LangGraph output through the former standalone surface."""
+        source = initial_state if initial_state is not None else input if isinstance(input, Mapping) else None
+        query = message or (input if isinstance(input, str) else "")
+        state = _prepare_standalone_input(str(query or ""), source)
+        config = _standalone_run_config(session_id, checkpoint_id)
+        return self.graph.astream(state, config=config, stream_mode=stream_mode, **kwargs)
 
-    def _distribute_context_dump_dir(self, init: dict[str, Any], *, session_id: str | None = None) -> None:
-        """Resolve and distribute the per-run NL2SQL context-dump dir to all nodes."""
-        from dataagent.utils.env_utils import get_env_bool
 
-        if not get_env_bool("DATAAGENT_CONTEXT_DUMP"):
-            return
+def create_nl2sql_agent(
+    config: Mapping[str, Any],
+    model: BaseChatModel,
+    backend: BackendProtocol,
+    *,
+    name: str = "nl2sql",
+    checkpointer: Checkpointer = None,
+    store: BaseStore | None = None,
+    debug: bool = False,
+) -> CompiledStateGraph:
+    """Compile the deterministic NL2SQL pipeline as a native LangGraph graph."""
+    graph, _ = _build_nl2sql_graph(
+        config,
+        model,
+        backend,
+        name=name,
+        checkpointer=checkpointer,
+        store=store,
+        debug=debug,
+    )
+    return graph
 
-        user_id = str(init.get("user_id") or "anonymous")
-        cfg = self._config_obj
-        cfg_session_id = cfg.get("SESSION_ID") if isinstance(cfg, dict) else None
-        parent_session_id = init.get("_parent_session_id")
-        if cfg_session_id:
-            effective_session_id = str(cfg_session_id)
-        elif parent_session_id:
-            effective_session_id = str(parent_session_id)
-        elif session_id:
-            effective_session_id = str(session_id)
-        else:
-            effective_session_id = str(init.get("session_id") or "default_session")
-        run_id = init.get("_parent_run_id", init.get("run_id", 0))
-        try:
-            dump_dir = self._create_context_dump_dir(
-                user_id=user_id,
-                session_id=effective_session_id,
-                workspace=init.get("workspace"),
-                run_id=run_id,
-            )
-        except Exception as exc:
-            logger.warning(f"Failed to init NL2SQL context dump dir: {exc}")
-            return
-        logger.info(
-            f"[_distribute_context_dump_dir] session_id={effective_session_id}, "
-            f"user_id={user_id}, run_id={run_id}, dump_dir={dump_dir}"
-        )
-        shared_seq: list[int] = [0]
-        for node in self.nodes:
-            node.set_context_dump_dir(dump_dir)
-            node._context_dump_seq = shared_seq
-        logger.info(f"[_distribute_context_dump_dir] distributed dump_dir to {len(self.nodes)} nodes")
 
-    def _create_context_dump_dir(
-        self,
-        *,
-        user_id: str,
-        session_id: str,
-        workspace: Any,
-        run_id: Any,
-    ) -> Path:
-        """Create and return the next per-run NL2SQL context-dump directory."""
-        from dataagent.utils.runtime_paths import resolve_flex_session_memory_dir
+def _build_nl2sql_graph(
+    config: Mapping[str, Any],
+    model: BaseChatModel,
+    backend: BackendProtocol,
+    *,
+    name: str = "nl2sql",
+    checkpointer: Checkpointer = None,
+    store: BaseStore | None = None,
+    debug: bool = False,
+) -> tuple[CompiledStateGraph, list[BaseNL2SQLNode]]:
+    nodes, state_defaults = _build_nodes(config, model)
+    router = NL2SQLRouter(enabled_nodes=_PIPELINE_NODE_NAMES)
+    dialect = str(_mapping(config.get("DATABASE")).get("dialect", "sqlite") or "sqlite")
+    builder = StateGraph(
+        NL2SQLState,
+        input_schema=NL2SQLInputState,
+        output_schema=NL2SQLOutputState,
+    )
 
-        memory_dir = resolve_flex_session_memory_dir(
-            user_id=user_id,
-            session_id=session_id,
-            workspace=workspace,
-            config=self.config,
-        )
-        base_dir = memory_dir / "context_dump" / f"run_{run_id}"
-        existing = (
-            [path.name for path in base_dir.iterdir() if path.is_dir() and path.name.startswith("nl2sql_")]
-            if base_dir.is_dir()
-            else []
-        )
-        dump_dir = base_dir / f"nl2sql_{len(existing) + 1:02d}"
-        dump_dir.mkdir(parents=True, exist_ok=True)
-        return dump_dir
+    async def prepare(state: NL2SQLInputState) -> dict[str, Any]:
+        question = _resolve_question(state)
+        initialized = get_default_state(question, **state_defaults)
+        return {
+            key: value for key, value in initialized.items() if key not in {"messages", "files", "structured_response"}
+        }
 
-    async def _yield_perf_stream(
-        self,
-        state: Mapping[str, Any] | None,
-        stream: AsyncIterator[Any],
-    ) -> AsyncGenerator[Any, None]:
-        latest, flush_provider = make_perf_state_holder(state)
-        with self._performance_run(state=state, backend=self.backend, flush_state_provider=flush_provider):
-            async for item in stream:
-                update_latest_state_from_stream_item(item, latest)
-                if self.sql_security_enabled:
-                    from dataagent.agents.nl2sql.security.streaming import sanitize_stream_item
+    async def finalize(state: NL2SQLState) -> dict[str, Any]:
+        return await _finalize_result(state, backend, dialect)
 
-                    item = sanitize_stream_item(item)
-                yield item
+    builder.add_node("prepare", prepare)
+    for node in nodes:
+        builder.add_node(node.name, node.aprocess)
+    builder.add_node("finalize", finalize)
+    builder.add_edge(START, "prepare")
+    builder.add_edge("prepare", router.entry_point)
+    builder.add_edge("perceptor", "generator")
+    builder.add_edge("generator", "validator")
+    builder.add_edge("validator", "reflector")
+    builder.add_conditional_edges("reflector", router.route_from_reflector, ["validator", "executor"])
+    builder.add_edge("executor", "selector")
+    builder.add_conditional_edges("selector", _route_after_selector, ["reflector", "finalize"])
+    builder.add_edge("finalize", END)
+    return builder.compile(checkpointer=checkpointer, store=store, debug=debug, name=name), nodes
+
+
+def _build_nodes(
+    config: Mapping[str, Any],
+    model: BaseChatModel,
+) -> tuple[list[BaseNL2SQLNode], dict[str, Any]]:
+    core_config = _validate_pipeline_config(config)
+    database_config = _mapping(config.get("DATABASE"))
+    perceptor_class = _resolve_perceptor_class(database_config)
+    validator_config = dict(_mapping(core_config.get("validator")))
+    security_enabled = bool(validator_config.get("sql_security_enabled", False))
+    reflector_config = dict(_mapping(core_config.get("reflector")))
+    if security_enabled:
+        reflector_config.update({"sql_security_enabled": True})
+
+    node_specs: tuple[tuple[type[BaseNL2SQLNode], Mapping[str, Any]], ...] = (
+        (perceptor_class, _mapping(core_config.get("perceptor"))),
+        (GeneratorNode, _mapping(core_config.get("generator"))),
+        (ValidatorNode, validator_config),
+        (ReflectorNode, reflector_config),
+        (ExecutorNode, _mapping(core_config.get("executor"))),
+        (SelectorNode, _mapping(core_config.get("selector"))),
+    )
+    nodes: list[BaseNL2SQLNode] = [
+        node_class(model=model, agent_config=config, **dict(node_config)) for node_class, node_config in node_specs
+    ]
+    state_defaults = {
+        "ref_retries": reflector_config.get("ref_retries", DEFAULT_NL2SQL_REF_RETRIES),
+        "sel_retries": _mapping(core_config.get("selector")).get("sel_retries", DEFAULT_NL2SQL_SEL_RETRIES),
+    }
+    return nodes, state_defaults
+
+
+def _validate_pipeline_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    core_config = _mapping(config.get("CORE"))
+    missing = [node_name for node_name in _PIPELINE_NODE_NAMES if node_name not in core_config]
+    if missing:
+        raise ValueError(f"NL2SQL.CORE must configure all pipeline nodes; missing: {', '.join(missing)}.")
+    return core_config
+
+
+def _resolve_perceptor_class(database_config: Mapping[str, Any]) -> type[PerceptorNode]:
+    perceptor_classes: dict[str, type[PerceptorNode]] = {
+        "business_twin": BusinessTwinPerceptorNode,
+        "traffic_insight": TrafficInsightPerceptorNode,
+    }
+    perceptor_type = str(database_config.get("perceptor_type", "") or "").strip().lower()
+    return perceptor_classes.get(perceptor_type, PerceptorNode)
+
+
+def _route_after_selector(state: NL2SQLState) -> str:
+    return "finalize" if state.get("proceed", False) else "reflector"
+
+
+async def _finalize_result(state: NL2SQLState, backend: BackendProtocol, dialect: str) -> dict[str, Any]:
+    error = state.get("error")
+    if error:
+        raise DataAgentError(source="tool", component="nl2sql", fact=str(error))
+    sql = str(state.get("sql", "") or "").strip()
+    columns = [str(column) for column in (state.get("columns") or [])]
+    rows = list(state.get("rows") or [])
+    if not sql:
+        raise DataAgentError(source="internal", component="nl2sql", fact="NL2SQL completed without SQL.")
+
+    invocation_id = uuid.uuid4().hex
+    sql_path = f"/nl2sql/{invocation_id}/query.sql"
+    csv_path = f"/nl2sql/{invocation_id}/result.csv"
+    formatted_sql = _format_sql(sql, dialect)
+    csv_content = _render_csv(columns, rows)
+    await _write_artifact(backend, sql_path, f"{formatted_sql.rstrip(';')};\n")
+    await _write_artifact(backend, csv_path, csv_content)
+
+    preview = [_json_row(row) for row in (state.get("rows_preview") or [])]
+    structured_result = NL2SQLStructuredResult(
+        sql=formatted_sql,
+        sql_path=sql_path,
+        csv_path=csv_path,
+        columns=columns,
+        row_count=len(rows),
+        rows_preview=preview,
+        confidence=float(state.get("confidence", 0.0) or 0.0),
+        error=None,
+    )
+    content = json.dumps(asdict(structured_result), ensure_ascii=False, default=str)
+    return {"messages": [AIMessage(content=content)], "structured_response": structured_result}
+
+
+async def _write_artifact(backend: BackendProtocol, path: str, content: str) -> None:
+    result = await backend.awrite(path, content)
+    error = getattr(result, "error", None)
+    if error:
+        raise DataAgentError(source="tool", component="nl2sql", fact=f"Failed to write {path}: {error}")
+
+
+def _resolve_question(state: Mapping[str, Any]) -> str:
+    explicit = str(state.get("question", "") or "").strip()
+    if explicit:
+        return explicit
+    messages = state.get("messages", [])
+    if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+        for message in reversed(messages):
+            if isinstance(message, HumanMessage):
+                text = _message_text(message.content).strip()
+                if text:
+                    return text
+    raise ValueError("NL2SQL requires a question or at least one HumanMessage.")
+
+
+def _message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False, default=str)
+
+
+def _render_csv(columns: list[str], rows: list[tuple[Any, ...]]) -> str:
+    output = StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    if columns:
+        writer.writerow(columns)
+    writer.writerows(rows)
+    return "\ufeff" + output.getvalue()
+
+
+def _json_row(row: Sequence[Any]) -> list[Any]:
+    return [value if value is None or isinstance(value, (bool, int, float, str)) else str(value) for value in row]
+
+
+def _format_sql(sql: str, dialect: str) -> str:
+    try:
+        import sqlglot
+
+        parsed = sqlglot.parse_one(sql, read=dialect or None)
+        return parsed.sql(dialect=dialect or None, pretty=True)
+    except Exception:
+        return sql.strip().rstrip(";")
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _compile_standalone_model(config: Mapping[str, Any]) -> BaseChatModel:
+    from dataagent.core.deepagents.config.models import ModelConfigCompiler
+
+    compiler = ModelConfigCompiler(config)
+    models = compiler.compile()
+    primary_name = compiler.resolve_primary_model_name(models)
+    model = models.get(primary_name)
+    if model is None:
+        raise ValueError(f"Primary model '{primary_name}' is not available.")
+    return model
+
+
+def _prepare_standalone_input(message: str, initial_state: Mapping[str, Any] | None) -> dict[str, Any]:
+    state = dict(initial_state or {})
+    messages = list(state.get("messages", []))
+    if message.strip():
+        messages.append(HumanMessage(content=message))
+    state.update({"messages": messages})
+    return state
+
+
+def _standalone_run_config(session_id: Any, checkpoint_id: Any) -> RunnableConfig:
+    configurable: dict[str, Any] = {"thread_id": str(session_id or uuid.uuid4())}
+    if checkpoint_id:
+        configurable.update({"checkpoint_id": str(checkpoint_id)})
+    return {"configurable": configurable}
+
+
+__all__ = ["NL2SQLAgent", "NL2SQLStructuredResult", "create_nl2sql_agent"]

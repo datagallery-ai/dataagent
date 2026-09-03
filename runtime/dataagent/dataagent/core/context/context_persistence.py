@@ -20,7 +20,7 @@ import networkx as nx
 from loguru import logger
 from networkx.classes.digraph import DiGraph
 
-from dataagent.utils.runtime_paths import resolve_flex_context_dir, resolve_session_framework_workspace
+from dataagent.utils.runtime_paths import resolve_context_dir, resolve_session_framework_workspace
 
 if TYPE_CHECKING:
     from dataagent.core.context.context import Context
@@ -267,7 +267,7 @@ class ContextPersistence:
 
     def _context_dir(self):
         """Resolve the configured context directory under the framework workspace."""
-        return resolve_flex_context_dir(
+        return resolve_context_dir(
             user_id=self._ctx.state.user_id,
             session_id=self._ctx.state.session_id,
             workspace=self._ctx.state.workspace,
@@ -278,7 +278,7 @@ class ContextPersistence:
         if user_id == self._ctx.state.user_id and session_id == self._ctx.state.session_id:
             context_dir = self._context_dir()
         else:
-            context_dir = resolve_flex_context_dir(
+            context_dir = resolve_context_dir(
                 user_id=user_id,
                 session_id=session_id,
                 workspace=self._ctx.state.workspace,

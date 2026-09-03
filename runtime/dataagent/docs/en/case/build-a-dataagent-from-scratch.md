@@ -1,254 +1,137 @@
-# Build a Data Analysis Agent
+# Build a Data Analysis Agent with NL2SQL
 
-This guide explains how to build a ReAct main Agent that invokes an NL2SQL sub-Agent when a database query is needed. It fits scenarios where the user's task is more than a single lookup, but one step requires natural language to SQL.
+This pattern uses a native Deep Agent as the main planner and gives it one dedicated native NL2SQL subagent. The main Agent can inspect files, use business tools, and produce reports; database questions are delegated to the NL2SQL runnable only when needed.
 
-Unlike [Build a Dedicated NL2SQL Agent](build-an-nl2sql-application.md), the main Agent here understands the task, organizes steps, and summarizes the answer; NL2SQL is only invoked on demand as a tool capability.
-
-## 1. When to Use This Pattern
-
-| Suitable | Not suitable |
-| --- | --- |
-| The user's task requires understanding the goal first, then deciding whether to query the database. | The user's question is itself a one-off database lookup. |
-| The main Agent also organizes the final answer, saves SQL/CSV files, or coordinates with other tools. | You only want to validate NL2SQL on a specific database. |
-| You want NL2SQL wrapped as a reusable tool, with the main Agent controlling when it is called. | You do not need ReAct orchestration—only SQL generation and execution. |
-
-Example question:
+## Architecture
 
 ```text
-统计高价值客户最近一个季度的购买金额变化，并把 SQL 和结果文件保存下来。
+User request
+    │
+    ▼
+Deep Agents main Agent
+    ├── native filesystem / Shell / local / MCP / A2A tools
+    ├── native skills and middleware
+    └── native subagent delegation
+             │
+             ▼
+       NL2SQL LangGraph
+       perception → generation → validation → execution → selection
 ```
 
-The main Agent must clarify the task goal, call `nl2sql_sub_agent_tool`, obtain SQL/CSV file paths, and then compose the final answer.
+There is no separate NL2SQL wrapper tool to register. The `NL2SQL` YAML block is compiled to a runnable and passed directly to Deep Agents as a subagent.
 
-## 2. Overall Architecture
-
-```text
-用户问题
-  │
-  ▼
-FlexAgent（AGENT_CONFIG.type = react）
-  │
-  ├─ Planner：判断是否需要查数据库
-  ├─ Executor：调用工具
-  │       │
-  │       ▼
-  │   nl2sql_sub_agent_tool
-  │       │
-  │       ├─ 读取内置 NL2SQL 配置
-  │       ├─ 用主 Agent 的 DATABASE / SEMANTIC_LAYER 覆盖子 Agent 配置
-  │       ├─ 拉起 NL2SQLAgent 执行查询
-  │       └─ 保存 SQL 文件和 CSV 结果文件
-  │
-  └─ 汇总最终回答
-```
-
-The key point of this pattern: `DATABASE` and `SEMANTIC_LAYER` live in the main Agent YAML; at runtime the tool overlays them onto the temporary NL2SQL sub-Agent config. The same NL2SQL sub-Agent can therefore be reused by different business main Agents.
-
-## 3. Prerequisites
-
-Before you start, confirm:
-
-1. Project installation is complete and you can run `uv run ...` from the repository root.
-2. Model environment variables are configured, e.g. `BAILIAN_BASE_URL` and `BAILIAN_API_KEY`.
-3. **When the main Agent calls NL2SQL**: Semantic Service deployment and scenario data import are complete:
-   - [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md)
-   - [Scenario Data Import](../installation_doc/database_install/scenario-data-import.md)
-4. Demo SQLite database created; use an **absolute path** in Agent config (`demo_db` / `demo_retail.sqlite`; not bundled with the Semantic Layer package).
-5. A writable workspace is available for SQL and CSV files from the sub-Agent.
-
-If Semantic Service is not deployed, start from [Quick Start §8](../quick_start/quick_start.md#optional-semantic-service).
-
-See [Semantic Service User Guide](../semantic_service/semantic-service-user-guide.md).
-
-## 4. Author the Main Agent Configuration
-
-The built-in example lives at:
-
-```text
-dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml
-```
-
-A main Agent that calls an NL2SQL sub-Agent has four main configuration blocks.
-
-| Block | Role |
-| --- | --- |
-| `AGENT_CONFIG` | Use `type: "react"` so the main Agent follows Flex/ReAct orchestration. |
-| `MODEL` | Configure at least the main Agent model and the model slot bound to the NL2SQL sub-Agent. |
-| `SCENARIO` | Tell the main Agent when to call NL2SQL and which parameters to pass. |
-| `TOOLS.local_functions` | Register `nl2sql_sub_agent_tool`. |
-| `DATABASE` / `SEMANTIC_LAYER` | The main Agent holds runtime database and Semantic Service settings and overlays them onto the sub-Agent. |
-
-Example configuration (same structure as repository `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml`; replace `demo_db` and paths for your scenario):
+## Configuration
 
 ```yaml
 AGENT_CONFIG:
-  name: "NL2SQL Flex Subagent Launcher"
-  type: "react"
-  backend: "langgraph"
-  debug: true
+  name: "Sales Data Agent"
+  description: "Analyze sales data and produce grounded reports."
+  backend: langgraph
+  type: react
+  primary_model: chat_model
+  max_iter: 40
 
 MODEL:
   chat_model:
-    model_type: "chat"
-    provider: "bailian"
+    provider: deepseek
+    model_type: chat
     params:
-      model: "deepseek-v4-flash"
-      temperature: 0.0
+      model: deepseek-chat
+      temperature: 0.1
+
+WORKSPACE:
+  path: /absolute/path/to/workspace
 
 SCENARIO:
   chat:
-    input: "nl2sql question"
-    task: "launch nl2sql as a sub agent and return DONE"
     instructions: |
-      Complete the data analysis task; call `nl2sql_sub_agent_tool` when a SQL query is needed.
-    output_format: "DONE"
-
-TOOLS:
-  local_functions:
-    - module: "dataagent.actions.tools.local_tool.tools"
-      function: "nl2sql_sub_agent_tool"
-      config:
-        llm_model: chat_model
-
-PRE_WORKFLOW: []
-POST_WORKFLOW: []
+      Delegate database questions to the nl2sql subagent.
+      Preserve its SQL and result artifacts, then explain the result in business language.
 
 DATABASE:
-  db_id: "demo_db"
-  dialect: "sqlite"
+  db_id: sales
+  dialect: sqlite
   config:
-    path: "/absolute/path/to/data/demo_retail.sqlite"
+    path: /absolute/path/to/sales.sqlite
 
 SEMANTIC_LAYER:
-  base_url: "http://localhost:32000"
-  username: "example"
+  base_url: http://localhost:32000
+  username: example
   password: "123456"
   timeout: 30
 
-SWARM:
-  enable: false
+NL2SQL:
+  CORE:
+    coordinator: {}
+    perceptor:
+      user_schema: null
+      user_evidence: null
+      user_sql_rules: sql_rules_bird
+      user_few_shot_examples: null
+    generator:
+      strategies: [prompt]
+      num_workers: 1
+      num_samples: 3
+    validator:
+      db_explain: true
+      keyword_match: false
+      metadata_match: false
+    reflector:
+      threshold: 0.9
+    executor:
+      limit: -1
+      preview_limit: 5
+    selector:
+      threshold: 0.9
 ```
 
-Notes:
+The inline block supplies default metadata:
 
-- `TOOLS.local_functions[].function` must be `nl2sql_sub_agent_tool`.
-- `config.llm_model` must point to a section under main Agent `MODEL`; the repository example uses `chat_model`.
-- Put `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML; you do not need to edit the temporary sub-Agent config by hand.
-- The tool requires `query`, `sql_filename`, and `csv_filename`; `workspace` comes from runtime `initial_state.workspace` (or `chat(workspace=...)`)—see §6.
+- identifier: `nl2sql`;
+- name: `NL2SQL Agent`;
+- type: `nl2sql`;
+- a description instructing the main Agent when to delegate.
 
-## 5. Sub-Agent Configuration Overlay Logic
+You may add `NL2SQL.AGENT_CONFIG` to override compatible metadata or choose another configured model with `primary_model`. Exactly one inline `NL2SQL` child is supported. Top-level `DATABASE` and `SEMANTIC_LAYER` settings override copies inside the inline block so connection policy stays centralized.
 
-Inside `nl2sql_sub_agent_tool`, the following happens:
-
-1. Load the built-in NL2SQL config: `dataagent/agents/nl2sql/nl2sql_agent.yaml`.
-2. Read `DATABASE` and `SEMANTIC_LAYER` from the main Agent's current configuration.
-3. Overlay the main Agent settings onto the temporary NL2SQL sub-Agent YAML.
-4. If the tool defines `config.llm_model`, read `MODEL.<llm_model>` from the main Agent and write it into the sub-Agent.
-5. Invoke `sub_agent_tool` to launch the NL2SQL sub-Agent.
-6. Save SQL and query results returned by the sub-Agent under `workspace`.
-
-Tool parameters:
-
-| Parameter | Description |
-| --- | --- |
-| `query` | Natural language query passed to the NL2SQL sub-Agent. State the business goal, metrics, filters, grouping, and output columns as clearly as possible. |
-| `sql_filename` | Filename for generated SQL, e.g. `monthly_orders.sql` (saved under session `workspace`). |
-| `csv_filename` | Filename for the result CSV, e.g. `monthly_orders.csv` (saved under session `workspace`). |
-
-## 6. Run the Main Agent
-
-You can run the end-to-end example in the repository:
-
-```bash
-uv run tests/e2e/test_nl2sql_flex_subagent.py
-```
-
-Or load your main Agent configuration with the SDK:
+## Run
 
 ```python
 import asyncio
-from pathlib import Path
 
-from dataagent.interface.sdk.agent import DataAgent
+from dataagent import DataAgent
 
 
-async def main():
-    project_dir = Path(__file__).resolve().parents[2]
-    config_path = project_dir / "dataagent" / "core" / "flex" / "examples" / "nl2sql_flex_e2e_subagent.yaml"
-    agent = DataAgent.from_config(config_path)
-
-    result = await agent.chat(
-        "每月订单量是多少？请保存 SQL 和 CSV 结果。",
-        initial_state={
-            "run_id": 0,
-            "sub_id": 0,
-            "workspace": "/tmp/dataagent-nl2sql-demo",
-        },
-    )
-    print(result)
+async def main() -> None:
+    agent = DataAgent.from_config("config.yaml")
+    result = await agent.chat("Which five cities had the highest revenue last month?", session_id="demo")
+    print(result["messages"][-1].content)
 
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-If your runtime uses a sandbox or workspace restrictions, ensure `workspace` is writable and the SQLite file path is within allowed access.
+The returned object is native LangGraph state. SQL, CSV, and supporting files produced through the shared backend are visible to the main Agent, while message handoff and execution remain inside Deep Agents' subagent middleware.
 
-## 7. Inspect Results
+## General subagents
 
-After a successful run, the final answer should include:
+Use `SUBAGENTS` when a child needs its own complete YAML rather than the dedicated inline NL2SQL form:
 
-- SQL file path.
-- CSV result file path.
-- A summary of generated SQL or query results.
-
-You can also inspect the workspace:
-
-```bash
-ls -lh /tmp/dataagent-nl2sql-demo
+```yaml
+SUBAGENTS:
+  - path: /absolute/path/to/researcher.yaml
+  - path: /absolute/path/to/another_nl2sql.yaml
 ```
 
-If the tool fails, check the message for:
+The child may inherit the parent's models and backend. A child that declares its own `MODEL` section uses those models instead. Recursive paths and duplicate identifiers fail during compilation.
 
-- `nl2sql_sub_agent_tool 工具执行失败`
-- `子 Agent 执行失败`
-- `Config YAML not found`
-- Database connection or SQLite path errors
+## Operational checks
 
-## 8. Comparison with a Dedicated NL2SQL Agent
+1. Verify the model provider's API key and optional base URL in `.env`.
+2. Use an absolute database path.
+3. Confirm `DATABASE.db_id` matches metadata loaded into Semantic Service.
+4. Verify `SEMANTIC_LAYER.base_url` before testing SQL generation.
+5. Reuse `session_id` when the main Agent must continue the same LangGraph thread.
 
-| Aspect | Dedicated NL2SQL Agent | Main Agent calling NL2SQL sub-Agent |
-| --- | --- | --- |
-| `AGENT_CONFIG.type` | `nl2sql` | `react` |
-| Primary role | Convert natural language to SQL directly. | Main Agent plans the task and calls NL2SQL when needed. |
-| Config location | `DATABASE` / `SEMANTIC_LAYER` in the NL2SQL Agent config. | `DATABASE` / `SEMANTIC_LAYER` in the main Agent config, overlaid onto the sub-Agent. |
-| Output shape | Returns NL2SQL state and query results. | Main Agent summarizes the answer and can save SQL/CSV files. |
-| Best fit | Single database lookup questions. | Database query subtasks within multi-step workflows. |
-
-## 9. Common Issues
-
-### 9.1 Main Agent does not call the NL2SQL tool
-
-Check that `SCENARIO.chat.instructions` tells the model to call `nl2sql_sub_agent_tool` when a database query is needed, and that `workspace` is set at runtime.
-
-### 9.2 Tool reports missing parameters
-
-`nl2sql_sub_agent_tool` requires `query`, `sql_filename`, and `csv_filename`. Set session `workspace` via `initial_state.workspace` or `chat(workspace=...)` before running. Strengthen `SCENARIO` if the model omits filenames.
-
-### 9.3 Sub-Agent database configuration is wrong
-
-Check `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML. The tool overlays these onto the sub-Agent, so issues usually come from the main Agent runtime config, not the temporary YAML.
-
-### 9.4 Semantic Service connection failure
-
-Confirm `SEMANTIC_LAYER.base_url` is reachable, and that metadata for `DATABASE.db_id` has been imported. See [Semantic Service Deployment Guide](../installation_doc/database_install/semantic-service-deployment.md) for the full flow.
-
-## 10. Summary
-
-The essentials for a main Agent calling an NL2SQL sub-Agent:
-
-1. Main Agent uses `AGENT_CONFIG.type: "react"`.
-2. Register `nl2sql_sub_agent_tool`.
-3. Configure `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML.
-4. Define call boundaries and tool parameters in `SCENARIO`.
-5. Use `workspace` to save SQL and CSV results for answers, auditing, and reuse.
+For a standalone Agent that always runs the NL2SQL graph directly, see [Build a Dedicated NL2SQL Agent](build-an-nl2sql-application.md).

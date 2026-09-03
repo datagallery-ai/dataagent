@@ -22,7 +22,6 @@ from mcp.types import Tool as MCPTool
 
 from dataagent.actions.tools.mcp import MCPClientWrapper, MCPServerConfig, MCPToolWrapper
 from dataagent.core.errors import DataAgentError
-from dataagent.core.flex.nodes.executor import Executor
 from dataagent.core.managers.action_manager.base import ToolResult
 
 
@@ -55,21 +54,3 @@ def test_mcp_is_error_returns_failed_tool_result() -> None:
     assert result.success is False
     assert error.source == "tool"
     assert "upstream tool exploded" in error.fact
-
-
-def test_mcp_is_error_becomes_tool_message_error() -> None:
-    wrapper = _wrapper()
-    with pytest.raises(DataAgentError) as caught:
-        asyncio.run(wrapper._async_call())
-    result = ToolResult(error=caught.value)
-    executor = Executor("executor")
-    execution = executor._normalize_tool_execution(
-        tool_name="boom",
-        tool_call_id="call-1",
-        tool_args={},
-        result=result,
-        metadata={},
-    )
-    message = executor._build_tool_message(execution)
-    assert message.status == "error"
-    assert "upstream tool exploded" in str(message.content)

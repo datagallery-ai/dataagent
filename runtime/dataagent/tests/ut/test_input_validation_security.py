@@ -10,24 +10,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from unittest.mock import MagicMock
-
 import pytest
 
-from dataagent.actions.gym.nl2sql.base_env import BaseNL2SQLEnv
 from dataagent.utils import env_file_loader
-
-
-def test_base_nl2sql_env_does_not_apply_sql_guard():
-    """Gym tool layer has no AST guard; online gate stays in Validator."""
-    env = object.__new__(BaseNL2SQLEnv)
-    execute = MagicMock()
-    env._execute = execute
-
-    result = env.is_sql_executable("SELECT * FROM read_text('/tmp/secret')")
-
-    assert result["original_msg"] == "OK"
-    execute.assert_called_once_with("EXPLAIN SELECT * FROM read_text('/tmp/secret')")
 
 
 @pytest.mark.parametrize(

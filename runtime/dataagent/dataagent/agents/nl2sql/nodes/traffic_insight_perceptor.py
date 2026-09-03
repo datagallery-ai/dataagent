@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
-from typing import Any, Optional, cast
+from typing import Any
 
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
@@ -40,7 +40,6 @@ from dataagent.agents.nl2sql.utils.traffic_insight_table_recall import (
     tables_missing_from_hybrid_columns,
 )
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.cbb.base_state import BaseState
 from dataagent.core.errors import DataAgentError
 from dataagent.utils.log import logger
 
@@ -63,8 +62,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         self._exclude_prefixes = tuple(str(p) for p in (prefixes or ["dim"]))
         self._hybrid_batch_size = int(recall_cfg.get("hybrid_batch_size", 50))
 
-    async def _aprocess(self, state: BaseState, runtime: Any = None) -> NL2SQLState:
-        state = cast(NL2SQLState, state)
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         state["sql_rules"] = await asyncio.to_thread(self._load_prompt, self.user_sql_rules)
         state["sql_rules"] += f"\n现在为{date.today().year}年{date.today().month}月{date.today().day}日。"
         schema, joins = await self._traffic_insight_schema_linking(state["question"])
@@ -219,7 +217,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         self,
         question: str,
         families: list[dict[str, Any]],
-    ) -> Optional[dict[str, str]]:  # noqa: UP045
+    ) -> dict[str, str] | None:
         parsed = await self.execute_with_llm_json(
             {
                 "question": question,

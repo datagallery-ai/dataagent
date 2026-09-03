@@ -1,24 +1,22 @@
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
+"""Pure routing helpers for the native NL2SQL LangGraph."""
+
+from dataclasses import dataclass
+
+from langgraph.graph import END
+
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
-from dataagent.core.cbb.base_router import BaseRouter
 
 
-class NL2SQLRouter(BaseRouter):
-    def __init__(self, enabled_nodes: list[str]):
-        self.enabled_nodes = enabled_nodes
-        super().__init__(entry_point=enabled_nodes[0])
-        self._setup_default_rules()
+@dataclass(frozen=True)
+class NL2SQLRouter:
+    """Route between enabled NL2SQL nodes without the retired BaseRouter layer."""
+
+    enabled_nodes: tuple[str, ...]
+
+    @property
+    def entry_point(self) -> str:
+        """Return the first enabled pipeline node."""
+        return self.enabled_nodes[0]
 
     def route_from_perceptor(self, state: NL2SQLState) -> str:
         """Route after perceptor to the next enabled node."""
@@ -33,33 +31,24 @@ class NL2SQLRouter(BaseRouter):
         return self._next("validator")
 
     def route_from_reflector(self, state: NL2SQLState) -> str:
-        """Route after reflector based on proceed flag."""
-        if state["proceed"]:
-            return self._next("reflector")
-        return "validator"
+        """Route a failed validation back through validation after reflection."""
+        return self._next("reflector") if state.get("proceed", False) else "validator"
 
     def route_from_executor(self, state: NL2SQLState) -> str:
         """Route after executor to the next enabled node."""
         return self._next("executor")
 
     def route_from_selector(self, state: NL2SQLState) -> str:
-        """Route after selector to end or back to reflector."""
-        if state["proceed"]:
-            return "__end__"
-        return "reflector"
+        """Finish a selected result or return it to the reflector."""
+        return END if state.get("proceed", False) else "reflector"
+
+    def route(self, node_name: str, state: NL2SQLState) -> str:
+        """Dispatch routing for one configured node."""
+        route_method = getattr(self, f"route_from_{node_name}")
+        return route_method(state)
 
     def _next(self, current: str) -> str:
-        idx = self.enabled_nodes.index(current)
-        if idx + 1 >= len(self.enabled_nodes):
-            return "__end__"
-        return self.enabled_nodes[idx + 1]
-
-    def _setup_default_rules(self):
-        self._routing_rules = {
-            "perceptor": self.route_from_perceptor,
-            "generator": self.route_from_generator,
-            "validator": self.route_from_validator,
-            "reflector": self.route_from_reflector,
-            "executor": self.route_from_executor,
-            "selector": self.route_from_selector,
-        }
+        index = self.enabled_nodes.index(current)
+        if index + 1 >= len(self.enabled_nodes):
+            return END
+        return self.enabled_nodes[index + 1]

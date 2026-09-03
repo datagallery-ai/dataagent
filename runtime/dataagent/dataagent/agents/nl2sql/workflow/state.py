@@ -1,30 +1,23 @@
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
-from dataclasses import dataclass, field
-from typing import Any, Literal
+"""Native LangGraph state contracts for the NL2SQL subagent."""
 
-from dataagent.core.cbb.base_state import BaseState
+from dataclasses import dataclass, field
+from typing import Any, Literal, cast
+
+from deepagents.middleware.filesystem import FilesystemState
+
 from dataagent.utils.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SEL_RETRIES
 
 
 @dataclass
 class Result:
+    """One mutable SQL candidate as it moves through the deterministic pipeline."""
+
     id: int
     sql: str
     prompt: str = ""
     strategy: Literal["prompt", "skeleton", "icl", "dc"] = "prompt"
-    score: float = 0.0  # reflector
-    confidence: float = 0.0  # selector
+    score: float = 0.0
+    confidence: float = 0.0
     issues: list[str] = field(default_factory=list)
     columns: list[str] | None = field(default_factory=list)
     rows: list[tuple[Any, ...]] | None = field(default_factory=list)
@@ -35,51 +28,63 @@ class Result:
     security_violations: list[dict[str, str]] = field(default_factory=list)
 
 
-class NL2SQLState(BaseState):
+@dataclass(frozen=True)
+class NL2SQLStructuredResult:
+    """Compact NL2SQL result returned to the parent agent."""
+
+    sql: str
+    sql_path: str
+    csv_path: str
+    columns: list[str]
+    row_count: int
+    rows_preview: list[list[Any]]
+    confidence: float
+    error: str | None = None
+
+
+class NL2SQLInputState(FilesystemState, total=False):
+    """Public input accepted by the NL2SQL subgraph."""
+
     question: str
 
-    # output
+
+class NL2SQLState(NL2SQLInputState, total=False):
+    """Internal state used by the deterministic NL2SQL graph."""
+
     sql: str
     confidence: float
     columns: list[str] | None
     rows: list[tuple[Any, ...]] | None
     rows_preview: list[tuple[str, ...]] | None
     error: str | None
-
-    # perceptor
     keywords: list[str]
-    schema: dict
+    schema: dict[str, Any]
     joins: list[tuple[str, str]]
-    schema_str: str  # backdoor for schema injection
+    schema_str: str
     few_shot_examples: str
     sql_rules: str
     evidence: str
-
-    # generator
     generation_results: list[Result]
-
-    # validator
     validation_results: list[Result]
     security_sql_approved: bool
-
-    # reflector
     ref_retries: int
     proceed: bool
-
-    # executor
     execution_results: list[Result]
-
-    # selector
     sel_retries: int
-
-    # streaming
     stream_message: str
 
 
-def get_default_state(question: str, **override) -> NL2SQLState:
-    """Return a fresh NL2SQLState with default field values."""
-    default_state = {
+class NL2SQLOutputState(FilesystemState, total=False):
+    """Public output merged by Deep Agents after a compiled-subagent call."""
+
+    pass
+
+
+def get_default_state(question: str, **override: Any) -> NL2SQLState:
+    """Return a fresh native NL2SQL state with default field values."""
+    default_state: NL2SQLState = {
         "messages": [],
+        "files": {},
         "question": question,
         "sql": "",
         "confidence": 0.0,
@@ -103,5 +108,4 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "sel_retries": DEFAULT_NL2SQL_SEL_RETRIES,
         "stream_message": "",
     }
-    default_state.update(override)
-    return default_state
+    return cast(NL2SQLState, {**default_state, **override})

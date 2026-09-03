@@ -31,13 +31,16 @@ def auth_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         "AUTH_PUBLIC_BASE_URL": "http://127.0.0.1:3000",
         "AUTH_REGISTRATION_MODE": "open",
         "AUTH_EMAIL_DELIVERY": "test",
-        "DEEPAGENTS_RUNTIME_MODEL": "fake",
+        "SECRET_MASTER_KEY": "pytest-model-secret-master-key",
+        "LLM_PROVIDER": "openai-compatible",
+        "LLM_MODEL": "test-model",
+        "LLM_BASE_URL": "http://127.0.0.1:9/v1",
+        "LLM_API_KEY": "test-api-key",
         "METADATA_DB_PATH": str(tmp_path / "workbench.sqlite"),
         "STORAGE_ROOT_DIR": str(tmp_path / "storage"),
     }
     for key, value in env.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("RUNTIME_SERVICE_URL", raising=False)
     monkeypatch.delenv("RUNTIME_SERVICE_TOKEN", raising=False)

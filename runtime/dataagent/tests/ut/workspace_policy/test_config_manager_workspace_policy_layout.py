@@ -20,9 +20,6 @@ import yaml
 
 from dataagent.config.config_manager import ConfigManager
 from dataagent.utils.constants import DEFAULT_WORKSPACE_LAYOUT
-from dataagent.utils.runtime_paths import dataagent_package_path
-
-DEFAULT_CONFIG = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
 
 
 def _write_yaml(path: Path, payload: dict) -> Path:
@@ -30,7 +27,12 @@ def _write_yaml(path: Path, payload: dict) -> Path:
     return path
 
 
+def _write_default_config(path: Path) -> Path:
+    return _write_yaml(path, {"WORKSPACE_POLICY": {"layout": DEFAULT_WORKSPACE_LAYOUT}})
+
+
 def test_reload_merges_workspace_policy_layout_from_default_and_user(tmp_path: Path) -> None:
+    default_path = _write_default_config(tmp_path / "default.yaml")
     user_path = _write_yaml(
         tmp_path / "layout_user.yaml",
         {
@@ -39,13 +41,14 @@ def test_reload_merges_workspace_policy_layout_from_default_and_user(tmp_path: P
         },
     )
     cm = ConfigManager()
-    cm.reload(str(user_path), str(DEFAULT_CONFIG))
-    layout = cm.settings["WORKSPACE_POLICY"]["layout"]
-    assert layout["session_memory_dir"] == "state/mem"
-    assert layout["context_dir"] == DEFAULT_WORKSPACE_LAYOUT["context_dir"]
+    cm.reload(str(user_path), str(default_path))
+    layout = cm.settings.get("WORKSPACE_POLICY", {}).get("layout", {})
+    assert layout.get("session_memory_dir") == "state/mem"
+    assert layout.get("context_dir") == DEFAULT_WORKSPACE_LAYOUT.get("context_dir")
 
 
 def test_reload_rejects_absolute_layout_segment(tmp_path: Path) -> None:
+    default_path = _write_default_config(tmp_path / "default.yaml")
     good_path = _write_yaml(
         tmp_path / "good_layout.yaml",
         {"AGENT_CONFIG": {"name": "good", "type": "react"}},
@@ -58,14 +61,15 @@ def test_reload_rejects_absolute_layout_segment(tmp_path: Path) -> None:
         },
     )
     cm = ConfigManager()
-    cm.reload(str(good_path), str(DEFAULT_CONFIG))
+    cm.reload(str(good_path), str(default_path))
     previous = copy.deepcopy(cm.settings)
     with pytest.raises(ValueError, match="relative path segment"):
-        cm.reload(str(bad_path), str(DEFAULT_CONFIG))
+        cm.reload(str(bad_path), str(default_path))
     assert cm.settings == previous
 
 
 def test_reload_rejects_layout_segment_with_dotdot(tmp_path: Path) -> None:
+    default_path = _write_default_config(tmp_path / "default.yaml")
     good_path = _write_yaml(
         tmp_path / "good_layout2.yaml",
         {"AGENT_CONFIG": {"name": "good", "type": "react"}},
@@ -78,8 +82,8 @@ def test_reload_rejects_layout_segment_with_dotdot(tmp_path: Path) -> None:
         },
     )
     cm = ConfigManager()
-    cm.reload(str(good_path), str(DEFAULT_CONFIG))
+    cm.reload(str(good_path), str(default_path))
     previous = copy.deepcopy(cm.settings)
     with pytest.raises(ValueError, match="must not contain"):
-        cm.reload(str(bad_path), str(DEFAULT_CONFIG))
+        cm.reload(str(bad_path), str(default_path))
     assert cm.settings == previous

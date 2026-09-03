@@ -91,7 +91,7 @@ def acquire_workspace_lock(
         workspace_root: Absolute directory that owns ``.lock/``.
         owner_kind: Logical owner class (e.g. ``main_session``).
         owner_id: Owner identity (e.g. session id).
-        purpose: Short reason string (e.g. ``flex_chat``).
+        purpose: Short reason string (e.g. ``agent_chat``).
         ttl_seconds: Lock lifetime; expired locks are cleaned as stale.
 
     Returns:

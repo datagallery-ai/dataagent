@@ -191,7 +191,7 @@ def test_agent_service_persists_finalized_envelope_metadata(tmp_path) -> None:
     from dataagent.core.jobs.file_store import FileJobStore
     from dataagent.core.jobs.service import JobService
 
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
     job_service = JobService(FileJobStore(parent_ws))
     runtime = SimpleNamespace(
         workspace_dir=parent_ws,

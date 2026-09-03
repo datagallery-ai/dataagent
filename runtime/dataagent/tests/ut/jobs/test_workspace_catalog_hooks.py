@@ -63,7 +63,7 @@ def _build_agent_service(tmp_path: Path, *, runner_factory) -> tuple[AgentServic
         yaml.safe_dump({"AGENT_CONFIG": {"id": "arith", "name": "arith", "description": "math"}}),
         encoding="utf-8",
     )
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
 
     class _Adapter:
         def run(self, **kwargs: Any) -> JobResult:

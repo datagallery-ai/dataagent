@@ -14,14 +14,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-import tempfile
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from dataagent.core.context.context import ContextFactory
 from dataagent.core.errors import DataAgentError
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.utils.log import logger
@@ -131,6 +130,12 @@ class DataAgentService:
         try:
             if self._agent is None:
                 self.initialize()
+            if self._agent is None:
+                raise DataAgentError.from_exception(
+                    RuntimeError("DataAgent service is not initialized."),
+                    component="rest",
+                )
+            agent = self._agent
 
             with self._request_scope() as request:
                 if request:
@@ -138,13 +143,13 @@ class DataAgentService:
                     workspace = request.get("workspace")
                     if workspace is not None:
                         initial_state["workspace"] = workspace
-                    stream = self._agent.astream(
+                    stream = agent.astream(
                         initial_state=initial_state,
                         session_id=request.get("session_id"),
                         stream_mode=["updates", "custom", "values"],
                     )
                 else:
-                    stream = self._agent.astream(
+                    stream = agent.astream(
                         initial_state={"user_query": query}, stream_mode=["updates", "custom", "values"]
                     )
                 async for item in stream:
@@ -253,8 +258,21 @@ class DataAgentService:
         def hash_sql(sql: str) -> str:
             return hashlib.sha256(re.sub(r"\s+", " ", (sql or "").strip()).encode()).hexdigest()
 
-        sql = str(state.get("sql") or "")
-        rows_preview = state.get("rows_preview")
+        structured = state.get("structured_response")
+        model_dump = getattr(structured, "model_dump", None)
+        result: Mapping[str, Any]
+        if is_dataclass(structured) and not isinstance(structured, type):
+            result = asdict(structured)
+        elif callable(model_dump):
+            dumped = model_dump()
+            result = dumped if isinstance(dumped, Mapping) else {}
+        elif isinstance(structured, Mapping):
+            result = dict(structured)
+        else:
+            result = state
+
+        sql = str(result.get("sql") or "")
+        rows_preview = result.get("rows_preview")
         message = "SQL generated."
         if rows_preview:
             message = "SQL generated and executed with preview rows."
@@ -276,10 +294,13 @@ class DataAgentService:
             "message": message,
             "candidates": candidates,
             "sql": sql,
-            "confidence": state.get("confidence"),
-            "columns": state.get("columns"),
+            "confidence": result.get("confidence"),
+            "columns": result.get("columns"),
             "rows_preview": rows_preview,
             "session_id": state.get("session_id"),
+            "sql_path": result.get("sql_path"),
+            "csv_path": result.get("csv_path"),
+            "row_count": result.get("row_count"),
         }
         if sql:
             payload["sql_fingerprint"] = hash_sql(sql)
@@ -317,38 +338,8 @@ class DataAgentService:
 
     @contextmanager
     def _request_scope(self) -> Iterator[dict[str, Any]]:
-        """Create isolated resources for one stateless REST request and release them on exit."""
+        """Assign a distinct native session to each standalone NL2SQL REST request."""
         if self._agent_type() != "nl2sql":
             yield {}
             return
-
-        agent_config = getattr(self._agent, "config", {})
-        if hasattr(agent_config, "get_all") and callable(agent_config.get_all):
-            config = agent_config.get_all() or {}
-        elif isinstance(agent_config, Mapping):
-            config = agent_config
-        else:
-            config = {}
-
-        user_id = str(config.get("USER_ID", "anonymous") or "anonymous")
-        run_id = int(config.get("RUN_ID", 0) or 0)
-        sub_id = int(config.get("SUB_ID", 0) or 0)
-        session_id = str(uuid.uuid4())
-        workspace_config = config.get("WORKSPACE", {})
-        persistent_workspace = workspace_config.get("path") if isinstance(workspace_config, Mapping) else None
-        temporary_workspace = None
-        request: dict[str, Any] = {"session_id": session_id}
-        if not persistent_workspace:
-            temporary_workspace = tempfile.TemporaryDirectory(prefix="dataagent-rest-")
-            request["workspace"] = Path(temporary_workspace.name)
-
-        try:
-            yield request
-        finally:
-            released = ContextFactory.release_context(
-                user_id=user_id, session_id=session_id, run_id=run_id, sub_id=sub_id
-            )
-            if released:
-                logger.debug("Released {} REST Context instance(s) for session {}", released, session_id)
-            if temporary_workspace is not None:
-                temporary_workspace.cleanup()
+        yield {"session_id": str(uuid.uuid4())}

@@ -259,7 +259,7 @@ async def run_eval(
                 final_state = last[1]
 
         if final_state is None:
-            raw = await agent._chat_agent.chat(query)
+            raw = await agent.chat(query)
             final_state = dict(raw) if isinstance(raw, dict) else {}
             if not trajectory:
                 result_payload["runtime"]["e2e_ms"] = (time.perf_counter() - t0) * 1000.0

@@ -1,0 +1,21 @@
+AGENT_CONFIG:
+  name: "DataFoundry"
+  version: "1.0"
+  description: "DataFoundry data agent"
+  backend: "langgraph"
+  type: "react"
+  enable_human_feedback: true
+  max_iter: null
+
+MODEL:
+  chat_model:
+    provider: "$env{LLM_PROVIDER}"
+    model_type: "chat"
+    params:
+      model: "$env{LLM_MODEL}"
+      base_url: "$env{LLM_BASE_URL}"
+      api_key: "$env{LLM_API_KEY}"
+
+SCENARIO:
+  chat:
+    human_feedback_conditions: []

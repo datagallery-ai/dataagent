@@ -14,7 +14,7 @@ def test_ready_returns_control_plane_status(client) -> None:
     assert body["success"] is True
     assert body["data"]["status"] == "ready"
     assert body["data"]["control_plane"] == "ready"
-    assert body["data"]["runtime"]["provider"] == "deepagents"
+    assert body["data"]["runtime"]["provider"] == "dataagent"
 
 
 def test_unknown_route_uses_error_envelope(client) -> None:

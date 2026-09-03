@@ -1,98 +1,96 @@
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
+"""Shared native node base for the NL2SQL LangGraph."""
+
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
-from dataagent.core.cbb.base_node import BaseNode
+from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.core.errors import DataAgentError
-from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, TZ_CN
 from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.log import logger
 
-_TYPE_LABELS = {
-    SystemMessage: "SYSTEM",
-    HumanMessage: "HUMAN",
-    AIMessage: "AI",
-    ToolMessage: "TOOL",
-}
 
+class BaseNL2SQLNode:
+    """Run an NL2SQL stage with an injected LangChain chat model and effective config."""
 
-class BaseNL2SQLNode(BaseNode):
-    def __init__(self, name: str, config_manager: Any | None = None, **kwargs: Any) -> None:
-        """Initialize NL2SQL node with optional per-Agent ConfigManager.
-
-        Args:
-            name: Node name for prompts and routing.
-            config_manager: Per-Agent configuration; required for DATABASE/SEMANTIC_LAYER reads.
-            **kwargs: Remaining node-specific options (passed to :class:`BaseNode`).
-        """
-        super().__init__(name=name, **kwargs)
-        self._config_manager = config_manager
+    def __init__(
+        self,
+        name: str,
+        model: BaseChatModel | None = None,
+        agent_config: Mapping[str, Any] | None = None,
+        config_manager: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.name = name
+        self._model = model
+        self.agent_config = agent_config or {}
+        self._compat_config_manager = config_manager
+        self.config = kwargs
         self._nl2sql_context_dump_dir: Path | None = None
         self._context_dump_seq: list[int] = [0]
-        self._context_dump_enabled: bool = get_env_bool("DATAAGENT_CONTEXT_DUMP")
+        self._context_dump_enabled = get_env_bool("DATAAGENT_CONTEXT_DUMP")
 
     @property
-    def db(self):
-        """Return the configured DATABASE.db_id."""
-        return self._get_agent_config("DATABASE.db_id", "")
+    def db(self) -> str:
+        """Return the configured ``DATABASE.db_id``."""
+        return str(self._get_agent_config("DATABASE.db_id", "") or "")
 
     @property
-    def dialect(self):
-        """Return the configured DATABASE.dialect (default sqlite)."""
-        return self._get_agent_config("DATABASE.dialect", "sqlite")
+    def dialect(self) -> str:
+        """Return the configured ``DATABASE.dialect``."""
+        return str(self._get_agent_config("DATABASE.dialect", "sqlite") or "sqlite")
 
     @property
-    def engine(self):
-        """Return DATABASE.engine, falling back to dialect."""
-        return self._get_agent_config("DATABASE.engine") or self.dialect
+    def engine(self) -> str:
+        """Return ``DATABASE.engine``, falling back to the SQL dialect."""
+        return str(self._get_agent_config("DATABASE.engine") or self.dialect)
+
+    @property
+    def model(self) -> BaseChatModel:
+        """Return the injected model or fail when a model-backed operation is attempted."""
+        if self._model is None:
+            raise RuntimeError(f"NL2SQL node {self.name!r} requires an injected BaseChatModel for model calls.")
+        return self._model
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Expose ConfigManager-compatible dotted lookup to dependent clients."""
+        return self._get_agent_config(key, default)
 
     def set_context_dump_dir(self, dump_dir: Any | None) -> None:
-        """Set or clear this node's NL2SQL context-dump directory."""
-        if dump_dir is not None:
-            self._nl2sql_context_dump_dir = Path(dump_dir)
-        else:
-            self._nl2sql_context_dump_dir = None
+        """Set or clear this node's optional prompt-dump directory."""
+        self._nl2sql_context_dump_dir = Path(dump_dir) if dump_dir is not None else None
 
-    async def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
-        """Render the node prompts and asynchronously invoke the configured LLM."""
-        llm = llm_manager.get_default_llm()
+    async def aprocess(self, state: NL2SQLState, runtime: Any = None) -> dict[str, Any]:
+        """Execute the native asynchronous node and omit reducer-owned public fields from its delta."""
+        result = await self._aprocess(state, runtime)
+        return {key: value for key, value in result.items() if key not in {"messages", "files", "structured_response"}}
+
+    async def execute_with_llm(self, context: dict[str, Any], action: str = "") -> str:
+        """Render this node's prompts and invoke the injected LangChain chat model."""
         system_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}system"
         ).content
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}user"
         ).apply_prompt_template(**context)
-        prompts = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        response = await llm.ainvoke(prompts)
+        response = await self.model.ainvoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
         content = response.content
-        self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
-        return content
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)
+        self._dump_llm_context(system_prompt, user_prompt, text, self.name, action)
+        return text
 
-    async def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
-        """Execute the LLM with the given context and action, returning parsed JSON output."""
+    async def execute_with_llm_json(self, context: dict[str, Any], action: str = "") -> Any:
+        """Invoke the model and parse the JSON content required by the NL2SQL algorithm."""
         for attempt in range(3):
             try:
                 return json.loads(json_parser(await self.execute_with_llm(context, action)))
@@ -107,41 +105,46 @@ class BaseNL2SQLNode(BaseNode):
                     ) from exc
         return None
 
-    def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
-        """Persist the (system, user, AI) prompt triple to the node's context-dump file."""
-        if not self._context_dump_enabled:
-            return
-        if self._nl2sql_context_dump_dir is None:
+    async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
+        raise NotImplementedError
+
+    def _dump_llm_context(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        result: str,
+        node_name: str,
+        action: str,
+    ) -> None:
+        if not self._context_dump_enabled or self._nl2sql_context_dump_dir is None:
             return
         try:
             self._context_dump_seq[0] += 1
-            seq = self._context_dump_seq[0]
+            sequence = self._context_dump_seq[0]
             label = f"{node_name}_{action}" if action else node_name
-            dump_file = self._nl2sql_context_dump_dir / f"{seq:02d}_round_{label}.txt"
+            dump_file = self._nl2sql_context_dump_dir / f"{sequence:02d}_round_{label}.txt"
             separator = "=" * 80
-            ts = datetime.now(tz=TZ_CN).strftime("%Y-%m-%d %H:%M:%S")
-            with dump_file.open("w", encoding="utf-8") as f:
-                f.write(f"{separator}\n")
-                f.write(f"  NL2SQL Prompt Dump  |  {ts}  |  node: {label}\n")
-                f.write(f"{separator}\n\n")
-                f.write("--- [0] SYSTEM ---\n")
-                f.write(f"{system_prompt}\n\n")
-                f.write("--- [1] HUMAN ---\n")
-                f.write(f"{user_prompt}\n\n")
-                f.write("--- [2] AI ---\n")
-                f.write(f"{result}\n\n")
-                f.write(f"{separator}\n")
-                f.write("  END OF DUMP\n")
-                f.write(f"{separator}\n")
-            logger.info(f"NL2SQL context dump saved: {seq:02d}_round_{label}.txt")
+            timestamp = datetime.now(tz=TZ_CN).strftime("%Y-%m-%d %H:%M:%S")
+            dump_file.parent.mkdir(parents=True, exist_ok=True)
+            dump_file.write_text(
+                f"{separator}\n  NL2SQL Prompt Dump  |  {timestamp}  |  node: {label}\n{separator}\n\n"
+                f"--- [0] SYSTEM ---\n{system_prompt}\n\n--- [1] HUMAN ---\n{user_prompt}\n\n"
+                f"--- [2] AI ---\n{result}\n\n{separator}\n  END OF DUMP\n{separator}\n",
+                encoding="utf-8",
+            )
+            logger.info("NL2SQL context dump saved: {:02d}_round_{}.txt", sequence, label)
         except Exception as exc:
             self._context_dump_seq[0] -= 1
-            logger.warning(f"Failed to dump NL2SQL context: {exc}")
+            logger.warning("Failed to dump NL2SQL context: {}", exc)
 
     def _get_agent_config(self, key: str, default: Any = None) -> Any:
-        """Read configuration from the bound per-Agent ConfigManager."""
-        if self._config_manager is None:
-            raise RuntimeError(
-                f"NL2SQL node {self.name!r} has no config_manager; pass config_manager when constructing the node."
-            )
-        return self._config_manager.get(key, default)
+        value: Any = self.agent_config
+        missing = object()
+        for segment in key.split("."):
+            if not isinstance(value, Mapping):
+                return default
+            value = value.get(segment, missing)
+            if value is missing:
+                manager_get = getattr(self._compat_config_manager, "get", None)
+                return manager_get(key, default) if callable(manager_get) else default
+        return value

@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Workspace catalog frontmatter for Flex subagent directories."""
+"""Workspace catalog frontmatter for retained Job subagent directories."""
 
 from dataagent.core.workspace.catalog import (
     append_job,

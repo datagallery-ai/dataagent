@@ -44,8 +44,16 @@ def test_from_config_keeps_generator_decoupled_from_sql_security() -> None:
             "generator": {},
             "validator": {"sql_security_enabled": True},
             "reflector": {},
+            "executor": {},
+            "selector": {},
         },
         "DATABASE": {"dialect": "postgres"},
+        "MODEL": {
+            "chat_model": {
+                "provider": "deepseek",
+                "params": {"model": "deepseek-v4-flash"},
+            }
+        },
     }
 
     agent = NL2SQLAgent.from_config(config, config_manager=_config_manager(config))

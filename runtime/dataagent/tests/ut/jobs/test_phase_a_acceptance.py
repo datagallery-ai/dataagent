@@ -35,7 +35,6 @@ from dataagent.core.agents.subagent_subprocess_runner import (
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
-from dataagent.core.managers.action_manager.manager import ToolManager
 
 
 def _wait_until_terminal(service: JobService, job_id: str, *, timeout_sec: float = 5.0) -> str:
@@ -69,7 +68,7 @@ def _build_agent_service(tmp_path: Path, *, runner_factory) -> tuple[AgentServic
         yaml.safe_dump({"AGENT_CONFIG": {"id": "arith", "name": "arith", "description": "math"}}),
         encoding="utf-8",
     )
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
 
     class _Adapter:
         def run(self, **kwargs: Any) -> JobResult:
@@ -77,21 +76,6 @@ def _build_agent_service(tmp_path: Path, *, runner_factory) -> tuple[AgentServic
 
     service = AgentService(registry=registry, job_service=job_service, runtime=runtime, adapter=_Adapter())
     return service, runtime
-
-
-def test_ac03_empty_subagent_configs_skips_job_tools():
-    """AC-03: empty SUBAGENT_CONFIGS must not register lifecycle tools."""
-    tm = ToolManager()
-    tm._register_implicit_job_tools({"SUBAGENT_CONFIGS": [], "RESOURCES": [{"id": "gpu"}]})
-    for name in (
-        "submit_subagent",
-        "poll_subagent",
-        "collect_subagent",
-        "cancel_subagent",
-        "search_workspaces",
-        "inspect_workspace",
-    ):
-        assert not tm.exists(name)
 
 
 def test_ac05_submit_returns_job_metadata_and_jobs_dir(tmp_path):
@@ -452,7 +436,7 @@ def test_ac18_ac19_agent_id_resolution(tmp_path):
     )
     no_id = tmp_path / "from_stem.yaml"
     no_id.write_text(yaml.safe_dump({"AGENT_CONFIG": {"name": "n", "description": "d"}}), encoding="utf-8")
-    registry = AgentRegistry.from_subagent_configs([{"path": str(with_id)}, {"path": str(no_id)}])
+    registry = AgentRegistry.from_subagents([{"path": str(with_id)}, {"path": str(no_id)}])
     assert registry.resolve("custom_id").spec is not None
     assert registry.resolve("from_stem").spec is not None
     assert registry.resolve("from_stem").spec.id == "from_stem"

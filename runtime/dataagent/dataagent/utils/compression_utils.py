@@ -28,7 +28,7 @@ from langchain_core.messages.utils import count_tokens_approximately
 from loguru import logger
 
 from dataagent.core.context.context import Context
-from dataagent.core.context.flex_context_formatting import format_one_message
+from dataagent.core.context.context_formatting import format_one_message
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.utils.constants import (

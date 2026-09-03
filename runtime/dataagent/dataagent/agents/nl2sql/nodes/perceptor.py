@@ -58,7 +58,7 @@ class PerceptorNode(BaseNL2SQLNode):
         """Lazily build the semantic-layer client from agent config."""
         if self._semantic_client is None:
             try:
-                self._semantic_client = SemanticServiceClient.from_config(self._config_manager)
+                self._semantic_client = SemanticServiceClient.from_config(self)
             except DataAgentError:
                 raise
             except (AttributeError, ValueError) as exc:
@@ -175,6 +175,8 @@ class PerceptorNode(BaseNL2SQLNode):
             ("few_shot_examples", self.user_few_shot_examples),
         ]:
             state[attr] = await asyncio.to_thread(self._load_prompt, key)
+        if state.get("schema_str", "").strip() and not state.get("schema"):
+            state["schema"] = self._schema_from_ddl(state.get("schema_str", ""))
         if not state.get("schema_str", "").strip():
             logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
             if self.schema_mode == _SCHEMA_MODE_LINKING:
@@ -195,6 +197,48 @@ class PerceptorNode(BaseNL2SQLNode):
         logger.info(message)
         state["stream_message"] = message
         return state
+
+    def _schema_from_ddl(self, ddl: str) -> dict[str, Any]:
+        """Best-effort conversion of configured DDL into the semantic schema shape."""
+        try:
+            import sqlglot
+            from sqlglot import exp
+            from sqlglot.errors import ErrorLevel
+
+            statements = sqlglot.parse(ddl, read=self.dialect, error_level=ErrorLevel.IGNORE)
+        except Exception as exc:
+            logger.warning("NL2SQL could not parse user_schema as DDL: {}", exc)
+            return {}
+
+        schema: dict[str, Any] = {}
+        for statement in statements:
+            if not isinstance(statement, exp.Create):
+                continue
+            if str(statement.args.get("kind", "") or "").strip().upper() != "TABLE":
+                continue
+            definition = statement.this
+            if not isinstance(definition, exp.Schema) or not isinstance(definition.this, exp.Table):
+                continue
+            table = definition.this
+            table_name = ".".join(str(part) for part in (table.catalog, table.db, table.name) if str(part))
+            if not table_name:
+                continue
+            columns: dict[str, Any] = {}
+            for column in definition.expressions:
+                if not isinstance(column, exp.ColumnDef) or not column.name:
+                    continue
+                kind = column.args.get("kind")
+                columns.update(
+                    {
+                        str(column.name): {
+                            "description": "",
+                            "value_type": kind.sql(dialect=self.dialect) if isinstance(kind, exp.DataType) else "",
+                            "example_values": "",
+                        }
+                    }
+                )
+            schema.update({table_name: {"description": "", "columns": columns}})
+        return schema
 
     def _load_prompt(self, name: str | None) -> str:
         """Load a user-supplied prompt file by name.

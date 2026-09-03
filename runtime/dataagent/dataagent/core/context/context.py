@@ -28,7 +28,7 @@ from dataagent.core.context.context_state import ContextState
 from dataagent.core.context.todolist_manager import TodoListManager
 from dataagent.core.context.trajectory_editor import TrajectoryEditor
 from dataagent.core.context.trajectory_navigator import TrajectoryNavigator
-from dataagent.utils.runtime_paths import resolve_flex_context_dir
+from dataagent.utils.runtime_paths import resolve_context_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +49,7 @@ def build_context_init_options(
     """
     Build narrow Context init options from a per-Agent ConfigManager.
 
-    Call from Runtime / FlexAgent boundaries only; Context does not read YAML config itself.
+    Call from runtime boundaries only; Context does not read YAML config itself.
 
     Args:
         config_manager: Per-Agent :class:`~dataagent.config.config_manager.ConfigManager`.
@@ -288,7 +288,7 @@ class Context:
         Load metadata JSON for a given run (if exists).
         """
         meta_path = (
-            resolve_flex_context_dir(
+            resolve_context_dir(
                 user_id=user_id,
                 session_id=session_id,
                 workspace=workspace,
@@ -529,7 +529,7 @@ class Context:
 
         if output_html is None:
             output_path = (
-                resolve_flex_context_dir(
+                resolve_context_dir(
                     user_id=self.state.user_id,
                     session_id=self.state.session_id,
                     workspace=self.state.workspace,

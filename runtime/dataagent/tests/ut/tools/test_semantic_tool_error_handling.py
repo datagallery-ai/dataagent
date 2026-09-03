@@ -19,7 +19,6 @@ import pytest
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.semantic_tool import basic_retrieval, get_join_relations
 from dataagent.core.errors import DataAgentError
-from dataagent.core.managers.action_manager.manager import ToolManager
 
 
 def test_list_semantic_layer_tables_propagates_dataagent_error(monkeypatch) -> None:
@@ -65,38 +64,6 @@ def test_get_semantic_layer_table_schema_propagates_dataagent_error(monkeypatch)
     with pytest.raises(DataAgentError) as exc_info:
         basic_retrieval.get_semantic_layer_table_schema("orders", _tool_context=context)
 
-    assert "retrieval/tables/orders/schema" in exc_info.value.fact
-
-
-@pytest.mark.asyncio
-async def test_tool_manager_raises_dataagent_error_from_semantic_failure(monkeypatch) -> None:
-    class _FailingClient:
-        def get_retrieval_table_schema(self, table: str) -> dict:
-            raise DataAgentError(
-                source="tool",
-                component="semantic-service",
-                fact=f"语义服务 HTTP 500：GET retrieval/tables/{table}/schema",
-            )
-
-    monkeypatch.setattr(
-        basic_retrieval.SemanticServiceClient,
-        "from_config",
-        classmethod(lambda cls, config_manager: _FailingClient()),
-    )
-
-    tool_manager = ToolManager(config_manager=SimpleNamespace())
-    tool_manager.register_local_tool(
-        basic_retrieval.get_semantic_layer_table_schema,
-        name="get_semantic_layer_table_schema",
-    )
-
-    try:
-        with pytest.raises(DataAgentError) as exc_info:
-            await tool_manager.acall("get_semantic_layer_table_schema", table="orders")
-    finally:
-        await tool_manager.cleanup()
-
-    assert exc_info.value.source == "tool"
     assert "retrieval/tables/orders/schema" in exc_info.value.fact
 
 

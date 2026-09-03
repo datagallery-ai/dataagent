@@ -18,9 +18,7 @@
   :meth:`PromptTemplate.from_package_relative`
 - :data:`PROMPT_MD_PREFIX` —— 内置 ``*.md`` 相对 ``dataagent`` 包根的路径前缀
 
-yaml ``prompt_template`` 配置解析见 :func:`dataagent.config.config_manager.build_prompt`；
-planner 业务相关的 skill 选择 / planner system+user 组装见
-``dataagent.core.flex.utils.planner_prompt_builder``。
+旧 ``prompt_template``/Planner 模板装配已移除；原生 Agent 提示词由 Deep Agents 配置编译器处理。
 """
 
 from dataagent.core.managers.prompt_manager.template import PROMPT_MD_PREFIX, PromptTemplate

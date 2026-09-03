@@ -27,15 +27,14 @@ from dataagent.core.agents.subagent_session import (
     prepare_subagent_workspace,
     resolve_subagent_workspace_session,
 )
-from dataagent.core.flex.hooks.history_writer import save_messages
+from dataagent.core.context.message_history import write_messages_file
 from dataagent.core.jobs.file_store import FileJobStore
 from dataagent.core.jobs.models import JobResult
 from dataagent.core.jobs.service import JobService
-from dataagent.core.managers.action_manager.manager import ToolManager
 from dataagent.utils.runtime_paths import (
-    FLEX_PERSISTENCE_ROOT_ENV,
+    PERSISTENCE_ROOT_ENV,
     is_job_subagent_workspace,
-    resolve_flex_storage_root,
+    resolve_agent_storage_root,
 )
 
 
@@ -143,7 +142,7 @@ def test_agent_service_submit_reuses_workspace_after_prior_job(tmp_path):
         yaml.safe_dump({"AGENT_CONFIG": {"id": "demo", "name": "demo", "description": "d"}}),
         encoding="utf-8",
     )
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
 
     class _Adapter:
         def run(self, **kwargs: Any) -> JobResult:
@@ -211,7 +210,7 @@ def test_agent_service_submit_rejects_busy_reused_workspace(tmp_path):
         yaml.safe_dump({"AGENT_CONFIG": {"id": "demo", "name": "demo", "description": "d"}}),
         encoding="utf-8",
     )
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
 
     class _Adapter:
         def run(self, **kwargs: Any) -> JobResult:
@@ -237,12 +236,12 @@ def test_flex_storage_root_uses_job_subagent_workspace_env(tmp_path, monkeypatch
     """Job subprocess persistence root redirects ``.memory`` under ``subagents/{id}/``."""
     parent = tmp_path / "parent_session"
     session = prepare_subagent_workspace(parent_workspace=parent)
-    monkeypatch.setenv(FLEX_PERSISTENCE_ROOT_ENV, str(session.workspace_dir))
-    storage_root = resolve_flex_storage_root(user_id="anonymous", session_id="ignored")
+    monkeypatch.setenv(PERSISTENCE_ROOT_ENV, str(session.workspace_dir))
+    storage_root = resolve_agent_storage_root(user_id="anonymous", session_id="ignored")
     assert storage_root == session.workspace_dir.resolve()
 
-    save_messages("anonymous", session.subagent_session_id, [HumanMessage(content="hi")])
     messages_path = session.workspace_dir / ".memory" / "messages.json"
+    write_messages_file(messages_path, [HumanMessage(content="hi")])
     assert messages_path.is_file()
     assert not (tmp_path / "anonymous" / "ignored" / ".memory" / "messages.json").exists()
 
@@ -319,39 +318,14 @@ def test_map_cancel_tool_result_converts_not_found_to_error():
     assert passthrough["status"] == "cancelled"
 
 
-@pytest.mark.asyncio
-async def test_implicit_job_tools_registered_from_subagent_configs(tmp_path):
-    """``SUBAGENT_CONFIGS`` registers job lifecycle and workspace catalog tools."""
-    subagent_yaml = tmp_path / "worker.yaml"
-    subagent_yaml.write_text(
-        yaml.safe_dump({"AGENT_CONFIG": {"name": "arith", "description": "does math"}}),
-        encoding="utf-8",
-    )
-    tm = ToolManager()
-    tm._register_implicit_job_tools({"SUBAGENT_CONFIGS": [{"path": str(subagent_yaml)}]})
-    for name in (
-        "submit_subagent",
-        "poll_subagent",
-        "collect_subagent",
-        "cancel_subagent",
-        "search_workspaces",
-        "inspect_workspace",
-    ):
-        assert tm.exists(name)
-    assert not tm.exists("sub_agent_tool")
-    desc = tm.get("submit_subagent").description
-    assert "worker" in desc or "worker.yaml" in desc or "arith" in desc
-    await tm.cleanup()
-
-
-def test_agent_registry_from_subagent_configs(tmp_path):
+def test_agent_registry_from_subagents(tmp_path):
     """Registry maps ``agent_id`` to config path."""
     subagent_yaml = tmp_path / "arithmetic_ref.yaml"
     subagent_yaml.write_text(
         yaml.safe_dump({"AGENT_CONFIG": {"name": "arith", "description": "does math"}}),
         encoding="utf-8",
     )
-    registry = AgentRegistry.from_subagent_configs([{"path": str(subagent_yaml)}])
+    registry = AgentRegistry.from_subagents([{"path": str(subagent_yaml)}])
     resolution = registry.resolve("arithmetic_ref")
     assert resolution.spec is not None
     assert resolution.spec.id == "arithmetic_ref"

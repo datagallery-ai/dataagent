@@ -409,19 +409,7 @@ class LangChainChatModelAdapter:
 
     @staticmethod
     def _get_otel_recorder() -> Any:
-        """Get the OTel event recorder from the current runtime context, if available.
-
-        Returns the ``OtelEventRecorder`` instance set on the current Runtime,
-        or ``None`` when OTel tracing is not enabled.
-        """
-        try:
-            from dataagent.core.framework_adapters.runtime.context import get_current_runtime
-
-            runtime = get_current_runtime()
-            if runtime is not None:
-                return getattr(runtime, "otel_recorder", None)
-        except Exception:
-            logger.debug("Failed to get OTel recorder from runtime context.")
+        """Return no legacy workflow-scoped OTel recorder."""
         return None
 
     @classmethod

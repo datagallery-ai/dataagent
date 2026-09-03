@@ -18,7 +18,6 @@ from dataagent.core.suite.merge import (
     merge_layers,
     parse_override_keys,
 )
-from dataagent.core.suite.validation import validate_strict_duplicates
 
 
 def test_merge_layers_list_append_high_priority_first() -> None:
@@ -137,24 +136,6 @@ def test_merge_layers_priority_override_suite_order() -> None:
     result = merge_layers([default, low_suite, high_suite])
     specs = result["HOOKS"]["nodes"]["planner"]["pre"]
     assert specs == ["high_hook", "low_hook", "pruner"]
-
-
-def test_validate_strict_duplicates_tools() -> None:
-    config = {
-        "TOOLS": {
-            "local_functions": [
-                {"function": "a"},
-                {"function": "a"},
-            ]
-        }
-    }
-    try:
-        validate_strict_duplicates(config)
-        raised = False
-    except ValueError as exc:
-        raised = True
-        assert "Duplicate" in str(exc)
-    assert raised
 
 
 def test_apply_override_keys_replaces_actor_loop() -> None:
