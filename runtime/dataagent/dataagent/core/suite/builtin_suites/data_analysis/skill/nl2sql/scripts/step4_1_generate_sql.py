@@ -357,7 +357,40 @@ def _hint_game_key_candidates(output_meta: dict[str, Any]) -> dict[str, list[str
     return candidates
 
 
+def _first_nonempty_text(*values: Any) -> str:
+    """Return the first non-empty stripped string among ``values``."""
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _schema_role_value(schema_resolution: dict[str, Any], *names: str) -> str:
+    """Resolve a named schema role from ``roles`` first, then top-level keys.
+
+    Feature Engineering may emit ``user_table`` / ``user_id`` at the document
+    root instead of nesting them under ``roles``. Both shapes are accepted;
+    ``roles`` wins when both are present.
+    """
+    roles = schema_resolution.get("roles")
+    role_map = roles if isinstance(roles, dict) else {}
+    from_roles = _first_nonempty_text(*(role_map.get(name) for name in names))
+    if from_roles:
+        return from_roles
+    from_top = _first_nonempty_text(*(schema_resolution.get(name) for name in names))
+    if from_top:
+        INPUT_NORMALIZATION_WARNINGS.append(
+            "schema_resolution resolved "
+            + "/".join(names)
+            + " from top-level keys because roles did not provide them"
+        )
+        return from_top
+    return ""
+
+
 def load_runtime_contract() -> RuntimeContract:
+    """Load databases, user keys, and table roles from step1 plus schema_resolution."""
     output_meta = _read_json("step1_output_meta.json")
     sample_stats = _read_json("step1_sample_stats.json")
     schema_resolution = _read_json("schema_resolution.json")
@@ -380,13 +413,14 @@ def load_runtime_contract() -> RuntimeContract:
     if not sampling_database:
         raise SystemExit("step1_sample_stats.json must provide output_database")
     target_game = str(sample_stats.get("target_game") or "").strip()
-    roles = schema_resolution.get("roles", {})
-    if not isinstance(roles, dict):
-        raise SystemExit("schema_resolution.roles must be an object")
-    user_table = str(roles.get("<user_table>") or roles.get("user_table") or "").strip()
-    user_id = str(roles.get("<user_id>") or roles.get("user_id") or "").strip()
+    user_table = _schema_role_value(schema_resolution, "<user_table>", "user_table")
+    user_id = _schema_role_value(schema_resolution, "<user_id>", "user_id")
     if not user_table or not user_id:
-        raise SystemExit("schema_resolution must resolve <user_table> and <user_id>")
+        available = ", ".join(sorted(str(key) for key in schema_resolution.keys()))
+        raise SystemExit(
+            "schema_resolution must resolve <user_table> and <user_id> "
+            f"from roles or top-level keys; available keys: {available}"
+        )
 
     table_columns = _table_schema_map(output_meta)
     if user_table not in table_columns:
@@ -454,7 +488,7 @@ def load_runtime_contract() -> RuntimeContract:
         )
     )
 
-    role_game_key = str(roles.get("<game_id>") or roles.get("game_id") or "").strip()
+    role_game_key = _schema_role_value(schema_resolution, "<game_id>", "game_id")
     hint_candidates = _hint_game_key_candidates(output_meta)
     game_keys: dict[str, str] = {}
     for table in sorted(game_dimension_tables):
@@ -1445,6 +1479,22 @@ def build_tree_candidate(path: Path) -> CandidateSQL:
     )
 
 
+def _scorecard_score_expression(branches: list[str]) -> str:
+    """Combine per-rule ``if(...)`` branches into one ClickHouse score expression.
+
+    Joining branches with left-associative ``+`` makes ClickHouse nest binary
+    ``Plus`` nodes to depth ``len(branches) - 1``. That exceeds the default
+    AST depth limit of 1000 once a scorecard has more than about 1000 rules.
+    ``arraySum`` keeps depth constant regardless of rule count.
+    """
+    if not branches:
+        return "CAST(0 AS Float64)"
+    if len(branches) == 1:
+        return branches[0]
+    inner = ",\n      ".join(branches)
+    return f"arraySum([\n      {inner}\n    ])"
+
+
 def parse_scorecard_condition(feature: str, condition: str, alias: str = "features") -> str:
     reference = f"{alias}.{_quote_identifier(feature)}"
     text = str(condition).strip()
@@ -1467,6 +1517,7 @@ def parse_scorecard_condition(feature: str, condition: str, alias: str = "featur
 
 
 def build_scorecard_candidate(path: Path) -> CandidateSQL:
+    """Parse a scorecard rule CSV into a deployable ClickHouse score expression."""
     frame = pd.read_csv(path, encoding="utf-8-sig")
     required = {"feature", "condition", "weighted_score"}
     if not required.issubset(frame.columns):
@@ -1485,7 +1536,7 @@ def build_scorecard_candidate(path: Path) -> CandidateSQL:
         features.add(feature)
         branches.append(f"if({condition}, toFloat64({score}), toFloat64(0))")
     coverage = len(branches) / len(frame) if len(frame) else 0.0
-    expression = "\n      + ".join(branches) if branches else "CAST(0 AS Float64)"
+    expression = _scorecard_score_expression(branches)
     return CandidateSQL(
         name="scorecard",
         expression=expression,
@@ -2496,11 +2547,63 @@ def _risk_flags(name: str, metrics: dict[str, Any], rule_count: int) -> list[str
     return flags
 
 
+_MAX_DIAGNOSTIC_ERRORS = 8
+_MAX_DIAGNOSTIC_ERROR_CHARS = 300
+
+
+def _truncate_diagnostic_error(text: str) -> str:
+    """Keep one diagnostic line short enough for an LLM to read in a SystemExit."""
+    cleaned = str(text or "").strip()
+    if len(cleaned) <= _MAX_DIAGNOSTIC_ERROR_CHARS:
+        return cleaned
+    return cleaned[: _MAX_DIAGNOSTIC_ERROR_CHARS - 3] + "..."
+
+
+def _format_diagnostic_errors(errors: list[str] | None) -> str:
+    """Join parse or deployment errors into a compact SystemExit fragment."""
+    items = [_truncate_diagnostic_error(item) for item in (errors or [])]
+    items = [item for item in items if item]
+    if not items:
+        return "(none)"
+    shown = items[:_MAX_DIAGNOSTIC_ERRORS]
+    extra = len(items) - len(shown)
+    body = "; ".join(shown)
+    if extra > 0:
+        return f"{body}; ... and {extra} more"
+    return body
+
+
+def _format_undeployable_candidate(candidate: CandidateSQL) -> str:
+    """Summarize why one white-box candidate cannot be deployed."""
+    return (
+        f"{candidate.name}: renderable={candidate.renderable}"
+        f", rule_count={candidate.rule_count}"
+        f", parse_coverage={candidate.parse_coverage}"
+        f", parse_errors={_format_diagnostic_errors(candidate.render_errors)}"
+        f", deployment_errors={_format_diagnostic_errors(candidate.deployment_errors)}"
+    )
+
+
+def _undeployable_whitebox_exit_message(tree: CandidateSQL, scorecard: CandidateSQL) -> str:
+    """Build a SystemExit payload that tells the LLM which candidate failed and why."""
+    return (
+        "Neither white-box candidate is deployable; "
+        "this is an invalid technical input or lineage contract, not a model-quality gate. "
+        "Do not rewrite rule scores, labels, or predictions. "
+        "Inspect schema_resolution, rule CSV conditions, tree preprocessing, "
+        "and feature lineage using the diagnostics below. "
+        + _format_undeployable_candidate(tree)
+        + " ; "
+        + _format_undeployable_candidate(scorecard)
+    )
+
+
 def choose_strategy(
     aligned: pd.DataFrame,
     tree: CandidateSQL,
     scorecard: CandidateSQL,
 ) -> tuple[dict[str, Any], dict[str, float]]:
+    """Compare deployable tree and scorecard candidates and pick one strategy."""
     labels = aligned["label"].to_numpy(dtype=int)
     teacher_scores = aligned["teacher_score"].to_numpy(dtype=float)
     tree_scores = aligned["tree_score"].to_numpy(dtype=float)
@@ -2522,10 +2625,7 @@ def choose_strategy(
     card_metrics["risk_flags"] = _risk_flags("scorecard", card_metrics, scorecard.rule_count)
 
     if not tree.renderable and not scorecard.renderable:
-        raise SystemExit(
-            "Neither white-box rule artifact is fully parseable; "
-            "this is an invalid technical input contract, not a model-quality gate"
-        )
+        raise SystemExit(_undeployable_whitebox_exit_message(tree, scorecard))
     if tree.renderable != scorecard.renderable:
         strategy = "decision_tree" if tree.renderable else "scorecard"
         return (
@@ -3191,6 +3291,8 @@ def main() -> None:
                 raise SystemExit(
                     "Cannot render a deployable white-box SQL after lineage normalization: "
                     + str(exc)
+                    + ". "
+                    + _undeployable_whitebox_exit_message(tree, scorecard)
                 ) from exc
             fallback = alternatives[0]
             strategy = fallback.name
