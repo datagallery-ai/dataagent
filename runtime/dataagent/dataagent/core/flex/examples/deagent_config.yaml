@@ -1,0 +1,133 @@
+AGENT_CONFIG:
+  name: "data_engineering_agent"
+  version: "1.0"
+  backend: "langgraph"
+  type: "react"
+  enable_human_feedback: false
+  hitl_task_index_path: "评测集task.json的完整路径"
+  hitl_auto_resolve: false
+  debug: true
+
+SUITE:
+  include:
+    - data_engineering
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "DeepSeek_V4_Flash_Client"
+      temperature: 0.3
+      timeout: 600
+
+#开启自动回复human_feedback hook把下方注释内容去掉
+#HOOKS:
+#  nodes:
+#    human_feedback:
+#      pre:
+#        - name: hitl_auto_resolver
+
+SCENARIO:
+  chat:
+    input: "data engineering request"
+    task: "design and deliver production-ready feature SQL package: DDL + one INSERT + requirement table"
+    instructions:
+    human_feedback_conditions: # human_feedback_conditions 在 enable_human_feedback 配置为 true 时生效，建议在需要多轮 HITL 确认的场景中使用
+      # ===== 存在关键业务口径歧义（关键项，中频触发）=====
+      # 覆盖各阶段（需求理解 → 数据源选择 → 数据处理 → 指标计算 → 方案权衡 → 最终证据确认）
+      - "需求存在歧义或多种合理解读（如目标粒度、指标口径不明确）时，需由用户澄清"
+      - "缺少关键业务信息（业务含义、筛选条件、时间窗口等）且无法从数据中推断时，需向用户确认"
+      - "若源表选择依赖业务知识而非元数据证据时，需向用户确认数据来源表"
+      - "若存在多个候选源表且元数据无法确定最优选择时，需在调用 wrapped_nl2sql_sub_agent_tool 工具前向用户确认所选源表"
+      - "源表数据存在异常（如关键字段大面积为空、数据分布不合理）且无法推断处理策略时，需由用户决定处理策略"
+      - "主键/JOIN key 字段空值处理策略存在歧义（过滤/保留影响行数）时，需向用户确认"
+      - "分区策略（天/小时/分钟）与用户需求不完全匹配时，需向用户确认"
+      - "目标粒度（GROUP BY 字段组合）存在多种划分方式且无明确优先级时，需向用户确认"
+      - "去重口径（全局/分组）不明确且影响指标计算时，需向用户确认"
+      - "若时间窗口（是否包含当天）存在多种理解时，需向用户确认"
+      - "多个可行方案之间有显著取舍（性能 vs 精度、宽表 vs 窄表等）时，需由用户拍板"
+      - "在调用 metadata_recall 工具获取完所有元数据证据（表、列字段、指标、UDF、Join 关系等）之后，且调用 wrapped_nl2sql_sub_agent_tool 工具之前，需向用户确认 1 次证据列表"
+
+      # ===== 存在任意模糊匹配或潜在问题（不限项，高频触发）=====
+      # - "若表/字段/UDF检索结果存在模糊匹配（哪怕只有一个相似项）时，需向用户确认"
+      # - "若JOIN路径存在多种选择时，需向用户确认"
+      # - "若指标计算口径（求和/计数/去重计数/均值）存在歧义时，需向用户确认"
+      # - "若序列排序口径（PARTITION BY字段）存在多种理解时，需向用户确认"
+      # - "若序列分隔符、TopN截断规则未明确指定时，需向用户确认"
+      # - "若映射输出字段未命中且存在多种处理策略时，需向用户确认"
+      # - "若枚举取值集合无法从元数据完全确定时，需向用户确认"
+
+      # ===== 最终交付前确认（强制项，固定触发）=====
+      - "若同一 BLOCKED 问题连续 2 次修复后仍未通过，必须通过 HITL 请求用户决策，禁止继续重复调用 validate_deliverables 工具"
+      - "在调用 validate_deliverables 工具完成 SQL 校验后，在最终交付前，需输出完整口径说明，并向用户确认"
+    output_format: done
+
+DATABASE:
+  db_id:
+    - "biods"
+    - "biads"
+    - "agapads"
+    - "agapdw"
+    - "agsearch"
+    - "agsecads"
+    - "biads"
+    - "bicoredata"
+    - "biods"
+    - "gamecenter"
+    - "pps_dspperfm"
+
+SEMANTIC_LAYER:
+  base_url: "http://127.0.0.1:31000"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                      # 未启用认证时保持 null；启用认证时填写
+  password: null                      # 未启用认证时保持 null；启用认证时填写
+  timeout: 30
+  verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
+
+TOOLS:
+  builtin:
+    - name: "bash"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "bash"
+    - name: "edit_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "edit_file"
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post
+          - dataagent.actions.tools.hooks.examples.sql_syntax_hooks.sql_edit_post
+    - name: "read_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "read_file"
+    - name: "grep"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "grep"
+    - name: "glob"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "glob"
+    - name: "create_plan"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "create_plan"
+    - name: "update_plan"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "update_plan"
+    - name: "delete_plan"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "delete_plan"
+    - name: "complete_current_todo"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "complete_current_todo"
+
+WORKSPACE:
+  allow_path:
+    - "/path/to/readbook"
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 16384 # 工具结果截断长度默认 8192，数据工程场景改大（主 Agent）

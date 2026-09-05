@@ -1,0 +1,92 @@
+AGENT_CONFIG:
+  name: "sql_mod_agent"
+  version: "1.0"
+  backend: "langgraph"
+  type: "react"
+  enable_human_feedback: false
+  debug: true
+
+SUITE:
+  include:
+    - sql_modification
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "DeepSeek_V4_Flash_Client"
+      temperature: 0.3
+      timeout: 600
+
+SCENARIO:
+  chat:
+    input: "data engineering request"
+    task: "review and fix user-provided SQL or modify current SQL based on user requests"
+    instructions: 
+    output_format: done
+
+DATABASE:
+  db_id:
+    - "biods"
+    - "biads"
+    - "agapads"
+    - "agapdw"
+    - "agsearch"
+    - "agsecads"
+    - "biads"
+    - "bicoredata"
+    - "biods"
+    - "gamecenter"
+    - "pps_dspperfm"
+
+SEMANTIC_LAYER:
+  base_url: "http://127.0.0.1:31000"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
+  username: null                      # 未启用认证时保持 null；启用认证时填写
+  password: null                      # 未启用认证时保持 null；启用认证时填写
+  timeout: 30
+  verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
+
+TOOLS:
+  builtin:
+    - name: "bash"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "bash"
+    - name: "edit_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "edit_file"
+    - name: "read_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "read_file"
+    - name: "grep"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "grep"
+    - name: "glob"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "glob"
+    - name: "create_plan"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "create_plan"
+    - name: "update_plan"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "update_plan"
+    - name: "delete_plan"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "delete_plan"
+    - name: "complete_current_todo"
+      module: "dataagent.actions.tools.local_tool.plan"
+      function: "complete_current_todo"
+
+WORKSPACE:
+  allow_path:
+    - "/path"
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 16384 # 工具结果截断长度默认 8192，数据工程场景改大（主 Agent）
