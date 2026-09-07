@@ -5,14 +5,14 @@ import json
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from datafoundry_api.agent import AgentScopeError, DataAgentRuntime
+from datafoundry_api.agent import AgentScopeError, DataAgentRuntime, RunResourceConfig
 from datafoundry_api.auth import (
     AuthService,
     attach_auth_cookies,
@@ -21,9 +21,12 @@ from datafoundry_api.auth import (
 )
 from datafoundry_api.bootstrap import CAPABILITIES, RUN_DEFAULTS, WORKSPACE_CONFIG
 from datafoundry_api.envelopes import error, success
-from datafoundry_api.errors import AuthError
+from datafoundry_api.errors import AuthError, ResourceError
+from datafoundry_api.file_assets import FileAssetService
+from datafoundry_api.mcp_servers import McpServerService
 from datafoundry_api.model_profiles import ModelProfileError, ModelProfileService
 from datafoundry_api.settings import Settings
+from datafoundry_api.skills import SkillService
 from datafoundry_api.store import SqliteStore
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -43,6 +46,8 @@ CORS_HEADERS = {
     "Access-Control-Allow-Headers": "Content-Type, Authorization, Idempotency-Key, If-Match, X-CSRF-Token",
     "Access-Control-Max-Age": "86400",
 }
+_MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024
+_MAX_FILE_UPLOAD_BATCH_BYTES = 100 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +57,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     store = SqliteStore(resolved.metadata_db_path)
     auth = AuthService(store, resolved)
     model_profiles = ModelProfileService(store, resolved)
+    files = FileAssetService(store)
+    skills = SkillService(store, files)
+    mcp_servers = McpServerService(store, resolved)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -67,6 +75,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 resolved.dataagent_config_path,
                 checkpointer=checkpointer,
                 store=state_store,
+                files=files,
+                skills=skills,
+                mcp_servers=mcp_servers,
             )
             app.state.runtime_ready = True
             try:
@@ -80,6 +91,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.store = store
     app.state.auth = auth
     app.state.model_profiles = model_profiles
+    app.state.files = files
+    app.state.skills = skills
+    app.state.mcp_servers = mcp_servers
     app.state.agent_runtime = None
     app.state.runtime_ready = False
 
@@ -188,16 +202,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/workspace-config")
     async def workspace_config(request: Request) -> JSONResponse:
+        """Return the frontend workspace resource catalog."""
         identity = identity_from_request(request, auth)
         workspace = dict(WORKSPACE_CONFIG)
         workspace["modelProfiles"] = model_profiles.list_profiles(identity)
+        workspace["mcpServers"] = mcp_servers.list_servers(identity)
+        workspace["skills"] = skills.list_skills(identity)
         return success(workspace)
 
     @app.get("/api/v1/run-defaults")
     async def run_defaults(request: Request) -> JSONResponse:
+        """Return default-enabled resources used when a run omits explicit selections."""
         identity = identity_from_request(request, auth)
         defaults = dict(RUN_DEFAULTS)
         defaults["activeLlmProfileId"] = model_profiles.default_profile_id(identity)
+        defaults["enabledMcpServerIds"] = list(mcp_servers.default_ids(identity))
+        defaults["enabledSkillIds"] = list(skills.default_ids(identity))
+        defaults["activeSkillId"] = defaults["enabledSkillIds"][0] if defaults["enabledSkillIds"] else ""
         return success(defaults)
 
     @app.get("/api/v1/model-profiles")
@@ -239,8 +260,223 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return success({"sessions": []})
 
     @app.get("/api/v1/skills")
-    async def skills() -> JSONResponse:
-        return success([])
+    async def list_skills(request: Request) -> JSONResponse:
+        """List installed native Skills."""
+        return success(skills.list_skills(identity_from_request(request, auth)))
+
+    @app.post("/api/v1/skills")
+    async def create_skill(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        id: Annotated[str | None, Form()] = None,
+        name: Annotated[str | None, Form()] = None,
+        description: Annotated[str | None, Form()] = None,
+        defaultEnabled: Annotated[str | None, Form()] = None,
+        defaultDbIds: Annotated[str | None, Form()] = None,
+        defaultKbIds: Annotated[str | None, Form()] = None,
+        defaultMcpIds: Annotated[str | None, Form()] = None,
+        modelProfileId: Annotated[str | None, Form()] = None,
+    ) -> JSONResponse:
+        """Upload and install one SKILL.md or ZIP package."""
+        identity = identity_from_request(request, auth)
+        fields = {
+            "id": id,
+            "name": name,
+            "description": description,
+            "defaultEnabled": defaultEnabled,
+            "defaultDbIds": defaultDbIds,
+            "defaultKbIds": defaultKbIds,
+            "defaultMcpIds": defaultMcpIds,
+            "modelProfileId": modelProfileId,
+        }
+        return success(
+            skills.create_skill(
+                identity,
+                filename=file.filename or "SKILL.md",
+                content=await file.read(),
+                fields=fields,
+            ),
+            status_code=201,
+        )
+
+    @app.post("/api/v1/skills/select")
+    async def select_skills(request: Request) -> JSONResponse:
+        """Resolve an explicit Skill selection without adding resource bindings."""
+        identity = identity_from_request(request, auth)
+        body = await _json_body(request)
+        enabled = _optional_id_tuple(body, "enabledSkillIds", "enabled_skill_ids")
+        active = _optional_string(body, "activeSkillId") or _optional_string(body, "active_skill_id")
+        selection = skills.resolve_selection(identity, enabled, active)
+        selected_names = set(selection.names)
+        selected = [item for item in skills.list_skills(identity) if item.get("name") in selected_names]
+        return success({"skills": selected, "selectedSkillIds": [item.get("id") for item in selected]})
+
+    @app.get("/api/v1/skills/{skill_id}")
+    async def get_skill(skill_id: str, request: Request) -> JSONResponse:
+        """Return one installed Skill."""
+        return success(skills.get_skill(identity_from_request(request, auth), skill_id))
+
+    @app.patch("/api/v1/skills/{skill_id}")
+    async def patch_skill(skill_id: str, request: Request) -> JSONResponse:
+        """Patch one Skill's control fields."""
+        identity = identity_from_request(request, auth)
+        return success(skills.patch_skill(identity, skill_id, await _json_body(request)))
+
+    @app.delete("/api/v1/skills/{skill_id}")
+    async def delete_skill(skill_id: str, request: Request) -> JSONResponse:
+        """Delete one installed Skill."""
+        return success(skills.delete_skill(identity_from_request(request, auth), skill_id))
+
+    @app.post("/api/v1/skills/{skill_id}/replace")
+    async def replace_skill(
+        skill_id: str,
+        request: Request,
+        file: Annotated[UploadFile, File()],
+    ) -> JSONResponse:
+        """Replace one installed Skill package."""
+        identity = identity_from_request(request, auth)
+        return success(
+            skills.replace_skill(
+                identity,
+                skill_id,
+                filename=file.filename or "SKILL.md",
+                content=await file.read(),
+            )
+        )
+
+    @app.post("/api/v1/skills/{skill_id}/validate")
+    async def validate_skill(skill_id: str, request: Request) -> JSONResponse:
+        """Validate a stored and installed Skill package."""
+        return success(skills.validate_skill(identity_from_request(request, auth), skill_id))
+
+    @app.post("/api/v1/skills/{skill_id}/test")
+    async def test_skill(skill_id: str, request: Request) -> JSONResponse:
+        """Run deterministic validation for one Skill."""
+        return success(skills.test_skill(identity_from_request(request, auth), skill_id))
+
+    @app.get("/api/v1/skills/{skill_id}/package")
+    @app.get("/api/v1/skills/{skill_id}/download")
+    async def download_skill_package(skill_id: str, request: Request) -> Response:
+        """Download the original uploaded Skill package."""
+        filename, mime_type, content = skills.package(identity_from_request(request, auth), skill_id)
+        return Response(
+            content=content,
+            media_type=mime_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/api/v1/mcp-servers")
+    async def list_mcp_servers(request: Request) -> JSONResponse:
+        """List frontend-managed MCP servers."""
+        return success(mcp_servers.list_servers(identity_from_request(request, auth)))
+
+    @app.post("/api/v1/mcp-servers")
+    async def create_mcp_server(request: Request) -> JSONResponse:
+        """Create a remote MCP server configuration."""
+        identity = identity_from_request(request, auth)
+        return success(mcp_servers.create_server(identity, await _json_body(request)), status_code=201)
+
+    @app.get("/api/v1/mcp-servers/{server_id}")
+    async def get_mcp_server(server_id: str, request: Request) -> JSONResponse:
+        """Return one MCP server configuration."""
+        return success(mcp_servers.get_server(identity_from_request(request, auth), server_id))
+
+    @app.patch("/api/v1/mcp-servers/{server_id}")
+    async def patch_mcp_server(server_id: str, request: Request) -> JSONResponse:
+        """Patch one MCP server configuration."""
+        identity = identity_from_request(request, auth)
+        return success(mcp_servers.patch_server(identity, server_id, await _json_body(request)))
+
+    @app.delete("/api/v1/mcp-servers/{server_id}")
+    async def delete_mcp_server(server_id: str, request: Request) -> JSONResponse:
+        """Delete one MCP server configuration."""
+        return success(mcp_servers.delete_server(identity_from_request(request, auth), server_id))
+
+    @app.post("/api/v1/mcp-servers/{server_id}/test")
+    async def test_mcp_server(server_id: str, request: Request) -> JSONResponse:
+        """Initialize one MCP server and persist its live tool manifest."""
+        return success(await mcp_servers.test_server(identity_from_request(request, auth), server_id))
+
+    @app.get("/api/v1/mcp-servers/{server_id}/tools")
+    async def list_mcp_tools(server_id: str, request: Request) -> JSONResponse:
+        """Return a live allowlisted MCP tool manifest."""
+        return success(await mcp_servers.list_tools(identity_from_request(request, auth), server_id))
+
+    @app.get("/api/v1/files")
+    async def list_files(request: Request) -> JSONResponse:
+        """List session-private or common-workspace FileAsset references."""
+        identity = identity_from_request(request, auth)
+        scope = request.query_params.get("scope")
+        if scope not in {None, "session", "workspace"}:
+            raise ResourceError(400, "BAD_REQUEST", "File scope must be session or workspace.")
+        session_id = request.query_params.get("sessionId") or request.query_params.get("session_id")
+        source_value = request.query_params.get("source") or request.query_params.get("sources")
+        origin_value = request.query_params.get("origin") or request.query_params.get("origins")
+        sources = _file_sources(source_value, origin_value)
+        records = files.list_refs(identity, scope=scope, session_id=session_id, sources=sources)
+        return success({"files": [files.to_dto(record) for record in records]})
+
+    @app.post("/api/v1/files")
+    async def upload_files(
+        request: Request,
+        file: Annotated[list[UploadFile], File()],
+        sessionId: Annotated[str | None, Form()] = None,
+        threadId: Annotated[str | None, Form()] = None,
+    ) -> JSONResponse:
+        """Upload files into FileAsset storage and the selected session workspace."""
+        identity = identity_from_request(request, auth)
+        session_id = sessionId or threadId or request.headers.get("x-session-id") or request.headers.get("x-thread-id")
+        if not session_id:
+            raise ResourceError(400, "FILE_UPLOAD_SESSION_REQUIRED", "A sessionId or threadId is required.")
+        pending_uploads: list[tuple[str, bytes, str | None]] = []
+        total_bytes = 0
+        for upload in file:
+            content = await upload.read()
+            total_bytes += len(content)
+            if len(content) > _MAX_FILE_UPLOAD_BYTES or total_bytes > _MAX_FILE_UPLOAD_BATCH_BYTES:
+                raise ResourceError(413, "FILE_UPLOAD_TOO_LARGE", "Uploaded files exceed the configured size limit.")
+            pending_uploads.append((upload.filename or "file", content, upload.content_type))
+        uploaded: list[dict[str, Any]] = []
+        for filename, content, mime_type in pending_uploads:
+            record = files.create_ref(
+                identity,
+                filename=filename,
+                content=content,
+                source="upload",
+                mime_type=mime_type,
+                session_id=session_id,
+                run_id="file-upload",
+            )
+            files.materialize_session_ref(identity, str(record.get("id", "")), session_id)
+            uploaded.append(files.to_dto(record))
+        return success({"files": uploaded}, status_code=201)
+
+    @app.post("/api/v1/files/{file_id}/promote")
+    async def promote_file(file_id: str, request: Request) -> JSONResponse:
+        """Promote one session FileAsset reference into the user common workspace."""
+        identity = identity_from_request(request, auth)
+        promoted = files.to_dto(files.promote_ref(identity, file_id))
+        promoted["downloadUrl"] = f"/api/v1/files/{promoted.get('id', '')}/download"
+        return success(promoted)
+
+    @app.get("/api/v1/files/{file_id}/download")
+    async def download_file(file_id: str, request: Request) -> Response:
+        """Download one tenant-owned FileAsset reference."""
+        record, content = files.read_ref(identity_from_request(request, auth), file_id)
+        filename = str(record.get("filename", "file"))
+        media_type = str(
+            record.get("declared_mime_type") or record.get("detected_mime_type") or "application/octet-stream"
+        )
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.delete("/api/v1/files/{file_id}")
+    async def delete_file(file_id: str, request: Request) -> JSONResponse:
+        """Delete one tenant-owned FileAsset reference."""
+        return success(files.delete_ref(identity_from_request(request, auth), file_id))
 
     @app.get("/api/copilotkit/info")
     async def copilotkit_info() -> JSONResponse:
@@ -277,14 +513,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 identity,
                 _active_model_profile_id(input_data),
             )
+            resource_config = _resource_config(input_data)
             agent = await app.state.agent_runtime.agent_for(
                 identity.user_id,
                 input_data.thread_id,
                 model_selection,
+                identity=identity,
+                resources=resource_config,
             )
         except AgentScopeError as exc:
             return error("BAD_REQUEST", str(exc), 400)
         except ModelProfileError as exc:
+            return error(exc.code, exc.message, exc.status)
+        except ResourceError as exc:
             return error(exc.code, exc.message, exc.status)
         except Exception as exc:
             logger.exception("Failed to initialize DataAgent runtime")
@@ -326,6 +567,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def handle_model_profile_error(_request: Request, exc: ModelProfileError) -> JSONResponse:
         return error(exc.code, exc.message, exc.status)
 
+    @app.exception_handler(ResourceError)
+    async def handle_resource_error(_request: Request, exc: ResourceError) -> JSONResponse:
+        """Return a stable envelope for workspace, Skill, and MCP failures."""
+        return error(exc.code, exc.message, exc.status)
+
     @app.api_route("/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     async def not_found(path: str) -> JSONResponse:
         return error("RESOURCE_NOT_FOUND", "Route not found.", 404)
@@ -351,16 +597,68 @@ def _runtime_info() -> dict[str, Any]:
 
 
 def _active_model_profile_id(input_data: Any) -> str | None:
-    forwarded = getattr(input_data, "forwarded_props", None)
-    if not isinstance(forwarded, Mapping):
-        return None
-    run_config = forwarded.get("run_config") or forwarded.get("runConfig")
-    if not isinstance(run_config, Mapping):
-        return None
+    run_config = _run_config(input_data)
     value = run_config.get("activeLlmProfileId") or run_config.get("active_llm_profile_id")
     if not isinstance(value, str):
         return None
     return value.strip() or None
+
+
+def _resource_config(input_data: Any) -> RunResourceConfig:
+    run_config = _run_config(input_data)
+    return RunResourceConfig(
+        enabled_skill_ids=_optional_id_tuple(run_config, "enabledSkillIds", "enabled_skill_ids"),
+        active_skill_id=_mapping_string(run_config, "activeSkillId", "active_skill_id"),
+        enabled_mcp_server_ids=_optional_id_tuple(
+            run_config,
+            "enabledMcpServerIds",
+            "enabled_mcp_server_ids",
+        ),
+    )
+
+
+def _run_config(input_data: Any) -> Mapping[str, Any]:
+    forwarded = getattr(input_data, "forwarded_props", None)
+    if not isinstance(forwarded, Mapping):
+        return {}
+    run_config = forwarded.get("run_config") or forwarded.get("runConfig")
+    return run_config if isinstance(run_config, Mapping) else {}
+
+
+def _optional_id_tuple(body: Mapping[str, Any], camel_key: str, snake_key: str) -> tuple[str, ...] | None:
+    value = body.get(camel_key, body.get(snake_key))
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ResourceError(400, "BAD_REQUEST", f"{camel_key} must be a list of resource IDs.")
+    result: list[str] = []
+    for item in value:
+        resource_id = str(item or "").strip()
+        if resource_id and resource_id not in result:
+            result.append(resource_id)
+    return tuple(result)
+
+
+def _mapping_string(body: Mapping[str, Any], camel_key: str, snake_key: str) -> str | None:
+    value = body.get(camel_key, body.get(snake_key))
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+def _file_sources(source_value: str | None, origin_value: str | None) -> tuple[str, ...]:
+    if source_value:
+        return tuple(item.strip() for item in source_value.split(",") if item.strip())
+    origins = tuple(item.strip() for item in (origin_value or "").split(",") if item.strip())
+    source_by_origin = {
+        "uploaded": "upload",
+        "generated": "artifact",
+        "saved": "workspace",
+        "knowledge": "knowledge",
+        "run-attachment": "run-attachment",
+        "skill-package": "skill-package",
+    }
+    return tuple(source_by_origin.get(origin, origin) for origin in origins)
 
 
 def _is_envelope(payload: Any) -> bool:

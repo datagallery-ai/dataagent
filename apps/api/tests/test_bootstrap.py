@@ -3,7 +3,7 @@ from __future__ import annotations
 from conftest import register_and_login
 
 
-def test_capabilities_disable_deferred_features(client) -> None:
+def test_capabilities_enable_migrated_features_and_disable_deferred_features(client) -> None:
     register_and_login(client)
     response = client.get("/api/v1/capabilities")
     assert response.status_code == 200
@@ -13,9 +13,13 @@ def test_capabilities_disable_deferred_features(client) -> None:
     assert caps["runtime.dataTools"] is False
     assert caps["runtime.traceDag"] is False
     assert caps["knowledge"] is False
-    assert caps["mcp"] is False
-    assert caps["skills"] is False
-    assert caps["files"] is False
+    assert caps["mcp"] is True
+    assert caps["mcp.stdio"] is False
+    assert caps["mcp.toolPolicy"] is True
+    assert caps["skills"] is True
+    assert caps["skill.resourceBinding"] is False
+    assert caps["files"] is True
+    assert caps["chat.fileUpload"] is True
     assert caps["artifact.list"] is False
     assert caps["llm.advancedSampling"] is False
     assert caps["llm.samplingParams"] is True

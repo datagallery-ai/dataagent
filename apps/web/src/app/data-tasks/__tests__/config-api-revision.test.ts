@@ -50,4 +50,30 @@ describe("config api adapter revision and secrets", () => {
     expect(merged.revision).toBe(4);
     expect(merged.settings?.apiKey).toBe("sk-new");
   });
+
+  it("drops MCP credential plaintext after the backend confirms a save", () => {
+    const current = {
+      id: "custom-auth",
+      name: "Custom auth",
+      description: "",
+      enabled: true,
+      settings: {
+        authType: "custom-header",
+        customHeaderName: "X-API-Key",
+        customHeaderValue: "header-secret",
+      },
+    };
+    const merged = mergeItemFromDto("mcp", current, {
+      id: "custom-auth",
+      name: "Custom auth",
+      authType: "custom-header",
+      hasSecret: true,
+      revision: 2,
+    });
+
+    expect(merged.hasSecret).toBe(true);
+    expect(merged.persistedAuthType).toBe("custom-header");
+    expect(merged.settings?.customHeaderName).toBe("");
+    expect(merged.settings?.customHeaderValue).toBe("");
+  });
 });

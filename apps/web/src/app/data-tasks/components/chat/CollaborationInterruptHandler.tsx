@@ -370,8 +370,7 @@ function CollaborationInterruptPanel({
   );
 }
 
-export type { MastraInterrupt };
-export { parseInterruptValue, AskUserPrompt, SubmitPlanPrompt };
+export { AskUserPrompt, SubmitPlanPrompt };
 
 const INTERRUPT_EVENT_NAME = "on_interrupt";
 

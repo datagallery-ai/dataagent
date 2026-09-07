@@ -476,9 +476,9 @@
     "selectedFile": "Selected: {{name}}",
     "skillNotesTitle": "Skill package notes",
     "skillNotesStructure": "Standard structure: directory contains SKILL.md (YAML frontmatter + instructions)",
-    "skillNotesContract": "Backend contract: POST /api/v1/skills multipart upload; runs send only activeSkillId, not package content",
+    "skillNotesContract": "Backend contract: POST /api/v1/skills multipart upload; runs send enabledSkillIds and activeSkillId, never package content",
     "skillNotesBuiltin": "Built-in Skills are provided by the server; the frontend only shows metadata",
-    "skillNotesCustom": "Custom Skills are uploaded through REST multipart; AG-UI context carries only the skill id",
+    "skillNotesCustom": "Custom Skills are uploaded through REST multipart; AG-UI run config carries only Skill ids",
     "mcpNotesTitle": "MCP connection notes",
     "mcpNotesRemote": "Remote services commonly use SSE / Streamable HTTP URLs, for example https://host/mcp",
     "mcpNotesPersist": "Configuration is persisted through POST /api/v1/mcp-servers; tokens are stored in secretRef",
@@ -918,9 +918,18 @@
         "label": "Authentication method"
       },
       "apiKey": {
-        "label": "Token / API Key",
+        "label": "Bearer token",
         "placeholder": "••••••",
         "helpText": "Stored in secretRef for Bearer authentication."
+      },
+      "customHeaderName": {
+        "label": "Header name",
+        "placeholder": "X-API-Key"
+      },
+      "customHeaderValue": {
+        "label": "Header value",
+        "placeholder": "••••••",
+        "helpText": "Stored encrypted in secretRef."
       },
       "toolAllowlist": {
         "label": "Tool allowlist",
@@ -1062,7 +1071,7 @@
       "authType": {
         "none": "No authentication",
         "bearer": "Bearer Token",
-        "custom-header": "Custom header (pending backend)"
+        "custom-header": "Custom header"
       }
     },
     "llm": {

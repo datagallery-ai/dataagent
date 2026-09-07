@@ -49,4 +49,12 @@ allowed-tools: inspect_schema, run_sql_readonly
       true,
     );
   });
+
+  it("treats a server-persisted package as valid without keeping its content in the browser", () => {
+    expect(isSkillSettingsValid({
+      packageSource: "server",
+      packageContent: "",
+      hasPackageContent: "true",
+    })).toBe(true);
+  });
 });

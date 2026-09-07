@@ -14,9 +14,12 @@ dependencies = [
     "cryptography>=44.0.0",
     "datagallery-dataagent[nl2sql]",
     "fastapi>=0.115.0",
+    "langchain-core>=1.2.15,<2.0.0",
+    "langchain-mcp-adapters==0.3.2",
     "langgraph>=0.4.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
     "pydantic-settings>=2.8.0",
+    "PyYAML==6.0.2",
     "python-multipart>=0.0.18",
     "uvicorn[standard]>=0.32.0",
 ]

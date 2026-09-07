@@ -180,6 +180,7 @@ export function mcpServerDtoToItem(dto: McpServerDto): WorkspaceConfigItem {
     builtin: dto.builtin ?? false,
     secretRef: dto.secretRef ?? undefined,
     hasSecret: dto.hasSecret ?? false,
+    persistedAuthType: dto.authType ?? "none",
     revision: dto.revision,
     status: mapResourceStatus(dto.healthStatus),
     settings: {
@@ -188,6 +189,8 @@ export function mcpServerDtoToItem(dto: McpServerDto): WorkspaceConfigItem {
       apiUrl: dto.apiUrl ?? "",
       authType: dto.authType ?? "none",
       apiKey: "",
+      customHeaderName: "",
+      customHeaderValue: "",
       toolAllowlist: Array.isArray(dto.toolAllowlist) ? dto.toolAllowlist.join(", ") : dto.toolAllowlist ?? "",
       timeoutMs: asString(dto.timeoutMs ?? ""),
       command: dto.command ?? "",
@@ -353,6 +356,18 @@ function buildCredentials(
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+function buildMcpCredentials(settings: Record<string, string>): Record<string, unknown> | undefined {
+  if (settings.authType === "bearer") {
+    return buildCredentials(settings, [{ settingKey: "apiKey", credentialKey: "token" }]);
+  }
+  if (settings.authType === "custom-header") {
+    const name = settings.customHeaderName?.trim();
+    const value = settings.customHeaderValue?.trim();
+    return name && value ? { customHeader: { name, value } } : undefined;
+  }
+  return undefined;
+}
+
 export function itemToCreateBody(
   kind: WorkspaceConfigKind,
   item: WorkspaceConfigItem,
@@ -472,9 +487,7 @@ export function itemToCreateBody(
       };
     }
     case "mcp": {
-      const credentials = buildCredentials(settings, [
-        { settingKey: "apiKey", credentialKey: "token" },
-      ]);
+      const credentials = buildMcpCredentials(settings);
       const body: Record<string, unknown> = {
         ...base,
         transport: settings.transport ?? "streamable-http",
@@ -665,14 +678,17 @@ export function itemToPatchBody(
       if (settings.transport?.trim()) body.transport = settings.transport.trim();
       if (settings.serverUrl?.trim()) body.serverUrl = settings.serverUrl.trim();
       if (settings.apiUrl?.trim()) body.apiUrl = settings.apiUrl.trim();
-      if (settings.authType?.trim()) body.authType = settings.authType.trim();
+      const authType = settings.authType?.trim() || "none";
+      body.authType = authType;
       if (splitCsv(settings.toolAllowlist)) {
         body.toolAllowlist = splitCsv(settings.toolAllowlist);
       }
       if (parseNumber(settings.timeoutMs) !== undefined) {
         body.timeoutMs = parseNumber(settings.timeoutMs);
       }
-      if (settings.apiKey?.trim()) body.credentials = { token: settings.apiKey.trim() };
+      const credentials = buildMcpCredentials(settings);
+      if (credentials) body.credentials = credentials;
+      if (authType === "none" && item.hasSecret) body.clearCredentials = true;
       appendMcpStdioFields(body, settings);
       break;
     case "llm":
@@ -748,7 +764,7 @@ export function mergeItemFromDto(
     settings: {
       ...mapped.settings,
       ...(current.settings?.password?.trim() ? { password: current.settings.password } : {}),
-      ...(current.settings?.apiKey?.trim() ? { apiKey: current.settings.apiKey } : {}),
+      ...(kind !== "mcp" && current.settings?.apiKey?.trim() ? { apiKey: current.settings.apiKey } : {}),
       ...(current.settings?.embeddingApiKey?.trim()
         ? { embeddingApiKey: current.settings.embeddingApiKey }
         : {}),
