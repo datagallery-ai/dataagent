@@ -55,7 +55,7 @@ def _outbound_needs_password(cert: Mapping) -> bool:
     """出站实际会 ``load_cert_chain`` 且 ``outbound_encrypted`` 为开才取口令。
 
     未 opt-in：``outbound_enabled: false`` 或 ``outbound_ssl_services`` 为空。
-    mode 1/2 不出示客户端证书，不需要私钥口令。
+    mode 0/1 不出示客户端证书，不需要私钥口令。
     """
     from dataagent.common_utils.outbound_tls import (
         _DEFAULT_MODE,
@@ -67,8 +67,7 @@ def _outbound_needs_password(cert: Mapping) -> bool:
     if not _resolve_ssl_services(cert):
         return False
     mode = _parse_outbound_mode(cert.get("outbound_certificate_mode", _DEFAULT_MODE))
-    _verify_server, present_client_cert = _OUTBOUND_CERT_MODE[mode]
-    if not present_client_cert:
+    if not _OUTBOUND_CERT_MODE[mode].present_client_cert:
         return False
     return _encrypted(cert.get("outbound_encrypted"))
 
