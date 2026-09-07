@@ -174,13 +174,14 @@ def test_llm_mode1_treats_as_server_verify_only(monkeypatch, _cert_files):
 def test_llm_mode2_skip_verify_but_presents_client_cert(monkeypatch, _cert_files):
     monkeypatch.setenv(outbound_tls.ENV_SSL_SERVICES, "llm")
     monkeypatch.setenv(outbound_tls.ENV_MODE, "2")
+    monkeypatch.setenv(outbound_tls.ENV_CA_FILE, _cert_files["ca"])
     monkeypatch.setenv(outbound_tls.ENV_CLIENT_CERT, _cert_files["cert"])
     monkeypatch.setenv(outbound_tls.ENV_CLIENT_KEY, _cert_files["key"])
     calls = _spy_load_cert_chain(monkeypatch)
 
     ctx = outbound_tls.httpx_verify()
     assert ctx.check_hostname is False
-    assert ctx.verify_mode == ssl.CERT_NONE
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
     assert calls
     assert calls[0][1]["certfile"] == _cert_files["cert"]
     assert calls[0][1]["keyfile"] == _cert_files["key"]
@@ -313,7 +314,7 @@ def test_apply_certificate_config_mode3_missing_client_errors():
 
 
 def test_apply_certificate_config_mode2_missing_client_errors():
-    with pytest.raises(ValueError, match="missing: client_cert_file, client_key_file"):
+    with pytest.raises(ValueError, match="missing: client_cert_file, client_key_file, ca_cert_file"):
         outbound_tls.apply_certificate_config(
             {
                 "outbound_ssl_services": ["llm"],
@@ -480,6 +481,7 @@ def test_apply_certificate_config_mode2_downfeeds_client_paths(_cert_files):
         {
             "outbound_ssl_services": ["llm"],
             "outbound_certificate_mode": 2,
+            "ca_cert_file": _cert_files["ca"],
             "client_cert_file": _cert_files["cert"],
             "client_key_file": _cert_files["key"],
         }

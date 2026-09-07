@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 import ssl
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NamedTuple
 
 from loguru import logger
 
@@ -43,16 +43,25 @@ _DEFAULT_OUTBOUND_SERVICES = ("llm", "semantic_layer", "cloud_core")
 _MODE_TRUE_ALIASES = frozenset({"true"})
 _MODE_FALSE_ALIASES = frozenset({"false"})
 
-# outbound_certificate_mode -> (校验服务端, 出示客户端证书)。
+
+class _OutboundPolicy(NamedTuple):
+    """一个 ``outbound_certificate_mode`` 对应的三项开关。"""
+
+    verify_server: bool
+    present_client_cert: bool
+    check_hostname: bool
+
+
+# outbound_certificate_mode -> 校验策略。
 # 0: 不验、不出示证（curl -k）
 # 1: 验链+hostname、不出示证
-# 2: 不验、出示证（curl -vk --cert --key；等价 Go InsecureSkipVerify + load_cert_chain）
+# 2: 验链、不验 hostname、出示证（双向 mTLS，服务端证 SAN 与 base_url 不一致时仍可握手）
 # 3: 验链+hostname + 出示证
-_OUTBOUND_CERT_MODE: dict[int, tuple[bool, bool]] = {
-    0: (False, False),
-    1: (True, False),
-    2: (False, True),
-    3: (True, True),
+_OUTBOUND_CERT_MODE: dict[int, _OutboundPolicy] = {
+    0: _OutboundPolicy(verify_server=False, present_client_cert=False, check_hostname=False),
+    1: _OutboundPolicy(verify_server=True, present_client_cert=False, check_hostname=True),
+    2: _OutboundPolicy(verify_server=True, present_client_cert=True, check_hostname=False),
+    3: _OutboundPolicy(verify_server=True, present_client_cert=True, check_hostname=True),
 }
 
 
@@ -146,14 +155,14 @@ def _missing_outbound_files(
     client_key: Any,
 ) -> list[str]:
     """列出当前 mode 仍缺的出站证书字段名。"""
-    verify_server, present_client_cert = _OUTBOUND_CERT_MODE[mode]
+    policy = _OUTBOUND_CERT_MODE[mode]
     missing: list[str] = []
-    if present_client_cert:
+    if policy.present_client_cert:
         if not client_cert:
             missing.append("client_cert_file")
         if not client_key:
             missing.append("client_key_file")
-    if verify_server and present_client_cert and not ca_file:
+    if policy.verify_server and policy.present_client_cert and not ca_file:
         missing.append("ca_cert_file")
     return missing
 
@@ -239,13 +248,13 @@ def _store_context(ctx: ssl.SSLContext) -> None:
 def _make_context(*, password: str | None = None) -> ssl.SSLContext:
     """构造出站 TLS 材料；口令仅经参数传入 ``load_cert_chain``。"""
     mode = _mode()
-    verify_server, present_client_cert = _OUTBOUND_CERT_MODE[mode]
+    policy = _OUTBOUND_CERT_MODE[mode]
     ca_file = (os.getenv(ENV_CA_FILE) or "").strip()
     client_cert = (os.getenv(ENV_CLIENT_CERT) or "").strip()
     client_key = (os.getenv(ENV_CLIENT_KEY) or "").strip()
     ciphers = (os.getenv(ENV_CIPHERS) or "").strip()
 
-    if present_client_cert:
+    if policy.present_client_cert:
         missing = _missing_outbound_files(mode, ca_file=ca_file, client_cert=client_cert, client_key=client_key)
         if missing:
             raise ValueError(
@@ -259,26 +268,24 @@ def _make_context(*, password: str | None = None) -> ssl.SSLContext:
             if path and not os.path.isfile(path):
                 raise FileNotFoundError(f"certificate.{label} not found: {path}")
 
-    ctx = ssl.create_default_context(cafile=ca_file or None if verify_server else None)
+    ctx = ssl.create_default_context(cafile=ca_file or None if policy.verify_server else None)
 
-    if not verify_server:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    else:
-        ctx.check_hostname = True
-        ctx.verify_mode = ssl.CERT_REQUIRED
+    # 先关 check_hostname 再落 verify_mode：CERT_NONE 与 check_hostname=True 不能共存。
+    ctx.check_hostname = policy.check_hostname
+    ctx.verify_mode = ssl.CERT_REQUIRED if policy.verify_server else ssl.CERT_NONE
 
-    if present_client_cert:
+    if policy.present_client_cert:
         ctx.load_cert_chain(certfile=client_cert, keyfile=client_key, password=password)
 
     if ciphers:
         ctx.set_ciphers(ciphers)
 
     logger.debug(
-        "outbound_tls: SSLContext built (mode={} ca={} client_cert={})",
+        "outbound_tls: SSLContext built (mode={} ca={} client_cert={} check_hostname={})",
         mode,
         bool(ca_file),
-        present_client_cert,
+        policy.present_client_cert,
+        policy.check_hostname,
     )
     return ctx
 
