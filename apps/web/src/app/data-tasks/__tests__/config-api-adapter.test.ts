@@ -288,6 +288,54 @@ describe("config api adapter", () => {
     expect(body.timeoutMs).toBe(45000);
   });
 
+  it("builds encrypted custom-header MCP credentials", () => {
+    const item = {
+      id: "custom-auth",
+      name: "Custom auth",
+      description: "",
+      enabled: true,
+      settings: {
+        transport: "streamable-http",
+        serverUrl: "https://example.com/mcp",
+        authType: "custom-header",
+        customHeaderName: "X-API-Key",
+        customHeaderValue: "header-secret",
+      },
+    };
+
+    expect(itemToCreateBody("mcp", item).credentials).toEqual({
+      customHeader: { name: "X-API-Key", value: "header-secret" },
+    });
+    expect(itemToPatchBody("mcp", item).credentials).toEqual({
+      customHeader: { name: "X-API-Key", value: "header-secret" },
+    });
+  });
+
+  it("preserves stored MCP credentials when auth is unchanged and clears them for no auth", () => {
+    const saved = {
+      id: "custom-auth",
+      name: "Custom auth",
+      description: "",
+      enabled: true,
+      hasSecret: true,
+      persistedAuthType: "custom-header",
+      settings: {
+        transport: "streamable-http",
+        serverUrl: "https://example.com/mcp",
+        authType: "custom-header",
+        customHeaderName: "",
+        customHeaderValue: "",
+      },
+    };
+
+    expect(itemToPatchBody("mcp", saved)).not.toHaveProperty("credentials");
+    expect(itemToPatchBody("mcp", saved)).not.toHaveProperty("clearCredentials");
+    expect(itemToPatchBody("mcp", {
+      ...saved,
+      settings: { ...saved.settings, authType: "none" },
+    })).toMatchObject({ authType: "none", clearCredentials: true });
+  });
+
   it("builds mcp stdio create body with command args cwd env", () => {
     const body = itemToCreateBody("mcp", {
       id: "local-fs",
@@ -330,6 +378,19 @@ describe("config api adapter", () => {
     expect(item.settings?.args).toBe("-y pkg");
     expect(item.settings?.cwd).toBe("/tmp");
     expect(item.settings?.env).toContain("FOO");
+  });
+
+  it("remembers the persisted MCP auth type without exposing credential values", () => {
+    const item = mcpServerDtoToItem({
+      id: "saved-auth",
+      name: "Saved auth",
+      authType: "custom-header",
+      hasSecret: true,
+    });
+
+    expect(item.persistedAuthType).toBe("custom-header");
+    expect(item.settings?.customHeaderName).toBe("");
+    expect(item.settings?.customHeaderValue).toBe("");
   });
 
   it("maps mcp tool manifest names for datalink detection", () => {

@@ -669,8 +669,13 @@ export async function parseSkillPackageFile(
   }
   if (lower.endsWith(".zip")) {
     return {
-      error:
-        "ZIP package import requires backend POST /api/v1/skills support. Upload SKILL.md for now.",
+      fileName: file.name,
+      format: "zip",
+      name: file.name.replace(/\.zip$/i, "") || "Imported Skill",
+      description: "Skill package metadata will be validated by the backend.",
+      version: "",
+      allowedTools: "",
+      content: "zip-package-selected",
     };
   }
   return { error: "Only .md (SKILL.md) or .zip Skill packages are supported." };
@@ -707,6 +712,7 @@ export function normalizeSkillSettings(
     packageFormat: settings?.packageFormat ?? "",
     packageVersion: settings?.packageVersion ?? "",
     packageSource: settings?.packageSource ?? "",
+    hasPackageContent: settings?.hasPackageContent ?? "",
     allowedTools: settings?.allowedTools ?? "",
     packageContent: settings?.packageContent ?? "",
     defaultDbIds: settings?.defaultDbIds ?? "",
@@ -718,7 +724,7 @@ export function normalizeSkillSettings(
 
 export function isSkillSettingsValid(settings: Record<string, string>): boolean {
   if (settings.packageSource?.startsWith("builtin://")) return true;
-  return (settings.packageContent ?? "").trim().length > 0;
+  return settings.hasPackageContent === "true" || (settings.packageContent ?? "").trim().length > 0;
 }
 
 export const SKILL_PACKAGE_LOCAL_ONLY_KEYS = ["packageContent"] as const;
@@ -835,6 +841,8 @@ export interface WorkspaceConfigItem {
   settings?: Record<string, string>;
   secretRef?: string;
   hasSecret?: boolean;
+  /** Last MCP auth type confirmed by the backend; never contains credential material. */
+  persistedAuthType?: string;
   revision?: number;
   /** Connectivity result from backend `test`. Defaults to untested. */
   status?: ConfigItemStatus;
@@ -1182,7 +1190,7 @@ export const KB_SCOPE_OPTIONS = [
 export const MCP_AUTH_TYPE_OPTIONS = [
   { value: "none", label: "No authentication" },
   { value: "bearer", label: "Bearer Token" },
-  { value: "custom-header", label: "Custom header (pending backend)" },
+  { value: "custom-header", label: "Custom header" },
 ] as const;
 
 /** Chat models use one OpenAI-compatible provider path; vendor choice lives in baseUrl/modelName. */
@@ -1324,6 +1332,8 @@ export function normalizeMcpSettings(
   authType: string;
   toolAllowlist: string;
   timeoutMs: string;
+  customHeaderName: string;
+  customHeaderValue: string;
   command: string;
   args: string;
   cwd: string;
@@ -1337,6 +1347,8 @@ export function normalizeMcpSettings(
     authType: settings?.authType ?? "none",
     toolAllowlist: settings?.toolAllowlist ?? "",
     timeoutMs: settings?.timeoutMs ?? "",
+    customHeaderName: settings?.customHeaderName ?? "",
+    customHeaderValue: settings?.customHeaderValue ?? "",
     command: settings?.command ?? "",
     args: settings?.args ?? "",
     cwd: settings?.cwd ?? "",
@@ -1809,17 +1821,33 @@ export const WORKSPACE_CONFIG_FIELDS: Record<
       label: "Authentication method",
       inputType: "select",
       options: [...MCP_AUTH_TYPE_OPTIONS],
-      pendingOptionValues: ["custom-header"],
       visibleWhen: (settings) => !isMcpStdioTransport(settings),
     },
     {
       key: "apiKey",
-      label: "Token / API Key",
+      label: "Bearer token",
       inputType: "password",
       placeholder: "••••••",
       helpText: "Stored in secretRef for Bearer authentication.",
-      visibleWhen: (settings) =>
-        !isMcpStdioTransport(settings) && (settings.authType ?? "none") !== "none",
+      visibleWhen: (settings) => !isMcpStdioTransport(settings) && settings.authType === "bearer",
+      fullWidth: true,
+    },
+    {
+      key: "customHeaderName",
+      label: "Header name",
+      placeholder: "X-API-Key",
+      visibleWhen: (settings) => !isMcpStdioTransport(settings) && settings.authType === "custom-header",
+      required: true,
+      fullWidth: true,
+    },
+    {
+      key: "customHeaderValue",
+      label: "Header value",
+      inputType: "password",
+      placeholder: "••••••",
+      helpText: "Stored encrypted in secretRef.",
+      visibleWhen: (settings) => !isMcpStdioTransport(settings) && settings.authType === "custom-header",
+      required: true,
       fullWidth: true,
     },
     {
@@ -1973,35 +2001,6 @@ export const WORKSPACE_CONFIG_FIELDS: Record<
       fullWidth: true,
       visibleWhen: (settings) => (settings.allowedTools ?? "").trim().length > 0,
     },
-    {
-      key: "defaultDbIds",
-      label: "Default data sources",
-      placeholder: "sales-db, analytics-pg",
-      helpText: "Comma-separated datasource ids. Added automatically to the run when the skill matches.",
-      pendingCapability: "skill.resourceBinding",
-      fullWidth: true,
-    },
-    {
-      key: "defaultKbIds",
-      label: "Default knowledge bases",
-      placeholder: "metrics-docs",
-      pendingCapability: "skill.resourceBinding",
-      fullWidth: true,
-    },
-    {
-      key: "defaultMcpIds",
-      label: "Default MCP",
-      placeholder: "notion",
-      pendingCapability: "skill.resourceBinding",
-      fullWidth: true,
-    },
-    {
-      key: "modelProfileId",
-      label: "Default model profile",
-      placeholder: "qwen-plus-default",
-      pendingCapability: "skill.resourceBinding",
-      fullWidth: true,
-    },
   ],
 };
 
@@ -2120,14 +2119,50 @@ export function isWorkspaceConfigItemValid(
   if (panel === "skill") {
     return isSkillSettingsValid(settings);
   }
+  const mcpAuthType = settings.authType?.trim() || "none";
+  const canReuseMcpCredentials =
+    panel === "mcp" &&
+    item.hasSecret === true &&
+    item.persistedAuthType === mcpAuthType;
+  if (panel === "mcp" && mcpAuthType === "bearer") {
+    if (!settings.apiKey?.trim() && !canReuseMcpCredentials) return false;
+  }
+  if (panel === "mcp" && mcpAuthType === "custom-header") {
+    const hasHeaderName = Boolean(settings.customHeaderName?.trim());
+    const hasHeaderValue = Boolean(settings.customHeaderValue?.trim());
+    if (hasHeaderName !== hasHeaderValue) return false;
+    if (!hasHeaderName && !canReuseMcpCredentials) return false;
+  }
   return visibleConfigFields(panel, settings).every((field) => {
     if (!field.required) return true;
     if (field.readOnly?.(item)) return true;
+    if (
+      canReuseMcpCredentials &&
+      mcpAuthType === "custom-header" &&
+      (field.key === "customHeaderName" || field.key === "customHeaderValue")
+    ) {
+      return true;
+    }
     return (settings[field.key] ?? "").trim().length > 0;
   });
 }
 
 /** Compare editable fields for save/cancel dirty detection (ignores revision/status). */
+const SERVER_DERIVED_SETTING_KEYS = new Set([
+  "allowedTools",
+  "connectionStatus",
+  "hasPackageContent",
+  "healthStatus",
+  "indexStatus",
+  "packageFileName",
+  "packageFormat",
+  "packageSource",
+  "packageVersion",
+  "toolCount",
+  "toolNames",
+  "validationStatus",
+]);
+
 export function workspaceConfigItemDraftEquals(
   a: WorkspaceConfigItem,
   b: WorkspaceConfigItem,
@@ -2139,6 +2174,7 @@ export function workspaceConfigItemDraftEquals(
   const bSettings = b.settings ?? {};
   const keys = new Set([...Object.keys(aSettings), ...Object.keys(bSettings)]);
   for (const key of keys) {
+    if (SERVER_DERIVED_SETTING_KEYS.has(key)) continue;
     if ((aSettings[key] ?? "").trim() !== (bSettings[key] ?? "").trim()) {
       return false;
     }

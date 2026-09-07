@@ -926,6 +926,7 @@ const SECRET_SETTING_KEYS = [
   "secret",
   "password",
   "credentialsJson",
+  "customHeaderValue",
 ];
 
 /**
@@ -6829,9 +6830,7 @@ function ConfigItemDetailView({
                 helpText={fieldCopy.helpText}
                 inputType={field.inputType}
                 options={options}
-                isOptionPending={
-                  lockField ? (value) => isSelectOptionPending(field, value) : undefined
-                }
+                isOptionPending={(value) => isSelectOptionPending(field, value)}
                 fullWidth={field.fullWidth}
                 required={field.required && !pending}
                 readOnly={lockField ? (field.readOnly?.(item) ?? false) : false}

@@ -90,4 +90,17 @@ describe("chat attachment capabilities", () => {
     expect(typeField ? isSelectOptionPending(typeField, "clickhouse") : true).toBe(false);
     expect(typeField ? isSelectOptionPending(typeField, "oracle") : false).toBe(true);
   });
+
+  it("keeps frontend MCP remote-only and does not expose Skill resource bindings", () => {
+    const transportField = WORKSPACE_CONFIG_FIELDS.mcp.find((field) => field.key === "transport");
+    const authField = WORKSPACE_CONFIG_FIELDS.mcp.find((field) => field.key === "authType");
+    const skillFields = new Set(WORKSPACE_CONFIG_FIELDS.skill.map((field) => field.key));
+
+    expect(transportField ? isSelectOptionPending(transportField, "stdio") : false).toBe(true);
+    expect(authField ? isSelectOptionPending(authField, "custom-header") : true).toBe(false);
+    expect(skillFields.has("defaultDbIds")).toBe(false);
+    expect(skillFields.has("defaultKbIds")).toBe(false);
+    expect(skillFields.has("defaultMcpIds")).toBe(false);
+    expect(skillFields.has("modelProfileId")).toBe(false);
+  });
 });

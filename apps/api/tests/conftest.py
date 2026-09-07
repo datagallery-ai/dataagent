@@ -38,6 +38,7 @@ def auth_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         "LLM_API_KEY": "test-api-key",
         "METADATA_DB_PATH": str(tmp_path / "workbench.sqlite"),
         "STORAGE_ROOT_DIR": str(tmp_path / "storage"),
+        "DATAAGENT_HOME": str(tmp_path / ".dataagent"),
     }
     for key, value in env.items():
         monkeypatch.setenv(key, value)

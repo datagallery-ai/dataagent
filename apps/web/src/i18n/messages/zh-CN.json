@@ -476,9 +476,9 @@
     "selectedFile": "已选择：{{name}}",
     "skillNotesTitle": "Skill 包说明",
     "skillNotesStructure": "标准结构：目录中包含 SKILL.md（YAML frontmatter + 说明）",
-    "skillNotesContract": "后端约定：POST /api/v1/skills multipart 上传；运行时只发送 activeSkillId，不发送包内容",
+    "skillNotesContract": "后端约定：POST /api/v1/skills multipart 上传；运行时发送 enabledSkillIds 和 activeSkillId，不发送包内容",
     "skillNotesBuiltin": "内置 Skill 由服务端提供；前端仅展示元数据",
-    "skillNotesCustom": "自定义 Skill 通过 REST multipart 上传；AG-UI 上下文只携带 skill id",
+    "skillNotesCustom": "自定义 Skill 通过 REST multipart 上传；AG-UI run_config 只携带 Skill id",
     "mcpNotesTitle": "MCP 连接说明",
     "mcpNotesRemote": "远程服务通常使用 SSE / Streamable HTTP URL，例如 https://host/mcp",
     "mcpNotesPersist": "配置通过 POST /api/v1/mcp-servers 持久化；令牌保存在 secretRef",
@@ -918,9 +918,18 @@
         "label": "认证方式"
       },
       "apiKey": {
-        "label": "Token / API Key",
+        "label": "Bearer Token",
         "placeholder": "••••••",
         "helpText": "Bearer 认证时保存在 secretRef。"
+      },
+      "customHeaderName": {
+        "label": "请求头名称",
+        "placeholder": "X-API-Key"
+      },
+      "customHeaderValue": {
+        "label": "请求头值",
+        "placeholder": "••••••",
+        "helpText": "加密保存到 secretRef。"
       },
       "toolAllowlist": {
         "label": "工具白名单",
@@ -1062,7 +1071,7 @@
       "authType": {
         "none": "无认证",
         "bearer": "Bearer Token",
-        "custom-header": "自定义请求头（后端待支持）"
+        "custom-header": "自定义请求头"
       }
     },
     "llm": {

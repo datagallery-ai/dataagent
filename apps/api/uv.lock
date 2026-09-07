@@ -566,10 +566,13 @@ dependencies = [
     { name = "cryptography" },
     { name = "datagallery-dataagent", extra = ["nl2sql"] },
     { name = "fastapi" },
+    { name = "langchain-core" },
+    { name = "langchain-mcp-adapters" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -589,10 +592,13 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "datagallery-dataagent", extras = ["nl2sql"], editable = "../../runtime/dataagent" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "langchain-core", specifier = ">=1.2.15,<2.0.0" },
+    { name = "langchain-mcp-adapters", specifier = "==0.3.2" },
     { name = "langgraph", specifier = ">=0.4.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.8.0" },
     { name = "python-multipart", specifier = ">=0.0.18" },
+    { name = "pyyaml", specifier = "==6.0.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
 

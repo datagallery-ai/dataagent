@@ -82,6 +82,37 @@ class SqliteStore:
             );
             CREATE INDEX IF NOT EXISTS idx_encrypted_secrets_owner
                 ON encrypted_secrets(workspace_id, user_id, owner_kind, owner_id);
+            CREATE TABLE IF NOT EXISTS file_assets (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                storage_path TEXT NOT NULL,
+                detected_mime_type TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, sha256)
+            );
+            CREATE TABLE IF NOT EXISTS file_asset_refs (
+                id TEXT PRIMARY KEY,
+                file_asset_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                declared_mime_type TEXT,
+                source TEXT NOT NULL,
+                session_id TEXT,
+                run_id TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'ready',
+                deleted_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(file_asset_id) REFERENCES file_assets(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_file_asset_refs_scope
+                ON file_asset_refs(workspace_id, user_id, session_id, source, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_file_asset_refs_asset
+                ON file_asset_refs(file_asset_id, deleted_at);
             """
         )
         self.conn.commit()

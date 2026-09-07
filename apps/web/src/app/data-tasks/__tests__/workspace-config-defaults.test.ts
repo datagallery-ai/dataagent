@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   defaultWorkspaceConfig,
   getEnabledLlmItems,
+  isWorkspaceConfigItemValid,
   resolveActiveLlmProfileId,
   summarizeConfigItems,
   summarizeLlmItems,
   summarizeMcpItems,
+  workspaceConfigItemDraftEquals,
   type WorkspaceConfigStore,
 } from "../data-task-state";
 
@@ -53,6 +55,62 @@ describe("workspace config defaults", () => {
       "server-default",
     ]);
     expect(summarizeLlmItems(workspaceConfig.llm, "未配置")).toBe("default");
+  });
+
+  it("does not mark an MCP form dirty when only live manifest fields refresh", () => {
+    const draft = {
+      id: "mcp-1",
+      name: "MCP",
+      description: "",
+      enabled: true,
+      settings: {
+        transport: "streamable-http",
+        serverUrl: "http://127.0.0.1:8898/mcp",
+        healthStatus: "untested",
+        toolCount: "0",
+        toolNames: "",
+      },
+    };
+    const refreshed = {
+      ...draft,
+      settings: {
+        ...draft.settings,
+        healthStatus: "connected",
+        toolCount: "1",
+        toolNames: "echo",
+      },
+    };
+
+    expect(workspaceConfigItemDraftEquals(draft, refreshed)).toBe(true);
+  });
+
+  it("allows saved MCP credentials to stay blank but requires replacements after auth changes", () => {
+    const saved = {
+      id: "mcp-1",
+      name: "MCP",
+      description: "",
+      enabled: true,
+      hasSecret: true,
+      persistedAuthType: "custom-header",
+      settings: {
+        transport: "streamable-http",
+        serverUrl: "https://example.com/mcp",
+        authType: "custom-header",
+        customHeaderName: "",
+        customHeaderValue: "",
+      },
+    };
+
+    expect(isWorkspaceConfigItemValid("mcp", saved, saved.settings)).toBe(true);
+    expect(isWorkspaceConfigItemValid("mcp", saved, {
+      ...saved.settings,
+      authType: "bearer",
+    })).toBe(false);
+    expect(isWorkspaceConfigItemValid("mcp", saved, {
+      ...saved.settings,
+      authType: "bearer",
+      apiKey: "replacement-token",
+    })).toBe(true);
   });
 });
 

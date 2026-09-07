@@ -72,6 +72,30 @@ async def test_runtime_rebuilds_graph_for_model_profile_revision(monkeypatch: py
 
 
 @pytest.mark.asyncio
+async def test_runtime_evicts_least_recently_used_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai-compatible")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("LLM_API_KEY", "test-api-key")
+    runtime = DataAgentRuntime(
+        _config_path(),
+        checkpointer=InMemorySaver(),
+        store=InMemoryStore(),
+        graph_cache_size=2,
+    )
+
+    first = await runtime.agent_for("user-a", "thread-1")
+    second = await runtime.agent_for("user-a", "thread-2")
+    first_again = await runtime.agent_for("user-a", "thread-1")
+    await runtime.agent_for("user-a", "thread-3")
+    second_again = await runtime.agent_for("user-a", "thread-2")
+
+    assert first_again.graph is first.graph
+    assert second_again.graph is not second.graph
+    assert len(runtime._graphs) == 2
+
+
+@pytest.mark.asyncio
 async def test_runtime_rejects_unsafe_thread_id() -> None:
     runtime = DataAgentRuntime(
         _config_path(),
