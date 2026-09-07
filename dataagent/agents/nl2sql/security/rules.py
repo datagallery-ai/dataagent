@@ -310,6 +310,11 @@ def check_semantic_schema(
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
         detail = str(exc)
+        ambiguous = _ambiguous_column_context(statement, detail, normalized_schema, allowed_tables)
+        if ambiguous is not None:
+            column_name, candidates, full_outer_join = ambiguous
+            message = _ambiguous_column_resolution_message(column_name, candidates, full_outer_join)
+            return [SecurityViolation("SCHEMA-004", message)]
         hint = _wrong_cte_qualifier_hint(statement, detail)
         message = _schema_column_resolution_message(detail, hint)
         return [SecurityViolation("SCHEMA-002", message)]
@@ -330,15 +335,96 @@ def check_semantic_schema(
 
 def _schema_column_resolution_message(detail: str, hint: str = "") -> str:
     message = (
-        "Source column is missing from the provided semantic schema or cannot be resolved unambiguously: "
-        f"{detail.rstrip('.')}."
+        "Column is not exposed by a source available in this query scope: "
+        f"{detail.rstrip('.')}. Verify that the column exists in the referenced physical table's semantic schema or "
+        "is included in the referenced CTE/subquery SELECT list. Then use the actual exposed column name with the "
+        "correct table or CTE alias."
     )
     if hint:
         return f"{message} {hint}"
-    return (
-        f"{message} Ensure the column exists under the referenced table in the provided semantic schema; then check "
-        "the table or CTE alias and qualify the column with its unique source."
+    return message
+
+
+def _ambiguous_column_resolution_message(
+    column_name: str,
+    candidates: list[str],
+    full_outer_join: bool,
+) -> str:
+    candidate_text = ", ".join(candidates)
+    message = (
+        f"Column reference '{column_name}' is ambiguous in the current query scope because multiple sources expose "
+        f"it: {candidate_text}. This is not a missing semantic-schema column. Qualify every unqualified reference "
+        f"with the intended source alias, for example '{candidates[0]}'."
     )
+    if not full_outer_join or len(candidates) != 2:
+        return message
+    return (
+        f"{message} For this FULL OUTER JOIN, use JOIN ... USING ({column_name}) when both inputs intentionally "
+        f"share one join key, or project COALESCE({candidates[0]}, {candidates[1]}) AS {column_name} when either side "
+        "may be absent."
+    )
+
+
+def _ambiguous_column_context(
+    statement: exp.Expression,
+    detail: str,
+    normalized_schema: dict[str, Any],
+    allowed_tables: set[str],
+) -> Optional[tuple[str, list[str], bool]]:
+    unresolved_name = _unresolved_column_name(detail)
+    if not unresolved_name:
+        return None
+    for scope in traverse_scope(statement):
+        column_name = ""
+        for column in scope.columns:
+            if not column.table and _normalize_identifier(column.name) == unresolved_name:
+                column_name = column.name
+                break
+        if not column_name:
+            continue
+        candidates = []
+        for alias, source_entry in scope.selected_sources.items():
+            _, source = source_entry
+            outputs = _source_output_columns(source, normalized_schema, allowed_tables)
+            if unresolved_name in outputs:
+                candidates.append(f"{alias}.{column_name}")
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            continue
+        expression = scope.expression
+        joins = []
+        if isinstance(expression, exp.Select):
+            joins = expression.args.get("joins") or []
+        full_outer_join = any(str(join.args.get("side") or "").upper() == "FULL" for join in joins)
+        return column_name, candidates, full_outer_join
+    return None
+
+
+def _source_output_columns(
+    source: Any,
+    normalized_schema: dict[str, Any],
+    allowed_tables: set[str],
+) -> set[str]:
+    if isinstance(source, exp.Table):
+        matches = _matching_schema_tables(source, allowed_tables)
+        if len(matches) != 1:
+            return set()
+        table_name = next(iter(matches))
+        columns = normalized_schema.get(table_name, {}).get("columns", {})
+        return {_normalize_identifier(name) for name in columns}
+    if hasattr(source, "selected_sources"):
+        return {_normalize_identifier(name) for name in source.expression.named_selects}
+    return set()
+
+
+def _unresolved_column_name(detail: str) -> str:
+    marker = "Column '"
+    _, found, remainder = detail.partition(marker)
+    if not found:
+        return ""
+    column_name, closing_quote, _ = remainder.partition("'")
+    return _normalize_identifier(column_name) if closing_quote else ""
 
 
 def _wrong_cte_qualifier_hint(statement: exp.Expression, detail: str) -> str:

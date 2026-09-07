@@ -268,6 +268,21 @@ def test_check_sql_resolves_cte_column_named_like_context_function(qualifier: st
         assert result.normalized_sql == sql.replace("current_time", '"current_time"')
 
 
+def test_check_sql_resolves_cte_current_time_despite_unrelated_column_error() -> None:
+    """An unrelated missing column should not make a proven CTE column look like a context function."""
+    schema = {"orders": {"columns": {"id": {}, "time": {}}}}
+    sql = (
+        "WITH aligned_periods AS ("
+        "SELECT time AS current_time FROM orders WHERE id = 1"
+        ") SELECT current_time, missing_column FROM aligned_periods"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
+
+
 def test_check_sql_resolves_base_column_named_like_context_function() -> None:
     """A modeled base column should disambiguate a bare context-function-shaped name."""
     schema = {"orders": {"columns": {"id": {}, "current_time": {}}}}
@@ -398,8 +413,9 @@ def test_check_sql_rejects_column_missing_from_semantic_schema() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
-    assert "exists under the referenced table" in result.violations[0].message
-    assert "table or CTE alias" in result.violations[0].message
+    assert "not exposed by a source available in this query scope" in result.violations[0].message
+    assert "physical table's semantic schema" in result.violations[0].message
+    assert "CTE/subquery SELECT list" in result.violations[0].message
 
 
 def test_check_sql_explains_how_to_fix_ambiguous_source_column() -> None:
@@ -416,8 +432,29 @@ def test_check_sql_explains_how_to_fix_ambiguous_source_column() -> None:
     )
 
     assert result.blocked is True
-    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
-    assert "qualify the column with its unique source" in result.violations[0].message
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-004"]
+    assert "orders.id" in result.violations[0].message
+    assert "customers.id" in result.violations[0].message
+    assert "not a missing semantic-schema column" in result.violations[0].message
+    assert "Qualify every unqualified reference" in result.violations[0].message
+
+
+def test_check_sql_explains_ambiguous_derived_time_column() -> None:
+    """An ambiguous derived column should name both aliases and explain FULL OUTER JOIN repair options."""
+    schema = {"events": {"columns": {"id": {}, "time": {}}}}
+    sql = (
+        "SELECT time FROM (SELECT time FROM events WHERE id = 1) c "
+        "FULL OUTER JOIN (SELECT time FROM events WHERE id = 2) p ON c.time = p.time ORDER BY time"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-004"]
+    assert "c.time" in result.violations[0].message
+    assert "p.time" in result.violations[0].message
+    assert "USING (time)" in result.violations[0].message
+    assert "COALESCE(c.time, p.time) AS time" in result.violations[0].message
 
 
 def test_check_sql_explains_wrong_cte_column_qualifier() -> None:
@@ -447,7 +484,8 @@ def test_check_sql_keeps_generic_hint_when_no_cte_exposes_column() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
-    assert "exists under the referenced table" in result.violations[0].message
+    assert "physical table's semantic schema" in result.violations[0].message
+    assert "CTE/subquery SELECT list" in result.violations[0].message
     assert "not exposed by CTE alias" not in result.violations[0].message
 
 

@@ -20,6 +20,7 @@ import sqlglot
 from sqlglot import Tokenizer, TokenType, exp
 from sqlglot.errors import ErrorLevel, ParseError
 from sqlglot.expressions.core import Expression
+from sqlglot.optimizer.scope import traverse_scope
 
 _COLUMN_CONTEXT_FUNCTION_NAMES = frozenset({"current_role", "user"})
 
@@ -42,8 +43,11 @@ def normalize_semantic_column_references(
         try:
             candidate = cast(Expression, sqlglot.parse_one(candidate_sql, read=dialect, error_level=ErrorLevel.RAISE))
             qualify_with_semantic_schema(candidate, dialect=dialect, schema=schema)
-        except (ParseError, ValueError):
+        except ParseError:
             continue
+        except ValueError:
+            if not _candidate_is_unique_derived_column(statement, name):
+                continue
         normalized_sql = candidate_sql
     return normalized_sql if normalized_sql != sql else None
 
@@ -65,6 +69,32 @@ def _candidate_names(statement: Expression) -> set[str]:
         ):
             names.add(name)
     return names
+
+
+def _candidate_is_unique_derived_column(statement: Expression, name: str) -> bool:
+    found = False
+    for scope in traverse_scope(statement):
+        expression = scope.expression
+        if not isinstance(expression, exp.Select) or not _select_has_function_candidate(expression, name):
+            continue
+        found = True
+        matching_sources = 0
+        for _, source in scope.selected_sources.values():
+            if not hasattr(source, "selected_sources"):
+                continue
+            outputs = {_normalize_identifier(output) for output in source.expression.named_selects}
+            if name in outputs:
+                matching_sources += 1
+        if matching_sources != 1:
+            return False
+    return found
+
+
+def _select_has_function_candidate(select: exp.Select, name: str) -> bool:
+    for node in select.find_all(exp.Func):
+        if node.find_ancestor(exp.Select) is select and _function_name(node) == name and not node.args:
+            return True
+    return False
 
 
 def _quote_candidate_tokens(sql: str, dialect: str, candidate_name: str) -> str:
