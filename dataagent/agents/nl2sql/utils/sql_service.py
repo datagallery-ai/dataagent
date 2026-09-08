@@ -20,6 +20,7 @@ import httpx
 from dataagent.agents.nl2sql.errors import SQLServiceError
 from dataagent.common_utils.outbound_tls import httpx_verify
 from dataagent.utils.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, DEFAULT_NL2SQL_SQLITE_TIMEOUT
+from dataagent.utils.log import logger
 
 _CLOUD_CORE_TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=1800.0, pool=10.0)
 
@@ -37,6 +38,7 @@ class SQLiteConfig:
 class CloudCoreConfig:
     path: str
     explain_url: str | None = None
+    feature: str | None = None
 
     def to_conn_kwargs(self) -> dict[str, Any]:
         """Return connection kwargs for the SQL driver."""
@@ -173,22 +175,25 @@ class CloudCoreService(SqlService):
         try:
             verify = httpx_verify("cloud_core")
             if self.config.explain_url:
+                request_data = {
+                    "sql": sql,
+                    "feature": self.config.feature,
+                }
+                logger.info("Call cloud-core dry run: {}, request: {}", self.config.explain_url, request_data)
                 response = httpx.post(
                     self.config.explain_url,
-                    params={
-                        "auto_repair": "true",
-                        "format_sql": "false",
-                    },
-                    content=sql.encode("utf-8"),
+                    json=request_data,
                     headers={
-                        "Content-Type": "text/plain; charset=utf-8",
+                        "Content-Type": "application/json; charset=utf-8",
                     },
                     timeout=_CLOUD_CORE_TIMEOUT,
                     verify=verify,
                 )
-                response.raise_for_status()
-                error = response.json().get("error")
-                return str(error) if error else None
+                result = response.json()
+                logger.info("Call cloud-core dry run result: {}", result)
+                if result.get("result") is False:
+                    return result.get("message")
+                return None
 
             response = httpx.post(
                 self.config.path,
