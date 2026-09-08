@@ -70,6 +70,17 @@ _ALLOWED_FUNCTIONS = frozenset(
     }
 )
 _MAX_STRING_BYTES = 16 * 1024 * 1024
+# sqlglot 28 parses these keyword-shaped names as bare columns, not Func nodes.
+_COLUMN_CONTEXT_FUNCTION_NAMES = frozenset(
+    {
+        "current_catalog",
+        "current_database",
+        "current_path",
+        "current_role",
+        "session_user",
+        "user",
+    }
+)
 
 
 def _resolve_expression_types(names: tuple[str, ...]) -> tuple[type[Any], ...]:
@@ -177,7 +188,7 @@ def check_allowed_functions(
             not column.table
             and isinstance(identifier, exp.Identifier)
             and not identifier.args.get("quoted")
-            and name in {"current_role", "user"}
+            and name in _COLUMN_CONTEXT_FUNCTION_NAMES
         ):
             return [SecurityViolation("FUNCTION-001", f"SQL function is not in the allowlist: {name}.")]
     return []
@@ -310,6 +321,8 @@ def check_semantic_schema(
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
         detail = str(exc)
+        if _unresolved_column_name(detail) in _COLUMN_CONTEXT_FUNCTION_NAMES:
+            return []
         ambiguous = _ambiguous_column_context(statement, detail, normalized_schema, allowed_tables)
         if ambiguous is not None:
             column_name, candidates, full_outer_join = ambiguous

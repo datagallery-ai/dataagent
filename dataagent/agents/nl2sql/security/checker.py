@@ -17,7 +17,7 @@ from typing import Any, cast
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, OptimizeError
-from sqlglot.expressions.core import Expression
+from sqlglot.expressions import Expression
 from sqlglot.optimizer.qualify import qualify
 
 from dataagent.agents.nl2sql.security.models import SecurityCheckResult, SecurityViolation
