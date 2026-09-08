@@ -203,6 +203,7 @@ Comparison examples:
 - For AMF, PCF, NWDAF generic wording, do not filter ne_name = 'AMF', 'PCF', or 'NWDAF'. These are type labels, not instance values.
 - Temporarily never add info_indicate filters.
 - Use IS NULL or IS NOT NULL. Do not compare metrics with 'NULL' or empty string.
+- When a metric is a single-column aggregate (`SUM(col)`, `AVG(col)`, `MAX(col)`, `MIN(col)`, `COUNT(col)`), alias the result with the original column name so the aggregate overwrites the raw field name. Do NOT append suffixes such as `_sum`, `_total`, or `_agg`. Multi-expression metrics (e.g. sums of multiple columns, ratios, conditional `CASE` aggregation) keep a descriptive ASCII alias instead.
 - Do not invent SPLIT_PART, regex, JSON extraction, delimiters, unit conversions, ::hll, or HLL functions unless schema or evidence confirms them.
 - If a column has `relation_formula` in its description, use that formula to compute the metric.
 - When returning dimension members that are filtered, ranked, or ordered by a metric, SELECT must include both the involved dimensions and the computed metric value. Reuse exactly the same aggregate or formula expression in SELECT and HAVING/ORDER BY; do not return only the dimensions. If the user explicitly asks only for the count of qualifying members, return the count only.

@@ -31,7 +31,6 @@ def _load_catalog() -> dict[str, Any]:
         raise ValueError("unsupported business-twin business ID catalog version")
     for field in (
         "ignored_temporal_fields",
-        "network_subject_terms",
         "business_schemas",
         "business_rules",
     ):
@@ -42,7 +41,6 @@ def _load_catalog() -> dict[str, Any]:
 
 _CATALOG = _load_catalog()
 _IGNORED_TEMPORAL_FIELDS = frozenset(_CATALOG["ignored_temporal_fields"])
-_NETWORK_SUBJECT_TERMS = dict(_CATALOG["network_subject_terms"])
 _BUSINESS_SCHEMAS = {
     business_id: {
         "metrics": frozenset(schema["metrics"]),

@@ -12,11 +12,6 @@
     "week",
     "year"
   ],
-  "network_subject_terms": {
-    "amf": "AMF",
-    "pcf": "PCF",
-    "nwdaf": "NWDAF"
-  },
   "business_schemas": {
     "dw1745159003": {
       "metrics": [
@@ -557,11 +552,6 @@
     }
   },
   "business_rules": {
-    "network_element_routes": {
-      "amf": "dw1745159005",
-      "nwdaf": "dw1745159003",
-      "pcf": "dw1745159006"
-    },
     "prb": {
       "business_ids": [
         "dw1745159004"

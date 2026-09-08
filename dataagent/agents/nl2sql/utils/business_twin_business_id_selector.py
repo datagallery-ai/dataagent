@@ -22,7 +22,6 @@ from dataagent.agents.nl2sql.utils.business_twin_business_id_catalog import (
     _DIMENSION_FIELDS,
     _IGNORED_TEMPORAL_FIELDS,
     _METRIC_FIELDS,
-    _NETWORK_SUBJECT_TERMS,
 )
 from dataagent.utils.log import logger
 
@@ -71,29 +70,6 @@ def _normalize_columns(payload: object) -> tuple[frozenset[str], frozenset[str]]
     )
 
 
-def _subject_from_question(question: str) -> str:
-    normalized = question.upper()
-    if "高铁" in question:
-        return "high_rail"
-
-    targeted: list[tuple[int, str]] = []
-    mentioned: list[tuple[int, str]] = []
-    for subject, term in _NETWORK_SUBJECT_TERMS.items():
-        for suffix in ("网元", "实例"):
-            index = normalized.find(f"{term}{suffix}")
-            if index >= 0:
-                targeted.append((index, subject))
-        index = normalized.find(term)
-        if index >= 0:
-            mentioned.append((index, subject))
-
-    if targeted:
-        return min(targeted)[1]
-    if mentioned:
-        return min(mentioned)[1]
-    return "general"
-
-
 def _route_by_dimension(dimensions: frozenset[str], routes: Mapping[str, Sequence[str]]) -> Sequence[str]:
     if "default5qi_group" in dimensions:
         return routes["default5qi_group"]
@@ -106,18 +82,6 @@ def _preference_groups(extraction: Mapping[str, Any]) -> list[Sequence[str]]:
     metrics: frozenset[str] = extraction["metrics"]
     dimensions: frozenset[str] = extraction["dimensions"]
     groups: list[Sequence[str]] = []
-
-    if extraction["subject"] == "high_rail":
-        if metrics & _HIGH_RAIL_RIDE_METRICS or dimensions & _HIGH_RAIL_RIDE_DIMENSIONS:
-            groups.append(_HIGH_RAIL_RULES["ride_routes"])
-        if metrics - _HIGH_RAIL_RIDE_METRICS - _HIGH_RAIL_USER_METRICS:
-            groups.append(_HIGH_RAIL_RULES["experience_routes"])
-        if metrics & _HIGH_RAIL_USER_METRICS or (not metrics and dimensions & _HIGH_RAIL_GROUPED_DIMENSIONS):
-            if dimensions & _HIGH_RAIL_GROUPED_DIMENSIONS:
-                groups.append(_HIGH_RAIL_RULES["grouped_user_routes"])
-            groups.append(_HIGH_RAIL_RULES["default_routes"])
-        elif not metrics:
-            groups.append(_HIGH_RAIL_RULES["default_routes"])
 
     prb = _BUSINESS_RULES["prb"]
     if metrics & _PRB_TRIGGER_METRICS:
@@ -189,10 +153,6 @@ def _select_business_id(extraction: Mapping[str, Any]) -> str:
             }
         )
 
-    forced_business_id = _BUSINESS_RULES["network_element_routes"].get(extraction["subject"])
-    if forced_business_id:
-        return forced_business_id
-
     exact_scores = [score for score in scores if score["exact"]]
     if exact_scores:
         pool = exact_scores
@@ -231,10 +191,4 @@ def select_business_twin_business_id(question: str, payload: object) -> str:
     """Select one business-twin business ID from canonical columns extracted by the model."""
 
     metrics, dimensions = _normalize_columns(payload)
-    return _select_business_id(
-        {
-            "metrics": metrics,
-            "dimensions": dimensions,
-            "subject": _subject_from_question(question),
-        }
-    )
+    return _select_business_id({"metrics": metrics, "dimensions": dimensions})
