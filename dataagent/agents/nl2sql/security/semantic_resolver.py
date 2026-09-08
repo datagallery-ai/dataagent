@@ -19,10 +19,20 @@ from typing import Any, Optional, cast
 import sqlglot
 from sqlglot import Tokenizer, TokenType, exp
 from sqlglot.errors import ErrorLevel, ParseError
-from sqlglot.expressions.core import Expression
+from sqlglot.expressions import Expression
 from sqlglot.optimizer.scope import traverse_scope
 
-_COLUMN_CONTEXT_FUNCTION_NAMES = frozenset({"current_role", "user"})
+# sqlglot 28 parses these keyword-shaped names as bare columns, not Func nodes.
+_COLUMN_CONTEXT_FUNCTION_NAMES = frozenset(
+    {
+        "current_catalog",
+        "current_database",
+        "current_path",
+        "current_role",
+        "session_user",
+        "user",
+    }
+)
 
 
 def normalize_semantic_column_references(
@@ -101,13 +111,10 @@ def _quote_candidate_tokens(sql: str, dialect: str, candidate_name: str) -> str:
     tokens = Tokenizer(dialect=dialect).tokenize(sql)
     edits = []
     for index, token in enumerate(tokens):
-        previous = tokens[index - 1] if index else None
         following = tokens[index + 1] if index + 1 < len(tokens) else None
         if _normalize_identifier(token.text) != candidate_name:
             continue
         if token.token_type in {TokenType.IDENTIFIER, TokenType.STRING}:
-            continue
-        if previous is not None and previous.token_type is TokenType.DOT:
             continue
         if following is not None and following.token_type is TokenType.L_PAREN:
             continue
