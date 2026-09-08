@@ -56,13 +56,21 @@ def test_known_extra_metric_is_classified_without_dimension_error() -> None:
 @pytest.mark.parametrize(
     ("question", "columns", "expected"),
     [
-        ("查询AMF网元在线用户数", [], "dw1745159005"),
-        ("查询PCF实例策略授权成功次数", [], "dw1745159006"),
-        ("查询NWDAF实例保障异常释放次数", [], "dw1745159003"),
+        ("查询AMF网元在线用户数", ["recv_ue_logo_online_users_of_amf"], "dw1745159005"),
+        (
+            "查询PCF实例策略授权成功次数",
+            ["to_amf_policy_auth_request_success_times_of_pcf"],
+            "dw1745159006",
+        ),
+        (
+            "查询NWDAF实例保障异常释放次数",
+            ["assurance_abnormal_release_times_of_nwdaf"],
+            "dw1745159003",
+        ),
         ("查询高铁用户数", ["crh_users"], "dw1745159021"),
         ("查询高铁乘坐次数", ["crh_ride_times", "gpsi"], "dw1745159012"),
         ("查询高铁分群用户数", ["crh_users", "crh_group"], "dw1745159010"),
-        ("查询高铁下行流量", ["downlink_traffic"], "dw1745159011"),
+        ("查询高铁下行流量", ["downlink_traffic"], "dw1745159007"),
         ("查询上行PRB使用量", ["cell_prb_ul_usage"], "dw1745159004"),
         ("查询保障次数", ["assurance_times"], "dw1745159008"),
         (
