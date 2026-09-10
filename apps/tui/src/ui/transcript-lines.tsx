@@ -57,6 +57,7 @@ export interface BuildChatLinesInput {
   startup?: StartupInfo | undefined;
   compactMode?: boolean | undefined;
   thoughtExpanded?: boolean | undefined;
+  runStartedAt?: number | undefined;
 }
 
 type ToolCallElement = Extract<DisplayMessage["elements"][number], { type: "tool_call" }>;
@@ -143,8 +144,23 @@ export function buildChatLines(input: BuildChatLinesInput): VisualLine[] {
   }
 
   for (const message of input.messages) {
+    if (message.runSummary) {
+      const key = `m:${message.id}:summary`;
+      const { status, durationMs } = message.runSummary;
+      const label = status === 'completed' ? '✓ Run completed' : status === 'failed'
+        ? '✗ Run failed' : 'Interrupted — completion unknown';
+      push(key, <Text key={key} color={status === 'completed' ? inkColors.success : status === 'failed' ? inkColors.error : inkColors.warning}>
+        {truncateToWidth(`  ${label} · ${formatRunDuration(durationMs)}`, contentWidth)}
+      </Text>);
+      push(`${key}:after`, blankNode(`${key}:after`));
+      continue;
+    }
     pushMessageLines(message, toolCalls, bodyWidth, push, compactMode, thoughtExpanded);
     push(`m:${message.id}:after`, blankNode(`m:${message.id}:after`));
+  }
+
+  if (input.runStartedAt !== undefined) {
+    push('run:progress', <RunProgress key="run:progress" startedAt={input.runStartedAt} width={contentWidth} />);
   }
 
   // Restored sessions can report a count without hydrated messages yet.
@@ -158,6 +174,23 @@ export function buildChatLines(input: BuildChatLinesInput): VisualLine[] {
 /** Convenience for callers that only need the row count (e.g. scroll clamps). */
 export function countChatLines(input: BuildChatLinesInput): number {
   return buildChatLines(input).length;
+}
+
+export function formatRunDuration(ms: number): string {
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m ${Math.floor(ms % 60000 / 1000)}s`;
+}
+
+function RunProgress({ startedAt, width }: { startedAt: number; width: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  return <Text color={inkColors.muted}>{truncateToWidth(
+    `  Running${'.'.repeat(Math.floor(now / 1000) % 3 + 1)} · ${formatRunDuration(Math.max(0, now - startedAt))}`,
+    width,
+  )}</Text>;
 }
 
 /**
@@ -231,8 +264,6 @@ function pushMessageLines(
   pushLine(headerKey, <MessageHeader key={headerKey} message={message} />);
 
   if (message.elements.length === 0 && message.isStreaming) {
-    const key = `m:${message.id}:thinking`;
-    pushLine(key, <ThinkingLine key={key} />);
     return;
   }
 
@@ -1304,7 +1335,6 @@ const MessageHeader: React.FC<MessageHeaderProps> = ({ message }) => {
       {INDENT}
       <Text bold color={roleColor(message.role)}>{roleLabel(message.role)}</Text>
       <Text dimColor>  {formatTimestamp(message.timestamp)}</Text>
-      {message.isStreaming ? <Text dimColor> • working...</Text> : null}
     </Text>
   );
 };

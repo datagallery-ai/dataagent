@@ -16,11 +16,12 @@ import { useTerminalSize } from './use-terminal-size.js';
 import { SessionPicker } from './SessionPicker.js';
 import { ResourcePicker, type ResourcePickerItem } from './ResourcePicker.js';
 import { HomeSplash } from './HomeSplash.js';
-import { StatusBar } from './StatusBar.js';
+import { installFullscreenCursorCorrection } from './fullscreen-cursor.js';
 import { CommandHistory, DEFAULT_COMMANDS } from './keybindings.js';
 import { AssistantTextStreamBuffer, type AssistantTextFlush } from './assistant-stream-buffer.js';
 import { createWheelScrollDecoder } from '../input/mouse-wheel.js';
 import { inkColors } from './theme.js';
+import { commandAvailable, loadBackendConfig } from '../backend-config.js';
 import {
   restoreSessionConversation,
   store,
@@ -31,12 +32,11 @@ import {
   persistWorkspaceConfig,
   type WorkspaceConfigItem,
 } from '../state/data-task-state.js';
-import { getMessageTextContent } from '../state/message-history.js';
 import type { AgentClient, AgentMessage, RunAgentInput } from '../protocol/types.js';
-import { classifyError, formatErrorMessage, errorLogger } from '../protocol/error-handler.js';
+import { classifyError, formatErrorMessage, errorLogger, ErrorCategory } from '../protocol/error-handler.js';
 import { commandProcessor } from '../commands/index.js';
 import type { CommandContext, CommandResult } from '../commands/types.js';
-import { ConfigClientError, type ConfigClient, type Datasource, type SessionListItem, type Skill } from '../config/index.js';
+import { ConfigClientError, type Capabilities, type ConfigClient, type Datasource, type SessionListItem, type Skill } from '../config/index.js';
 import type { AppExitReason, AuthCommandController } from '../auth/types.js';
 
 interface AppProps {
@@ -148,8 +148,7 @@ const firstEnabledDatasourceId = (state: TuiAppState): string | undefined => {
 };
 
 const firstEnabledSkillId = (state: TuiAppState): string | undefined => {
-  return state.workspaceConfig.skill.find((item) => item.enabled)?.id
-    ?? state.workspaceConfig.skill[0]?.id;
+  return state.workspaceConfig.skill.find((item) => item.enabled)?.id;
 };
 
 const uniqueStrings = (values: Array<string | undefined>): string[] => {
@@ -183,6 +182,7 @@ const buildTuiRunConfig = (
 
   return {
     ...datasourceSelection,
+    activeLlmProfileId: state.workspaceConfig.llm.find((item) => item.enabled)?.id,
     enabledKnowledgeIds: enabledItemIds(state.workspaceConfig.kb),
     enabledMcpServerIds: enabledItemIds(state.workspaceConfig.mcp),
     enabledSkillIds,
@@ -329,15 +329,17 @@ export const App: React.FC<AppProps> = ({
 }) => {
   const { exit } = useApp();
   const { stdin } = useStdin();
-  const { write: writeToStdout } = useStdout();
+  const { write: writeToStdout, stdout } = useStdout();
   const { columns: terminalColumns, rows: terminalRows } = useTerminalSize();
-  // Ink 7 renders an exact-height frame without a trailing newline, so the app
-  // can safely use the full viewport and keep the status bar on the bottom row.
+  // Full-height frames need no blank bottom row once Ink's cursor suffix is corrected.
   const appRows = Math.max(1, terminalRows);
-  const workspaceRows = Math.max(0, appRows - 1);
+  useLayoutEffect(() => installFullscreenCursorCorrection(stdout), [stdout]);
   const [state, setState] = useState<TuiAppState>(store.getState());
+  const [backendReady, setBackendReady] = useState(!configClient);
+  const [capabilities, setCapabilities] = useState<Capabilities>({});
   const [inputFocused, setInputFocused] = useState(false);
   const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null);
+  const [inputHint, setInputHint] = useState('');
   const [logoutConfirm, setLogoutConfirm] = useState<
     | {
         kind: "remote-failed";
@@ -357,7 +359,7 @@ export const App: React.FC<AppProps> = ({
       ?? (configClient ? undefined : firstEnabledDatasourceId(store.getState())),
   );
   const [activeSkillId, setActiveSkillId] = useState<string | undefined>(
-    () => firstEnabledSkillId(store.getState()),
+    () => configClient ? undefined : firstEnabledSkillId(store.getState()),
   );
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [pickerSessions, setPickerSessions] = useState<SessionListItem[]>([]);
@@ -413,9 +415,10 @@ export const App: React.FC<AppProps> = ({
     datasourceId: activeDatasourceId,
   };
   const visibleMessages = state.messages;
+  const workspaceRows = appRows;
   const isRestoringSession = resumeLoadingSessionId !== null;
   const showLiveActivity = false;
-  const isHomeScreen = visibleMessages.length === 0
+  const isHomeScreen = backendReady && visibleMessages.length === 0
     && state.messages.length === 0
     && !commandNotice
     && queuedPrompts.length === 0
@@ -451,6 +454,8 @@ export const App: React.FC<AppProps> = ({
     isHomeScreen ? 'home' : 'workspace',
     pickerOpen ? 'picker-open' : 'picker-closed',
     commandNotice ? `${commandNotice.kind}:${commandNotice.message}` : 'clean',
+    inputHint,
+    ctrlCPressedOnce,
     terminalColumns,
     workspaceRows,
     reportedInputBoxRows ?? 'input-unknown',
@@ -463,7 +468,7 @@ export const App: React.FC<AppProps> = ({
     activeSkillId ?? 'no-skill',
   ].join('\u0000');
   const estimatedControlsRowCount = estimateControlsRows({
-    commandNotice: Boolean(commandNotice),
+    commandNotice: Boolean(commandNotice || inputHint || ctrlCPressedOnce),
     queuedPromptCount: queuedPrompts.length,
     activeTab: 'chat',
     homeScreen: isHomeScreen,
@@ -472,17 +477,17 @@ export const App: React.FC<AppProps> = ({
   const controlsRowCountForViewport = Math.max(estimatedControlsRowCount, controlsHeight);
   const scrollableRowCount = availableContentRows(workspaceRows, controlsRowCountForViewport);
   const chatViewportRowCount = scrollableRowCount;
-  const inputDisabled = isRestoringSession;
+  const inputDisabled = isRestoringSession || !backendReady;
   const inputCommands = useMemo(
     () => uniqueStrings([
-      ...DEFAULT_COMMANDS,
+      ...DEFAULT_COMMANDS.filter((command) => command.startsWith('/') && commandAvailable(command, capabilities)),
       ...skillShortcutItems.map((item) => `/${item.id}`),
     ]),
-    [skillShortcutItems],
+    [skillShortcutItems, capabilities],
   );
 
   const resolveDefaultDatasourceId = useCallback(async (): Promise<string | undefined> => {
-    if (!configClient || datasourceSelectionLockedRef.current || activeDatasourceIdRef.current) {
+    if (!backendReady || !capabilities['runtime.dataTools'] || !configClient || datasourceSelectionLockedRef.current || activeDatasourceIdRef.current) {
       return activeDatasourceIdRef.current;
     }
 
@@ -508,7 +513,7 @@ export const App: React.FC<AppProps> = ({
 
     await defaultDatasourcePromiseRef.current;
     return activeDatasourceIdRef.current;
-  }, [configClient]);
+  }, [configClient, backendReady, capabilities]);
 
   const requestControlsMeasurement = useCallback((inputBoxRows?: number) => {
     if (typeof inputBoxRows === 'number') {
@@ -660,7 +665,7 @@ export const App: React.FC<AppProps> = ({
     if (!activeDatasourceId && !configClient) {
       setActiveDatasourceId(firstEnabledDatasourceId(state));
     }
-    if (!activeSkillId) {
+    if (!activeSkillId && !configClient) {
       setActiveSkillId(firstEnabledSkillId(state));
     }
   }, [activeDatasourceId, activeSkillId, configClient, state.workspaceConfig]);
@@ -688,11 +693,31 @@ export const App: React.FC<AppProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!configClient) return;
+    let cancelled = false;
+    setBackendReady(false);
+    setCommandNotice({ kind: 'info', message: 'Loading backend configuration...' });
+    loadBackendConfig(configClient).then(({ workspace, defaults, capabilities: flags }) => {
+      if (cancelled) return;
+      store.setWorkspaceConfig(workspace);
+      setCapabilities(flags);
+      setActiveSkillId(defaults.activeSkillId && workspace.skill.some((item) => item.id === defaults.activeSkillId && item.enabled)
+        ? defaults.activeSkillId : undefined);
+      setActiveDatasourceId(flags['runtime.dataTools'] ? datasourceId ?? defaults.activeDatasourceId : undefined);
+      setBackendReady(true);
+      setCommandNotice(null);
+    }).catch((error: unknown) => {
+      if (!cancelled) setCommandNotice({ kind: 'error', message: `Unable to load backend configuration: ${formatSkillApiError(error)}. Restart TUI to retry.` });
+    });
+    return () => { cancelled = true; };
+  }, [configClient, datasourceId]);
+
+  useEffect(() => {
     let cancelled = false;
     const localItems = localSkillPickerItems(state.workspaceConfig.skill, activeSkillId);
     setSkillShortcutItems(localItems);
 
-    if (!configClient) {
+    if (!configClient || !backendReady || !capabilities.skills) {
       return () => {
         cancelled = true;
       };
@@ -713,7 +738,7 @@ export const App: React.FC<AppProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [configClient, state.workspaceConfig.skill, activeSkillId]);
+  }, [configClient, backendReady, capabilities.skills, state.workspaceConfig.skill, activeSkillId]);
 
   useEffect(() => {
     const decoder = createWheelScrollDecoder();
@@ -779,11 +804,11 @@ export const App: React.FC<AppProps> = ({
   }, [client]);
 
   useEffect(() => {
-    if (!initialResume?.enabled || startupResumeAttempted.current) return;
+    if (!backendReady || !initialResume?.enabled || startupResumeAttempted.current) return;
     if (state.connectionStatus !== 'connected') return;
     startupResumeAttempted.current = true;
     void restoreHistoricalSession(initialResume.sessionId, true);
-  }, [initialResume?.enabled, initialResume?.sessionId, state.connectionStatus]);
+  }, [backendReady, initialResume?.enabled, initialResume?.sessionId, state.connectionStatus]);
 
   useEffect(() => () => {
     clearCtrlCExitTimer();
@@ -793,6 +818,10 @@ export const App: React.FC<AppProps> = ({
     requestedSessionId?: string | undefined,
     startup = false,
   ): Promise<void> {
+    if (!capabilities['conversation.memory']) {
+      setCommandNotice({ kind: 'info', message: 'This backend does not support restoring saved conversations. Start a new chat.' });
+      return;
+    }
     if (store.getState().runStatus === 'running') {
       setResumeLoadingSessionId(null);
       setCommandNotice({
@@ -856,6 +885,10 @@ export const App: React.FC<AppProps> = ({
   }
 
   async function openSessionPicker(): Promise<void> {
+    if (!capabilities['conversation.memory']) {
+      setCommandNotice({ kind: 'info', message: 'This backend does not support saved conversations.' });
+      return;
+    }
     if (store.getState().runStatus === 'running') {
       setCommandNotice({
         kind: 'error',
@@ -892,6 +925,10 @@ export const App: React.FC<AppProps> = ({
   }
 
   async function openDatasourcePicker(): Promise<void> {
+    if (!capabilities['runtime.dataTools']) {
+      setCommandNotice({ kind: 'info', message: 'This backend does not expose datasource management. You can chat directly using its configured tools.' });
+      return;
+    }
     setCommandNotice(null);
     setDatasourcePickerOpen(true);
     setSessionPickerOpen(false);
@@ -1188,6 +1225,7 @@ export const App: React.FC<AppProps> = ({
       const currentState = store.getState();
       const commandContext: CommandContext = {
         client,
+        capabilities,
         ...(configClient ? { configClient } : {}),
         ...(authController ? { authController } : {}),
         ...(activeDatasourceId ? { datasourceId: activeDatasourceId } : {}),
@@ -1274,6 +1312,7 @@ export const App: React.FC<AppProps> = ({
 
   // Handle agent query execution
   const handleAgentQuery = async (input: string) => {
+    if (!backendReady) return;
     setCommandNotice(null);
     const resolvedActiveDatasourceId = activeDatasourceId ?? await resolveDefaultDatasourceId();
     store.addUserMessage(input);
@@ -1290,11 +1329,10 @@ export const App: React.FC<AppProps> = ({
       store.setThreadId(threadId);
     }
 
-    const messages: AgentMessage[] = currentState.messages.map(msg => ({
-      id: msg.id,
-      role: msg.role,
-      content: getMessageTextContent(msg),  // Extract text from elements
-    }));
+    // The backend checkpoint owns history, including structured tool messages.
+    // Do not replay the lossy terminal transcript as model history.
+    const latestMessage = currentState.messages.at(-1)!;
+    const messages: AgentMessage[] = [{ id: latestMessage.id, role: 'user', content: input }];
 
     const createRunInput = (): RunAgentInput => {
       const runId = `run-${Date.now()}-${Math.random().toString(36).substring(7)}`;
@@ -1373,11 +1411,6 @@ export const App: React.FC<AppProps> = ({
       const storeCurrentRunEvent = (event: RuntimeEvent) => {
         store.handleLiveRunEvent({ ...event, _clientRunId: currentAttemptRunId() });
       };
-      const handleCurrentRunEvent = (event: RuntimeEvent) => {
-        if (shouldHandleRunEvent(event)) {
-          storeCurrentRunEvent(event);
-        }
-      };
 
       if (attempt === 0) {
         store.addAssistantMessage('', true);
@@ -1385,6 +1418,7 @@ export const App: React.FC<AppProps> = ({
 
       setRetryCount(attempt);
       let receivedText = false;
+      const renderedTextIds = new Set<string>();
       const textBuffer = new AssistantTextStreamBuffer();
       let textFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -1443,6 +1477,7 @@ export const App: React.FC<AppProps> = ({
           } else if (event.type === 'TEXT_MESSAGE_CONTENT' || event.type === 'TEXT_MESSAGE_CHUNK') {
             const delta = (event as { delta?: unknown }).delta;
             if (typeof delta === 'string') {
+              if (typeof runtimeEvent.messageId === 'string') renderedTextIds.add(runtimeEvent.messageId);
               if (!textBuffer.append(delta)) {
                 continue;
               }
@@ -1453,12 +1488,28 @@ export const App: React.FC<AppProps> = ({
               }
               scheduleTextFlush();
             }
+          } else if (event.type === 'MESSAGES_SNAPSHOT' && Array.isArray(runtimeEvent.messages)) {
+            // Non-streaming models publish final text in the message snapshot.
+            // Only consume this turn; streamed message IDs must not be duplicated.
+            const messages = runtimeEvent.messages as AgentMessage[];
+            const userIndex = messages.findIndex(message => message.id === latestMessage.id);
+            if (userIndex >= 0) {
+              for (const message of messages.slice(userIndex + 1)) {
+                if (message.role !== 'assistant' || typeof message.content !== 'string' || !message.content || renderedTextIds.has(message.id)) continue;
+                startNextTextSegment();
+                renderedTextIds.add(message.id);
+                receivedText = true;
+                textBuffer.append(message.content);
+                flushTextBuffer(false);
+              }
+            }
           } else if (event.type === 'TEXT_MESSAGE_END') {
             flushTextBuffer(false);
           } else if (event.type === 'RUN_FINISHED') {
             flushTextBuffer(false);
             store.finalizeReasoningMessage();
             storeCurrentRunEvent(runtimeEvent);
+            if (store.getState().runStatus === 'completed') store.recordRunSummary('completed');
           } else if (event.type === 'RUN_ERROR') {
             flushTextBuffer();
             store.finalizeReasoningMessage();
@@ -1467,16 +1518,24 @@ export const App: React.FC<AppProps> = ({
             storeCurrentRunEvent(runtimeEvent);
 
             // Classify and log the error
-            const classifiedError = classifyError(new Error(errorMessage));
+            const errorCode = typeof runtimeEvent.code === 'string' ? runtimeEvent.code : 'RUN_ERROR';
+            const classifiedError = {
+              category: ErrorCategory.API, message: errorMessage, userMessage: errorMessage,
+              code: errorCode, retryable: false,
+            };
             errorLogger.log(classifiedError, { threadId, runId });
 
             // Display user-friendly error message
             const friendlyMessage = formatErrorMessage(classifiedError);
-            store.updateAssistantMessage(`Error: ${friendlyMessage}`, false);
+            store.finalizeAssistantMessage();
+            store.addAssistantMessage(`Error [${errorCode}]: ${friendlyMessage}`, false);
+            store.recordRunSummary('failed');
           } else if (isToolCallEvent(runtimeEvent)) {
             startNextTextSegment();
             store.finalizeReasoningMessage();
             storeCurrentRunEvent(runtimeEvent);
+          } else if (event.type === 'CUSTOM' && runtimeEvent.name === 'unavailable_resources') {
+            setCommandNotice({ kind: 'info', message: 'Some enabled MCP resources are unavailable. The backend is continuing with the remaining tools.' });
           } else {
             // Feed non-text events into the state reducer. Text chunks are
             // rendered through the buffered assistant message path above.
@@ -1489,10 +1548,10 @@ export const App: React.FC<AppProps> = ({
           return;
         }
 
-        // Ensure run is marked as finished
+        // EOF alone does not prove the backend completed the run.
         const finalState = store.getState();
         if (finalState.runStatus === 'running') {
-          handleCurrentRunEvent({ type: 'RUN_FINISHED', runId: currentAttemptRunId() });
+          throw new Error('Agent stream ended without a terminal event. Completion is unknown; the request was not replayed.');
         }
 
         // Clear any previous errors on success
@@ -1526,44 +1585,31 @@ export const App: React.FC<AppProps> = ({
         // Format user-friendly error message
         const friendlyMessage = formatErrorMessage(classifiedError);
 
-        // Handle retryable errors
-        if (classifiedError.retryable && attempt < 3) {
-          const nextAttempt = attempt + 1;
-          setRetryCount(nextAttempt);
+        // Replaying a run can repeat tools that already executed.
+        store.handleLiveRunEvent({
+          type: 'RUN_ERROR',
+          runId: currentAttemptRunId(),
+          message: friendlyMessage,
+          _clientRunId: currentAttemptRunId(),
+        });
 
-          // Show retry message in the existing assistant bubble.
-          store.updateAssistantMessage(
-            `${friendlyMessage}\n\nRetrying (${nextAttempt}/3)...`,
-            true,
-          );
+        // Add error message to chat with category indicator
+        const categoryEmoji = {
+          network: '🌐',
+          config: '⚙️',
+          api: '🔌',
+          validation: '✏️',
+          stream: '📡',
+          unknown: '❓',
+        }[classifiedError.category];
 
-          await new Promise(resolve => setTimeout(resolve, 2000 * nextAttempt));
-          await runAttempt(nextAttempt);
-        } else {
-          // Non-retryable or max retries reached
-          store.handleLiveRunEvent({
-            type: 'RUN_ERROR',
-            runId: currentAttemptRunId(),
-            message: friendlyMessage,
-            _clientRunId: currentAttemptRunId(),
-          });
-
-          // Add error message to chat with category indicator
-          const categoryEmoji = {
-            network: '🌐',
-            config: '⚙️',
-            api: '🔌',
-            validation: '✏️',
-            stream: '📡',
-            unknown: '❓',
-          }[classifiedError.category];
-
-          store.updateAssistantMessage(
-            `${categoryEmoji} ${friendlyMessage}`,
-            false,
-          );
-          setRetryCount(0);
-        }
+        store.finalizeAssistantMessage();
+        store.addAssistantMessage(
+          `${categoryEmoji} ${friendlyMessage}`,
+          false,
+        );
+        store.recordRunSummary(['network', 'stream', 'unknown'].includes(classifiedError.category) ? 'interrupted' : 'failed');
+        setRetryCount(0);
       }
     };
 
@@ -1743,12 +1789,12 @@ export const App: React.FC<AppProps> = ({
             columns={Math.max(20, terminalColumns - 2)}
             rows={workspaceRows}
             fetchArtifactPreview={
-              configClient
+              configClient && capabilities['artifact.export']
                 ? (artifactId) => configClient.getArtifactPreview(artifactId)
                 : undefined
             }
             fetchArtifactContent={
-              configClient
+              configClient && capabilities['artifact.export']
                 ? (artifactId) => configClient.getArtifactContent(artifactId)
                 : undefined
             }
@@ -1796,7 +1842,8 @@ export const App: React.FC<AppProps> = ({
                       rows={scrollableRowCount}
                       columns={chatPaneColumns}
                       startup={startup}
-                      canResume={Boolean(configClient)}
+                      canResume={capabilities['conversation.memory'] === true}
+                      canSelectDatasource={capabilities['runtime.dataTools'] === true}
                       input={(promptWidth) => (
                         <EnhancedInputBox
                           onChange={handleInputChange}
@@ -1806,10 +1853,11 @@ export const App: React.FC<AppProps> = ({
                           onNewSession={startNewSession}
                           onExitRequest={requestCtrlCExit}
                           onRestoreQueuedMessages={popAllQueuedPrompts}
-                          ctrlCExitPending={ctrlCPressedOnce}
+                          onHintChange={setInputHint}
                           disabled={inputDisabled}
                           commands={inputCommands}
                           modelName={modelName}
+                          connectionStatus={state.connectionStatus}
                           datasourceId={activeDatasourceId}
                           skillId={activeSkillId}
                           inputWidth={promptWidth}
@@ -1819,7 +1867,7 @@ export const App: React.FC<AppProps> = ({
                               void handleSubmit('Show tables');
                               return true;
                             }
-                            if (shortcut === '2' && configClient) {
+                            if (shortcut === '2' && configClient && capabilities['conversation.memory']) {
                               void handleCommandExecution('/resume latest');
                               return true;
                             }
@@ -1864,6 +1912,7 @@ export const App: React.FC<AppProps> = ({
                         startup={transcriptStartup}
                         compactMode={compactMode}
                         thoughtExpanded={thoughtExpanded}
+                        runStartedAt={state.runStatus === 'running' ? state.runStartedAt : undefined}
                       />
                     </Box>
 
@@ -1888,10 +1937,10 @@ export const App: React.FC<AppProps> = ({
           }
           bottom={
             <Box ref={mainControlsRef} flexDirection="column" flexShrink={0}>
-              {commandNotice && (
+              {(commandNotice || inputHint || ctrlCPressedOnce) && (
                 <Box paddingX={1} flexShrink={0}>
-                  <Text color={commandNotice.kind === 'error' ? inkColors.error : inkColors.accent}>
-                    {commandNotice.message}
+                  <Text color={commandNotice?.kind === 'error' ? inkColors.error : inkColors.accent}>
+                    {ctrlCPressedOnce ? 'Press Ctrl+C again to exit.' : commandNotice?.message || inputHint}
                   </Text>
                 </Box>
               )}
@@ -1909,11 +1958,12 @@ export const App: React.FC<AppProps> = ({
                   onNewSession={startNewSession}
                   onExitRequest={requestCtrlCExit}
                   onRestoreQueuedMessages={popAllQueuedPrompts}
-                  ctrlCExitPending={ctrlCPressedOnce}
+                  onHintChange={setInputHint}
                   onLayoutChange={requestControlsMeasurement}
                   disabled={inputDisabled}
                   commands={inputCommands}
                   modelName={modelName}
+                  connectionStatus={state.connectionStatus}
                   datasourceId={activeDatasourceId}
                   skillId={activeSkillId}
                   inputWidth={chatPaneColumns}
@@ -1927,7 +1977,6 @@ export const App: React.FC<AppProps> = ({
         />
         )}
       </Box>
-      <StatusBar columns={terminalColumns} startup={startup} />
     </Box>
   );
 };

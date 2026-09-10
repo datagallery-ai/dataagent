@@ -105,11 +105,20 @@ export function classifyError(error: unknown): ClassifiedError {
         return {
           category: ErrorCategory.VALIDATION,
           message,
-          userMessage: 'Invalid request data',
+          userMessage: `Invalid request data: ${message}`,
           code,
           statusCode,
           retryable: false,
           suggestedAction: 'Check your input and try again',
+        };
+
+      case 'INCOMPLETE_STREAM':
+      case 'UNSUPPORTED_INTERRUPT':
+      case 'INVALID_EVENT':
+      case 'STREAM_ERROR':
+        return {
+          category: ErrorCategory.STREAM, message, userMessage: message,
+          code, statusCode, retryable: false,
         };
 
       case 'INVALID_CONTENT_TYPE':

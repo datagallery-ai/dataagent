@@ -32,7 +32,7 @@ type TestOutput = PassThrough & {
 
 const activeViews: Array<ReturnType<typeof render>> = [];
 
-function renderInputBox(element: React.ReactElement) {
+function renderInputBox(element: React.ReactElement, options: { debug?: boolean; columns?: number; rows?: number; keyboard?: boolean } = {}) {
   const stdin = new PassThrough() as TestInput;
   stdin.isTTY = true;
   stdin.isRaw = false;
@@ -43,8 +43,8 @@ function renderInputBox(element: React.ReactElement) {
   stdin.unref = () => stdin;
 
   const stdout = new PassThrough() as TestOutput;
-  stdout.columns = 100;
-  stdout.rows = 40;
+  stdout.columns = options.columns ?? 100;
+  stdout.rows = options.rows ?? 40;
   stdout.isTTY = true;
   const stderr = new PassThrough() as TestOutput;
   stderr.columns = 100;
@@ -57,13 +57,14 @@ function renderInputBox(element: React.ReactElement) {
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
     stderr: stderr as unknown as NodeJS.WriteStream,
-    debug: true,
+    debug: options.debug ?? true,
+    ...(options.keyboard ? { kittyKeyboard: { mode: 'auto' as const } } : {}),
     exitOnCtrlC: false,
     patchConsole: false,
     interactive: true,
   });
   activeViews.push(view);
-  return { ...view, stdin, output };
+  return { ...view, stdin, stdout, output };
 }
 
 afterEach(() => {
@@ -295,13 +296,13 @@ describe('EnhancedInputBox slash command menu', () => {
     );
     await waitForInput();
 
-    assert.equal(layoutRows.at(-1), 9);
+    assert.equal(layoutRows.at(-1), 3);
 
     view.stdin.write('/');
     await waitForInput();
     await waitForInput();
 
-    assert.equal(layoutRows.at(-1), 9);
+    assert.equal(layoutRows.at(-1), 3);
     assert.match(view.output.join(''), /\/clear\s+Clear chat history/);
     assert.doesNotMatch(view.output.join(''), /Slash Commands/);
   });
@@ -376,6 +377,66 @@ describe('EnhancedInputBox slash command menu', () => {
 });
 
 describe('EnhancedInputBox layout', () => {
+  it('starts with one line, grows upward to six lines and shrinks after submit', async () => {
+    const heights: number[] = [];
+    const changes: string[] = [];
+    const view = renderInputBox(<Box height={20} width={80} flexDirection="column" justifyContent="flex-end">
+      <EnhancedInputBox onChange={v => changes.push(v)} onSubmit={() => {}} onLayoutChange={v => heights.push(v)} inputWidth={80} />
+    </Box>);
+    await waitForInput();
+    assert.equal(heights.at(-1), 3);
+    view.stdin.write('first');
+    await waitForInput();
+    view.stdin.write('\x1b[13;2u');
+    await waitForInput();
+    assert.equal(heights.at(-1), 4);
+    assert.equal(changes.at(-1), 'first\n');
+    for (let i = 0; i < 8; i++) {
+      view.stdin.write('\x1b[13;2u');
+      await waitForInput();
+    }
+    assert.equal(heights.at(-1), 8);
+    view.stdin.write('last');
+    await waitForInput();
+    assert.match(view.output.at(-1) ?? '', /last/);
+    view.stdin.write('\r');
+    await waitForInput();
+    assert.equal(heights.at(-1), 3);
+  });
+
+  for (const columns of [60, 80, 160]) {
+    it(`keeps the composer within ${columns} columns and wraps Chinese without overflow`, async () => {
+      const heights: number[] = [];
+      const view = renderInputBox(<EnhancedInputBox value={'中文'.repeat(35)} inputWidth={columns}
+        onChange={() => {}} onSubmit={() => {}} onLayoutChange={v => heights.push(v)} />,
+      { columns, rows: 24 });
+      await waitForInput();
+      await waitForInput();
+      const width = columns - 4;
+      const border = (view.output.at(-1) ?? '').split('\n').find(line => line.includes('──')) ?? '';
+      assert.equal(border.trim().length, width);
+      assert.equal(border.indexOf('─'), 2);
+      assert.doesNotMatch(view.output.at(-1) ?? '', /[│┌┐└┘]/);
+      assert.ok((heights.at(-1) ?? 0) >= 3);
+      assert.ok((heights.at(-1) ?? 0) <= 8);
+    });
+  }
+
+  it('places the real IME cursor after Chinese text inside the bottom-anchored composer', async () => {
+    const view = renderInputBox(<Box height={20} width={80} flexDirection="column" justifyContent="flex-end">
+      <EnhancedInputBox inputWidth={80} onChange={() => {}} onSubmit={() => {}} />
+    </Box>, { debug: false, columns: 80, rows: 24 });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    view.stdin.write('中文');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // Prompt starts at x=5; two Chinese graphemes occupy four terminal cells.
+    // With a 3-row composer at the bottom, the input row is 2 rows above output end.
+    assert.ok(view.output.join('').includes('\x1b[2A\x1b[10G\x1b[?25h'));
+    view.stdin.write('\x1b[13;2u');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.ok(view.output.join('').includes('\x1b[2A\x1b[6G\x1b[?25h'));
+  });
+
   it('keeps all three input viewport rows visible inside the full border', async () => {
     const view = renderInputBox(
       <Box width={88}>
@@ -395,7 +456,7 @@ describe('EnhancedInputBox layout', () => {
     assert.match(view.output.join(''), /third/);
   });
 
-  it('uses the compact shortcut footer at the 76-column home width', async () => {
+  it('omits the metadata and shortcut footer at the 76-column home width', async () => {
     const view = renderInputBox(
       <Box width={76}>
         <EnhancedInputBox
@@ -410,9 +471,9 @@ describe('EnhancedInputBox layout', () => {
     await waitForInput();
 
     const output = view.output.join('');
-    assert.match(output, /ANALYZE/);
-    assert.match(output, /dtc-growth-demo/);
-    assert.match(output, /\[Enter\]/);
+    assert.doesNotMatch(output, /ANALYZE/);
+    assert.doesNotMatch(output, /dtc-growth-demo/);
+    assert.doesNotMatch(output, /\[Enter\]/);
     assert.doesNotMatch(output, /\[Shift\+Enter\]/);
   });
 
@@ -439,6 +500,39 @@ describe('EnhancedInputBox layout', () => {
   });
 });
 
+describe('EnhancedInputBox newline keys', () => {
+  for (const [name, sequence] of [['Shift+Enter (CSI-u)', '\x1b[13;2u'], ['xterm Shift+Enter', '\x1b[27;2;13~'], ['Ctrl+J', '\n'], ['Alt+Enter', '\x1b\r']]) {
+    it(`${name} inserts a newline without sending`, async () => {
+      const changes: string[] = [];
+      const sent: string[] = [];
+      const view = renderInputBox(<EnhancedInputBox onChange={v => changes.push(v)} onSubmit={v => sent.push(v)} />);
+      await waitForInput();
+      view.stdin.write('你好');
+      await waitForInput();
+      view.stdin.write(sequence!);
+      await waitForInput();
+      assert.deepEqual(sent, []);
+      assert.equal(changes.at(-1), '你好\n');
+      view.stdin.write('世界');
+      await waitForInput();
+      view.stdin.write('\r');
+      await waitForInput();
+      assert.deepEqual(sent, ['你好\n世界']);
+    });
+  }
+
+  it('negotiates enhanced keyboard reporting with iTerm2 and restores it on exit', async () => {
+    const view = renderInputBox(<EnhancedInputBox onChange={() => {}} onSubmit={() => {}} />, { keyboard: true });
+    await waitForInput();
+    assert.ok(view.output.join('').includes('\x1b[?u'));
+    view.stdin.write('\x1b[?0u');
+    await waitForInput();
+    assert.ok(view.output.join('').includes('\x1b[>1u'));
+    view.unmount();
+    assert.ok(view.output.join('').includes('\x1b[<u'));
+  });
+});
+
 describe('StatusBar', () => {
   const startup = {
     threadId: 'thread-1',
@@ -449,7 +543,7 @@ describe('StatusBar', () => {
     datasourceId: 'dtc-growth-demo',
   } as const;
 
-  it('shows live run, datasource, and model state when space is available', async () => {
+  it('combines model and datasource in the composer footer', async () => {
     const view = renderInputBox(
       <Box width={80}>
         <StatusBar columns={80} startup={startup} />
@@ -458,14 +552,14 @@ describe('StatusBar', () => {
     await waitForInput();
 
     const output = view.output.join('');
-    assert.match(output, /Running/);
+    assert.doesNotMatch(output, /Connected|●/);
+    assert.doesNotMatch(output, /Running|Ready/);
     assert.match(output, /source: /);
     assert.match(output, /dtc-growth-demo/);
-    assert.match(output, /model: /);
-    assert.match(output, /Qwen3-32B/);
+    assert.match(output, /model: Qwen3-32B/);
   });
 
-  it('keeps only the primary state on narrow terminals', async () => {
+  it('keeps the model and hides optional datasource on narrow terminals', async () => {
     const view = renderInputBox(
       <Box width={39}>
         <StatusBar columns={39} startup={startup} />
@@ -474,9 +568,18 @@ describe('StatusBar', () => {
     await waitForInput();
 
     const output = view.output.join('');
-    assert.match(output, /Running/);
+    assert.doesNotMatch(output, /Connected|●/);
+    assert.doesNotMatch(output, /Running|Ready/);
     assert.doesNotMatch(output, /source: /);
-    assert.doesNotMatch(output, /model: /);
+    assert.match(output, /model: Qwen3-32B/);
+  });
+
+  it('keeps connection trouble beside the model rather than adding another row', async () => {
+    const view = renderInputBox(<Box width={39}>
+      <StatusBar columns={39} startup={{ ...startup, connectionStatus: 'error' }} />
+    </Box>);
+    await waitForInput();
+    assert.match(view.output.join(''), /model: Qwen3-32B.*Error/);
   });
 });
 

@@ -7,7 +7,6 @@ import { getLogger } from "../utils/logger.js";
 import {
   classifyError,
   errorLogger,
-  shouldRetry,
   getRetryDelay,
   type ClassifiedError,
 } from "./error-handler.js";
@@ -34,6 +33,7 @@ export class CopilotKitClient {
   private onError?: ((error: ClassifiedError) => void) | undefined;
   private reconnectTimer?: NodeJS.Timeout | undefined;
   private isReconnecting: boolean = false;
+  private readonly activeRuns = new Set<AbortController>();
 
   constructor(config: CopilotKitClientConfig) {
     this.runtimeUrl = config.runtimeUrl;
@@ -138,79 +138,77 @@ export class CopilotKitClient {
    */
   dispose(): void {
     this.stopConnectionMonitoring();
+    this.isReconnecting = false;
+    for (const controller of this.activeRuns) controller.abort();
   }
 
   async *runAgent(input: RunAgentInput): AsyncGenerator<CopilotKitEvent> {
-    let attempt = 0;
-    let lastError: ClassifiedError | undefined;
+    const controller = new AbortController();
+    this.activeRuns.add(controller);
+    try {
+      const response = await this.postRunAgent(input, controller);
 
-    while (attempt <= this.maxRetries) {
-      try {
-        const response = await this.postRunAgent(input);
+      if (!response.ok) {
+        throw await this.errorFromResponse(response);
+      }
 
-        if (!response.ok) {
-          throw await this.errorFromResponse(response);
-        }
+      const contentType = response.headers.get("content-type");
+      if (!contentType?.includes("text/event-stream")) {
+        throw new CopilotKitClientError(
+          `Expected text/event-stream, got ${contentType ?? "unknown"}`,
+          "INVALID_CONTENT_TYPE",
+          response.status,
+        );
+      }
 
-        const contentType = response.headers.get("content-type");
-        if (!contentType?.includes("text/event-stream")) {
+      if (!response.body) {
+        throw new CopilotKitClientError("Response body is empty", "EMPTY_STREAM");
+      }
+
+      // Success - reset reconnecting state if applicable
+      if (this.isReconnecting) {
+        this.isReconnecting = false;
+        this.onConnectionStatusChange?.('connected');
+      }
+
+      for await (const event of this.parseSSEStream(response.body)) {
+        if (event.type === 'CUSTOM' && (event as unknown as { name?: string }).name === 'on_interrupt') {
           throw new CopilotKitClientError(
-            `Expected text/event-stream, got ${contentType ?? "unknown"}`,
-            "INVALID_CONTENT_TYPE",
-            response.status,
+            'The agent is waiting for human input. This TUI version cannot resume an interrupted run; use /reset to start a new conversation.',
+            'UNSUPPORTED_INTERRUPT',
           );
         }
-
-        if (!response.body) {
-          throw new CopilotKitClientError("Response body is empty", "EMPTY_STREAM");
-        }
-
-        // Success - reset reconnecting state if applicable
-        if (this.isReconnecting) {
-          this.isReconnecting = false;
-          this.onConnectionStatusChange?.('connected');
-        }
-
-        yield* this.parseSSEStream(response.body);
-        return; // Success
-      } catch (error) {
-        // Classify the error
-        const classifiedError = classifyError(error);
-        lastError = classifiedError;
-
-        // Log the error
-        errorLogger.log(classifiedError, {
-          attempt,
-          threadId: input.threadId,
-          runId: input.runId,
-        });
-
-        // Notify error handler
-        this.onError?.(classifiedError);
-
-        // Determine if we should retry
-        if (!shouldRetry(classifiedError, attempt, this.maxRetries)) {
-          throw error; // Non-retryable or max attempts reached
-        }
-
-        // Calculate delay and retry
-        attempt++;
-        if (attempt <= this.maxRetries) {
-          this.onConnectionStatusChange?.('reconnecting');
-          const delay = getRetryDelay(attempt - 1, this.retryBaseDelay);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
+        yield event;
+        if (event.type === 'RUN_FINISHED' || event.type === 'RUN_ERROR') return;
       }
-    }
+      throw new CopilotKitClientError(
+        'Agent stream ended without a terminal event. Completion is unknown; the request was not replayed.',
+        'INCOMPLETE_STREAM',
+      );
+    } catch (error) {
+      // Classify the error
+      const classifiedError = classifyError(error);
 
-    // If we've exhausted all retries, throw the last error
-    throw lastError ? new Error(lastError.userMessage) : new Error('Request failed after maximum retries');
+      // Log the error
+      errorLogger.log(classifiedError, {
+        threadId: input.threadId,
+        runId: input.runId,
+      });
+
+      // Notify error handler
+      this.onError?.(classifiedError);
+
+      // A failed POST/stream may already have executed tools. Never replay it.
+      throw error;
+    } finally {
+      controller.abort();
+      this.activeRuns.delete(controller);
+    }
   }
 
-  private async postRunAgent(input: RunAgentInput): Promise<Response> {
+  private async postRunAgent(input: RunAgentInput, controller = new AbortController()): Promise<Response> {
     let response: Response;
     try {
-      const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
 
       response = await this.fetchImpl(this.runtimeUrl, {
@@ -309,6 +307,7 @@ export class CopilotKitClient {
         'STREAM_ERROR',
       );
     } finally {
+      await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
   }
@@ -355,7 +354,7 @@ export class CopilotKitClient {
       getLogger().warn("Failed to parse SSE event", {
         data: data.length > 2000 ? `${data.slice(0, 2000)}...` : data,
       });
-      return null;
+      throw new CopilotKitClientError('Invalid JSON in AG-UI stream.', 'INVALID_EVENT');
     }
   }
 }

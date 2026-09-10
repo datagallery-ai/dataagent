@@ -129,11 +129,11 @@ check(inputBuffer.text === 'abc', 'raw DEL is ignored by the text buffer instead
 
 // --- layout helpers ---
 check(chatContentWidth(120) === 115, 'content width is capped for wide terminals');
-check(estimateControlsRows({ commandNotice: false, activeTab: 'chat' }) === 9, 'controls estimate reserves the fixed enhanced input height');
-check(estimateControlsRows({ commandNotice: true, activeTab: 'chat' }) === 10, 'controls estimate includes command notice');
+check(estimateControlsRows({ commandNotice: false, activeTab: 'chat' }) === 3, 'controls estimate reserves a single-line composer');
+check(estimateControlsRows({ commandNotice: true, activeTab: 'chat' }) === 4, 'controls estimate includes command notice');
 check(estimateControlsRows({ commandNotice: false, activeTab: 'chat', inputBoxRows: 12 }) === 12, 'controls estimate follows expanded input height');
 check(estimateControlsRows({ commandNotice: true, activeTab: 'chat', inputBoxRows: 12 }) === 13, 'controls estimate combines notice and expanded input height');
-check(ENHANCED_INPUT_RESERVED_ROWS === 9, 'reserved input height covers the bordered three-row input viewport');
+check(ENHANCED_INPUT_RESERVED_ROWS === 3, 'reserved input height covers a single input row and separators');
 check(
   estimateControlsRows({
     commandNotice: false,

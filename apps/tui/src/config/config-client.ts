@@ -149,7 +149,7 @@ const ModelProfileSchema = CommonFieldsSchema.extend({
   provider: z.string().default("openai-compatible"),
   baseUrl: z.string().optional(),
   modelName: z.string(),
-  secretRef: z.string().optional(),
+  secretRef: z.string().nullish(),
   temperature: z.number().optional(),
   maxTokens: z.number().optional(),
   timeoutMs: z.number().optional(),
@@ -201,7 +201,7 @@ const McpServerSchema = CommonFieldsSchema.extend({
   transport: z.enum(["streamable-http", "sse"]),
   serverUrl: z.string(),
   authType: z.enum(["none", "bearer", "custom-header"]).optional(),
-  secretRef: z.string().optional(),
+  secretRef: z.string().nullish(),
   healthStatus: z.enum(["connected", "failed", "untested", "disabled"]).optional(),
   toolManifest: z
     .array(
@@ -268,42 +268,13 @@ const RunDefaultsSchema = z.object({
   enabledDatasourceIds: z.array(z.string()),
   enabledKnowledgeIds: z.array(z.string()),
   enabledMcpServerIds: z.array(z.string()),
+  enabledSkillIds: z.array(z.string()),
   activeDatasourceId: z.string().optional(),
   activeLlmProfileId: z.string().optional(),
   activeSkillId: z.string().optional(),
 });
 
-const CapabilitiesSchema = z.object({
-  datasource: z
-    .object({
-      supportedTypes: z.array(z.string()),
-      server: z.boolean().optional(),
-      queryPolicy: z.boolean().optional(),
-    })
-    .optional(),
-  knowledge: z
-    .object({
-      vectorSearch: z.boolean().optional(),
-      rerank: z.boolean().optional(),
-    })
-    .optional(),
-  mcp: z
-    .object({
-      transports: z.array(z.string()).optional(),
-    })
-    .optional(),
-  llm: z
-    .object({
-      providers: z.array(z.string()).optional(),
-      samplingParams: z.boolean().optional(),
-    })
-    .optional(),
-  skill: z
-    .object({
-      formats: z.array(z.string()).optional(),
-    })
-    .optional(),
-});
+const CapabilitiesSchema = z.record(z.string(), z.boolean());
 
 // ==================== Session Schemas ====================
 

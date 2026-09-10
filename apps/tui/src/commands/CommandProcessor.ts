@@ -4,6 +4,7 @@
 
 import type { Command, CommandResult, CommandContext } from './types.js';
 import { builtinCommands } from './builtinCommands.js';
+import { commandAvailable } from '../backend-config.js';
 
 export class CommandProcessor {
   private commands: Map<string, Command> = new Map();
@@ -91,6 +92,9 @@ export class CommandProcessor {
         };
       }
 
+      if (context.capabilities && !commandAvailable(command.name, context.capabilities)) {
+        return { success: false, message: `/${command.name} is not supported by the connected backend.` };
+      }
       return await command.execute(args, context);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

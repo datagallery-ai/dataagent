@@ -4,6 +4,7 @@
 
 import type { Command } from './types.js';
 import type { WorkspaceConfigItem } from '../state/data-task-state.js';
+import { commandAvailable } from '../backend-config.js';
 
 export const helpCommand: Command = {
   name: 'help',
@@ -12,6 +13,7 @@ export const helpCommand: Command = {
   execute: async (args, context) => {
     const commands = getAllCommands();
     const commandList = commands
+      .filter(cmd => !context.capabilities || commandAvailable(cmd.name, context.capabilities))
       .map(cmd => {
         const aliases = cmd.aliases ? ` (${cmd.aliases.join(', ')})` : '';
         return `  /${cmd.name}${aliases} - ${cmd.description}`;
@@ -132,7 +134,7 @@ const formatError = (error: unknown): string => {
 };
 
 const firstEnabledSkillId = (items: WorkspaceConfigItem[]): string | undefined => {
-  return items.find((item) => item.enabled)?.id ?? items[0]?.id;
+  return items.find((item) => item.enabled)?.id;
 };
 
 const localSkillChoices = (

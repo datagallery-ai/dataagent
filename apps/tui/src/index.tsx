@@ -26,6 +26,7 @@ import { installTerminalRedrawOptimizer } from "./terminal-redraw-optimizer.js";
 import { withAlternateScreen } from "./terminal-screen.js";
 import { App } from "./ui/App.js";
 import { themeManager } from "./ui/themes/theme-manager.js";
+import { startLocalRuntime } from "./local-runtime.js";
 
 export type RunTuiOptions = {
   argv?: string[];
@@ -35,6 +36,7 @@ export type RunTuiOptions = {
   prompt?: import("./auth/interactive-login.js").PromptFn;
   sessionStore?: import("./auth/session-store.js").TuiSessionStore;
   renderApp?: typeof renderAuthenticatedApp;
+  localCredentials?: { token: string; csrf: string };
 };
 
 async function renderAuthenticatedApp(options: {
@@ -74,6 +76,7 @@ async function renderAuthenticatedApp(options: {
             process.env.DATAFOUNDRY_TUI_INCREMENTAL_RENDERING !== "0",
           maxFps: 30,
           patchConsole: false,
+          kittyKeyboard: { mode: 'auto', flags: ['disambiguateEscapeCodes'] },
         },
       );
       if (options.transport) {
@@ -103,7 +106,8 @@ Usage:
 
 Options:
   --runtime-url <url>     CopilotKit runtime URL
-                          (default: http://127.0.0.1:8787/api/copilotkit)
+                          (explicit URL: remote mode with account login;
+                           omitted: start a private local backend, no registration)
   --datasource-id <id>    Datasource ID
                           (default: backend run-defaults)
   --agent <name>          Agent name
@@ -163,6 +167,27 @@ function resolveResumeRequest(
 
 export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   const args = options.argv ?? process.argv.slice(2);
+  if (args.some((arg) => ['--runtime-url', '--help', '-h', `--${'demo'}`].includes(arg))) {
+    return runConnectedTui(options);
+  }
+  const prompt = options.prompt ?? createSecurePrompt({ stdin: options.stdin ?? process.stdin, stdout: options.stdout ?? process.stdout });
+  let local: Awaited<ReturnType<typeof startLocalRuntime>> | undefined;
+  try {
+    local = await startLocalRuntime({ prompt, stdout: options.stdout ?? process.stdout });
+    prompt.close();
+    return await runConnectedTui({ ...options, argv: [...args, '--runtime-url', local.runtimeUrl],
+      localCredentials: { token: local.token, csrf: local.csrf } });
+  } catch (error) {
+    (options.stdout ?? process.stderr).write(`${errorMessage(error)}\n`);
+    return 1;
+  } finally {
+    prompt.close();
+    await local?.stop();
+  }
+}
+
+async function runConnectedTui(options: RunTuiOptions = {}): Promise<number> {
+  const args = options.argv ?? process.argv.slice(2);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const renderApp = options.renderApp ?? renderAuthenticatedApp;
 
@@ -211,9 +236,11 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
         apiBaseUrl: configBaseUrl,
         noAutoLogin: forceInteractiveLogin,
         fetchImpl,
+        ...(options.localCredentials ? { localCredentials: options.localCredentials } : {}),
         ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
       });
     } catch (error) {
+      if (options.localCredentials) throw error;
       const recovered = await promptApiUnreachableRecovery({
         apiBaseUrl: configBaseUrl,
         error,
@@ -325,22 +352,24 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
       `Authenticated as ${bootstrap.session.user.email} (${bootstrap.session.workspace.id})`,
     );
 
-    const exitReason = await renderApp({
-      client,
-      configClient,
-      datasourceId: explicitDatasourceId,
-      initialDatasourceId,
-      authController,
-      transport: bootstrap.transport,
-      onExit: () => {},
-      ...(initialResume ? { initialResume } : {}),
-    });
-
-    if ("dispose" in client && typeof client.dispose === "function") {
+    let exitReason: AppExitReason;
+    try {
+      exitReason = await renderApp({
+        client,
+        configClient,
+        datasourceId: explicitDatasourceId,
+        initialDatasourceId,
+        authController,
+        transport: bootstrap.transport,
+        onExit: () => {},
+        ...(initialResume ? { initialResume } : {}),
+      });
+    } finally {
       client.dispose();
     }
 
     if (exitReason === "logout" || exitReason === "auth-required") {
+      if (options.localCredentials) return exitReason === "logout" ? 0 : 1;
       store.reset();
       if (exitReason === "auth-required") {
         console.log("Session expired or revoked. Please sign in again.");

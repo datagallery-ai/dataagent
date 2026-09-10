@@ -31,6 +31,7 @@ export interface DisplayMessage {
   id: string;
   role: "user" | "assistant" | "system";
   timestamp: number;
+  runSummary?: { status: 'completed' | 'failed' | 'interrupted'; durationMs: number };
   /** For assistant messages that are still streaming */
   isStreaming?: boolean | undefined;
   /** Message elements (text, tool calls, etc.) in order */

@@ -20,6 +20,7 @@ describe("ConfigClient auth transport", () => {
               enabledDatasourceIds: ["ds-1"],
               enabledKnowledgeIds: [],
               enabledMcpServerIds: [],
+              enabledSkillIds: [],
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },

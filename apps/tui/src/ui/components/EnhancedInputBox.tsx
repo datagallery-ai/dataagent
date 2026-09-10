@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Box, Text, useInput, usePaste, useStdin, useStdout, type Key } from 'ink';
+import { Box, Text, useInput, usePaste, useStdin, useStdout, useCursor, useBoxMetrics, type DOMElement, type Key } from 'ink';
+import { textWidth } from '../text-width.js';
+import { StatusBar } from '../StatusBar.js';
+import type { ConnectionStatus } from '../../state/index.js';
 import { isMouseInput } from '../../input/mouse-wheel.js';
 import { CommandCompletion, CommandHistory, DEFAULT_COMMANDS } from '../keybindings.js';
 import { inkColors } from '../theme.js';
@@ -19,12 +22,13 @@ interface EnhancedInputBoxProps {
   onNewSession?: () => void;
   onExitRequest?: (clearInputDraft: () => boolean) => void;
   onRestoreQueuedMessages?: () => string | null;
-  ctrlCExitPending?: boolean | undefined;
+  onHintChange?: ((hint: string) => void) | undefined;
   onLayoutChange?: (rows: number) => void;
   disabled?: boolean;
   commands?: string[];
   placeholder?: string | undefined;
   modelName?: string | undefined;
+  connectionStatus?: ConnectionStatus | undefined;
   datasourceId?: string | undefined;
   skillId?: string | undefined;
   inputWidth?: number | undefined;
@@ -33,16 +37,16 @@ interface EnhancedInputBoxProps {
   onShortcut?: ((input: string) => boolean) | undefined;
 }
 
-const INPUT_VIEWPORT_HEIGHT = 3;
+const MAX_INPUT_VIEWPORT_HEIGHT = 6;
 const LARGE_PASTE_CHAR_THRESHOLD = 1000;
 const LARGE_PASTE_LINE_THRESHOLD = 10;
 
 function inputBoxRowsFor(renderedInputRows: number): number {
-  // Full border + vertical input padding + divider + metadata row.
-  return Math.max(1, renderedInputRows) + 6;
+  // Input rows plus the top and bottom separators.
+  return Math.max(1, renderedInputRows) + 2;
 }
 
-export const ENHANCED_INPUT_RESERVED_ROWS = inputBoxRowsFor(INPUT_VIEWPORT_HEIGHT);
+export const ENHANCED_INPUT_RESERVED_ROWS = inputBoxRowsFor(1);
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -162,21 +166,21 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   onNewSession,
   onExitRequest,
   onRestoreQueuedMessages,
-  ctrlCExitPending = false,
+  onHintChange,
   onLayoutChange,
   disabled = false,
   commands = DEFAULT_COMMANDS,
   placeholder = 'Ask about your data... "Show tables"',
   modelName,
+  connectionStatus = 'connected',
   datasourceId,
-  skillId,
   inputWidth,
-  outputCount = 0,
   history,
   onShortcut,
 }) => {
   const [, forceRender] = useState(0);
   const [completionHint, setCompletionHint] = useState('');
+  useEffect(() => { onHintChange?.(completionHint); }, [completionHint, onHintChange]);
   const [showSlashPopover, setShowSlashPopover] = useState(false);
   const [slashPopoverActiveIndex, setSlashPopoverActiveIndex] = useState(0);
   const pendingPastesRef = useRef<Map<string, string>>(new Map());
@@ -187,20 +191,38 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   const { isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
   const fallbackWidth = stdout.columns ?? process.stdout.columns ?? 80;
-  const composerWidth = Math.max(12, Math.floor(inputWidth ?? fallbackWidth));
-  const visualWidth = Math.max(12, composerWidth - 6);
-  const bufferRef = useRef<TextBuffer>(new TextBuffer('', INPUT_VIEWPORT_HEIGHT, visualWidth));
+  const composerWidth = Math.max(8, Math.floor(inputWidth ?? fallbackWidth) - 4);
+  // Horizontal padding + prompt; reserve one cell for the real cursor.
+  const visualWidth = Math.max(1, composerWidth - 5);
+  const maxInputRows = Math.max(1, Math.min(MAX_INPUT_VIEWPORT_HEIGHT, Math.floor((stdout.rows ?? 24) / 3)));
+  const bufferRef = useRef<TextBuffer>(new TextBuffer('', 1, visualWidth));
   const buffer = bufferRef.current;
   const inputIsActive = isRawModeSupported;
+  const inputRef = useRef<DOMElement>(null);
+  useBoxMetrics(inputRef);
+  const { setCursorPosition } = useCursor();
+  const [inputOrigin, setInputOrigin] = useState<{ x: number; y: number }>();
+
+  // Ink renders the whole screen, so IME needs coordinates including every
+  // ancestor (home centering, chat dock, borders and padding), not a fake cursor.
+  useLayoutEffect(() => {
+    let node = inputRef.current;
+    if (!node) return;
+    let x = 0;
+    let y = 0;
+    while (node) {
+      const layout = node.yogaNode?.getComputedLayout();
+      x += layout?.left ?? 0;
+      y += layout?.top ?? 0;
+      node = node.parentNode ?? null;
+    }
+    setInputOrigin((previous) => previous?.x === x && previous?.y === y ? previous : { x, y });
+  });
 
   const availableCommands = React.useMemo(() => commandProcessor.getCommands(), []);
 
   const accent = disabled ? inkColors.muted : inkColors.focus;
   const borderColor = disabled ? inkColors.muted : (inputIsActive ? inkColors.focus : inkColors.border);
-  const metaParts = [
-    datasourceId || 'no datasource',
-    skillId,
-  ].filter((part): part is string => Boolean(part));
 
   const redraw = useCallback(() => {
     forceRender((version) => version + 1);
@@ -246,7 +268,9 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     filterSlashCommands(availableCommands, getSlashQuery() ?? '')
   ), [availableCommands, getSlashQuery]);
 
-  const currentLayoutRows = useCallback(() => ENHANCED_INPUT_RESERVED_ROWS, []);
+  const currentLayoutRows = useCallback(() => (
+    inputBoxRowsFor(Math.min(maxInputRows, buffer.allVisualLines.length)) + (modelName ? 1 : 0)
+  ), [buffer, maxInputRows, modelName]);
 
   const syncChange = useCallback(() => {
     onChange(buffer.text);
@@ -506,9 +530,9 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   }, [commands]);
 
   useEffect(() => {
-    buffer.setViewport(visualWidth, INPUT_VIEWPORT_HEIGHT);
+    buffer.setViewport(visualWidth, Math.min(maxInputRows, buffer.allVisualLines.length));
     redraw();
-  }, [buffer, redraw, visualWidth]);
+  }, [buffer, redraw, visualWidth, maxInputRows]);
 
   useEffect(() => {
     if (value !== undefined && value !== buffer.text) {
@@ -543,7 +567,8 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
         return;
       }
 
-      if (isModifiedReturn(key) || (key.ctrl && input === 'j')) {
+      // CSI-u is parsed by Ink; also accept xterm modifyOtherKeys sequences.
+      if (isModifiedReturn(key) || (key.ctrl && input === 'j') || /^\[27;[2-8];13~$/.test(input)) {
         buffer.newline();
         syncChange();
         resetCompletion();
@@ -779,19 +804,20 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     { isActive: inputIsActive },
   );
 
+  const inputRows = Math.min(maxInputRows, buffer.allVisualLines.length);
+  buffer.setViewportHeight(inputRows);
   const lines = buffer.viewportVisualLines;
   const [cursorVisualRow, cursorVisualCol] = buffer.visualCursor;
   const relativeCursorRow = cursorVisualRow - buffer.visualScrollOffset;
-  const placeholderFirst = cpSlice(placeholder, 0, 1);
-  const placeholderRest = cpSlice(placeholder, 1);
+  const cursorCell = textWidth(cpSlice(lines[relativeCursorRow] ?? '', 0, cursorVisualCol));
+  setCursorPosition(inputIsActive && !disabled && inputOrigin ? {
+    x: inputOrigin.x + Math.min(cursorCell, visualWidth),
+    y: inputOrigin.y + relativeCursorRow,
+  } : undefined);
   const layoutRows = currentLayoutRows();
-  const showNewlineHint = composerWidth >= 96;
-  const showSendHint = composerWidth >= 40;
-  const showOutputCount = outputCount > 0 && composerWidth >= 64;
   const layoutSignature = [
     layoutRows,
     visualWidth,
-    metaParts.join('\u0000'),
   ].join(':');
   const isBufferEmpty = buffer.text.length === 0;
 
@@ -823,8 +849,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
       return (
         <Box key={`input-line-${index}`} minHeight={1}>
           <Text color={inkColors.muted} wrap="truncate-end">
-            {!disabled ? <Text inverse>{placeholderFirst || ' '}</Text> : placeholderFirst}
-            {placeholderRest}
+            {placeholder}
           </Text>
         </Box>
       );
@@ -854,12 +879,11 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
               key={`${index}:${fragmentIndex}`}
               color={fragment.isPastePlaceholder ? inkColors.accent : textColor}
               bold={fragment.isPastePlaceholder}
-              inverse={fragment.hasCursor}
             >
               {fragment.text}
             </Text>
           ))}
-          {cursorPos === codePoints.length && <Text inverse> </Text>}
+          {cursorPos === codePoints.length && ' '}
         </Text>
       </Box>
     );
@@ -868,8 +892,11 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     <Box
       flexDirection="column"
       flexShrink={0}
-      height={ENHANCED_INPUT_RESERVED_ROWS}
-      width="100%"
+      height={layoutRows}
+      width={composerWidth}
+      maxWidth="100%"
+      alignSelf="flex-start"
+      marginX={2}
       position="relative"
     >
       {showSlashPopover && !disabled && (
@@ -877,7 +904,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
           position="absolute"
           left={0}
           right={0}
-          bottom={ENHANCED_INPUT_RESERVED_ROWS}
+          bottom={layoutRows}
         >
           <SlashCommandPopover
             commands={getFilteredCommands()}
@@ -890,6 +917,8 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
         flexDirection="column"
         width="100%"
         borderStyle="single"
+        borderLeft={false}
+        borderRight={false}
         borderColor={borderColor}
       >
         {/* 主输入区域 */}
@@ -897,8 +926,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
           flexDirection="row"
           width="100%"
           paddingLeft={1}
-          paddingRight={2}
-          paddingY={1}
+          paddingRight={1}
         >
           <Text color={accent} bold>›</Text>
           <Box
@@ -907,83 +935,24 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
             paddingLeft={1}
           >
             <Box
+              ref={inputRef}
               flexDirection="column"
-              height={INPUT_VIEWPORT_HEIGHT}
+              height={inputRows}
               overflowY="hidden"
               flexShrink={0}
             >
-              {Array.from({ length: INPUT_VIEWPORT_HEIGHT }).map((_, index) => renderInputLine(index))}
+              {Array.from({ length: inputRows }).map((_, index) => renderInputLine(index))}
             </Box>
           </Box>
         </Box>
 
-        {/* 分隔线 */}
-        <Box
-          width="100%"
-          borderStyle="single"
-          borderTop={true}
-          borderBottom={false}
-          borderLeft={false}
-          borderRight={false}
-          borderColor={inkColors.border}
-        />
-
-        {/* 底部元数据栏 */}
-        <Box
-          flexDirection="row"
-          width="100%"
-          paddingX={1}
-          paddingY={0}
-          justifyContent="space-between"
-        >
-          {ctrlCExitPending ? (
-            <Text color={inkColors.warning} wrap="truncate-end">
-              Press Ctrl+C again to exit.
-            </Text>
-          ) : (
-            <>
-              <Box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0} marginRight={1}>
-                <Text wrap="truncate-end">
-                  {!disabled && completionHint && !showSlashPopover ? (
-                    <Text color={inkColors.muted}>{completionHint}</Text>
-                  ) : (
-                    <>
-                      <Text color={inkColors.muted}>ANALYZE / </Text>
-                      <Text color={disabled ? inkColors.muted : inkColors.text}>
-                        {datasourceId || 'no datasource'}
-                      </Text>
-                      {skillId && (
-                        <>
-                          <Text color={inkColors.muted}> / </Text>
-                          <Text color={disabled ? inkColors.muted : inkColors.text}>{skillId}</Text>
-                        </>
-                      )}
-                    </>
-                  )}
-                </Text>
-              </Box>
-              {showSendHint && (
-                <Box flexDirection="row" flexShrink={0}>
-                  {showOutputCount && (
-                    <>
-                      <Text color={inkColors.accent}>Outputs {outputCount}</Text>
-                      <Text color={inkColors.muted}>  </Text>
-                    </>
-                  )}
-                  {showNewlineHint && (
-                    <>
-                      <Text color={inkColors.muted}>[Shift+Enter]</Text>
-                      <Text color={inkColors.muted}> new line  </Text>
-                    </>
-                  )}
-                  <Text color={inkColors.muted}>[Enter]</Text>
-                  <Text color={inkColors.text}> send</Text>
-                </Box>
-              )}
-            </>
-          )}
-        </Box>
       </Box>
+
+      {modelName && (
+        <StatusBar columns={composerWidth} startup={{
+          modelName, connectionStatus, datasourceId, threadId: undefined, runStatus: 'idle', directory: '',
+        }} />
+      )}
     </Box>
   );
 };

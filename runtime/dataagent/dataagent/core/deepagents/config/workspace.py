@@ -89,7 +89,10 @@ class WorkspaceConfigCompiler:
         permissions: tuple[FilesystemPermission, ...] = ()
         if readonly_patterns:
             permissions = (FilesystemPermission(operations=["write"], paths=readonly_patterns, mode="deny"),)
-        prompt = self._build_system_prompt(workspace_root, readonly_mounts)
+        prompt = self._build_system_prompt(
+            workspace_root, readonly_mounts,
+            virtual_mode=bool(getattr(self._default_backend(backend), "virtual_mode", False)),
+        )
         return WorkspaceConfig(
             backend=backend,
             permissions=permissions,
@@ -159,7 +162,7 @@ class WorkspaceConfigCompiler:
             return StateBackend()
         if workspace_root is None:
             raise ValueError("Filesystem workspace requires a resolved workspace root.")
-        return FilesystemBackend(root_dir=workspace_root, virtual_mode=True)
+        return FilesystemBackend(root_dir=workspace_root, virtual_mode=False)
 
     @staticmethod
     def _infer_backend_type(backend: BackendProtocol) -> WorkspaceBackendType:
@@ -217,12 +220,30 @@ class WorkspaceConfigCompiler:
         return f"{root.as_posix().rstrip('/')}/"
 
     @staticmethod
-    def _build_system_prompt(workspace_root: Path | None, readonly_mounts: list[tuple[str, Path]]) -> str:
+    def _build_system_prompt(
+        workspace_root: Path | None,
+        readonly_mounts: list[tuple[str, Path]],
+        *,
+        virtual_mode: bool = False,
+    ) -> str:
         if workspace_root is None and not readonly_mounts:
             return ""
 
         lines = ["# Workspace"]
-        if workspace_root is not None:
+        if workspace_root is not None and not virtual_mode:
+            lines.extend(
+                (
+                    f"The working directory for filesystem tools and the initial shell session is `{workspace_root}`.",
+                    "Filesystem tools and shell commands use real host paths: `/` is the host filesystem root, "
+                    "not an alias for the workspace. Absolute paths refer to the same files in both tools.",
+                    "Relative filesystem paths resolve under the working directory above. "
+                    "Relative shell and script paths resolve under the shell's current directory; "
+                    "changing directory changes that base. Prefer absolute workspace paths when switching tools.",
+                    "Create task outputs inside the working directory unless the user specifies another location. "
+                    "For example, use `<working-directory>/advertising_data.csv`, not `/advertising_data.csv`.",
+                )
+            )
+        elif workspace_root is not None:
             lines.extend(
                 (
                     "The writable workspace is mounted at `/` in the filesystem tools.",

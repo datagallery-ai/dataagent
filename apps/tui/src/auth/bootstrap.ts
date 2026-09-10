@@ -13,6 +13,7 @@ export type BootstrapAuthOptions = {
   sessionStore?: TuiSessionStore;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  localCredentials?: { token: string; csrf: string };
 };
 
 export type BootstrapAuthResult =
@@ -43,6 +44,19 @@ export async function bootstrapTuiAuth(
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const authClient = new TuiAuthClient({ apiBaseUrl, cookieJar, fetchImpl });
   const now = options.now ?? Date.now;
+  if (options.localCredentials) {
+    if (new URL(apiBaseUrl).hostname !== "127.0.0.1") throw new Error("Local credentials require loopback.");
+    cookieJar.replace({ df_session: options.localCredentials.token, df_csrf: options.localCredentials.csrf });
+    const me = await authClient.me();
+    const session: StoredTuiSession = {
+      apiBaseUrl, cookies: cookieJar.snapshot(),
+      user: { id: me.id, email: me.email }, workspace: me.workspace,
+      expiresAt: new Date(now() + 7 * 86400_000).toISOString(),
+    };
+    // Ephemeral credentials never enter the remote-login session cache.
+    return { kind: "authenticated", session, authClient, cookieJar, sessionStore,
+      transport: createTransport({ cookieJar, authClient, sessionStore, apiBaseUrl, fetchImpl }) };
+  }
   const status = await authClient.getStatus();
   const cached = await sessionStore.load(apiBaseUrl);
 

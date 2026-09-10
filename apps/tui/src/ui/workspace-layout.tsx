@@ -8,7 +8,7 @@ export type WorkspaceTab = 'chat' | 'stats' | 'config' | 'outputs';
 export const OUTPUTS_SIDEBAR_COLUMNS = 42;
 export const OUTPUTS_SIDEBAR_BREAKPOINT_COLUMNS = 120;
 const MIN_WORKSPACE_ROWS = 19;
-const DEFAULT_INPUT_BOX_ROWS = 9;
+const DEFAULT_INPUT_BOX_ROWS = 3;
 
 export interface MainPaneColumns {
   chatColumns: number;

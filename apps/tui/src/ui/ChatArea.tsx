@@ -33,6 +33,7 @@ interface ChatAreaProps {
   startup?: StartupInfo | undefined;
   compactMode?: boolean | undefined;
   thoughtExpanded?: boolean | undefined;
+  runStartedAt?: number | undefined;
 }
 
 export type ChatAreaRef = {
@@ -64,6 +65,7 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
   startup,
   compactMode = false,
   thoughtExpanded = false,
+  runStartedAt,
 }, ref) => {
   const scrollAnchor = useRef(new ScrollAnchor());
   const [internalScrollbackRows, setInternalScrollbackRows] = useState(
@@ -80,6 +82,7 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
     startup,
     compactMode,
     thoughtExpanded,
+    runStartedAt,
   }), [
     messages,
     artifacts,
@@ -90,6 +93,7 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
     startup,
     compactMode,
     thoughtExpanded,
+    runStartedAt,
   ]);
 
   const viewport = viewportRows === undefined ? undefined : Math.max(0, viewportRows);
