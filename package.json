@@ -70,6 +70,8 @@
     "dev:tui": "npm --workspace @datafoundry/tui run dev",
     "start:tui": "npm --workspace @datafoundry/tui run start --",
     "build:tui": "npm --workspace @datafoundry/tui run build",
+    "smoke:tui-python": "npm run build:tui && uv run --directory apps/api pytest tests/test_tui_e2e.py -q",
+    "smoke:tui-local": "npm run build:tui && TUI_LOCAL_SMOKE=1 node --test apps/tui/dist/local-runtime.test.js",
     "smoke:api": "node scripts/smoke-copilotkit.mjs",
     "smoke:copilotkit": "node scripts/smoke-copilotkit.mjs",
     "smoke:copilotkit-run": "npm run build && node scripts/smoke-copilotkit-run.mjs",

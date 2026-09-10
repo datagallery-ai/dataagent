@@ -103,7 +103,8 @@ WORKSPACE:
     - /srv/reference-data
 ```
 
-- Default backend: Deep Agents `FilesystemBackend`.
+- Default backend: Deep Agents `FilesystemBackend` with `virtual_mode=False` for the main workspace. Absolute paths are real host paths; relative paths resolve under `WORKSPACE.path` (or the session directory). Shell starts in that same directory; after `cd`, use absolute workspace paths across tools.
+- The workspace is a default directory, not a sandbox boundary. Absolute paths can access files outside it; use only in a trusted execution environment.
 - Default path: `.dataagent/<user_id>/<session_id>` according to the configured workspace policy.
 - `allow_path` entries are mounted into native filesystem tools as read-only directories.
 - `backend: state` selects `StateBackend`; `path` is then invalid and the Shell tool is disabled.

@@ -10,6 +10,7 @@ interface HomeSplashProps {
   startup: StartupInfo;
   input: React.ReactNode | ((width: number) => React.ReactNode);
   canResume?: boolean | undefined;
+  canSelectDatasource?: boolean | undefined;
 }
 
 const WORDMARK = [
@@ -27,10 +28,9 @@ const WORDMARK_WIDTH = Math.max(
   ...WORDMARK.map((line) => textWidth(`${line.left}   ${line.right}`)),
 );
 
-export function HomeSplash({ rows, columns, startup, input, canResume = false }: HomeSplashProps) {
+export function HomeSplash({ rows, columns, startup, input, canResume = false, canSelectDatasource = true }: HomeSplashProps) {
   const availableWidth = Math.max(24, columns - 4);
-  // 使用统一的容器宽度，范围在 76-88 列之间
-  const containerWidth = Math.min(88, Math.max(76, Math.floor(columns * 0.7)), availableWidth);
+  const containerWidth = Math.min(76, availableWidth);
   const showLogo = availableWidth >= WORDMARK_WIDTH && rows >= 20;
 
   // 根据数据源状态决定显示什么提示
@@ -68,11 +68,6 @@ export function HomeSplash({ rows, columns, startup, input, canResume = false }:
 
         <Box height={showLogo ? 2 : 1} />
         <Box width={containerWidth} flexDirection="column">
-          {typeof input === 'function' ? input(containerWidth) : input}
-        </Box>
-
-        <Box height={1} />
-        <Box width={containerWidth} flexDirection="column">
           {hasDataSource ? (
             // 有数据源：显示建议的业务问题
             <Box flexDirection="row" justifyContent="center">
@@ -80,7 +75,7 @@ export function HomeSplash({ rows, columns, startup, input, canResume = false }:
                 Try: <Text color={inkColors.text}>Why did revenue decline last month?</Text>
               </Text>
             </Box>
-          ) : (
+          ) : canSelectDatasource ? (
             // 无数据源：提示选择数据源
             <Box flexDirection="column" alignItems="center">
               <Text color={inkColors.muted}>No datasource selected</Text>
@@ -89,6 +84,11 @@ export function HomeSplash({ rows, columns, startup, input, canResume = false }:
                 <Text color={inkColors.accent}>[/datasource]</Text>
                 <Text color={inkColors.muted}>Choose a datasource to get started</Text>
               </Box>
+            </Box>
+          ) : (
+            <Box flexDirection="column" alignItems="center">
+              <Text color={inkColors.muted}>Ask a question to get started.</Text>
+              <Text color={inkColors.muted}>Using your backend model and enabled tools. Type /help for commands.</Text>
             </Box>
           )}
         </Box>
@@ -111,8 +111,11 @@ export function HomeSplash({ rows, columns, startup, input, canResume = false }:
             </Box>
           </>
         )}
+        <Box height={1} />
+        <Box width="100%" flexDirection="column" alignSelf="flex-start">
+          {typeof input === 'function' ? input(columns) : input}
+        </Box>
       </Box>
-      <Box flexGrow={1} minHeight={0} />
     </Box>
   );
 }

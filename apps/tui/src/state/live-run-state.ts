@@ -227,7 +227,7 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
         ...optionalRunId(runIdFromEvent(event)),
         agentResponseComplete: false,
         runStatus: "running",
-        runStartedAt: Date.now(),
+        runStartedAt: state.runStatus === "running" ? state.runStartedAt ?? Date.now() : Date.now(),
       };
     case "RUN_FINISHED":
       if (isTerminalRunStatus(state.runStatus) && state.runStatus !== "completed") {
@@ -282,6 +282,9 @@ function isArtifactFromCurrentRun(liveRun: LiveRun, artifact: DataArtifact): boo
 }
 
 function applyRunStatus(state: LiveRun, status: LiveRunStatus): LiveRun {
+  // Snapshots can finish a message/graph step before the stream finishes.
+  // Only RUN_FINISHED / RUN_ERROR may terminate an active client run.
+  if (state.runStatus === "running" && isTerminalRunStatus(status)) return state;
   if (state.runStatus === status && !isTerminalRunStatus(status)) return state;
   if (isTerminalRunStatus(state.runStatus) && state.runStatus !== status) return state;
   if (status === "completed") return completeRunState(state, "completed", "success");

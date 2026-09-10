@@ -273,6 +273,17 @@ class StateStore {
     this.setState(newState as TuiAppState);
   }
 
+  recordRunSummary(status: 'completed' | 'failed' | 'interrupted'): void {
+    const id = `run-summary:${this.state.runId}`;
+    if (this.state.messages.some(message => message.id === id)) return;
+    const durationMs = Math.max(0,
+      (this.state.runFinishedAt ?? Date.now()) - (this.state.runStartedAt ?? Date.now()));
+    this.setState({ ...this.state, messages: [...this.state.messages, {
+      id, role: 'system', timestamp: Date.now(), elements: [],
+      runSummary: { status, durationMs },
+    }] }, true);
+  }
+
   /**
    * Add an assistant message
    */

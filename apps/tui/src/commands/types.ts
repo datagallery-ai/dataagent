@@ -4,7 +4,7 @@
 
 import type { DisplayMessage } from '../state/tui-state.js';
 import type { WorkspaceConfigStore } from '../state/data-task-state.js';
-import type { ConfigClient } from '../config/index.js';
+import type { Capabilities, ConfigClient } from '../config/index.js';
 import type { AuthCommandController } from '../auth/types.js';
 
 export interface CommandResult {
@@ -23,6 +23,7 @@ export interface Command {
 export interface CommandContext {
   client: unknown;
   configClient?: ConfigClient | undefined;
+  capabilities?: Capabilities | undefined;
   authController?: AuthCommandController | undefined;
   datasourceId?: string | undefined;
   activeSkillId?: string | undefined;

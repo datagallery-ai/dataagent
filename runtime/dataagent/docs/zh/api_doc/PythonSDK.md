@@ -103,7 +103,8 @@ WORKSPACE:
     - /srv/reference-data
 ```
 
-- 默认后端是 Deep Agents `FilesystemBackend`。
+- 默认后端是 Deep Agents `FilesystemBackend`，主工作区使用 `virtual_mode=False`：绝对路径为宿主机真实路径，相对路径基于 `WORKSPACE.path`（未配置则使用会话目录）。Shell 初始工作目录与其一致；Shell 中 `cd` 后请使用绝对工作区路径跨工具访问文件。
+- 工作区是默认目录，不是沙箱边界。绝对路径可以访问工作区外的文件，请仅在可信执行环境中使用。
 - 默认路径按工作区策略落在 `.dataagent/<user_id>/<session_id>`。
 - `allow_path` 目录以只读方式挂入原生文件工具。
 - `backend: state` 选择 `StateBackend`；此时不能配置 `path`，Shell 工具也会被禁用。

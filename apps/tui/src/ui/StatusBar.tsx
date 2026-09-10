@@ -12,20 +12,14 @@ interface StatusBarProps {
 function statusDisplay(startup: StartupInfo): {
   label: string;
   color: typeof inkColors[keyof typeof inkColors];
-} {
+} | null {
   if (startup.connectionStatus === 'error') {
     return { label: 'Error', color: inkColors.error };
   }
   if (startup.connectionStatus === 'disconnected') {
     return { label: 'Disconnected', color: inkColors.error };
   }
-  if (startup.runStatus === 'running') {
-    return { label: 'Running', color: inkColors.warning };
-  }
-  if (startup.runStatus === 'failed') {
-    return { label: 'Failed', color: inkColors.error };
-  }
-  return { label: 'Ready', color: inkColors.success };
+  return null;
 }
 
 export function StatusBar({ columns, startup }: StatusBarProps) {
@@ -33,7 +27,6 @@ export function StatusBar({ columns, startup }: StatusBarProps) {
   const status = statusDisplay(startup);
   const hasDatasource = Boolean(startup.datasourceId && startup.datasourceId !== 'undefined');
   const showSource = hasDatasource && safeColumns >= 44;
-  const showModel = safeColumns >= (showSource ? 72 : 40);
 
   return (
     <Box
@@ -45,27 +38,20 @@ export function StatusBar({ columns, startup }: StatusBarProps) {
       flexShrink={0}
       overflowX="hidden"
     >
-      <Box flexDirection="row" flexShrink={0}>
-        <Text color={status.color}>●</Text>
-        <Text color={inkColors.text}> {status.label}</Text>
+      <Box flexDirection="row" flexGrow={1}>
+        <Text color={inkColors.muted}>
+          {truncateToWidth(`model: ${startup.modelName || 'auto'}`, Math.max(1,
+            safeColumns - 2 - (status ? status.label.length + 4 : showSource ? 30 : 0)))}
+        </Text>
       </Box>
 
-      {(showSource || showModel) && (
+      {status ? <Text color={status.color}>● {status.label}</Text> : showSource && (
         <Box flexDirection="row" flexShrink={0}>
           {showSource && (
             <>
               <Text color={inkColors.muted}>source: </Text>
               <Text color={inkColors.text}>
                 {truncateToWidth(startup.datasourceId ?? '', 20)}
-              </Text>
-              {showModel && <Text color={inkColors.muted}>  </Text>}
-            </>
-          )}
-          {showModel && (
-            <>
-              <Text color={inkColors.muted}>model: </Text>
-              <Text color={inkColors.text}>
-                {truncateToWidth(startup.modelName || 'auto', 16)}
               </Text>
             </>
           )}

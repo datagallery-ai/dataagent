@@ -4,12 +4,13 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.errors import GraphRecursionError
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from datafoundry_api.agent import AgentScopeError, DataAgentRuntime, RunResourceConfig
@@ -533,21 +534,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         encoder = EventEncoder(accept=request.headers.get("accept"))
 
         async def generate() -> AsyncIterator[str]:
-            if model_selection.run_timeout_ms is None:
-                async for event in agent.run(input_data):
-                    yield encoder.encode(event)
-                return
+            terminal_seen = False
+            timeout_ms = model_selection.run_timeout_ms
+            deadline = asyncio.timeout(None if timeout_ms is None else timeout_ms / 1000)
             try:
-                async with asyncio.timeout(model_selection.run_timeout_ms / 1000):
-                    async for event in agent.run(input_data):
-                        yield encoder.encode(event)
-            except TimeoutError:
-                yield encoder.encode(
-                    RunErrorEvent(
-                        code="RUN_TIMEOUT",
-                        message=f"Agent run exceeded the configured timeout of {model_selection.run_timeout_ms} ms.",
-                    )
+                async with deadline, aclosing(agent.run(input_data)) as events:
+                    async for event in events:
+                        encoded = encoder.encode(event)
+                        terminal_seen = terminal_seen or event.type in {"RUN_FINISHED", "RUN_ERROR"}
+                        yield encoded
+                if not terminal_seen:
+                    yield encoder.encode(RunErrorEvent(
+                        code="RUN_INCOMPLETE",
+                        message="Agent execution ended without a terminal event. Completion is unknown.",
+                    ))
+            except Exception as exc:
+                # Cancellation/disconnection must propagate; CancelledError is a BaseException.
+                logger.exception(
+                    "Agent execution failed (thread_id=%s, run_id=%s)",
+                    input_data.thread_id, input_data.run_id,
                 )
+                if terminal_seen:
+                    return
+                if isinstance(exc, GraphRecursionError):
+                    code = "GRAPH_RECURSION_LIMIT"
+                    message = (
+                        "Agent reached the graph execution step limit before completing the task. "
+                        "Repeated tool failures may have exhausted the limit; check the backend log "
+                        "and simplify the task or review the recursion_limit setting."
+                    )
+                elif isinstance(exc, TimeoutError):
+                    code = "RUN_TIMEOUT"
+                    message = (
+                        f"Agent run exceeded the configured timeout of {timeout_ms} ms."
+                        if deadline.expired() else "An operation timed out during agent execution."
+                    )
+                else:
+                    code = "RUN_EXECUTION_ERROR"
+                    message = "Agent execution failed unexpectedly. Check the backend log for details."
+                # Do not send str(exc): provider errors can contain credentials, paths or request bodies.
+                yield encoder.encode(RunErrorEvent(code=code, message=message))
 
         return StreamingResponse(
             generate(),
