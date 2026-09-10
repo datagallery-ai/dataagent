@@ -31,16 +31,18 @@ Create a SQL skeleton with:
 Fill in the skeleton with:
 - Exact table and column names from the schema
 - Specific values and conditions from the question
+- Proper {{ dialect }} syntax and functions
 - Final validation of the query logic
 
 # Important Rules:
-1. **Schema Accuracy**: Use exact table and column names from the provided schema
-2. **Logical Flow**: Ensure the query logic matches the question requirements
-3. **Performance**: Prefer efficient JOIN patterns over nested subqueries when possible
-4. **Readability**: Use clear aliases and proper formatting
-5. **Completeness**: Address all aspects mentioned in the question
+{{ sql_rules }}
 
-# Output:
-Please respond with:
-1. Your comprehensive analysis and planning for the SQL query generation and the SQL skeleton with placeholders, enclosed in ```text``` block.
-2. The final SQL query that answers the target question and can be executed by {{ dialect }}, enclosed in ```sql``` block.
+# Output Format:
+Please respond with XML code structured as follows.
+<reasoning>
+    Repeat the question, then provide your comprehensive analysis and planning for the SQL query generation and the SQL skeleton with placeholders.
+</reasoning>
+<result>
+    The final SQL query that answers the target question and can be executed on the target {{ dialect }} database, ensure there is not any {{ dialect }} comment and not any other explanation text in the SQL query.
+    The SQL query must not include XML-specific characters (e.g., `&lt;`, `&gt;`, `&amp;`); only SQL-valid characters are allowed.
+</result>

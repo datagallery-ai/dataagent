@@ -10,7 +10,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import hashlib
 import re
 from typing import Any
 
@@ -21,12 +20,6 @@ from dataagent.utils.constants import DEFAULT_NL2SQL_CELL_TRUNCATE_LENGTH
 _PLACEHOLDER_BRACE = re.compile(r"(?<!\')\$\{[^}]+\}(?!')")
 # 匹配未被单引号包裹的 $var 模板（如 $date）；排除 ${...} 中的 $
 _PLACEHOLDER_SIMPLE = re.compile(r"(?<!\')\$(?!\{)[a-zA-Z_][a-zA-Z0-9_]*(?!')")
-
-
-def sql_sha256(sql: str) -> str:
-    """Return a stable SHA-256 fingerprint for normalized SQL."""
-    normalized = re.sub(r"\s+", " ", (sql or "").strip())
-    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 def iter_semantic_column_payloads(raw: Any) -> list[dict]:
@@ -63,6 +56,14 @@ def sql_parser(content: str) -> list[str]:
         sql = quote_sql_placeholders(sql)
         sqls.append(sql)
     return sqls
+
+
+def xml_parser(content: str) -> list[str]:
+    return [
+        x.strip()
+        for x in re.findall(r"<result>\s*(.*?)\s*</result>", content, re.S | re.I)
+        if x.strip()
+    ]
 
 
 def json_parser(content: str) -> str:

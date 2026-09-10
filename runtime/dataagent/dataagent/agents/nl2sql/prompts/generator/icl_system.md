@@ -21,13 +21,14 @@ Your task is to generate a SQL query for the target question by learning from th
    - Ensure the query logic matches the question's intent
 
 # Important Rules:
-1. **Schema Adaptation**: The examples use different database schemas, so you must adapt the patterns to work with the target schema
-2. **Column Mapping**: Pay attention to how similar concepts are represented in different schemas
-3. **Query Structure**: Follow the structural patterns from examples (JOIN types, subquery usage, etc.)
-4. **Exact Column Names**: Use the exact column and table names from the target schema
-5. **Logical Consistency**: Ensure the generated query logically answers the target question
+{{ sql_rules }}
 
-# Output:
-Please respond with:
-1. Your analysis of the examples and reasoning for the SQL generation, enclosed in ```text``` block
-2. The final SQL query that answers the target question and can be executed by {{ dialect }}, enclosed in ```sql``` block.
+# Output Format:
+Please respond with XML code structured as follows.
+<reasoning>
+    Your analysis of the examples and reasoning for the SQL generation.
+</reasoning>
+<result>
+    The final SQL query that answers the target question and can be executed on the target {{ dialect }} database, ensure there is not any {{ dialect }} comment and not any other explanation text in the SQL query.
+    The SQL query must not include XML-specific characters (e.g., `&lt;`, `&gt;`, `&amp;`); only SQL-valid characters are allowed.
+</result>
