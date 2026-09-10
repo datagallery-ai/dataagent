@@ -131,7 +131,7 @@ AGENT_CONFIG:
 | `MODEL.<name>.provider` | 决定读取 `{PROVIDER}_BASE_URL`、`{PROVIDER}_API_KEY`。 |
 | `MODEL.<name>.params.base_url` | 模型服务地址；优先级高于环境变量。 |
 | `MODEL.<name>.params.model` | 模型名称，必填。 |
-| `MODEL.<name>.params.model_provider` | litellm 透传，默认 `openai`。 |
+| `MODEL.<name>.params.model_provider` | 透传给调用层的供应商标识，通常可省略。 |
 
 推荐显式写 `base_url` 和 `model`，把 `api_key` 放到环境变量中：
 
@@ -151,7 +151,6 @@ MODEL:
       base_url: "https://api.deepseek.com"
       api_key: "sk-..."
       model: "deepseek-chat"
-      model_provider: "openai"
       temperature: 0.1
       timeout: 60
 ```
@@ -281,7 +280,6 @@ API Key 优先级：
 
 1. `MODEL.<name>.params.api_key`
 2. `{PROVIDER}_API_KEY`
-3. `OPENAI_API_KEY`
 
 例如 `provider: "deepseek"` 时，会读取 `DEEPSEEK_API_KEY`。
 

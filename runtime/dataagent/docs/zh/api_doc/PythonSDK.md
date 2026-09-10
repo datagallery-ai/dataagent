@@ -168,7 +168,7 @@ MODEL:
   qwen3:                               # 辅助模型槽（给 hook 或独立节点使用）
     name: "QWEN3_CHAT"
     model_type: "chat"
-    provider: "openai"                 # 兼容 OpenAI 协议的服务
+    provider: "qwen"                   # 兼容协议服务，用于读取 QWEN_BASE_URL / QWEN_API_KEY
     params:
       model: "qwen3-235b"
       temperature: 0.3
