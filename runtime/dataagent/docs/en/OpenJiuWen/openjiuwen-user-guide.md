@@ -130,7 +130,7 @@ Planner, Executor, tools, Scenario, Memory, and other settings still use the sam
 | `MODEL.<name>.provider` | Reads `{PROVIDER}_BASE_URL`, `{PROVIDER}_API_KEY`. |
 | `MODEL.<name>.params.base_url` | Model endpoint; overrides env when set. |
 | `MODEL.<name>.params.model` | Model name (required). |
-| `MODEL.<name>.params.model_provider` | Passed through to litellm; default `openai`. |
+| `MODEL.<name>.params.model_provider` | Provider id passed through to the caller; usually optional. |
 
 Prefer explicit `base_url` and `model`, with `api_key` in the environment:
 
@@ -150,7 +150,6 @@ MODEL:
       base_url: "https://api.deepseek.com"
       api_key: "sk-..."
       model: "deepseek-chat"
-      model_provider: "openai"
       temperature: 0.1
       timeout: 60
 ```
@@ -278,7 +277,6 @@ Priority:
 
 1. `MODEL.<name>.params.api_key`
 2. `{PROVIDER}_API_KEY`
-3. `OPENAI_API_KEY`
 
 For `provider: "deepseek"`, use `DEEPSEEK_API_KEY`.
 

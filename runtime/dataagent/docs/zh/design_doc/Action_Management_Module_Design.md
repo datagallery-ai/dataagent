@@ -29,7 +29,7 @@ action 管理模块是 DataAgent 的 **action space 网关**，负责统一管�
 **Schema 与元数据驱动**
 
 每个工具在注册或发现时，会生成一份结构化的 Schema 描述，包含工具名、参数列表（名称、类型、是否必填、默认值）、工具描述等。通过 Schema，模块可以：
-- 为 LLM function calling 生成 OpenAI 兼容的工具定义；
+- 为 LLM function calling 生成标准工具定义；
 - 为前端管理界面提供结构化的工具信息；
 - 在调用前进行参数校验。
 
@@ -126,7 +126,7 @@ action 管理模块是 DataAgent 的 **action space 网关**，负责统一管�
 - **查询**：
   - **按条件列出工具**：支持按分类、工具类型过滤；
   - **获取 Schema**：从缓存中返回指定工具的完整参数 Schema；
-  - **获取 LLM 工具定义**：将指定工具的 Schema 批量转换为 OpenAI function calling 格式；
+  - **获取 LLM 工具定义**：将指定工具的 Schema 批量转换为标准 function calling 格式；
   - **获取工具详情/汇总/健康状态**：用于诊断、监控和管理界面展示。
 
 ##### 2.3.6 错误处理与重试

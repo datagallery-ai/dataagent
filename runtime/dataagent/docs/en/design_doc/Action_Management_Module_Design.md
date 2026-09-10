@@ -29,7 +29,7 @@ All tools from any source — whether local functions, MCP services, or A2A agen
 **Schema and Metadata-Driven**
 
 Each tool generates a structured Schema description upon registration or discovery, containing the tool name, parameter list (name, type, required, default), tool description, etc. Through Schema, the module can:
-- Generate OpenAI-compatible tool definitions for LLM function calling;
+- Generate standard tool definitions for LLM function calling;
 - Provide structured tool information for frontend management interfaces;
 - Perform parameter validation before invocation.
 
@@ -126,7 +126,7 @@ Tool management module initialization is driven by the agent configuration file.
 - **Query**:
   - **List tools by criteria**: Support filtering by category and tool type;
   - **Get Schema**: Return the complete parameter Schema for a specified tool from cache;
-  - **Get LLM tool definitions**: Batch-convert specified tool Schemas to OpenAI function calling format;
+  - **Get LLM tool definitions**: Batch-convert specified tool Schemas to the standard function calling format;
   - **Get tool details / summary / health status**: Used for diagnostics, monitoring, and admin UI display.
 
 #### 2.3.6 Error Handling and Retry

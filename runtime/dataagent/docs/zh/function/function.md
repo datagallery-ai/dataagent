@@ -128,8 +128,8 @@ hide:
 | --- | --- |
 | 统一管理入口 | DataAgent 使用 `LLMManager` 统一管理模型实例的创建与缓存，模型配置来自 YAML 的 `MODEL` 段。 |
 | 初始化流程 | 在初始化阶段，系统会遍历yaml配置文件的 `MODEL` 下的每个 section 并创建对应模型实例，供 Agent 与工作流调用。 |
-| LLM 底层 | 统一经 `LLMClient`（litellm，OpenAI 兼容协议）；`MODEL.provider` 用于拼接环境变量 `{PROVIDER}_BASE_URL` / `{PROVIDER}_API_KEY`。 |
-| Embedding | `model_type=embedding` 的 section 仅注册配置（`get_llm_config`）；向量推理由知识库/工具侧通过 OpenAI 兼容 `embeddings` API 直接调用，不创建 `LLMClient` 实例。 |
+| LLM 底层 | 统一经 `LLMClient`（litellm，兼容协议）；`MODEL.provider` 用于拼接环境变量 `{PROVIDER}_BASE_URL` / `{PROVIDER}_API_KEY`。 |
+| Embedding | `model_type=embedding` 的 section 仅注册配置（`get_llm_config`）；向量推理由知识库/工具侧通过兼容协议的 `embeddings` API 直接调用，不创建 `LLMClient` 实例。 |
 | 工作流 backend | `AGENT_CONFIG.backend`（`langgraph` / `openjiuwen`）仅决定工作流引擎，不影响 LLM SDK 选择。 |
 
 ### 使用方法（YAML 配置）

@@ -168,7 +168,7 @@ MODEL:
   qwen3:                                 # Auxiliary model slot (for hooks or standalone nodes)
     name: "QWEN3_CHAT"
     model_type: "chat"
-    provider: "openai"                   # OpenAI-protocol-compatible service
+    provider: "qwen"                     # Compatible-protocol service; reads QWEN_BASE_URL / QWEN_API_KEY
     params:
       model: "qwen3-235b"
       temperature: 0.3
