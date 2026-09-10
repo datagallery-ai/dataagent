@@ -13,32 +13,14 @@ Here is a high level description of the steps.
 4. **Final Output:** This bottom-up assembly culminates in the complete and correct SQL query that answers the original complex question.
 
 # Important Rules:
-1. **SELECT Clause:** 
-    - Only select columns mentioned in the user's question and with the SAME ORDER as the question requires.
-    - Avoid unnecessary columns or values.
-2. **Handling NULLs:**
-    - If a column may contain NULL values, use `JOIN` or `WHERE <column> IS NOT NULL`.
-3. **FROM/JOIN Clauses:**
-    - Only include tables essential to answer the question.
-4. **Thorough Question Analysis:**
-    - Address all conditions mentioned in the question.
-5. **DISTINCT Keyword:**
-    - Use `SELECT DISTINCT` when the question requires unique values (e.g., IDs, URLs). 
-    - Refer to column statistics ("Total count" and "Distinct count") to determine if `DISTINCT` is necessary.
-6. **Column Selection:**
-    - Carefully analyze the question and column descriptions to choose the correct column when similar columns exist across tables.
-7. **String Concatenation:**
-    - Never use `|| ' ' ||` or any other method to concatenate strings in the `SELECT` clause.
-8. **JOIN Preference:**
-    - Prioritize `INNER JOIN` over nested `SELECT` statements.
-9. **Date Processing:**
-    - Utilize `STRFTIME()` for date manipulation (e.g., `STRFTIME('%Y', SOMETIME)` to extract the year).
-10. **Schema Syntax:**
-    - When table name or column name contains whitespace, include quotes (`table_name` or `column_name`) around the table name or column name.
-11. **Value Examples:**
-    - For key phrases mentioned in the question, we have provided the most similar values within the columns (TEXT-TYPE columns) denoted by "Value Examples".
+{{ sql_rules }}
 
-# Output:
-Please respond with:
-1. Your detailed reasoning for the SQL query generation with Recursive Divide-and-Conquer approach, enclosed in ```text``` block.
-2. The final SQL query that answers the question that can be executed by {{ dialect }}, enclosed in ```sql``` block.
+# Output Format:
+Please respond with XML code structured as follows.
+<reasoning>
+    Your detailed reasoning for the SQL query generation, with Recursive Divide-and-Conquer approach.
+</reasoning>
+<result>
+    The final SQL query that answers the question and can be executed by {{ dialect }} directly, ensure there is not any {{ dialect }} comment and not any other explanation text in the SQL query.
+    The SQL query must not include XML-specific characters (e.g., `&lt;`, `&gt;`, `&amp;`); only SQL-valid characters are allowed.
+</result>

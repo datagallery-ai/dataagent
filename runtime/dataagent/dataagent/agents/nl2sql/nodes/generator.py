@@ -14,7 +14,7 @@ import asyncio
 from typing import Any
 
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser
+from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_parser, xml_parser
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
@@ -41,7 +41,8 @@ class GeneratorNode(BaseNL2SQLNode):
         content = (await llm_manager.get_default_llm().ainvoke(prompts)).content
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
         expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
-        sqls = sql_parser(content)[-expected_num_sql:]
+        parser = xml_parser if strategy in {"dc", "skeleton", "icl"} else sql_parser
+        sqls = parser(content)[-expected_num_sql:]
         prompt_history = system_prompt + "\n\n" + user_prompt
         return [(sql, prompt_history, strategy) for sql in sqls]
 
@@ -71,11 +72,13 @@ class GeneratorNode(BaseNL2SQLNode):
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
-        settings = {"dialect": self.dialect}
+        settings = {
+            "dialect": self.dialect,
+            "sql_rules": state["sql_rules"],
+        }
         context = {
             "question": state["question"],
             "schema": state["schema_str"],
-            "sql_rules": state["sql_rules"],
             "evidence": state["evidence"],
             "few_shot_examples": state["few_shot_examples"],
         }
