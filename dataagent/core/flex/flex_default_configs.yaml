@@ -38,7 +38,7 @@ POST_WORKFLOW: []
 # enable_cache_control: 控制 _add_cc 是否将 string content 转为 list-of-dicts
 # （多模态格式）以注入 cache_control 断点。自部署端点（vLLM-served Qwen 30B 等）
 # 不支持 list content，需设为 false。
-# - 省略（None）：自动探测（Qwen/Claude/百炼 deepseek-v3.2 等开，其余关）
+# - 省略（None）：默认关闭；仅当 DATAAGENT_CACHE_CONTROL=1 时才按模型自动探测
 # - true：强制启用（即使模型不在支持列表）
 # - false：强制禁用（避免 list content 转换）
 # 环境变量 DATAAGENT_CACHE_CONTROL=0 可全局禁用（优先级最高，运维逃生用）

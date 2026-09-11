@@ -179,7 +179,7 @@ Full walkthrough tutorials:
 - When the main Agent calls an NL2SQL sub-agent, confirm `nl2sql_sub_agent_tool` is registered—not the generic `sub_agent_tool`.
 - Put Semantic Service config under `SEMANTIC_LAYER` on the runtime Agent; for sub-agent scenarios, put it in the main Agent YAML.
 - `DATABASE.db_id` must match the database name imported into Semantic Service.
-- `SEMANTIC_LAYER.base_url` should be `http://host:port`; the client normalizes it to `/api/semantic/v1`.
+- `SEMANTIC_LAYER.base_url` must be a complete `http://host:port` or `https://host:port`; the client only appends `/api/semantic/v1` and does not add a scheme.
 - Ontology/knowledge-graph query capabilities are under development; configure them according to the documentation after integration stabilizes.
 
 ## 7. Related Code and Examples

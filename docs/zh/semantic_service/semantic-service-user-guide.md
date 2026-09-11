@@ -179,7 +179,7 @@ Ontology 本体服务面向业务知识图谱。和增强元数据 REST 能力�
 - 主 Agent 调 NL2SQL 子 Agent 时，确认注册的是 `nl2sql_sub_agent_tool`，而不是通用 `sub_agent_tool`。
 - Semantic Service 配置写在运行时 Agent 的 `SEMANTIC_LAYER` 下；子 Agent 场景中写在主 Agent YAML 中即可。
 - `DATABASE.db_id` 必须与 Semantic Service 中导入的数据库名一致。
-- `SEMANTIC_LAYER.base_url` 建议写 `http://host:port`，客户端会统一补齐到 `/api/semantic/v1`。
+- `SEMANTIC_LAYER.base_url` 必须写完整的 `http://host:port` 或 `https://host:port`，客户端只补齐路径到 `/api/semantic/v1`，不会补 scheme。
 - 出站 TLS/mTLS 由 `certificate.outbound_ssl_services` 统一控制；需要校验时加入 `semantic_layer`。`SEMANTIC_LAYER.verify_ssl` 已废弃。
 - 本体/知识图谱查询能力正在开发中；相关接入能力稳定后，再按文档说明配置。
 

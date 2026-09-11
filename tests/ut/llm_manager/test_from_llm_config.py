@@ -513,7 +513,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
 
         msgs = self._build_round_like_messages()
         out = tmp_path / "round_3.txt"
-        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True)
+        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True, enable_cache_control=True)
         text = out.read_text(encoding="utf-8")
 
         # bp tags in headers
@@ -550,7 +550,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
         )
 
         out = tmp_path / "round_3.txt"
-        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True)
+        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True, enable_cache_control=True)
         text = out.read_text(encoding="utf-8")
 
         bp_tags = [line for line in text.splitlines() if "[bp " in line and "---" in line]
@@ -566,7 +566,9 @@ class TestDumpPromptAnnotatesAllBreakpoints:
         msgs = self._build_round_like_messages()
         out = tmp_path / "round_3.txt"
         # compress_message_cnt=3 → approaching at 0.8*3=2.4, i.e. almost always True
-        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True, compress_message_cnt=3)
+        dump_prompt_to_file(
+            msgs, out, annotate_cache_breakpoints=True, compress_message_cnt=3, enable_cache_control=True
+        )
         text = out.read_text(encoding="utf-8")
 
         # ground truth with the same compress config
@@ -583,7 +585,7 @@ class TestDumpPromptAnnotatesAllBreakpoints:
 
 
 class TestEnableCacheControlSwitch:
-    """验证 ``enable_cache_control`` 三层控制（env var > YAML per-LLM > auto-detect）。
+    """验证 ``enable_cache_control``：默认关闭，env / YAML 显式打开。
 
     见 ``docs/main_agent_cache_optimization_design.md`` §2.5.1。
     """
@@ -616,14 +618,23 @@ class TestEnableCacheControlSwitch:
         client = self._make_client(model="Qwen3.7-Plus", enable_cache_control=False)
         assert client._should_inject_cache_control() is False
 
-    def test_yaml_none_uses_auto_detect(self, monkeypatch: pytest.MonkeyPatch):
-        """L3: enable_cache_control=None 走自动探测（向后兼容）。"""
+    def test_yaml_none_defaults_off(self, monkeypatch: pytest.MonkeyPatch):
+        """未配 YAML、未设环境变量时，即使 Qwen 也不注入 cc。"""
         monkeypatch.delenv("DATAAGENT_CACHE_CONTROL", raising=False)
         client_qwen = self._make_client(model="Qwen3.7-Plus", enable_cache_control=None)
-        assert client_qwen._should_inject_cache_control() is True  # Qwen supports cc
+        assert client_qwen._should_inject_cache_control() is False
 
         client_deepseek = self._make_client(model="deepseek-v4-flash", enable_cache_control=None)
-        assert client_deepseek._should_inject_cache_control() is False  # not in support list
+        assert client_deepseek._should_inject_cache_control() is False
+
+    def test_env_var_one_restores_auto_detect(self, monkeypatch: pytest.MonkeyPatch):
+        """DATAAGENT_CACHE_CONTROL=1 恢复按模型自动探测。"""
+        monkeypatch.setenv("DATAAGENT_CACHE_CONTROL", "1")
+        client_qwen = self._make_client(model="Qwen3.7-Plus", enable_cache_control=None)
+        assert client_qwen._should_inject_cache_control() is True
+
+        client_deepseek = self._make_client(model="deepseek-v4-flash", enable_cache_control=None)
+        assert client_deepseek._should_inject_cache_control() is False
 
     def test_yaml_explicit_true_forces_enable(self, monkeypatch: pytest.MonkeyPatch):
         """L2: enable_cache_control=True 强制启用，即使模型不在支持列表。"""
@@ -688,6 +699,24 @@ class TestEnableCacheControlSwitch:
         text = out.read_text(encoding="utf-8")
         assert "Cache Breakpoint Annotation: OFF" in text, "dump header should show OFF when enable_cache_control=False"
         assert "[bp " not in text, "no bp tags should appear when cache_control disabled"
+
+    def test_dump_defaults_off_without_env(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
+        """未设环境变量、未传 YAML 时 dump 不标注断点。"""
+        monkeypatch.delenv("DATAAGENT_CACHE_CONTROL", raising=False)
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from dataagent.utils.messages_utils import dump_prompt_to_file
+
+        msgs = [
+            SystemMessage(content="System prompt"),
+            HumanMessage(content="User query"),
+            HumanMessage(content="# Work Plan Status\nDone"),
+        ]
+        out = tmp_path / "round_test.txt"
+        dump_prompt_to_file(msgs, out, annotate_cache_breakpoints=True)
+        text = out.read_text(encoding="utf-8")
+        assert "Cache Breakpoint Annotation: OFF" in text
+        assert "[bp " not in text
 
     def test_dump_no_bp_when_env_var_disables(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
         """DATAAGENT_CACHE_CONTROL=0 时 dump 不标注断点。"""

@@ -467,19 +467,16 @@ def _compute_final_breakpoints(
 ) -> dict[int, Any]:
     """Compute final cache_control breakpoint allocation via apply_cache_control_with_anchors.
 
-    遵循与 ``LLMClient._should_inject_cache_control`` 相同的三层决策（§2.5.1）：
-    1. ``DATAAGENT_CACHE_CONTROL=0`` 环境变量 → 全局禁用，返回空 dict
-    2. ``enable_cache_control`` 参数（per-LLM YAML 值）→ 显式覆盖
-    3. 默认 ``None`` → 计算 bp（与改动前行为一致，向后兼容）
+    与 ``LLMClient._should_inject_cache_control`` 同一套开关：默认关闭；
+    ``DATAAGENT_CACHE_CONTROL=0`` 全局禁用；YAML / 参数显式覆盖；
+    ``DATAAGENT_CACHE_CONTROL=1`` 才按旧逻辑计算断点。
 
     这样 dump 文件标注的断点与实际 LLM 请求一致：当 cache_control 被禁用时，
     dump 不标注任何 bp，避免误导调试者以为 cache_control 生效。
     """
-    # L1: 环境变量全局逃生
-    if os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0":
-        return {}
-    # L2: per-LLM YAML 显式禁用
-    if enable_cache_control is False:
+    from dataagent.core.managers.llm_manager.llm_client import cache_control_is_enabled
+
+    if not cache_control_is_enabled(enable_cache_control):
         return {}
 
     # L3: 默认 None 或 True → 计算断点
@@ -636,8 +633,9 @@ def dump_prompt_to_file(
     }
     separator = "=" * 80
 
-    # 检测 cache_control 是否被显式禁用（用于 dump header 显示）
-    cc_disabled = os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0" or enable_cache_control is False
+    from dataagent.core.managers.llm_manager.llm_client import cache_control_is_enabled
+
+    cc_disabled = not cache_control_is_enabled(enable_cache_control)
 
     final_bp = (
         _compute_final_breakpoints(
@@ -662,7 +660,7 @@ def dump_prompt_to_file(
             if cc_disabled:
                 f.write(
                     "  Cache Breakpoint Annotation: OFF  |  cache_control disabled "
-                    "(DATAAGENT_CACHE_CONTROL=0 or enable_cache_control=false)\n"
+                    "(default off; DATAAGENT_CACHE_CONTROL=1 or enable_cache_control=true to enable)\n"
                 )
             else:
                 f.write(

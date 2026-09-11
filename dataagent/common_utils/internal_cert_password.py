@@ -101,7 +101,7 @@ def require_internal_cert_password() -> str:
 
     original_argv = sys.argv[:]
     if "-processType" not in original_argv:
-        sys.argv.extend(["-processType", "nl2sql"])
+        sys.argv.extend(["-processType", "datagallery-dataagent"])
     try:
         FrameworkStarter.init_framework()
     finally:
