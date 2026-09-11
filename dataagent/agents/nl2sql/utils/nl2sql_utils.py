@@ -70,7 +70,7 @@ def sql_parser(content: str) -> list[str]:
     """Extract SQL statements from model output text."""
     m = re.findall(r"```sql\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
-        raise LLMOutputParseError(detail="No SQL found")
+        raise LLMOutputParseError(f"No SQL block found in model output, raw content: {truncate(content)}")
     sqls = []
     for sql in m:
         sql = sql.replace("\xa0", " ").strip().rstrip(";")
@@ -85,7 +85,7 @@ def json_parser(content: str) -> str:
     """Extract a JSON object/array string from model output."""
     m = re.search(r"```json\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
-        raise LLMOutputParseError(detail="No JSON found")
+        raise LLMOutputParseError(f"No JSON block found in model output, raw content: {truncate(content)}")
     return m.group(1).strip()
 
 
@@ -93,7 +93,7 @@ def metadata_parser(text: str) -> list[dict[str, set[str]]]:
     """Parse metadata-match model output into table/column sets."""
     blocks = re.findall(r"<res>\s*(.*?)\s*</res>", text, flags=re.S | re.I)
     if not blocks:
-        raise LLMOutputParseError(detail="No metadata result found")
+        raise LLMOutputParseError(f"No <res> metadata block found in model output, raw content: {truncate(text)}")
     out: list[dict[str, set[str]]] = []
     try:
         for b in blocks:
@@ -110,7 +110,7 @@ def metadata_parser(text: str) -> list[dict[str, set[str]]]:
                 m[f"{t}.{c}"] = vals
             out.append(m)
     except Exception as exc:
-        raise LLMOutputParseError(detail=str(exc)) from exc
+        raise LLMOutputParseError(f"Metadata block parsing failed: {exc}, raw content: {truncate(text)}") from exc
     return out
 
 

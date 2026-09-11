@@ -31,8 +31,10 @@ def test_production_prompt_embeds_full_catalog_and_requires_bare_array() -> None
     catalog_names = re.findall(r"(?m)^- ([a-zA-Z0-9_*]+) \|", text)
 
     assert "{{CATALOG}}" not in text
-    assert len(catalog_names) == 101
-    assert len(set(catalog_names)) == 101
+    assert len(catalog_names) == 104
+    assert len(set(catalog_names)) == 104
+    for granularity_field in ("1h_granularity", "1d_granularity", "15min_granularity"):
+        assert granularity_field in catalog_names
     assert not re.findall(r"dw\d+", text)
     assert '["规范列名"]' in text
     for removed_key in (

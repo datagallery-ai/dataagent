@@ -30,6 +30,9 @@ def test_business_id_catalog_is_a_packaged_json_resource() -> None:
         "guarantee_group",
         "sub_app_id",
         "tai",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity",
     ]
 
 

@@ -36,7 +36,10 @@
         "to_smf_qos_exp_event_subs_creation_request_times_of_nwdaf"
       ],
       "dimensions": [
-        "ne_name"
+        "ne_name",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159004": {
@@ -50,7 +53,10 @@
         "cell_dl_group",
         "cell_id",
         "cell_ul_group",
-        "gnb"
+        "gnb",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159005": {
@@ -59,7 +65,10 @@
         "recv_ue_logo_online_users_of_amf"
       ],
       "dimensions": [
-        "ne_name"
+        "ne_name",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159006": {
@@ -68,7 +77,10 @@
         "to_amf_policy_auth_request_success_times_of_pcf"
       ],
       "dimensions": [
-        "ne_name"
+        "ne_name",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159007": {
@@ -131,7 +143,10 @@
         "gnb",
         "guarantee_group",
         "sub_app_id",
-        "tai"
+        "tai",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159008": {
@@ -148,7 +163,8 @@
         "county",
         "custom_group",
         "info_indicate",
-        "sub_app_id"
+        "sub_app_id",
+        "1d_granularity"
       ]
     },
     "dw1745159009": {
@@ -189,7 +205,8 @@
         "custom_group",
         "gpsi",
         "mos4_qds",
-        "sub_app_id"
+        "sub_app_id",
+        "1h_granularity"
       ]
     },
     "dw1745159010": {
@@ -200,7 +217,8 @@
         "city",
         "county",
         "crh_group",
-        "guarantee_group"
+        "guarantee_group",
+        "1d_granularity"
       ]
     },
     "dw1745159011": {
@@ -237,7 +255,10 @@
         "gnb",
         "guarantee_group",
         "sub_app_id",
-        "tai"
+        "tai",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159012": {
@@ -246,7 +267,8 @@
       ],
       "dimensions": [
         "crh_group",
-        "gpsi"
+        "gpsi",
+        "1d_granularity"
       ]
     },
     "dw1745159013": {
@@ -283,7 +305,10 @@
         "default5qi_group",
         "guarantee_group",
         "sub_app_id",
-        "term_brand"
+        "term_brand",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159014": {
@@ -342,7 +367,10 @@
         "guarantee_group",
         "sub_app_id",
         "tai",
-        "term_brand"
+        "term_brand",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159015": {
@@ -401,7 +429,10 @@
         "gnb",
         "guarantee_group",
         "sub_app_id",
-        "tai"
+        "tai",
+        "1h_granularity",
+        "1d_granularity",
+        "15min_granularity"
       ]
     },
     "dw1745159016": {
@@ -418,7 +449,8 @@
         "county",
         "info_indicate",
         "sub_app_id",
-        "term_brand"
+        "term_brand",
+        "1d_granularity"
       ]
     },
     "dw1745159017": {
@@ -435,7 +467,8 @@
         "county",
         "default5qi_group",
         "info_indicate",
-        "sub_app_id"
+        "sub_app_id",
+        "1d_granularity"
       ]
     },
     "dw1745159018": {
@@ -476,7 +509,8 @@
         "gpsi",
         "mos4_qds",
         "sub_app_id",
-        "term_brand"
+        "term_brand",
+        "1h_granularity"
       ]
     },
     "dw1745159019": {
@@ -517,7 +551,8 @@
         "default5qi_group",
         "gpsi",
         "mos4_qds",
-        "sub_app_id"
+        "sub_app_id",
+        "1h_granularity"
       ]
     },
     "dw1745159020": {
@@ -537,7 +572,8 @@
       "dimensions": [
         "city",
         "mos4_qds",
-        "sub_app_id"
+        "sub_app_id",
+        "1d_granularity"
       ]
     },
     "dw1745159021": {
@@ -547,7 +583,8 @@
       "dimensions": [
         "city",
         "county",
-        "user_type"
+        "user_type",
+        "1d_granularity"
       ]
     }
   },
