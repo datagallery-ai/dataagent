@@ -327,12 +327,12 @@ class SemanticServiceClient:
 
 
 def normalize_semantic_base_url(raw_url: str) -> str:
-    """Normalize semantic-service host or API URL to ``/api/semantic/v1``."""
+    """Normalize a complete ``http(s)`` semantic-service URL to ``/api/semantic/v1``."""
     base = str(raw_url).strip().rstrip("/")
     if not base:
         raise ValueError("validation error: semantic service base_url must not be empty")
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", base):
-        base = f"http://{base}"
+    if not re.match(r"^https?://", base, flags=re.IGNORECASE):
+        raise ValueError("validation error: SEMANTIC_LAYER.base_url must start with http:// or https://")
 
     lower = base.lower()
     if lower.endswith("/api/semantic/v1"):

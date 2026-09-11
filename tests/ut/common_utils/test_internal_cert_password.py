@@ -64,7 +64,7 @@ def test_encrypted_default_or_true_fills_both_passwords(monkeypatch, certificate
     assert passwords["outbound"] == "from-om"
     assert calls["query"] == 1
     assert calls["init"] == 1
-    assert calls["argv"][-2:] == ["-processType", "nl2sql"]
+    assert calls["argv"][-2:] == ["-processType", "datagallery-dataagent"]
     assert sys.argv == original_argv
 
 

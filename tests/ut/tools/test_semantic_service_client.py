@@ -6,7 +6,10 @@ import httpx
 import pytest
 
 from dataagent.actions.tools.semantic_tool import semantic_client
-from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
+from dataagent.actions.tools.semantic_tool.semantic_client import (
+    SemanticServiceClient,
+    normalize_semantic_base_url,
+)
 
 
 class _FakeResponse:
@@ -186,3 +189,15 @@ def test_client_uses_httpx_verify_for_semantic_layer(monkeypatch) -> None:
     monkeypatch.setattr(semantic_client.httpx, "Client", _capturing_client)
     SemanticServiceClient("http://semantic.local:41000")
     assert captured["verify"] is sentinel
+
+
+def test_normalize_semantic_base_url_keeps_http_and_https() -> None:
+    assert normalize_semantic_base_url("http://127.0.0.1:31347") == "http://127.0.0.1:31347/api/semantic/v1"
+    assert normalize_semantic_base_url("HTTPS://semantic.example:443") == "HTTPS://semantic.example:443/api/semantic/v1"
+
+
+def test_normalize_semantic_base_url_rejects_missing_scheme() -> None:
+    with pytest.raises(ValueError, match="http:// or https://"):
+        normalize_semantic_base_url("127.0.0.1:31347")
+    with pytest.raises(ValueError, match="http:// or https://"):
+        normalize_semantic_base_url("ftp://semantic.example")

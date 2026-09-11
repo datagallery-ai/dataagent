@@ -182,6 +182,32 @@ def _supports_explicit_cache_control(model: str, provider: str | None = None) ->
     return m in _BAILIAN_EXPLICIT_CACHE_MODELS
 
 
+def cache_control_is_enabled(
+    enable_cache_control: bool | None = None,
+    *,
+    model: str | None = None,
+    provider: str | None = None,
+) -> bool:
+    """Whether explicit cache_control should be injected / annotated.
+
+    Priority:
+    1. ``DATAAGENT_CACHE_CONTROL=0`` → always off
+    2. YAML / caller ``enable_cache_control`` if set
+    3. ``DATAAGENT_CACHE_CONTROL=1`` → auto-detect (or on when ``model`` is omitted)
+    4. default off
+    """
+    env = os.getenv("DATAAGENT_CACHE_CONTROL")
+    if env == "0":
+        return False
+    if enable_cache_control is not None:
+        return bool(enable_cache_control)
+    if env == "1":
+        if model is None:
+            return True
+        return _supports_explicit_cache_control(model, provider)
+    return False
+
+
 def _apply_cache_defaults(params: dict[str, Any]) -> None:
     """兼容 flex_runtime_from_config 的导入；自实现客户端不再需要 litellm 的 custom_llm_provider。"""
     params.pop("custom_llm_provider", None)
@@ -804,10 +830,10 @@ class LLMClient:
             compress_token_limit: 实际压缩 token 阈值（由 runtime.env 注入），影响 approaching_compress 判断。
             compress_message_cnt: 实际压缩消息数阈值（由 runtime.env 注入），影响 approaching_compress 判断。
             repetition_leniency: 重复检测宽松系数（由 runtime.env / YAML 注入）；``None`` 用默认值。
-            enable_cache_control: 是否注入显式 cache_control 标记。``None`` 走自动探测
-                （``_supports_explicit_cache_control``，向后兼容）；``True`` 强制启用；
-                ``False`` 强制禁用（用于自部署端点不支持 list content 格式的场景）。
-                环境变量 ``DATAAGENT_CACHE_CONTROL=0`` 优先级最高，全局禁用。
+            enable_cache_control: 是否注入显式 cache_control 标记。默认关闭。
+                ``True`` 强制启用；``False`` 强制禁用；``None`` 时仅当
+                ``DATAAGENT_CACHE_CONTROL=1`` 才按模型自动探测。
+                ``DATAAGENT_CACHE_CONTROL=0`` 优先级最高，全局禁用。
             disable_response_compression: 是否通过 ``Accept-Encoding: identity`` 禁用响应压缩。
         """
         self._model = model
@@ -1909,18 +1935,13 @@ class LLMClient:
     def _should_inject_cache_control(self) -> bool:
         """Decide whether to inject cache_control breakpoints.
 
-        Three-layer priority (see docs/main_agent_cache_optimization_design.md §2.5.1):
-        1. ``DATAAGENT_CACHE_CONTROL=0`` env var → global disable (escape hatch)
-        2. ``self._enable_cache_control`` YAML per-LLM flag → explicit override
-        3. ``_supports_explicit_cache_control(model, provider)`` → auto-detect (default)
-
-        Returns ``True`` if cache_control should be injected, ``False`` otherwise.
+        Default off. See :func:`cache_control_is_enabled`.
         """
-        if os.getenv("DATAAGENT_CACHE_CONTROL", "1") == "0":
-            return False
-        if self._enable_cache_control is not None:
-            return self._enable_cache_control
-        return _supports_explicit_cache_control(self._model, self._provider)
+        return cache_control_is_enabled(
+            self._enable_cache_control,
+            model=self._model,
+            provider=self._provider,
+        )
 
     def _build_payload(
         self,
