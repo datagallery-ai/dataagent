@@ -1,0 +1,7 @@
+name: bird_benchmark
+version: "1.0.0"
+description: "统一的 BIRD 预处理、standard/limited 评测、可选错误补跑与结果汇总。"
+priority: 50
+enabled: true
+requires: []
+conflicts: []

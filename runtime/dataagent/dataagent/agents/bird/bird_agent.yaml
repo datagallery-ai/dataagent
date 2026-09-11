@@ -1,0 +1,64 @@
+AGENT_CONFIG:
+  name: "BIRD Agent"
+  backend: "langgraph"
+  type: "bird"
+MODEL:
+  deepseek:
+    model_type: "chat"
+    provider: "deepseek"
+    params:
+      model: "deepseek-v4-flash"
+      temperature: 0.0
+      extra_body: # for bailian/glm, extra_body={"enable_thinking":False}
+        thinking:
+          type: "disabled"
+CORE:
+  llm_max_concurrency: null  # Opt-in, shared by this BirdAgent's nodes; null leaves requests unlimited.
+  perceptor:
+    allow_unfenced_json: true
+    column_top_k: 5
+    value_description_top_k: 3
+    value_vector_top_k: 3
+    value_search_workers: 4
+    value_search_max_calls: 80
+    sample_count: 3
+    column_score_threshold: 0.4
+    value_score_threshold: 0.55
+    value_vector_score_threshold: 0.3
+    value_distance_threshold: 0.05
+    trace_max_tables: 12
+    trace_max_columns: 80
+    trace_max_values_per_column: 5
+    trace_max_warnings: 20
+  generator:
+    num_workers: 5
+    phase1_budget: 3
+    max_route_attempts: 3
+    max_tokens: null
+    icl_top_k: 3
+  validator:
+    allow_unfenced_json: true
+    response_format_type: json_schema
+    semantic_failure_score: 0
+  reflector:
+    allow_unfenced_json: true
+    threshold: 0.9
+    ref_retries: 2
+  executor:
+    limit: -1
+    preview_limit: 5
+  selector:
+    allow_unfenced_json: true
+    review_consistency_threshold: 0.5
+    response_format_type: json_schema
+DATABASE:
+  db_id: ""
+  dialect: "sqlite"  # "sqlite", "mysql", "hive", "postgres"
+  engine: null  # specify when different from dialect (e.g. "cloud_core", "gaussvector")
+  config:
+    path: ""  # replace with actual .sqlite path
+SEMANTIC_LAYER:
+  base_url: ""  # replace with actual semantic service port
+  username: null
+  password: null
+  timeout: 30

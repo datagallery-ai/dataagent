@@ -219,7 +219,7 @@ class DataAgentService:
             message = message if isinstance(message, str) and message.strip() else "Agent failed"
             raise DataAgentError.from_exception(RuntimeError(message), component="rest")
 
-        if self._agent_type() == "nl2sql":
+        if self._agent_type() in {"nl2sql", "bird"}:
             return {"result": self._format_nl2sql_result(state)}
 
         messages = state.get("messages", [])
@@ -294,7 +294,8 @@ class DataAgentService:
         fact = self._unstructured_error_fact(error)
         if not fact:
             return DataAgentError.from_exception(RuntimeError("Agent failed"), component="rest")
-        component = "nl2sql" if self._agent_type() == "nl2sql" else "rest"
+        agent_type = self._agent_type()
+        component = agent_type if agent_type in {"nl2sql", "bird"} else "rest"
         return DataAgentError(source="tool", component=component, fact=fact)
 
     @staticmethod
@@ -318,7 +319,7 @@ class DataAgentService:
     @contextmanager
     def _request_scope(self) -> Iterator[dict[str, Any]]:
         """Create isolated resources for one stateless REST request and release them on exit."""
-        if self._agent_type() != "nl2sql":
+        if self._agent_type() not in {"nl2sql", "bird"}:
             yield {}
             return
 

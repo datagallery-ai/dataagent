@@ -82,6 +82,55 @@ class SemanticServiceClient:
         """Get column metadata for a table."""
         return self.get("advanced-search/table-columns-info", params={"tableName": table_name, "limit": limit})
 
+    def get_columns_sample_values(
+        self,
+        column_ids: list[str],
+        sample_count: int = 3,
+    ) -> dict[str, list[str]]:
+        """Get sample values for fully qualified ``db.table.column`` identifiers."""
+        if not 0 <= sample_count <= 100:
+            raise ValueError("validation error: sample_count must be in [0, 100]")
+
+        normalized: list[str] = []
+        for column_id in column_ids:
+            name = str(column_id or "").strip()
+            parts = name.split(".", 2)
+            if len(parts) != 3 or any(not part for part in parts):
+                raise ValueError("validation error: column_ids must use db.table.column identifiers")
+            normalized.append(name)
+        if not normalized:
+            return {}
+
+        params: list[tuple[str, Any]] = [("columnNames", column_id) for column_id in normalized]
+        params.extend(
+            [
+                ("sampleValuesNumber", sample_count),
+                ("limit", len(normalized)),
+            ]
+        )
+        payload = self.get("advanced-search/column-value-info", params=params)
+        if not isinstance(payload, dict):
+            raise ValueError("internal semantic service schema error: column-value-info expected object")
+
+        response_keys = {str(key).casefold(): str(key) for key in payload}
+        result: dict[str, list[str]] = {}
+        for column_id in normalized:
+            response_key = response_keys.get(column_id.casefold())
+            if response_key is None:
+                continue
+            column_info = payload.get(response_key)
+            if not isinstance(column_info, dict):
+                continue
+            samples = column_info.get("sample_values")
+            if not isinstance(samples, list):
+                continue
+            result[column_id] = [
+                str(sample["value"])
+                for sample in samples[:sample_count]
+                if isinstance(sample, dict) and sample.get("value") is not None
+            ]
+        return result
+
     def semantic_retrieve(self, query: str) -> dict:
         """Retrieve the semantic bundle relevant to one natural-language query."""
         payload: dict[str, Any] = {"query": query}
@@ -92,6 +141,8 @@ class SemanticServiceClient:
         database_name: str,
         keywords: list[str],
         top_k: int,
+        *,
+        search_values: bool = False,
     ) -> list:
         """Search columns by semantic keywords."""
         return self.get(
@@ -101,8 +152,49 @@ class SemanticServiceClient:
                 "keywords": keywords,
                 "topK": top_k,
                 "searchColumns": "true",
-                "searchValues": "false",
+                "searchValues": "true" if search_values else "false",
             },
+        )
+
+    def get_table_relations_path(
+        self,
+        db_table1: str,
+        db_table2: str,
+        max_depth: int = 5,
+    ) -> list:
+        """Get relation paths connecting two fully qualified tables."""
+        return self.get(
+            "advanced-search/table-relations-path",
+            params={
+                "dbTable1": db_table1,
+                "dbTable2": db_table2,
+                "maxDepth": max_depth,
+            },
+        )
+
+    def vector_search_column_value(
+        self,
+        keyword: str,
+        database_name: str,
+        table_name: str,
+        top_k: int,
+    ) -> list:
+        """Search imported column values by value-vector similarity."""
+        return self.get(
+            "advanced-search/vector-search-column-value",
+            params={
+                "keyword": keyword,
+                "databaseName": database_name,
+                "tableName": table_name,
+                "topK": top_k,
+            },
+        )
+
+    def sql_few_shots(self, query: str, top_k: int) -> list:
+        """Search semantic-service SQL examples for an NL2SQL query."""
+        return self.get(
+            "advanced-search/sql-few-shots",
+            params={"query": query, "topK": top_k},
         )
 
     def vector_search_table_desc(self, database_name: str, keywords: list[str], top_k: int) -> list:
