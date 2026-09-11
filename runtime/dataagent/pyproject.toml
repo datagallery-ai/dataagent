@@ -32,6 +32,9 @@ dependencies = [
     "rich>=13.0.0",
 ]
 
+[project.scripts]
+dataagent-bird-benchmark = "dataagent.core.suite.builtin_suites.bird_benchmark.run_bird:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dataagent*"]

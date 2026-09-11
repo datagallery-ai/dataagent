@@ -202,6 +202,12 @@ class DataAgent:
     def astream(self, *args, **kwargs):
         """流式对话；整轮持有 session workspace 锁，busy 时直接失败。"""
         input_val = kwargs.get("input")
+        if getattr(self, "type", None) == "bird":
+            from dataagent.agents.bird.context_dump import validate_bird_path_inputs
+
+            validate_bird_path_inputs(self.config, input_val)
+            if args and isinstance(args[0], Mapping):
+                validate_bird_path_inputs(self.config, args[0])
         # 优先级：显式 kwargs.workspace > input.workspace（input 可能是 LangGraph Command，无 .get）
         in_ws = input_val.get("workspace") if isinstance(input_val, Mapping) else None
         workspace = self._validate_workspace(kwargs.get("workspace") or in_ws)
@@ -271,6 +277,10 @@ class DataAgent:
             from dataagent.agents.nl2sql.agent import NL2SQLAgent
 
             return NL2SQLAgent.from_config(config=engine_config, config_manager=self.config)
+        if self.type == "bird":
+            from dataagent.agents.bird.agent import BirdAgent
+
+            return BirdAgent.from_config(config=engine_config, config_manager=self.config)
         raise ValueError(f"Unsupported agent type: {self.type}")
 
     def global_init(self, config: dict[str, Any] | None):
@@ -444,6 +454,11 @@ class DataAgent:
         for key, default_val in defaults.items():
             if key not in initial_state:
                 initial_state[key] = default_val
+
+        if getattr(self, "type", None) == "bird":
+            from dataagent.agents.bird.context_dump import validate_bird_path_inputs
+
+            validate_bird_path_inputs(self.config, initial_state, session_id=session_id)
 
         resolved_workspace = resolve_effective_workspace_root(
             config=self.config.get_all(),
