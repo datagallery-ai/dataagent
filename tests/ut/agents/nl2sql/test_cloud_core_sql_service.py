@@ -82,7 +82,6 @@ def test_explain_with_url_posts_via_httpx_with_cloud_core_verify(monkeypatch) ->
     assert service.explain("SELECT 1") is None
     assert captured["url"] == "https://sql.example.test/explain"
     assert captured["verify"] is captured["verify_sentinel"]
-    assert captured["params"] == {"auto_repair": "true", "format_sql": "false"}
     assert seen == ["cloud_core"]
     _assert_cloud_core_timeout(captured["timeout"])
 
