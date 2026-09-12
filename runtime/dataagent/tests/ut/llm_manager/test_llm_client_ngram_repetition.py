@@ -74,7 +74,7 @@ def test_detect_repetition_respects_leniency():
     """同一结构化 JSON 片段在默认系数下可能误报，提高 leniency 后应放过。"""
     item = '{"feature":"x","value":1},'
     # 构造足够长、且 n-gram 会反复命中分隔符的文本
-    content = "[" + item * 80 + "]"
+    content = "[" + item * 120 + "]"
     is_rep_tight, _ = _detect_repetition(content, leniency=1.0)
     is_rep_loose, _ = _detect_repetition(content, leniency=5.0)
     assert is_rep_tight
