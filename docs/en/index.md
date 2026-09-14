@@ -1,12 +1,12 @@
 # User Guide
 
-DataFoundry is an AI workbench for data analysis. It brings natural-language questions, data source management, read-only SQL execution, analysis traceability, and result delivery into one workflow.
+DataAgent is an AI workbench for data analysis. It brings natural-language questions, data source management, read-only SQL execution, analysis traceability, and result delivery into one workflow.
 
 <div class="df-grid" markdown>
 
 <div class="df-card" markdown>
 <p class="df-card-title">Product overview</p>
-Understand where DataFoundry fits and which problems it addresses.
+Understand where DataAgent fits and which problems it addresses.
 
 [Read overview](overview.md)
 </div>
@@ -37,4 +37,4 @@ Review a realistic growth spike with schema inspection, read-only SQL, and trace
 
 ## Documentation scope
 
-These docs are for product trials, customer demos, open-source visitors, and integration developers. If you are extending or integrating DataFoundry, start with `Reference` and `Developer Guide`.
+These docs are for product trials, customer demos, open-source visitors, and integration developers. If you are extending or integrating DataAgent, start with `Reference` and `Developer Guide`.

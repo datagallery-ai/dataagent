@@ -1,6 +1,6 @@
 # Documentation source
 
-This directory contains the public documentation source for the DataFoundry GitHub Pages site. The site uses MkDocs Material.
+This directory contains the public documentation source for the DataAgent GitHub Pages site. The site uses MkDocs Material.
 
 - Site home: [index.md](index.md)
 - English: [English docs](en/index.md)

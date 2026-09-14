@@ -1,4 +1,4 @@
-<h1 align="center">DataFoundry</h1>
+<h1 align="center">DataAgent</h1>
 
 <p align="center">
   企业级 Data Agent 工作台 —— 用统一语义读懂业务口径，在只读安全边界内执行多表、多步的复杂分析，<br />
@@ -38,16 +38,16 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/gui-demo.gif" alt="DataFoundry Web 工作台演示" width="100%">
+  <img src="docs/assets/readme/gui-demo.gif" alt="DataAgent Web 工作台演示" width="100%">
 </p>
 
 ---
 
-## 🤔 DataFoundry 是什么
+## 🤔 DataAgent 是什么
 
 让 AI 直接查企业数据库，团队最担心的从来不是「模型会不会写 SQL」，而是：**它懂不懂业务口径？会不会误改生产数据？凭据会不会漏进上下文？结论出了问题能不能复盘？**
 
-大多数工具把问题简化成 `prompt → SQL → answer`，demo 惊艳，进企业就卡死。DataFoundry 走另一条路：**把 Agent 放进一个有语义、有权限、有证据链的数据任务系统里**，让「自然语言问数」升级成可控、可信、可验证的数据工作。
+大多数工具把问题简化成 `prompt → SQL → answer`，demo 惊艳，进企业就卡死。DataAgent 走另一条路：**把 Agent 放进一个有语义、有权限、有证据链的数据任务系统里**，让「自然语言问数」升级成可控、可信、可验证的数据工作。
 
 ## ✨ 核心能力
 
@@ -59,7 +59,7 @@
 
 ## 🆕 v0.2.0 新能力
 
-DataFoundry 0.2 在首个可用版本上，进一步补齐了有状态、可追溯的 Data Agent 工作流：
+DataAgent 0.2 在首个可用版本上，进一步补齐了有状态、可追溯的 Data Agent 工作流：
 
 - **可分支的并发分析** — 多个会话可同时运行，运行中可排队后续问题；恢复历史后，可从早期问题或 checkpoint 创建新分支，不覆盖原分析路径。
 - **证据驱动的追问** — 可将完整产出，或选中的表格区域、文本片段引用到下一个问题；证据解析结果和诊断信息会进入受控 run context。
@@ -158,20 +158,20 @@ npm run start        # Web :3000 + API :8787
 
 ## 🆚 和 Coding Agent、SQL Chatbot 有什么不同
 
-Coding agent 改代码，SQL chatbot 回答问题，DataFoundry 跑数据任务——三者的工作对象、风险边界和产出完全不同：
+Coding agent 改代码，SQL chatbot 回答问题，DataAgent 跑数据任务——三者的工作对象、风险边界和产出完全不同：
 
 | | 工作对象 | 核心风险 | 产出 |
 | --- | --- | --- | --- |
 | Coding agent | 代码仓、测试、PR | 改错代码 | patch、commit、PR |
 | SQL chatbot | prompt、SQL、回答 | 猜错表、越权、凭据泄漏、不可复盘 | 一段 SQL 或一段回答 |
-| **DataFoundry** | 数据源、文件、知识库、工具、任务状态 | 生产数据边界、业务口径、审计证据 | **可回放的数据任务** + SQL 审计 + 表格 / 图表 / 报告 |
+| **DataAgent** | 数据源、文件、知识库、工具、任务状态 | 生产数据边界、业务口径、审计证据 | **可回放的数据任务** + SQL 审计 + 表格 / 图表 / 报告 |
 
-具体到数据任务上，DataFoundry 相比通用 coding agent 的核心优势是：
+具体到数据任务上，DataAgent 相比通用 coding agent 的核心优势是：
 
-- **精度优势，来自数据约束** — coding agent 直接面对数据库时容易猜表、猜字段、猜口径；DataFoundry 强制 schema-first，并通过 Data Gateway 约束查询路径，减少字段猜测和错误关联。
-- **安全优势，来自受控执行** — coding agent 能执行命令、读写文件，能力强但对企业数据风险更高；DataFoundry 默认只读 SQL、凭据隔离、字段脱敏、行数限制、超时和审计，更适合真实数据环境。
+- **精度优势，来自数据约束** — coding agent 直接面对数据库时容易猜表、猜字段、猜口径；DataAgent 强制 schema-first，并通过 Data Gateway 约束查询路径，减少字段猜测和错误关联。
+- **安全优势，来自受控执行** — coding agent 能执行命令、读写文件，能力强但对企业数据风险更高；DataAgent 默认只读 SQL、凭据隔离、字段脱敏、行数限制、超时和审计，更适合真实数据环境。
 - **性能优势，来自任务链路收敛** — 不靠模型推理天然更快，而是通过数据源选择、schema 缓存、上下文预算、工具策略和 artifact 流程减少无效尝试，让分析更快收敛到结果。
-- **复杂任务优势，来自数据工作流设计** — coding agent 擅长代码工程；DataFoundry 面向多表、多字段、多指标、知识库、文件和报告产出的分析任务，把「查数、验证、解释、沉淀产出」串成完整流程。
+- **复杂任务优势，来自数据工作流设计** — coding agent 擅长代码工程；DataAgent 面向多表、多字段、多指标、知识库、文件和报告产出的分析任务，把「查数、验证、解释、沉淀产出」串成完整流程。
 - **落地优势，来自企业运行时** — 这不是一个 demo，而是 Web 工作台、TUI、REST API、CopilotKit / AG-UI、Data Gateway、Skill、MCP、Files、Artifacts、Metadata 组合成的数据 Agent 操作底座。
 
 ## ⚙️ 一条数据任务如何跑完
@@ -187,7 +187,7 @@ Coding agent 改代码，SQL chatbot 回答问题，DataFoundry 跑数据任务�
 5. **回放复盘** — Web、TUI、API 共用同一条 run history，随时回看每一步的依据。
 
 <p align="center">
-  <img src="docs/assets/readme/runtime-flow.png" alt="DataFoundry 运行流程" width="100%">
+  <img src="docs/assets/readme/runtime-flow.png" alt="DataAgent 运行流程" width="100%">
 </p>
 
 ## 🖥️ 不止一个聊天框
@@ -196,7 +196,7 @@ Coding agent 改代码，SQL chatbot 回答问题，DataFoundry 跑数据任务�
 
 <p align="center">
   <a href="docs/assets/readme/tui-demo.mp4">
-    <img src="docs/assets/readme/tui-demo.gif" alt="DataFoundry TUI 演示" width="100%">
+    <img src="docs/assets/readme/tui-demo.gif" alt="DataAgent TUI 演示" width="100%">
   </a>
 </p>
 
@@ -205,7 +205,7 @@ Coding agent 改代码，SQL chatbot 回答问题，DataFoundry 跑数据任务�
 通过 Data Gateway 适配器接入：内置 DTC 增长经营复盘案例开箱即用；DuckDB、SQLite、CSV、Excel、PostgreSQL、MySQL 适合本地试用；云数仓、搜索引擎和 NoSQL 按需配置服务与凭据。
 
 <p align="center">
-  <img src="docs/assets/readme/database-wall.png" alt="DataFoundry 支持的数据源" width="100%">
+  <img src="docs/assets/readme/database-wall.png" alt="DataAgent 支持的数据源" width="100%">
 </p>
 
 完整列表见 [支持的数据源](docs/zh/reference/supported-datasources.md)。
@@ -241,7 +241,7 @@ Coding agent 改代码，SQL chatbot 回答问题，DataFoundry 跑数据任务�
 
 ## 🤝 参与贡献
 
-DataFoundry 迭代很快，小而聚焦的 PR 最容易被合入：
+DataAgent 迭代很快，小而聚焦的 PR 最容易被合入：
 
 1. 行为、协议、数据源适配器和 Agent 策略变更，请先开 issue 或 discussion。
 2. 每个 PR 聚焦一个运行时边界或功能区。
@@ -253,7 +253,7 @@ DataFoundry 迭代很快，小而聚焦的 PR 最容易被合入：
 
 ## 💬 社区与交流
 
-加入 DataFoundry 社区，和我们讨论产品、路线图和落地实践；也欢迎通过 issue 和 discussion 反馈问题、提出想法。
+加入 DataAgent 社区，和我们讨论产品、路线图和落地实践；也欢迎通过 issue 和 discussion 反馈问题、提出想法。
 
 <table align="center">
   <tr>
@@ -261,8 +261,8 @@ DataFoundry 迭代很快，小而聚焦的 PR 最容易被合入：
     <td align="center"><strong>Slack Community</strong></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataFoundry QQ 交流群二维码" width="220"></td>
-    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataFoundry Slack 社区二维码" width="300"></td>
+    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataAgent QQ 交流群二维码" width="220"></td>
+    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataAgent Slack 社区二维码" width="300"></td>
   </tr>
   <tr>
     <td align="center"><strong>交流群号</strong><br><code>1048076064</code></td>
@@ -272,7 +272,7 @@ DataFoundry 迭代很快，小而聚焦的 PR 最容易被合入：
 
 ## 🙏 致谢
 
-DataFoundry 受益于这些优秀的开源项目与社区：
+DataAgent 受益于这些优秀的开源项目与社区：
 
 - 感谢 [LINUX DO](https://linux.do/) 社区的支持与讨论。
 - [Mastra](https://github.com/mastra-ai/mastra)：Agent 运行时模式。
@@ -285,4 +285,4 @@ DataFoundry 受益于这些优秀的开源项目与社区：
 
 Apache License 2.0，见 [LICENSE](LICENSE)。
 
-> DataFoundry 仍在快速开发中，以当前代码、公开文档和 smoke 检查结果为准。
+> DataAgent 仍在快速开发中，以当前代码、公开文档和 smoke 检查结果为准。
