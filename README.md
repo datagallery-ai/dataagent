@@ -1,4 +1,4 @@
-<h1 align="center">DataFoundry</h1>
+<h1 align="center">DataAgent</h1>
 
 <p align="center">
   An enterprise-grade Data Agent workbench — it reads business definitions through unified semantics, runs complex multi-table, multi-step analysis inside read-only boundaries,<br />
@@ -38,16 +38,16 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/gui-demo.gif" alt="DataFoundry Web workbench demo" width="100%">
+  <img src="docs/assets/readme/gui-demo.gif" alt="DataAgent Web workbench demo" width="100%">
 </p>
 
 ---
 
-## 🤔 What Is DataFoundry
+## 🤔 What Is DataAgent
 
 When teams let AI query enterprise databases, the real worry is never "can the model write SQL." It is: **does it understand business definitions? Could it mutate production data? Could credentials leak into context? Can a conclusion be verified after the fact?**
 
-Most tools reduce the problem to `prompt → SQL → answer` — impressive in a demo, dead on arrival in the enterprise. DataFoundry takes a different path: **it puts the agent inside a semantic, policy-aware, evidence-preserving data task system**, upgrading natural-language analytics into controllable, trustworthy, verifiable data work.
+Most tools reduce the problem to `prompt → SQL → answer` — impressive in a demo, dead on arrival in the enterprise. DataAgent takes a different path: **it puts the agent inside a semantic, policy-aware, evidence-preserving data task system**, upgrading natural-language analytics into controllable, trustworthy, verifiable data work.
 
 ## ✨ Core Capabilities
 
@@ -59,7 +59,7 @@ Most tools reduce the problem to `prompt → SQL → answer` — impressive in a
 
 ## 🆕 What's New In v0.2.0
 
-DataFoundry 0.2 turns the first usable workbench into a more complete, stateful data-agent workflow:
+DataAgent 0.2 turns the first usable workbench into a more complete, stateful data-agent workflow:
 
 - **Branchable, concurrent analysis** — Keep multiple sessions running, queue follow-up prompts, restore completed work, and branch from an earlier question or checkpoint without overwriting the original path.
 - **Evidence-first follow-ups** — Reference a complete output or a selected table/text region in the next question; resolved evidence is carried into the governed run context with diagnostics.
@@ -159,20 +159,20 @@ For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.dat
 
 ## 🆚 How It Differs From Coding Agents And SQL Chatbots
 
-Coding agents change code, SQL chatbots answer questions, DataFoundry runs data tasks — three different operating objects, risk boundaries, and outputs:
+Coding agents change code, SQL chatbots answer questions, DataAgent runs data tasks — three different operating objects, risk boundaries, and outputs:
 
 | | Works on | Main risk | Output |
 | --- | --- | --- | --- |
 | Coding agent | Repos, tests, PRs | Breaking code | Patch, commit, PR |
 | SQL chatbot | Prompt, SQL, answer | Wrong tables, unsafe access, leaked credentials, no replay | A SQL snippet or an answer |
-| **DataFoundry** | Datasources, files, knowledge, tools, task state | Production data boundaries, business semantics, audit evidence | **Replayable data tasks** + SQL audit + tables / charts / reports |
+| **DataAgent** | Datasources, files, knowledge, tools, task state | Production data boundaries, business semantics, audit evidence | **Replayable data tasks** + SQL audit + tables / charts / reports |
 
-On data tasks specifically, DataFoundry's core advantages over a general-purpose coding agent are:
+On data tasks specifically, DataAgent's core advantages over a general-purpose coding agent are:
 
-- **Accuracy, from data constraints** — Pointed at a database, a coding agent tends to guess tables, fields, and definitions; DataFoundry enforces schema-first analysis and constrains query paths through Data Gateway, cutting guessed fields and wrong joins.
-- **Safety, from controlled execution** — Coding agents run commands and write files: powerful, but high-risk against enterprise data. DataFoundry defaults to read-only SQL, credential isolation, field masking, row limits, timeouts, and audit — built for real data environments.
+- **Accuracy, from data constraints** — Pointed at a database, a coding agent tends to guess tables, fields, and definitions; DataAgent enforces schema-first analysis and constrains query paths through Data Gateway, cutting guessed fields and wrong joins.
+- **Safety, from controlled execution** — Coding agents run commands and write files: powerful, but high-risk against enterprise data. DataAgent defaults to read-only SQL, credential isolation, field masking, row limits, timeouts, and audit — built for real data environments.
 - **Speed, from a converging task path** — Not because the model reasons faster, but because datasource selection, schema caching, context budgeting, tool policy, and the artifact pipeline eliminate wasted attempts, so analysis converges on results sooner.
-- **Complex tasks, from data-workflow design** — Coding agents excel at code engineering; DataFoundry is built for analysis across many tables, fields, and metrics plus knowledge bases, files, and report outputs, chaining "query, verify, explain, materialize" into one complete flow.
+- **Complex tasks, from data-workflow design** — Coding agents excel at code engineering; DataAgent is built for analysis across many tables, fields, and metrics plus knowledge bases, files, and report outputs, chaining "query, verify, explain, materialize" into one complete flow.
 - **Adoption, from an enterprise runtime** — This is not a demo: the Web workbench, TUI, REST API, CopilotKit / AG-UI, Data Gateway, Skills, MCP, Files, Artifacts, and Metadata combine into an operating foundation for data agents.
 
 ## ⚙️ How A Data Task Runs
@@ -188,7 +188,7 @@ Ask → Align semantics → Execute under control → Materialize output → Rep
 5. **Replay and review** — Web, TUI, and API share one run history, so every step's evidence is always one click away.
 
 <p align="center">
-  <img src="docs/assets/readme/runtime-flow.png" alt="DataFoundry runtime flow" width="100%">
+  <img src="docs/assets/readme/runtime-flow.png" alt="DataAgent runtime flow" width="100%">
 </p>
 
 ## 🖥️ More Than A Chat Box
@@ -197,7 +197,7 @@ The **Web workbench** fits day-to-day analysis and demos, the **TUI** fits termi
 
 <p align="center">
   <a href="docs/assets/readme/tui-demo.mp4">
-    <img src="docs/assets/readme/tui-demo.gif" alt="DataFoundry TUI demo" width="100%">
+    <img src="docs/assets/readme/tui-demo.gif" alt="DataAgent TUI demo" width="100%">
   </a>
 </p>
 
@@ -206,7 +206,7 @@ The **Web workbench** fits day-to-day analysis and demos, the **TUI** fits termi
 Connect through Data Gateway adapters: the built-in DTC Growth Review case works out of the box; DuckDB, SQLite, CSV, Excel, PostgreSQL, and MySQL fit local trials; cloud warehouses, search engines, and NoSQL systems plug in with their own services and credentials.
 
 <p align="center">
-  <img src="docs/assets/readme/database-wall.png" alt="Supported DataFoundry data sources" width="100%">
+  <img src="docs/assets/readme/database-wall.png" alt="Supported DataAgent data sources" width="100%">
 </p>
 
 See the full list in [Supported Data Sources](docs/en/reference/supported-datasources.md).
@@ -242,7 +242,7 @@ Roadmap discussions are welcome in issues and discussions.
 
 ## 🤝 Contributing
 
-DataFoundry moves quickly, so small, well-scoped PRs are the easiest to merge:
+DataAgent moves quickly, so small, well-scoped PRs are the easiest to merge:
 
 1. Open an issue or discussion first for behavioral, protocol, datasource-adapter, or agent-policy changes.
 2. Keep each PR focused on one runtime boundary or feature area.
@@ -254,7 +254,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## 💬 Community
 
-Join the DataFoundry community to discuss the product, roadmap, and real-world adoption with us. Issues and discussions are always welcome too.
+Join the DataAgent community to discuss the product, roadmap, and real-world adoption with us. Issues and discussions are always welcome too.
 
 <table align="center">
   <tr>
@@ -262,8 +262,8 @@ Join the DataFoundry community to discuss the product, roadmap, and real-world a
     <td align="center"><strong>QQ Group</strong></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataFoundry Slack community QR code" width="300"></td>
-    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataFoundry QQ group QR code" width="220"></td>
+    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataAgent Slack community QR code" width="300"></td>
+    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataAgent QQ group QR code" width="220"></td>
   </tr>
   <tr>
     <td align="center"><a href="https://join.slack.com/t/datafoundry-7bb8405/shared_invite/zt-42qikc65e-DwA~8ltIri_WYWWpRMjCFQ"><strong>Join Slack</strong></a></td>
@@ -273,7 +273,7 @@ Join the DataFoundry community to discuss the product, roadmap, and real-world a
 
 ## 🙏 Acknowledgements
 
-DataFoundry is inspired by and built with ideas from excellent open-source projects and communities:
+DataAgent is inspired by and built with ideas from excellent open-source projects and communities:
 
 - Thanks to the [LINUX DO](https://linux.do/) community for their support and discussions.
 - [Mastra](https://github.com/mastra-ai/mastra) for agent runtime patterns.
@@ -286,4 +286,4 @@ DataFoundry is inspired by and built with ideas from excellent open-source proje
 
 Apache License 2.0. See [LICENSE](LICENSE).
 
-> DataFoundry is under active development. Current code, public docs, and passing smoke checks are the source of truth.
+> DataAgent is under active development. Current code, public docs, and passing smoke checks are the source of truth.
