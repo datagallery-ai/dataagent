@@ -1,0 +1,10 @@
+# =============================================================================
+# hooks/hooks.yaml — 贡献顶层 HOOKS 段
+# =============================================================================
+
+HOOKS:
+  agent:
+    pre:
+      - name: hooks.checker.check_metadata
+    post:
+      - name: dataagent.core.flex.hooks.organize_workspace.organize_workspace

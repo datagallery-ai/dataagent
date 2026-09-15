@@ -20,21 +20,21 @@ from dataagent.core.flex.workflow.state import FlexState
 
 
 def organize_workspace(state: FlexState, runtime: Runtime) -> FlexState:
-    """定位 create_*.sql 和 insert_*.sql 文件位置，将它们放到 sql/ 目录下"""
+    """定位 create_*.sql、alter_*.sql、 insert_*.sql 和 modified_insert_*.sql 文件位置，将它们放到 sql/ 目录下"""
     workspace_dir = runtime.workspace_dir
     if workspace_dir is None:
         return state
 
     workspace = workspace_dir.resolve()
     sql_dir = workspace / "sql"
-    moved_files = []
+    copied_files = []
 
     for file_path in workspace.iterdir():
         if not file_path.is_file():
             continue
         if file_path.suffix.lower() != ".sql":
             continue
-        if not re.match(r"^(create_|insert_)", file_path.name, re.IGNORECASE):
+        if not re.match(r"^(create_|alter_|insert_|modified_insert_)", file_path.name, re.IGNORECASE):
             continue
 
         try:
@@ -43,14 +43,14 @@ def organize_workspace(state: FlexState, runtime: Runtime) -> FlexState:
 
             if dest_path.exists():
                 if dest_path.stat().st_mtime >= file_path.stat().st_mtime:
-                    logger.info(f"Skip moving {file_path.name}: destination is newer or same age")
+                    logger.info(f"Skip copying {file_path.name}: destination is newer or same age")
                     continue
                 dest_path.unlink()
 
-            shutil.move(str(file_path), str(dest_path))
-            moved_files.append(file_path.name)
-            logger.info(f"Moved {file_path.name} to {sql_dir}")
+            shutil.copy(str(file_path), str(dest_path))
+            copied_files.append(file_path.name)
+            logger.info(f"Copied {file_path.name} to {sql_dir}")
         except Exception as e:
-            logger.warning(f"Failed to move {file_path.name}: {e}")
+            logger.warning(f"Failed to copy {file_path.name}: {e}")
 
     return state

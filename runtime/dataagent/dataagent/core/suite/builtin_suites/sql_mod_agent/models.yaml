@@ -1,0 +1,12 @@
+# =============================================================================
+# models.yaml — 贡献顶层 MODEL 段
+# =============================================================================
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      model: "DeepSeek_V4_Flash_Client"
+      temperature: 0.3
+      timeout: 3600

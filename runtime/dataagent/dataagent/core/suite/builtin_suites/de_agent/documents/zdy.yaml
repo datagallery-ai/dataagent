@@ -1,0 +1,13 @@
+AGENT_CONFIG:
+  name: "NL2SQL Agent"
+  backend: "langgraph"
+  type: "nl2sql"
+CORE:
+  perceptor: {}
+  generator:
+    strategies: ["prompt"]
+  validator:
+    read_only: false
+  reflector: {}
+DATABASE:
+  dialect: "hive"

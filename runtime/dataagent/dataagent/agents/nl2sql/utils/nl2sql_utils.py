@@ -59,11 +59,7 @@ def sql_parser(content: str) -> list[str]:
 
 
 def xml_parser(content: str) -> list[str]:
-    return [
-        x.strip()
-        for x in re.findall(r"<result>\s*(.*?)\s*</result>", content, re.S | re.I)
-        if x.strip()
-    ]
+    return [x.strip() for x in re.findall(r"<result>\s*(.*?)\s*</result>", content, re.S | re.I) if x.strip()]
 
 
 def json_parser(content: str) -> str:

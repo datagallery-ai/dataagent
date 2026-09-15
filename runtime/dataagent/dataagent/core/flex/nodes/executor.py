@@ -423,6 +423,7 @@ class Executor(BaseNode):
                     sub_id=int(state.get("sub_id")) if state.get("sub_id") is not None else None,
                     run_id=int(state.get("run_id")) if state.get("run_id") is not None else None,
                     runtime=runtime,
+                    state=state,
                 )
 
             parallel_tasks[tool_call_id] = asyncio.create_task(
@@ -689,7 +690,23 @@ class Executor(BaseNode):
         sub_id: int | None = None,
         run_id: int | None = None,
         runtime: Any = None,
+        state: FlexState | None = None,
     ) -> NormalizedToolExecution:
+        """Execute one tool call, including pre/post hooks.
+
+        Args:
+            tool_call: LangChain tool-call dict (``name`` / ``args`` / ``id``).
+            workspace: Workspace path string, if any.
+            user_id: Session user id from FlexState.
+            session_id: Session id from FlexState.
+            sub_id: Sub-agent id from FlexState.
+            run_id: Run id from FlexState.
+            runtime: Per-invocation Runtime.
+            state: Current Executor FlexState, forwarded to tool hooks for reading.
+
+        Returns:
+            Normalized tool execution result.
+        """
         return await self._execute_tool_call_impl(
             tool_call=tool_call,
             workspace=workspace,
@@ -698,6 +715,7 @@ class Executor(BaseNode):
             sub_id=sub_id,
             run_id=run_id,
             runtime=runtime,
+            state=state,
         )
 
     async def _execute_tool_call_impl(
@@ -710,7 +728,23 @@ class Executor(BaseNode):
         sub_id: int | None,
         run_id: int | None = None,
         runtime: Any,
+        state: FlexState | None = None,
     ) -> NormalizedToolExecution:
+        """Execute one tool call after ``@measure_tool`` wrapping.
+
+        Args:
+            tool_call: LangChain tool-call dict (``name`` / ``args`` / ``id``).
+            workspace: Workspace path string, if any.
+            user_id: Session user id from FlexState.
+            session_id: Session id from FlexState.
+            sub_id: Sub-agent id from FlexState.
+            run_id: Run id from FlexState.
+            runtime: Per-invocation Runtime.
+            state: Current Executor FlexState, forwarded to tool hooks for reading.
+
+        Returns:
+            Normalized tool execution result.
+        """
         blocked = self._blocked_execution_for_invisible_tool(tool_call, runtime=runtime)
         if blocked is not None:
             return blocked
@@ -745,6 +779,7 @@ class Executor(BaseNode):
             tool_args=tool_args,
             runtime=runtime,
             phase="pre",
+            state=state,
         )
 
         try:
@@ -828,8 +863,20 @@ class Executor(BaseNode):
         tool_args: dict[str, Any],
         runtime: Any,
         phase: str,
+        state: FlexState | None = None,
     ) -> ToolHookInvocation:
-        """Build per-call hook invocation (shared ``hook_context`` across pre/post)."""
+        """Build per-call hook invocation (shared ``hook_context`` across pre/post).
+
+        Args:
+            setup: Prepared tool-call metadata (name, id, workspace fields).
+            tool_args: Mutable args dict after validation/backfill.
+            runtime: Per-invocation Runtime.
+            phase: Initial hook phase (``pre`` or ``post``).
+            state: Current Executor FlexState for read-only hook access.
+
+        Returns:
+            Shared invocation object used by both pre-hooks and post-hooks.
+        """
         return ToolHookInvocation(
             tool_name=setup.tool_name,
             tool_call_id=setup.tool_call_id,
@@ -837,6 +884,7 @@ class Executor(BaseNode):
             runtime=runtime,
             metadata=dict(setup.metadata),
             phase=phase,  # type: ignore[arg-type]
+            state=state,
         )
 
     def _failed_execution_from_hook(
