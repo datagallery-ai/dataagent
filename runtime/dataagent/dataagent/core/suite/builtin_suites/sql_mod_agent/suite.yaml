@@ -1,0 +1,19 @@
+# =============================================================================
+# suite.yaml — Suite 包根目录元数据
+# =============================================================================
+
+name: sql_modification
+
+version: "0.1.0"
+
+display_name: "SQL Modification"
+
+description: SQL修改suite，用于修改和修复已有的SQL脚本
+
+priority: 50
+
+enabled: true
+
+requires: []
+
+conflicts: []

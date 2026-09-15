@@ -1,0 +1,38 @@
+# =============================================================================
+# tools/tools.yaml — 贡献顶层 TOOLS 段
+# =============================================================================
+
+TOOLS:
+  local_functions:
+    # 元数据召回工具
+    - name: "metadata_recall"
+      module: "dataagent.actions.tools.semantic_tool.metadata_recall"
+      function: "metadata_recall"
+      config:
+        llm_model: "chat_model"
+    # 表 schema 查询
+    - name: "get_table_schema"
+      module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+      function: "get_table_schema"
+    # UDF 函数检索
+    - name: "search_udf_function_by_name_keyword"
+      module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
+      function: "search_udf_function_by_name_keyword"
+    - name: "search_udf_function_by_dsl"
+      module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
+      function: "search_udf_function_by_dsl"
+    # JOIN 关系查询
+    - name: "get_join_relations"
+      module: "dataagent.actions.tools.semantic_tool.get_join_relations"
+      function: "get_join_relations"
+    # SQL 校验工具
+    - name: "validate_deliverables"
+      module: "dataagent.core.suite.builtin_suites.sql_mod_agent.tools.verify"
+      function: "validate_deliverables"
+  builtin:
+    - name: read_file
+      module: dataagent.actions.tools.local_tool.tools
+      function: read_file
+    - name: write_file
+      module: dataagent.actions.tools.local_tool.tools
+      function: write_file

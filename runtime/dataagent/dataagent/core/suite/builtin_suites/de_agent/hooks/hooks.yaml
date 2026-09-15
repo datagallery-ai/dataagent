@@ -1,0 +1,30 @@
+# =============================================================================
+# hooks/hooks.yaml — 贡献顶层 HOOKS 段（本文件整体选填）
+# =============================================================================
+# 条目形态：与用户 YAML 相同
+#   - 字符串：相对 <suite_root> 的 module.path.callable（合并后自动加 {suite_name}. 前缀）
+#   - 字符串：dataagent.* 框架全路径（合并后不加前缀，与用户 YAML 一致）
+#   - 字典：name（必填）+ model（选填，仅 hook 内需 runtime.llm 时；引用 MODEL 槽位名）
+# 禁止：内置 registry 短名（如 pruner、portraiter）
+# 实现：须在 hooks/*.py 中提供可调用对象；hooks/__init__.py 建议保留便于本地调试
+# 加载：运行期按文件直载 hooks/custom_hooks.py，不支持包内相对导入（见 custom_hooks.py）
+# Hook 签名：(state) 或 (state, runtime)，不可用 **kwargs 作第二参
+# =============================================================================
+
+HOOKS:
+  agent:
+    pre:
+      - name: hooks.checker.check_metadata
+    post:
+      - name: dataagent.core.flex.hooks.organize_workspace.organize_workspace
+  # nodes:
+  #   planner:
+  #     post:
+  #        # human_feedback_guard 和 human_feedback_guard_conditions 在 enable_human_feedback 配置为 true 时生效，Agent 任务完成前固定触发 HITL
+  #       - name: dataagent.core.flex.hooks.human_feedback_guard.human_feedback_guard
+  #         human_feedback_guard_conditions:
+  #           - "需求理解（业务含义、目标表名、输出粒度、分区策略等）是否满足需求"
+  #           - "数据源选择（数据源表、数据源字段、UDF、Join 关系等）是否满足需求"
+  #           - "口径理解（口径定义、时间窗口、去重口径、排序口径、指标计算逻辑、聚合粒度等）是否满足需求"
+  #           - "交付文件清单（输出文件名、文件内容等）是否满足需求"
+  #           - "其他（如需要调整，请说明需要修改的部分）"

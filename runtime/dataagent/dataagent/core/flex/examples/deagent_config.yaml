@@ -108,6 +108,9 @@ TOOLS:
     - name: "create_plan"
       module: "dataagent.actions.tools.local_tool.plan"
       function: "create_plan"
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.create_ir
     - name: "update_plan"
       module: "dataagent.actions.tools.local_tool.plan"
       function: "update_plan"
@@ -117,6 +120,9 @@ TOOLS:
     - name: "complete_current_todo"
       module: "dataagent.actions.tools.local_tool.plan"
       function: "complete_current_todo"
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.update_ir
 
 WORKSPACE:
   allow_path:

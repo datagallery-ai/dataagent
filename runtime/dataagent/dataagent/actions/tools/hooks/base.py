@@ -23,6 +23,7 @@ from dataagent.core.utils.performance import callable_perf_name, get_current_col
 if TYPE_CHECKING:
     from dataagent.core.cbb.runtime import Runtime
     from dataagent.core.flex.nodes.executor import NormalizedToolExecution
+    from dataagent.core.flex.workflow.state import FlexState
     from dataagent.core.managers.action_manager.base import ToolResult
 
 
@@ -32,6 +33,9 @@ class ToolHookInvocation:
 
     ``hook_context`` is shared across all hooks in the same tool call (pre and post).
     ``tool_args`` is the mutable argument dict passed to tool invocation.
+    ``state`` is the Executor node's ``FlexState`` at tool-call start (``None`` outside
+    Flex Executor). Treat it as read-only: mutations are not merged back into graph state.
+    This round's ``ToolMessage`` results are not in ``state["messages"]`` yet.
     """
 
     tool_name: str
@@ -43,6 +47,7 @@ class ToolHookInvocation:
     phase: Literal["pre", "post"] = "pre"
     tool_result: ToolResult | None = None
     execution: NormalizedToolExecution | None = None
+    state: FlexState | None = None
 
 
 @dataclass

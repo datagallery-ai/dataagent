@@ -1,0 +1,90 @@
+# =============================================================================
+# tools/tools.yaml — 贡献顶层 TOOLS 段（本文件整体选填）
+# =============================================================================
+# 允许：local_functions、mcp_servers、A2A
+# 禁止：TOOLS.skills（Skill 请放 <suite_root>/skill/ 目录，合并时写入 custom_dirs）
+# 禁止：local_functions 中声明 sub_agent_tool（Subagent 请放 subagents/*.yaml）
+# 合并：各 list 跨层追加，高优 Suite 条目在前；
+# =============================================================================
+
+TOOLS:
+  local_functions:
+    # 文档召回模块
+    # - name: "document_recall"
+    #   module: "dataagent.actions.tools.local_tool.document_recall"
+    #   function: "document_recall_tool"
+    #   config:
+    #     llm_model: "chat_model"
+    # 元数据召回子 agent
+    - name: "metadata_recall"
+      module: "dataagent.actions.tools.semantic_tool.metadata_recall"
+      function: "metadata_recall"
+      config:
+        llm_model: "chat_model"
+    # golden schema linking 召回子 agent
+    # - name: "metadata_recall"
+    #   module: "dataagent.core.suite.builtin_suites.de_agent.tools.golden_schema_metadata_recall"
+    #   function: "metadata_recall"
+    #   config:
+    #     llm_model: "chat_model"
+    #     path: "/path/to/sql_feature_eval/tasks.json"
+    # 基于 fulltext 粗召回 “metric 指标 + data_column 与 data_table 候补” 的表列检索（思路1）
+    # - name: "search_metric_instance"
+    #   module: "dataagent.actions.tools.semantic_tool.search_metric_instance"
+    #   function: "search_metric_instance"
+    # 基于 fulltext + typename 粗召回 “data_table” 的表检索（思路2）
+    # - name: "search_tables_with_typename"
+    #   module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+    #   function: "search_tables_with_typename"
+    # 检索表的完整 schema（表的所有列信息）（思路2）
+    # - name: "get_table_schema"
+    #   module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
+    #   function: "get_table_schema"
+    # 基于 basic 属性检索 UDF
+    # - name: "search_udf_function_by_name_keyword"
+    #   module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
+    #   function: "search_udf_function_by_name_keyword"
+    # 基于 DSL 检索 UDF
+    # - name: "search_udf_function_by_dsl"
+    #   module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
+    #   function: "search_udf_function_by_dsl"
+    # 检索 Join 关系
+    # - name: "get_join_relations"
+    #   module: "dataagent.actions.tools.semantic_tool.get_join_relations"
+    #   function: "get_join_relations"
+    # nl2sql（思路1）
+    # - name: "nl2sql_sub_agent_tool"
+    #   module: "dataagent.core.suite.builtin_suites.de_agent.tools.nl2sql"
+    #   function: "nl2sql_sub_agent_tool"
+    #   config:
+    #     llm_model: "chat_model"
+    # nl2sql（思路2）
+    - name: "wrapped_nl2sql_sub_agent_tool"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.nl2sql"
+      function: "wrapped_nl2sql_sub_agent_tool"
+      config:
+        llm_model: "chat_model"
+        suite_name: "data_engineering"
+    # 写文件
+    - name: "write_file"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.write_file"
+      function: "write_file"
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post
+    # 表名格式校验 + 数据库名校验
+    - name: "validate_table_name"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.check_table_existence"
+      function: "validate_table_name"
+    # 表存在性检查 + 获取 schema
+    - name: "check_table_existence"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.check_table_existence"
+      function: "check_table_existence"
+    # 查询已有表的 DML（INSERT SQL）
+    - name: "query_sql_process"
+      module: "dataagent.actions.tools.semantic_tool.query_sql_process"
+      function: "query_sql_process"
+    # SQL校验
+    - name: "validate_deliverables"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.verify"
+      function: "validate_deliverables"

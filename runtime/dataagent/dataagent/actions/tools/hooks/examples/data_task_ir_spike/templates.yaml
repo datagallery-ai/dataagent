@@ -1,0 +1,1884 @@
+template_id: data_task_ir
+template_version: "0.7.0"
+language: zh-CN
+contract:
+  - 每个 field unit 独立调用模型；模型只能修改当前 writable_template 中出现的字段。
+  - 输出必须是单个 JSON 对象；field_id 和 value 必须保留，rationale 必须输出，unresolved 和 question 按需输出。
+  - 每个输出必须包含 rationale 字段：一段纯文本，说明填写 value 的依据（引用用户原话或工具证据中的具体表述）与关键判断逻辑；即使 value 为空也必须说明为什么没有可填内容。禁止把 rationale 写成与输入无关的套话，禁止编造输入中不存在的依据。
+  - null 表示证据明确不足，绝不表示沿用旧值；数组没有可确认项时填空数组。
+  - 只使用用户问题、已确认上下文、当前字段值和工具证据；few-shot 只演示格式，绝不是证据。
+  - 禁止把“通常、一般、默认、建议、prefer、preference”等模糊表达写成已确认口径。
+  - 尽可能提取输入中属于当前 Field Unit 的全部确定内容；允许部分填写，禁止因字段标题未被直接提及而忽略证据。
+  - unresolved 只在用户问题涉及当前字段但存在缺失、歧义或无法消解的冲突时输出。
+  - unresolved 只能是纯文本字符串数组；禁止输出对象、字典或嵌套结构，没有内容时可省略。
+  - unresolved 只记录当前 Field Unit 的直接问题；其他字段的缺失或冲突必须忽略，禁止跨字段传播。
+  - 发生冲突时，直接受冲突影响的 value 槽位必须保持 null 或空数组，并在 unresolved 说明，禁止选择任一方。
+  - unresolved 非空时必须同时输出 question；question 是一个可直接询问用户的字符串，不能是对象或数组。
+  - question 必须说明用户和证据中有无相关信息；没有时说明要补充什么，有时指出具体哪里没说清楚。
+
+output_contract:
+  field_id: 必填字符串；固定为当前 Field Unit 的 field_id。
+  value: 必填；结构遵循当前 writable_template，并尽可能保留全部有直接证据支持的子字段。
+  rationale: 必填字符串；说明填写 value 的依据与关键判断逻辑，引用用户原话或工具证据中的具体表述；value 为空时说明没有证据的原因。
+  unresolved: 可选字符串数组；只记录当前字段确实存在的缺失、歧义或冲突。
+  question: 可选字符串；仅在 unresolved 非空时输出，并形成可直接向用户提出的澄清问题。
+
+fields:
+  - field_id: feature_key
+    title: 特征主键
+    purpose: 定义最终结果中一条特征记录所代表对象的逻辑唯一标识。
+    field_instructions:
+      global_rules:
+        - 只填写最终结果的逻辑主键，不得把源表物理主键、去重键或 join 键自动当成特征主键。
+        - 多字段联合主键必须逐项列出；证据没有说明空值等价关系时必须保持 null 并写入 unresolved。
+        - 候选主键字段发生无优先级冲突时 components 必须为空，并写入 unresolved；不得先填其中一方再附加说明。
+        - 主键字段冲突只影响 components；如果 uniqueness_scope 有独立明确证据，必须保留，不得把整个 value 清空。
+      subfields:
+        components: 按联合键顺序填写 field_ref、semantic_role 和 null_semantics。
+        uniqueness_scope: 填主键在哪个范围内唯一，只能使用允许的枚举。
+      completion_conditions:
+        - components 非空，且每个组件均有明确字段引用和空值语义。
+        - uniqueness_scope 有明确证据。
+      common_errors:
+        - 把订单明细 id 当作用户特征主键。
+        - 根据字段名猜测 null_semantics。
+    few_shots:
+      - input: 用户要每个门店每天一条记录；证据说明 store_id 不允许为空。
+        output:
+          field_id: feature_key
+          value:
+            components:
+              - field_ref: store_id
+                semantic_role: 门店
+                null_semantics: reject_record
+            uniqueness_scope: within_statistic_period
+          unresolved: []
+          rationale: 用户要求按门店每天一条记录，证据补充 store_id 不允许为空，故以 store_id 为主键并采用 reject_record。
+      - input: 只提到“形成用户特征表”，没有给出用户标识字段。
+        output:
+          field_id: feature_key
+          value:
+            components: []
+            uniqueness_scope: null
+          unresolved:
+            - 最终特征主键字段及唯一范围未说明
+          question: 用户问题需要形成特征记录，但用户和证据都没有给出主键字段及唯一范围；请补充这两项信息。
+          rationale: 输入只说明要形成用户特征表，未给出任何主键字段，components 留空并记入 unresolved。
+      - input: 每个自然日内主键唯一；工具 A 说主键是 user_id，工具 B 说主键是 account_id，无优先级。
+        output:
+          field_id: feature_key
+          value:
+            components: []
+            uniqueness_scope: within_statistic_period
+          unresolved:
+            - 主键字段在 user_id 与 account_id 之间冲突且无优先级
+          question: 工具 A 和工具 B 都给出了主键证据，但候选字段冲突且无优先级；请确认应采用哪个字段或证据源。
+          rationale: 每日唯一说明唯一范围为统计周期内；但 user_id 与 account_id 证据冲突且无优先级，主键字段不填、记入 unresolved。
+    writable_template:
+      field_id: feature_key
+      value:
+        components:
+          - field_ref: null
+            semantic_role: null
+            null_semantics: null
+        uniqueness_scope: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [components, uniqueness_scope]
+      properties:
+        components:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field_ref, semantic_role, null_semantics]
+            properties:
+              field_ref: {type: string, minLength: 1}
+              semantic_role: {type: string, minLength: 1}
+              null_semantics:
+                enum: [nulls_equal, nulls_distinct, reject_record, conflict, null]
+        uniqueness_scope:
+          enum: [final_dataset, within_statistic_period, within_sequence_partition, null]
+
+  - field_id: statistic_period
+    title: 统计周期
+    purpose: 定义最终指标或特征输出所属的时间分桶，不表示输入数据的回看窗口。
+    field_instructions:
+      global_rules:
+        - 统计周期回答“每条输出属于哪个时间桶”；过去 N 天属于 time_window，不得填到这里。
+        - 周、月等日历周期必须明确时区和日历；周粒度还必须明确每周起始日。
+      subfields:
+        time_field: 用于给输出分桶的字段。
+        grain: 仅使用允许的标准粒度；非标准周期使用 custom 并填写 custom_definition。
+        timezone: 使用 IANA 时区或证据中的明确时区。
+        calendar: 如 gregorian、iso_week 或明确业务日历名称。
+        week_start: 周粒度填写 monday 至 sunday，其他粒度填 null。
+        custom_definition: custom 时给出可执行且无歧义的周期定义，否则填 null。
+      completion_conditions:
+        - time_field、grain、timezone、calendar 均有证据。
+        - grain 为 week 时 week_start 非空；grain 为 custom 时 custom_definition 非空。
+      common_errors:
+        - 把“过去 7 天”写成 daily。
+        - 未经证据补出默认时区。
+    few_shots:
+      - input: 结果按 event_time 的北京时间自然周输出，每周一开始。
+        output:
+          field_id: statistic_period
+          value:
+            time_field: event_time
+            grain: week
+            timezone: Asia/Shanghai
+            calendar: gregorian
+            week_start: monday
+            custom_definition: null
+          unresolved: []
+          rationale: 用户明确按 event_time 的北京时间自然周输出、每周一开始，故依次填写 time_field/grain/timezone/week_start。
+      - input: 用户只说“按周统计”。
+        output:
+          field_id: statistic_period
+          value:
+            time_field: null
+            grain: week
+            timezone: null
+            calendar: null
+            week_start: null
+            custom_definition: null
+          unresolved:
+            - 分桶时间字段、时区、日历和每周起始日未说明
+          question: 用户提出按周统计，但用户和证据都没有说明分桶时间字段、时区、日历及每周起始日；请补充这些口径。
+          rationale: 只有 grain=week 有证据；时间字段、时区、日历与每周起始日均无证据，保持 null 并记入 unresolved。
+      - input: 输出按 event_time 自然日分桶，gregorian 日历；工具 A 说时区 Asia/Shanghai，工具 B 说时区 UTC，无优先级。
+        output:
+          field_id: statistic_period
+          value:
+            time_field: event_time
+            grain: day
+            timezone: null
+            calendar: gregorian
+            week_start: null
+            custom_definition: null
+          unresolved:
+            - 统计周期时区在 Asia/Shanghai 与 UTC 之间冲突且无优先级
+          question: 工具 A 和工具 B 都提供了统计周期时区，但 Asia/Shanghai 与 UTC 相互冲突；请确认采用哪个时区。
+          rationale: 按明确证据填写 time_field/grain/calendar；时区在 Asia/Shanghai 与 UTC 间冲突且无优先级，故为 null 并记入 unresolved。
+    writable_template:
+      field_id: statistic_period
+      value:
+        time_field: null
+        grain: null
+        timezone: null
+        calendar: null
+        week_start: null
+        custom_definition: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [time_field, grain, timezone, calendar, week_start, custom_definition]
+      properties:
+        time_field: {type: [string, "null"]}
+        grain: {enum: [none, day, week, month, quarter, year, custom, null]}
+        timezone: {type: [string, "null"]}
+        calendar: {type: [string, "null"]}
+        week_start: {enum: [monday, tuesday, wednesday, thursday, friday, saturday, sunday, null]}
+        custom_definition: {type: [string, "null"]}
+
+  - field_id: fact_filters
+    title: 事实表过滤条件
+    purpose: 定义事实记录进入口径计算集合所必须满足的资格谓词。
+    optional: true
+    not_applicable_value:
+      predicates: []
+    field_instructions:
+      global_rules:
+        - 只记录事实表资格条件；时间窗口、join 条件、字段转换和去重条件分别写入其他 field unit。
+        - 一个谓词一项；不得把自然语言“有效数据”等概念直接当作条件，必须落到字段、操作符和值。
+        - 仅填写 source_ref 被证据明确标注为事实源的谓词；同一证据中的维度源谓词属于 dimension_filters，必须忽略。
+        - 去重 identity 中“键为空时拒绝”只定义记录等价关系，不得转换成 is_not_null 事实过滤；只有证据明确把它表述为事实记录资格条件时才纳入。
+        - “非零”“非空”“不等于”“不为”“忽略/排除/过滤掉为零的记录”等自然语言限定词必须映射为 ne 操作符，operands=["0"]；只有用户明确表达“大于 0”“正数”时才使用 gt。ne 表示不等于（仅排除 0，保留负值），gt 表示大于（连负值一起排除），二者语义不同，禁止互相替换；把“忽略为零”记成 gt 会导致质量校验把正确的 != 0 改写成 > 0，造成口径漂移。
+        - 每个谓词必须标注作用范围 filter_scope：source_level 表示作用于整个事实源、任何窗口/分支计算之前都生效；window_branch 表示仅作用于指定窗口分支（branch_ref 必须写明，如“7d窗口”），禁止提升为对整个事实源的全局过滤。
+        - 同一业务过滤针对多个窗口变体字段（如 user_app_interest_score_7d_sum_up / _14d_sum_up / _30d_sum_up）时，每个变体必须单独记录一个 window_branch 谓词并各自标注 branch_ref；禁止合并成“三个字段同时满足”的全局过滤，那会把仅在部分窗口有非零数据的用户整体排除。
+        - 数值比较的 operands 必须使用数值原文（如 "0"），operand_type 必须与字段类型一致（number）；禁止把数值比较的 operand_type 记成 string。
+      subfields:
+        predicates: 填 source_ref、field_ref、operator、operand_type、operands、null_semantics、filter_scope、branch_ref。
+        operands: 所有常量使用字符串保存；between 恰好两个值，is_null/is_not_null 使用空数组。
+        filter_scope: source_level 或 window_branch；有明确证据时按证据填写，无法判定时填 null 并写入 unresolved。
+        branch_ref: filter_scope=window_branch 时必填，用证据中的窗口名称（如“7d窗口”）指明分支；source_level 时填 null。
+      completion_conditions:
+        - 每个谓词的字段、操作符、常量类型和值均明确。
+        - 每个谓词的 filter_scope 已明确；window_branch 谓词均有 branch_ref。
+        - SQL 三值逻辑下的 null_semantics 已明确。
+      common_errors:
+        - 把时间窗口重复写进事实过滤。
+        - 把维度源的 is_active 等谓词写入事实过滤。
+        - 把事实去重键或维度实体键的空值规则改写为事实资格谓词。
+        - 把 source_ref 猜成某张未在证据出现的表。
+        - 把“忽略得分为零/非零”改写成 gt/gte（gt 连负值一起排除；质量校验会据此把正确的 != 0 改写成 > 0）。
+        - 把针对不同窗口变体字段的过滤合并成“同时满足”的全局过滤（丢失仅在部分窗口有非零数据的用户）。
+        - window_branch 谓词未填写 branch_ref，或把 window_branch 谓词提升为整个事实源的全局过滤。
+        - 把数值比较的 operand_type 写成 string。
+    few_shots:
+      - input: 事实源 app_tag_score；只保留 tag_score 非零的标签记录。
+        output:
+          field_id: fact_filters
+          value:
+            predicates:
+              - source_ref: app_tag_score
+                field_ref: tag_score
+                operator: ne
+                operand_type: number
+                operands: ["0"]
+                null_semantics: exclude_unknown
+                filter_scope: source_level
+                branch_ref: null
+          unresolved: []
+          rationale: 用户要求"非零"，按协议映射为 ne 且 operands=["0"]；无窗口分支概念，作用范围取 source_level。
+      - input: 事实源 user_system_tag_score；分别按 7d/14d/30d 窗口生成系统标签序列，每个窗口忽略对应窗口兴趣得分为零的记录（7d 窗口只过滤 7d 得分，14d 窗口只过滤 14d 得分，30d 窗口只过滤 30d 得分）。
+        output:
+          field_id: fact_filters
+          value:
+            predicates:
+              - source_ref: user_system_tag_score
+                field_ref: user_app_interest_score_7d_sum_up
+                operator: ne
+                operand_type: number
+                operands: ["0"]
+                null_semantics: exclude_unknown
+                filter_scope: window_branch
+                branch_ref: "7d窗口"
+              - source_ref: user_system_tag_score
+                field_ref: user_app_interest_score_14d_sum_up
+                operator: ne
+                operand_type: number
+                operands: ["0"]
+                null_semantics: exclude_unknown
+                filter_scope: window_branch
+                branch_ref: "14d窗口"
+              - source_ref: user_system_tag_score
+                field_ref: user_app_interest_score_30d_sum_up
+                operator: ne
+                operand_type: number
+                operands: ["0"]
+                null_semantics: exclude_unknown
+                filter_scope: window_branch
+                branch_ref: "30d窗口"
+          unresolved: []
+          rationale: 每个窗口只过滤对应窗口得分，故按窗口变体字段分别记录 window_branch 谓词并标注 branch_ref，禁止合并为全局过滤。
+      - input: 事实源 orders；只统计金额大于 0 的订单（用户明确“大于 0”），空值排除。
+        output:
+          field_id: fact_filters
+          value:
+            predicates:
+              - source_ref: orders
+                field_ref: amount
+                operator: gt
+                operand_type: number
+                operands: ["0"]
+                null_semantics: exclude_unknown
+                filter_scope: source_level
+                branch_ref: null
+          unresolved: []
+          rationale: 用户明确"大于 0"故用 gt；空值排除对应 exclude_unknown；无窗口分支，作用范围取 source_level。
+      - input: 事实源 orders；只取 status in ('paid','completed')，status 为空时排除。
+        output:
+          field_id: fact_filters
+          value:
+            predicates:
+              - source_ref: orders
+                field_ref: status
+                operator: in
+                operand_type: string
+                operands: [paid, completed]
+                null_semantics: exclude_unknown
+                filter_scope: source_level
+                branch_ref: null
+          unresolved: []
+          rationale: 按用户给出的枚举值填 in 谓词，operand_type=string，空值排除；作用范围 source_level。
+      - input: 证据只说“过滤无效订单”，没有有效状态定义。
+        output:
+          field_id: fact_filters
+          value:
+            predicates: []
+          unresolved:
+            - 无效订单缺少可执行的字段谓词定义
+          question: 现有信息提到过滤无效订单，但没有说明对应字段、操作符和值；请补充可执行的过滤谓词。
+          rationale: 证据只说"过滤无效订单"，没有字段/操作符/值定义，predicates 留空并记入 unresolved。
+      - input: 用户只要求统计全部订单数量，没有提出事实记录过滤要求。
+        output:
+          field_id: fact_filters
+          value:
+            predicates: []
+          rationale: 用户只要求统计全部订单数量，未提出事实过滤要求，predicates 为空。
+      - input: 证据只说明事实去重键 business_id 为空时拒绝、维度表 is_active=true，并出现 join 类型冲突；没有事实记录资格条件。
+        output:
+          field_id: fact_filters
+          value:
+            predicates: []
+          rationale: 去重键空值规则与维度 is_active 过滤不构成事实记录资格谓词，predicates 为空。
+    writable_template:
+      field_id: fact_filters
+      value:
+        predicates:
+          - source_ref: null
+            field_ref: null
+            operator: null
+            operand_type: null
+            operands: []
+            null_semantics: null
+            filter_scope: null
+            branch_ref: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [predicates]
+      properties:
+        predicates:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source_ref, field_ref, operator, operand_type, operands, null_semantics, filter_scope, branch_ref]
+            properties:
+              source_ref: {type: string, minLength: 1}
+              field_ref: {type: string, minLength: 1}
+              operator: {enum: [eq, ne, in, not_in, gt, gte, lt, lte, between, is_null, is_not_null]}
+              operand_type: {enum: [string, number, boolean, date, datetime]}
+              operands: {type: array, items: {type: string}}
+              null_semantics: {enum: [exclude_unknown, include_unknown, conflict]}
+              filter_scope: {enum: [source_level, window_branch, null]}
+              branch_ref: {type: [string, "null"], minLength: 1}
+
+  - field_id: fact_derived_fields
+    title: 事实表字段转换
+    purpose: 定义事实数据进入最终口径前必须得到的确定性派生字段。
+    optional: true
+    not_applicable_value:
+      derived_fields: []
+    field_instructions:
+      global_rules:
+        - 每个派生字段必须能由列出的 input_fields 和 expression 唯一计算，不得使用“清洗一下”等模糊描述。
+        - 不记录执行顺序；若表达式依赖未提供的中间字段，写入 unresolved。
+        - 仅填写 source_ref 被证据明确标注为事实源的转换；同一证据中的维度源转换属于 dimension_derived_fields，必须忽略。
+        - 表达式中的类型转换必须与字段实际语义一致：得分、金额、比率等可能含小数的数值字符串字段必须使用 FLOAT/DOUBLE 转换，禁止 CAST 成 INT（INT 截断小数会导致过滤条件与排序全部失效）；只有证据明确该字段为整数时才允许 INT。
+        - 使用带排序语义的 UDAF（如 ConcatWithRank 按第二参数升序拼接）时，必须按其文档语义传参；需要降序拼接时不得直接传原始得分字段，必须先用窗口函数生成排名（或取负值）再传入。
+      subfields:
+        derived_fields: 填 source_ref、target_field、input_fields、expression、output_type、unit、rounding、null_semantics。
+        expression: 使用证据给出的确定公式或受控表达式，不得自行设计公式。
+        rounding: 无舍入填 null；有舍入时写明确模式与位数，例如 half_up:2。
+      completion_conditions:
+        - 目标字段、全部输入字段、表达式、输出类型和空值语义完整。
+      common_errors:
+        - 根据字段名猜测单位换算。
+        - 因为工具证据同时出现维度转换，就把维度派生字段写入事实派生字段。
+        - 用自然语言替代可判定的表达式。
+        - 把可能含小数的得分/金额字段 CAST 成 INT（截断后过滤与排序失效）。
+        - 使用 ConcatWithRank 等带排序语义的 UDAF 时直接传原始得分字段作排序依据（升序与降序需求相反）。
+    few_shots:
+      - input: orders.amount_cent 除以 100 得到 amount_yuan，decimal(18,2)，不舍入；输入为空则输出为空。
+        output:
+          field_id: fact_derived_fields
+          value:
+            derived_fields:
+              - source_ref: orders
+                target_field: amount_yuan
+                input_fields: [amount_cent]
+                expression: amount_cent / 100
+                output_type: decimal(18,2)
+                unit: CNY_yuan
+                rounding: null
+                null_semantics: propagate_null
+          unresolved: []
+          rationale: 按转换要求填写输入字段、表达式、输出类型；不舍入及空输入输出为空对应 rounding=null 与 propagate_null。
+      - input: 只说“把金额标准化”。
+        output:
+          field_id: fact_derived_fields
+          value:
+            derived_fields: []
+          unresolved:
+            - 金额标准化缺少输入字段、目标字段和确定公式
+          question: 现有信息要求金额标准化，但没有说明输入字段、目标字段和确定公式；请补充这些转换口径。
+          rationale: 只说"金额标准化"，缺少输入字段与确定公式，derived_fields 留空并记入 unresolved。
+      - input: 用户直接使用事实源字段，没有提出任何字段转换要求。
+        output:
+          field_id: fact_derived_fields
+          value:
+            derived_fields: []
+          rationale: 事实源字段直接使用，没有转换要求，derived_fields 为空。
+      - input: 证据只说明 dim_user.name 需要 lower(trim(name))，事实源字段直接使用。
+        output:
+          field_id: fact_derived_fields
+          value:
+            derived_fields: []
+          rationale: lower(trim(name)) 只作用于维度表 dim_user，不属于事实表转换，derived_fields 为空。
+    writable_template:
+      field_id: fact_derived_fields
+      value:
+        derived_fields:
+          - source_ref: null
+            target_field: null
+            input_fields: []
+            expression: null
+            output_type: null
+            unit: null
+            rounding: null
+            null_semantics: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [derived_fields]
+      properties:
+        derived_fields:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source_ref, target_field, input_fields, expression, output_type, unit, rounding, null_semantics]
+            properties:
+              source_ref: {type: string, minLength: 1}
+              target_field: {type: string, minLength: 1}
+              input_fields: {type: array, minItems: 1, items: {type: string, minLength: 1}}
+              expression: {type: string, minLength: 1}
+              output_type: {type: string, minLength: 1}
+              unit: {type: [string, "null"]}
+              rounding: {type: [string, "null"]}
+              null_semantics: {enum: [propagate_null, substitute_zero, reject_record, conflict]}
+
+  - field_id: fact_deduplication
+    title: 事实表去重规则
+    purpose: 定义聚合口径中的同一事实记录等价类，以及每个等价类的唯一选择函数。
+    optional: true
+    not_applicable_value:
+      record_identity:
+        fields: []
+        null_equality: null
+      record_selection:
+        criteria: []
+        if_all_criteria_equal: null
+    field_instructions:
+      global_rules:
+        - record_identity 只回答哪些记录属于同一业务事实；record_selection 只回答同组如何唯一选择。
+        - 禁止填写 latest、earliest、prefer；必须用 choose=greatest/least 和明确字段、类型、空值排序。
+        - record_selection 未确认时 criteria 必须为空且 if_all_criteria_equal 必须为 null，不得从 few-shot 或其他去重字段补默认平局行为。
+        - 特征主键、统计时间、join 键、最终序列分区或排序字段都不自动构成事实记录身份；只有证据明确说明同一业务事实的判定方式时才适用本字段。
+        - 用户未显式提出去重或重复记录需求时，record_identity.fields 必须为空数组：不要把"每个X""按X分组""按X分区""X的排名"等分区/分组语义推断为记录身份，也不得用通用建模知识补出身份字段。
+        - 只有工具证据明确出现"同一记录""重复记录""同一实体""相同XX视为同一事实"等重复语义时才填写 record_identity.fields，并同时给出对应证据来源。
+      subfields:
+        record_identity.fields: 构成同一事实记录等价类的全部字段。
+        record_identity.null_equality: 明确空值是否相等、区分、拒绝或视为冲突。
+        record_selection.criteria: 按优先级列出字段、choose、value_type、null_rank。
+        record_selection.if_all_criteria_equal: 所有条件相同时的唯一行为。
+      completion_conditions:
+        - 身份等价关系和选择函数均完整；需要唯一输出时不得留下未决平局。
+      common_errors:
+        - 只写“按更新时间取最新”。
+        - 把最终序列去重规则写到这里。
+    few_shots:
+      - input: orders 中相同 order_id、line_id 是同一事实；先取 updated_at 最大，再取 ingestion_id 最大；空值最低；仍相同则冲突。
+        output:
+          field_id: fact_deduplication
+          value:
+            record_identity:
+              fields: [order_id, line_id]
+              null_equality: reject_record
+            record_selection:
+              criteria:
+                - field_ref: updated_at
+                  choose: greatest
+                  value_type: datetime
+                  null_rank: lowest
+                - field_ref: ingestion_id
+                  choose: greatest
+                  value_type: number
+                  null_rank: lowest
+              if_all_criteria_equal: conflict
+          unresolved: []
+          rationale: 按证据填写 identity 字段与两级选择标准（updated_at 优先、ingestion_id 次级），空值最低且平局冲突。
+      - input: 相同 order_id 要去重，只说“保留最新记录”。
+        output:
+          field_id: fact_deduplication
+          value:
+            record_identity:
+              fields: [order_id]
+              null_equality: null
+            record_selection:
+              criteria: []
+              if_all_criteria_equal: null
+          unresolved:
+            - 最新记录缺少比较字段、类型、空值排序和平局行为
+            - order_id 为空时的身份等价关系未说明
+          question: 现有信息要求按 order_id 保留最新记录，但没有说清比较字段、类型、空值排序、平局行为及空 order_id 的处理；请补充这些规则。
+          rationale: 只有 identity 字段有证据；比较字段、类型、空值排序与平局行为未说明，selection 留空并记入 unresolved。
+      - input: 用户没有提出事实记录去重要求，证据也没有说明事实源存在重复记录。
+        output:
+          field_id: fact_deduplication
+          value:
+            record_identity:
+              fields: []
+              null_equality: null
+            record_selection:
+              criteria: []
+              if_all_criteria_equal: null
+          rationale: 用户与证据均未提出去重要求，identity 与 selection 均保持空。
+      - input: 证据给出了 feature_key、统计时间、join 键和最终序列排序；还说明 dim_user 按 version_no 选版本、最终重复时按 score 取一条；没有说明哪些事实记录属于同一业务事实。
+        output:
+          field_id: fact_deduplication
+          value:
+            record_identity:
+              fields: []
+              null_equality: null
+            record_selection:
+              criteria: []
+              if_all_criteria_equal: null
+          rationale: 证据只给 feature_key/统计时间/join 键等，未说明哪些事实记录属于同一业务事实，保持空。
+    writable_template:
+      field_id: fact_deduplication
+      value:
+        record_identity:
+          fields: []
+          null_equality: null
+        record_selection:
+          criteria:
+            - field_ref: null
+              choose: null
+              value_type: null
+              null_rank: null
+          if_all_criteria_equal: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [record_identity, record_selection]
+      properties:
+        record_identity:
+          type: object
+          additionalProperties: false
+          required: [fields, null_equality]
+          properties:
+            fields: {type: array, items: {type: string, minLength: 1}}
+            null_equality: {enum: [nulls_equal, nulls_distinct, reject_record, conflict, null]}
+        record_selection:
+          type: object
+          additionalProperties: false
+          required: [criteria, if_all_criteria_equal]
+          properties:
+            criteria:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [field_ref, choose, value_type, null_rank]
+                properties:
+                  field_ref: {type: string, minLength: 1}
+                  choose: {enum: [greatest, least]}
+                  value_type: {enum: [string, number, date, datetime, boolean]}
+                  null_rank: {enum: [lowest, highest, reject_record, conflict]}
+            if_all_criteria_equal: {enum: [conflict, retain_all, records_are_equivalent, null]}
+
+  - field_id: dimension_filters
+    title: 维度表过滤条件
+    purpose: 分维度源定义可参与关联的维度记录资格谓词。
+    optional: true
+    not_applicable_value:
+      scopes: []
+    field_instructions:
+      global_rules:
+        - 每个 source_ref 独立成一个 scope；不得把事实表过滤或 join 条件写进来。
+        - 条件协议与 fact_filters 相同，常量必须有类型，空值语义必须明确；每个谓词同样标注 filter_scope（维度源按窗口分支过滤时用 window_branch 并填 branch_ref）。
+        - 只有工具证据明确出现维度源（被标注为维度/维表，或与事实源存在关联关系）时才填写本字段；任务不涉及维度表时 scopes 必须为空数组，禁止按通用建模知识发明维度源。
+      subfields:
+        scopes: 每项包含 source_ref 和该维度源的 predicates。
+      completion_conditions:
+        - 所有被明确提及的维度源和过滤谓词均被覆盖。
+      common_errors:
+        - 合并不同维度表的同名字段条件。
+        - 根据“有效维度”自行猜测状态值。
+        - 任务无维度表时仍发明维度过滤；把最终序列排序/截断规则误写成维度过滤。
+    few_shots:
+      - input: dim_store 只保留 is_active=true；空值排除。
+        output:
+          field_id: dimension_filters
+          value:
+            scopes:
+              - source_ref: dim_store
+                predicates:
+                  - field_ref: is_active
+                    operator: eq
+                    operand_type: boolean
+                    operands: ["true"]
+                    null_semantics: exclude_unknown
+                    filter_scope: source_level
+                    branch_ref: null
+          unresolved: []
+          rationale: 按维度过滤要求填 eq 谓词、operand_type=boolean 与空值排除；无窗口分支，作用范围 source_level。
+      - input: 没有给出任何维度过滤要求。
+        output:
+          field_id: dimension_filters
+          value:
+            scopes: []
+          unresolved: []
+          rationale: 未给出任何维度过滤要求，scopes 为空。
+    writable_template:
+      field_id: dimension_filters
+      value:
+        scopes:
+          - source_ref: null
+            predicates:
+              - field_ref: null
+                operator: null
+                operand_type: null
+                operands: []
+                null_semantics: null
+                filter_scope: null
+                branch_ref: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source_ref, predicates]
+            properties:
+              source_ref: {type: string, minLength: 1}
+              predicates:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [field_ref, operator, operand_type, operands, null_semantics, filter_scope, branch_ref]
+                  properties:
+                    field_ref: {type: string, minLength: 1}
+                    operator: {enum: [eq, ne, in, not_in, gt, gte, lt, lte, between, is_null, is_not_null]}
+                    operand_type: {enum: [string, number, boolean, date, datetime]}
+                    operands: {type: array, items: {type: string}}
+                    null_semantics: {enum: [exclude_unknown, include_unknown, conflict]}
+                    filter_scope: {enum: [source_level, window_branch, null]}
+                    branch_ref: {type: [string, "null"], minLength: 1}
+
+  - field_id: dimension_derived_fields
+    title: 维度表预处理逻辑
+    purpose: 分维度源定义关联前需要得到的确定性派生字段。
+    optional: true
+    not_applicable_value:
+      scopes: []
+    field_instructions:
+      global_rules:
+        - 只记录非直接使用的确定性字段转换；维度过滤、版本选择和 join 条件分别填写。
+        - 每个派生字段必须有完整输入、公式、输出类型与空值语义。
+        - 仅填写 source_ref 被证据明确标注为维度源的转换；同一证据中的事实源转换属于 fact_derived_fields，必须忽略。
+        - 只有工具证据明确出现维度源及其字段转换时才填写本字段；任务不涉及维度表时 scopes 必须为空数组，禁止发明维度字段转换。
+      subfields:
+        scopes: 每项包含 source_ref 和 derived_fields；派生字段结构与 fact_derived_fields 相同但不重复 source_ref。
+      completion_conditions:
+        - 每个转换可由列出的输入字段唯一计算。
+      common_errors:
+        - 把 SCD 版本选择写成字段转换。
+        - 把模糊业务词直接当 expression。
+    few_shots:
+      - input: dim_user 的 phone 去除两端空格并转小写，得到 phone_norm；空值保持空。
+        output:
+          field_id: dimension_derived_fields
+          value:
+            scopes:
+              - source_ref: dim_user
+                derived_fields:
+                  - target_field: phone_norm
+                    input_fields: [phone]
+                    expression: lower(trim(phone))
+                    output_type: string
+                    unit: null
+                    rounding: null
+                    null_semantics: propagate_null
+          unresolved: []
+          rationale: 按转换要求填写表达式 lower(trim(phone)) 与 propagate_null。
+      - input: 维度字段直接使用，不做转换。
+        output:
+          field_id: dimension_derived_fields
+          value:
+            scopes: []
+          unresolved: []
+          rationale: 维度字段直接使用，无转换证据，scopes 为空。
+    writable_template:
+      field_id: dimension_derived_fields
+      value:
+        scopes:
+          - source_ref: null
+            derived_fields:
+              - target_field: null
+                input_fields: []
+                expression: null
+                output_type: null
+                unit: null
+                rounding: null
+                null_semantics: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source_ref, derived_fields]
+            properties:
+              source_ref: {type: string, minLength: 1}
+              derived_fields:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [target_field, input_fields, expression, output_type, unit, rounding, null_semantics]
+                  properties:
+                    target_field: {type: string, minLength: 1}
+                    input_fields: {type: array, minItems: 1, items: {type: string, minLength: 1}}
+                    expression: {type: string, minLength: 1}
+                    output_type: {type: string, minLength: 1}
+                    unit: {type: [string, "null"]}
+                    rounding: {type: [string, "null"]}
+                    null_semantics: {enum: [propagate_null, substitute_zero, reject_record, conflict]}
+
+  - field_id: dimension_deduplication
+    title: 维度表记录身份与版本选择
+    purpose: 分维度源定义同一维度实体的等价关系，以及多个候选版本之间的唯一选择函数。
+    optional: true
+    not_applicable_value:
+      scopes: []
+    field_instructions:
+      global_rules:
+        - 每个 source_ref 必须同时考虑 record_identity 和 record_selection；不存在版本选择时 criteria 可为空。
+        - 禁止使用“最新版本”等不可执行短语，必须展开为有类型和空值排序的选择条件。
+        - 只有工具证据明确出现维度源且说明同一实体或版本选择时才填写本字段；任务不涉及维度表时 scopes 必须为空数组，禁止把最终序列的排序或截断规则（如按得分取前10）改写成维度版本选择。
+      subfields:
+        scopes: 每项包含 source_ref、record_identity 和 record_selection，子结构与事实去重一致。
+      completion_conditions:
+        - 所有需要去重或选版本的维度源都有完整规则。
+      common_errors:
+        - 只填版本选择，不填同一实体定义。
+        - 把 join 键自动当成维度实体键。
+        - 把最终序列排序/截断（按得分取前N）误写成维度版本选择；无维度表时发明维度去重。
+    few_shots:
+      - input: dim_user 中 user_id 相同是同一实体，user_id 为空拒绝；按 version_no 最大选，空值最低；仍相同则冲突。
+        output:
+          field_id: dimension_deduplication
+          value:
+            scopes:
+              - source_ref: dim_user
+                record_identity:
+                  fields: [user_id]
+                  null_equality: reject_record
+                record_selection:
+                  criteria:
+                    - field_ref: version_no
+                      choose: greatest
+                      value_type: number
+                      null_rank: lowest
+                  if_all_criteria_equal: conflict
+          unresolved: []
+          rationale: 按证据填写 identity（user_id 为空拒绝）与选择标准（version_no 最大、空值最低、平局冲突）。
+      - input: dim_user 直接关联，没有任何重复或版本说明。
+        output:
+          field_id: dimension_deduplication
+          value:
+            scopes: []
+          unresolved: []
+          rationale: 维度表直接关联，无重复或版本说明，scopes 为空。
+    writable_template:
+      field_id: dimension_deduplication
+      value:
+        scopes:
+          - source_ref: null
+            record_identity:
+              fields: []
+              null_equality: null
+            record_selection:
+              criteria:
+                - field_ref: null
+                  choose: null
+                  value_type: null
+                  null_rank: null
+              if_all_criteria_equal: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [source_ref, record_identity, record_selection]
+            properties:
+              source_ref: {type: string, minLength: 1}
+              record_identity:
+                type: object
+                additionalProperties: false
+                required: [fields, null_equality]
+                properties:
+                  fields: {type: array, minItems: 1, items: {type: string, minLength: 1}}
+                  null_equality: {enum: [nulls_equal, nulls_distinct, reject_record, conflict]}
+              record_selection:
+                type: object
+                additionalProperties: false
+                required: [criteria, if_all_criteria_equal]
+                properties:
+                  criteria:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [field_ref, choose, value_type, null_rank]
+                      properties:
+                        field_ref: {type: string, minLength: 1}
+                        choose: {enum: [greatest, least]}
+                        value_type: {enum: [string, number, date, datetime, boolean]}
+                        null_rank: {enum: [lowest, highest, reject_record, conflict]}
+                  if_all_criteria_equal: {enum: [conflict, retain_all, records_are_equivalent, null]}
+
+  - field_id: dimension_relations
+    title: 维度表关联条件
+    purpose: 定义事实源与维度源之间的关联谓词、基数、未匹配行为和可选时间有效性。
+    optional: true
+    not_applicable_value:
+      relations: []
+    field_instructions:
+      global_rules:
+        - join 条件必须逐项给出左右字段和操作符；不得只写“关联用户维表”。
+        - 基数是数据契约而不是优化提示；证据未说明时填 null 并写入 unresolved。
+        - 时间有效关联必须明确起止边界、开放结束值语义和事实时间字段。
+        - join_type 等子字段发生无优先级冲突时，只将受影响子字段置为 null；不得因为基础证据先出现就选择它。
+        - 只有工具证据明确给出事实源与维度源的关联关系时才填写本字段；任务不涉及维度关联时 relations 必须为空数组，禁止按星型模型常识发明关联。
+      subfields:
+        relations: 每项填写事实源、维度源、join_type、conditions、cardinality、unmatched_fact、temporal_validity。
+        conditions.null_matches: 明确双方 null 是否匹配。
+        temporal_validity: 非时间有效关联填 null。
+      completion_conditions:
+        - 每个关联均有完整谓词；关联类型、基数和未匹配行为明确。
+      common_errors:
+        - 根据常见星型模型猜测 many_to_one。
+        - 忽略有效期的开闭边界。
+        - 没有维度关联证据时仍根据通用建模知识补出 join。
+    few_shots:
+      - input: orders left join dim_user on orders.user_id = dim_user.user_id，null 不匹配，many_to_one；未匹配事实保留且维度列为空；非时间有效关联。
+        output:
+          field_id: dimension_relations
+          value:
+            relations:
+              - fact_source_ref: orders
+                dimension_source_ref: dim_user
+                join_type: left
+                conditions:
+                  - fact_field: user_id
+                    operator: eq
+                    dimension_field: user_id
+                    null_matches: false
+                cardinality: many_to_one
+                unmatched_fact: retain_with_nulls
+                temporal_validity: null
+          unresolved: []
+          rationale: 按证据填写 join_type/关联条件（null 不匹配）/基数/未匹配事实保留且维度列空。
+      - input: orders 关联 dim_user，只给了 user_id 相等。
+        output:
+          field_id: dimension_relations
+          value:
+            relations:
+              - fact_source_ref: orders
+                dimension_source_ref: dim_user
+                join_type: null
+                conditions:
+                  - fact_field: user_id
+                    operator: eq
+                    dimension_field: user_id
+                    null_matches: null
+                cardinality: null
+                unmatched_fact: null
+                temporal_validity: null
+          unresolved:
+            - 关联类型、空值匹配、基数和未匹配事实行为未说明
+          question: 现有信息说明了关联字段，但没有说清 join 类型、空值匹配、基数及未匹配事实处理；请补充这些关联口径。
+          rationale: 只有 user_id 相等有证据；其余子字段无证据保持 null 并记入 unresolved。
+      - input: 任务只涉及单张事实源表，没有维度表和关联关系。
+        output:
+          field_id: dimension_relations
+          value:
+            relations: []
+          unresolved: []
+          rationale: 任务只涉及单张事实源表，无维度表与关联关系，relations 为空。
+    writable_template:
+      field_id: dimension_relations
+      value:
+        relations:
+          - fact_source_ref: null
+            dimension_source_ref: null
+            join_type: null
+            conditions:
+              - fact_field: null
+                operator: null
+                dimension_field: null
+                null_matches: null
+            cardinality: null
+            unmatched_fact: null
+            temporal_validity:
+              fact_time_field: null
+              valid_from_field: null
+              valid_to_field: null
+              start_inclusive: null
+              end_inclusive: null
+              open_end_allowed: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [relations]
+      properties:
+        relations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [fact_source_ref, dimension_source_ref, join_type, conditions, cardinality, unmatched_fact, temporal_validity]
+            properties:
+              fact_source_ref: {type: string, minLength: 1}
+              dimension_source_ref: {type: string, minLength: 1}
+              join_type: {enum: [left, inner, right, full, null]}
+              conditions:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [fact_field, operator, dimension_field, null_matches]
+                  properties:
+                    fact_field: {type: string, minLength: 1}
+                    operator: {enum: [eq, ne, gt, gte, lt, lte]}
+                    dimension_field: {type: string, minLength: 1}
+                    null_matches: {type: [boolean, "null"]}
+              cardinality: {enum: [one_to_one, one_to_many, many_to_one, many_to_many, null]}
+              unmatched_fact: {enum: [reject, retain_with_nulls, conflict, null]}
+              temporal_validity:
+                oneOf:
+                  - {type: "null"}
+                  - type: object
+                    additionalProperties: false
+                    required: [fact_time_field, valid_from_field, valid_to_field, start_inclusive, end_inclusive, open_end_allowed]
+                    properties:
+                      fact_time_field: {type: string, minLength: 1}
+                      valid_from_field: {type: string, minLength: 1}
+                      valid_to_field: {type: string, minLength: 1}
+                      start_inclusive: {type: boolean}
+                      end_inclusive: {type: boolean}
+                      open_end_allowed: {type: boolean}
+
+  - field_id: time_window
+    title: 时间窗口
+    purpose: 定义哪些事实时间点属于输入集合，尤其明确锚点、周期类型和区间边界。
+    optional: true
+    not_applicable_value:
+      time_field: null
+      anchor: {field: null, value: null}
+      range: {type: null, direction: null, number: null, unit: null, include_anchor_period: null}
+      boundary: {start_inclusive: null, end_inclusive: null}
+      null_time_semantics: null
+    field_instructions:
+      global_rules:
+        - 必须区分 calendar_periods 与 duration；“过去 7 天”若证据未说明是哪一种，不能自行选择。
+        - include_anchor_period 与 start/end_inclusive 都必须明确；不得用“包含最近七天”等语言代替边界。
+        - statistic_period 的空值规则或其他字段口径不能自动复制到时间窗口；每个窗口子字段必须有直接证据。
+        - 窗口子字段发生无优先级冲突时，将该子字段置为 null 并写入 unresolved，不得保留先出现的值。
+      subfields:
+        time_field: 判定记录进入窗口的事实时间字段。
+        anchor: 有直接证据时填写锚点字段或固定锚点值；没有时保持 null。
+        range: 填 type、direction、number、unit、include_anchor_period。
+        boundary: 明确起点和终点是否包含。
+        null_time_semantics: 时间为空时排除、包含还是冲突。
+      completion_conditions:
+        - 时间字段、范围方向、数量和单位均明确；其他子字段有证据时一并填写。
+      common_errors:
+        - 默认认为过去 7 天包含今天。
+        - 把统计周期的日粒度当成窗口定义。
+    few_shots:
+      - input: event_time 取过去 7 个完整自然日，不含今天；区间左闭右开；空时间排除。
+        output:
+          field_id: time_window
+          value:
+            time_field: event_time
+            anchor:
+              field: null
+              value: null
+            range:
+              type: calendar_periods
+              direction: past
+              number: 7
+              unit: day
+              include_anchor_period: false
+            boundary:
+              start_inclusive: true
+              end_inclusive: false
+            null_time_semantics: exclude_record
+          unresolved: []
+          rationale: 按证据填写窗口范围（过去 7 个完整自然日、不含今天）、左闭右开边界与空时间排除。
+      - input: 用户说“过去 7 天”，其余信息没有说明。
+        output:
+          field_id: time_window
+          value:
+            time_field: null
+            anchor:
+              field: null
+              value: null
+            range:
+              type: null
+              direction: past
+              number: 7
+              unit: day
+              include_anchor_period: null
+            boundary:
+              start_inclusive: null
+              end_inclusive: null
+            null_time_semantics: null
+          unresolved:
+            - 时间字段、自然日或时长、是否包含锚点周期、开闭边界和空时间行为未说明
+          question: 用户要求过去 7 天，但用户和证据没有说清时间字段、周期类型、边界及空时间处理；请补充这些窗口口径。
+          rationale: 只有"7 天"有证据；时间字段、边界与空时间行为均未说明，保持 null 并记入 unresolved。
+      - input: 窗口直接证据说 event_time 取过去 7 个完整自然日；工具 A 说包含今天，工具 B 说不包含今天，无优先级；其他窗口子字段均明确。
+        output:
+          field_id: time_window
+          value:
+            time_field: event_time
+            anchor:
+              field: null
+              value: null
+            range:
+              type: calendar_periods
+              direction: past
+              number: 7
+              unit: day
+              include_anchor_period: null
+            boundary:
+              start_inclusive: true
+              end_inclusive: false
+            null_time_semantics: exclude_record
+          unresolved:
+            - 窗口是否包含今天存在无优先级冲突
+          question: 工具 A 和工具 B 都说明了窗口是否包含今天，但结论相反且无优先级；请确认是否包含今天。
+          rationale: 按直接证据填写范围与边界；是否包含今天在工具 A/B 间冲突且无优先级，保持 null 并记入 unresolved。
+    writable_template:
+      field_id: time_window
+      value:
+        time_field: null
+        anchor:
+          field: null
+          value: null
+        range:
+          type: null
+          direction: null
+          number: null
+          unit: null
+          include_anchor_period: null
+        boundary:
+          start_inclusive: null
+          end_inclusive: null
+        null_time_semantics: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [time_field, anchor, range, boundary, null_time_semantics]
+      properties:
+        time_field: {type: [string, "null"]}
+        anchor:
+          type: object
+          additionalProperties: false
+          required: [field, value]
+          properties:
+            field: {type: [string, "null"]}
+            value: {type: [string, "null"]}
+        range:
+          type: object
+          additionalProperties: false
+          required: [type, direction, number, unit, include_anchor_period]
+          properties:
+            type: {enum: [calendar_periods, duration, null]}
+            direction: {enum: [past, future, null]}
+            number: {type: [integer, "null"], minimum: 1}
+            unit: {enum: [minute, hour, day, week, month, quarter, year, null]}
+            include_anchor_period: {type: [boolean, "null"]}
+        boundary:
+          type: object
+          additionalProperties: false
+          required: [start_inclusive, end_inclusive]
+          properties:
+            start_inclusive: {type: [boolean, "null"]}
+            end_inclusive: {type: [boolean, "null"]}
+        null_time_semantics: {enum: [exclude_record, include_record, conflict, null]}
+
+  - field_id: window_partitioning
+    title: 窗口分区键
+    purpose: 定义窗口函数（如ROW_NUMBER()、RANK()、LAG()等）执行时的PARTITION BY分组键，与最终序列分区键（final_sequence_partitioning）和特征主键（feature_key）是不同概念。
+    optional: true
+    not_applicable_value:
+      partition_fields: []
+      null_equality: null
+    field_instructions:
+      global_rules:
+        - window_partitioning 定义的是窗口函数执行时的分组范围，不是最终输出的分组
+        - 窗口分区键应细于或等于最终序列分区键；当二者不同时，窗口分区会产生中间序列
+        - 只有在SQL中使用了窗口函数（ROW_NUMBER、RANK、SUM/AVG OVER等）时才需要填写此字段
+        - 如果最终输出是直接聚合结果（GROUP BY without窗口函数），此字段可能不适用
+        - 涉及排序/排名/TopN 的任务（用户要求“排名”“前N”“每个X中最高/最多”“保留每个X前N条”等，或最终输出含 rank/row_number 字段）必须明确填写此字段：partition_fields = 排序范围“每个X”中的 X（通常等于聚合分组键），禁止留空让 SQL Agent 自行推断 PARTITION BY
+        - 排序范围为“每个X”，但 X 在最终输出中未体现时，partition_fields 仍须按 X 填写，不得省略
+      subfields:
+        partition_fields: 窗口函数PARTITION BY的字段列表
+        null_equality: 空值在窗口分区等价关系中的处理
+      completion_conditions:
+        - 窗口分区键字段与窗口函数中实际使用的PARTITION BY字段一致
+        - 任务涉及排序/排名/TopN 时，partition_fields 已明确填写排序范围字段（不可留空）
+      common_errors:
+        - 把最终序列分区键误认为是窗口分区键
+        - 在没有窗口函数的场景下错误填写此字段
+        - 排序/TopN 任务漏填或留空 window_partitioning，导致 SQL Agent 自行猜测 PARTITION BY 范围（如漏掉按 list_id/device 分区，直接全表排序）
+    few_shots:
+      - input: 用户要求按app_id分组计算每日使用次数排名，使用ROW_NUMBER() OVER(PARTITION BY app_id ORDER BY usage_cnt DESC)
+        output:
+          field_id: window_partitioning
+          value:
+            partition_fields: [app_id]
+            null_equality: reject_record
+          unresolved: []
+          rationale: 窗口函数按 app_id 分区，故分区字段为 app_id；空值拒绝。
+      - input: 用户要求统计每个用户的总消费金额，没有使用任何窗口函数
+        output:
+          field_id: window_partitioning
+          value:
+            partition_fields: []
+            null_equality: null
+          unresolved: []
+          rationale: 统计总消费金额不使用窗口函数，partition_fields 为空。
+      - input: 用户要求计算每个设备每天的应用使用次数序列，使用窗口函数先按imei分区排序
+        output:
+          field_id: window_partitioning
+          value:
+            partition_fields: [imei]
+            null_equality: reject_record
+          unresolved: []
+          rationale: 窗口函数按 imei 分区排序，分区字段为 imei。
+      - input: 用户要求按imei、tail、app_type做聚合，但排序时每个imei内部再按使用次数排序
+        output:
+          field_id: window_partitioning
+          value:
+            partition_fields: [imei]
+            null_equality: reject_record
+          unresolved: []
+          rationale: 窗口函数只按 imei 分区，imei/tail/app_type 是聚合键而非窗口分区键，partition_fields 只取 imei。
+    writable_template:
+      field_id: window_partitioning
+      value:
+        partition_fields: []
+        null_equality: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [partition_fields, null_equality]
+      properties:
+        partition_fields: {type: array, items: {type: string, minLength: 1}}
+        null_equality: {enum: [nulls_equal, nulls_distinct, reject_record, conflict, null]}
+
+  - field_id: final_sequence_partitioning
+    title: 最终序列分区
+    purpose: 定义哪些最终记录属于同一个逻辑序列；这不是存储分区或 SQL 性能提示。
+    optional: true
+    not_applicable_value:
+      partition_fields: []
+      null_equality: null
+    field_instructions:
+      global_rules:
+        - partition_fields 定义逻辑序列的等价类，不得填写表分区、文件分桶等物理信息。
+        - 多字段分区必须全部列出，并明确空值等价关系。
+      subfields:
+        partition_fields: 构成同一逻辑序列的全部字段。
+        null_equality: 空值在分区等价关系中的处理。
+      completion_conditions:
+        - 序列存在时，字段与空值等价关系均明确。
+      common_errors:
+        - 把 feature_key 无证据地复制成分区键。
+        - 把 SQL PARTITION BY 语法当作语义定义。
+    few_shots:
+      - input: 每个 user_id、device_id 形成一条序列；任一为空则拒绝记录。
+        output:
+          field_id: final_sequence_partitioning
+          value:
+            partition_fields: [user_id, device_id]
+            null_equality: reject_record
+          unresolved: []
+          rationale: 按证据填写分区字段 user_id/device_id，任一为空拒绝记录。
+      - input: 没有序列概念或分区要求。
+        output:
+          field_id: final_sequence_partitioning
+          value:
+            partition_fields: []
+            null_equality: null
+          unresolved: []
+          rationale: 无序列概念或分区要求，分区字段为空。
+    writable_template:
+      field_id: final_sequence_partitioning
+      value:
+        partition_fields: []
+        null_equality: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [partition_fields, null_equality]
+      properties:
+        partition_fields: {type: array, items: {type: string, minLength: 1}}
+        null_equality: {enum: [nulls_equal, nulls_distinct, reject_record, conflict, null]}
+
+  - field_id: final_sequence_ordering
+    title: 最终序列排序依据
+    purpose: 定义每个逻辑序列内部的词典序全序关系。
+    optional: true
+    not_applicable_value:
+      criteria: []
+      tie_behavior: null
+    field_instructions:
+      global_rules:
+        - criteria 按比较优先级排列；每项必须有字段、方向、类型和空值排序。
+        - 如果所有条件相同仍不能形成全序，必须用 tie_behavior 明确冲突、等价或保留全部。
+        - 已确认排序字段但方向、类型或空值位置未确认时，仍保留该字段项并将未知子字段填 null；不得删除整项。
+      subfields:
+        criteria: 按优先级填写 field_ref、direction、value_type、null_rank。
+        tie_behavior: 所有排序键相同时的行为。
+      completion_conditions:
+        - 需要确定顺序时 criteria 非空，且平局行为明确。
+      common_errors:
+        - 只写“按时间排序”而没有升降序和空值位置。
+        - 把用于去重的选择规则自动当作展示顺序。
+    few_shots:
+      - input: 序列先按 event_time 升序，空值拒绝；同时间按 event_id 升序，空值最高；仍相同视为等价。
+        output:
+          field_id: final_sequence_ordering
+          value:
+            criteria:
+              - field_ref: event_time
+                direction: ascending
+                value_type: datetime
+                null_rank: reject_record
+              - field_ref: event_id
+                direction: ascending
+                value_type: string
+                null_rank: highest
+            tie_behavior: records_are_equivalent
+          unresolved: []
+          rationale: 按证据填写两级排序标准（event_time 升序空值拒绝、event_id 升序空值最高）与平局等价行为。
+      - input: 只说“按发生时间排”。
+        output:
+          field_id: final_sequence_ordering
+          value:
+            criteria:
+              - field_ref: event_time
+                direction: null
+                value_type: null
+                null_rank: null
+            tie_behavior: null
+          unresolved:
+            - event_time 的方向、类型、空值排序和平局行为未说明
+          question: 现有信息要求按 event_time 排序，但没有说清方向、类型、空值位置及平局行为；请补充这些排序口径。
+          rationale: 只有排序字段有证据；方向、类型、空值排序与平局行为未说明，保持 null 并记入 unresolved。
+    writable_template:
+      field_id: final_sequence_ordering
+      value:
+        criteria:
+          - field_ref: null
+            direction: null
+            value_type: null
+            null_rank: null
+        tie_behavior: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [criteria, tie_behavior]
+      properties:
+        criteria:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field_ref, direction, value_type, null_rank]
+            properties:
+              field_ref: {type: string, minLength: 1}
+              direction: {enum: [ascending, descending, null]}
+              value_type: {enum: [string, number, date, datetime, boolean, null]}
+              null_rank: {enum: [lowest, highest, reject_record, conflict, null]}
+        tie_behavior: {enum: [conflict, retain_all, records_are_equivalent, null]}
+
+  - field_id: final_sequence_deduplication
+    title: 最终序列去重规则
+    purpose: 定义最终序列中按特征主键识别重复后，是否以及如何得到唯一记录。
+    optional: true
+    not_applicable_value:
+      identity_ref: null
+      custom_identity_fields: []
+      on_duplicate: null
+      record_selection:
+        criteria: []
+        if_all_criteria_equal: null
+    field_instructions:
+      global_rules:
+        - identity_ref 优先引用 feature_key，不重复抄写主键；只有证据明确使用另一组身份字段时才用 custom。
+        - on_duplicate=choose_one 时必须填写完整 record_selection；retain_all 或 conflict 时 criteria 应为空。
+        - 禁止用“最新、优先”等词代替明确选择函数。
+        - on_duplicate 发生无优先级冲突时，on_duplicate 填 null，record_selection 清空并将平局行为填 null；不得选择某一行为。
+        - feature_key 内部由哪些字段构成即使发生冲突，也不改变 identity_ref=feature_key 这个引用；不得把其他 Field Unit 的冲突传播到本字段。
+        - 用户或证据未明确提到“最终输出需要去重/唯一化/重复记录处理”时，identity_ref 必须为 null、on_duplicate 必须为 null、record_selection.criteria 必须为空数组；禁止按通用建模知识补出最终序列去重。
+        - 禁止把“排名前N”“取得分最大”“按得分排序”等 TopN/排序语义写成 on_duplicate=choose_one 或 record_selection；这些由 final_sequence_ordering 和 final_sequence_truncation 承载。
+        - 任务同时存在 TopN 截断（final_sequence_truncation 非空）且无重复记录证据时，identity_ref 必须为 null：按 feature_key 判重后 choose_one 会使每个序列只剩一条，与“保留前N”直接冲突。
+      subfields:
+        identity_ref: feature_key 或 custom。
+        custom_identity_fields: identity_ref=custom 时填写，否则为空数组。
+        on_duplicate: choose_one、retain_all 或 conflict。
+        record_selection: 结构与事实去重的选择函数一致。
+      completion_conditions:
+        - 重复身份和重复处理行为均明确；choose_one 时选择函数无未决平局。
+      common_errors:
+        - 再次复制 feature_key 字段造成口径漂移。
+        - 把序列排序依据直接当作去重选择函数。
+        - 把 TopN 截断或排序规则误写成最终序列去重（identity_ref=feature_key + choose_one 时每个序列只剩一条，与“保留前N”矛盾）。
+    few_shots:
+      - input: 最终序列按 feature_key 判重；重复时取 score 最大，空值最低；仍相同则冲突。
+        output:
+          field_id: final_sequence_deduplication
+          value:
+            identity_ref: feature_key
+            custom_identity_fields: []
+            on_duplicate: choose_one
+            record_selection:
+              criteria:
+                - field_ref: score
+                  choose: greatest
+                  value_type: number
+                  null_rank: lowest
+              if_all_criteria_equal: conflict
+          unresolved: []
+          rationale: 按证据填写 identity_ref=feature_key 与选择标准（score 最大、空值最低、平局冲突）。
+      - input: 最终结果不去重，重复记录全部保留。
+        output:
+          field_id: final_sequence_deduplication
+          value:
+            identity_ref: feature_key
+            custom_identity_fields: []
+            on_duplicate: retain_all
+            record_selection:
+              criteria: []
+              if_all_criteria_equal: retain_all
+          unresolved: []
+          rationale: 用户明确不去重、重复全部保留，对应 retain_all。
+      - input: 最终按 feature_key 判重，重复时取 score 最大且平局冲突；另一个 Field Unit 中，feature_key 的具体字段候选发生冲突。
+        output:
+          field_id: final_sequence_deduplication
+          value:
+            identity_ref: feature_key
+            custom_identity_fields: []
+            on_duplicate: choose_one
+            record_selection:
+              criteria:
+                - field_ref: score
+                  choose: greatest
+                  value_type: number
+                  null_rank: lowest
+              if_all_criteria_equal: conflict
+          unresolved: []
+          rationale: 本字段的身份引用与选择标准有证据；feature_key 字段候选冲突属其他 Field Unit，不跨字段记录。
+    writable_template:
+      field_id: final_sequence_deduplication
+      value:
+        identity_ref: null
+        custom_identity_fields: []
+        on_duplicate: null
+        record_selection:
+          criteria:
+            - field_ref: null
+              choose: null
+              value_type: null
+              null_rank: null
+          if_all_criteria_equal: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [identity_ref, custom_identity_fields, on_duplicate, record_selection]
+      properties:
+        identity_ref: {enum: [feature_key, custom, null]}
+        custom_identity_fields: {type: array, items: {type: string, minLength: 1}}
+        on_duplicate: {enum: [choose_one, retain_all, conflict, null]}
+        record_selection:
+          type: object
+          additionalProperties: false
+          required: [criteria, if_all_criteria_equal]
+          properties:
+            criteria:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [field_ref, choose, value_type, null_rank]
+                properties:
+                  field_ref: {type: string, minLength: 1}
+                  choose: {enum: [greatest, least, null]}
+                  value_type: {enum: [string, number, date, datetime, boolean, null]}
+                  null_rank: {enum: [lowest, highest, reject_record, conflict, null]}
+            if_all_criteria_equal: {enum: [conflict, retain_all, records_are_equivalent, null]}
+
+  - field_id: final_sequence_truncation
+    title: 最终序列截断（TopN）
+    purpose: 定义每个逻辑序列内最多保留的记录数上限（如“排名前10”），以及达到上限且排序键并列时的处理方式。
+    optional: true
+    not_applicable_value:
+      limit_per_partition: null
+      tie_behavior: null
+    field_instructions:
+      global_rules:
+        - limit_per_partition 表示每个逻辑序列内最多保留的记录数；与 final_sequence_ordering 配合，先排序后截断。
+        - 只有用户明确给出数量上限（如“前10”“Top 10”“取10条”）时才填写；用户只要求排序时 limit_per_partition 必须为 null。
+        - 截断发生在最终排序之后、去重与输出之前；不得把截断写成过滤条件、去重规则或聚合。
+      subfields:
+        limit_per_partition: 每个逻辑序列内保留的记录数上限，正整数。
+        tie_behavior: 排序键并列且达到上限时，retain_all 表示保留全部并列记录，truncate_exact 表示仍只取上限条数。
+      completion_conditions:
+        - 用户明确给出截断条数时 limit_per_partition 已填写；并列行为有证据时 tie_behavior 已明确。
+      common_errors:
+        - 把“取排名前10”误写成 fact_filters 谓词或去重规则。
+        - 用户只说排序时自行补出截断条数。
+    few_shots:
+      - input: 每个应用ID保留运营标签得分排名前10的标签记录。
+        output:
+          field_id: final_sequence_truncation
+          value:
+            limit_per_partition: 10
+            tie_behavior: null
+          unresolved: []
+          rationale: 按证据填写每分区保留前 10 条，未说明并列行为故 tie_behavior 为 null。
+      - input: 每个设备按得分排序后取前5条，得分并列时全部保留。
+        output:
+          field_id: final_sequence_truncation
+          value:
+            limit_per_partition: 5
+            tie_behavior: retain_all
+          unresolved: []
+          rationale: 按证据填写每分区保留前 5 条，得分并列时全部保留。
+      - input: 用户只要求按事件时间排序，没有提出条数上限。
+        output:
+          field_id: final_sequence_truncation
+          value:
+            limit_per_partition: null
+            tie_behavior: null
+          unresolved: []
+          rationale: 只要求按事件时间排序，没有条数上限证据，limit_per_partition 为 null。
+    writable_template:
+      field_id: final_sequence_truncation
+      value:
+        limit_per_partition: null
+        tie_behavior: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [limit_per_partition, tie_behavior]
+      properties:
+        limit_per_partition: {type: [integer, "null"], minimum: 1}
+        tie_behavior: {enum: [retain_all, truncate_exact, null]}
+
+  - field_id: output_fields
+    title: 输出字段定义
+    purpose: 定义最终输出包含哪些字段及其计算口径，确保所有用户要求的输出字段都被明确记录。
+    field_instructions:
+      global_rules:
+        - 每个输出字段必须有明确的数据来源（字段引用或计算表达式）
+        - 聚合字段必须说明聚合函数和分组键
+        - 用户明确要求的输出字段不得遗漏
+        - 字段涉及计算口径（聚合、转换、拼接、裁剪等）时，必须将具体计算逻辑写入 expression（如 count(dm.app_id)、sum(orders.amount)、date_format(ts,'yyyy-MM-dd')），不得只填 source 字段名；source 仅用于无计算直接取用的字段
+        - expression 与 source 同时存在时，渲染以 expression 为准，source 仅作为来源参考
+      subfields:
+        fields: 按输出顺序列出每个字段的 field_name、source（表.字段）、expression（计算口径，无计算时填 null）、output_type、description
+      completion_conditions:
+        - 所有用户要求的输出字段均被覆盖
+        - 每个字段有明确来源或计算表达式
+        - 存在计算口径的字段均已填写 expression
+      common_errors:
+        - 遗漏用户要求的输出字段
+        - 字段来源不明确或使用模糊描述
+        - 有计算口径的字段只填 source 不填 expression，导致下游拿不到计算逻辑
+    few_shots:
+      - input: 用户要求输出 user_id、app_id、download_count 三个字段，其中 download_count 是 app_id 在 30 天内的下载次数
+        output:
+          field_id: output_fields
+          value:
+            fields:
+              - field_name: user_id
+                source: dm.user_id
+                expression: null
+                output_type: string
+                description: 用户唯一标识
+              - field_name: app_id
+                source: dm.app_id
+                expression: null
+                output_type: string
+                description: 应用唯一标识
+              - field_name: download_count
+                source: dm.app_id
+                expression: count(dm.app_id)
+                output_type: bigint
+                description: 30天内应用下载次数
+          unresolved: []
+          rationale: 按用户列出的三个字段填写来源与表达式，download_count 按 30 天下载次数口径填写。
+      - input: 用户只要求统计总销售额，没有明确输出字段列表
+        output:
+          field_id: output_fields
+          value:
+            fields:
+              - field_name: total_amount
+                source: orders.amount
+                expression: sum(orders.amount)
+                output_type: decimal(18,2)
+                description: 销售总额
+          unresolved: []
+          rationale: 用户未列输出字段，按"总销售额"口径推导唯一输出列 total_amount=sum(orders.amount)。
+    writable_template:
+      field_id: output_fields
+      value:
+        fields:
+          - field_name: null
+            source: null
+            expression: null
+            output_type: null
+            description: null
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field_name, source, expression, output_type, description]
+            properties:
+              field_name: {type: string, minLength: 1}
+              source: {type: [string, "null"]}
+              expression: {type: [string, "null"]}
+              output_type: {type: string, minLength: 1}
+              description: {type: string, minLength: 1}
+
+  - field_id: aggregation_metrics
+    title: 聚合指标定义
+    purpose: 定义计数、求和、均值等聚合指标的计算口径，明确聚合粒度和计数语义。
+    field_instructions:
+      global_rules:
+        - 计数类指标必须明确是记录行数（row_count）、去重计数（distinct_count）还是条件计数（conditional_count）
+        - count_type=row_count 表示统计原始记录行数（COUNT(1)），不得因为 metric 名称包含”用户数量””设备数量”等自然语言语义而自动改写为 COUNT(DISTINCT ...)
+        - count_entity 描述每个计数单元代表的业务实体（record_row 表示原始行；session、device、user 等表示用户/证据以业务实体指代”记录”时的计数主体）。用户问题中的”记录/数量”指代业务实体（如”不同 session””每个设备””用户数”）时必须填写 count_entity，不得默认写成 record_row
+        - count_entity 非 record_row 时，若源表在该实体上不唯一（同一实体可能对应多行），必须改用 count_type=distinct_count 并填写 distinct_field=实体字段，或先聚合到实体唯一粒度；只有源表粒度与计数实体一致（每个实体恰好一行）时才允许 row_count
+        - count_type=distinct_count 表示去重计数（COUNT(DISTINCT field)）
+        - count_type=conditional_count 表示带条件的行数计数，必须填写 expression_template 字段，如 SUM(IF(isempty(field),0,1))
+        - count_type=row_count 时 distinct_field 必须为 null；count_type=distinct_count 时 distinct_field 必须明确；count_type=conditional_count 时 expression_template 必须填写
+        - count metric 的计数条件属于当前 metric 的 filter_condition，不得自动提升为 fact_filters；只有用户明确要求过滤事实记录时才写入 fact_filters
+        - 聚合分组键必须明确
+        - 比例类指标必须明确分子分母来源，且分子分母不能有包含关系（分子不应等于分子+分母，否则结果恒为1）
+        - 比例指标必须填写 description 来说明业务语义，用于验证分子分母逻辑是否正确
+        - 聚合指标必须与 output_fields 中的聚合字段对应
+      subfields:
+        count_metrics: 计数指标列表，包含 metric_name、count_type、count_entity、distinct_field、group_by、filter_condition、expression_template
+        ratio_metrics: 比例指标列表，包含 metric_name、numerator、denominator、precision、description
+        avg_metrics: 均值指标列表，包含 metric_name、numerator、denominator、group_by
+      completion_conditions:
+        - 计数口径明确（row_count vs distinct_count vs conditional_count）
+        - 计数实体明确（count_entity 已填写，或可明确判定为 record_row）
+        - conditional_count 时 expression_template 必须填写
+        - 如果用户明确给出”非空记录行数””满足条件的记录数”等计数条件，必须使用 conditional_count 并填写 expression_template
+        - 比例指标必须填写 description 来说明业务语义
+        - 比例/均值计算的分子分母有明确来源，且逻辑关系正确
+        - 聚合分组键明确
+      common_errors:
+        - 把”用户数量”默认解释成 COUNT(DISTINCT 用户标识)，忽略用户明确给出的”记录行数/非空记录行数”等统计口径
+        - 把用户以业务实体指代”记录”的计数（如”不同session””设备数”）直接当原始行计数，忽略 count_entity 语义
+        - 计数实体非 record_row 但源表在实体上不唯一时仍用 row_count，未用 distinct_count 或先聚合到实体粒度
+        - 把 count metric 的条件错误写入 fact_filters，导致其他指标也被过滤
+        - 把 row_count 改写为 COUNT(DISTINCT field)
+        - 把 conditional_count 的 expression_template 留空
+        - 比例指标分子分母有包含关系（如分子=活跃+非活跃，分母=总数，导致结果恒为1）
+        - 比例指标不填写 description，导致无法验证分子分母逻辑
+        - 聚合粒度与分组键不一致
+        - 分子分母来源不明确
+    few_shots:
+      - input: 用户要求统计每日活跃用户数，按 user_id 去重
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: daily_active_users
+                count_type: distinct_count
+                count_entity: user
+                distinct_field: user_id
+                group_by: [pt_d]
+                filter_condition: null
+            ratio_metrics: []
+            avg_metrics: []
+          unresolved: []
+          rationale: 按 user_id 去重计数对应 distinct_count(user_id)，分组 pt_d。
+      - input: 用户要求统计每个榜单下不同 session 的数量，数据源为 session 级表（每设备每会话每榜单恰好一行，同一 session 在同一榜单内唯一）
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: session_count
+                count_type: row_count
+                count_entity: session
+                distinct_field: null
+                group_by: [list_id]
+                filter_condition: null
+            ratio_metrics: []
+            avg_metrics: []
+          unresolved: []
+          rationale: session 级表每榜单内 session 唯一，直接按行计数，分组 list_id。
+      - input: 用户要求统计每个应用的去重设备数，同一设备可能多次出现
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: device_count
+                count_type: distinct_count
+                count_entity: device
+                distinct_field: device_id
+                group_by: [app_id]
+                filter_condition: null
+            ratio_metrics: []
+            avg_metrics: []
+          unresolved: []
+          rationale: 同一设备可能多次出现，去重设备数对应 distinct_count(device_id)，分组 app_id。
+      - input: 用户要求统计用户下载次数（记录行数），以及去重后的应用数
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: download_count
+                count_type: row_count
+                count_entity: record_row
+                distinct_field: null
+                group_by: [user_id]
+                filter_condition: null
+              - metric_name: app_count
+                count_type: distinct_count
+                count_entity: app
+                distinct_field: app_id
+                group_by: [user_id]
+                filter_condition: null
+            ratio_metrics: []
+            avg_metrics: []
+          unresolved: []
+          rationale: 下载次数按记录行数计数，应用数按 app_id 去重计数，均按 user_id 分组。
+      - input: 用户要求统计使用时间非空的记录行数
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: usage_record_count
+                count_type: row_count
+                count_entity: record_row
+                distinct_field: null
+                group_by: [system_tag]
+                filter_condition: user_use_total_mins_30d is_not_null
+            ratio_metrics: []
+            avg_metrics: []
+          unresolved: []
+          rationale: 统计使用时间非空的记录行数，row_count 且 filter_condition 为 is_not_null。
+      - input: 用户要求计算下载成功率的百分比，成功次数/总尝试次数
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics: []
+            ratio_metrics:
+              - metric_name: download_success_rate
+                numerator: download_success_count
+                denominator: download_total_count
+                precision: 4
+            avg_metrics: []
+          unresolved: []
+          rationale: 下载成功率是比例指标，按分子成功次数/分母总尝试次数填入 ratio_metrics。
+    writable_template:
+      field_id: aggregation_metrics
+      value:
+        count_metrics:
+          - metric_name: null
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            group_by: []
+            filter_condition: null
+            expression_template: null
+        ratio_metrics:
+          - metric_name: null
+            numerator: null
+            denominator: null
+            precision: null
+            description: null
+        avg_metrics:
+          - metric_name: null
+            numerator: null
+            denominator: null
+            group_by: []
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [count_metrics, ratio_metrics, avg_metrics]
+      properties:
+        count_metrics:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [metric_name, count_type, count_entity, distinct_field, group_by, filter_condition]
+            properties:
+              metric_name: {type: string, minLength: 1}
+              count_type: {enum: [row_count, distinct_count, conditional_count, null]}
+              count_entity: {type: [string, "null"], description: "每个计数单元代表的业务实体，如 record_row、session、device、user。用户以业务实体指代'记录'时必须填写。"}
+              distinct_field: {type: [string, "null"]}
+              group_by: {type: array, items: {type: string}}
+              filter_condition: {type: [string, "null"]}
+              expression_template: {type: [string, "null"], description: "具体的SQL聚合表达式片段，用于生成最终SQL。例如：SUM(IF(isempty(field),0,1))、COUNT(1)、COUNT(DISTINCT field)。当count_type=conditional_count时必须填写此字段。"}
+        ratio_metrics:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [metric_name, numerator, denominator, precision]
+            properties:
+              metric_name: {type: string, minLength: 1}
+              numerator: {type: string, minLength: 1}
+              denominator: {type: string, minLength: 1}
+              precision: {type: [integer, "null"]}
+              description: {type: [string, "null"], description: "比例指标的业务语义说明，用于验证分子分母逻辑是否正确。例如：转化率=活跃转化数/下载总数，注意分子不应包含分母的所有记录。"}
+        avg_metrics:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [metric_name, numerator, denominator, group_by]
+            properties:
+              metric_name: {type: string, minLength: 1}
+              numerator: {type: string, minLength: 1}
+              denominator: {type: string, minLength: 1}
+              group_by: {type: array, items: {type: string}}
+
+  - field_id: aggregation_precedence
+    title: 去重与聚合的先后关系
+    purpose: 定义事实表去重、维度关联、聚合计算之间的执行顺序和依赖关系，避免聚合粒度与去重粒度冲突。
+    field_instructions:
+      global_rules:
+        - 当存在 fact_deduplication 或 dimension_deduplication 时，必须明确聚合是基于去重前还是去重后的数据
+        - 如果去重后的记录会参与聚合，必须说明聚合粒度与去重粒度的关系
+        - 如果去重发生在聚合之后，必须明确使用什么作为去重后的聚合输入
+        - 如果用户明确要求“基于原始记录”“基于用户-应用记录”“不要使用预聚合字段”等，必须将输入粒度写入 input_grain，并禁止 SQL Agent 用更高层级的预聚合字段替代
+        - 同一任务存在多个聚合粒度时，必须明确各聚合阶段的 group_by 和依赖关系，禁止 SQL Agent 自行改变聚合顺序
+        - 任务不涉及聚合（无 count/sum/avg 等指标，仅过滤/转换/排序/截断）时，本字段不填写：deduplication_before_aggregation 填 false，aggregation_key 填空数组，count_semantics 填 null，input_grain 填 null；禁止因“每个X”“按X”等表述推断出聚合。
+        - input_grain 描述参与聚合的输入记录粒度，即每个计数单元代表的业务实体，须与 aggregation_metrics.count_entity 一致（如 fact_record、session_record、user_record）；当计数实体非 fact_record 且源表在该实体上不唯一（同一实体对应多行）时，SQL 必须先聚合/去重到该实体粒度再计数，禁止直接对原始行 COUNT。input_grain 不代表需要按该粒度预先分组或去重，禁止把 input_grain 当作聚合分组键或去重依据。
+      subfields:
+        deduplication_before_aggregation: 聚合是基于去重前的原始记录还是去重后的记录
+        aggregation_key: 聚合的分组键，与去重键的关系
+        count_semantics: count/sum等聚合函数的行为定义（每行计数 vs 去重后计数）
+        input_grain: 聚合输入数据粒度（即计数实体，与 aggregation_metrics.count_entity 一致），例如 fact_record、session_record、user_record
+        aggregation_stages: 多阶段聚合列表，每项包含 stage_id、input_grain、group_by、output_metrics、depends_on
+      completion_conditions:
+        - 聚合与去重的执行顺序明确
+        - 聚合粒度与去重粒度的关系明确
+        - 聚合输入粒度明确；存在多阶段聚合时各阶段依赖明确
+      common_errors:
+        - 假设 fact_deduplication 必然先于聚合执行
+        - 假设 count(1) 等同于 count(DISTINCT key)
+        - 聚合粒度比去重粒度粗时未说明聚合基于去重前数据
+        - 用户要求基于原始记录计算，却错误使用事实表中预聚合后的应用粒度字段
+        - 多阶段聚合时错误地在不同粒度之间直接复用聚合结果
+        - 无聚合任务却填写 aggregation_key、count_semantics 或 input_grain
+        - 把 input_grain（聚合输入粒度）误用作分组键或去重依据
+    few_shots:
+      - input: 事实表去重键为 [app_id, device_id, pt_d]，最终按 app_id 聚合计数下载次数
+        output:
+          field_id: aggregation_precedence
+          value:
+            deduplication_before_aggregation: false
+            aggregation_key: [app_id]
+            count_semantics: row_count
+          unresolved: []
+          rationale: 聚合计数在事实表去重之后进行，按 app_id 分组且为行数口径。
+      - input: 事实表去重后按 user_id 统计去重设备数
+        output:
+          field_id: aggregation_precedence
+          value:
+            deduplication_before_aggregation: true
+            aggregation_key: [user_id]
+            count_semantics: distinct_count
+          unresolved: []
+          rationale: 先去重再按 user_id 统计去重设备数，对应 distinct_count。
+      - input: 用户要求统计每日每设备的下载次数，事实表可能存在重复
+        output:
+          field_id: aggregation_precedence
+          value:
+            deduplication_before_aggregation: true
+            aggregation_key: [pt_d, device_id]
+            count_semantics: row_count
+          unresolved: []
+          rationale: 事实表可能重复，须先按去重键去重再按 pt_d/device_id 聚合，行数口径。
+    writable_template:
+      field_id: aggregation_precedence
+      value:
+        deduplication_before_aggregation: null
+        aggregation_key: []
+        count_semantics: null
+        input_grain: null
+        aggregation_stages:
+          - stage_id: null
+            input_grain: null
+            group_by: []
+            output_metrics: []
+            depends_on: []
+      unresolved: []
+    value_schema:
+      type: object
+      additionalProperties: false
+      required: [deduplication_before_aggregation, aggregation_key, count_semantics, input_grain, aggregation_stages]
+      properties:
+        deduplication_before_aggregation:
+          type: [boolean, "null"]
+        aggregation_key:
+          type: array
+          items: {type: string}
+        count_semantics:
+          type: [string, "null"]
+        input_grain:
+          type: [string, "null"]
+        aggregation_stages:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [stage_id, input_grain, group_by, output_metrics, depends_on]
+            properties:
+              stage_id: {type: string, minLength: 1}
+              input_grain: {type: string, minLength: 1}
+              group_by: {type: array, items: {type: string}}
+              output_metrics: {type: array, items: {type: string}}
+              depends_on: {type: array, items: {type: string}}
