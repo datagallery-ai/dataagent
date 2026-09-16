@@ -23,6 +23,42 @@ __all__ = [
 
 from typing import Any
 
+_SQL_SECURITY_PUBLIC_CODES = {
+    "SQL-001": "NL2SQL-SEC-002",
+    "SQL-002": "NL2SQL-SEC-003",
+    "FUNCTION-001": "NL2SQL-SEC-004",
+    "SYNTAX-001": "NL2SQL-SEC-005",
+    "RESOURCE-001": "NL2SQL-SEC-006",
+    "RESOURCE-002": "NL2SQL-SEC-007",
+    "RESOURCE-003": "NL2SQL-SEC-008",
+    "RESOURCE-006": "NL2SQL-SEC-009",
+    "RESOURCE-007": "NL2SQL-SEC-010",
+    "RESOURCE-008": "NL2SQL-SEC-011",
+    "RESOURCE-009": "NL2SQL-SEC-012",
+    "SCHEMA-001": "NL2SQL-SEC-013",
+    "SCHEMA-002": "NL2SQL-SEC-014",
+    "SCHEMA-003": "NL2SQL-SEC-015",
+    "SCHEMA-004": "NL2SQL-SEC-016",
+}
+
+
+def _map_sql_security_violations(violations: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Convert internal security rule identifiers to public API errors."""
+    public_errors: list[dict[str, str]] = []
+    seen = set()
+    for violation in violations:
+        rule_id = violation.get("rule_id", "")
+        message = violation.get("message", "")
+        if not message:
+            continue
+        code = _SQL_SECURITY_PUBLIC_CODES.get(rule_id, "NL2SQL-SEC-001")
+        key = (code, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        public_errors.append({"code": code, "message": message})
+    return public_errors
+
 
 class NL2SQLError(Exception):
     """Base exception for NL2SQL errors that should be translated at service boundaries."""
@@ -98,3 +134,24 @@ class SQLSecurityValidationError(NL2SQLError):
     http_status = 422
     retryable = False
     component = "sql_security"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        detail: str | None = None,
+        violations: list[dict[str, str]] | None = None,
+    ):
+        """Initialize a security error with public error codes and messages."""
+        self.errors = _map_sql_security_violations(violations or [])
+        if len(self.errors) == 1:
+            self.code = self.errors[0].get("code", self.code)
+            message = self.errors[0].get("message", message)
+        super().__init__(message, detail=detail)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the public SQL security error payload."""
+        payload = super().to_dict()
+        if self.errors:
+            payload["errors"] = self.errors
+        return payload

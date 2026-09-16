@@ -77,6 +77,27 @@ class DataAgentService:
         return str(data.get("summary") or data.get("content") or "") or None
 
     @staticmethod
+    def _normalize_sql_security_errors(error: dict[str, Any]) -> list[dict[str, str]]:
+        """Keep only public SQL security codes and messages."""
+        if error.get("component") != "sql_security":
+            return []
+        errors = error.get("errors")
+        if not isinstance(errors, list):
+            return []
+        public_errors: list[dict[str, str]] = []
+        for item in errors:
+            if not isinstance(item, dict):
+                continue
+            code = item.get("code")
+            message = item.get("message")
+            if not isinstance(code, str) or not code.startswith("NL2SQL-SEC-"):
+                continue
+            if not isinstance(message, str) or not message.strip():
+                continue
+            public_errors.append({"code": code, "message": message})
+        return public_errors
+
+    @staticmethod
     def _collect_nl2sql_candidates(state: dict[str, Any], hash_sql) -> list[dict[str, Any]]:
         """Build candidate list from generation/execution results without prompt fields."""
         sources = (
@@ -309,6 +330,9 @@ class DataAgentService:
                 value = error.get(field)
                 if isinstance(value, expected_type) and not (expected_type is int and isinstance(value, bool)):
                     payload["result"][field] = value
+            security_errors = self._normalize_sql_security_errors(error)
+            if security_errors:
+                payload["result"]["errors"] = security_errors
             return payload
         return self._format_error(str(error))
 
