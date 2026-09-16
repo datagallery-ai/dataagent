@@ -3,7 +3,7 @@
 安装普通 wheel 后，通过统一入口完成 BIRD 预处理、评测、一次错误补跑和结果汇总。`standard` 与 `limited` 提供可覆盖的运行默认值；每次运行使用一个评测模型，保留原 BirdAgent、SQL 判分及逐题产物。
 
 ```sh
-python -m pip install /path/to/datagallery_dataagent-0.1.0-py3-none-any.whl
+python -m pip install /path/to/datagallery_dataagent-0.2.0-py3-none-any.whl
 dataagent-bird-benchmark --help
 ```
 

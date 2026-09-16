@@ -694,7 +694,7 @@ def main():
         metavar="DIR",
         help="dryrun 模式下将合并 YAML 写入目录（文件名带 UTC 时间戳）；未指定则仅打印到终端",
     )
-    parser.add_argument("--version", "-v", action="version", version="DataAgent 0.1.0")
+    parser.add_argument("--version", "-v", action="version", version="DataAgent 0.2.0")
 
     args = parser.parse_args()
 

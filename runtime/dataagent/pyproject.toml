@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datagallery-dataagent"
-version = "0.1.0"
+version = "0.2.0"
 description = "DataAgent - A powerful multi-modal Data Agent workflow template framework"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     # ---- DataAgent core ----
     "a2a-sdk>=1.0.2",
@@ -177,7 +177,7 @@ exclude = ["*/dataagent/*", "*/tests/*"]
 
 # Pyright 配置
 [tool.pyright]
-pythonVersion = "3.11"
+pythonVersion = "3.12"
 pythonPlatform = "Linux"
 strict = false
 reportLevel = "error"
@@ -217,7 +217,7 @@ override-dependencies = [
     "uvicorn==0.34.0"
 ]
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 120
 # Ruff 0.16+ 默认 include 含 *.md（会 format 其中的 Python 代码块）；本仓库排除之。
 include = ["*.py", "*.pyi", "*.pyw", "*.ipynb", "**/pyproject.toml", "**/ruff.toml", "**/.ruff.toml"]

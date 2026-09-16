@@ -43,7 +43,7 @@ def build_agent_card(
     """
     agent_name = agent.name() or "DataAgent"
     agent_desc = agent.description() or "DataAgent data analysis agent"
-    agent_ver = agent.version() or "0.1.0"
+    agent_ver = agent.version() or "0.2.0"
 
     # AgentCard URL should use 127.0.0.1 for local access (host may be 0.0.0.0 for binding)
     card_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host

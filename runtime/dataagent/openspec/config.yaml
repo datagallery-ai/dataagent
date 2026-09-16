@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  DataAgent 是 Python 3.11+ 的企业级数据智能体框架，使用 uv 管理依赖。
+  DataAgent 是 Python 3.12+ 的企业级数据智能体框架，使用 uv 管理依赖。
   核心运行链路是：YAML 配置合并 -> DataAgent.from_config -> Flex/ReAct 规划执行 -> 工具调用。
   公共入口包括 Python SDK、REST 和 CLI。
   核心代码位于 dataagent/，测试位于 tests/。

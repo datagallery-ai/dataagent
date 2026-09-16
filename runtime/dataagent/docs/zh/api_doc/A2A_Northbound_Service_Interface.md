@@ -125,7 +125,7 @@ GET /.well-known/agent-card.json
       "url": "http://127.0.0.1:9999/a2a/rest"
     }
   ],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
 ```
 
