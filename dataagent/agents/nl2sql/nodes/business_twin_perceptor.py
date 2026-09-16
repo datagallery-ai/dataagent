@@ -142,7 +142,16 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         r"^(?:[^.]+\.)?fact_(?P<business_id>dw\d+)_"
         r"(?P<dimension_code>[0-9a-fA-F]{16})_metric_(?P<granularity>5min|15min|1h|1d)$"
     )
+    # 从自然语言中提取表名提及（忽略大小写），表名前后紧邻字母/数字/下划线时不匹配；
+    # 表名格式为：fact_dw<数字>_<16位十六进制>_metric_(5min|15min|1h|1d)
+    _TABLE_MENTION_RE = re.compile(
+        r"(?<![A-Za-z0-9_])"
+        r"(?P<table_name>fact_dw[0-9]+_[0-9a-fA-F]{16}_metric_(?:5min|15min|1h|1d))"
+        r"(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
     _GRANULARITY_ORDER = {"5min": 0, "15min": 1, "1h": 2, "1d": 3}
+    _EXPLICIT_ONLY_TABLES = frozenset({"fact_dw1745159004_0000000000000000_metric_1h"})
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -200,6 +209,15 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         }
 
     @classmethod
+    def _mentioned_tables(cls, question: str) -> list[str]:
+        names: list[str] = []
+        for match in cls._TABLE_MENTION_RE.finditer(question):
+            name = match.group("table_name").lower()
+            if name not in names:
+                names.append(name)
+        return names
+
+    @classmethod
     def _build_table_family_candidates(
         cls, catalog: list[dict[str, Any]], business_ids: list[str]
     ) -> list[dict[str, Any]]:
@@ -226,6 +244,23 @@ class BusinessTwinPerceptorNode(PerceptorNode):
                 }
             )
         return families
+
+    def _pinned_table(self, question: str, catalog: list[dict[str, Any]]) -> Optional[str]:  # noqa: UP045
+        mentioned = self._mentioned_tables(question)
+        if not mentioned:
+            return None
+        if len(mentioned) > 1:
+            raise NL2SQLError(
+                "Business-twin question mentions multiple tables",
+                detail=f"only one table can be pinned per question: {', '.join(mentioned)}",
+            )
+        catalog_names = {table["bare_table_name"].lower(): table["bare_table_name"] for table in catalog}
+        if mentioned[0] not in catalog_names:
+            raise NL2SQLError(
+                "Business-twin explicitly requested table is not in the catalog",
+                detail=f"table not found in catalog: {mentioned[0]}",
+            )
+        return catalog_names[mentioned[0]]
 
     def _resolve_table_family_selection(
         self, selection: dict[str, str] | None, families: list[dict[str, Any]]
@@ -318,9 +353,15 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
 
     async def _select_table_by_business_family(self, question: str) -> str:
-        business_id = await self._select_business_id(question)
         catalog = await asyncio.to_thread(self._full_table_catalog)
-        families = self._build_table_family_candidates(catalog, [business_id])
+        pinned = self._pinned_table(question, catalog)
+        if pinned:
+            return pinned
+        business_id = await self._select_business_id(question)
+        families = self._build_table_family_candidates(
+            [table for table in catalog if table["bare_table_name"].lower() not in self._EXPLICIT_ONLY_TABLES],
+            [business_id],
+        )
         if not families:
             raise NL2SQLError(
                 "Business-twin table family catalog is empty",
