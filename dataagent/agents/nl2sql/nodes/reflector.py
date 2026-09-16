@@ -35,15 +35,10 @@ class ReflectorNode(BaseNL2SQLNode):
             if not result.security_violations and (result.security_checked or not self.sql_security_enabled)
         ]
         if not safe_results and state["ref_retries"] <= 0:
-            rule_id_set = set()
+            violations = []
             for result in state["validation_results"]:
-                for violation in result.security_violations:
-                    rule_id = violation.get("rule_id", "")
-                    if rule_id:
-                        rule_id_set.add(rule_id)
-            rule_ids = sorted(rule_id_set)
-            detail = f"Blocked by SQL security rules: {', '.join(rule_ids)}" if rule_ids else "No safe SQL candidate."
-            raise SQLSecurityValidationError(detail=detail)
+                violations.extend(result.security_violations)
+            raise SQLSecurityValidationError(violations=violations)
         best = max(safe_results or state["validation_results"], key=lambda result: result.score)
         if safe_results and ((best.score >= self.threshold and not best.need_ref) or state["ref_retries"] <= 0):
             state["validation_results"] = safe_results

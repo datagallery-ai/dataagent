@@ -51,6 +51,48 @@ def test_normalize_structured_error_uses_public_field_allowlist() -> None:
     }
 
 
+def test_normalize_sql_security_error_preserves_public_details() -> None:
+    """Mapped SQL security errors should cross the REST boundary without internal rule identifiers."""
+    service = DataAgentService()
+    error = {
+        "success": False,
+        "code": "NL2SQL-SEC-014",
+        "message": "Source column is not allowed: missing_column.",
+        "http_status": 422,
+        "component": "sql_security",
+        "retryable": False,
+        "detail": "Blocked by SQL security rule: SCHEMA-002",
+        "errors": [
+            {
+                "code": "NL2SQL-SEC-014",
+                "message": "Source column is not allowed: missing_column.",
+                "rule_id": "SCHEMA-002",
+            },
+            {"code": "SCHEMA-004", "message": "must not pass"},
+            {"code": "NL2SQL-SEC-016", "message": 123},
+        ],
+    }
+
+    result = service._normalize_error_payload(error)
+
+    assert result == {
+        "result": {
+            "success": False,
+            "code": "NL2SQL-SEC-014",
+            "message": "Source column is not allowed: missing_column.",
+            "http_status": 422,
+            "component": "sql_security",
+            "retryable": False,
+            "errors": [
+                {
+                    "code": "NL2SQL-SEC-014",
+                    "message": "Source column is not allowed: missing_column.",
+                }
+            ],
+        }
+    }
+
+
 @pytest.mark.parametrize(
     ("state", "expected_message"),
     [

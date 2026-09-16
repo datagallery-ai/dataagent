@@ -20,9 +20,44 @@ from dataagent.agents.nl2sql.nodes.reflector import ReflectorNode
 from dataagent.agents.nl2sql.workflow.state import Result, get_default_state
 
 
-def _candidate(candidate_id: int, sql: str, score: float, *, blocked: bool = False) -> Result:
-    violations = [{"rule_id": "FUNCTION-001", "message": "blocked"}] if blocked else []
+def _candidate(
+    candidate_id: int,
+    sql: str,
+    score: float,
+    *,
+    blocked: bool = False,
+    rule_id: str = "FUNCTION-001",
+    violation_message: str = "SQL function is not in the allowlist: current_setting.",
+) -> Result:
+    violations = [{"rule_id": rule_id, "message": violation_message}] if blocked else []
     return Result(id=candidate_id, sql=sql, score=score, security_checked=True, security_violations=violations)
+
+
+def test_sql_security_error_maps_every_internal_rule_to_a_public_code() -> None:
+    """Every current internal security rule should have a stable public code."""
+    expected_codes = {
+        "SQL-001": "NL2SQL-SEC-002",
+        "SQL-002": "NL2SQL-SEC-003",
+        "FUNCTION-001": "NL2SQL-SEC-004",
+        "SYNTAX-001": "NL2SQL-SEC-005",
+        "RESOURCE-001": "NL2SQL-SEC-006",
+        "RESOURCE-002": "NL2SQL-SEC-007",
+        "RESOURCE-003": "NL2SQL-SEC-008",
+        "RESOURCE-006": "NL2SQL-SEC-009",
+        "RESOURCE-007": "NL2SQL-SEC-010",
+        "RESOURCE-008": "NL2SQL-SEC-011",
+        "RESOURCE-009": "NL2SQL-SEC-012",
+        "SCHEMA-001": "NL2SQL-SEC-013",
+        "SCHEMA-002": "NL2SQL-SEC-014",
+        "SCHEMA-003": "NL2SQL-SEC-015",
+        "SCHEMA-004": "NL2SQL-SEC-016",
+    }
+
+    for rule_id, expected_code in expected_codes.items():
+        error = SQLSecurityValidationError(violations=[{"rule_id": rule_id, "message": "public reason"}])
+
+        assert error.to_dict().get("code") == expected_code
+        assert rule_id not in str(error.to_dict())
 
 
 @pytest.mark.asyncio
@@ -53,8 +88,60 @@ async def test_reflector_raises_security_error_when_all_candidates_blocked_after
     with pytest.raises(SQLSecurityValidationError) as error:
         await node._aprocess(state)
 
-    assert error.value.code == "NL2SQL-SEC-001"
-    assert "current_setting" not in str(error.value.detail)
+    payload = error.value.to_dict()
+    assert payload.get("code") == "NL2SQL-SEC-004"
+    assert payload.get("message") == "SQL function is not in the allowlist: current_setting."
+    assert payload.get("errors") == [
+        {
+            "code": "NL2SQL-SEC-004",
+            "message": "SQL function is not in the allowlist: current_setting.",
+        }
+    ]
+    assert "FUNCTION-001" not in str(payload)
+
+
+@pytest.mark.asyncio
+async def test_reflector_returns_multiple_public_security_errors_without_internal_rule_ids() -> None:
+    """Multiple violations should retain public details without exposing internal rule identifiers."""
+    node = ReflectorNode(threshold=0.9)
+    state = get_default_state("question", ref_retries=0)
+    state["validation_results"] = [
+        _candidate(
+            0,
+            "SELECT missing_column FROM orders",
+            0.0,
+            blocked=True,
+            rule_id="SCHEMA-002",
+            violation_message="Source column is not allowed: missing_column.",
+        ),
+        _candidate(
+            1,
+            "SELECT * FROM orders",
+            0.0,
+            blocked=True,
+            rule_id="RESOURCE-009",
+            violation_message="Unfiltered row query requires WHERE, HAVING, LIMIT, or FETCH.",
+        ),
+    ]
+
+    with pytest.raises(SQLSecurityValidationError) as error:
+        await node._aprocess(state)
+
+    payload = error.value.to_dict()
+    assert payload.get("code") == "NL2SQL-SEC-001"
+    assert payload.get("message") == "生成的 SQL 未通过安全校验"
+    assert payload.get("errors") == [
+        {
+            "code": "NL2SQL-SEC-014",
+            "message": "Source column is not allowed: missing_column.",
+        },
+        {
+            "code": "NL2SQL-SEC-012",
+            "message": "Unfiltered row query requires WHERE, HAVING, LIMIT, or FETCH.",
+        },
+    ]
+    assert "SCHEMA-002" not in str(payload)
+    assert "RESOURCE-009" not in str(payload)
 
 
 @pytest.mark.asyncio
