@@ -215,8 +215,11 @@ def _parse_keywords(udf_name_keyword: str | list | None) -> list:
         keywords = [kw.strip() for kw in udf_name_keyword if isinstance(kw, str) and kw.strip()]
     elif isinstance(udf_name_keyword, str):
         if "," in udf_name_keyword:
-            # 逗号分隔的字符串
+            # 英文逗号分隔的字符串
             keywords = [kw.strip() for kw in udf_name_keyword.split(",") if kw.strip()]
+        elif "，" in udf_name_keyword:
+            # 中文逗号分隔的字符串
+            keywords = [kw.strip() for kw in udf_name_keyword.split("，") if kw.strip()]
         else:
             # 单个字符串
             kw = udf_name_keyword.strip()
