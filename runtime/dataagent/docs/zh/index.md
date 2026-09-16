@@ -8,7 +8,7 @@ hide:
 # 🚀 DataAgent
 
 <p style="text-align: center;">
-  <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/Python-3.11+-blue.svg"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python" src="https://img.shields.io/badge/Python-3.12+-blue.svg"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
   <a href="https://github.com/langchain-ai/langgraph"><img alt="LangGraph" src="https://img.shields.io/badge/LangGraph-1.1.3-red.svg"></a>
   <a href="openJiuwen/openJiuwen-user-guide.md"><img alt="openJiuwen" src="https://img.shields.io/badge/openJiuwen-0.1.14-purple.svg"></a>

@@ -1,6 +1,6 @@
 ## Installation
 
-DataAgent requires Python `>=3.11`. We recommend using `uv` to manage the environment and dependencies.
+DataAgent requires Python `>=3.12`. We recommend using `uv` to manage the environment and dependencies.
 
 ## 1. Install uv
 

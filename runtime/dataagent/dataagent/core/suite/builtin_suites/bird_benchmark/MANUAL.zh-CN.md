@@ -7,7 +7,7 @@
 在已具备项目 `nl2sql` 或 `all` 依赖的 Python 环境安装 wheel：
 
 ```sh
-python -m pip install /path/to/datagallery_dataagent-0.1.0-py3-none-any.whl
+python -m pip install /path/to/datagallery_dataagent-0.2.0-py3-none-any.whl
 dataagent-bird-benchmark --help
 ```
 

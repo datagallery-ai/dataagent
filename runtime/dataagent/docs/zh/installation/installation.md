@@ -1,6 +1,6 @@
 ## 安装部署
 
-DataAgent 当前要求 Python `>=3.11`，推荐使用 `uv` 管理环境和依赖。
+DataAgent 当前要求 Python `>=3.12`，推荐使用 `uv` 管理环境和依赖。
 
 ## 1. 安装 uv
 
