@@ -255,11 +255,6 @@
       "dimension_table": "dim_user_segment",
       "key_column": "user_segment_key",
       "value_column": "user_segment_value"
-    },
-    "website": {
-      "dimension_table": "dim_website",
-      "key_column": "website_key",
-      "value_column": "website_value"
     }
   }
 }
