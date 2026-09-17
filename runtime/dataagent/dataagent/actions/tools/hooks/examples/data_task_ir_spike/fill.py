@@ -105,6 +105,10 @@ def write_field_meta(trace_dir: str | None, field_id: str, result: dict[str, Any
             "error": result.get("error"),
             "completion_retried": result.get("completion_retried"),
             "missing_critical_paths": result.get("missing_critical_paths"),
+            "latency_seconds": result.get("latency_seconds", 0.0),
+            "queue_wait_seconds": result.get("queue_wait_seconds", 0.0),
+            "model_call_seconds": result.get("model_call_seconds", 0.0),
+            "skipped_incremental": result.get("skipped_incremental", False),
             "final_output": result.get("output"),
         }
         (target / "meta.json").write_text(
@@ -216,7 +220,7 @@ async def fill_field_template(
         trace_dir=trace_dir,
     )
     output = detailed.get("output")
-    if not isinstance(output, dict):
+    if not isinstance(output, dict) or detailed.get("error"):
         raise ValueError(str(detailed.get("error", "DataTaskIR field extraction failed")))
     return output
 
@@ -282,6 +286,8 @@ async def fill_field_template_detailed(
             write_field_attempt(trace_dir, field_id, attempt, call_messages, raw)
             if output is None:
                 raise ValueError("Model output could not be repaired into a JSON object")
+            if not isinstance(output.get("value"), dict):
+                raise ValueError("DataTaskIR field value must be an object")
             output["field_id"] = field_template.get("field_id")
             best_output = deepcopy(output)
             missing_paths = []
@@ -314,14 +320,14 @@ async def fill_field_template_detailed(
         output = _add_completion_diagnostics(field_template, best_output, missing_paths)
         return finalize({
             "field_id": field_template.get("field_id"),
-            "success": True,
+            "success": False,
             "attempts": max_attempts,
             "latency_seconds": time.perf_counter() - started,
             "queue_wait_seconds": queue_wait_seconds,
             "model_call_seconds": model_call_seconds,
             "output": output,
             "raw_responses": raw_responses,
-            "error": None,
+            "error": errors[-1] if errors else "Field completion failed",
             "completion_retried": completion_retried,
             "missing_critical_paths": missing_paths,
         })
@@ -347,24 +353,29 @@ async def fill_field_templates(
     tool_evidence: str,
     llm: LLMClient,
     confirmed_context: str = "",
-    current_values: Optional[dict[str, dict[str, Any]]] = None,
+    current_values: Optional[list[dict[str, Any]]] = None,
     max_concurrency: int = 8,
     allow_repair: bool = True,
     trace_dir: Optional[str] = None,
+    reuse_field_ids: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     """Fill independent DataTaskIR field units concurrently with one shared concurrency limit."""
     if max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
-    values = current_values or {}
+    values = {value["field_id"]: value for value in (current_values or [])}
+    reuse_ids = reuse_field_ids or set()
     semaphore = asyncio.Semaphore(max_concurrency)
     tasks = []
     for field_template in field_templates:
         field_id = str(field_template.get("field_id", ""))
-        file_value = {}
-        for v in values:
-            if v.get("field_id") == field_id:
-                file_value = v
-                break
+        file_value = values.get(field_id)
+        if field_id in reuse_ids and is_field_confirmed(file_value, field_template):
+            reused = deepcopy(file_value)
+            write_field_meta(trace_dir, field_id, {
+                "success": True, "attempts": 0, "skipped_incremental": True, "output": reused,
+            })
+            tasks.append(asyncio.sleep(0, result=reused))
+            continue
         task = fill_field_template(
             field_template,
             user_query=user_query,
@@ -377,7 +388,15 @@ async def fill_field_templates(
             trace_dir=trace_dir,
         )
         tasks.append(task)
-    outputs = await asyncio.gather(*tasks)
+    pending = [asyncio.create_task(task) for task in tasks]
+    try:
+        outputs = await asyncio.gather(*pending)
+    except BaseException:
+        # Do not leave model calls running after the runtime releases its update lock.
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
     return [deepcopy(output) for output in outputs]
 
 
@@ -441,6 +460,86 @@ def _is_meaningful_value(value: Any) -> bool:
     if isinstance(value, (list, dict)):
         return bool(value)
     return True
+
+
+def _has_meaningful_leaf(value: Any) -> bool:
+    """Return whether a nested value contains any non-empty leaf."""
+    if isinstance(value, dict):
+        return any(_has_meaningful_leaf(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_has_meaningful_leaf(child) for child in value)
+    return _is_meaningful_value(value)
+
+
+def is_field_confirmed(current_value: Any, field_template: dict[str, Any]) -> bool:
+    """Reuse only complete field values without unresolved diagnostics."""
+    if not isinstance(current_value, dict):
+        return False
+    value = current_value.get("value")
+    return (
+        isinstance(value, dict)
+        and _has_meaningful_leaf(value)
+        and not current_value.get("unresolved")
+        and not _find_missing_critical_paths(field_template, value)
+    )
+
+
+async def detect_field_changes(
+    *,
+    new_evidence: str,
+    confirmed_fields: list[dict[str, Any]],
+    llm: LLMClient,
+    trace_dir: Optional[str] = None,
+    max_input_chars: int = 24000,
+) -> set[str]:
+    """Return affected IDs, conservatively refilling all on overflow or failure."""
+    field_ids = {field["field_id"] for field in confirmed_fields}
+    if not field_ids or not new_evidence.strip():
+        return set()
+    summary = json.dumps(
+        [{"field_id": field["field_id"], "value": field["value"]} for field in confirmed_fields],
+        ensure_ascii=False,
+    )
+    # Never classify unseen evidence as irrelevant. Large deltas use the full fill path.
+    if len(summary) + len(new_evidence) > max_input_chars:
+        logger.info("[IR] change detection budget exceeded; refill {} fields", len(field_ids))
+        write_field_meta(trace_dir, "_change_detection", {
+            "success": False, "attempts": 0, "error": "input_budget_exceeded",
+            "output": {"reestimate": sorted(field_ids)},
+        })
+        return field_ids
+    messages = [
+        {"role": "system", "content": (
+            "你是 DataTaskIR 字段变更检测器。判断完整新增证据是否补充、修正、撤销或冲突于已确认字段，"
+            "包括字段之间的依赖影响；拿不准的字段必须重估。仅输出 JSON："
+            '{"reestimate": ["field_id"], "reason": "简短依据"}。'
+            "field_id 只能来自输入；无字段受影响时返回空数组。"
+        )},
+        {"role": "user", "content": f"已确认字段：\n{summary}\n\n新增证据：\n{new_evidence}"},
+    ]
+    started = time.perf_counter()
+    raw = ""
+    error = None
+    try:
+        parsed, raw = await ainvoke_json_object(llm, messages)
+        detected = parsed.get("reestimate") if isinstance(parsed, dict) else None
+        if not isinstance(detected, list) or any(
+            not isinstance(item, str) or item not in field_ids for item in detected
+        ):
+            raise ValueError("Change detector returned invalid field IDs or shape")
+        result = set(detected)
+    except Exception as exc:
+        error = type(exc).__name__
+        logger.warning("[IR] change detection failed ({}); refill all confirmed fields", error)
+        result = field_ids
+    write_field_attempt(trace_dir, "_change_detection", 1, messages, raw)
+    write_field_meta(trace_dir, "_change_detection", {
+        "success": error is None, "attempts": 1, "error": error,
+        "latency_seconds": time.perf_counter() - started,
+        "model_call_seconds": time.perf_counter() - started,
+        "output": {"reestimate": sorted(result)},
+    })
+    return result
 
 
 def _is_explicit_none_evidence(tool_evidence: str) -> bool:

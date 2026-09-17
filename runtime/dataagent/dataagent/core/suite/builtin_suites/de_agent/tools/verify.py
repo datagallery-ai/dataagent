@@ -20,7 +20,7 @@ from loguru import logger
 from sqlglot import exp
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import render_context
+from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
 from dataagent.core.managers.llm_manager import llm_manager
 
 # 质量门禁校验的 system prompt
@@ -415,10 +415,9 @@ def _validate_deliverables_quality_gate(
 
     # 获取IR
     runtime = _tool_context.runtime
-    data_task_ir = runtime.get_cache("ir_field_values", {})
     nl2sql_detail = runtime.get_cache("nl2sql_detail", {})
 
-    rendered_ir = render_context(data_task_ir) if data_task_ir else "**DataTaskIR 功能未启用**"
+    rendered_ir = get_ir_context(runtime) or "**DataTaskIR 功能未启用**"
     nl2sql_detail = nl2sql_detail if nl2sql_detail else "**NL2SQL详细意图理解未找到**"
 
     # 构建提示词并调用 LLM（添加重试机制：最多重试1次）
