@@ -91,6 +91,16 @@ DEFAULT_LLM_RETRY_BACKOFF_BASE: float = 3.0
 DEFAULT_LLM_RETRY_BACKOFF_MAX: float = 300.0
 """重试退避上限（秒）：单次等待时间封顶，避免指数退避无限增长。"""
 
+_ASTREAM_RETRY_CONTINUATION_MESSAGES: tuple[str, ...] = (
+    "继续",
+    "continue",
+    "请继续",
+    "please continue",
+    "继续完成",
+    "resume",
+)
+"""流式重试时临时追加到请求副本的 user message；不进入调用方 messages 或 Agent state。"""
+
 # ── 重复检测常量 ────────────────────────────────────────────────────────────────
 DEFAULT_REPETITION_DETECTION_ENABLED: bool = True
 """是否启用 LLM 输出重复检测。"""
@@ -1389,6 +1399,25 @@ class LLMClient:
         return True
 
     @staticmethod
+    def _astream_payload_for_attempt(payload: dict[str, Any], attempt: int) -> dict[str, Any]:
+        """Return the base payload or an isolated retry copy with one continuation user message."""
+        if attempt <= 0:
+            return payload
+        prompt_index = attempt - 1
+        if prompt_index < len(_ASTREAM_RETRY_CONTINUATION_MESSAGES):
+            content = _ASTREAM_RETRY_CONTINUATION_MESSAGES[prompt_index]
+        else:
+            content = f"continue retry {attempt}"
+        base_messages = payload.get("messages", [])
+        if not isinstance(base_messages, list):
+            return payload
+        retry_messages = list(base_messages)
+        retry_messages.append({"role": "user", "content": content})
+        retry_payload = dict(payload)
+        retry_payload["messages"] = retry_messages
+        return retry_payload
+
+    @staticmethod
     def _apply_delta_tool_call_deltas(
         raw_delta_tool_calls: list[Any],
         by_index: dict[int, dict[str, str]],
@@ -1637,9 +1666,10 @@ class LLMClient:
 
         for attempt in range(max_attempts + 1):
             stream_state = _AStreamState()
+            attempt_payload = self._astream_payload_for_attempt(payload, attempt)
             try:
                 async for msg in self._astream_iter(
-                    payload=payload,
+                    payload=attempt_payload,
                     timeout=timeout,
                     request_url=request_url,
                     messages=messages,

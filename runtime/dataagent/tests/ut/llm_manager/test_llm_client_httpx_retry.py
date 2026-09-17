@@ -344,6 +344,53 @@ class TestAstreamRepetitionRetry:
         assert calls["n"] == 2
 
 
+class TestAstreamRetryContinuationMessage:
+    """astream retries append isolated continuation messages only to request payload copies."""
+
+    @pytest.mark.asyncio
+    async def test_retries_append_distinct_messages_without_mutating_caller_messages(self):
+        """Each retry should add one distinct user message while preserving the original input."""
+        original_messages = [{"role": "user", "content": "solve the task"}]
+        captured_payloads: list[dict] = []
+        retry_error = LLMRepetitionError("ngram", "repeat detected", content_snippet="abc", model="m")
+
+        async def _fake_iter(self, **kwargs):  # noqa: ANN001
+            payload = kwargs.get("payload", {})
+            captured_payloads.append(payload)
+            if len(captured_payloads) < 3:
+                raise retry_error
+            state = kwargs.get("state")
+            assert state is not None
+            state.finish_reason = "stop"
+            if False:
+                yield  # pragma: no cover
+
+        with (
+            patch.object(LLMClient, "_astream_iter", _fake_iter),
+            patch("dataagent.core.managers.llm_manager.llm_client.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=2)
+            chunks = [chunk async for chunk in client.astream(original_messages)]
+
+        request_messages = [payload.get("messages", []) for payload in captured_payloads]
+        retry_contents = [messages[-1].get("content", "") for messages in request_messages[1:]]
+        assert chunks == []
+        assert original_messages == [{"role": "user", "content": "solve the task"}]
+        assert request_messages[0] == original_messages
+        assert all(messages[:-1] == original_messages for messages in request_messages[1:])
+        assert all(len(messages) == len(original_messages) + 1 for messages in request_messages[1:])
+        assert retry_contents == ["继续", "continue"]
+
+    def test_retry_messages_remain_unique_beyond_default_retry_count(self):
+        """Configured retry counts above the built-in variants should still receive unique text."""
+        payload = {"model": "m", "messages": [{"role": "user", "content": "solve"}], "stream": True}
+        retry_payloads = [LLMClient._astream_payload_for_attempt(payload, attempt) for attempt in range(1, 9)]
+        retry_contents = [retry_payload.get("messages", [])[-1].get("content", "") for retry_payload in retry_payloads]
+
+        assert len(set(retry_contents)) == len(retry_contents)
+        assert payload.get("messages", []) == [{"role": "user", "content": "solve"}]
+
+
 class TestAstreamAcloseDoesNotMask:
     """``_astream_iter`` 的 ``aclose`` 失败不得盖住 HTTP/解析等业务异常。"""
 
