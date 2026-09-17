@@ -93,3 +93,4 @@ certs/
 .opencode/
 opencode.jsonc
 run_logs/
+AGENT.md

@@ -20,6 +20,7 @@ from loguru import logger
 from sqlglot import exp
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import render_context
 from dataagent.core.managers.llm_manager import llm_manager
 
 # 质量门禁校验的 system prompt
@@ -57,7 +58,6 @@ _QUALITY_GATE_USER_PROMPT_TEMPLATE = """## 用户原始需求
 ## 【DataTaskIR 强制约束说明】
 以下DataTaskIR记录了此任务的**已确认口径约束**，你在校验过程中**必须严格遵循**，如果有冲突，以DataTaskIR记录的为准。
 特别地，IR中的"输出字段定义"（output_fields）是最终输出列的**权威清单**：INSERT SELECT 的输出列（不含分区列）必须与它完全一致（个数、顺序、名称、类型）；IR 未列出的字段不得输出，IR 已列出的字段不得遗漏。多输出、少输出或改名一律视为**硬性错误**，必须要求修正，不得以"建议与业务确认"等疑问语气放过。
-当 IR 未记录任何去重要求（事实表去重/维度表去重/最终序列去重均无已确认内容）时，SQL 中出现的 `ROW_NUMBER()...WHERE rn=1`、`DISTINCT`、按业务键取唯一等去重逻辑属于**口径偏离**，即使需求细节段落（nl2sql_detail）提到去重，也必须要求删除去重逻辑，不得放过。
 {rendered_ir}
 
 ---
@@ -65,7 +65,7 @@ _QUALITY_GATE_USER_PROMPT_TEMPLATE = """## 用户原始需求
 ## 校验标准
 
 ### 质量门禁（8 类质量自检表）
-按以下 8 个质量主题做自检：
+按以下 8 个质量主题做自检：（注：若DataTaskIR功能未启用，跳过下方相关的检查项）
 
 1. **空值判断**：区分过滤和填充；业务主键、设备 ID、业务对象 ID、分类维度、派生维度、JOIN key 缺失时默认过滤，除非需求明确保留。
 
@@ -415,11 +415,11 @@ def _validate_deliverables_quality_gate(
 
     # 获取IR
     runtime = _tool_context.runtime
-    from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import render_context
-
     data_task_ir = runtime.get_cache("ir_field_values", {})
     nl2sql_detail = runtime.get_cache("nl2sql_detail", {})
-    rendered_ir = render_context(data_task_ir)
+
+    rendered_ir = render_context(data_task_ir) if data_task_ir else "**DataTaskIR 功能未启用**"
+    nl2sql_detail = nl2sql_detail if nl2sql_detail else "**NL2SQL详细意图理解未找到**"
 
     # 构建提示词并调用 LLM（添加重试机制：最多重试1次）
     system_prompt, user_prompt = _build_quality_gate_prompt(

@@ -74,6 +74,7 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
             warning = f"{FIELD_TITLES.get(field_id)}：存在未确认口径"
             if question_text:
                 warning += f"（待澄清问题：{question_text}）"
+            # 当前warning未加入到IR渲染内容中
             warnings.append(warning)
         if not value:
             continue
@@ -81,12 +82,36 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
         value_text = renderer(value)
         if value_text:
             lines.append(f"- {FIELD_TITLES.get(field_id)}：{value_text}")
-    # if warnings:
-    #     lines.append("")
-    #     lines.append("【口径风险提示（未确认，生成 SQL 时需谨慎）】")
-    #     lines.append("以下口径在填充时存在未确认项，SQL Agent 不得擅自补充默认口径，需按原始用户问题推导或明确标注假设：")
-    #     lines.extend(f"- {warning}" for warning in warnings)
+    if not _has_confirmed_dedup(by_id) and any(by_id.get(field_id) for field_id in ("fact_deduplication", "dimension_deduplication", "final_sequence_deduplication")):
+        lines.append(
+            "- 去重约束：本任务未确认任何去重要求（事实表去重、维度表去重、最终序列去重均无已确认内容）。"
+            "用户未明确要求去重时，禁止对事实记录或最终输出执行去重；源表为天级增量表或存在多分区不作为去重依据。"
+            "维表在 JOIN 前为保证关联键唯一所必需的去重按 JOIN 安全规则执行，不在此限。"
+        )
     return "\n".join(lines)
+
+
+def _has_confirmed_dedup(by_id: dict[str, dict[str, Any]]) -> bool:
+    """Whether any dedup dimension (fact/dimension/final sequence) recorded confirmed content."""
+    fact = by_id.get("fact_deduplication")
+    if fact:
+        value = fact.get("value", {})
+        if isinstance(value, dict):
+            identity = value.get("record_identity", {}) or {}
+            selection = value.get("record_selection", {}) or {}
+            if identity.get("fields") or selection.get("criteria"):
+                return True
+    dimension = by_id.get("dimension_deduplication")
+    if dimension:
+        value = dimension.get("value", {})
+        if isinstance(value, dict) and value.get("scopes"):
+            return True
+    final = by_id.get("final_sequence_deduplication")
+    if final:
+        value = final.get("value", {})
+        if isinstance(value, dict) and value.get("on_duplicate") is not None:
+            return True
+    return False
 
 
 def _confirmed_dimension_sources(output: dict[str, Any] | None) -> set[str]:
