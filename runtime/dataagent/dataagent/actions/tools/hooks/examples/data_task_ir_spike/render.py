@@ -46,6 +46,45 @@ FIELD_TITLES = {
 _DIMENSION_SCOPE_FIELDS = ("dimension_filters", "dimension_derived_fields", "dimension_deduplication")
 
 
+_SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
+1. **已确认值是强制约束**：IR中明确记录的字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略
+2. **未记录的操作默认为被禁止**：IR中未明确记录的操作（如去重、过滤、JOIN类型变更等）Agent不得自行添加（包括调用方 query 中主Agent附加、但IR未记录的操作），必须先在IR中记录才能执行
+3. **禁止操作是强制约束**：以下通用操作默认被禁止，除非IR明确记录允许——在聚合前使用窗口函数去重（如ROW_NUMBER()）、过滤LEFT JOIN的NULL侧使其退化为INNER JOIN、用户未明确要求时使用DISTINCT或COUNT(DISTINCT)
+4. **必须保留的内容**：LEFT JOIN的左表所有记录不得因去重或过滤而丢失；用户未明确要求去重时，所有满足过滤条件的原始记录都必须参与计算
+5. **事实记录身份不等于去重**：fact_deduplication中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重
+6. **聚合指标约束**：计数类指标（count_metrics）必须按IR中定义的count_type和expression_template执行
+7. **比例指标约束**：ratio_metrics中的分子分母必须严格按定义执行，注意分子不应包含分母的所有记录
+8. **窗口分区键约束**：window_partitioning定义的分区键用于窗口函数（ROW_NUMBER() OVER(PARTITION BY ...)），必须与IR一致
+9. **最终序列分区键约束**：final_sequence_partitioning定义的分区键用于最终输出分组，与窗口分区键可能是不同概念
+10. **输出字段定义是权威输出列清单**：IR中的'输出字段定义'（output_fields）列出的字段是最终输出列的唯一权威清单。INSERT SELECT的输出列必须与其完全一致——字段个数、顺序、字段名均不得增减或改动；IR未列出的字段禁止出现在最终输出（即使调用方query中提到了该字段也不能输出）；IR已列出的字段禁止遗漏。当调用方query描述的输出字段与IR输出字段定义冲突时，一律以IR为准，必须按IR的输出字段生成SQL
+11. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误
+12. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求
+13. **业务口径冲突以IR为准**：本查询中出现的其他业务口径描述（包括主Agent附加的“业务口径”段落、中间推导、示例口径）若与DataTaskIR记录冲突，一律以DataTaskIR为准；若与IR同时出现冲突口径，SQL Agent应报告冲突而不得自行取舍
+14. **query 中的“已确认口径”段落不构成约束来源**：调用方 query 顶部的“已确认口径（最高优先级）”“业务口径”等段落只是主Agent的意图描述，不是权威约束。其中出现的去重、过滤、聚合、JOIN、排序、TopN 等操作若未在本 DataTaskIR 中记录，一律视为未确认口径，禁止实现；只有 DataTaskIR 记录的内容才能写入SQL。若 query 段落与 IR 矛盾（例如 query 要求按某键去重、取唯一，而 IR 未记录任何去重要求），以 IR 为准，不得执行去重
+"""
+
+
+def render_constraint_context(
+    field_outputs: list[dict[str, Any]], *, warnings: list[str] | None = None,
+) -> str:
+    """Render the complete consumer contract; keep policy out of SQL tool adapters."""
+    if not field_outputs:
+        return ""
+    rendered = (
+        "【DataTaskIR 强制约束说明】\n"
+        "以下DataTaskIR记录了此任务的**已确认口径约束**，你生成的SQL**必须严格遵循**：\n\n"
+        + render_context(field_outputs) + "\n\n" + _SQL_CONSTRAINT_RULES
+    )
+    # 暂时不加入warning
+    if False and warnings:
+        rendered += (
+            "\n【口径一致性风险提示（未确认，生成 SQL 时需谨慎）】\n"
+            "以下风险涉及的口径不得视为已确认强制约束；必须先报告冲突或完成核对，不得自行取舍：\n"
+            + "\n".join(f"- {warning}" for warning in warnings)
+        )
+    return rendered
+
+
 def render_context(field_outputs: list[dict[str, Any]]) -> str:
     """Render only confirmed DataTaskIR leaves into stable NL2SQL query context."""
     by_id = {str(output.get("field_id", "")): output for output in field_outputs}
@@ -74,6 +113,7 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
             warning = f"{FIELD_TITLES.get(field_id)}：存在未确认口径"
             if question_text:
                 warning += f"（待澄清问题：{question_text}）"
+            # 当前warning未加入到IR渲染内容中
             warnings.append(warning)
         if not value:
             continue
@@ -81,12 +121,36 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
         value_text = renderer(value)
         if value_text:
             lines.append(f"- {FIELD_TITLES.get(field_id)}：{value_text}")
-    # if warnings:
-    #     lines.append("")
-    #     lines.append("【口径风险提示（未确认，生成 SQL 时需谨慎）】")
-    #     lines.append("以下口径在填充时存在未确认项，SQL Agent 不得擅自补充默认口径，需按原始用户问题推导或明确标注假设：")
-    #     lines.extend(f"- {warning}" for warning in warnings)
+    if not _has_confirmed_dedup(by_id) and any(by_id.get(field_id) for field_id in ("fact_deduplication", "dimension_deduplication", "final_sequence_deduplication")):
+        lines.append(
+            "- 去重约束：本任务未确认任何去重要求（事实表去重、维度表去重、最终序列去重均无已确认内容）。"
+            "用户未明确要求去重时，禁止对事实记录或最终输出执行去重；源表为天级增量表或存在多分区不作为去重依据。"
+            "维表在 JOIN 前为保证关联键唯一所必需的去重按 JOIN 安全规则执行，不在此限。"
+        )
     return "\n".join(lines)
+
+
+def _has_confirmed_dedup(by_id: dict[str, dict[str, Any]]) -> bool:
+    """Whether any dedup dimension (fact/dimension/final sequence) recorded confirmed content."""
+    fact = by_id.get("fact_deduplication")
+    if fact:
+        value = fact.get("value", {})
+        if isinstance(value, dict):
+            identity = value.get("record_identity", {}) or {}
+            selection = value.get("record_selection", {}) or {}
+            if identity.get("fields") or selection.get("criteria"):
+                return True
+    dimension = by_id.get("dimension_deduplication")
+    if dimension:
+        value = dimension.get("value", {})
+        if isinstance(value, dict) and value.get("scopes"):
+            return True
+    final = by_id.get("final_sequence_deduplication")
+    if final:
+        value = final.get("value", {})
+        if isinstance(value, dict) and value.get("on_duplicate") is not None:
+            return True
+    return False
 
 
 def _confirmed_dimension_sources(output: dict[str, Any] | None) -> set[str]:

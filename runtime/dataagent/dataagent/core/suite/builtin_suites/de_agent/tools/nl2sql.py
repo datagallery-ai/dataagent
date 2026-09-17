@@ -22,13 +22,13 @@ import yaml
 from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from dataagent.actions.tools.local_tool.tools import (
     _build_nl2sql_sub_agent_config,
     _resolve_and_authorize,
     sub_agent_tool,
 )
-from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import render_context
 from dataagent.actions.tools.semantic_tool.get_join_relations import get_join_relations
 from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_description
 from dataagent.actions.tools.semantic_tool.search_tables_with_schema import get_table_schema
@@ -121,31 +121,9 @@ async def nl2sql_sub_agent_tool(
         temp_config_path = temp_file.name
     try:
         runtime.set_cache("nl2sql_detail", query)
-        data_task_ir = runtime.get_cache("ir_field_values", {})
-        rendered_ir = render_context(data_task_ir)
-        ir_constraint_prompt = (
-            "\n\n"
-            + "【DataTaskIR 强制约束说明】\n"
-            + "以下DataTaskIR记录了此任务的**已确认口径约束**，你生成的SQL**必须严格遵循**：\n\n"
-            + rendered_ir
-            + "\n\n"
-            + "【约束遵循规则 - 必须遵守】\n"
-            + "1. **已确认值是强制约束**：IR中明确记录的字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略\n"
-            + "2. **未记录的操作默认为被禁止**：IR中未明确记录的操作（如去重、过滤、JOIN类型变更等）Agent不得自行添加（包括调用方 query 中主Agent附加、但IR未记录的操作），必须先在IR中记录才能执行\n"
-            + "3. **禁止操作是强制约束**：以下通用操作默认被禁止，除非IR明确记录允许——在聚合前使用窗口函数去重（如ROW_NUMBER()）、过滤LEFT JOIN的NULL侧使其退化为INNER JOIN、用户未明确要求时使用DISTINCT或COUNT(DISTINCT)\n"
-            + "4. **必须保留的内容**：LEFT JOIN的左表所有记录不得因去重或过滤而丢失；用户未明确要求去重时，所有满足过滤条件的原始记录都必须参与计算\n"
-            + "5. **事实记录身份不等于去重**：fact_deduplication中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重\n"
-            + "6. **聚合指标约束**：计数类指标（count_metrics）必须按IR中定义的count_type和expression_template执行\n"
-            + "7. **比例指标约束**：ratio_metrics中的分子分母必须严格按定义执行，注意分子不应包含分母的所有记录\n"
-            + "8. **窗口分区键约束**：window_partitioning定义的分区键用于窗口函数（ROW_NUMBER() OVER(PARTITION BY ...)），必须与IR一致\n"
-            + "9. **最终序列分区键约束**：final_sequence_partitioning定义的分区键用于最终输出分组，与窗口分区键可能是不同概念\n"
-            + "10. **输出字段定义是权威输出列清单**：IR中的'输出字段定义'（output_fields）列出的字段是最终输出列的唯一权威清单。INSERT SELECT的输出列必须与其完全一致——字段个数、顺序、字段名均不得增减或改动；IR未列出的字段禁止出现在最终输出（即使调用方query中提到了该字段也不能输出）；IR已列出的字段禁止遗漏。当调用方query描述的输出字段与IR输出字段定义冲突时，一律以IR为准，必须按IR的输出字段生成SQL\n"
-            + "11. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误\n"
-            + "12. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求\n"
-            + "13. **业务口径冲突以IR为准**：本查询中出现的其他业务口径描述（包括主Agent附加的“业务口径”段落、中间推导、示例口径）若与DataTaskIR记录冲突，一律以DataTaskIR为准；若与IR同时出现冲突口径，SQL Agent应报告冲突而不得自行取舍\n"
-            + "14. **query 中的“已确认口径”段落不构成约束来源**：调用方 query 顶部的“已确认口径（最高优先级）”“业务口径”等段落只是主Agent的意图描述，不是权威约束。其中出现的去重、过滤、聚合、JOIN、排序、TopN 等操作若未在本 DataTaskIR 中记录，一律视为未确认口径，禁止实现；只有 DataTaskIR 记录的内容才能写入SQL。若 query 段落与 IR 矛盾（例如 query 要求按某键去重、取唯一，而 IR 未记录任何去重要求），以 IR 为准，不得执行去重\n"
-        )
-        query += ir_constraint_prompt
+        ir_context = get_ir_context(runtime)
+        if ir_context:
+            query += "\n\n" + ir_context
         res = await sub_agent_tool(query=query, config_path=temp_config_path)
     finally:
         Path(temp_config_path).unlink(missing_ok=True)
