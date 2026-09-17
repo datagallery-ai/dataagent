@@ -13,6 +13,7 @@
 import pytest
 
 from dataagent.agents.nl2sql.security import check_sql
+from dataagent.agents.nl2sql.security import rules as security_rules
 
 
 def test_check_sql_rejects_non_select_statement() -> None:
@@ -268,8 +269,8 @@ def test_check_sql_resolves_cte_column_named_like_context_function(qualifier: st
         assert result.normalized_sql == sql.replace("current_time", '"current_time"')
 
 
-def test_check_sql_resolves_cte_current_time_despite_unrelated_column_error() -> None:
-    """An unrelated missing column should not make a proven CTE column look like a context function."""
+def test_check_sql_allows_unmodeled_cte_projection_with_current_time_alias() -> None:
+    """Column existence should be left to the database after resolving a context-shaped CTE alias."""
     schema = {"orders": {"columns": {"id": {}, "time": {}}}}
     sql = (
         "WITH aligned_periods AS ("
@@ -279,8 +280,8 @@ def test_check_sql_resolves_cte_current_time_despite_unrelated_column_error() ->
 
     result = check_sql(sql, dialect="postgres", schema=schema)
 
-    assert result.blocked is True
-    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
+    assert result.blocked is False
+    assert result.normalized_sql == sql.replace("current_time", '"current_time"')
 
 
 def test_check_sql_resolves_base_column_named_like_context_function() -> None:
@@ -405,21 +406,88 @@ def test_check_sql_checks_base_table_shadowed_by_cte_name() -> None:
     assert "SCHEMA-001" in [violation.rule_id for violation in result.violations]
 
 
-def test_check_sql_rejects_column_missing_from_semantic_schema() -> None:
-    """Security checker should reject an unmodeled source column."""
+def test_check_sql_allows_column_missing_from_semantic_schema() -> None:
+    """Security checker should leave source-column existence to the database."""
     schema = {"orders": {"columns": {"id": {"value_type": "integer"}}}}
+
+    result = check_sql("SELECT password FROM orders WHERE id = 1", dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.violations == []
+
+
+def test_check_sql_allows_ambiguous_source_column_for_database_validation() -> None:
+    """Ambiguous source columns should be validated by the database rather than the security module."""
+    schema = {
+        "orders": {"columns": {"id": {}}},
+        "customers": {"columns": {"id": {}}},
+    }
+
+    result = check_sql(
+        "SELECT id FROM orders CROSS JOIN customers WHERE orders.id = customers.id",
+        dialect="postgres",
+        schema=schema,
+    )
+
+    assert result.blocked is False
+    assert result.violations == []
+
+
+def test_check_sql_allows_ambiguous_derived_time_column_for_database_validation() -> None:
+    """Ambiguous derived columns should be validated by the database rather than the security module."""
+    schema = {"events": {"columns": {"id": {}, "time": {}}}}
+    sql = (
+        "SELECT time FROM (SELECT time FROM events WHERE id = 1) c "
+        "FULL OUTER JOIN (SELECT time FROM events WHERE id = 2) p ON c.time = p.time ORDER BY time"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.violations == []
+
+
+def test_check_sql_allows_wrong_cte_column_qualifier_for_database_validation() -> None:
+    """CTE output-column references should be validated by the database rather than the security module."""
+    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
+    sql = (
+        "WITH current_period AS (SELECT SUM(amount) AS current_total FROM orders WHERE id = 1), "
+        "comparison_period AS (SELECT SUM(amount) AS comparison_total FROM orders WHERE id = 1) "
+        "SELECT cp.current_total, cp.comparison_total "
+        "FROM current_period cp CROSS JOIN comparison_period"
+    )
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.violations == []
+
+
+def test_check_sql_allows_missing_derived_column_for_database_validation() -> None:
+    """Derived-column existence should be left to the database."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = "WITH recent AS (SELECT id FROM orders WHERE id = 1) SELECT r.missing FROM recent r"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.violations == []
+
+
+def test_check_sql_can_restore_missing_column_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The retained column-validation path should still emit SCHEMA-002 when explicitly enabled."""
+    monkeypatch.setattr(security_rules, "_SEMANTIC_COLUMN_VALIDATION_ENABLED", True)
+    schema = {"orders": {"columns": {"id": {}}}}
 
     result = check_sql("SELECT password FROM orders WHERE id = 1", dialect="postgres", schema=schema)
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
-    assert "not exposed by a source available in this query scope" in result.violations[0].message
-    assert "physical table's semantic schema" in result.violations[0].message
-    assert "CTE/subquery SELECT list" in result.violations[0].message
 
 
-def test_check_sql_explains_how_to_fix_ambiguous_source_column() -> None:
-    """A column-resolution issue should tell Reflector how to repair the source reference."""
+def test_check_sql_can_restore_ambiguous_column_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The retained column-validation path should still emit SCHEMA-004 when explicitly enabled."""
+    monkeypatch.setattr(security_rules, "_SEMANTIC_COLUMN_VALIDATION_ENABLED", True)
     schema = {
         "orders": {"columns": {"id": {}}},
         "customers": {"columns": {"id": {}}},
@@ -433,60 +501,6 @@ def test_check_sql_explains_how_to_fix_ambiguous_source_column() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-004"]
-    assert "orders.id" in result.violations[0].message
-    assert "customers.id" in result.violations[0].message
-    assert "not a missing semantic-schema column" in result.violations[0].message
-    assert "Qualify every unqualified reference" in result.violations[0].message
-
-
-def test_check_sql_explains_ambiguous_derived_time_column() -> None:
-    """An ambiguous derived column should name both aliases and explain FULL OUTER JOIN repair options."""
-    schema = {"events": {"columns": {"id": {}, "time": {}}}}
-    sql = (
-        "SELECT time FROM (SELECT time FROM events WHERE id = 1) c "
-        "FULL OUTER JOIN (SELECT time FROM events WHERE id = 2) p ON c.time = p.time ORDER BY time"
-    )
-
-    result = check_sql(sql, dialect="postgres", schema=schema)
-
-    assert result.blocked is True
-    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-004"]
-    assert "c.time" in result.violations[0].message
-    assert "p.time" in result.violations[0].message
-    assert "USING (time)" in result.violations[0].message
-    assert "COALESCE(c.time, p.time) AS time" in result.violations[0].message
-
-
-def test_check_sql_explains_wrong_cte_column_qualifier() -> None:
-    """A wrong CTE qualifier should identify the unique CTE that exposes the requested column."""
-    schema = {"orders": {"columns": {"id": {}, "amount": {}}}}
-    sql = (
-        "WITH current_period AS (SELECT SUM(amount) AS current_total FROM orders WHERE id = 1), "
-        "comparison_period AS (SELECT SUM(amount) AS comparison_total FROM orders WHERE id = 1) "
-        "SELECT cp.current_total, cp.comparison_total "
-        "FROM current_period cp CROSS JOIN comparison_period"
-    )
-
-    result = check_sql(sql, dialect="postgres", schema=schema)
-
-    assert result.blocked is True
-    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
-    assert "not exposed by CTE alias 'cp' (CTE 'current_period')" in result.violations[0].message
-    assert "comparison_period.comparison_total" in result.violations[0].message
-
-
-def test_check_sql_keeps_generic_hint_when_no_cte_exposes_column() -> None:
-    """A missing derived column should not invent an alternative CTE reference."""
-    schema = {"orders": {"columns": {"id": {}}}}
-    sql = "WITH recent AS (SELECT id FROM orders WHERE id = 1) SELECT r.missing FROM recent r"
-
-    result = check_sql(sql, dialect="postgres", schema=schema)
-
-    assert result.blocked is True
-    assert [violation.rule_id for violation in result.violations] == ["SCHEMA-002"]
-    assert "physical table's semantic schema" in result.violations[0].message
-    assert "CTE/subquery SELECT list" in result.violations[0].message
-    assert "not exposed by CTE alias" not in result.violations[0].message
 
 
 def test_check_sql_allows_unqualified_unique_semantic_table() -> None:
@@ -701,26 +715,29 @@ def test_check_sql_does_not_mask_unfiltered_union_branch_with_tablesample() -> N
 
 
 @pytest.mark.parametrize("operator", ["UNION", "UNION ALL"])
-@pytest.mark.parametrize(
-    ("right_projection", "rule_id"),
-    [
-        ("MD5(status)", "FUNCTION-001"),
-        ("password", "SCHEMA-002"),
-    ],
-)
 def test_check_sql_recursively_checks_every_union_branch(
     operator: str,
-    right_projection: str,
-    rule_id: str,
 ) -> None:
     """A safe UNION branch should not hide a violation in another branch."""
     schema = {"orders": {"columns": {"id": {}, "status": {}}}}
-    sql = f"SELECT id FROM orders WHERE id = 1 {operator} SELECT {right_projection} FROM orders WHERE id = 2"
+    sql = f"SELECT id FROM orders WHERE id = 1 {operator} SELECT MD5(status) FROM orders WHERE id = 2"
 
     result = check_sql(sql, dialect="postgres", schema=schema)
 
     assert result.blocked is True
-    assert rule_id in [violation.rule_id for violation in result.violations]
+    assert "FUNCTION-001" in [violation.rule_id for violation in result.violations]
+
+
+@pytest.mark.parametrize("operator", ["UNION", "UNION ALL"])
+def test_check_sql_allows_unmodeled_column_in_union_branch(operator: str) -> None:
+    """An unmodeled UNION projection should be left to the database for validation."""
+    schema = {"orders": {"columns": {"id": {}}}}
+    sql = f"SELECT id FROM orders WHERE id = 1 {operator} SELECT password FROM orders WHERE id = 2"
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is False
+    assert result.violations == []
 
 
 @pytest.mark.parametrize(

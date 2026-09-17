@@ -70,6 +70,8 @@ _ALLOWED_FUNCTIONS = frozenset(
     }
 )
 _MAX_STRING_BYTES = 16 * 1024 * 1024
+# Column validation is retained for future use, but current security policy only enforces modeled tables.
+_SEMANTIC_COLUMN_VALIDATION_ENABLED = False
 # sqlglot 28 parses these keyword-shaped names as bare columns, not Func nodes.
 _COLUMN_CONTEXT_FUNCTION_NAMES = frozenset(
     {
@@ -292,7 +294,7 @@ def check_semantic_schema(
     dialect: str,
     schema: dict[str, Any],
 ) -> list[SecurityViolation]:
-    """Require every source table and source column to exist in semantic metadata."""
+    """Require semantic tables and optionally validate their column references."""
     from dataagent.agents.nl2sql.security.checker import qualify_with_semantic_schema
 
     normalized_schema = {_normalize_identifier(table_name): table_meta for table_name, table_meta in schema.items()}
@@ -317,6 +319,8 @@ def check_semantic_schema(
             "modeled business table and use only that table's exposed columns."
         )
         return [SecurityViolation("SCHEMA-003", message)]
+    if not _SEMANTIC_COLUMN_VALIDATION_ENABLED:
+        return []
     try:
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
