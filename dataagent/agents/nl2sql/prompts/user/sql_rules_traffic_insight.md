@@ -171,28 +171,28 @@ FULL OUTER JOIN (
 
 ## 3. Time Window Rules
 
-- `time` = Unix epoch seconds (bucket start). Filters half-open. Boundaries via `EXTRACT(EPOCH FROM ...)::bigint`.
-- Relative words (今天 / 本周 / 本月 / 最近 N …) anchor on `NOW()`. 「现在为…」 is calendar context only — do not replace `NOW()` with a fixed date.
-- **Interval syntax:** write every timestamp offset as `INTERVAL 'N unit'` (e.g. `date_trunc('day', NOW()) - INTERVAL '1 day'`).
+- `time` = Unix epoch seconds (bucket start). Half-open filters; boundaries via `EXTRACT(EPOCH FROM ...)::bigint`. Relative words anchor on `NOW()`; 「现在为…」 is context only. Offsets use `INTERVAL 'N unit'`.
+- 「过去 / 最近 / 近」+ duration are synonyms: `NOW() - INTERVAL '…'` → `NOW()`（一周 / 7 天 = `'7 days'`）. Match the table by wording.
+- **「粒度…」/ table suffix (`5min`/`1h`/`1d`/`1w`/`1m`)** only picks the fact table; WHERE time bounds follow the wording row below and stay the same across grains（例：过去一周 + 粒度1w → still `NOW() - INTERVAL '7 days'` → `NOW()`）.
 
 | Window | Bounds |
 |--------|--------|
+| 过去/最近/近 N 分钟\|小时\|天\|周 | `NOW() - INTERVAL 'N …'` → `NOW()` |
 | 今天 | `date_trunc('day', NOW())` → `NOW()` |
 | 本周 / 这周 | `date_trunc('week', NOW())` → `NOW()` |
 | 本月 | `date_trunc('month', NOW())` → `NOW()` |
-| 最近 N … | `NOW() - INTERVAL '…'` → `NOW()` |
 | 昨天 | `[date_trunc('day', NOW()) - INTERVAL '1 day', date_trunc('day', NOW()))` |
 | 上周 | `[date_trunc('week', NOW()) - INTERVAL '1 week', date_trunc('week', NOW()))` |
 | 上个月 | `[date_trunc('month', NOW()) - INTERVAL '1 month', date_trunc('month', NOW()))` |
 
-Absolute date/time: half-open; omit year → current year; `timestamptz` then epoch.
+Absolute date/time: half-open; omit year → current year; `timestamptz` then epoch; date-only end includes that day (end = next midnight).
 
 **Comparison offsets** (named target first; shift current bounds):
 
 - 今天环比昨天 / 昨天环比前天: `INTERVAL '1 day'`
-- 上周同一天 / 同比上周 / 本周环比上周 / 与上周同一天同比: `INTERVAL '7 days'`（**not** `1 year`）
+- 上周同一天 / 同比上周 / 本周环比上周 / 与上周同一天同比: `INTERVAL '7 days'`
 - 本月环比上月 / 同比上月: `INTERVAL '1 month'`
-- 最近 N 小时/天环比: `INTERVAL 'N hours|days'`
+- 最近 / 过去 N 分钟/小时/天环比: `INTERVAL 'N minutes|hours|days'`
 - 同比去年 / 去年同期 / bare 同比 with no period named: `INTERVAL '1 year'`
 
 ## 4. General Rules
