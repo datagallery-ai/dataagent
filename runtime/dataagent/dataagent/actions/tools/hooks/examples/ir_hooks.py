@@ -22,7 +22,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolPostHookOutcome
+from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolPostHookOutcome, ToolPreHookOutcome
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.context.context import ContextFactory
 from dataagent.core.context.context_ir import ActionNode
@@ -34,6 +34,7 @@ from dataagent.actions.tools.hooks.examples.data_task_ir_spike.template import (
     list_field_templates,
 )
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.fill import (
+    COMPACT_JSON_INSTRUCTION,
     detect_field_changes,
     fill_field_templates,
     is_field_confirmed,
@@ -91,6 +92,7 @@ async def create_ir(inv: ToolHookInvocation) -> ToolPostHookOutcome:
 
     # Initialize empty field values
     runtime.set_cache("ir_field_values", [])
+    runtime.set_cache("ir_initialized", True)
     runtime.set_cache("ir_rendered_context", "IR init!")
     runtime.set_cache("ir_field_templates", field_templates)
     return ToolPostHookOutcome()
@@ -138,7 +140,8 @@ async def fill_ir_fields(
     """
     hook_name = "fill_ir_fields"
 
-    if inv.execution is None or not inv.execution.success:
+    if ((inv.execution is None and getattr(inv, "phase", "post") != "pre")
+            or (inv.execution is not None and not inv.execution.success)):
         logger.debug(
             f"[post_hook] {hook_name} skip. tool={inv.tool_name} call_id={inv.tool_call_id} reason=no_execution",
         )
@@ -162,7 +165,12 @@ async def fill_ir_fields(
         llm=llm,
         confirmed_context=confirmed_context,
         current_values=current_values,
-        max_concurrency=max_concurrency,
+        max_concurrency=_ir_option(runtime, "max_concurrency", max_concurrency),
+        completion_batch_size=_ir_option(runtime, "completion_batch_size", 1),
+        completion_policy=_ir_option(runtime, "completion_policy", "always"),
+        concise_rationale=_ir_option(runtime, "concise_rationale", False),
+        compact_json=_ir_option(runtime, "compact_json", False),
+        field_order=_ir_option(runtime, "field_order", "template"),
         trace_dir=trace_dir,
         reuse_field_ids=reuse_field_ids,
     )
@@ -224,6 +232,9 @@ async def _ir_consistency_gate(
                     "或源表在计数实体上不唯一却采用行级计数）；(4) 排序/排名/TopN 任务缺失分区键说明；"
                     "(5) 时间窗口、分组键、去重语义等关键口径与用户问题不一致。"
                     "只报告确有依据的问题，不臆测；无问题则 warnings 返回空数组。"
+                    '必须输出 JSON 对象，且必须同时包含 "consistent"（布尔值）和 "warnings"（数组）。'
+                    '例如无问题时 {"consistent": true, "warnings": []}；有问题时 consistent 必须为 false。'
+                    "不能省略 consistent，也不能用字符串代替布尔值。"
                 ),
             },
             {
@@ -239,9 +250,14 @@ async def _ir_consistency_gate(
                     f"{field_summary}\n\n"
                     '输出 JSON：{"warnings": [{"field": "字段名", "issue": "问题描述", "suggestion": "修正建议"}], '
                     '"consistent": true/false}'
+                    '\n先输出 consistent 布尔判定，再输出 warnings；例如发现问题时：'
+                    '{"consistent": false, "warnings": [{"field": "字段名", "issue": "问题描述", "suggestion": "修正建议"}]}。'
+                    '无问题则输出 {"consistent": true, "warnings": []}。所有有依据的问题仍须完整列出。'
                 ),
             },
         ]
+        if _ir_option(runtime, "compact_json", False):
+            messages[0]["content"] += COMPACT_JSON_INSTRUCTION
         parsed, raw = await ainvoke_json_object(runtime.llm("planner"), messages)
         if not isinstance(parsed, dict) or not isinstance(parsed.get("warnings"), list):
             raise ValueError("Consistency gate returned invalid warnings")
@@ -305,13 +321,47 @@ async def update_ir(inv: ToolHookInvocation) -> ToolPostHookOutcome:
         return ToolPostHookOutcome()
 
     runtime = inv.runtime
+    policy = _ir_option(runtime, "refresh_policy", "eager")
+    if policy not in {"eager", "on_consume"}:
+        raise ValueError("DATA_TASK_IR.refresh_policy must be eager or on_consume")
+    if policy == "on_consume":
+        async with _update_lock(runtime):
+            runtime.set_cache("ir_initialized", True)
+            runtime.set_cache("ir_dirty", True)
+        logger.info("[update_ir] deferred until IR consumer; no model calls")
+        return ToolPostHookOutcome()
+    async with _update_lock(runtime):
+        await _update_ir_locked(inv)
+    return ToolPostHookOutcome()
+
+
+def _update_lock(runtime: Runtime) -> asyncio.Lock:
     lock = runtime.get_cache("ir_update_lock")
     if lock is None:
         lock = asyncio.Lock()
         runtime.set_cache("ir_update_lock", lock)
-    async with lock:
+    return lock
+
+
+async def ensure_ir_ready(inv: ToolHookInvocation) -> ToolPreHookOutcome:
+    """Refresh from current state/evidence before a configured IR consumer runs.
+
+    This pre-hook must be attached to every consumer when on_consume is enabled.
+    Check inputs even if no todo completed since the previous consumer. Merely
+    enabling the policy must not activate IR when create/update hooks are absent.
+    """
+    runtime = inv.runtime
+    if (_ir_option(runtime, "refresh_policy", "eager") != "on_consume"
+            or not runtime.get_cache("ir_initialized")):
+        return ToolPreHookOutcome()
+    if inv.state is None:
+        raise RuntimeError("DataTaskIR consumer pre-hook requires current workflow state")
+    async with _update_lock(runtime):
         await _update_ir_locked(inv)
-    return ToolPostHookOutcome()
+        if runtime.get_cache("ir_input_signature") is None:
+            runtime.set_cache("ir_dirty", True)
+            raise RuntimeError("DataTaskIR consistency check incomplete; retry consumer before using IR")
+    return ToolPreHookOutcome()
 
 
 def _input_digest(value: object) -> str:
@@ -319,14 +369,21 @@ def _input_digest(value: object) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _ir_option(runtime: Runtime, name: str, default):
+    """Keep tuning scoped to the agent configuration, including child agents."""
+    getter = getattr(runtime, "get_config", None)
+    return getter(f"DATA_TASK_IR.{name}", default) if getter else default
+
+
 async def _update_ir_locked(inv: ToolHookInvocation) -> None:
-    state = inv.state
+    state = inv.state or {}
     runtime = inv.runtime
     started = time.perf_counter()
     action_nodes = get_action_nodes(runtime)
 
     # 从 context 中提取所有 ToolMessage 的内容作为 tool_evidence
     tool_evidence_parts = []
+    tool_evidence_log_parts = []
     white_list = ["metadata_recall", "read_file"]
     for action_node in action_nodes:
         tool_name = action_node.action
@@ -338,8 +395,22 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
             tool_evidence_parts.append(json.dumps({
                 "tool": tool_name, "params": tool_args, "output": tool_output,
             }, ensure_ascii=False, sort_keys=True, default=str))
+            # Format the log from the original values so multiline tool responses
+            # remain readable; preserve the model input and its cache signature.
+            log_params = json.dumps(tool_args, ensure_ascii=False, indent=2, default=str)
+            log_output = tool_output if isinstance(tool_output, str) else json.dumps(
+                tool_output, ensure_ascii=False, indent=2, default=str,
+            )
+            tool_evidence_log_parts.append(
+                f"===== 证据 {len(tool_evidence_parts)} =====\n"
+                f"工具: {tool_name}\n"
+                f"输入参数:\n{log_params}\n"
+                f"返回结果:\n{log_output}"
+            )
 
     tool_evidence = "\n\n---\n\n".join(tool_evidence_parts)
+    evidence_preview = "\n\n".join(tool_evidence_log_parts) or "（无可用工具证据）"
+    logger.info(f"[update_ir] tool_evidence preview: \n{evidence_preview}")
 
     user_query = state.get("user_query", "")
 
@@ -356,15 +427,26 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
     if not field_templates:
         field_templates = list_field_templates(load_template_catalog())
         runtime.set_cache("ir_field_templates", field_templates)
-    context_signature = _input_digest([user_query, confirmed_context, field_templates])
+    semantic_reuse = _ir_option(runtime, "semantic_field_reuse", False) is True
+    context_signature = _input_digest([
+        user_query, confirmed_context, field_templates,
+        {"completion_batch_size": _ir_option(runtime, "completion_batch_size", 1),
+         "completion_policy": _ir_option(runtime, "completion_policy", "always"),
+         "concise_rationale": _ir_option(runtime, "concise_rationale", False),
+         "compact_json": _ir_option(runtime, "compact_json", False),
+         "field_order": _ir_option(runtime, "field_order", "template"),
+         "semantic_field_reuse": semantic_reuse},
+    ])
     input_signature = _input_digest([context_signature, tool_evidence_parts])
     if runtime.get_cache("ir_input_signature") == input_signature:
+        runtime.set_cache("ir_dirty", False)
         logger.info("[update_ir] unchanged inputs; skip fill and gate")
         return
 
     # Publish no old validated snapshot while this refresh is awaiting model calls.
     runtime.set_cache("ir_input_signature", None)
     runtime.set_cache("ir_refresh_failed", True)
+    runtime.set_cache("ir_initialized", True)
     current_values = runtime.get_cache("ir_field_values") or []
     trace_dir = _resolve_ir_trace_dir(runtime)
     reuse_ids: set[str] = set()
@@ -378,7 +460,8 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
             and tool_evidence_parts[:len(previous_parts)] == previous_parts
             and len(tool_evidence_parts) > len(previous_parts)
         )
-        if (runtime.get_cache("ir_context_signature") == context_signature
+        if (semantic_reuse
+                and runtime.get_cache("ir_context_signature") == context_signature
                 and append_only and not runtime.get_cache("ir_gate_warnings")):
             templates_by_id = {template["field_id"]: template for template in field_templates}
             confirmed = [field for field in current_values
@@ -392,7 +475,11 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
                 reuse_ids = {field["field_id"] for field in confirmed} - changed_ids
         field_results = await fill_ir_fields(
             inv, user_query=user_query, tool_evidence=tool_evidence,
-            confirmed_context=confirmed_context, current_values=current_values,
+            # Old extracted values are not evidence when their sources/query may
+            # have been removed or rewritten. Start fresh in those cases.
+            confirmed_context=confirmed_context,
+            current_values=(current_values if append_only
+                            and runtime.get_cache("ir_context_signature") == context_signature else None),
             reuse_field_ids=reuse_ids, trace_dir=trace_dir,
         )
         runtime.set_cache("ir_field_values", field_results)
@@ -409,8 +496,11 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
         trace_dir=trace_dir,
     )
     runtime.set_cache("ir_gate_warnings", gate_warnings)
-    runtime.set_cache("ir_rendered_context", render_constraint_context(field_results, warnings=gate_warnings))
+    rendered = render_constraint_context(field_results, warnings=gate_warnings)
+    logger.info(f"[update_ir] ir_rendered_context: \n{rendered}")
+    runtime.set_cache("ir_rendered_context", rendered)
     runtime.set_cache("ir_refresh_failed", False)
+    runtime.set_cache("ir_dirty", False)
     if gate_completed:
         runtime.set_cache("ir_input_signature", input_signature)
     logger.info("[update_ir] completed: fields={} reused={} gate_completed={} elapsed={:.3f}s trace={}",
@@ -419,7 +509,7 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
 
 def get_ir_context(runtime: Runtime) -> str:
     """Return the shared IR contract, including validation warnings, to consumers."""
-    if runtime.get_cache("ir_refresh_failed"):
+    if runtime.get_cache("ir_dirty") or runtime.get_cache("ir_refresh_failed"):
         raise RuntimeError("DataTaskIR refresh failed or is in progress; retry update_ir before consuming IR")
     fields = runtime.get_cache("ir_field_values")
     if not fields:

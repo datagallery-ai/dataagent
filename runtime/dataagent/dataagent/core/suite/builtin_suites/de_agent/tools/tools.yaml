@@ -62,6 +62,9 @@ TOOLS:
     - name: "wrapped_nl2sql_sub_agent_tool"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.nl2sql"
       function: "wrapped_nl2sql_sub_agent_tool"
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready
       config:
         llm_model: "chat_model"
         suite_name: "data_engineering"
@@ -88,3 +91,6 @@ TOOLS:
     - name: "validate_deliverables"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.verify"
       function: "validate_deliverables"
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready

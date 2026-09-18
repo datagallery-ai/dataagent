@@ -30,6 +30,17 @@ from dataagent.core.managers.llm_manager.llm_client import LLMClient
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.json_llm import ainvoke_json_object, repair_json_object
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.template import materialize_writable_template
 
+CONCISE_RATIONALE_INSTRUCTION = (
+    "\n输出精简要求：value 必须完整，不能省略已知字段、条件、表达式或分支。"
+    "rationale 用1至2句简短说明直接依据，不复述整段问题、模板规则或元数据；"
+    "unresolved 逐项简述真实缺失/冲突，不重复，question 合并为一句。"
+    "精简只作用于说明文字，不能缩减业务内容。"
+)
+COMPACT_JSON_INSTRUCTION = (
+    "\n使用紧凑 JSON 输出：不缩进、不换行，省去 JSON 标点周围的非必要空格。"
+    "这只是序列化格式要求，字符串内的空格、全部键和值、数组元素及业务表达式必须完整保留。"
+)
+
 
 CRITICAL_PATHS = {
     "feature_key": ["components", "components[].field_ref", "components[].null_semantics", "uniqueness_scope"],
@@ -102,6 +113,7 @@ def write_field_meta(trace_dir: str | None, field_id: str, result: dict[str, Any
             "field_id": field_id,
             "success": result.get("success"),
             "attempts": result.get("attempts"),
+            "model_requests": result.get("model_requests", result.get("attempts", 0)),
             "error": result.get("error"),
             "completion_retried": result.get("completion_retried"),
             "missing_critical_paths": result.get("missing_critical_paths"),
@@ -109,6 +121,10 @@ def write_field_meta(trace_dir: str | None, field_id: str, result: dict[str, Any
             "queue_wait_seconds": result.get("queue_wait_seconds", 0.0),
             "model_call_seconds": result.get("model_call_seconds", 0.0),
             "skipped_incremental": result.get("skipped_incremental", False),
+            "completion_pending": result.get("completion_pending", False),
+            "completion_skipped_reason": result.get("completion_skipped_reason"),
+            "completion_batch_size": result.get("completion_batch_size", 1),
+            "completion_batch_trace": result.get("completion_batch_trace"),
             "final_output": result.get("output"),
         }
         (target / "meta.json").write_text(
@@ -146,12 +162,30 @@ def build_field_messages(
     tool_evidence: str,
     confirmed_context: str = "",
     current_value: Optional[dict[str, Any]] = None,
+    concise_rationale: bool = False,
+    compact_json: bool = False,
 ) -> list[dict[str, str]]:
     """Compile one independent field unit and its evidence into model messages."""
+    system, common, specific = _build_field_parts(
+        field_template, user_query=user_query, tool_evidence=tool_evidence,
+        confirmed_context=confirmed_context, current_value=current_value,
+    )
+    if concise_rationale:
+        system += CONCISE_RATIONALE_INSTRUCTION
+    if compact_json:
+        system += COMPACT_JSON_INSTRUCTION
+    return [{"role": "system", "content": system},
+            {"role": "user", "content": common + "\n\n" + specific}]
+
+
+def _build_field_parts(
+    field_template, *, user_query, tool_evidence, confirmed_context, current_value,
+):
+    """Build shared and field-specific blocks without parsing untrusted evidence."""
     writable = materialize_writable_template(field_template, current_value)
     system = """你是 DataTaskIR 单字段提取器。你只能根据本次输入中的证据填写一个字段。
 只输出一个 JSON 对象，不输出 Markdown 或 JSON 之外的任何文字。
-field_id 和 value 必须保留；rational 必须输出；unresolved 和 question 按输出字段协议决定是否出现。
+field_id 和 value 必须保留；rationale 必须输出；unresolved 和 question 按输出字段协议决定是否出现。
 rationale 是一段纯文本，必须说明你填写 value 的依据与关键判断逻辑；引用用户原话或工具证据中的具体表述，说明为什么这样映射；
 即使 value 为空，也要说明输入中没有可填内容的证据或原因。禁止把 rationale 写成与输入无关的套话，禁止编造输入中不存在的依据。
 few-shot 只演示协议，不是当前任务证据，禁止复制例子中的业务值。
@@ -166,24 +200,34 @@ unresolved 只能记录当前 Field Unit 的直接问题；其他字段的缺失
 冲突涉及的 value 槽位必须保持 null 或空数组；不得填写某个候选值后再备注冲突。
 禁止把“通常、一般、默认、建议、prefer、preference、latest、earliest”写成确定口径。
 [当前字段值]是历史填充的记录，你需要根据新查询的信息，看是否要在已有基础上添加信息/修正信息/删除信息等，注意严格按照模板规范"""
-    sections = {
+    common_sections = {
         "模板公共契约": _model_visible_contract(field_template),
         "输出字段协议": _model_visible_output_contract(field_template),
         "用户原始问题": user_query,
         "已确认上下文": confirmed_context or "（无）",
+        # Keep the complete common input before field-specific content so providers
+        # with prefix caching can share it across fields and completion calls.
+        "工具证据": tool_evidence or "（无）",
+    }
+    field_sections = {
         "当前字段值": current_value if current_value is not None else "（无）",
         "字段目的": field_template.get("purpose", ""),
         "字段填写说明": field_template.get("field_instructions", {}),
         "字段 Few-shots": _model_visible_few_shots(field_template),
-        "工具证据": tool_evidence or "（无）",
         "可写模板": writable,
     }
-    chunks = []
-    for title, content in sections.items():
-        rendered = yaml.safe_dump(content, allow_unicode=True, sort_keys=False).strip()
-        chunks.append(f"【{title}】\n{rendered}")
-    user = "\n\n".join(chunks)
-    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    def render_sections(sections):
+        chunks = []
+        for title, content in sections.items():
+            # Large evidence/context strings are already text. YAML scanning/escaping
+            # each copy blocks the event loop and does not add information.
+            rendered = content if isinstance(content, str) else yaml.safe_dump(
+                content, allow_unicode=True, sort_keys=False,
+            ).strip()
+            chunks.append(f"【{title}】\n{rendered}")
+        return "\n\n".join(chunks)
+
+    return system, render_sections(common_sections), render_sections(field_sections)
 
 
 def parse_model_json(raw_text: str) -> dict[str, Any]:
@@ -206,6 +250,9 @@ async def fill_field_template(
     semaphore: Optional[asyncio.Semaphore] = None,
     allow_repair: bool = True,
     trace_dir: Optional[str] = None,
+    completion_policy: str = "always",
+    concise_rationale: bool = False,
+    compact_json: bool = False,
 ) -> dict[str, Any]:
     """Fill one independent DataTaskIR field template and return its repaired JSON object."""
     detailed = await fill_field_template_detailed(
@@ -218,6 +265,9 @@ async def fill_field_template(
         semaphore=semaphore,
         allow_repair=allow_repair,
         trace_dir=trace_dir,
+        completion_policy=completion_policy,
+        concise_rationale=concise_rationale,
+        compact_json=compact_json,
     )
     output = detailed.get("output")
     if not isinstance(output, dict) or detailed.get("error"):
@@ -236,6 +286,10 @@ async def fill_field_template_detailed(
     semaphore: Optional[asyncio.Semaphore] = None,
     allow_repair: bool = True,
     trace_dir: Optional[str] = None,
+    defer_completion: bool = False,
+    completion_policy: str = "always",
+    concise_rationale: bool = False,
+    compact_json: bool = False,
 ) -> dict[str, Any]:
     """Fill one field and return output plus attempts, latency, raw responses, and any call or parsing error.
 
@@ -243,12 +297,16 @@ async def fill_field_template_detailed(
     written under ``{trace_dir}/{field_id}/`` for offline audit, together with a
     ``meta.json`` summary written on return.
     """
+    if completion_policy not in {"always", "partial_only"}:
+        raise ValueError("completion_policy must be always or partial_only")
     messages = build_field_messages(
         field_template,
         user_query=user_query,
         tool_evidence=tool_evidence,
         confirmed_context=confirmed_context,
         current_value=current_value,
+        concise_rationale=concise_rationale,
+        compact_json=compact_json,
     )
     gate = semaphore or asyncio.Semaphore(1)
     started = time.perf_counter()
@@ -290,10 +348,11 @@ async def fill_field_template_detailed(
                 raise ValueError("DataTaskIR field value must be an object")
             output["field_id"] = field_template.get("field_id")
             best_output = deepcopy(output)
-            missing_paths = []
-            if not _is_explicit_none_evidence(tool_evidence):
-                missing_paths = _find_missing_critical_paths(field_template, output.get("value", {}))
-            if missing_paths and attempt < max_attempts:
+            # A marker elsewhere in a document cannot waive this field's checks.
+            missing_paths = _find_missing_critical_paths(field_template, output.get("value", {}))
+            skip_completion = (completion_policy == "partial_only"
+                               and not _has_meaningful_leaf(output["value"]))
+            if missing_paths and attempt < max_attempts and not defer_completion and not skip_completion:
                 previous_missing_paths = missing_paths
                 errors.append(f"Missing critical paths: {', '.join(missing_paths)}")
                 continue
@@ -310,6 +369,9 @@ async def fill_field_template_detailed(
                 "error": None,
                 "completion_retried": completion_retried,
                 "missing_critical_paths": missing_paths,
+                "completion_pending": bool(missing_paths and defer_completion and not skip_completion),
+                "completion_skipped_reason": "empty_value_preserved_as_unresolved"
+                    if missing_paths and skip_completion else None,
             })
         except Exception as exc:
             errors.append(f"{type(exc).__name__}: {exc}")
@@ -358,15 +420,35 @@ async def fill_field_templates(
     allow_repair: bool = True,
     trace_dir: Optional[str] = None,
     reuse_field_ids: Optional[set[str]] = None,
+    completion_batch_size: int = 1,
+    completion_policy: str = "always",
+    concise_rationale: bool = False,
+    compact_json: bool = False,
+    field_order: str = "template",
 ) -> list[dict[str, Any]]:
     """Fill independent DataTaskIR field units concurrently with one shared concurrency limit."""
-    if max_concurrency < 1:
+    if isinstance(max_concurrency, bool) or not isinstance(max_concurrency, int) or max_concurrency < 1:
         raise ValueError("max_concurrency must be at least 1")
+    if (isinstance(completion_batch_size, bool) or not isinstance(completion_batch_size, int)
+            or not 1 <= completion_batch_size <= 4):
+        raise ValueError("completion_batch_size must be between 1 and 4")
+    if completion_policy not in {"always", "partial_only"}:
+        raise ValueError("completion_policy must be always or partial_only")
+    if field_order not in {"template", "long_first"}:
+        raise ValueError("field_order must be template or long_first")
     values = {value["field_id"]: value for value in (current_values or [])}
     reuse_ids = reuse_field_ids or set()
     semaphore = asyncio.Semaphore(max_concurrency)
     tasks = []
-    for field_template in field_templates:
+    deferred_templates = []
+    # Start historically long outputs early, without changing their prompts or
+    # public result order. Keep the same semaphore limit and full validation.
+    priority = {"output_fields": 0, "aggregation_metrics": 1, "aggregation_precedence": 2}
+    scheduled = (
+        sorted(field_templates, key=lambda t: priority.get(t["field_id"], 3))
+        if field_order == "long_first" else field_templates
+    )
+    for field_template in scheduled:
         field_id = str(field_template.get("field_id", ""))
         file_value = values.get(field_id)
         if field_id in reuse_ids and is_field_confirmed(file_value, field_template):
@@ -375,6 +457,17 @@ async def fill_field_templates(
                 "success": True, "attempts": 0, "skipped_incremental": True, "output": reused,
             })
             tasks.append(asyncio.sleep(0, result=reused))
+            continue
+        if completion_batch_size > 1 and allow_repair:
+            deferred_templates.append(field_template)
+            tasks.append(fill_field_template_detailed(
+                field_template, user_query=user_query, tool_evidence=tool_evidence,
+                llm=llm, confirmed_context=confirmed_context, current_value=file_value,
+                semaphore=semaphore, allow_repair=allow_repair, trace_dir=trace_dir,
+                defer_completion=True,
+                completion_policy=completion_policy, concise_rationale=concise_rationale,
+                compact_json=compact_json,
+            ))
             continue
         task = fill_field_template(
             field_template,
@@ -386,8 +479,36 @@ async def fill_field_templates(
             semaphore=semaphore,
             allow_repair=allow_repair,
             trace_dir=trace_dir,
+            completion_policy=completion_policy,
+            concise_rationale=concise_rationale,
+            compact_json=compact_json,
         )
         tasks.append(task)
+    outputs = await _gather_cancel_on_error(tasks)
+    if deferred_templates:
+        deferred_ids = {template["field_id"] for template in deferred_templates}
+        details = {item["field_id"]: item for item in outputs if item["field_id"] in deferred_ids}
+        for detail in details.values():
+            if not detail["success"] or detail.get("error"):
+                raise ValueError(str(detail.get("error") or "DataTaskIR field extraction failed"))
+        incomplete = [template for template in deferred_templates
+                      if details[template["field_id"]].get("completion_pending")]
+        await _gather_cancel_on_error([
+            _complete_field_batch(
+                incomplete[start:start + completion_batch_size], details=details,
+                user_query=user_query, tool_evidence=tool_evidence, confirmed_context=confirmed_context,
+                current_values=values, llm=llm, semaphore=semaphore, trace_dir=trace_dir,
+                concise_rationale=concise_rationale, compact_json=compact_json,
+            )
+            for start in range(0, len(incomplete), completion_batch_size)
+        ])
+        outputs = [details[item["field_id"]]["output"] if item["field_id"] in details else item
+                   for item in outputs]
+    by_id = {output["field_id"]: output for output in outputs}
+    return [deepcopy(by_id[template["field_id"]]) for template in field_templates]
+
+
+async def _gather_cancel_on_error(tasks: list) -> list:
     pending = [asyncio.create_task(task) for task in tasks]
     try:
         outputs = await asyncio.gather(*pending)
@@ -397,7 +518,145 @@ async def fill_field_templates(
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         raise
-    return [deepcopy(output) for output in outputs]
+    return outputs
+
+
+async def _complete_field_batch(
+    templates: list[dict[str, Any]], *, details: dict[str, dict[str, Any]],
+    user_query: str, tool_evidence: str, confirmed_context: str,
+    current_values: dict[str, dict[str, Any]], llm: LLMClient,
+    semaphore: asyncio.Semaphore, trace_dir: Optional[str],
+    concise_rationale: bool = False, compact_json: bool = False,
+) -> None:
+    """Share evidence across at most four second opinions; never waive missing checks.
+
+    A malformed/failed batch falls back to the original independent completion
+    request. This opt-in path changes model reasoning and needs task-level evals.
+    """
+    requests = []
+    messages = None
+    for template in templates:
+        field_id = template["field_id"]
+        _, common, specific = _build_field_parts(
+            template, user_query=user_query, tool_evidence=tool_evidence,
+            confirmed_context=confirmed_context, current_value=current_values.get(field_id),
+        )
+        if messages is None:
+            messages = [
+                {"role": "system", "content": (
+                    "你是 DataTaskIR 字段补全审查员。分别复核本批每个字段，只能依据完整用户问题、"
+                    "已确认上下文和工具证据补全。每个字段遵循它自己的模板、说明和示例，"
+                    "不能互相代填，历史值和示例都不是新增证据。空值也必须重新检查，"
+                    "不得把空值自动解释为不适用。缺证据或冲突时保留空值及 unresolved/question，"
+                    "禁止猜测或丢弃原有已证实内容。逐字段输出 rationale 说明依据。"
+                    '仅输出 JSON 对象 {"fields": [各字段的完整输出对象]}，每个请求字段恰好出现一次。'
+                    '模板中的单字段输出协议在 fields 数组的每个元素内适用。'
+                )},
+                {"role": "user", "content": common},
+            ]
+        # Include contracts per field too: callers may supply different catalogs.
+        requests.append({
+            "field_id": field_id,
+            "template_contract": _model_visible_contract(template),
+            "output_contract": _model_visible_output_contract(template),
+            "field_request": specific,
+            "previous_output": details[field_id]["output"],
+            "missing_critical_paths": details[field_id]["missing_critical_paths"],
+        })
+    messages.append({"role": "user", "content": json.dumps(requests, ensure_ascii=False)})
+    started = time.perf_counter()
+    raw = ""
+    error = None
+    if concise_rationale:
+        messages[0]["content"] += CONCISE_RATIONALE_INSTRUCTION
+    if compact_json:
+        messages[0]["content"] += COMPACT_JSON_INSTRUCTION
+    candidates = {}
+    call_started = started
+    try:
+        async with semaphore:
+            call_started = time.perf_counter()
+            parsed, raw = await ainvoke_json_object(llm, messages)
+        fields = parsed.get("fields") if isinstance(parsed, dict) else None
+        expected = {template["field_id"] for template in templates}
+        if (not isinstance(fields, list) or len(fields) != len(expected)
+                or any(not isinstance(item, dict) or not isinstance(item.get("field_id"), str)
+                       for item in fields)
+                or {item["field_id"] for item in fields} != expected):
+            raise ValueError("Batch completion returned missing, duplicate or unknown field IDs")
+        candidates = {item["field_id"]: item for item in fields}
+    except Exception as exc:
+        error = type(exc).__name__
+        logger.warning("[IR] batch completion failed ({}); retry individual fields", error)
+    elapsed = time.perf_counter() - started
+    batch_id = "_completion_" + "_".join(template["field_id"] for template in templates)
+    write_field_attempt(trace_dir, batch_id, 1, messages, raw)
+    write_field_meta(trace_dir, batch_id, {
+        "success": error is None, "attempts": 1, "error": error,
+        "latency_seconds": elapsed, "queue_wait_seconds": call_started - started,
+        "model_call_seconds": elapsed - (call_started - started),
+    })
+
+    async def finish(template):
+        field_id = template["field_id"]
+        detail = details[field_id]
+        output = candidates.get(field_id)
+        fallback_wait = 0.0
+        fallback_seconds = 0.0
+        initial_attempts = detail["attempts"]
+        # A parseable object is not sufficient to trust a batched response.
+        valid = (isinstance(output, dict) and isinstance(output.get("value"), dict)
+                 and isinstance(output.get("rationale"), str) and bool(output["rationale"].strip())
+                 and isinstance(output.get("unresolved", []), list)
+                 and all(isinstance(item, str) for item in output.get("unresolved", []))
+                 and (not output.get("unresolved") or
+                      isinstance(output.get("question"), str) and bool(output["question"].strip())))
+        if not valid:
+            original = build_field_messages(
+                template, user_query=user_query, tool_evidence=tool_evidence,
+                confirmed_context=confirmed_context, current_value=current_values.get(field_id),
+                concise_rationale=concise_rationale, compact_json=compact_json,
+            )
+            fallback = _build_completion_messages(
+                original, detail["raw_responses"][-1], detail["missing_critical_paths"],
+            )
+            fallback_started = time.perf_counter()
+            async with semaphore:
+                fallback_call_started = time.perf_counter()
+                fallback_wait = fallback_call_started - fallback_started
+                try:
+                    output, fallback_raw = await ainvoke_json_object(llm, fallback)
+                except Exception as exc:
+                    write_field_meta(trace_dir, field_id, {
+                        **detail, "success": False, "error": type(exc).__name__,
+                        "attempts": detail["attempts"] + 2, "completion_batch_trace": batch_id,
+                    })
+                    raise
+                fallback_seconds = time.perf_counter() - fallback_call_started
+            write_field_attempt(trace_dir, field_id, detail["attempts"] + 2, fallback, fallback_raw)
+            if not isinstance(output, dict) or not isinstance(output.get("value"), dict):
+                write_field_meta(trace_dir, field_id, {
+                    **detail, "success": False, "error": "Invalid individual completion",
+                    "attempts": detail["attempts"] + 2, "completion_batch_trace": batch_id,
+                })
+                raise ValueError(f"Individual completion failed for {field_id}")
+            detail["attempts"] += 1
+        output["field_id"] = field_id
+        missing = _find_missing_critical_paths(template, output["value"])
+        detail.update(
+            output=_add_completion_diagnostics(template, output, missing),
+            attempts=detail["attempts"] + 1, completion_retried=True, completion_pending=False,
+            completion_batch_size=len(templates), missing_critical_paths=missing,
+            completion_batch_trace=batch_id,
+            model_requests=initial_attempts + (not valid),
+            latency_seconds=detail["latency_seconds"] + time.perf_counter() - started,
+            # Shared-call time is recorded under batch_id once, not per field.
+            queue_wait_seconds=detail["queue_wait_seconds"] + fallback_wait,
+            model_call_seconds=detail["model_call_seconds"] + fallback_seconds,
+        )
+        write_field_meta(trace_dir, field_id, detail)
+
+    await _gather_cancel_on_error([finish(template) for template in templates])
 
 
 def _build_repair_messages(
@@ -540,11 +799,6 @@ async def detect_field_changes(
         "output": {"reestimate": sorted(result)},
     })
     return result
-
-
-def _is_explicit_none_evidence(tool_evidence: str) -> bool:
-    normalized = tool_evidence.lower().replace(" ", "")
-    return "evidence_status:explicit_none" in normalized or "证据状态：explicit_none" in normalized
 
 
 def _add_completion_diagnostics(
