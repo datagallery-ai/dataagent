@@ -351,7 +351,7 @@ def _add_dimension_context(
                 state["joins"].append(join)
         rule_lines.append(
             f"- When `{name}` is projected, use `{table}.{value}` through "
-            f"`LEFT JOIN {table} ON <fact>.{name} = {table}.{key}`. "
+            f"`INNER JOIN {table} ON <fact>.{name} = {table}.{key}`. "
             "This is a required display-value lookup, not extra business logic; "
             "WHERE/HAVING predicates remain on the fact key."
         )

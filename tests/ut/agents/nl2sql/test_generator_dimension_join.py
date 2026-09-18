@@ -116,7 +116,7 @@ async def test_rewrites_dimension_and_augments_downstream_context() -> None:
     )
     rewritten = (
         "SELECT f.time, d.county_value, SUM(f.uplink_traffic) AS uplink_traffic FROM fact_metric f "
-        "LEFT JOIN dim_exp_county d ON f.county = d.county_key "
+        "INNER JOIN dim_exp_county d ON f.county = d.county_key "
         "WHERE f.county = 10 GROUP BY f.time, d.county_value ORDER BY d.county_value"
     )
     llm = SimpleNamespace(
