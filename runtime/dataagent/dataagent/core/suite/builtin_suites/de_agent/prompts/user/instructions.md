@@ -20,11 +20,16 @@
 - 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用后调用过1次或多次validate_deliverables工具。
 - wrapped_nl2sql_sub_agent_tool 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
    - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（fact_deduplication / dimension_deduplication / final_sequence_deduplication 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
-- DataOps 校验时机：在完成「8 类质量自检」并且全部 PASS 之后，必须对生成的每条 DDL/DML 调用 `dataops_validate_sql_with_log_analysis` 工具做最终校验（DDL 走 create_table 路径，DML 走 submit_job 路径）。
-  - **默认行为**：当前 yaml 没有声明 `RESOURCES: dataops`，工具会自动跳过校验（返回 `passed=true, skipped=true, reason=no_dataops_resource`），等同于关闭 DataOps 校验。
-  - **DataOps 提交顺序**：DDL 与 DML 必须**分两次**调用 `dataops_validate_sql_with_log_analysis`；必须先提交 DDL，DDL 返回 `passed=true` 后才提交 DML。DDL 失败时禁止提交 DML。
-  - **轮询与超时**：`dataops_validate_sql_with_log_analysis` 内部固定每 30 s 轮询一次，最长等待 30 min。30 min 内未返回时返回 `timed_out=true`、跳过该 SQL 的校验并在交付报告中标注「DataOps 校验已跳过」；禁止自行加轮询或重试。
-  - **校验失败处理**：启用后若 `passed=false`，从 OBS 拉取执行日志并总结错误类型 / 位置 / 修复建议，据此修正 SQL 并重新调用 `dataops_validate_sql_with_log_analysis` 校验。只有 `passed=true` 或 `skipped=true` 时才允许交付文件。
+- **DataOps 校验（de_agent 契约）**：
+  - 何时调：完成「8 类质量自检」且全部 PASS 后，对生成的每条 DDL/DML 调一次 `dataops_validate_sql_with_log_analysis(sql, attempt=1, prior_attempts=...)`。
+  - 调用约定：每次调用必须传入两个参数：`attempt`（从 1 开始的第几次尝试）和 `prior_attempts`（上一次调用返回的 `attempts` 列表，首次调用传 `None`）。首次失败后，de_agent 必须把上一次的 `attempts` 字段原样回传，作为下一次调用的 `prior_attempts`，以便 wrapper 累加失败历史。wrapper 会自动维护 `attempts` / `failed_after_max_retries` / `validation_report_path` / `delivery_warning_path` 四个返回字段。
+  - 失败处理：返回 `passed: false` 时**必须**读取 `log_analysis`，按 `suggestions` → `error_type` / `location` → `error` 字段的优先级定位失败原因，**实际修改 SQL 后再次调用**该工具；禁止原样 SQL 重跑，也禁止把 `log_analysis.suggestions` 当"诊断总结"复读后结束任务。
+  - 重试上限：每条 SQL 最多调用 3 次（含首次），具体次数由 wrapper 强制；超限（attempt > 3）后 wrapper 直接返回 `passed: false` + `failed_after_max_retries: true` 而不发起第 4 次校验。
+  - 退出条件：任一次返回 `passed=true` 或 `skipped=true` 才能正常交付；wrapper 标记 `failed_after_max_retries: true` 时只能 best-effort 交付。
+  - **best-effort 交付**：当第 3 次仍失败时，wrapper 会自动在 workspace 写入 `validate_<table>.json`（含 3 次的 `job_id` / `elapsed` / `error_type` / `error` / `suggestions`）和 `delivery_warning.md`（首行写「⚠️ 本次交付物未通过 DataOps 校验（重试 3 次仍失败），仅作 best-effort，下游使用前必须人工复核」）。de_agent 此时只需把最后一次提交的 SQL 作为交付物写入 workspace，并在交付报告中说明实际执行的修复动作（diff 简述）。
+  - **绝对禁止**：
+    - ❌ DDL 失败却继续提交对应的 DML（DDL 与对应 DML 必须视为同一交付单元，要么一起交付要么一起标注未通过）
+
 - 维度表选表经验（下面列出的维表不合适时，无需强行使用）：
   - 需要以app_id为主键的应用信息表时，天级增量表默认选biads.ads_noah_common_app_info_dm表，天级全量表默认选biads.ads_noah_hispace_app_info_ds。
   - 事实表中已存在所需要的列时，默认无需关联对应的维度表，除非用户明确要求

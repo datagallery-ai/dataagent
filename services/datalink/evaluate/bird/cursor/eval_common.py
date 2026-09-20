@@ -246,8 +246,7 @@ def build_prompt(
     if inject_sqlite_path and sqlite_url:
         sqlite_block = f"SQLite database file: {sqlite_url_to_path(sqlite_url)}\n"
         path_rule = (
-            "- The database file path above is authoritative — do not search the "
-            "workspace for other DB files.\n"
+            "- The database file path above is authoritative — do not search the workspace for other DB files.\n"
         )
     else:
         sqlite_block = ""
@@ -261,8 +260,7 @@ def build_prompt(
     else:
         explore_rule = ""
         python_rule = (
-            "- The environment does not have sqlite3 command in the terminal. "
-            "You have to use python if needed.\n"
+            "- The environment does not have sqlite3 command in the terminal. You have to use python if needed.\n"
         )
     return PROMPT_TEMPLATE.format(
         db_id=item["db_id"],

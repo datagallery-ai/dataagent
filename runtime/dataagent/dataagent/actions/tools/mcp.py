@@ -169,10 +169,18 @@ class MCPClientWrapper:
                     headers=params.get("headers", {}),
                     timeout=params.get("timeout", 30),
                 )
+            elif self.transport_type == "streamable_http":
+                params = cast(dict[str, Any], self._transport_params)
+                headers = params.get("headers") or {}
+                timeout = float(params.get("timeout", 30))
+                import httpx
+
+                http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout))
+                self._client_context = streamable_http_client(params["url"], http_client=http_client)
             else:
                 raise ValueError(
-                    f"Unsupported transport type: {self.transport_type}. \
-                                 Only 'stdio' and 'sse' are supported."
+                    f"Unsupported transport type: {self.transport_type}. "
+                    "Only 'stdio', 'sse', and 'streamable_http' are supported."
                 )
 
             # 进入上下文管理器获取读写流
@@ -292,21 +300,35 @@ class MCPClientWrapper:
                 params = cast(dict[str, Any], self._transport_params)
                 headers = params.get("headers") or {}
                 timeout = float(params.get("timeout", 30))
-                async with (
-                    httpx.AsyncClient(
-                        headers=headers,
-                        timeout=httpx.Timeout(timeout),
-                    ) as http_client,
-                    streamable_http_client(params["url"], http_client=http_client) as (
-                        read_stream,
-                        write_stream,
-                        _get_session_id,
-                    ),
-                ):
-                    del _get_session_id
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        return await operation(session)
+                try:
+                    async with (
+                        httpx.AsyncClient(
+                            headers=headers,
+                            timeout=httpx.Timeout(timeout),
+                        ) as http_client,
+                        streamable_http_client(params["url"], http_client=http_client) as (
+                            read_stream,
+                            write_stream,
+                            _get_session_id,
+                        ),
+                    ):
+                        del _get_session_id
+                        async with ClientSession(read_stream, write_stream) as session:
+                            await session.initialize()
+                            return await operation(session)
+                except Exception as exc:
+                    # Unwrap ExceptionGroup (anyio's task group wraps HTTP errors)
+                    inner = exc
+                    if hasattr(exc, "exceptions") and exc.exceptions:
+                        inner = exc.exceptions[0]
+                    fact = f"MCP streamable_http call failed: {inner}"
+                    if hasattr(inner, "response") and hasattr(inner.response, "status_code"):
+                        fact = f"MCP streamable_http HTTP {inner.response.status_code}: {inner}"
+                    raise DataAgentError(
+                        source="tool",
+                        fact=fact,
+                        component="mcp",
+                    ) from exc
 
             raise ValueError(f"Unsupported transport type: {self.transport_type}")
 

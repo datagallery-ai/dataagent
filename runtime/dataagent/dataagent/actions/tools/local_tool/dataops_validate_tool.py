@@ -26,6 +26,14 @@ The tool reads the ``dataops`` resource from
 ``runtime.ensure_resource_coordinator().catalog``. If the resource is absent,
 the tool returns ``{"passed": true, "skipped": true, "reason": "..."}``
 so that callers can no-op cleanly.
+
+Environment routing
+-------------------
+
+Set ``DATAOPS_ENV=prod`` to route validation through the official DataOps MCP
+(2-step ``execute_sql`` -> ``get_query_result`` flow). Defaults to
+``integration`` (the original 3-step ``submit -> poll -> collect`` flow). Unknown
+values fall back to ``integration`` with a warning log.
 """
 
 from __future__ import annotations
@@ -36,7 +44,8 @@ import json
 import os
 import re
 import time
-from datetime import date
+from datetime import date, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
@@ -45,6 +54,17 @@ from dataagent.utils.log import logger
 
 if TYPE_CHECKING:
     pass
+
+
+# ============================================================================
+# Retry / best-effort constants (shared by dataops_validate_sql_with_log_analysis)
+# ============================================================================
+MAX_VALIDATE_ATTEMPTS = 3
+_VALIDATION_REPORT_FILENAME = "validate_{table}.json"
+_DELIVERY_WARNING_FILENAME = "delivery_warning.md"
+_DELIVERY_WARNING_HEADER = (
+    "⚠️ 本次交付物未通过 DataOps 校验（重试 {n} 次仍失败），仅作 best-effort，下游使用前必须人工复核"
+)
 
 
 def _get_dataops_resource(runtime):
@@ -218,6 +238,44 @@ def _get_temp_table_name(original_table: str, user_account: str, today: str, tab
 
 
 _INSERT_RE = re.compile(r"\binsert\s+(?:overwrite\s+|into\s+)?(?:table\s+)?", re.IGNORECASE)
+_CREATE_RE = re.compile(r"\bcreate\s+(?:external\s+)?table\b", re.IGNORECASE)
+
+
+def _is_create_sql(sql: str) -> bool:
+    """Return True if sql is a CREATE TABLE statement."""
+    return bool(_CREATE_RE.search(sql))
+
+
+def _build_drop_sql(original_sql: str, user_account: str, table_suffix: str) -> str | None:
+    """Build DROP TABLE IF EXISTS statement for the temporary table.
+
+    This is used when submitting CREATE TABLE to ensure clean table creation
+    by dropping any existing table with the same name first.
+
+    Args:
+        original_sql: The original CREATE TABLE statement (before rewriting)
+        user_account: User account for temp table naming
+        table_suffix: Table suffix from resource metadata
+
+    Returns:
+        DROP TABLE IF EXISTS statement for the temp table, or None if extraction fails.
+    """
+    # First rewrite to get the temp table name
+    rewritten = _replace_target_table(original_sql, user_account, table_suffix)
+
+    # Extract the temp table name from the rewritten CREATE statement
+    # Pattern: CREATE [EXTERNAL] TABLE [IF NOT EXISTS] temp_table (...)
+    create_pattern = r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.`_-]+)"
+    match = re.search(create_pattern, rewritten, re.IGNORECASE)
+    if not match:
+        return None
+
+    temp_table = match.group(1).strip()
+    temp_table = temp_table.strip("`").strip("'").strip('"')
+    if not temp_table:
+        return None
+
+    return f"DROP TABLE IF EXISTS {temp_table}"
 
 
 def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str:
@@ -225,7 +283,7 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
 
     Temporary table format: adhoctemp.tmp_{user_account}_{date}_{table_suffix}
 
-    Also replaces pt_d = '$date' (and other partition columns) with the current date.
+    Also replaces pt_d = '$date' (and other partition columns) with one year from today.
 
     Examples:
         CREATE TABLE biads.ads_xxx → CREATE TABLE adhoctemp.tmp_user_date_ads_xxx
@@ -233,18 +291,16 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
         INSERT OVERWRITE EXTERNAL TABLE xxx → INSERT OVERWRITE TABLE adhoctemp.tmp_user_date_xxx
         pt_d = '$date' → pt_d = 'YYYYMMDD'
     """
-    today = date.today().strftime("%Y%m%d")
-
-    # Replace partition date placeholders like pt_d = '$date' with actual date
+    one_year_later = (date.today() + timedelta(days=365)).strftime("%Y%m%d")
     sql = re.sub(
         r"(\w+)\s*=\s*'\$date'",
-        lambda m: f"{m.group(1)} = '{today}'",
+        lambda m: f"{m.group(1)} = '{one_year_later}'",
         sql,
         flags=re.IGNORECASE,
     )
     sql = re.sub(
         r"(\w+)\s*=\s*'\$\{date\}'",
-        lambda m: f"{m.group(1)} = '{today}'",
+        lambda m: f"{m.group(1)} = '{one_year_later}'",
         sql,
         flags=re.IGNORECASE,
     )
@@ -296,7 +352,7 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
         )
 
         table_name = create_match.group(2)
-        temp_table = _get_temp_table_name(table_name, user_account, today, table_suffix)
+        temp_table = _get_temp_table_name(table_name, user_account, one_year_later, table_suffix)
 
         # Find parentheses content
         paren_start = full_match.find("(", create_match.end())
@@ -326,7 +382,7 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
 
         db_name = insert_match.group(1)
         table_name = insert_match.group(2)
-        temp_table = _get_temp_table_name(table_name, user_account, today, table_suffix)
+        temp_table = _get_temp_table_name(table_name, user_account, one_year_later, table_suffix)
 
         # Replace original table name
         original = f"{db_name}.{table_name}" if db_name else table_name
@@ -471,7 +527,7 @@ def _build_count_sql(rewritten_insert_sql: str, partition_col: str = _POST_VALID
     The adhoctemp table name is extracted directly from the INSERT clause
     (between INSERT and SELECT), not from the SELECT source.
     """
-    today = date.today().strftime("%Y%m%d")
+    one_year_later = (date.today() + timedelta(days=365)).strftime("%Y%m%d")
     # Strip any trailing semicolon and whitespace
     sql = rewritten_insert_sql.rstrip("; \t\r\n")
 
@@ -487,7 +543,7 @@ def _build_count_sql(rewritten_insert_sql: str, partition_col: str = _POST_VALID
     target_table = m.group(1).strip().strip("`").strip("'").strip('"')
     if not target_table:
         return None
-    return f"SELECT count(*) FROM {target_table} WHERE {partition_col} = '{today}'"
+    return f"SELECT count(*) FROM {target_table} WHERE {partition_col} = '{one_year_later}'"
 
 
 def _parse_count_from_collect(result: dict[str, Any]) -> int | None:
@@ -700,6 +756,100 @@ async def _run_post_validate(
     }
 
 
+# ============================================================================
+# Lifecycle helpers
+# ============================================================================
+
+
+async def _submit_and_poll(
+    coordinator,
+    sql_for_submit: str,
+    timeout_sec: int,
+    poll_interval: float,
+) -> tuple[str, str | None, dict | None]:
+    """Submit SQL to DataOps and poll until done.
+
+    Returns:
+        (result_status, job_id, result)
+        job_id is None if submission failed.
+    """
+    try:
+        submit_result = coordinator.submit_job(
+            resource_id="dataops",
+            command=sql_for_submit,
+            task_type="sql_validate",
+            timeout_sec=timeout_sec,
+        )
+        job_id = submit_result.get("job_id")
+        if submit_result.get("status") == "ERROR":
+            return "error", None, {"error": submit_result.get("message") or "dataops submit_job failed"}
+        if not job_id:
+            return "error", None, {"error": "dataops submit_job returned no job_id"}
+
+        result_status, result = await _poll_until_done(coordinator, job_id, timeout_sec, poll_interval)
+
+        if result_status == "timed_out":
+            return "timed_out", job_id, None
+
+        if result is None:
+            return "error", job_id, None
+
+        return result_status, job_id, result
+
+    except Exception as exc:  # noqa: BLE001
+        return "error", None, {"error": f"dataops MCP call failed: {exc}"}
+
+
+async def _handle_post_validate(
+    coordinator,
+    sql_for_submit: str,
+    original_sql: str,
+    user_account: str,
+    table_suffix: str,
+    resource: Any,
+    runtime: Any,
+    timeout_sec: int,
+    poll_interval: float,
+) -> dict[str, Any] | None:
+    """Run post-validation for INSERT SQL: SELECT count(*) against temp table.
+
+    Returns None if not an INSERT or if temp table extraction failed.
+    Returns the post-validate dict with 'ok', 'count', 'error', etc.
+    """
+    if not _is_insert_sql(original_sql):
+        return None
+
+    original_query = ""
+    if runtime is not None:
+        original_query = str(getattr(runtime, "user_query", "") or "").strip()
+        if not original_query:
+            original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
+
+    temp_table = _extract_insert_target_table(original_sql, user_account, table_suffix)
+    if not temp_table:
+        logger.debug("[dataops_validate_sql] post-validate skipped: could not extract target table")
+        return None
+
+    count_sql = _build_count_sql(sql_for_submit, _POST_VALIDATE_PARTITION_COL)
+    if not count_sql:
+        return None
+
+    return await _run_post_validate(
+        coordinator,
+        count_sql,
+        sql_for_submit,
+        timeout_sec=timeout_sec,
+        poll_interval=poll_interval,
+        runtime=runtime,
+        original_query=original_query,
+    )
+
+
+# ============================================================================
+# Main validation entry points
+# ============================================================================
+
+
 async def dataops_validate_sql(
     sql: str,
     *,
@@ -729,6 +879,14 @@ async def dataops_validate_sql(
     """
     runtime = _tool_context.runtime
 
+    # --- Environment routing -------------------------------------------------
+    env = _get_dataops_env()
+    logger.info(f"[dataops_validate_sql] env routing: DATAOPS_ENV={env!r} (set={bool(os.environ.get('DATAOPS_ENV'))})")
+    if env == "prod":
+        logger.info("[dataops_validate_sql] routing to PROD path (official MCP flat flow)")
+        return await _dataops_validate_sql_prod(sql, _tool_context=_tool_context)
+    logger.info("[dataops_validate_sql] routing to INTEGRATION path (resource-coordinator flow)")
+
     # --- Skip / setup ---
     skip_result, coordinator = _check_skip_conditions(sql, runtime)
     if skip_result is not None:
@@ -746,112 +904,143 @@ async def dataops_validate_sql(
 
     # --- SQL rewrite ---
     sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
-
     sql_for_submit = await _expand_cte_for_dml(sql_for_submit, timeout_sec=min(timeout_sec, 60), runtime=runtime)
 
-    # --- Lifecycle ---
-    try:
-        submit_result = coordinator.submit_job(
-            resource_id="dataops",
-            command=sql_for_submit,
-            task_type="sql_validate",
-            timeout_sec=timeout_sec,
+    # --- Pre-submit: DROP temp table for CREATE TABLE (when enabled) ---
+    drop_job_id: str | None = None
+    if bool(resource.metadata.get("drop_before_create", False)):
+        drop_job_id = await _pre_drop_for_create(
+            coordinator, sql, user_account, table_suffix, timeout_sec, poll_interval
         )
-        job_id = submit_result.get("job_id")
-        if submit_result.get("status") == "ERROR":
-            return {"passed": False, "error": submit_result.get("message") or "dataops submit_job failed"}
-        if not job_id:
-            return {"passed": False, "error": "dataops submit_job returned no job_id"}
 
-        result_status, result = await _poll_until_done(coordinator, job_id, timeout_sec, poll_interval)
+    # --- Lifecycle ---
+    result_status, job_id, result = await _submit_and_poll(coordinator, sql_for_submit, timeout_sec, poll_interval)
 
-        if result_status == "timed_out":
-            return {
-                "passed": False,
-                "error": f"dataops execution timed out after {timeout_sec}s, skipped check",
-                "job_id": job_id,
-                "timed_out": True,
-            }
+    if result_status == "timed_out":
+        return {
+            "passed": False,
+            "error": f"dataops execution timed out after {timeout_sec}s, skipped check",
+            "job_id": job_id,
+            "timed_out": True,
+        }
 
-        if result is None:
-            return {"passed": False, "error": "dataops collect returned no result", "job_id": job_id}
-
-    except Exception as exc:  # noqa: BLE001
-        return {"passed": False, "error": f"dataops MCP call failed: {exc}"}
+    if result_status == "error":
+        err = result or {}
+        return {"passed": False, "error": err.get("error", "unknown error"), "job_id": job_id}
 
     # --- Outcome ---
     if result_status == "completed":
-        final_result = {"passed": True, "job_id": job_id}
+        final_result: dict[str, Any] = {"passed": True, "job_id": job_id}
+        if drop_job_id:
+            final_result["drop_job_id"] = drop_job_id
 
-        # Post-validate: INSERT only — run SELECT count(*) against the same temp table
-        if _is_insert_sql(sql):
-            # Try to get original NL query for semantic mismatch analysis
-            original_query = ""
-            if runtime is not None:
-                original_query = str(getattr(runtime, "user_query", "") or "").strip()
-                if not original_query:
-                    original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
+        pv = await _handle_post_validate(
+            coordinator,
+            sql_for_submit,
+            sql,
+            user_account,
+            table_suffix,
+            resource,
+            runtime,
+            timeout_sec,
+            poll_interval,
+        )
+        if pv is not None:
+            _apply_post_validate_result(final_result, pv, resource)
 
-            temp_table = _extract_insert_target_table(sql, user_account, table_suffix)
-            if temp_table:
-                count_sql = _build_count_sql(sql_for_submit, _POST_VALIDATE_PARTITION_COL)
-                if count_sql:
-                    pv = await _run_post_validate(
-                        coordinator,
-                        count_sql,
-                        sql_for_submit,
-                        timeout_sec=timeout_sec,
-                        poll_interval=poll_interval,
-                        runtime=runtime,
-                        original_query=original_query,
-                    )
-                    if not pv["ok"]:
-                        final_result = {
-                            "passed": False,
-                            "error": f"post_validate error: {pv['error']}",
-                            "job_id": job_id,
-                        }
-                    elif pv["count"] == 0:
-                        skip_count_zero = bool(resource.metadata.get("skip_post_validate_count_zero", False))
-                        if skip_count_zero:
-                            final_result = {"passed": True, "job_id": job_id}
-                        # count=0 → first attempt: if LLM detected a mismatch, report it as suggestion
-                        elif pv.get("has_mismatch") and pv.get("fix_suggestion"):
-                            final_result = {
-                                "passed": False,
-                                "error": (
-                                    f"INSERT validated but target table is empty (0 rows on "
-                                    f"{_POST_VALIDATE_PARTITION_COL}=<today>): "
-                                    f"{pv['mismatch_reason']}"
-                                ),
-                                "job_id": job_id,
-                                "count_zero_analysis": {
-                                    "has_mismatch": True,
-                                    "mismatch_reason": pv["mismatch_reason"],
-                                    "fix_suggestion": pv["fix_suggestion"],
-                                },
-                            }
-                        else:
-                            # No LLM mismatch signal → report as empty without SQL-specific suggestion
-                            final_result = {
-                                "passed": False,
-                                "error": (
-                                    f"INSERT validated but target table is empty "
-                                    f"(0 rows on {_POST_VALIDATE_PARTITION_COL}=<today>)"
-                                ),
-                                "job_id": job_id,
-                            }
-            else:
-                logger.debug("[dataops_validate_sql] post-validate skipped: could not extract target table")
         return final_result
 
-    failure_result = _build_failure_response(result_status, job_id, result, sql)
-    return failure_result
+    # Failed
+    return _build_failure_response(result_status, job_id, result, sql)
+
+
+async def _pre_drop_for_create(
+    coordinator,
+    sql: str,
+    user_account: str,
+    table_suffix: str,
+    timeout_sec: int,
+    poll_interval: float,
+) -> str | None:
+    """For CREATE TABLE, drop existing temp table first to ensure clean creation.
+
+    Returns the drop job_id if submitted, None otherwise.
+    """
+    if not _is_create_sql(sql):
+        return None
+
+    drop_sql = _build_drop_sql(sql, user_account, table_suffix)
+    if not drop_sql:
+        return None
+
+    try:
+        logger.debug(f"[dataops_validate_sql] Submitting DROP for CREATE TABLE: {drop_sql}")
+        drop_result = coordinator.submit_job(
+            resource_id="dataops",
+            command=drop_sql,
+            task_type="sql_validate",
+            timeout_sec=min(timeout_sec, 60),
+        )
+        drop_job_id = drop_result.get("job_id")
+        if drop_result.get("status") == "ERROR" or not drop_job_id:
+            logger.warning(
+                f"[dataops_validate_sql] DROP failed, continuing with CREATE anyway: "
+                f"{drop_result.get('message', 'no job_id')}"
+            )
+            return None
+
+        drop_status, _ = await _poll_until_done(coordinator, drop_job_id, min(timeout_sec, 60), poll_interval)
+        if drop_status == "completed":
+            logger.debug(f"[dataops_validate_sql] DROP completed successfully job_id={drop_job_id}")
+        else:
+            logger.warning(
+                f"[dataops_validate_sql] DROP ended with status={drop_status}, "
+                f"proceeding with CREATE anyway job_id={drop_job_id}"
+            )
+        return drop_job_id
+
+    except Exception as drop_exc:
+        logger.warning(f"[dataops_validate_sql] DROP submission failed, continuing: {drop_exc}")
+        return None
+
+
+def _apply_post_validate_result(final_result: dict[str, Any], pv: dict[str, Any], resource: Any) -> None:
+    """Merge post-validate result into final_result, mutating final_result in place."""
+    if not pv["ok"]:
+        final_result["passed"] = False
+        final_result["error"] = f"post_validate error: {pv['error']}"
+        return
+
+    if pv["count"] == 0:
+        skip_count_zero = bool(resource.metadata.get("skip_post_validate_count_zero", False))
+        if skip_count_zero:
+            final_result["passed"] = True
+            return
+
+        if pv.get("has_mismatch") and pv.get("fix_suggestion"):
+            final_result["passed"] = False
+            final_result["error"] = (
+                f"INSERT validated but target table is empty (0 rows on "
+                f"{_POST_VALIDATE_PARTITION_COL}=<today>): "
+                f"{pv['mismatch_reason']}"
+            )
+            final_result["count_zero_analysis"] = {
+                "has_mismatch": True,
+                "mismatch_reason": pv["mismatch_reason"],
+                "fix_suggestion": pv["fix_suggestion"],
+            }
+        else:
+            final_result["passed"] = False
+            final_result["error"] = (
+                f"INSERT validated but target table is empty (0 rows on {_POST_VALIDATE_PARTITION_COL}=<today>)"
+            )
 
 
 async def dataops_validate_sql_with_log_analysis(
     sql: str,
     *,
+    attempt: int = 1,
+    prior_attempts: list[dict[str, Any]] | None = None,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Validate SQL and fetch + analyze OBS log on failure in a single tool call.
@@ -865,17 +1054,63 @@ async def dataops_validate_sql_with_log_analysis(
     2. Analyzing log content with LLM
     3. Returning structured error analysis (error_type, location, suggestions)
 
+    **Retry contract (de_agent invariant):**
+    - Per SQL, the caller may invoke this at most ``MAX_VALIDATE_ATTEMPTS`` (3)
+      times (including the first call). Each invocation must pass
+      ``attempt`` = 1, 2, or 3, and ``prior_attempts`` = the ``attempts`` list
+      returned by the previous call (empty list on first call).
+    - When ``attempt > MAX_VALIDATE_ATTEMPTS`` the call is rejected without
+      touching DataOps; the caller must not initiate a 4th call.
+    - When the final attempt (``attempt == MAX_VALIDATE_ATTEMPTS``) still
+      returns ``passed: false``, this wrapper auto-dumps
+      ``validate_<table>.json`` + ``delivery_warning.md`` to the workspace
+      and adds ``failed_after_max_retries: true`` to the response.
+
     Args:
         sql: SQL statement to validate.
+        attempt: 1-indexed attempt number for this call (caller-managed).
+        prior_attempts: Returned ``attempts`` list from the previous call
+            (empty/None on first call).
 
     Returns:
         Same as ``dataops_validate_sql``, but on failure also includes:
         - ``log_analysis``: Structured error analysis (error_type, error_message,
           location, suggestions)
         - ``log_analysis_summary``: Short summary for display (not full log)
+        - ``attempts``: Running list of attempt summaries (always returned;
+          caller must echo this back as ``prior_attempts`` on the next call)
+        - On max retries: ``failed_after_max_retries: true``,
+          ``validation_report_path``: report file path,
+          ``delivery_warning_path``: warning file path
     """
-    logger.debug(f"[dataops_validate_sql_with_log_analysis] === START === sql={sql[:100]}")
     start_time = time.time()
+    prior_attempts = list(prior_attempts or [])
+
+    # --- Retry guard: reject attempts beyond MAX_VALIDATE_ATTEMPTS -------------
+    if not isinstance(attempt, int) or attempt < 1:
+        return {
+            "passed": False,
+            "failed_after_max_retries": True,
+            "error": f"attempt must be a positive int (got {attempt!r})",
+            "attempts": prior_attempts,
+        }
+    if attempt > MAX_VALIDATE_ATTEMPTS:
+        logger.warning(
+            f"[dataops_validate_sql_with_log_analysis] attempt={attempt} exceeds "
+            f"MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; refusing. "
+            f"Caller must not initiate a 4th call."
+        )
+        return {
+            "passed": False,
+            "failed_after_max_retries": True,
+            "error": (f"exceeded MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; caller must not initiate a 4th call"),
+            "attempts": prior_attempts,
+        }
+
+    logger.debug(
+        f"[dataops_validate_sql_with_log_analysis] === START attempt={attempt} "
+        f"prior_attempts={len(prior_attempts)} sql={sql[:100]}"
+    )
 
     # Step 1: Validate SQL
     logger.debug("[dataops_validate_sql_with_log_analysis] Calling dataops_validate_sql...")
@@ -890,19 +1125,29 @@ async def dataops_validate_sql_with_log_analysis(
     # If passed, return immediately
     if validate_result.get("passed"):
         elapsed = time.time() - start_time
-        logger.debug(f"[dataops_validate_sql_with_log_analysis] === END (passed) elapsed={elapsed:.2f}s ===")
+        logger.debug(
+            f"[dataops_validate_sql_with_log_analysis] === END (passed) attempt={attempt} elapsed={elapsed:.2f}s ==="
+        )
         return validate_result
 
-    # If failed but no log_file_info, return as-is
+    # If failed but neither log_file_info (integration) nor inline errorLog (prod)
+    # is available, return as-is — there's nothing to analyze.
     log_file_info = validate_result.get("log_file_info")
-    if not log_file_info:
+    inline_error_log = validate_result.get("errorLog") or ""
+    if not log_file_info and not inline_error_log:
         logger.debug(
-            "[dataops_validate_sql_with_log_analysis] Validation failed but no log_file_info job_id={}".format(
+            "[dataops_validate_sql_with_log_analysis] Validation failed but no log source "
+            "job_id={} log_file_info_present={} errorLog_present={}".format(
                 validate_result.get("job_id"),
+                bool(log_file_info),
+                bool(inline_error_log),
             ),
         )
         elapsed = time.time() - start_time
-        logger.debug(f"[dataops_validate_sql_with_log_analysis] === END (no log_info) elapsed={elapsed:.2f}s ===")
+        logger.debug(
+            f"[dataops_validate_sql_with_log_analysis] === END (no log_info) "
+            f"attempt={attempt} elapsed={elapsed:.2f}s ==="
+        )
         return validate_result
 
     job_id = validate_result.get("job_id")
@@ -915,11 +1160,19 @@ async def dataops_validate_sql_with_log_analysis(
         ),
     )
 
-    # Step 2: Fetch OBS log and analyze with LLM in-process. The raw log and LLM
-    # messages stay private to this tool invocation, so the main agent's chat
-    # history is never polluted with raw log content. Only the structured
-    # analysis (error_type, error_message, location, suggestions) is returned.
-    fetch_and_analyze = await _analyze_log_directly(log_file_info, job_id, raw_error, _tool_context=_tool_context)
+    # Step 2: Analyze error context with LLM in-process. Two source modes:
+    #   - integration: log_file_info (url + headers) → fetch OBS log → analyze
+    #   - prod: inline errorLog (already on the response) → analyze directly
+    # The raw log and LLM messages stay private to this tool invocation, so the
+    # main agent's chat history is never polluted with raw log content. Only the
+    # structured analysis (error_type, error_message, location, suggestions) is returned.
+    fetch_and_analyze = await _analyze_log_directly(
+        log_file_info if log_file_info else None,
+        job_id,
+        raw_error,
+        raw_log=inline_error_log if (not log_file_info and inline_error_log) else None,
+        _tool_context=_tool_context,
+    )
     direct_status = fetch_and_analyze.get("status")
     logger.debug(
         f"[dataops_validate_sql_with_log_analysis] In-process analysis job_id={job_id!r} "
@@ -947,6 +1200,32 @@ async def dataops_validate_sql_with_log_analysis(
             ),
         )
 
+    # --- Append this attempt's summary to the running history -----------------
+    # Strip bulky fields (log_file_info / log analysis raw text) before storing;
+    # the caller will echo this back as prior_attempts, so keep it compact.
+    attempt_summary = _summarize_attempt(attempt, validate_result, start_time)
+    attempts = prior_attempts + [attempt_summary]
+    validate_result["attempts"] = attempts
+
+    # --- Max-retries reached → dump validate_<table>.json + delivery_warning.md
+    if attempt >= MAX_VALIDATE_ATTEMPTS:
+        validate_result["failed_after_max_retries"] = True
+        report_paths = _dump_validation_artifacts(
+            sql=sql,
+            attempts=attempts,
+            _tool_context=_tool_context,
+        )
+        if report_paths.get("validation_report_path"):
+            validate_result["validation_report_path"] = report_paths["validation_report_path"]
+        if report_paths.get("delivery_warning_path"):
+            validate_result["delivery_warning_path"] = report_paths["delivery_warning_path"]
+        logger.warning(
+            f"[dataops_validate_sql_with_log_analysis] MAX_VALIDATE_ATTEMPTS reached "
+            f"({attempt}/{MAX_VALIDATE_ATTEMPTS}); best-effort artifacts written. "
+            f"report={report_paths.get('validation_report_path')} "
+            f"warning={report_paths.get('delivery_warning_path')}"
+        )
+
     # Reorder fields so analysis comes before log_file_info (the latter is bulky and
     # easily truncated when the tool result is displayed in chat history). Putting
     # log_analysis_summary first keeps the actionable info visible.
@@ -966,6 +1245,16 @@ async def dataops_validate_sql_with_log_analysis(
     if reason is not None:
         ordered_result["reason"] = reason
 
+    # attempts / failed_after_max_retries / paths must surface before log_file_info
+    for key in (
+        "attempts",
+        "failed_after_max_retries",
+        "validation_report_path",
+        "delivery_warning_path",
+    ):
+        if key in validate_result:
+            ordered_result[key] = validate_result.pop(key)
+
     # log_analysis / log_analysis_summary / log_analysis_error sit before the
     # verbose log_file_info block so they remain visible even if the result is truncated.
     for key in ("log_analysis", "log_analysis_summary", "log_analysis_error"):
@@ -977,7 +1266,10 @@ async def dataops_validate_sql_with_log_analysis(
         ordered_result[key] = value
 
     elapsed = time.time() - start_time
-    logger.debug(f"[dataops_validate_sql_with_log_analysis] === END (failed with analysis) elapsed={elapsed:.2f}s ===")
+    logger.debug(
+        f"[dataops_validate_sql_with_log_analysis] === END (failed with analysis) "
+        f"attempt={attempt} elapsed={elapsed:.2f}s ==="
+    )
     return ordered_result
 
 
@@ -1016,18 +1308,23 @@ def _parse_analysis_from_text(text: str) -> dict[str, Any]:
 
 
 async def _analyze_log_directly(
-    log_file_info: dict[str, Any],
+    log_file_info: dict[str, Any] | None,
     job_id: str,
     raw_error: str,
+    *,
+    raw_log: str | None = None,
     _tool_context: ToolExecutionContext | None = None,
 ) -> dict[str, Any]:
-    """Fetch OBS log and analyze with LLM in-process — keeps main-agent chat history clean.
+    """Analyze an error log with LLM in-process.
 
-    Runs inside the same tool invocation so:
-      - The raw log content stays a local variable and never enters chat history.
-      - Only the structured analysis (error_type, error_message, location, suggestions)
-        is returned to the caller.
-      - LLM I/O is wrapped in asyncio.to_thread (same pattern as _expand_cte_for_dml).
+    Two source modes (mutually exclusive):
+      - integration: ``log_file_info`` is set → fetch OBS log via URL+headers.
+      - prod: ``raw_log`` is set → use the inline ``errorLog`` returned by the
+        official MCP directly (no OBS hop).
+
+    Runs inside the same tool invocation so the raw log never enters chat history.
+    Only the structured analysis (error_type, error_message, location, suggestions)
+    is returned to the caller.
 
     LLM resolution order (first non-None wins):
       1. ``_tool_context.runtime.llm("planner")`` — reuse the main agent's LLM
@@ -1037,25 +1334,32 @@ async def _analyze_log_directly(
     Returns:
         dict with keys: status, analysis (optional), error (optional).
     """
-    logger.debug(f"[_analyze_log_directly] START job_id={job_id!r}")
+    logger.debug(f"[_analyze_log_directly] START job_id={job_id!r} source={'inline_error_log' if raw_log else 'obs'}")
 
-    # 1) Fetch raw log (private to this function — never returned to main agent)
-    fetch_result = await dataops_fetch_obs_log(log_file_info, _tool_context=None)  # type: ignore[arg-type]
-    status = fetch_result.get("status")
-    if status != "success":
+    # 1) Resolve raw log content (private to this function — never returned to main agent)
+    if raw_log:
+        # prod path: official MCP returned errorLog inline, skip OBS fetch entirely
+        log_content = raw_log
         logger.debug(
-            f"[_analyze_log_directly] OBS fetch failed job_id={job_id!r} "
-            f"fetch_status={status!r} error={fetch_result.get('error')!r}",
+            f"[_analyze_log_directly] using inline errorLog job_id={job_id!r} log_len={len(log_content)}",
         )
-        return {
-            "status": "fetch_error",
-            "error": fetch_result.get("error", "failed to fetch log from OBS"),
-        }
-
-    log_content = fetch_result.get("log_content", "") or ""
-    logger.debug(
-        f"[_analyze_log_directly] OBS fetched job_id={job_id!r} log_len={len(log_content)}",
-    )
+    else:
+        # integration path: fetch OBS log via URL+headers
+        fetch_result = await dataops_fetch_obs_log(log_file_info, _tool_context=None)  # type: ignore[arg-type]
+        status = fetch_result.get("status")
+        if status != "success":
+            logger.debug(
+                f"[_analyze_log_directly] OBS fetch failed job_id={job_id!r} "
+                f"fetch_status={status!r} error={fetch_result.get('error')!r}",
+            )
+            return {
+                "status": "fetch_error",
+                "error": fetch_result.get("error", "failed to fetch log from OBS"),
+            }
+        log_content = fetch_result.get("log_content", "") or ""
+        logger.debug(
+            f"[_analyze_log_directly] OBS fetched job_id={job_id!r} log_len={len(log_content)}",
+        )
 
     # Truncate to keep LLM prompt bounded. Spark logs are usually < 50KB; cap at 32KB.
     truncated_log = log_content[:32_000]
@@ -1282,3 +1586,434 @@ async def dataops_fetch_obs_log(
             exc_info=True,
         )
         return {"status": "error", "error": f"Failed to fetch log from OBS: {exc}"}
+
+
+# ============================================================================
+# Production environment (扁平路径,不走 resource-coordinator)
+# ============================================================================
+
+_PROD_ENV = "prod"
+_VALID_DATAOPS_ENVS = frozenset({"prod", "integration"})
+
+
+def _get_dataops_env() -> str:
+    """读取 DATAOPS_ENV,默认 integration(保持向后兼容).
+
+    Returns:
+        "prod" or "integration"
+    """
+    raw = os.environ.get("DATAOPS_ENV", "integration").strip().lower()
+    if raw not in _VALID_DATAOPS_ENVS:
+        logger.warning(f"[dataops_validate_sql] Unknown DATAOPS_ENV={raw!r}, falling back to 'integration'")
+        return "integration"
+    return raw
+
+
+async def _dataops_validate_sql_prod(
+    sql: str,
+    *,
+    _tool_context: ToolExecutionContext,
+) -> dict[str, Any]:
+    """Production-environment validation entry point.
+
+    与联调路径完全独立:不走 submit -> poll -> collect,直接调官方 MCP 工具。
+    """
+    runtime = _tool_context.runtime
+
+    # --- Empty SQL shortcut ---
+    sql = (sql or "").strip()
+    if not sql:
+        return {"passed": True, "skipped": True, "reason": "empty sql"}
+
+    # --- Config ---
+    POLL_INTERVAL_SEC = 5.0  # 比联调(30s)短,官方 MCP 无 per-poll 开销
+    MAX_TIMEOUT_SEC = 30 * 60
+    timeout_sec = MAX_TIMEOUT_SEC
+    poll_interval = POLL_INTERVAL_SEC
+
+    user_account = _get_user_account(runtime)
+    table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
+
+    # --- SQL rewrite (与联调相同) ---
+    sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
+    sql_for_submit = await _expand_cte_for_dml(sql_for_submit, timeout_sec=min(timeout_sec, 60), runtime=runtime)
+
+    # --- Execute -> poll -> collect (扁平函数) ---
+    result_status, job_id, result = await _submit_and_poll_prod(sql_for_submit, timeout_sec, poll_interval)
+
+    # --- Outcome dispatch ---
+    if result_status == "timed_out":
+        return {
+            "passed": False,
+            "error": f"dataops(prod) execution timed out after {timeout_sec}s",
+            "job_id": job_id,
+            "timed_out": True,
+        }
+    if result_status == "error":
+        err = result or {}
+        return {"passed": False, "error": err.get("error", "unknown error"), "job_id": job_id}
+
+    if result_status == "completed":
+        final_result: dict[str, Any] = {"passed": True, "job_id": job_id}
+        pv = await _run_post_validate_prod(
+            sql_for_submit,
+            sql,
+            timeout_sec=timeout_sec,
+            poll_interval=poll_interval,
+            runtime=runtime,
+        )
+        if pv is not None:
+            _apply_post_validate_result_prod(final_result, pv)
+        return final_result
+
+    # failed
+    return _build_failure_response_prod(result_status, job_id, result, sql)
+
+
+async def _submit_and_poll_prod(
+    sql_for_submit: str,
+    timeout_sec: int,
+    poll_interval: float,
+) -> tuple[str, str | None, dict | None]:
+    """Execute -> poll-until-done for production (扁平实现).
+
+    与联调版本的核心区别:
+        - 联调:submit_job -> 循环 poll -> collect(走 HMAC-SHA256 OpenAPI)
+        - 生产:execute_sql -> 循环 get_query_result -> 直接返回结果(走官方 MCP)
+    """
+    from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
+        prod_collect_result,
+        prod_execute_sql,
+        prod_get_query_result,
+    )
+
+    # Step 1: 提交 SQL
+    try:
+        submit_result = await prod_execute_sql(sql_for_submit)
+        if not submit_result["success"]:
+            return "error", None, {"error": submit_result.get("error") or "execute_sql failed"}
+        job_id = submit_result["job_id"]
+    except Exception as exc:
+        return "error", None, {"error": f"dataops(prod) MCP execute_sql failed: {exc}"}
+
+    # Step 2: 轮询直到 terminal 状态
+    deadline = asyncio.get_event_loop().time() + timeout_sec
+    while asyncio.get_event_loop().time() < deadline:
+        polled = await prod_get_query_result(job_id)
+        status = polled["status"]
+        if status in {"completed", "failed"}:
+            # Step 3: 到达 terminal,取最终结果(含 inline data 或 errorLog)
+            result = await prod_collect_result(job_id)
+            return status, job_id, result
+        if status == "error":
+            return "error", job_id, {"error": polled.get("error", "poll error")}
+        await asyncio.sleep(poll_interval)
+
+    return "timed_out", job_id, None
+
+
+async def _run_post_validate_prod(
+    sql_for_submit: str,
+    original_sql: str,
+    *,
+    timeout_sec: int,
+    poll_interval: float,
+    runtime: Any,
+) -> dict[str, Any] | None:
+    """生产端后置验证:count 校验 + 0 行 LLM 分析。
+
+    与联调版 _run_post_validate 逻辑对齐,但执行层走生产 MCP 扁平函数(不耦合 coordinator)。
+    """
+    from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
+        prod_collect_result,
+        prod_execute_sql,
+        prod_get_query_result,
+    )
+
+    if not _is_insert_sql(original_sql):
+        return None
+
+    count_sql = _build_count_sql(sql_for_submit, _POST_VALIDATE_PARTITION_COL)
+    if not count_sql:
+        return None
+
+    count_timeout = min(timeout_sec, 120)
+
+    # Submit count query
+    try:
+        submit_result = await prod_execute_sql(count_sql)
+        if not submit_result["success"]:
+            return {
+                "ok": False,
+                "count": None,
+                "error": submit_result.get("error") or "count submit failed",
+                "job_id": None,
+            }
+        count_job_id = submit_result["job_id"]
+    except Exception as exc:
+        return {"ok": False, "count": None, "error": f"count submit error: {exc}", "job_id": None}
+
+    # Poll count query
+    deadline = asyncio.get_event_loop().time() + count_timeout
+    while asyncio.get_event_loop().time() < deadline:
+        polled = await prod_get_query_result(count_job_id)
+        if polled["status"] == "completed":
+            count_result = await prod_collect_result(count_job_id)
+            break
+        if polled["status"] == "error":
+            return {
+                "ok": False,
+                "count": None,
+                "error": polled.get("error", "count poll error"),
+                "job_id": count_job_id,
+            }
+        await asyncio.sleep(poll_interval)
+    else:
+        return {
+            "ok": False,
+            "count": None,
+            "error": f"count query timed out after {count_timeout}s",
+            "job_id": count_job_id,
+        }
+
+    # Parse count
+    count = _parse_count_from_collect(count_result)
+    if count is None:
+        return {
+            "ok": False,
+            "count": None,
+            "error": "count result parse failed",
+            "job_id": count_job_id,
+            "has_mismatch": False,
+            "mismatch_reason": "",
+            "fix_suggestion": "",
+        }
+
+    # 0 行 LLM 分析(复用联调版 LLM 调用)
+    if count == 0:
+        original_query = ""
+        if runtime is not None:
+            original_query = str(getattr(runtime, "user_query", "") or "").strip()
+            if not original_query:
+                original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
+        if original_query:
+            analysis = await _analyze_count_zero_with_llm(original_query, original_sql or count_sql, runtime=runtime)
+            return {
+                "ok": True,
+                "count": 0,
+                "error": None,
+                "job_id": count_job_id,
+                **analysis,
+            }
+
+    return {
+        "ok": True,
+        "count": count,
+        "error": None,
+        "job_id": count_job_id,
+        "has_mismatch": False,
+        "mismatch_reason": "",
+        "fix_suggestion": "",
+    }
+
+
+def _apply_post_validate_result_prod(
+    final_result: dict[str, Any],
+    pv: dict[str, Any],
+) -> None:
+    """将后置验证结果合并到生产路径的 final_result(与联调版镜像,不需要 resource)。"""
+    if pv.get("error") and not pv.get("ok"):
+        # 验证出错时,不阻塞上层(参考联调版逻辑,只 attach 字段)
+        final_result["post_validate"] = {
+            "ok": False,
+            "error": pv.get("error"),
+            "job_id": pv.get("job_id"),
+        }
+        return
+
+    final_result["post_validate"] = {
+        "ok": pv.get("ok", True),
+        "count": pv.get("count"),
+        "job_id": pv.get("job_id"),
+    }
+    if pv.get("has_mismatch"):
+        final_result["post_validate"]["has_mismatch"] = True
+        final_result["post_validate"]["mismatch_reason"] = pv.get("mismatch_reason", "")
+        final_result["post_validate"]["fix_suggestion"] = pv.get("fix_suggestion", "")
+
+
+def _build_failure_response_prod(
+    result_status: str,
+    job_id: str,
+    result: dict,
+    sql: str,
+) -> dict[str, Any]:
+    """生产端失败响应(参考联调版 _build_failure_response,但不依赖 OBS logFileInfo)。
+
+    errorLog 直接从响应里取(生产端内联,无需 OBS)。
+    """
+    error_msg = (result or {}).get("error") or f"dataops(prod) rejected SQL (status={result_status})"
+    error_log = (result or {}).get("errorLog") or ""
+    response_data: dict[str, Any] = {
+        "passed": False,
+        "error": error_msg,
+        "job_id": job_id,
+    }
+    if error_log:
+        response_data["errorLog"] = error_log
+        response_data["log_source"] = "inline"
+    return response_data
+
+
+# ============================================================================
+# Retry helpers (shared by dataops_validate_sql_with_log_analysis)
+# ============================================================================
+
+
+def _extract_original_target_table(sql: str) -> str | None:
+    """Extract the target table reference (db.table) from a SQL statement.
+
+    Used purely to derive a filename for ``validate_<table>.json``. Falls back
+    to ``None`` when no INSERT/CREATE clause is found; the caller must then
+    use a generic filename like ``validate_unknown.json``.
+
+    NOTE: This parses the *original* (pre-rewrite) SQL so the report filename
+    matches the user-visible table, not the adhoctemp rewriting.
+    """
+    if not sql:
+        return None
+    sql_no_comment = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    patterns = [
+        # INSERT OVERWRITE TABLE db.tbl PARTITION ...
+        r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?([`\w.-]+(?:\.[`\w.-]+)+)",
+        # CREATE [EXTERNAL] TABLE [IF NOT EXISTS] db.tbl
+        r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`\w.-]+(?:\.[`\w.-]+)+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, sql_no_comment, re.IGNORECASE)
+        if m:
+            ref = m.group(1).strip().strip("`").strip("'").strip('"')
+            # Take last segment after a dot if multi-segment, otherwise full
+            return ref.replace(".", "_").replace("-", "_") if ref else None
+    return None
+
+
+def _summarize_attempt(
+    attempt: int,
+    validate_result: dict[str, Any],
+    start_time: float,
+) -> dict[str, Any]:
+    """Build a compact summary of one attempt for storage in ``attempts`` list.
+
+    The summary is intentionally stripped of bulky fields (raw log_file_info,
+    full log analysis, raw errorLog) — those are not needed for the caller to
+    decide what to fix on the next attempt; ``log_analysis_summary`` is enough.
+    """
+    elapsed = max(0.0, time.time() - start_time)
+    analysis = validate_result.get("log_analysis") or {}
+    return {
+        "attempt": attempt,
+        "passed": bool(validate_result.get("passed")),
+        "job_id": validate_result.get("job_id"),
+        "elapsed_sec": round(elapsed, 2),
+        "error_type": analysis.get("error_type"),
+        "error_message": analysis.get("error_message") or validate_result.get("error"),
+        "suggestions": list(analysis.get("suggestions") or []),
+        "log_analysis_summary": validate_result.get("log_analysis_summary"),
+    }
+
+
+def _resolve_workspace_dir(_tool_context: ToolExecutionContext | None) -> Path | None:
+    """Pick the best workspace directory we can write validation artifacts to.
+
+    Priority:
+      1. ``runtime.workspace_dir`` (preferred — same dir the agent writes SQL into)
+      2. ``DATAOPS_VALIDATION_REPORT_DIR`` env var (manual override)
+      3. ``None`` (caller falls back to logging-only mode)
+    """
+    env_dir: Path | None = None
+    raw = os.environ.get("DATAOPS_VALIDATION_REPORT_DIR", "").strip()
+    if raw:
+        env_dir = Path(raw).expanduser().resolve()
+    runtime = getattr(_tool_context, "runtime", None) if _tool_context is not None else None
+    runtime_ws = getattr(runtime, "workspace_dir", None) if runtime is not None else None
+    if runtime_ws:
+        return Path(runtime_ws).expanduser().resolve()
+    return env_dir
+
+
+def _dump_validation_artifacts(
+    sql: str,
+    attempts: list[dict[str, Any]],
+    _tool_context: ToolExecutionContext | None,
+) -> dict[str, str | None]:
+    """Best-effort write of ``validate_<table>.json`` + ``delivery_warning.md``.
+
+    Never raises — failures are logged and returned as None paths so the
+    main flow keeps moving. Returns:
+        {"validation_report_path": str|None, "delivery_warning_path": str|None}
+    """
+    result: dict[str, str | None] = {
+        "validation_report_path": None,
+        "delivery_warning_path": None,
+    }
+    workspace = _resolve_workspace_dir(_tool_context)
+    if workspace is None:
+        logger.warning(
+            "[_dump_validation_artifacts] no workspace_dir available; "
+            "skipping validate_<table>.json / delivery_warning.md dump"
+        )
+        return result
+
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        logger.warning(f"[_dump_validation_artifacts] cannot create workspace {workspace}: {exc}")
+        return result
+
+    table_token = _extract_original_target_table(sql) or "unknown"
+    report_path = workspace / _VALIDATION_REPORT_FILENAME.format(table=table_token)
+    warning_path = workspace / _DELIVERY_WARNING_FILENAME
+
+    report = {
+        "validation_status": "failed_after_max_retries",
+        "max_attempts": MAX_VALIDATE_ATTEMPTS,
+        "sql_excerpt": (sql or "")[:500],
+        "attempts": attempts,
+        "generated_at": time.time(),
+    }
+    try:
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        result["validation_report_path"] = str(report_path)
+        logger.info(f"[_dump_validation_artifacts] wrote validation report to {report_path}")
+    except Exception as exc:
+        logger.warning(f"[_dump_validation_artifacts] failed to write report {report_path}: {exc}")
+
+    # delivery_warning.md — short, scannable, fixed format
+    suggestion_lines: list[str] = []
+    for att in attempts:
+        att_no = att.get("attempt")
+        et = att.get("error_type") or "unknown"
+        em = (att.get("error_message") or "")[:200]
+        sgs = att.get("suggestions") or []
+        suggestion_lines.append(f"- attempt {att_no}: `{et}` — {em}")
+        for sg in sgs[:3]:
+            suggestion_lines.append(f"  - {sg}")
+
+    warning_body = (
+        f"# {_DELIVERY_WARNING_HEADER.format(n=MAX_VALIDATE_ATTEMPTS)}\n\n"
+        f"## 失败摘要\n\n" + "\n".join(suggestion_lines) + f"\n\n## 详细报告\n\n"
+        f"见 `{report_path.name}`（含每次调用的 job_id、elapsed、error_type、suggestions）。\n"
+        f"下游使用本批 SQL 前必须人工复核。\n"
+    )
+    try:
+        warning_path.write_text(warning_body, encoding="utf-8")
+        result["delivery_warning_path"] = str(warning_path)
+        logger.info(f"[_dump_validation_artifacts] wrote delivery warning to {warning_path}")
+    except Exception as exc:
+        logger.warning(f"[_dump_validation_artifacts] failed to write warning {warning_path}: {exc}")
+
+    return result

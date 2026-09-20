@@ -26,6 +26,9 @@ The tests below pin down each of these contracts.
 from __future__ import annotations
 
 import asyncio
+import json
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1286,6 +1289,90 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert "log_analysis" in keys[:idx_lfi]
         assert "log_analysis_summary" in keys[:idx_lfi]
 
+    # ----- prod path: inline errorLog (no OBS) --------------------------
+
+    def test_prod_failed_with_inline_error_log_runs_analysis(self, monkeypatch):
+        """Prod MCP returns errorLog inline; wrapper must analyze it in-process
+        and attach structured log_analysis, even when log_file_info is absent.
+        Regression: previously the wrapper only entered the analysis branch
+        when log_file_info was present, so prod failures silently skipped the
+        analyzer and returned a raw errorLog that the planner misread as PASSED.
+        """
+        monkeypatch.setenv("DATAOPS_ENV", "prod")
+        runtime = _make_runtime(resource=None, coordinator=None)
+        ctx = _make_context(runtime)
+
+        # Stub prod flow: submit OK, poll failed, collect yields inline errorLog
+        async def _fake_prod(sql, *, _tool_context):
+            return {
+                "passed": False,
+                "error": "AnalysisException: cannot resolve 'foo'",
+                "job_id": "job-prod-1",
+                "errorLog": _SAMPLE_LOG,
+                "log_source": "inline",
+            }
+
+        fake_llm = MagicMock(
+            invoke=MagicMock(
+                return_value=_FakeLLMResp(
+                    '{"error_type":"AnalysisException",'
+                    '"error_message":"foo not found",'
+                    '"location":{"columns":["foo"]},'
+                    '"suggestions":["use an existing column"]}'
+                )
+            )
+        )
+        runtime.llm = MagicMock(return_value=fake_llm)
+
+        with (
+            patch.object(vt, "_dataops_validate_sql_prod", side_effect=_fake_prod),
+            patch.object(vt, "dataops_fetch_obs_log") as fetch_obs,
+        ):
+            result = asyncio.run(
+                vt.dataops_validate_sql_with_log_analysis(
+                    "SELECT foo FROM db.tbl1",
+                    _tool_context=ctx,
+                )
+            )
+
+        # Wrapper must not have fallen into the OBS path
+        fetch_obs.assert_not_called()
+        assert result["passed"] is False
+        assert result["job_id"] == "job-prod-1"
+        # Inline errorLog preserved (for downstream visibility)
+        assert result["errorLog"] == _SAMPLE_LOG
+        # And — critically — structured analysis is now attached
+        assert result["log_analysis"]["error_type"] == "AnalysisException"
+        assert result["log_analysis_summary"]
+        assert "suggestions" in result["log_analysis"]
+
+    def test_prod_failed_no_log_source_returns_inner_as_is(self, monkeypatch):
+        """If prod failed but returned neither log_file_info nor errorLog,
+        wrapper should still return as-is (no analyzer input to work with).
+        """
+        monkeypatch.setenv("DATAOPS_ENV", "prod")
+        runtime = _make_runtime(resource=None, coordinator=None)
+        ctx = _make_context(runtime)
+
+        async def _fake_prod(sql, *, _tool_context):
+            return {
+                "passed": False,
+                "error": "submission failed",
+                "job_id": None,
+            }
+
+        with patch.object(vt, "_dataops_validate_sql_prod", side_effect=_fake_prod):
+            result = asyncio.run(
+                vt.dataops_validate_sql_with_log_analysis(
+                    "SELECT 1",
+                    _tool_context=ctx,
+                )
+            )
+
+        assert result["passed"] is False
+        assert result["error"] == "submission failed"
+        assert "log_analysis" not in result
+
 
 # ===========================================================================
 # _is_insert_sql / _extract_insert_target_table / _build_count_sql
@@ -1954,3 +2041,278 @@ class TestDataopsValidateSqlCountZeroAnalysis:
         assert result["passed"] is False
         assert "empty" in result["error"].lower()
         assert "count_zero_analysis" not in result
+
+
+# ===========================================================================
+# Retry / best-effort delivery (dataops_validate_sql_with_log_analysis)
+# ===========================================================================
+
+
+class TestExtractOriginalTargetTable:
+    """_extract_original_target_table parses db.table for the report filename."""
+
+    def test_insert_with_db_prefix(self):
+        sql = "INSERT OVERWRITE TABLE biads.ads_xxx_dm SELECT 1"
+        assert vt._extract_original_target_table(sql) == "biads_ads_xxx_dm"
+
+    def test_insert_with_partition(self):
+        sql = "INSERT OVERWRITE TABLE biads.ads_x PARTITION(pt_d='$date') SELECT 1"
+        assert vt._extract_original_target_table(sql) == "biads_ads_x"
+
+    def test_create_table(self):
+        sql = "CREATE EXTERNAL TABLE IF NOT EXISTS biads.ads_foo (id INT)"
+        assert vt._extract_original_target_table(sql) == "biads_ads_foo"
+
+    def test_no_table_returns_none(self):
+        assert vt._extract_original_target_table("SELECT 1") is None
+
+    def test_empty_returns_none(self):
+        assert vt._extract_original_target_table("") is None
+
+
+class TestSummarizeAttempt:
+    """_summarize_attempt builds compact per-attempt records."""
+
+    def test_compact_summary(self):
+        result = {
+            "passed": False,
+            "job_id": "j-1",
+            "error": "boom",
+            "log_analysis": {
+                "error_type": "ParseException",
+                "error_message": "syntax error at 'INVALID'",
+                "suggestions": ["replace 'INVALID' with 'SELECT'"],
+            },
+            "log_analysis_summary": "parse: INVALID → SELECT",
+            "log_file_info": {"url": "http://x", "headers": {"k": "v"}},  # should be dropped
+        }
+        summary = vt._summarize_attempt(1, result, start_time=time.time() - 1.5)
+        assert summary["attempt"] == 1
+        assert summary["passed"] is False
+        assert summary["job_id"] == "j-1"
+        assert summary["error_type"] == "ParseException"
+        assert summary["suggestions"] == ["replace 'INVALID' with 'SELECT'"]
+        assert "log_file_info" not in summary  # bulky fields stripped
+        assert summary["elapsed_sec"] >= 1.0
+
+
+class TestDumpValidationArtifacts:
+    """_dump_validation_artifacts writes report + warning when workspace is set."""
+
+    def test_writes_report_and_warning_when_workspace_present(self, tmp_path):
+        sql = "INSERT OVERWRITE TABLE biads.ads_x_dm SELECT 1"
+        attempts = [
+            {
+                "attempt": 1,
+                "passed": False,
+                "job_id": "j-1",
+                "error_type": "ParseException",
+                "error_message": "bad sql",
+                "suggestions": ["fix it"],
+                "log_analysis_summary": "summary-1",
+            },
+            {
+                "attempt": 2,
+                "passed": False,
+                "job_id": "j-2",
+                "error_type": "TableNotFoundException",
+                "error_message": "no tbl",
+                "suggestions": ["create table first"],
+                "log_analysis_summary": "summary-2",
+            },
+            {
+                "attempt": 3,
+                "passed": False,
+                "job_id": "j-3",
+                "error_type": "AnalysisException",
+                "error_message": "still bad",
+                "suggestions": ["use left join"],
+                "log_analysis_summary": "summary-3",
+            },
+        ]
+        ctx = ToolExecutionContext(runtime=None)  # type: ignore[arg-type]
+        # Inject workspace_dir via a tiny runtime shim
+        shim = SimpleNamespace(workspace_dir=tmp_path)
+        ctx = ToolExecutionContext(runtime=shim)  # type: ignore[arg-type]
+        out = vt._dump_validation_artifacts(sql=sql, attempts=attempts, _tool_context=ctx)
+        assert out["validation_report_path"] is not None
+        assert out["delivery_warning_path"] is not None
+        # Report contents
+        report = json.loads(Path(out["validation_report_path"]).read_text(encoding="utf-8"))
+        assert report["validation_status"] == "failed_after_max_retries"
+        assert report["max_attempts"] == 3
+        assert len(report["attempts"]) == 3
+        # Warning contents
+        warning = Path(out["delivery_warning_path"]).read_text(encoding="utf-8")
+        assert "重试 3 次仍失败" in warning
+        assert "attempt 1" in warning
+        assert "attempt 3" in warning
+        assert "fix it" in warning
+
+    def test_returns_none_paths_when_no_workspace(self, monkeypatch):
+        monkeypatch.delenv("DATAOPS_VALIDATION_REPORT_DIR", raising=False)
+        ctx = ToolExecutionContext(runtime=None)  # type: ignore[arg-type]
+        out = vt._dump_validation_artifacts(
+            sql="INSERT OVERWRITE TABLE biads.x SELECT 1",
+            attempts=[{"attempt": 1, "passed": False}],
+            _tool_context=ctx,
+        )
+        assert out["validation_report_path"] is None
+        assert out["delivery_warning_path"] is None
+
+
+class TestDataopsValidateSqlWithLogAnalysisRetry:
+    """Retry contract: 3-call cap, failed_after_max_retries flag, report dump."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_above_max_is_rejected_without_running(self, tmp_path):
+        """attempt=4 → returned with failed_after_max_retries, no DataOps call."""
+        runtime = MagicMock()
+        runtime.workspace_dir = tmp_path
+        ctx = ToolExecutionContext(runtime=runtime)  # type: ignore[arg-type]
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "SELECT 1",
+            attempt=4,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert result["failed_after_max_retries"] is True
+        assert "exceeded MAX_VALIDATE_ATTEMPTS" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_attempt_3_triggers_dump_with_log_analysis(self, tmp_path):
+        """attempt=3 + still failing + has log_file_info → log_analysis runs,
+        failed_after_max_retries set, report + warning written."""
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(_make_resource())
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-3"}
+        # poll returns "failed" directly so the wrapper goes through
+        # _build_failure_response (which extracts log_file_info) instead of
+        # the completed-path (which would trigger post_validate for INSERT).
+        coordinator.poll.return_value = {"status": "failed"}
+        coordinator.collect.return_value = {
+            "status": "failed",
+            "job_id": "j-3",
+            "error": "syntax error",
+            "logFileInfo": {"url": "http://x", "headers": {"k": "v"}},
+        }
+        runtime = MagicMock()
+        runtime.ensure_resource_coordinator.return_value = coordinator
+        runtime.workspace_dir = tmp_path
+
+        # Fake LLM that returns a valid analysis JSON
+        fake_llm = _FakeLLMResp(
+            '{"error_type":"ParseException","error_message":"bad",'
+            '"location":{"tables":[],"columns":[],"functions":[],"line":null},'
+            '"suggestions":["replace INVALID with SELECT"]}'
+        )
+        runtime.llm = MagicMock(return_value=fake_llm)
+
+        ctx = _make_context(runtime)
+        # Mock the OBS fetcher to avoid hitting a real endpoint
+        with patch.object(vt, "dataops_fetch_obs_log") as mock_fetch:
+            mock_fetch.return_value = {
+                "status": "success",
+                "log_content": "ParseException: INVALID not recognized",
+            }
+            prior = [
+                {
+                    "attempt": 1,
+                    "passed": False,
+                    "job_id": "j-1",
+                    "error_type": "ParseException",
+                    "error_message": "bad",
+                    "suggestions": ["check syntax"],
+                },
+                {
+                    "attempt": 2,
+                    "passed": False,
+                    "job_id": "j-2",
+                    "error_type": "ParseException",
+                    "error_message": "still bad",
+                    "suggestions": ["check keyword case"],
+                },
+            ]
+            result = await vt.dataops_validate_sql_with_log_analysis(
+                "INSERT OVERWRITE TABLE biads.ads_x_dm INVALID 1",
+                attempt=3,
+                prior_attempts=prior,
+                _tool_context=ctx,
+            )
+
+        assert result["passed"] is False
+        assert result["failed_after_max_retries"] is True
+        assert len(result["attempts"]) == 3
+        assert result["attempts"][0]["attempt"] == 1
+        assert result["attempts"][-1]["attempt"] == 3
+        assert result["validation_report_path"] is not None
+        assert result["delivery_warning_path"] is not None
+        # Report file exists and is parseable JSON
+        report = json.loads(Path(result["validation_report_path"]).read_text(encoding="utf-8"))
+        assert report["validation_status"] == "failed_after_max_retries"
+        # Warning file contains the header
+        warning = Path(result["delivery_warning_path"]).read_text(encoding="utf-8")
+        assert "重试 3 次仍失败" in warning
+
+    @pytest.mark.asyncio
+    async def test_attempt_2_does_not_dump(self, tmp_path):
+        """attempt=2 with still failing → failed_after_max_retries NOT set,
+        no dump, attempts list has 2 entries."""
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(_make_resource())
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-x"}
+        coordinator.poll.return_value = {"status": "failed"}
+        coordinator.collect.return_value = {
+            "status": "failed",
+            "job_id": "j-x",
+            "error": "still bad",
+            "logFileInfo": {"url": "http://x", "headers": {"k": "v"}},
+        }
+        runtime = MagicMock()
+        runtime.ensure_resource_coordinator.return_value = coordinator
+        runtime.workspace_dir = tmp_path
+        fake_llm = _FakeLLMResp(
+            '{"error_type":"AnalysisException","error_message":"x",'
+            '"location":{"tables":[],"columns":[],"functions":[],"line":null},'
+            '"suggestions":["s"]}'
+        )
+        runtime.llm = MagicMock(return_value=fake_llm)
+
+        ctx = _make_context(runtime)
+        with patch.object(vt, "dataops_fetch_obs_log") as mock_fetch:
+            mock_fetch.return_value = {"status": "success", "log_content": "log"}
+            prior = [
+                {
+                    "attempt": 1,
+                    "passed": False,
+                    "job_id": "j-1",
+                    "error_type": "AnalysisException",
+                    "error_message": "x",
+                    "suggestions": ["s"],
+                },
+            ]
+            result = await vt.dataops_validate_sql_with_log_analysis(
+                "INSERT OVERWRITE TABLE biads.x SELECT 1",
+                attempt=2,
+                prior_attempts=prior,
+                _tool_context=ctx,
+            )
+
+        assert result["passed"] is False
+        assert result.get("failed_after_max_retries") is not True
+        assert result.get("validation_report_path") is None
+        assert result.get("delivery_warning_path") is None
+        assert len(result["attempts"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_invalid_attempt_returns_error(self):
+        runtime = MagicMock()
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "SELECT 1",
+            attempt=0,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert result["failed_after_max_retries"] is True
+        assert "attempt must be a positive int" in result["error"]
