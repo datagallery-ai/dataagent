@@ -37,6 +37,17 @@ from dataagent.core.managers.action_manager.base import (
 from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
 
 
+async def _await_close_quietly(awaitable: Any, *, what: str) -> None:
+    """Await a close call and log failures without raising.
+
+    Used while dropping a streamable-HTTP session so a later reconnect can proceed.
+    """
+    try:
+        await awaitable
+    except Exception as exc:
+        logger.warning(f"Error closing {what} during streamable-HTTP reset: {exc}")
+
+
 def _mcp_call_error_fact(tool_name: str, response: CallToolResult) -> str:
     """Build a locatable fact from an MCP ``CallToolResult`` with ``isError``."""
     parts: list[str] = []
@@ -122,8 +133,15 @@ class MCPClientWrapper:
     """基于官方MCP库的客户端包装器 - 支持连接池管理"""
 
     def __init__(self, config: MCPServerConfig):
+        """Create one MCP client wrapper.
+
+        Args:
+            config: Server connection configuration.
+        """
         self.config = config
         self._session: ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
+        self._http_client: httpx.AsyncClient | None = None
         self._connected = False
         self._client_context = None
         self._read_stream = None
@@ -170,13 +188,8 @@ class MCPClientWrapper:
                     timeout=params.get("timeout", 30),
                 )
             elif self.transport_type == "streamable_http":
-                params = cast(dict[str, Any], self._transport_params)
-                headers = params.get("headers") or {}
-                timeout = float(params.get("timeout", 30))
-                import httpx
-
-                http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout))
-                self._client_context = streamable_http_client(params["url"], http_client=http_client)
+                await self._ensure_streamable_http_session()
+                return
             else:
                 raise ValueError(
                     f"Unsupported transport type: {self.transport_type}. "
@@ -192,7 +205,10 @@ class MCPClientWrapper:
 
         except Exception as e:
             # 清理部分初始化的资源
-            await self._cleanup_on_error()
+            if self.transport_type == "streamable_http":
+                await self._reset_streamable_http_session()
+            else:
+                await self._cleanup_on_error()
             raise DataAgentError(
                 source="tool", fact=f"Failed to connect to MCP server '{self.config.server_id}': {e}", component="tool"
             ) from e
@@ -200,6 +216,9 @@ class MCPClientWrapper:
 
     async def disconnect(self):
         """断开与MCP服务器的连接"""
+        if self.transport_type == "streamable_http":
+            await self._reset_streamable_http_session()
+            return
         if not self._connected:
             return
 
@@ -297,27 +316,11 @@ class MCPClientWrapper:
                         return await operation(session)
 
             if self.transport_type == "streamable_http":
-                params = cast(dict[str, Any], self._transport_params)
-                headers = params.get("headers") or {}
-                timeout = float(params.get("timeout", 30))
+                await self._ensure_streamable_http_session()
                 try:
-                    async with (
-                        httpx.AsyncClient(
-                            headers=headers,
-                            timeout=httpx.Timeout(timeout),
-                        ) as http_client,
-                        streamable_http_client(params["url"], http_client=http_client) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ),
-                    ):
-                        del _get_session_id
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            return await operation(session)
+                    return await operation(self._session)
                 except Exception as exc:
-                    # Unwrap ExceptionGroup (anyio's task group wraps HTTP errors)
+                    await self._reset_streamable_http_session()
                     inner = exc
                     if hasattr(exc, "exceptions") and exc.exceptions:
                         inner = exc.exceptions[0]
@@ -331,6 +334,51 @@ class MCPClientWrapper:
                     ) from exc
 
             raise ValueError(f"Unsupported transport type: {self.transport_type}")
+
+    async def _ensure_streamable_http_session(self) -> None:
+        """Reuse the streamable-HTTP session when the current event loop still owns it."""
+        loop = asyncio.get_running_loop()
+        if self._session is not None and self._session_loop is loop:
+            return
+        await self._reset_streamable_http_session()
+        params = cast(dict[str, Any], self._transport_params)
+        headers = params.get("headers") or {}
+        timeout = float(params.get("timeout", 30))
+        self._http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout))
+        self._client_context = streamable_http_client(
+            params["url"],
+            http_client=self._http_client,
+            terminate_on_close=False,
+        )
+        read_stream, write_stream, _get_session_id = await self._client_context.__aenter__()
+        del _get_session_id
+        self._read_stream = read_stream
+        self._write_stream = write_stream
+        self._session = ClientSession(read_stream, write_stream)
+        await self._session.__aenter__()
+        await self._session.initialize()
+        self._session_loop = loop
+        self._connected = True
+
+    async def _reset_streamable_http_session(self) -> None:
+        """Drop a streamable-HTTP session so the next call can reconnect."""
+        session = self._session
+        self._session = None
+        self._session_loop = None
+        self._connected = False
+        if session is not None:
+            await _await_close_quietly(session.__aexit__(None, None, None), what="MCP session")
+        if self._client_context is not None:
+            await _await_close_quietly(
+                self._client_context.__aexit__(None, None, None),
+                what="MCP client context",
+            )
+            self._client_context = None
+        if self._http_client is not None:
+            await _await_close_quietly(self._http_client.aclose(), what="MCP HTTP client")
+            self._http_client = None
+        self._read_stream = None
+        self._write_stream = None
 
     async def _cleanup_on_error(self):
         """错误时清理资源"""

@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Callable
+from concurrent.futures import Future
 from typing import Any
 
 from mcp.types import CallToolResult, TextContent
@@ -27,6 +29,9 @@ from dataagent.resources.catalog.models import Resource
 from dataagent.resources.drivers.mcp_resource import resolve_mcp_transport
 from dataagent.resources.resolve.prepare import DriverBinding
 from dataagent.utils.constants import DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC
+
+_LOOP_GUARD = threading.Lock()
+_LOOP: _ResourceMcpEventLoop | None = None
 
 
 def resolve_mcp_preflight_timeout_sec(resource: Resource, driver: DriverBinding) -> int:
@@ -114,7 +119,12 @@ class McpResourceClientAdapter:
     """Adapter that exposes :class:`MCPClientWrapper` through :class:`McpResourceClient`."""
 
     def __init__(self, client: MCPClientWrapper) -> None:
-        """Wrap one MCP client for resource operation calls."""
+        """Wrap one MCP client used by all jobs on this resource.
+
+        Args:
+            client: Underlying MCP wrapper. Streamable HTTP is reused across calls
+                when those calls run on the same event loop.
+        """
         self._client = client
 
     def call_tool_sync(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -122,23 +132,79 @@ class McpResourceClientAdapter:
         return call_resource_mcp_tool_sync(self._client, tool_name, arguments)
 
     def probe_reachable_sync(self, *, timeout_sec: int = DEFAULT_MCP_PREFLIGHT_TIMEOUT_SEC) -> str | None:
-        """Check MCP reachability before queueing a resource job."""
+        """Check MCP reachability before queueing a resource job.
+
+        Args:
+            timeout_sec: Maximum seconds to wait for the preflight ping.
+        """
         return probe_mcp_reachability_sync(self._client, timeout_sec=timeout_sec)
 
 
-def _run_async_coro_sync(coro: Any) -> Any:
-    """Run one coroutine from a sync caller, including when an event loop is already running."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop is not None and loop.is_running():
-        import concurrent.futures
+class _ResourceMcpEventLoop:
+    """Dedicated asyncio loop so MCP streamable HTTP is not torn down by ``asyncio.run``."""
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result()
-    return asyncio.run(coro)
+    def __init__(self) -> None:
+        """Start one daemon thread that owns the resource-MCP event loop."""
+        self._loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run_forever,
+            name="ferry-resource-mcp",
+            daemon=True,
+        )
+        self._thread.start()
+        if not self._ready.wait(timeout=5):
+            raise RuntimeError("resource MCP event loop failed to start")
+
+    def run(self, factory: Callable[[], Any]) -> Any:
+        """Create and await ``factory()`` on the MCP loop, then return its result.
+
+        Args:
+            factory: Zero-arg callable invoked on the loop thread; must return a coroutine.
+        """
+        done: Future[Any] = Future()
+
+        def _schedule() -> None:
+            """Create the coroutine on the MCP loop thread and bridge its result."""
+            try:
+                task = self._loop.create_task(factory())
+            except Exception as exc:
+                done.set_exception(exc)
+                return
+
+            def _on_done(completed: asyncio.Task[Any]) -> None:
+                """Forward the asyncio task outcome to the waiting thread."""
+                if done.done():
+                    return
+                try:
+                    done.set_result(completed.result())
+                except BaseException as exc:
+                    done.set_exception(exc)
+
+            task.add_done_callback(_on_done)
+
+        self._loop.call_soon_threadsafe(_schedule)
+        return done.result()
+
+    def _run_forever(self) -> None:
+        """Run the MCP event loop until process exit."""
+        asyncio.set_event_loop(self._loop)
+        self._ready.set()
+        self._loop.run_forever()
+
+
+def _resource_mcp_loop() -> _ResourceMcpEventLoop:
+    """Return the process-wide resource-MCP event loop, creating it on first use."""
+    global _LOOP
+    with _LOOP_GUARD:
+        if _LOOP is None:
+            _LOOP = _ResourceMcpEventLoop()
+        return _LOOP
+
+
+def _run_async_coro_sync(factory: Callable[[], Any]) -> Any:
+    """Run one coroutine factory on the resource-MCP loop from any caller thread."""
+    return _resource_mcp_loop().run(factory)
 
 
 async def _async_probe_mcp_client(client: MCPClientWrapper) -> None:
@@ -161,8 +227,13 @@ def probe_mcp_reachability_sync(
     Returns:
         ``None`` when reachable; otherwise an error string suitable for tool responses.
     """
+
+    def _probe_with_timeout() -> Any:
+        """Create the preflight ping coroutine on the MCP loop thread."""
+        return asyncio.wait_for(_async_probe_mcp_client(client), timeout=float(max(1, int(timeout_sec))))
+
     try:
-        _run_async_coro_sync(asyncio.wait_for(_async_probe_mcp_client(client), timeout=float(max(1, int(timeout_sec)))))
+        _run_async_coro_sync(_probe_with_timeout)
         return None
     except Exception as exc:
         return format_mcp_call_exception(client, "preflight", exc)
@@ -174,8 +245,13 @@ def call_resource_mcp_tool_sync(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """Invoke one MCP tool synchronously from a resource job runner thread."""
+
+    def _call_tool() -> Any:
+        """Create the MCP tool-call coroutine on the MCP loop thread."""
+        return _async_call_resource_mcp_tool(client, tool_name, arguments)
+
     try:
-        raw = _run_async_coro_sync(_async_call_resource_mcp_tool(client, tool_name, arguments))
+        raw = _run_async_coro_sync(_call_tool)
         normalized = normalize_mcp_call_tool_result(raw)
         return normalized if isinstance(normalized, dict) else {"result": normalized}
     except Exception as exc:
