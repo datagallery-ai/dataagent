@@ -494,6 +494,31 @@ def _is_insert_sql(sql: str) -> bool:
     return bool(_INSERT_RE.search(sql))
 
 
+def _extract_temp_table_name(
+    sql: str,
+    user_account: str,
+    table_suffix: str,
+) -> str | None:
+    """Extract the adhoctemp target table name from any rewritten SQL (CREATE or INSERT).
+
+    Unified extractor for cleanup purposes. Returns None for SELECT-like SQL
+    that doesn't materialize a temp table.
+    """
+    if _is_create_sql(sql):
+        # CREATE: parse the rewritten CREATE statement
+        rewritten = _replace_target_table(sql, user_account, table_suffix)
+        match = re.search(
+            r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.`_-]+)",
+            rewritten,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return match.group(1).strip().strip("`").strip("'").strip('"') or None
+
+    return _extract_insert_target_table(sql, user_account, table_suffix)
+
+
 def _extract_insert_target_table(
     sql: str,
     user_account: str,
@@ -816,6 +841,11 @@ async def _handle_post_validate(
     Returns None if not an INSERT or if temp table extraction failed.
     Returns the post-validate dict with 'ok', 'count', 'error', etc.
     """
+    # 统一门控:环境变量 DATAOPS_ENABLE_POST_VALIDATE=false 时完全跳过 count 校验
+    if not _is_post_validate_enabled():
+        logger.debug("[dataops_validate_sql] post-validate disabled by DATAOPS_ENABLE_POST_VALIDATE")
+        return None
+
     if not _is_insert_sql(original_sql):
         return None
 
@@ -881,11 +911,11 @@ async def dataops_validate_sql(
 
     # --- Environment routing -------------------------------------------------
     env = _get_dataops_env()
-    logger.info(f"[dataops_validate_sql] env routing: DATAOPS_ENV={env!r} (set={bool(os.environ.get('DATAOPS_ENV'))})")
+    logger.debug(f"[dataops_validate_sql] env routing: DATAOPS_ENV={env!r} (set={bool(os.environ.get('DATAOPS_ENV'))})")
     if env == "prod":
-        logger.info("[dataops_validate_sql] routing to PROD path (official MCP flat flow)")
+        logger.debug("[dataops_validate_sql] routing to PROD path (official MCP flat flow)")
         return await _dataops_validate_sql_prod(sql, _tool_context=_tool_context)
-    logger.info("[dataops_validate_sql] routing to INTEGRATION path (resource-coordinator flow)")
+    logger.debug("[dataops_validate_sql] routing to INTEGRATION path (resource-coordinator flow)")
 
     # --- Skip / setup ---
     skip_result, coordinator = _check_skip_conditions(sql, runtime)
@@ -948,9 +978,15 @@ async def dataops_validate_sql(
         if pv is not None:
             _apply_post_validate_result(final_result, pv, resource)
 
+        # NOTE: temp-table cleanup is NOT done here. Single-attempt
+        # entry point must leave the adhoctemp.tmp_* table in place
+        # so the corresponding DML (INSERT OVERWRITE) on the same table
+        # can run. Cleanup is owned by the multi-attempt wrapper
+        # (dataops_validate_sql_with_log_analysis), which knows whether
+        # this is the last attempt and whether the SQL is DDL or DML.
         return final_result
 
-    # Failed
+    # Failed — return the failure as-is, no cleanup here either (see note above).
     return _build_failure_response(result_status, job_id, result, sql)
 
 
@@ -1002,6 +1038,192 @@ async def _pre_drop_for_create(
     except Exception as drop_exc:
         logger.warning(f"[dataops_validate_sql] DROP submission failed, continuing: {drop_exc}")
         return None
+
+
+async def _cleanup_temp_table(
+    coordinator,
+    sql: str,
+    user_account: str,
+    table_suffix: str,
+    timeout_sec: int,
+    poll_interval: float,
+    *,
+    context_label: str = "dataops_validate_sql",
+) -> str | None:
+    """Drop the adhoctemp temporary table after a validation attempt completes.
+
+    Fire-and-forget: this runs on every attempt outcome (passed / failed /
+    timed_out) to ensure the temp table doesn't accumulate in adhoctemp.
+    Cleanup failures are logged but NEVER affect the validation result —
+    the user has already received their pass/fail verdict.
+
+    Gated by DATAOPS_DISABLE_TEMP_CLEANUP: when set to a truthy value
+    (true/1/yes/on/y/t, case-insensitive), cleanup is skipped so the temp
+    table is preserved for debugging. Default behavior (var unset or any
+    other value) is cleanup ON.
+
+    Returns the drop job_id if a DROP was submitted, None if no temp table
+    was created (e.g. SELECT-only), extraction failed, or cleanup disabled.
+    """
+    if _is_temp_cleanup_disabled():
+        logger.debug(
+            f"[{context_label}] cleanup skipped: DATAOPS_DISABLE_TEMP_CLEANUP is set "
+            f"(preserving adhoctemp table for inspection)"
+        )
+        return None
+
+    temp_table = _extract_temp_table_name(sql, user_account, table_suffix)
+    if not temp_table:
+        logger.debug(f"[{context_label}] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}")
+        return None
+
+    drop_sql = f"DROP TABLE IF EXISTS {temp_table}"
+    try:
+        logger.debug(f"[{context_label}] cleanup DROP submitting: {drop_sql}")
+        # Cap cleanup timeout so it can't block validation indefinitely
+        cleanup_timeout = min(timeout_sec, 60)
+        submit_result = coordinator.submit_job(
+            resource_id="dataops",
+            command=drop_sql,
+            task_type="sql_validate",
+            timeout_sec=cleanup_timeout,
+        )
+        if submit_result.get("status") == "ERROR" or not submit_result.get("job_id"):
+            logger.warning(
+                f"[{context_label}] cleanup DROP submission failed: {submit_result.get('message', 'no job_id')}"
+            )
+            return None
+        drop_job_id = submit_result["job_id"]
+        drop_status, _ = await _poll_until_done(coordinator, drop_job_id, cleanup_timeout, poll_interval)
+        if drop_status == "completed":
+            logger.debug(f"[{context_label}] cleanup DROP completed table={temp_table} job_id={drop_job_id}")
+        else:
+            logger.warning(
+                f"[{context_label}] cleanup DROP ended with status={drop_status} "
+                f"table={temp_table} job_id={drop_job_id}"
+            )
+        return drop_job_id
+    except Exception as cleanup_exc:
+        logger.warning(f"[{context_label}] cleanup DROP exception table={temp_table}: {cleanup_exc}")
+        return None
+
+
+async def _cleanup_temp_table_prod(
+    sql: str,
+    user_account: str,
+    table_suffix: str,
+    timeout_sec: int,
+) -> str | None:
+    """Production counterpart of :func:`_cleanup_temp_table` — drops the adhoctemp
+    temp table via official MCP after each validation attempt. Fire-and-forget.
+
+    Same gating as the integration path: DATAOPS_DISABLE_TEMP_CLEANUP=true
+    preserves the temp table for debugging.
+    """
+    if _is_temp_cleanup_disabled():
+        logger.debug(
+            "[dataops_validate_sql_prod] cleanup skipped: DATAOPS_DISABLE_TEMP_CLEANUP is set "
+            "(preserving adhoctemp table for inspection)"
+        )
+        return None
+
+    from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
+        prod_collect_result,
+        prod_execute_sql,
+        prod_get_query_result,
+    )
+
+    temp_table = _extract_temp_table_name(sql, user_account, table_suffix)
+    if not temp_table:
+        logger.debug(
+            f"[dataops_validate_sql_prod] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}"
+        )
+        return None
+
+    drop_sql = f"DROP TABLE IF EXISTS {temp_table}"
+    try:
+        logger.debug(f"[dataops_validate_sql_prod] cleanup DROP submitting: {drop_sql}")
+        submit_result = await prod_execute_sql(drop_sql)
+        if not submit_result.get("success"):
+            logger.warning(
+                f"[dataops_validate_sql_prod] cleanup DROP submission failed: {submit_result.get('error', 'unknown')}"
+            )
+            return None
+        drop_job_id = submit_result["job_id"]
+        cleanup_timeout = min(timeout_sec, 60)
+        deadline = asyncio.get_event_loop().time() + cleanup_timeout
+        while asyncio.get_event_loop().time() < deadline:
+            polled = await prod_get_query_result(drop_job_id)
+            status = polled.get("status")
+            if status in {"completed", "failed"}:
+                await prod_collect_result(drop_job_id)
+                if status == "completed":
+                    logger.debug(
+                        f"[dataops_validate_sql_prod] cleanup DROP completed table={temp_table} job_id={drop_job_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[dataops_validate_sql_prod] cleanup DROP failed table={temp_table} job_id={drop_job_id}"
+                    )
+                return drop_job_id
+            await asyncio.sleep(5.0)
+        logger.warning(f"[dataops_validate_sql_prod] cleanup DROP timed out table={temp_table} job_id={drop_job_id}")
+        return drop_job_id
+    except Exception as cleanup_exc:
+        logger.warning(f"[dataops_validate_sql_prod] cleanup DROP exception table={temp_table}: {cleanup_exc}")
+        return None
+
+
+async def _cleanup_temp_table_wrapper(
+    sql: str,
+    *,
+    _tool_context: ToolExecutionContext,
+) -> str | None:
+    """Cleanup dispatcher for ``dataops_validate_sql_with_log_analysis``.
+
+    Routes to the integration- or production-cleanup helper based on
+    DATAOPS_ENV, with shared gating (DATAOPS_DISABLE_TEMP_CLEANUP) and
+    identical fire-and-forget semantics. Returns the drop job_id if a
+    DROP was submitted, otherwise None.
+
+    Note: this is only invoked by the wrapper, AFTER the wrapper has
+    already determined that this is the final outcome (passed, or
+    attempt >= MAX_VALIDATE_ATTEMPTS) and the SQL is DML (not DDL).
+    """
+    runtime = _tool_context.runtime
+    if _get_dataops_env() == "prod":
+        user_account = _get_user_account(runtime)
+        table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
+        timeout_sec = 30 * 60
+        return await _cleanup_temp_table_prod(sql, user_account, table_suffix, timeout_sec)
+
+    # Integration path
+    resource = _get_dataops_resource(runtime)
+    coordinator = runtime.ensure_resource_coordinator("dataops") if hasattr(runtime, "ensure_resource_coordinator") else None
+    if coordinator is None:
+        logger.debug(
+            "[dataops_validate_sql_with_log_analysis] cleanup skipped: "
+            "no resource coordinator available"
+        )
+        return None
+    POLL_INTERVAL_SEC = 30.0
+    MAX_TIMEOUT_SEC = 30 * 60
+    timeout_sec = min(int(resource.metadata.get("timeout_s", MAX_TIMEOUT_SEC)), MAX_TIMEOUT_SEC)
+    poll_interval = max(
+        POLL_INTERVAL_SEC,
+        float(resource.metadata.get("poll_interval_ms", 30_000)) / 1000.0,
+    )
+    user_account = resource.metadata.get("exec_user") or _get_user_account(runtime) or "anonymous"
+    table_suffix = resource.metadata.get("table_suffix", "")
+    return await _cleanup_temp_table(
+        coordinator,
+        sql,
+        user_account,
+        table_suffix,
+        timeout_sec,
+        poll_interval,
+        context_label="dataops_validate_sql_with_log_analysis",
+    )
 
 
 def _apply_post_validate_result(final_result: dict[str, Any], pv: dict[str, Any], resource: Any) -> None:
@@ -1128,6 +1350,15 @@ async def dataops_validate_sql_with_log_analysis(
         logger.debug(
             f"[dataops_validate_sql_with_log_analysis] === END (passed) attempt={attempt} elapsed={elapsed:.2f}s ==="
         )
+        # Cleanup: only drop the temp table when the SQL is DML (not DDL)
+        # and this is the final outcome. CREATE TABLE leaves the temp
+        # table in place so the corresponding INSERT OVERWRITE can target it.
+        if not _is_create_sql(sql):
+            cleanup_job_id = await _cleanup_temp_table_wrapper(
+                sql, _tool_context=_tool_context
+            )
+            if cleanup_job_id:
+                validate_result["cleanup_job_id"] = cleanup_job_id
         return validate_result
 
     # If failed but neither log_file_info (integration) nor inline errorLog (prod)
@@ -1225,6 +1456,15 @@ async def dataops_validate_sql_with_log_analysis(
             f"report={report_paths.get('validation_report_path')} "
             f"warning={report_paths.get('delivery_warning_path')}"
         )
+        # Cleanup: after exhausting all retries on a DML, drop the temp table.
+        # DDL is NEVER dropped here — its temp table must remain for the
+        # matching DML (which may run on a separate wrapper invocation).
+        if not _is_create_sql(sql):
+            cleanup_job_id = await _cleanup_temp_table_wrapper(
+                sql, _tool_context=_tool_context
+            )
+            if cleanup_job_id:
+                validate_result["cleanup_job_id"] = cleanup_job_id
 
     # Reorder fields so analysis comes before log_file_info (the latter is bulky and
     # easily truncated when the tool result is displayed in chat history). Putting
@@ -1595,6 +1835,43 @@ async def dataops_fetch_obs_log(
 _PROD_ENV = "prod"
 _VALID_DATAOPS_ENVS = frozenset({"prod", "integration"})
 
+# 控制是否在 INSERT 校验通过后再跑一次 SELECT count(*) 后置校验。
+# 默认 True（保持现状,向后兼容）。关闭后,联调和生产两条路径都不再触发 count SQL。
+# 接受 (case-insensitive) true/false/1/0/yes/no/on/off,其它值按 True 处理。
+_DISABLE_POST_VALIDATE_VALUES = frozenset({"false", "0", "no", "off", "n", "f"})
+
+
+def _is_post_validate_enabled() -> bool:
+    """读取 DATAOPS_ENABLE_POST_VALIDATE,默认 True(向后兼容)。
+
+    Returns:
+        True  -> 跑 SELECT count(*) 后置校验(默认)
+        False -> 完全跳过 count SQL 的 submit/poll/collect
+    """
+    raw = os.environ.get("DATAOPS_ENABLE_POST_VALIDATE", "").strip().lower()
+    if not raw:
+        return True
+    return raw not in _DISABLE_POST_VALIDATE_VALUES
+
+
+# 控制是否在每次校验后自动 DROP adhoctemp 临时表。
+# 默认 False（保持现状,自动清理开启）。开启后会保留临时表方便调试,但会在 adhoctemp 库累积。
+# 接受 (case-insensitive) true/false/1/0/yes/no/on/off,其它值按 False 处理。
+_ENABLE_KEEP_TEMP_VALUES = frozenset({"true", "1", "yes", "on", "y", "t"})
+
+
+def _is_temp_cleanup_disabled() -> bool:
+    """读取 DATAOPS_DISABLE_TEMP_CLEANUP,默认 False(自动清理开启,默认行为)。
+
+    Returns:
+        True  -> 保留临时表(关闭自动清理,方便调试 adhoctemp 残留)
+        False -> 自动 DROP(默认)
+    """
+    raw = os.environ.get("DATAOPS_DISABLE_TEMP_CLEANUP", "").strip().lower()
+    if not raw:
+        return False
+    return raw in _ENABLE_KEEP_TEMP_VALUES
+
 
 def _get_dataops_env() -> str:
     """读取 DATAOPS_ENV,默认 integration(保持向后兼容).
@@ -1664,9 +1941,13 @@ async def _dataops_validate_sql_prod(
         )
         if pv is not None:
             _apply_post_validate_result_prod(final_result, pv)
+        # NOTE: temp-table cleanup is NOT done here. Single-attempt
+        # entry point must leave the adhoctemp.tmp_* table in place
+        # so the corresponding DML on the same table can run.
+        # Cleanup is owned by the multi-attempt wrapper.
         return final_result
 
-    # failed
+    # failed — return as-is, no cleanup here either (see note above).
     return _build_failure_response_prod(result_status, job_id, result, sql)
 
 
@@ -1729,6 +2010,12 @@ async def _run_post_validate_prod(
         prod_execute_sql,
         prod_get_query_result,
     )
+
+    # 统一门控:环境变量 DATAOPS_ENABLE_POST_VALIDATE=false 时完全跳过 count 校验
+    # 与联调路径读取同一个开关,避免联调/生产行为分叉
+    if not _is_post_validate_enabled():
+        logger.debug("[dataops_validate_sql_prod] post-validate disabled by DATAOPS_ENABLE_POST_VALIDATE")
+        return None
 
     if not _is_insert_sql(original_sql):
         return None
@@ -1988,7 +2275,7 @@ def _dump_validation_artifacts(
             encoding="utf-8",
         )
         result["validation_report_path"] = str(report_path)
-        logger.info(f"[_dump_validation_artifacts] wrote validation report to {report_path}")
+        logger.debug(f"[_dump_validation_artifacts] wrote validation report to {report_path}")
     except Exception as exc:
         logger.warning(f"[_dump_validation_artifacts] failed to write report {report_path}: {exc}")
 
@@ -2012,7 +2299,7 @@ def _dump_validation_artifacts(
     try:
         warning_path.write_text(warning_body, encoding="utf-8")
         result["delivery_warning_path"] = str(warning_path)
-        logger.info(f"[_dump_validation_artifacts] wrote delivery warning to {warning_path}")
+        logger.debug(f"[_dump_validation_artifacts] wrote delivery warning to {warning_path}")
     except Exception as exc:
         logger.warning(f"[_dump_validation_artifacts] failed to write warning {warning_path}: {exc}")
 

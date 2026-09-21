@@ -57,7 +57,7 @@ async def _call_official_mcp(tool_name: str, arguments: dict[str, Any]) -> dict[
 
     logger.debug(f"[dataops_prod_adapter] calling MCP tool={tool_name!r} args_keys={list(arguments.keys())}")
     if "sql" in arguments:
-        logger.info(f"[dataops_prod_adapter] MCP sql=\n{arguments['sql']}\n")
+        logger.debug(f"[dataops_prod_adapter] MCP sql=\n{arguments['sql']}\n")
     client = create_mcp_client()
     try:
         result = await client._execute_with_connection(

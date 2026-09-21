@@ -1739,7 +1739,12 @@ class TestDataopsValidateSqlPostValidate:
 
     @pytest.mark.asyncio
     async def test_create_no_post_validate(self):
-        """CREATE TABLE does not trigger second-phase count query."""
+        """CREATE TABLE does not trigger second-phase count query.
+
+        Note: single-attempt entry point does NOT do temp-table cleanup
+        (cleanup is owned by the wrapper, which only cleans DML). So
+        submit_job is called exactly once for CREATE.
+        """
         resource = _make_resource(timeout_s=5, poll_interval_ms=50)
         coordinator = _wired_coordinator(
             resource=resource,
@@ -1755,10 +1760,17 @@ class TestDataopsValidateSqlPostValidate:
         )
         assert result["passed"] is True
         assert coordinator.submit_job.call_count == 1
+        # No cleanup_job_id: single-attempt entry point leaves the temp
+        # table in place so the matching DML can target it.
+        assert "cleanup_job_id" not in result
 
     @pytest.mark.asyncio
     async def test_first_phase_failed_no_post_validate(self):
-        """First phase failed — no second phase at all."""
+        """First phase failed — no second phase at all.
+
+        Note: single-attempt entry point does NOT do cleanup either on
+        failure (cleanup is owned by the wrapper, only on DML final outcome).
+        """
         resource = _make_resource(timeout_s=5, poll_interval_ms=50)
         coordinator = _wired_coordinator(
             resource=resource,
@@ -1774,8 +1786,202 @@ class TestDataopsValidateSqlPostValidate:
         )
         assert result["passed"] is False
         assert "bad sql" in result["error"]
-        # Only the first submit_job was called (count not submitted)
+        # Only the first submit_job was called (count not submitted either,
+        # and cleanup is owned by the wrapper, not the entry point).
         assert coordinator.submit_job.call_count == 1
+        assert "cleanup_job_id" not in result
+
+    @pytest.mark.asyncio
+    async def test_cleanup_disabled_truthy_variants(self, monkeypatch):
+        """DATAOPS_DISABLE_TEMP_CLEANUP accepts case-insensitive truthy values.
+
+        Sanity-check that the parsing matches the documented set:
+        true/1/yes/on/y/t (case-insensitive). Other strings (including empty)
+        keep cleanup enabled (default).
+        """
+        for truthy in ("true", "TRUE", "1", "yes", "on", "y", "t"):
+            monkeypatch.setenv("DATAOPS_DISABLE_TEMP_CLEANUP", truthy)
+            assert vt._is_temp_cleanup_disabled() is True, f"truthy={truthy!r} should disable cleanup"
+
+        # Default (unset) keeps cleanup enabled.
+        monkeypatch.delenv("DATAOPS_DISABLE_TEMP_CLEANUP", raising=False)
+        assert vt._is_temp_cleanup_disabled() is False
+
+        # Non-truthy values also keep cleanup enabled (only the documented set disables).
+        for falsy in ("false", "0", "no", "off", "", "garbage"):
+            monkeypatch.setenv("DATAOPS_DISABLE_TEMP_CLEANUP", falsy)
+            assert vt._is_temp_cleanup_disabled() is False, f"value={falsy!r} should NOT disable cleanup"
+
+    @pytest.mark.asyncio
+    async def test_wrapper_dml_passed_triggers_cleanup(self, monkeypatch):
+        """Wrapper: DML passed on attempt 1 -> cleanup DROP is submitted.
+
+        This is the regression scenario from prod: a complete DDL+DML delivery.
+        After DML passes, the wrapper must drop the adhoctemp.tmp_* table.
+        Note: post-validate (count check) is disabled via env var since this test
+        only covers the cleanup path.
+        """
+        # Disable post-validate so the INSERT result is considered "passed"
+        # without needing to mock the count-SQL round-trip.
+        monkeypatch.setenv("DATAOPS_ENABLE_POST_VALIDATE", "false")
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-dml"},
+            poll=[
+                {"status": "completed", "job_id": "j-dml"},
+                {"status": "completed", "job_id": "j-cleanup"},
+            ],
+            collect=[
+                {"status": "completed", "job_id": "j-dml"},
+                {"status": "completed", "job_id": "j-cleanup"},
+            ],
+        )
+        coordinator.submit_job.side_effect = [
+            {"status": "queued", "job_id": "j-dml"},
+            {"status": "queued", "job_id": "j-cleanup"},
+        ]
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.x SELECT 1",
+            attempt=1,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is True
+        # 1 DML submit + 1 cleanup DROP = 2 total
+        assert coordinator.submit_job.call_count == 2
+        assert result.get("cleanup_job_id") == "j-cleanup"
+
+    @pytest.mark.asyncio
+    async def test_wrapper_create_passed_does_NOT_cleanup(self):
+        """Wrapper: CREATE passed on attempt 1 -> NO cleanup.
+
+        Regression scenario: if the wrapper dropped the CREATE temp table, the
+        subsequent DML (INSERT OVERWRITE) on the same adhoctemp.tmp_* table
+        would fail with 'table not found'. The temp table must persist until
+        the matching DML has been validated.
+        """
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-create"},
+            poll=[{"status": "completed", "job_id": "j-create"}],
+            collect={"status": "completed", "job_id": "j-create"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "CREATE TABLE biads.x (id INT)",
+            attempt=1,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is True
+        # Only 1 submit_job: CREATE submit. No cleanup.
+        assert coordinator.submit_job.call_count == 1
+        assert "cleanup_job_id" not in result
+
+    @pytest.mark.asyncio
+    async def test_wrapper_create_failed_does_NOT_cleanup(self):
+        """Wrapper: CREATE failed on attempt 1 -> NO cleanup.
+
+        Same reason: the temp table may still be needed if the agent retries
+        with a corrected CREATE statement. Cleanup only fires on DML.
+        """
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-create"},
+            poll=[{"status": "failed", "job_id": "j-create"}],
+            collect={"status": "failed", "job_id": "j-create", "error": "syntax error"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "CREATE TABLE biads.x (id INT)",
+            attempt=1,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        # Only 1 submit_job (the failed CREATE). No cleanup.
+        assert coordinator.submit_job.call_count == 1
+        assert "cleanup_job_id" not in result
+
+    @pytest.mark.asyncio
+    async def test_wrapper_dml_failed_midway_no_cleanup(self):
+        """Wrapper: DML fails on attempt 1 -> NO cleanup (will retry on attempt 2).
+
+        Cleanup only happens on the FINAL outcome (passed or attempt >=
+        MAX_VALIDATE_ATTEMPTS). Mid-retry failures must leave the temp table
+        so attempt 2/3 can write to it.
+        """
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-dml-1"},
+            poll=[{"status": "failed", "job_id": "j-dml-1"}],
+            collect={"status": "failed", "job_id": "j-dml-1", "error": "bad sql"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.x SELECT 1",
+            attempt=1,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        # Only 1 submit_job (the failed DML). No cleanup — agent will retry.
+        assert coordinator.submit_job.call_count == 1
+        assert "cleanup_job_id" not in result
+
+    @pytest.mark.asyncio
+    async def test_wrapper_dml_max_retries_triggers_cleanup(self, monkeypatch):
+        """Wrapper: DML failed on attempt 3 -> cleanup DROP is submitted.
+
+        After exhausting all retries, the temp table is no longer useful, so
+        the wrapper cleans it up. The CREATE-table scenario still never
+        triggers cleanup (verified separately).
+        """
+        # Disable post-validate so attempt 3 doesn't fire a 4th submit.
+        monkeypatch.setenv("DATAOPS_ENABLE_POST_VALIDATE", "false")
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-dml-3"},
+            poll=[
+                {"status": "failed", "job_id": "j-dml-3"},
+                {"status": "completed", "job_id": "j-cleanup"},
+            ],
+            collect=[
+                # logFileInfo is required so the wrapper does NOT early-return
+                # (it only skips log analysis when both log_file_info and
+                # errorLog are absent). With log info present, the wrapper
+                # proceeds to the MAX_VALIDATE_ATTEMPTS branch where cleanup fires.
+                {"status": "failed", "job_id": "j-dml-3", "error": "bad sql",
+                 "logFileInfo": {"url": "http://obs/log.txt", "headers": {}}},
+                {"status": "completed", "job_id": "j-cleanup"},
+            ],
+        )
+        coordinator.submit_job.side_effect = [
+            {"status": "queued", "job_id": "j-dml-3"},
+            {"status": "queued", "job_id": "j-cleanup"},
+        ]
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.x SELECT 1",
+            attempt=3,
+            prior_attempts=[
+                {"attempt": 1, "passed": False, "job_id": "j-dml-1", "elapsed": 0.1, "error": "err1"},
+                {"attempt": 2, "passed": False, "job_id": "j-dml-2", "elapsed": 0.1, "error": "err2"},
+            ],
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert result.get("failed_after_max_retries") is True
+        # 1 DML submit (failed) + 1 cleanup DROP = 2 total
+        assert coordinator.submit_job.call_count == 2
+        assert result.get("cleanup_job_id") == "j-cleanup"
 
 
 # ===========================================================================
