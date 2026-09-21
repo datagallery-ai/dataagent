@@ -72,14 +72,20 @@ class BaseNL2SQLNode(BaseNode):
         else:
             self._nl2sql_context_dump_dir = None
 
-    async def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
-        """Render the node prompts and asynchronously invoke the configured LLM."""
+    async def execute_with_llm(
+        self, context: dict[str, str], action: str = "", *, prompt_node: str | None = None
+    ) -> str:
+        """Render NL2SQL prompts and asynchronously invoke the configured LLM.
+
+        ``prompt_node`` selects which prompt directory to load. It defaults to
+        this node's name so callers can reuse another node's templates without
+        copying the invocation logic.
+        """
+        node = prompt_node or self.name
         llm = llm_manager.get_default_llm()
-        system_prompt = PromptTemplate.from_package_relative(
-            f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}system"
-        ).content
+        system_prompt = PromptTemplate.from_package_relative(f"{NL2SQL_PROMPT_PREFIX}/{node}/{action}system").content
         user_prompt = PromptTemplate.from_package_relative(
-            f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}user"
+            f"{NL2SQL_PROMPT_PREFIX}/{node}/{action}user"
         ).apply_prompt_template(**context)
         prompts = [
             {"role": "system", "content": system_prompt},
@@ -87,8 +93,12 @@ class BaseNL2SQLNode(BaseNode):
         ]
         response = await llm.ainvoke(prompts)
         content = response.content
-        self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
+        self._dump_llm_context(system_prompt, user_prompt, content, node, action)
         return content
+
+    async def execute_dimension_join_llm(self, context: dict[str, str], action: str = "dimension_join_") -> str:
+        """Rewrite dimension joins with the generator templates, regardless of node name."""
+        return await self.execute_with_llm(context, action, prompt_node="generator")
 
     async def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
         """Execute the LLM with the given context and action, returning parsed JSON output."""

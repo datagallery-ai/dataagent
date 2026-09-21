@@ -17,7 +17,12 @@ import pytest
 
 from dataagent.agents.nl2sql.nodes.generator import GeneratorNode
 from dataagent.agents.nl2sql.security import check_sql
-from dataagent.agents.nl2sql.utils.nl2sql_utils import load_dimension_mappings, schema_to_ddl, selected_dimensions
+from dataagent.agents.nl2sql.utils.nl2sql_utils import (
+    _add_dimension_context,
+    load_dimension_mappings,
+    schema_to_ddl,
+    selected_dimensions,
+)
 from dataagent.agents.nl2sql.workflow.state import get_default_state
 from dataagent.config.config_manager import ConfigManager
 from dataagent.core.managers.llm_manager import llm_manager
@@ -188,3 +193,19 @@ async def test_keeps_original_and_requests_reflection_when_rewrite_fails(rewrite
     assert candidate.need_ref is True
     assert "dim_exp_county" in result["schema"]
     assert "dim_exp_county" in candidate.prompt
+
+
+def test_add_dimension_context_appends_only_newly_discovered_dimension() -> None:
+    state = _state()
+    mappings = load_dimension_mappings("business_twin")
+
+    _add_dimension_context(state, ["county"], mappings)
+    added = _add_dimension_context(state, ["county", "city"], mappings)
+
+    assert "dim_exp_city" in added
+    assert "When `city` is projected" in added
+    assert "When `county` is projected" not in added
+    assert state["schema_str"].count("CREATE TABLE `dim_exp_county`") == 1
+    assert state["schema_str"].count("CREATE TABLE `dim_exp_city`") == 1
+    assert state["sql_rules"].count("When `county` is projected") == 1
+    assert state["sql_rules"].count("When `city` is projected") == 1

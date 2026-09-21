@@ -116,7 +116,7 @@ class GeneratorNode(BaseNL2SQLNode):
                 state,
                 scenario=self._get_agent_config("DATABASE.perceptor_type", ""),
                 dialect=self.dialect,
-                execute_with_llm=self.execute_with_llm,
+                execute_with_llm=self.execute_dimension_join_llm,
             )
         )
         state["sql"] = state["generation_results"][0].sql
