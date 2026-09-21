@@ -15,7 +15,7 @@ from typing import Any
 
 from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import quote_sql_placeholders
+from dataagent.agents.nl2sql.utils.nl2sql_utils import process_dimension_joins, quote_sql_placeholders
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_REFLECTOR_THRESHOLD
 from dataagent.utils.log import logger
@@ -58,12 +58,26 @@ class ReflectorNode(BaseNL2SQLNode):
             # skip if fail
             logger.warning("Reflector failed.")
             fix_sqls = [v.sql for v in state["validation_results"]]
+        current_batch = []
         for v, sql in zip(state["validation_results"], fix_sqls, strict=True):
             v.sql, v.score, v.issues, v.need_ref = sql, 0, [], False
             v.security_checked = False
             v.security_violations = []
+            current_batch.append(v)
             state["generation_results"].append(v)
         state["validation_results"].clear()
+        if self._config_manager is not None and current_batch:
+            rewritten = await process_dimension_joins(
+                [(item.sql, item.prompt, item.strategy) for item in current_batch],
+                state,
+                scenario=self._get_agent_config("DATABASE.perceptor_type", ""),
+                dialect=self.dialect,
+                execute_with_llm=self.execute_dimension_join_llm,
+            )
+            for original, new in zip(current_batch, rewritten, strict=True):
+                original.sql = new.sql
+                original.prompt = new.prompt
+                original.need_ref = new.need_ref
         p = "\n".join([s.sql for s in state["generation_results"]])
         message = f"=== Reflector ===\n{p}"
         logger.info(message)

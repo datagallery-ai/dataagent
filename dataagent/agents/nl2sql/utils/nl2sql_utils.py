@@ -325,14 +325,28 @@ async def _process_dimension_candidate(
     return rewritten, prompt, strategy, dimensions, False
 
 
+def _dimension_rule_line(name: str, mapping: dict[str, str]) -> str:
+    table = mapping["dimension_table"]
+    key = mapping["key_column"]
+    value = mapping["value_column"]
+    return (
+        f"- When `{name}` is projected, use `{table}.{value}` through "
+        f"`INNER JOIN {table} ON <fact>.{name} = {table}.{key}`. "
+        "This is a required display-value lookup, not extra business logic; "
+        "WHERE/HAVING predicates remain on the fact key."
+    )
+
+
 def _add_dimension_context(
     state: NL2SQLState,
     dimensions: list[str],
     mappings: dict[str, dict[str, str]],
 ) -> str:
     fact_table = next(iter(state["schema"]), "")
-    dimension_tables = {}
-    rule_lines = ["## Required Dimension Value Mappings"]
+    schema_str = state["schema_str"] or ""
+    sql_rules = state["sql_rules"] or ""
+    new_tables: dict[str, dict[str, Any]] = {}
+    new_rule_lines: list[str] = []
     for name in dimensions:
         mapping = mappings[name]
         table = mapping["dimension_table"]
@@ -344,22 +358,33 @@ def _add_dimension_context(
         )
         for column in (key, value):
             table_meta["columns"].setdefault(column, {"description": "", "value_type": ""})
-        dimension_tables[table] = table_meta
         if fact_table:
             join = (f"{fact_table}.{name}", f"{table}.{key}")
             if join not in state["joins"]:
                 state["joins"].append(join)
-        rule_lines.append(
-            f"- When `{name}` is projected, use `{table}.{value}` through "
-            f"`INNER JOIN {table} ON <fact>.{name} = {table}.{key}`. "
-            "This is a required display-value lookup, not extra business logic; "
-            "WHERE/HAVING predicates remain on the fact key."
+        if f"CREATE TABLE `{table}`" not in schema_str:
+            new_tables[table] = table_meta
+        rule_line = _dimension_rule_line(name, mapping)
+        if rule_line not in sql_rules:
+            new_rule_lines.append(rule_line)
+    parts: list[str] = []
+    if new_tables:
+        schema_ddl = schema_to_ddl(new_tables)
+        schema_block = (
+            schema_ddl if "## Dimension Lookup Schema" in schema_str else f"## Dimension Lookup Schema\n{schema_ddl}"
         )
-    schema_context = "## Dimension Lookup Schema\n" + schema_to_ddl(dimension_tables)
-    rules_context = "\n".join(rule_lines)
-    state["schema_str"] = f"{state['schema_str']}\n\n{schema_context}".strip()
-    state["sql_rules"] = f"{state['sql_rules']}\n\n{rules_context}".strip()
-    return f"{schema_context}\n\n{rules_context}"
+        state["schema_str"] = f"{schema_str}\n\n{schema_block}".strip()
+        parts.append(schema_block)
+    if new_rule_lines:
+        rules_body = "\n".join(new_rule_lines)
+        rules_block = (
+            rules_body
+            if "## Required Dimension Value Mappings" in sql_rules
+            else f"## Required Dimension Value Mappings\n{rules_body}"
+        )
+        state["sql_rules"] = f"{sql_rules}\n\n{rules_block}".strip()
+        parts.append(rules_block)
+    return "\n\n".join(parts)
 
 
 async def process_dimension_joins(
