@@ -13,23 +13,48 @@
 import json
 import os
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from fastapi import Body, Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
 from dataagent.interface.rest_api.service import DataAgentService
 
 
 class DataAgentQueryRequest(BaseModel):
-    """DataAgent query request."""
+    """Original /api/agent/query body. Callers of this path keep this contract."""
 
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
     stream: bool = False
+
+
+class QueryContent(BaseModel):
+    """Body of the query operation. stream belongs here, not on other types."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1)
+    stream: bool = False
+
+
+class QueryRequest(BaseModel):
+    """One northbound operation. type selects the operation; query is implemented first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["query"] = Field(description="Operation type. query is one operation; more can be added later.")
+    content: QueryContent
+
+
+# Discriminated by `type`. First wave registers query only.
+# Later operations add another model; they will not inherit query/stream.
+DataAgentRequest = Annotated[QueryRequest, Field(discriminator="type")]
+_DATA_AGENT_REQUEST_ADAPTER: TypeAdapter[QueryRequest] = TypeAdapter(DataAgentRequest)
 
 
 _data_agent_service: DataAgentService | None = None
@@ -41,6 +66,34 @@ def get_data_agent_service() -> DataAgentService:
     if _data_agent_service is None:
         raise RuntimeError("DataAgent service is not initialized.")
     return _data_agent_service
+
+
+async def get_data_agent_request(http_request: Request) -> QueryRequest:
+    """Parse a type-discriminated body. Other operations are not registered yet."""
+    try:
+        payload = await http_request.json()
+    except Exception as exc:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "json_invalid",
+                    "loc": ("body",),
+                    "msg": "JSON decode error",
+                    "input": {},
+                    "ctx": {"error": str(exc)},
+                }
+            ]
+        ) from exc
+    try:
+        return _DATA_AGENT_REQUEST_ADAPTER.validate_python(payload)
+    except ValidationError as exc:
+        errors = []
+        for err in exc.errors():
+            loc = err.get("loc", ())
+            if not loc or loc[0] != "body":
+                err = {**err, "loc": ("body", *loc)}
+            errors.append(err)
+        raise RequestValidationError(errors, body=payload) from exc
 
 
 def agent_error_payload(result: Any) -> dict[str, Any] | None:
@@ -108,17 +161,33 @@ async def health_check():
     return {"status": "ok"}
 
 
-@app.post("/api/agent/query")
-async def query_agent(
-    request: DataAgentQueryRequest = Body(...),
-    service: DataAgentService = Depends(get_data_agent_service),
-):
-    """Run one DataAgent query."""
-    if request.stream:
-        return StreamingResponse(stream_agent_events(request.query, service), media_type="text/event-stream")
+async def _dispatch_query(query: str, stream: bool, service: DataAgentService):
+    """Run the query operation. Output shape is unchanged."""
+    if stream:
+        return StreamingResponse(stream_agent_events(query, service), media_type="text/event-stream")
 
-    result = await service.query(request.query)
+    result = await service.query(query)
     payload = agent_error_payload(result)
     if payload is not None:
         return JSONResponse(status_code=int(payload.get("http_status", 500)), content=result)
     return result
+
+
+@app.post("/api/agent/query")
+async def query_agent(
+    request: DataAgentQueryRequest,
+    service: DataAgentService = Depends(get_data_agent_service),
+):
+    """Original query path. Body stays {query, stream}."""
+    return await _dispatch_query(request.query, request.stream, service)
+
+
+@app.post("/api/agent/operation")
+async def agent_operation(
+    request: QueryRequest = Depends(get_data_agent_request),
+    service: DataAgentService = Depends(get_data_agent_service),
+):
+    """New operation path. First wave only implements type=query."""
+    if isinstance(request, QueryRequest):
+        return await _dispatch_query(request.content.query, request.content.stream, service)
+    raise AssertionError(f"unsupported type: {getattr(request, 'type', request)}")
