@@ -19,20 +19,20 @@ def test_business_id_catalog_is_a_packaged_json_resource() -> None:
     payload = json.loads(catalog_path.read_text(encoding="utf-8"))
 
     assert payload["version"] == 1
-    assert len(payload["business_schemas"]) == 19
+    assert len(payload["business_schemas"]) == 21
     assert payload["business_schemas"]["dw1745159007"]["dimensions"] == [
-        "app_id",
-        "cell_id",
         "city",
         "county",
-        "custom_group",
-        "gnb",
-        "guarantee_group",
-        "sub_app_id",
         "tai",
+        "gnb",
+        "cell_id",
+        "guarantee_group",
+        "app_id",
+        "sub_app_id",
+        "custom_group",
+        "15min_granularity",
         "1h_granularity",
         "1d_granularity",
-        "15min_granularity",
     ]
 
 
@@ -70,12 +70,47 @@ def test_known_extra_metric_is_classified_without_dimension_error() -> None:
             ["assurance_abnormal_release_times_of_nwdaf"],
             "dw1745159003",
         ),
-        ("查询高铁用户数", ["crh_users"], "dw1745159021"),
+        (
+            "查询高铁用户接入高铁专网次数",
+            ["de_acc_num_of_rail_usr_of_nwdaf", "ne_name"],
+            "dw1745159003",
+        ),
+        ("查询高铁用户数", ["crh_users"], "dw1745159030"),
+        ("查询高铁分群用户数", ["crh_users", "crh_group"], "dw1745159030"),
         ("查询高铁乘坐次数", ["crh_ride_times", "gpsi"], "dw1745159012"),
-        ("查询高铁分群用户数", ["crh_users", "crh_group"], "dw1745159010"),
+        (
+            "查询高铁首次N23会话创建上报次数",
+            ["crh_trigger_first_n23_create_times", "gnb"],
+            "dw1745159031",
+        ),
+        (
+            "查询高铁线路段下行流量",
+            ["downlink_traffic", "crh_section_id"],
+            "dw1745159032",
+        ),
+        (
+            "查询高铁线路业务使用次数",
+            ["service_times", "crh_railway_id"],
+            "dw1745159033",
+        ),
+        (
+            "查询高铁线路保障用户数",
+            ["assurance_users", "crh_railway_id"],
+            "dw1745159034",
+        ),
         ("查询高铁下行流量", ["downlink_traffic"], "dw1745159007"),
         ("查询上行PRB使用量", ["cell_prb_ul_usage"], "dw1745159004"),
         ("查询保障次数", ["assurance_times"], "dw1745159008"),
+        (
+            "查询网元维度保障用户数",
+            ["assurance_users", "ne_name"],
+            "dw1745159028",
+        ),
+        (
+            "查询小区维度保障用户数",
+            ["assurance_users", "cell_id"],
+            "dw1745159037",
+        ),
         (
             "查询各终端品牌保障次数",
             ["assurance_times", "term_brand"],
@@ -88,18 +123,18 @@ def test_known_extra_metric_is_classified_without_dimension_error() -> None:
         ),
         (
             "查询保障与非保障用户MOS",
-            ["avg_qoe", "mos_times", "mos4_qds"],
-            "dw1745159020",
+            ["avg_qoe", "mos_times", "guarantee_group"],
+            "dw1745159007",
         ),
         (
             "查询各终端品牌保障与非保障用户MOS",
-            ["avg_qoe", "mos_times", "mos4_qds", "term_brand"],
-            "dw1745159018",
+            ["avg_qoe", "mos_times", "guarantee_group", "term_brand"],
+            "dw1745159014",
         ),
         (
             "查询各5QI分群保障与非保障用户MOS",
-            ["avg_qoe", "mos_times", "mos4_qds", "default5qi_group"],
-            "dw1745159019",
+            ["avg_qoe", "mos_times", "guarantee_group", "default5qi_group"],
+            "dw1745159015",
         ),
         ("普通查询", [], "dw1745159007"),
     ],
@@ -111,9 +146,10 @@ def test_column_only_routes(question: str, columns: list[str], expected: str) ->
 @pytest.mark.parametrize(
     ("columns", "expected"),
     [
-        (["mos_sec3_users"], "dw1745159009"),
-        (["mos_sec1_users", "term_brand"], "dw1745159018"),
-        (["mos_sec2_users", "default5qi_group"], "dw1745159019"),
+        (["mos_sec3_times"], "dw1745159007"),
+        (["mos_sec1_times", "term_brand"], "dw1745159014"),
+        (["mos_sec2_times", "default5qi_group"], "dw1745159015"),
+        (["most_resolution1080p_times", "ne_name"], "dw1745159027"),
     ],
 )
 def test_normalizes_physical_distribution_metrics(columns: list[str], expected: str) -> None:

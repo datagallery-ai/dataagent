@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ import pytest
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.business_twin_perceptor import BusinessTwinPerceptorNode
+from dataagent.utils.runtime_paths import dataagent_package_path
 
 PROMPT_PATH = (
     Path(__file__).resolve().parents[4]
@@ -19,6 +21,12 @@ PROMPT_PATH = (
     / "filter_business_twin_business_id_system.md"
 )
 USER_PROMPT_PATH = PROMPT_PATH.with_name("filter_business_twin_business_id_user.md")
+CATALOG_PATH = dataagent_package_path(
+    "agents",
+    "nl2sql",
+    "utils",
+    "business_twin_business_id_catalog.json",
+)
 
 
 class _ConfigManager:
@@ -29,10 +37,17 @@ class _ConfigManager:
 def test_production_prompt_embeds_full_catalog_and_requires_bare_array() -> None:
     text = PROMPT_PATH.read_text(encoding="utf-8")
     catalog_names = re.findall(r"(?m)^- ([a-zA-Z0-9_*]+) \|", text)
+    catalog_payload = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    catalog_fields = {
+        field
+        for schema in catalog_payload["business_schemas"].values()
+        for field in (*schema["metrics"], *schema["dimensions"])
+    }
 
     assert "{{CATALOG}}" not in text
-    assert len(catalog_names) == 104
-    assert len(set(catalog_names)) == 104
+    assert len(catalog_names) == 156
+    assert len(set(catalog_names)) == 156
+    assert set(catalog_names) == catalog_fields
     for granularity_field in ("1h_granularity", "1d_granularity", "15min_granularity"):
         assert granularity_field in catalog_names
     assert not re.findall(r"dw\d+", text)
