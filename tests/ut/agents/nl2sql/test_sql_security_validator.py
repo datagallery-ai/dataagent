@@ -10,12 +10,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import json
 from unittest.mock import AsyncMock
 
 import pytest
 
 from dataagent.agents.nl2sql.nodes.validator import ValidatorNode
-from dataagent.agents.nl2sql.workflow.state import Result
+from dataagent.agents.nl2sql.workflow.state import Result, get_default_state
 from dataagent.config.config_manager import ConfigManager
 
 
@@ -126,3 +127,54 @@ async def test_validator_checks_all_generated_candidates_independently() -> None
     assert safe.security_violations == []
     assert safe.security_checked is True
     assert result[1].get("score", 0) == 1
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected_score"),
+    [
+        ({"score": 0.8, "issues": []}, 1),
+        ({"score": 0.8, "issues": ["Missing time filter"]}, 0.8),
+        ({"score": 0.8}, 1),
+    ],
+    ids=["no-issues", "with-issues", "issues-key-omitted"],
+)
+@pytest.mark.asyncio
+async def test_semantic_score_only_drops_when_there_is_something_to_repair(
+    reported: dict, expected_score: float
+) -> None:
+    """A score below the threshold with an empty issue list leaves the Reflector nothing to do."""
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=False)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, **reported}])
+    state = get_default_state("question", generation_results=[Result(id=0, sql="SELECT time FROM fact_metric")])
+
+    result = await node._aprocess(state)
+
+    assert result["validation_results"][0].score == expected_score
+    # No prior round here, so the template must not render an empty history block.
+    assert node.execute_with_llm_json.await_args.args[0]["review_history"] == ""
+
+
+@pytest.mark.asyncio
+async def test_validator_passes_prior_review_rounds_to_the_semantic_check() -> None:
+    """The semantic check must see what earlier rounds raised and what could not be repaired."""
+    node = ValidatorNode(config_manager=_config_manager(), db_explain=False, sql_security_enabled=False)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "score": 1, "issues": []}])
+    entry = {
+        "round": 1,
+        "id": 0,
+        "sql_before": "SELECT time FROM fact_metric",
+        "issues": ["Aggregate by city as well."],
+        "sql_after": "SELECT time FROM fact_metric",
+        "changed": False,
+        "unresolved": ["Aggregate by city as well. - the schema has no city column."],
+    }
+    state = get_default_state(
+        "question",
+        generation_results=[Result(id=0, sql="SELECT time FROM fact_metric")],
+        review_history=[entry],
+    )
+
+    await node._aprocess(state)
+
+    context = node.execute_with_llm_json.await_args.args[0]
+    assert json.loads(context["review_history"]) == [entry]

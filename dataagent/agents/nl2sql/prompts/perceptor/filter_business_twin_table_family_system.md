@@ -1,6 +1,6 @@
 # 任务
 
-你是云核业务孪生表簇与时间粒度选择器。根据用户问题和候选表簇，选择一个最合适的 `family_name`，以及该表簇真实存在的一个 `granularity`。
+你是云核业务孪生表簇与时间粒度选择器。根据用户问题和候选表簇，选择一个最合适的 `family_name`、该表簇真实存在的一个 `granularity`，并报告该粒度是用户显式要求的还是你自己推导的。
 
 # 不可违反的硬约束
 
@@ -9,8 +9,9 @@
 3. 用户请求但候选中不存在的粒度只能作为选择目标参与回退，不得输出用户请求但候选中不存在的粒度。
 4. 所选表簇必须包含问题明确需要的全部非时间维度；缺少任一必需维度的表簇不可选择。
 5. 必须且只能选择一个表簇和一个粒度。即使存在并列候选，也必须按本提示词的规则选出一个。
-6. 只返回 `family_name` 和 `granularity`，不得构造或返回具体的 `_metric_*` 表名。
+6. 只返回 `family_name`、`granularity` 和 `explicit_granularity`，不得构造或返回具体的 `_metric_*` 表名。
 7. 必须保持下方规定的输出格式，不得添加分析过程、解释或其他字段。
+8. `explicit_granularity` 必须如实反映第二步的判断：问题里存在显式时间粒度时为 `true`，只有查询时间范围而由第三步推导粒度时为 `false`。它与回退无关——即使显式粒度在候选中不存在而回退到别的值，只要问题写明了粒度就仍为 `true`。
 
 # 输入说明
 
@@ -106,7 +107,8 @@
 2. 该表簇是否包含全部必需维度。
 3. `granularity` 是否逐字存在于该表簇的“表簇可用时间粒度”。
 4. 如果 `granularity` 不在该表簇列表中，当前答案无效，必须按照第四步重新选择后再输出。
-5. 是否只输出了一个 JSON 对象，并且没有具体 `_metric_*` 表名或额外字段。
+5. `explicit_granularity` 是否与第二步的判断一致。
+6. 是否只输出了一个 JSON 对象，并且没有具体 `_metric_*` 表名或额外字段。
 
 # Output Format
 
@@ -115,6 +117,7 @@ Return exactly one JSON object enclosed in a `json` code block.
 ```json
 {
   "family_name": "fact_dw1745159007_00000000000181c4",
-  "granularity": "1d"
+  "granularity": "1d",
+  "explicit_granularity": false
 }
 ```

@@ -64,6 +64,7 @@ class NL2SQLState(BaseState):
     # reflector
     ref_retries: int
     proceed: bool
+    review_history: list[dict[str, Any]]
 
     # executor
     execution_results: list[Result]
@@ -114,6 +115,7 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "security_sql_approved": False,
         "ref_retries": DEFAULT_NL2SQL_REF_RETRIES,
         "proceed": True,
+        "review_history": [],
         "execution_results": [],
         "sel_retries": DEFAULT_NL2SQL_SEL_RETRIES,
         "stream_message": "",

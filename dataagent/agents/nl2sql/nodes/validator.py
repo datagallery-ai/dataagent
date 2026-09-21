@@ -54,12 +54,14 @@ class ValidatorNode(BaseNL2SQLNode):
 
     async def _validate_semantic(self, state: NL2SQLState) -> list[dict[str, Any]]:
         res = [{"id": r.id, "sql": r.sql} for r in state["generation_results"]]
+        history = state.get("review_history") or []
         context = {
             "schema": state["schema_str"],
             "evidence": state["evidence"],
             "question": state["question"],
             "sql_rules": state["sql_rules"],
             "sqls": json.dumps(res),
+            "review_history": json.dumps(history, ensure_ascii=False) if history else "",
         }
         for _ in range(3):
             out = await self.execute_with_llm_json(context, "validate_semantic_")
@@ -72,6 +74,12 @@ class ValidatorNode(BaseNL2SQLNode):
             # skip if fail
             logger.warning("Semantic validator failed.")
             res = [{"score": 1, "issues": []}] * len(state["generation_results"])
+        for r in res:
+            # Repair is driven by issues, so a score below 1 with nothing to repair
+            # would send an unrepairable SQL round-tripping through the Reflector.
+            if not r.get("issues"):
+                r["issues"] = []
+                r["score"] = 1
         return res
 
     async def _validate_syntax(self, gen_res: list[Result], schema: dict) -> list[dict[str, Any]]:

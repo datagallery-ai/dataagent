@@ -14,5 +14,10 @@
 {{ sql_rules }}
 {% endif %}
 
+{% if review_history %}
+## Prior Review Rounds
+{{ review_history }}
+{% endif %}
+
 ## Generated SQLs
 {{ sqls }}

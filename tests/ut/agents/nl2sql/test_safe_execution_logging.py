@@ -21,7 +21,7 @@ from dataagent.agents.nl2sql.nodes import executor as executor_module
 from dataagent.agents.nl2sql.nodes import selector as selector_module
 from dataagent.agents.nl2sql.nodes.executor import ExecutorNode
 from dataagent.agents.nl2sql.nodes.selector import SelectorNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import sql_sha256
+from dataagent.agents.nl2sql.utils.nl2sql_utils import normalize_sql, sql_sha256
 from dataagent.agents.nl2sql.workflow.state import Result, get_default_state
 
 
@@ -42,6 +42,10 @@ def _capture_info(monkeypatch: pytest.MonkeyPatch, module: Any) -> list[str]:
 
 def test_sql_sha256_normalizes_whitespace() -> None:
     assert sql_sha256("  SELECT   secret\nFROM account  ") == sql_sha256("SELECT secret FROM account")
+
+
+def test_normalize_sql_treats_case_whitespace_and_semicolon_as_equal() -> None:
+    assert normalize_sql("SELECT  time\nFROM t;") == normalize_sql("select time from t")
 
 
 @pytest.mark.asyncio

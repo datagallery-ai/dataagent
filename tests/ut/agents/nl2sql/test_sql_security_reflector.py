@@ -179,9 +179,172 @@ async def test_reflector_receives_actionable_security_issue_without_rewriting_it
     node = ReflectorNode(threshold=0.9)
     node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "sql": "SELECT orders.id FROM orders"}])
 
-    fixed_sql = await node._fix_sql([candidate])
+    fixes = await node._fix_sql([candidate])
 
     context = node.execute_with_llm_json.await_args.args[0]
     cases = json.loads(context.get("cases", "[]"))
     assert cases[0].get("issues", []) == [issue]
-    assert fixed_sql == ["SELECT orders.id FROM orders"]
+    assert context.get("review_history") == ""
+    assert fixes == [{"sql": "SELECT orders.id FROM orders", "unresolved": []}]
+
+
+_PRIOR_ROUND = [{"round": 1, "id": 0, "issues": [], "changed": False, "unresolved": ["cannot be fixed"]}]
+
+
+@pytest.mark.asyncio
+async def test_repeated_unchanged_round_ends_the_loop() -> None:
+    """Once an unchanged round repeats, the Validator has had its chance; stop reflecting."""
+    sql = "SELECT time, SUM(metric) AS metric FROM fact_metric GROUP BY time ORDER BY time"
+    node = ReflectorNode(threshold=0.9)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "sql": f"  {sql} ;", "unresolved": []}])
+    state = get_default_state("question", ref_retries=2, review_history=list(_PRIOR_ROUND))
+    state["validation_results"] = [
+        Result(id=0, sql=sql, prompt="p", score=0.8, issues=["cannot be applied"], security_checked=True)
+    ]
+
+    result = await node._aprocess(state)
+
+    assert result["proceed"] is True
+    assert result["sql"] == sql
+    assert result["security_sql_approved"] is True
+    assert result["generation_results"] == []
+    assert result["validation_results"][0].sql == sql
+    # This path produces no SQL of its own, so nothing may be streamed or appended to it.
+    assert result["stream_message"] == ""
+
+
+@pytest.mark.asyncio
+async def test_unchanged_sql_never_approves_a_security_blocked_candidate() -> None:
+    """The no-op exit must not become a way around the security verdict."""
+    blocked_sql = "SELECT current_setting('x')"
+    node = ReflectorNode(threshold=0.9)
+    node.execute_with_llm_json = AsyncMock(
+        return_value=[{"id": 0, "sql": blocked_sql, "unresolved": ["cannot be fixed"]}]
+    )
+    state = get_default_state("question", ref_retries=2, review_history=list(_PRIOR_ROUND))
+    state["validation_results"] = [_candidate(0, blocked_sql, 0.0, blocked=True)]
+
+    result = await node._aprocess(state)
+
+    assert result["proceed"] is False
+    assert result["security_sql_approved"] is False
+    assert result["sql"] == ""
+
+
+@pytest.mark.asyncio
+async def test_failed_repair_round_keeps_retrying_instead_of_approving() -> None:
+    """A transient Reflector failure is not a decision to leave the SQL as is."""
+    sql = "SELECT id FROM orders"
+    node = ReflectorNode(threshold=0.9, sql_security_enabled=False)
+    node.execute_with_llm_json = AsyncMock(return_value=[])
+    state = get_default_state("question", ref_retries=2, review_history=list(_PRIOR_ROUND))
+    state["validation_results"] = [
+        Result(id=0, sql=sql, prompt="p", score=0.1, issues=["Missing time filter"], security_checked=True)
+    ]
+
+    result = await node._aprocess(state)
+
+    assert result["proceed"] is False
+    assert result["generation_results"][0].sql == sql
+    assert result["review_history"] == _PRIOR_ROUND
+
+
+@pytest.mark.asyncio
+async def test_unchanged_sql_does_not_approve_a_candidate_still_needing_dimension_join() -> None:
+    """need_ref marks an incomplete rewrite, so the no-op exit must not short-circuit it."""
+    sql = "SELECT county, SUM(x) AS x FROM fact GROUP BY county"
+    node = ReflectorNode(threshold=0.9, sql_security_enabled=False)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "sql": sql, "unresolved": []}])
+    state = get_default_state("question", ref_retries=2, review_history=list(_PRIOR_ROUND))
+    state["validation_results"] = [
+        Result(id=0, sql=sql, prompt="p", score=1.0, issues=[], need_ref=True, security_checked=True)
+    ]
+
+    result = await node._aprocess(state)
+
+    assert result["proceed"] is False
+
+
+@pytest.mark.parametrize(
+    ("after_sql", "unresolved", "changed"),
+    [
+        ("SELECT fact_orders.id FROM fact_orders INNER JOIN dim_date ON fact_orders.dt = dim_date.dt", [], True),
+        ("SELECT id FROM fact_orders", ["needs a column the schema does not have"], False),
+    ],
+    ids=["repaired", "left-as-is"],
+)
+@pytest.mark.asyncio
+async def test_repair_round_is_recorded_and_sent_back_for_revalidation(
+    after_sql: str, unresolved: list[str], changed: bool
+) -> None:
+    """Every completed round lands in the ledger, and the first one always re-enters the Validator."""
+    before_sql = "SELECT id FROM fact_orders"
+    issues = ["Missing dimension-table JOIN on dim_date"]
+    node = ReflectorNode(threshold=0.9)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "sql": after_sql, "unresolved": unresolved}])
+    state = get_default_state("question", ref_retries=2)
+    state["validation_results"] = [
+        Result(id=0, sql=before_sql, prompt="schema prompt", score=0.1, issues=issues, security_checked=True)
+    ]
+
+    result = await node._aprocess(state)
+
+    assert result["proceed"] is False
+    assert result["validation_results"] == []
+    assert result["generation_results"][0].sql == after_sql
+    assert result["review_history"] == [
+        {
+            "round": 1,
+            "id": 0,
+            "sql_before": before_sql,
+            "issues": issues,
+            "sql_after": after_sql,
+            "changed": changed,
+            "unresolved": unresolved,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reflector_ledger_numbers_rounds_and_feeds_the_next_repair() -> None:
+    """A second round appends to the ledger and injects the first round back into the repair prompt."""
+    first_before = "SELECT id FROM fact_orders"
+    first_after = "SELECT fact_orders.id FROM fact_orders INNER JOIN dim_date ON fact_orders.dt = dim_date.dt"
+    second_after = "SELECT fact_orders.id FROM fact_orders WHERE fact_orders.dt >= '2024-01-01'"
+    first_issues = ["Missing dimension-table JOIN on dim_date"]
+    second_issues = ["Drop unused JOIN on dim_date"]
+    node = ReflectorNode(threshold=0.9, sql_security_enabled=False)
+    node.execute_with_llm_json = AsyncMock(
+        side_effect=[
+            [{"id": 0, "sql": first_after, "unresolved": []}],
+            [{"id": 0, "sql": second_after, "unresolved": ["Render a chart. - SQL cannot draw charts."]}],
+        ]
+    )
+    state = get_default_state("question", ref_retries=3)
+    state["validation_results"] = [
+        Result(id=0, sql=first_before, prompt="p", score=0.1, issues=first_issues, security_checked=True)
+    ]
+
+    state = await node._aprocess(state)
+    state["validation_results"] = [
+        Result(id=0, sql=first_after, prompt="p", score=0.2, issues=second_issues, security_checked=True)
+    ]
+    state = await node._aprocess(state)
+
+    second_context = node.execute_with_llm_json.await_args_list[1].args[0]
+    assert json.loads(second_context.get("review_history", "[]")) == [
+        {
+            "round": 1,
+            "id": 0,
+            "sql_before": first_before,
+            "issues": first_issues,
+            "sql_after": first_after,
+            "changed": True,
+            "unresolved": [],
+        }
+    ]
+    assert [(entry["round"], entry["issues"]) for entry in state["review_history"]] == [
+        (1, first_issues),
+        (2, second_issues),
+    ]
+    assert state["review_history"][1]["unresolved"] == ["Render a chart. - SQL cannot draw charts."]

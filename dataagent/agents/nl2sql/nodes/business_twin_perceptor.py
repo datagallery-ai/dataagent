@@ -275,8 +275,8 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         return None
 
     async def _business_twin_schema_linking(self, question: str):
-        """Select the business-twin table family and return its schema, joins, and catalog."""
-        table = await self._select_table_by_business_family(question)
+        """Select the business-twin table family and return its schema, joins, catalog, and granularity."""
+        table, explicit_granularity = await self._select_table_by_business_family(question)
         schema, joins = await asyncio.to_thread(self.full_schema, [table])
         for table in schema.values():
             for column in table["columns"].values():
@@ -286,7 +286,7 @@ class BusinessTwinPerceptorNode(PerceptorNode):
                     if item
                 )
         catalog = await asyncio.to_thread(self._column_metadata)
-        return schema, joins, catalog
+        return schema, joins, catalog, explicit_granularity
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
@@ -299,7 +299,14 @@ class BusinessTwinPerceptorNode(PerceptorNode):
             format_administrative_division_rules,
             state["question"],
         )
-        schema, joins, catalog = await self._business_twin_schema_linking(state["question"])
+        schema, joins, catalog, explicit_granularity = await self._business_twin_schema_linking(state["question"])
+        if explicit_granularity:
+            state["sql_rules"] += (
+                "\n\n## 时间粒度"
+                "\n- 问题明确要求了时间粒度：`time` 必须出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
+                "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不得把结果压成单行。"
+                "\n- 不得从 SELECT 或 GROUP BY 移除 `time`，任何要求移除 `time` 的意见都应判为无效。"
+            )
         state["schema"] = schema
         state["joins"] = joins
         state["schema_str"] = schema_to_ddl(schema, joins, catalog)
@@ -350,13 +357,21 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         )
         family_name = str(parsed.get("family_name") or "").strip()
         granularity = str(parsed.get("granularity") or "").strip()
-        return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
+        if not family_name or not granularity:
+            return None
+        return {
+            "family_name": family_name,
+            "granularity": granularity,
+            "explicit_granularity": parsed.get("explicit_granularity") is True,
+        }
 
-    async def _select_table_by_business_family(self, question: str) -> str:
+    async def _select_table_by_business_family(self, question: str) -> tuple[str, bool]:
+        """Return the selected table and whether the question named its time granularity."""
         catalog = await asyncio.to_thread(self._full_table_catalog)
         pinned = self._pinned_table(question, catalog)
         if pinned:
-            return pinned
+            # Pinning names a table, not an output granularity, so nothing is claimed here.
+            return pinned, False
         business_id = await self._select_business_id(question)
         families = self._build_table_family_candidates(
             [table for table in catalog if table["bare_table_name"].lower() not in self._EXPLICIT_ONLY_TABLES],
@@ -371,4 +386,4 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         table = self._resolve_table_family_selection(selection, families)
         if not table:
             raise NL2SQLError("Business-twin table family selection returned no valid table")
-        return table
+        return table, bool(selection and selection.get("explicit_granularity"))

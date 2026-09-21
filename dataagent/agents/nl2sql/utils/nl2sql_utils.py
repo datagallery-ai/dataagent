@@ -39,6 +39,11 @@ _DIMENSION_CONFIG_FILES = {
 _Strategy = Literal["prompt", "skeleton", "icl", "dc"]
 
 
+def normalize_sql(sql: str) -> str:
+    """Collapse whitespace and trailing semicolons for SQL equality checks."""
+    return re.sub(r"\s+", " ", (sql or "").strip()).strip(" ;").casefold()
+
+
 def sql_sha256(sql: str) -> str:
     """Return a stable SHA-256 fingerprint for normalized SQL."""
     normalized = re.sub(r"\s+", " ", (sql or "").strip())
