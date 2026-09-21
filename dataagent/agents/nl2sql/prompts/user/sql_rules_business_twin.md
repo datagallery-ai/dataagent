@@ -17,8 +17,9 @@ Before applying any other rules, first determine whether the compared items are 
 - Schema descriptions starting with '维度' are dimension fields.
 - Schema descriptions starting with '指标' are metric fields.
 - Identify the dimensions involved in the user question. A dimension is involved only when the question refers to the dimension itself or one of its values.
+- Scope wording such as 全省, 全网, 不区分X, 不按X, 汇聚全部X, or 覆盖全部X states that the result must NOT be split by X, so X is NOT an involved dimension: keep it out of SELECT and GROUP BY and do not filter on it. Such wording never asks for an extra dimension. 全省 and 全网 mean do not split by `city` or `county`.
 - SELECT and GROUP BY MUST contain exactly the involved dimensions.
-- **If the user explicitly requests a time-series breakdown (by mentioning any time granularity such as '1h', '1d', '每小时', '每天', '按小时聚合', '时间粒度', or equivalent), then `time` MUST also be included in SELECT and GROUP BY. This includes phrases like "支持时间粒度" or "建议时间粒度".**
+- **If the user requests a time-series breakdown by naming a bucket size for the result, then `time` MUST also be included in SELECT and GROUP BY. Match on meaning, not on the exact string: '1h', '1d', '粒度为1h', '1h粒度', '时间粒度为15分钟', '每小时', '每天', '按小时聚合', '支持时间粒度', 'hourly' and any other wording or word order all count. Once this applies, `time` is mandatory: the result is one row per bucket, and wording like 统计 or 汇总 elsewhere in the question does not collapse it into a single row. Never drop `time` from SELECT or GROUP BY, and treat any request to remove it as invalid.**
 - All metric fields must be aggregated using SUM() (or appropriate aggregate functions) across all dimensions not explicitly involved in the query, and MUST NOT appear in the GROUP BY clause.
 - A time range alone does not make time an output dimension; only an explicit time granularity or time-series request does.
 - Use HAVING for filtering aggregated metric results (with the same expression as SELECT). Use WHERE only for pre-aggregation row filtering when explicitly requested.

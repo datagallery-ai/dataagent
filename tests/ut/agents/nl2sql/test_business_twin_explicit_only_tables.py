@@ -70,7 +70,8 @@ async def test_mentioned_table_is_pinned_without_llm(
     monkeypatch.setattr(node, "execute_with_llm_json", fail_execute)
     monkeypatch.setattr(node, "_full_table_catalog", lambda: _catalog())
 
-    assert await node._select_table_by_business_family(question) == expected
+    # Pinning names a table, not an output granularity, so no granularity is claimed.
+    assert await node._select_table_by_business_family(question) == (expected, False)
 
 
 @pytest.mark.asyncio
@@ -103,18 +104,19 @@ async def test_unmentioned_question_excludes_explicit_only_table(
     async def fake_business_id(question: str) -> str:
         return "dw1745159004"
 
-    async def fake_select_family(question: str, families: list[dict[str, Any]]) -> dict[str, str]:
+    async def fake_select_family(question: str, families: list[dict[str, Any]]) -> dict[str, Any]:
         seen_families.append(families)
-        return {"family_name": OTHER_FAMILY, "granularity": "1h"}
+        return {"family_name": OTHER_FAMILY, "granularity": "1h", "explicit_granularity": True}
 
     monkeypatch.setattr(node, "_select_business_id", fake_business_id)
     monkeypatch.setattr(node, "_full_table_catalog", lambda: _catalog())
     monkeypatch.setattr(node, "_select_table_family", fake_select_family)
 
     question = "查询最近一周按全省（不区分城市）统计的无线小区下行PRB可用数，该指标对应字段为cell_prb_dl_total，单位为个，按1小时粒度展示"
-    table = await node._select_table_by_business_family(question)
+    table, explicit_granularity = await node._select_table_by_business_family(question)
 
     assert table == OTHER_TABLE
+    assert explicit_granularity is True
     assert len(seen_families) == 1
     family_names = {family["family_name"] for family in seen_families[0]}
     assert EXCLUDED_FAMILY not in family_names
@@ -132,15 +134,15 @@ async def test_plain_question_keeps_normal_flow(
         called["business_id"] = True
         return "dw1745159004"
 
-    async def fake_select_family(question: str, families: list[dict[str, Any]]) -> dict[str, str]:
-        return {"family_name": OTHER_FAMILY, "granularity": "1h"}
+    async def fake_select_family(question: str, families: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"family_name": OTHER_FAMILY, "granularity": "1h", "explicit_granularity": True}
 
     monkeypatch.setattr(node, "_select_business_id", fake_business_id)
     monkeypatch.setattr(node, "_full_table_catalog", lambda: _catalog())
     monkeypatch.setattr(node, "_select_table_family", fake_select_family)
 
     question = "查询最近一周全省无线小区下行PRB可用数，按1小时粒度展示"
-    assert await node._select_table_by_business_family(question) == OTHER_TABLE
+    assert await node._select_table_by_business_family(question) == (OTHER_TABLE, True)
     assert called["business_id"] is True
 
 

@@ -15,10 +15,17 @@ from typing import Any
 
 from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from dataagent.agents.nl2sql.utils.nl2sql_utils import process_dimension_joins, quote_sql_placeholders
+from dataagent.agents.nl2sql.utils.nl2sql_utils import normalize_sql, process_dimension_joins, quote_sql_placeholders
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.constants import DEFAULT_NL2SQL_REFLECTOR_THRESHOLD
 from dataagent.utils.log import logger
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Normalize a model-supplied field into a list of strings."""
+    if isinstance(value, list | tuple):
+        return [str(item) for item in value]
+    return [str(value)] if value else []
 
 
 class ReflectorNode(BaseNL2SQLNode):
@@ -41,23 +48,30 @@ class ReflectorNode(BaseNL2SQLNode):
             raise SQLSecurityValidationError(violations=violations)
         best = max(safe_results or state["validation_results"], key=lambda result: result.score)
         if safe_results and ((best.score >= self.threshold and not best.need_ref) or state["ref_retries"] <= 0):
-            state["validation_results"] = safe_results
-            state["proceed"] = True
-            state["sql"] = best.sql
-            state["security_sql_approved"] = True
-            return state
+            return self._approve(state, safe_results, best)
         state["ref_retries"] -= 1
         state["proceed"] = False
         state["security_sql_approved"] = False
+        history = state.setdefault("review_history", [])
+        reviewed_before = bool(history)
+        repaired = None
         for _ in range(3):
-            out = await self._fix_sql(state["validation_results"])
+            out = await self._fix_sql(state["validation_results"], history)
             if len(out) == len(state["validation_results"]):
-                fix_sqls = out
+                repaired = out
                 break
-        else:
+        if repaired is None:
             # skip if fail
             logger.warning("Reflector failed.")
             fix_sqls = [v.sql for v in state["validation_results"]]
+        else:
+            fix_sqls = [fix["sql"] for fix in repaired]
+            changed = self._record_review_round(history, state["validation_results"], repaired)
+            # The first unchanged round still goes back, so the Validator can read this
+            # round's `unresolved` report before the loop gives up.
+            if reviewed_before and safe_results and not best.need_ref and not any(changed):
+                logger.info("Reflector stopped: SQL unchanged across rounds.")
+                return self._approve(state, safe_results, best)
         current_batch = []
         for v, sql in zip(state["validation_results"], fix_sqls, strict=True):
             v.sql, v.score, v.issues, v.need_ref = sql, 0, [], False
@@ -84,9 +98,47 @@ class ReflectorNode(BaseNL2SQLNode):
         state["stream_message"] = message
         return state
 
-    async def _fix_sql(self, val_res: list[Result]) -> list[str]:
-        cases = [{"id": v.id, "sql": v.sql, "issues": v.issues} for v in val_res]
-        cases = json.dumps(cases, ensure_ascii=False, separators=(",", ":"))
-        context = {"cases": cases, "prompt": val_res[0].prompt}
+    def _approve(self, state: NL2SQLState, safe_results: list[Result], best: Result) -> NL2SQLState:
+        """Accept ``best`` as the final SQL and let the workflow move past reflection."""
+        state["validation_results"] = safe_results
+        state["proceed"] = True
+        state["sql"] = best.sql
+        state["security_sql_approved"] = True
+        return state
+
+    def _record_review_round(
+        self, history: list[dict[str, Any]], results: list[Result], fixes: list[dict[str, Any]]
+    ) -> list[bool]:
+        """Append this round to the ledger and return which candidates actually changed."""
+        round_index = max((entry.get("round", 0) for entry in history), default=0) + 1
+        changed = []
+        for v, fix in zip(results, fixes, strict=True):
+            is_changed = normalize_sql(v.sql) != normalize_sql(fix["sql"])
+            changed.append(is_changed)
+            history.append(
+                {
+                    "round": round_index,
+                    "id": v.id,
+                    "sql_before": v.sql,
+                    "issues": list(v.issues),
+                    "sql_after": fix["sql"],
+                    "changed": is_changed,
+                    "unresolved": list(fix["unresolved"]),
+                }
+            )
+        return changed
+
+    async def _fix_sql(
+        self, val_res: list[Result], review_history: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
+        cases = json.dumps(
+            [{"id": v.id, "sql": v.sql, "issues": v.issues} for v in val_res],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        history = json.dumps(review_history, ensure_ascii=False, separators=(",", ":")) if review_history else ""
+        context = {"cases": cases, "prompt": val_res[0].prompt, "review_history": history}
         response = await self.execute_with_llm_json(context)
-        return [quote_sql_placeholders(x["sql"]) for x in response]
+        return [
+            {"sql": quote_sql_placeholders(x["sql"]), "unresolved": _as_str_list(x.get("unresolved"))} for x in response
+        ]

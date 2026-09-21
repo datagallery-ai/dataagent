@@ -134,7 +134,7 @@ async def test_business_twin_aprocess_appends_administrative_rules(monkeypatch: 
     monkeypatch.setattr(business_twin_perceptor_module, "schema_to_ddl", lambda *_args: "DDL")
 
     async def fake_schema_linking(_question: str):
-        return {}, [], {}
+        return {}, [], {}, False
 
     monkeypatch.setattr(node, "_business_twin_schema_linking", fake_schema_linking)
     state = {"question": "查询深圳市南山区流量"}
