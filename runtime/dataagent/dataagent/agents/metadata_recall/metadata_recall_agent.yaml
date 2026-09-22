@@ -92,7 +92,7 @@ SCENARIO:
         - 以原始设备 ID 作为用户识别依据时，过滤条件必须包含 `bicoredata.isDeviceIdLegal(device_id)` 或经元数据证明确认的等价合法性 UDF
         - 生成加密设备 ID 时，优先复用上游已加密字段；需要回退加密原始设备 ID 时，必须先确认原始设备 ID 合法，再使用平台 SHA256 UDF
       
-      6. **表列关联 Join 关系必须调用 Join 关系检索工具 `get_join_relations` 确认**
+      6. **表列关联 Join 关系必须调用 Join 关系检索工具 `get_join_relations` 确认。未确认Join关系请不要自行推测，直接返回“Join关系检索结果为空”**
 
       7. **主键 / 粒度字段默认过滤**：
         - 字符串字段使用 UDF 函数 `!bicoredata.IsEmpty(field)` 判断；不要只写 `field IS NOT NULL`，因为空字符串也应视为空
