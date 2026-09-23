@@ -57,7 +57,7 @@ _QUALITY_GATE_USER_PROMPT_TEMPLATE = """## 用户原始需求
 
 ## 【DataTaskIR 强制约束说明】
 以下DataTaskIR记录了此任务的**已确认口径约束**，你在校验过程中**必须严格遵循**，如果有冲突，以DataTaskIR记录的为准。
-特别地，IR中的"输出字段定义"（output_fields）是最终输出列的**权威清单**：INSERT SELECT 的输出列（不含分区列）必须与它完全一致（个数、顺序、名称、类型）；IR 未列出的字段不得输出，IR 已列出的字段不得遗漏。多输出、少输出或改名一律视为**硬性错误**，必须要求修正，不得以"建议与业务确认"等疑问语气放过。
+特别地，最终输出列权威清单 =「特征主键」前缀列 +「输出字段定义」业务/指标列：INSERT SELECT 的输出列（不含分区列）必须先按 feature_key.components 顺序输出主键列（即使它们未出现在 output_fields 中），再严格按 output_fields 中的非主键字段依次输出（个数、顺序、名称、类型）；多维交叉已展开的每条 fields 项对应一列，不得合并或漏项。若各输出列标注了不同的 aggregation_grain，还必须逐列按该粒度聚合，禁止统一成单一 GROUP BY。多输出、少输出、改名或粒度错用一律视为**硬性错误**，必须要求修正，不得以"建议与业务确认"等疑问语气放过。
 {rendered_ir}
 
 ---
@@ -81,7 +81,7 @@ _QUALITY_GATE_USER_PROMPT_TEMPLATE = """## 用户原始需求
 
 7. **业务逻辑完整性**：需求表、DDL、INSERT 三者在粒度、字段、公式、分隔符、精度、排序、去重、TopN 上一一对应。
 
-8. **口径冻结一致性**：最终 SELECT/GROUP BY、JOIN、窗口、排序、去重、空值策略、枚举取值策略必须与DataTaskIR记录一致；任何偏离都必须有证据或 HITL 结论。**其中 IR 的"输出字段定义"（output_fields）是输出列的权威清单：INSERT SELECT 输出列（不含分区列）必须与 IR 输出字段定义完全一致（个数、顺序、名称、类型），多列、少列、字段改名或类型不符都是硬性错误，必须列入问题并要求修正，不得作为"建议确认"的软问题放过。**
+8. **口径冻结一致性**：最终 SELECT/GROUP BY、JOIN、窗口、排序、去重、空值策略、枚举取值策略必须与DataTaskIR记录一致；任何偏离都必须有证据或 HITL 结论。**其中最终输出列权威清单 = 特征主键前缀 + 输出字段定义：INSERT SELECT 输出列（不含分区列）必须先包含已确认 feature_key 的全部 components（即使未写入 output_fields），再包含 output_fields 中的全部非主键业务/指标列（多维交叉展开后的每一项各占一列）；列数、顺序、名称、类型不符都是硬性错误。若各输出列标注了 aggregation_grain（或 aggregation_stages 分列了不同 group_by），还必须逐列核对聚合粒度，禁止用单一全局 GROUP BY 覆盖不同粒度特征；多粒度漏写、写错或统一成公共键均为硬性错误，必须列入问题并要求修正，不得作为"建议确认"的软问题放过。**
 
 ### Gate Check（必须首先验证，不通过则停止交付并修正）
 - [ ] **GATE-1**: INSERT 以 `INSERT OVERWRITE ... PARTITION ...` 开头，且 SELECT 中不输出时间分区列
@@ -89,12 +89,13 @@ _QUALITY_GATE_USER_PROMPT_TEMPLATE = """## 用户原始需求
   - 简单列表型：序列中直接为元素时，元素和元素之间使用 `,` 分隔。例如 `elem1,elem2,elem3`
   - 键值对型：序列中为键值对时，键值对之间使用 `;` 分割，键和值之间使用 `:` 分割，值之间使用 `,` 分隔。例如 `键1:值1,值2;键2:值3`
   - 注意：键值对型中若值为单值（例如 `键1:值1`），则不存在值间逗号不视为违规。
-- [ ] **GATE-3**: 输出字段一致性校验（以 DataTaskIR 输出字段定义为权威）。INSERT SELECT 的输出列（不含分区列）必须与 IR"输出字段定义"（output_fields）完全一致：字段个数相同、顺序相同、字段名相同、类型一致。IR 未列出的字段（如多余的原始分类字段）禁止出现在输出列；IR 已列出的字段禁止遗漏。任一不一致即为 GATE 不通过，必须在 gate_failures 中明确指出并停止交付修正。
+- [ ] **GATE-3**: 输出字段一致性校验（以 DataTaskIR「特征主键 + 输出字段定义」为权威）。INSERT SELECT 的输出列（不含分区列）必须：先按 feature_key.components 顺序包含全部已确认主键列（即使未出现在 output_fields 中），再按 output_fields 顺序包含全部非主键业务/指标列；字段个数、顺序、字段名、类型均须一致。多维交叉场景下 output_fields 的每一项必须各占一列，禁止合并窗口/指标导致少列。若 IR 为输出列标注了 aggregation_grain（或 aggregation_stages 给出不同 group_by），还必须逐列核对聚合粒度，禁止用单一全局 GROUP BY 覆盖不同粒度特征。IR 权威清单外的字段禁止出现；权威清单内的字段禁止遗漏。任一不一致即为 GATE 不通过，必须在 gate_failures 中明确指出并停止交付修正。
 
 ### 其他检查项
 - [ ] INSERT SELECT 不输出分区列
 - [ ] DDL 字段数 = INSERT SELECT 输出列数（不含分区列）
-- [ ] 输出列与 DataTaskIR 输出字段定义严格一致：INSERT SELECT 输出列（个数/顺序/名称/类型）= IR"输出字段定义"（output_fields），IR 未列出的字段禁止输出，IR 已列出的字段不得遗漏
+- [ ] 输出列与 DataTaskIR 最终输出列权威清单严格一致：INSERT SELECT 输出列（个数/顺序/名称/类型）= 已确认特征主键前缀列 + output_fields 非主键业务/指标列；主键列即使未写入 output_fields 也必须输出；多维交叉展开的每一项不得漏列或合并
+- [ ] 逐特征聚合粒度一致：若 output_fields.aggregation_grain 或 aggregation_stages[].group_by 已确认，各输出列的 GROUP BY / 预聚合粒度必须与之逐列对齐，禁止用单一全局粒度覆盖不同特征
 - [ ] 每张目标表的 DDL 字段类型与其 INSERT 输出列一一对齐（按位置）
 - [ ] DDL 字段类型仅使用白名单：STRING、TINYINT、SMALLINT、INT、BIGINT、DECIMAL(p,s)；分区列仅允许 `pt_* string`
 - [ ] 每条 INSERT 仅 1 条主语句（可含子查询/UNION ALL）
@@ -148,7 +149,7 @@ _QUALITY_GATE_USER_PROMPT_TEMPLATE = """## 用户原始需求
 ```
 
 - GATE-1/GATE-2/GATE-3 任一不通过时，gate_passed 必须为 false，并将对应失败项（以"GATE-N: "开头，明确写出失败原因，如"GATE-3: 输出字段一致性校验未通过：输出列多出 app_fourth_class_cn_name"）写入 gate_failures；失败项描述中不要使用"符合/通过"等含通过含义的词。
-- 输出字段与 IR 输出字段定义不一致（多列、少列、顺序不同、字段改名）必须作为 GATE-3 硬性失败，禁止以"建议与业务确认"的软性口吻描述。
+- 输出字段与 IR「特征主键 + 输出字段定义」权威清单不一致（缺主键列、多列、少列、顺序不同、字段改名、多维交叉漏列），或逐特征聚合粒度与 IR aggregation_grain / aggregation_stages 不一致，必须作为 GATE-3 硬性失败，禁止以"建议与业务确认"的软性口吻描述。
 
 必须返回合法 JSON，不得包含 markdown 代码块标记或其他文字。"""
 
