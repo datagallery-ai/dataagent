@@ -2044,8 +2044,10 @@ async def _run_post_validate_prod(
     deadline = asyncio.get_event_loop().time() + count_timeout
     while asyncio.get_event_loop().time() < deadline:
         polled = await prod_get_query_result(count_job_id)
+        logger.debug(f"[post_validate] count_job_id={count_job_id} polled_status={polled['status']} polled_keys={list(polled.keys())}")
         if polled["status"] == "completed":
             count_result = await prod_collect_result(count_job_id)
+            logger.debug(f"[post_validate] count_result data={count_result.get('data')} data_meta={count_result.get('data_meta')} raw_result_keys={list(count_result.get('raw_result', {}).keys()) if isinstance(count_result.get('raw_result'), dict) else None}")
             break
         if polled["status"] == "error":
             return {
@@ -2066,6 +2068,8 @@ async def _run_post_validate_prod(
     # Parse count
     count = _parse_count_from_collect(count_result)
     if count is None:
+        raw_r = count_result.get("raw_result", {})
+        logger.error(f"[post_validate] parse_failed raw_result={raw_r} data={count_result.get('data')} data_meta={count_result.get('data_meta')}")
         return {
             "ok": False,
             "count": None,

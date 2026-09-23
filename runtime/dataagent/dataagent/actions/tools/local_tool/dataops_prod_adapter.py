@@ -154,14 +154,51 @@ async def prod_collect_result(job_id: str) -> dict[str, Any]:
     raw = polled.get("raw") or {}
 
     if polled["status"] == "completed":
-        # 将 {headers, rows} 转换为 list[dict],供后置验证的 _parse_count_from_collect 使用
+        # 将官方返回转换为 list[dict],供后置验证的 _parse_count_from_collect 使用。
+        # 兼容多种官方返回格式:
+        #   - {"data": {"headers": [...], "rows": [[...]]}}   ← 文档示例
+        #   - {"data": [...]}                                  ← 直接 list
+        #   - {"data": 5} / {"data": "5"}                      ← 标量(罕见)
+        #   - {"data": null} / {"data": {}}                    ← 空(常见于 DDL)
         payload = raw.get("data")
-        headers = []
+        headers: list = []
         rows: list = []
+        rows_as_dicts: list[dict] = []
+
         if isinstance(payload, dict):
-            headers = payload.get("headers") or []
-            rows = payload.get("rows") or []
-        rows_as_dicts = [dict(zip(headers, row, strict=True)) for row in rows] if headers else []
+            # 官方文档示例是 {headers, rows}，但实际生产返回的是
+            # {queryResultColumns: [{title, width}], data: [[...]]}
+            if "queryResultColumns" in payload and "data" in payload:
+                # 真实生产格式: 从 queryResultColumns 提取列名
+                cols = payload.get("queryResultColumns") or []
+                headers = [c.get("title", "") if isinstance(c, dict) else str(c) for c in cols]
+                rows = payload.get("data") or []
+                rows_as_dicts = [dict(zip(headers, row, strict=True)) for row in rows] if headers else []
+            elif "headers" in payload and "rows" in payload:
+                # 文档示例格式(保留兼容)
+                headers = payload.get("headers") or []
+                rows = payload.get("rows") or []
+                rows_as_dicts = [dict(zip(headers, row, strict=True)) for row in rows] if headers else []
+            else:
+                rows_as_dicts = []
+        elif isinstance(payload, list):
+            # 官方有时直接返回 list,如 [5] 或 [{"k": "v"}]
+            if payload and isinstance(payload[0], dict):
+                rows_as_dicts = payload
+            elif payload:
+                # 标量 list,如 [5]
+                rows_as_dicts = [{"value": v} for v in payload]
+        # else: payload 是 None/标量/空 dict → rows_as_dicts 保持 []
+
+        logger.debug(
+            f"[prod_collect_result] completed payload_type={type(payload).__name__} "
+            f"headers={headers} rows_count={len(rows)} "
+            f"rows_as_dicts_count={len(rows_as_dicts)} "
+            f"raw_data_keys={list(raw.keys()) if isinstance(raw, dict) else None}"
+        )
+        logger.debug(
+            f"[prod_collect_result] raw_result={raw}"
+        )
         return {
             "status": "completed",
             "job_id": job_id,

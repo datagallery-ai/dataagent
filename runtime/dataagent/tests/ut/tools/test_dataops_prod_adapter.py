@@ -157,6 +157,74 @@ class TestProdCollectResult:
         assert result["data"] == []
 
     @pytest.mark.asyncio
+    async def test_completed_with_scalar_list_payload(self) -> None:
+        """官方 MCP 偶发直接返回 list[标量],如 [5]。"""
+        polled = {"status": "completed", "raw": {"data": [5]}, "error": None}
+        with patch.object(pa, "prod_get_query_result", AsyncMock(return_value=polled)):
+            result = await pa.prod_collect_result("job-scalar")
+
+        assert result["status"] == "completed"
+        assert result["data"] == [{"value": 5}]
+
+    @pytest.mark.asyncio
+    async def test_completed_with_dict_list_payload(self) -> None:
+        """官方 MCP 偶发直接返回 list[dict],如 [{"c": 5}]。"""
+        polled = {
+            "status": "completed",
+            "raw": {"data": [{"_c0": 5}]},
+            "error": None,
+        }
+        with patch.object(pa, "prod_get_query_result", AsyncMock(return_value=polled)):
+            result = await pa.prod_collect_result("job-dict-list")
+
+        assert result["status"] == "completed"
+        assert result["data"] == [{"_c0": 5}]
+
+    @pytest.mark.asyncio
+    async def test_completed_with_scalar_payload(self) -> None:
+        """官方 MCP 偶发直接返回标量,如 5。"""
+        polled = {"status": "completed", "raw": {"data": 5}, "error": None}
+        with patch.object(pa, "prod_get_query_result", AsyncMock(return_value=polled)):
+            result = await pa.prod_collect_result("job-raw-scalar")
+
+        assert result["status"] == "completed"
+        assert result["data"] == []
+
+    @pytest.mark.asyncio
+    async def test_completed_with_empty_dict_payload(self) -> None:
+        """DDL 场景官方返回 {"data": null} 或 {"data": {}}。"""
+        polled = {"status": "completed", "raw": {"data": {}}, "error": None}
+        with patch.object(pa, "prod_get_query_result", AsyncMock(return_value=polled)):
+            result = await pa.prod_collect_result("job-empty")
+
+        assert result["status"] == "completed"
+        assert result["data"] == []
+
+    @pytest.mark.asyncio
+    async def test_completed_with_query_result_columns_format(self) -> None:
+        """真实生产格式: {queryResultColumns: [{title, width}], data: [[...]]}。"""
+        polled = {
+            "status": "completed",
+            "raw": {
+                "data": {
+                    "queryResultColumns": [
+                        {"title": "count(1)", "width": "10%"},
+                        {"title": "", "width": "10%"},
+                    ],
+                    "data": [["0", ""]],
+                    "downLoadPath": None,
+                    "enableCopy": False,
+                },
+            },
+            "error": None,
+        }
+        with patch.object(pa, "prod_get_query_result", AsyncMock(return_value=polled)):
+            result = await pa.prod_collect_result("job-real")
+
+        assert result["status"] == "completed"
+        assert result["data"] == [{"count(1)": "0", "": ""}]
+
+    @pytest.mark.asyncio
     async def test_failed_inlines_error_log(self) -> None:
         polled = {
             "status": "failed",
