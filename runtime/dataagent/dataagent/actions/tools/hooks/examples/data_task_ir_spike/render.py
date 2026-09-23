@@ -52,15 +52,18 @@ _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 3. **禁止操作是强制约束**：以下通用操作默认被禁止，除非IR明确记录允许——在聚合前使用窗口函数去重（如ROW_NUMBER()）、过滤LEFT JOIN的NULL侧使其退化为INNER JOIN、用户未明确要求时使用DISTINCT或COUNT(DISTINCT)
 4. **必须保留的内容**：LEFT JOIN的左表所有记录不得因去重或过滤而丢失；用户未明确要求去重时，所有满足过滤条件的原始记录都必须参与计算
 5. **事实记录身份不等于去重**：fact_deduplication中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重
-6. **聚合指标约束**：计数类指标（count_metrics）必须按IR中定义的count_type和expression_template执行
+6. **聚合指标约束**：计数类指标（count_metrics）必须按IR中定义的count_type和expression_template执行；每个指标的 group_by 是该指标自己的聚合粒度，禁止把全部指标默认按同一分组键聚合
 7. **比例指标约束**：ratio_metrics中的分子分母必须严格按定义执行，注意分子不应包含分母的所有记录
 8. **窗口分区键约束**：window_partitioning定义的分区键用于窗口函数（ROW_NUMBER() OVER(PARTITION BY ...)），必须与IR一致
 9. **最终序列分区键约束**：final_sequence_partitioning定义的分区键用于最终输出分组，与窗口分区键可能是不同概念
-10. **输出字段定义是权威输出列清单**：IR中的'输出字段定义'（output_fields）列出的字段是最终输出列的唯一权威清单。INSERT SELECT的输出列必须与其完全一致——字段个数、顺序、字段名均不得增减或改动；IR未列出的字段禁止出现在最终输出（即使调用方query中提到了该字段也不能输出）；IR已列出的字段禁止遗漏。当调用方query描述的输出字段与IR输出字段定义冲突时，一律以IR为准，必须按IR的输出字段生成SQL
-11. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误
-12. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求
-13. **业务口径冲突以IR为准**：本查询中出现的其他业务口径描述（包括主Agent附加的“业务口径”段落、中间推导、示例口径）若与DataTaskIR记录冲突，一律以DataTaskIR为准；若与IR同时出现冲突口径，SQL Agent应报告冲突而不得自行取舍
-14. **query 中的“已确认口径”段落不构成约束来源**：调用方 query 顶部的“已确认口径（最高优先级）”“业务口径”等段落只是主Agent的意图描述，不是权威约束。其中出现的去重、过滤、聚合、JOIN、排序、TopN 等操作若未在本 DataTaskIR 中记录，一律视为未确认口径，禁止实现；只有 DataTaskIR 记录的内容才能写入SQL。若 query 段落与 IR 矛盾（例如 query 要求按某键去重、取唯一，而 IR 未记录任何去重要求），以 IR 为准，不得执行去重
+10. **最终输出列权威清单 = 特征主键前缀 + 输出字段定义**：INSERT SELECT 的输出列（不含分区列）必须按此构成，不得增减或改名——(a) 若 IR 已确认「特征主键」，则其 components 中的每个 field_ref **必须**作为输出列前缀出现（按 components 顺序），即使这些列未出现在「输出字段定义」中；(b) 随后严格按「输出字段定义」（output_fields）中**尚未被主键覆盖**的字段依次输出（个数、顺序、名称、类型均不得改动；多维交叉展开的每一项各占一列）；(c) 总列数（不含分区列）以渲染条目「最终输出列构成（权威）」为准（主键组件数 + 非主键业务列数）；(d) 除上述权威清单外的列禁止输出；调用方 query 与 IR 冲突时以 IR 为准
+11. **多维交叉输出必须完整展开**：当 output_fields 记录了多个独立维度组合（如多个时间窗口 × 多个特征/指标），每条 fields 项对应一个独立输出列；SQL 必须输出全部展开列，列数与 IR 中 fields 条数一致，禁止把多个组合压成一列、只输出“代表窗口/代表指标”、或按维度基数求和/取最大而少列
+12. **逐特征聚合粒度强制约束**：若 output_fields 为某列填写了 aggregation_grain，则该列的聚合/预聚合必须严格按该分组键执行；不同输出列的 aggregation_grain 可以不同，禁止用 aggregation_precedence.aggregation_key 或多数列的粒度统一覆盖少数列；多粒度时以各列 aggregation_grain 及 aggregation_stages[].group_by 为准。时间窗口差异不是聚合粒度差异，不得据此改写 GROUP BY
+13. **output_fields.expression 是语义说明而非可执行 SQL**：其中的计算口径只约束“算什么/什么意图”，不要求也不应被当作必须照抄的 SQL/UDF 片段；具体语法以实现阶段证据与 aggregation_metrics（count_type、expression_template 等）为准。禁止因 expression 文字不像合法 SQL 而判定 IR 失败，也禁止把有语法风险的 expression 原文硬编码进 SQL
+14. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误
+15. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求
+16. **业务口径冲突以IR为准**：本查询中出现的其他业务口径描述（包括主Agent附加的“业务口径”段落、中间推导、示例口径）若与DataTaskIR记录冲突，一律以DataTaskIR为准；若与IR同时出现冲突口径，SQL Agent应报告冲突而不得自行取舍
+17. **query 中的“已确认口径”段落不构成约束来源**：调用方 query 顶部的“已确认口径（最高优先级）”“业务口径”等段落只是主Agent的意图描述，不是权威约束。其中出现的去重、过滤、聚合、JOIN、排序、TopN 等操作若未在本 DataTaskIR 中记录，一律视为未确认口径，禁止实现；只有 DataTaskIR 记录的内容才能写入SQL。若 query 段落与 IR 矛盾（例如 query 要求按某键去重、取唯一，而 IR 未记录任何去重要求），以 IR 为准，不得执行去重
 """
 
 
@@ -121,6 +124,12 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
         value_text = renderer(value)
         if value_text:
             lines.append(f"- {FIELD_TITLES.get(field_id)}：{value_text}")
+    output_contract = _render_final_output_column_contract(by_id)
+    if output_contract:
+        lines.append(f"- 最终输出列构成（权威）：{output_contract}")
+    grain_contract = _render_per_field_aggregation_grain_contract(by_id)
+    if grain_contract:
+        lines.append(f"- 逐特征聚合粒度（权威）：{grain_contract}")
     if not _has_confirmed_dedup(by_id) and any(by_id.get(field_id) for field_id in ("fact_deduplication", "dimension_deduplication", "final_sequence_deduplication")):
         lines.append(
             "- 去重约束：本任务未确认任何去重要求（事实表去重、维度表去重、最终序列去重均无已确认内容）。"
@@ -241,6 +250,118 @@ def _attributes(items: list[tuple[str, Any]]) -> str:
     return "，".join(f"{label}={value}" for label, value in items if value is not None)
 
 
+def _confirmed_feature_key_refs(by_id: dict[str, dict[str, Any]]) -> list[str]:
+    """Return confirmed feature_key component field_refs in template order."""
+    output = by_id.get("feature_key")
+    if output is None or _normalize_unresolved(output.get("unresolved")):
+        return []
+    raw = output.get("value", {})
+    value = raw if isinstance(raw, dict) else {}
+    refs: list[str] = []
+    for item in value.get("components", []) or []:
+        if not isinstance(item, dict):
+            continue
+        field_ref = item.get("field_ref")
+        if field_ref is not None and str(field_ref).strip():
+            refs.append(str(field_ref))
+    return refs
+
+
+def _confirmed_output_field_names(by_id: dict[str, dict[str, Any]]) -> list[str]:
+    """Return confirmed output_fields.field_name values in listed order."""
+    output = by_id.get("output_fields")
+    if output is None or _normalize_unresolved(output.get("unresolved")):
+        return []
+    raw = output.get("value", {})
+    value = raw if isinstance(raw, dict) else {}
+    names: list[str] = []
+    for item in value.get("fields", []) or []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("field_name")
+        if name is not None and str(name).strip():
+            names.append(str(name))
+    return names
+
+
+def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> str:
+    """Synthesize the authoritative INSERT SELECT column contract for consumers."""
+    key_refs = _confirmed_feature_key_refs(by_id)
+    field_names = _confirmed_output_field_names(by_id)
+    if not key_refs and not field_names:
+        return ""
+    key_aliases = {ref.split(".")[-1] for ref in key_refs}
+    key_aliases.update(key_refs)
+    business_names = [
+        name for name in field_names
+        if name not in key_aliases and name.split(".")[-1] not in key_aliases
+    ]
+    parts: list[str] = []
+    if key_refs:
+        parts.append(
+            f"先按顺序输出特征主键列 [{', '.join(key_refs)}]"
+            "（即使未出现在输出字段定义中也必须输出，不得遗漏或后置到指标列之后）"
+        )
+    else:
+        parts.append("本任务暂无已确认特征主键前缀列")
+    if business_names:
+        parts.append(
+            f"再按顺序输出业务/指标列共 {len(business_names)} 列 [{', '.join(business_names)}]"
+            "（每条非主键 output_fields 项对应一列，多维交叉已展开的列不得合并或漏项）"
+        )
+    elif field_names:
+        parts.append(
+            "输出字段定义中的列均已由特征主键覆盖，不再额外增加业务/指标列"
+        )
+    else:
+        parts.append("本任务暂无已确认业务/指标输出列")
+    total = len(key_refs) + len(business_names)
+    parts.append(f"不含分区列的总输出列数必须为 {total}")
+    return "；".join(parts) + "。"
+
+
+def _render_per_field_aggregation_grain_contract(by_id: dict[str, dict[str, Any]]) -> str:
+    """Summarize per-output-field aggregation grains when any are confirmed."""
+    output = by_id.get("output_fields")
+    if output is None or _normalize_unresolved(output.get("unresolved")):
+        return ""
+    raw = output.get("value", {})
+    value = raw if isinstance(raw, dict) else {}
+    grains: list[tuple[str, list[str] | None]] = []
+    for item in value.get("fields", []) or []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("field_name")
+        if name is None or not str(name).strip():
+            continue
+        grain = item.get("aggregation_grain")
+        if grain is None:
+            continue
+        if isinstance(grain, list):
+            grains.append((str(name), [str(g) for g in grain if str(g).strip()]))
+        else:
+            grains.append((str(name), None))
+    if not grains:
+        return ""
+    unique = {tuple(g or []) for _, g in grains if g is not None}
+    parts = [
+        f"{name}=[{', '.join(grain)}]" if grain is not None else f"{name}=未确认"
+        for name, grain in grains
+        if grain is not None
+    ]
+    if not parts:
+        return ""
+    summary = "；".join(parts)
+    if len(unique) > 1:
+        summary += (
+            "。已确认存在多种聚合粒度：各输出列必须按其自身 aggregation_grain 聚合，"
+            "禁止用单一全局 GROUP BY 覆盖全部特征"
+        )
+    else:
+        summary += "。各输出列须按其标注的聚合粒度执行 GROUP BY"
+    return summary + "。"
+
+
 def _render_feature_key(value: dict[str, Any]) -> str:
     parts = []
     for item in value.get("components", []):
@@ -256,6 +377,9 @@ def _render_feature_key(value: dict[str, Any]) -> str:
     rendered = []
     if parts:
         rendered.append(f"由 {' + '.join(parts)} 联合构成")
+        rendered.append(
+            "上述主键列是最终输出的必选前缀列，即使未写入输出字段定义也必须出现在 INSERT SELECT 中"
+        )
     if value.get("uniqueness_scope") is not None:
         rendered.append(f"唯一范围={value.get('uniqueness_scope')}")
     return "；".join(rendered) + ("。" if rendered else "")
@@ -613,16 +737,29 @@ def _render_output_fields(value: dict[str, Any]) -> str:
         expression = item.get("expression")
         source = item.get("source")
         if expression:
-            origin_text = f"计算口径={expression}"
+            origin_text = f"计算口径说明={expression}"
             if source:
-                origin_text += f"（来源={source}）"
+                origin_text += f"（主要来源={source}）"
         else:
             origin_text = f"来源={source or '无来源'}"
+        grain = item.get("aggregation_grain")
+        if isinstance(grain, list):
+            grain_text = f"，聚合粒度=[{', '.join(str(g) for g in grain)}]"
+        elif grain is not None:
+            grain_text = f"，聚合粒度={grain}"
+        else:
+            grain_text = ""
         rendered.append(
-            f"{item.get('field_name')}: {origin_text}，类型={item.get('output_type')}，"
-            f"说明={item.get('description')}"
+            f"{item.get('field_name')}: {origin_text}，类型={item.get('output_type')}"
+            f"{grain_text}，说明={item.get('description')}"
         )
-    return "；".join(rendered) + "。"
+    prefix = (
+        f"共 {len(fields)} 个业务/指标输出列（不含特征主键；每项一列，"
+        "多维交叉组合已展开时不得合并、漏项或改数量；"
+        "各列聚合粒度以 aggregation_grain 为准，存在多种粒度时不得统一 GROUP BY；"
+        "计算口径说明为语义约束，不是必须照抄的 SQL）"
+    )
+    return prefix + "：" + "；".join(rendered) + "。"
 
 
 def _render_aggregation_metrics(value: dict[str, Any]) -> str:
@@ -636,7 +773,8 @@ def _render_aggregation_metrics(value: dict[str, Any]) -> str:
         group_by = item.get("group_by", [])
         entity_text = f"，计数实体={count_entity}" if count_entity else ""
         parts.append(
-            f"{item.get('metric_name')}: 计数类型={count_type}{entity_text}，分组键={group_by}"
+            f"{item.get('metric_name')}: 计数类型={count_type}{entity_text}，"
+            f"聚合粒度(group_by)={group_by}"
         )
     for item in ratio_metrics:
         parts.append(
@@ -646,7 +784,7 @@ def _render_aggregation_metrics(value: dict[str, Any]) -> str:
     for item in avg_metrics:
         parts.append(
             f"{item.get('metric_name')}: 分子={item.get('numerator')}，分母={item.get('denominator')}，"
-            f"分组键={item.get('group_by')}"
+            f"聚合粒度(group_by)={item.get('group_by')}"
         )
     return "；".join(parts) if parts else "无已确认聚合指标。"
 
@@ -656,17 +794,38 @@ def _render_aggregation_precedence(value: dict[str, Any]) -> str:
     aggregation_key = value.get("aggregation_key", [])
     count_semantics = value.get("count_semantics")
     input_grain = value.get("input_grain")
+    stages = value.get("aggregation_stages") or []
     parts = []
     if aggregation_key:
         dedup_text = "去重先于聚合" if dedup_before else "聚合基于原始记录（不去重）"
         parts.append(dedup_text)
-        parts.append(f"聚合分组键={aggregation_key}")
+        parts.append(f"任务级默认/公共聚合分组键={aggregation_key}")
         if count_semantics:
             parts.append(f"计数语义={count_semantics}")
     else:
         parts.append("本任务无聚合计算（无分组键），禁止自行添加聚合或按其他粒度分组")
     if input_grain:
         parts.append(f"聚合输入数据粒度={input_grain}")
+    confirmed_stages = [
+        stage for stage in stages
+        if isinstance(stage, dict) and (
+            stage.get("stage_id") or stage.get("group_by") or stage.get("output_metrics")
+        )
+    ]
+    if confirmed_stages:
+        stage_texts = []
+        for stage in confirmed_stages:
+            stage_texts.append(
+                f"{stage.get('stage_id') or 'stage'}: "
+                f"group_by={stage.get('group_by') or []}，"
+                f"产出={stage.get('output_metrics') or []}，"
+                f"依赖={stage.get('depends_on') or []}"
+            )
+        parts.append("多粒度/多阶段聚合=" + " | ".join(stage_texts))
+        parts.append(
+            "各输出特征必须按其所属 stage 的 group_by 聚合，"
+            "禁止仅按任务级 aggregation_key 统一全部特征"
+        )
     return "；".join(parts) + "。" if parts else ""
 
 

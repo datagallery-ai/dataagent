@@ -71,9 +71,10 @@ CRITICAL_PATHS = {
     "final_sequence_ordering": ["criteria", "criteria[].field_ref", "criteria[].direction"],
     "final_sequence_truncation": ["limit_per_partition"],
     "final_sequence_deduplication": ["identity_ref", "on_duplicate"],
-    "output_fields": ["fields", "fields[].field_name", "fields[].source", "fields[].expression"],
+    "output_fields": ["fields", "fields[].field_name"],
     "aggregation_metrics": [
-        "count_metrics", "count_metrics[].metric_name", "count_metrics[].count_type","count_metrics[].count_entity"
+        "count_metrics", "count_metrics[].metric_name", "count_metrics[].count_type",
+        "count_metrics[].count_entity",
     ],
     "aggregation_precedence": ["deduplication_before_aggregation", "aggregation_key", "count_semantics"],
 }

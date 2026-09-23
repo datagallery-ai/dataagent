@@ -26,13 +26,14 @@ output_contract:
 fields:
   - field_id: feature_key
     title: 特征主键
-    purpose: 定义最终结果中一条特征记录所代表对象的逻辑唯一标识。
+    purpose: 定义最终结果中一条特征记录所代表对象的逻辑唯一标识；已确认的主键列是最终输出的必选前缀列（即使未写入 output_fields）。
     field_instructions:
       global_rules:
         - 只填写最终结果的逻辑主键，不得把源表物理主键、去重键或 join 键自动当成特征主键。
         - 多字段联合主键必须逐项列出；证据没有说明空值等价关系时必须保持 null 并写入 unresolved。
         - 候选主键字段发生无优先级冲突时 components 必须为空，并写入 unresolved；不得先填其中一方再附加说明。
         - 主键字段冲突只影响 components；如果 uniqueness_scope 有独立明确证据，必须保留，不得把整个 value 清空。
+        - 已确认的 components 默认出现在最终输出列的最前面；本字段记录身份口径，不必为了“能输出”而改写到 output_fields。
       subfields:
         components: 按联合键顺序填写 field_ref、semantic_role 和 null_semantics。
         uniqueness_scope: 填主键在哪个范围内唯一，只能使用允许的枚举。
@@ -42,6 +43,7 @@ fields:
       common_errors:
         - 把订单明细 id 当作用户特征主键。
         - 根据字段名猜测 null_semantics。
+        - 因主键列未出现在用户“输出字段列表”中，就省略 components 或改写到其他字段。
     few_shots:
       - input: 用户要每个门店每天一条记录；证据说明 store_id 不允许为空。
         output:
@@ -1502,47 +1504,136 @@ fields:
 
   - field_id: output_fields
     title: 输出字段定义
-    purpose: 定义最终输出包含哪些字段及其计算口径，确保所有用户要求的输出字段都被明确记录。
+    purpose: 定义最终输出中除特征主键外的业务/指标列、语义级计算口径与聚合粒度；与 feature_key 共同构成完整输出列清单。
     field_instructions:
       global_rules:
-        - 每个输出字段必须有明确的数据来源（字段引用或计算表达式）
-        - 聚合字段必须说明聚合函数和分组键
+        - 每个输出字段必须有明确的数据来源或业务语义（字段引用、指标名或简要口径说明）
+        - 聚合字段必须说明聚合意图（如计数/求和/去重计数）和聚合粒度；精细计数语义优先写入 aggregation_metrics，不在本字段展开
         - 用户明确要求的输出字段不得遗漏
-        - 字段涉及计算口径（聚合、转换、拼接、裁剪等）时，必须将具体计算逻辑写入 expression（如 count(dm.app_id)、sum(orders.amount)、date_format(ts,'yyyy-MM-dd')），不得只填 source 字段名；source 仅用于无计算直接取用的字段
-        - expression 与 source 同时存在时，渲染以 expression 为准，source 仅作为来源参考
+        - expression 只记录**语义级**计算口径说明（聚合类型 + 对象 + 必要限定），用于帮助下游理解“算什么”；禁止追求可执行 SQL/UDF 语法，禁止编造未证实的函数名、方言写法、参数顺序或嵌套逻辑
+        - expression 允许的粒度示例：“近30天下载次数（行计数）”“付费金额求和”“活跃天数（按自然日去重计数）”“下载量最高的类目”；不要求写成 count(...)/sum(...)/date_format(...)/arg_max(...) 等具体表达式
+        - 证据未给出可确认的计算细节时，expression 用简短语义即可，细节留空或写入 unresolved；不得为“填满字段”而 invent 具体公式
+        - 无计算、直接透传的字段：expression 填 null，仅填 source；有计算意图时优先保证 description / expression 语义清楚，source 可填主要参与字段或 null
+        - 特征主键列由 feature_key 单独记录；本字段不要为“保证能输出主键”而重复抄写 feature_key.components（除非用户明确要求把主键再列一次业务别名列）
+        - 多维交叉展开：当输出同时沿多个独立维度变化（如多个时间窗口/统计周期 × 多个指标/特征名 × 多个对象类型等），必须按笛卡尔积为每个组合各建一条独立 fields 项；不得把多个组合压成一个字段、只列维度名而不展开、或只填“代表项”
+        - 展开后的 fields 条数必须等于各维度基数之积（例如 3 个时间周期 × 3 个特征 = 9 条）；任一组合缺失、合并或改名导致数量不对时，必须写入 unresolved，禁止自行少填或多填
+        - 每个展开项的 field_name / description（及必要时 expression）必须能唯一标识其所属维度组合（如 7d_download_cnt 与 30d_download_cnt 分列），禁止共用同一 field_name
+        - aggregation_grain 记录该输出列自身的聚合分组键（GROUP BY 粒度），与 feature_key / 任务级 aggregation_precedence.aggregation_key 可能不同；聚合类字段（count/sum/avg/max/min 等）必须填写非空数组，非聚合直出字段填 null
+        - 同一任务中不同输出特征可以有不同聚合粒度；必须逐字段写明各自的 aggregation_grain，禁止用单一全局粒度覆盖全部特征，禁止因多数特征同粒度而省略少数不同粒度特征的说明
+        - 若某特征按主键聚合、另一特征按主键+类目/会话等更细或更粗粒度聚合，二者的 aggregation_grain 必须分别列出完整分组键，不得互相推断或省略
+        - aggregation_grain 应与对应 aggregation_metrics.*.group_by（及多阶段时 aggregation_stages[].group_by）一致；冲突时保持 null 并写入 unresolved，禁止任选一方
       subfields:
-        fields: 按输出顺序列出每个字段的 field_name、source（表.字段）、expression（计算口径，无计算时填 null）、output_type、description
+        fields: 按输出顺序列出每个字段的 field_name、source、expression（语义级口径，非必可执行 SQL）、output_type、description、aggregation_grain；多维交叉时按笛卡尔积展开后的顺序填写
       completion_conditions:
         - 所有用户要求的输出字段均被覆盖
-        - 每个字段有明确来源或计算表达式
-        - 存在计算口径的字段均已填写 expression
+        - 多维交叉场景下 fields 条数等于各维度基数之积，且每个组合均可被 field_name/description 唯一识别
+        - 每个字段有明确来源或语义级口径（source / expression / description 至少一项可定位业务含义）
+        - 有计算意图的字段已用 description 或 expression 说明“算什么”；不要求写出可执行 SQL
+        - 每个聚合类输出字段均已填写非空 aggregation_grain；存在多种聚合粒度时各字段粒度均可区分
       common_errors:
         - 遗漏用户要求的输出字段
-        - 字段来源不明确或使用模糊描述
-        - 有计算口径的字段只填 source 不填 expression，导致下游拿不到计算逻辑
+        - 字段来源与业务含义都不清楚
+        - 把未证实的 SQL/UDF 细节写入 expression（错误函数名、错误参数、错误方言），导致下游照抄出错
+        - 为凑“具体表达式” invent 公式，或把 aggregation_metrics 已覆盖的计数细节再抄成脆弱 SQL
+        - 多时间窗口或多指标只填 1 条“模板字段”，未按笛卡尔积展开成独立列
+        - 把“3 个周期 × 3 个特征”误记成 3 列或 6 列，而不是 9 列
+        - 把 feature_key 组件误当成可省略的输出列，或反过来在本字段重复堆砌主键列却漏掉指标列
+        - 多个特征聚合粒度不同却只写一个全局粒度，或聚合字段漏填 aggregation_grain
+        - 把时间窗口（近7天/近30天）误当成 aggregation_grain；窗口属于过滤/分支，粒度是 GROUP BY 键
     few_shots:
-      - input: 用户要求输出 user_id、app_id、download_count 三个字段，其中 download_count 是 app_id 在 30 天内的下载次数
+      - input: 用户要求输出 user_id、app_id、download_count 三个字段，其中 download_count 是 app_id 在 30 天内的下载次数；feature_key 已确认为 user_id+app_id
         output:
           field_id: output_fields
           value:
             fields:
-              - field_name: user_id
-                source: dm.user_id
-                expression: null
-                output_type: string
-                description: 用户唯一标识
-              - field_name: app_id
-                source: dm.app_id
-                expression: null
-                output_type: string
-                description: 应用唯一标识
               - field_name: download_count
                 source: dm.app_id
-                expression: count(dm.app_id)
+                expression: 近30天下载次数（行计数）
                 output_type: bigint
                 description: 30天内应用下载次数
+                aggregation_grain: [user_id, app_id]
           unresolved: []
-          rationale: 按用户列出的三个字段填写来源与表达式，download_count 按 30 天下载次数口径填写。
+          rationale: user_id/app_id 已由 feature_key 覆盖；download_count 只写语义口径与聚合粒度，不写具体 SQL。
+      - input: 用户要求按近7天、近30天、近90天三个时间窗口，分别输出下载次数、活跃天数、付费金额三个特征（共 3×3=9 列），主键为 device_id；全部按 device_id 聚合
+        output:
+          field_id: output_fields
+          value:
+            fields:
+              - field_name: download_cnt_7d
+                source: evt.app_id
+                expression: 近7天下载次数（行计数）
+                output_type: bigint
+                description: 近7天下载次数
+                aggregation_grain: [device_id]
+              - field_name: active_days_7d
+                source: evt.pt_d
+                expression: 近7天活跃天数（按自然日去重计数）
+                output_type: bigint
+                description: 近7天活跃天数
+                aggregation_grain: [device_id]
+              - field_name: pay_amt_7d
+                source: evt.amount
+                expression: 近7天付费金额求和
+                output_type: decimal(18,2)
+                description: 近7天付费金额
+                aggregation_grain: [device_id]
+              - field_name: download_cnt_30d
+                source: evt.app_id
+                expression: 近30天下载次数（行计数）
+                output_type: bigint
+                description: 近30天下载次数
+                aggregation_grain: [device_id]
+              - field_name: active_days_30d
+                source: evt.pt_d
+                expression: 近30天活跃天数（按自然日去重计数）
+                output_type: bigint
+                description: 近30天活跃天数
+                aggregation_grain: [device_id]
+              - field_name: pay_amt_30d
+                source: evt.amount
+                expression: 近30天付费金额求和
+                output_type: decimal(18,2)
+                description: 近30天付费金额
+                aggregation_grain: [device_id]
+              - field_name: download_cnt_90d
+                source: evt.app_id
+                expression: 近90天下载次数（行计数）
+                output_type: bigint
+                description: 近90天下载次数
+                aggregation_grain: [device_id]
+              - field_name: active_days_90d
+                source: evt.pt_d
+                expression: 近90天活跃天数（按自然日去重计数）
+                output_type: bigint
+                description: 近90天活跃天数
+                aggregation_grain: [device_id]
+              - field_name: pay_amt_90d
+                source: evt.amount
+                expression: 近90天付费金额求和
+                output_type: decimal(18,2)
+                description: 近90天付费金额
+                aggregation_grain: [device_id]
+          unresolved: []
+          rationale: 3×3 展开为9列；expression 只用语义说明，避免写出易错 SQL；粒度均为 [device_id]。
+      - input: 同一用户特征表中，user_download_cnt 按 user_id 聚合统计下载次数，user_top_category 先按 user_id+category 聚合再取 Top1 类目；两特征聚合粒度不同
+        output:
+          field_id: output_fields
+          value:
+            fields:
+              - field_name: user_download_cnt
+                source: evt.app_id
+                expression: 用户下载次数（行计数）
+                output_type: bigint
+                description: 用户下载次数
+                aggregation_grain: [user_id]
+              - field_name: user_top_category
+                source: evt.category
+                expression: 用户下载量最高的类目（先按用户+类目聚合再取Top1）
+                output_type: string
+                description: 用户下载量最高的类目
+                aggregation_grain: [user_id, category]
+          unresolved: []
+          rationale: 两特征粒度分列；Top1 类目只写业务步骤语义，不编造 arg_max 等具体函数写法。
       - input: 用户只要求统计总销售额，没有明确输出字段列表
         output:
           field_id: output_fields
@@ -1550,11 +1641,12 @@ fields:
             fields:
               - field_name: total_amount
                 source: orders.amount
-                expression: sum(orders.amount)
+                expression: 销售总额求和
                 output_type: decimal(18,2)
                 description: 销售总额
+                aggregation_grain: []
           unresolved: []
-          rationale: 用户未列输出字段，按"总销售额"口径推导唯一输出列 total_amount=sum(orders.amount)。
+          rationale: 未列字段时按“总销售额”语义推导一列；expression 保持语义级。
     writable_template:
       field_id: output_fields
       value:
@@ -1564,6 +1656,7 @@ fields:
             expression: null
             output_type: null
             description: null
+            aggregation_grain: null
       unresolved: []
     value_schema:
       type: object
@@ -1575,13 +1668,16 @@ fields:
           items:
             type: object
             additionalProperties: false
-            required: [field_name, source, expression, output_type, description]
+            required: [field_name, source, expression, output_type, description, aggregation_grain]
             properties:
               field_name: {type: string, minLength: 1}
               source: {type: [string, "null"]}
               expression: {type: [string, "null"]}
               output_type: {type: string, minLength: 1}
               description: {type: string, minLength: 1}
+              aggregation_grain:
+                type: [array, "null"]
+                items: {type: string, minLength: 1}
 
   - field_id: aggregation_metrics
     title: 聚合指标定义
@@ -1600,10 +1696,13 @@ fields:
         - 比例类指标必须明确分子分母来源，且分子分母不能有包含关系（分子不应等于分子+分母，否则结果恒为1）
         - 比例指标必须填写 description 来说明业务语义，用于验证分子分母逻辑是否正确
         - 聚合指标必须与 output_fields 中的聚合字段对应
+        - 每个 metric 的 group_by 即该指标的聚合粒度；不同指标允许不同 group_by，必须逐指标填写，禁止把全部指标默认写成同一分组键
+        - 当 output_fields 中多个特征的 aggregation_grain 不一致时，对应 metric 的 group_by 必须与各自 aggregation_grain 对齐；不得只保留一种粒度
+        - 时间窗口差异（近7天 vs 近30天）不是 group_by 差异；窗口应体现在 filter_condition / 分支，不得误写入 group_by
       subfields:
-        count_metrics: 计数指标列表，包含 metric_name、count_type、count_entity、distinct_field、group_by、filter_condition、expression_template
+        count_metrics: 计数指标列表，包含 metric_name、count_type、count_entity、distinct_field、group_by（该指标聚合粒度）、filter_condition、expression_template
         ratio_metrics: 比例指标列表，包含 metric_name、numerator、denominator、precision、description
-        avg_metrics: 均值指标列表，包含 metric_name、numerator、denominator、group_by
+        avg_metrics: 均值指标列表，包含 metric_name、numerator、denominator、group_by（该指标聚合粒度）
       completion_conditions:
         - 计数口径明确（row_count vs distinct_count vs conditional_count）
         - 计数实体明确（count_entity 已填写，或可明确判定为 record_row）
@@ -1611,7 +1710,7 @@ fields:
         - 如果用户明确给出”非空记录行数””满足条件的记录数”等计数条件，必须使用 conditional_count 并填写 expression_template
         - 比例指标必须填写 description 来说明业务语义
         - 比例/均值计算的分子分母有明确来源，且逻辑关系正确
-        - 聚合分组键明确
+        - 聚合分组键明确；存在多种聚合粒度时各 metric 的 group_by 均可区分且与对应输出字段一致
       common_errors:
         - 把”用户数量”默认解释成 COUNT(DISTINCT 用户标识)，忽略用户明确给出的”记录行数/非空记录行数”等统计口径
         - 把用户以业务实体指代”记录”的计数（如”不同session””设备数”）直接当原始行计数，忽略 count_entity 语义
@@ -1623,6 +1722,8 @@ fields:
         - 比例指标不填写 description，导致无法验证分子分母逻辑
         - 聚合粒度与分组键不一致
         - 分子分母来源不明确
+        - 不同特征聚合粒度不同却给所有 metric 填相同 group_by
+        - 把时间窗口差异误写成 group_by 差异
     few_shots:
       - input: 用户要求统计每日活跃用户数，按 user_id 去重
         output:
@@ -1718,6 +1819,27 @@ fields:
             avg_metrics: []
           unresolved: []
           rationale: 下载成功率是比例指标，按分子成功次数/分母总尝试次数填入 ratio_metrics。
+      - input: 同一任务中 user_download_cnt 按 user_id 聚合，user_category_download_cnt 按 user_id+category 聚合
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: user_download_cnt
+                count_type: row_count
+                count_entity: record_row
+                distinct_field: null
+                group_by: [user_id]
+                filter_condition: null
+              - metric_name: user_category_download_cnt
+                count_type: row_count
+                count_entity: record_row
+                distinct_field: null
+                group_by: [user_id, category]
+                filter_condition: null
+            ratio_metrics: []
+            avg_metrics: []
+          unresolved: []
+          rationale: 两指标聚合粒度不同，分别填写 group_by=[user_id] 与 [user_id, category]，禁止统一成单一粒度。
     writable_template:
       field_id: aggregation_metrics
       value:
@@ -1786,26 +1908,27 @@ fields:
 
   - field_id: aggregation_precedence
     title: 去重与聚合的先后关系
-    purpose: 定义事实表去重、维度关联、聚合计算之间的执行顺序和依赖关系，避免聚合粒度与去重粒度冲突。
+    purpose: 定义事实表去重、维度关联、聚合计算之间的执行顺序和依赖关系，避免聚合粒度与去重粒度冲突；多特征多粒度时用 aggregation_stages 逐阶段说明。
     field_instructions:
       global_rules:
         - 当存在 fact_deduplication 或 dimension_deduplication 时，必须明确聚合是基于去重前还是去重后的数据
         - 如果去重后的记录会参与聚合，必须说明聚合粒度与去重粒度的关系
         - 如果去重发生在聚合之后，必须明确使用什么作为去重后的聚合输入
         - 如果用户明确要求“基于原始记录”“基于用户-应用记录”“不要使用预聚合字段”等，必须将输入粒度写入 input_grain，并禁止 SQL Agent 用更高层级的预聚合字段替代
-        - 同一任务存在多个聚合粒度时，必须明确各聚合阶段的 group_by 和依赖关系，禁止 SQL Agent 自行改变聚合顺序
+        - 同一任务存在多个聚合粒度时，必须在 aggregation_stages 中为每个粒度各建一个 stage（group_by / output_metrics / depends_on），禁止只用单一 aggregation_key 覆盖全部特征，禁止 SQL Agent 自行统一粒度或改变聚合顺序
+        - 多粒度时 aggregation_key 可填最终落到输出主键/最粗公共分组键，但不得据此推断所有指标都按该键聚合；各特征真实粒度以 output_fields.aggregation_grain 与对应 stage.group_by 为准
         - 任务不涉及聚合（无 count/sum/avg 等指标，仅过滤/转换/排序/截断）时，本字段不填写：deduplication_before_aggregation 填 false，aggregation_key 填空数组，count_semantics 填 null，input_grain 填 null；禁止因“每个X”“按X”等表述推断出聚合。
         - input_grain 描述参与聚合的输入记录粒度，即每个计数单元代表的业务实体，须与 aggregation_metrics.count_entity 一致（如 fact_record、session_record、user_record）；当计数实体非 fact_record 且源表在该实体上不唯一（同一实体对应多行）时，SQL 必须先聚合/去重到该实体粒度再计数，禁止直接对原始行 COUNT。input_grain 不代表需要按该粒度预先分组或去重，禁止把 input_grain 当作聚合分组键或去重依据。
       subfields:
         deduplication_before_aggregation: 聚合是基于去重前的原始记录还是去重后的记录
-        aggregation_key: 聚合的分组键，与去重键的关系
+        aggregation_key: 任务级默认/最粗公共聚合分组键；多粒度场景不得单独作为全部特征的粒度权威
         count_semantics: count/sum等聚合函数的行为定义（每行计数 vs 去重后计数）
         input_grain: 聚合输入数据粒度（即计数实体，与 aggregation_metrics.count_entity 一致），例如 fact_record、session_record、user_record
-        aggregation_stages: 多阶段聚合列表，每项包含 stage_id、input_grain、group_by、output_metrics、depends_on
+        aggregation_stages: 多阶段/多粒度聚合列表，每项包含 stage_id、input_grain、group_by（该阶段聚合粒度）、output_metrics（产出的指标/输出字段名）、depends_on
       completion_conditions:
         - 聚合与去重的执行顺序明确
         - 聚合粒度与去重粒度的关系明确
-        - 聚合输入粒度明确；存在多阶段聚合时各阶段依赖明确
+        - 聚合输入粒度明确；存在多阶段或多粒度聚合时各阶段 group_by / output_metrics / depends_on 明确
       common_errors:
         - 假设 fact_deduplication 必然先于聚合执行
         - 假设 count(1) 等同于 count(DISTINCT key)
@@ -1814,6 +1937,7 @@ fields:
         - 多阶段聚合时错误地在不同粒度之间直接复用聚合结果
         - 无聚合任务却填写 aggregation_key、count_semantics 或 input_grain
         - 把 input_grain（聚合输入粒度）误用作分组键或去重依据
+        - 输出特征存在多种聚合粒度却只填单一 aggregation_key，未用 aggregation_stages 分列
     few_shots:
       - input: 事实表去重键为 [app_id, device_id, pt_d]，最终按 app_id 聚合计数下载次数
         output:
@@ -1842,6 +1966,27 @@ fields:
             count_semantics: row_count
           unresolved: []
           rationale: 事实表可能重复，须先按去重键去重再按 pt_d/device_id 聚合，行数口径。
+      - input: 同一任务输出 user_download_cnt（按 user_id 聚合）与 user_category_download_cnt（按 user_id+category 聚合），再回挂到用户主键
+        output:
+          field_id: aggregation_precedence
+          value:
+            deduplication_before_aggregation: false
+            aggregation_key: [user_id]
+            count_semantics: row_count
+            input_grain: fact_record
+            aggregation_stages:
+              - stage_id: agg_user
+                input_grain: fact_record
+                group_by: [user_id]
+                output_metrics: [user_download_cnt]
+                depends_on: []
+              - stage_id: agg_user_category
+                input_grain: fact_record
+                group_by: [user_id, category]
+                output_metrics: [user_category_download_cnt]
+                depends_on: []
+          unresolved: []
+          rationale: 两特征粒度不同，用两个 aggregation_stages 分别记录 group_by；aggregation_key 仅表示最终用户主键粒度，不覆盖类目级指标。
     writable_template:
       field_id: aggregation_precedence
       value:

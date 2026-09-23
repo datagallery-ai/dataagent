@@ -20,6 +20,8 @@
 - 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用后调用过1次或多次validate_deliverables工具。
 - wrapped_nl2sql_sub_agent_tool 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
    - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（fact_deduplication / dimension_deduplication / final_sequence_deduplication 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
+   - 最终输出列 = 已确认特征主键（feature_key.components，必选前缀，即使未出现在 output_fields 中）+ output_fields 中的业务/指标列；多时间窗口 × 多特征等交叉场景必须以 IR 中展开后的字段条数为准（如 3×3=9），不得在 query 中压缩成更少的“代表列”。
+   - 若 output_fields 为各特征填写了不同的 aggregation_grain，query/SQL 必须按列分别说明并实现各自聚合粒度；禁止用单一全局 GROUP BY 或只复述 aggregation_precedence.aggregation_key 覆盖全部特征。
 - **DataOps 校验**：
   - 何时调：完成「8 类质量自检」且全部 PASS 后，对生成的每条 DDL/DML 调一次 `dataops_validate_sql_with_log_analysis(sql, attempt=1, prior_attempts=...)`。
   - 调用约定：每次调用必须传入两个参数：`attempt`（从 1 开始的第几次尝试）和 `prior_attempts`（上一次调用返回的 `attempts` 列表，首次调用传 `None`）。首次失败后，de_agent 必须把上一次的 `attempts` 字段原样回传，作为下一次调用的 `prior_attempts`，以便 wrapper 累加失败历史。wrapper 会自动维护 `attempts` / `failed_after_max_retries` / `validation_report_path` / `delivery_warning_path` 四个返回字段。
