@@ -2141,6 +2141,71 @@ def _compute_unified_diff(
     return result
 
 
+def list_files(path: str | None = None, max_depth: int = 2, max_results: int = 200) -> dict[str, Any]:
+    """List a directory as a compact tree.
+
+    Use this tool to discover workspace contents before reading files.
+    Directory symlinks are never traversed. Results are sorted directories first.
+
+    Args:
+        path (str | None): Directory to list; defaults to the workspace root.
+        max_depth (int): Number of directory levels to display (default 2, maximum 10).
+        max_results (int): Maximum entries to display (default 200, maximum 1000).
+    """
+    if not 1 <= max_depth <= 10:
+        raise ValueError("max_depth must be between 1 and 10.")
+    if not 1 <= max_results <= 1000:
+        raise ValueError("max_results must be between 1 and 1000.")
+    guard = get_current_sandbox()
+    root = _resolve_and_authorize(path or str(guard.workspace_root), "path", operation="list_files")
+    if not root.is_dir():
+        raise NotADirectoryError(f"Not a directory: {root}")
+    lines = [f"{root.name}/"]
+    count = 0
+    truncated = False
+
+    def _walk(directory: Path, prefix: str, depth: int) -> None:
+        nonlocal count, truncated
+        entries = []
+        for entry in directory.iterdir():
+            if entry.is_dir() and entry.name.startswith("."):
+                continue
+            try:
+                resolved = guard.authorize_read(entry, operation="list_files")
+                resolved.relative_to(root.resolve())
+            except (ValueError, WorkspaceAccessError):
+                continue
+            entries.append(entry)
+        entries.sort(key=lambda entry: (not entry.is_dir(), entry.name.casefold(), entry.name))
+        for entry in entries:
+            if count >= max_results:
+                truncated = True
+                return
+            is_dir = entry.is_dir()
+            suffix = "/" if is_dir else ""
+            if entry.is_symlink():
+                suffix += " [symlink]"
+            elif is_dir and depth >= max_depth:
+                suffix += " …"
+            lines.append(prefix + entry.name + suffix)
+            count += 1
+            if is_dir and not entry.is_symlink() and depth < max_depth:
+                _walk(entry, prefix + "  ", depth + 1)
+                if truncated:
+                    return
+
+    if not root.name.startswith("."):
+        _walk(root, "  ", 1)
+    if truncated:
+        lines.append("(Results truncated. Choose a narrower path or increase max_results.)")
+    tree = "\n".join(lines)
+    return {
+        "original_msg": tree,
+        "frontend_msg": f"\n\nlist_files 工具执行完成\n\n```text\n{tree}\n```",
+        "data": {"path": str(root.resolve()), "num_entries": count, "truncated": truncated},
+    }
+
+
 def read_file(
     path: str, purpose: str | None = None, offset: int | None = 1, limit: int | None = None
 ) -> dict[str, Any]:
@@ -2161,7 +2226,7 @@ def read_file(
       part — this is important for larger files.
     - Results are returned with line numbers (``N\\tline``) starting at 1.
     - This tool can only read text files, not directories. To list a directory,
-      use the bash tool with ``ls``.
+      use the list_files tool.
     - If you read a file that exists but has empty contents you will receive a
       system reminder warning in place of file contents.
     - Binary files and files exceeding the size budget will be rejected with a
@@ -2786,6 +2851,7 @@ tool_mapping = {
     "edit_file": edit_file,
     "inspect_file": inspect_file,
     "read_file": read_file,
+    "list_files": list_files,
     "write_file": write_file,
     "request_human_feedback": request_human_feedback,
     "nl2sql_sub_agent_tool": nl2sql_sub_agent_tool,

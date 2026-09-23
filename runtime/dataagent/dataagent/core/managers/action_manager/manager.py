@@ -43,6 +43,11 @@ _BUILTIN_LOCAL_TOOL_CATALOG: dict[str, dict[str, str]] = {
     "bash": {"name": "bash", "function": "bash", "module": "dataagent.actions.tools.local_tool.tools"},
     "edit_file": {"name": "edit_file", "function": "edit_file", "module": "dataagent.actions.tools.local_tool.tools"},
     "read_file": {"name": "read_file", "function": "read_file", "module": "dataagent.actions.tools.local_tool.tools"},
+    "list_files": {
+        "name": "list_files",
+        "function": "list_files",
+        "module": "dataagent.actions.tools.local_tool.tools",
+    },
     "write_file": {
         "name": "write_file",
         "function": "write_file",

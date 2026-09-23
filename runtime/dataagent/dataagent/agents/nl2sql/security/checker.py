@@ -17,7 +17,7 @@ from typing import Any, cast
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, OptimizeError
-from sqlglot.expressions.core import Expression
+from sqlglot.expressions import Expression
 from sqlglot.optimizer.qualify import qualify
 
 from dataagent.agents.nl2sql.security.models import SecurityCheckResult, SecurityViolation
@@ -65,6 +65,8 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
     if violations:
         return SecurityCheckResult(violations)
     violations.extend(check_allowed_functions(statement, sql=sql, dialect=dialect))
+    if violations:
+        return SecurityCheckResult(violations)
     violations.extend(check_semantic_schema(statement, dialect=dialect, schema=schema))
     return SecurityCheckResult(violations, normalized_sql=normalized_sql if not violations else None)
 
