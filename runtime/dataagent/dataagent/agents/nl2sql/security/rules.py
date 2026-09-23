@@ -67,6 +67,10 @@ _ALLOWED_FUNCTIONS = frozenset(
     }
 )
 _MAX_STRING_BYTES = 16 * 1024 * 1024
+# SQLGlot 28 represents these context functions as bare columns.
+_COLUMN_CONTEXT_FUNCTION_NAMES = frozenset(
+    {"current_catalog", "current_database", "current_path", "current_role", "session_user", "user"}
+)
 
 
 def _resolve_expression_types(names: tuple[str, ...]) -> tuple[type[Any], ...]:
@@ -175,7 +179,7 @@ def check_allowed_functions(
             not column.table
             and isinstance(identifier, exp.Identifier)
             and not identifier.args.get("quoted")
-            and name in {"current_role", "user"}
+            and name in _COLUMN_CONTEXT_FUNCTION_NAMES
         ):
             return [SecurityViolation("FUNCTION-001", f"SQL function is not in the allowlist: {name}.")]
     return []

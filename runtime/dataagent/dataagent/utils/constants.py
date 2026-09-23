@@ -388,6 +388,7 @@ DEFAULT_BUILTIN_LOCAL_TOOLS: tuple[str, ...] = (
     "bash",
     "edit_file",
     "read_file",
+    "list_files",
     "write_file",
     "grep",
     "glob",

@@ -77,7 +77,7 @@ mkdoc = [
     "pymdown-extensions>=10.8.0",
 ]
 nl2sql = [
-    "sqlglot>=28.1.0",
+    "sqlglot==28.1.0",
     "sqlparse>=0.5.5"
 ]
 test = [

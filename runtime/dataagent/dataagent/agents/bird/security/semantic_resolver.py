@@ -19,7 +19,7 @@ from typing import Any, Optional, cast
 import sqlglot
 from sqlglot import Tokenizer, TokenType, exp
 from sqlglot.errors import ErrorLevel, ParseError
-from sqlglot.expressions.core import Expression
+from sqlglot.expressions import Expression
 
 _COLUMN_CONTEXT_FUNCTION_NAMES = frozenset({"current_role", "user"})
 
