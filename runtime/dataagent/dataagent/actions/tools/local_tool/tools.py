@@ -1182,8 +1182,8 @@ async def nl2sql_sub_agent_tool(
     try:
         import sqlglot
 
-        dialect = source_config["DATABASE"]["dialect"]
-        sql = sqlglot.parse_one(sql, read=dialect).sql(pretty=True)
+        dialect = temp_config.get("DATABASE", {}).get("dialect", "sqlite")
+        sql = sqlglot.parse_one(sql, read=dialect).sql(dialect=dialect, pretty=True)
     except Exception:
         try:
             import sqlparse
