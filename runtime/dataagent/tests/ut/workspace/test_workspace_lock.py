@@ -190,8 +190,8 @@ def test_release_ignores_mismatched_token(tmp_path: Path) -> None:
 
 def test_workspace_busy_error_message_includes_owner(tmp_path: Path) -> None:
     """Busy error should include owner metadata without leaking the lock path."""
-    workspace = tmp_path / "session_ws"
-    workspace.mkdir()
+    workspace = tmp_path.joinpath(*(["nested"] * 12), "session_ws")
+    workspace.mkdir(parents=True)
     handle = acquire_workspace_lock(
         workspace_root=workspace,
         owner_kind="main_session",
@@ -204,16 +204,22 @@ def test_workspace_busy_error_message_includes_owner(tmp_path: Path) -> None:
     message = str(err)
     assert "session-a" in message
     assert "flex_chat" in message
+    assert message.index("owner_id=") < message.index("workspace=")
     assert ".lock" not in message
     assert "删除" not in message
+    from dataagent.core.errors import DataAgentError
+
+    fact = DataAgentError.from_exception(err, component="sdk").fact
+    assert "session-a" in fact
+    assert "flex_chat" in fact
     release_workspace_lock(handle)
 
 
 @pytest.mark.asyncio
 async def test_data_agent_chat_rejects_busy_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """DataAgent.chat must fail fast when the session workspace is already locked."""
-    workspace = tmp_path / "shared_ws"
-    workspace.mkdir()
+    workspace = tmp_path.joinpath(*(["nested"] * 12), "shared_ws")
+    workspace.mkdir(parents=True)
     existing = acquire_workspace_lock(
         workspace_root=workspace,
         owner_kind="main_session",

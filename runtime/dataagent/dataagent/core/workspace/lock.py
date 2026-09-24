@@ -59,8 +59,10 @@ class WorkspaceBusyError(RuntimeError):
 
         Returns:
             ``WorkspaceBusyError`` whose message includes owner fields when present.
-            The message never includes the lock-file path, so callers (including LLMs)
-            are not prompted to delete the lock.
+            Owner fields come before the workspace path: ``DataAgentError.fact`` keeps
+            only the first 160 characters, and a long path (pytest-xdist ``tmp_path``)
+            would otherwise cut off ``owner_id``. The message never includes the
+            lock-file path, so callers (including LLMs) are not prompted to delete the lock.
         """
         root = Path(workspace_root).expanduser()
         meta = _read_lock_payload(root / ".lock" / "lock.json")
@@ -72,8 +74,8 @@ class WorkspaceBusyError(RuntimeError):
         expires_at = meta.get("expires_at") or "unknown"
         return cls(
             "Session workspace is busy "
-            f"(workspace={root}, owner_kind={owner_kind}, owner_id={owner_id}, "
-            f"purpose={purpose}, expires_at={expires_at})"
+            f"(owner_kind={owner_kind}, owner_id={owner_id}, "
+            f"purpose={purpose}, expires_at={expires_at}, workspace={root})"
         )
 
 
