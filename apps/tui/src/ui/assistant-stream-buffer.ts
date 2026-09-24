@@ -36,18 +36,7 @@ export const stripInternalContextBlocks = (text: string): string => {
 };
 
 export const mergeStreamText = (current: string, incoming: string): string => {
-  if (!incoming) return current;
-  if (!current) return incoming;
-  if (incoming.startsWith(current)) return incoming;
-  if (current.endsWith(incoming)) return current;
-
-  const maxOverlap = Math.min(current.length, incoming.length);
-  for (let length = maxOverlap; length > 0; length -= 1) {
-    if (current.endsWith(incoming.slice(0, length))) {
-      return current + incoming.slice(length);
-    }
-  }
-
+  // AG-UI content is a delta, even when it repeats the previous chunk.
   return current + incoming;
 };
 

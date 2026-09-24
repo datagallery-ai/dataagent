@@ -8,6 +8,7 @@ import type {
   LiveToolCallRecord,
 } from '../state/index.js';
 import { InlineToolCall } from './InlineToolCall.js';
+import { Spinner } from './components/ProgressView.js';
 import {
   graphemeWidth,
   graphemes,
@@ -57,50 +58,24 @@ export interface BuildChatLinesInput {
   startup?: StartupInfo | undefined;
   compactMode?: boolean | undefined;
   thoughtExpanded?: boolean | undefined;
+  /** Monotonic dispatch time (performance.now), not the state wall clock. */
+  runStartedAt?: number | undefined;
 }
 
 type ToolCallElement = Extract<DisplayMessage["elements"][number], { type: "tool_call" }>;
 type ReasoningElement = Extract<DisplayMessage["elements"][number], { type: "reasoning" }>;
 
-const INDENT = '  ';
-const INDENT_WIDTH = 2;
+const INDENT_WIDTH = 3;
 const TOOL_DETAIL_INDENT = '  ';
-const USER_MESSAGE_BORDER = '┃ ';
-const USER_MESSAGE_BORDER_WIDTH = textWidth(USER_MESSAGE_BORDER);
 const MAX_ELEMENT_LINES = 1000;
 const MAX_REASONING_LINES = 120;
 const MAX_TOOL_PAYLOAD_LINES = 28;
 const MAX_TABLE_ROWS = 12;
 const MIN_TABLE_CELL_WIDTH = 3;
 const TOOL_DETAIL_INDENT_WIDTH = textWidth(TOOL_DETAIL_INDENT);
-const STARTUP_BANNER_ART = [
-  ' ____        _        _____                     _            ',
-  '|  _ \\  __ _| |_ __ _|  ___|__  _   _ _ __   __| |_ __ _   _ ',
-  '| | | |/ _` | __/ _` | |_ / _ \\| | | | `_ \\ / _` | `__| | | |',
-  '| |_| | (_| | || (_| |  _| (_) | |_| | | | | (_| | |  | |_| |',
-  '|____/ \\__,_|\\__\\__,_|_|  \\___/ \\__,_|_| |_|\\__,_|_|   \\__, |',
-  '                                                        |___/ ',
-];
-const STARTUP_BANNER_ART_WIDTH = Math.max(
-  ...STARTUP_BANNER_ART.map((line) => textWidth(line)),
-);
-const STARTUP_BANNER_MAX_WIDTH = 72;
-
-/**
- * Total display-column budget for a single chat row.
- *
- * 优化说明：
- * - 限制最大宽度为 115 格，避免宽屏时文本过长难以阅读
- * - 窄屏时使用全宽（减去 padding），保持响应式
- * - 宽屏时自然留白，提升阅读舒适度
- */
+/** Shared with the composer: two cells of outer margin on each side. */
 export function chatContentWidth(columns: number): number {
-  const minWidth = 20;
-  const maxWidth = 115; // 限制最大宽度，优化宽屏阅读体验
-  const padding = 4;
-
-  const availableWidth = columns - padding;
-  return Math.max(minWidth, Math.min(maxWidth, availableWidth));
+  return Math.max(1, Math.floor(columns) - 4);
 }
 
 /**
@@ -121,13 +96,36 @@ export function buildChatLines(input: BuildChatLinesInput): VisualLine[] {
   const push = (key: string, node: React.ReactNode) => {
     lines.push({ key, node });
   };
+  const outputsByMessage = new Map<string, DataArtifact[]>();
+  const sessionOutputs: DataArtifact[] = [];
+  const outputIds = new Set<string>();
+  for (const artifact of input.artifacts) {
+    if (outputIds.has(artifact.id)) continue;
+    outputIds.add(artifact.id);
+    const source = artifact.createdByEventId && input.messages.find((message) =>
+      message.role === 'assistant' && message.elements.some((element) =>
+        element.type === 'tool_call' && element.toolCallId === artifact.createdByEventId));
+    if (source) {
+      outputsByMessage.set(source.id, [...(outputsByMessage.get(source.id) ?? []), artifact]);
+    } else {
+      sessionOutputs.push(artifact);
+    }
+  }
+  const pushOutput = (artifact: DataArtifact) => {
+    const key = `output:${artifact.id}`;
+    const suffix = ' · /outputs';
+    const title = truncateToWidth(artifact.title.replace(/\s+/gu, ' '), Math.max(1, bodyWidth - textWidth(suffix) - 2));
+    push(key, <Text key={key} color={inkColors.muted}>
+      {truncateToWidth(`   ↳ ${title}${suffix}`, contentWidth)}
+    </Text>);
+  };
 
   if (input.startup) {
     pushStartupLines(input.startup, contentWidth, push);
   }
 
   const hasMessages = input.messages.length > 0;
-  if (!hasMessages && messageCount === 0) {
+  if (!hasMessages && messageCount === 0 && input.artifacts.length === 0) {
     if (!input.startup) {
       push('empty:0', <Text key="empty:0" dimColor>No messages yet. Start typing to begin...</Text>);
       push('empty:1', <Text key="empty:1" dimColor>Type your question and press Enter to send.</Text>);
@@ -139,12 +137,35 @@ export function buildChatLines(input: BuildChatLinesInput): VisualLine[] {
   // startup banner.
   if (hasMessages) {
     push('spacer:top:0', blankNode('spacer:top:0'));
-    push('spacer:top:1', blankNode('spacer:top:1'));
   }
 
   for (const message of input.messages) {
+    if (message.runSummary) {
+      const key = `m:${message.id}:summary`;
+      const { status, durationMs } = message.runSummary;
+      const label = status === 'completed' ? '✓ Run completed' : status === 'failed'
+        ? '✗ Run failed' : 'Interrupted — completion unknown';
+      push(key, <Text key={key} color={status === 'completed' ? inkColors.muted : status === 'failed' ? inkColors.error : inkColors.warning}>
+        {truncateToWidth(`   ${label} · ${formatRunDuration(durationMs)}`, contentWidth)}
+      </Text>);
+      push(`${key}:after`, blankNode(`${key}:after`));
+      continue;
+    }
     pushMessageLines(message, toolCalls, bodyWidth, push, compactMode, thoughtExpanded);
+    for (const artifact of outputsByMessage.get(message.id) ?? []) pushOutput(artifact);
     push(`m:${message.id}:after`, blankNode(`m:${message.id}:after`));
+  }
+
+  if (sessionOutputs.length > 0) {
+    push('outputs:heading', <Text key="outputs:heading" color={inkColors.muted}>
+      {truncateToWidth('   Session outputs', contentWidth)}
+    </Text>);
+    for (const artifact of sessionOutputs) pushOutput(artifact);
+    push('outputs:after', blankNode('outputs:after'));
+  }
+
+  if (input.runStartedAt !== undefined) {
+    push('run:progress', <RunProgress key="run:progress" startedAt={input.runStartedAt} width={contentWidth} />);
   }
 
   // Restored sessions can report a count without hydrated messages yet.
@@ -158,6 +179,27 @@ export function buildChatLines(input: BuildChatLinesInput): VisualLine[] {
 /** Convenience for callers that only need the row count (e.g. scroll clamps). */
 export function countChatLines(input: BuildChatLinesInput): number {
   return buildChatLines(input).length;
+}
+
+export function formatRunDuration(ms: number): string {
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m ${Math.floor(ms % 60000 / 1000)}s`;
+}
+
+function RunProgress({ startedAt, width }: { startedAt: number; width: number }) {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(performance.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  // Reserve the timer's width across digit/minute transitions. The independent
+  // one-cell spinner animates without changing the label or timer cadence.
+  const duration = formatRunDuration(Math.max(0, now - startedAt)).padStart(8);
+  return <Box width={width} height={1} flexShrink={0} overflowX="hidden">
+    <Text color={inkColors.muted} wrap="truncate-end">
+      {' '}<Spinner type="dots" color={inkColors.muted} />{` Running · ${duration}`}
+    </Text>
+  </Box>;
 }
 
 /**
@@ -197,121 +239,70 @@ function pushMessageLines(
   compactMode: boolean,
   thoughtExpanded: boolean,
 ): void {
-  const isUser = message.role === 'user';
-  const headerKey = `m:${message.id}:h`;
-  const messageBodyWidth = isUser
-    ? Math.max(1, bodyWidth - USER_MESSAGE_BORDER_WIDTH)
-    : bodyWidth;
-
-  // pushLine wraps content with visual decorations to maintain alignment:
-  // - User messages: blue border (┃ ) is added to the left of all content
-  // - Agent messages: equivalent whitespace padding is added to align with User messages
-  // This ensures both message types start at the same column position.
-  const pushLine = (key: string, node: React.ReactNode) => {
-    if (isUser) {
-      push(
-        key,
-        <Box key={`box-${key}`}>
-          <Text color={inkColors.accent}>{USER_MESSAGE_BORDER}</Text>
-          {node}
-        </Box>,
-      );
-    } else {
-      // Agent messages need left padding to align with User messages that have border
-      push(
-        key,
-        <Box key={`box-${key}`}>
-          <Text>{' '.repeat(USER_MESSAGE_BORDER_WIDTH)}</Text>
-          {node}
-        </Box>,
-      );
-    }
-  };
-
-  pushLine(headerKey, <MessageHeader key={headerKey} message={message} />);
-
-  if (message.elements.length === 0 && message.isStreaming) {
-    const key = `m:${message.id}:thinking`;
-    pushLine(key, <ThinkingLine key={key} />);
+  if (message.role === 'user') {
+    const width = bodyWidth + INDENT_WIDTH;
+    const content = message.elements.filter((element) => element.type === 'text')
+      .map((element) => element.content).join('\n');
+    const rows = textRows(content, Math.max(1, bodyWidth - 1)).slice(0, MAX_ELEMENT_LINES);
+    const userRow = (key: string, text: string, marker = '   ') => push(key,
+      <Box key={key} width={width} backgroundColor={inkColors.surface}>
+        <Text color={inkColors.text}>{marker + text}</Text>
+      </Box>,
+    );
+    userRow(`m:${message.id}:before`, ' ');
+    rows.forEach((row, index) => userRow(`m:${message.id}:user:${index}`, row, index === 0 ? ' › ' : '   '));
+    userRow(`m:${message.id}:padding`, ' ');
     return;
   }
 
   let blocksEmitted = 0;
   let emittedLines = 0;
-
-  // Exactly one blank row between consecutive blocks (text/tool); none before
-  // the first so the header stays glued to its content. Mirrors DataDock's
-  // uniform marginTop={1} spacing within the flat single-row line model.
+  let firstContentLine = true;
+  const emit = (key: string, node: React.ReactNode): void => {
+    if (emittedLines >= MAX_ELEMENT_LINES) return;
+    emittedLines += 1;
+    push(key, node);
+  };
   const separate = (key: string): void => {
-    if (blocksEmitted > 0) {
-      pushLine(key, blankNode(key));
-    }
+    if (blocksEmitted > 0) emit(key, blankNode(key));
+    blocksEmitted += 1;
+    firstContentLine = true;
   };
   const pushContentLine = (key: string, node: React.ReactNode): void => {
-    if (emittedLines >= MAX_ELEMENT_LINES) {
-      return;
-    }
-    emittedLines += 1;
-    pushLine(key, node);
+    const marker = firstContentLine ? ' • ' : '   ';
+    firstContentLine = false;
+    emit(key, <Box key={`box-${key}`}><Text color={inkColors.muted}>{marker}</Text>{node}</Box>);
   };
 
   message.elements.forEach((element, elementIndex) => {
     const keyBase = `m:${message.id}:e${elementIndex}`;
-
     if (element.type === 'text') {
       const normalized = normalizeBlankLines(element.content);
-      if (normalized === '') {
-        return;
-      }
+      if (normalized === '') return;
       separate(`${keyBase}:gap`);
-      blocksEmitted += 1;
-      pushMarkdownLines(normalized, messageBodyWidth, keyBase, pushContentLine);
+      pushMarkdownLines(normalized, bodyWidth, keyBase, pushContentLine);
       return;
     }
-
     if (element.type === 'reasoning') {
       const normalized = normalizeBlankLines(element.content);
-      if (compactMode) {
-        if (!element.isStreaming) {
-          return;
-        }
-        separate(`${keyBase}:gap`);
-        blocksEmitted += 1;
-        pushContentLine(`${keyBase}:thinking`, <ThinkingLine key={`${keyBase}:thinking`} />);
-        return;
-      }
-
-      if (normalized === '' && !element.isStreaming) {
-        return;
-      }
-
+      if (compactMode && !element.isStreaming) return;
+      if (normalized === '' && !element.isStreaming) return;
       separate(`${keyBase}:gap`);
-      blocksEmitted += 1;
-      pushReasoningLines(
-        element,
-        messageBodyWidth,
-        keyBase,
-        thoughtExpanded,
-        pushContentLine,
-      );
+      if (compactMode) {
+        pushContentLine(`${keyBase}:thinking`, <ThinkingLine key={`${keyBase}:thinking`} />);
+      } else {
+        pushReasoningLines(element, bodyWidth, keyBase, thoughtExpanded, pushContentLine);
+      }
       return;
     }
-
-    // tool_call element
     const toolCall = resolveToolCallForElement(element, toolCalls);
-    if (!toolCall) {
-      return;
-    }
+    if (!toolCall) return;
     const key = `${keyBase}:tool`;
     separate(`${key}:gap`);
-    blocksEmitted += 1;
-    pushToolCallLines(toolCall, messageBodyWidth, key, compactMode, pushContentLine);
+    pushToolCallLines(toolCall, bodyWidth + 2, key, compactMode, (lineKey, node) => {
+      emit(lineKey, <Box key={`box-${lineKey}`}><Text> </Text>{node}</Box>);
+    });
   });
-
-  if (message.isStreaming && message.elements.length > 0) {
-    const key = `m:${message.id}:cursor`;
-    pushLine(key, <Text key={key} dimColor>{`${INDENT}▊`}</Text>);
-  }
 }
 
 function resolveToolCallForElement(
@@ -388,95 +379,58 @@ function pushReasoningLines(
 
 function pushToolCallLines(
   toolCall: LiveToolCallRecord,
-  bodyWidth: number,
+  width: number,
   keyBase: string,
   compactMode: boolean,
   push: (key: string, node: React.ReactNode) => void,
 ): void {
-  const blockWidth = toolBlockBackgroundWidth(bodyWidth);
-
-  push(
-    keyBase,
-    <Box key={keyBase} width={bodyWidth}>
-      <Text>{TOOL_DETAIL_INDENT}</Text>
-      <Box width={blockWidth}>
-        <InlineToolCall toolCall={toolCall} showName maxWidth={blockWidth} />
-      </Box>
-    </Box>,
-  );
-
+  push(keyBase, <InlineToolCall key={keyBase} toolCall={toolCall} showName maxWidth={width} />);
+  const detailWidth = Math.max(1, width - 4);
   if (compactMode) {
+    // The preview is deliberately bounded; Ctrl+O retains the existing detail view.
+    const resultRows = toolResultRows(toolCall);
+    const wrappedRows = resultRows.flatMap((row) => textRows(row.replace(/^(?:output|line): /u, ''), detailWidth));
+    wrappedRows.slice(0, 2).forEach((row, index) => {
+      const key = `${keyBase}:preview:${index}`;
+      push(key, <Text key={key} color={toolCall.status === 'failed' ? inkColors.error : inkColors.muted}>
+        {`${index === 0 ? '  └ ' : '    '}${row}`}
+      </Text>);
+    });
+    if (wrappedRows.length > 2) {
+      const key = `${keyBase}:preview:more`;
+      push(key, <Text key={key} color={inkColors.muted}>{'    ' + truncateToWidth('… more output · Ctrl+O details', detailWidth)}</Text>);
+    }
     return;
   }
-
   const parameterRows = toolParameterRows(toolCall);
-  if (parameterRows.length > 0) {
-    pushPayloadBlock('Parameters', parameterRows, bodyWidth, `${keyBase}:args`, push);
-  }
-
+  if (parameterRows.length > 0) pushPayloadBlock('Input', parameterRows, width, `${keyBase}:args`, push);
   const resultRows = toolResultRows(toolCall);
-  if (resultRows.length > 0) {
-    pushPayloadBlock('Result', resultRows, bodyWidth, `${keyBase}:result`, push);
-  }
+  if (resultRows.length > 0) pushPayloadBlock('Output', resultRows, width, `${keyBase}:result`, push);
 }
 
 function pushPayloadBlock(
   label: string,
   rows: string[],
-  bodyWidth: number,
+  width: number,
   keyBase: string,
   push: (key: string, node: React.ReactNode) => void,
 ): void {
-  const blockWidth = toolBlockBackgroundWidth(bodyWidth);
   const key = `${keyBase}:label`;
-  push(
-    key,
-    <ToolBlockLine
-      key={key}
-      width={blockWidth}
-      segments={[
-        { text: label, color: inkColors.accent, bold: true },
-      ]}
-    />,
-  );
-
-  const detailIndent = TOOL_DETAIL_INDENT;
-  const detailWidth = Math.max(1, blockWidth - textWidth(detailIndent));
+  push(key, <Text key={key} color={inkColors.muted}>{`  └ ${label}`}</Text>);
+  const detailWidth = Math.max(1, width - 4);
   const wrappedRows = rows.flatMap((row) => textRows(row, detailWidth));
   const visibleRows = wrappedRows.slice(0, MAX_TOOL_PAYLOAD_LINES);
   visibleRows.forEach((row, rowIndex) => {
     const rowKey = `${keyBase}:r${rowIndex}`;
-    push(
-      rowKey,
-      <ToolBlockLine
-        key={rowKey}
-        width={blockWidth}
-        segments={detailRowSegments(detailIndent, row)}
-      />,
-    );
+    push(rowKey, <ToolBlockLine key={rowKey} width={width - TOOL_DETAIL_INDENT_WIDTH}
+      segments={detailRowSegments('  ', row)} />);
   });
-
   if (wrappedRows.length > visibleRows.length) {
-    const hidden = wrappedRows.length - visibleRows.length;
     const moreKey = `${keyBase}:more`;
-    push(
-      moreKey,
-      <ToolBlockLine
-        key={moreKey}
-        width={blockWidth}
-        segments={[
-          {
-            text: `${detailIndent}... ${hidden} more lines hidden ...`,
-            color: inkColors.muted,
-          },
-        ]}
-      />,
-    );
+    push(moreKey, <Text key={moreKey} color={inkColors.muted}>
+      {'    ' + truncateToWidth(`… ${wrappedRows.length - visibleRows.length} more lines hidden`, detailWidth)}
+    </Text>);
   }
-}
-
-function toolBlockBackgroundWidth(bodyWidth: number): number {
-  return Math.max(1, bodyWidth - TOOL_DETAIL_INDENT_WIDTH);
 }
 
 function detailRowSegments(indent: string, row: string): StyledSegment[] {
@@ -484,18 +438,18 @@ function detailRowSegments(indent: string, row: string): StyledSegment[] {
   if (separatorIndex <= 0) {
     return [
       { text: indent, color: inkColors.muted },
-      { text: row, color: inkColors.text },
+      { text: row, color: inkColors.muted },
     ];
   }
 
   const field = row.slice(0, separatorIndex + 1);
   const value = row.slice(separatorIndex + 2);
   const fieldName = row.slice(0, separatorIndex).toLowerCase();
-  const valueColor = fieldName === 'error' ? inkColors.error : inkColors.text;
+  const valueColor = fieldName === 'error' ? inkColors.error : inkColors.muted;
 
   return [
     { text: indent, color: inkColors.muted },
-    { text: field, color: inkColors.muted, bold: true },
+    { text: field, color: inkColors.muted },
     { text: ' ', color: inkColors.muted },
     { text: value, color: valueColor },
   ];
@@ -626,7 +580,6 @@ function compactTextRows(label: string, text: string): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .slice(0, 6)
     .map((line, index) => `${index === 0 ? label : 'line'}: ${compactWhitespace(line)}`);
 }
 
@@ -788,7 +741,7 @@ function pushMarkdownLines(
       case 'heading':
         pushStyledRows(parseInlineRuns(line.text), bodyWidth, lineKey, push, {
           bold: true,
-          blockColor: inkColors.accent,
+          blockColor: inkColors.text,
         });
         return;
       case 'paragraph':
@@ -1163,7 +1116,6 @@ function clipSegments(segments: StyledSegment[], width: number): StyledSegment[]
 
 const StyledLine: React.FC<{ segments: StyledSegment[] }> = ({ segments }) => (
   <Text>
-    {INDENT}
     {segments.map((segment, index) => renderSegment(segment, index))}
   </Text>
 );
@@ -1223,66 +1175,20 @@ function pushStartupLines(
   contentWidth: number,
   push: (key: string, node: React.ReactNode) => void,
 ): void {
-  const conn = connectionDisplay(startup.connectionStatus);
-  const run = runDisplay(startup.runStatus);
-  const bannerWidth = Math.max(20, Math.min(contentWidth, STARTUP_BANNER_MAX_WIDTH));
-  const border = `+${'-'.repeat(Math.max(0, bannerWidth - 2))}+`;
-  const session = startup.threadId ? startup.threadId.slice(0, 8) : 'new';
-  const statusText = `${conn.icon} ${conn.text} | ${run.icon} ${run.text}`;
-  const showArt = bannerWidth >= STARTUP_BANNER_ART_WIDTH + 4;
-
-  push('startup:border:top', <Text key="startup:border:top" color={inkColors.accent}>{border}</Text>);
-  push('startup:title', (
-    <Text key="startup:title" bold color={inkColors.accent}>
-      {bannerContent('DataFoundry', bannerWidth)}
-    </Text>
-  ));
-
-  if (showArt) {
-    STARTUP_BANNER_ART.forEach((line, index) => {
-      const key = `startup:art:${index}`;
-      push(
-        key,
-        <Text key={key} color={inkColors.accent}>
-          {bannerContent(padToWidth(line.trimEnd(), STARTUP_BANNER_ART_WIDTH), bannerWidth)}
-        </Text>,
-      );
-    });
-  }
-
-  push(
-    'startup:session',
-    <Text key="startup:session" dimColor>
-      {bannerContent(`session ${session} | model ${startup.modelName}`, bannerWidth)}
+  const width = Math.min(contentWidth, 70);
+  const innerWidth = Math.max(1, width - 4);
+  const row = (key: string, text: string, title = false) => push(key,
+    <Text key={key} color={title ? inkColors.text : inkColors.muted} bold={title}>
+      {`│ ${padToWidth(text, innerWidth)} │`}
     </Text>,
   );
-  push(
-    'startup:dir',
-    <Text key="startup:dir" dimColor>
-      {bannerContent(`cwd ${startup.directory}`, bannerWidth)}
-    </Text>,
-  );
-  push(
-    'startup:status',
-    <Text key="startup:status">
-      {bannerContent(statusText, bannerWidth)}
-    </Text>,
-  );
-  push('startup:border:bottom', <Text key="startup:border:bottom" color={inkColors.accent}>{border}</Text>);
+  push('startup:border:top', <Text key="startup:border:top" color={inkColors.border}>{`╭${'─'.repeat(width - 2)}╮`}</Text>);
+  row('startup:title', '›_ DataFoundry', true);
+  row('startup:space', '');
+  row('startup:model', `model:     ${startup.modelName}`);
+  row('startup:dir', `directory: ${startup.directory}`);
+  push('startup:border:bottom', <Text key="startup:border:bottom" color={inkColors.border}>{`╰${'─'.repeat(width - 2)}╯`}</Text>);
   push('startup:after', blankNode('startup:after'));
-}
-
-function bannerContent(text: string, width: number): string {
-  const innerWidth = Math.max(0, width - 4);
-  return `| ${centerToWidth(text, innerWidth)} |`;
-}
-
-function centerToWidth(text: string, width: number): string {
-  const fitted = truncateToWidth(text, width);
-  const remaining = Math.max(0, width - textWidth(fitted));
-  const left = Math.floor(remaining / 2);
-  const right = remaining - left;
-  return `${' '.repeat(left)}${fitted}${' '.repeat(right)}`;
 }
 
 function padToWidth(text: string, width: number): string {
@@ -1294,21 +1200,6 @@ function blankNode(key: string): React.ReactNode {
   return <Text key={key}> </Text>;
 }
 
-interface MessageHeaderProps {
-  message: DisplayMessage;
-}
-
-const MessageHeader: React.FC<MessageHeaderProps> = ({ message }) => {
-  return (
-    <Text>
-      {INDENT}
-      <Text bold color={roleColor(message.role)}>{roleLabel(message.role)}</Text>
-      <Text dimColor>  {formatTimestamp(message.timestamp)}</Text>
-      {message.isStreaming ? <Text dimColor> • working...</Text> : null}
-    </Text>
-  );
-};
-
 const ThinkingLine: React.FC = () => {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -1319,80 +1210,6 @@ const ThinkingLine: React.FC = () => {
   const text = `thinking${'.'.repeat(dotCount)}${' '.repeat(3 - dotCount)}`;
   const bright = tick % 2 === 0;
   return (
-    <Text color={bright ? inkColors.text : inkColors.muted} dimColor={!bright}>{INDENT + text}</Text>
+    <Text color={bright ? inkColors.text : inkColors.muted} dimColor={!bright}>{text}</Text>
   );
 };
-
-function roleColor(role: DisplayMessage['role']): string {
-  switch (role) {
-    case 'user':
-      return inkColors.accent;
-    case 'assistant':
-      return inkColors.text;
-    case 'system':
-      return inkColors.muted;
-    default:
-      return inkColors.muted;
-  }
-}
-
-function roleLabel(role: DisplayMessage['role']): string {
-  switch (role) {
-    case 'user':
-      return 'YOU';
-    case 'assistant':
-      return 'AGENT';
-    case 'system':
-      return 'SYSTEM';
-    default:
-      return 'Unknown';
-  }
-}
-
-function formatTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-  if (isToday) {
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-  }
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
-
-function connectionDisplay(status: ConnectionStatus): { color: string; icon: string; text: string } {
-  switch (status) {
-    case 'connected':
-      return { color: inkColors.success, icon: '●', text: 'Connected' };
-    case 'disconnected':
-      return { color: inkColors.muted, icon: '○', text: 'Disconnected' };
-    case 'error':
-      return { color: inkColors.error, icon: '✖', text: 'Error' };
-    default:
-      return { color: inkColors.muted, icon: '○', text: 'Unknown' };
-  }
-}
-
-function runDisplay(status: LiveRunStatus): { color: string; icon: string; text: string } {
-  switch (status) {
-    case 'idle':
-      return { color: inkColors.muted, icon: '○', text: 'Idle' };
-    case 'running':
-      return { color: inkColors.warning, icon: '◐', text: 'Running' };
-    case 'completed':
-      return { color: inkColors.success, icon: '✓', text: 'Completed' };
-    case 'failed':
-      return { color: inkColors.error, icon: '✖', text: 'Failed' };
-    default:
-      return { color: inkColors.muted, icon: '○', text: 'Unknown' };
-  }
-}

@@ -1,28 +1,28 @@
 import type { TuiThemePreset } from './types.js';
 
 /**
- * DataFoundry 默认主题：蓝色负责结构，雾青负责操作和选择，冷灰负责说明。
+ * Neutral conversation canvas; lifted surfaces mark user messages and input.
  */
 export const mistDarkTheme: TuiThemePreset = {
   name: 'mist-dark',
   aliases: ['default', 'mist'],
   tokens: {
     background: {
-      canvas: '#0B0F14',
-      surface: '#121820',
-      overlay: '#111719',
+      canvas: '#1E1E1E',
+      surface: '#343434',
+      overlay: '#262626',
     },
     text: {
-      primary: '#E6EDF3',
-      emphasis: '#B7C0C8',
-      secondary: '#7D8590',
-      muted: '#5F6975',
-      disabled: '#586368',
+      primary: '#E6E6E6',
+      emphasis: '#DCC99F',
+      secondary: '#9A9A9A',
+      muted: '#777777',
+      disabled: '#777777',
     },
     border: {
-      default: '#27313C',
-      focused: '#496783',
-      overlay: '#29383E',
+      default: '#555555',
+      focused: '#9A9A9A',
+      overlay: '#555555',
     },
     structure: {
       accent: '#6CA8E8',
@@ -37,9 +37,9 @@ export const mistDarkTheme: TuiThemePreset = {
       error: '#F87171',
     },
     selection: {
-      background: '#111719',
-      selectedBackground: '#1B272C',
-      border: '#29383E',
+      background: '#262626',
+      selectedBackground: '#3A3A3A',
+      border: '#555555',
       heading: '#D5DEDE',
       selectedTitle: '#D5DEDE',
       title: '#A9B8B9',

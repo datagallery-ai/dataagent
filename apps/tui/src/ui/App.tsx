@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallba
 import { Box, Text, useApp, useInput, useStdin, useStdout, measureElement, type DOMElement } from 'ink';
 import { randomUUID } from 'node:crypto';
 import { ChatArea, type ChatAreaRef } from './ChatArea.js';
-import { OutputsScreen, OutputsSidebar } from './OutputsView.js';
+import { OutputsScreen } from './OutputsView.js';
 import { ActivityPanel } from './ActivityPanel.js';
 import { EnhancedInputBox, ENHANCED_INPUT_RESERVED_ROWS } from './components/EnhancedInputBox.js';
 import { QueuedPromptDisplay } from './components/QueuedPromptDisplay.js';
@@ -10,13 +10,11 @@ import {
   WorkspaceFrame,
   availableContentRows,
   estimateControlsRows,
-  resolveMainPaneColumns,
 } from './workspace-layout.js';
 import { useTerminalSize } from './use-terminal-size.js';
 import { SessionPicker } from './SessionPicker.js';
 import { ResourcePicker, type ResourcePickerItem } from './ResourcePicker.js';
 import { HomeSplash } from './HomeSplash.js';
-import { StatusBar } from './StatusBar.js';
 import { CommandHistory, DEFAULT_COMMANDS } from './keybindings.js';
 import { AssistantTextStreamBuffer, type AssistantTextFlush } from './assistant-stream-buffer.js';
 import { createWheelScrollDecoder } from '../input/mouse-wheel.js';
@@ -30,6 +28,7 @@ import { runIdFromEvent } from '../state/live-run-state.js';
 import {
   persistWorkspaceConfig,
   type WorkspaceConfigItem,
+  type DataArtifact,
 } from '../state/data-task-state.js';
 import { getMessageTextContent } from '../state/message-history.js';
 import type { AgentClient, AgentMessage, RunAgentInput } from '../protocol/types.js';
@@ -38,9 +37,17 @@ import { commandProcessor } from '../commands/index.js';
 import type { CommandContext, CommandResult } from '../commands/types.js';
 import { ConfigClientError, type ConfigClient, type Datasource, type SessionListItem, type Skill } from '../config/index.js';
 import type { AppExitReason, AuthCommandController } from '../auth/types.js';
+import { restoreV2Messages, type V2AppContext } from '../protocol/v2-session-client.js';
+import type { Message } from '@ag-ui/core';
+import { V2_COMMANDS } from '../v2.js';
+import { useV2TerminalLifecycle } from '../v2-terminal.js';
+import { AguiClientError } from '../protocol/agui-client.js';
+import { getLogger } from '../utils/logger.js';
+import { installFullscreenCursorCorrection } from './fullscreen-cursor.js';
 
 interface AppProps {
   client: AgentClient;
+  v2?: V2AppContext | undefined;
   configClient?: ConfigClient | undefined;
   authController?: AuthCommandController | undefined;
   onExit?: ((reason: AppExitReason) => void) | undefined;
@@ -320,6 +327,7 @@ const findSkillPickerItem = (
 
 export const App: React.FC<AppProps> = ({
   client,
+  v2,
   configClient,
   authController,
   onExit,
@@ -327,14 +335,16 @@ export const App: React.FC<AppProps> = ({
   initialDatasourceId,
   initialResume,
 }) => {
+  const { suspended, suspending } = useV2TerminalLifecycle(Boolean(v2));
   const { exit } = useApp();
   const { stdin } = useStdin();
-  const { write: writeToStdout } = useStdout();
+  const { stdout, write: writeToStdout } = useStdout();
+  useLayoutEffect(() => installFullscreenCursorCorrection(stdout, () => !suspending.current), [stdout, suspending]);
   const { columns: terminalColumns, rows: terminalRows } = useTerminalSize();
   // Ink 7 renders an exact-height frame without a trailing newline, so the app
   // can safely use the full viewport and keep the status bar on the bottom row.
   const appRows = Math.max(1, terminalRows);
-  const workspaceRows = Math.max(0, appRows - 1);
+  const workspaceRows = appRows;
   const [state, setState] = useState<TuiAppState>(store.getState());
   const [inputFocused, setInputFocused] = useState(false);
   const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null);
@@ -365,6 +375,7 @@ export const App: React.FC<AppProps> = ({
   const [pickerError, setPickerError] = useState<string | undefined>(undefined);
   const [resumeLoadingSessionId, setResumeLoadingSessionId] = useState<string | null>(null);
   const [outputsOpen, setOutputsOpen] = useState(false);
+  const [sessionOutputs, setSessionOutputs] = useState<{ threadId: string; files: DataArtifact[] } | null>(null);
   const [datasourcePickerOpen, setDatasourcePickerOpen] = useState(false);
   const [datasourcePickerItems, setDatasourcePickerItems] = useState<ResourcePickerItem[]>([]);
   const [datasourcePickerLoading, setDatasourcePickerLoading] = useState(false);
@@ -381,7 +392,7 @@ export const App: React.FC<AppProps> = ({
   const [retryCount, setRetryCount] = useState(0);
   const [controlsHeight, setControlsHeight] = useState(0);
   const [reportedInputBoxRows, setReportedInputBoxRows] = useState<number | null>(
-    ENHANCED_INPUT_RESERVED_ROWS,
+    ENHANCED_INPUT_RESERVED_ROWS + 1,
   );
   const [ctrlCPressedOnce, setCtrlCPressedOnce] = useState(false);
   const [compactMode, setCompactMode] = useState(true);
@@ -401,9 +412,10 @@ export const App: React.FC<AppProps> = ({
   const queuedPromptsRef = useRef<string[]>([]);
   const drainingQueuedPromptRef = useRef(false);
   const handleAgentQueryRef = useRef<((input: string) => Promise<void>) | null>(null);
+  const runClockRef = useRef<{ runId: string; startedAt: number } | null>(null);
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
-  const modelName = resolveModelName(state);
-  const directory = formatDirectory(process.env.PWD || process.cwd());
+  const modelName = v2?.model ?? resolveModelName(state);
+  const directory = formatDirectory(v2?.home ?? process.env.PWD ?? process.cwd());
   const startup = {
     threadId: state.threadId,
     connectionStatus: state.connectionStatus,
@@ -417,6 +429,7 @@ export const App: React.FC<AppProps> = ({
   const showLiveActivity = false;
   const isHomeScreen = visibleMessages.length === 0
     && state.messages.length === 0
+    && state.artifacts.length === 0
     && !commandNotice
     && queuedPrompts.length === 0
     && !isRestoringSession
@@ -428,18 +441,10 @@ export const App: React.FC<AppProps> = ({
     ? startup
     : undefined;
   const pickerOpen = sessionPickerOpen || datasourcePickerOpen || skillPickerOpen || outputsOpen;
-  const mainPaneColumns = resolveMainPaneColumns({
-    columns: terminalColumns,
-  });
   const showResumeLoading = isRestoringSession && state.messages.length === 0;
-  const showOutputsSidebar = mainPaneColumns.outputsVisible
-    && !showLiveActivity
-    && !isHomeScreen
-    && !showResumeLoading;
   const fullRedrawSignature = [
     isHomeScreen ? 'home' : 'workspace',
     pickerOpen ? 'picker-open' : 'picker-closed',
-    showOutputsSidebar ? 'outputs-sidebar' : 'main-only',
     terminalColumns,
     workspaceRows,
     isHomeScreen ? state.connectionStatus : '',
@@ -463,7 +468,7 @@ export const App: React.FC<AppProps> = ({
     activeSkillId ?? 'no-skill',
   ].join('\u0000');
   const estimatedControlsRowCount = estimateControlsRows({
-    commandNotice: Boolean(commandNotice),
+    commandNotice: false,
     queuedPromptCount: queuedPrompts.length,
     activeTab: 'chat',
     homeScreen: isHomeScreen,
@@ -474,11 +479,11 @@ export const App: React.FC<AppProps> = ({
   const chatViewportRowCount = scrollableRowCount;
   const inputDisabled = isRestoringSession;
   const inputCommands = useMemo(
-    () => uniqueStrings([
+    () => v2 ? V2_COMMANDS : uniqueStrings([
       ...DEFAULT_COMMANDS,
       ...skillShortcutItems.map((item) => `/${item.id}`),
     ]),
-    [skillShortcutItems],
+    [skillShortcutItems, v2],
   );
 
   const resolveDefaultDatasourceId = useCallback(async (): Promise<string | undefined> => {
@@ -802,6 +807,28 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
+    if (v2) {
+      setResumeLoadingSessionId(requestedSessionId ?? 'latest');
+      try {
+        const id = requestedSessionId ?? (await v2.sessions.listSessions({ limit: 1 })).sessions[0]?.threadId;
+        if (!id) {
+          setCommandNotice({ kind: 'info', message: 'No saved sessions yet.' });
+          return;
+        }
+        const session = await v2.sessions.getSession(id);
+        clearQueuedPrompts();
+        if (session.newThreadRequired) store.startNewSession(createThreadId());
+        else store.restoreSession({ threadId: id, ...restoreV2Messages(session.messages) });
+        chatAreaRef.current?.reset();
+        setCommandNotice({ kind: 'info', message: session.notice ?? `Restored: ${session.title}` });
+      } catch (error) {
+        setCommandNotice({ kind: 'error', message: `Resume failed: ${error instanceof Error ? error.message : String(error)}` });
+      } finally {
+        setResumeLoadingSessionId(null);
+      }
+      return;
+    }
+
     if (!configClient) {
       setResumeLoadingSessionId(null);
       setCommandNotice({
@@ -856,6 +883,7 @@ export const App: React.FC<AppProps> = ({
   }
 
   async function openSessionPicker(): Promise<void> {
+    const sessionClient = v2?.sessions ?? configClient;
     if (store.getState().runStatus === 'running') {
       setCommandNotice({
         kind: 'error',
@@ -864,7 +892,7 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (!configClient) {
+    if (!sessionClient) {
       setCommandNotice({
         kind: 'error',
         message: 'Session resume requires a live backend; it is not available in demo mode.',
@@ -882,7 +910,7 @@ export const App: React.FC<AppProps> = ({
     setPickerSessions([]);
 
     try {
-      const response = await configClient.listSessions({ limit: 50 });
+      const response = await sessionClient.listSessions({ limit: 50 });
       setPickerSessions(response.sessions);
     } catch (error) {
       setPickerError(formatSessionApiError(error));
@@ -1183,6 +1211,47 @@ export const App: React.FC<AppProps> = ({
     store.clearInputBuffer();
     setCommandNotice(null);
 
+    if (v2) {
+      const [command, argument, ...extra] = input.trim().split(/\s+/);
+      if (command === '/exit' && !argument) {
+        exitApplication('exit');
+      } else if (command === '/help' && !argument) {
+        setCommandNotice({ kind: 'info', message: '/help · /clear (new conversation) · /resume [id] · /outputs · /exit' });
+      } else if (command === '/outputs' && !argument) {
+        const threadId = store.getState().threadId;
+        if (!threadId) {
+          setSessionOutputs(null);
+          setOutputsOpen(true);
+          return;
+        }
+        setCommandNotice({ kind: 'info', message: 'Loading session outputs…' });
+        try {
+          const files = await v2.sessions.listOutputs(threadId);
+          if (store.getState().threadId !== threadId) return;
+          setSessionOutputs({ threadId, files });
+          setCommandNotice(null);
+          setOutputsOpen(true);
+        } catch (error) {
+          if (store.getState().threadId !== threadId) return;
+          setCommandNotice({ kind: 'error', message: `Unable to load outputs: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      } else if (command === '/clear' && !argument) {
+        if (store.getState().runStatus === 'running') {
+          setCommandNotice({ kind: 'error', message: 'Wait for the current run to finish before starting a new conversation.' });
+        } else {
+          clearQueuedPrompts();
+          store.startNewSession(createThreadId());
+          chatAreaRef.current?.reset();
+        }
+      } else if (command === '/resume' && extra.length === 0) {
+        if (argument) await restoreHistoricalSession(argument === 'latest' ? undefined : argument);
+        else await openSessionPicker();
+      } else {
+        setCommandNotice({ kind: 'error', message: 'This command is not supported in V2. Use /help.' });
+      }
+      return;
+    }
+
     try {
       // Prepare command context
       const currentState = store.getState();
@@ -1290,7 +1359,7 @@ export const App: React.FC<AppProps> = ({
       store.setThreadId(threadId);
     }
 
-    const messages: AgentMessage[] = currentState.messages.map(msg => ({
+    const messages: AgentMessage[] = currentState.messages.filter(msg => !msg.runSummary).map(msg => ({
       id: msg.id,
       role: msg.role,
       content: getMessageTextContent(msg),  // Extract text from elements
@@ -1298,6 +1367,12 @@ export const App: React.FC<AppProps> = ({
 
     const createRunInput = (): RunAgentInput => {
       const runId = `run-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      if (v2) {
+        return {
+          threadId, runId, messages: messages.filter((message) => message.role === 'user').slice(-1),
+          tools: [], context: [], state: {}, forwardedProps: {},
+        };
+      }
       const runConfig = buildTuiRunConfig(currentState, resolvedActiveDatasourceId, activeSkillId);
       const context: NonNullable<RunAgentInput['context']> = [
         ...(resolvedActiveDatasourceId
@@ -1343,13 +1418,16 @@ export const App: React.FC<AppProps> = ({
       const runInput = createRunInput();
       const runId = runInput.runId;
       const acceptedRunIds = new Set<string>([runId]);
+      const startedAt = performance.now();
+      runClockRef.current = { runId, startedAt };
 
       // Set run status to running
       store.handleLiveRunEvent({ type: 'RUN_STARTED', runId });
 
       const isCurrentRun = () => {
         const currentRunId = store.getState().runId;
-        return currentRunId !== undefined && acceptedRunIds.has(currentRunId);
+        return store.getState().threadId === threadId
+          && currentRunId !== undefined && acceptedRunIds.has(currentRunId);
       };
       const currentAttemptRunId = () => {
         const currentRunId = store.getState().runId;
@@ -1363,6 +1441,7 @@ export const App: React.FC<AppProps> = ({
         const eventRunId = event ? runIdFromEvent(event) : undefined;
         if (!eventRunId) return true;
         if (acceptedRunIds.has(eventRunId)) return true;
+        if (v2) return false;
 
         // A backend may normalize the run id for resume/canonical identity.
         // While this attempt is still current, treat the first new run id from
@@ -1385,6 +1464,11 @@ export const App: React.FC<AppProps> = ({
 
       setRetryCount(attempt);
       let receivedText = false;
+      let receivedTerminal = false;
+      const streamedMessageIds = new Set<string>();
+      const userMessageId = runInput.messages.filter((message) => message.role === 'user').at(-1)?.id;
+      let lastStreamMessageId: string | undefined;
+      let addedSnapshotText = false;
       const textBuffer = new AssistantTextStreamBuffer();
       let textFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -1442,7 +1526,16 @@ export const App: React.FC<AppProps> = ({
             store.finalizeReasoningMessage();
           } else if (event.type === 'TEXT_MESSAGE_CONTENT' || event.type === 'TEXT_MESSAGE_CHUNK') {
             const delta = (event as { delta?: unknown }).delta;
-            if (typeof delta === 'string') {
+            if (typeof delta === 'string' && delta) {
+              const messageId = typeof runtimeEvent.messageId === 'string' ? runtimeEvent.messageId : undefined;
+              if (v2 && (addedSnapshotText || (lastStreamMessageId && messageId !== lastStreamMessageId))) {
+                startNextTextSegment();
+                store.finalizeAssistantMessage();
+                store.addAssistantMessage('', true);
+                addedSnapshotText = false;
+              }
+              lastStreamMessageId = messageId;
+              if (messageId) streamedMessageIds.add(messageId);
               if (!textBuffer.append(delta)) {
                 continue;
               }
@@ -1456,23 +1549,52 @@ export const App: React.FC<AppProps> = ({
           } else if (event.type === 'TEXT_MESSAGE_END') {
             flushTextBuffer(false);
           } else if (event.type === 'RUN_FINISHED') {
+            receivedTerminal = true;
             flushTextBuffer(false);
             store.finalizeReasoningMessage();
             storeCurrentRunEvent(runtimeEvent);
+            if (v2) {
+              store.addRunSummary(threadId, runId, 'completed', performance.now() - startedAt);
+            }
           } else if (event.type === 'RUN_ERROR') {
+            receivedTerminal = true;
             flushTextBuffer();
             store.finalizeReasoningMessage();
             const message = (event as { message?: unknown }).message;
             const errorMessage = typeof message === 'string' ? message : 'Agent run failed';
             storeCurrentRunEvent(runtimeEvent);
 
-            // Classify and log the error
-            const classifiedError = classifyError(new Error(errorMessage));
-            errorLogger.log(classifiedError, { threadId, runId });
-
-            // Display user-friendly error message
-            const friendlyMessage = formatErrorMessage(classifiedError);
-            store.updateAssistantMessage(`Error: ${friendlyMessage}`, false);
+            if (v2) {
+              const code = typeof runtimeEvent.code === 'string' ? runtimeEvent.code : 'RUN_ERROR';
+              getLogger().error('V2 run failed', { threadId, runId, code, message: errorMessage });
+              store.appendToAssistantMessage(`\n\nError [${code}]: ${errorMessage}`);
+              store.finalizeAssistantMessage();
+              store.addRunSummary(threadId, runId, 'failed', performance.now() - startedAt);
+            } else {
+              const classifiedError = classifyError(new Error(errorMessage));
+              errorLogger.log(classifiedError, { threadId, runId });
+              const friendlyMessage = formatErrorMessage(classifiedError);
+              store.updateAssistantMessage(`Error: ${friendlyMessage}`, false);
+            }
+          } else if (v2 && event.type === 'MESSAGES_SNAPSHOT') {
+            flushTextBuffer(false);
+            // AG-UI result deltas omit LangChain's error status; the authoritative
+            // snapshot carries it. Correct tool badges without replacing the text.
+            store.reconcileToolResults(restoreV2Messages(runtimeEvent.messages as Message[]).toolCalls);
+            const snapshot = runtimeEvent.messages as Message[];
+            const boundary = snapshot.findIndex((message) => message.role === 'user' && message.id === userMessageId);
+            if (boundary < 0) {
+              getLogger().warn('V2 snapshot missing current user boundary', { threadId, runId, userMessageId });
+            } else {
+              for (const answer of snapshot.slice(boundary + 1)) {
+                if (answer.role !== 'assistant' || typeof answer.content !== 'string'
+                  || !answer.content || streamedMessageIds.has(answer.id)) continue;
+                streamedMessageIds.add(answer.id);
+                store.addAssistantMessage(answer.content, false);
+                receivedText = true;
+                addedSnapshotText = true;
+              }
+            }
           } else if (isToolCallEvent(runtimeEvent)) {
             startNextTextSegment();
             store.finalizeReasoningMessage();
@@ -1492,6 +1614,7 @@ export const App: React.FC<AppProps> = ({
         // Ensure run is marked as finished
         const finalState = store.getState();
         if (finalState.runStatus === 'running') {
+          if (v2 && !receivedTerminal) throw new Error('INCOMPLETE_STREAM: connection ended without a terminal event');
           handleCurrentRunEvent({ type: 'RUN_FINISHED', runId: currentAttemptRunId() });
         }
 
@@ -1502,6 +1625,20 @@ export const App: React.FC<AppProps> = ({
         flushTextBuffer();
         store.finalizeReasoningMessage();
         if (!isCurrentRun()) {
+          return;
+        }
+
+        if (v2) {
+          const message = error instanceof Error ? error.message : String(error);
+          const code = error instanceof AguiClientError ? error.code : 'TRANSPORT_ERROR';
+          store.handleLiveRunEvent({ type: 'RUN_ERROR', runId: currentAttemptRunId(), message });
+          getLogger().error('V2 stream failed', { threadId, runId, code, message });
+          store.appendToAssistantMessage(`\n\nError [${code}]: ${message}`);
+          store.finalizeAssistantMessage();
+          store.addRunSummary(threadId, runId,
+            error instanceof AguiClientError && error.statusCode !== undefined ? 'failed' : 'interrupted',
+            performance.now() - startedAt);
+          setRetryCount(0);
           return;
         }
 
@@ -1608,6 +1745,9 @@ export const App: React.FC<AppProps> = ({
   };
 
   const visibleArtifacts = state.artifacts;
+  const outputArtifacts = v2
+    ? (sessionOutputs && sessionOutputs.threadId === state.threadId ? sessionOutputs.files : [])
+    : visibleArtifacts;
   const liveActivity = state.runStatus === 'running'
     ? {
         plan: state.plan,
@@ -1619,9 +1759,7 @@ export const App: React.FC<AppProps> = ({
         toolCalls: [],
         events: [],
       };
-  const chatPaneColumns = showOutputsSidebar
-    ? mainPaneColumns.chatColumns
-    : terminalColumns;
+  const chatPaneColumns = terminalColumns;
 
   if (logoutConfirm) {
     if (logoutConfirm.kind === 'local-cleanup-failed') {
@@ -1738,12 +1876,14 @@ export const App: React.FC<AppProps> = ({
           paddingX={1}
         >
           <OutputsScreen
-            artifacts={visibleArtifacts}
+            artifacts={outputArtifacts}
             events={state.events}
             columns={Math.max(20, terminalColumns - 2)}
             rows={workspaceRows}
             fetchArtifactPreview={
-              configClient
+              v2 && sessionOutputs
+                ? (path) => v2.sessions.getOutputPreview(sessionOutputs.threadId, path)
+                : configClient
                 ? (artifactId) => configClient.getArtifactPreview(artifactId)
                 : undefined
             }
@@ -1762,19 +1902,6 @@ export const App: React.FC<AppProps> = ({
           rows={workspaceRows}
           columns={terminalColumns}
           scrollableRows={scrollableRowCount}
-          {...(showOutputsSidebar
-            ? {
-                rightColumns: mainPaneColumns.outputsColumns,
-                right: (
-                  <OutputsSidebar
-                    artifacts={visibleArtifacts}
-                    events={state.events}
-                    columns={mainPaneColumns.outputsColumns}
-                    rows={workspaceRows}
-                  />
-                ),
-              }
-            : {})}
           scrollable={
             <Box
               key={isHomeScreen ? 'home-scrollable' : 'chat-scrollable'}
@@ -1793,10 +1920,12 @@ export const App: React.FC<AppProps> = ({
                     overflowY="hidden"
                   >
                     <HomeSplash
+                      mounts={v2?.mounts}
                       rows={scrollableRowCount}
                       columns={chatPaneColumns}
                       startup={startup}
-                      canResume={Boolean(configClient)}
+                      canResume={Boolean(configClient || v2)}
+                      localAgent={Boolean(v2)}
                       input={(promptWidth) => (
                         <EnhancedInputBox
                           onChange={handleInputChange}
@@ -1807,19 +1936,25 @@ export const App: React.FC<AppProps> = ({
                           onExitRequest={requestCtrlCExit}
                           onRestoreQueuedMessages={popAllQueuedPrompts}
                           ctrlCExitPending={ctrlCPressedOnce}
+                          notice={commandNotice}
+                          connectionStatus={state.connectionStatus}
+                          cursorActive={!pickerOpen && !suspended}
                           disabled={inputDisabled}
                           commands={inputCommands}
+                          restrictCommands={Boolean(v2)}
+                          hideDatasource={Boolean(v2)}
+                          placeholder={v2 ? 'Ask a question… "Summarize 1, 2, 3"' : undefined}
                           modelName={modelName}
+                          directory={directory}
                           datasourceId={activeDatasourceId}
-                          skillId={activeSkillId}
                           inputWidth={promptWidth}
                           history={inputHistoryRef.current}
                           onShortcut={(shortcut) => {
                             if (shortcut === '1') {
-                              void handleSubmit('Show tables');
+                              void handleSubmit(v2 ? 'Summarize the numbers 1, 2, 3.' : 'Show tables');
                               return true;
                             }
-                            if (shortcut === '2' && configClient) {
+                            if (shortcut === '2' && (configClient || v2)) {
                               void handleCommandExecution('/resume latest');
                               return true;
                             }
@@ -1850,7 +1985,7 @@ export const App: React.FC<AppProps> = ({
                       width={showLiveActivity ? '70%' : chatPaneColumns}
                       height={scrollableRowCount}
                       flexShrink={0}
-                      paddingX={1}
+                      paddingX={2}
                       overflowY="hidden"
                     >
                       <ChatArea
@@ -1864,6 +1999,7 @@ export const App: React.FC<AppProps> = ({
                         startup={transcriptStartup}
                         compactMode={compactMode}
                         thoughtExpanded={thoughtExpanded}
+                        runStartedAt={state.runStatus === 'running' ? runClockRef.current?.startedAt : undefined}
                       />
                     </Box>
 
@@ -1888,14 +2024,6 @@ export const App: React.FC<AppProps> = ({
           }
           bottom={
             <Box ref={mainControlsRef} flexDirection="column" flexShrink={0}>
-              {commandNotice && (
-                <Box paddingX={1} flexShrink={0}>
-                  <Text color={commandNotice.kind === 'error' ? inkColors.error : inkColors.accent}>
-                    {commandNotice.message}
-                  </Text>
-                </Box>
-              )}
-
               {queuedPrompts.length > 0 && (
                 <QueuedPromptDisplay prompts={queuedPrompts} />
               )}
@@ -1910,14 +2038,19 @@ export const App: React.FC<AppProps> = ({
                   onExitRequest={requestCtrlCExit}
                   onRestoreQueuedMessages={popAllQueuedPrompts}
                   ctrlCExitPending={ctrlCPressedOnce}
+                  notice={commandNotice}
+                  connectionStatus={state.connectionStatus}
+                  cursorActive={!pickerOpen && !suspended}
                   onLayoutChange={requestControlsMeasurement}
                   disabled={inputDisabled}
                   commands={inputCommands}
+                  restrictCommands={Boolean(v2)}
+                  hideDatasource={Boolean(v2)}
+                  placeholder={v2 ? 'Ask a question… "Summarize 1, 2, 3"' : undefined}
                   modelName={modelName}
+                  directory={directory}
                   datasourceId={activeDatasourceId}
-                  skillId={activeSkillId}
                   inputWidth={chatPaneColumns}
-                  outputCount={visibleArtifacts.length}
                   history={inputHistoryRef.current}
                 />
               )}
@@ -1927,7 +2060,6 @@ export const App: React.FC<AppProps> = ({
         />
         )}
       </Box>
-      <StatusBar columns={terminalColumns} startup={startup} />
     </Box>
   );
 };

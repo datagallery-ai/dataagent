@@ -85,6 +85,7 @@ describe("runTui auth wiring", () => {
         const configFetch = (configClient as unknown as { fetchImpl: typeof fetch }).fetchImpl;
         const clientFetch = (client as unknown as { fetchImpl: typeof fetch }).fetchImpl;
         assert.equal(configFetch, clientFetch);
+        assert.ok(authController, 'The legacy authenticated entrypoint supplies an auth controller');
         assert.equal(typeof authController.logout, "function");
         assert.equal(initialDatasourceId, "ds-1");
         return "exit";

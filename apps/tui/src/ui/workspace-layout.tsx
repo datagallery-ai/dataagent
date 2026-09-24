@@ -5,45 +5,8 @@ import { inkColors } from './theme.js';
 
 export type WorkspaceTab = 'chat' | 'stats' | 'config' | 'outputs';
 
-export const OUTPUTS_SIDEBAR_COLUMNS = 42;
-export const OUTPUTS_SIDEBAR_BREAKPOINT_COLUMNS = 120;
 const MIN_WORKSPACE_ROWS = 19;
-const DEFAULT_INPUT_BOX_ROWS = 9;
-
-export interface MainPaneColumns {
-  chatColumns: number;
-  outputsColumns: number;
-  outputsVisible: boolean;
-}
-
-export function preferredOutputsSidebarColumns(columns: number): number {
-  return Math.min(OUTPUTS_SIDEBAR_COLUMNS, Math.max(0, Math.floor(columns) - 1));
-}
-
-export function resolveMainPaneColumns({
-  columns,
-}: {
-  columns: number;
-}): MainPaneColumns {
-  const safeColumns = Math.max(1, Math.floor(columns));
-  const canShowOutputs = safeColumns > OUTPUTS_SIDEBAR_BREAKPOINT_COLUMNS;
-
-  if (!canShowOutputs) {
-    return {
-      chatColumns: safeColumns,
-      outputsColumns: 0,
-      outputsVisible: false,
-    };
-  }
-
-  const outputsColumns = preferredOutputsSidebarColumns(safeColumns);
-
-  return {
-    chatColumns: Math.max(1, safeColumns - outputsColumns),
-    outputsColumns,
-    outputsVisible: true,
-  };
-}
+const DEFAULT_INPUT_BOX_ROWS = 4;
 
 export function WorkspaceFrame({
   rows,
@@ -51,29 +14,23 @@ export function WorkspaceFrame({
   scrollableRows,
   scrollable,
   bottom,
-  right,
-  rightColumns = 0,
 }: {
   rows: number;
   columns: number;
   scrollableRows: number;
   scrollable: React.ReactNode;
   bottom: React.ReactNode;
-  right?: React.ReactNode;
-  rightColumns?: number | undefined;
 }) {
   const safeColumns = Math.max(1, Math.floor(columns));
-  const sideColumns = right ? Math.max(1, Math.min(safeColumns - 1, Math.floor(rightColumns))) : 0;
-  const mainColumns = Math.max(1, safeColumns - sideColumns);
   const contentRows = Math.min(rows, Math.max(0, Math.floor(scrollableRows)));
   const controlsRows = Math.max(0, rows - contentRows);
 
-  if (rows < MIN_WORKSPACE_ROWS) {
+  if (rows < MIN_WORKSPACE_ROWS || columns < 60) {
     return (
       <Box flexDirection="column" height={rows} width={safeColumns}>
         <Box paddingX={1} flexDirection="column">
           <Text color={inkColors.warning} bold>Terminal too small</Text>
-          <Text dimColor>Resize to at least 80x20 for the DataFoundry TUI.</Text>
+          <Text dimColor>Resize to at least 60x19 for the DataFoundry TUI.</Text>
         </Box>
       </Box>
     );
@@ -81,10 +38,10 @@ export function WorkspaceFrame({
 
   return (
     <Box flexDirection="row" height={rows} width={safeColumns}>
-      <Box flexDirection="column" height={rows} width={mainColumns} flexShrink={0}>
+      <Box flexDirection="column" height={rows} width={safeColumns} flexShrink={0}>
         <Box
           height={contentRows}
-          width={mainColumns}
+          width={safeColumns}
           overflowY="hidden"
           flexDirection="column"
           flexShrink={0}
@@ -92,7 +49,7 @@ export function WorkspaceFrame({
           {scrollable}
         </Box>
         <Box
-          width={mainColumns}
+          width={safeColumns}
           height={controlsRows}
           overflowY="visible"
           flexShrink={0}
@@ -102,7 +59,6 @@ export function WorkspaceFrame({
           {bottom}
         </Box>
       </Box>
-      {right}
     </Box>
   );
 }
@@ -117,7 +73,7 @@ export function estimateControlsRows(
   },
 ): number {
   const inputBoxRows = Math.max(
-    DEFAULT_INPUT_BOX_ROWS,
+    3,
     Math.ceil(options.inputBoxRows ?? DEFAULT_INPUT_BOX_ROWS),
   );
   const queueRows = queuedPromptDisplayRows(options.queuedPromptCount ?? 0);

@@ -1,0 +1,46 @@
+{
+  "venvPath": "apps/api",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "include": [
+    "apps/api",
+    "runtime/deepagents",
+    "runtime/dataagent",
+    "runtime/agentkit",
+    "services/datalink"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "apps/web",
+    "docs"
+  ],
+  "extraPaths": [
+    "apps/api/src",
+    "runtime/deepagents/src",
+    "runtime/dataagent"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "apps/api",
+      "extraPaths": ["apps/api/src", "runtime/deepagents/src"],
+      "pythonVersion": "3.12"
+    },
+    {
+      "root": "runtime/deepagents",
+      "extraPaths": ["runtime/deepagents/src"],
+      "pythonVersion": "3.12"
+    },
+    {
+      "root": "runtime/dataagent",
+      "extraPaths": ["runtime/dataagent"],
+      "pythonVersion": "3.11"
+    },
+    {
+      "root": "runtime/agentkit",
+      "extraPaths": ["runtime/agentkit"],
+      "pythonVersion": "3.12"
+    }
+  ]
+}

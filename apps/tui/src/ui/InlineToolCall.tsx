@@ -1,7 +1,7 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Text } from 'ink';
 import type { LiveToolCallRecord } from '../state/index.js';
-import { basename, formatBytes, getStatusColor } from './theme.js';
+import { basename, formatBytes, getStatusColor, inkColors } from './theme.js';
 import { textWidth, truncateToWidth } from './text-width.js';
 
 const RUNNING_TOOL_FRAME_MS = 250;
@@ -78,7 +78,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
       case 'pending':
         return '○';
       case 'success':
-        return '✓';
+        return '•';
       case 'failed':
         return '✗';
       case 'cancelled':
@@ -101,51 +101,62 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   const icon = getStatusIcon(toolCall.status);
   const color = getStatusColor(toolCall.status);
   const duration = getDuration();
-  const summary = showName ? toolSummary(toolCall, duration) : duration;
-  const summaryWidth = maxWidth === undefined
-    ? undefined
-    : Math.max(1, maxWidth - textWidth(icon) - 1);
-  const fittedSummary = summaryWidth === undefined
-    ? summary
-    : truncateToWidth(summary, summaryWidth);
+  const summary = toolSummary(toolCall);
+  const status = toolCall.status === 'failed' ? 'Failed · '
+    : toolCall.status === 'cancelled' ? 'Cancelled · '
+      : toolCall.status === 'pending' ? 'Queued · ' : '';
+  const width = Math.max(1, (maxWidth ?? 1000) - textWidth(icon) - 1);
+  const suffix = duration ? ` · ${duration}` : '';
+  const title = showName ? truncateToWidth(status + summary.title, Math.max(1, width - textWidth(suffix))) : '';
+  const detailBudget = Math.max(0, width - textWidth(title) - textWidth(suffix) - 1);
+  const detail = showName && summary.detail && detailBudget > 0
+    ? truncateToWidth(summary.detail, detailBudget) : '';
 
   return (
-    <Box>
-      <Text color={color}>{icon}</Text>
-      {fittedSummary && (
-        <>
-          <Text dimColor> </Text>
-          <Text dimColor>{fittedSummary}</Text>
-        </>
-      )}
-    </Box>
+    <Text wrap="truncate-end">
+      <Text color={color}>{icon}</Text>{' '}
+      <Text color={inkColors.text} bold>{title}</Text>
+      {detail && <Text color={inkColors.accent}> {detail}</Text>}
+      <Text color={inkColors.muted}>{showName ? suffix : duration}</Text>
+    </Text>
   );
 };
 
-function toolSummary(toolCall: LiveToolCallRecord, duration: string): string {
+function toolSummary(toolCall: LiveToolCallRecord): { title: string; detail: string } {
   const file = fileToolSummary(toolCall);
-  const parts = file
-    ? [file.label, file.path, file.size]
-    : [toolDisplayName(toolCall.name)];
-  if (duration) parts.push(duration);
-  return parts.filter((part): part is string => Boolean(part)).join(' · ');
+  const args = parsePayloadRecord(toolCall.args);
+  const target = file
+    ? [file.path, file.size].filter(Boolean).join(' · ')
+    : stringField(args, 'file_path') ?? stringField(args, 'path')
+      ?? stringField(args, 'command') ?? stringField(args, 'pattern')
+      ?? stringField(args, 'subagent_type') ?? stringField(args, 'sql')
+      ?? stringField(args, 'query') ?? '';
+  return { title: toolDisplayName(toolCall.name), detail: target.replace(/\s+/gu, ' ').trim() };
 }
 
 function toolDisplayName(name: string): string {
   const displayNames: Record<string, string> = {
-    run_sql_readonly: '执行 SQL',
-    inspect_schema: '检查 schema',
-    list_data_sources: '列出数据源',
-    get_table_schema: '读取表结构',
-    query_data: '查询数据',
-    publish_artifact: '生成产物',
-    promote_workspace_file: '生成文件',
+    read_file: 'Read',
+    ls: 'List',
+    glob: 'Find',
+    grep: 'Search',
+    task: 'Delegate',
+    execute: 'Run',
+    write_file: 'Write file',
+    edit_file: 'Edit file',
+    write_todos: 'Update plan',
+    run_sql_readonly: 'Run SQL',
+    inspect_schema: 'Inspect schema',
+    list_data_sources: 'List sources',
+    get_table_schema: 'Read schema',
+    query_data: 'Query data',
+    publish_artifact: 'Publish artifact',
+    promote_workspace_file: 'Create file',
   };
   return displayNames[name] || name;
 }
 
 function fileToolSummary(toolCall: LiveToolCallRecord): {
-  label: string;
   path?: string | undefined;
   size?: string | undefined;
 } | undefined {
@@ -171,14 +182,7 @@ function fileToolSummary(toolCall: LiveToolCallRecord): {
     numberField(result, 'size') ??
     (wrote?.[1] ? Number(wrote[1]) : undefined);
 
-  const label = toolCall.name === 'edit_file'
-    ? '已更新文件'
-    : toolCall.name === 'publish_artifact'
-      ? '已发布产物'
-      : '已生成文件';
-
   return {
-    label,
     ...(rawPath ? { path: basename(rawPath.trim()) } : {}),
     ...(Number.isFinite(bytes) ? { size: formatBytes(bytes as number) } : {}),
   };

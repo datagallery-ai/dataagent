@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "math": {
+      "type": "stdio",
+      "command": "$env{MCP_PYTHON}",
+      "args": ["math_server.py"],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    "analytics": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer $env{ANALYTICS_MCP_TOKEN}"
+      }
+    },
+    "legacy": {
+      "type": "sse",
+      "url": "https://legacy.example.com/sse",
+      "headers": {
+        "X-API-Key": "$env{LEGACY_MCP_API_KEY}"
+      }
+    }
+  }
+}

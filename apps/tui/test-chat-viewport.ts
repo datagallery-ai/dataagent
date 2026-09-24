@@ -12,7 +12,6 @@ import { textWidth, wrapToWidth, truncateToWidth } from './dist/ui/text-width.js
 import {
   availableContentRows,
   estimateControlsRows,
-  resolveMainPaneColumns,
 } from './dist/ui/workspace-layout.js';
 import { ENHANCED_INPUT_RESERVED_ROWS } from './dist/ui/components/EnhancedInputBox.js';
 import { TextBuffer } from './dist/ui/components/text-buffer.js';
@@ -48,7 +47,7 @@ function visualLineText(line: { node: unknown }): string {
 }
 
 function unindentedLineText(line: { node: unknown }): string {
-  return visualLineText(line).trimStart();
+  return visualLineText(line).trimStart().replace(/^• /u, '');
 }
 
 function reactNodeText(node: unknown): string {
@@ -128,12 +127,12 @@ inputBuffer.insert('\x7f');
 check(inputBuffer.text === 'abc', 'raw DEL is ignored by the text buffer instead of rendering as residue');
 
 // --- layout helpers ---
-check(chatContentWidth(120) === 115, 'content width is capped for wide terminals');
-check(estimateControlsRows({ commandNotice: false, activeTab: 'chat' }) === 9, 'controls estimate reserves the fixed enhanced input height');
-check(estimateControlsRows({ commandNotice: true, activeTab: 'chat' }) === 10, 'controls estimate includes command notice');
+check(chatContentWidth(120) === 116, 'content width matches the composer with two-cell margins');
+check(estimateControlsRows({ commandNotice: false, activeTab: 'chat' }) === 4, 'controls estimate reserves one input row, two padding rows and model');
+check(estimateControlsRows({ commandNotice: true, activeTab: 'chat' }) === 5, 'controls estimate includes command notice');
 check(estimateControlsRows({ commandNotice: false, activeTab: 'chat', inputBoxRows: 12 }) === 12, 'controls estimate follows expanded input height');
 check(estimateControlsRows({ commandNotice: true, activeTab: 'chat', inputBoxRows: 12 }) === 13, 'controls estimate combines notice and expanded input height');
-check(ENHANCED_INPUT_RESERVED_ROWS === 9, 'reserved input height covers the bordered three-row input viewport');
+check(ENHANCED_INPUT_RESERVED_ROWS === 3, 'reserved input height covers one input row and two padding rows');
 check(
   estimateControlsRows({
     commandNotice: false,
@@ -185,39 +184,6 @@ check(
     && artifactMarkdownContent(markdownReportArtifact) === '# Summary\n\nComplete.',
   'markdown artifact preview_json markdown field renders as report markdown',
 );
-check(
-  eq(resolveMainPaneColumns({ columns: 120 }), {
-    chatColumns: 120,
-    outputsColumns: 0,
-    outputsVisible: false,
-  }),
-  'outputs sidebar stays hidden at the opencode-style breakpoint',
-);
-check(
-  eq(resolveMainPaneColumns({ columns: 121 }), {
-    chatColumns: 79,
-    outputsColumns: 42,
-    outputsVisible: true,
-  }),
-  'outputs sidebar appears above the opencode-style breakpoint with fixed width',
-);
-check(
-  eq(resolveMainPaneColumns({ columns: 220 }), {
-    chatColumns: 178,
-    outputsColumns: 42,
-    outputsVisible: true,
-  }),
-  'outputs sidebar keeps a fixed width on very wide terminals',
-);
-check(
-  eq(resolveMainPaneColumns({ columns: 200 }), {
-    chatColumns: 158,
-    outputsColumns: 42,
-    outputsVisible: true,
-  }),
-  'outputs sidebar stays visible on wide terminals even before outputs exist',
-);
-
 // --- mouse wheel parsing ---
 const ESC = '\u001B';
 const wheelBurst = `${ESC}[<64;10;2M${ESC}[<65;10;3M${ESC}[<64;10;4M`;
@@ -260,14 +226,14 @@ check(
 // --- exact line counts ---
 const columns = 120;
 check(
-  countChatLines({ messages: [textMessage('m1', 'hello')], artifacts: [], columns }) === 5,
-  'short message = top padding + header + 1 line + trailing blank (5 rows)',
+  countChatLines({ messages: [textMessage('m1', 'hello')], artifacts: [], columns }) === 3,
+  'short message = top padding + 1 line + trailing blank (3 rows)',
 );
 
-// bodyWidth = 115 - 2 = 113 -> 56 CJK chars per row -> 60 chars wrap to 2 rows.
+// bodyWidth = 116 - 3 = 113 -> 56 CJK chars per row -> 60 chars wrap to 2 rows.
 check(
-  countChatLines({ messages: [textMessage('m2', '中'.repeat(60))], artifacts: [], columns }) === 6,
-  '60 CJK chars wrap to 2 rows (top padding + header + 2 + blank = 6)',
+  countChatLines({ messages: [textMessage('m2', '中'.repeat(60))], artifacts: [], columns }) === 4,
+  '60 CJK chars wrap to 2 rows (top padding + 2 + blank = 4)',
 );
 
 // The previous length-based estimate would have counted this as a single row,
@@ -285,7 +251,7 @@ const tableMarkdown = [
   '| Alpha | 123 | ok |',
   '| Very long item name that should be clipped | 456789 | 中文 |',
 ].join('\n');
-const tableBodyWidth = chatContentWidth(40) - 2;
+const tableBodyWidth = chatContentWidth(40) - 3;
 const tableRows = buildChatLines({
   messages: [textMessage('tbl', tableMarkdown)],
   artifacts: [],
@@ -337,11 +303,11 @@ check(
 // --- block spacing: exactly one blank row between text and tool calls ---
 const toolCalls: LiveToolCallRecord[] = [toolRecord('tc1'), toolRecord('tc2')];
 
-// top padding + header + "a" + 1 blank + tool line + trailing blank = 7 rows.
+// top padding + "a" + 1 blank + tool line + trailing blank = 5 rows.
 const paddedTextThenTool = elementMessage('s1', [textElement('a\n\n\n'), toolElement('tc1')]);
 check(
-  countChatLines({ messages: [paddedTextThenTool], artifacts: [], toolCalls, columns }) === 7,
-  'text + tool = top padding + header + text + 1 blank + tool + trailing blank (7 rows)',
+  countChatLines({ messages: [paddedTextThenTool], artifacts: [], toolCalls, columns }) === 5,
+  'text + tool = top padding + text + 1 blank + tool + trailing blank (5 rows)',
 );
 
 // Trailing newlines the model emits before a tool must not inflate the gap.
@@ -353,11 +319,11 @@ check(
 );
 
 // text -> tool -> text: a single blank between each of the three blocks.
-// top padding + header + "a" + blank + tool + blank + "b" + trailing blank = 9 rows.
+// top padding + "a" + blank + tool + blank + "b" + trailing blank = 7 rows.
 const textToolText = elementMessage('s3', [textElement('a'), toolElement('tc1'), textElement('b')]);
 check(
-  countChatLines({ messages: [textToolText], artifacts: [], toolCalls, columns }) === 9,
-  'text/tool/text join with one blank between each block (9 rows)',
+  countChatLines({ messages: [textToolText], artifacts: [], toolCalls, columns }) === 7,
+  'text/tool/text join with one blank between each block (7 rows)',
 );
 
 // A whitespace-only text element (e.g. the lone "\n\n" before a tool) is skipped
@@ -370,11 +336,11 @@ check(
 );
 
 // Two adjacent tool calls keep a single blank between them.
-// top padding + header + "a" + blank + tool + blank + tool + trailing blank = 9 rows.
+// top padding + "a" + blank + tool + blank + tool + trailing blank = 7 rows.
 const textToolTool = elementMessage('s5', [textElement('a'), toolElement('tc1'), toolElement('tc2')]);
 check(
-  countChatLines({ messages: [textToolTool], artifacts: [], toolCalls, columns }) === 9,
-  'adjacent tool calls keep exactly one blank between them (9 rows)',
+  countChatLines({ messages: [textToolTool], artifacts: [], toolCalls, columns }) === 7,
+  'adjacent tool calls keep exactly one blank between them (7 rows)',
 );
 
 // --- deterministic, stable slicing ---

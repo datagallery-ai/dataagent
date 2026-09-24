@@ -1,5 +1,9 @@
 import { themeManager } from './themes/theme-manager.js';
 import type { TuiThemeTokens } from './themes/types.js';
+import chalk from 'chalk';
+
+// Ink's locked Chalk version does not detect NO_COLOR itself.
+if (process.env.NO_COLOR) chalk.level = 0;
 
 /**
  * 动态语义主题访问层。组件应优先使用这里的语义分组，而不是直接写色值。
@@ -143,7 +147,7 @@ export function basename(path: string): string {
  * ❌ 避免使用：
  * - magenta/purple: 已移除，用 muted 或 accent 替代
  * - 同时使用多种高亮色在相邻元素上
- * - 大面积背景色（除非是真正的错误/警告）
+ * - 工具和助手正文的大面积背景色（surface 仅用于用户消息与输入）
  *
  * 示例：
  * ```tsx

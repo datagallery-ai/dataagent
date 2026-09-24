@@ -55,7 +55,6 @@ export const FullExample = () => {
         placeholder="Type a command or paste large content..."
         modelName="gpt-4"
         datasourceId="my-database"
-        skillId="data-analysis"
       />
 
       {history.length > 0 && (

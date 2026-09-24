@@ -1,0 +1,56 @@
+{
+  "schema_version": 3,
+  "dataagent": {
+    "model": {
+      "default": "primary"
+    },
+    "limits": {
+      "timeout_seconds": 180,
+      "model_calls_per_agent": 128,
+      "tool_calls_per_agent": 128
+    },
+    "workspaces": [],
+    "hooks": {
+      "before_agent": [
+        {
+          "entrypoint": "hooks/check_input.py:handle",
+          "params": {
+            "max_chars": 4000
+          }
+        }
+      ],
+      "after_agent": [],
+      "before_model": [],
+      "after_model": [],
+      "before_tool": [
+        {
+          "matcher": "common__summarize_numbers",
+          "entrypoint": "hooks/check_tool.py:handle",
+          "params": {
+            "blocked_tools": []
+          }
+        }
+      ],
+      "after_tool": []
+    }
+  },
+  "models": {
+    "primary": {
+      "provider": "openai",
+      "name": "$env{LLM_MODEL}",
+      "base_url": "$env{LLM_BASE_URL}",
+      "api_key": "$env{LLM_API_KEY}",
+      "max_retries": 2
+    }
+  },
+  "plugins": {
+    "enabled": [
+      "common"
+    ],
+    "paths": []
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8790
+  }
+}

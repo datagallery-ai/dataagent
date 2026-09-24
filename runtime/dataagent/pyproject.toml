@@ -85,6 +85,7 @@ test = [
     "datagallery-dataagent[nl2sql]",
     "setuptools>=67.6.1,<81",
     "pytest>=8.4.2",
+    "pytest-xdist>=3.8.0",
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=1.2.0",
     "diff-cover>=7.5",
