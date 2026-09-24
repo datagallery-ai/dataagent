@@ -10,9 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import json
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from loguru import logger
@@ -52,6 +55,7 @@ class TodoListManager:
         self,
         maxlen: int = 100,
         *,
+        storage_path: Path | None = None,
         pre_workflow: Sequence[dict[str, Any]] | None = None,
         post_workflow: Sequence[dict[str, Any]] | None = None,
     ) -> None:
@@ -61,13 +65,15 @@ class TodoListManager:
         Args:
             maxlen (int): The maximum number of nodes each internal deque can hold.
                 When the deque reaches this size, further additions to that deque will fail.
+            storage_path: Optional JSON snapshot restored on initialization and saved on every plan change.
             pre_workflow: PRE_WORKFLOW node definitions from Agent YAML.
             post_workflow: POST_WORKFLOW node definitions from Agent YAML.
         """
         self._pre_workflow: tuple[dict[str, Any], ...] = tuple(pre_workflow or ())
         self._post_workflow: tuple[dict[str, Any], ...] = tuple(post_workflow or ())
         self.prelist = deque(maxlen=maxlen)
-        self.todolist: Plan | None = None
+        self._storage_path = storage_path
+        self.todolist: Plan | None = self._load_plan()
         self.postlist = deque(maxlen=maxlen)
         self.lists = {
             "pre": self.prelist,
@@ -129,20 +135,16 @@ class TodoListManager:
 
     def create_plan(self, *, introduction: str, approach: str, todos: list[str]) -> None:
         """
-        Create or replace the in-memory global plan for the current process.
+        Create or replace the plan and persist its snapshot.
 
         The new plan overwrites any existing plan. All todo items start as incomplete.
-        State is guarded by a lock and the returned ``Plan`` is a deep copy of the
-        stored snapshot.
 
         Args:
             introduction (str): High-level description of what the plan covers.
             approach (str): Development strategy or implementation approach.
             todos (list[str]): Ordered todo titles; each becomes an incomplete ``TodoItem``.
         """
-        self.todolist = Plan(
-            introduction=introduction, approach=approach, todos=[TodoItem(title=t, completed=False) for t in todos]
-        )
+        self._set_plan(Plan(introduction=introduction, approach=approach, todos=[TodoItem(title=t) for t in todos]))
 
     def update_plan(
         self,
@@ -152,7 +154,7 @@ class TodoListManager:
         todos: list[str] | None = None,
     ) -> None:
         """
-        Apply field-level updates to the current in-memory global plan.
+        Apply field-level updates to the current plan and persist the snapshot.
 
         Only arguments that are not ``None`` are applied. When ``todos`` is provided,
         the todo list is replaced in full (titles only; all new items are incomplete).
@@ -173,14 +175,14 @@ class TodoListManager:
         else:
             new_todos = list(self.todolist.todos)
 
-        self.todolist = Plan(introduction=new_intro, approach=new_approach, todos=new_todos)
+        self._set_plan(Plan(introduction=new_intro, approach=new_approach, todos=new_todos))
 
     def delete_plan(self) -> None:
         """
-        Remove the in-memory global plan for the current process. Subsequent reads behave as if no
+        Remove the plan from memory and disk. Subsequent reads behave as if no
         plan was ever created until ``create_plan`` is called again.
         """
-        self.todolist = None
+        self._set_plan(None)
 
     def complete_current_todo(self) -> str:
         """
@@ -194,9 +196,48 @@ class TodoListManager:
         if self.todolist is None:
             return "No plan found. You must create a plan first."
 
-        for todo in self.todolist.todos:
+        for index, todo in enumerate(self.todolist.todos):
             if not todo.completed:
-                todo.completed = True
+                todos = list(self.todolist.todos)
+                todos[index] = replace(todo, completed=True)
+                self._set_plan(replace(self.todolist, todos=todos))
                 return f"Todo '{todo.title}' completed successfully."
 
         return "No incomplete todos found. All todos are already completed."
+
+    def _load_plan(self) -> Plan | None:
+        if self._storage_path is None or not self._storage_path.exists():
+            return None
+        try:
+            data = json.loads(self._storage_path.read_text(encoding="utf-8"))
+            introduction, approach, todos = data.get("introduction"), data.get("approach"), data.get("todos")
+            if not isinstance(introduction, str) or not isinstance(approach, str) or not isinstance(todos, list):
+                raise ValueError("Invalid plan snapshot fields")
+            restored = []
+            for item in todos:
+                title, completed = item.get("title"), item.get("completed", False)
+                if not isinstance(title, str) or not isinstance(completed, bool):
+                    raise ValueError("Invalid todo snapshot fields")
+                restored.append(TodoItem(title=title, completed=completed))
+            return Plan(introduction=introduction, approach=approach, todos=restored)
+        except (OSError, ValueError, AttributeError) as exc:
+            logger.warning("Failed to restore plan from {}: {}", self._storage_path, exc)
+            return None
+
+    def _set_plan(self, plan: Plan | None) -> None:
+        path = self._storage_path
+        if path is not None:
+            if plan is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = None
+                try:
+                    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+                        temporary = Path(stream.name)
+                        json.dump(asdict(plan), stream, ensure_ascii=False, indent=2)
+                    temporary.replace(path)
+                finally:
+                    if temporary is not None:
+                        temporary.unlink(missing_ok=True)
+        self.todolist = plan

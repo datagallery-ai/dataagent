@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import hashlib
 import json
 import re
 import threading
@@ -212,8 +213,17 @@ class Context:
         self._persistence = ContextPersistence(ctx=self)
         self._editor = TrajectoryEditor(ctx=self)
         self._profiler = ContextProfiler(ctx=self)
+        # Main-agent plans span turns; sub_id values can be reused by unrelated child runs.
+        plan_scope = [user_id, session_id, sub_id]
+        if sub_id != 0:
+            plan_scope.append(run_id)
+        scope_key = hashlib.sha256(json.dumps(plan_scope).encode("utf-8")).hexdigest()[:16]
+        context_dir = resolve_flex_context_dir(
+            user_id=user_id, session_id=session_id, workspace=self.state.workspace, config=self.state.config
+        )
         self._todolist_manager = TodoListManager(
             maxlen=100,
+            storage_path=context_dir / f"todolist_{scope_key}.json",
             pre_workflow=init_opts.pre_workflow,
             post_workflow=init_opts.post_workflow,
         )
