@@ -221,6 +221,7 @@ export function deriveLiveSessionView(
 export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
   switch (event.type) {
     case "RUN_STARTED":
+      if (state.runId && state.runId === runIdFromEvent(event)) return state;
       return {
         ...createInitialLiveRun(),
         artifacts: state.artifacts,
@@ -282,6 +283,9 @@ function isArtifactFromCurrentRun(liveRun: LiveRun, artifact: DataArtifact): boo
 }
 
 function applyRunStatus(state: LiveRun, status: LiveRunStatus): LiveRun {
+  // Only a root terminal event can finish an active request. Snapshots may
+  // describe a completed graph step while the response is still streaming.
+  if (state.runStatus === "running") return state;
   if (state.runStatus === status && !isTerminalRunStatus(status)) return state;
   if (isTerminalRunStatus(state.runStatus) && state.runStatus !== status) return state;
   if (status === "completed") return completeRunState(state, "completed", "success");
@@ -523,7 +527,10 @@ function reduceToolEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
     });
   } else if (eventType === "TOOL_CALL_ARGS") {
     const existing = nextState.toolCalls.find((item) => item.id === id);
-    const recordArgs = incomingArgs !== undefined ? incomingArgs : existing?.args;
+    const recordArgs = incomingArgs !== undefined ? incomingArgs
+      : typeof event.delta === "string"
+        ? `${typeof existing?.args === "string" ? existing.args : ""}${event.delta}`
+        : existing?.args;
     nextState = upsertToolCallRecord(nextState, {
       id,
       name: toolName,

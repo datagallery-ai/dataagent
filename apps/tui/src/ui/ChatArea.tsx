@@ -33,6 +33,8 @@ interface ChatAreaProps {
   startup?: StartupInfo | undefined;
   compactMode?: boolean | undefined;
   thoughtExpanded?: boolean | undefined;
+  /** Monotonic dispatch time (performance.now), not the state wall clock. */
+  runStartedAt?: number | undefined;
 }
 
 export type ChatAreaRef = {
@@ -64,8 +66,10 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
   startup,
   compactMode = false,
   thoughtExpanded = false,
+  runStartedAt,
 }, ref) => {
   const scrollAnchor = useRef(new ScrollAnchor());
+  const previousViewport = useRef(viewportRows);
   const [internalScrollbackRows, setInternalScrollbackRows] = useState(
     scrollbackRows ?? 0,
   );
@@ -80,6 +84,7 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
     startup,
     compactMode,
     thoughtExpanded,
+    runStartedAt,
   }), [
     messages,
     artifacts,
@@ -90,6 +95,7 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
     startup,
     compactMode,
     thoughtExpanded,
+    runStartedAt,
   ]);
 
   const viewport = viewportRows === undefined ? undefined : Math.max(0, viewportRows);
@@ -134,10 +140,12 @@ const ChatAreaComponent = forwardRef<ChatAreaRef, ChatAreaProps>(({
 
   useEffect(() => {
     if (controlled || viewport === undefined) return;
+    const viewportDelta = (previousViewport.current ?? viewport) - viewport;
+    previousViewport.current = viewport;
 
     setInternalScrollbackRows((current) => {
       const adjustedScrollback = scrollAnchor.current.handleContentGrowth(total, current);
-      return Math.max(0, Math.min(maxScroll, adjustedScrollback));
+      return Math.max(0, Math.min(maxScroll, adjustedScrollback + (current > 0 ? viewportDelta : 0)));
     });
   }, [controlled, maxScroll, total, viewport]);
 

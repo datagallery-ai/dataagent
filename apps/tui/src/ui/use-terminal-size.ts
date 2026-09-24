@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useStdout } from 'ink';
 
 export function useTerminalSize(): { columns: number; rows: number } {
+  const { stdout } = useStdout();
   const readSize = () => ({
-    columns: process.stdout.columns || 80,
-    rows: process.stdout.rows || 24,
+    columns: stdout.columns || 80,
+    rows: stdout.rows || 24,
   });
   const [size, setSize] = useState(readSize);
 
@@ -12,11 +14,12 @@ export function useTerminalSize(): { columns: number; rows: number } {
       setSize(readSize());
     };
 
-    process.stdout.on('resize', updateSize);
+    updateSize();
+    stdout.on('resize', updateSize);
     return () => {
-      process.stdout.off('resize', updateSize);
+      stdout.off('resize', updateSize);
     };
-  }, []);
+  }, [stdout]);
 
   return size;
 }

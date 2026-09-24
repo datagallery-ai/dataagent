@@ -1,0 +1,49 @@
+{
+  "name": "general-purpose",
+  "description": "Handle focused research, file inspection, data analysis and artifact creation using the enabled tools and skills.",
+  "system_prompt": "prompts/general-purpose.md",
+  "hooks": [
+    {
+      "event": "before_agent",
+      "entrypoint": "hooks/audit.py:before_agent",
+      "params": {
+        "agent": "general-purpose"
+      }
+    },
+    {
+      "event": "after_agent",
+      "entrypoint": "hooks/audit.py:after_agent",
+      "params": {
+        "agent": "general-purpose"
+      }
+    },
+    {
+      "event": "before_model",
+      "entrypoint": "hooks/audit.py:before_model",
+      "params": {
+        "agent": "general-purpose"
+      }
+    },
+    {
+      "event": "after_model",
+      "entrypoint": "hooks/audit.py:after_model",
+      "params": {
+        "agent": "general-purpose"
+      }
+    },
+    {
+      "event": "before_tool",
+      "entrypoint": "hooks/audit.py:before_tool",
+      "params": {
+        "agent": "general-purpose"
+      }
+    },
+    {
+      "event": "after_tool",
+      "entrypoint": "hooks/audit.py:after_tool",
+      "params": {
+        "agent": "general-purpose"
+      }
+    }
+  ]
+}

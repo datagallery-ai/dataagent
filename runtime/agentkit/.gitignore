@@ -1,0 +1,5 @@
+config.yaml
+!dataagent/bootstrap/templates/config.yaml
+!examples/config.yaml
+.dataagent_v2/
+workspace/

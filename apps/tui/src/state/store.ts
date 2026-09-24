@@ -281,6 +281,19 @@ class StateStore {
     this.setState(newState as TuiAppState, isStreaming);
   }
 
+  addRunSummary(threadId: string, runId: string, status: NonNullable<DisplayMessage['runSummary']>['status'], durationMs: number): void {
+    const id = `run-summary:${threadId}:${runId}`;
+    if (this.state.threadId !== threadId || this.state.runId !== runId
+      || this.state.messages.some((message) => message.id === id)) return;
+    this.setState({
+      ...this.state,
+      messages: [...this.state.messages, {
+        id, role: 'system', timestamp: Date.now(), elements: [],
+        runSummary: { status, durationMs: Math.max(0, durationMs) },
+      }],
+    }, true);
+  }
+
   /**
    * Append to the last assistant message (for streaming)
    */
@@ -402,6 +415,20 @@ class StateStore {
       sessionStats: createInitialSessionUsage(),
       threadId: input.threadId,
     }, true);
+  }
+
+  /** Reconcile final native history without replacing streamed text or run state. */
+  reconcileToolResults(results: LiveToolCallRecord[]): void {
+    const byId = new Map(results.map((result) => [result.id, result]));
+    const toolCalls = this.state.toolCalls.map((call) => {
+      const saved = byId.get(call.id);
+      return saved ? { ...call, status: saved.status, result: saved.result } : call;
+    });
+    let next = this.state;
+    for (const call of toolCalls) {
+      next = updateToolCallInMessages(next, call, this.state.runId, this.state.runId) as TuiAppState;
+    }
+    this.setState({ ...next, toolCalls });
   }
 
   /**

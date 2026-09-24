@@ -35,6 +35,11 @@ export interface DisplayMessage {
   isStreaming?: boolean | undefined;
   /** Message elements (text, tool calls, etc.) in order */
   elements: MessageElement[];
+  /** Ephemeral UI result; never persisted or sent as model history. */
+  runSummary?: {
+    status: 'completed' | 'failed' | 'interrupted';
+    durationMs: number;
+  } | undefined;
 }
 
 /**

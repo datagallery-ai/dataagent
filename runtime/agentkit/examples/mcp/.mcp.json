@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "math": {
+      "type": "stdio",
+      "command": "$env{MCP_PYTHON}",
+      "args": ["math_server.py"]
+    }
+  }
+}

@@ -275,8 +275,8 @@ describe('EnhancedInputBox slash command menu', () => {
       await waitForInput();
 
       const output = view.output.join('');
-      assert.match(output, /\u001B\[48;2;17;23;25m/);
-      assert.match(output, /\u001B\[48;2;27;39;44m/);
+      assert.match(output, /\u001B\[48;2;38;38;38m/);
+      assert.match(output, /\u001B\[48;2;58;58;58m/);
     } finally {
       chalk.level = previousColorLevel;
     }
@@ -295,13 +295,13 @@ describe('EnhancedInputBox slash command menu', () => {
     );
     await waitForInput();
 
-    assert.equal(layoutRows.at(-1), 9);
+    assert.equal(layoutRows.at(-1), 3);
 
     view.stdin.write('/');
     await waitForInput();
     await waitForInput();
 
-    assert.equal(layoutRows.at(-1), 9);
+    assert.equal(layoutRows.at(-1), 3);
     assert.match(view.output.join(''), /\/clear\s+Clear chat history/);
     assert.doesNotMatch(view.output.join(''), /Slash Commands/);
   });
@@ -376,14 +376,13 @@ describe('EnhancedInputBox slash command menu', () => {
 });
 
 describe('EnhancedInputBox layout', () => {
-  it('keeps all three input viewport rows visible inside the full border', async () => {
+  it('grows to three visible input rows inside the padded surface', async () => {
     const view = renderInputBox(
       <Box width={88}>
         <EnhancedInputBox
           value={'first\nsecond\nthird'}
           inputWidth={88}
           datasourceId="dtc-growth-demo"
-          skillId="data-analysis"
           onChange={() => {}}
           onSubmit={() => {}}
         />
@@ -395,13 +394,13 @@ describe('EnhancedInputBox layout', () => {
     assert.match(view.output.join(''), /third/);
   });
 
-  it('uses the compact shortcut footer at the 76-column home width', async () => {
+  it('uses a single model footer at the 76-column home width', async () => {
     const view = renderInputBox(
       <Box width={76}>
         <EnhancedInputBox
           inputWidth={76}
+          modelName="GLM-5.2"
           datasourceId="dtc-growth-demo"
-          skillId="data-analysis"
           onChange={() => {}}
           onSubmit={() => {}}
         />
@@ -410,9 +409,10 @@ describe('EnhancedInputBox layout', () => {
     await waitForInput();
 
     const output = view.output.join('');
-    assert.match(output, /ANALYZE/);
+    assert.doesNotMatch(output, /ANALYZE/);
+    assert.match(output, /GLM-5.2/);
     assert.match(output, /dtc-growth-demo/);
-    assert.match(output, /\[Enter\]/);
+    assert.doesNotMatch(output, /\[Enter\]/);
     assert.doesNotMatch(output, /\[Shift\+Enter\]/);
   });
 
@@ -449,7 +449,7 @@ describe('StatusBar', () => {
     datasourceId: 'dtc-growth-demo',
   } as const;
 
-  it('shows live run, datasource, and model state when space is available', async () => {
+  it('shows model and optional datasource without a healthy connection badge', async () => {
     const view = renderInputBox(
       <Box width={80}>
         <StatusBar columns={80} startup={startup} />
@@ -458,14 +458,14 @@ describe('StatusBar', () => {
     await waitForInput();
 
     const output = view.output.join('');
-    assert.match(output, /Running/);
+    assert.doesNotMatch(output, /Running|Ready|●/);
     assert.match(output, /source: /);
     assert.match(output, /dtc-growth-demo/);
-    assert.match(output, /model: /);
+    assert.match(output, /Qwen3-32B/);
     assert.match(output, /Qwen3-32B/);
   });
 
-  it('keeps only the primary state on narrow terminals', async () => {
+  it('keeps the model visible on narrow terminals', async () => {
     const view = renderInputBox(
       <Box width={39}>
         <StatusBar columns={39} startup={startup} />
@@ -474,9 +474,9 @@ describe('StatusBar', () => {
     await waitForInput();
 
     const output = view.output.join('');
-    assert.match(output, /Running/);
+    assert.doesNotMatch(output, /Running|Ready|●/);
     assert.doesNotMatch(output, /source: /);
-    assert.doesNotMatch(output, /model: /);
+    assert.match(output, /Qwen3-32B/);
   });
 });
 
@@ -546,8 +546,8 @@ describe('shared selection theme', () => {
         resourceView.output.join(''),
         outputsView.output.join(''),
       ]) {
-        assert.match(output, /\u001B\[48;2;17;23;25m/);
-        assert.match(output, /\u001B\[48;2;27;39;44m/);
+        assert.match(output, /\u001B\[48;2;38;38;38m/);
+        assert.match(output, /\u001B\[48;2;58;58;58m/);
         assert.match(output, /\u001B\[38;2;121;165;169m/);
       }
     } finally {
@@ -562,7 +562,96 @@ describe('shared selection theme', () => {
 
     assert.equal(themeManager.setActiveTheme('mist-dark'), true);
     assert.equal(selectionColors.accent, '#79A5A9');
-    assert.equal(selectionColors.background, '#111719');
+    assert.equal(selectionColors.background, '#262626');
     assert.equal(themeManager.setActiveTheme('unknown-theme'), false);
   });
+});
+
+for (const [label, sequence] of [
+  ['CSI-u Shift+Enter', '\x1b[13;2u'],
+  ['xterm Shift+Enter', '\x1b[27;2;13~'],
+  ['Ctrl+J', '\n'],
+  ['Alt+Enter', '\x1b\r'],
+]) it(`${label} inserts a newline; plain Enter submits once`, async () => {
+  const submissions: string[] = [];
+  const view = renderInputBox(<EnhancedInputBox onChange={() => {}} onSubmit={(text) => submissions.push(text)} />);
+  await waitForInput();
+  view.stdin.write('你好');
+  await waitForInput();
+  view.stdin.write(sequence);
+  await waitForInput();
+  view.stdin.write('e\u0301👨‍👩‍👧‍👦');
+  await waitForInput();
+  assert.equal(submissions.length, 0);
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, ['你好\ne\u0301👨‍👩‍👧‍👦'.normalize('NFC')]);
+});
+
+it('grows from one to six visible rows, scrolls internally, and shrinks on submit', async () => {
+  const rows: number[] = [];
+  const submissions: string[] = [];
+  const view = renderInputBox(<EnhancedInputBox modelName="GLM-5.2" onChange={() => {}}
+    onSubmit={(text) => submissions.push(text)} onLayoutChange={(height) => rows.push(height)} />);
+  await waitForInput();
+  assert.equal(rows.at(-1), 4);
+  view.stdin.write('\x1b[200~one\ntwo\nthree\nfour\nfive\nsix\nseven\x1b[201~');
+  await waitForInput();
+  assert.equal(rows.at(-1), 9);
+  assert.match(view.output.at(-1)!, /seven/);
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.equal(submissions.length, 1);
+  assert.equal(rows.at(-1), 4);
+});
+
+it('prioritizes exit reminder over command notice and completion without metadata duplication', async () => {
+  const view = renderInputBox(<EnhancedInputBox ctrlCExitPending notice={{ message: 'Command notice', kind: 'info' }}
+    modelName="GLM-5.2" onChange={() => {}} onSubmit={() => {}} />);
+  await waitForInput();
+  assert.match(view.output.at(-1)!, /Press Ctrl\+C again/);
+  assert.doesNotMatch(view.output.at(-1)!, /Command notice|ANALYZE|LOCAL AGENT|Ready/);
+});
+
+it('places connection failure beside a cell-truncated model and hides optional datasource first', async () => {
+  const view = renderInputBox(<StatusBar columns={39} startup={{
+    modelName: '中文模型'.repeat(12), connectionStatus: 'disconnected', runStatus: 'idle',
+    datasourceId: 'optional-source', threadId: undefined, directory: '',
+  }} />);
+  await waitForInput();
+  const output = view.output.at(-1)!;
+  assert.match(output, /中文模型/);
+  assert.match(output, /Disconnected/);
+  assert.doesNotMatch(output, /optional-source/);
+  assert.equal(output.trimEnd().split('\n').length, 1);
+});
+
+it('keeps scrolled transcript anchored as the composer changes height and the timer ticks', async () => {
+  const { ChatArea } = await import('../ChatArea.js');
+  const { stripVTControlCharacters } = await import('node:util');
+  const ref = React.createRef<import('../ChatArea.js').ChatAreaRef>();
+  const messages: import('../../state/index.js').DisplayMessage[] = [{
+    id: 'long-answer', role: 'assistant', timestamp: 1,
+    elements: [{ type: 'text', content: Array.from({ length: 50 }, (_, i) => `Line ${i}`).join('\n'), timestamp: 1 }],
+  }];
+  const startedAt = performance.now();
+  const element = (viewportRows: number) => <ChatArea ref={ref} messages={messages} artifacts={[]}
+    columns={80} viewportRows={viewportRows} runStartedAt={startedAt} />;
+  const view = renderInputBox(element(15));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+  await settle();
+  ref.current?.scrollBy(8);
+  await settle();
+  const topLine = () => stripVTControlCharacters(view.output.at(-1)!).split('\n')[0];
+  const anchor = topLine();
+  view.rerender(element(10));
+  await settle();
+  assert.equal(topLine(), anchor);
+  assert.equal(ref.current?.getScrollbackRows(), 13);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(topLine(), anchor);
+  view.rerender(element(15));
+  await settle();
+  assert.equal(topLine(), anchor);
+  assert.equal(ref.current?.getScrollbackRows(), 8);
 });

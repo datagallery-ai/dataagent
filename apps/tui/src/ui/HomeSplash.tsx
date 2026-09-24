@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { StartupInfo } from './transcript-lines.js';
-import { textWidth } from './text-width.js';
+import { truncateToWidth } from './text-width.js';
 import { inkColors } from './theme.js';
 
 interface HomeSplashProps {
@@ -10,109 +10,48 @@ interface HomeSplashProps {
   startup: StartupInfo;
   input: React.ReactNode | ((width: number) => React.ReactNode);
   canResume?: boolean | undefined;
+  localAgent?: boolean | undefined;
+  mounts?: string | undefined;
 }
 
-const WORDMARK = [
-  {
-    left: '█▀▄ ▄▀█ ▀█▀ ▄▀█',
-    right: '█▀▀ █▀█ █ █ █▄ █ █▀▄ █▀█ █▄█',
-  },
-  {
-    left: '█▄▀ █▀█  █  █▀█',
-    right: '█▀  █▄█ █▄█ █ ▀█ █▄▀ █▀▄  █ ',
-  },
-];
-
-const WORDMARK_WIDTH = Math.max(
-  ...WORDMARK.map((line) => textWidth(`${line.left}   ${line.right}`)),
-);
-
-export function HomeSplash({ rows, columns, startup, input, canResume = false }: HomeSplashProps) {
-  const availableWidth = Math.max(24, columns - 4);
-  // 使用统一的容器宽度，范围在 76-88 列之间
-  const containerWidth = Math.min(88, Math.max(76, Math.floor(columns * 0.7)), availableWidth);
-  const showLogo = availableWidth >= WORDMARK_WIDTH && rows >= 20;
-
-  // 根据数据源状态决定显示什么提示
+export function HomeSplash({ rows, columns, startup, input, canResume = false, localAgent = false, mounts }: HomeSplashProps) {
+  const width = Math.max(1, columns - 4);
+  const cardWidth = Math.min(70, width);
+  const valueWidth = Math.max(1, cardWidth - 15);
   const hasDataSource = startup.datasourceId && startup.datasourceId !== 'undefined';
+  const title = localAgent ? 'DataAgent' : 'DataFoundry';
 
   return (
     <Box width="100%" height={rows} flexDirection="column" overflowY="hidden">
-      <Box flexGrow={1} minHeight={0} />
-      <Box width="100%" flexDirection="column" alignItems="center" flexShrink={0}>
-        {showLogo ? (
-          <Box flexDirection="column" width={WORDMARK_WIDTH}>
-            {WORDMARK.map((line, index) => (
-              <Text key={`home-logo-${index}`}>
-                <Text color={inkColors.muted}>{line.left}</Text>
-                <Text color={inkColors.muted}>   </Text>
-                <Text color={inkColors.text} bold>{line.right}</Text>
-              </Text>
-            ))}
+      <Box marginX={2} marginTop={1} flexDirection="column" flexShrink={1} overflowY="hidden">
+        {rows >= 24 ? (
+          <Box width={cardWidth} borderStyle="round" borderColor={inkColors.border} paddingX={1} flexDirection="column" flexShrink={0}>
+            <Text><Text color={inkColors.muted}>›_ </Text><Text color={inkColors.text} bold>{title}</Text></Text>
+            <Text> </Text>
+            <Text><Text color={inkColors.muted}>model:     </Text><Text color={inkColors.text}>{truncateToWidth(startup.modelName, valueWidth)}</Text></Text>
+            <Text><Text color={inkColors.muted}>directory: </Text><Text color={inkColors.text}>{truncateToWidth(startup.directory, valueWidth)}</Text></Text>
           </Box>
-        ) : (
-          <Box flexDirection="row">
-            <Text color={inkColors.muted}>data</Text>
-            <Text color={inkColors.text} bold>foundry</Text>
+        ) : <Text color={inkColors.text} bold>›_ {title}</Text>}
+        <Box marginTop={1} paddingX={1} flexDirection="column" flexShrink={0}>
+          <Text color={inkColors.muted} wrap="truncate-end">
+            <Text color={inkColors.text}>Try: </Text>
+            {localAgent ? 'Summarize the numbers 1, 2, 3.' : hasDataSource ? 'Why did revenue decline last month?' : '/datasource to choose a datasource.'}
+          </Text>
+          {localAgent && <Text color={inkColors.muted} wrap="truncate-end">{mounts ? 'Inputs are read-only. ' : ''}Write files in session outputs.</Text>}
+          {mounts && <Text color={inkColors.muted} wrap="truncate-end">{mounts}</Text>}
+          <Box marginTop={1}>
+            <Text color={inkColors.muted} wrap="truncate-end">
+              {(hasDataSource || localAgent) && <><Text color={inkColors.accent}>[1]</Text> {localAgent ? 'Try statistics' : 'Explore schema'}   </>}
+              {canResume && <><Text color={inkColors.accent}>[2]</Text> Resume latest   </>}
+              <Text color={inkColors.accent}>[/]</Text> Commands
+            </Text>
           </Box>
-        )}
-
-        {showLogo && (
-          <>
-            <Box height={1} />
-            <Box width={containerWidth} flexDirection="row" justifyContent="center">
-              <Text color={inkColors.muted}>From question to query to evidence.</Text>
-            </Box>
-          </>
-        )}
-
-        <Box height={showLogo ? 2 : 1} />
-        <Box width={containerWidth} flexDirection="column">
-          {typeof input === 'function' ? input(containerWidth) : input}
         </Box>
-
-        <Box height={1} />
-        <Box width={containerWidth} flexDirection="column">
-          {hasDataSource ? (
-            // 有数据源：显示建议的业务问题
-            <Box flexDirection="row" justifyContent="center">
-              <Text color={inkColors.muted}>
-                Try: <Text color={inkColors.text}>Why did revenue decline last month?</Text>
-              </Text>
-            </Box>
-          ) : (
-            // 无数据源：提示选择数据源
-            <Box flexDirection="column" alignItems="center">
-              <Text color={inkColors.muted}>No datasource selected</Text>
-              <Box height={1} />
-              <Box flexDirection="row" gap={2}>
-                <Text color={inkColors.accent}>[/datasource]</Text>
-                <Text color={inkColors.muted}>Choose a datasource to get started</Text>
-              </Box>
-            </Box>
-          )}
-        </Box>
-
-        {hasDataSource && (
-          <>
-            <Box height={1} />
-            <Box width={containerWidth} flexDirection="row" justifyContent="center" gap={2}>
-              <Text color={inkColors.muted}>
-                <Text color={inkColors.accent}>[1]</Text> Explore schema
-              </Text>
-              {canResume && (
-                <Text color={inkColors.muted}>
-                  <Text color={inkColors.accent}>[2]</Text> Resume latest
-                </Text>
-              )}
-              <Text color={inkColors.muted}>
-                <Text color={inkColors.accent}>[/]</Text> Commands
-              </Text>
-            </Box>
-          </>
-        )}
       </Box>
       <Box flexGrow={1} minHeight={0} />
+      <Box width="100%" flexDirection="column" flexShrink={0}>
+        {typeof input === 'function' ? input(columns) : input}
+      </Box>
     </Box>
   );
 }

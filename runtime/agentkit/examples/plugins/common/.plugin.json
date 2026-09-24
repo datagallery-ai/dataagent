@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "id": "common",
+  "system_prompt": "prompts/agent.md",
+  "tools": {
+    "summarize_numbers": {
+      "entrypoint": "tools/statistics.py:summarize_numbers"
+    }
+  },
+  "skills": [
+    "skills"
+  ],
+  "subagents": [
+    "subagents/general-purpose.json"
+  ],
+  "hooks": [
+    {
+      "event": "before_agent",
+      "entrypoint": "hooks/audit.py:before_agent"
+    },
+    {
+      "event": "after_agent",
+      "entrypoint": "hooks/audit.py:after_agent"
+    },
+    {
+      "event": "before_model",
+      "entrypoint": "hooks/audit.py:before_model"
+    },
+    {
+      "event": "after_model",
+      "entrypoint": "hooks/audit.py:after_model"
+    },
+    {
+      "event": "before_tool",
+      "entrypoint": "hooks/audit.py:before_tool"
+    },
+    {
+      "event": "after_tool",
+      "entrypoint": "hooks/audit.py:after_tool"
+    }
+  ]
+}

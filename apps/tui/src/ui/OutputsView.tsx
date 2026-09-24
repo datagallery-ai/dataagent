@@ -43,8 +43,6 @@ type PreviewState = {
 
 const RESERVED_LINES = 5;
 const ITEM_HEIGHT = 4;
-const SIDEBAR_RESERVED_LINES = 4;
-const SIDEBAR_ITEM_HEIGHT = 4;
 const MARKDOWN_PREVIEW_TIMEOUT_MS = 5000;
 
 const truncate = (value: string, maxWidth: number): string => {
@@ -121,17 +119,6 @@ function artifactMetadata(artifact: DataArtifact, events: TimelineEvent[]): stri
     artifactTimeLabel(artifact),
     sourceLabel(artifact, events),
   ].filter(Boolean).join(' - ');
-}
-
-function compactArtifactMetadata(artifact: DataArtifact, events: TimelineEvent[]): string {
-  const compact = [
-    artifactTypeLabel(artifact),
-    artifactDetailLabel(artifact),
-    artifactVersionLabel(artifact),
-    artifactTimeLabel(artifact),
-  ].filter(Boolean).join(' - ');
-
-  return compact || sourceLabel(artifact, events);
 }
 
 function previewErrorMessage(error: unknown): string {
@@ -299,129 +286,6 @@ export const OutputsView: React.FC<OutputsViewProps> = ({
           })}
         </Box>
       )}
-    </Box>
-  );
-};
-
-export const OutputsSidebar: React.FC<{
-  artifacts: DataArtifact[];
-  events: TimelineEvent[];
-  columns?: number | undefined;
-  rows?: number | undefined;
-}> = ({
-  artifacts,
-  events,
-  columns = 42,
-  rows = 24,
-}) => {
-  const panelWidth = Math.max(24, Math.floor(columns));
-  const panelHeight = Math.max(0, Math.floor(rows));
-  const contentWidth = Math.max(10, panelWidth - 4);
-  const separatorWidth = Math.max(0, panelWidth - 2);
-  const maxVisibleItems = Math.max(
-    1,
-    Math.floor((panelHeight - SIDEBAR_RESERVED_LINES) / SIDEBAR_ITEM_HEIGHT),
-  );
-  const visibleArtifacts = artifacts.slice(0, maxVisibleItems);
-  const hiddenCount = Math.max(0, artifacts.length - visibleArtifacts.length);
-  const headerSuffix = ` ${artifacts.length}`;
-  const headerTitle = truncate(
-    'Outputs',
-    Math.max(1, contentWidth - textWidth(headerSuffix)),
-  );
-  const footerText = hiddenCount > 0
-    ? `+${hiddenCount} more - open /outputs`
-    : 'Open /outputs for details';
-
-  if (panelHeight <= 0) {
-    return <Box width={panelWidth} flexShrink={0} />;
-  }
-
-  return (
-    <Box
-      flexDirection="column"
-      width={panelWidth}
-      height={panelHeight}
-      flexShrink={0}
-      borderStyle="single"
-      borderColor={inkColors.border}
-      overflow="hidden"
-    >
-      <Box paddingX={1}>
-        <Text bold color={inkColors.accent} wrap="truncate-end">{headerTitle}</Text>
-        <Text dimColor wrap="truncate-end">
-          {truncate(headerSuffix, Math.max(1, contentWidth - textWidth(headerTitle)))}
-        </Text>
-      </Box>
-
-      <Box>
-        <Text color={inkColors.border}>{'-'.repeat(separatorWidth)}</Text>
-      </Box>
-
-      <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
-        {artifacts.length === 0 ? (
-          <Box flexDirection="column" paddingY={1}>
-            <Text dimColor wrap="truncate-end">
-              {truncate('暂无产出。', contentWidth)}
-            </Text>
-          </Box>
-        ) : (
-          visibleArtifacts.map((artifact, index) => {
-            const isLatest = index === 0;
-            const indexLabel = `${index + 1}. `;
-            const typeLabel = ` ${artifactTypeLabel(artifact)}`;
-            const title = truncate(
-              artifact.title,
-              Math.max(
-                1,
-                contentWidth - textWidth(indexLabel) - textWidth(typeLabel),
-              ),
-            );
-            const summary = truncate(artifact.summary, Math.max(1, contentWidth - 2));
-            const metadata = truncate(
-              compactArtifactMetadata(artifact, events),
-              Math.max(1, contentWidth - 2),
-            );
-            const isLast = index === visibleArtifacts.length - 1;
-
-            return (
-              <Box
-                key={artifact.id}
-                flexDirection="column"
-                marginBottom={isLast ? 0 : 1}
-              >
-                <Box>
-                  <Text color={isLatest ? inkColors.accent : inkColors.muted}>
-                    {indexLabel}
-                  </Text>
-                  <Text color={isLatest ? inkColors.accent : inkColors.text} wrap="truncate-end">
-                    {title}
-                  </Text>
-                  <Text dimColor wrap="truncate-end">
-                    {truncate(typeLabel, Math.max(1, contentWidth - textWidth(indexLabel) - textWidth(title)))}
-                  </Text>
-                </Box>
-                <Box paddingLeft={2}>
-                  <Text dimColor wrap="truncate-end">{summary}</Text>
-                </Box>
-                <Box paddingLeft={2}>
-                  <Text dimColor wrap="truncate-end">{metadata}</Text>
-                </Box>
-              </Box>
-            );
-          })
-        )}
-      </Box>
-
-      <Box>
-        <Text color={inkColors.border}>{'-'.repeat(separatorWidth)}</Text>
-      </Box>
-
-      <Box paddingX={1}>
-        <Text dimColor wrap="truncate-end">
-          {truncate(footerText, contentWidth)}
-        </Text>
-      </Box>
     </Box>
   );
 };
