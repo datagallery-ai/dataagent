@@ -32,6 +32,7 @@ from dataagent.utils.constants import (
     DEFAULT_IR_KNOWLEDGE_MAX_LEN,
     DEFAULT_IR_RECENT_TURNS,
     DEFAULT_IR_SCRIPT_MAX_LEN,
+    DEFAULT_MAX_TOOL_RESULT_LENGTH,
 )
 
 if TYPE_CHECKING:
@@ -46,24 +47,42 @@ class DataNodeRenderSnapshot:
     desc: str
 
 
-def render_ir_summary(data_nodes: list[DataNode], tool_name: str) -> str:
+def render_ir_summary(
+    data_nodes: list[DataNode],
+    tool_name: str,
+    *,
+    original_content: str = "",
+    max_tool_result_length: int | None = None,
+) -> str:
     """将 DataNode 列表渲染为紧凑的文本摘要。
 
     Args:
         data_nodes: 工具调用产出的数据 IR 节点列表
         tool_name: 工具名称（用于摘要标题）
+        original_content: 本次工具输出，保留受限前缀供模型直接使用
+        max_tool_result_length: 工具结果长度配置，预览取其 1/8；None 时使用默认配置值
 
     Returns:
         可读的 IR 摘要文本
     """
-    lines: list[str] = [f"[IR Summary] tool={tool_name}", "Artifacts produced:"]
+    lines: list[str] = [f"[IR Summary] tool={tool_name}"]
+    if original_content:
+        output_limit = DEFAULT_MAX_TOOL_RESULT_LENGTH if max_tool_result_length is None else max_tool_result_length
+        preview = original_content[: max(1, output_limit // 8)]
+        if len(preview) < len(original_content):
+            extent = f"first {len(preview)} of {len(original_content)} characters; truncated"
+        else:
+            extent = f"complete, {len(original_content)} characters"
+        lines.extend([f"Tool output preview ({extent}):", preview, ""])
+    lines.append("Artifacts produced:")
+    artifact_start = len(lines)
 
     for node in data_nodes:
         line = _render_single_node(node)
         if line:
             lines.append(f"- {line}")
 
-    if len(lines) == 2:
+    if len(lines) == artifact_start:
         lines.append("- (no artifacts)")
 
     return "\n".join(lines)
@@ -89,7 +108,12 @@ def _build_original_content_hint(node: DataNode) -> str | None:
     if node_type == "Table":
         path = getattr(node, "path", None)
         if path:
-            return f"Original content: table data stored at `{path}` | To restore: `cat {path}`"
+            return (
+                f"Original content: table data stored at `{path}` | "
+                f'To inspect if needed: use `read_file` with path="{path}" and appropriate offset/limit '
+                "(for example, offset=1, limit=20); "
+                "reduce limit if truncated and continue from the needed line"
+            )
         return "Original content: in-memory table (not persisted)"
 
     if node_type == "Column":
@@ -104,7 +128,12 @@ def _build_original_content_hint(node: DataNode) -> str | None:
         path = getattr(node, "path", None)
         script_content = getattr(node, "script_content", None)
         if path:
-            return f"Original content: script stored at `{path}` | To restore: `cat {path}`"
+            return (
+                f"Original content: script stored at `{path}` | "
+                f'To inspect if needed: use `read_file` with path="{path}" and appropriate offset/limit '
+                "(for example, offset=1, limit=20); "
+                "reduce limit if truncated and continue from the needed line"
+            )
         if script_content:
             truncated = script_content[:DEFAULT_IR_SCRIPT_MAX_LEN]
             if len(script_content) > DEFAULT_IR_SCRIPT_MAX_LEN:
@@ -117,7 +146,9 @@ def _build_original_content_hint(node: DataNode) -> str | None:
         if path:
             return (
                 f"Original content: file stored at `{path}` | "
-                f'To inspect: use `read_file` with path="{path}" and appropriate offset/limit, '
+                f'To inspect if needed: use `read_file` with path="{path}" and appropriate offset/limit '
+                "(for example, offset=1, limit=20); "
+                "reduce limit if truncated and continue from the needed line, "
                 f"or use `grep` with pattern matching to search for relevant content"
             )
         return None
@@ -199,6 +230,7 @@ def build_ir_candidate(
     context: Context,
     *,
     ir_recent_turns: int = DEFAULT_IR_RECENT_TURNS,
+    max_tool_result_length: int | None = None,
 ) -> list[AnyMessage]:
     """构建批量 IR candidate，不修改输入消息或历史 state。
 
@@ -220,7 +252,7 @@ def build_ir_candidate(
             candidate.append(message)
             continue
 
-        replaced = try_replace_with_ir(message, context)
+        replaced = try_replace_with_ir(message, context, max_tool_result_length=max_tool_result_length)
         if replaced is message:
             candidate.append(message)
             continue
@@ -229,7 +261,9 @@ def build_ir_candidate(
     return candidate
 
 
-def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
+def try_replace_with_ir(
+    msg: ToolMessage, context: Context, *, max_tool_result_length: int | None = None
+) -> ToolMessage:
     """尝试用 IR 摘要替换 ToolMessage 内容。失败时返回原始消息。
 
     P1 (stable IR replacement): 首次成功渲染的 IR 摘要按 ``tool_call_id``
@@ -264,7 +298,10 @@ def try_replace_with_ir(msg: ToolMessage, context: Context) -> ToolMessage:
     if not data_nodes:
         return msg
 
-    summary = render_ir_summary(data_nodes, tool_name)
+    original_content = msg.content if isinstance(msg.content, str) else str(msg.content)
+    summary = render_ir_summary(
+        data_nodes, tool_name, original_content=original_content, max_tool_result_length=max_tool_result_length
+    )
 
     if isinstance(ir_cache, dict):
         ir_cache[tool_call_id] = summary

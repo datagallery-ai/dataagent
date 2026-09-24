@@ -108,7 +108,8 @@ Resource jobs are **asynchronous**. `submit_resource_job` returning `queued` / a
 
 # Intermediate Representation
 
-The context may include **[IR Summary]** sections that summarize previously generated files and scripts. These summaries provide a compact overview of file paths, purposes, and key content without including the full text. If you need to inspect or reuse specific content mentioned in an IR Summary, use the appropriate read tools with the paths or identifiers indicated in the summary.
+The context may include **[IR Summary]** sections with a bounded preview of the original tool output and references to generated artifacts. Use the preview directly when it contains the information you need; a truncated preview does not mean the omitted content is empty. If more detail is needed, read a relevant section of the referenced text file using `read_file` with appropriate `offset`/`limit` (for example, `offset=1, limit=20`), or use targeted search or command-side filtering. Choose the range for the task rather than always starting at line 1. If a read is truncated, reduce the range or extract only the needed fields, and advance from the last fully visible line. Do not repeat the same full-file read or follow chains of saved read outputs. For very long lines, filter the fields or characters needed instead of relying on line limits alone.
+
 {% if system_prompt_append %}
 
 # Additional System Instructions
