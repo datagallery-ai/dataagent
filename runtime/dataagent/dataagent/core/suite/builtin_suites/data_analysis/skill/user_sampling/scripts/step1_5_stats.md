@@ -82,7 +82,7 @@ FROM {{output_database}}.<table>;
 | 比例 | `pos_neg_ratio ∉ [0.2, 0.3]`（偏离 1:4 硬约束的 20% 容差区间） |
 | 去重 | `unique_users != total_users` |
 | 空样本 | `pos_cnt == 0`（cold_start 下允许 > 0 但 < cold_start_threshold） |
-| 缩行 | 某张 `user_keyed` 表 `rows / src_rows > 0.5`。`rows` 取自 §3 的 `step1_temp_stats_rows_*`；`src_rows` 取自 step1_4 gate 表 `step1_temp_step1_4_gate_<table>` 的 `src_rows` 列 |
+| 缩行 | 某张 `user_keyed` 表 `rows / src_rows > 0.5`。`rows` 取自 §3 的 `step1_temp_stats_rows_*`；`src_rows` 取自 step1_4 总 gate 表 `step1_temp_step1_4_gate` 中对应 `proj_table` 行的 `src_rows` 列 |
 | 表数 | `ok != true` → 直接回 step1_4，不走自查 |
 
 ---

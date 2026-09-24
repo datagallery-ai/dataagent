@@ -1,0 +1,89 @@
+# 游戏推荐场景绑定。采样脚本只读这份文件，不在 Python 里写业务表名 / 列名。
+# 换场景：改这里，不要改 scripts/*.py。
+#
+# columns.*            列族别名，从上到下优先（一张表里先命中的当该表的键）
+# roles.<role>.tables  精确表名；ClickHouse 清单里有则直接用，不再模糊匹配
+# roles.<role>.match*  tables 都未出现在清单时的退路（表名包含 / 全等 / 后缀）
+# projection.catalog_copy  无用户键的目录维表：整表拷贝，不套 target_game
+#   其中 tables 为精确表名，match 按下划线分词匹配，避免无边界字符串误中
+
+version: 1
+
+columns:
+  user_id:
+    - usid
+    - rank_flg
+    - dsid
+    - user_id
+    - user_key
+    - userid
+    - uid
+  game:
+    - game_id
+    - gameid
+    - gid
+    - game_name
+    - app_id
+    - appid
+  label:
+    - label
+    - y
+    - target
+    - is_positive
+    - label_value
+  event_time:
+    - event_time
+    - act_time
+    - action_time
+    - event_ts
+    - ts
+    - event_date
+    - act_date
+    - ds
+    - pt_d
+
+roles:
+  user_table:
+    pick: first
+    tables: [user_info]
+    match: [user, profile, portrait, dau]
+    require_columns: [user_id]
+    prefer_columns: [label]
+    demote_match: [statistic, booking, detail, coupon, act_]
+  game_dim:
+    pick: first
+    tables: [game_info]
+    match_exact: [game_info, app_info, game_dim, dim_game]
+    match_suffix: [info]
+    require_columns: [game]
+    forbid_columns: [user_id]
+    demote_match: [act_, coupon, prize, push, stat, detail, booking, event, log]
+  label_event:
+    pick: all
+    limit: 3
+    require_columns: [label]
+    exclude_roles: [user_table]
+  activity_event:
+    pick: all
+    limit: 3
+    tables: [game_statistics_push]
+    match: [statistic, event_log, click_log]
+    match_suffix: [stats]
+    exclude_roles: [user_table]
+  conversion_event:
+    pick: all
+    limit: 3
+    tables: [list_booking]
+    match: [detail, convert, purchase, booking]
+    require_columns: [user_id, game]
+    prefer_match: [detail]
+    prefer_prefix: [list]
+    exclude_roles: [user_table]
+
+projection:
+  catalog_copy:
+    tables:
+      - game_act_info
+      - game_coupon_info
+      - game_prize_info
+    match: [act_info, coupon, prize, award]

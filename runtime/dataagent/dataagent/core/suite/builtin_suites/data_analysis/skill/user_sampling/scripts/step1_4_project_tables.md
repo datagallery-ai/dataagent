@@ -2,7 +2,7 @@
 
 <入口规则>两种模式均执行本步</入口规则>
 
-**目的**：为 `projections[]` 中每张源表在 `output_database` 建<必须>同名</必须>交付表。列集与源表一致，唯一用户数 = `sampled_n`；用户表含 `label` 列（主路径 JOIN 追加 / prelabeled 保留源列）。
+**目的**：为 `projections[]` 中每张源表在 `output_database` 建<必须>同名</必须>交付表。列集与源表一致；用户表含 `label` 列（主路径 JOIN 追加 / prelabeled 保留源列）。
 
 <必须>ClickHouse SQL 仅通过 `submit_resource_job`（`resource_id="clickhouse"`）执行。</必须>
 
@@ -10,158 +10,69 @@
 
 ## 前置
 
-step1_3 已完成，`step1_temp_sampled_users` 可查；`read` `step1_0_table_schema.json` 与 `step1_0_sampling_plan.json`。**从文件读 `projections[]` / `inventory_check.table_count`，禁止凭记忆列清单。**<必须>确定要建的表和张数</必须>。ENGINE 固定 `MergeTree() ORDER BY tuple()`。
+step1_3 已完成，`step1_temp_sampled_users` 可查。`step1_0_table_schema.json` 与 `step1_0_sampling_plan.json` 已落盘。ENGINE 固定 `MergeTree() ORDER BY tuple()`。
 
----
+投影 SQL **由脚本生成**，不要手写 CTAS。
 
-## 表清单对齐（建表前最后核对）
-
-查 ClickHouse 实表后与 `source_table_inventory.tables` 做差集：
-
-```sql
-SELECT name FROM system.tables
-WHERE database = '{{source_database}}'
-ORDER BY name
+```bash
+python skill/user_sampling/scripts/build_projection_sql.py \
+  --plan step1_0_sampling_plan.json \
+  --schema step1_0_table_schema.json \
+  --out-dir step1_4_sql
 ```
 
-- 差集为空 → 直接建表
-- 漏表 → 语义补查结构与角色，更新 `step1_0_table_schema.json`（`tables[]`（及每表内的 `columns[]`）+ `join_hints` + `role_candidates`）和 plan（`source_table_inventory.tables` + `projections[]` + `inventory_check.table_count`）
-- 语义有而库无 → 阻塞
+退出码 0 后，工作区有：
 
----
+- `step1_4_sql/step1_4_ctas_manifest.json`（`table_count` / 每张表的 `file` 与 `type`）
+- `step1_4_sql/<index>_<table>.sql`（每张交付表一条 `CREATE OR REPLACE TABLE ... AS SELECT`）
+- `step1_4_sql/step1_4_gate.sql`
+- `step1_4_sql/step1_4_count_check.sql`
 
-## 投影模板
+退出码 2：按 stderr 修 plan（缺 `user_key`、`game_keyed` 误标、缺
+`game_scope.target` / 每表 `game_key` 等），再跑同一条命令。
 
-<必须>逐张建表，不得跳过。以下是要建的完整表清单：</必须>
+`ls` 核对 `manifest.table_count == inventory_check.table_count` 且每个 `ctas[].file` 存在后，再提交作业。
 
-- `projections[0]`：`<table_1>`（type: `<type_1>`）
-- `projections[1]`：`<table_2>`（type: `<type_2>`）
-- … 共 `inventory_check.table_count` 张
+脚本按 `projections[].type` 选模板：
 
-每张表：预检 → 建 `<table>`（<必须>表名同源表名</必须>） → gate 验证，通过再建下一张。
-
-> `<user_key_column>` = `projections[].user_key`，缺省用 `keys.user_key_default`；`<game_key_column>` = `keys.game_key_default`。
-
-### user_table
-
-<必须>按 `mode` 选择对应模板：</必须>
-
-**`mode != "prelabeled"`**：JOIN `step1_temp_sampled_users` 追加 `label` 列。<必须>`LIMIT 1 BY src.<user_key_column>` 保证每用户只保留一行，防止源表同一用户多行导致交付表膨胀。</必须>
-
-```sql
-CREATE OR REPLACE TABLE {{output_database}}.<table>
-ENGINE = MergeTree()
-ORDER BY tuple()
-AS
-SELECT src.*, s.label
-FROM {{source_database}}.<table> AS src
-INNER JOIN {{output_database}}.step1_temp_sampled_users AS s
-  ON src.<user_key_column> = s.user_key
-WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != ''
-LIMIT 1 BY src.<user_key_column>;
-```
-
-**`mode == "prelabeled"`**：<禁止>禁止 `SELECT src.*, s.label`（会重名列）</禁止>。<必须>`LIMIT 1 BY src.<user_key_column>` + `AND src.<keys.label_column> IN (<label_both_vals>)`</必须>。`<label_both_vals>`：`keys.label_column` 在 schema 中 valueType 为 Int* 时填 `0, 1`，为 String 时填 `'0', '1'`。<必须>`LIMIT 1 BY` 保证每用户只保留一行，防止源表同一用户多行导致交付表膨胀。</必须>
-
-```sql
-CREATE OR REPLACE TABLE {{output_database}}.<table>
-ENGINE = MergeTree()
-ORDER BY tuple()
-AS
-SELECT src.*
-FROM {{source_database}}.<table> AS src
-INNER JOIN {{output_database}}.step1_temp_sampled_users AS s
-  ON src.<user_key_column> = s.user_key
-WHERE src.<user_key_column> IS NOT NULL AND src.<user_key_column> != ''
-  AND src.<keys.label_column> IN (<label_both_vals>)
-LIMIT 1 BY src.<user_key_column>;
-```
-
-### user_keyed
-
-含用户键的表，按采样用户过滤行。
-
-```sql
-CREATE OR REPLACE TABLE {{output_database}}.<table>
-ENGINE = MergeTree()
-ORDER BY tuple()
-AS
-SELECT *
-FROM {{source_database}}.<table> AS t
-WHERE t.<user_key_column> IS NOT NULL AND t.<user_key_column> != ''
-  AND t.<user_key_column> IN (
-    SELECT user_key FROM {{output_database}}.step1_temp_sampled_users
-  );
-```
-
-### game_keyed
-
-纯游戏维表，用 `sql_fragments.game_filter` 过滤相关游戏。
-
-```sql
-CREATE OR REPLACE TABLE {{output_database}}.<table>
-ENGINE = MergeTree()
-ORDER BY tuple()
-AS
-SELECT *
-FROM {{source_database}}.<table> AS t
-WHERE <sql_fragments.game_filter>
-  AND t.<game_key_column> IS NOT NULL;
-```
-
----
-
-## Gate SQL（每张表建完后验证）
-
-`user_table` / `user_keyed` 类型：
-
-```sql
-CREATE OR REPLACE TABLE {{output_database}}.step1_temp_step1_4_gate_<table>
-ENGINE = MergeTree()
-ORDER BY tuple()
-AS
-SELECT
-  uniqExact(<user_key_column>) AS out_users,
-  (SELECT count() FROM {{output_database}}.step1_temp_sampled_users) AS sampled_n,
-  (SELECT count() FROM {{output_database}}.<table>) AS out_rows,
-  (SELECT count() FROM {{source_database}}.<table>) AS src_rows;
-```
-
-`game_keyed` 类型只查行数：
-
-```sql
-CREATE OR REPLACE TABLE {{output_database}}.step1_temp_step1_4_gate_<table>
-ENGINE = MergeTree()
-ORDER BY tuple()
-AS
-SELECT
-  (SELECT count() FROM {{output_database}}.<table>) AS out_rows,
-  (SELECT count() FROM {{source_database}}.<table>) AS src_rows;
-```
-
-| table type | <必须>失败条件</必须> |
+| type | 过滤方式 |
 |---|---|
-| `user_table` | `out_users != sampled_n` |
-| `user_keyed` | `out_users > sampled_n` |
-| `game_keyed` | 不做硬检查 |
+| `user_table` | JOIN `step1_temp_sampled_users`，追加或保留 `label`，`LIMIT 1 BY` 用户键 |
+| `user_keyed` | JOIN `step1_temp_sampled_users`（有用户键的行为/明细表） |
+| `game_keyed` | 一行一游戏的本体维表用该表 `projections[].game_key = game_scope.target` 独立过滤，投影后通常 1 行；不复用 cold_start 会扩展的 `sql_fragments.game_filter`。`config.yaml` `projection.catalog_copy` 中的目录维表整表拷贝 |
 
----
+## 执行流程
 
-## 建表完成检查
+读 `step1_4_ctas_manifest.json` 的 `ctas[]`。按 `file` 提交，每条 `submit_resource_job` 用 `command_file="step1_4_sql/<file>"`（`resource_id="clickhouse"`，`task_type="sql_query"`），不要改文件内容。
 
-<必须>全部建完后执行此 SQL 验证表数：
+同一轮最多 **8** 个在途 CTAS，目标表名互不相同。超过 8 张则分批：上一批全部 `collect_job` 完成后再提下一批。
 
-```sql
-SELECT count() AS actual
-FROM system.tables
-WHERE database = '{{output_database}}'
-  AND name NOT LIKE 'step1_%';
+**第 1 轮 submit** — 本批每个 `file` 一次，写在同一条回复里：
+
+```
+submit_resource_job(resource_id="clickhouse", task_type="sql_query", command_file="step1_4_sql/00_<table_a>.sql")
+submit_resource_job(resource_id="clickhouse", task_type="sql_query", command_file="step1_4_sql/01_<table_b>.sql")
 ```
 
-<必须>`actual == inventory_check.table_count`，不相等则回补缺失表</必须>，不得进入 step1_5。
+**第 2 轮 poll** — 对返回的全部 `job_id` 各发一次 `poll_job(job_id, watch_sec=…, stop_on_terminal=true)`。
 
----
+**第 3 轮 collect** — 终态后对各 `job_id` 发 `collect_job`。
+
+失败项按报错改 plan / 重跑脚本后，只重提失败表对应的 `command_file`。已成功的表不要重跑。
+
+多条 CTAS 同时读 `step1_temp_sampled_users` 是安全的。
+
+## Gate 与表数
+
+全部 CTAS `collect_job` 成功后：
+
+1. `submit_resource_job(..., command_file="step1_4_sql/step1_4_gate.sql")` → poll → collect。产物表 `step1_temp_step1_4_gate` 一行一张交付表。
+2. 读 gate 结果。失败条件：
+   - `user_table`：`out_users != sampled_n`
+   - `user_keyed`：`out_users > sampled_n`
+   - `game_keyed`：不做硬检查
+3. `submit_resource_job(..., command_file="step1_4_sql/step1_4_count_check.sql")`。`actual == inventory_check.table_count` 后进入 step1_5。
 
 ## 产出
 
-全部表建齐后进入 step1_5。不产出本地文件。
+全部表建齐、gate 通过后进入 step1_5。本地过程文件在 `step1_4_sql/`，不算交付产物。

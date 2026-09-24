@@ -99,6 +99,12 @@ def test_client_uses_semantic_v1_paths_for_metadata_apis(monkeypatch) -> None:
     assert url == "http://semantic.local:41000/api/semantic/v1/semantic/retrieve"
     assert payload == {"query": "查找 IC50 结果"}
 
+    assert client.semantic_download("game_ontology") == {"ok": True}
+    method, url, params, headers = fake_client.calls[-1]
+    assert method == "GET"
+    assert url == "http://semantic.local:41000/api/semantic/v1/ontology/define/json/download"
+    assert params == {"scene_name": "game_ontology"}
+
     assert client.hybrid_table_columns([" db.table ", "", "db.other"]) == {"ok": True}
     method, url, payload, headers = fake_client.calls[-1]
     assert method == "POST"

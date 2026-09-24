@@ -55,7 +55,10 @@
     "game_dim": ["<候选表>"]
   },
   "column_aliases": {
-    "user_id_columns": ["usid", "rank_flg", "dsid"]
+    "user_id_columns": ["<config.yaml columns.user_id 中实际出现的列>"],
+    "game_columns": ["<config.yaml columns.game 中实际出现的列>"],
+    "label_columns": ["<config.yaml columns.label 中实际出现的列>"],
+    "event_time_columns": ["<config.yaml columns.event_time 中实际出现的列>"]
   }
 }
 ```
