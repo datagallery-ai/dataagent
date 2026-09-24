@@ -22,11 +22,9 @@ def create_plan(
     _tool_context: ToolExecutionContext,
 ) -> dict[str, str]:
     """
-    Create or replace the in-memory global plan for the current process.
+    Create or replace the current plan, persisted across turns of this conversation.
 
     The new plan overwrites any existing plan. All todo items start as incomplete.
-    State is guarded by a lock and the returned ``Plan`` is a deep copy of the
-    stored snapshot.
 
     Args:
         introduction (str): High-level description of what the plan covers.
@@ -60,7 +58,7 @@ def update_plan(
     _tool_context: ToolExecutionContext,
 ) -> dict[str, str]:
     """
-    Apply field-level updates to the current in-memory global plan.
+    Apply field-level updates to the persisted plan for this conversation.
 
     Only arguments that are not ``None`` are applied. When ``todos`` is provided,
     the todo list is replaced in full (titles only; all new items are incomplete).
@@ -100,7 +98,7 @@ def update_plan(
 
 def delete_plan(*, _tool_context: ToolExecutionContext) -> dict[str, str]:
     """
-    Remove the in-memory global plan for the current process.
+    Remove the current plan from memory and disk.
 
     Subsequent reads behave as if no plan was ever created until ``create_plan`` is called again.
 
