@@ -260,7 +260,65 @@ def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolat
     for limit in statement.find_all(exp.Limit):
         if limit.args.get("offset") or limit.args.get("limit_options") or limit.args.get("expressions"):
             return [SecurityViolation("SYNTAX-001", "LIMIT modifier is not in the syntax allowlist.")]
-    return []
+    return _check_grouped_projections(statement)
+
+
+def _check_grouped_projections(statement: exp.Expression) -> list[SecurityViolation]:
+    """Reject a selected column that GROUP BY leaves neither grouped nor aggregated."""
+    violations = []
+    for select in statement.find_all(exp.Select):
+        group = select.args.get("group")
+        if not isinstance(group, exp.Group):
+            continue
+        grouped = _grouped_column_names(select, group)
+        missing = []
+        seen = set()
+        for projection in select.expressions:
+            for column in projection.find_all(exp.Column):
+                name = column.name.casefold()
+                if (
+                    column.find_ancestor(exp.Select) is not select
+                    or _column_is_aggregated(column, select)
+                    or name in grouped
+                    or name in seen
+                ):
+                    continue
+                seen.add(name)
+                missing.append(column.name)
+        if missing:
+            rendered = ", ".join(f"`{name}`" for name in missing)
+            violations.append(
+                SecurityViolation(
+                    "SYNTAX-001",
+                    (
+                        f"Selected column {rendered} is not in GROUP BY and is not aggregated, "
+                        "so the query cannot execute. Wrap a metric in SUM(), or add a dimension to GROUP BY."
+                    ),
+                )
+            )
+    return violations
+
+
+def _grouped_column_names(select: exp.Select, group: exp.Group) -> set[str]:
+    names = set()
+    for expression in group.expressions:
+        for column in expression.find_all(exp.Column):
+            if column.find_ancestor(exp.Select) is select:
+                names.add(column.name.casefold())
+    return names
+
+
+def _column_is_aggregated(node: exp.Expression, select: exp.Select) -> bool:
+    current = node.parent
+    while current is not None and current is not select:
+        if isinstance(current, exp.Select):
+            return False
+        if isinstance(current, exp.AggFunc):
+            return True
+        if isinstance(current, exp.Filter) and isinstance(current.this, exp.AggFunc):
+            return True
+        current = current.parent
+    return False
 
 
 def check_resource_usage(statement: exp.Expression) -> list[SecurityViolation]:
@@ -584,9 +642,32 @@ def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
         )
     ):
         return False
+    if isinstance(statement, exp.Select) and _is_grouped_aggregate(statement):
+        return False
     if isinstance(statement, exp.Select):
         return not all(isinstance(expression.unnest(), exp.Exists) for expression in statement.expressions)
     return True
+
+
+def _is_grouped_aggregate(statement: exp.Select) -> bool:
+    """A GROUP BY aggregate collapses rows, so it is not an unfiltered row dump."""
+    group = statement.args.get("group")
+    if not isinstance(group, exp.Group) or statement.find(exp.Window) or not statement.find(exp.AggFunc):
+        return False
+    grouped = _grouped_column_names(statement, group)
+    saw_aggregate = False
+    for projection in statement.expressions:
+        if (
+            projection.find(exp.AggFunc) is not None
+            and projection.find(exp.AggFunc).find_ancestor(exp.Select) is statement
+        ):
+            saw_aggregate = True
+        for column in projection.find_all(exp.Column):
+            if column.find_ancestor(exp.Select) is not statement or _column_is_aggregated(column, statement):
+                continue
+            if column.name.casefold() not in grouped:
+                return False
+    return saw_aggregate
 
 
 def _union_returns_unfiltered_rows(statement: exp.Union) -> bool:
