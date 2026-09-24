@@ -78,6 +78,8 @@ def test_loads_packaged_scenario_dimension_mapping(scenario: str, dimension: str
     mappings = load_dimension_mappings(scenario)
 
     assert mappings[dimension]["dimension_table"] == table
+    if scenario == "business_twin":
+        assert "ne_name" not in mappings
 
 
 def test_detects_only_standalone_final_select_dimensions() -> None:

@@ -56,11 +56,6 @@
       "key_column": "cell_group",
       "value_column": "cell_group_value"
     },
-    "ne_name": {
-      "dimension_table": "dim_exp_ne",
-      "key_column": "ne_name",
-      "value_column": "ne_value"
-    },
     "info_indicate": {
       "dimension_table": "dim_exp_info_indicate",
       "key_column": "info_indicate",

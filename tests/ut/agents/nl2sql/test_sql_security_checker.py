@@ -594,6 +594,25 @@ def test_check_sql_allows_whitelisted_join_types(join_sql: str) -> None:
     assert result.blocked is False
 
 
+def test_check_sql_rejects_selected_column_missing_from_group_by() -> None:
+    """A selected column under GROUP BY must be grouped or aggregated."""
+    bare = check_sql(
+        "SELECT time, crh_unsub_users FROM fact_metric WHERE time > 0 GROUP BY time",
+        dialect="postgres",
+        schema={},
+    )
+    summed = check_sql(
+        "SELECT time, SUM(crh_unsub_users) AS crh_unsub_users FROM fact_metric WHERE time > 0 GROUP BY time",
+        dialect="postgres",
+        schema={"fact_metric": {"columns": {"time": {}, "crh_unsub_users": {}}}},
+    )
+
+    assert bare.blocked is True
+    assert bare.violations[0].rule_id == "SYNTAX-001"
+    assert "crh_unsub_users" in bare.violations[0].message
+    assert summed.blocked is False
+
+
 def test_check_sql_allows_whitelisted_query_clauses() -> None:
     """Security checker should allow the fixed filtering, grouping, sorting, and filter clauses."""
     schema = {"orders": {"columns": {"customer_id": {}, "amount": {}, "status": {}}}}
@@ -877,6 +896,25 @@ def test_check_sql_rejects_high_confidence_query_shapes(sql: str, rule_id: str, 
     assert result.blocked is True
     assert rule_id in [violation.rule_id for violation in result.violations]
     assert message in result.violations[0].message
+
+
+def test_check_sql_allows_grouped_aggregate_without_row_filter() -> None:
+    """Aggregating every selected metric under GROUP BY is not an unfiltered row dump."""
+    schema = {"fact_metric": {"columns": {"ne_name": {}, "time": {}, "users": {}}}}
+    allowed = check_sql(
+        "SELECT ne_name, time, SUM(users) AS users FROM fact_metric GROUP BY ne_name, time ORDER BY ne_name, time",
+        dialect="postgres",
+        schema=schema,
+    )
+    distinct_dump = check_sql(
+        "SELECT ne_name FROM fact_metric GROUP BY ne_name",
+        dialect="postgres",
+        schema=schema,
+    )
+
+    assert allowed.blocked is False
+    assert distinct_dump.blocked is True
+    assert distinct_dump.violations[0].rule_id == "RESOURCE-009"
 
 
 @pytest.mark.parametrize(
