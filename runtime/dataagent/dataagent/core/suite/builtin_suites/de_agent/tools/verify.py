@@ -320,10 +320,10 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
         _tool_context=_tool_context,
     )
     out = "最终产物校验通过。" if result else "最终产物校验不通过。"
-    if error:
-        out += "\n" + error
     if warning:
         out += "\n" + warning
+    if error:
+        out += "\n" + error
 
     return {
         "original_msg": out,

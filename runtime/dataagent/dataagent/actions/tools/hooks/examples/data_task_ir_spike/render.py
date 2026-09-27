@@ -32,7 +32,6 @@ FIELD_TITLES = {
     "dimension_derived_fields": "维度表预处理逻辑",
     "dimension_deduplication": "维度表记录身份与版本选择",
     "dimension_relations": "维度表关联条件",
-    "time_window": "时间窗口",
     "window_partitioning": "窗口分区键",
     "final_sequence_partitioning": "最终序列分区",
     "final_sequence_ordering": "最终序列排序依据",

@@ -1199,7 +1199,7 @@ async def _cleanup_temp_table_wrapper(
 
     # Integration path
     resource = _get_dataops_resource(runtime)
-    coordinator = runtime.ensure_resource_coordinator("dataops") if hasattr(runtime, "ensure_resource_coordinator") else None
+    coordinator = runtime.ensure_resource_coordinator() if hasattr(runtime, "ensure_resource_coordinator") else None
     if coordinator is None:
         logger.debug(
             "[dataops_validate_sql_with_log_analysis] cleanup skipped: "
