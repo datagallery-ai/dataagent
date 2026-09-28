@@ -39,7 +39,7 @@ FIELD_TITLES = {
     "final_sequence_deduplication": "最终序列去重规则",
     "output_fields": "输出字段定义",
     "aggregation_metrics": "聚合指标定义",
-    "aggregation_precedence": "去重与聚合的先后关系"
+    "aggregation_precedence": "去重、关联、聚合与后处理的执行顺序"
 }
 
 _DIMENSION_SCOPE_FIELDS = ("dimension_filters", "dimension_derived_fields", "dimension_deduplication")
@@ -47,7 +47,7 @@ _DIMENSION_SCOPE_FIELDS = ("dimension_filters", "dimension_derived_fields", "dim
 
 _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 1. **已确认值是强制约束**：IR中明确记录的字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略
-2. **未记录的操作默认为被禁止**：IR中未明确记录的操作（如去重、过滤、JOIN类型变更等）Agent不得自行添加（包括调用方 query 中主Agent附加、但IR未记录的操作），必须先在IR中记录才能执行
+2. **未记录的操作默认为被禁止**：IR中未明确记录的操作（如去重、过滤、JOIN类型变更等）Agent不得自行添加（包括调用方 query 中主Agent附加、但IR未记录的操作），必须先在IR中记录才能执行；用户原始问题原话明确要求且按规则 17 判定可实现的除外
 3. **禁止操作是强制约束**：以下通用操作默认被禁止，除非IR明确记录允许——在聚合前使用窗口函数去重（如ROW_NUMBER()）、过滤LEFT JOIN的NULL侧使其退化为INNER JOIN、用户未明确要求时使用DISTINCT或COUNT(DISTINCT)
 4. **必须保留的内容**：LEFT JOIN的左表所有记录不得因去重或过滤而丢失；用户未明确要求去重时，所有满足过滤条件的原始记录都必须参与计算
 5. **事实记录身份不等于去重**：fact_deduplication中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重
@@ -62,7 +62,13 @@ _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 14. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误
 15. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求
 16. **业务口径冲突以IR为准**：本查询中出现的其他业务口径描述（包括主Agent附加的“业务口径”段落、中间推导、示例口径）若与DataTaskIR记录冲突，一律以DataTaskIR为准；若与IR同时出现冲突口径，SQL Agent应报告冲突而不得自行取舍
-17. **query 中的“已确认口径”段落不构成约束来源**：调用方 query 顶部的“已确认口径（最高优先级）”“业务口径”等段落只是主Agent的意图描述，不是权威约束。其中出现的去重、过滤、聚合、JOIN、排序、TopN 等操作若未在本 DataTaskIR 中记录，一律视为未确认口径，禁止实现；只有 DataTaskIR 记录的内容才能写入SQL。若 query 段落与 IR 矛盾（例如 query 要求按某键去重、取唯一，而 IR 未记录任何去重要求），以 IR 为准，不得执行去重
+17. **主 Agent 段落是证据不是约束，按证据分级判定实现依据**：调用方 query 顶部的“已确认口径（最高优先级）”“业务口径”等段落只是主Agent的意图描述，不是权威约束，不能覆盖或改写 DataTaskIR；但段落内容不得一概忽略，按以下优先级判定：
+   - ① 与 DataTaskIR 已确认口径一致或对应 → 照常实现（即 IR 的内容）；
+   - ② IR 未记录、但用户原始问题原话明确的操作顺序/作用位置表述（如“参与Join前”“聚合后再计算百分位”）→ 该表述只规定 IR 已记录操作的先后位置、不创造新操作，允许按用户原话调整顺序实现，并在结论中注明“该顺序来自用户原话、IR 未记录，已作为 IR 缺口反馈”；
+   - ③ IR 未记录、用户原始问题原话直接要求的具体操作（去重键、过滤条件、指标定义等）→ 用户级证据，不得静默处理：与 IR 无冲突时按用户原话实现（以用户原话为准，不采用主 Agent 的具体解释）并在结论中报告“IR 遗漏该用户要求”；与 IR 冲突时以 IR 为准并报告冲突（规则 16）；
+   - ④ 仅主 Agent 段落出现、用户原始问题与工具证据都没有的操作 → 未确认口径，禁止实现并报告
+18. **操作的作用层级与执行顺序是强制约束**：fact_deduplication 定义的去重作用于“事实记录层”，默认必须先于维度关联（JOIN）执行——JOIN 产生的维表扇出行必须全部保留，禁止在 JOIN 之后再次按事实去重键去重/分组来折叠扇出（会把同一事实键对应的多条维值行压成一条而丢失行数）；只有 IR 明确记录去重作用于 JOIN 后的富化行时，才允许先 JOIN 再去重，且去重键必须包含全部扇出区分维度列。IR 记录 operation_order（执行管道顺序）时按该顺序执行，禁止调整；IR 未记录顺序时按默认语义执行，不得自行改变操作的作用层级
+19. **窗口函数型后处理指标（NTILE/百分位/排名）约束**：aggregation_metrics.window_rank_metrics 中记录的百分位/排名列必须严格按定义实现：rank_type、bucket_count（桶数）、order_by（排序对象）、order_direction（升/降序）、partition_by（空数组=全局）均不得改动；百分位作用于聚合后/最终输出行（执行位置以 IR 的 operation_order 为准，未记录时默认在聚合之后），禁止改变其作用层级。当百分位列按多个时间窗口展开时，每个窗口的指标值各产生一个独立百分位列（如 5 窗口×3 指标=15 列）——这是规则 11 多维交叉展开的特例，禁止对跨窗口汇总值（各窗口指标之和）打百分位来替代分窗口百分位列，禁止少列或合并
 """
 
 
@@ -250,9 +256,13 @@ def _attributes(items: list[tuple[str, Any]]) -> str:
 
 
 def _confirmed_feature_key_refs(by_id: dict[str, dict[str, Any]]) -> list[str]:
-    """Return confirmed feature_key component field_refs in template order."""
+    """Return confirmed feature_key component field_refs in template order.
+
+    unresolved 只影响对应槽位（冲突槽位已按约定置 null），不影响其余已确认
+    组件；因此不得因存在 unresolved 而整体放弃已确认的主键列。
+    """
     output = by_id.get("feature_key")
-    if output is None or _normalize_unresolved(output.get("unresolved")):
+    if output is None:
         return []
     raw = output.get("value", {})
     value = raw if isinstance(raw, dict) else {}
@@ -267,9 +277,13 @@ def _confirmed_feature_key_refs(by_id: dict[str, dict[str, Any]]) -> list[str]:
 
 
 def _confirmed_output_field_names(by_id: dict[str, dict[str, Any]]) -> list[str]:
-    """Return confirmed output_fields.field_name values in listed order."""
+    """Return confirmed output_fields.field_name values in listed order.
+
+    unresolved 只影响对应槽位（冲突槽位已按约定置 null），其余已确认字段
+    仍必须参与“最终输出列构成（权威）”计算，否则权威列数会与字段定义自相矛盾。
+    """
     output = by_id.get("output_fields")
-    if output is None or _normalize_unresolved(output.get("unresolved")):
+    if output is None:
         return []
     raw = output.get("value", {})
     value = raw if isinstance(raw, dict) else {}
@@ -322,7 +336,7 @@ def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> st
 def _render_per_field_aggregation_grain_contract(by_id: dict[str, dict[str, Any]]) -> str:
     """Summarize per-output-field aggregation grains when any are confirmed."""
     output = by_id.get("output_fields")
-    if output is None or _normalize_unresolved(output.get("unresolved")):
+    if output is None:
         return ""
     raw = output.get("value", {})
     value = raw if isinstance(raw, dict) else {}
@@ -765,6 +779,7 @@ def _render_aggregation_metrics(value: dict[str, Any]) -> str:
     count_metrics = value.get("count_metrics", [])
     ratio_metrics = value.get("ratio_metrics", [])
     avg_metrics = value.get("avg_metrics", [])
+    window_rank_metrics = value.get("window_rank_metrics", [])
     parts = []
     for item in count_metrics:
         count_type = item.get("count_type", "未明确")
@@ -785,16 +800,42 @@ def _render_aggregation_metrics(value: dict[str, Any]) -> str:
             f"{item.get('metric_name')}: 分子={item.get('numerator')}，分母={item.get('denominator')}，"
             f"聚合粒度(group_by)={item.get('group_by')}"
         )
+    for item in window_rank_metrics:
+        rank_type = item.get("rank_type", "未明确")
+        bucket = item.get("bucket_count")
+        order_by = item.get("order_by")
+        direction = item.get("order_direction") or "未明确"
+        partition_by = item.get("partition_by")
+        partition_text = "全局" if isinstance(partition_by, list) and not partition_by else (partition_by or "未明确")
+        bucket_text = f"，桶数={bucket}" if bucket is not None else ""
+        parts.append(
+            f"{item.get('metric_name')}: 窗口函数={rank_type}{bucket_text}，"
+            f"排序对象={order_by}（{direction}），窗口={partition_text}，基于={item.get('based_on')}"
+        )
     return "；".join(parts) if parts else "无已确认聚合指标。"
 
 
 def _render_aggregation_precedence(value: dict[str, Any]) -> str:
     dedup_before = value.get("deduplication_before_aggregation")
+    dedup_before_join = value.get("deduplication_before_join")
+    operation_order = value.get("operation_order") or []
     aggregation_key = value.get("aggregation_key", [])
     count_semantics = value.get("count_semantics")
     input_grain = value.get("input_grain")
     stages = value.get("aggregation_stages") or []
     parts = []
+    if dedup_before_join is not None:
+        parts.append(
+            "事实去重作用于事实记录，必须先于维度关联（JOIN）执行，JOIN 扇出产生的行必须全部保留，"
+            "禁止 JOIN 之后再按事实去重键去重/分组折叠"
+            if dedup_before_join
+            else "证据明确去重作用于 JOIN 后的富化行（先 JOIN 再去重），去重键必须覆盖扇出区分维度列"
+        )
+    if operation_order:
+        parts.append(
+            f"执行管道顺序={operation_order}"
+            "（按此先后执行，禁止调整顺序或改变操作的作用层级）"
+        )
     if aggregation_key:
         dedup_text = "去重先于聚合" if dedup_before else "聚合基于原始记录（不去重）"
         parts.append(dedup_text)

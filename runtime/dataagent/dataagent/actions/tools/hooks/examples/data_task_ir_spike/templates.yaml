@@ -1,5 +1,5 @@
 template_id: data_task_ir
-template_version: "0.7.0"
+template_version: "0.8.0"
 language: zh-CN
 contract:
   - 每个 field unit 独立调用模型；模型只能修改当前 writable_template 中出现的字段。
@@ -684,6 +684,7 @@ fields:
       common_errors:
         - 把 SCD 版本选择写成字段转换。
         - 把模糊业务词直接当 expression。
+        - 仅凭“映射/扩展/硬编码规则”等元数据描述推断字段转换方向；转换方向必须由 dimension_relations 的关联条件（fact 字段 = dimension 字段）决定，禁止发明与关联条件方向相反或无关联的转换。
     few_shots:
       - input: dim_user 的 phone 去除两端空格并转小写，得到 phone_norm；空值保持空。
         output:
@@ -708,6 +709,13 @@ fields:
             scopes: []
           unresolved: []
           rationale: 维度字段直接使用，无转换证据，scopes 为空。
+      - input: 事实表 third_app_type 通过 LEFT JOIN 维表（fact.third_app_type = dim.extend_third_type）关联后直接输出 dim.app_third_type；元数据把该维表描述为“扩展映射规则”，但没有任何字段转换。
+        output:
+          field_id: dimension_derived_fields
+          value:
+            scopes: []
+          unresolved: []
+          rationale: 关联后直接透传 dim.app_third_type 属于 join 取列而非字段转换；元数据“映射规则”描述不构成转换证据，scopes 为空。
     writable_template:
       field_id: dimension_derived_fields
       value:
@@ -862,6 +870,7 @@ fields:
         - 时间有效关联必须明确起止边界、开放结束值语义和事实时间字段。
         - join_type 等子字段发生无优先级冲突时，只将受影响子字段置为 null；不得因为基础证据先出现就选择它。
         - 只有工具证据明确给出事实源与维度源的关联关系时才填写本字段；任务不涉及维度关联时 relations 必须为空数组，禁止按星型模型常识发明关联。
+        - 维度源在关联键上不唯一时（同一 dimension_field 值对应多条维度行，如一个分类键映射多个类目/语言/三级类型），基数必须记为 one_to_many 或 many_to_many，禁止写 many_to_one 掩盖扇出；扇出行是否保留由 aggregation_precedence.deduplication_before_join 决定，禁止在 JOIN 后按事实去重键再次去重折叠扇出。
       subfields:
         relations: 每项填写事实源、维度源、join_type、conditions、cardinality、unmatched_fact、temporal_validity。
         conditions.null_matches: 明确双方 null 是否匹配。
@@ -872,6 +881,7 @@ fields:
         - 根据常见星型模型猜测 many_to_one。
         - 忽略有效期的开闭边界。
         - 没有维度关联证据时仍根据通用建模知识补出 join。
+        - 维度源在关联键上不唯一仍写 many_to_one（掩盖扇出，导致 JOIN 后再按事实键去重时折叠行数）。
     few_shots:
       - input: orders left join dim_user on orders.user_id = dim_user.user_id，null 不匹配，many_to_one；未匹配事实保留且维度列为空；非时间有效关联。
         output:
@@ -1522,6 +1532,8 @@ fields:
         - 同一任务中不同输出特征可以有不同聚合粒度；必须逐字段写明各自的 aggregation_grain，禁止用单一全局粒度覆盖全部特征，禁止因多数特征同粒度而省略少数不同粒度特征的说明
         - 若某特征按主键聚合、另一特征按主键+类目/会话等更细或更粗粒度聚合，二者的 aggregation_grain 必须分别列出完整分组键，不得互相推断或省略
         - aggregation_grain 应与对应 aggregation_metrics.*.group_by（及多阶段时 aggregation_stages[].group_by）一致；冲突时保持 null 并写入 unresolved，禁止任选一方
+        - 每个输出字段必须有直接来源：field_name / description 能在【用户原始问题】或【已确认上下文】中找到对应表述（指标词、窗口词、维度词等）；禁止仅凭知识库命名示例（如 app_click_seq10_1y_upid）或常见特征命名模式拼凑用户未要求的字段；无法在输入中定位来源的字段禁止填写并记入 unresolved
+        - 用户要求“对以上各个指标计算百分位数/NTILE/排名”时，百分位/排名列必须与对应指标列成对展开：每个已确认指标（含每个时间窗口组合）各对应一个百分位列，并在 description 中注明所基于的指标与窗口；禁止只记指标列遗漏百分位列，也禁止把多窗口百分位合并成“全窗口合计”单列
       subfields:
         fields: 按输出顺序列出每个字段的 field_name、source、expression（语义级口径，非必可执行 SQL）、output_type、description、aggregation_grain；多维交叉时按笛卡尔积展开后的顺序填写
       completion_conditions:
@@ -1540,6 +1552,8 @@ fields:
         - 把 feature_key 组件误当成可省略的输出列，或反过来在本字段重复堆砌主键列却漏掉指标列
         - 多个特征聚合粒度不同却只写一个全局粒度，或聚合字段漏填 aggregation_grain
         - 把时间窗口（近7天/近30天）误当成 aggregation_grain；窗口属于过滤/分支，粒度是 GROUP BY 键
+        - 凭知识库命名示例或特征命名 chunk 拼凑出用户未要求的字段（如“平均使用次数排名前7的应用”），导致 IR 输出列与任务完全无关
+        - 用户要求百分位列时遗漏百分位列，或把多窗口百分位合并成跨窗口汇总值的单列
     few_shots:
       - input: 用户要求输出 user_id、app_id、download_count 三个字段，其中 download_count 是 app_id 在 30 天内的下载次数；feature_key 已确认为 user_id+app_id
         output:
@@ -1615,6 +1629,37 @@ fields:
                 aggregation_grain: [device_id]
           unresolved: []
           rationale: 3×3 展开为9列；expression 只用语义说明，避免写出易错 SQL；粒度均为 [device_id]。
+      - input: 用户要求按近7天、近30天输出下载次数，并“对以上各个指标的百分位数（NTILE 100，升序，全局）”；主键 device_id，全部按 device_id 聚合
+        output:
+          field_id: output_fields
+          value:
+            fields:
+              - field_name: download_cnt_7d
+                source: evt.app_id
+                expression: 近7天下载次数（行计数）
+                output_type: bigint
+                description: 近7天下载次数
+                aggregation_grain: [device_id]
+              - field_name: download_cnt_30d
+                source: evt.app_id
+                expression: 近30天下载次数（行计数）
+                output_type: bigint
+                description: 近30天下载次数
+                aggregation_grain: [device_id]
+              - field_name: download_cnt_7d_bucket
+                source: null
+                expression: 近7天下载次数的百分位数（NTILE 100 升序）
+                output_type: int
+                description: 近7天下载次数的全局百分位分桶（基于 download_cnt_7d）
+                aggregation_grain: [device_id]
+              - field_name: download_cnt_30d_bucket
+                source: null
+                expression: 近30天下载次数的百分位数（NTILE 100 升序）
+                output_type: int
+                description: 近30天下载次数的全局百分位分桶（基于 download_cnt_30d）
+                aggregation_grain: [device_id]
+          unresolved: []
+          rationale: 每个窗口的指标与其百分位列成对展开（2窗口×1指标=2指标列+2百分位列）；百分位列 description 注明所基于的指标与窗口，禁止合并成跨窗口汇总值的单列。
       - input: 同一用户特征表中，user_download_cnt 按 user_id 聚合统计下载次数，user_top_category 先按 user_id+category 聚合再取 Top1 类目；两特征聚合粒度不同
         output:
           field_id: output_fields
@@ -1681,7 +1726,7 @@ fields:
 
   - field_id: aggregation_metrics
     title: 聚合指标定义
-    purpose: 定义计数、求和、均值等聚合指标的计算口径，明确聚合粒度和计数语义。
+    purpose: 定义计数、求和、均值等聚合指标的计算口径，明确聚合粒度和计数语义；以及 NTILE 分位桶、RANK 排名等窗口函数型后处理指标的排序与分桶口径。
     field_instructions:
       global_rules:
         - 计数类指标必须明确是记录行数（row_count）、去重计数（distinct_count）还是条件计数（conditional_count）
@@ -1699,10 +1744,17 @@ fields:
         - 每个 metric 的 group_by 即该指标的聚合粒度；不同指标允许不同 group_by，必须逐指标填写，禁止把全部指标默认写成同一分组键
         - 当 output_fields 中多个特征的 aggregation_grain 不一致时，对应 metric 的 group_by 必须与各自 aggregation_grain 对齐；不得只保留一种粒度
         - 时间窗口差异（近7天 vs 近30天）不是 group_by 差异；窗口应体现在 filter_condition / 分支，不得误写入 group_by
+        - 用户要求对指标做“百分位数/NTILE/分桶/N%”或输出 rank/排名值列等窗口函数型后处理时，必须填写 window_rank_metrics；禁止把这类指标写进 count/ratio/avg 或当作“后处理不属于聚合指标”而丢弃
+        - “前N条/排名前N”的截断过滤属于 final_sequence_truncation，序列内部排序属于 window_partitioning / final_sequence_ordering；这两类任务不要写进 window_rank_metrics。rank_type=row_number 仅当行号本身作为输出特征列，不用于事实去重
+        - NTILE 分桶必须明确 bucket_count（桶数，如100）、order_by（排序对象，即所基于的指标/字段）、order_direction（asc/desc）和 partition_by（空数组表示全局不分窗口、对所有行排序分桶）；based_on 必须与对应 count/ratio metric 同名或可明确对应
+        - 百分位/排名列按多个时间窗口展开时（如 1/3/7/14/30 天各自的指标值各打一次百分位），每个窗口的指标各产生一个独立百分位列，列数=窗口数×指标数；禁止对跨窗口汇总值（如各窗口指标之和）打百分位来替代分窗口百分位列
+        - 百分位列的排序对象是各窗口自己的指标值，不是窗口汇总值；partition_by 反映“全局 vs 分窗口”语义，与输出列的窗口维度一致
+        - 百分位/排名列的窗口函数作用于聚合后/最终输出行，其执行位置（相对 JOIN、聚合）以 aggregation_precedence.operation_order 为准；证据未明确时默认在聚合之后，禁止把百分位计算提前到聚合前或改到其他作用层级
       subfields:
         count_metrics: 计数指标列表，包含 metric_name、count_type、count_entity、distinct_field、group_by（该指标聚合粒度）、filter_condition、expression_template
         ratio_metrics: 比例指标列表，包含 metric_name、numerator、denominator、precision、description
         avg_metrics: 均值指标列表，包含 metric_name、numerator、denominator、group_by（该指标聚合粒度）
+        window_rank_metrics: 窗口函数型后处理指标列表，包含 metric_name、rank_type（ntile/rank/dense_rank/row_number）、bucket_count（仅 ntile）、order_by、order_direction（asc/desc）、partition_by（空数组=全局）、based_on、description
       completion_conditions:
         - 计数口径明确（row_count vs distinct_count vs conditional_count）
         - 计数实体明确（count_entity 已填写，或可明确判定为 record_row）
@@ -1711,6 +1763,8 @@ fields:
         - 比例指标必须填写 description 来说明业务语义
         - 比例/均值计算的分子分母有明确来源，且逻辑关系正确
         - 聚合分组键明确；存在多种聚合粒度时各 metric 的 group_by 均可区分且与对应输出字段一致
+        - 用户要求百分位/NTILE/排名输出时，window_rank_metrics 已填写且桶数、排序对象、方向、分区明确
+        - 百分位列数量与“窗口数×指标数”一致，未用跨窗口汇总值替代
       common_errors:
         - 把”用户数量”默认解释成 COUNT(DISTINCT 用户标识)，忽略用户明确给出的”记录行数/非空记录行数”等统计口径
         - 把用户以业务实体指代”记录”的计数（如”不同session””设备数”）直接当原始行计数，忽略 count_entity 语义
@@ -1724,6 +1778,9 @@ fields:
         - 分子分母来源不明确
         - 不同特征聚合粒度不同却给所有 metric 填相同 group_by
         - 把时间窗口差异误写成 group_by 差异
+        - 用户要求“以上各个指标的百分位数”时未生成百分位列，或只对跨窗口汇总值打一个全局百分位替代分窗口百分位（少列）
+        - NTILE 未填 bucket_count/order_direction/partition_by，或 based_on 与对应 metric 无法对应
+        - 把 NTILE/百分位指标丢弃为“后处理步骤，不属于聚合指标定义”而不记录
     few_shots:
       - input: 用户要求统计每日活跃用户数，按 user_id 去重
         output:
@@ -1840,6 +1897,59 @@ fields:
             avg_metrics: []
           unresolved: []
           rationale: 两指标聚合粒度不同，分别填写 group_by=[user_id] 与 [user_id, category]，禁止统一成单一粒度。
+      - input: 用户要求输出每个应用设备组合的近1天/近3天下载数、留存次数、留存率，并“对以上各个指标的百分位数（NTILE 100 分桶，升序）”；百分位按全局排序，与窗口无关。
+        output:
+          field_id: aggregation_metrics
+          value:
+            count_metrics:
+              - metric_name: download_count_1d
+                count_type: row_count
+                count_entity: record_row
+                distinct_field: null
+                group_by: [app_id, device_name]
+                filter_condition: null
+              - metric_name: retention_count_1d
+                count_type: conditional_count
+                count_entity: record_row
+                distinct_field: null
+                group_by: [app_id, device_name]
+                filter_condition: null
+                expression_template: SUM(IF(retention_label='1',1,0))
+            ratio_metrics:
+              - metric_name: retention_rate_1d
+                numerator: retention_count_1d
+                denominator: download_count_1d
+                precision: 6
+                description: 留存率=留存次数/下载数
+            avg_metrics: []
+            window_rank_metrics:
+              - metric_name: download_count_1d_bucket
+                rank_type: ntile
+                bucket_count: 100
+                order_by: download_count_1d
+                order_direction: asc
+                partition_by: []
+                based_on: download_count_1d
+                description: 近1天下载数的全局百分位分桶
+              - metric_name: retention_count_1d_bucket
+                rank_type: ntile
+                bucket_count: 100
+                order_by: retention_count_1d
+                order_direction: asc
+                partition_by: []
+                based_on: retention_count_1d
+                description: 近1天留存次数的全局百分位分桶
+              - metric_name: retention_rate_1d_bucket
+                rank_type: ntile
+                bucket_count: 100
+                order_by: retention_rate_1d
+                order_direction: asc
+                partition_by: []
+                based_on: retention_rate_1d
+                description: 近1天留存率的全局百分位分桶
+          unresolved:
+            - 近3天窗口的计数/比例/百分位指标尚未确认
+          rationale: 各窗口指标各对应一个 NTILE(100) 百分位列；partition_by 为空表示全局排序；近3天窗口证据未明确，记入 unresolved。
     writable_template:
       field_id: aggregation_metrics
       value:
@@ -1862,11 +1972,20 @@ fields:
             numerator: null
             denominator: null
             group_by: []
+        window_rank_metrics:
+          - metric_name: null
+            rank_type: null
+            bucket_count: null
+            order_by: null
+            order_direction: null
+            partition_by: []
+            based_on: null
+            description: null
       unresolved: []
     value_schema:
       type: object
       additionalProperties: false
-      required: [count_metrics, ratio_metrics, avg_metrics]
+      required: [count_metrics, ratio_metrics, avg_metrics, window_rank_metrics]
       properties:
         count_metrics:
           type: array
@@ -1905,10 +2024,25 @@ fields:
               numerator: {type: string, minLength: 1}
               denominator: {type: string, minLength: 1}
               group_by: {type: array, items: {type: string}}
+        window_rank_metrics:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [metric_name, rank_type, bucket_count, order_by, order_direction, partition_by, based_on, description]
+            properties:
+              metric_name: {type: string, minLength: 1}
+              rank_type: {enum: [ntile, rank, dense_rank, row_number, null]}
+              bucket_count: {type: [integer, "null"]}
+              order_by: {type: [string, "null"]}
+              order_direction: {enum: [asc, desc, null]}
+              partition_by: {type: array, items: {type: string}}
+              based_on: {type: [string, "null"]}
+              description: {type: [string, "null"]}
 
   - field_id: aggregation_precedence
-    title: 去重与聚合的先后关系
-    purpose: 定义事实表去重、维度关联、聚合计算之间的执行顺序和依赖关系，避免聚合粒度与去重粒度冲突；多特征多粒度时用 aggregation_stages 逐阶段说明。
+    title: 去重、关联、聚合与后处理的执行顺序
+    purpose: 定义事实表去重、维度表关联（JOIN）、聚合、窗口函数后处理（NTILE/百分位等）之间的执行顺序和依赖关系，明确各操作的作用层级（事实记录层/聚合后行），避免聚合粒度与去重粒度冲突、避免 JOIN 扇出被去重折叠；多特征多粒度时用 aggregation_stages 逐阶段说明。
     field_instructions:
       global_rules:
         - 当存在 fact_deduplication 或 dimension_deduplication 时，必须明确聚合是基于去重前还是去重后的数据
@@ -1919,8 +2053,15 @@ fields:
         - 多粒度时 aggregation_key 可填最终落到输出主键/最粗公共分组键，但不得据此推断所有指标都按该键聚合；各特征真实粒度以 output_fields.aggregation_grain 与对应 stage.group_by 为准
         - 任务不涉及聚合（无 count/sum/avg 等指标，仅过滤/转换/排序/截断）时，本字段不填写：deduplication_before_aggregation 填 false，aggregation_key 填空数组，count_semantics 填 null，input_grain 填 null；禁止因“每个X”“按X”等表述推断出聚合。
         - input_grain 描述参与聚合的输入记录粒度，即每个计数单元代表的业务实体，须与 aggregation_metrics.count_entity 一致（如 fact_record、session_record、user_record）；当计数实体非 fact_record 且源表在该实体上不唯一（同一实体对应多行）时，SQL 必须先聚合/去重到该实体粒度再计数，禁止直接对原始行 COUNT。input_grain 不代表需要按该粒度预先分组或去重，禁止把 input_grain 当作聚合分组键或去重依据。
+        - 操作的作用层级是强制约束：fact_deduplication 定义的去重作用于“事实记录层”（JOIN 前的事实表行），因此默认必须先于维度关联（JOIN）执行；只有证据明确要求“对 JOIN 后的富化行去重”时才允许先 JOIN 再去重，且此时去重键必须包含全部扇出区分维度列
+        - 事实去重默认先去重再 JOIN：JOIN 产生的维表扇出行必须全部保留，禁止在 JOIN 之后再次按事实去重键去重/分组来折叠扇出（会把同一事实键对应的多条维值行压成一条而丢失行数）；维表在关联键上唯一（无扇出风险）或任务无维度关联时不受此约束
+        - 证据未说明去重相对 JOIN 的先后时，deduplication_before_join 保持 null 且不记 unresolved，按“去重作用于事实记录（先于 JOIN）”的默认语义执行；不得仅因存在事实去重或维度关联就强制填写
+        - 当证据明确多个操作的执行管道顺序（如“参与Join前先去重”“聚合后再计算百分位数”）时，用 operation_order 按执行先后记录；证据未明确顺序时 operation_order 保持空数组，禁止凭通用建模常识推断顺序
+        - deduplication_before_join 与 operation_order 必须由同一证据得出且不得矛盾；矛盾时两者都置 null/空并记入 unresolved，禁止任选一方
       subfields:
         deduplication_before_aggregation: 聚合是基于去重前的原始记录还是去重后的记录
+        deduplication_before_join: 事实去重相对维度表关联（JOIN）的执行顺序；true=去重作用于事实记录、先于 JOIN（默认语义），false=去重作用于 JOIN 后的富化行（仅证据明确时，去重键须含扇出区分列），null=未说明
+        operation_order: 证据明确给出的操作/阶段执行先后顺序（如“参与Join前先去重”“聚合后再计算百分位”），按执行先后列出阶段名；证据未明确时为空数组
         aggregation_key: 任务级默认/最粗公共聚合分组键；多粒度场景不得单独作为全部特征的粒度权威
         count_semantics: count/sum等聚合函数的行为定义（每行计数 vs 去重后计数）
         input_grain: 聚合输入数据粒度（即计数实体，与 aggregation_metrics.count_entity 一致），例如 fact_record、session_record、user_record
@@ -1929,6 +2070,7 @@ fields:
         - 聚合与去重的执行顺序明确
         - 聚合粒度与去重粒度的关系明确
         - 聚合输入粒度明确；存在多阶段或多粒度聚合时各阶段 group_by / output_metrics / depends_on 明确
+        - 证据明确给出操作执行顺序（如去重与 JOIN 先后、聚合与百分位先后）时，顺序已被记录且与证据一致
       common_errors:
         - 假设 fact_deduplication 必然先于聚合执行
         - 假设 count(1) 等同于 count(DISTINCT key)
@@ -1938,6 +2080,8 @@ fields:
         - 无聚合任务却填写 aggregation_key、count_semantics 或 input_grain
         - 把 input_grain（聚合输入粒度）误用作分组键或去重依据
         - 输出特征存在多种聚合粒度却只填单一 aggregation_key，未用 aggregation_stages 分列
+        - 证据明确“参与Join前”去重或“聚合后再算百分位”等顺序时未记录，或在证据未给出顺序时凭常识编造顺序
+        - 去重作用于事实记录时仍在 JOIN 后按事实去重键再次去重，折叠维表扇出行数
     few_shots:
       - input: 事实表去重键为 [app_id, device_id, pt_d]，最终按 app_id 聚合计数下载次数
         output:
@@ -1987,10 +2131,38 @@ fields:
                 depends_on: []
           unresolved: []
           rationale: 两特征粒度不同，用两个 aggregation_stages 分别记录 group_by；aggregation_key 仅表示最终用户主键粒度，不覆盖类目级指标。
+      - input: 用户要求输出每个用户的下载应用ID序列（按操作时间由近到远）；事实表按 (imei, app_id) 去重保留操作时间最近一条，用户明确要求“参与Join前”先去重；随后 LEFT JOIN 应用分类维表（同一分类键可映射多个应用三级类型，维表不唯一且不去重）；序列按 imei 分区、按操作时间降序拼接。任务无聚合指标。
+        output:
+          field_id: aggregation_precedence
+          value:
+            deduplication_before_aggregation: false
+            deduplication_before_join: true
+            operation_order: [filter_fact, dedup_fact, join_dim, final_sequence]
+            aggregation_key: []
+            count_semantics: null
+            input_grain: null
+            aggregation_stages: []
+          unresolved: []
+          rationale: 用户明确“参与Join前”去重，deduplication_before_join=true 且 operation_order 记为先 dedup_fact 再 join_dim；JOIN 扇出行必须全部保留，禁止 JOIN 后按 (imei, app_id) 再次去重折叠；任务无聚合指标故 aggregation_key 为空。
+      - input: 用户要求按近7天/近30天统计每个应用的下载数、留存次数并输出各指标 NTILE(100) 百分位列；明确“先过滤事实记录，再按 app_id 聚合，最后对各窗口指标值计算百分位”；维表仅用于补全应用名称（关联键唯一）。
+        output:
+          field_id: aggregation_precedence
+          value:
+            deduplication_before_aggregation: false
+            deduplication_before_join: null
+            operation_order: [filter_fact, aggregate, join_dim, window_rank]
+            aggregation_key: [app_id]
+            count_semantics: row_count
+            input_grain: fact_record
+            aggregation_stages: []
+          unresolved: []
+          rationale: 证据明确聚合后再计算百分位（NTILE 作用于聚合输出行），operation_order 记为先 aggregate 再 window_rank；维表补名不影响行数故 deduplication_before_join 不适用保持 null。
     writable_template:
       field_id: aggregation_precedence
       value:
         deduplication_before_aggregation: null
+        deduplication_before_join: null
+        operation_order: []
         aggregation_key: []
         count_semantics: null
         input_grain: null
@@ -2004,10 +2176,15 @@ fields:
     value_schema:
       type: object
       additionalProperties: false
-      required: [deduplication_before_aggregation, aggregation_key, count_semantics, input_grain, aggregation_stages]
+      required: [deduplication_before_aggregation, deduplication_before_join, operation_order, aggregation_key, count_semantics, input_grain, aggregation_stages]
       properties:
         deduplication_before_aggregation:
           type: [boolean, "null"]
+        deduplication_before_join:
+          type: [boolean, "null"]
+        operation_order:
+          type: array
+          items: {type: string}
         aggregation_key:
           type: array
           items: {type: string}
