@@ -66,7 +66,12 @@ def pruner(state: FlexState, runtime: Runtime) -> FlexState:
             recent_turns = getattr(runtime.env, "ir_recent_turns", None)
             if recent_turns is None:
                 recent_turns = DEFAULT_IR_RECENT_TURNS
-            candidate = build_ir_candidate(messages, context, ir_recent_turns=recent_turns)
+            candidate = build_ir_candidate(
+                messages,
+                context,
+                ir_recent_turns=recent_turns,
+                max_tool_result_length=getattr(runtime.env, "max_tool_result_length", None),
+            )
             target_tokens = int(strategy.token_limit * strategy.low_water_ratio)
             if count_tokens_approximately(candidate) <= target_tokens:
                 state["messages"] = cast(list[AnyMessage], [RemoveMessage(id="__remove_all__"), *candidate])

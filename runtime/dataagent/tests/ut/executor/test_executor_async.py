@@ -550,7 +550,8 @@ async def test_executor_long_result_replaced_with_ir(monkeypatch, tmp_path):
     monkeypatch.setattr(executor_module, "record_message", lambda _ctx, _msg: None)
     monkeypatch.setattr(executor_module.ResultIRConverter, "convert", staticmethod(lambda **kwargs: []))
 
-    def fake_try_replace(msg, _ctx):
+    def fake_try_replace(msg, _ctx, *, max_tool_result_length):
+        assert max_tool_result_length == MAX_TOOL_RESULT_LENGTH
         return ToolMessage(
             content='[IR Summary] tool=huge_tool\nArtifacts produced:\n- File(file00001) ""  \n  Original content: file stored at `/tmp/test_output.txt` | To restore: `cat /tmp/test_output.txt`',
             tool_call_id=msg.tool_call_id,

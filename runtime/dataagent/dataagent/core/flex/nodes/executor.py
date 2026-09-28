@@ -1392,7 +1392,7 @@ class Executor(BaseNode):
         if len(content) < self._max_tool_result_length:
             return tool_msg
 
-        replaced = try_replace_with_ir(tool_msg, context)
+        replaced = try_replace_with_ir(tool_msg, context, max_tool_result_length=self._max_tool_result_length)
         if replaced is not tool_msg:
             return replaced
 

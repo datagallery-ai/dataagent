@@ -461,6 +461,20 @@ class TestBuildIRAwareMessages:
         assert result[0].content == "hello"
 
 
+def test_ir_summary_uses_configured_budget():
+    node = _FakeFileNode(label="f1", description=None, path="/workspace/output.txt")
+    ctx = _make_mock_context({"Action(tc_preview)": [node]})
+    msg = ToolMessage(content="START\n" + "x" * 10000 + "\nEND", tool_call_id="tc_preview", name="large_tool")
+
+    summary = try_replace_with_ir(msg, ctx, max_tool_result_length=4096)
+
+    assert "START\n" in summary.content
+    assert "END" not in summary.content
+    assert "first 512 of" in summary.content
+    assert "/workspace/output.txt" in summary.content
+    assert len(summary.content) < 2000
+
+
 # ── P1: per-session IR summary cache ──────────────────────────────
 
 

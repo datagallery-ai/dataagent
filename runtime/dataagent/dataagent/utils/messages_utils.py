@@ -197,7 +197,7 @@ def build_messages(
                 max_turn,
                 recent_turns=DEFAULT_IR_RECENT_TURNS if ir_recent_turns is None else ir_recent_turns,
             ):
-                message = try_replace_with_ir(message, context)
+                message = try_replace_with_ir(message, context, max_tool_result_length=max_tool_result_length)
             message = _truncate_tool_message_content(
                 message,
                 max_length=MAX_TOOL_RESULT_LENGTH if max_tool_result_length is None else max_tool_result_length,
