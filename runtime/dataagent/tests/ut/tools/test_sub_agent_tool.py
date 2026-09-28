@@ -1275,7 +1275,7 @@ def test_nl2sql_sub_agent_tool_ignores_none_error_field(monkeypatch, tmp_path):
     )
 
     assert "SQL 文件已保存到" in result["frontend_msg"]
-    assert "SELECT 1" in sql_path.read_text(encoding="utf-8")
+    assert "SELECT 1" in " ".join(sql_path.read_text(encoding="utf-8").split())
     assert "value" in csv_path.read_text(encoding="utf-8")
 
 
