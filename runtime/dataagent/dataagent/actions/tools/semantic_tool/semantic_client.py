@@ -136,6 +136,13 @@ class SemanticServiceClient:
         payload: dict[str, Any] = {"query": query}
         return self.post("semantic/retrieve", json=payload, headers={"Content-Type": "application/json"})
 
+    def semantic_download(self, scene_name: str) -> dict:
+        """Download ontology JSON for one scene via GET ontology/define/json/download."""
+        return self.get(
+            "ontology/define/json/download",
+            params={"scene_name": scene_name},
+        )
+
     def semantic_search_columns(
         self,
         database_name: str,

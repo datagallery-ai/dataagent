@@ -13,7 +13,8 @@
 | 用途 | plan 路径 |
 |---|---|
 | 游戏维度表 | `sampling_sources.game_dim` |
-| 游戏键列 | `keys.game_key_default` |
+| 游戏维表键列 | `keys.game_key_default` |
+| 行为/转化表游戏键列 | `keys.game_key_behavior` |
 | 相似维度列 | `keys.similar_dim` |
 | 目标游戏 | `game_scope.target` |
 
@@ -71,7 +72,9 @@ WHERE <game_key_default> IS NOT NULL
 把 `sql_fragments.game_filter` 从目标游戏单点过滤更新为覆盖目标 + 相似游戏的范围过滤，格式固定为：
 
 ```
-<game_key_default> IN (SELECT game_id FROM {{output_database}}.step1_temp_similar_games UNION ALL SELECT '<game_scope.target>' AS game_id)
+<game_key_behavior> IN (SELECT game_id FROM {{output_database}}.step1_temp_similar_games UNION ALL SELECT '<game_scope.target>' AS game_id)
 ```
 
-即同时包含临时表中的相似游戏和目标游戏本身。**禁止**把 `similar_games` 列表展开成 `IN ('a','b','c',...)` 超长字面量。
+其中左侧列取 `keys.game_key_behavior`，子查询中的 `game_id` 仍由游戏维表
+`keys.game_key_default` 产出。即同时包含临时表中的相似游戏和目标游戏本身。
+**禁止**把 `similar_games` 列表展开成 `IN ('a','b','c',...)` 超长字面量。

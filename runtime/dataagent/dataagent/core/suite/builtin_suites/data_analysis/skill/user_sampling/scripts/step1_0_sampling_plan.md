@@ -4,20 +4,19 @@
 
 **全表投影**：<必须>`projections[]` 与源表一一对应，一张都不能少</必须>；step1_4 为每张源表在 output_database 建同名表，全表投影。
 
-**核心原则**：所有语义查询结果**立刻落盘到独立文件**，写 schema 时只从文件读、对着抄，禁止凭对话记忆写任何一个字段。
+**核心原则**：整库本体可用一次 `semantic_download` 落盘，再由 skill 自带脚本生成 schema（格式与 `step1_output_meta.json` 同构）。按 query 检索仍可用 MCP `semantic_retrieve`。
 
 ---
 
 ## 本步做什么
 
-1. **ClickHouse 取全局表名列表**（最先做，唯一权威清单）→ 写入 `source_table_inventory.tables`。
-2. **语义批查**：表名按 ≤8 张分组，每批一次 `semantic_retrieve`，同时问列结构 + JOIN 关系 + 业务角色。返回的完整 JSON **立刻 `Write` 到 `step1_semantic_batch_NN.json`**（`01`、`02`… 两位编号）。
-3. **覆盖检查**：所有批查完成后，核对 CH 清单是否全覆盖；列结构有缺口则用 `system.columns` 批查补齐。
-4. **写 schema**：先 `ls` 确认所有 `step1_semantic_batch_NN.json` 已落盘，再逐个 `Read`，从中**机械抄写** `description`、`join_hints`、`role_candidates` 到 `step1_0_table_schema.json`。
-5. **判定 mode**：查用户表 label 列情况 → `prelabeled` 或 `regular`。据此写出 `step1_0_sampling_plan.json`。
-6. <重要>`mode=="prelabeled"` → 跳至 step1_3；否则 → step1_1</重要>。
-
-<必须>本步所有 `semantic_retrieve` **必须串行**：同一时刻只允许 1 个在途请求；等返回后再发下一批，禁止并行。</必须>
+1. **ClickHouse 取全局表名列表**（最先做，唯一权威清单）→ `write` `step1_ch_tables.json`，并记入 `source_table_inventory.tables`。
+2. **取语义**：整库本体用 `semantic_download`（`scene_name` 取任务 JSON / 用户 query 的 `scene_name` 或 `scene`），正文写入 `.dataagent/tool_outputs/semantic_download_<timestamp>.txt`。按 query 检索用 MCP `semantic_retrieve`。
+3. **脚本写 schema**：运行 `scripts/build_table_schema.py`，产出 `step1_0_table_schema.json`。
+4. **列缺口兜底**：脚本退出码 2 时，对缺口表一次 `system.columns` 批查 → `write` `step1_ch_columns.json` → 带 `--columns-file` 再跑脚本。
+5. **脚本写 plan 骨架**：运行 `scripts/build_sampling_plan.py`，产出 `step1_0_sampling_plan.json`（`mode` 仍为 null）和 `step1_0_sql/mode_probe.sql`。`projections[]`、`user_key`、`sql_fragments.user_key_expr` / `valid_user` / `game_filter` 由脚本从 schema + 任务参数生成，不要手写 21 表计划。
+6. **判定 mode**：提交 probe SQL（用户表无 label 列则跳过 probe，直接 `--mode regular`）。`pos_users > 0` 且 `neg_users > 0` → `--mode prelabeled`，否则 `--mode regular`。
+7. <重要>`mode=="prelabeled"` → 跳至 step1_3；`regular` 先补 `y_label.family` / `positive_label` / `negative_populations`，再进入 step1_1</重要>。
 
 ---
 
@@ -49,6 +48,7 @@
     "user_key_default": "<string>",
     "user_key_behavior": "<string>",
     "game_key_default": "<string>",
+    "game_key_behavior": "<string>",
     "event_time": "<string>",
     "similar_dim": "<string>",
     "label_column": null
@@ -86,33 +86,43 @@ WHERE database = '{{source_database}}'
 ORDER BY name
 ```
 
-写入 `source_table_inventory.tables`。`inventory_check.table_count` = 该列表长度。
-<必须>CH 表名清单是后续语义查询的**唯一表名来源**；禁止在未获取此清单前发起 `semantic_retrieve`，也禁止发自由关键词式语义查询，必须以 CH 清单中的具体表名逐张注入 query。</必须>
+将 `collect_job` 结果 `write` 为工作区 **`step1_ch_tables.json`**（JSON 数组，或 `{"tables":[...]}` / `[{"name":"..."}]`）。`source_table_inventory.tables` 与该清单一致。`inventory_check.table_count` = 该列表长度。
+
+<必须>CH 表名清单是表集合的唯一来源；先落盘清单，再 `semantic_download`。</必须>
 
 ---
 
-### 1. 语义批查 + 立即落盘
+### 1. 一次 download + 落盘
 
-<必须>语义服务单批不稳定，必须分批查询，每批 ≤8 张且不重复</必须>。
+`scene_name`：任务 JSON / 用户 query 里的 `scene_name` 或 `scene`。`source_database` 是 ClickHouse 库名，给脚本 `--source-database`。
 
-每批 `semantic_retrieve` 一次问清三件事——列结构、JOIN 关系、业务角色。query 固定为：
+调用一次（本地工具）：
 
 ```text
-查询 <source_database> 数据库以下表的语义信息：<t1>, <t2>, …
-目标游戏：<target_game>
+semantic_download(scene_name=<scene_name>)
 ```
 
-流程：
+工具把 HTTP 正文写入当前任务 workspace 的 `.dataagent/tool_outputs/semantic_download_<timestamp>.txt`。给模型的只是 `{ok, path, bytes, top_level_keys}`。`--dump` 用回执里的 `path`。`write_file` 的 `content` 必须由模型填进参数，接不住上一个工具的返回值，所以 **不要** 用 `write_file` 抄 dump。确认回执 `ok == true` 且该路径文件已存在后，进入脚本转 schema。
 
-1. 从 `source_table_inventory.tables` 取出全部表名，每批 ≤8 张分组
-2. 按组**串行**发 `semantic_retrieve`：发完一批，等返回
-3. 返回后**立刻落盘**——把语义返回的完整 JSON 用 `Write` 写入 `step1_semantic_batch_NN.json`（`NN` 从 `01` 开始两位编号，如 `step1_semantic_batch_01.json`）
-4. 继续下一批，重复 2–3
-5. 全部分批完成后，对照 CH 清单检查覆盖：重算 `missing_names`（CH 清单中有但任何 dump 文件里都没出现的表）和 `missing_columns`（表名出现了但列结构不全）；若任一项非空 → 立即走 CH 批查补齐（不再追加语义查询）
+---
 
-#### 列缺口 CH 批查（唯一兜底）
+### 2. 脚本生成 schema
 
-对 `missing_columns`（如有 `missing_names` 一并包含）**一次**提交：
+`ls` 确认回执 `path` 与 `step1_ch_tables.json` 已落盘后，用 Bash 跑 skill 自带脚本（不要自写转换脚本）：
+
+```bash
+python skill/user_sampling/scripts/build_table_schema.py \
+  --dump <semantic_download 回执 path> \
+  --source-database {{source_database}} \
+  --inventory-file step1_ch_tables.json \
+  --out step1_0_table_schema.json
+```
+
+脚本会把本体里的表/列/描述/JOIN 写成与 `step1_output_meta.json` 同构的 schema：`table_names` 对齐 CH 清单，`columns[].description` 从 dump 原样带出（语义无描述则为 `null`），`join_hints` 从 relations / joinPaths 解析，`role_candidates` / `column_aliases` 按 `skill/user_sampling/config.yaml` 匹配清单（脚本默认读该文件，不必传 `--config`）。
+
+#### 列缺口 CH 批查（脚本退出码 2）
+
+stderr 会打印 `missing_columns=[...]`。对这些表**一次**提交：
 
 ```sql
 SELECT table, name, type
@@ -122,94 +132,32 @@ WHERE database = '{{source_database}}'
 ORDER BY table, position
 ```
 
-将结果写回对应 `tables[].columns`（`name`←`name`，`valueType`←`type`；`description`/`isPrimaryKey` 可空）。
+`write` 为 `step1_ch_columns.json`（`[{"table","name","type"}, ...]`），再跑：
+
+```bash
+python skill/user_sampling/scripts/build_table_schema.py \
+  --dump <semantic_download 回执 path> \
+  --source-database {{source_database}} \
+  --inventory-file step1_ch_tables.json \
+  --columns-file step1_ch_columns.json \
+  --out step1_0_table_schema.json
+```
 
 <禁止>使用 `is_in_primary_key`、`ordinal_position` 等可能不存在的元数据列</禁止>。
-语义侧的表用途描述可保留；**列清单以 CH 为准**。
+CH 补上的列 `description` / `isPrimaryKey` 可空；**列清单以 CH 为准**，本体已有的 description 由脚本保留。
 
 ---
 
 ### 覆盖定义（硬门禁）
 
-CH 清单里有这张表名，不代表我们已经拿到了它的列结构。<必须>下面两条同时满足，才能说覆盖完成，才能进入写 schema</必须>：
+脚本成功（退出码 0）且磁盘上 `step1_0_table_schema.json` 满足下面两条，才能判定 mode / 写 plan：
 
-1. **表名未遗漏**：`missing_names` 为空。CH 清单中的每一张表，在语义查询结果中都出现了，一张不少。
-2. **每表的列结构到位**：`missing_columns` 为空。对 CH 清单中的任意一张表，以下三点同时满足才算到位：
-   - `columns` 数组非空（`columns.length >= 1`）
-   - 每条列都有 `name` 字段
-   - 若 `valueType` 缺失，已用 CH `system.columns` 兜底补齐
+1. **表名未遗漏**：`table_names` 与 `step1_ch_tables.json` 1:1。
+2. **每表的列结构到位**：每张表 `columns.length >= 1`，每条列有 `name`；缺 `valueType` 的已用 `--columns-file` 补齐。
 
-<禁止>
-- 把 `answerGuidance`、diagnostic、toolTrace、或 `behavior_1~7` 这类无列名无类型的字段当成列结构来凑数
-- 表名数量对上了就写「全覆盖」，无视 `missing_columns` 不为空
-- `missing_columns` 还没清空就判定 mode 或写 plan
-- 在拿到 CH 表名清单之前发送任何 `semantic_retrieve`
-- 发自由关键词式语义查询；query 中必须注入 CH 实表名
-</禁止>
+`role_candidates`：`user_table` / `game_dim` 须非空；`label_event` / `activity_event` / `conversion_event` 在 regular 尽量有值，prelabeled 可为 `[]`。其余表只进入 `tables[]`。无用户键的表由脚本标 `game_keyed`：一行一游戏的本体维表套目标游戏过滤；`config.yaml` `projection.catalog_copy` 中的目录维表整表拷贝。
 
----
-
-### 写 schema
-
-覆盖门禁通过后，写出 **`step1_0_table_schema.json`**。
-
-<必须>写 schema 前三步走，漏一步视为未完成</必须>：
-1. `ls` 确认所有 `step1_semantic_batch_*.json` 文件已落盘，数量与批次数一致
-2. **逐个 `Read`** 每一个 dump 文件（不跳、不凭记忆），读完再汇总
-3. 最后 `Write` `step1_0_table_schema.json`
-
-<下面的约束非常重要!!!/>
-<重要>写 schema 时**禁止凭记忆**。所有内容必须来自第 2 步 `Read` 到的 dump 文件内容——对着原文搬运，不缩写、不改写、不补全。</重要>
-
-#### description 保真
-
-<必须>以下规则逐字遵守；违反任意一条即视为落盘失败，须 Read 对应 dump 文件重写该列 description。</必须>
-
-| 规则 | 说明 |
-|------|------|
-| **逐字搬运** | `columns[].description` <必须>与 dump 文件中语义返回的 `dataAccessPlan.tables[].columns[].description` **逐字符一致**</必须>（含空格、标点、括号、枚举全文），不得改写、摘要、截断 |
-| **括号/枚举全保留** | 含括号内枚举值、编码映射、补充说明时，**整段原样写入**，禁止只留括号前短标题 |
-| **排序/TopN说明保留** | 含 `TOPN`、`按XX排序`、`截断` 等说明时，**全量保留** |
-| **语义无描述则留 null** | 语义侧为 `null` 时写 `null`，**不得**用列名或自拟短词填上 |
-
-<禁止>
-- **禁止**去掉括号内的枚举/映射/补充说明
-- **禁止**缩写为短标签（完整描述截成前缀）
-- **禁止**概括语义已列出的值列表
-- **禁止**在语义有描述时自行改写、换同义词、重新措辞
-- **禁止**把 description 写成列名本身
-</禁止>
-
-<错误示例>
-<错误> 语义返回包含括号内完整枚举，写入时只取了括号前的短标题
-<错误> 语义返回列出了一系列枚举值，写入时替换成了概括性的简短标签
-<错误> 语义返回了完整的时间和排序说明，写入时只保留了列名本身
-</错误示例>
-
-#### join_hints 保真
-
-<必须>写 `join_hints` 时，逐个 Read 所有 `step1_semantic_batch_NN.json`，从各文件的 `dataAccessPlan.joinPaths` 中收集，按 `left` + `right` + `on` 去重后写入。</必须>
-
-映射规则：
-- 每条 joinPath → 一条 hint：`left` / `right` = `<表名>.<列名>`（去掉库前缀，列名从 `on` 解析）
-- `note` 可写简短说明
-- left/right 顺序与语义返回一致，禁止调转
-- 所有 dump 文件中都找不到 joinPaths → `join_hints` 写 `[]`
-- 禁止因多表都有同名键列而自行加边——文件里没写的表对，不补
-
-#### role_candidates
-
-<必须>从所有 `step1_semantic_batch_NN.json` 中，收集语义返回的每张表业务角色，写入 `role_candidates`</必须>（五键齐全）：
-
-| 角色 | 要求 |
-|---|---|
-| `user_table` | <必须>非空 |
-| `game_dim` | <必须>非空 |
-| `label_event` / `activity_event` / `conversion_event` | regular 尽量填；prelabeled 可为 `[]` |
-
-<禁止>要求全局每张表都分到上述五类</禁止>。其余表只进入 `tables[]`，后续在 `projections[].type` 标 `user_keyed` / `game_keyed`。角色无法从语义确认时，用已落盘的列名约定推断并写入，不阻塞。
-
-</上面的约束非常重要!!!>
+写 plan 时 **`read` 脚本产出的 schema 与 plan**，不要凭记忆改 `projections` / `description` / `join_hints` / `columns`。
 
 ```json
 {
@@ -235,7 +183,10 @@ CH 清单里有这张表名，不代表我们已经拿到了它的列结构。<�
     "game_dim": ["<候选表>"]
   },
   "column_aliases": {
-    "user_id_columns": ["<如 usid>", "<rank_flg>", "<dsid>"]
+    "user_id_columns": ["<config.yaml columns.user_id 中实际出现的列>"],
+    "game_columns": ["<config.yaml columns.game 中实际出现的列>"],
+    "label_columns": ["<config.yaml columns.label 中实际出现的列>"],
+    "event_time_columns": ["<config.yaml columns.event_time 中实际出现的列>"]
   }
 }
 ```
@@ -245,16 +196,35 @@ CH 清单里有这张表名，不代表我们已经拿到了它的列结构。<�
 
 ---
 
-### 键表达式预构造（模式判定前）
+## 2. 脚本写 plan 骨架
 
-从 schema 提取用户键列名与类型，按 §3.1 构造 `user_key_expr`、`valid_user`（此时不需要 `game_key_expr` / `game_filter`）。
+schema 覆盖门禁通过后，用任务参数跑 skill 自带脚本（不要手写 `projections[]` 或 `sql_fragments.user_key_expr` / `valid_user` / `game_filter`）：
 
-## 2. 判定 mode：查用户表是否已有 label
+```bash
+python skill/user_sampling/scripts/build_sampling_plan.py \
+  --schema step1_0_table_schema.json \
+  --source-database {{source_database}} \
+  --output-database {{output_database}} \
+  --target-game <target_game> \
+  --run-id <run_id> \
+  --t0 <T0> \
+  --label-window-days <label_window_days> \
+  --lookback-days <lookback_days> \
+  --sample-size <sample_size> \
+  --out step1_0_sampling_plan.json
+```
 
-- **prelabeled**：用户表已有 label 列且 0/1 两侧都有数据 → 跳过 step1_1/step1_2
-- **regular**：否则走事件口径（step1_1 正样本 < 500 时降级 `cold_start`）
+退出码 0 后：
 
-**前置**：schema 已落盘且覆盖门禁通过；`user_key_expr` / `valid_user` 已预构造。
+- `step1_0_sampling_plan.json`：`mode` 为 `null`；`projections[]` 与 schema 表名 1:1；用户键 / `valid_user` / `game_filter` 已填
+- `step1_0_plan_notes.json`：脚本推断结果 + 模型还需补的字段
+- `step1_0_sql/mode_probe.sql`：仅当用户表有 label 列时写出
+
+脚本**不会**填写：`mode`、`y_label.family`、`sql_fragments.positive_label`、`negative_populations`、`keys.similar_dim`。这些要么由 probe 决定，要么只在 regular 由模型按实表取值填写。
+
+## 3. 判定 mode
+
+用户表有 label 列时，提交 `step1_0_sql/mode_probe.sql`（`resource_id="clickhouse"`，顶层 `SELECT`，不要加 `LIMIT 1`）：
 
 ```sql
 SELECT
@@ -264,24 +234,28 @@ FROM {{source_database}}.<user_table>
 WHERE <valid_user>
 ```
 
-`<label_pos_val>`/`<label_neg_val>`：Int* → `1`/`0`，String → `'1'`/`'0'`。  
-`pos_users > 0` 且 `neg_users > 0` → `mode="prelabeled"`（§3.A）；否则 `mode="regular"`（§3.B）。  
-**禁止加 LIMIT 1**。
+占位符已写进生成的 SQL，不要改写。`pos_users > 0` 且 `neg_users > 0` → `prelabeled`；否则 → `regular`。用户表没有 label 列 → 直接 `regular`。
 
-## 3. 填写 plan
+```bash
+python skill/user_sampling/scripts/build_sampling_plan.py \
+  --schema step1_0_table_schema.json \
+  --out step1_0_sampling_plan.json \
+  --mode prelabeled
+```
 
-`read` schema + 任务参数 → 按 mode 二选一 → `write`/`edit` `step1_0_sampling_plan.json`。
+或 `--mode regular`。`cold_start` 仍由 step1_1 的正样本计数决定，不要在本步写成 `cold_start`。
 
-### 3.A prelabeled（`mode=="prelabeled"`）
+### 3.A `--mode prelabeled`
 
-`mode` 写 `"prelabeled"`；`y_label.event_table` / `sampling_sources.label_event` / `sampling_sources.activity_event` / `sampling_sources.conversion_event` / `sql_fragments`（除 `user_key_expr`、`valid_user`、`game_filter` 外）写 `null`；`negative_populations` 写 `[]`。具体：
+脚本会把 `y_label.event_table` / 事件类 `sampling_sources` / `positive_label` 与时间片段置 `null`，`negative_populations` 置 `[]`。`keys.label_column` 必须已在骨架里。不要对事件表做枚举查询。完成后进入 step1_3。
 
-- <必须>`keys.label_column` 必填</必须>（以 schema 实列为准）
-- <必须>仅当 `projections[]` 有 `game_keyed` 时才构造 `sql_fragments.game_filter`</必须>
-- <禁止>对事件表 MCP `SELECT` 枚举画像</禁止>
-- <禁止>把事件表写入 `sampling_sources`</禁止>
+### 3.B `--mode regular`
 
-### 3.B regular（`mode!="prelabeled"`）
+脚本填入 `role_candidates` 里的事件表候选，并在能识别 `event_time` 且 `T0` / 窗口参数齐全时写入时间片段。模型还须：
+
+1. 按任务目标写入 `y_label.family`（家族表见下）
+2. 对 `y_label.event_table` 查真实枚举后写 `sql_fragments.positive_label`（取值必须出现在查询结果里）
+3. 按家族写 `negative_populations`
 
 | 家族 | 关键词 |
 |---|---|
@@ -294,22 +268,22 @@ WHERE <valid_user>
 
 负样本默认：付费 **N4**；CTR **N2**；安装/留存/时长 **N3+N2**；至少一 hard + **N5**。
 
-填写顺序：顶层参数 → `game_scope` → `y_label` → `sampling_sources` → `keys` → `sql_fragments` → `negative_populations` → `source_table_inventory` → `projections[]` → `inventory_check`。
-
-`sampling_sources` / `keys` / `sql_fragments` 依据 `role_candidates` / `tables`（`join_hints` 仅作下游参考，采样阶段不依赖它构造 SQL）。
+`sampling_sources` / `keys` / `sql_fragments` 以脚本产出为准；只改 notes 里列出的待填项。
 
 ### 3.1 sql_fragments 构造规则
+
+骨架已生成的片段不要手改。下表仅用于 regular 补时间片段（脚本没写出时）和 `positive_label`。
 
 每个片段必须是可直接拼入 ClickHouse WHERE / SELECT 的表达式。列名与类型取自 `step1_0_table_schema.json`。
 
 | 片段 | 规则 | 示例 |
 |---|---|---|
-| `user_key_expr` | String：`assumeNotNull(<col>)`；数值：`<col>` | `assumeNotNull(user_id)` |
-| `valid_user` | 滤 NULL（String 加 `!= ''`） | `user_id IS NOT NULL AND user_id != ''` |
+| `user_key_expr` | 脚本已生成：String 用 `assumeNotNull(<col>)`，数值用 `<col>` | `assumeNotNull(user_id)` |
+| `valid_user` | 脚本已生成：滤 NULL（String 加 `!= ''`） | `user_id IS NOT NULL AND user_id != ''` |
 | `game_key_expr` | 同用户键规则 | `assumeNotNull(game_id)` |
-| `game_filter` | String：`= '<target>'`；Int*：`= <target>` | `game_id = 'genshin'` |
+| `game_filter` | 行为/转化事件的游戏范围过滤；列取 `keys.game_key_behavior`。脚本初始生成目标游戏单点条件，cold_start 在 step1_2 扩成目标 + 相似游戏 | `game_name = 'genshin'` |
 
-#### 时间片段（仅 regular）
+#### 时间片段（仅 regular，脚本未写出时按此补）
 
 | 片段 | 窗口 | 写法（`<tc>`=`keys.event_time`；String 包 `parseDateTimeBestEffortOrNull(<tc>)`） |
 |---|---|---|
@@ -321,7 +295,7 @@ WHERE <valid_user>
 
 #### positive_label（仅 regular）
 
-标定正样本的 WHERE（不含时间窗）。写 plan 前对 `y_label.event_table`：
+标定正样本的 WHERE（不含时间窗）。写完 family 后对 `y_label.event_table`：
 
 ```sql
 SELECT <enum_col>, count() AS cnt
@@ -338,13 +312,13 @@ LIMIT 20
 
 ## 4. 完成检查
 
-- [ ] 文件已写出：`step1_0_table_schema.json`、`step1_0_sampling_plan.json`
-- [ ] 语义 dump 文件齐全：`step1_semantic_batch_01.json`、`02`… 与批次数对应
+- [ ] 文件已写出：`step1_ch_tables.json`、`semantic_download` 回执 `path`（`.dataagent/tool_outputs/semantic_download_*.txt`）、`step1_0_table_schema.json`、`step1_0_sampling_plan.json`
+- [ ] schema 由 `scripts/build_table_schema.py` 生成（退出码 0），不是手写
 - [ ] schema 覆盖：`table_names` 与 CH 清单一一对应，每张表 `columns.length >= 1`
-- [ ] description 保真：每列的 description 来自 dump 文件逐字搬运，没返回的就写 `null`，不缩写不重写
-- [ ] join_hints 保真：每条 hint 都能在 dump 文件的 `joinPaths` 中找到对应，没有凭空多出的表对，全部文件无 joinPaths 时写 `[]`
 - [ ] role_candidates 五键齐全：`user_table`、`game_dim`、`label_event`、`activity_event`、`conversion_event`
 - [ ] column_aliases：`user_id_columns` 非空
+- [ ] plan 由 `scripts/build_sampling_plan.py` 生成后 `--mode prelabeled|regular` 定稿，不是手写 `projections[]`
+- [ ] `mode` 已是 `prelabeled` 或 `regular`（`cold_start` 留给 step1_1）
 - [ ] plan 完整：`source_table_inventory` 与 `projections` 一一对应
 - [ ] inventory 核对：`inventory_check.ok == true`，`table_count == len(projections)`
 - [ ] projections 类型合法：每项 `type` 只允许 `user_table` / `user_keyed` / `game_keyed`

@@ -121,6 +121,6 @@ WHERE <valid_user_key_predicate>
 
 ---
 
-**取值词表**：安装、预约等取值须在 **`semantic_retrieve`** 返回中确认，写入 plan 的 `sql_fragments`。
+**取值词表**：安装、预约等取值须在 **`step1_0_table_schema.json`**（由 download dump 脚本生成）中确认，写入 plan 的 `sql_fragments`。
 
 **输出**：一列 canonical `user_key`（回归再带 `label_value`），供 `scripts/step1_3_build_training_set.md` 的 `pos` 使用。
