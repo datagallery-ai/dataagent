@@ -7,7 +7,6 @@ No custom Agent runner.
 
 from collections.abc import Sequence
 
-from deepagents import create_deep_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelCallLimitMiddleware,
@@ -20,6 +19,7 @@ from langchain_openai import ChatOpenAI
 
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
+from dataagent.core.graph import create_deep_agent
 from dataagent.extensions import compile_extensions, select_plugins
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 from dataagent.extensions.skills import VersionedSkillsMiddleware

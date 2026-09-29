@@ -1,12 +1,12 @@
-"""Compile Skill sources using the pinned native metadata parser."""
+"""Compile Skill sources with the rewritten core metadata parser."""
 
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Annotated, NotRequired
 
-from deepagents.middleware.skills import SkillsMiddleware, SkillsState, _parse_skill_metadata
 from langchain.agents.middleware.types import PrivateStateAttr
 
+from dataagent.core.middleware.skills import SkillsMiddleware, SkillsState, _parse_skill_metadata
 from dataagent.extensions.loading import contained_path
 
 
@@ -74,8 +74,8 @@ def compile_skill_sources(
     root: Path, paths: list[str], names: dict[str, Path] | None = None,
     *, label: str,
 ) -> list[tuple[str, str]]:
-    # Reuse the parser from the pinned Deep Agents release: a configured Skill
-    # must not be silently skipped by the native discovery middleware.
+    # Use the rewritten core parser: a configured Skill must not be silently
+    # skipped by discovery middleware.
     names = {} if names is None else names
     sources = []
     for relative in paths:

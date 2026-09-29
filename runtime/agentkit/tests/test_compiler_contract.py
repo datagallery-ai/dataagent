@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from conftest import ScriptedModel, call
-from deepagents import create_deep_agent
-from deepagents.backends import StateBackend
 from langchain_core.messages import AIMessage, HumanMessage
 
+from dataagent.core.backends import StateBackend
+from dataagent.core.graph import create_deep_agent
 from dataagent.declarations import HookSpec, PluginSpec
 from dataagent.extensions import compile_extensions, select_plugins
 

@@ -8,8 +8,6 @@ from typing import Annotated
 
 import pytest
 from conftest import ScriptedModel, call
-from deepagents import create_deep_agent
-from deepagents.graph import DeepAgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -18,6 +16,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from dataagent.agent import build_native_middleware
+from dataagent.core.graph import DeepAgentState, create_deep_agent
 from dataagent.declarations import HookSpec
 from dataagent.extensions.hooks import compile_hook
 from dataagent.settings import Limits

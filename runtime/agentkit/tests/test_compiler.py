@@ -1,10 +1,10 @@
 import inspect
 
 import pytest
-from deepagents import create_deep_agent
 from langchain.agents.middleware import AgentMiddleware
 from pydantic import ValidationError
 
+from dataagent.core.graph import create_deep_agent
 from dataagent.declarations import PluginSpec, SubAgentSpec
 from dataagent.extensions import compile_extensions, contained_path, select_plugins
 
