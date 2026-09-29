@@ -40,6 +40,7 @@ from dataagent.actions.tools.local_tool.agent_status_handler import (
 )
 from dataagent.actions.tools.local_tool.sandbox import WorkspaceAccessError, get_current_sandbox
 from dataagent.actions.tools.local_tool.sql_reader import load_table
+from dataagent.actions.tools.local_tool.sub_agent_config import temporary_sub_agent_config
 from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING
 from dataagent.core.context.message_history import serialize_message
 from dataagent.core.errors import DataAgentError
@@ -1128,23 +1129,11 @@ async def nl2sql_sub_agent_tool(
         user_id=str(getattr(runtime, "user_id", None) or ""),
         session_id=str(getattr(runtime, "session_id", None) or ""),
     )
-    guard = get_current_sandbox()
-    temp_root = guard.workspace_root or Path.cwd().resolve()
-    temp_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        prefix="nl2sql_sub_agent_",
-        dir=temp_root,
-        delete=False,
-        encoding="utf-8",
-    ) as temp_file:
-        yaml.safe_dump(temp_config, temp_file, allow_unicode=False, sort_keys=False)
-        temp_config_path = temp_file.name
-    try:
+    workspace_root = get_current_sandbox().workspace_root or Path.cwd().resolve()
+    with temporary_sub_agent_config(
+        temp_config, prefix="nl2sql_sub_agent_", workspace_root=workspace_root
+    ) as temp_config_path:
         res = await sub_agent_tool(query=query, config_path=temp_config_path)
-    finally:
-        Path(temp_config_path).unlink(missing_ok=True)
 
     worker_payload = res.get("original_msg")
     if isinstance(worker_payload, dict) and worker_payload.get("status") != "success":

@@ -13,7 +13,6 @@
 import json
 import os
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ from loguru import logger
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+from dataagent.actions.tools.local_tool.sub_agent_config import temporary_sub_agent_config
 from dataagent.actions.tools.local_tool.tools import (
     _build_nl2sql_sub_agent_config,
     _resolve_and_authorize,
@@ -107,26 +107,15 @@ async def nl2sql_sub_agent_tool(
         user_id=str(getattr(runtime, "user_id", None) or ""),
         session_id=str(getattr(runtime, "session_id", None) or ""),
     )
-    temp_root = guard.workspace_root or Path.cwd().resolve()
-    temp_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        prefix="nl2sql_sub_agent_",
-        dir=temp_root,
-        delete=False,
-        encoding="utf-8",
-    ) as temp_file:
-        yaml.safe_dump(temp_config, temp_file, allow_unicode=False, sort_keys=False)
-        temp_config_path = temp_file.name
-    try:
+    workspace_root = guard.workspace_root or Path.cwd().resolve()
+    with temporary_sub_agent_config(
+        temp_config, prefix="nl2sql_sub_agent_", workspace_root=workspace_root
+    ) as temp_config_path:
         runtime.set_cache("nl2sql_detail", query)
         ir_context = get_ir_context(runtime)
         if ir_context:
             query += "\n\n" + ir_context
         res = await sub_agent_tool(query=query, config_path=temp_config_path)
-    finally:
-        Path(temp_config_path).unlink(missing_ok=True)
     worker_payload = res.get("original_msg")
     if isinstance(worker_payload, dict) and worker_payload.get("error"):
         err = worker_payload.get("error")
