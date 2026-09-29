@@ -432,7 +432,7 @@ def enrich_families_with_columns(
 
 
 def resolve_family_selection(
-    selection: dict[str, str] | None,
+    selection: dict[str, Any] | None,
     families: list[dict[str, Any]],
 ) -> str | None:
     """Map LLM ``{family_name, granularity}`` to a physical table name."""

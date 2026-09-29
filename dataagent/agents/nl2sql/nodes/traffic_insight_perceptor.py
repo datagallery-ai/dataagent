@@ -66,7 +66,14 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         state = cast(NL2SQLState, state)
         state["sql_rules"] = await asyncio.to_thread(self._load_prompt, self.user_sql_rules)
         state["sql_rules"] += f"\n现在为{date.today().year}年{date.today().month}月{date.today().day}日。"
-        schema, joins = await self._traffic_insight_schema_linking(state["question"])
+        schema, joins, explicit_granularity = await self._traffic_insight_schema_linking(state["question"])
+        if explicit_granularity:
+            state["sql_rules"] += (
+                "\n\n## 时间粒度"
+                "\n- 问题明确要求了时间粒度：`time` 必须出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
+                "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不得把结果压成单行。"
+                "\n- 不得从 SELECT 或 GROUP BY 移除 `time`，任何要求移除 `time` 的意见都应判为无效。"
+            )
         state["schema"] = schema
         state["joins"] = joins
         state["schema_str"] = schema_to_ddl(schema, joins)
@@ -75,10 +82,10 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         state["stream_message"] = message
         return state
 
-    async def _traffic_insight_schema_linking(self, question: str) -> tuple[dict[str, Any], list]:
+    async def _traffic_insight_schema_linking(self, question: str) -> tuple[dict[str, Any], list, bool]:
         """Select one fact table; build schema via hybrid columns + optional values."""
         logger.info(f"load schema linking for question: {question}")
-        table = await self._select_traffic_insight_table(question)
+        table, explicit_granularity = await self._select_traffic_insight_table(question)
         schema = await asyncio.to_thread(self._schema_for_selected_table, table)
         if not schema:
             raise NL2SQLError(
@@ -95,9 +102,9 @@ class TrafficInsightPerceptorNode(PerceptorNode):
             with_values,
             schema[bare].get("description") or "",
         )
-        return schema, []
+        return schema, [], explicit_granularity
 
-    async def _select_traffic_insight_table(self, question: str) -> str:
+    async def _select_traffic_insight_table(self, question: str) -> tuple[str, bool]:
         need = await self._extract_need_columns(question)
         need_d: set[str] = need["need_d"]
         need_m: set[str] = need["need_m"]
@@ -189,7 +196,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
             selection,
             table,
         )
-        return table
+        return table, bool(selection and selection.get("explicit_granularity"))
 
     async def _extract_need_columns(self, question: str) -> dict[str, set[str]]:
         payload = await self.execute_with_llm_json({"question": question}, action="filter_traffic_insight_fields_")
@@ -209,7 +216,7 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         self,
         question: str,
         families: list[dict[str, Any]],
-    ) -> Optional[dict[str, str]]:  # noqa: UP045
+    ) -> Optional[dict[str, Any]]:  # noqa: UP045
         table_families_info = format_traffic_insight_table_family_prompt_context(families)
         parsed = await self.execute_with_llm_json(
             {
@@ -223,7 +230,13 @@ class TrafficInsightPerceptorNode(PerceptorNode):
             return None
         family_name = str(parsed.get("family_name") or "").strip()
         granularity = str(parsed.get("granularity") or "").strip()
-        return {"family_name": family_name, "granularity": granularity} if family_name and granularity else None
+        if not family_name or not granularity:
+            return None
+        return {
+            "family_name": family_name,
+            "granularity": granularity,
+            "explicit_granularity": parsed.get("explicit_granularity") is True,
+        }
 
     def _recall_tables_by_field_eq(self, need_d: set[str], need_m: set[str]) -> tuple[dict[str, set[str]], str]:
         """Paginate EQ searches into ``table → {hit fields}``; no table-level rank truncation."""
