@@ -6,12 +6,12 @@ import sys
 
 import pytest
 from conftest import ScriptedModel, call
-from deepagents.backends import LocalShellBackend
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from dataagent.agent import build_agent
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.bootstrap.paths import ensure_session
+from dataagent.core.backends import LocalShellBackend
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 
 

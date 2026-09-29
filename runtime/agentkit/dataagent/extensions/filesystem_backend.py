@@ -4,10 +4,9 @@ Both use host permissions without sandboxing. Input protection and output placem
 are prompt conventions, not enforced access boundaries.
 """
 
-from deepagents.backends import CompositeBackend, LocalShellBackend
-
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.paths import SessionPaths, ensure_session
+from dataagent.core.backends import CompositeBackend, LocalShellBackend
 
 
 def build_filesystem_backend(runtime: Runtime, session: SessionPaths) -> CompositeBackend:

@@ -5,13 +5,13 @@ from unittest.mock import patch
 
 import pytest
 from conftest import ScriptedModel, call
-from deepagents import create_deep_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from test_launch import MODEL, config, options
 
 from dataagent import safe_error
 from dataagent.agent import build_agent
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
+from dataagent.core.graph import create_deep_agent
 from dataagent.declarations import PluginSpec
 from dataagent.extensions import select_plugins
 

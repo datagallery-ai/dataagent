@@ -1,12 +1,12 @@
 from pathlib import Path
 
 from conftest import ScriptedModel, call
-from deepagents import create_deep_agent
-from deepagents.middleware import FilesystemMiddleware, SummarizationMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
+from dataagent.core.graph import create_deep_agent
+from dataagent.core.middleware import FilesystemMiddleware, SummarizationMiddleware
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 
 

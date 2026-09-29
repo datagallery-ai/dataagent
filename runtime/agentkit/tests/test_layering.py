@@ -37,9 +37,9 @@ EXTENSION_CORE_DEPENDENCIES = {
     "tracing": {"diagnostics"},
     "trace_exporter": set(),
     "mcp": {"bootstrap", "diagnostics"},
-    "filesystem_backend": {"bootstrap"},
+    "filesystem_backend": {"bootstrap", "core"},
     "loading": {"declarations", "settings", "strict_json"},
-    "skills": set(),
+    "skills": {"core"},
     "tools": {"declarations"},
     "hooks": {"declarations"},
     "subagents": {"declarations", "strict_json"},
@@ -135,13 +135,25 @@ def test_bootstrap_class_ownership_is_explicit():
 
 
 def test_only_host_adapters_consume_runtime_and_bootstrap_paths():
+    rewritten_core = {
+        "filesystem_backend": "dataagent.core",
+        "skills": "dataagent.core",
+    }
     for path in (CORE / "extensions").glob("*.py"):
         host_types = {
             "filesystem_backend": {"dataagent.bootstrap", "dataagent.bootstrap.paths"},
             "mcp": {"dataagent.bootstrap"},
         }.get(path.stem, set())
+        core_root = rewritten_core.get(path.stem)
         for module in core_imports(path):
-            assert (module in FOUNDATION | host_types or module.startswith("dataagent.extensions.")), (path, module)
+            uses_core = core_root is not None and (
+                module == core_root or module.startswith(core_root + ".")
+            )
+            assert (
+                module in FOUNDATION | host_types
+                or module.startswith("dataagent.extensions.")
+                or uses_core
+            ), (path, module)
 
 
 def test_rest_host_uses_only_the_package_root():
