@@ -416,7 +416,7 @@ def load_runtime_contract() -> RuntimeContract:
     user_table = _schema_role_value(schema_resolution, "<user_table>", "user_table")
     user_id = _schema_role_value(schema_resolution, "<user_id>", "user_id")
     if not user_table or not user_id:
-        available = ", ".join(sorted(str(key) for key in schema_resolution.keys()))
+        available = ", ".join(sorted(str(key) for key in schema_resolution))
         raise SystemExit(
             "schema_resolution must resolve <user_table> and <user_id> "
             f"from roles or top-level keys; available keys: {available}"
@@ -1773,6 +1773,7 @@ def render_feature_subquery_from_deployment_contract(
     tree_preprocessing: dict[str, Any],
     *,
     trial_mode: bool = False,
+    category_index_thresholds: dict[str, list[float]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Render required features from the validated Step2 deployment contract."""
     plans = deployment["relation_plans"]
@@ -1915,6 +1916,7 @@ def render_feature_subquery_from_deployment_contract(
         required_features,
         tree_features,
         tree_preprocessing,
+        category_index_thresholds,
     )
     report = {
         "lineage_source": DEPLOYMENT_FEATURE_CONTRACT,
@@ -1953,11 +1955,226 @@ def _dimension_expression_for_entry(
     return f"any({qualified})"
 
 
+_TREE_CUT_ATOM = re.compile(
+    r"\s*([A-Za-z_][A-Za-z0-9_.]*)\s*(<=|>=|!=|=|<|>)\s*"
+    r"(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*"
+)
+_BUCKET_SAFE_OPERATORS = frozenset({"<=", ">"})
+# One equality per class at ~90 bytes each reached about 2MB and was rejected.
+# ClickHouse accepts queries up to about 256KB. Keep the per-class form only
+# while this one expression stays inside the budget below.
+_CATEGORICAL_EQUALITY_SQL_BUDGET_BYTES = 32 * 1024
+
+
+def _rule_card_cutpoints(path: Path) -> dict[str, list[float]]:
+    """Return sorted ``<=`` / ``>`` cutpoints for each feature in a rule card.
+
+    The cutpoints are the encoded-index numbers already written in
+    ``step3_5_rule_card.csv`` for this run. They are not fixed constants.
+    A feature that also uses ``=``, ``!=``, ``<``, or ``>=`` is omitted:
+    threshold buckets only preserve ``<=`` and ``>``.
+    """
+    frame = pd.read_csv(path, encoding="utf-8-sig")
+    if "condition" not in frame.columns:
+        return {}
+    cuts: dict[str, set[float]] = {}
+    unsafe: set[str] = set()
+    for condition in frame["condition"].astype(str):
+        for atom in _split_and(condition):
+            match = _TREE_CUT_ATOM.fullmatch(atom)
+            if not match:
+                continue
+            feature = match.group(1).split(".")[-1]
+            operator = match.group(2)
+            if operator not in _BUCKET_SAFE_OPERATORS:
+                unsafe.add(feature)
+                continue
+            cuts.setdefault(feature, set()).add(float(match.group(3)))
+    return {
+        feature: sorted(values)
+        for feature, values in cuts.items()
+        if feature not in unsafe and values
+    }
+
+
+def _class_labels_in_index_order(
+    feature: str,
+    classes: list[Any],
+    mapping: dict[str, Any],
+) -> list[tuple[int, str]]:
+    """Return ``(encoder index, label)`` pairs sorted by encoder index."""
+    ordered: list[tuple[int, str]] = []
+    for value in classes:
+        encoded = mapping.get(str(value))
+        if encoded is None:
+            raise ValueError(f"{feature}: category mapping lacks {value!r}")
+        ordered.append((int(encoded), str(value)))
+
+    def sort_by_index(item: tuple[int, str]) -> int:
+        """Sort key: label-encoder index."""
+        return item[0]
+
+    ordered.sort(key=sort_by_index)
+    return ordered
+
+
+def _equality_sql_bytes(categorical: str, ordered: list[tuple[int, str]]) -> int:
+    """Estimate the SQL size of one equality branch per class label."""
+    total = 0
+    for index, label in ordered:
+        total += len(categorical) + len(_sql_string_literal(label)) + len(str(index)) + 24
+    return total
+
+
+def _same_threshold_sides(left: float, right: float, thresholds: list[float]) -> bool:
+    """Return whether ``left`` and ``right`` take the same ``<=`` and ``>`` side of every cut."""
+    for threshold in thresholds:
+        if (left <= threshold) != (right <= threshold):
+            return False
+        if (left > threshold) != (right > threshold):
+            return False
+    return True
+
+
+def _labels_follow_index_order(ordered: list[tuple[int, str]]) -> bool:
+    """Return whether label text order is the same as encoder index order.
+
+    Bucket bounds compare label text in the database. That comparison matches
+    the encoder only when the labels are ASCII and already sorted by index.
+    """
+    labels = [label for _index, label in ordered]
+    for label in labels:
+        for character in label:
+            if ord(character) > 127:
+                return False
+    return labels == sorted(labels)
+
+
+def _sql_encoded_number(value: float) -> str:
+    """Format one encoded bucket value the same way as an integer class id."""
+    if value.is_integer():
+        return f"toFloat64({int(value)})"
+    return f"toFloat64({value:.17g})"
+
+
+def _threshold_bucket_plan(
+    ordered: list[tuple[int, str]],
+    thresholds: list[float],
+) -> list[tuple[str | None, float]] | None:
+    """Build ``(upper label, representative)`` buckets from this run's cutpoints.
+
+    ``upper label`` is the last class label included in the bucket. ``None``
+    marks the final bucket, which has no upper bound. The representative of
+    the first bucket is 0. After a cut ``T`` the representative is
+    ``floor(T) + 1``. Returns ``None`` when those representatives would not
+    compare like the original encoder indexes.
+    """
+    if not thresholds or not _labels_follow_index_order(ordered):
+        return None
+    cuts = sorted(set(thresholds))
+    ranges: list[tuple[float | None, float | None]] = [(None, cuts[0])]
+    for index in range(len(cuts) - 1):
+        ranges.append((cuts[index], cuts[index + 1]))
+    ranges.append((cuts[-1], None))
+
+    plan: list[tuple[str | None, float]] = []
+    for lower, upper in ranges:
+        members = [
+            index
+            for index, _label in ordered
+            if (lower is None or index > lower) and (upper is None or index <= upper)
+        ]
+        if not members:
+            continue
+        representative = 0.0 if lower is None else float(math.floor(lower) + 1)
+        for index in members:
+            if not _same_threshold_sides(float(index), representative, cuts):
+                return None
+        if upper is None:
+            plan.append((None, representative))
+            continue
+        highest = max(members)
+        boundary = ""
+        for index, label in ordered:
+            if index == highest:
+                boundary = label
+                break
+        plan.append((boundary, representative))
+
+    if not plan or plan[-1][0] is not None:
+        last_representative = float(math.floor(cuts[-1]) + 1)
+        if any(last_representative <= cut for cut in cuts):
+            return None
+        plan.append((None, last_representative))
+    bounded = [label for label, _representative in plan if label is not None]
+    if bounded != sorted(bounded) or plan[-1][0] is not None:
+        return None
+    return plan
+
+
+def _threshold_bucket_expression(
+    feature: str,
+    categorical: str,
+    ordered: list[tuple[int, str]],
+    thresholds: list[float],
+    missing_string: str,
+    unknown: float,
+) -> str | None:
+    """Render a few index-threshold buckets, or ``None`` to keep one equality per class.
+
+    Per-class SQL is kept when it fits in
+    ``_CATEGORICAL_EQUALITY_SQL_BUDGET_BYTES``. Above that budget, buckets are
+    used only when every class index still falls on the same side of every
+    cutpoint as its bucket representative.
+    """
+    if not thresholds:
+        return None
+    if _equality_sql_bytes(categorical, ordered) <= _CATEGORICAL_EQUALITY_SQL_BUDGET_BYTES:
+        return None
+    plan = _threshold_bucket_plan(ordered, thresholds)
+    if plan is None:
+        INPUT_NORMALIZATION_WARNINGS.append(
+            f"{feature}: categorical label list exceeds the SQL size budget, "
+            "but threshold buckets would change rule comparisons; "
+            "kept one equality per class"
+        )
+        return None
+    branches: list[str] = []
+    known_labels = {label for _index, label in ordered}
+    if missing_string not in known_labels:
+        branches.extend(
+            [
+                f"{categorical} = {_sql_string_literal(missing_string)}",
+                f"toFloat64({unknown:.17g})",
+            ]
+        )
+    else_value = plan[-1][1]
+    for boundary, representative in plan:
+        if boundary is None:
+            else_value = representative
+            continue
+        branches.extend(
+            [
+                f"{categorical} <= {_sql_string_literal(boundary)}",
+                _sql_encoded_number(representative),
+            ]
+        )
+    branches.append(_sql_encoded_number(else_value))
+    return "multiIf(" + ", ".join(branches) + ")"
+
+
 def _tree_preprocessing_expression(
     feature: str,
     metadata: dict[str, Any],
     alias: str,
+    category_thresholds: list[float] | None = None,
 ) -> str:
+    """Render the SQL that reproduces one feature's tree encoding.
+
+    High-cardinality label columns use one bucket per cutpoint from this run's
+    rule card. Cutpoints are read from the card, not hard-coded. Columns whose
+    per-class SQL fits in the size budget stay on the original equality form.
+    """
     reference = f"{alias}.{_quote_identifier(feature)}"
     kind = metadata.get("kind")
     if kind == "numeric_identity":
@@ -1994,18 +2211,27 @@ def _tree_preprocessing_expression(
             f"ifNull(toString({reference}), "
             f"{_sql_string_literal(str(metadata.get('missing_string_value', 'nan')))})"
         )
+        ordered = _class_labels_in_index_order(feature, classes, mapping)
+        unknown = float(metadata.get("unknown_encoded_value", -1.0))
+        missing_string = str(metadata.get("missing_string_value", "nan"))
+        bucket_sql = _threshold_bucket_expression(
+            feature,
+            categorical,
+            ordered,
+            list(category_thresholds or []),
+            missing_string,
+            unknown,
+        )
+        if bucket_sql is not None:
+            return bucket_sql
         branches: list[str] = []
-        for value in classes:
-            encoded = mapping.get(str(value))
-            if encoded is None:
-                raise ValueError(f"{feature}: category mapping lacks {value!r}")
+        for _index, label in ordered:
             branches.extend(
                 [
-                    f"{categorical} = {_sql_string_literal(str(value))}",
-                    f"toFloat64({int(encoded)})",
+                    f"{categorical} = {_sql_string_literal(label)}",
+                    f"toFloat64({_index})",
                 ]
             )
-        unknown = float(metadata.get("unknown_encoded_value", -1.0))
         branches.append(f"toFloat64({unknown:.17g})")
         return "multiIf(" + ", ".join(branches) + ")"
     raise ValueError(f"{feature}: unsupported preprocessing kind {kind!r}")
@@ -2016,6 +2242,7 @@ def _wrap_tree_preprocessing(
     required_features: set[str],
     tree_features: set[str],
     tree_preprocessing: dict[str, Any],
+    category_index_thresholds: dict[str, list[float]] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     if not tree_features:
         return feature_sql, []
@@ -2029,10 +2256,14 @@ def _wrap_tree_preprocessing(
             raise ValueError(
                 f"{feature}: absent from step3_5_preprocessing_reconstructed.json"
             )
+        feature_thresholds = None
+        if category_index_thresholds is not None:
+            feature_thresholds = category_index_thresholds.get(feature)
         expression = _tree_preprocessing_expression(
             feature,
             metadata[feature],
             "raw_features",
+            feature_thresholds,
         )
         encoded_name = "__tree_" + feature
         encoded_selects.append(
@@ -2072,6 +2303,7 @@ def render_feature_subquery(
     tree_preprocessing: dict[str, Any],
     *,
     trial_mode: bool = False,
+    category_index_thresholds: dict[str, list[float]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     index = _lineage_index(lineage)
     errors: list[str] = []
@@ -2311,6 +2543,7 @@ def render_feature_subquery(
         required_features,
         tree_features,
         tree_preprocessing,
+        category_index_thresholds,
     )
     report = {
         "required_feature_count": len(required_features),
@@ -3186,6 +3419,7 @@ def main() -> None:
         "scorecard": _read_json("step3_6_model_report.json"),
     }
     tree_preprocessing = _read_json("step3_5_preprocessing_reconstructed.json")
+    category_index_thresholds = _rule_card_cutpoints(OUTPUT_DIR / "step3_5_rule_card.csv")
     deployment_contract: dict[str, Any] | None = None
     if _has_usable_deployment_feature_contract():
         deployment_contract = load_deployment_feature_contract(contract)
@@ -3212,6 +3446,7 @@ def main() -> None:
                 contract,
                 tree_preprocessing,
                 trial_mode=trial_mode,
+                category_index_thresholds=category_index_thresholds,
             )
         assert lineage is not None
         return render_feature_subquery(
@@ -3221,6 +3456,7 @@ def main() -> None:
             contract,
             tree_preprocessing,
             trial_mode=trial_mode,
+            category_index_thresholds=category_index_thresholds,
         )
     tree = build_tree_candidate(OUTPUT_DIR / "step3_5_rule_card.csv")
     scorecard = build_scorecard_candidate(OUTPUT_DIR / "step3_6_score_rule.csv")
