@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +21,7 @@ import yaml
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+from dataagent.actions.tools.local_tool.sub_agent_config import temporary_sub_agent_config
 from dataagent.actions.tools.local_tool.tools import sub_agent_tool
 from dataagent.actions.tools.semantic_tool.metadata_recall import (
     _build_metadata_recall_sub_agent_config,
@@ -77,23 +77,10 @@ async def metadata_recall(
             f"\n需要同时检索和原始任务相关的元数据、UDF和Join 信息，以下是原始任务的描述：{user_query_str}"
         )
 
-    temp_root = workspace_path
-    temp_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        prefix="golden_schema_metadata_recall_sub_agent_",
-        dir=temp_root,
-        delete=False,
-        encoding="utf-8",
-    ) as temp_file:
-        yaml.safe_dump(temp_config, temp_file, allow_unicode=False, sort_keys=False)
-        temp_config_path = temp_file.name
-
-    try:
+    with temporary_sub_agent_config(
+        temp_config, prefix="golden_schema_metadata_recall_sub_agent_", workspace_root=workspace_path
+    ) as temp_config_path:
         res = await sub_agent_tool(query=enhanced_query, config_path=temp_config_path, timeout=timeout)
-    finally:
-        Path(temp_config_path).unlink(missing_ok=True)
 
     return _extract_recall_result_from_state(res)
 

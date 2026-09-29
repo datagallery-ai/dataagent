@@ -13,7 +13,6 @@
 import copy
 import json
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +21,7 @@ from loguru import logger
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
+from dataagent.actions.tools.local_tool.sub_agent_config import temporary_sub_agent_config
 from dataagent.actions.tools.local_tool.tools import _resolve_bound_llm_model_name, sub_agent_tool
 from dataagent.utils.constants import DEFAULT_SUBAGENT_TOOL_TIMEOUT
 from dataagent.utils.info_utils import get_current_query
@@ -84,23 +84,10 @@ async def metadata_recall(
             f"\n需要同时检索和原始任务相关的元数据、UDF和Join 信息，以下是原始任务的描述：{user_query_str}"
         )
 
-    temp_root = workspace_path
-    temp_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".yaml",
-        prefix="metadata_recall_sub_agent_",
-        dir=temp_root,
-        delete=False,
-        encoding="utf-8",
-    ) as temp_file:
-        yaml.safe_dump(temp_config, temp_file, allow_unicode=False, sort_keys=False)
-        temp_config_path = temp_file.name
-
-    try:
+    with temporary_sub_agent_config(
+        temp_config, prefix="metadata_recall_sub_agent_", workspace_root=workspace_path
+    ) as temp_config_path:
         res = await sub_agent_tool(query=enhanced_query, config_path=temp_config_path, timeout=timeout)
-    finally:
-        Path(temp_config_path).unlink(missing_ok=True)
 
     # sub_agent_tool 返回 {"original_msg": <worker_result>, "state": <flex state dict>, ...}
     # state 包含完整的 messages 列表，需提取最后一条 AIMessage 的 content 作为干净结果

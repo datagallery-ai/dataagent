@@ -86,9 +86,9 @@ SEMANTIC_LAYER:
 
 TOOLS:
   builtin:
-    - name: "bash"
+    - name: "list_files"
       module: "dataagent.actions.tools.local_tool.tools"
-      function: "bash"
+      function: "list_files"
     - name: "edit_file"
       module: "dataagent.actions.tools.local_tool.tools"
       function: "edit_file"
