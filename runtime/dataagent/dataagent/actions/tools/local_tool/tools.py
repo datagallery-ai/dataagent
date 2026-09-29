@@ -2168,7 +2168,7 @@ def list_files(path: str | None = None, max_depth: int = 2, max_results: int = 2
         nonlocal count, truncated
         entries = []
         for entry in directory.iterdir():
-            if entry.is_dir() and entry.name.startswith("."):
+            if entry.name.startswith("."):
                 continue
             try:
                 resolved = guard.authorize_read(entry, operation="list_files")
