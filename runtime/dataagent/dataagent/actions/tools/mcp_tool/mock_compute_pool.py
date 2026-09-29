@@ -179,8 +179,15 @@ def create_server(*, host: str, port: int) -> FastMCP:
         return {"status": "running", "job_id": job.job_id}
 
     @server.tool()
-    def poll_job(job_id: str) -> dict[str, Any]:
-        """Poll one remote job until it reaches a terminal state."""
+    def poll_job(job_id: str, wait_sec: float = 0.0) -> dict[str, Any]:
+        """Poll one remote job until it reaches a terminal state.
+
+        ``wait_sec`` is a test-only knob: when > 0 the handler sleeps for
+        that many seconds before returning. Production callers never pass it,
+        so default behaviour stays bit-for-bit compatible.
+        """
+        if wait_sec > 0:
+            time.sleep(wait_sec)
         payload = _STORE.poll(job_id)
         logger.info("poll_job job_id={} status={}", job_id, payload.get("status"))
         return payload

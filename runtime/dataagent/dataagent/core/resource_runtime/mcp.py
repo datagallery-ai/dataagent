@@ -94,7 +94,13 @@ def build_mcp_resource_client(resource: Resource) -> McpResourceClient:
         category="resource",
         description=f"Resource MCP backend for {resource.id}",
     )
-    return McpResourceClientAdapter(MCPClientWrapper(server_config))
+    # Resource-job coordinators own a dedicated event loop
+    # (``_ResourceMcpEventLoop``), so the streamable-HTTP session can be safely
+    # reused across submit / poll / collect calls without leaking into the
+    # LangGraph pregel cancel scope.
+    return McpResourceClientAdapter(
+        MCPClientWrapper(server_config, reuse_streamable_http_session=True)
+    )
 
 
 def build_mcp_client_from_driver(resource_id: str, driver: DriverBinding) -> McpResourceClient:
@@ -107,7 +113,12 @@ def build_mcp_client_from_driver(resource_id: str, driver: DriverBinding) -> Mcp
     Returns:
         Client implementing :class:`McpResourceClient`.
     """
-    return McpResourceClientAdapter(MCPClientWrapper(mcp_server_config_from_binding(resource_id, driver)))
+    return McpResourceClientAdapter(
+        MCPClientWrapper(
+            mcp_server_config_from_binding(resource_id, driver),
+            reuse_streamable_http_session=True,
+        )
+    )
 
 
 def default_mcp_client_factory() -> Callable[[Resource], McpResourceClient]:
