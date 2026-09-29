@@ -132,13 +132,29 @@ class MCPServerConfig:
 class MCPClientWrapper:
     """基于官方MCP库的客户端包装器 - 支持连接池管理"""
 
-    def __init__(self, config: MCPServerConfig):
+    def __init__(
+        self,
+        config: MCPServerConfig,
+        *,
+        reuse_streamable_http_session: bool = False,
+    ):
         """Create one MCP client wrapper.
 
         Args:
             config: Server connection configuration.
+            reuse_streamable_http_session: Only relevant for ``streamable_http``
+                transport. When ``True``, ``_execute_with_connection`` will keep a
+                single :class:`ClientSession` alive across calls as long as the
+                same event loop is running. Use this only for long-lived clients
+                that own their event loop (e.g. resource-job coordinators that
+                pin a dedicated loop with :class:`_ResourceMcpEventLoop`).
+                Default ``False``: each call opens and tears down its own
+                ``streamable_http_client`` / ``ClientSession`` inside ``async
+                with`` blocks, matching ``stdio`` / ``sse`` semantics so an
+                outer cancel scope cannot strand the MCP internal streams.
         """
         self.config = config
+        self._reuse_streamable_http_session = reuse_streamable_http_session
         self._session: ClientSession | None = None
         self._session_loop: asyncio.AbstractEventLoop | None = None
         self._http_client: httpx.AsyncClient | None = None
@@ -188,6 +204,16 @@ class MCPClientWrapper:
                     timeout=params.get("timeout", 30),
                 )
             elif self.transport_type == "streamable_http":
+                if not self._reuse_streamable_http_session:
+                    raise DataAgentError(
+                        source="tool",
+                        fact=(
+                            "streamable_http MCPClientWrapper without "
+                            "reuse_streamable_http_session=True is short-lived: "
+                            "use _execute_with_connection() instead of connect()/disconnect()."
+                        ),
+                        component="tool",
+                    )
                 await self._ensure_streamable_http_session()
                 return
             else:
@@ -217,6 +243,9 @@ class MCPClientWrapper:
     async def disconnect(self):
         """断开与MCP服务器的连接"""
         if self.transport_type == "streamable_http":
+            if not self._reuse_streamable_http_session:
+                # 单次调用路径下没有长期持有的 session,直接 no-op。
+                return
             await self._reset_streamable_http_session()
             return
         if not self._connected:
@@ -316,11 +345,55 @@ class MCPClientWrapper:
                         return await operation(session)
 
             if self.transport_type == "streamable_http":
-                await self._ensure_streamable_http_session()
+                if self._reuse_streamable_http_session:
+                    # 长生命周期客户端(目前只有 resource-job 协调器在专用事件循环上
+                    # 持有的 MCPClientWrapper):复用同一条 streamable-HTTP 会话。
+                    await self._ensure_streamable_http_session()
+                    try:
+                        return await operation(self._session)
+                    except Exception as exc:
+                        await self._reset_streamable_http_session()
+                        inner = exc
+                        if hasattr(exc, "exceptions") and exc.exceptions:
+                            inner = exc.exceptions[0]
+                        fact = f"MCP streamable_http call failed: {inner}"
+                        if hasattr(inner, "response") and hasattr(inner.response, "status_code"):
+                            fact = f"MCP streamable_http HTTP {inner.response.status_code}: {inner}"
+                        raise DataAgentError(
+                            source="tool",
+                            fact=fact,
+                            component="mcp",
+                        ) from exc
+
+                # 单次调用路径(工具调用场景,如 DataOps prod 适配器):每次新建一条
+                # session,在嵌套 ``async with`` 中随外层 task 一起被清理。这样当
+                # LangGraph/pregel 的外层 cancel scope 撤销时,所有 MCP 内部 stream
+                # 都会随 ``httpx.AsyncClient`` / ``streamable_http_client`` /
+                # ``ClientSession`` 的 __aexit__ 一起被 cancel,不会留下挂在
+                # MemoryObjectSendStream backpressure 上的协程。
+                params = cast(dict[str, Any], self._transport_params)
+                headers = params.get("headers") or {}
+                timeout = float(params.get("timeout", 30))
                 try:
-                    return await operation(self._session)
+                    async with httpx.AsyncClient(  # noqa: SIM117
+                        headers=headers,
+                        timeout=httpx.Timeout(timeout),
+                    ) as http_client:
+                        async with streamable_http_client(  # noqa: SIM117
+                            params["url"],
+                            http_client=http_client,
+                            terminate_on_close=True,
+                        ) as (
+                            read_stream,
+                            write_stream,
+                            _get_session_id,
+                        ):
+                            del _get_session_id
+                            async with ClientSession(read_stream, write_stream) as session:
+                                await session.initialize()
+                                return await operation(session)
                 except Exception as exc:
-                    await self._reset_streamable_http_session()
+                    # Unwrap ExceptionGroup (anyio's task group wraps HTTP errors)
                     inner = exc
                     if hasattr(exc, "exceptions") and exc.exceptions:
                         inner = exc.exceptions[0]
@@ -337,6 +410,15 @@ class MCPClientWrapper:
 
     async def _ensure_streamable_http_session(self) -> None:
         """Reuse the streamable-HTTP session when the current event loop still owns it."""
+        if not self._reuse_streamable_http_session:
+            raise DataAgentError(
+                source="tool",
+                fact=(
+                    "_ensure_streamable_http_session called on a non-reuse "
+                    "streamable_http MCPClientWrapper; use _execute_with_connection."
+                ),
+                component="tool",
+            )
         loop = asyncio.get_running_loop()
         if self._session is not None and self._session_loop is loop:
             return
@@ -362,6 +444,9 @@ class MCPClientWrapper:
 
     async def _reset_streamable_http_session(self) -> None:
         """Drop a streamable-HTTP session so the next call can reconnect."""
+        if not self._reuse_streamable_http_session and self._session is None:
+            # 单次调用路径本来就没有长期持有的 session 状态,直接 no-op。
+            return
         session = self._session
         self._session = None
         self._session_loop = None
