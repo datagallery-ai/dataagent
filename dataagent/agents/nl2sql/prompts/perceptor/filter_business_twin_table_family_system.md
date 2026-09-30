@@ -116,7 +116,7 @@ Return exactly one JSON object enclosed in a `json` code block.
 
 ```json
 {
-  "family_name": "fact_dw1745159007_00000000000181c4",
+  "family_name": "fact_dwXXXXXXXXXX_XXXXXXXXXXXXXXXX",
   "granularity": "1d",
   "explicit_granularity": false
 }

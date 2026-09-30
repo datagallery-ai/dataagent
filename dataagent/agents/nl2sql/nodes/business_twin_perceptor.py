@@ -18,7 +18,10 @@ from typing import Any, Optional
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
 from dataagent.agents.nl2sql.utils.administrative_divisions import format_administrative_division_rules
-from dataagent.agents.nl2sql.utils.business_twin_business_id_selector import select_business_twin_business_id
+from dataagent.agents.nl2sql.utils.business_twin_business_id_selector import (
+    BusinessTwinExtraction,
+    select_business_twin_business_id,
+)
 from dataagent.agents.nl2sql.utils.nl2sql_utils import schema_to_ddl
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.utils.log import logger
@@ -193,6 +196,47 @@ class BusinessTwinPerceptorNode(PerceptorNode):
             )
         return "\n".join(lines).rstrip()
 
+    @staticmethod
+    def _fallback_family(families: list[dict[str, Any]], required: set[str]) -> dict[str, Any]:
+        """Pick the family covering the most required dimensions, then with the fewest extras."""
+
+        def sort_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
+            index, family = item
+            dimensions = set(family["dimensions"])
+            return (len(required - dimensions), len(dimensions - required), index)
+
+        eligible = [family for family in families if required <= set(family["dimensions"])]
+        if not eligible:
+            logger.warning(
+                f"No business-twin table family covers required dimensions: {sorted(required)}; "
+                "falling back to best partial coverage"
+            )
+            eligible = families
+        return min(enumerate(eligible), key=sort_key)[1]
+
+    @classmethod
+    def _fallback_granularity(
+        cls,
+        family: dict[str, Any],
+        selection: Optional[dict[str, Any]],  # noqa: UP045
+        extraction: BusinessTwinExtraction,
+    ) -> str:
+        """Pick a granularity the family really has: explicit ask, model's pick, then closest."""
+        available = family["tables_by_granularity"]
+        target = extraction.granularity or (selection or {}).get("granularity") or ""
+        if target in available:
+            return target
+        order = cls._GRANULARITY_ORDER.get(target)
+        if order is not None:
+            finer = [g for g in available if cls._GRANULARITY_ORDER.get(g, 999) < order]
+            if finer:
+                return max(finer, key=lambda g: cls._GRANULARITY_ORDER[g])
+            coarser = [g for g in available if cls._GRANULARITY_ORDER.get(g, 999) > order]
+            if coarser:
+                return min(coarser, key=lambda g: cls._GRANULARITY_ORDER[g])
+        # A finer table can still answer coarser questions; the reverse cannot.
+        return next(iter(available))
+
     @classmethod
     def _parse_table_name(cls, table_name: str) -> dict[str, str] | None:
         name = str(table_name or "").strip()
@@ -262,17 +306,41 @@ class BusinessTwinPerceptorNode(PerceptorNode):
             )
         return catalog_names[mentioned[0]]
 
-    def _resolve_table_family_selection(
-        self, selection: dict[str, str] | None, families: list[dict[str, Any]]
-    ) -> str | None:
-        if not selection:
-            return None
-        family_name = selection["family_name"].removeprefix(f"{self.db}.")
+    def _find_family(self, family_name: str, families: list[dict[str, Any]]) -> Optional[dict[str, Any]]:  # noqa: UP045
+        target = str(family_name or "").removeprefix(f"{self.db}.")
         for family in families:
-            if family["family_name"] != family_name:
-                continue
-            return family["tables_by_granularity"].get(selection["granularity"])
+            if family["family_name"] == target:
+                return family
         return None
+
+    def _resolve_table(
+        self,
+        selection: Optional[dict[str, Any]],  # noqa: UP045
+        families: list[dict[str, Any]],
+        extraction: BusinessTwinExtraction,
+    ) -> tuple[str, bool]:
+        """Resolve the model's family selection to a table, with a deterministic fallback."""
+        family_dimensions = set().union(*(family["dimensions"] for family in families))
+        dropped = set(extraction.dimensions) - family_dimensions
+        if dropped:
+            logger.warning(
+                f"Ignoring business-twin extracted dimensions no candidate family carries: {sorted(dropped)}"
+            )
+        required = set(extraction.dimensions) & family_dimensions
+        if selection:
+            family = self._find_family(selection.get("family_name", ""), families)
+            if family is not None and required <= set(family["dimensions"]):
+                table = family["tables_by_granularity"].get(selection.get("granularity"))
+                if table:
+                    return table, selection.get("explicit_granularity") is True
+        family = self._fallback_family(families, required)
+        granularity = self._fallback_granularity(family, selection, extraction)
+        logger.warning(
+            "Business-twin table family fallback: "
+            f"llm_selection={selection} required_dimensions={sorted(required)} "
+            f"fallback={family['family_name']} granularity={granularity}"
+        )
+        return family["tables_by_granularity"][granularity], extraction.granularity is not None
 
     async def _business_twin_schema_linking(self, question: str):
         """Select the business-twin table family and return its schema, joins, catalog, and granularity."""
@@ -333,7 +401,7 @@ class BusinessTwinPerceptorNode(PerceptorNode):
                 catalog.append(parsed)
         return catalog
 
-    async def _select_business_id(self, question: str) -> str:
+    async def _select_business_id(self, question: str) -> BusinessTwinExtraction:
         payload = await self.execute_with_llm_json(
             {"question": question},
             action="filter_business_twin_business_id_",
@@ -372,18 +440,15 @@ class BusinessTwinPerceptorNode(PerceptorNode):
         if pinned:
             # Pinning names a table, not an output granularity, so nothing is claimed here.
             return pinned, False
-        business_id = await self._select_business_id(question)
+        extraction = await self._select_business_id(question)
         families = self._build_table_family_candidates(
             [table for table in catalog if table["bare_table_name"].lower() not in self._EXPLICIT_ONLY_TABLES],
-            [business_id],
+            [extraction.business_id],
         )
         if not families:
             raise NL2SQLError(
                 "Business-twin table family catalog is empty",
-                detail=f"No table family matched business ID: {business_id}",
+                detail=f"No table family matched business ID: {extraction.business_id}",
             )
         selection = await self._select_table_family(question, families)
-        table = self._resolve_table_family_selection(selection, families)
-        if not table:
-            raise NL2SQLError("Business-twin table family selection returned no valid table")
-        return table, bool(selection and selection.get("explicit_granularity"))
+        return self._resolve_table(selection, families, extraction)
