@@ -13,6 +13,7 @@
 
 import re
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any
 
@@ -38,9 +39,25 @@ _ORDINARY_RULES = _BUSINESS_RULES["ordinary_experience"]
 _ORDINARY_EXTENDED_METRICS = frozenset(_ORDINARY_RULES["extended_metrics"])
 _ORDINARY_LOAD_DIMENSIONS = frozenset(_ORDINARY_RULES["load_dimensions"])
 _WILDCARD_METRIC_FIELDS = tuple(field for field in _METRIC_FIELDS if "*" in field)
+_GRANULARITY_FIELD_TO_VALUE = {
+    "15min_granularity": "15min",
+    "1h_granularity": "1h",
+    "1d_granularity": "1d",
+}
+
+
+@dataclass(frozen=True)
+class BusinessTwinExtraction:
+    """Canonical columns extracted from a question plus the business ID they route to."""
+
+    business_id: str
+    metrics: frozenset[str]
+    dimensions: frozenset[str]
+    granularity: str | None
 
 
 def _canonicalize_column(field: str) -> str:
+    field = field.casefold()  # 大小写归一
     if field in _METRIC_FIELDS or field in _DIMENSION_FIELDS:
         return field
     return next((pattern for pattern in _WILDCARD_METRIC_FIELDS if fnmatchcase(field, pattern)), field)
@@ -54,7 +71,7 @@ def _normalize_columns(payload: object) -> tuple[frozenset[str], frozenset[str]]
     valid: list[str] = []
     unknown: list[str] = []
     for field in unique:
-        if field.casefold() in _IGNORED_TEMPORAL_FIELDS:
+        if field in _IGNORED_TEMPORAL_FIELDS:
             continue
         if field not in _METRIC_FIELDS and field not in _DIMENSION_FIELDS:
             unknown.append(field)
@@ -187,8 +204,30 @@ def _select_business_id(extraction: Mapping[str, Any]) -> str:
     return min(pool, key=sort_key)["business_id"]
 
 
-def select_business_twin_business_id(question: str, payload: object) -> str:
-    """Select one business-twin business ID from canonical columns extracted by the model."""
+def _extract_granularity(payload: object) -> str | None:
+    """Return the first explicit granularity pseudo-dimension in the payload, if any."""
+    if not isinstance(payload, list):
+        return None
+    for item in payload:
+        if not isinstance(item, str):
+            continue
+        value = _GRANULARITY_FIELD_TO_VALUE.get(item.strip().casefold())
+        if value:
+            return value
+    return None
 
+
+def select_business_twin_business_id(question: str, payload: object) -> BusinessTwinExtraction:
+    """Select the business-twin business ID from canonical columns extracted by the model.
+
+    The normalized columns are kept alongside so callers can validate downstream
+    table selection: ``dimensions`` are the columns the physical table must carry,
+    and ``granularity`` is the granularity the question asked for explicitly.
+    """
     metrics, dimensions = _normalize_columns(payload)
-    return _select_business_id({"metrics": metrics, "dimensions": dimensions})
+    return BusinessTwinExtraction(
+        business_id=_select_business_id({"metrics": metrics, "dimensions": dimensions}),
+        metrics=metrics,
+        dimensions=dimensions - frozenset(_GRANULARITY_FIELD_TO_VALUE),
+        granularity=_extract_granularity(payload),
+    )

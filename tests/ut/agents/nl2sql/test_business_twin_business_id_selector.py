@@ -41,7 +41,7 @@ def test_selects_general_experience_from_bare_column_list() -> None:
         selector.select_business_twin_business_id(
             "5月宜兴市保障用户网络下行速率提升百分比前20个",
             ["downlink_traffic", "downlink_duration", "county", "guarantee_group"],
-        )
+        ).business_id
         == "dw1745159007"
     )
 
@@ -51,9 +51,43 @@ def test_known_extra_metric_is_classified_without_dimension_error() -> None:
         selector.select_business_twin_business_id(
             "5月宜兴市保障用户网络下行速率提升百分比前20个",
             ["downlink_traffic", "downlink_duration", "county", "assurance_users"],
-        )
+        ).business_id
         == "dw1745159007"
     )
+
+
+def test_extraction_keeps_required_dimensions_and_granularity() -> None:
+    result = selector.select_business_twin_business_id(
+        "查询最近三天小时粒度下按TAI统计的保障用户保障前后网络下行速率提升百分比",
+        ["downlink_traffic", "downlink_duration", "guarantee_group", "1h_granularity", "tai"],
+    )
+
+    assert result.business_id == "dw1745159007"
+    assert result.metrics == frozenset({"downlink_traffic", "downlink_duration"})
+    assert result.dimensions == frozenset({"guarantee_group", "tai"})
+    assert result.granularity == "1h"
+
+
+def test_extraction_reports_first_granularity_and_none_without_one() -> None:
+    assert (
+        selector.select_business_twin_business_id(
+            "查询下行流量", ["downlink_traffic", "1d_granularity", "1h_granularity"]
+        ).granularity
+        == "1d"
+    )
+    assert selector.select_business_twin_business_id("查询下行流量", ["downlink_traffic"]).granularity is None
+
+
+def test_extraction_normalizes_case_deviated_columns() -> None:
+    result = selector.select_business_twin_business_id(
+        "查询最近三天小时粒度下按TAI统计的保障用户保障前后网络下行速率提升百分比",
+        ["Downlink_Traffic", "DOWNLINK_DURATION", "GUARANTEE_GROUP", "1H_Granularity", "Tai"],
+    )
+
+    assert result.business_id == "dw1745159007"
+    assert result.metrics == frozenset({"downlink_traffic", "downlink_duration"})
+    assert result.dimensions == frozenset({"guarantee_group", "tai"})
+    assert result.granularity == "1h"
 
 
 @pytest.mark.parametrize(
@@ -140,7 +174,7 @@ def test_known_extra_metric_is_classified_without_dimension_error() -> None:
     ],
 )
 def test_column_only_routes(question: str, columns: list[str], expected: str) -> None:
-    assert selector.select_business_twin_business_id(question, columns) == expected
+    assert selector.select_business_twin_business_id(question, columns).business_id == expected
 
 
 @pytest.mark.parametrize(
@@ -153,7 +187,31 @@ def test_column_only_routes(question: str, columns: list[str], expected: str) ->
     ],
 )
 def test_normalizes_physical_distribution_metrics(columns: list[str], expected: str) -> None:
-    assert selector.select_business_twin_business_id("查询MOS分段用户数", columns) == expected
+    assert selector.select_business_twin_business_id("查询MOS分段用户数", columns).business_id == expected
+
+
+@pytest.mark.parametrize(
+    ("columns", "expected"),
+    [
+        (["MOS_SEC3_TIMES"], "dw1745159007"),
+        (["Mos_Sec1_Times", "TERM_BRAND"], "dw1745159014"),
+        (["MOST_RESOLUTION1080P_TIMES", "NE_NAME"], "dw1745159027"),
+        (["ASSURANCE_TIMES", "Term_Brand"], "dw1745159016"),
+    ],
+)
+def test_routes_case_deviated_columns(columns: list[str], expected: str) -> None:
+    assert selector.select_business_twin_business_id("查询MOS分段用户数", columns).business_id == expected
+
+
+def test_ignores_case_deviated_temporal_columns_silently(monkeypatch: pytest.MonkeyPatch) -> None:
+    warnings: list[str] = []
+    monkeypatch.setattr(selector.logger, "warning", warnings.append)
+
+    result = selector.select_business_twin_business_id("查询无锡下行流量", ["Downlink_Traffic", "TIME"])
+
+    assert result.business_id == "dw1745159007"
+    assert result.dimensions == frozenset()
+    assert warnings == []
 
 
 def test_ignores_duplicate_temporal_and_unknown_columns(
@@ -167,7 +225,7 @@ def test_ignores_duplicate_temporal_and_unknown_columns(
         ["downlink_traffic", "downlink_traffic", "time", "invented_column", "city"],
     )
 
-    assert result == "dw1745159007"
+    assert result.business_id == "dw1745159007"
     assert warnings == ["Ignoring unknown business-twin extraction columns: invented_column"]
 
 
@@ -180,7 +238,7 @@ def test_all_ignored_or_unknown_columns_use_general_fallback(
         selector.select_business_twin_business_id(
             "普通查询",
             ["time", "invented_column"],
-        )
+        ).business_id
         == "dw1745159007"
     )
 
@@ -196,6 +254,6 @@ def test_value_sensitive_mobile_game_preference_is_removed() -> None:
         selector.select_business_twin_business_id(
             "查询无锡市华为终端手游平均端到端时延",
             ["delay_e2e", "delay_e2e_times", "app_id", "city", "term_brand"],
-        )
+        ).business_id
         == "dw1745159014"
     )

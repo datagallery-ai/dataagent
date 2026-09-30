@@ -18,6 +18,7 @@ import pytest
 
 from dataagent.agents.nl2sql.errors import NL2SQLError
 from dataagent.agents.nl2sql.nodes.business_twin_perceptor import BusinessTwinPerceptorNode
+from dataagent.agents.nl2sql.utils.business_twin_business_id_selector import BusinessTwinExtraction
 
 EXPLICIT_ONLY_TABLE = "fact_dw1745159004_0000000000000000_metric_1h"
 EXCLUDED_FAMILY = "fact_dw1745159004_0000000000000000"
@@ -101,8 +102,13 @@ async def test_unmentioned_question_excludes_explicit_only_table(
     node = BusinessTwinPerceptorNode(config_manager=_ConfigManager())
     seen_families: list[list[dict[str, Any]]] = []
 
-    async def fake_business_id(question: str) -> str:
-        return "dw1745159004"
+    async def fake_business_id(question: str) -> BusinessTwinExtraction:
+        return BusinessTwinExtraction(
+            business_id="dw1745159004",
+            metrics=frozenset(),
+            dimensions=frozenset(),
+            granularity="1h",
+        )
 
     async def fake_select_family(question: str, families: list[dict[str, Any]]) -> dict[str, Any]:
         seen_families.append(families)
@@ -130,9 +136,14 @@ async def test_plain_question_keeps_normal_flow(
     node = BusinessTwinPerceptorNode(config_manager=_ConfigManager())
     called = {"business_id": False}
 
-    async def fake_business_id(question: str) -> str:
+    async def fake_business_id(question: str) -> BusinessTwinExtraction:
         called["business_id"] = True
-        return "dw1745159004"
+        return BusinessTwinExtraction(
+            business_id="dw1745159004",
+            metrics=frozenset(),
+            dimensions=frozenset(),
+            granularity="1h",
+        )
 
     async def fake_select_family(question: str, families: list[dict[str, Any]]) -> dict[str, Any]:
         return {"family_name": OTHER_FAMILY, "granularity": "1h", "explicit_granularity": True}
