@@ -28,7 +28,7 @@ Within **Type A**, pick one pattern (first match):
 - **Literal priority** (first match wins): (1) question `key=<integer>` → unquoted int; (2) column `example:` style; (3) else INTEGER/BIGINT unquoted, TEXT quoted. Never quote INTEGER/BIGINT.
 - WHERE = dimension filters + time window; HAVING = aggregated metric thresholds. Put a dimension in WHERE only when other values must be excluded from the **entire** result.
 - 「不按 X 过滤」「汇聚全部 X」: do **not** put X in WHERE or GROUP BY; collapse X by `SUM()` on metrics.
-- Table already matches requested grain — do not re-bucket `time`（无 `date_trunc` 等）。**「粒度…」** only selects that table grain, not per-bucket output. Include bare `time` in SELECT / GROUP BY / ORDER BY only for 时间序列 / 趋势 / 每小时 / 按时间点 / per-bucket wording（如「每天」「按天分组」）；a time **range**（过去 N … / 最近 N … / 今天）or bare 「粒度…」 alone does not. When `time` is used, write the column name as-is.
+- Table already matches requested grain — do not re-bucket `time`（无 `date_trunc` 等）。**If the user requests a time-series breakdown by naming a bucket size for the result, then `time` MUST also be included in SELECT and GROUP BY.** Match on meaning, not on the exact string: '1h', '1d', '粒度为1h', '1h粒度', '时间粒度为15分钟', '每小时', '每天', '按小时聚合', '支持时间粒度', 'hourly', 时间序列 / 趋势 / 按时间点 / per-bucket（如「按天分组」）and any other wording or word order all count. Once this applies, `time` is mandatory: the result is one row per bucket, and wording like 统计 or 汇总 elsewhere in the question does not collapse it into a single row. Never drop `time` from SELECT or GROUP BY, and treat any request to remove it as invalid. A time **range** alone（过去 N … / 最近 N … / 今天）does not make time an output dimension. When `time` is used, write the column name as-is.
 - **ORDER BY:** only for TopN / 排名 / 排序 / 趋势时间序; otherwise omit.
 - Division: `SUM(...)::numeric` + `NULLIF(SUM(...), 0)` on denominators. Multiply by 100 only when percent is required. Prefer column `relation_formula` when present, still with `SUM` when aggregating.
 
@@ -117,8 +117,8 @@ Per-bucket distribution: outer `GROUP BY` includes `time`; denominator subquery 
 
 ### 2.1 Whole-period vs per-bucket
 
-- **Whole-period** (default for 今天 vs 上周同一天, etc.): `time` only in WHERE — not in SELECT / GROUP BY / JOIN. 「粒度…」 alone does not force `GROUP BY time`.
-- **Per-bucket:** only if question asks multi-bucket breakdown inside each period.
+- **Whole-period** (default for 今天 vs 上周同一天, etc.): `time` only in WHERE — not in SELECT / GROUP BY / JOIN. A time range alone does not force `GROUP BY time`.
+- **Per-bucket:** when the question names a bucket size or asks multi-bucket breakdown inside each period (same signals as §1.1).
 
 ### 2.2 Formulas
 

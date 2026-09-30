@@ -628,7 +628,8 @@ def test_perceptor_max_need_hit_families_and_resolve_with_mocks(monkeypatch: pyt
     client.hybrid_table_columns = fake_hybrid
 
     table = asyncio.run(node._select_traffic_insight_table("各小区应用大类下行流量和用户数按小时"))
-    assert table in {"appcate_cell_1h", "db.appcate_cell_1h"}
+    assert table[0] in {"appcate_cell_1h", "db.appcate_cell_1h"}
+    assert table[1] is False  # mock omits explicit_granularity → treated as derived
     # Only max need-hit family (appcate_cell hits 3) should be hybrid-fetched; lower tiers dropped.
     requested_bares = {name.rsplit(".", 1)[-1] for chunk in hybrid_requests for name in chunk}
     assert requested_bares == {"appcate_cell_1h"}
@@ -688,7 +689,7 @@ def test_perceptor_min_extra_top5_keeps_more_tiers(monkeypatch: pytest.MonkeyPat
     client.hybrid_table_columns = fake_hybrid
 
     table = asyncio.run(node._select_traffic_insight_table("各小区应用大类下行流量"))
-    assert "appcate_cell_1h" in table
+    assert "appcate_cell_1h" in table[0]
     assert len(llm2_tables_blob) == 1
     assert "`appcate_cell`" in llm2_tables_blob[0]
     assert "`wide_appcate_cell`" in llm2_tables_blob[0]
@@ -728,7 +729,7 @@ def test_perceptor_need_d_empty_continues_with_metrics(monkeypatch: pytest.Monke
     client.hybrid_table_columns = fake_hybrid
 
     table = asyncio.run(node._select_traffic_insight_table("查一下行流量"))
-    assert "appcate_cell_1h" in table
+    assert "appcate_cell_1h" in table[0]
 
 
 def test_perceptor_single_dimension_miss_continues(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -766,7 +767,7 @@ def test_perceptor_single_dimension_miss_continues(monkeypatch: pytest.MonkeyPat
     client.hybrid_table_columns = fake_hybrid
 
     table = asyncio.run(node._select_traffic_insight_table("按小区查下行流量"))
-    assert "appcate_cell_1h" in table
+    assert "appcate_cell_1h" in table[0]
 
 
 def test_perceptor_all_field_eq_miss_raises(monkeypatch: pytest.MonkeyPatch) -> None:
