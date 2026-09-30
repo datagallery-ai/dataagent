@@ -74,8 +74,7 @@ class BaseNL2SQLNode(BaseNode):
             self._nl2sql_context_dump_dir = None
 
     async def execute_with_llm(self, context: dict[str, str], action: str = "") -> str:
-        """Render the node prompts and asynchronously invoke the configured LLM."""
-        llm = llm_manager.get_default_llm()
+        """Render the node prompts and collect the configured LLM's streamed response."""
         system_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}system"
         ).content
@@ -86,8 +85,7 @@ class BaseNL2SQLNode(BaseNode):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        response = await llm.ainvoke(prompts)
-        content = response.content
+        content = await self._collect_llm_stream(prompts)
         self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
         return content
 
@@ -106,6 +104,17 @@ class BaseNL2SQLNode(BaseNode):
                         component="nl2sql",
                     ) from exc
         return None
+
+    async def _collect_llm_stream(self, prompts: list[dict[str, str]]) -> str:
+        """Consume all chunks before returning text, preserving stream failures and cancellation."""
+        parts: list[str] = []
+        final_content: str | None = None
+        async for chunk in llm_manager.get_default_llm().astream(prompts):
+            if chunk.final_response is not None:
+                final_content = chunk.final_response.content
+            elif chunk.content:
+                parts.append(chunk.content)
+        return final_content if final_content is not None else "".join(parts)
 
     def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
         """Persist the (system, user, AI) prompt triple to the node's context-dump file."""
