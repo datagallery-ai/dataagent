@@ -100,6 +100,53 @@ _TAI_QUESTION = "查询最近三天小时粒度下，按TAI（tai字段）统计
 _RESOLUTION_QUESTION = "查询最近三天小时粒度下，按地市和TAI统计的保障用户占比最高分辨率次数分布"
 
 
+def test_railway_dimension_bit_is_exposed_on_its_table_family() -> None:
+    """Bits 23-26 stay station, section, railway, and max-share resolution; old masks stay unchanged."""
+    node = BusinessTwinPerceptorNode(config_manager=_ConfigManager())
+
+    assert node._decode_dimensions("0000000000800000") == ["crh_station_id"]
+    assert node._decode_dimensions("0000000001000000") == ["crh_section_id"]
+    assert node._decode_dimensions("0000000002000000") == ["crh_railway_id"]
+    assert node._decode_dimensions("0000000004000000") == ["most_resolution"]
+    assert node._decode_dimensions("0000000003000000") == ["crh_section_id", "crh_railway_id"]
+    assert node._decode_dimensions("0000000000801000") == ["gnb", "crh_station_id"]
+    assert node._decode_dimensions("0000000000001000") == ["gnb"]
+    assert node._decode_dimensions("00000000000181c4") == [
+        "guarantee_group",
+        "custom_group",
+        "app_id",
+        "sub_app_id",
+        "city",
+        "county",
+    ]
+
+    families = node._build_table_family_candidates(
+        [
+            {
+                "bare_table_name": "fact_dw1745159031_0000000000001000_metric_1h",
+                "business_id": "dw1745159031",
+                "dimension_code": "0000000000001000",
+                "granularity": "1h",
+            },
+            {
+                "bare_table_name": "fact_dw1745159031_0000000002000000_metric_1h",
+                "business_id": "dw1745159031",
+                "dimension_code": "0000000002000000",
+                "granularity": "1h",
+            },
+        ],
+        ["dw1745159031"],
+    )
+    by_name = {family["family_name"]: family["dimensions"] for family in families}
+
+    assert by_name["fact_dw1745159031_0000000002000000"] == ["crh_railway_id"]
+    assert by_name["fact_dw1745159031_0000000000001000"] == ["gnb"]
+    prompt = node._format_table_family_prompt_context(families)
+    assert "`crh_railway_id`（高铁线路）" in prompt
+    railway_block = prompt.split("fact_dw1745159031_0000000002000000", 1)[1]
+    assert "`crh_railway_id`" in railway_block.split("###", 1)[0]
+
+
 def test_table_family_uses_granularity_to_table_mapping() -> None:
     node = BusinessTwinPerceptorNode(config_manager=_ConfigManager())
     families = node._build_table_family_candidates(

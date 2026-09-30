@@ -137,6 +137,26 @@ _DIMENSION_METADATA = {
         "name": "高铁签约标识",
         "description": "标识用户是否为高铁签约用户",
     },
+    23: {
+        "field": "crh_station_id",
+        "name": "高铁站点",
+        "description": "高铁站点标识",
+    },
+    24: {
+        "field": "crh_section_id",
+        "name": "高铁线路段",
+        "description": "高铁线路段标识",
+    },
+    25: {
+        "field": "crh_railway_id",
+        "name": "高铁线路",
+        "description": "高铁线路标识",
+    },
+    26: {
+        "field": "most_resolution",
+        "name": "最大占比分辨率",
+        "description": "占比最高的分辨率",
+    },
 }
 
 
