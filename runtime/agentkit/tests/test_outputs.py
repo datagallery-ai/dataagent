@@ -30,7 +30,7 @@ async def test_native_output_listing_and_preview_survive_restart(runtime):
         assert (await client.get("/sessions/thread-1/outputs")).json() == response.json()
         preview = await client.get("/sessions/thread-1/outputs/preview", params={"path": "销售报告.md"})
         assert preview.json()["content"] == "# Sales\n\nTotal: 42"
-        assert not app.state.agents.graphs  # Listing/preview never assembles an Agent.
+        assert not app.state.agents.cache  # Listing/preview never assembles an Agent.
 
 
 async def test_outputs_only_list_current_session_regular_business_files(runtime, tmp_path):

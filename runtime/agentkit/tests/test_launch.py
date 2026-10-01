@@ -98,7 +98,7 @@ def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path)
 def test_runtime_separates_settings_paths_extensions_and_report(tmp_path):
     runtime = prepare_runtime(options(tmp_path))
     assert {field.name for field in fields(runtime)} == {
-        "settings", "paths", "extensions", "report",
+        "settings", "paths", "extensions", "report", "model_environment",
     }
     assert {field.name for field in fields(runtime.report)} == {
         "configs", "plugin_origins", "env_file",

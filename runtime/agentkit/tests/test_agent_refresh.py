@@ -28,7 +28,7 @@ async def ask(client, text="hello", thread="thread-1"):
 
 async def test_same_session_reuses_graph_and_history_other_sessions_do_not(runtime):
     model = ScriptedModel(responses=[AIMessage(content="done")] * 3)
-    with patch.object(agents, "build_agent", wraps=agents.build_agent) as build:
+    with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
         async with client_for(runtime, model) as (client, app):
             await ask(client, "first")
             await ask(client, "second")
@@ -38,13 +38,13 @@ async def test_same_session_reuses_graph_and_history_other_sessions_do_not(runti
             assert build.call_count == 1
             await ask(client, "isolated", "thread-2")
             assert build.call_count == 2
-            assert len(app.state.agents.graphs) == 2
+            assert len(app.state.agents.cache) == 2
             assert [m.content for m in model.requests[2] if isinstance(m, HumanMessage)] == ["isolated"]
 
 
 async def test_skill_install_and_remove_refresh_checkpointed_metadata(runtime):
     model = ScriptedModel(responses=[AIMessage(content="done")] * 3)
-    with patch.object(agents, "build_agent", wraps=agents.build_agent) as build:
+    with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
         async with client_for(runtime, model) as (client, app):
             await ask(client, "before installation")
             installed = skill(runtime.paths.home / "skills", "new-skill", "New skill evidence.")
@@ -54,8 +54,8 @@ async def test_skill_install_and_remove_refresh_checkpointed_metadata(runtime):
             await ask(client, "after removal")
             assert "new-skill" not in str(model.requests[2][0].content)
             assert build.call_count == 3
-            graph = next(iter(app.state.agents.graphs.values()))
-            state = await graph.aget_state({"configurable": {"thread_id": "thread-1"}})
+            graph = next(iter(app.state.agents.cache.values()))
+            state = await graph.graph.aget_state({"configurable": {"thread_id": "thread-1"}})
             assert len([m for m in state.values["messages"] if isinstance(m, HumanMessage)]) == 3
             assert state.values["extension_revision"] == app.state.agents.revision
 
@@ -110,12 +110,12 @@ async def test_reload_failure_preserves_previous_session_and_retries_after_fix(r
     async with client_for(runtime, model) as (client, app):
         await ask(client)
         previous = app.state.agents.revision
-        graph = next(iter(app.state.agents.graphs.values()))
+        graph = next(iter(app.state.agents.cache.values()))
         home_config(runtime, {"plugins": {"enabled": ["missing-plugin"]}})
         response = await client.post("/dataagent/stream", json=query("rejected"))
         assert response.status_code == 409 and "Extension reload failed" in response.text
         assert app.state.agents.revision == previous
-        assert next(iter(app.state.agents.graphs.values())) is graph
+        assert next(iter(app.state.agents.cache.values())) is graph
         restored = (await client.get("/sessions/thread-1")).json()
         assert restored["status"] == "complete"
         home_config(runtime, {"plugins": {"enabled": ["common"]}})
@@ -195,13 +195,13 @@ async def test_active_run_keeps_graph_while_another_session_refreshes(runtime):
 
 async def test_cache_eviction_keeps_persisted_history(runtime):
     model = ScriptedModel(responses=[AIMessage(content="done")] * 3)
-    with patch.object(agents, "build_agent", wraps=agents.build_agent) as build:
+    with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
         async with client_for(runtime, model) as (client, app):
             app.state.agents.max_cached = 1
             await ask(client, "first", "one")
             await ask(client, "second", "two")
             await ask(client, "third", "one")
-            assert len(app.state.agents.graphs) == 1 and build.call_count == 3
+            assert len(app.state.agents.cache) == 1 and build.call_count == 3
             assert [m.content for m in model.requests[-1] if isinstance(m, HumanMessage)] == ["first", "third"]
 
 

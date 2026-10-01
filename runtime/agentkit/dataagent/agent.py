@@ -15,7 +15,6 @@ from langchain.agents.middleware import (
     ToolErrorMiddleware,
 )
 from langchain_core.tools import BaseTool, ToolException
-from langchain_openai import ChatOpenAI
 
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
@@ -24,20 +23,9 @@ from dataagent.extensions import compile_extensions, select_plugins
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 from dataagent.extensions.skills import VersionedSkillsMiddleware
 from dataagent.extensions.tracing import LocalLangChainTracer
+from dataagent.models import ModelContext
 from dataagent.prompts import render_agent_prompt, render_filesystem_prompt, render_subagent_prompt
-from dataagent.settings import Limits, Settings
-
-
-def build_model(settings: Settings):
-    config = settings.models[settings.dataagent.model.default]
-    return ChatOpenAI(
-        model=config.name,
-        base_url=config.base_url,
-        api_key=config.api_key,
-        use_responses_api=False,
-        max_retries=config.max_retries,
-        timeout=settings.dataagent.limits.timeout_seconds,
-    )
+from dataagent.settings import Limits
 
 
 def _correctable_error(error, request):
@@ -83,7 +71,10 @@ def build_agent(
     input_workspaces: tuple[WorkspaceInput, ...] | None = None,
     mcp_tools: Sequence[BaseTool] | None = None,
     extension_revision: str | None = None,
+    context: ModelContext | None = None,
 ):
+    """Return the native graph; raw callers pass context on invocation or use create_agent."""
+    context = context if context is not None else ModelContext(runtime, model=model)
     settings = runtime.settings
     workspaces = runtime.paths.workspaces if input_workspaces is None else input_workspaces
     session = session or runtime.paths.for_session("sdk")
@@ -104,7 +95,8 @@ def build_agent(
                 backend=backend, sources=child.get("skills", []), revision=extension_revision,
             ))
     kwargs.update(
-        model=model if model is not None else build_model(settings),
+        model=context.get_model(),
+        context_schema=ModelContext,
         backend=backend,
         checkpointer=checkpointer,
         system_prompt=render_agent_prompt(
