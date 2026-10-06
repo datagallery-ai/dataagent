@@ -1505,6 +1505,14 @@ async def dataops_validate_sql_with_log_analysis(
     for key, value in validate_result.items():
         ordered_result[key] = value
 
+    MAX_LEN_ERROR_LOG = 250
+    if len(ordered_result.get("errorLog", "")) > MAX_LEN_ERROR_LOG:
+        ordered_result["errorLog"] = ordered_result["errorLog"][:MAX_LEN_ERROR_LOG] + f"... truncated at {MAX_LEN_ERROR_LOG} chars."
+
+    MAX_LEN_ERROR = 500
+    if len(ordered_result.get("error", "")) > MAX_LEN_ERROR:
+        ordered_result["error"] = ordered_result["error"][:MAX_LEN_ERROR] + f"... truncated at {MAX_LEN_ERROR} chars."
+
     elapsed = time.time() - start_time
     logger.debug(
         f"[dataops_validate_sql_with_log_analysis] === END (failed with analysis) "

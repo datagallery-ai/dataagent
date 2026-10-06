@@ -3,7 +3,8 @@ AGENT_CONFIG:
   backend: "langgraph"
   type: "nl2sql"
 CORE:
-  perceptor: {}
+  perceptor:
+    user_sql_rules: "sql_rules"
   generator:
     strategies: ["prompt"]
   validator:
