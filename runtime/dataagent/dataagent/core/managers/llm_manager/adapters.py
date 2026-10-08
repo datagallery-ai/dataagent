@@ -37,6 +37,17 @@ def log_llm_done(phase: str, resp: LLMResponse, *, rid: str | None = None) -> No
     )
 
 
+def split_inline_reasoning(content: str, reasoning_content: str = "") -> tuple[str, str]:
+    """Move text preceding the first closing think tag into reasoning for a complete response."""
+    before, marker, after = content.partition("</think>")
+    if not marker:
+        return content, reasoning_content
+    inline_reasoning = before.lstrip().removeprefix("<think>").strip()
+    if inline_reasoning:
+        reasoning_content = f"{reasoning_content}\n{inline_reasoning}" if reasoning_content else inline_reasoning
+    return after.lstrip(), reasoning_content
+
+
 @dataclass(frozen=True)
 class LLMResponse:
     """
@@ -91,10 +102,11 @@ class _StreamAccum:
 
     def to_llm_response(self) -> LLMResponse:
         """将累积状态化为最终 LLMResponse。"""
+        content, reasoning_content = split_inline_reasoning("".join(self.content_parts), "".join(self.reasoning_parts))
         return LLMResponse(
-            content="".join(self.content_parts),
+            content=content,
             usage_metadata=self.usage_metadata,
-            reasoning_content="".join(self.reasoning_parts),
+            reasoning_content=reasoning_content,
             tool_calls=list(self.tool_calls),
             invalid_tool_calls=list(self.invalid_tool_calls),
             raw=self.raw,
@@ -502,7 +514,7 @@ class LangChainChatModelAdapter:
         return m
 
     @classmethod
-    def _wrap_output(cls, out: Any) -> LLMResponse:
+    def _wrap_output(cls, out: Any, *, complete: bool = True) -> LLMResponse:
         """解析模型输出并封装为统一响应结构。"""
         # langchain 通常返回 AIMessage，具备 content / usage_metadata
         content = ""
@@ -529,6 +541,8 @@ class LangChainChatModelAdapter:
                 }
             )
         reasoning_content = cls._extract_reasoning_content(out)
+        if complete:
+            content, reasoning_content = split_inline_reasoning(content, reasoning_content)
         try:
             tool_calls = cast(list[dict[str, Any]], getattr(out, "tool_calls", None) or [])
         except Exception:
@@ -660,7 +674,7 @@ class LangChainChatModelAdapter:
     def _stream_out_step(
         self, accumulated: _StreamAccum | None, out: Any
     ) -> tuple[_StreamAccum, LLMStreamChunk | None]:
-        chunk_resp = out if isinstance(out, LLMResponse) else self._wrap_output(out)
+        chunk_resp = out if isinstance(out, LLMResponse) else self._wrap_output(out, complete=False)
         if accumulated is None:
             accumulated = _StreamAccum()
         accumulated.append_chunk(chunk_resp)
