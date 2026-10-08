@@ -28,6 +28,7 @@ from a2a.types.a2a_pb2 import (
     TaskArtifactUpdateEvent,
     TaskState,
 )
+from langchain_core.messages import AIMessage
 from loguru import logger
 
 from dataagent.core.errors import DataAgentError
@@ -210,6 +211,10 @@ class DataAgentExecutor(AgentExecutor):
         fallback_text: str = "",
     ) -> None:
         """Convert a DataAgent final state into A2A artifact and terminal status events."""
+        error_text = _extract_terminal_error(final_state)
+        if error_text:
+            await self._emit_failed(event_queue, task_id, context_id, error_text)
+            return
         final_text = fallback_text.strip() if fallback_text else _extract_final_answer(final_state).strip()
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
@@ -266,6 +271,7 @@ class DataAgentExecutor(AgentExecutor):
             stream_text = ""  # For custom/delta chunks (use +=)
             latest_state_text = ""  # For values/updates snapshots (use assignment)
             final_state: dict[str, Any] = {}  # Track the latest state for structured error checks
+            has_values_snapshot = False
             chunk_count = 0
 
             async for chunk in stream_response:
@@ -291,9 +297,18 @@ class DataAgentExecutor(AgentExecutor):
                         await self._emit_working(event_queue, task_id, context_id, stream_text)
 
                 elif mode in ("values", "updates") and isinstance(data, dict):
-                    # Values/updates mode: treat as full state snapshot
-                    # Snapshot replaces all previous content (including deltas)
-                    final_state = data
+                    # Values are full snapshots; updates contain per-node state deltas.
+                    # Preserve the complete snapshot for terminal error checks.
+                    if mode == "values":
+                        final_state = data
+                        has_values_snapshot = True
+                    elif not has_values_snapshot:
+                        if "messages" in data or "error" in data:
+                            final_state.update(data)
+                        else:
+                            for update in data.values():
+                                if isinstance(update, dict):
+                                    final_state.update(update)
                     snapshot = self._extract_state_answer_text(data)
                     if snapshot:
                         stream_text = snapshot
@@ -677,6 +692,32 @@ def _is_streaming_request(context: RequestContext) -> bool:
     if isinstance(marker, str):
         return marker.strip().lower() not in {"0", "false", "no"}
     return bool(marker)
+
+
+def _extract_terminal_error(response: Any) -> str:
+    """Read terminal error markers without treating recovered tool errors as task failures."""
+    if not isinstance(response, dict):
+        return ""
+
+    error = response.get("error")
+    if error:
+        return str(error)
+
+    messages = response.get("messages", [])
+    if not messages:
+        return ""
+    last_message = messages[-1] if isinstance(messages, (list, tuple)) else messages
+    if isinstance(last_message, AIMessage):
+        is_error = last_message.additional_kwargs.get("error", False)
+        content = last_message.content
+    elif isinstance(last_message, dict) and last_message.get("type") == "ai":
+        is_error = last_message.get("additional_kwargs", {}).get("error", False)
+        content = last_message.get("content", "")
+    else:
+        return ""
+    if is_error:
+        return str(content) or "Agent execution failed."
+    return ""
 
 
 def _extract_final_answer(response: Any) -> str:

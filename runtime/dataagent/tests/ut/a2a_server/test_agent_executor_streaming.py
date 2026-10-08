@@ -265,8 +265,8 @@ async def test_execute_agent_astream_natural_language_error_words_do_not_fail():
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_astream_structured_error_stays_completed():
-    """Direct A2A chat keeps COMPLETED when state carries an error field."""
+async def test_execute_agent_astream_structured_error_fails():
+    """A terminal error produces FAILED with error text and no result artifact."""
     chunks = [
         ("values", {"error": "Something went wrong", "messages": []}),
     ]
@@ -285,7 +285,9 @@ async def test_execute_agent_astream_structured_error_stays_completed():
     )
 
     status_events = [e for e in queue.events if e.__class__.__name__ == "TaskStatusUpdateEvent"]
-    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_COMPLETED)
+    assert int(status_events[-1].status.state) == int(TaskState.TASK_STATE_FAILED)
+    assert status_events[-1].status.message.parts[0].text == "Something went wrong"
+    assert not any(e.__class__.__name__ == "TaskArtifactUpdateEvent" for e in queue.events)
 
 
 @pytest.mark.asyncio
