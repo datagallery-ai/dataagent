@@ -144,7 +144,7 @@ class compress_strategy:
         self.message_cnt = message_cnt
         self.low_water_ratio = low_water_ratio
         self.ignore_history_reasoning = ignore_history_reasoning
-        if message_cnt < 2:
+        if message_cnt < 5:
             self.message_cnt = DEFAULT_MESSAGE_CNT
         if token_limit < 1024:
             self.token_limit = DEFAULT_TOKEN_LIMIT
