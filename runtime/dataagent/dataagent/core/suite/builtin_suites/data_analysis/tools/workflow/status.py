@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from copy import deepcopy
 from datetime import datetime
@@ -482,16 +483,16 @@ def validate_receipt(value: Any) -> dict[str, Any]:
         if not isinstance(artifact, dict):
             raise ValueError(f"receipt.artifacts[{index}] must be a dict")
         kind = str(artifact.get("kind") or "file").strip().lower()
-        if kind == "clickhouse_table":
+        if is_warehouse_table_kind(kind):
             uri = str(artifact.get("uri") or "").strip()
             name = str(artifact.get("name") or "").strip()
-            database, table = _clickhouse_table_from_uri(uri)
+            database, table = _warehouse_table_from_uri(uri)
             canonical_name = f"{database}.{table}"
             if name and name != canonical_name:
-                raise ValueError(f"receipt.artifacts[{index}].name must match ClickHouse URI table `{canonical_name}`")
+                raise ValueError(f"receipt.artifacts[{index}].name must match warehouse URI table `{canonical_name}`")
             if uri in seen:
                 continue
-            clean_artifacts.append({"kind": "clickhouse_table", "uri": uri, "name": canonical_name})
+            clean_artifacts.append({"kind": kind, "uri": uri, "name": canonical_name})
             seen.add(uri)
             continue
         if kind != "file":
@@ -507,24 +508,34 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     return {"summary": summary.strip(), "artifacts": clean_artifacts}
 
 
-def _clickhouse_table_from_uri(uri: str) -> tuple[str, str]:
-    prefix = "clickhouse://"
+WAREHOUSE_TABLE_KINDS = frozenset({"warehouse_table", "clickhouse_table"})
+_URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*$")
+
+
+def is_warehouse_table_kind(kind: str) -> bool:
+    """Return True for generic warehouse tables and the legacy ClickHouse kind."""
+    return str(kind or "").strip().lower() in WAREHOUSE_TABLE_KINDS
+
+
+def _warehouse_table_from_uri(uri: str) -> tuple[str, str]:
     value = str(uri or "").strip()
-    if not value.startswith(prefix):
-        raise ValueError("ClickHouse table artifact uri must use clickhouse://<database>/<table>")
-    remainder = value[len(prefix) :]
+    if "://" not in value:
+        raise ValueError("warehouse table artifact uri must use <scheme>://<database>/<table>")
+    scheme, remainder = value.split("://", 1)
+    if not _URI_SCHEME.fullmatch(scheme) or not remainder:
+        raise ValueError("warehouse table artifact uri must use <scheme>://<database>/<table>")
     if any(marker in remainder for marker in ("?", "#", "@")):
-        raise ValueError("ClickHouse table artifact uri must not contain query, fragment, or credentials")
+        raise ValueError("warehouse table artifact uri must not contain query, fragment, or credentials")
     parts = remainder.split("/")
     if len(parts) != 2 or not all(parts):
-        raise ValueError("ClickHouse table artifact uri must use clickhouse://<database>/<table>")
+        raise ValueError("warehouse table artifact uri must use <scheme>://<database>/<table>")
     database, table = parts
-    if not _is_clickhouse_identifier(database) or not _is_clickhouse_identifier(table):
-        raise ValueError("ClickHouse table artifact uri contains an invalid database or table name")
+    if not _is_warehouse_identifier(database) or not _is_warehouse_identifier(table):
+        raise ValueError("warehouse table artifact uri contains an invalid database or table name")
     return database, table
 
 
-def _is_clickhouse_identifier(value: str) -> bool:
+def _is_warehouse_identifier(value: str) -> bool:
     return bool(value) and value.replace("_", "a").isalnum() and not value[0].isdigit()
 
 

@@ -16,8 +16,8 @@ omit the path to allocate a fresh workspace.
 With `AGENT_CONFIG.subagent_output_sharing: true`, completed children
 also publish business artifacts to `subagent_output/<session>/`. The workflow
 stages local input files there before the first step; subsequent children use
-the read-only `subagent_output/manifest.json` index rather than reading the
-parent workspace or peer workspaces.
+the read-only shared-output index rather than reading the parent workspace or
+peer workspaces.
 
 Dynamic Python prompts, runtime-mount initialization, and resource-job post-hooks
 from the legacy 5519 plugin are intentionally not part of this native Suite.

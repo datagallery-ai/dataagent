@@ -1,0 +1,85 @@
+# 文件名（不含扩展名）即 semantic_download 的 scene_name。scene_id 只写入采样 plan。
+scene_id: game_user_targeting
+match_terms: [游戏, game, 下载, 安装]
+
+entity:
+  label: 目标游戏
+  tables:
+    - game_info
+    - game_feedback
+    - game_brand
+  key_table: game_info
+  key_column: game_id
+
+sampling:
+  pos_neg_ratio:
+    positive: 1
+    negative: 4
+    tolerance: 0.2
+  defaults:
+    sample_size: null
+    lookback_days: 90
+    label_window_days: null
+  prelabeled:
+    label_column_aliases: [label]
+    positive_values: [1, "1"]
+    negative_values: [0, "0"]
+  label_families:
+    - id: install_download
+      keywords: [下载, 安装, 拉新]
+      default_negative_populations: [N3, N2, N5]
+    - id: payment_revenue
+      keywords: [付费, 收入, ARPU]
+      default_negative_populations: [N4, N5]
+    - id: booking
+      keywords: [预约]
+      default_negative_populations: [N1, N5]
+    - id: click_conversion
+      keywords: [点击, CTR, 曝光转化]
+      default_negative_populations: [N2, N5]
+    - id: retention_activity
+      keywords: [留存, 活跃, DAU]
+      default_negative_populations: [N3, N2, N5]
+    - id: engagement
+      keywords: [时长, 参与]
+      default_negative_populations: [N3, N2, N5]
+    - id: search_browse
+      keywords: [搜索, 浏览, 意向]
+      default_negative_populations: [N1, N5]
+  negative_populations:
+    N1: domain_unconverted
+    N2: exposed_unconverted
+    N3: active_untouched
+    N4: payer_non_target
+    N5: random_background
+    N6: attribute_mismatch
+
+user_id_aliases: [usid, rank_flg, dsid]
+
+example_tables:
+  user_table: user_info
+  n_to_one_table: list_detail_info
+  event_fact_table: game_statistics_push
+  pay_event_table: game_booking_pay_info
+  entity_dim_table: game_info
+  entity_attr_table: game_feedback
+  entity_brand_table: game_brand
+
+example_columns:
+  list_col: game_interest_play_u
+  id_list_col: care_notification_up
+  n_to_one_list_col: anime_list_90d
+  numeric_str_col: funny_time
+  comma_list_col: game_installed_app_30d
+  metric_col: app_pref_count
+  pay_amount: pay_amount
+  entity_name: game_name
+  entity_key: game_id
+
+geo_columns:
+  name_patterns: [city, city_name, reside_city, user_city]
+  name_contains: [城市]
+  exclude_patterns: [cityhash, hash_city]
+  output_suffix: _tier
+
+list_delimiters: ["#", "^"]

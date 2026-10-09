@@ -1,126 +1,54 @@
-# 口径：labels（各 y-label 家族的正样本口径）
+# 口径：labels（通用正样本）
 
-**目的**：给出每个 y-label 家族「窗口内正样本」的口径。所有家族共用：正样本 = `(T0, T0+N]` 窗口内、对结构化 `game_scope` 指定游戏、发生该家族目标行为的 canonical `user_key`。防泄漏见 SKILL §4：label 口径只用带事件时间的事件流。
+**目的**：构造 label 窗口内的正样本。family 的关键词和负样本策略来自
+工作区里的 `scene.yaml`（来自 `config/scenes/<scene_name>.yaml`）；本文件不维护业务词表、固定表名、固定列名或枚举值。
 
-**公共参数**：`{{source_database}}`、`game_scope`、`T0`、`label_window_days`；表名/列名/SQL 从 plan 的 `sampling_sources`、`keys`、`sql_fragments` 读取。
+正样本是在 `(T0, T0+label_window_days]` 内，对 `entity_scope` 指定实体发生
+目标行为的 canonical `user_key`。表、列、类型和谓词只从 schema 与 plan 的
+`sampling_sources`、`keys`、`sql_fragments` 读取。
 
-**类型适配**：时间/金额列类型以 **`step1_0_table_schema.json`** 为准，写入 plan 的 `sql_fragments`。
+## 单事件正样本
 
----
-
-## 安装/下载
-
-```sql
-SELECT DISTINCT <canonical_user_key> AS user_key
-FROM {{source_database}}.<behavior_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <install_open_predicate>
-  AND <label_window_predicate>;
+```text
+SELECT DISTINCT <user_key_expr> AS user_key
+FROM {{source_database}}.<y_label.event_table>
+WHERE <valid_user>
+  AND <entity_filter>
+  AND <positive_label>
+  AND <label_window>;
 ```
 
-## 付费/收入（二分类）
+`positive_label` 由 step1_0 查询事件表的真实取值后写入 plan。语义结果用来理解列的含义，取值本身来自这次查询。
 
-```sql
-SELECT DISTINCT <canonical_user_key> AS user_key
-FROM {{source_database}}.<pay_booking_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <positive_pay_predicate>
-  AND <label_window_predicate>;
+## 多事件链路
+
+仅当语义结果和 `join_hints` 明确给出链路时使用：
+
+```text
+SELECT DISTINCT <left_user_key_expr> AS user_key
+FROM {{source_database}}.<upstream_event> AS e
+INNER JOIN {{source_database}}.<downstream_event> AS d
+  ON <verified_user_join> AND <verified_entity_join>
+WHERE <valid_join_keys>
+  AND <entity_filter>
+  AND <upstream_window>
+  AND <downstream_positive_label>
+  AND <downstream_window>
+  AND <downstream_after_upstream>;
 ```
 
-## 付费/收入（回归）
+## 聚合阈值
 
-```sql
-SELECT <canonical_user_key> AS user_key, sum(<numeric_pay_amount_expr>) AS label_value
-FROM {{source_database}}.<pay_booking_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <positive_pay_predicate>
-  AND <label_window_predicate>
-GROUP BY user_key;
-```
+次数、天数、金额或时长阈值必须来自任务参数或真实画像，并固化到
+`sql_fragments.positive_label`：
 
-## 预约
-
-```sql
-SELECT DISTINCT <canonical_user_key> AS user_key
-FROM {{source_database}}.<pay_booking_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <booking_converted_predicate>
-  AND <label_window_predicate>;
-```
-
-## 点击/CTR
-
-```sql
-SELECT DISTINCT <canonical_user_key> AS user_key
-FROM {{source_database}}.<exposure_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <click_indicator_predicate>
-  AND <label_window_predicate>;
-```
-
-## 曝光转化
-
-```sql
-SELECT DISTINCT <canonical_exposure_user_key> AS user_key
-FROM {{source_database}}.<exposure_event> AS e
-INNER JOIN {{source_database}}.<下游目标事件表> AS d
-  ON <canonical_exposure_user_key> = <canonical_downstream_user_key>
- AND <canonical_exposure_game_key> = <canonical_downstream_game_key>
-WHERE <valid_join_key_predicates>
-  AND <game_filter_predicate_exposure>
-  AND <label_window_predicate_exposure>
-  AND <downstream_positive_predicate>
-  AND <downstream_after_exposure_predicate>
-  AND <label_window_predicate_downstream>;
-```
-
-## 留存/活跃
-
-```sql
-SELECT <canonical_user_key> AS user_key
-FROM {{source_database}}.<behavior_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <label_window_predicate>
+```text
+SELECT <user_key_expr> AS user_key
+FROM {{source_database}}.<y_label.event_table>
+WHERE <valid_user> AND <entity_filter> AND <label_window>
 GROUP BY user_key
-HAVING uniqExact(<canonical_active_day_expr>) >= {{active_threshold}};
+HAVING <verified_aggregate_predicate>;
 ```
 
-## 时长/参与度
-
-二分类：
-```sql
-SELECT <canonical_user_key> AS user_key
-FROM {{source_database}}.<behavior_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <label_window_predicate>
-  AND <valid_duration_predicate>
-GROUP BY user_key
-HAVING sum(<numeric_duration_expr>) >= {{duration_threshold}};
-```
-
-回归口径为 `SELECT <canonical_user_key> AS user_key, sum(<numeric_duration_expr>) AS label_value ... GROUP BY user_key`，无 `HAVING`。
-
-## 搜索/浏览意向
-
-```sql
-SELECT DISTINCT <canonical_user_key> AS user_key
-FROM {{source_database}}.<behavior_event>
-WHERE <valid_user_key_predicate>
-  AND <game_filter_predicate>
-  AND <search_browse_predicate>
-  AND <label_window_predicate>;
-```
-
----
-
-**取值词表**：安装、预约等取值须在 **`step1_0_table_schema.json`**（由 download dump 脚本生成）中确认，写入 plan 的 `sql_fragments`。
-
-**输出**：一列 canonical `user_key`（回归再带 `label_value`），供 `scripts/step1_3_build_training_set.md` 的 `pos` 使用。
+输出一列 canonical `user_key`，供 `step1_1_build_training_set.md` 的 `pos`
+使用。标签是二分类：正样本为 1，负样本为 0。
