@@ -12,7 +12,7 @@
 # ============================================================================
 import json
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Coroutine
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
@@ -58,10 +58,46 @@ class QueryRequest(BaseModel):
     content: QueryContent
 
 
-# Discriminated by `type`. First wave registers query only.
-# Later operations add another model; they will not inherit query/stream.
-DataAgentRequest = Annotated[QueryRequest, Field(discriminator="type")]
-_DATA_AGENT_REQUEST_ADAPTER: TypeAdapter[QueryRequest] = TypeAdapter(DataAgentRequest)
+class ViewContent(BaseModel):
+    """Body of the view operation. scenario picks the packaged prompt file to read."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: str = Field(min_length=1)
+
+
+class ViewRequest(BaseModel):
+    """View one scenario's editable packaged prompt markdown and its last write time."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["view"]
+    content: ViewContent
+
+
+class UpdateContent(BaseModel):
+    """Body of the update operation. markdown is the full replacement text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: str = Field(min_length=1)
+    markdown: str = Field(min_length=1, max_length=65536)
+
+
+class UpdateRequest(BaseModel):
+    """Replace one scenario's editable packaged prompt file; effective on the next query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["update"]
+    content: UpdateContent
+
+
+# Discriminated by `type`. query plus the packaged-prompt view/update operations.
+# Each operation keeps its own content model; they never inherit query/stream.
+OperationRequest = QueryRequest | ViewRequest | UpdateRequest
+DataAgentRequest = Annotated[OperationRequest, Field(discriminator="type")]
+_DATA_AGENT_REQUEST_ADAPTER: TypeAdapter[OperationRequest] = TypeAdapter(DataAgentRequest)
 
 
 _data_agent_service: DataAgentService | None = None
@@ -74,8 +110,8 @@ def get_data_agent_service() -> DataAgentService:
     return _data_agent_service
 
 
-async def get_data_agent_request(http_request: Request) -> QueryRequest:
-    """Parse a type-discriminated body. Other operations are not registered yet."""
+async def get_data_agent_request(http_request: Request) -> OperationRequest:
+    """Parse a type-discriminated body into one registered operation."""
     try:
         payload = await http_request.json()
     except Exception as exc:
@@ -173,6 +209,18 @@ async def health_check():
     return {"status": "ok"}
 
 
+async def _run_operation(operation: Coroutine[Any, Any, Any]):
+    """Await one service operation; map unknown scenarios and failure envelopes to responses."""
+    try:
+        result = await operation
+    except UnknownScenarioError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+    payload = agent_error_payload(result)
+    if payload is not None:
+        return JSONResponse(status_code=int(payload.get("http_status", 500)), content=result)
+    return result
+
+
 async def _dispatch_query(query: str, stream: bool, service: DataAgentService, scenario: str | None = None):
     """Run the query operation. Output shape is unchanged."""
     try:
@@ -182,14 +230,7 @@ async def _dispatch_query(query: str, stream: bool, service: DataAgentService, s
     if stream:
         return StreamingResponse(stream_agent_events(query, service, scenario), media_type="text/event-stream")
 
-    try:
-        result = await service.query(query, scenario=scenario)
-    except UnknownScenarioError as exc:
-        return JSONResponse(status_code=422, content={"detail": str(exc)})
-    payload = agent_error_payload(result)
-    if payload is not None:
-        return JSONResponse(status_code=int(payload.get("http_status", 500)), content=result)
-    return result
+    return await _run_operation(service.query(query, scenario=scenario))
 
 
 @app.post("/api/agent/query")
@@ -203,10 +244,14 @@ async def query_agent(
 
 @app.post("/api/agent/operation")
 async def agent_operation(
-    request: QueryRequest = Depends(get_data_agent_request),
+    request: OperationRequest = Depends(get_data_agent_request),
     service: DataAgentService = Depends(get_data_agent_service),
 ):
-    """New operation path. First wave only implements type=query."""
+    """Operation path: query plus scenario packaged-prompt view/update."""
     if isinstance(request, QueryRequest):
         return await _dispatch_query(request.content.query, request.content.stream, service, request.content.scenario)
+    if isinstance(request, ViewRequest):
+        return await _run_operation(service.view_prompt(request.content.scenario))
+    if isinstance(request, UpdateRequest):
+        return await _run_operation(service.update_prompt(request.content.scenario, request.content.markdown))
     raise AssertionError(f"unsupported type: {getattr(request, 'type', request)}")
