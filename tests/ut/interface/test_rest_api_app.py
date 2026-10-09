@@ -27,8 +27,13 @@ LEGACY_QUERY_PATH = "/api/agent/query"
 class _StubDataAgentService:
     """Return the submitted query without invoking the real agent."""
 
-    async def query(self, query: str) -> dict[str, str]:
+    def resolve_scenario(self, scenario: str | None) -> None:
+        """Accept the default scenario used by endpoint tests."""
+        _ = scenario
+
+    async def query(self, query: str, scenario: str | None = None) -> dict[str, str]:
         """Return the query for endpoint validation tests."""
+        _ = scenario
         return {"query": query}
 
 
@@ -52,14 +57,18 @@ class _StubSQLSecurityErrorService:
         }
     }
 
-    async def query(self, query: str) -> dict[str, Any]:
+    def resolve_scenario(self, scenario: str | None) -> None:
+        """Accept the default scenario used by endpoint tests."""
+        _ = scenario
+
+    async def query(self, query: str, scenario: str | None = None) -> dict[str, Any]:
         """Return a mapped SQL security error."""
-        _ = query
+        _ = query, scenario
         return self._result
 
-    async def stream_query(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def stream_query(self, query: str, scenario: str | None = None) -> AsyncGenerator[dict[str, Any], None]:
         """Yield a mapped SQL security error as the final stream result."""
-        _ = query
+        _ = query, scenario
         yield {"event": "result", "data": self._result}
 
 

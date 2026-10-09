@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import ssl
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,9 @@ from loguru import logger
 from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
 from dataagent.config.config_manager import ConfigManager
 
-_CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
+CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
+ROUTES_ENV_NAME = "DATAAGENT_REST_ROUTES"
+
 _DEFAULT_INBOUND_CIPHER_SUITES = "ECDHE+AESGCM:ECDHE+CHACHA20"
 _INBOUND_TLS_PROTOCOL = ssl.PROTOCOL_TLS_SERVER
 _MINIMUM_INBOUND_TLS_VERSION = ssl.TLSVersion.TLSv1_2
@@ -102,10 +106,118 @@ def load_certificate_config(config_path: str) -> dict[str, Any]:
     return cert if isinstance(cert, dict) else {}
 
 
+class UnknownScenarioError(LookupError):
+    """The request named a scenario that was not registered at startup."""
+
+    def __init__(self, scenario: str) -> None:
+        self.scenario = scenario
+        super().__init__(f"unknown scenario: {scenario}")
+
+
+@dataclass(frozen=True)
+class ScenarioTable:
+    """Scenario name to absolute yaml path. ``default`` serves ``/api/agent/query``."""
+
+    routes: dict[str, Path]
+    default: str
+
+    @classmethod
+    def from_json(cls, raw: str) -> ScenarioTable:
+        """Restore a table written by :meth:`to_json`."""
+        data = json.loads(raw)
+        routes = {str(name): Path(path) for name, path in dict(data["routes"]).items()}
+        default = str(data["default"])
+        if default not in routes:
+            raise ValueError(f"default scenario {default!r} is not registered")
+        return cls(routes=routes, default=default)
+
+    def to_json(self) -> str:
+        """Serialize the table for worker processes."""
+        payload = {
+            "default": self.default,
+            "routes": {name: str(path) for name, path in self.routes.items()},
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class StartupPlan:
+    """Resolved REST startup. ``table`` is set only for ``scenario=path`` registration."""
+
+    config_path: Path
+    table: ScenarioTable | None = None
+
+
+def build_startup_plan(configs: list[str]) -> StartupPlan:
+    """Build the startup plan from repeated ``--config`` values.
+
+    One bare path keeps the original single-agent startup. Named entries use the
+    first scenario as the target of ``/api/agent/query``.
+    """
+    if not configs:
+        raise ValueError("DataAgent service requires --config.")
+    named = ["=" in item for item in configs]
+    if any(named) and not all(named):
+        raise ValueError("use either one --config path or repeated --config scenario=path")
+    if not any(named):
+        return _bare_plan(configs)
+    return _named_plan(configs)
+
+
+def _bare_plan(configs: list[str]) -> StartupPlan:
+    if len(configs) != 1:
+        raise ValueError("multiple yaml files require scenario=path")
+    return StartupPlan(config_path=_resolve_yaml(configs[0]))
+
+
+def _named_plan(configs: list[str]) -> StartupPlan:
+    routes: dict[str, Path] = {}
+    owners: dict[Path, str] = {}
+    for item in configs:
+        name, raw_path = _split_config(item)
+        if name in routes:
+            raise ValueError(f"duplicate scenario name: {name}")
+        path = _resolve_yaml(raw_path)
+        owner = owners.get(path)
+        if owner is not None:
+            raise ValueError(f"yaml {path} is already registered as {owner}")
+        _check_perceptor_type(name, path)
+        routes[name] = path
+        owners[path] = name
+    default_scenario = next(iter(routes))
+    return StartupPlan(config_path=routes[default_scenario], table=ScenarioTable(routes, default_scenario))
+
+
+def _split_config(item: str) -> tuple[str, str]:
+    name, separator, raw_path = item.partition("=")
+    if not separator or not name or not raw_path or any(character.isspace() for character in name):
+        raise ValueError(f"invalid --config {item!r}; expected scenario=path")
+    return name, raw_path
+
+
+def _resolve_yaml(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser().resolve()
+    if not path.is_file():
+        raise ValueError(f"config not found: {raw_path}")
+    return path
+
+
+def _check_perceptor_type(name: str, path: Path) -> None:
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"config must be a mapping: {path}")
+    database = data.get("DATABASE")
+    perceptor_type = database.get("perceptor_type") if isinstance(database, dict) else None
+    perceptor_type = "" if perceptor_type is None else str(perceptor_type)
+    if perceptor_type != name:
+        raise ValueError(f"scenario {name}: DATABASE.perceptor_type is {perceptor_type!r}, expected {name!r}")
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments for the DataAgent API server."""
     parser = argparse.ArgumentParser(description="Start the DataAgent FastAPI service.")
-    parser.add_argument("--config", required=True)
+    parser.add_argument("--config", action="append", required=True, help="yaml path, or scenario=yaml for each scene")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8010)
     parser.add_argument("--workers", type=int, default=1)
@@ -180,9 +292,20 @@ def build_ssl_kwargs(
 def main() -> None:
     """Start the DataAgent FastAPI server."""
     args = parse_args()
-    config_path = args.config
-    os.environ[_CONFIG_ENV_NAME] = config_path
-    logger.info(f"Using DataAgent config: {config_path}")
+    try:
+        plan = build_startup_plan(args.config)
+    except ValueError as exc:
+        logger.error(str(exc))
+        raise SystemExit(2) from exc
+    config_path = str(plan.config_path)
+    os.environ[CONFIG_ENV_NAME] = config_path
+    if plan.table is None:
+        os.environ.pop(ROUTES_ENV_NAME, None)
+        logger.info(f"Using DataAgent config: {config_path}")
+    else:
+        os.environ[ROUTES_ENV_NAME] = plan.table.to_json()
+        bindings = ", ".join(f"{name}={path}" for name, path in plan.table.routes.items())
+        logger.info(f"Using scenarios: {bindings}; default={plan.table.default}")
 
     cert = load_certificate_config(config_path)
     ssl_kwargs = build_ssl_kwargs(

@@ -22,10 +22,13 @@ from pathlib import Path
 from typing import Any
 
 from dataagent.core.context.context import ContextFactory
+from dataagent.interface.rest_api.start_service import ScenarioTable, UnknownScenarioError
 from dataagent.interface.sdk.agent import DataAgent
 from dataagent.utils.log import logger
 
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.DOTALL | re.IGNORECASE)
+
+
 _PUBLIC_ERROR_FIELD_TYPES = {
     "code": str,
     "http_status": int,
@@ -37,9 +40,14 @@ _PUBLIC_ERROR_FIELD_TYPES = {
 class DataAgentService:
     """DataAgent service facade."""
 
-    def __init__(self, *, config_path: str | Path | None = None):
+    def __init__(self, *, config_path: str | Path | None = None, table: ScenarioTable | None = None):
         """Initialize DataAgent service."""
-        self.config_path = Path(config_path).expanduser().resolve() if config_path is not None else None
+        self._table = table
+        if table is not None:
+            self.config_path: Path | None = table.routes[table.default]
+        else:
+            self.config_path = Path(config_path).expanduser().resolve() if config_path is not None else None
+        self._agents: dict[str, DataAgent] = {}
         self._agent: DataAgent | None = None
         self._cached_agent_type: str | None = None
 
@@ -118,69 +126,97 @@ class DataAgentService:
             candidates.append({"index": idx, "sql": item_sql, "sql_sha256": digest})
         return candidates
 
-    def initialize(self) -> None:
-        """Initialize the service agent."""
-        if self.config_path is None:
-            raise ValueError("DataAgent service requires --config.")
+    @staticmethod
+    def _load_agent(path: Path) -> DataAgent:
+        """Load one DataAgent from a yaml path."""
         try:
-            self._agent = DataAgent.from_config(self.config_path)
+            agent = DataAgent.from_config(path)
         except Exception as exc:
             raise RuntimeError("DataAgent.from_config raised an exception") from exc
-        if self._agent is None:
+        if agent is None:
             raise RuntimeError("DataAgent.from_config returned None")
+        return agent
+
+    def initialize(self) -> None:
+        """Initialize one DataAgent for the single config, or one per scenario."""
+        if self._table is None:
+            if self.config_path is None:
+                raise ValueError("DataAgent service requires --config.")
+            self._agent = self._load_agent(self.config_path)
+        else:
+            loaded = {name: self._load_agent(path) for name, path in self._table.routes.items()}
+            self._agents = loaded
+            self._agent = loaded[self._table.default]
         self._cached_agent_type = str(getattr(self._agent, "type", "") or "react")
+
+    def resolve_scenario(self, scenario: str | None) -> str | None:
+        """Return the registered scenario name. None keeps the single-config agent."""
+        if self._table is None:
+            if scenario:
+                raise UnknownScenarioError(scenario)
+            return None
+        if not scenario:
+            return self._table.default
+        if scenario not in self._table.routes:
+            raise UnknownScenarioError(scenario)
+        return scenario
 
     def is_ready(self) -> bool:
         """Return True when the underlying agent has been initialized."""
         return self._agent is not None
 
-    async def query(self, query: str) -> Any:
+    async def query(self, query: str, scenario: str | None = None) -> Any:
         """Run one DataAgent query."""
+        agent: DataAgent | None = None
         try:
-            if self._agent is None:
-                self.initialize()
-            if self._agent is None:
-                return self._format_error("DataAgent service is not initialized.")
-            with self._request_scope() as request:
+            agent = self._select(scenario)
+            with self._request_scope(agent) as request:
                 if not request:
-                    return self._format_result(await self._agent.chat(query))
+                    return self._format_result(await agent.chat(query), agent=agent)
                 initial_state = {"session_id": request.get("session_id")}
-                return self._format_result(await self._agent.chat(query, initial_state=initial_state, **request))
+                return self._format_result(
+                    await agent.chat(query, initial_state=initial_state, **request),
+                    agent=agent,
+                )
+        except UnknownScenarioError:
+            raise
         except Exception as exc:
             logger.exception(
                 "Unexpected DataAgent query error: {}",
                 {"message": str(exc), "type": exc.__class__.__name__},
             )
-            return self._format_error("internal error")
+            return self._format_error("internal error", agent=agent)
 
-    async def stream_query(self, query: str):
+    async def stream_query(self, query: str, scenario: str | None = None):
         """Stream one DataAgent query as message/result events."""
         final_state: Any = None
         update_state: dict[str, Any] = {}
         last_message: str | None = None
+        agent: DataAgent | None = None
 
         try:
-            if self._agent is None:
-                self.initialize()
-
-            with self._request_scope() as request:
+            agent = self._select(scenario)
+            with self._request_scope(agent) as request:
                 if request:
                     initial_state = {"user_query": query, "session_id": request.get("session_id")}
                     workspace = request.get("workspace")
                     if workspace is not None:
                         initial_state["workspace"] = workspace
-                    stream = self._agent.astream(
+                    stream = agent.astream(
                         initial_state=initial_state,
                         session_id=request.get("session_id"),
                         stream_mode=["updates", "custom", "values"],
                     )
                 else:
-                    stream = self._agent.astream(
+                    stream = agent.astream(
                         initial_state={"user_query": query}, stream_mode=["updates", "custom", "values"]
                     )
                 async for item in stream:
                     if isinstance(item, dict) and "error" in item:
-                        yield {"event": "result", "data": self._normalize_error_payload(item.get("error"))}
+                        yield {
+                            "event": "result",
+                            "data": self._normalize_error_payload(item.get("error"), agent=agent),
+                        }
                         return
 
                     if isinstance(item, tuple) and len(item) == 3:
@@ -217,31 +253,50 @@ class DataAgentService:
 
             result_state = final_state if final_state is not None else update_state
             if result_state:
-                yield {"event": "result", "data": self._format_result(result_state)}
+                yield {"event": "result", "data": self._format_result(result_state, agent=agent)}
             else:
-                yield {"event": "result", "data": self._format_error("Agent returned an empty stream result")}
+                yield {
+                    "event": "result",
+                    "data": self._format_error("Agent returned an empty stream result", agent=agent),
+                }
+        except UnknownScenarioError:
+            raise
         except Exception as exc:
             logger.exception(
                 "Unexpected DataAgent stream error: {}",
                 {"message": str(exc), "type": exc.__class__.__name__},
             )
-            yield {"event": "result", "data": self._format_error("internal error")}
+            yield {"event": "result", "data": self._format_error("internal error", agent=agent)}
 
-    def _format_result(self, state: Any) -> dict[str, Any]:
+    def _select(self, scenario: str | None) -> DataAgent:
+        """Return the agent for this request. An empty scenario uses the default agent."""
+        name = self.resolve_scenario(scenario)
+        if self._agent is None:
+            self.initialize()
+        if name is None:
+            if self._agent is None:
+                raise RuntimeError("DataAgent service is not initialized.")
+            return self._agent
+        agent = self._agents.get(name)
+        if agent is None:
+            raise RuntimeError("DataAgent service is not initialized.")
+        return agent
+
+    def _format_result(self, state: Any, agent: DataAgent | None = None) -> dict[str, Any]:
         """Format final agent state for the REST API."""
 
         if not isinstance(state, dict):
-            return self._format_error("Agent returned an invalid result")
+            return self._format_error("Agent returned an invalid result", agent=agent)
         if isinstance(state.get("error"), dict):
-            return self._normalize_error_payload(state["error"])
+            return self._normalize_error_payload(state["error"], agent=agent)
         if state.get("success") is False:
             message = state.get("message")
             message = message if isinstance(message, str) and message.strip() else "Agent failed"
-            return self._format_error(message)
+            return self._format_error(message, agent=agent)
         if state.get("error"):
-            return self._format_error("Agent failed")
+            return self._format_error("Agent failed", agent=agent)
 
-        if self._agent_type() == "nl2sql":
+        if self._agent_type(agent) == "nl2sql":
             return {"result": self._format_nl2sql_result(state)}
 
         messages = state.get("messages", [])
@@ -254,7 +309,7 @@ class DataAgentService:
             content = ""
 
         if not content:
-            return self._format_error("Agent returned an empty result")
+            return self._format_error("Agent returned an empty result", agent=agent)
         match = _ANSWER_TAG_RE.search(content)
         sql = match.group(1).strip() if match else ""
         payload = {
@@ -308,12 +363,12 @@ class DataAgentService:
             payload["sql_fingerprint"] = hash_sql(sql)
         return payload
 
-    def _format_error(self, message: str) -> dict[str, Any]:
+    def _format_error(self, message: str, agent: DataAgent | None = None) -> dict[str, Any]:
         """Format base agent error payload."""
         return {
             "result": {
                 "success": False,
-                "code": self._agent_error_code(),
+                "code": self._agent_error_code(agent),
                 "message": message,
                 "http_status": 500,
                 "component": "agent",
@@ -321,11 +376,11 @@ class DataAgentService:
             }
         }
 
-    def _normalize_error_payload(self, error: Any) -> dict[str, Any]:
+    def _normalize_error_payload(self, error: Any, agent: DataAgent | None = None) -> dict[str, Any]:
         """Normalize agent stream error payloads."""
         if isinstance(error, dict):
             message = error.get("message")
-            payload = self._format_error(message if isinstance(message, str) else "Agent failed")
+            payload = self._format_error(message if isinstance(message, str) else "Agent failed", agent=agent)
             for field, expected_type in _PUBLIC_ERROR_FIELD_TYPES.items():
                 value = error.get(field)
                 if isinstance(value, expected_type) and not (expected_type is int and isinstance(value, bool)):
@@ -334,26 +389,29 @@ class DataAgentService:
             if security_errors:
                 payload["result"]["errors"] = security_errors
             return payload
-        return self._format_error(str(error))
+        return self._format_error(str(error), agent=agent)
 
-    def _agent_error_code(self) -> str:
+    def _agent_error_code(self, agent: DataAgent | None = None) -> str:
         """Return the fallback agent error code."""
-        return "WORKFLOW-AGENT-001" if self._agent_type() == "nl2sql" else "REACT-AGENT-001"
+        return "WORKFLOW-AGENT-001" if self._agent_type(agent) == "nl2sql" else "REACT-AGENT-001"
 
-    def _agent_type(self) -> str:
-        """Return current SDK agent type."""
+    def _agent_type(self, agent: DataAgent | None = None) -> str:
+        """Return the type of the agent that served this call."""
+        if agent is not None:
+            return str(getattr(agent, "type", "") or "react")
         if self._cached_agent_type is not None:
             return self._cached_agent_type
         return str(getattr(self._agent, "type", "") or "react")
 
     @contextmanager
-    def _request_scope(self) -> Iterator[dict[str, Any]]:
+    def _request_scope(self, agent: DataAgent | None = None) -> Iterator[dict[str, Any]]:
         """Create isolated resources for one stateless REST request and release them on exit."""
-        if self._agent_type() != "nl2sql":
+        selected = self._agent if agent is None else agent
+        if self._agent_type(None if agent is None else selected) != "nl2sql":
             yield {}
             return
 
-        agent_config = getattr(self._agent, "config", {})
+        agent_config = getattr(selected, "config", {})
         if hasattr(agent_config, "get_all") and callable(agent_config.get_all):
             config = agent_config.get_all() or {}
         elif isinstance(agent_config, Mapping):

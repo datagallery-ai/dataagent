@@ -22,6 +22,12 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
 from dataagent.interface.rest_api.service import DataAgentService
+from dataagent.interface.rest_api.start_service import (
+    CONFIG_ENV_NAME,
+    ROUTES_ENV_NAME,
+    ScenarioTable,
+    UnknownScenarioError,
+)
 
 
 class DataAgentQueryRequest(BaseModel):
@@ -40,6 +46,7 @@ class QueryContent(BaseModel):
 
     query: str = Field(min_length=1)
     stream: bool = False
+    scenario: str | None = None
 
 
 class QueryRequest(BaseModel):
@@ -58,7 +65,6 @@ _DATA_AGENT_REQUEST_ADAPTER: TypeAdapter[QueryRequest] = TypeAdapter(DataAgentRe
 
 
 _data_agent_service: DataAgentService | None = None
-_CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
 
 
 def get_data_agent_service() -> DataAgentService:
@@ -113,9 +119,11 @@ def sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
-async def stream_agent_events(query: str, service: DataAgentService) -> AsyncGenerator[str, None]:
+async def stream_agent_events(
+    query: str, service: DataAgentService, scenario: str | None = None
+) -> AsyncGenerator[str, None]:
     """Yield DataAgent server-sent events."""
-    async for item in service.stream_query(query):
+    async for item in service.stream_query(query, scenario=scenario):
         event = item.get("event")
         data = item.get("data")
         if event is None:
@@ -134,8 +142,12 @@ _middleware_installed = False
 def create_app() -> FastAPI:
     """Create the DataAgent FastAPI app with ingress limits middleware."""
     global _data_agent_service, _middleware_installed
-    config_path = os.getenv(_CONFIG_ENV_NAME)
-    _data_agent_service = DataAgentService(config_path=config_path) if config_path else None
+    config_path = os.getenv(CONFIG_ENV_NAME)
+    routes_raw = os.getenv(ROUTES_ENV_NAME)
+    if routes_raw:
+        _data_agent_service = DataAgentService(table=ScenarioTable.from_json(routes_raw))
+    else:
+        _data_agent_service = DataAgentService(config_path=config_path) if config_path else None
     limits = load_rest_api_limits(config_path)
     if not _middleware_installed:
         app.add_middleware(SecurityLimitsMiddleware, limits=limits)
@@ -161,12 +173,19 @@ async def health_check():
     return {"status": "ok"}
 
 
-async def _dispatch_query(query: str, stream: bool, service: DataAgentService):
+async def _dispatch_query(query: str, stream: bool, service: DataAgentService, scenario: str | None = None):
     """Run the query operation. Output shape is unchanged."""
+    try:
+        service.resolve_scenario(scenario)
+    except UnknownScenarioError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
     if stream:
-        return StreamingResponse(stream_agent_events(query, service), media_type="text/event-stream")
+        return StreamingResponse(stream_agent_events(query, service, scenario), media_type="text/event-stream")
 
-    result = await service.query(query)
+    try:
+        result = await service.query(query, scenario=scenario)
+    except UnknownScenarioError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
     payload = agent_error_payload(result)
     if payload is not None:
         return JSONResponse(status_code=int(payload.get("http_status", 500)), content=result)
@@ -189,5 +208,5 @@ async def agent_operation(
 ):
     """New operation path. First wave only implements type=query."""
     if isinstance(request, QueryRequest):
-        return await _dispatch_query(request.content.query, request.content.stream, service)
+        return await _dispatch_query(request.content.query, request.content.stream, service, request.content.scenario)
     raise AssertionError(f"unsupported type: {getattr(request, 'type', request)}")
