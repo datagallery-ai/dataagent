@@ -218,7 +218,10 @@ def schema_to_ddl(schema_ir, joins=None, relation_catalog=None):
                 comments.append(col_desc)
             vals = col_info.get("example_values")
             if vals:
-                comments.append(f"example: {vals}")
+                example_text = str(vals)
+                if len(example_text) > 500:
+                    example_text = example_text[:497] + "..."
+                comments.append(f"example: {example_text}")
             for formula in relation_formulas.get((table_name, col_name), []):
                 comments.append(f"relation_formula: {formula}")
             if comments:
