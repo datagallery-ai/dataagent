@@ -18,3 +18,5 @@ python -m dataagent.core.suite.builtin_suites.bird_benchmark.run_bird --help
 `test_bird_e2e.py` 等原独立工具仍可通过包内模块路径调用；`run_bird_dev_models.sh` 仅转换旧环境变量并调用统一入口，不再自动运行两个模型。
 
 预处理、评测、参数和结果说明见 [操作手册](MANUAL.zh-CN.md)。
+
+导入要求服务端同步填充（`semantic_service.vector.fill.async=false`），兼容旧 `pending` / 新 `processed` 统计并保留完整填充校验。当前不轮询异步任务，验证范围为新 namespace、单模型。评测可通过 `--semantic-preprocess-model` 和 `--semantic-model-digest` 记录实际资产来源；复用描述时不会根据当前请求模型推断旧来源，无法确定则写 `unknown`。

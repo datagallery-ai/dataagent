@@ -42,6 +42,8 @@ DEFAULTS = {
     "extra_body": {},
     "semantic_db_prefix": "bird",
     "preprocess": "skip",
+    "semantic_preprocess_model": None,
+    "semantic_model_digest": None,
     "retry": True,
     "retry_on": "deferred,agent_error",
     "retry_case_timeout": None,
@@ -438,13 +440,43 @@ def _effective_results(root: Path, initial: list[dict[str, Any]]) -> list[dict[s
     return merge_retry_results(initial, rows)
 
 
+def _preprocess_metadata(settings: dict[str, Any], db_ids: set[str]) -> dict[str, str]:
+    model = settings.get("semantic_preprocess_model")
+    digest = settings.get("semantic_model_digest")
+    root = settings.get("preprocess_root")
+    metadata_path = Path(root) / "semantic_preprocess_settings.json" if root else None
+    if metadata_path is not None and metadata_path.is_file():
+        metadata = _read(metadata_path)
+        databases = metadata.get("databases") or {}
+        # A requested model cannot establish the origin of reused descriptions.
+        # Only a record of fresh generation can supply an implicit model name.
+        # Database IDs alone do not identify assets across semantic namespaces.
+        prefix = settings.get("semantic_db_prefix")
+        covered = (
+            bool(prefix)
+            and metadata.get("semantic_db_prefix") == prefix
+            and bool(db_ids)
+            and db_ids <= databases.keys()
+        )
+        all_generated = covered and all(
+            type(entry.get("reused_descriptions")) is int and entry["reused_descriptions"] == 0
+            for entry in databases.values()
+        )
+        if not model and all_generated:
+            model = (metadata.get("requested_settings") or {}).get("model")
+        if covered:
+            digest = digest or metadata.get("semantic_model_digest")
+    return {"semantic_preprocess_model": model or "unknown", "semantic_model_digest": digest or "unknown"}
+
+
 def _worker(args: argparse.Namespace) -> None:
     settings = _read(Path(args.settings))
+    questions = _read(Path(args.questions))
     kwargs = {key: settings.get(key) for key in REQUEST_FIELDS if key != "model"}
     asyncio.run(
         evaluator.run_evaluation(
             bird_data_dir=Path(settings["bird_data_dir"]),
-            questions=_read(Path(args.questions)),
+            questions=questions,
             run_dir=Path(args.run_dir),
             resume=args.resume,
             semantic_service_url=settings["semantic_service_url"],
@@ -453,6 +485,7 @@ def _worker(args: argparse.Namespace) -> None:
             case_timeout=settings["case_timeout"],
             generator_max_tokens=settings["generator_max_tokens"],
             llm_max_concurrency=settings["llm_max_concurrency"],
+            **_preprocess_metadata(settings, {str(question["db_id"]) for question in questions}),
             **kwargs,
         )
     )
@@ -501,6 +534,8 @@ def _parser() -> argparse.ArgumentParser:
             "preprocess-root",
             "semantic-service-url",
             "semantic-db-prefix",
+            "semantic-preprocess-model",
+            "semantic-model-digest",
             "workers",
             "llm-max-concurrency",
             "generator-max-tokens",

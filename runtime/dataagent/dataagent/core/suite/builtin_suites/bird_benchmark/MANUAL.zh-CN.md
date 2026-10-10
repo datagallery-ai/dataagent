@@ -30,6 +30,12 @@ dataagent-bird-benchmark prepare \
 
 `--preprocess-model`、`--preprocess-api-base`、数据目录、train cache、预处理目录及服务地址是 prepare 的必需配置，可由对应环境变量提供。使用 `--preprocess-api-key-file` 指定独立凭据；未指定文件时使用 `LLM_API_KEY`／`DEEPSEEK_API_KEY` 环境变量。密钥文件支持单个 key 或含这些变量的 dotenv 文件。
 
+### 导入服务兼容范围
+
+`prepare` / `import` 需要同步向量填充；服务端设置 `semantic_service.vector.fill.async=false`。校验兼容旧版 `pending` 和新版 `processed`（本次实际处理行数），仍要求值描述、原值两个任务族各自的计数及 `filled` 合计等于 OSI 发出的值数量，`skipped` 为 0 且无 warnings。缺失、负数、非整数或互相矛盾的计数会拒绝。
+
+`ACCEPTED` 且无 summary 不表示完成，当前没有异步轮询。已验证范围是新 namespace、单模型同步填充；重复导入已有向量可能被拒绝，双模型按任务族合计也不能证明每个模型的完整覆盖。列和 SQL 示例向量不在这两类值向量的校验范围内。
+
 使用 `verify` 检查预处理产物，使用 `import` 将产物导入 semantic-service：
 
 ```sh
@@ -44,6 +50,12 @@ dataagent-bird-benchmark import \
 ```
 
 评测的 `--preprocess` 有三个值：默认 `skip` 使用已准备好的语义服务；`reuse` 校验指定本地目录后评测；`prepare` 先生成并导入所选数据库，再评测。
+
+### 评测结果中的预处理来源
+
+`run` / `retry` 可用 `--semantic-preprocess-model` 声明实际生成描述的模型，用 `--semantic-model-digest` 传入已有的资产标识；对应环境变量为 `BIRD_SEMANTIC_PREPROCESS_MODEL`、`BIRD_SEMANTIC_MODEL_DIGEST`。这些值会传入评测 worker 并写入结果。
+
+未显式指定来源模型时，仅当 `--preprocess-root` 下的 `semantic_preprocess_settings.json` 覆盖本 worker 评测的所有数据库且记录全部 `reused_descriptions=0`，才采用该记录的 `requested_settings.model`。存在描述复用、缺少记录或来源不明时写 `unknown`，即使传了当前 `--preprocess-model` 也不会将它当作旧描述来源。答题用的 `--model` 同样不能替代描述生成模型。digest 优先使用显式参数，其次使用覆盖当前数据库的资产记录已有的 `semantic_model_digest`，否则写 `unknown`，不自动合成标识。
 
 预处理输出包括 `descriptions/`、`osi/`、`import_responses/` 和 `logs/`。全局 train 示例在 `california_schools` 的 YAML 中导入一次；只准备其他数据库时，应确认这些全局示例已经导入。值采样参数见第 3 节。
 
@@ -121,6 +133,7 @@ dataagent-bird-benchmark check \
 | `--reasoning-effort VALUE` | 指定推理强度，取值按模型 API 的要求填写；`omit` 省略 |
 | `--extra-body '{"temperature":0.2}'` | 额外 JSON 对象；与模型、消息、stream、token、思考或传输控制冲突的键会报错，不能放凭据 |
 | `--preprocess-model`、`--preprocess-api-base`、`--preprocess-api-key-file` | 独立预处理模型、网关及凭据 |
+| `--semantic-preprocess-model`、`--semantic-model-digest` | 结果中的实际描述来源模型、已有资产标识；来源不明写 `unknown` |
 | `--preprocess-thinking`、`--preprocess-enable-thinking`、`--preprocess-reasoning-effort`、`--preprocess-extra-body` | 与评测相同的字段省略和显式取值语义 |
 | `--preprocess-llm-timeout`、`--preprocess-llm-num-retries` | 预处理 HTTP 设置，默认 900 秒 / 2 次重试 |
 | `--value-mode` | `sample`、`text_distinct`、`all_distinct`；默认 `text_distinct` |

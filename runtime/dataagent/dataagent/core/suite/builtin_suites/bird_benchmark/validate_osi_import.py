@@ -25,6 +25,23 @@ def _column_value_count(payload: dict[str, Any]) -> int:
     return len(values)
 
 
+def _task_count(task: dict[str, Any], field: str) -> int:
+    value = task.get(field)
+    if type(value) is not int or value < 0:
+        raise ValueError(f"invalid {field} counter in vector task {task.get('task')}")
+    return value
+
+
+def _attempted_count(task: dict[str, Any]) -> int:
+    # Old service reports initially pending rows; newer service reports rows
+    # actually processed. Filled/skipped counts must still prove completion.
+    field = "processed" if "processed" in task else "pending"
+    value = _task_count(task, field)
+    if "processed" in task and "pending" in task and _task_count(task, "pending") != value:
+        raise ValueError(f"inconsistent pending/processed counters in vector task {task.get('task')}")
+    return value
+
+
 def validate_import(yaml_payload: dict[str, Any], response: dict[str, Any]) -> dict[str, int]:
     if response.get("error"):
         raise ValueError(f"OSI import returned error: {response['error']}")
@@ -43,7 +60,7 @@ def validate_import(yaml_payload: dict[str, Any], response: dict[str, Any]) -> d
 
     emitted = _column_value_count(yaml_payload)
     task_results = summary.get("taskResults")
-    if not isinstance(task_results, list):
+    if not isinstance(task_results, list) or not all(isinstance(task, dict) for task in task_results):
         raise ValueError("missing vectorFillSummary.taskResults")
 
     counts: dict[str, int] = {"emitted": emitted}
@@ -51,13 +68,13 @@ def validate_import(yaml_payload: dict[str, Any], response: dict[str, Any]) -> d
         matches = [task for task in task_results if str(task.get("task", "")).startswith(prefix)]
         if not matches:
             raise ValueError(f"missing vector task family: {prefix}")
-        pending = sum(int(task.get("pending", 0)) for task in matches)
-        filled = sum(int(task.get("filled", 0)) for task in matches)
-        skipped = sum(int(task.get("skipped", 0)) for task in matches)
-        if (pending, filled, skipped) != (emitted, emitted, 0):
+        attempted = sum(_attempted_count(task) for task in matches)
+        filled = sum(_task_count(task, "filled") for task in matches)
+        skipped = sum(_task_count(task, "skipped") for task in matches)
+        if (attempted, filled, skipped) != (emitted, emitted, 0):
             raise ValueError(
                 f"incomplete {prefix} vector fill: emitted={emitted} "
-                f"pending={pending} filled={filled} skipped={skipped}"
+                f"pending/processed={attempted} filled={filled} skipped={skipped}"
             )
         counts[f"{prefix}filled"] = filled
     return counts
