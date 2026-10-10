@@ -65,6 +65,11 @@ TOOLS:
     - name: "get_table_schema"
       module: "dataagent.actions.tools.semantic_tool.search_tables_with_schema"
       function: "get_table_schema"
+      # 列枚举值（enum_values）配置：enum_values_enabled 为字段开关（false 时不返回该字段），
+      # enum_values_max_length 为内联预算（字符），超出时整体写入 txt 文件保存到 agent_workspace 目录下
+      config:
+        enum_values_enabled: true
+        enum_values_max_length: 500
     - name: "search_udf_function_by_name_keyword"
       module: "dataagent.actions.tools.semantic_tool.search_udf_functions"
       function: "search_udf_function_by_name_keyword"

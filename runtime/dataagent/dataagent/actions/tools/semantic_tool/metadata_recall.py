@@ -23,6 +23,7 @@ from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from dataagent.actions.tools.local_tool.sub_agent_config import temporary_sub_agent_config
 from dataagent.actions.tools.local_tool.tools import _resolve_bound_llm_model_name, sub_agent_tool
+from dataagent.actions.tools.semantic_tool.search_tables_with_schema import inject_enum_values_config
 from dataagent.utils.constants import DEFAULT_SUBAGENT_TOOL_TIMEOUT
 from dataagent.utils.info_utils import get_current_query
 from dataagent.utils.runtime_paths import dataagent_package_root
@@ -101,7 +102,7 @@ def _build_metadata_recall_sub_agent_config(
     tool_config: dict[str, Any] | None = None,
     workspace_root: Path,
 ) -> dict[str, Any]:
-    """构建 metadata_recall subagent 的临时配置，注入主 Agent 的模型配置和 workspace。"""
+    """构建 metadata_recall subagent 的临时配置，注入主 Agent 的模型配置、workspace 及列枚举值配置。"""
     temp_config = copy.deepcopy(source_config)
 
     bound_llm_model_name = _resolve_bound_llm_model_name(tool_config=tool_config)
@@ -132,6 +133,8 @@ def _build_metadata_recall_sub_agent_config(
     if semantic_layer:
         temp_config["SEMANTIC_LAYER"] = semantic_layer
     temp_config["DATABASE"] = {"db_id": database_id} if database_id else {}
+
+    inject_enum_values_config(temp_config, tool_config)
 
     return temp_config
 

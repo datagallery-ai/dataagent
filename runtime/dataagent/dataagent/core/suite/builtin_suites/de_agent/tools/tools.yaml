@@ -21,6 +21,10 @@ TOOLS:
       function: "metadata_recall"
       config:
         llm_model: "chat_model"
+        # get_table_schema 的列枚举值开关与阈值统一放在本条目配置：
+        # metadata_recall 子代理与主进程内直接调用均读取此处
+        enum_values_enabled: true
+        enum_values_max_length: 500
     # golden schema linking 召回子 agent
     # - name: "metadata_recall"
     #   module: "dataagent.core.suite.builtin_suites.de_agent.tools.golden_schema_metadata_recall"
