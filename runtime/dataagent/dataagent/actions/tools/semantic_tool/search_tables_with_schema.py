@@ -17,6 +17,7 @@ and columns based on business-oriented keywords.
 """
 
 import json
+import secrets
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -32,6 +33,10 @@ from dataagent.utils.constants import (
     DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT,
     DEFAULT_SEMANTIC_SERVICE_TYPENAME_SEARCH_TOP_K,
 )
+
+# get_table_schema 列枚举值默认配置；优先级：工具级 config > 合并配置 metadata_recall 条目 > 此默认值
+ENUM_VALUES_ENABLED: bool = True
+ENUM_VALUES_MAX_LENGTH: int = 500
 
 # ============================================================
 # 工具主函数
@@ -391,6 +396,24 @@ def get_table_schema(
     Returns:
         dict with ``data.columns`` — a list of column dicts
         (name, description, value_type).
+
+    Note:
+        每列含列枚举值 ``enum_values``；当全表枚举值序列化总长超过阈值（默认值见
+        ``ENUM_VALUES_MAX_LENGTH`` 常量）时，枚举值整体保存到 agent_workspace 下按“表名+随机数”命名的 txt 文件，
+        detail 中给出文件路径，可用 ``read_file`` 按需读取。文件内容按列分段：每列一段
+        ``[列名 (类型)]`` 标题，其下每行一条 ``值：含义``（无含义时仅值）。
+
+        可在 Agent YAML ``TOOLS.local_functions[].config`` 手动配置：
+
+        - ``enum_values_enabled``（默认 ``True``）：列枚举值字段开关，``False``
+          时不返回 enum_values（detail / ``data.columns`` / ``.metric_dir``
+          JSON 均不含）；
+        - ``enum_values_max_length``（默认值见 ``ENUM_VALUES_MAX_LENGTH``）：内联预算（字符），
+          超出时整体保存成文件落盘。
+
+        工具级未配置时，回退读取合并配置 ``TOOLS.local_functions`` 中 metadata_recall
+        条目的同名字段（覆盖主进程直调路径；子代理子进程经 ``inject_enum_values_config``
+        注入工具级配置，不经回退）。
     """
     if not table_name:
         return _fmt("未提供表名。", "未提供表名。", {})
@@ -398,25 +421,64 @@ def get_table_schema(
     client = SemanticServiceClient.from_config(_tool_context.config_manager)
     cols_raw = client.get_table_columns_info(table_name, limit=1000)
 
+    enum_values_enabled = _resolve_enum_values_enabled(_tool_context)
     columns: list[dict] = []
-    for dtc, meta in cols_raw.items():
-        _, _, c = dtc.split(".")
-        columns.append(
-            {
-                "name": c,
-                "full_name": dtc,
-                "description": meta.get("column_short_description", ""),
-                "value_type": meta.get("value_type", ""),
-                "column_properties": meta.get("column_properties", None),
-            }
+    enum_values_file_path: Path | None = None
+    if enum_values_enabled:
+        # 开启：构建含 enum_values 的列，并按阈值决定是否整体保存成文件落盘到 agent_workspace 目录
+        for dtc, meta in cols_raw.items():
+            _, _, c = dtc.split(".")
+            columns.append(
+                {
+                    "name": c,
+                    "full_name": dtc,
+                    "description": meta.get("column_short_description", ""),
+                    "value_type": meta.get("value_type", ""),
+                    "column_properties": meta.get("column_properties", None),
+                    "enum_values": meta.get("examples", None),
+                }
+            )
+        enum_values_max_length = _resolve_enum_values_max_length(_tool_context)
+        enum_values_total = sum(
+            len(json.dumps(col["enum_values"], ensure_ascii=False)) for col in columns if col["enum_values"]
         )
+        if enum_values_total > enum_values_max_length:
+            # 超出内联预算：整体落盘到 agent_workspace 根目录“表名+随机数”命名 txt，detail 仅保留路径引用
+            enum_values_file_path = _save_enum_values_to_file(
+                table_name, columns, enum_values_total, enum_values_max_length
+            )
+    else:
+        # 关闭：不返回字段 enum_values key，也不做阈值统计与落盘
+        for dtc, meta in cols_raw.items():
+            _, _, c = dtc.split(".")
+            columns.append(
+                {
+                    "name": c,
+                    "full_name": dtc,
+                    "description": meta.get("column_short_description", ""),
+                    "value_type": meta.get("value_type", ""),
+                    "column_properties": meta.get("column_properties", None),
+                }
+            )
 
     summary = f"表 {table_name} 共 {len(columns)} 个字段。"
-    lines = [
-        f"  - {col['name']} ({col['value_type']}): {col['description']}，属性：{json.dumps(col['column_properties'])}"
-        for col in columns
-    ]
+    lines: list[str] = []
+    for col in columns:
+        line = (
+            f"  - {col['name']} ({col['value_type']}): {col['description']}，"
+            f"属性：{json.dumps(col['column_properties'])}"
+        )
+        if enum_values_file_path is None and col.get("enum_values"):
+            line += f"，列枚举值：{json.dumps(col['enum_values'], ensure_ascii=False)}"
+        lines.append(line)
     detail = summary + "\n" + "\n".join(lines)
+    if enum_values_file_path is not None:
+        detail += (
+            f"\n本表列枚举值共 {enum_values_total} 字符，超出阈值 {enum_values_max_length}，"
+            f"详见文件：{enum_values_file_path}"
+            f"\n文件内容说明：按列分段，每列一段 “[列名 (类型)]”，其下每行一条 “值：含义”"
+            f"（无含义时仅值），可用 read_file 分段读取。"
+        )
 
     preview_lines: list[str] = [summary]
     if columns:
@@ -444,6 +506,7 @@ def get_table_schema(
                 "column_name": col.get("name", ""),
                 "column_description": col.get("description", ""),
                 "column_type": col.get("value_type", ""),
+                **({"enum_values": col.get("enum_values", None)} if "enum_values" in col else {}),
             }
             for col in columns
         ],
@@ -469,6 +532,135 @@ def get_table_schema(
 
 def _fmt(original: str, frontend: str, data: Any) -> dict:
     return {"original_msg": original, "frontend_msg": frontend, "data": data}
+
+
+ENUM_VALUES_CONFIG_KEYS = ("enum_values_enabled", "enum_values_max_length")
+
+
+def inject_enum_values_config(temp_config: dict[str, Any], tool_config: dict[str, Any] | None) -> None:
+    """将 ``tool_config`` 中的列枚举值配置键透传进 ``temp_config`` 的 get_table_schema 注册条目。
+
+    供 metadata_recall 构建子代理临时配置使用：子进程内 get_table_schema 只见自身注册配置。
+    """
+    enum_values_config = {
+        key: value
+        for key, value in (tool_config or {}).items()
+        if key in ENUM_VALUES_CONFIG_KEYS
+    }
+    if not enum_values_config:
+        return
+    for entry in temp_config.get("TOOLS", {}).get("local_functions", []):
+        if isinstance(entry, dict) and entry.get("function") == "get_table_schema":
+            merged_config = dict(entry.get("config") or {})
+            merged_config.update(enum_values_config)
+            entry["config"] = merged_config
+
+
+def _metadata_recall_enum_values_config(_tool_context: ToolExecutionContext) -> dict[str, Any]:
+    """从主 agent 合并配置的 TOOLS.local_functions 中读取 metadata_recall 条目的列枚举值配置。
+
+    主进程直调路径（wrapped_nl2sql_sub_agent_tool）的 tool_config属于调用方工具，不含开关时经本函数回退读取；
+    子代理子进程经 inject_enum_values_config注入，不经本函数。
+    """
+    try:
+        manager = _tool_context.config_manager
+        if manager is None:
+            return {}
+        local_functions = (manager.get("TOOLS", {}) or {}).get("local_functions", [])
+        config: dict[str, Any] = {}
+        for entry in local_functions:
+            if isinstance(entry, dict) and entry.get("function") == "metadata_recall":
+                entry_config = entry.get("config")
+                if isinstance(entry_config, dict):
+                    config = entry_config
+        return config
+    except Exception:
+        return {}
+
+
+def _resolve_enum_values_max_length(_tool_context: ToolExecutionContext) -> int:
+    """解析列枚举值（enum_values）内联阈值，工具级 ``config.enum_values_max_length`` 可覆盖。"""
+    raw = (_tool_context.tool_config or {}).get("enum_values_max_length")
+    if raw is None:
+        raw = _metadata_recall_enum_values_config(_tool_context).get("enum_values_max_length")
+    if raw is None:
+        return ENUM_VALUES_MAX_LENGTH
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if value <= 0:
+        logger.warning(
+            f"[get_table_schema] 非法 enum_values_max_length 配置: {raw!r}，使用默认值 {ENUM_VALUES_MAX_LENGTH}"
+        )
+        return ENUM_VALUES_MAX_LENGTH
+    return value
+
+
+def _resolve_enum_values_enabled(_tool_context: ToolExecutionContext) -> bool:
+    """解析列枚举值（enum_values）字段开关，工具级 ``config.enum_values_enabled`` 可覆盖。
+
+    仅接受布尔或字符串 ``true``/``false``（大小写不敏感）；其他取值告警并回退默认值。
+    """
+    raw = (_tool_context.tool_config or {}).get("enum_values_enabled")
+    if raw is None:
+        raw = _metadata_recall_enum_values_config(_tool_context).get("enum_values_enabled")
+    if raw is None:
+        return ENUM_VALUES_ENABLED
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    logger.warning(
+        f"[get_table_schema] 非法 enum_values_enabled 配置: {raw!r}，使用默认值 {ENUM_VALUES_ENABLED}"
+    )
+    return ENUM_VALUES_ENABLED
+
+
+def _save_enum_values_to_file(
+    table_name: str,
+    columns: list[dict],
+    enum_values_total: int,
+    enum_values_max_length: int,
+) -> Path | None:
+    """将全表列枚举值卸载为 agent_workspace 根目录下按“表名+随机数”命名的 txt 文件。
+
+    文件名形如 ``get_table_schema_enum_values_{表名}_{随机数}.txt``，避免多次 ``get_table_schema``
+    落盘文件混淆；失败（无 sandbox / 写入异常）时返回 ``None``，调用方回退为内联渲染。
+    """
+    try:
+        guard = get_current_sandbox()
+        workspace_root = Path(guard.workspace_root).resolve()
+        safe_table = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in table_name)
+        file_path = workspace_root / f"get_table_schema_enum_values_{safe_table}_{secrets.token_hex(4)}.txt"
+        lines = [
+            f"表 {table_name} 列枚举值明细（序列化总长 {enum_values_total} 字符，超出内联阈值 {enum_values_max_length}）",
+            f"生成时间：{datetime.now(UTC).isoformat()}",
+            "格式说明：按列分段，每列一段 “[列名 (类型)]”，其下每行一条 “值：含义”（无含义时仅值）",
+            "",
+        ]
+        for col in columns:
+            if not col.get("enum_values"):
+                continue
+            lines.append(f"[{col['name']} ({col['value_type']})]")
+            for entry in col["enum_values"]:
+                if isinstance(entry, dict):
+                    value = str(entry.get("value", ""))
+                    desc = str(entry.get("description", ""))
+                    lines.append(f"  - {value}：{desc}" if desc else f"  - {value}")
+                else:
+                    lines.append(f"  - {entry}")
+            lines.append("")
+        file_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"[get_table_schema] 列枚举值已卸载至文件: {file_path}")
+        return file_path
+    except Exception as e:
+        logger.warning(f"[get_table_schema] 列枚举值落盘失败，detail 回退内联渲染: {e}")
+        return None
 
 
 def _db_ids(_tool_context: ToolExecutionContext) -> list[str]:
