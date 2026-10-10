@@ -19,6 +19,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from dataagent.interface.rest_api.app import app, get_data_agent_service
+from dataagent.interface.rest_api.start_service import UnknownScenarioError
 
 OPERATION_PATH = "/api/agent/operation"
 LEGACY_QUERY_PATH = "/api/agent/query"
@@ -70,6 +71,62 @@ class _StubSQLSecurityErrorService:
         """Yield a mapped SQL security error as the final stream result."""
         _ = query, scenario
         yield {"event": "result", "data": self._result}
+
+
+class _StubPromptService:
+    """Echo the scenario and markdown length through canned view/update payloads."""
+
+    async def view_prompt(self, scenario: str) -> dict[str, Any]:
+        """Echo the scenario through the markdown field."""
+        return {
+            "result": {
+                "success": True,
+                "markdown": f"view:{scenario}",
+                "updated_at": "2026-09-30T08:15:23.123456+00:00",
+            }
+        }
+
+    async def update_prompt(self, scenario: str, markdown: str) -> dict[str, Any]:
+        """Echo the scenario and markdown length through the updated_at field."""
+        return {"result": {"success": True, "updated_at": f"update:{scenario}:{len(markdown)}"}}
+
+
+class _StubUnknownScenarioService:
+    """Raise UnknownScenarioError for both prompt operations."""
+
+    async def view_prompt(self, scenario: str) -> dict[str, Any]:
+        """Reject the scenario the same way the query operation does."""
+        raise UnknownScenarioError(scenario)
+
+    async def update_prompt(self, scenario: str, markdown: str) -> dict[str, Any]:
+        """Reject the scenario the same way the query operation does."""
+        _ = markdown
+        raise UnknownScenarioError(scenario)
+
+
+class _StubPromptFailureService:
+    """Return the file-layer failure envelope through both prompt operations."""
+
+    _result = {
+        "result": {
+            "success": False,
+            "code": "WORKFLOW-AGENT-001",
+            "message": "CORE.perceptor.user_sql_rules is not configured: /data/business_twin.yaml",
+            "http_status": 500,
+            "component": "agent",
+            "retryable": False,
+        }
+    }
+
+    async def view_prompt(self, scenario: str) -> dict[str, Any]:
+        """Return a file-layer failure envelope."""
+        _ = scenario
+        return self._result
+
+    async def update_prompt(self, scenario: str, markdown: str) -> dict[str, Any]:
+        """Return a file-layer failure envelope."""
+        _ = scenario, markdown
+        return self._result
 
 
 @pytest.fixture
@@ -132,11 +189,11 @@ def test_query_endpoint_rejects_string_content(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_query_endpoint_rejects_unknown_type(client: TestClient) -> None:
-    """Unimplemented operations must not fall through to query."""
+def test_operation_endpoint_rejects_unknown_type(client: TestClient) -> None:
+    """Operations outside the registered types must not fall through to query."""
     response = client.post(
         OPERATION_PATH,
-        json={"type": "update", "content": {"query": "hello", "stream": False}},
+        json={"type": "other", "content": {"scenario": "business_twin"}},
     )
 
     assert response.status_code == 422
@@ -224,3 +281,192 @@ def test_streaming_query_returns_detailed_sql_security_error() -> None:
     assert '"code": "NL2SQL-SEC-014"' in response.text
     assert "Source column is not allowed: missing_column." in response.text
     assert "SCHEMA-002" not in response.text
+
+
+def test_view_operation_returns_markdown_and_updated_at() -> None:
+    """type=view dispatches to the service and keeps the result envelope."""
+    app.dependency_overrides[get_data_agent_service] = _StubPromptService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "view", "content": {"scenario": "business_twin"}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "result": {
+            "success": True,
+            "markdown": "view:business_twin",
+            "updated_at": "2026-09-30T08:15:23.123456+00:00",
+        }
+    }
+
+
+def test_update_operation_returns_updated_at() -> None:
+    """type=update passes scenario and markdown through to the service."""
+    app.dependency_overrides[get_data_agent_service] = _StubPromptService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "update", "content": {"scenario": "traffic_insight", "markdown": "# new rules"}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 200
+    assert response.json() == {"result": {"success": True, "updated_at": "update:traffic_insight:11"}}
+
+
+def test_update_operation_accepts_max_length_markdown() -> None:
+    """65536 characters is the inclusive upper bound and passes validation."""
+    app.dependency_overrides[get_data_agent_service] = _StubPromptService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "update", "content": {"scenario": "business_twin", "markdown": "x" * 65536}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 200
+    assert response.json() == {"result": {"success": True, "updated_at": "update:business_twin:65536"}}
+
+
+def test_update_operation_rejects_empty_markdown(client: TestClient) -> None:
+    """An empty markdown is rejected before the service is called; no file write."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "update", "content": {"scenario": "business_twin", "markdown": ""}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_short"
+    assert detail["loc"][-1] == "markdown"
+
+
+def test_update_operation_rejects_overlong_markdown(client: TestClient) -> None:
+    """One character over the bound is rejected before the service is called; no file write."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "update", "content": {"scenario": "business_twin", "markdown": "x" * 65537}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_long"
+    assert detail["loc"][-1] == "markdown"
+
+
+def test_view_operation_requires_scenario(client: TestClient) -> None:
+    """content.scenario is mandatory for type=view."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "view", "content": {}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "missing"
+    assert detail["loc"][-1] == "scenario"
+
+
+def test_view_operation_rejects_empty_scenario(client: TestClient) -> None:
+    """An empty scenario is rejected instead of falling back to the default."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "view", "content": {"scenario": ""}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_short"
+    assert detail["loc"][-1] == "scenario"
+
+
+def test_view_operation_rejects_unknown_content_fields(client: TestClient) -> None:
+    """Undeclared content fields are rejected for type=view."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "view", "content": {"scenario": "business_twin", "foo": 1}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "extra_forbidden"
+    assert detail["loc"][-1] == "foo"
+
+
+def test_view_operation_rejects_query_fields(client: TestClient) -> None:
+    """view never inherits query/stream from the query operation."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "view", "content": {"scenario": "business_twin", "query": "hello", "stream": True}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "extra_forbidden"
+    assert detail["loc"][-1] in {"query", "stream"}
+
+
+def test_view_operation_unknown_scenario_maps_to_422() -> None:
+    """Unregistered scenarios keep the query operation's 422 detail body."""
+    app.dependency_overrides[get_data_agent_service] = _StubUnknownScenarioService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "view", "content": {"scenario": "missing"}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "unknown scenario: missing"}
+
+
+def test_update_operation_unknown_scenario_maps_to_422() -> None:
+    """Unregistered scenarios keep the query operation's 422 detail body."""
+    app.dependency_overrides[get_data_agent_service] = _StubUnknownScenarioService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "update", "content": {"scenario": "missing", "markdown": "# rules"}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "unknown scenario: missing"}
+
+
+def test_view_operation_file_failure_maps_to_500() -> None:
+    """File-layer failures keep the agent failure envelope and its http_status."""
+    app.dependency_overrides[get_data_agent_service] = _StubPromptFailureService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "view", "content": {"scenario": "business_twin"}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 500
+    assert response.json() == _StubPromptFailureService._result
+
+
+def test_update_operation_file_failure_maps_to_500() -> None:
+    """File-layer failures keep the agent failure envelope and its http_status."""
+    app.dependency_overrides[get_data_agent_service] = _StubPromptFailureService
+    try:
+        response = TestClient(app).post(
+            OPERATION_PATH,
+            json={"type": "update", "content": {"scenario": "business_twin", "markdown": "# rules"}},
+        )
+    finally:
+        app.dependency_overrides.pop(get_data_agent_service, None)
+
+    assert response.status_code == 500
+    assert response.json() == _StubPromptFailureService._result

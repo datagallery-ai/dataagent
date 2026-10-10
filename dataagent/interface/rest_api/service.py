@@ -12,6 +12,7 @@
 # ============================================================================
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 import tempfile
@@ -21,6 +22,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from dataagent.agents.nl2sql.utils.prompt_files import (
+    DEFAULT_EDITABLE_PROMPT,
+    editable_prompt_path,
+    read_prompt_file,
+    write_prompt_file,
+)
 from dataagent.core.context.context import ContextFactory
 from dataagent.interface.rest_api.start_service import ScenarioTable, UnknownScenarioError
 from dataagent.interface.sdk.agent import DataAgent
@@ -50,6 +57,7 @@ class DataAgentService:
         self._agents: dict[str, DataAgent] = {}
         self._agent: DataAgent | None = None
         self._cached_agent_type: str | None = None
+        self._prompt_targets: dict[tuple[str, str], Path] = {}
 
     @staticmethod
     def _extract_stream_message(data: Any) -> str | None:
@@ -268,6 +276,40 @@ class DataAgentService:
             )
             yield {"event": "result", "data": self._format_error("internal error", agent=agent)}
 
+    async def view_prompt(self, scenario: str, document: str = DEFAULT_EDITABLE_PROMPT) -> dict[str, Any]:
+        """View one scenario's editable packaged prompt markdown and its last write time."""
+        agent = self._agents.get(scenario) or self._agent
+        try:
+            path = self._prompt_target(scenario, document)
+            markdown, updated_at = await asyncio.to_thread(read_prompt_file, path)
+        except UnknownScenarioError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Unexpected prompt view error: {}",
+                {"message": str(exc), "type": exc.__class__.__name__},
+            )
+            return self._format_error(str(exc), agent=agent)
+        return {"result": {"success": True, "markdown": markdown, "updated_at": updated_at}}
+
+    async def update_prompt(
+        self, scenario: str, markdown: str, document: str = DEFAULT_EDITABLE_PROMPT
+    ) -> dict[str, Any]:
+        """Replace one scenario's editable packaged prompt markdown; effective on the next query."""
+        agent = self._agents.get(scenario) or self._agent
+        try:
+            path = self._prompt_target(scenario, document)
+            updated_at = await asyncio.to_thread(write_prompt_file, path, markdown)
+        except UnknownScenarioError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Unexpected prompt update error: {}",
+                {"message": str(exc), "type": exc.__class__.__name__},
+            )
+            return self._format_error(str(exc), agent=agent)
+        return {"result": {"success": True, "updated_at": updated_at}}
+
     def _select(self, scenario: str | None) -> DataAgent:
         """Return the agent for this request. An empty scenario uses the default agent."""
         name = self.resolve_scenario(scenario)
@@ -281,6 +323,18 @@ class DataAgentService:
         if agent is None:
             raise RuntimeError("DataAgent service is not initialized.")
         return agent
+
+    def _prompt_target(self, scenario: str, document: str) -> Path:
+        """Resolve (scenario, document) to its packaged md path, cached per pair."""
+        if not scenario:
+            raise UnknownScenarioError(scenario)
+        name = self.resolve_scenario(scenario)
+        if name is None or self._table is None:
+            raise UnknownScenarioError(scenario)
+        cache_key = (name, document)
+        if cache_key not in self._prompt_targets:
+            self._prompt_targets[cache_key] = editable_prompt_path(document, self._table.routes[name])
+        return self._prompt_targets[cache_key]
 
     def _format_result(self, state: Any, agent: DataAgent | None = None) -> dict[str, Any]:
         """Format final agent state for the REST API."""
