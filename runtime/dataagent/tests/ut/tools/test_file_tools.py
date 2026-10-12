@@ -44,9 +44,10 @@ def workspace(tmp_path: Path):
 
 class TestReadFileLineNumbers:
     def test_single_line(self, workspace: Path):
+        """Keep the file content numbered before the EOF notice."""
         (workspace / "a.txt").write_text("hello", encoding="utf-8")
         r = tools.read_file(str(workspace / "a.txt"), purpose="test")
-        assert r["original_msg"] == "1\thello"
+        assert r.get("original_msg", "").partition("\n\n")[0] == "1\thello"
 
     def test_skill_alias_path(self, tmp_path: Path):
         workspace_root = (tmp_path / "workspace").resolve()
@@ -79,6 +80,118 @@ class TestReadFileLineNumbers:
         r2 = tools.read_file(str(f), purpose="test")
         assert r1["original_msg"] == r2["original_msg"]
         assert r2["original_msg"].startswith("1\t")
+
+
+class TestReadFileRanges:
+    """Verify range boundaries and model-visible continuation information."""
+
+    @pytest.mark.parametrize("offset", [4, 100])
+    @pytest.mark.parametrize("limit", [None, 2])
+    def test_offset_beyond_eof_reports_total_lines(self, workspace: Path, offset: int, limit: int | None):
+        """Reject an invalid starting line with the actual file length."""
+        target = workspace / "three-lines.txt"
+        target.write_text("aaa\nbbb\nccc\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match=rf"offset {offset}.*3 lines"):
+            tools.read_file(str(target), offset=offset, limit=limit)
+
+    @pytest.mark.parametrize("ending", ["", "\n"])
+    @pytest.mark.parametrize("offset,limit", [(1, 3), (2, 10), (3, 1)])
+    def test_read_through_eof_has_no_extra_numbered_line(self, workspace: Path, ending: str, offset: int, limit: int):
+        """Report EOF without creating a numbered line for the final newline."""
+        target = workspace / "three-lines.txt"
+        target.write_text("aaa\nbbb\nccc" + ending, encoding="utf-8")
+
+        result = tools.read_file(str(target), offset=offset, limit=limit)
+        message = result.get("original_msg", "")
+        data = result.get("data", {})
+        all_lines = enumerate(("aaa", "bbb", "ccc"), 1)
+        expected = "\n".join(f"{number}\t{text}" for number, text in all_lines if number >= offset)
+        assert message.partition("\n\n")[0] == expected
+        assert "End of file reached" in message
+        assert "3 total lines" in message
+        assert data.get("num_lines") == 4 - offset
+        assert data.get("start_line") == offset
+        assert data.get("end_line") == 3
+        assert data.get("total_lines") == 3
+        assert data.get("has_more") is False
+        assert data.get("next_offset") is None
+
+    def test_partial_read_exposes_next_offset(self, workspace: Path):
+        """Let the model continue paging using only the visible tool response."""
+        target = workspace / "three-lines.txt"
+        target.write_text("aaa\nbbb\nccc\n", encoding="utf-8")
+
+        result = tools.read_file(str(target), offset=1, limit=2)
+        message = result.get("original_msg", "")
+        data = result.get("data", {})
+        assert message.partition("\n\n")[0] == "1\taaa\n2\tbbb"
+        assert "Read lines 1-2" in message
+        assert "More content is available" in message
+        assert "offset=3" in message
+        assert data.get("truncated") is True
+        assert data.get("has_more") is True
+        assert data.get("next_offset") == 3
+        assert data.get("total_lines") is None
+
+    @pytest.mark.parametrize("content", ["", "\ufeff"])
+    @pytest.mark.parametrize("offset", [None, 1])
+    def test_empty_file_is_explicit(self, workspace: Path, content: str, offset: int | None):
+        """Identify empty and BOM-only files without an invented first line."""
+        target = workspace / "empty.txt"
+        target.write_text(content, encoding="utf-8")
+
+        result = tools.read_file(str(target), offset=offset)
+        message = result.get("original_msg", "")
+        data = result.get("data", {})
+        assert "File is empty" in message
+        assert "End of file reached" in message
+        assert "\t" not in message
+        assert data.get("num_lines") == 0
+        assert data.get("total_lines") == 0
+        assert data.get("end_line") is None
+        assert data.get("has_more") is False
+
+    def test_empty_file_offset_beyond_start_is_rejected(self, workspace: Path):
+        """Allow the default empty-file read while rejecting a later offset."""
+        target = workspace / "empty.txt"
+        target.write_text("", encoding="utf-8")
+
+        with pytest.raises(ValueError, match=r"offset 2.*0 lines"):
+            tools.read_file(str(target), offset=2)
+
+    def test_real_blank_lines_keep_their_numbers(self, workspace: Path):
+        """Keep actual empty lines while removing the synthetic trailing line."""
+        target = workspace / "blank-lines.txt"
+        target.write_text("\n\n", encoding="utf-8")
+
+        result = tools.read_file(str(target))
+        assert result.get("original_msg", "").partition("\n\n")[0] == "1\t\n2\t"
+        assert result.get("data", {}).get("num_lines") == 2
+        assert result.get("data", {}).get("total_lines") == 2
+
+    def test_first_line_exceeding_output_budget_is_not_reported_as_empty(self, workspace: Path):
+        """Explain why a nonempty range cannot fit within the output budget."""
+        target = workspace / "long-line.txt"
+        target.write_text("x" * (tools.DEFAULT_READ_MAX_OUTPUT_BYTES + 1), encoding="utf-8")
+
+        with pytest.raises(ValueError, match=r"Line 1.*output.*budget"):
+            tools.read_file(str(target), limit=1)
+
+    def test_output_budget_reports_the_unread_line(self, workspace: Path):
+        """Do not skip a line that failed to fit after earlier returned lines."""
+        target = workspace / "long-second-line.txt"
+        target.write_text("a\n" + "x" * tools.DEFAULT_READ_MAX_OUTPUT_BYTES, encoding="utf-8")
+
+        result = tools.read_file(str(target), limit=2)
+        message = result.get("original_msg", "")
+        data = result.get("data", {})
+        assert message.partition("\n\n")[0] == "1\ta"
+        assert "offset=2" in message
+        assert data.get("num_lines") == 1
+        assert data.get("has_more") is True
+        assert data.get("next_offset") == 2
+        assert data.get("total_lines") is None
 
 
 class TestReadFileTokenBudget:
