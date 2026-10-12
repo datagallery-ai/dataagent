@@ -2108,7 +2108,11 @@ def _atomic_write(target: Path, data: bytes) -> None:
 
 def _add_line_numbers(content: str, start_line: int = 1) -> str:
     """Add line-number prefixes (compact ``N\\tline`` format) for model consumption."""
+    if not content:
+        return ""
     lines = content.split("\n")
+    if content.endswith("\n"):
+        lines.pop()
     return "\n".join(f"{i + start_line}\t{line}" for i, line in enumerate(lines))
 
 
@@ -2213,11 +2217,13 @@ def read_file(
       ``offset`` and ``limit`` to read only the relevant section.
     - When you already know which part of the file you need, only read that
       part — this is important for larger files.
-    - Results are returned with line numbers (``N\\tline``) starting at 1.
+    - Results include line numbers (``N\\tline``), the actual range read, and
+      either an end-of-file notice or the next ``offset`` to continue reading.
+    - An ``offset`` beyond the end of the file raises an error with the actual
+      total line count. A ``limit`` extending past EOF returns the remaining lines.
     - This tool can only read text files, not directories. To list a directory,
       use the list_files tool.
-    - If you read a file that exists but has empty contents you will receive a
-      system reminder warning in place of file contents.
+    - Empty files return an explicit empty-file notice when read from line 1.
     - Binary files and files exceeding the size budget will be rejected with a
       clear error message.
 
@@ -2273,7 +2279,7 @@ def read_file(
     truncated = False
 
     # Stream file line-by-line, reading only the requested range (+1 line to detect truncation).
-    # We do NOT scan to EOF; total_lines is therefore unknown.
+    # Total line count is known only if iteration reaches EOF naturally.
     with p.open("r", encoding=encoding, errors="replace", newline="") as tf:
         # Skip BOM for UTF-8 explicitly (TextIO will keep it in content)
         if encoding == "utf-8":
@@ -2310,24 +2316,52 @@ def read_file(
         # If we didn't hit limit_lines but did hit byte budget, truncated already True and loop broke.
         # If limit_lines is None, truncation only reflects the output budget.
 
-    content = "".join(collected)
+    if not truncated and start_line > max(1, current_line_no):
+        raise ValueError(f"offset {start_line} is beyond end of file: {path} has {current_line_no} lines.")
+    if truncated and not collected:
+        raise ValueError(
+            f"Line {start_line} exceeds the read_file output size budget ({DEFAULT_READ_MAX_OUTPUT_BYTES} bytes). "
+            "Use grep to search for specific content."
+        )
 
-    line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+    content = "".join(collected)
+    line_count = lines_collected
+    end_line = start_line + line_count - 1 if line_count else None
+    total_lines = None if truncated else current_line_no
+    next_offset = start_line + line_count if truncated else None
     numbered = _add_line_numbers(content, start_line)
+    if line_count:
+        read_status = f"Read lines {start_line}-{end_line}. "
+        if truncated:
+            read_status += f"More content is available; continue with offset={next_offset}."
+        else:
+            read_status += f"End of file reached ({total_lines} total lines)."
+    else:
+        read_status = "File is empty (0 lines). End of file reached."
+    original_msg = f"{numbered}\n\n[{read_status}]" if numbered else f"[{read_status}]"
     return {
-        "original_msg": numbered,
+        "original_msg": original_msg,
         "frontend_msg": (
             "\n\nread_file 工具执行完成"
             + (f" — {normalized_purpose}" if normalized_purpose else "")
             + f"\n\n已读取: {path}（{collected_bytes} 字节，{line_count} 行，从第 {start_line} 行开始"
             + (f"，最多 {limit_lines} 行" if limit_lines is not None else "")
-            + ("，已截断）" if truncated else "）")
+            + (
+                f"，已截断，可从第 {next_offset} 行继续读取）"
+                if truncated
+                else f"，已到文件末尾，共 {total_lines} 行）"
+            )
         ),
         "data": {
             "path": resolved_path,
             "total_bytes": total_bytes,
             "num_lines": line_count,
             "truncated": truncated,
+            "start_line": start_line,
+            "end_line": end_line,
+            "total_lines": total_lines,
+            "has_more": truncated,
+            "next_offset": next_offset,
         },
     }
 

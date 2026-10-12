@@ -34,6 +34,7 @@ def test_read_file_requires_bound_sandbox(tmp_path: Path):
 
 
 def test_read_file_uses_bound_sandbox(tmp_path: Path):
+    """Read from the bound workspace with a model-visible EOF notice."""
     workspace = tmp_path.resolve()
     target = workspace / "demo.txt"
     target.write_text("hello", encoding="utf-8")
@@ -44,11 +45,13 @@ def test_read_file_uses_bound_sandbox(tmp_path: Path):
     finally:
         reset_current_sandbox(token)
 
-    assert result["original_msg"] == "1\thello"
-    assert result["data"]["path"] == str(target.resolve())
+    assert result.get("original_msg", "").partition("\n\n")[0] == "1\thello"
+    assert "End of file reached" in result.get("original_msg", "")
+    assert result.get("data", {}).get("path") == str(target.resolve())
 
 
 def test_concurrent_tool_context_isolates_workspace_and_skill_aliases(tmp_path: Path):
+    """Keep concurrent reads within their own workspace and skill aliases."""
     workspace_a = (tmp_path / "workspace-a").resolve()
     workspace_b = (tmp_path / "workspace-b").resolve()
     skill_root_a = (tmp_path / "skill-a").resolve()
@@ -72,7 +75,7 @@ def test_concurrent_tool_context_isolates_workspace_and_skill_aliases(tmp_path: 
             assert current.skill_aliases == {"pdf": skill_root}
             target = workspace / filename
             result = tools.read_file(str(target), purpose="concurrent read")
-            return result["original_msg"]
+            return result.get("original_msg", "")
         finally:
             reset_current_sandbox(token)
 
@@ -83,11 +86,12 @@ def test_concurrent_tool_context_isolates_workspace_and_skill_aliases(tmp_path: 
         )
 
     content_a, content_b = asyncio.run(_run_workers())
-    assert content_a == "1\tfrom-a"
-    assert content_b == "1\tfrom-b"
+    assert content_a.partition("\n\n")[0] == "1\tfrom-a"
+    assert content_b.partition("\n\n")[0] == "1\tfrom-b"
 
 
 def test_concurrent_tool_context_isolates_allow_read_roots(tmp_path: Path):
+    """Keep concurrent reads within their own additional read-only roots."""
     workspace_a = (tmp_path / "workspace-a").resolve()
     workspace_b = (tmp_path / "workspace-b").resolve()
     allow_a = (tmp_path / "allow-a").resolve()
@@ -111,7 +115,7 @@ def test_concurrent_tool_context_isolates_allow_read_roots(tmp_path: Path):
             with pytest.raises(WorkspaceAccessError):
                 tools.read_file(str(other_target), purpose="cross root should fail")
             result = tools.read_file(str(target_file), purpose="own root should pass")
-            return result["original_msg"]
+            return result.get("original_msg", "")
         finally:
             reset_current_sandbox(token)
 
@@ -122,5 +126,5 @@ def test_concurrent_tool_context_isolates_allow_read_roots(tmp_path: Path):
         )
 
     content_a, content_b = asyncio.run(_run_workers())
-    assert content_a == "1\tallow-a"
-    assert content_b == "1\tallow-b"
+    assert content_a.partition("\n\n")[0] == "1\tallow-a"
+    assert content_b.partition("\n\n")[0] == "1\tallow-b"
