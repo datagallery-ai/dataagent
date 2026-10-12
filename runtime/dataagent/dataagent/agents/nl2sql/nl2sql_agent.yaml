@@ -48,6 +48,7 @@ DATABASE:
     path: ""  # replace with actual .sqlite path
 SEMANTIC_LAYER:
   base_url: ""  # replace with actual semantic service port
+  scenario: ""  # semantic-service scene name; empty omits X-Semantic-Scenario. Health checks never send it.
   username: null
   password: null
   timeout: 30

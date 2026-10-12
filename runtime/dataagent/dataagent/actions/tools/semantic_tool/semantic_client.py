@@ -41,11 +41,13 @@ class SemanticServiceClient:
         *,
         auth: tuple[str, str] | None = None,
         timeout: float = 30.0,
+        scenario: str | None = None,
     ) -> None:
         """Create a client for the configured semantic-service base URL."""
         self.base_url = normalize_semantic_base_url(base_url)
         self.timeout = timeout
         self.auth = auth
+        self.scenario = normalize_semantic_scenario(scenario)
         self.client = httpx.Client(
             timeout=timeout,
             auth=auth,
@@ -70,7 +72,12 @@ class SemanticServiceClient:
             config_manager.get("SEMANTIC_LAYER.timeout", 30.0),
             30.0,
         )
-        return cls(str(raw_base_url), auth=auth, timeout=timeout)
+        return cls(
+            str(raw_base_url),
+            auth=auth,
+            timeout=timeout,
+            scenario=config_manager.get("SEMANTIC_LAYER.scenario"),
+        )
 
     def get_table_list(self, database_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT) -> list:
         """Get tables under a semantic database."""
@@ -317,6 +324,7 @@ class SemanticServiceClient:
     ) -> Any:
         """Send a request with JSON completeness checks and audit logging."""
         url = self._url(path)
+        headers = self._scenario_headers(path, headers)
         started = time.perf_counter()
         try:
             if method.upper() == "GET":
@@ -386,9 +394,27 @@ class SemanticServiceClient:
             )
             raise error from err
 
+    def _scenario_headers(self, path: str, headers: dict[str, str] | None) -> dict[str, str] | None:
+        """Attach ``X-Semantic-Scenario`` except on the process health check."""
+        if not self.scenario or path.strip("/") == "health":
+            return headers
+        merged = dict(headers or {})
+        merged.setdefault("X-Semantic-Scenario", self.scenario)
+        return merged
+
     def _url(self, path: str) -> str:
         """Build an absolute URL from a relative API path."""
         return f"{self.base_url}/{path.lstrip('/')}"
+
+
+def normalize_semantic_scenario(raw: Any) -> str | None:
+    """Return a semantic scenario name, or None when the header should be omitted."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("validation error: SEMANTIC_LAYER.scenario must be a string")
+    name = raw.strip()
+    return name or None
 
 
 def normalize_semantic_base_url(raw_url: str) -> str:
@@ -474,6 +500,12 @@ def _optional_str(value: Any) -> str | None:
 def _truncate(text: str, max_len: int) -> str:
     """Truncate text to a maximum length."""
     return text if len(text) <= max_len else f"{text[:max_len]}..."
+
+
+def _normalize_scenario(scenario: str | None) -> str | None:
+    """Normalize a scenario name; blank values mean the default semantic service."""
+    text = str(scenario or "").strip()
+    return text or None
 
 
 def _as_float(value: Any, default: float) -> float:
