@@ -49,6 +49,7 @@ DATABASE:
 SEMANTIC_LAYER:
   base_url: ""  # replace with actual semantic service port
   timeout: 30
+  scenario: ""  # semantic-service scene name; empty omits X-Semantic-Scenario. Health checks never send it.
 
 # 整段不写 / 空段 = 默认 inbound+outbound 开启且 mode 3，必须补证书路径。
 # encrypted 省略或 true = 私钥口令走内部包；CI/ST 夹具应关 *_enabled，不要把生产样例写成 false。

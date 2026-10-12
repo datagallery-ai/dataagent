@@ -93,9 +93,42 @@ class UpdateRequest(BaseModel):
     content: UpdateContent
 
 
-# Discriminated by `type`. query plus the packaged-prompt view/update operations.
+class SemanticStatusContent(BaseModel):
+    """semantic_status takes no fields. Health is not scenario-routed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SemanticStatusRequest(BaseModel):
+    """Ask whether the semantic service process is up."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["semantic_status"]
+    content: SemanticStatusContent
+
+
+class IngestionStatusContent(BaseModel):
+    """Body of the ingestion_status operation. scenario selects the registered yaml."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: str = Field(min_length=1)
+    traceId: str = Field(min_length=1)
+
+
+class IngestionStatusRequest(BaseModel):
+    """Ask whether one ingestion job, identified by traceId, has finished."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ingestion_status"]
+    content: IngestionStatusContent
+
+
+# Discriminated by `type`. query, packaged-prompt view/update, and status operations.
 # Each operation keeps its own content model; they never inherit query/stream.
-OperationRequest = QueryRequest | ViewRequest | UpdateRequest
+OperationRequest = QueryRequest | ViewRequest | UpdateRequest | SemanticStatusRequest | IngestionStatusRequest
 DataAgentRequest = Annotated[OperationRequest, Field(discriminator="type")]
 _DATA_AGENT_REQUEST_ADAPTER: TypeAdapter[OperationRequest] = TypeAdapter(DataAgentRequest)
 
@@ -247,11 +280,15 @@ async def agent_operation(
     request: OperationRequest = Depends(get_data_agent_request),
     service: DataAgentService = Depends(get_data_agent_service),
 ):
-    """Operation path: query plus scenario packaged-prompt view/update."""
+    """Operation path: query, packaged-prompt view/update, semantic_status, and ingestion_status."""
     if isinstance(request, QueryRequest):
         return await _dispatch_query(request.content.query, request.content.stream, service, request.content.scenario)
     if isinstance(request, ViewRequest):
         return await _run_operation(service.view_prompt(request.content.scenario))
     if isinstance(request, UpdateRequest):
         return await _run_operation(service.update_prompt(request.content.scenario, request.content.markdown))
+    if isinstance(request, SemanticStatusRequest):
+        return await _run_operation(service.semantic_status())
+    if isinstance(request, IngestionStatusRequest):
+        return await _run_operation(service.ingestion_status(request.content.scenario, request.content.traceId))
     raise AssertionError(f"unsupported type: {getattr(request, 'type', request)}")
