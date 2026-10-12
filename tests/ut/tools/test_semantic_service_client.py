@@ -191,6 +191,62 @@ def test_client_uses_httpx_verify_for_semantic_layer(monkeypatch) -> None:
     assert captured["verify"] is sentinel
 
 
+def test_scenario_header_follows_semantic_layer_scenario(monkeypatch) -> None:
+    fake_client = _FakeClient()
+    monkeypatch.setattr(semantic_client.httpx, "Client", lambda *a, **k: fake_client)
+
+    class _CM:
+        def get(self, key: str, default: Any = None) -> Any:
+            values = {
+                "SEMANTIC_LAYER.base_url": "http://semantic.local:41000",
+                "SEMANTIC_LAYER.scenario": " traffic_insight ",
+            }
+            return values.get(key, default)
+
+    client = SemanticServiceClient.from_config(_CM())
+    assert client.scenario == "traffic_insight"
+    assert client.get_table_list("yunhe") == {"ok": True}
+    assert fake_client.calls[-1][3] == {"X-Semantic-Scenario": "traffic_insight"}
+    assert client.get("health") == {"ok": True}
+    assert fake_client.calls[-1][3] is None
+    assert client.semantic_search_tables("订单") == {"ok": True}
+    assert fake_client.calls[-1][3] == {
+        "Content-Type": "application/json",
+        "X-Semantic-Scenario": "traffic_insight",
+    }
+
+
+def test_blank_scenario_omits_header(monkeypatch) -> None:
+    fake_client = _FakeClient()
+    monkeypatch.setattr(semantic_client.httpx, "Client", lambda *a, **k: fake_client)
+
+    class _CM:
+        def get(self, key: str, default: Any = None) -> Any:
+            values = {
+                "SEMANTIC_LAYER.base_url": "http://semantic.local:41000",
+                "SEMANTIC_LAYER.scenario": "  ",
+            }
+            return values.get(key, default)
+
+    client = SemanticServiceClient.from_config(_CM())
+    assert client.scenario is None
+    assert client.get_table_list("yunhe") == {"ok": True}
+    assert fake_client.calls[-1][3] is None
+
+
+def test_scenario_must_be_a_string() -> None:
+    class _CM:
+        def get(self, key: str, default: Any = None) -> Any:
+            values = {
+                "SEMANTIC_LAYER.base_url": "http://semantic.local:41000",
+                "SEMANTIC_LAYER.scenario": 1,
+            }
+            return values.get(key, default)
+
+    with pytest.raises(ValueError, match="SEMANTIC_LAYER.scenario must be a string"):
+        SemanticServiceClient.from_config(_CM())
+
+
 def test_normalize_semantic_base_url_keeps_http_and_https() -> None:
     assert normalize_semantic_base_url("http://127.0.0.1:31347") == "http://127.0.0.1:31347/api/semantic/v1"
     assert normalize_semantic_base_url("HTTPS://semantic.example:443") == "HTTPS://semantic.example:443/api/semantic/v1"

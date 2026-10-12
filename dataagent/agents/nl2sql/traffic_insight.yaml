@@ -32,6 +32,7 @@ DATABASE:
 SEMANTIC_LAYER:
   base_url: "http://"  # 可填服务根地址；客户端会统一到 /api/semantic/v1
   timeout: 30
+  scenario: "traffic_insight"  # 语义服务场景名；有值才带 X-Semantic-Scenario，健康检查不带
   traffic_insight:
     recall:
       column_eq_page_size: 200

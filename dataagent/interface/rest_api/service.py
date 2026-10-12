@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient, SemanticServiceError
 from dataagent.agents.nl2sql.utils.prompt_files import (
     DEFAULT_EDITABLE_PROMPT,
     editable_prompt_path,
@@ -34,6 +35,45 @@ from dataagent.interface.sdk.agent import DataAgent
 from dataagent.utils.log import logger
 
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", flags=re.DOTALL | re.IGNORECASE)
+# Keep the semantic status string. ``completed`` is only a summary: updating and failed
+# are both incomplete, and callers tell those two states apart by ``status``.
+_INGESTION_COMPLETED = {
+    "normal": True,
+    "updating": False,
+    "failed": False,
+}
+_SEMANTIC_NOT_UP = "semantic service is not UP"
+_TRACE_NOT_FOUND = "ingestion trace not found"
+_INGESTION_UNAVAILABLE = "failed to query ingestion status"
+
+
+def _trace_status(payload: Any) -> str | None:
+    """Return the single ingestion trace status from ``items[0]``."""
+    if not isinstance(payload, dict):
+        return None
+    items = payload.get("items")
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+        return None
+    status = items[0].get("status")
+    if status not in _INGESTION_COMPLETED:
+        return None
+    return str(status)
+
+
+def _ingestion_result(status: str) -> dict[str, Any]:
+    """One ingestion trace. ``status`` is the semantic value, not collapsed to ``completed``."""
+    return {
+        "result": {
+            "success": True,
+            "status": status,
+            "completed": _INGESTION_COMPLETED[status],
+        }
+    }
+
+
+def _trace_missing(exc: SemanticServiceError) -> bool:
+    """True when semantic reports that the trace id does not exist."""
+    return exc.status_code == 404 or exc.error_code == "INGESTION_TRACE_NOT_FOUND"
 
 
 _PUBLIC_ERROR_FIELD_TYPES = {
@@ -145,6 +185,21 @@ class DataAgentService:
             raise RuntimeError("DataAgent.from_config returned None")
         return agent
 
+    @staticmethod
+    def _semantic_get(
+        agent: DataAgent,
+        path: str,
+        *,
+        params: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """GET one semantic path using that agent's ``SEMANTIC_LAYER.base_url``."""
+        client = SemanticServiceClient.from_config(agent.config)
+        try:
+            return client.get(path, params=params, headers=headers)
+        finally:
+            client.client.close()
+
     def initialize(self) -> None:
         """Initialize one DataAgent for the single config, or one per scenario."""
         if self._table is None:
@@ -172,6 +227,51 @@ class DataAgentService:
     def is_ready(self) -> bool:
         """Return True when the underlying agent has been initialized."""
         return self._agent is not None
+
+    async def semantic_status(self) -> dict[str, Any]:
+        """Report whether the default scenario's semantic service process is UP."""
+        agent: DataAgent | None = None
+        try:
+            agent = self._default_agent()
+            payload = await asyncio.to_thread(self._semantic_get, agent, "health")
+        except SemanticServiceError as exc:
+            logger.warning("semantic status failed: status={} error_code={}", exc.status_code, exc.error_code)
+            return self._format_error(_SEMANTIC_NOT_UP, agent=agent)
+        except Exception as exc:
+            logger.exception("semantic status failed: {}", {"type": exc.__class__.__name__})
+            return self._format_error(_SEMANTIC_NOT_UP, agent=agent)
+        if not (isinstance(payload, dict) and payload.get("status") == "UP"):
+            return self._format_error(_SEMANTIC_NOT_UP, agent=agent)
+        return {"result": {"success": True, "status": "UP"}}
+
+    async def ingestion_status(self, scenario: str, trace_id: str) -> dict[str, Any]:
+        """Report one ingestion job. ``normal`` is complete; ``updating`` and ``failed`` stay distinct."""
+        agent: DataAgent | None = None
+        try:
+            agent = self._select(scenario)
+            payload = await asyncio.to_thread(
+                self._semantic_get,
+                agent,
+                "ingestion-traces",
+                params={"traceId": trace_id},
+            )
+        except UnknownScenarioError:
+            raise
+        except SemanticServiceError as exc:
+            message = _TRACE_NOT_FOUND if _trace_missing(exc) else _INGESTION_UNAVAILABLE
+            logger.warning(
+                "ingestion status failed: status={} error_code={}",
+                exc.status_code,
+                exc.error_code,
+            )
+            return self._format_error(message, agent=agent)
+        except Exception as exc:
+            logger.exception("ingestion status failed: {}", {"type": exc.__class__.__name__})
+            return self._format_error(_INGESTION_UNAVAILABLE, agent=agent)
+        status = _trace_status(payload)
+        if status is None:
+            return self._format_error(_INGESTION_UNAVAILABLE, agent=agent)
+        return _ingestion_result(status)
 
     async def query(self, query: str, scenario: str | None = None) -> Any:
         """Run one DataAgent query."""
@@ -309,6 +409,14 @@ class DataAgentService:
             )
             return self._format_error(str(exc), agent=agent)
         return {"result": {"success": True, "updated_at": updated_at}}
+
+    def _default_agent(self) -> DataAgent:
+        """Return the agent for the first ``--config``. A bare path has no scenario table."""
+        if self._agent is None:
+            self.initialize()
+        if self._agent is None:
+            raise RuntimeError("DataAgent service is not initialized.")
+        return self._agent
 
     def _select(self, scenario: str | None) -> DataAgent:
         """Return the agent for this request. An empty scenario uses the default agent."""
