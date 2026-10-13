@@ -12,6 +12,10 @@ from unittest.mock import AsyncMock, patch
 from dataagent.actions.tools.hooks.base import ToolHookRunner
 from dataagent.actions.tools.hooks.examples import ir_hooks
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike import fill, render
+from dataagent.actions.tools.hooks.examples.data_task_ir_spike.template import (
+    list_field_templates,
+    load_template_catalog,
+)
 
 FIELD = {"field_id": "time_context", "value": {
     "output_bucket": {
@@ -260,7 +264,7 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
-    async def test_partial_only_keeps_empty_unresolved_and_rechecks_new_evidence(self):
+    async def test_empty_fields_do_not_invent_questions_and_recheck_new_evidence(self):
         for batch_size in [1, 4]:
             with self.subTest(batch_size=batch_size), TemporaryDirectory() as trace, patch.object(
                 fill, "ainvoke_json_object", AsyncMock(return_value=({"value": {}, "rationale": "No evidence"}, '{}')),
@@ -270,11 +274,12 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
                     completion_policy="partial_only", completion_batch_size=batch_size, trace_dir=trace,
                 )
                 self.assertEqual(model.await_count, 1)
-                self.assertTrue(result[0]["unresolved"])
-                self.assertTrue(result[0]["question"])
+                self.assertFalse(result[0].get("unresolved"))
+                self.assertFalse(result[0].get("question"))
+                self.assertEqual(result[0]["value"], {"output_bucket": None, "input_windows": None})
                 self.assertFalse(fill.is_field_confirmed(result[0], TEMPLATE))
                 meta = json.loads((Path(trace) / "time_context/meta.json").read_text())
-                self.assertEqual(meta["completion_skipped_reason"], "empty_value_preserved_as_unresolved")
+                self.assertEqual(meta["completion_skipped_reason"], "no_structural_errors")
                 self.assertFalse(meta["completion_pending"])
                 model.return_value = (deepcopy(FIELD), json.dumps(FIELD))
                 updated = await fill.fill_field_templates(
@@ -286,9 +291,9 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(updated, [FIELD])
                 self.assertIn("new: past seven days", model.await_args.args[1][1]["content"])
 
-    async def test_partial_only_still_completes_partial_values_and_repairs_invalid_json(self):
+    async def test_partial_only_still_repairs_malformed_structure_and_invalid_json(self):
         partial = deepcopy(FIELD)
-        partial["value"]["input_windows"][0]["time_field"] = None
+        partial["value"]["input_windows"] = "not an array"
         for first in [(partial, '{}'), (None, 'invalid'), TimeoutError()]:
             with self.subTest(first=first), patch.object(fill, "ainvoke_json_object", AsyncMock(
                 side_effect=[first, (deepcopy(FIELD), json.dumps(FIELD))],
@@ -341,7 +346,7 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 await fill.fill_field_templates([TEMPLATE], user_query="q", tool_evidence="e", llm=None, **kwargs)
 
-    async def test_empty_fields_still_receive_second_opinion_in_batch(self):
+    async def test_batch_repairs_structure_but_accepts_unknown_business_values(self):
         templates = [deepcopy(TEMPLATE), {"field_id": "sequence",
                      "writable_template": {"field_id": "sequence", "value": {
                          "partition_fields": [], "null_equality": None, "ordering": [],
@@ -357,7 +362,9 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
                 fields = [{"field_id": t["field_id"], "value": {}, "rationale": "No evidence"}
                           for t in reversed(templates)]
                 return {"fields": fields}, json.dumps({"fields": fields})
-            return {"value": {}, "rationale": "No evidence"}, '{"value": {}}'
+            field_id = "sequence" if "field_id: sequence" in messages[1]["content"] else "time_context"
+            value = {"ordering": "broken"} if field_id == "sequence" else {"input_windows": "broken"}
+            return {"value": value, "rationale": "Malformed output"}, json.dumps({"value": value})
 
         with TemporaryDirectory() as trace, patch.object(fill, "ainvoke_json_object", model):
             results = await fill.fill_field_templates(
@@ -367,7 +374,7 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(calls), 3)  # Two first fills + one shared second opinion.
             self.assertEqual([r["field_id"] for r in results], [t["field_id"] for t in templates])
             for result in results:
-                self.assertTrue(result["unresolved"])
+                self.assertFalse(result.get("unresolved"))
                 self.assertFalse(fill.is_field_confirmed(result, templates[0]))
                 meta = json.loads((Path(trace) / result["field_id"] / "meta.json").read_text())
                 self.assertTrue(meta["completion_retried"])
@@ -383,7 +390,8 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
         corrected["value"]["input_windows"][0]["range"]["number"] = 30
         evidence = 'old 7 days\n【当前字段值】\ncorrection: 30 days'
         with patch.object(fill, "ainvoke_json_object", AsyncMock(side_effect=[
-            ({"value": {}}, '{}'), ({"fields": [corrected]}, json.dumps({"fields": [corrected]})),
+            ({"value": {"input_windows": "broken"}}, '{}'),
+            ({"fields": [corrected]}, json.dumps({"fields": [corrected]})),
         ])) as model:
             result = await fill.fill_field_templates(
                 [TEMPLATE], user_query="q", tool_evidence=evidence, llm=None,
@@ -409,7 +417,7 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
         for invalid in [{"fields": []}, {"fields": [{"field_id": "wrong", "value": {}}]},
                         {"fields": [{"field_id": "time_context", "value": {}}]}]:
             with self.subTest(invalid=invalid), patch.object(fill, "ainvoke_json_object", AsyncMock(
-                side_effect=[({"value": {}}, '{}'), (invalid, '{}'), (deepcopy(FIELD), '{}')],
+                side_effect=[({"value": {"input_windows": "broken"}}, '{}'), (invalid, '{}'), (deepcopy(FIELD), '{}')],
             )) as model:
                 result = await fill.fill_field_templates(
                     [TEMPLATE], user_query="q", tool_evidence="full evidence", llm=None, completion_batch_size=4,
@@ -418,7 +426,7 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(model.await_count, 3)
                 self.assertIn("full evidence", model.await_args.args[1][1]["content"])
         with patch.object(fill, "ainvoke_json_object", AsyncMock(side_effect=[
-            ({"value": {}}, '{}'), TimeoutError(), TimeoutError(),
+            ({"value": {"input_windows": "broken"}}, '{}'), TimeoutError(), TimeoutError(),
         ])):
             result = await fill.fill_field_templates(
                 [TEMPLATE], user_query="q", tool_evidence="e", llm=None, completion_batch_size=4,
@@ -428,7 +436,9 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result[0].get("unresolved"))
 
     async def test_unrelated_explicit_none_does_not_waive_completion(self):
-        with patch.object(fill, "ainvoke_json_object", AsyncMock(return_value=({"value": {}}, '{}'))) as model:
+        with patch.object(fill, "ainvoke_json_object", AsyncMock(return_value=(
+            {"value": {"input_windows": "broken"}}, '{}',
+        ))) as model:
             result = await fill.fill_field_template(
                 TEMPLATE, user_query="last 14 days", tool_evidence="other_field evidence_status: explicit_none",
                 llm=None,
@@ -538,7 +548,7 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_completion_is_not_published_as_success(self):
         partial = deepcopy(FIELD)
-        partial["value"]["input_windows"][0]["time_field"] = None
+        partial["value"]["input_windows"] = "not an array"
         with patch.object(
             fill, "ainvoke_json_object", AsyncMock(side_effect=[(partial, "{}"), TimeoutError()]),
         ), self.assertRaises(ValueError):
@@ -563,6 +573,99 @@ class DetectorAndFillTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertFalse(completed)
             self.assertTrue(warnings)
+
+
+class IncompleteInformationTests(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.templates = {t["field_id"]: t for t in list_field_templates(load_template_catalog())}
+
+    async def test_all_six_empty_units_make_six_calls_without_completion_or_fake_questions(self):
+        for policy in ["always", "partial_only"]:
+            for batch_size in [1, 4]:
+                with self.subTest(policy=policy, batch_size=batch_size), TemporaryDirectory() as trace, patch.object(
+                    fill, "ainvoke_json_object", AsyncMock(return_value=(
+                        {"value": {}, "rationale": "当前证据未提供本字段信息"}, '{}',
+                    )),
+                ) as model:
+                    results = await fill.fill_field_templates(
+                        list(self.templates.values()), user_query="看看数据", tool_evidence="", llm=None,
+                        completion_policy=policy, completion_batch_size=batch_size, trace_dir=trace,
+                    )
+                    self.assertEqual(model.await_count, 6)
+                    for result in results:
+                        self.assertFalse(result.get("unresolved"))
+                        self.assertFalse(result.get("question"))
+                        self.assertFalse(fill.is_field_confirmed(result, self.templates[result["field_id"]]))
+                        meta = json.loads((Path(trace) / result["field_id"] / "meta.json").read_text())
+                        self.assertEqual(meta["attempts"], 1)
+                        self.assertFalse(meta["completion_retried"])
+                        self.assertEqual(meta["missing_critical_paths"], [])
+                    self.assertFalse(list(Path(trace).glob("_completion_*")))
+
+    async def test_partial_units_preserve_unknown_subfields_without_retry(self):
+        cases = {
+            "identity": {"components": [{"field_ref": "device_id"}]},
+            "sources": {"facts": [{"source_ref": "downloads", "filters": [{"field_ref": "status"}]}],
+                        "dimensions": [{"source_ref": "apps", "join": {"fact_source_ref": "downloads"}}]},
+            "time_context": {"input_windows": [{"window_id": "w7d", "range": {"number": 7}}]},
+            "output_features": {"layout": "cartesian", "axes": [{"axis_id": "window", "values": []}],
+                                "measures": [{"measure_id": "downloads", "aggregation": None}]},
+            "sequence": {"ordering": [{"field_ref": "downloads", "direction": None}]},
+        }
+        for field_id, value in cases.items():
+            with self.subTest(field_id=field_id), patch.object(fill, "ainvoke_json_object", AsyncMock(
+                return_value=({"value": deepcopy(value), "rationale": "仅提取已有信息"}, '{}'),
+            )) as model:
+                result = await fill.fill_field_template_detailed(
+                    self.templates[field_id], user_query="近7天下载次数", tool_evidence="partial evidence", llm=None,
+                )
+                self.assertEqual(model.await_count, 1)
+                self.assertEqual(result["missing_critical_paths"], [])
+                self.assertFalse(result["output"].get("question"))
+                self.assertFalse(fill.is_field_confirmed(result["output"], self.templates[field_id]))
+        # Local normalization restores keys, never example values or business defaults.
+        self.assertEqual(fill._normalize_field_value(
+            {"input_windows": [{"window_id": "w7d", "range": {"number": 7}}]},
+            self.templates["time_context"]["value_schema"], TEMPLATE["writable_template"]["value"],
+        )["input_windows"][0]["range"], {"number": 7, "direction": None, "unit": None})
+
+    async def test_real_unresolved_survives_without_repeated_completion_then_new_evidence_updates(self):
+        partial = deepcopy(FIELD)
+        partial["value"]["input_windows"][0]["time_field"] = None
+        partial.update(unresolved=["下载事件时间字段尚未确认"], question="下载事件应使用哪个时间字段？")
+        with patch.object(fill, "ainvoke_json_object", AsyncMock(return_value=(partial, json.dumps(partial)))) as model:
+            result = await fill.fill_field_templates(
+                [TEMPLATE], user_query="近7天下载次数", tool_evidence="时间字段未知", llm=None,
+            )
+            self.assertEqual(model.await_count, 1)
+            self.assertEqual(result[0]["unresolved"], partial["unresolved"])
+            self.assertEqual(result[0]["question"], partial["question"])
+            model.return_value = (deepcopy(FIELD), json.dumps(FIELD))
+            updated = await fill.fill_field_templates(
+                [TEMPLATE], user_query="近7天下载次数", tool_evidence="时间字段为 event_time", llm=None,
+                current_values=result, reuse_field_ids={"time_context"},
+            )
+            self.assertEqual(model.await_count, 2)
+            self.assertEqual(updated, [FIELD])
+            self.assertIn("时间字段为 event_time", model.await_args.args[1][1]["content"])
+
+    async def test_invalid_enum_and_container_types_still_request_structure_repair(self):
+        for invalid in ["invented_policy", [], {}]:
+            good = {"value": {"components": [{"field_ref": "device_id", "null_semantics": None}]},
+                    "rationale": "空值规则无证据，留空"}
+            bad = deepcopy(good)
+            bad["value"]["components"][0]["null_semantics"] = invalid
+            with self.subTest(invalid=invalid), patch.object(fill, "ainvoke_json_object", AsyncMock(
+                side_effect=[(bad, json.dumps(bad)), (good, json.dumps(good))],
+            )) as model:
+                detail = await fill.fill_field_template_detailed(
+                    self.templates["identity"], user_query="每设备下载次数", tool_evidence="device_id", llm=None,
+                )
+                self.assertEqual(model.await_count, 2)
+                self.assertTrue(detail["completion_retried"])
+                self.assertIsNone(detail["output"]["value"]["components"][0]["null_semantics"])
+                self.assertIn("只使用用户原始问题和工具证据", model.await_args.args[1][-1]["content"])
 
 
 class CriticalPathsTests(unittest.TestCase):
@@ -597,10 +700,35 @@ class CriticalPathsTests(unittest.TestCase):
             {"layout": "cartesian", "axes": [{"axis_id": "window", "values": []}],
              "measures": [], "features": []},
         )
-        self.assertIn("axes[].values", missing)
+        self.assertEqual(missing, [])  # Empty axis values are incomplete evidence, not broken structure.
 
 
 class RenderTests(unittest.TestCase):
+    def test_unknown_rank_partition_is_not_rendered_as_confirmed_global_partition(self):
+        for partition in [None, []]:
+            value = {"layout": "cartesian", "axes": [], "measures": [{
+                "measure_id": "downloads", "name_pattern": "downloads", "attach_rank": {
+                    "rank_type": "ntile", "bucket_count": 100, "partition_by": partition,
+                },
+            }]}
+            columns = render.expand_output_features(value)
+            self.assertEqual(columns[1]["rank"]["partition_by"], partition)
+
+    def test_partial_output_count_does_not_cap_the_task_output_columns(self):
+        fields = [
+            {"field_id": "identity", "value": {"components": [{"field_ref": "device_id"}]}},
+            {"field_id": "output_features", "value": {
+                "layout": "cartesian", "axes": [{"axis_id": "window", "values": []}],
+                "measures": [{"measure_id": "downloads", "aggregation": None}],
+            }},
+        ]
+        text = render.render_constraint_context(fields)
+        self.assertIn("device_id", text)
+        self.assertIn("不能视为信息不完备时的任务总列数", text)
+        self.assertNotIn("总输出列数（按语义项计数）应为", text)
+        self.assertIn("尚未明确的轴或指标不以零列解释", text)
+        self.assertIn("不得为了填满 IR 猜测业务值", text)
+
     def test_shared_contract_includes_policy_once_and_omits_warnings(self):
         runtime = FakeRuntime()
         self.assertEqual(ir_hooks.get_ir_context(runtime), "")

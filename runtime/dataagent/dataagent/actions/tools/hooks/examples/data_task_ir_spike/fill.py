@@ -31,7 +31,7 @@ from dataagent.actions.tools.hooks.examples.data_task_ir_spike.json_llm import a
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.template import materialize_writable_template
 
 CONCISE_RATIONALE_INSTRUCTION = (
-    "\n输出精简要求：value 必须完整，不能省略已知字段、条件、表达式或分支。"
+    "\n输出精简要求：value 必须完整保留已有证据，不要求填满未知槽位，不能省略已知字段、条件、表达式或分支。"
     "rationale 用1至2句简短说明直接依据，不复述整段问题、模板规则或元数据；"
     "unresolved 逐项简述真实缺失/冲突，不重复，question 合并为一句。"
     "精简只作用于说明文字，不能缩减业务内容。"
@@ -42,10 +42,9 @@ COMPACT_JSON_INSTRUCTION = (
 )
 
 
-# Structural integrity only: if a list item exists, these leaves must be present.
-# Empty arrays are valid (宁缺毋滥) — they do not fail via vacuous [].
-# Do NOT list optional containers (filters/dimensions/windows/axes/features/…) or
-# often-null N/A fields (pipeline bools, sequence truncation/dedup, uniqueness_scope).
+# Structural integrity only: absent leaves are normalized to unknown locally.
+# Unknown values and empty arrays never request business-content completion.
+# This is not a checklist of business information the user must provide.
 CRITICAL_PATHS = {
     "identity": [
         "components[].field_ref",
@@ -238,8 +237,12 @@ few-shot 只演示协议，不是当前任务证据，禁止复制例子中的�
 必须尽量提取用户原始问题、已确认上下文和工具证据中属于当前 Field Unit 的全部确定内容。
 即使用户没有使用字段标题，也不能忽略自然语言中已经表达的直接口径。
 允许部分填写；没有证据、存在歧义或冲突的子字段保持 null 或空数组，禁止自行裁决。
-只有工具证据明确标记 evidence_status: explicit_none 时，才把结构空值解释为确定不执行该操作。
-存在未决项时才输出 unresolved 和 question；unresolved 是纯文本字符串数组。
+上述规则适用于整个 Field Unit 及其任意子字段；完整提取已有证据，不等于填满模板。
+模板的 required/completion_conditions 描述结构或信息齐备状态，不要求为满足它们而补出未知业务值。
+未涉及的操作保持空值，不为填满模板新增操作或要求用户逐项补齐。
+空值不等于已确认不执行；只有用户、已确认上下文或工具证据明确说明不执行时，才作此判断。
+仅当缺失或冲突影响当前任务的正确实现时输出 unresolved 和 question；unresolved 是纯文本字符串数组。
+可选操作未涉及、与当前任务无关的槽位为空，不是待澄清问题。
 question 是一个字符串，必须说明用户和证据中是否存在相关信息：
 没有时说明需要补充什么；有时指出哪里没说清楚。
 unresolved 只能记录当前 Field Unit 的直接问题；其他字段的缺失或冲突必须完全忽略。
@@ -393,14 +396,18 @@ async def fill_field_template_detailed(
             if not isinstance(output.get("value"), dict):
                 raise ValueError("DataTaskIR field value must be an object")
             output["field_id"] = field_template.get("field_id")
+            output["value"] = _normalize_field_value(
+                output["value"], field_template.get("value_schema", {}),
+                field_template.get("writable_template", {}).get("value", {}),
+            )
             best_output = deepcopy(output)
-            # A marker elsewhere in a document cannot waive this field's checks.
+            # Repair malformed structure, never ask the model to fill unknown business values.
+            # completion_policy is retained for configuration compatibility; both policies
+            # now permit unknowns and repair structural errors only.
             missing_paths = _find_missing_critical_paths(field_template, output.get("value", {}))
-            skip_completion = (completion_policy == "partial_only"
-                               and not _has_meaningful_leaf(output["value"]))
-            if missing_paths and attempt < max_attempts and not defer_completion and not skip_completion:
+            if missing_paths and attempt < max_attempts and not defer_completion:
                 previous_missing_paths = missing_paths
-                errors.append(f"Missing critical paths: {', '.join(missing_paths)}")
+                errors.append(f"Invalid structural paths: {', '.join(missing_paths)}")
                 continue
             output = _add_completion_diagnostics(field_template, output, missing_paths)
             return finalize({
@@ -415,9 +422,8 @@ async def fill_field_template_detailed(
                 "error": None,
                 "completion_retried": completion_retried,
                 "missing_critical_paths": missing_paths,
-                "completion_pending": bool(missing_paths and defer_completion and not skip_completion),
-                "completion_skipped_reason": "empty_value_preserved_as_unresolved"
-                    if missing_paths and skip_completion else None,
+                "completion_pending": bool(missing_paths and defer_completion),
+                "completion_skipped_reason": "no_structural_errors" if not missing_paths else None,
             })
         except Exception as exc:
             errors.append(f"{type(exc).__name__}: {exc}")
@@ -636,8 +642,9 @@ async def _complete_field_batch(
                 {"role": "system", "content": (
                     "你是 DataTaskIR 字段补全审查员。分别复核本批每个字段，只能依据完整用户问题、"
                     "已确认上下文和工具证据补全。每个字段遵循它自己的模板、说明和示例，"
-                    "不能互相代填，历史值和示例都不是新增证据。空值也必须重新检查，"
-                    "不得把空值自动解释为不适用。缺证据或冲突时保留空值及 unresolved/question，"
+                    "不能互相代填，历史值和示例都不是新增证据。只修复错误的数据结构，"
+                    "空值不是漏填，不要求填满模板，也不得把空值自动解释为不适用。"
+                    "缺证据或冲突时保留空值；只对影响当前任务正确实现的问题保留 unresolved/question，"
                     "禁止猜测或丢弃原有已证实内容。逐字段输出 rationale 说明依据。"
                     '仅输出 JSON 对象 {"fields": [各字段的完整输出对象]}，每个请求字段恰好出现一次。'
                     '模板中的单字段输出协议在 fields 数组的每个元素内适用。'
@@ -726,6 +733,10 @@ async def _complete_field_batch(
                     raise ValueError(f"Individual completion failed for {field_id}")
                 detail["attempts"] += 1
             output["field_id"] = field_id
+            output["value"] = _normalize_field_value(
+                output["value"], template.get("value_schema", {}),
+                template.get("writable_template", {}).get("value", {}),
+            )
             missing = _find_missing_critical_paths(template, output["value"])
             detail.update(
                 output=_add_completion_diagnostics(template, output, missing),
@@ -779,22 +790,84 @@ def _build_completion_messages(
     original_messages: list[dict[str, str]], raw_response: str, missing_paths: list[str]
 ) -> list[dict[str, str]]:
     refill = (
-        "上一输出可以解析，但遗漏了当前 Field Unit 的关键内容。"
-        "请重新阅读用户原始问题和工具证据，只补充有直接证据支持的内容，禁止猜测。\n"
-        f"缺失关键路径：{', '.join(missing_paths)}\n"
+        "上一输出存在数据结构或输出协议问题，请修复格式、类型或非法枚举值。"
+        "只使用用户原始问题和工具证据，不得为修复结构而补造业务值。\n"
+        f"需检查的结构路径：{', '.join(missing_paths)}\n"
         f"上一输出：\n{raw_response}\n"
-        "如果相关内容确实没有证据，保持空值并在 unresolved 和 question 中准确说明。"
+        "没有证据的整个字段或子字段保持 null/空数组，不要求填满模板。"
+        "只对影响当前任务正确实现的真实缺失或冲突输出 unresolved/question。"
     )
     messages = deepcopy(original_messages)
     messages.append({"role": "user", "content": refill})
     return messages
 
 
+def _normalize_field_value(value: Any, schema: Any, prototype: Any) -> Any:
+    """Restore missing keys as unknown, without copying example/history business values.
+
+    Descriptive schemas constrain known values; even a non-nullable business slot
+    can be unknown during extraction. Missing containers become null (not []/{}),
+    so normalization cannot invent a negative decision or a global grouping.
+    """
+    schema = schema if isinstance(schema, dict) else {}
+    if isinstance(value, str) and not value.strip():
+        return None
+    if isinstance(value, dict):
+        prototype = prototype if isinstance(prototype, dict) else {}
+        properties = schema.get("properties", {})
+        result = deepcopy(value)
+        for key in list(prototype) + schema.get("required", []):
+            result.setdefault(key, None)
+        return {
+            key: _normalize_field_value(child, properties.get(key, {}), prototype.get(key))
+            for key, child in result.items()
+        }
+    if isinstance(value, list):
+        item_prototype = prototype[0] if isinstance(prototype, list) and prototype else None
+        return [_normalize_field_value(child, schema.get("items", {}), item_prototype) for child in value]
+    return value
+
+
 def _find_missing_critical_paths(field_template: dict[str, Any], value: Any) -> list[str]:
+    """Return structural errors only; business completeness is evidence-dependent."""
     field_id = str(field_template.get("field_id", ""))
     paths = CRITICAL_PATHS.get(field_id, [])
     mapping = value if isinstance(value, dict) else {}
-    return [path for path in paths if not _has_meaningful_path(mapping, path.split("."))]
+    schema = field_template.get("value_schema", {})
+    return [path for path in paths if not _has_structural_path(mapping, schema, path.split("."))]
+
+
+def _has_structural_path(value: Any, schema: Any, parts: list[str]) -> bool:
+    if value is None:
+        return True  # Unknown, including an entire intermediate object/container.
+    schema = schema if isinstance(schema, dict) else {}
+    if not parts:
+        if "enum" in schema and value not in schema["enum"]:
+            return False
+        type_ = schema.get("type")
+        types = type_ if isinstance(type_, list) else [type_]
+        type_checks = {
+            "string": isinstance(value, str), "array": isinstance(value, list),
+            "object": isinstance(value, dict), "boolean": isinstance(value, bool),
+            "integer": isinstance(value, int) and not isinstance(value, bool),
+            "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        }
+        return type_ is None or any(type_checks.get(name, False) for name in types)
+    if not isinstance(value, dict):
+        return False
+    part = parts[0]
+    key = part[:-2] if part.endswith("[]") else part
+    if key not in value:
+        return False  # The fill pipeline normalizes absent keys before this check.
+    child = value[key]
+    child_schema = schema.get("properties", {}).get(key, {})
+    if part.endswith("[]"):
+        if child is None:
+            return True
+        if not isinstance(child, list):
+            return False
+        return all(_has_structural_path(item, child_schema.get("items", {}), parts[1:]) for item in child)
+    return _has_structural_path(child, child_schema, parts[1:])
 
 
 def _has_meaningful_path(value: Any, parts: list[str]) -> bool:
@@ -835,7 +908,7 @@ def _has_meaningful_leaf(value: Any) -> bool:
 
 
 def is_field_confirmed(current_value: Any, field_template: dict[str, Any]) -> bool:
-    """Reuse only complete field values without unresolved diagnostics."""
+    """Keep reuse stricter than extraction: unknown critical slots must be rechecked."""
     if not isinstance(current_value, dict):
         return False
     value = current_value.get("value")
@@ -844,6 +917,8 @@ def is_field_confirmed(current_value: Any, field_template: dict[str, Any]) -> bo
         and _has_meaningful_leaf(value)
         and not current_value.get("unresolved")
         and not _find_missing_critical_paths(field_template, value)
+        and all(_has_meaningful_path(value, path.split("."))
+                for path in CRITICAL_PATHS.get(str(field_template.get("field_id", "")), []))
     )
 
 
@@ -912,7 +987,7 @@ def _add_completion_diagnostics(
     if not missing_paths:
         return finalized
     field_title = str(field_template.get("title", field_template.get("field_id", "当前字段")))
-    message = f"{field_title}仍缺少关键内容：{', '.join(missing_paths)}"
+    message = f"{field_title}存在数据结构异常（非业务信息不足）：{', '.join(missing_paths)}"
     raw_unresolved = finalized.get("unresolved", [])
     unresolved = [str(item) for item in raw_unresolved] if isinstance(raw_unresolved, list) else []
     if message not in unresolved:
@@ -920,7 +995,7 @@ def _add_completion_diagnostics(
     finalized["unresolved"] = unresolved
     question = finalized.get("question")
     if not isinstance(question, str) or not question.strip():
-        finalized["question"] = f"当前输入仍未明确{field_title}的关键内容：{', '.join(missing_paths)}；请补充或确认。"
+        finalized["question"] = f"请重新提取并修复{field_title}的数据结构；缺证据的业务值继续留空，无需用户补齐模板。"
     return finalized
 
 
