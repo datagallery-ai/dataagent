@@ -17,7 +17,6 @@ from ag_ui.core import (
     RunStartedEvent,
 )
 from ag_ui.encoder import EventEncoder
-from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.utils import langchain_messages_to_agui
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -105,7 +104,7 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
                 try:
                     yield
                 finally:
-                    app.state.agents.graphs.clear()
+                    app.state.agents.cache.clear()
     app = FastAPI(lifespan=lifespan)
 
     @app.get("/healthz")
@@ -172,7 +171,8 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
             raise HTTPException(409, "Session binding is missing. Start a new conversation.")
         if (user_id, thread_id) in busy:
             raise HTTPException(409, "Session is currently running")
-        _, graph, _ = opened
+        _, agent, _ = opened
+        graph = agent.graph
         messages = []
         if row["last_checkpoint_id"]:
             state = await graph.aget_state({"configurable": {
@@ -213,7 +213,8 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
         except BaseException:
             busy.discard((user_id, thread_id))
             raise
-        session, graph, run_runtime = opened
+        session, agent, run_runtime = opened
+        graph = agent.graph
         secrets = run_runtime.redaction_secrets
         config = {"configurable": {"thread_id": thread_id}, "metadata": {
             "dataagent_root_run_id": body.run_id,
@@ -258,8 +259,8 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
             nonlocal status
             encoder = EventEncoder()
             started = time.monotonic()
-            adapter = LangGraphAgent(
-                name="dataagent-v2", graph=graph, emit_raw_events=False, subagent_visibility="hidden",
+            adapter = agent.as_agui(
+                name="dataagent-v2", emit_raw_events=False, subagent_visibility="hidden",
             )
             adapter.config = config
             upstream = None

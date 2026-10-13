@@ -12,7 +12,7 @@ from test_api import client_for, query, sse, terminal
 from test_launch import MODEL, config
 
 from dataagent import LaunchOptions, prepare_runtime
-from dataagent.agent import build_model
+from dataagent.models import build_model
 
 
 def tool_delta(name, arguments):
@@ -86,7 +86,7 @@ async def models(runtime):
                 "base_url": url, "max_retries": max_retries,
             }),
         }})
-        model = build_model(settings)
+        model = build_model(replace(runtime, settings=settings))
         created.append(model)
         assert model.max_retries == model.root_client.max_retries == model.root_async_client.max_retries == max_retries
         assert model.use_responses_api is False

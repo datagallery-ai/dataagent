@@ -179,7 +179,7 @@ async def test_upstream_run_error_is_also_logged_redacted(runtime, caplog, monke
     async def fail(self, body):
         yield RunErrorEvent(message="upstream failed: test-secret")
 
-    monkeypatch.setattr("restapi.app.LangGraphAgent.run", fail)
+    monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent.run", fail)
     caplog.set_level("ERROR", logger="dataagent.api")
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
         events = sse(await client.post("/dataagent/stream", json=query()))
@@ -249,7 +249,7 @@ async def test_child_internal_events_hidden(runtime, monkeypatch):
     from dataagent.agent import build_agent
 
     recorder = RecordingCallback()
-    monkeypatch.setattr(importlib.import_module("restapi.agents"), "build_agent",
+    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_agent",
                         lambda *args, **kwargs: build_agent(*args, **kwargs).with_config(callbacks=[recorder]))
     model = ScriptedModel(responses=[
         call("task", {"subagent_type": "general-purpose", "description": "statistics"}),
@@ -302,7 +302,7 @@ async def test_real_http_disconnect_cancels_model_and_releases_session(runtime, 
 
     cancelled = asyncio.Event()
     recorder = RecordingCallback()
-    monkeypatch.setattr(importlib.import_module("restapi.agents"), "build_agent",
+    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_agent",
                         lambda *args, **kwargs: build_agent(*args, **kwargs).with_config(callbacks=[recorder]))
 
     class WaitingStream(ScriptedModel):
@@ -375,7 +375,7 @@ async def test_sdk_and_http_share_hook_lifecycle(runtime, monkeypatch, scenario)
         await graph.ainvoke({"messages": [HumanMessage(content="test")]})
     except RuntimeError:
         assert scenario == "model_error"
-    monkeypatch.setattr(importlib.import_module("restapi.agents"), "build_agent",
+    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_agent",
                         lambda *args, **kwargs: build_agent(*args, **kwargs).with_config(callbacks=[http_hooks]))
     async with client_for(runtime, ScriptedModel(responses=responses)) as (client, app):
         events = sse(await client.post("/dataagent/stream", json=query()))

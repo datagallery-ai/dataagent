@@ -44,7 +44,7 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 - 例外：`dataagent.hooks` 按层追加。`"hooks": []` 或空事件分组只表示本层不追加，不清除低层注册。
 - 完整示例列出了默认值，作为最高层使用会覆盖低层相应字段。
 - 环境变量优先级：进程 > `--env-file` > 显式配置旁的 `.env` > Home `.env`。空值不覆盖低层非空值。
-- 引用写为 JSON 字符串 `"$env{LLM_MODEL}"`，不是 `${LLM_MODEL}`。仅展开最终选中模型的环境引用。
+- 引用写为 JSON 字符串 `"$env{LLM_MODEL}"`，不是 `${LLM_MODEL}`。启动时仅展开默认模型的环境引用；工具选择其他模型时延迟解析。
 - 扩展相关配置在 REST/TUI 的下一轮请求前刷新；模型、宿主路径和服务配置仍需重启。
   具体范围见[扩展刷新说明](../docs/extension-refresh.md)。未知字段、重复键（含嵌套对象）、非法 JSON 和非有限数值都会报错。
 
@@ -70,7 +70,9 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 | `server.port` | `8790`；1–65535，被占用则报错，不复用未知服务 |
 
 多个模型可放在 `models` 中，修改 `dataagent.model.default` 后重启切换；没有自动 fallback 或动态切换接口。
-只展开最终选中模型的环境引用，未选择模型的环境变量可以暂不定义。
+启动时只展开默认模型的环境引用；工具通过 `runtime.context.get_model("模型ID")` 首次获取其他模型时，
+再使用启动时捕获的环境值解析该模型。未使用模型的变量可以暂不定义，实际使用时缺失则报错。
+工具的完整示例见 [llm-utils](plugins/llm-utils/README.md)；该机制不增加 `/model` 命令。
 
 ## 六类 Hooks
 

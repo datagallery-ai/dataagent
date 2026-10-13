@@ -10,6 +10,8 @@ Layout, by phase:
     extensions/     plugin and standalone declarations -> native Deep Agents kwargs
     prompts/        host templates + session paths + extension instructions -> prompt text
     agent.py        Runtime + compiled extensions + host policies -> Deep Agents graph
+    models.py       Configured model clients exposed through native ToolRuntime.context
+    client.py       Graph + dependencies; SDK invocation and AG-UI adapter convenience
 
 Hosts (REST, SDK) prepare/build native graphs; `extension_revision` and `refresh_extensions`
 support next-turn refresh without changing host identity. Hooks receive native objects.
@@ -32,6 +34,9 @@ __all__ = [
     "LaunchOptions",
     "Runtime",
     "build_agent",
+    "create_agent",
+    "Agent",
+    "ModelContext",
     "load_extensions",
     "load_mcp_tools",
     "prepare_runtime",
@@ -41,6 +46,9 @@ __all__ = [
 ]
 
 _LAZY = {
+    "create_agent": ("dataagent.client", "create_agent"),
+    "Agent": ("dataagent.client", "Agent"),
+    "ModelContext": ("dataagent.models", "ModelContext"),
     "build_agent": ("dataagent.agent", "build_agent"),
     "load_extensions": ("dataagent.agent", "load_extensions"),
     "load_mcp_tools": ("dataagent.extensions.mcp", "load_mcp_tools"),

@@ -1,10 +1,10 @@
-"""Bounded per-session graphs, refreshed atomically before a new run (never mid-run)."""
+"""Bounded per-session AgentKit handles, refreshed atomically before a new run (never mid-run)."""
 
 import asyncio
 from collections import OrderedDict
 
 from dataagent import (
-    build_agent,
+    create_agent,
     extension_revision,
     load_mcp_tools,
     refresh_extensions,
@@ -22,7 +22,7 @@ class SessionAgents:
         self.mcp_tools = mcp_tools
         self.revision = extension_revision(runtime)
         self.max_cached = max_cached
-        self.graphs = OrderedDict()
+        self.cache = OrderedDict()
         self.lock = asyncio.Lock()
 
     async def get(self, thread_id: str, *, create: bool):
@@ -39,12 +39,12 @@ class SessionAgents:
                     return None
                 session, workspaces = opened
                 key = (thread_id, workspaces)
-                if not changed and key in self.graphs:
-                    self.graphs.move_to_end(key)
-                    return session, self.graphs[key], self.runtime
+                if not changed and key in self.cache:
+                    self.cache.move_to_end(key)
+                    return session, self.cache[key], self.runtime
                 if changed and candidate.extensions.mcp_servers != self.runtime.extensions.mcp_servers:
                     tools = await load_mcp_tools(candidate)
-                graph = build_agent(
+                agent = create_agent(
                     candidate, checkpointer=self.checkpointer, model=self.model,
                     session=session, input_workspaces=workspaces, mcp_tools=tools,
                     extension_revision=revision,
@@ -57,9 +57,9 @@ class SessionAgents:
                 message = safe_error(error, (*self.runtime.redaction_secrets, *candidate.redaction_secrets))["message"]
                 raise ValueError(f"Extension reload failed: {message}") from None
             if changed:
-                self.graphs.clear()
+                self.cache.clear()
                 self.runtime, self.mcp_tools, self.revision = candidate, tools, revision
-            self.graphs[key] = graph
-            while len(self.graphs) > self.max_cached:
-                self.graphs.popitem(last=False)
-            return session, graph, candidate
+            self.cache[key] = agent
+            while len(self.cache) > self.max_cached:
+                self.cache.popitem(last=False)
+            return session, agent, candidate

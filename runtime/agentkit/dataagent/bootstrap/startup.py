@@ -7,8 +7,9 @@ touches a terminal, HTTP, LangChain or plugin code.
 
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
-from dataagent.bootstrap.config_files import ConfigSource, load_layers, merge
+from dataagent.bootstrap.config_files import ENV_REFERENCE, ConfigSource, load_layers, merge
 from dataagent.bootstrap.discovery import locate_extensions
 from dataagent.bootstrap.environment import load_env
 from dataagent.bootstrap.mcp import load_mcp_config
@@ -94,7 +95,16 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
         plugin_origins=plugin_origins,
         env_file=env_file,
     )
-    return Runtime(settings=settings, paths=paths, report=report, extensions=extensions)
+    # Retain only model-referenced values, not the entire process environment. Resolve
+    # secondary models on first use without rereading dotenv or changing os.environ.
+    model_environment = MappingProxyType({
+        name: environment.values[name]
+        for model in settings.models.values()
+        for value in (model.name, model.base_url, model.api_key.get_secret_value())
+        for name in ENV_REFERENCE.findall(value) if name in environment.values
+    })
+    return Runtime(settings=settings, paths=paths, report=report, extensions=extensions,
+                   model_environment=model_environment)
 
 
 def refresh_extensions(runtime: Runtime) -> Runtime:

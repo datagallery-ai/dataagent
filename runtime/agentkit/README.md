@@ -147,7 +147,8 @@ file is an additional **partial layer**, not a replacement. Launch-directory
 - Paths keep their declaring file's directory as their base.
 - Selecting the same real config explicitly skips its automatic layer and applies
   it only once as the explicit layer; extension paths still use its directory.
-- Only the selected model's environment references are expanded.
+- At startup, only the default model's environment references are expanded.
+  Tool-selected models resolve on first use from the captured startup values.
 - Restart after changing configuration or extensions.
 
 Environment priority: process > `--env-file` > explicit `--config` sibling `.env` >
@@ -328,16 +329,42 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json --works
 Keep a dedicated V2 environment; the legacy runtime shares the `dataagent` import name.
 
 ```python
-from dataagent import LaunchOptions, build_agent, prepare_runtime
+from dataagent import LaunchOptions, create_agent, prepare_runtime
 
 runtime = prepare_runtime(LaunchOptions(workspace="/existing/data"))
-graph = build_agent(runtime, checkpointer=checkpointer)
-result = await graph.ainvoke({"messages": [("user", "Summarize 1, 2, 3")]}, config)
+agent = create_agent(runtime, checkpointer=checkpointer)
+result = await agent.ainvoke({"messages": [("user", "Summarize 1, 2, 3")]}, config)
 ```
 
 The caller supplies/owns the checkpointer and run config. SDK preparation defaults
 to `init_home=False`; a missing Home is simply an absent user layer. Request templates
 explicitly with `init_home=True`. SDK never reads a terminal.
+
+`create_agent` returns a thin `Agent` handle owning a native graph and one `ModelContext`.
+Its invoke/stream methods supply context automatically; `agent.graph` exposes native
+schema and checkpoint APIs. REST caches this handle and calls `agent.as_agui()`;
+all model dependency injection stays in AgentKit, not in the HTTP request handler.
+No `RunnableBinding` or schema workaround is involved.
+
+Python tools can use the configured models without loading credentials themselves:
+
+```python
+from langchain.tools import ToolRuntime
+from dataagent import ModelContext
+
+async def summarize(text: str, runtime: ToolRuntime[ModelContext]) -> str:
+    """Summarize text using the configured fast model."""
+    model = runtime.context.get_model("fast")
+    return (await model.ainvoke(text, config=runtime.config)).text
+```
+
+`get_model()` uses the default alias; unknown aliases fail without fallback.
+Clients are created lazily and reused within this handle, including child tools.
+Secondary model environment references use the startup snapshot on first access.
+Clients and keys are not stored in messages/checkpoints. Internal LLM calls preserve
+trace parentage through `runtime.config`, but do not run Agent model middleware or
+consume the Agent's model-node limit. Remote MCP services manage their own models.
+See the [external tool example](examples/plugins/llm-utils/README.md).
 
 `dataagent.prepare_runtime` (implemented in the `dataagent.bootstrap` package) owns paths,
 initialization, environment, configuration and resource discovery. It
@@ -348,6 +375,16 @@ returns an immutable Runtime. Package layout and dependency rules:
 combines selected plugins with standalone `skill_sources` and `hook_entries`, returning
 native Deep Agents kwargs. No HostBindings object or virtual plugin is required.
 `build_agent` returns the native `CompiledStateGraph`. It does not launch a service.
+Low-level tools needing model access require native explicit context:
+
+```python
+from dataagent import ModelContext, build_agent
+
+context = ModelContext(runtime)
+graph = build_agent(runtime, context=context, checkpointer=checkpointer)
+result = await graph.ainvoke(inputs, config, context=context)
+```
+
 For SDK-only tracing, use the graph's native API:
 
 ```python
