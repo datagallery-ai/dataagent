@@ -7,6 +7,9 @@ contract:
 - 每个 field unit 独立调用模型；只能修改当前 writable_template 中出现的字段。
 - 输出必须是单个 JSON 对象；field_id、value、rationale 必填；unresolved/question 按需。
 - null 表示证据不足，不表示沿用旧值；数组无项时填空数组。
+- 整个字段或任意子字段均允许信息不完备；required 只描述键结构，不要求猜测业务值。缺少的键可由程序补为 null。
+- completion_conditions 仅描述信息齐备状态，不是必须填满的要求；只提取已有证据，不为满足齐备条件而发明口径。
+- 未涉及的操作不新增、不强制追问；只有影响当前任务正确实现的缺失或冲突才写 unresolved/question。
 - 禁止把“通常/默认/建议/prefer”写成已确认口径。
 - 冲突时受影响槽位保持 null/空数组，并写 unresolved，禁止选边。
 - few-shot 只演示协议，禁止复制业务值。
@@ -97,7 +100,7 @@ fields:
       components: 联合键顺序的 field_ref / semantic_role / null_semantics
       uniqueness_scope: final_dataset | within_statistic_period | within_sequence_partition
     completion_conditions:
-    - components 非空且每项有 field_ref 与 null_semantics；uniqueness_scope 有证据
+    - 有主键证据时提取 components；null_semantics/uniqueness_scope 无证据时留空，不为确认主键强制补齐这些子字段
     common_errors:
     - 因主键未出现在用户输出列表而省略
     - 把明细行 id 当作用户/设备特征主键
@@ -526,7 +529,7 @@ fields:
     - overrides 仅用于极少数格子与模板不同；不得用 overrides 穷举笛卡尔积。
     - extras[]：不参与交叉的独立列（多阶段 Top1、全局比率、key_alias 等）。
     - layout=flat 时：使用 features[] 逐列描述（同旧 features 语义）；axes/measures 必须为空。
-    - calc.intent 语义级，禁止可执行 SQL；aggregation.grain 为该 measure/列的粒度权威 （[]=全局聚合，null=非聚合直出）。
+    - calc.intent 语义级，禁止可执行 SQL；aggregation.grain 为该 measure/列的粒度权威（[]=已确认全局聚合；null/未填写本身不确认粒度或是否聚合）。
     - 不同 measure 允许不同 grain；禁止用单一全局粒度覆盖。
     - 列私有过滤放 measure.filters / feature.filters；共享过滤放 sources。
     - filters 使用 predicate_protocol；有 window 轴时展开列自动绑定对应 window_ref。
@@ -1152,8 +1155,8 @@ fields:
     global_rules:
     - 禁止在此填写 aggregation_key / group_by / count_semantics / input_grain / stages。
     - 粒度与计数只在 output_features；本字段只回答“先做什么、作用在哪一层”。
-    - 默认事实去重先于 JOIN；JOIN 扇出必须保留，除非证据明确要求 JOIN 后去重且去重键含扇出维度。
-    - 有 window_rank（role=rank）时 operation_order 应包含 window_rank，默认在 aggregate 之后。
+    - sources 中事实层去重按其作用层级解释；除此之外，不凭默认习惯填写执行顺序。JOIN 扇出必须保留，除非证据明确要求 JOIN 后去重且去重键含扇出维度。
+    - 有 window_rank（role=rank）时，依据已确认的指标依赖确定 operation_order；不能确定先后关系时留空，不默认添加 aggregate。
     - 无聚合任务时 operation_order 可不含 aggregate。
     subfields:
       deduplication_before_join: 事实去重是否在 JOIN 前

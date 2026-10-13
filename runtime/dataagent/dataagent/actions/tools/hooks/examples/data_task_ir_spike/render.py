@@ -45,8 +45,8 @@ _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 8. **序列/窗口分区键约束**：sequence.window_partition 与 sequence.partition_fields 分别用于窗口函数与最终序列分区，二者可能不同；rank.partition_by 为空数组表示全局
 9. **最终序列分区键约束**：sequence.partition_fields 定义最终输出分组，与聚合 grain、rank.partition_by 可能是不同概念
 10. **最终输出列语义清单 = 特征主键前缀 + expand(output_features)**：INSERT SELECT 的输出列（不含分区列）须覆盖该清单的语义构成——(a) 若 IR 已确认「特征主键」(identity)，则其 components 中的每个 field_ref **必须**作为输出列前缀出现（按 components 顺序），即使这些列未出现在输出特征中；(b) 随后须覆盖 expand(output_features) 的全部业务/指标语义（cartesian 由代码按 axes×measures 确定性展开，每项各占一列，禁止少列/合并）；(c) **展开后的列名（field_name / name_pattern）不是权威约束**，仅供主 Agent 对照参考；SQL/DDL 可采用规范命名或证据中的命名，不得因未照抄 IR 列名而判失败；(d) 除上述语义清单外禁止额外发明无关业务列；调用方 query 与 IR 冲突时以 IR 口径为准（列名除外）
-11. **多维交叉输出必须完整展开**：layout=cartesian 时，期望业务列数由 ∏|axis.values| × measures（含 attach_rank 追加的百分位列）+ extras 决定；SQL 必须输出全部展开语义列，禁止把多个组合压成一列、只输出“代表窗口/代表指标”、或对跨窗口汇总值打一个分位替代分窗口分位列；IR 给出的展开列名仅供参考，不要求 SQL 字面一致
-12. **逐特征聚合粒度强制约束**：展开后各列的 aggregation.grain 是该列聚合权威（[]=全局聚合，null=非聚合直出）；不同列允许不同 grain，禁止用单一全局 GROUP BY 覆盖。时间窗口差异不是聚合粒度差异，不得据此改写 GROUP BY
+11. **多维交叉输出必须完整展开**：layout=cartesian 且轴与指标信息齐备时，期望业务列数由 ∏|axis.values| × measures（含 attach_rank 追加的百分位列）+ extras 决定；SQL 必须输出全部已确认展开语义列，禁止把多个组合压成一列、只输出“代表窗口/代表指标”、或对跨窗口汇总值打一个分位替代分窗口分位列；尚未明确的轴或指标不以零列解释，IR 给出的展开列名仅供参考，不要求 SQL 字面一致
+12. **逐特征聚合粒度强制约束**：展开后各列已确认的 aggregation.grain 是该列聚合权威（[]=已确认全局聚合；null/未填写本身不确认粒度或是否聚合）；不同列允许不同 grain，禁止用单一全局 GROUP BY 覆盖。时间窗口差异不是聚合粒度差异，不得据此改写 GROUP BY
 13. **calc.intent 是语义说明而非可执行 SQL**：只约束“算什么/什么意图”，不要求也不应被当作必须照抄的 SQL/UDF 片段；具体语法以实现阶段证据与 aggregation.count_type / expression_template 为准。禁止因 intent 文字不像合法 SQL 而判定 IR 失败，也禁止把有语法风险的 intent 原文硬编码进 SQL
 14. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误
 15. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求
@@ -57,7 +57,8 @@ _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
    - ③ IR 未记录、用户原始问题原话直接要求的具体操作（去重键、过滤条件、指标定义等）→ 用户级证据，不得静默处理：与 IR 无冲突时按用户原话实现（以用户原话为准，不采用主 Agent 的具体解释）并在结论中报告“IR 遗漏该用户要求”；与 IR 冲突时以 IR 为准并报告冲突（规则 16）；
    - ④ 仅主 Agent 段落出现、用户原始问题与工具证据都没有的操作 → 未确认口径，禁止实现并报告
 18. **操作的作用层级与执行顺序是强制约束**：sources.facts[].dedup 定义的去重作用于“事实记录层”，默认必须先于维度关联（JOIN）执行——JOIN 产生的维表扇出行必须全部保留，禁止在 JOIN 之后再次按事实去重键去重/分组来折叠扇出；只有 IR 明确记录去重作用于 JOIN 后的富化行时，才允许先 JOIN 再去重，且去重键必须包含全部扇出区分维度列。IR 记录 pipeline.operation_order 时按该顺序执行，禁止调整；IR 未记录顺序时按默认语义执行，不得自行改变操作的作用层级
-19. **窗口函数型后处理指标（NTILE/百分位/排名）约束**：output_features 中 attach_rank / rank 定义的百分位/排名列必须严格按定义实现：rank_type、bucket_count、order_direction、partition_by（空数组=全局）均不得改动；执行位置以 pipeline.operation_order 为准（未记录时默认在 aggregate 之后）。cartesian 下 attach_rank 随轴展开，每个轴组合各产生独立百分位列——禁止对跨窗口汇总值打百分位来替代分窗口百分位列，禁止少列或合并
+19. **窗口函数型后处理指标（NTILE/百分位/排名）约束**：output_features 中 attach_rank / rank 已确认的百分位/排名口径必须严格实现：rank_type、bucket_count、order_direction、partition_by（已确认空数组=全局）均不得改动；执行位置以 pipeline.operation_order 为准，未记录时只依据已确认指标依赖确定，无法确定时核对，不默认添加 aggregate。cartesian 下 attach_rank 随轴展开，每个轴组合各产生独立百分位列——禁止对跨窗口汇总值打百分位来替代分窗口百分位列，禁止少列或合并
+20. **允许信息不完备**：整个字段或子字段未确认时允许留空，不得为了填满 IR 猜测业务值、添加操作或要求用户逐项补齐模板。未知值不等于已确认不执行；空数组按具体字段协议解释，不得据此否定用户原话已有的要求。生成与校验只强制遵循已确认部分；影响当前任务正确实现的真实缺失须检索或澄清，不能静默猜测。
 """
 
 
@@ -277,7 +278,7 @@ def _derive_rank_column(
             "bucket_count": attach.get("bucket_count"),
             "order_by": based_on,
             "order_direction": attach.get("order_direction"),
-            "partition_by": deepcopy(attach.get("partition_by") or []),
+            "partition_by": deepcopy(attach.get("partition_by")),
             "based_on": based_on,
         },
         "depends_on": [based_on],
@@ -440,7 +441,8 @@ def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> st
         parts.append("本任务暂无已确认业务/指标输出列")
     total = len(key_refs) + len(business_names)
     parts.append(
-        f"不含分区列的总输出列数（按语义项计数）应为 {total}；"
+        f"当前已记录的输出语义项共 {total}（不含分区列）；"
+        "此数只用于核对已确认部分，不能视为信息不完备时的任务总列数；"
         "列名是否与 IR 参考名一致不作为约束"
     )
     return "；".join(parts) + "。"
@@ -796,7 +798,7 @@ def _render_output_features(value: dict[str, Any]) -> str:
         extras = value.get("extras") or []
         if extras:
             header_parts.append(f"extras={len(extras)}")
-    header_parts.append(f"展开后共 {len(columns)} 个业务/指标列")
+    header_parts.append(f"当前已展开 {len(columns)} 个业务/指标列（未展开的未知项不代表不需要输出）")
     prefix = (
         "，".join(header_parts)
         + "（cartesian 由代码确定性展开，禁止少列/合并；"
@@ -815,7 +817,7 @@ def _render_output_features(value: dict[str, Any]) -> str:
             if source:
                 origin_text += f"（主要来源={source}）"
         else:
-            origin_text = f"来源={source or '无来源'}"
+            origin_text = f"来源={source or '未确认'}"
         aggregation = item.get("aggregation")
         grain_text = ""
         if isinstance(aggregation, dict) and "grain" in aggregation:
