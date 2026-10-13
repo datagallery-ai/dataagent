@@ -24,8 +24,7 @@ description: |
   - **DataOps 提交顺序**：DDL 与 DML 必须**分两次**调用 `dataops_validate_sql_with_log_analysis`；必须先提交 DDL，DDL 返回 `passed=true` 后才提交 DML。DDL 失败时禁止提交 DML。
   - **轮询与超时**：`dataops_validate_sql_with_log_analysis` 内部固定每 30 s 轮询一次，最长等待 30 min。30 min 内未返回时返回 `timed_out=true`、跳过该 SQL 的校验并在交付报告中标注「DataOps 校验已跳过」；禁止自行加轮询或重试。
   - **校验失败处理**：启用后若 `passed=false`，从 OBS 拉取执行日志并总结错误类型 / 位置 / 修复建议，据此修正 SQL 并重新调用 `dataops_validate_sql_with_log_analysis` 校验。只有 `passed=true` 或 `skipped=true` 时才允许交付文件。
-- 维度表选表经验（下面列出的维表不合适时，无需强行使用）：
-  - 需要以app_id为主键的应用信息表时，天级增量表默认选biads.ads_noah_common_app_info_dm表，天级全量表默认选biads.ads_noah_hispace_app_info_ds。
+- 维度表选表经验：
   - 事实表中已存在所需要的列时，默认无需关联对应的维度表，除非用户明确要求
 
 ## SQL 规范
