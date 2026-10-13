@@ -100,3 +100,7 @@ TOOLS:
       hooks:
         pre:
           - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready
+    # 将 Agent 编写的口径冻结表融入 DataTaskIR（方案 B：Agent 主动调用）
+    - name: "freeze_calibration_to_ir"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.calibration_ir"
+      function: "freeze_calibration_to_ir"
