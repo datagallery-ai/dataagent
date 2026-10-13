@@ -14,6 +14,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from dataagent.agents.nl2sql.utils.nl2sql_utils import (
@@ -179,11 +181,30 @@ class PerceptorNode(BaseNL2SQLNode):
             logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
             if self.schema_mode == _SCHEMA_MODE_LINKING:
                 question = state.get("question", "").strip()
-                schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
-                if not schema:
+                try:
+                    schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
+                except httpx.HTTPError as exc:
+                    reason = type(exc).__name__
+                    if isinstance(exc, httpx.HTTPStatusError):
+                        reason = f"HTTP {exc.response.status_code}"
+                    raise DataAgentError(
+                        source="tool",
+                        component="nl2sql",
+                        fact=(
+                            f"NL2SQL 元数据服务请求失败（{reason}），无法获取表结构，无法生成 SQL。"
+                            "请检查元数据服务的可用性和连接配置，或提供可用的 schema。"
+                            "在元数据服务恢复或补充 schema 前，停止重复调用 NL2SQL，并向用户说明当前阻塞原因。"
+                        ),
+                    ) from exc
+                if not schema or not any(table.get("columns", {}) for table in schema.values()):
                     raise DataAgentError(
                         source="config",
-                        fact=f"schema_mode={self.schema_mode}",
+                        fact=(
+                            "NL2SQL schema_linking 未获取到可用的表和字段，无法生成 SQL。"
+                            "可能没有匹配的元数据，或元数据服务返回了空结果。"
+                            "请检查元数据服务、数据库的元数据是否已导入，或提供可用的 schema。"
+                            "在元数据恢复或补充 schema 前，停止重复调用 NL2SQL，并向用户说明当前阻塞原因。"
+                        ),
                         component="nl2sql",
                     )
             else:
