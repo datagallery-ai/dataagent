@@ -112,7 +112,7 @@ def _build_metadata_recall_sub_agent_config(
             runtime_model_copy = copy.deepcopy(runtime_model)
             runtime_params = runtime_model_copy.get("params")
             if isinstance(runtime_params, dict):
-                runtime_params["temperature"] = 0.0
+                runtime_params["temperature"] = 0.1
             temp_config["MODEL"] = {
                 bound_llm_model_name: runtime_model_copy,
             }

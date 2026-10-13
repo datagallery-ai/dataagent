@@ -1136,7 +1136,9 @@ TOOLS:
 
     assert captured["query"] == "查询测试"
     assert captured["config_path"] != str(source_config_path)
-    assert captured["config"]["MODEL"] == {"deepseek": runtime_model}
+    expected_model = {**runtime_model, "params": {**runtime_model.get("params", {}), "temperature": 0.1}}
+    assert captured.get("config", {}).get("MODEL") == {"deepseek": expected_model}
+    assert runtime_model.get("params", {}).get("temperature") == 0.0
     assert captured["config"]["DATABASE"] == runtime_database
     assert captured["config"]["SEMANTIC_LAYER"] == runtime_semantic_layer
     assert yaml.safe_load(source_config_path.read_text(encoding="utf-8"))["MODEL"] == {
