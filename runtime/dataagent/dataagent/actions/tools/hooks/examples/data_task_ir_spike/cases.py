@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Deterministic 100-case benchmark generator for the DataTaskIR spike."""
+"""Deterministic 100-case benchmark generator for the DataTaskIR spike (v1)."""
 
 from __future__ import annotations
 
@@ -30,20 +30,14 @@ DOMAINS = [
     ("energy", "meter_id", "电表", "reading_time", "meter_readings", "dim_meter"),
 ]
 
+# Evidence line indexes for the 6 v1 field units.
 FIELD_EVIDENCE_LINE_INDEXES = {
-    "feature_key": [0, 13],
-    "statistic_period": [1],
-    "fact_filters": [2],
-    "fact_derived_fields": [3],
-    "fact_deduplication": [4],
-    "dimension_filters": [5],
-    "dimension_derived_fields": [6],
-    "dimension_deduplication": [7],
-    "dimension_relations": [8],
-    "time_window": [9],
-    "final_sequence_partitioning": [10, 13],
-    "final_sequence_ordering": [11],
-    "final_sequence_deduplication": [12],
+    "identity": [0, 6],
+    "sources": [2, 3, 4, 5],
+    "time_context": [1, 7],
+    "output_features": [8],
+    "pipeline": [9],
+    "sequence": [10, 11, 12],
 }
 
 
@@ -89,71 +83,67 @@ def _base_values(
     entity_key: str, role: str, time_field: str, fact_source: str, dimension_source: str
 ) -> dict[str, dict[str, Any]]:
     return {
-        "feature_key": {
-            "components": [{"field_ref": entity_key, "semantic_role": role, "null_semantics": "reject_record"}],
+        "identity": {
+            "components": [
+                {"field_ref": entity_key, "semantic_role": role, "null_semantics": "reject_record"}
+            ],
             "uniqueness_scope": "within_statistic_period",
         },
-        "statistic_period": {
-            "time_field": time_field,
-            "grain": "day",
-            "timezone": "Asia/Shanghai",
-            "calendar": "gregorian",
-            "week_start": None,
-            "custom_definition": None,
-        },
-        "fact_filters": {
-            "predicates": [
+        "sources": {
+            "facts": [
                 {
                     "source_ref": fact_source,
-                    "field_ref": "record_status",
-                    "operator": "in",
-                    "operand_type": "string",
-                    "operands": ["valid", "settled"],
-                    "null_semantics": "exclude_unknown",
-                    "filter_scope": "source_level",
-                    "branch_ref": None,
-                }
-            ]
-        },
-        "fact_derived_fields": {
-            "derived_fields": [
-                {
-                    "source_ref": fact_source,
-                    "target_field": "amount_yuan",
-                    "input_fields": ["amount_cent"],
-                    "expression": "amount_cent / 100",
-                    "output_type": "decimal(18,2)",
-                    "unit": "CNY_yuan",
-                    "rounding": None,
-                    "null_semantics": "propagate_null",
-                }
-            ]
-        },
-        "fact_deduplication": {
-            "record_identity": {"fields": ["business_id", "line_id"], "null_equality": "reject_record"},
-            "record_selection": {
-                "criteria": [
-                    {
-                        "field_ref": "updated_at",
-                        "choose": "greatest",
-                        "value_type": "datetime",
-                        "null_rank": "lowest",
+                    "filters": [
+                        {
+                            "field_ref": "record_status",
+                            "operator": "in",
+                            "operand_type": "string",
+                            "operands": ["valid", "settled"],
+                            "null_semantics": "exclude_unknown",
+                            "filter_scope": "source_level",
+                            "branch_ref": None,
+                        }
+                    ],
+                    "derived": [
+                        {
+                            "target_field": "amount_yuan",
+                            "input_fields": ["amount_cent"],
+                            "expression": "amount_cent / 100",
+                            "output_type": "decimal(18,2)",
+                            "unit": "CNY_yuan",
+                            "rounding": None,
+                            "null_semantics": "propagate_null",
+                        }
+                    ],
+                    "dedup": {
+                        "record_identity": {
+                            "fields": ["business_id", "line_id"],
+                            "null_equality": "reject_record",
+                        },
+                        "record_selection": {
+                            "criteria": [
+                                {
+                                    "field_ref": "updated_at",
+                                    "choose": "greatest",
+                                    "value_type": "datetime",
+                                    "null_rank": "lowest",
+                                },
+                                {
+                                    "field_ref": "ingestion_id",
+                                    "choose": "greatest",
+                                    "value_type": "number",
+                                    "null_rank": "lowest",
+                                },
+                            ],
+                            "if_all_criteria_equal": "conflict",
+                        },
                     },
-                    {
-                        "field_ref": "ingestion_id",
-                        "choose": "greatest",
-                        "value_type": "number",
-                        "null_rank": "lowest",
-                    },
-                ],
-                "if_all_criteria_equal": "conflict",
-            },
-        },
-        "dimension_filters": {
-            "scopes": [
+                }
+            ],
+            "dimensions": [
                 {
                     "source_ref": dimension_source,
-                    "predicates": [
+                    "filters": [
                         {
                             "field_ref": "is_active",
                             "operator": "eq",
@@ -162,14 +152,7 @@ def _base_values(
                             "null_semantics": "exclude_unknown",
                         }
                     ],
-                }
-            ]
-        },
-        "dimension_derived_fields": {
-            "scopes": [
-                {
-                    "source_ref": dimension_source,
-                    "derived_fields": [
+                    "derived": [
                         {
                             "target_field": "name_norm",
                             "input_fields": ["name"],
@@ -180,97 +163,135 @@ def _base_values(
                             "null_semantics": "propagate_null",
                         }
                     ],
-                }
-            ]
-        },
-        "dimension_deduplication": {
-            "scopes": [
-                {
-                    "source_ref": dimension_source,
-                    "record_identity": {"fields": [entity_key], "null_equality": "reject_record"},
-                    "record_selection": {
-                        "criteria": [
+                    "dedup": {
+                        "record_identity": {
+                            "fields": [entity_key],
+                            "null_equality": "reject_record",
+                        },
+                        "record_selection": {
+                            "criteria": [
+                                {
+                                    "field_ref": "version_no",
+                                    "choose": "greatest",
+                                    "value_type": "number",
+                                    "null_rank": "lowest",
+                                }
+                            ],
+                            "if_all_criteria_equal": "conflict",
+                        },
+                    },
+                    "join": {
+                        "fact_source_ref": fact_source,
+                        "join_type": "left",
+                        "conditions": [
                             {
-                                "field_ref": "version_no",
-                                "choose": "greatest",
-                                "value_type": "number",
-                                "null_rank": "lowest",
+                                "fact_field": entity_key,
+                                "operator": "eq",
+                                "dim_field": entity_key,
+                                "null_matches": False,
                             }
                         ],
-                        "if_all_criteria_equal": "conflict",
+                        "cardinality": "many_to_one",
+                        "unmatched_fact": "keep",
+                        "temporal_validity": None,
                     },
                 }
-            ]
+            ],
         },
-        "dimension_relations": {
-            "relations": [
-                {
-                    "fact_source_ref": fact_source,
-                    "dimension_source_ref": dimension_source,
-                    "join_type": "left",
-                    "conditions": [
-                        {
-                            "fact_field": entity_key,
-                            "operator": "eq",
-                            "dimension_field": entity_key,
-                            "null_matches": False,
-                        }
-                    ],
-                    "cardinality": "many_to_one",
-                    "unmatched_fact": "retain_with_nulls",
-                    "temporal_validity": None,
-                }
-            ]
-        },
-        "time_window": {
-            "time_field": time_field,
-            "anchor": {"field": None, "value": None},
-            "range": {
-                "type": "calendar_periods",
-                "direction": "past",
-                "number": 7,
-                "unit": "day",
-                "include_anchor_period": False,
+        "time_context": {
+            "output_bucket": {
+                "time_field": time_field,
+                "grain": "day",
+                "timezone": "Asia/Shanghai",
+                "calendar": "gregorian",
+                "week_start": None,
+                "custom_definition": None,
             },
-            "boundary": {"start_inclusive": True, "end_inclusive": False},
-            "null_time_semantics": "exclude_record",
+            "input_windows": [
+                {
+                    "window_id": "w7d",
+                    "time_field": time_field,
+                    "anchor": "current_partition",
+                    "range": {
+                        "type": "calendar_periods",
+                        "direction": "past",
+                        "number": 7,
+                        "unit": "day",
+                        "include_anchor_period": False,
+                    },
+                    "boundary": "half_open_right",
+                }
+            ],
         },
-        "final_sequence_partitioning": {
+        "output_features": {
+            "layout": "flat",
+            "axes": [],
+            "measures": [],
+            "overrides": [],
+            "extras": [],
+            "features": [
+                {
+                    "field_name": "amount_yuan_sum",
+                    "role": "metric",
+                    "output_type": "decimal(18,2)",
+                    "description": "金额合计",
+                    "source": f"{fact_source}.amount_yuan",
+                    "calc": {"intent": "金额求和", "on": "amount_yuan"},
+                    "aggregation": {
+                        "grain": [entity_key],
+                        "count_type": None,
+                        "count_entity": None,
+                        "distinct_field": None,
+                        "expression_template": None,
+                    },
+                    "filters": [],
+                    "window_ref": "w7d",
+                    "ratio": None,
+                    "rank": None,
+                    "depends_on": [],
+                }
+            ],
+        },
+        "pipeline": {
+            "deduplication_before_join": True,
+            "deduplication_before_aggregation": True,
+            "operation_order": ["fact_filter", "fact_dedup", "join", "aggregate", "sequence"],
+        },
+        "sequence": {
             "partition_fields": [entity_key],
             "null_equality": "reject_record",
-        },
-        "final_sequence_ordering": {
-            "criteria": [
+            "ordering": [
                 {
                     "field_ref": time_field,
-                    "direction": "ascending",
+                    "direction": "asc",
                     "value_type": "datetime",
                     "null_rank": "reject_record",
                 },
                 {
                     "field_ref": "event_id",
-                    "direction": "ascending",
+                    "direction": "asc",
                     "value_type": "string",
                     "null_rank": "highest",
                 },
             ],
-            "tie_behavior": "records_are_equivalent",
-        },
-        "final_sequence_deduplication": {
-            "identity_ref": "feature_key",
-            "custom_identity_fields": [],
-            "on_duplicate": "choose_one",
-            "record_selection": {
-                "criteria": [
-                    {
-                        "field_ref": "score",
-                        "choose": "greatest",
-                        "value_type": "number",
-                        "null_rank": "lowest",
-                    }
-                ],
-                "if_all_criteria_equal": "conflict",
+            "dedup": {
+                "identity_ref": "identity",
+                "custom_identity_fields": [],
+                "on_duplicate": "choose_one",
+                "record_selection": {
+                    "criteria": [
+                        {
+                            "field_ref": "score",
+                            "choose": "greatest",
+                            "value_type": "number",
+                            "null_rank": "lowest",
+                        }
+                    ],
+                    "if_all_criteria_equal": "conflict",
+                },
             },
+            "truncation": None,
+            "window_partition": None,
         },
     }
 
@@ -286,19 +307,18 @@ def _base_evidence_lines(
         "不舍入，输入为空则输出为空。",
         "事实记录以 business_id + line_id 判定相同，任一为空拒绝；先取 updated_at 最大"
         "（datetime，空值最低），再取 ingestion_id 最大（number，空值最低），仍相同则冲突。",
-        f"维度源 {dimension_source} 只取 is_active = true，空值排除。",
-        f"{dimension_source}.name 经 lower(trim(name)) 得到 name_norm，输出 string，空值保持空，无单位和舍入。",
-        f"{dimension_source} 以 {entity_key} 判定同一实体，空值拒绝；按 version_no 最大选择"
-        "（number，空值最低），仍相同则冲突。",
-        f"{fact_source} left join {dimension_source} on {fact_source}.{entity_key} = "
-        f"{dimension_source}.{entity_key}；null 不匹配；many_to_one；未匹配事实保留且维度列为空；"
-        "不是时间有效关联。",
-        f"窗口用 {time_field} 判定，过去 7 个完整自然日，不含今天，左闭右开，空时间排除。",
+        f"维度源 {dimension_source} 只取 is_active = true，空值排除；"
+        f"{dimension_source}.name 经 lower(trim(name)) 得到 name_norm；"
+        f"以 {entity_key} 判定同一实体，按 version_no 最大选择；"
+        f"{fact_source} left join {dimension_source} on {entity_key}；many_to_one；未匹配事实保留。",
+        f"注意：{fact_source}.row_id 是源表物理键，不是最终特征主键，也不是逻辑序列分区键。",
+        f"输入回看窗口 w7d 用 {time_field} 判定，过去 7 个完整自然日，不含今天，左闭右开。",
+        f"输出特征 amount_yuan_sum：近7天金额求和，按 {entity_key} 聚合，窗口引用 w7d。",
+        "执行顺序：先事实过滤与去重，再 JOIN，再聚合，最后序列后处理；事实去重在 JOIN 前。",
         f"每个 {entity_key} 形成一个逻辑序列；分区字段为空时拒绝记录。",
         f"序列先按 {time_field} 升序（datetime，空值拒绝），再按 event_id 升序"
         "（string，空值最高）；仍相同视为等价记录。",
-        "最终序列按 feature_key 判重；重复时取 score 最大（number，空值最低），仍相同则冲突。",
-        f"注意：{fact_source}.row_id 是源表物理键，不是最终特征主键，也不是逻辑序列分区键。",
+        "最终序列按 identity 判重；重复时取 score 最大（number，空值最低），仍相同则冲突。",
     ]
 
 
@@ -310,60 +330,49 @@ def _apply_incomplete_variant(
 ) -> None:
     variant = (index - 75) % 5
     if variant == 0:
-        time_window = values.get("time_window", {})
-        time_field = time_window.get("time_field")
-        lines[9] = f"窗口只确认使用 {time_field}，取过去 7 天；自然周期或连续时长、边界和空值行为未确认。"
-        time_window["anchor"] = {"field": None, "value": None}
-        time_window["range"] = {
+        window = values["time_context"]["input_windows"][0]
+        time_field = window.get("time_field")
+        lines[7] = f"窗口 w7d 只确认使用 {time_field}，取过去 7 天；自然周期或连续时长、边界未确认。"
+        window["range"] = {
             "type": None,
             "direction": "past",
             "number": 7,
             "unit": "day",
             "include_anchor_period": None,
         }
-        time_window["boundary"] = {"start_inclusive": None, "end_inclusive": None}
-        time_window["null_time_semantics"] = None
-        expect_unresolved.add("time_window")
+        window["boundary"] = None
+        expect_unresolved.add("time_context")
     elif variant == 1:
         lines[4] = "事实记录以 business_id + line_id 判定相同，任一为空拒绝；同组记录的选择规则未确认。"
-        dedup = values.get("fact_deduplication", {})
-        dedup["record_selection"] = {"criteria": [], "if_all_criteria_equal": None}
-        expect_unresolved.add("fact_deduplication")
+        values["sources"]["facts"][0]["dedup"]["record_selection"] = {
+            "criteria": [],
+            "if_all_criteria_equal": None,
+        }
+        expect_unresolved.add("sources")
     elif variant == 2:
-        relation = values.get("dimension_relations", {}).get("relations", [])[0]
-        condition = relation.get("conditions", [])[0]
-        lines[8] = (
-            f"{relation.get('fact_source_ref')} 关联 {relation.get('dimension_source_ref')} on "
-            f"{relation.get('fact_source_ref')}.{condition.get('fact_field')} = "
-            f"{relation.get('dimension_source_ref')}.{condition.get('dimension_field')}；"
-            "关联类型、null 匹配、基数和未匹配事实行为未确认；不是时间有效关联。"
+        join = values["sources"]["dimensions"][0]["join"]
+        lines[5] = (
+            f"{join.get('fact_source_ref')} 关联 {values['sources']['dimensions'][0].get('source_ref')}；"
+            "关联类型、基数和未匹配事实行为未确认。"
         )
-        relation["join_type"] = None
-        relation.get("conditions", [])[0]["null_matches"] = None
-        relation["cardinality"] = None
-        relation["unmatched_fact"] = None
-        expect_unresolved.add("dimension_relations")
+        join["join_type"] = None
+        join["cardinality"] = None
+        join["unmatched_fact"] = None
+        expect_unresolved.add("sources")
     elif variant == 3:
         lines[1] = lines[1].split("；")[0] + "；时区和日历未确认。"
-        period = values.get("statistic_period", {})
-        period["timezone"] = None
-        period["calendar"] = None
-        expect_unresolved.add("statistic_period")
+        values["time_context"]["output_bucket"]["timezone"] = None
+        values["time_context"]["output_bucket"]["calendar"] = None
+        expect_unresolved.add("time_context")
     else:
-        ordering = values.get("final_sequence_ordering", {})
-        time_field = ordering.get("criteria", [])[0].get("field_ref")
-        lines[11] = f"序列使用 {time_field} 和 event_id 排序，但方向、类型、空值位置和平局行为未确认。"
-        ordering["criteria"] = [
-            {
-                "field_ref": ordering.get("criteria", [])[0].get("field_ref"),
-                "direction": None,
-                "value_type": None,
-                "null_rank": None,
-            },
+        ordering = values["sequence"]["ordering"]
+        time_field = ordering[0].get("field_ref")
+        lines[11] = f"序列使用 {time_field} 和 event_id 排序，但方向、类型、空值位置未确认。"
+        values["sequence"]["ordering"] = [
+            {"field_ref": time_field, "direction": None, "value_type": None, "null_rank": None},
             {"field_ref": "event_id", "direction": None, "value_type": None, "null_rank": None},
         ]
-        ordering["tie_behavior"] = None
-        expect_unresolved.add("final_sequence_ordering")
+        expect_unresolved.add("sequence")
 
 
 def _apply_optional_variant(
@@ -375,19 +384,15 @@ def _apply_optional_variant(
     variant = (index - 60) % 4
     if variant in {0, 3}:
         lines[2] = "[evidence_status: explicit_none] 工具明确确认事实表不需要额外过滤。"
-        values["fact_filters"] = {"predicates": []}
-        expect_not_applicable.add("fact_filters")
+        values["sources"]["facts"][0]["filters"] = []
     if variant in {1, 3}:
         lines[3] = "[evidence_status: explicit_none] 工具明确确认事实字段不需要转换。"
-        values["fact_derived_fields"] = {"derived_fields": []}
-        expect_not_applicable.add("fact_derived_fields")
+        values["sources"]["facts"][0]["derived"] = []
     if variant in {2, 3}:
         lines[4] = "[evidence_status: explicit_none] 工具明确确认事实记录不需要去重。"
-        values["fact_deduplication"] = {
-            "record_identity": {"fields": [], "null_equality": None},
-            "record_selection": {"criteria": [], "if_all_criteria_equal": None},
-        }
-        expect_not_applicable.add("fact_deduplication")
+        values["sources"]["facts"][0]["dedup"] = None
+    if variant == 3:
+        expect_not_applicable.add("sources")
 
 
 def _apply_conflict_variant(
@@ -399,29 +404,33 @@ def _apply_conflict_variant(
     variant = (index - 90) % 5
     if variant == 0:
         lines.append("工具 A 说明时间窗口包含今天；工具 B 说明同一窗口不包含今天；两者没有优先级。")
-        values.get("time_window", {}).get("range", {})["include_anchor_period"] = None
-        expect_unresolved.add("time_window")
+        values["time_context"]["input_windows"][0]["range"]["include_anchor_period"] = None
+        expect_unresolved.add("time_context")
     elif variant == 1:
         lines.append("工具 A 给统计周期时区 Asia/Shanghai；工具 B 给统计周期时区 UTC；两者没有优先级。")
-        values.get("statistic_period", {})["timezone"] = None
-        expect_unresolved.add("statistic_period")
+        values["time_context"]["output_bucket"]["timezone"] = None
+        expect_unresolved.add("time_context")
     elif variant == 2:
         lines.append("工具 A 要求 left join；工具 B 要求 inner join；两者没有优先级。")
-        values.get("dimension_relations", {}).get("relations", [])[0]["join_type"] = None
-        expect_unresolved.add("dimension_relations")
+        values["sources"]["dimensions"][0]["join"]["join_type"] = None
+        expect_unresolved.add("sources")
     elif variant == 3:
         lines.append("工具 A 要求最终重复记录 choose_one；工具 B 要求 retain_all；两者没有优先级。")
-        final_dedup = values.get("final_sequence_deduplication", {})
-        final_dedup["on_duplicate"] = None
-        final_dedup["record_selection"] = {"criteria": [], "if_all_criteria_equal": None}
-        expect_unresolved.add("final_sequence_deduplication")
+        values["sequence"]["dedup"]["on_duplicate"] = None
+        values["sequence"]["dedup"]["record_selection"] = {
+            "criteria": [],
+            "if_all_criteria_equal": None,
+        }
+        expect_unresolved.add("sequence")
     else:
-        original_key = values.get("feature_key", {}).get("components", [])[0].get("field_ref")
+        original_key = values["identity"]["components"][0]["field_ref"]
         lines[0] = "特征主键的唯一范围已独立确认为 within_statistic_period；具体主键字段见后续冲突证据。"
-        lines.append(f"工具 A 说最终特征主键是 {original_key}；工具 B 说最终特征主键是 business_id；无优先级。")
-        values.get("feature_key", {})["components"] = []
-        values.get("feature_key", {})["uniqueness_scope"] = "within_statistic_period"
-        expect_unresolved.add("feature_key")
+        lines.append(
+            f"工具 A 说最终特征主键是 {original_key}；工具 B 说最终特征主键是 business_id；无优先级。"
+        )
+        values["identity"]["components"] = []
+        values["identity"]["uniqueness_scope"] = "within_statistic_period"
+        expect_unresolved.add("identity")
 
 
 def _format_evidence(lines: list[str], style: int) -> str:
@@ -439,7 +448,7 @@ def _format_evidence(lines: list[str], style: int) -> str:
 
 def _build_evidence_by_field(lines: list[str], style: int, expect_unresolved: set[str]) -> dict[str, str]:
     routed = {}
-    conflict_lines = lines[14:] if len(lines) > 14 else []
+    conflict_lines = lines[13:] if len(lines) > 13 else []
     for field_id, indexes in FIELD_EVIDENCE_LINE_INDEXES.items():
         selected = [lines[index] for index in indexes if index < len(lines) and lines[index]]
         if field_id in expect_unresolved:

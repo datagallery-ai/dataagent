@@ -42,42 +42,87 @@ COMPACT_JSON_INSTRUCTION = (
 )
 
 
+# Structural integrity only: if a list item exists, these leaves must be present.
+# Empty arrays are valid (宁缺毋滥) — they do not fail via vacuous [].
+# Do NOT list optional containers (filters/dimensions/windows/axes/features/…) or
+# often-null N/A fields (pipeline bools, sequence truncation/dedup, uniqueness_scope).
 CRITICAL_PATHS = {
-    "feature_key": ["components", "components[].field_ref", "components[].null_semantics", "uniqueness_scope"],
-    "statistic_period": ["time_field", "grain"],
-    "fact_filters": ["predicates", "predicates[].source_ref", "predicates[].field_ref", "predicates[].operator",
-        "predicates[].filter_scope"
+    "identity": [
+        "components[].field_ref",
+        "components[].null_semantics",
     ],
-    "fact_derived_fields": ["derived_fields", "derived_fields[].target_field", "derived_fields[].expression"],
-    "fact_deduplication": ["record_identity.fields", "record_selection.criteria"],
-    "dimension_filters": ["scopes", "scopes[].source_ref", "scopes[].predicates"],
-    "dimension_derived_fields": ["scopes", "scopes[].source_ref", "scopes[].derived_fields"],
-    "dimension_deduplication": [
-        "scopes",
-        "scopes[].source_ref",
-        "scopes[].record_identity.fields",
-        "scopes[].record_selection.criteria",
+    "sources": [
+        "facts[].source_ref",
+        "facts[].filters[].field_ref",
+        "facts[].filters[].operator",
+        "dimensions[].source_ref",
+        "dimensions[].join.fact_source_ref",
+        "dimensions[].join.join_type",
+        "dimensions[].join.conditions",
+        "dimensions[].join.cardinality",
     ],
-    "dimension_relations": [
-        "relations",
-        "relations[].fact_source_ref",
-        "relations[].dimension_source_ref",
-        "relations[].join_type",
-        "relations[].conditions",
+    "time_context": [
+        "input_windows[].window_id",
+        "input_windows[].time_field",
+        "input_windows[].range",
     ],
-    "time_window": ["time_field", "range.direction", "range.number", "range.unit"],
-    "window_partitioning": ["partition_fields"],
-    "final_sequence_partitioning": ["partition_fields"],
-    "final_sequence_ordering": ["criteria", "criteria[].field_ref", "criteria[].direction"],
-    "final_sequence_truncation": ["limit_per_partition"],
-    "final_sequence_deduplication": ["identity_ref", "on_duplicate"],
-    "output_fields": ["fields", "fields[].field_name"],
-    "aggregation_metrics": [
-        "count_metrics", "count_metrics[].metric_name", "count_metrics[].count_type",
-        "count_metrics[].count_entity",
+    "output_features": [
+        "layout",
+        "axes[].axis_id",
+        "axes[].values",
+        "measures[].measure_id",
+        "measures[].aggregation",
+        "features[].field_name",
     ],
-    "aggregation_precedence": ["deduplication_before_aggregation", "aggregation_key", "count_semantics"],
+    "pipeline": [],
+    "sequence": [
+        "ordering[].field_ref",
+        "ordering[].direction",
+    ],
 }
+
+
+def _degraded_field_output(
+    field_id: str,
+    error: str,
+    *,
+    previous: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Build a non-blocking placeholder when one field fails to extract.
+
+    Downstream consumers keep running with remaining fields; this field is marked
+    unresolved so it is not treated as confirmed口径.
+    """
+    err = (error or "unknown error").strip() or "unknown error"
+    if isinstance(previous, dict) and isinstance(previous.get("value"), dict):
+        output = deepcopy(previous)
+        output["field_id"] = field_id
+        unresolved = [str(item) for item in (output.get("unresolved") or []) if str(item).strip()]
+        note = f"本轮重新提取失败，暂沿用上一轮结果（{err}）"
+        if note not in unresolved:
+            unresolved.append(note)
+        output["unresolved"] = unresolved
+        output["question"] = (
+            output.get("question")
+            if isinstance(output.get("question"), str) and output["question"].strip()
+            else f"字段 {field_id} 本轮提取失败，已沿用旧值，请复核后重试 update_ir。"
+        )
+        output["rationale"] = (
+            output.get("rationale")
+            if isinstance(output.get("rationale"), str) and output["rationale"].strip()
+            else note
+        )
+        return output
+    return {
+        "field_id": field_id,
+        "value": {},
+        "rationale": f"字段提取失败，本轮跳过该字段：{err}",
+        "unresolved": [f"字段提取失败：{err}"],
+        "question": (
+            f"字段 {field_id} 未能生成有效 JSON/结果，本轮不强制该字段口径；"
+            "请补充证据后重试 update_ir。"
+        ),
+    }
 
 
 def write_field_attempt(
@@ -444,11 +489,35 @@ async def fill_field_templates(
     deferred_templates = []
     # Start historically long outputs early, without changing their prompts or
     # public result order. Keep the same semaphore limit and full validation.
-    priority = {"output_fields": 0, "aggregation_metrics": 1, "aggregation_precedence": 2}
+    priority = {"output_features": 0, "sources": 1, "time_context": 2}
     scheduled = (
         sorted(field_templates, key=lambda t: priority.get(t["field_id"], 3))
         if field_order == "long_first" else field_templates
     )
+    async def _safe_detailed(field_template: dict[str, Any], *, defer_completion: bool) -> dict[str, Any]:
+        field_id = str(field_template.get("field_id", ""))
+        try:
+            return await fill_field_template_detailed(
+                field_template, user_query=user_query, tool_evidence=tool_evidence,
+                llm=llm, confirmed_context=confirmed_context, current_value=values.get(field_id),
+                semaphore=semaphore, allow_repair=allow_repair, trace_dir=trace_dir,
+                defer_completion=defer_completion,
+                completion_policy=completion_policy, concise_rationale=concise_rationale,
+                compact_json=compact_json,
+            )
+        except Exception as exc:
+            logger.warning("[IR] field {} raised {}; degrading", field_id, type(exc).__name__)
+            return {
+                "field_id": field_id,
+                "success": False,
+                "attempts": 0,
+                "output": None,
+                "error": f"{type(exc).__name__}: {exc}",
+                "completion_pending": False,
+                "raw_responses": [],
+                "missing_critical_paths": [],
+            }
+
     for field_template in scheduled:
         field_id = str(field_template.get("field_id", ""))
         file_value = values.get(field_id)
@@ -457,56 +526,76 @@ async def fill_field_templates(
             write_field_meta(trace_dir, field_id, {
                 "success": True, "attempts": 0, "skipped_incremental": True, "output": reused,
             })
-            tasks.append(asyncio.sleep(0, result=reused))
+            tasks.append(asyncio.sleep(0, result={
+                "field_id": field_id, "success": True, "output": reused, "error": None,
+                "completion_pending": False,
+            }))
             continue
         if completion_batch_size > 1 and allow_repair:
             deferred_templates.append(field_template)
-            tasks.append(fill_field_template_detailed(
-                field_template, user_query=user_query, tool_evidence=tool_evidence,
-                llm=llm, confirmed_context=confirmed_context, current_value=file_value,
-                semaphore=semaphore, allow_repair=allow_repair, trace_dir=trace_dir,
-                defer_completion=True,
-                completion_policy=completion_policy, concise_rationale=concise_rationale,
-                compact_json=compact_json,
-            ))
+            tasks.append(_safe_detailed(field_template, defer_completion=True))
             continue
-        task = fill_field_template(
-            field_template,
-            user_query=user_query,
-            tool_evidence=tool_evidence,
-            llm=llm,
-            confirmed_context=confirmed_context,
-            current_value=file_value,
-            semaphore=semaphore,
-            allow_repair=allow_repair,
-            trace_dir=trace_dir,
-            completion_policy=completion_policy,
-            concise_rationale=concise_rationale,
-            compact_json=compact_json,
-        )
-        tasks.append(task)
-    outputs = await _gather_cancel_on_error(tasks)
+        tasks.append(_safe_detailed(field_template, defer_completion=False))
+    details_list = await _gather_cancel_on_error(tasks)
+    details_by_id = {str(item.get("field_id", "")): item for item in details_list if isinstance(item, dict)}
+
+    def _materialize(field_template: dict[str, Any], detail: dict[str, Any] | None) -> dict[str, Any]:
+        field_id = str(field_template.get("field_id", ""))
+        if detail is None:
+            logger.warning("[IR] field {} missing from fill results; degrading", field_id)
+            return _degraded_field_output(field_id, "missing fill result", previous=values.get(field_id))
+        output = detail.get("output")
+        if isinstance(output, dict) and isinstance(output.get("value"), dict) and (
+            detail.get("success") or detail.get("degraded")
+        ):
+            return output
+        error = str(detail.get("error") or "DataTaskIR field extraction failed")
+        logger.warning("[IR] field {} degraded: {}", field_id, error)
+        degraded = _degraded_field_output(field_id, error, previous=values.get(field_id))
+        detail["output"] = degraded
+        detail["degraded"] = True
+        detail["completion_pending"] = False
+        write_field_meta(trace_dir, field_id, detail)
+        return degraded
+
     if deferred_templates:
-        deferred_ids = {template["field_id"] for template in deferred_templates}
-        details = {item["field_id"]: item for item in outputs if item["field_id"] in deferred_ids}
-        for detail in details.values():
-            if not detail["success"] or detail.get("error"):
-                raise ValueError(str(detail.get("error") or "DataTaskIR field extraction failed"))
-        incomplete = [template for template in deferred_templates
-                      if details[template["field_id"]].get("completion_pending")]
+        for template in deferred_templates:
+            field_id = str(template.get("field_id", ""))
+            detail = details_by_id.get(field_id)
+            if detail is None or not detail.get("success") or detail.get("error"):
+                # Leave a degraded output now; do not send failed fields to completion batch.
+                error = (detail or {}).get("error") or "DataTaskIR field extraction failed"
+                degraded = _degraded_field_output(field_id, str(error), previous=values.get(field_id))
+                details_by_id[field_id] = {
+                    "field_id": field_id,
+                    "success": False,
+                    "degraded": True,
+                    "output": degraded,
+                    "error": error,
+                    "completion_pending": False,
+                    "attempts": (detail or {}).get("attempts", 0),
+                    "raw_responses": (detail or {}).get("raw_responses") or [],
+                    "missing_critical_paths": [],
+                }
+                write_field_meta(trace_dir, field_id, details_by_id[field_id])
+        incomplete = [
+            template for template in deferred_templates
+            if details_by_id[str(template["field_id"])].get("completion_pending")
+        ]
         await _gather_cancel_on_error([
             _complete_field_batch(
-                incomplete[start:start + completion_batch_size], details=details,
+                incomplete[start:start + completion_batch_size], details=details_by_id,
                 user_query=user_query, tool_evidence=tool_evidence, confirmed_context=confirmed_context,
                 current_values=values, llm=llm, semaphore=semaphore, trace_dir=trace_dir,
                 concise_rationale=concise_rationale, compact_json=compact_json,
             )
             for start in range(0, len(incomplete), completion_batch_size)
         ])
-        outputs = [details[item["field_id"]]["output"] if item["field_id"] in details else item
-                   for item in outputs]
-    by_id = {output["field_id"]: output for output in outputs}
-    return [deepcopy(by_id[template["field_id"]]) for template in field_templates]
+
+    return [
+        deepcopy(_materialize(template, details_by_id.get(str(template.get("field_id", "")))))
+        for template in field_templates
+    ]
 
 
 async def _gather_cancel_on_error(tasks: list) -> list:
@@ -605,57 +694,68 @@ async def _complete_field_batch(
         fallback_wait = 0.0
         fallback_seconds = 0.0
         initial_attempts = detail["attempts"]
-        # A parseable object is not sufficient to trust a batched response.
-        valid = (isinstance(output, dict) and isinstance(output.get("value"), dict)
-                 and isinstance(output.get("rationale"), str) and bool(output["rationale"].strip())
-                 and isinstance(output.get("unresolved", []), list)
-                 and all(isinstance(item, str) for item in output.get("unresolved", []))
-                 and (not output.get("unresolved") or
-                      isinstance(output.get("question"), str) and bool(output["question"].strip())))
-        if not valid:
-            original = build_field_messages(
-                template, user_query=user_query, tool_evidence=tool_evidence,
-                confirmed_context=confirmed_context, current_value=current_values.get(field_id),
-                concise_rationale=concise_rationale, compact_json=compact_json,
+        try:
+            # A parseable object is not sufficient to trust a batched response.
+            valid = (isinstance(output, dict) and isinstance(output.get("value"), dict)
+                     and isinstance(output.get("rationale"), str) and bool(output["rationale"].strip())
+                     and isinstance(output.get("unresolved", []), list)
+                     and all(isinstance(item, str) for item in output.get("unresolved", []))
+                     and (not output.get("unresolved") or
+                          isinstance(output.get("question"), str) and bool(output["question"].strip())))
+            if not valid:
+                original = build_field_messages(
+                    template, user_query=user_query, tool_evidence=tool_evidence,
+                    confirmed_context=confirmed_context, current_value=current_values.get(field_id),
+                    concise_rationale=concise_rationale, compact_json=compact_json,
+                )
+                raw_responses = detail.get("raw_responses") or [""]
+                fallback = _build_completion_messages(
+                    original, raw_responses[-1], detail.get("missing_critical_paths") or [],
+                )
+                fallback_started = time.perf_counter()
+                async with semaphore:
+                    fallback_call_started = time.perf_counter()
+                    fallback_wait = fallback_call_started - fallback_started
+                    try:
+                        output, fallback_raw = await ainvoke_json_object(llm, fallback)
+                    except Exception as exc:
+                        raise ValueError(f"Individual completion failed for {field_id}: {type(exc).__name__}") from exc
+                    fallback_seconds = time.perf_counter() - fallback_call_started
+                write_field_attempt(trace_dir, field_id, detail["attempts"] + 2, fallback, fallback_raw)
+                if not isinstance(output, dict) or not isinstance(output.get("value"), dict):
+                    raise ValueError(f"Individual completion failed for {field_id}")
+                detail["attempts"] += 1
+            output["field_id"] = field_id
+            missing = _find_missing_critical_paths(template, output["value"])
+            detail.update(
+                output=_add_completion_diagnostics(template, output, missing),
+                attempts=detail["attempts"] + 1, completion_retried=True, completion_pending=False,
+                completion_batch_size=len(templates), missing_critical_paths=missing,
+                completion_batch_trace=batch_id,
+                model_requests=initial_attempts + (not valid),
+                latency_seconds=detail["latency_seconds"] + time.perf_counter() - started,
+                # Shared-call time is recorded under batch_id once, not per field.
+                queue_wait_seconds=detail["queue_wait_seconds"] + fallback_wait,
+                model_call_seconds=detail["model_call_seconds"] + fallback_seconds,
             )
-            fallback = _build_completion_messages(
-                original, detail["raw_responses"][-1], detail["missing_critical_paths"],
+            write_field_meta(trace_dir, field_id, detail)
+        except Exception as exc:
+            error = str(exc)
+            logger.warning("[IR] completion for {} degraded: {}", field_id, error)
+            degraded = _degraded_field_output(
+                field_id, error, previous=current_values.get(field_id) or detail.get("output"),
             )
-            fallback_started = time.perf_counter()
-            async with semaphore:
-                fallback_call_started = time.perf_counter()
-                fallback_wait = fallback_call_started - fallback_started
-                try:
-                    output, fallback_raw = await ainvoke_json_object(llm, fallback)
-                except Exception as exc:
-                    write_field_meta(trace_dir, field_id, {
-                        **detail, "success": False, "error": type(exc).__name__,
-                        "attempts": detail["attempts"] + 2, "completion_batch_trace": batch_id,
-                    })
-                    raise
-                fallback_seconds = time.perf_counter() - fallback_call_started
-            write_field_attempt(trace_dir, field_id, detail["attempts"] + 2, fallback, fallback_raw)
-            if not isinstance(output, dict) or not isinstance(output.get("value"), dict):
-                write_field_meta(trace_dir, field_id, {
-                    **detail, "success": False, "error": "Invalid individual completion",
-                    "attempts": detail["attempts"] + 2, "completion_batch_trace": batch_id,
-                })
-                raise ValueError(f"Individual completion failed for {field_id}")
-            detail["attempts"] += 1
-        output["field_id"] = field_id
-        missing = _find_missing_critical_paths(template, output["value"])
-        detail.update(
-            output=_add_completion_diagnostics(template, output, missing),
-            attempts=detail["attempts"] + 1, completion_retried=True, completion_pending=False,
-            completion_batch_size=len(templates), missing_critical_paths=missing,
-            completion_batch_trace=batch_id,
-            model_requests=initial_attempts + (not valid),
-            latency_seconds=detail["latency_seconds"] + time.perf_counter() - started,
-            # Shared-call time is recorded under batch_id once, not per field.
-            queue_wait_seconds=detail["queue_wait_seconds"] + fallback_wait,
-            model_call_seconds=detail["model_call_seconds"] + fallback_seconds,
-        )
-        write_field_meta(trace_dir, field_id, detail)
+            detail.update({
+                "success": False,
+                "degraded": True,
+                "error": error,
+                "output": degraded,
+                "completion_pending": False,
+                "completion_retried": True,
+                "completion_batch_trace": batch_id,
+                "attempts": detail.get("attempts", 0) + 1,
+            })
+            write_field_meta(trace_dir, field_id, detail)
 
     await _gather_cancel_on_error([finish(template) for template in templates])
 
@@ -705,8 +805,11 @@ def _has_meaningful_path(value: Any, parts: list[str]) -> bool:
     part = parts[0]
     if part.endswith("[]"):
         child = value.get(part[:-2])
-        if not isinstance(child, list) or not child:
+        if not isinstance(child, list):
             return False
+        # Empty list is intentional absence (宁缺毋滥), not a missing leaf.
+        if not child:
+            return True
         return all(_has_meaningful_path(item, parts[1:]) for item in child)
     child = value.get(part)
     return _has_meaningful_path(child, parts[1:])
