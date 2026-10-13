@@ -14,51 +14,40 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+import re
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
 logger = logging.getLogger(__name__)
 _OMITTED = object()
 
 FIELD_TITLES = {
-    "feature_key": "特征主键",
-    "statistic_period": "统计周期",
-    "fact_filters": "事实表过滤条件",
-    "fact_derived_fields": "事实表字段转换",
-    "fact_deduplication": "事实表去重规则",
-    "dimension_filters": "维度表过滤条件",
-    "dimension_derived_fields": "维度表预处理逻辑",
-    "dimension_deduplication": "维度表记录身份与版本选择",
-    "dimension_relations": "维度表关联条件",
-    "window_partitioning": "窗口分区键",
-    "final_sequence_partitioning": "最终序列分区",
-    "final_sequence_ordering": "最终序列排序依据",
-    "final_sequence_truncation": "最终序列截断（TopN）",
-    "final_sequence_deduplication": "最终序列去重规则",
-    "output_fields": "输出字段定义",
-    "aggregation_metrics": "聚合指标定义",
-    "aggregation_precedence": "去重、关联、聚合与后处理的执行顺序"
+    "identity": "特征主键",
+    "sources": "数据源与关联预处理",
+    "time_context": "时间上下文",
+    "output_features": "输出特征目录",
+    "pipeline": "执行管道",
+    "sequence": "最终序列后处理",
 }
 
-_DIMENSION_SCOPE_FIELDS = ("dimension_filters", "dimension_derived_fields", "dimension_deduplication")
-
-
 _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
-1. **已确认值是强制约束**：IR中明确记录的字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略
+1. **已确认值是强制约束**：IR中明确记录的源字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略；**输出列别名（expand 后的 field_name）除外**，见规则 10
 2. **未记录的操作默认为被禁止**：IR中未明确记录的操作（如去重、过滤、JOIN类型变更等）Agent不得自行添加（包括调用方 query 中主Agent附加、但IR未记录的操作），必须先在IR中记录才能执行；用户原始问题原话明确要求且按规则 17 判定可实现的除外
 3. **禁止操作是强制约束**：以下通用操作默认被禁止，除非IR明确记录允许——在聚合前使用窗口函数去重（如ROW_NUMBER()）、过滤LEFT JOIN的NULL侧使其退化为INNER JOIN、用户未明确要求时使用DISTINCT或COUNT(DISTINCT)
 4. **必须保留的内容**：LEFT JOIN的左表所有记录不得因去重或过滤而丢失；用户未明确要求去重时，所有满足过滤条件的原始记录都必须参与计算
-5. **事实记录身份不等于去重**：fact_deduplication中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重
-6. **聚合指标约束**：计数类指标（count_metrics）必须按IR中定义的count_type和expression_template执行；每个指标的 group_by 是该指标自己的聚合粒度，禁止把全部指标默认按同一分组键聚合
-7. **比例指标约束**：ratio_metrics中的分子分母必须严格按定义执行，注意分子不应包含分母的所有记录
-8. **窗口分区键约束**：window_partitioning定义的分区键用于窗口函数（ROW_NUMBER() OVER(PARTITION BY ...)），必须与IR一致
-9. **最终序列分区键约束**：final_sequence_partitioning定义的分区键用于最终输出分组，与窗口分区键可能是不同概念
-10. **最终输出列权威清单 = 特征主键前缀 + 输出字段定义**：INSERT SELECT 的输出列（不含分区列）必须按此构成，不得增减或改名——(a) 若 IR 已确认「特征主键」，则其 components 中的每个 field_ref **必须**作为输出列前缀出现（按 components 顺序），即使这些列未出现在「输出字段定义」中；(b) 随后严格按「输出字段定义」（output_fields）中**尚未被主键覆盖**的字段依次输出（个数、顺序、名称、类型均不得改动；多维交叉展开的每一项各占一列）；(c) 总列数（不含分区列）以渲染条目「最终输出列构成（权威）」为准（主键组件数 + 非主键业务列数）；(d) 除上述权威清单外的列禁止输出；调用方 query 与 IR 冲突时以 IR 为准
-11. **多维交叉输出必须完整展开**：当 output_fields 记录了多个独立维度组合（如多个时间窗口 × 多个特征/指标），每条 fields 项对应一个独立输出列；SQL 必须输出全部展开列，列数与 IR 中 fields 条数一致，禁止把多个组合压成一列、只输出“代表窗口/代表指标”、或按维度基数求和/取最大而少列
-12. **逐特征聚合粒度强制约束**：若 output_fields 为某列填写了 aggregation_grain，则该列的聚合/预聚合必须严格按该分组键执行；不同输出列的 aggregation_grain 可以不同，禁止用 aggregation_precedence.aggregation_key 或多数列的粒度统一覆盖少数列；多粒度时以各列 aggregation_grain 及 aggregation_stages[].group_by 为准。时间窗口差异不是聚合粒度差异，不得据此改写 GROUP BY
-13. **output_fields.expression 是语义说明而非可执行 SQL**：其中的计算口径只约束“算什么/什么意图”，不要求也不应被当作必须照抄的 SQL/UDF 片段；具体语法以实现阶段证据与 aggregation_metrics（count_type、expression_template 等）为准。禁止因 expression 文字不像合法 SQL 而判定 IR 失败，也禁止把有语法风险的 expression 原文硬编码进 SQL
+5. **事实记录身份不等于去重**：sources.facts[].dedup 中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重
+6. **聚合指标约束**：计数类指标必须按展开后各列 aggregation.count_type / expression_template 执行；每列 aggregation.grain 是该列自己的聚合粒度，禁止把全部指标默认按同一分组键聚合
+7. **比例指标约束**：ratio 中的分子分母必须严格按定义执行，注意分子不应包含分母的所有记录
+8. **序列/窗口分区键约束**：sequence.window_partition 与 sequence.partition_fields 分别用于窗口函数与最终序列分区，二者可能不同；rank.partition_by 为空数组表示全局
+9. **最终序列分区键约束**：sequence.partition_fields 定义最终输出分组，与聚合 grain、rank.partition_by 可能是不同概念
+10. **最终输出列语义清单 = 特征主键前缀 + expand(output_features)**：INSERT SELECT 的输出列（不含分区列）须覆盖该清单的语义构成——(a) 若 IR 已确认「特征主键」(identity)，则其 components 中的每个 field_ref **必须**作为输出列前缀出现（按 components 顺序），即使这些列未出现在输出特征中；(b) 随后须覆盖 expand(output_features) 的全部业务/指标语义（cartesian 由代码按 axes×measures 确定性展开，每项各占一列，禁止少列/合并）；(c) **展开后的列名（field_name / name_pattern）不是权威约束**，仅供主 Agent 对照参考；SQL/DDL 可采用规范命名或证据中的命名，不得因未照抄 IR 列名而判失败；(d) 除上述语义清单外禁止额外发明无关业务列；调用方 query 与 IR 冲突时以 IR 口径为准（列名除外）
+11. **多维交叉输出必须完整展开**：layout=cartesian 时，期望业务列数由 ∏|axis.values| × measures（含 attach_rank 追加的百分位列）+ extras 决定；SQL 必须输出全部展开语义列，禁止把多个组合压成一列、只输出“代表窗口/代表指标”、或对跨窗口汇总值打一个分位替代分窗口分位列；IR 给出的展开列名仅供参考，不要求 SQL 字面一致
+12. **逐特征聚合粒度强制约束**：展开后各列的 aggregation.grain 是该列聚合权威（[]=全局聚合，null=非聚合直出）；不同列允许不同 grain，禁止用单一全局 GROUP BY 覆盖。时间窗口差异不是聚合粒度差异，不得据此改写 GROUP BY
+13. **calc.intent 是语义说明而非可执行 SQL**：只约束“算什么/什么意图”，不要求也不应被当作必须照抄的 SQL/UDF 片段；具体语法以实现阶段证据与 aggregation.count_type / expression_template 为准。禁止因 intent 文字不像合法 SQL 而判定 IR 失败，也禁止把有语法风险的 intent 原文硬编码进 SQL
 14. **违反约束=错误**：如果生成的SQL违反了IR中的任何已确认约束（包括禁止操作和必须保留的内容），结果将被视为错误
 15. **IR优先于系统通用规则**：系统通用工程规则（如默认添加设备ID合法性过滤、默认判空过滤、默认去重、默认加时间窗口边界等）与本IR已确认口径冲突时，以IR为准；IR未记录的操作默认不执行，除非用户原始问题明确要求
 16. **业务口径冲突以IR为准**：本查询中出现的其他业务口径描述（包括主Agent附加的“业务口径”段落、中间推导、示例口径）若与DataTaskIR记录冲突，一律以DataTaskIR为准；若与IR同时出现冲突口径，SQL Agent应报告冲突而不得自行取舍
@@ -67,8 +56,8 @@ _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
    - ② IR 未记录、但用户原始问题原话明确的操作顺序/作用位置表述（如“参与Join前”“聚合后再计算百分位”）→ 该表述只规定 IR 已记录操作的先后位置、不创造新操作，允许按用户原话调整顺序实现，并在结论中注明“该顺序来自用户原话、IR 未记录，已作为 IR 缺口反馈”；
    - ③ IR 未记录、用户原始问题原话直接要求的具体操作（去重键、过滤条件、指标定义等）→ 用户级证据，不得静默处理：与 IR 无冲突时按用户原话实现（以用户原话为准，不采用主 Agent 的具体解释）并在结论中报告“IR 遗漏该用户要求”；与 IR 冲突时以 IR 为准并报告冲突（规则 16）；
    - ④ 仅主 Agent 段落出现、用户原始问题与工具证据都没有的操作 → 未确认口径，禁止实现并报告
-18. **操作的作用层级与执行顺序是强制约束**：fact_deduplication 定义的去重作用于“事实记录层”，默认必须先于维度关联（JOIN）执行——JOIN 产生的维表扇出行必须全部保留，禁止在 JOIN 之后再次按事实去重键去重/分组来折叠扇出（会把同一事实键对应的多条维值行压成一条而丢失行数）；只有 IR 明确记录去重作用于 JOIN 后的富化行时，才允许先 JOIN 再去重，且去重键必须包含全部扇出区分维度列。IR 记录 operation_order（执行管道顺序）时按该顺序执行，禁止调整；IR 未记录顺序时按默认语义执行，不得自行改变操作的作用层级
-19. **窗口函数型后处理指标（NTILE/百分位/排名）约束**：aggregation_metrics.window_rank_metrics 中记录的百分位/排名列必须严格按定义实现：rank_type、bucket_count（桶数）、order_by（排序对象）、order_direction（升/降序）、partition_by（空数组=全局）均不得改动；百分位作用于聚合后/最终输出行（执行位置以 IR 的 operation_order 为准，未记录时默认在聚合之后），禁止改变其作用层级。当百分位列按多个时间窗口展开时，每个窗口的指标值各产生一个独立百分位列（如 5 窗口×3 指标=15 列）——这是规则 11 多维交叉展开的特例，禁止对跨窗口汇总值（各窗口指标之和）打百分位来替代分窗口百分位列，禁止少列或合并
+18. **操作的作用层级与执行顺序是强制约束**：sources.facts[].dedup 定义的去重作用于“事实记录层”，默认必须先于维度关联（JOIN）执行——JOIN 产生的维表扇出行必须全部保留，禁止在 JOIN 之后再次按事实去重键去重/分组来折叠扇出；只有 IR 明确记录去重作用于 JOIN 后的富化行时，才允许先 JOIN 再去重，且去重键必须包含全部扇出区分维度列。IR 记录 pipeline.operation_order 时按该顺序执行，禁止调整；IR 未记录顺序时按默认语义执行，不得自行改变操作的作用层级
+19. **窗口函数型后处理指标（NTILE/百分位/排名）约束**：output_features 中 attach_rank / rank 定义的百分位/排名列必须严格按定义实现：rank_type、bucket_count、order_direction、partition_by（空数组=全局）均不得改动；执行位置以 pipeline.operation_order 为准（未记录时默认在 aggregate 之后）。cartesian 下 attach_rank 随轴展开，每个轴组合各产生独立百分位列——禁止对跨窗口汇总值打百分位来替代分窗口百分位列，禁止少列或合并
 """
 
 
@@ -83,7 +72,6 @@ def render_constraint_context(
         "以下DataTaskIR记录了此任务的**已确认口径约束**，你生成的SQL**必须严格遵循**：\n\n"
         + render_context(field_outputs) + "\n\n" + _SQL_CONSTRAINT_RULES
     )
-    # 暂时不加入warning
     if False and warnings:
         rendered += (
             "\n【口径一致性风险提示（未确认，生成 SQL 时需谨慎）】\n"
@@ -96,7 +84,6 @@ def render_constraint_context(
 def render_context(field_outputs: list[dict[str, Any]]) -> str:
     """Render only confirmed DataTaskIR leaves into stable NL2SQL query context."""
     by_id = {str(output.get("field_id", "")): output for output in field_outputs}
-    dimension_sources = _confirmed_dimension_sources(by_id.get("dimension_relations"))
     lines = [
         "【DataTaskIR 口径约束】",
         "以下仅包含已确认口径；未出现的内容不构成约束。",
@@ -113,15 +100,12 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
         omitted_paths: list[str] = []
         pruned = _prune_value(value_source, "$", bool(unresolved), omitted_paths)
         value = pruned if isinstance(pruned, dict) else {}
-        if field_id in _DIMENSION_SCOPE_FIELDS and value:
-            value = _filter_dimension_scopes(value, dimension_sources)
         _log_omissions(field_id, unresolved, question, omitted_paths)
         if unresolved:
             question_text = question if isinstance(question, str) and question.strip() else ""
             warning = f"{FIELD_TITLES.get(field_id)}：存在未确认口径"
             if question_text:
                 warning += f"（待澄清问题：{question_text}）"
-            # 当前warning未加入到IR渲染内容中
             warnings.append(warning)
         if not value:
             continue
@@ -131,70 +115,210 @@ def render_context(field_outputs: list[dict[str, Any]]) -> str:
             lines.append(f"- {FIELD_TITLES.get(field_id)}：{value_text}")
     output_contract = _render_final_output_column_contract(by_id)
     if output_contract:
-        lines.append(f"- 最终输出列构成（权威）：{output_contract}")
+        lines.append(f"- 最终输出列构成（语义权威；列名仅供参考）：{output_contract}")
     grain_contract = _render_per_field_aggregation_grain_contract(by_id)
     if grain_contract:
         lines.append(f"- 逐特征聚合粒度（权威）：{grain_contract}")
-    if not _has_confirmed_dedup(by_id) and any(by_id.get(field_id) for field_id in ("fact_deduplication", "dimension_deduplication", "final_sequence_deduplication")):
+    if not _has_confirmed_dedup(by_id) and any(
+        by_id.get(field_id) for field_id in ("sources", "sequence")
+    ):
         lines.append(
-            "- 去重约束：本任务未确认任何去重要求（事实表去重、维度表去重、最终序列去重均无已确认内容）。"
+            "- 去重约束：本任务未确认任何去重要求（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）。"
             "用户未明确要求去重时，禁止对事实记录或最终输出执行去重；源表为天级增量表或存在多分区不作为去重依据。"
             "维表在 JOIN 前为保证关联键唯一所必需的去重按 JOIN 安全规则执行，不在此限。"
         )
     return "\n".join(lines)
 
 
+def expand_output_features(value: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Deterministically expand output_features into concrete output columns.
+
+    layout=flat → features[]; layout=cartesian → axes×measures (+attach_rank) + extras.
+    """
+    if not isinstance(value, dict):
+        return []
+    layout = value.get("layout")
+    if layout == "flat":
+        return [
+            deepcopy(item)
+            for item in (value.get("features") or [])
+            if isinstance(item, dict) and item.get("field_name")
+        ]
+    if layout != "cartesian":
+        return []
+
+    axes = [axis for axis in (value.get("axes") or []) if isinstance(axis, dict)]
+    measures = [m for m in (value.get("measures") or []) if isinstance(m, dict)]
+    overrides = [o for o in (value.get("overrides") or []) if isinstance(o, dict)]
+    extras = [
+        deepcopy(item)
+        for item in (value.get("extras") or [])
+        if isinstance(item, dict) and item.get("field_name")
+    ]
+
+    axis_ids = [str(a.get("axis_id") or "") for a in axes]
+    axis_values = [
+        [str(v) for v in (a.get("values") or []) if v is not None and str(v).strip()]
+        for a in axes
+    ]
+    if not measures:
+        return extras
+    if axes and any(not vals for vals in axis_values):
+        return extras
+
+    products = list(itertools.product(*axis_values)) if axes else [()]
+    columns: list[dict[str, Any]] = []
+    for combo in products:
+        binding = {axis_ids[i]: combo[i] for i in range(len(axis_ids))}
+        for measure in measures:
+            col = _apply_measure(measure, binding, overrides)
+            if col.get("field_name"):
+                columns.append(col)
+            attach = measure.get("attach_rank")
+            if isinstance(attach, dict) and attach:
+                rank_col = _derive_rank_column(col, measure, attach, binding)
+                if rank_col.get("field_name"):
+                    columns.append(rank_col)
+    columns.extend(extras)
+    return columns
+
+
+def _format_name_pattern(pattern: str | None, measure_id: str, binding: dict[str, str], default: str) -> str:
+    text = pattern if isinstance(pattern, str) and pattern.strip() else default
+    mapping = {"measure_id": measure_id, **binding}
+    # Support both {window} and {measure_id} style placeholders.
+    def replacer(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return str(mapping.get(key, match.group(0)))
+
+    return re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}", replacer, text)
+
+
+def _apply_override(measure: dict[str, Any], binding: dict[str, str], overrides: list[dict[str, Any]]) -> dict[str, Any]:
+    result = deepcopy(measure)
+    measure_id = str(measure.get("measure_id") or "")
+    for override in overrides:
+        if str(override.get("measure_id") or "") != measure_id:
+            continue
+        ov_binding = override.get("binding") or {}
+        if not isinstance(ov_binding, dict):
+            continue
+        if any(str(ov_binding.get(k, "")) != str(v) for k, v in binding.items() if k in ov_binding):
+            continue
+        if any(str(binding.get(k, "")) != str(v) for k, v in ov_binding.items()):
+            continue
+        patch = override.get("patch")
+        if isinstance(patch, dict):
+            result = _deep_merge(result, patch)
+    return result
+
+
+def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _apply_measure(
+    measure: dict[str, Any], binding: dict[str, str], overrides: list[dict[str, Any]],
+) -> dict[str, Any]:
+    patched = _apply_override(measure, binding, overrides)
+    measure_id = str(patched.get("measure_id") or "measure")
+    field_name = _format_name_pattern(
+        patched.get("name_pattern"), measure_id, binding, "{measure_id}_{window}",
+    )
+    col: dict[str, Any] = {
+        "field_name": field_name,
+        "role": patched.get("role"),
+        "output_type": patched.get("output_type"),
+        "description": patched.get("description"),
+        "source": patched.get("source"),
+        "calc": deepcopy(patched.get("calc") or {}),
+        "aggregation": deepcopy(patched.get("aggregation")),
+        "filters": deepcopy(patched.get("filters") or []),
+        "window_ref": binding.get("window"),
+        "ratio": deepcopy(patched.get("ratio")),
+        "rank": None,
+        "depends_on": deepcopy(patched.get("depends_on") or []),
+        "measure_id": measure_id,
+        "axis_binding": dict(binding),
+    }
+    return col
+
+
+def _derive_rank_column(
+    base_col: dict[str, Any],
+    measure: dict[str, Any],
+    attach: dict[str, Any],
+    binding: dict[str, str],
+) -> dict[str, Any]:
+    measure_id = str(measure.get("measure_id") or "measure")
+    field_name = _format_name_pattern(
+        attach.get("name_pattern"), measure_id, binding, "{measure_id}_{window}_pct",
+    )
+    based_on = str(base_col.get("field_name") or "")
+    return {
+        "field_name": field_name,
+        "role": "rank",
+        "output_type": "int",
+        "description": f"{based_on} 的百分位/排名",
+        "source": based_on,
+        "calc": {"intent": f"对 {based_on} 做窗口排名/分位", "on": based_on},
+        "aggregation": None,
+        "filters": [],
+        "window_ref": binding.get("window"),
+        "ratio": None,
+        "rank": {
+            "rank_type": attach.get("rank_type"),
+            "bucket_count": attach.get("bucket_count"),
+            "order_by": based_on,
+            "order_direction": attach.get("order_direction"),
+            "partition_by": deepcopy(attach.get("partition_by") or []),
+            "based_on": based_on,
+        },
+        "depends_on": [based_on],
+        "measure_id": measure_id,
+        "axis_binding": dict(binding),
+    }
+
+
 def _has_confirmed_dedup(by_id: dict[str, dict[str, Any]]) -> bool:
-    """Whether any dedup dimension (fact/dimension/final sequence) recorded confirmed content."""
-    fact = by_id.get("fact_deduplication")
-    if fact:
-        value = fact.get("value", {})
+    sources = by_id.get("sources")
+    if sources:
+        value = sources.get("value", {})
         if isinstance(value, dict):
-            identity = value.get("record_identity", {}) or {}
-            selection = value.get("record_selection", {}) or {}
-            if identity.get("fields") or selection.get("criteria"):
+            for fact in value.get("facts") or []:
+                if isinstance(fact, dict) and _dedup_confirmed(fact.get("dedup")):
+                    return True
+            for dim in value.get("dimensions") or []:
+                if isinstance(dim, dict) and _dedup_confirmed(dim.get("dedup")):
+                    return True
+    sequence = by_id.get("sequence")
+    if sequence:
+        value = sequence.get("value", {})
+        if isinstance(value, dict):
+            dedup = value.get("dedup")
+            if isinstance(dedup, dict) and (
+                dedup.get("on_duplicate") is not None or dedup.get("identity_ref") is not None
+            ):
                 return True
-    dimension = by_id.get("dimension_deduplication")
-    if dimension:
-        value = dimension.get("value", {})
-        if isinstance(value, dict) and value.get("scopes"):
-            return True
-    final = by_id.get("final_sequence_deduplication")
-    if final:
-        value = final.get("value", {})
-        if isinstance(value, dict) and value.get("on_duplicate") is not None:
-            return True
     return False
 
 
-def _confirmed_dimension_sources(output: dict[str, Any] | None) -> set[str]:
-    """Collect dimension sources confirmed by dimension_relations (raw, unpruned)."""
-    if output is None:
-        return set()
-    raw = output.get("value", {})
-    value = raw if isinstance(raw, dict) else {}
-    relations = value.get("relations", [])
-    if not isinstance(relations, list):
-        return set()
-    return {
-        str(relation.get("dimension_source_ref"))
-        for relation in relations
-        if isinstance(relation, dict) and relation.get("dimension_source_ref")
-    }
-
-
-def _filter_dimension_scopes(value: dict[str, Any], dimension_sources: set[str]) -> dict[str, Any]:
-    """Keep only scopes whose source_ref is confirmed as a dimension source."""
-    scopes = value.get("scopes", [])
-    if not isinstance(scopes, list):
-        return {"scopes": []}
-    return {
-        "scopes": [
-            scope
-            for scope in scopes
-            if isinstance(scope, dict) and scope.get("source_ref") in dimension_sources
-        ]
-    }
+def _dedup_confirmed(dedup: Any) -> bool:
+    if not isinstance(dedup, dict):
+        return False
+    identity = dedup.get("record_identity") or {}
+    selection = dedup.get("record_selection") or {}
+    if isinstance(identity, dict) and identity.get("fields"):
+        return True
+    if isinstance(selection, dict) and selection.get("criteria"):
+        return True
+    return False
 
 
 def _normalize_unresolved(value: Any) -> list[str]:
@@ -255,13 +379,8 @@ def _attributes(items: list[tuple[str, Any]]) -> str:
     return "，".join(f"{label}={value}" for label, value in items if value is not None)
 
 
-def _confirmed_feature_key_refs(by_id: dict[str, dict[str, Any]]) -> list[str]:
-    """Return confirmed feature_key component field_refs in template order.
-
-    unresolved 只影响对应槽位（冲突槽位已按约定置 null），不影响其余已确认
-    组件；因此不得因存在 unresolved 而整体放弃已确认的主键列。
-    """
-    output = by_id.get("feature_key")
+def _confirmed_identity_refs(by_id: dict[str, dict[str, Any]]) -> list[str]:
+    output = by_id.get("identity")
     if output is None:
         return []
     raw = output.get("value", {})
@@ -276,21 +395,14 @@ def _confirmed_feature_key_refs(by_id: dict[str, dict[str, Any]]) -> list[str]:
     return refs
 
 
-def _confirmed_output_field_names(by_id: dict[str, dict[str, Any]]) -> list[str]:
-    """Return confirmed output_fields.field_name values in listed order.
-
-    unresolved 只影响对应槽位（冲突槽位已按约定置 null），其余已确认字段
-    仍必须参与“最终输出列构成（权威）”计算，否则权威列数会与字段定义自相矛盾。
-    """
-    output = by_id.get("output_fields")
+def _confirmed_expanded_field_names(by_id: dict[str, dict[str, Any]]) -> list[str]:
+    output = by_id.get("output_features")
     if output is None:
         return []
     raw = output.get("value", {})
     value = raw if isinstance(raw, dict) else {}
     names: list[str] = []
-    for item in value.get("fields", []) or []:
-        if not isinstance(item, dict):
-            continue
+    for item in expand_output_features(value):
         name = item.get("field_name")
         if name is not None and str(name).strip():
             names.append(str(name))
@@ -298,9 +410,8 @@ def _confirmed_output_field_names(by_id: dict[str, dict[str, Any]]) -> list[str]
 
 
 def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> str:
-    """Synthesize the authoritative INSERT SELECT column contract for consumers."""
-    key_refs = _confirmed_feature_key_refs(by_id)
-    field_names = _confirmed_output_field_names(by_id)
+    key_refs = _confirmed_identity_refs(by_id)
+    field_names = _confirmed_expanded_field_names(by_id)
     if not key_refs and not field_names:
         return ""
     key_aliases = {ref.split(".")[-1] for ref in key_refs}
@@ -313,41 +424,43 @@ def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> st
     if key_refs:
         parts.append(
             f"先按顺序输出特征主键列 [{', '.join(key_refs)}]"
-            "（即使未出现在输出字段定义中也必须输出，不得遗漏或后置到指标列之后）"
+            "（即使未出现在输出特征目录中也必须输出，不得遗漏或后置到指标列之后）"
         )
     else:
         parts.append("本任务暂无已确认特征主键前缀列")
     if business_names:
         parts.append(
-            f"再按顺序输出业务/指标列共 {len(business_names)} 列 [{', '.join(business_names)}]"
-            "（每条非主键 output_fields 项对应一列，多维交叉已展开的列不得合并或漏项）"
+            f"再覆盖业务/指标语义共 {len(business_names)} 列（IR 参考名：[{', '.join(business_names)}]）"
+            "——由 expand(output_features) 确定性展开，cartesian 交叉语义不得合并或漏项；"
+            "参考列名仅供主 Agent 对照，SQL/DDL 不强制使用同名"
         )
     elif field_names:
-        parts.append(
-            "输出字段定义中的列均已由特征主键覆盖，不再额外增加业务/指标列"
-        )
+        parts.append("输出特征中的列均已由特征主键覆盖，不再额外增加业务/指标列")
     else:
         parts.append("本任务暂无已确认业务/指标输出列")
     total = len(key_refs) + len(business_names)
-    parts.append(f"不含分区列的总输出列数必须为 {total}")
+    parts.append(
+        f"不含分区列的总输出列数（按语义项计数）应为 {total}；"
+        "列名是否与 IR 参考名一致不作为约束"
+    )
     return "；".join(parts) + "。"
 
 
 def _render_per_field_aggregation_grain_contract(by_id: dict[str, dict[str, Any]]) -> str:
-    """Summarize per-output-field aggregation grains when any are confirmed."""
-    output = by_id.get("output_fields")
+    output = by_id.get("output_features")
     if output is None:
         return ""
     raw = output.get("value", {})
     value = raw if isinstance(raw, dict) else {}
     grains: list[tuple[str, list[str] | None]] = []
-    for item in value.get("fields", []) or []:
-        if not isinstance(item, dict):
-            continue
+    for item in expand_output_features(value):
         name = item.get("field_name")
         if name is None or not str(name).strip():
             continue
-        grain = item.get("aggregation_grain")
+        aggregation = item.get("aggregation")
+        if not isinstance(aggregation, dict):
+            continue
+        grain = aggregation.get("grain")
         if grain is None:
             continue
         if isinstance(grain, list):
@@ -367,7 +480,7 @@ def _render_per_field_aggregation_grain_contract(by_id: dict[str, dict[str, Any]
     summary = "；".join(parts)
     if len(unique) > 1:
         summary += (
-            "。已确认存在多种聚合粒度：各输出列必须按其自身 aggregation_grain 聚合，"
+            "。已确认存在多种聚合粒度：各输出列必须按其自身 aggregation.grain 聚合，"
             "禁止用单一全局 GROUP BY 覆盖全部特征"
         )
     else:
@@ -375,9 +488,11 @@ def _render_per_field_aggregation_grain_contract(by_id: dict[str, dict[str, Any]
     return summary + "。"
 
 
-def _render_feature_key(value: dict[str, Any]) -> str:
+def _render_identity(value: dict[str, Any]) -> str:
     parts = []
-    for item in value.get("components", []):
+    for item in value.get("components", []) or []:
+        if not isinstance(item, dict):
+            continue
         attributes = _attributes(
             [
                 ("角色", item.get("semantic_role")),
@@ -391,33 +506,14 @@ def _render_feature_key(value: dict[str, Any]) -> str:
     if parts:
         rendered.append(f"由 {' + '.join(parts)} 联合构成")
         rendered.append(
-            "上述主键列是最终输出的必选前缀列，即使未写入输出字段定义也必须出现在 INSERT SELECT 中"
+            "上述主键列是最终输出的必选前缀列，即使未写入输出特征目录也必须出现在 INSERT SELECT 中"
         )
     if value.get("uniqueness_scope") is not None:
         rendered.append(f"唯一范围={value.get('uniqueness_scope')}")
     return "；".join(rendered) + ("。" if rendered else "")
 
 
-def _render_statistic_period(value: dict[str, Any]) -> str:
-    rendered = []
-    if value.get("time_field") is not None:
-        rendered.append(f"按 {value.get('time_field')} 分桶")
-    attributes = _attributes(
-        [
-            ("粒度", value.get("grain")),
-            ("时区", value.get("timezone")),
-            ("日历", value.get("calendar")),
-            ("周起始", value.get("week_start")),
-            ("自定义定义", value.get("custom_definition")),
-        ]
-    )
-    if attributes:
-        rendered.append(attributes)
-    return "；".join(rendered) + ("。" if rendered else "")
-
-
 def _render_filter_scope(item: dict[str, Any]) -> str | None:
-    """Render the application scope of a filter predicate, or None when unset."""
     filter_scope = item.get("filter_scope")
     if filter_scope == "window_branch":
         branch = item.get("branch_ref")
@@ -451,17 +547,6 @@ def _render_predicate(item: dict[str, Any], source_ref: Any) -> str:
     return f"{base}（{rendered_attributes}）" if rendered_attributes else base
 
 
-def _render_fact_filters(value: dict[str, Any]) -> str:
-    predicates = value.get("predicates", [])
-    if not predicates:
-        return "不需要额外事实过滤。"
-    rendered = [_render_predicate(item, item.get("source_ref")) for item in predicates]
-    text = "且".join(item for item in rendered if item)
-    if any(item.get("filter_scope") == "window_branch" for item in predicates):
-        text += "。窗口分支过滤仅作用于对应分支，禁止提升为对整个事实源的全局过滤；合并各窗口结果时必须以全部窗口用户的并集为基准，禁止以单个窗口用户集合为基准"
-    return text + "。"
-
-
 def _render_derived(item: dict[str, Any], source_ref: Any) -> str:
     source = f"{source_ref}." if source_ref is not None else ""
     target = item.get("target_field")
@@ -483,14 +568,6 @@ def _render_derived(item: dict[str, Any], source_ref: Any) -> str:
         ]
     )
     return f"{base}（{attributes}）" if base and attributes else base or attributes
-
-
-def _render_fact_derived(value: dict[str, Any]) -> str:
-    items = value.get("derived_fields", [])
-    if not items:
-        return "不需要事实字段转换。"
-    rendered = [_render_derived(item, item.get("source_ref")) for item in items]
-    return "；".join(item for item in rendered if item) + "。"
 
 
 def _render_selection(selection: dict[str, Any]) -> str:
@@ -515,315 +592,258 @@ def _render_selection(selection: dict[str, Any]) -> str:
     return "；".join(rendered)
 
 
-def _render_fact_dedup(value: dict[str, Any]) -> str:
-    identity = value.get("record_identity", {})
-    selection = value.get("record_selection", {})
-    identity_fields = identity.get("fields", []) or []
-    if not identity_fields and not selection.get("criteria"):
-        return "不需要事实记录去重。"
-    rendered = []
+def _render_dedup_block(dedup: Any, label: str) -> str:
+    if not isinstance(dedup, dict):
+        return ""
+    identity = dedup.get("record_identity") or {}
+    selection = dedup.get("record_selection") or {}
+    identity_fields = identity.get("fields", []) or [] if isinstance(identity, dict) else []
+    criteria = selection.get("criteria") if isinstance(selection, dict) else None
+    if not identity_fields and not criteria:
+        return ""
+    parts = [label]
     identity_text = _attributes(
         [
             ("同一事实字段", identity_fields),
-            ("空值等价", identity.get("null_equality")),
+            ("空值等价", identity.get("null_equality") if isinstance(identity, dict) else None),
         ]
     )
     if identity_text:
-        rendered.append(identity_text)
-    if identity_fields and not selection.get("criteria") and selection.get("if_all_criteria_equal") is None:
-        rendered.append("未定义选择函数，不产生去重")
-    else:
+        parts.append(identity_text)
+    if identity_fields and not criteria and (
+        not isinstance(selection, dict) or selection.get("if_all_criteria_equal") is None
+    ):
+        parts.append("未定义选择函数，不产生去重")
+    elif isinstance(selection, dict):
         selection_text = _render_selection(selection)
         if selection_text:
-            rendered.append(selection_text)
-    return "；".join(rendered) + "。"
-
-
-def _render_dimension_filters(value: dict[str, Any]) -> str:
-    scopes = value.get("scopes", [])
-    if not scopes:
-        return "不需要额外维度过滤。"
-    rendered = []
-    for scope in scopes:
-        source = scope.get("source_ref")
-        predicates = [_render_predicate(item, source) for item in scope.get("predicates", [])]
-        rendered.append("且".join(item for item in predicates if item))
-    return "；".join(item for item in rendered if item) + "。"
-
-
-def _render_dimension_derived(value: dict[str, Any]) -> str:
-    scopes = value.get("scopes", [])
-    if not scopes:
-        return "不需要维度字段预处理。"
-    rendered = []
-    for scope in scopes:
-        source = scope.get("source_ref")
-        rendered.extend(_render_derived(item, source) for item in scope.get("derived_fields", []))
-    return "；".join(item for item in rendered if item) + "。"
-
-
-def _render_dimension_dedup(value: dict[str, Any]) -> str:
-    scopes = value.get("scopes", [])
-    if not scopes:
-        return "不需要维度去重或版本选择。"
-    rendered = []
-    for scope in scopes:
-        identity = scope.get("record_identity", {})
-        parts = []
-        if scope.get("source_ref") is not None:
-            parts.append(str(scope.get("source_ref")))
-        identity_text = _attributes(
-            [
-                ("同一实体字段", identity.get("fields")),
-                ("空值等价", identity.get("null_equality")),
-            ]
-        )
-        if identity_text:
-            parts.append(identity_text)
-        selection_text = _render_selection(scope.get("record_selection", {}))
-        if selection_text:
             parts.append(selection_text)
-        rendered.append("：".join(parts[:2]) + ("；" + "；".join(parts[2:]) if len(parts) > 2 else ""))
-    return "；".join(item for item in rendered if item) + "。"
+    return "；".join(parts)
 
 
-def _render_relations(value: dict[str, Any]) -> str:
-    relations = value.get("relations", [])
-    if not relations:
-        return "不需要维度关联。"
-    rendered = []
-    for relation in relations:
-        parts = []
-        sources = [
-            relation.get("fact_source_ref"),
-            relation.get("join_type"),
-            "join",
-            relation.get("dimension_source_ref"),
+def _render_sources(value: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for fact in value.get("facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        source = fact.get("source_ref")
+        fact_parts = [f"事实源={source}" if source is not None else "事实源"]
+        predicates = [
+            _render_predicate(item, item.get("source_ref") or source)
+            for item in (fact.get("filters") or [])
+            if isinstance(item, dict)
         ]
-        source_text = " ".join(str(item) for item in sources if item is not None)
-        if source_text:
-            parts.append(source_text)
-        conditions = []
-        for item in relation.get("conditions", []):
-            base = " ".join(
-                str(child)
-                for child in [item.get("fact_field"), item.get("operator"), item.get("dimension_field")]
-                if child is not None
+        if predicates:
+            fact_parts.append("过滤=" + "且".join(p for p in predicates if p))
+        derived = [
+            _render_derived(item, source)
+            for item in (fact.get("derived") or [])
+            if isinstance(item, dict)
+        ]
+        if derived:
+            fact_parts.append("派生=" + "；".join(d for d in derived if d))
+        dedup_text = _render_dedup_block(fact.get("dedup"), "事实去重")
+        if dedup_text:
+            fact_parts.append(dedup_text)
+        parts.append("，".join(fact_parts))
+
+    for dim in value.get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        source = dim.get("source_ref")
+        dim_parts = [f"维度源={source}" if source is not None else "维度源"]
+        predicates = [
+            _render_predicate(item, item.get("source_ref") or source)
+            for item in (dim.get("filters") or [])
+            if isinstance(item, dict)
+        ]
+        if predicates:
+            dim_parts.append("过滤=" + "且".join(p for p in predicates if p))
+        derived = [
+            _render_derived(item, source)
+            for item in (dim.get("derived") or [])
+            if isinstance(item, dict)
+        ]
+        if derived:
+            dim_parts.append("派生=" + "；".join(d for d in derived if d))
+        dedup_text = _render_dedup_block(dim.get("dedup"), "维度去重")
+        if dedup_text:
+            dim_parts.append(dedup_text)
+        join = dim.get("join")
+        if isinstance(join, dict) and join:
+            join_bits = [
+                join.get("fact_source_ref"),
+                join.get("join_type"),
+                "join",
+                source,
+            ]
+            join_text = " ".join(str(b) for b in join_bits if b is not None)
+            conditions = []
+            for item in join.get("conditions") or []:
+                if not isinstance(item, dict):
+                    continue
+                base = " ".join(
+                    str(child)
+                    for child in [
+                        item.get("fact_field"),
+                        item.get("operator") or "eq",
+                        item.get("dim_field") or item.get("dimension_field"),
+                    ]
+                    if child is not None
+                )
+                if base:
+                    conditions.append(base)
+            if conditions:
+                join_text += f" on {' 且 '.join(conditions)}"
+            attrs = _attributes(
+                [
+                    ("基数", join.get("cardinality")),
+                    ("未匹配事实", join.get("unmatched_fact")),
+                    ("时间有效条件", join.get("temporal_validity")),
+                ]
             )
-            attributes = _attributes([("null匹配", item.get("null_matches"))])
-            conditions.append(f"{base}（{attributes}）" if attributes else base)
-        if conditions:
-            parts.append(f"on {' 且 '.join(item for item in conditions if item)}")
-        attributes = _attributes(
+            if attrs:
+                join_text += f"（{attrs}）"
+            dim_parts.append(join_text)
+        parts.append("，".join(dim_parts))
+
+    if not parts:
+        return "无已确认数据源预处理。"
+    return "；".join(parts) + "。"
+
+
+def _render_time_context(value: dict[str, Any]) -> str:
+    rendered: list[str] = []
+    bucket = value.get("output_bucket") or {}
+    if isinstance(bucket, dict):
+        bucket_parts = []
+        if bucket.get("time_field") is not None:
+            bucket_parts.append(f"输出分桶字段={bucket.get('time_field')}")
+        attrs = _attributes(
             [
-                ("基数", relation.get("cardinality")),
-                ("未匹配事实", relation.get("unmatched_fact")),
-                ("时间有效条件", relation.get("temporal_validity")),
+                ("粒度", bucket.get("grain")),
+                ("时区", bucket.get("timezone")),
+                ("日历", bucket.get("calendar")),
+                ("周起始", bucket.get("week_start")),
+                ("自定义定义", bucket.get("custom_definition")),
             ]
         )
-        if attributes:
-            parts.append(attributes)
-        rendered.append("；".join(parts))
-    return "；".join(item for item in rendered if item) + "。"
-
-
-def _render_time_window(value: dict[str, Any]) -> str:
-    rendered = []
-    if value.get("time_field") is not None:
-        rendered.append(f"使用 {value.get('time_field')} 判定")
-    anchor = value.get("anchor", {})
-    anchor_text = _attributes(
-        [
-            ("锚点字段", anchor.get("field")),
-            ("锚点值", anchor.get("value")),
-        ]
-    )
-    if anchor_text:
-        rendered.append(anchor_text)
-    range_value = value.get("range", {})
-    range_parts = [range_value.get("direction"), range_value.get("number"), range_value.get("unit")]
-    range_text = " ".join(str(item) for item in range_parts if item is not None)
-    if range_text:
-        rendered.append(f"范围={range_text}")
-    range_attributes = _attributes(
-        [
-            ("范围类型", range_value.get("type")),
-            ("包含锚点周期", range_value.get("include_anchor_period")),
-        ]
-    )
-    if range_attributes:
-        rendered.append(range_attributes)
-    boundary = value.get("boundary", {})
-    boundary_text = _attributes(
-        [
-            ("起点包含", boundary.get("start_inclusive")),
-            ("终点包含", boundary.get("end_inclusive")),
-        ]
-    )
-    if boundary_text:
-        rendered.append(boundary_text)
-    if value.get("null_time_semantics") is not None:
-        rendered.append(f"空时间={value.get('null_time_semantics')}")
+        if attrs:
+            bucket_parts.append(attrs)
+        if bucket_parts:
+            rendered.append("输出分桶：" + "；".join(bucket_parts))
+    windows = value.get("input_windows") or []
+    window_texts = []
+    for window in windows:
+        if not isinstance(window, dict):
+            continue
+        wid = window.get("window_id")
+        parts = [f"窗口={wid}" if wid is not None else "窗口"]
+        if window.get("time_field") is not None:
+            parts.append(f"时间字段={window.get('time_field')}")
+        if window.get("anchor") is not None:
+            parts.append(f"锚点={window.get('anchor')}")
+        range_value = window.get("range") or {}
+        if isinstance(range_value, dict):
+            range_parts = [
+                range_value.get("direction"),
+                range_value.get("number"),
+                range_value.get("unit"),
+            ]
+            range_text = " ".join(str(item) for item in range_parts if item is not None)
+            if range_text:
+                parts.append(f"范围={range_text}")
+            range_attrs = _attributes(
+                [
+                    ("范围类型", range_value.get("type")),
+                    ("包含锚点周期", range_value.get("include_anchor_period")),
+                ]
+            )
+            if range_attrs:
+                parts.append(range_attrs)
+        if window.get("boundary") is not None:
+            parts.append(f"边界={window.get('boundary')}")
+        window_texts.append("，".join(parts))
+    if window_texts:
+        rendered.append("输入回看窗口：" + "；".join(window_texts))
     return "；".join(rendered) + ("。" if rendered else "")
 
 
-def _render_window_partitioning(value: dict[str, Any]) -> str:
-    """Render window function PARTITION BY key, distinct from final sequence partitioning."""
-    fields = value.get("partition_fields", [])
-    if not fields:
-        return "不使用窗口函数，无需窗口分区键。"
-    rendered = [f"窗口函数分区键={fields}"]
-    if value.get("null_equality") is not None:
-        rendered.append(f"空值等价={value.get('null_equality')}")
-    return "；".join(rendered) + "。"
-
-
-def _render_partitioning(value: dict[str, Any]) -> str:
-    fields = value.get("partition_fields", [])
-    if not fields:
-        return "不需要逻辑序列分区。"
-    rendered = [f"由 {fields} 定义同一逻辑序列"]
-    if value.get("null_equality") is not None:
-        rendered.append(f"空值等价={value.get('null_equality')}")
-    return "；".join(rendered) + "。"
-
-
-def _render_ordering(value: dict[str, Any]) -> str:
-    criteria = value.get("criteria", [])
-    if not criteria:
-        return "不需要最终序列排序。"
-    parts = []
-    for item in criteria:
-        base = " ".join(str(child) for child in [item.get("field_ref"), item.get("direction")] if child is not None)
-        attributes = _attributes(
-            [
-                ("类型", item.get("value_type")),
-                ("空值位置", item.get("null_rank")),
-            ]
-        )
-        parts.append(f"{base}（{attributes}）" if attributes else base)
-    rendered = [f"按 {'，再按 '.join(item for item in parts if item)}"]
-    if value.get("tie_behavior") is not None:
-        rendered.append(f"全部相同时={value.get('tie_behavior')}")
-    return "；".join(rendered) + "。"
-
-
-def _render_final_dedup(value: dict[str, Any]) -> str:
-    if value.get("on_duplicate") is None:
-        return ""
-    identity = value.get("identity_ref")
-    if identity == "custom":
-        identity = f"custom:{value.get('custom_identity_fields', [])}"
+def _render_output_features(value: dict[str, Any]) -> str:
+    layout = value.get("layout")
+    columns = expand_output_features(value)
+    if not columns and layout not in ("cartesian", "flat"):
+        return "无已确认输出特征。"
+    header_parts = [f"layout={layout}" if layout else "layout=未确认"]
+    if layout == "cartesian":
+        axes = value.get("axes") or []
+        measures = value.get("measures") or []
+        axis_desc = []
+        for axis in axes:
+            if isinstance(axis, dict):
+                axis_desc.append(
+                    f"{axis.get('axis_id')}×{len(axis.get('values') or [])}"
+                )
+        measure_ids = [
+            str(m.get("measure_id"))
+            for m in measures
+            if isinstance(m, dict) and m.get("measure_id")
+        ]
+        if axis_desc:
+            header_parts.append(f"交叉声明=[{', '.join(axis_desc)}]")
+        if measure_ids:
+            header_parts.append(f"指标模板=[{', '.join(measure_ids)}]")
+        extras = value.get("extras") or []
+        if extras:
+            header_parts.append(f"extras={len(extras)}")
+    header_parts.append(f"展开后共 {len(columns)} 个业务/指标列")
+    prefix = (
+        "，".join(header_parts)
+        + "（cartesian 由代码确定性展开，禁止少列/合并；"
+        "各列聚合粒度以 aggregation.grain 为准；calc.intent 为语义约束，不是必须照抄的 SQL；"
+        "展开列名仅供主 Agent 参考，SQL 不强制同名）"
+    )
+    if not columns:
+        return prefix + "。"
     rendered = []
-    if identity is not None:
-        rendered.append(f"重复身份={identity}")
-    rendered.append(f"重复行为={value.get('on_duplicate')}")
-    selection = _render_selection(value.get("record_selection", {}))
-    if selection:
-        rendered.append(selection)
-    return "；".join(rendered) + "。"
-
-
-def _render_final_truncation(value: dict[str, Any]) -> str:
-    limit = value.get("limit_per_partition")
-    if limit is None:
-        return ""
-    tie_behavior = value.get("tie_behavior")
-    tie_text = ""
-    if tie_behavior == "retain_all":
-        tie_text = "；并列时全部保留"
-    elif tie_behavior == "truncate_exact":
-        tie_text = "；并列时仍只取上限条数"
-    return f"每个逻辑序列保留前 {limit} 条{tie_text}。"
-
-
-def _render_json_value(value: dict[str, Any]) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _render_output_fields(value: dict[str, Any]) -> str:
-    fields = value.get("fields", [])
-    if not fields:
-        return "无已确认输出字段。"
-    rendered = []
-    for item in fields:
-        expression = item.get("expression")
+    for item in columns:
+        calc = item.get("calc") or {}
+        intent = calc.get("intent") if isinstance(calc, dict) else None
         source = item.get("source")
-        if expression:
-            origin_text = f"计算口径说明={expression}"
+        if intent:
+            origin_text = f"计算口径说明={intent}"
             if source:
                 origin_text += f"（主要来源={source}）"
         else:
             origin_text = f"来源={source or '无来源'}"
-        grain = item.get("aggregation_grain")
-        if isinstance(grain, list):
-            grain_text = f"，聚合粒度=[{', '.join(str(g) for g in grain)}]"
-        elif grain is not None:
-            grain_text = f"，聚合粒度={grain}"
-        else:
-            grain_text = ""
+        aggregation = item.get("aggregation")
+        grain_text = ""
+        if isinstance(aggregation, dict) and "grain" in aggregation:
+            grain = aggregation.get("grain")
+            if isinstance(grain, list):
+                grain_text = f"，聚合粒度=[{', '.join(str(g) for g in grain)}]"
+            elif grain is not None:
+                grain_text = f"，聚合粒度={grain}"
+        window_ref = item.get("window_ref")
+        window_text = f"，窗口={window_ref}" if window_ref else ""
+        rank = item.get("rank")
+        rank_text = ""
+        if isinstance(rank, dict) and rank:
+            rank_text = (
+                f"，排名={rank.get('rank_type')}"
+                f"(桶={rank.get('bucket_count')}，方向={rank.get('order_direction')}，"
+                f"基于={rank.get('based_on') or rank.get('order_by')})"
+            )
         rendered.append(
             f"{item.get('field_name')}: {origin_text}，类型={item.get('output_type')}"
-            f"{grain_text}，说明={item.get('description')}"
+            f"{grain_text}{window_text}{rank_text}，说明={item.get('description')}"
         )
-    prefix = (
-        f"共 {len(fields)} 个业务/指标输出列（不含特征主键；每项一列，"
-        "多维交叉组合已展开时不得合并、漏项或改数量；"
-        "各列聚合粒度以 aggregation_grain 为准，存在多种粒度时不得统一 GROUP BY；"
-        "计算口径说明为语义约束，不是必须照抄的 SQL）"
-    )
     return prefix + "：" + "；".join(rendered) + "。"
 
 
-def _render_aggregation_metrics(value: dict[str, Any]) -> str:
-    count_metrics = value.get("count_metrics", [])
-    ratio_metrics = value.get("ratio_metrics", [])
-    avg_metrics = value.get("avg_metrics", [])
-    window_rank_metrics = value.get("window_rank_metrics", [])
-    parts = []
-    for item in count_metrics:
-        count_type = item.get("count_type", "未明确")
-        count_entity = item.get("count_entity")
-        group_by = item.get("group_by", [])
-        entity_text = f"，计数实体={count_entity}" if count_entity else ""
-        parts.append(
-            f"{item.get('metric_name')}: 计数类型={count_type}{entity_text}，"
-            f"聚合粒度(group_by)={group_by}"
-        )
-    for item in ratio_metrics:
-        parts.append(
-            f"{item.get('metric_name')}: 分子={item.get('numerator')}，分母={item.get('denominator')}，"
-            f"精度={item.get('precision')}"
-        )
-    for item in avg_metrics:
-        parts.append(
-            f"{item.get('metric_name')}: 分子={item.get('numerator')}，分母={item.get('denominator')}，"
-            f"聚合粒度(group_by)={item.get('group_by')}"
-        )
-    for item in window_rank_metrics:
-        rank_type = item.get("rank_type", "未明确")
-        bucket = item.get("bucket_count")
-        order_by = item.get("order_by")
-        direction = item.get("order_direction") or "未明确"
-        partition_by = item.get("partition_by")
-        partition_text = "全局" if isinstance(partition_by, list) and not partition_by else (partition_by or "未明确")
-        bucket_text = f"，桶数={bucket}" if bucket is not None else ""
-        parts.append(
-            f"{item.get('metric_name')}: 窗口函数={rank_type}{bucket_text}，"
-            f"排序对象={order_by}（{direction}），窗口={partition_text}，基于={item.get('based_on')}"
-        )
-    return "；".join(parts) if parts else "无已确认聚合指标。"
-
-
-def _render_aggregation_precedence(value: dict[str, Any]) -> str:
-    dedup_before = value.get("deduplication_before_aggregation")
+def _render_pipeline(value: dict[str, Any]) -> str:
+    parts: list[str] = []
     dedup_before_join = value.get("deduplication_before_join")
-    operation_order = value.get("operation_order") or []
-    aggregation_key = value.get("aggregation_key", [])
-    count_semantics = value.get("count_semantics")
-    input_grain = value.get("input_grain")
-    stages = value.get("aggregation_stages") or []
-    parts = []
     if dedup_before_join is not None:
         parts.append(
             "事实去重作用于事实记录，必须先于维度关联（JOIN）执行，JOIN 扇出产生的行必须全部保留，"
@@ -831,61 +851,91 @@ def _render_aggregation_precedence(value: dict[str, Any]) -> str:
             if dedup_before_join
             else "证据明确去重作用于 JOIN 后的富化行（先 JOIN 再去重），去重键必须覆盖扇出区分维度列"
         )
+    dedup_before_agg = value.get("deduplication_before_aggregation")
+    if dedup_before_agg is not None:
+        parts.append(
+            "去重先于聚合" if dedup_before_agg else "聚合基于原始记录（不去重）"
+        )
+    operation_order = value.get("operation_order") or []
     if operation_order:
         parts.append(
             f"执行管道顺序={operation_order}"
             "（按此先后执行，禁止调整顺序或改变操作的作用层级）"
         )
-    if aggregation_key:
-        dedup_text = "去重先于聚合" if dedup_before else "聚合基于原始记录（不去重）"
-        parts.append(dedup_text)
-        parts.append(f"任务级默认/公共聚合分组键={aggregation_key}")
-        if count_semantics:
-            parts.append(f"计数语义={count_semantics}")
-    else:
-        parts.append("本任务无聚合计算（无分组键），禁止自行添加聚合或按其他粒度分组")
-    if input_grain:
-        parts.append(f"聚合输入数据粒度={input_grain}")
-    confirmed_stages = [
-        stage for stage in stages
-        if isinstance(stage, dict) and (
-            stage.get("stage_id") or stage.get("group_by") or stage.get("output_metrics")
-        )
-    ]
-    if confirmed_stages:
-        stage_texts = []
-        for stage in confirmed_stages:
-            stage_texts.append(
-                f"{stage.get('stage_id') or 'stage'}: "
-                f"group_by={stage.get('group_by') or []}，"
-                f"产出={stage.get('output_metrics') or []}，"
-                f"依赖={stage.get('depends_on') or []}"
-            )
-        parts.append("多粒度/多阶段聚合=" + " | ".join(stage_texts))
-        parts.append(
-            "各输出特征必须按其所属 stage 的 group_by 聚合，"
-            "禁止仅按任务级 aggregation_key 统一全部特征"
-        )
     return "；".join(parts) + "。" if parts else ""
 
 
+def _render_sequence(value: dict[str, Any]) -> str:
+    parts: list[str] = []
+    fields = value.get("partition_fields") or []
+    if fields:
+        parts.append(f"逻辑序列分区={fields}")
+        if value.get("null_equality") is not None:
+            parts.append(f"空值等价={value.get('null_equality')}")
+    ordering = value.get("ordering") or []
+    if ordering:
+        order_parts = []
+        for item in ordering:
+            if not isinstance(item, dict):
+                continue
+            base = " ".join(
+                str(child)
+                for child in [item.get("field_ref"), item.get("direction")]
+                if child is not None
+            )
+            attributes = _attributes(
+                [
+                    ("类型", item.get("value_type")),
+                    ("空值位置", item.get("null_rank")),
+                ]
+            )
+            order_parts.append(f"{base}（{attributes}）" if attributes else base)
+        if order_parts:
+            parts.append(f"排序=按 {'，再按 '.join(order_parts)}")
+    dedup = value.get("dedup")
+    if isinstance(dedup, dict) and dedup.get("on_duplicate") is not None:
+        identity = dedup.get("identity_ref")
+        if identity == "custom":
+            identity = f"custom:{dedup.get('custom_identity_fields', [])}"
+        elif identity == "feature_key":
+            identity = "identity"
+        dedup_parts = []
+        if identity is not None:
+            dedup_parts.append(f"重复身份={identity}")
+        dedup_parts.append(f"重复行为={dedup.get('on_duplicate')}")
+        selection = _render_selection(dedup.get("record_selection") or {})
+        if selection:
+            dedup_parts.append(selection)
+        parts.append("序列去重=" + "；".join(dedup_parts))
+    truncation = value.get("truncation")
+    if isinstance(truncation, dict) and truncation.get("limit_per_partition") is not None:
+        limit = truncation.get("limit_per_partition")
+        tie_behavior = truncation.get("tie_behavior")
+        tie_text = ""
+        if tie_behavior == "retain_all":
+            tie_text = "；并列时全部保留"
+        elif tie_behavior == "truncate_exact":
+            tie_text = "；并列时仍只取上限条数"
+        parts.append(f"截断=每个逻辑序列保留前 {limit} 条{tie_text}")
+    window_partition = value.get("window_partition")
+    if isinstance(window_partition, dict):
+        wp_fields = window_partition.get("partition_fields")
+        if wp_fields:
+            parts.append(f"独立窗口分区键={wp_fields}")
+    if not parts:
+        return "无最终序列后处理（不适用）。"
+    return "；".join(parts) + "。"
+
+
+def _render_json_value(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 _RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
-    "feature_key": _render_feature_key,
-    "statistic_period": _render_statistic_period,
-    "fact_filters": _render_fact_filters,
-    "fact_derived_fields": _render_fact_derived,
-    "fact_deduplication": _render_fact_dedup,
-    "dimension_filters": _render_dimension_filters,
-    "dimension_derived_fields": _render_dimension_derived,
-    "dimension_deduplication": _render_dimension_dedup,
-    "dimension_relations": _render_relations,
-    "time_window": _render_time_window,
-    "window_partitioning": _render_window_partitioning,
-    "final_sequence_partitioning": _render_partitioning,
-    "final_sequence_ordering": _render_ordering,
-    "final_sequence_truncation": _render_final_truncation,
-    "final_sequence_deduplication": _render_final_dedup,
-    "output_fields": _render_output_fields,
-    "aggregation_metrics": _render_aggregation_metrics,
-    "aggregation_precedence": _render_aggregation_precedence,
+    "identity": _render_identity,
+    "sources": _render_sources,
+    "time_context": _render_time_context,
+    "output_features": _render_output_features,
+    "pipeline": _render_pipeline,
+    "sequence": _render_sequence,
 }

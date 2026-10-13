@@ -444,6 +444,7 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
         return
 
     # Publish no old validated snapshot while this refresh is awaiting model calls.
+    previous_input_signature = runtime.get_cache("ir_input_signature")
     runtime.set_cache("ir_input_signature", None)
     runtime.set_cache("ir_refresh_failed", True)
     runtime.set_cache("ir_initialized", True)
@@ -473,19 +474,50 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
                     confirmed_fields=confirmed, llm=runtime.llm("planner"), trace_dir=trace_dir,
                 )
                 reuse_ids = {field["field_id"] for field in confirmed} - changed_ids
-        field_results = await fill_ir_fields(
-            inv, user_query=user_query, tool_evidence=tool_evidence,
-            # Old extracted values are not evidence when their sources/query may
-            # have been removed or rewritten. Start fresh in those cases.
-            confirmed_context=confirmed_context,
-            current_values=(current_values if append_only
-                            and runtime.get_cache("ir_context_signature") == context_signature else None),
-            reuse_field_ids=reuse_ids, trace_dir=trace_dir,
+        fill_current = (
+            current_values if append_only
+            and runtime.get_cache("ir_context_signature") == context_signature else None
         )
-        runtime.set_cache("ir_field_values", field_results)
-        runtime.set_cache("ir_fields_signature", input_signature)
-        runtime.set_cache("ir_context_signature", context_signature)
-        runtime.set_cache("ir_evidence_parts", tool_evidence_parts)
+        try:
+            field_results = await fill_ir_fields(
+                inv, user_query=user_query, tool_evidence=tool_evidence,
+                # Old extracted values are not evidence when their sources/query may
+                # have been removed or rewritten. Start fresh in those cases.
+                confirmed_context=confirmed_context,
+                current_values=fill_current,
+                reuse_field_ids=reuse_ids, trace_dir=trace_dir,
+            )
+            runtime.set_cache("ir_field_values", field_results)
+            runtime.set_cache("ir_fields_signature", input_signature)
+            runtime.set_cache("ir_context_signature", context_signature)
+            runtime.set_cache("ir_evidence_parts", tool_evidence_parts)
+        except Exception as exc:
+            # Per-field soft-fail is handled inside fill; this is a last-resort
+            # safety net so a total fill crash does not permanently block NL2SQL.
+            logger.exception(
+                "[update_ir] fill aborted ({}); keep previous IR usable for consumers",
+                type(exc).__name__,
+            )
+            field_results = list(current_values or [])
+            runtime.set_cache("ir_field_values", field_results)
+            fill_warning = (
+                f"IR 字段提取未完成（{type(exc).__name__}），"
+                "已保留上一轮可用口径供下游继续；失败字段需重试 update_ir。"
+            )
+            runtime.set_cache("ir_gate_warnings", [fill_warning])
+            rendered = render_constraint_context(field_results, warnings=[fill_warning])
+            runtime.set_cache("ir_rendered_context", rendered or runtime.get_cache("ir_rendered_context") or "")
+            # Restore prior committed signature so consumers can keep using the last
+            # good IR; next update with changed inputs will still re-enter fill.
+            if previous_input_signature is not None:
+                runtime.set_cache("ir_input_signature", previous_input_signature)
+            runtime.set_cache("ir_refresh_failed", False)
+            runtime.set_cache("ir_dirty", False)
+            logger.info(
+                "[update_ir] degraded complete: fields={} elapsed={:.3f}s trace={}",
+                len(field_results), time.perf_counter() - started, trace_dir,
+            )
+            return
 
     gate_warnings, gate_completed = await _ir_consistency_gate(
         runtime,
