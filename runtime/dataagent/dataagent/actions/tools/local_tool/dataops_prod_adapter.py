@@ -94,6 +94,7 @@ async def prod_execute_sql(sql: str) -> dict[str, Any]:
             "sourceType": "Hive",
         },
     )
+    logger.debug(f"[dataops_prod_adapter] prod_execute_sql result success={result.get('success')} raw={result}")
     if not result.get("success"):
         return {
             "success": False,
@@ -103,6 +104,7 @@ async def prod_execute_sql(sql: str) -> dict[str, Any]:
         }
     data = result.get("data") or {}
     job_id = data.get("queryJobId")
+    logger.debug(f"[dataops_prod_adapter] prod_execute_sql extracted job_id={job_id!r} raw_data={data}")
     return {
         "success": job_id is not None,
         "job_id": str(job_id) if job_id is not None else None,
@@ -125,11 +127,13 @@ async def prod_get_query_result(job_id: str) -> dict[str, Any]:
         "dataops_get_query_result",
         {"queryJobId": int(job_id)},
     )
+    logger.debug(f"[dataops_prod_adapter] prod_get_query_result({job_id}) raw_result={result}")
     if not result.get("success"):
         return {"status": "error", "raw": {}, "error": result.get("error", "poll failed")}
     data = result.get("data") or {}
     official_status = str(data.get("status") or "").strip()
     internal_status = _STATUS_MAP.get(official_status, "error")
+    logger.debug(f"[dataops_prod_adapter] prod_get_query_result({job_id}) official_status={official_status!r} internal_status={internal_status!r}")
     return {"status": internal_status, "raw": data, "error": None}
 
 
@@ -191,13 +195,7 @@ async def prod_collect_result(job_id: str) -> dict[str, Any]:
         # else: payload 是 None/标量/空 dict → rows_as_dicts 保持 []
 
         logger.debug(
-            f"[prod_collect_result] completed payload_type={type(payload).__name__} "
-            f"headers={headers} rows_count={len(rows)} "
-            f"rows_as_dicts_count={len(rows_as_dicts)} "
-            f"raw_data_keys={list(raw.keys()) if isinstance(raw, dict) else None}"
-        )
-        logger.debug(
-            f"[prod_collect_result] raw_result={raw}"
+            f"[dataops_prod_adapter] prod_collect_result({job_id}) raw={raw}"
         )
         return {
             "status": "completed",
@@ -211,6 +209,7 @@ async def prod_collect_result(job_id: str) -> dict[str, Any]:
 
     if polled["status"] == "failed":
         error_log = raw.get("errorLog") or ""
+        logger.debug(f"[dataops_prod_adapter] prod_collect_result({job_id}) raw={raw}")
         return {
             "status": "failed",
             "job_id": job_id,
