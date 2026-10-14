@@ -246,7 +246,7 @@ def probe_mcp_reachability_sync(
     try:
         _run_async_coro_sync(_probe_with_timeout)
         return None
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         return format_mcp_call_exception(client, "preflight", exc)
 
 
@@ -265,7 +265,7 @@ def call_resource_mcp_tool_sync(
         raw = _run_async_coro_sync(_call_tool)
         normalized = normalize_mcp_call_tool_result(raw)
         return normalized if isinstance(normalized, dict) else {"result": normalized}
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         return {
             "status": "error",
             "error": format_mcp_call_exception(client, tool_name, exc),
@@ -354,11 +354,17 @@ def _summary_from_mapping(payload: dict[str, Any]) -> str:
     return str(payload)
 
 
-def format_mcp_call_exception(client: MCPClientWrapper, tool_name: str, exc: Exception) -> str:
+def format_mcp_call_exception(client: MCPClientWrapper, tool_name: str, exc: BaseException) -> str:
     """Format one MCP transport/tool exception into a resource-friendly message."""
     message = str(exc).strip() or exc.__class__.__name__
     lowered = message.lower()
-    if "connect" in lowered or "connection refused" in lowered or "unhandled errors in a taskgroup" in lowered:
+    if (
+        isinstance(exc, asyncio.CancelledError)
+        or "connect" in lowered
+        or "connection refused" in lowered
+        or "unhandled errors in a taskgroup" in lowered
+        or "cancel scope" in lowered
+    ):
         url = str((client.config.config or {}).get("url") or "").strip()
         server_id = str(client.config.server_id or "").strip()
         target = url or server_id or "configured MCP endpoint"
