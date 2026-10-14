@@ -1918,13 +1918,16 @@ async def _dataops_validate_sql_prod(
 
     user_account = _get_user_account(runtime)
     table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
+    logger.debug(f"[_dataops_validate_sql_prod] user_account={user_account!r} table_suffix={table_suffix!r}")
 
     # --- SQL rewrite (与联调相同) ---
     sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
     sql_for_submit = await _expand_cte_for_dml(sql_for_submit, timeout_sec=min(timeout_sec, 60), runtime=runtime)
 
     # --- Execute -> poll -> collect (扁平函数) ---
+    logger.debug(f"[_dataops_validate_sql_prod] submitting SQL (first 200 chars): {sql_for_submit[:200]}")
     result_status, job_id, result = await _submit_and_poll_prod(sql_for_submit, timeout_sec, poll_interval)
+    logger.debug(f"[_dataops_validate_sql_prod] _submit_and_poll_prod returned result_status={result_status!r} job_id={job_id!r} raw result={result}")
 
     # --- Outcome dispatch ---
     if result_status == "timed_out":
@@ -1977,8 +1980,10 @@ async def _submit_and_poll_prod(
     )
 
     # Step 1: 提交 SQL
+    logger.debug("[_submit_and_poll_prod] Step1: calling prod_execute_sql")
     try:
         submit_result = await prod_execute_sql(sql_for_submit)
+        logger.debug(f"[_submit_and_poll_prod] Step1 raw submit_result={submit_result}")
         if not submit_result["success"]:
             return "error", None, {"error": submit_result.get("error") or "execute_sql failed"}
         job_id = submit_result["job_id"]
@@ -1987,12 +1992,18 @@ async def _submit_and_poll_prod(
 
     # Step 2: 轮询直到 terminal 状态
     deadline = asyncio.get_event_loop().time() + timeout_sec
+    poll_count = 0
+    logger.debug(f"[_submit_and_poll_prod] job_id={job_id} Step2: start polling deadline={deadline}")
     while asyncio.get_event_loop().time() < deadline:
+        poll_count += 1
         polled = await prod_get_query_result(job_id)
         status = polled["status"]
+        logger.debug(f"[_submit_and_poll_prod] job_id={job_id} poll_count={poll_count} raw polled={polled}")
         if status in {"completed", "failed"}:
             # Step 3: 到达 terminal,取最终结果(含 inline data 或 errorLog)
+            logger.debug(f"[_submit_and_poll_prod] job_id={job_id} Step3: terminal reached ({status}), calling prod_collect_result")
             result = await prod_collect_result(job_id)
+            logger.debug(f"[_submit_and_poll_prod] job_id={job_id} Step3 raw result={result}")
             return status, job_id, result
         if status == "error":
             return "error", job_id, {"error": polled.get("error", "poll error")}
@@ -2030,13 +2041,16 @@ async def _run_post_validate_prod(
 
     count_sql = _build_count_sql(sql_for_submit, _POST_VALIDATE_PARTITION_COL)
     if not count_sql:
+        logger.debug("[post_validate] _build_count_sql returned None, skipping")
         return None
 
+    logger.debug(f"[post_validate] count_sql (first 200 chars): {count_sql[:200]}")
     count_timeout = min(timeout_sec, 120)
 
     # Submit count query
     try:
         submit_result = await prod_execute_sql(count_sql)
+        logger.debug(f"[post_validate] count submit raw submit_result={submit_result}")
         if not submit_result["success"]:
             return {
                 "ok": False,
@@ -2050,12 +2064,14 @@ async def _run_post_validate_prod(
 
     # Poll count query
     deadline = asyncio.get_event_loop().time() + count_timeout
+    poll_count = 0
     while asyncio.get_event_loop().time() < deadline:
+        poll_count += 1
         polled = await prod_get_query_result(count_job_id)
-        logger.debug(f"[post_validate] count_job_id={count_job_id} polled_status={polled['status']} polled_keys={list(polled.keys())}")
+        logger.debug(f"[post_validate] count_job_id={count_job_id} poll_count={poll_count} raw polled={polled}")
         if polled["status"] == "completed":
             count_result = await prod_collect_result(count_job_id)
-            logger.debug(f"[post_validate] count_result data={count_result.get('data')} data_meta={count_result.get('data_meta')} raw_result_keys={list(count_result.get('raw_result', {}).keys()) if isinstance(count_result.get('raw_result'), dict) else None}")
+            logger.debug(f"[post_validate] count_job_id={count_job_id} count completed raw count_result={count_result}")
             break
         if polled["status"] == "error":
             return {
@@ -2066,6 +2082,7 @@ async def _run_post_validate_prod(
             }
         await asyncio.sleep(poll_interval)
     else:
+        logger.debug(f"[post_validate] count_job_id={count_job_id} poll timed out after {count_timeout}s, poll_count={poll_count}")
         return {
             "ok": False,
             "count": None,
@@ -2075,9 +2092,10 @@ async def _run_post_validate_prod(
 
     # Parse count
     count = _parse_count_from_collect(count_result)
+    logger.debug(f"[post_validate] count_job_id={count_job_id} parsed count={count!r}")
     if count is None:
         raw_r = count_result.get("raw_result", {})
-        logger.error(f"[post_validate] parse_failed raw_result={raw_r} data={count_result.get('data')} data_meta={count_result.get('data_meta')}")
+        logger.error(f"[post_validate] parse_failed raw_result={raw_r}")
         return {
             "ok": False,
             "count": None,
@@ -2095,8 +2113,10 @@ async def _run_post_validate_prod(
             original_query = str(getattr(runtime, "user_query", "") or "").strip()
             if not original_query:
                 original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
+        logger.debug(f"[post_validate] count_job_id={count_job_id} count=0, original_query={original_query[:100]!r} calling LLM analysis")
         if original_query:
             analysis = await _analyze_count_zero_with_llm(original_query, original_sql or count_sql, runtime=runtime)
+            logger.debug(f"[post_validate] count_job_id={count_job_id} LLM analysis result keys={list(analysis.keys())}")
             return {
                 "ok": True,
                 "count": 0,
@@ -2105,6 +2125,7 @@ async def _run_post_validate_prod(
                 **analysis,
             }
 
+    logger.debug(f"[post_validate] count_job_id={count_job_id} final result ok=True count={count}")
     return {
         "ok": True,
         "count": count,
