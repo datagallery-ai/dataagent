@@ -521,13 +521,14 @@ fields:
     - layout 二选一权威：cartesian（默认用于窗口×指标等可因子化交叉）或 flat（列彼此独立）。
     - layout=cartesian 时：只填 axes + measures（+ 可选 overrides/extras）；禁止手写完整交叉列清单。
     - axes[].values 对 window 轴必须引用 time_context.input_windows.window_id；禁止在 measure 内重复定义窗口。
-    - measures[] 写指标模板一次（calc/aggregation/filters/attach_rank/name_pattern）；所有轴组合继承该模板。
+    - measures[] 写指标模板一次（calc/aggregation/filters/attach_rank/name_pattern）；**每个 measure 必须对全部轴组合展开**（不可只出轴的子集）。
+    - 判定口诀：该指标是否要对 axes 的每个取值各出一列？是 → measures；否（只出部分窗口/部分轴值，即使与轴有交集）→ extras，并用 window_ref（或等价字段）钉死那一个取值。
     - 展开列名由 name_pattern 确定性生成（默认 "{measure_id}_{window}"）；render 用同一规则展开供主 Agent 对照。
       展开列名不是 SQL/DDL 强制约束，下游可按规范另命名，不得因未照抄同名判失败。
-    - 期望业务列数 = ∏|axis.values|（每个 measure 一列）；若 measure.attach_rank 非 null， 再为每个轴组合追加 1 个 rank 列（name_pattern
-      默认 "{measure_id}_{window}_pct"）， 禁止对跨窗口汇总值打一个分位替代分窗口分位。
-    - overrides 仅用于极少数格子与模板不同；不得用 overrides 穷举笛卡尔积。
-    - extras[]：不参与交叉的独立列（多阶段 Top1、全局比率、key_alias 等）。
+    - 期望业务列数 = ∏|axis.values| × |measures|（每个 measure×轴组合一列）+ |extras|；若 measure.attach_rank 非 null，
+      再为每个轴组合追加 1 个 rank 列（name_pattern 默认 "{measure_id}_{window}_pct"），禁止对跨窗口汇总值打一个分位替代分窗口分位。
+    - overrides 仅用于极少数格子与模板不同；不得用 overrides 穷举笛卡尔积，也不得用 overrides“删掉”不需要的轴组合。
+    - extras[]：不参与笛卡尔积的独立列，包括 (1) 多阶段 Top1/全局比率/key_alias；(2) **只需轴上部分取值的指标**（如 A/B 要 7/14/21，C/D 只要 21 → C/D 进 extras 且 window_ref=w21d，禁止因 w21d∈axes 而把 C/D 放进 measures）。
     - layout=flat 时：使用 features[] 逐列描述（同旧 features 语义）；axes/measures 必须为空。
     - calc.intent 语义级，禁止可执行 SQL；aggregation.grain 为该 measure/列的粒度权威（[]=已确认全局聚合；null/未填写本身不确认粒度或是否聚合）。
     - 不同 measure 允许不同 grain；禁止用单一全局粒度覆盖。
@@ -553,6 +554,8 @@ fields:
     - invent SQL 到 calc.intent
     - 用跨窗口汇总值打一个全局百分位替代分窗口百分位
     - cartesian 与 flat 混用且两边都填满造成双权威
+    - 部分窗口指标因与 axes 有交集（如只要 w21d，而轴含 w7d/w14d/w21d）被误放进 measures，导致展开列数变成 ∏|axis|×全部指标，与“3×2+2=8”类口径不符；此类必须进 extras
+    - rationale 写对了列数（如 3×2+2=8）但 value 把本应 extras 的指标放进 measures（展开会变成 3×4=12）——以 value 槽位为准，必须纠正到 extras
   expansion_spec:
     description: render/verify 使用的确定性展开（非 LLM）
     algorithm: "if layout == flat:\n  columns = features\nelse:  # cartesian\n  columns = []\n  for each\
@@ -620,6 +623,103 @@ fields:
         features: []
       unresolved: []
       rationale: 只描述 2 窗口×2 指标模板；展开后 4 列由代码生成，不逐列抄写。
+  - input: 特征 A/B 要近7/14/21天；特征 C/D 只要近21天。共 3×2+2=8 列，均按 device_id 聚合
+    output:
+      field_id: output_features
+      value:
+        layout: cartesian
+        axes:
+        - axis_id: window
+          values:
+          - w7d
+          - w14d
+          - w21d
+        measures:
+        - measure_id: feat_a
+          role: metric
+          output_type: bigint
+          description: 特征A（7/14/21天均需）
+          source: evt.a
+          calc:
+            intent: 特征A计数
+            "on": a
+          aggregation:
+            grain:
+            - device_id
+            count_type: row_count
+            count_entity: record_row
+            distinct_field: null
+            expression_template: null
+          filters: []
+          name_pattern: '{measure_id}_{window}'
+          attach_rank: null
+          ratio: null
+          depends_on: []
+        - measure_id: feat_b
+          role: metric
+          output_type: bigint
+          description: 特征B（7/14/21天均需）
+          source: evt.b
+          calc:
+            intent: 特征B计数
+            "on": b
+          aggregation:
+            grain:
+            - device_id
+            count_type: row_count
+            count_entity: record_row
+            distinct_field: null
+            expression_template: null
+          filters: []
+          name_pattern: '{measure_id}_{window}'
+          attach_rank: null
+          ratio: null
+          depends_on: []
+        overrides: []
+        extras:
+        - field_name: feat_c
+          role: metric
+          output_type: bigint
+          description: 特征C（只要21天）
+          source: evt.c
+          calc:
+            intent: 特征C计数
+            "on": c
+          aggregation:
+            grain:
+            - device_id
+            count_type: row_count
+            count_entity: record_row
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: w21d
+          ratio: null
+          rank: null
+          depends_on: []
+        - field_name: feat_d
+          role: metric
+          output_type: bigint
+          description: 特征D（只要21天）
+          source: evt.d
+          calc:
+            intent: 特征D计数
+            "on": d
+          aggregation:
+            grain:
+            - device_id
+            count_type: row_count
+            count_entity: record_row
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: w21d
+          ratio: null
+          rank: null
+          depends_on: []
+        features: []
+      unresolved: []
+      rationale: A/B 对全部窗口轴展开（3×2=6）；C/D 虽与 w21d 相交但只需单窗口，必须进 extras（+2），禁止因交集放进 measures（否则会变成 3×4=12）。
   - input: 近7/30天下载次数，且各窗口下载次数各打全球 NTILE(100)
     output:
       field_id: output_features
