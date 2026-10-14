@@ -1,0 +1,546 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+"""Unified REST client for semantic-service metadata APIs."""
+
+from __future__ import annotations
+
+import logging
+import re
+import ssl
+import time
+from base64 import b64encode
+from threading import Condition
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from dataagent.diagnostics import safe_error
+from dataagent.errors import DataAgentError
+from dataagent.semantic_client.tls import build_ssl_context
+from dataagent.settings import SemanticSettings
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT = 25
+DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT = 25
+DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT = 2000
+
+
+class SemanticServiceClient:
+    """Thin client for ``/api/semantic/v1`` APIs used by semantic tools."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        auth: tuple[str, str] | None = None,
+        timeout: float = 30.0,
+        verify: bool | ssl.SSLContext = False,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        """Create a client for the configured semantic-service base URL."""
+        self.base_url = normalize_semantic_base_url(base_url)
+        self.timeout = timeout
+        self.auth = auth
+        self._condition = Condition()
+        self._active_requests = 0
+        self._closing = False
+        self.client = httpx.Client(
+            timeout=timeout,
+            auth=auth,
+            headers={"Accept": "application/json"},
+            verify=verify,
+            transport=transport,
+        )
+
+    def __enter__(self) -> SemanticServiceClient:
+        """Use the client as a context-managed connection pool."""
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """Close the pool after all active requests finish."""
+        self.close()
+
+    @property
+    def redaction_secrets(self) -> tuple[str, ...]:
+        """Return credentials for host diagnostics without displaying their values."""
+        values = list(self.auth or ())
+        if self.auth:
+            encoded = b64encode(":".join(self.auth).encode("utf-8")).decode("ascii")
+            values.append(encoded)
+        return tuple(value for value in values if value)
+
+    @classmethod
+    def from_settings(cls, settings: SemanticSettings) -> SemanticServiceClient:
+        """Build a client from validated settings without global environment access."""
+        auth = None
+        if settings.username is not None and settings.password is not None:
+            auth = (settings.username, settings.password.get_secret_value())
+        return cls(
+            settings.base_url,
+            auth=auth,
+            timeout=settings.timeout,
+            verify=build_ssl_context(settings.tls),
+        )
+
+    def close(self) -> None:
+        """Reject new requests and close the pool once active synchronous requests finish."""
+        with self._condition:
+            self._closing = True
+            while self._active_requests:
+                self._condition.wait()
+            self.client.close()
+
+    def get_table_list(
+        self, database_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT
+    ) -> list:
+        """Get tables under a semantic database."""
+        return self.get(
+            "advanced-search/table-list", params={"databaseName": database_name, "limit": limit}
+        )
+
+    def get_table_columns_info(
+        self, table_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_COLUMNS_LIMIT
+    ) -> dict:
+        """Get column metadata for a table."""
+        return self.get(
+            "advanced-search/table-columns-info", params={"tableName": table_name, "limit": limit}
+        )
+
+    def get_columns_sample_values(
+        self,
+        column_ids: list[str],
+        sample_count: int = 3,
+    ) -> dict[str, list[str]]:
+        """Get sample values for fully qualified ``db.table.column`` identifiers."""
+        if not 0 <= sample_count <= 100:
+            raise ValueError("validation error: sample_count must be in [0, 100]")
+
+        normalized: list[str] = []
+        for column_id in column_ids:
+            name = str(column_id or "").strip()
+            parts = name.split(".", 2)
+            if len(parts) != 3 or any(not part for part in parts):
+                raise ValueError(
+                    "validation error: column_ids must use db.table.column identifiers"
+                )
+            normalized.append(name)
+        if not normalized:
+            return {}
+
+        params: list[tuple[str, Any]] = [("columnNames", column_id) for column_id in normalized]
+        params.extend(
+            [
+                ("sampleValuesNumber", sample_count),
+                ("limit", len(normalized)),
+            ]
+        )
+        payload = self.get("advanced-search/column-value-info", params=params)
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "internal semantic service schema error: column-value-info expected object"
+            )
+
+        response_keys = {str(key).casefold(): str(key) for key in payload}
+        result: dict[str, list[str]] = {}
+        for column_id in normalized:
+            response_key = response_keys.get(column_id.casefold())
+            if response_key is None:
+                continue
+            column_info = payload.get(response_key)
+            if not isinstance(column_info, dict):
+                continue
+            samples = column_info.get("sample_values")
+            if not isinstance(samples, list):
+                continue
+            result[column_id] = [
+                str(sample.get("value"))
+                for sample in samples[:sample_count]
+                if isinstance(sample, dict) and sample.get("value") is not None
+            ]
+        return result
+
+    def semantic_retrieve(self, query: str) -> dict:
+        """Retrieve the semantic bundle relevant to one natural-language query."""
+        payload: dict[str, Any] = {"query": query}
+        return self.post(
+            "semantic/retrieve", json=payload, headers={"Content-Type": "application/json"}
+        )
+
+    def semantic_search_columns(
+        self,
+        database_name: str,
+        keywords: list[str],
+        top_k: int,
+        *,
+        search_values: bool = False,
+    ) -> list:
+        """Search columns by semantic keywords."""
+        return self.get(
+            "advanced-search/semantic-search-columns",
+            params={
+                "databaseName": database_name,
+                "keywords": keywords,
+                "topK": top_k,
+                "searchColumns": "true",
+                "searchValues": "true" if search_values else "false",
+            },
+        )
+
+    def get_table_relations_path(
+        self,
+        db_table1: str,
+        db_table2: str,
+        max_depth: int = 5,
+    ) -> list:
+        """Get relation paths connecting two fully qualified tables."""
+        return self.get(
+            "advanced-search/table-relations-path",
+            params={
+                "dbTable1": db_table1,
+                "dbTable2": db_table2,
+                "maxDepth": max_depth,
+            },
+        )
+
+    def vector_search_column_value(
+        self,
+        keyword: str,
+        database_name: str,
+        table_name: str,
+        top_k: int,
+    ) -> list:
+        """Search imported column values by value-vector similarity."""
+        return self.get(
+            "advanced-search/vector-search-column-value",
+            params={
+                "keyword": keyword,
+                "databaseName": database_name,
+                "tableName": table_name,
+                "topK": top_k,
+            },
+        )
+
+    def sql_few_shots(self, query: str, top_k: int) -> list:
+        """Search semantic-service SQL examples for an NL2SQL query."""
+        return self.get(
+            "advanced-search/sql-few-shots",
+            params={"query": query, "topK": top_k},
+        )
+
+    def vector_search_table_desc(self, database_name: str, keywords: list[str], top_k: int) -> list:
+        """Search table descriptions by vector similarity."""
+        return self.get(
+            "advanced-search/vector-search-table-desc",
+            params={
+                "databaseName": database_name,
+                "keywords": keywords,
+                "topK": int(top_k),
+            },
+        )
+
+    def get_joinable_tables(
+        self, table_names: list[str], *, limit: int = DEFAULT_SEMANTIC_SERVICE_JOINABLE_TABLES_LIMIT
+    ) -> list:
+        """Get joinable table relationships."""
+        normalized: list[str] = []
+        dropped = 0
+        for table_name in table_names:
+            name = str(table_name or "").strip()
+            if name:
+                normalized.append(name)
+            else:
+                dropped += 1
+        if dropped:
+            logger.warning("joinable-tables: skipped %s empty table name(s)", dropped)
+        if not normalized:
+            return []
+
+        params: list[tuple[str, Any]] = [("dbTableNames", table_name) for table_name in normalized]
+        params.append(("limit", limit))
+        return self.get("advanced-search/joinable-tables", params=params)
+
+    def search_fulltext(
+        self,
+        query: str,
+        *,
+        type_name: str | None = None,
+        limit: int = 25,
+        offset: int = 0,
+        exclude_deleted: bool = False,
+    ) -> dict:
+        """Run semantic-service full-text search."""
+        params: dict[str, Any] = {
+            "query": query,
+            "limit": limit,
+            "offset": offset,
+            "excludeDeletedEntities": "true" if exclude_deleted else "false",
+        }
+        if type_name:
+            params["typeName"] = type_name
+        return self.get("search/fulltext", params=params)
+
+    def search_basic(self, payload: dict[str, Any]) -> dict:
+        """Run semantic-service basic search."""
+        return self.post("search/basic", json=payload, headers={"Content-Type": "application/json"})
+
+    def search_dsl(self, query: str) -> dict:
+        """Run semantic-service DSL search."""
+        return self.get(
+            "search/dsl", params={"query": query}, headers={"Content-Type": "application/json"}
+        )
+
+    def get_entity_by_unique_attribute(
+        self, type_name: str, attr_name: str, attr_value: str
+    ) -> dict:
+        """Get an entity by a unique attribute value."""
+        path = f"entity/uniqueAttribute/type/{quote(type_name, safe='')}"
+        return self.get(path, params={f"attr:{attr_name}": attr_value})
+
+    def get_entity_by_guid(self, guid: str) -> dict:
+        """Get an entity by GUID."""
+        return self.get(f"entity/guid/{quote(guid, safe='')}")
+
+    def list_retrieval_tables(self) -> dict:
+        """List semantic-layer retrieval tables."""
+        return self.get("retrieval/tables")
+
+    def get_retrieval_table_schema(self, table: str) -> dict:
+        """Get schema for a semantic-layer retrieval table."""
+        return self.get(f"retrieval/tables/{quote(table, safe='')}/schema")
+
+    def hybrid_table_columns(self, tables: list[str]) -> list:
+        """Batch-fetch physical columns for the given tables via hybrid/table-columns."""
+        normalized = [str(name).strip() for name in tables if str(name or "").strip()]
+        if not normalized:
+            return []
+        return self.post(
+            "hybrid/table-columns",
+            json={"tables": normalized},
+            headers={"Content-Type": "application/json"},
+        )
+
+    def get(self, path: str, *, params: Any = None, headers: dict[str, str] | None = None) -> Any:
+        """Send a GET request and return JSON response."""
+        return self._request("GET", path, params=params, headers=headers)
+
+    def post(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """Send a POST request and return JSON response."""
+        return self._request("POST", path, json=json, headers=headers)
+
+    def _request(self, method: str, path: str, **kwargs) -> Any:
+        """Track in-flight requests so closing never races a worker thread."""
+        with self._condition:
+            if self._closing:
+                raise RuntimeError("SemanticServiceClient is closed")
+            self._active_requests += 1
+        try:
+            return self._send_request(method, path, **kwargs)
+        finally:
+            with self._condition:
+                self._active_requests -= 1
+                self._condition.notify_all()
+
+    def _send_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Any = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """Send a request with JSON completeness checks and audit logging."""
+        url = self._url(path)
+        started = time.perf_counter()
+        try:
+            if method.upper() == "GET":
+                response = self.client.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                )
+            elif method.upper() == "POST":
+                response = self.client.post(
+                    url,
+                    json=json,
+                    headers=headers,
+                )
+            else:
+                raise ValueError(f"unsupported semantic client method: {method}")
+            response.raise_for_status()
+            _assert_json_content_type(response)
+            try:
+                payload = response.json()
+            except ValueError as err:
+                raise DataAgentError(
+                    source="tool",
+                    component="semantic-service",
+                    fact=f"语义服务响应不是合法 JSON：{method} {path}",
+                ) from err
+            _assert_minimal_json_shape(payload, path=path)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "semantic.audit method=%s path=%s status=%s elapsed_ms=%.1f success=true",
+                method,
+                path,
+                getattr(response, "status_code", "-"),
+                elapsed_ms,
+            )
+            return payload
+        except DataAgentError:
+            raise
+        except httpx.TimeoutException:
+            logger.error(
+                "semantic.audit method=%s path=%s success=false error=timeout",
+                method,
+                path,
+            )
+            raise
+        except httpx.HTTPStatusError as err:
+            _log_http_status_error(err, method=method, path=path, secrets=self.redaction_secrets)
+            raise
+        except httpx.RequestError:
+            logger.error(
+                "semantic.audit method=%s path=%s success=false error=request",
+                method,
+                path,
+            )
+            raise
+        except ValueError as err:
+            error = DataAgentError(
+                source="tool",
+                component="semantic-service",
+                fact=f"语义服务响应无效：{method} {path}",
+            )
+            logger.error(
+                "semantic.audit source=%s method=%s path=%s success=false error=response_validation",
+                error.source,
+                method,
+                path,
+            )
+            raise error from err
+
+    def _url(self, path: str) -> str:
+        """Build an absolute URL from a relative API path."""
+        return f"{self.base_url}/{path.lstrip('/')}"
+
+
+def normalize_semantic_base_url(raw_url: str) -> str:
+    """Normalize semantic-service host or API URL to ``/api/semantic/v1``."""
+    base = str(raw_url).strip().rstrip("/")
+    if not base:
+        raise ValueError("validation error: semantic service base_url must not be empty")
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", base):
+        base = f"http://{base}"
+
+    lower = base.lower()
+    if lower.endswith("/api/semantic/v1"):
+        return base
+    if lower.endswith("/api/semantic"):
+        return f"{base}/v1"
+    if lower.endswith("/api"):
+        return f"{base}/semantic/v1"
+
+    return f"{base}/api/semantic/v1"
+
+
+def _assert_json_content_type(response: httpx.Response) -> None:
+    """JSON completeness: reject non-JSON Content-Type when the header is present."""
+    raw_headers = getattr(response, "headers", None) or {}
+    content_type = str(
+        raw_headers.get("Content-Type") or raw_headers.get("content-type") or ""
+    ).lower()
+    if not content_type:
+        return
+    if "json" not in content_type and "javascript" not in content_type:
+        raise ValueError(
+            f"internal semantic service content-type error: expected json, got {content_type}"
+        )
+
+
+def _assert_minimal_json_shape(payload: Any, *, path: str) -> None:
+    """JSON completeness: body must be object, array, or null (not a bare scalar)."""
+    if payload is None or isinstance(payload, (dict, list)):
+        return
+    raise ValueError(f"internal semantic service schema error: path={path} expected object/array")
+
+
+def _log_http_status_error(
+    err: httpx.HTTPStatusError,
+    *,
+    method: str,
+    path: str,
+    secrets: tuple[str, ...] = (),
+) -> None:
+    """Audit an HTTP status error without wrapping it for retry classification."""
+    response = err.response
+    status_code = response.status_code if response is not None else None
+    upstream_code: str | None = None
+    upstream_message: str | None = None
+
+    if response is not None:
+        payload = _response_json(response)
+        if isinstance(payload, dict):
+            upstream_code = _optional_str(payload.get("errorCode") or payload.get("error_code"))
+            upstream_message = _optional_str(
+                payload.get("errorMessage")
+                or payload.get("error_message")
+                or payload.get("message")
+            )
+        if not upstream_message:
+            text = getattr(response, "text", "") or ""
+            upstream_message = _truncate(text.strip(), 200) if text else None
+
+    if upstream_message:
+        error = DataAgentError(source="tool", component="semantic-service", fact=upstream_message)
+        upstream_message = safe_error(error, secrets).get("message", "")
+    if upstream_code:
+        error = DataAgentError(source="tool", component="semantic-service", fact=upstream_code)
+        upstream_code = safe_error(error, secrets).get("message", "")
+    logger.error(
+        "semantic.audit upstream_code=%s upstream_message=%s method=%s path=%s status=%s success=false",
+        upstream_code,
+        upstream_message,
+        method,
+        path,
+        status_code,
+    )
+
+
+def _response_json(response: httpx.Response) -> Any:
+    """Return response JSON when possible."""
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def _optional_str(value: Any) -> str | None:
+    """Convert a value to a non-empty string."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _truncate(text: str, max_len: int) -> str:
+    """Truncate text to a maximum length."""
+    return text if len(text) <= max_len else f"{text[:max_len]}..."

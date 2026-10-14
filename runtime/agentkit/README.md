@@ -515,3 +515,5 @@ DATAAGENT_V2_LIVE_ENV=/absolute/path/to/.env \
 
 GUI, full legacy capability migration, SQL/NL2SQL, MCP/A2A, shell, approvals,
 multiuser service and dynamic model editing remain outside this release.
+
+内置语义服务客户端的配置、SDK 生命周期及原生 context 用法见 [Semantic client](docs/semantic-client.md)。

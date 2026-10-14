@@ -25,6 +25,7 @@ dependencies = [
   "pydantic>=2.12,<3",
   "python-dotenv>=1.1,<2",
   "wcmatch>=11,<12",
+  "httpx>=0.28,<1",
 ]
 
 [project.scripts]
