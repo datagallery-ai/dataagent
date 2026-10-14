@@ -20,6 +20,7 @@ from dataagent.declarations import StrictModel, normalize_hooks
 from dataagent.settings import (
     SECTION_MODELS,
     ModelSettings,
+    SemanticSettings,
     Settings,
 )
 from dataagent.strict_json import read_json
@@ -62,9 +63,14 @@ def _partial(model):
         annotation = info.annotation
         if annotation in SECTION_MODELS:
             annotation = _partial(annotation)
+        elif model is Settings and name == "semantic":
+            annotation = _partial(SemanticSettings) | None
         elif model is Settings and name == "models":
             annotation = dict[str, _partial(ModelSettings)]
-        fields[name] = (Annotated[annotation, *info.metadata] if info.metadata else annotation, None)
+        fields[name] = (
+            Annotated[annotation, *info.metadata] if info.metadata else annotation,
+            None,
+        )
     return create_model(f"{model.__name__}Layer", __base__=StrictModel, **fields)
 
 
@@ -83,6 +89,7 @@ def validate_against(model, value, source):
 
 def expand_env(value, env, *, source, home, location=()):
     if isinstance(value, str):
+
         def replace(match):
             name = match.group(1)
             if not env.get(name):
@@ -91,13 +98,18 @@ def expand_env(value, env, *, source, home, location=()):
                     f"{'.'.join(map(str, location))}; configure {home / '.env'}"
                 )
             return env[name]
+
         return ENV_REFERENCE.sub(replace, value)
     if isinstance(value, Mapping):
-        return {key: expand_env(item, env, source=source, home=home, location=(*location, key))
-                for key, item in value.items()}
+        return {
+            key: expand_env(item, env, source=source, home=home, location=(*location, key))
+            for key, item in value.items()
+        }
     if isinstance(value, (tuple, list)):
-        return [expand_env(item, env, source=source, home=home, location=(*location, index))
-                for index, item in enumerate(value)]
+        return [
+            expand_env(item, env, source=source, home=home, location=(*location, index))
+            for index, item in enumerate(value)
+        ]
     return value
 
 
@@ -126,7 +138,9 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
         for key, value in overrides.items():
             location = (*prefix, key)
             if isinstance(value, Mapping):
-                overlay(target.setdefault(key, {}), value, source, location)
+                if not isinstance(target.get(key), dict):
+                    target[key] = {}
+                overlay(target.get(key), value, source, location)
             elif location == ("dataagent", "hooks"):
                 # Each registration keeps its position; repeated events/functions are valid.
                 target.setdefault(key, []).extend(value)
@@ -146,7 +160,11 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
         location = ("models", selected, key)
         source = field_sources[location]
         model_values[key] = expand_env(
-            value, source.env, source=source.path, home=source.home, location=location,
+            value,
+            source.env,
+            source=source.path,
+            home=source.home,
+            location=location,
         )
 
     # Defaults fill only still-absent fields; no layer's defaults can mask earlier values.
@@ -159,8 +177,7 @@ def _config_sources(home: Path, cli_config: Path | None) -> list[tuple[Scope, Pa
     candidates: list[tuple[Scope, Path]] = [("user", home / "config.json")]
     if cli_config is not None:
         cli_real = cli_config.resolve()
-        candidates = [(scope, path) for scope, path in candidates
-                      if path.resolve() != cli_real]
+        candidates = [(scope, path) for scope, path in candidates if path.resolve() != cli_real]
         candidates.append(("cli", cli_config))
     return candidates
 
@@ -210,6 +227,13 @@ def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer 
     # Validate without filling defaults: omitted fields must not override lower layers.
     validate_against(_partial(Settings), data, path)
     plugins = data.get("plugins", {})
+    semantic = data.get("semantic")
+    if isinstance(semantic, dict):
+        tls = semantic.get("tls", {})
+        for name in ("ca_file", "client_cert", "client_key"):
+            value = tls.get(name)
+            if value is not None:
+                tls[name] = absolute(value, path.parent, expand_home=True).resolve()
     # Partial models retain field schemas, not PluginSettings' model validators.
     if "enabled" in plugins and len(set(plugins["enabled"])) != len(plugins["enabled"]):
         raise ValueError(f"{path}: plugins.enabled contains duplicates")

@@ -31,6 +31,8 @@ from dataagent.diagnostics import safe_error
 __version__ = "0.1.0"
 
 __all__ = [
+    "SemanticServiceClient",
+    "DataAgentError",
     "LaunchOptions",
     "Runtime",
     "build_agent",
@@ -46,6 +48,8 @@ __all__ = [
 ]
 
 _LAZY = {
+    "SemanticServiceClient": ("dataagent.semantic_client", "SemanticServiceClient"),
+    "DataAgentError": ("dataagent.errors", "DataAgentError"),
     "create_agent": ("dataagent.client", "create_agent"),
     "Agent": ("dataagent.client", "Agent"),
     "ModelContext": ("dataagent.models", "ModelContext"),

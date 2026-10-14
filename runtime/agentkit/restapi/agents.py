@@ -15,7 +15,9 @@ from dataagent import (
 class SessionAgents:
     """Only preparation is serialized; active streams keep their own graph reference."""
 
-    def __init__(self, runtime, *, checkpointer, model, mcp_tools, max_cached=32):
+    def __init__(
+        self, runtime, *, checkpointer, model, mcp_tools, max_cached=32, semantic_client=None
+    ):
         self.runtime = runtime
         self.checkpointer = checkpointer
         self.model = model
@@ -24,8 +26,10 @@ class SessionAgents:
         self.max_cached = max_cached
         self.cache = OrderedDict()
         self.lock = asyncio.Lock()
+        self.semantic_client = semantic_client
 
     async def get(self, thread_id: str, *, create: bool):
+        """Prepare a session handle while retaining the host's shared semantic client."""
         async with self.lock:
             candidate = self.runtime
             tools = self.mcp_tools
@@ -42,19 +46,31 @@ class SessionAgents:
                 if not changed and key in self.cache:
                     self.cache.move_to_end(key)
                     return session, self.cache[key], self.runtime
-                if changed and candidate.extensions.mcp_servers != self.runtime.extensions.mcp_servers:
+                if (
+                    changed
+                    and candidate.extensions.mcp_servers != self.runtime.extensions.mcp_servers
+                ):
                     tools = await load_mcp_tools(candidate)
                 agent = create_agent(
-                    candidate, checkpointer=self.checkpointer, model=self.model,
-                    session=session, input_workspaces=workspaces, mcp_tools=tools,
+                    candidate,
+                    checkpointer=self.checkpointer,
+                    model=self.model,
+                    session=session,
+                    input_workspaces=workspaces,
+                    mcp_tools=tools,
                     extension_revision=revision,
+                    semantic_client=self.semantic_client,
                 )
                 if changed and extension_revision(candidate) != revision:
-                    raise ValueError("Extensions changed during loading; retry after installation finishes")
+                    raise ValueError(
+                        "Extensions changed during loading; retry after installation finishes"
+                    )
             except Exception as error:
                 if not changed:
                     raise
-                message = safe_error(error, (*self.runtime.redaction_secrets, *candidate.redaction_secrets))["message"]
+                message = safe_error(
+                    error, (*self.runtime.redaction_secrets, *candidate.redaction_secrets)
+                )["message"]
                 raise ValueError(f"Extension reload failed: {message}") from None
             if changed:
                 self.cache.clear()

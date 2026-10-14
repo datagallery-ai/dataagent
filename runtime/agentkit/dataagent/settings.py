@@ -80,12 +80,49 @@ class ServerSettings(StrictModel):
     port: int = Field(default=8790, ge=1, le=65535)
 
 
+class SemanticTLSSettings(StrictModel):
+    """Explicit semantic-service TLS policy; false preserves the legacy default."""
+
+    verify_server: bool = False
+    ca_file: Path | None = None
+    client_cert: Path | None = None
+    client_key: Path | None = None
+    ciphers: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def paired_certificate(self):
+        """Require a certificate and key together for client authentication."""
+        if (self.client_cert is None) != (self.client_key is None):
+            raise ValueError("semantic.tls.client_cert and client_key must both be configured")
+        return self
+
+
+class SemanticSettings(StrictModel):
+    """Connection configuration shared by semantic consumers, independent of plugins."""
+
+    base_url: str = Field(min_length=1)
+    username: str | None = Field(default=None, min_length=1, repr=False)
+    password: SecretStr | None = Field(default=None, min_length=1)
+    timeout: float = Field(default=30, gt=0, allow_inf_nan=False)
+    tls: SemanticTLSSettings = Field(default_factory=SemanticTLSSettings)
+
+    @model_validator(mode="after")
+    def paired_credentials(self):
+        """Require a complete optional Basic Auth pair and a nonblank endpoint."""
+        if not self.base_url.strip():
+            raise ValueError("semantic.base_url must not be blank")
+        if (self.username is None) != (self.password is None):
+            raise ValueError("semantic.username and password must both be configured")
+        return self
+
+
 class Settings(StrictModel):
     schema_version: Literal[3] = 3
     dataagent: AgentSettings = Field(default_factory=AgentSettings)
     models: Mapping[str, ModelSettings]
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
+    semantic: SemanticSettings | None = None
 
     @field_serializer("models", mode="wrap")
     def serialize_models(self, value, handler):
@@ -99,5 +136,15 @@ class Settings(StrictModel):
         return self
 
 
-SECTION_MODELS = frozenset({AgentSettings, ModelSelection, Limits, PluginSettings, ServerSettings})
+SECTION_MODELS = frozenset(
+    {
+        AgentSettings,
+        ModelSelection,
+        Limits,
+        PluginSettings,
+        ServerSettings,
+        SemanticSettings,
+        SemanticTLSSettings,
+    }
+)
 """Nested sections that configuration layers may declare partially."""

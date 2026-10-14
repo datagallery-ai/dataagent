@@ -37,10 +37,20 @@ class Runtime:
     def redaction_secrets(self) -> tuple[str, ...]:
         # Include secondary keys without requiring unused models to be configured.
         # Model names/URLs are diagnostic data, not automatically treated as secrets.
-        secrets = [ENV_REFERENCE.sub(
-            lambda match: self.model_environment.get(match[1], match[0]),
-            model.api_key.get_secret_value(),
-        ) for model in self.settings.models.values()]
+        secrets = [
+            ENV_REFERENCE.sub(
+                lambda match: self.model_environment.get(match[1], match[0]),
+                model.api_key.get_secret_value(),
+            )
+            for model in self.settings.models.values()
+        ]
+        semantic = self.settings.semantic
+        if semantic is not None:
+            if semantic.username:
+                secrets.append(semantic.username)
+            if semantic.password is not None:
+                secrets.append(semantic.password.get_secret_value())
+            secrets.append(semantic.base_url)
         for connection in self.extensions.mcp_servers.values():
             secrets.extend(connection.get("env", {}).values())
             secrets.extend(connection.get("headers", {}).values())

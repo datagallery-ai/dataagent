@@ -36,7 +36,10 @@ def _correctable_error(error, request):
 
 
 def build_native_middleware(
-    limits: Limits, *, root: bool, compiled_hooks: Sequence[AgentMiddleware] = (),
+    limits: Limits,
+    *,
+    root: bool,
+    compiled_hooks: Sequence[AgentMiddleware] = (),
 ) -> list[AgentMiddleware]:
     """Accept compiled adapters, not Python handlers; preserve native execution order."""
     return [
@@ -52,7 +55,9 @@ def load_extensions(runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = 
     """Compile Python extensions with already discovered native MCP tools."""
     settings, extensions = runtime.settings, runtime.extensions
     if extensions.mcp_servers and mcp_tools is None:
-        raise ValueError("MCP is configured: await load_mcp_tools(runtime), then pass mcp_tools to build_agent")
+        raise ValueError(
+            "MCP is configured: await load_mcp_tools(runtime), then pass mcp_tools to build_agent"
+        )
     if tuple(binding.spec for binding in extensions.hooks) != settings.dataagent.hooks:
         raise ValueError(
             "Independent Hook bindings do not match settings.dataagent.hooks; "
@@ -67,7 +72,11 @@ def load_extensions(runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = 
 
 
 def build_agent(
-    runtime: Runtime, *, checkpointer=None, model=None, session: SessionPaths | None = None,
+    runtime: Runtime,
+    *,
+    checkpointer=None,
+    model=None,
+    session: SessionPaths | None = None,
     input_workspaces: tuple[WorkspaceInput, ...] | None = None,
     mcp_tools: Sequence[BaseTool] | None = None,
     extension_revision: str | None = None,
@@ -76,6 +85,11 @@ def build_agent(
     """Return the native graph; raw callers pass context on invocation or use create_agent."""
     context = context if context is not None else ModelContext(runtime, model=model)
     settings = runtime.settings
+    if settings.semantic is not None and context.semantic_client is None:
+        raise ValueError(
+            "Semantic service is configured: use create_agent(), or supply a ModelContext "
+            "with a host-owned semantic_client to build_agent() and native graph invocations"
+        )
     workspaces = runtime.paths.workspaces if input_workspaces is None else input_workspaces
     session = session or runtime.paths.for_session("sdk")
     kwargs = load_extensions(runtime, mcp_tools=mcp_tools)
@@ -91,9 +105,13 @@ def build_agent(
             *build_native_middleware(limits, root=False, compiled_hooks=child["middleware"]),
         ]
         if extension_revision is not None:
-            child["middleware"].append(VersionedSkillsMiddleware(
-                backend=backend, sources=child.get("skills", []), revision=extension_revision,
-            ))
+            child["middleware"].append(
+                VersionedSkillsMiddleware(
+                    backend=backend,
+                    sources=child.get("skills", []),
+                    revision=extension_revision,
+                )
+            )
     kwargs.update(
         model=context.get_model(),
         context_schema=ModelContext,
@@ -108,12 +126,19 @@ def build_agent(
         ],
     )
     if extension_revision is not None:
-        kwargs["middleware"].append(VersionedSkillsMiddleware(
-            backend=backend, sources=kwargs["skills"], revision=extension_revision,
-        ))
+        kwargs["middleware"].append(
+            VersionedSkillsMiddleware(
+                backend=backend,
+                sources=kwargs["skills"],
+                revision=extension_revision,
+            )
+        )
     return create_deep_agent(**kwargs).with_config(
-        callbacks=[LocalLangChainTracer(
-            session.traces, runtime.redaction_secrets,
-            agent_names=tuple(child["name"] for child in kwargs["subagents"]),
-        )],
+        callbacks=[
+            LocalLangChainTracer(
+                session.traces,
+                context.redaction_secrets,
+                agent_names=tuple(child["name"] for child in kwargs["subagents"]),
+            )
+        ],
     )
