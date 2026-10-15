@@ -160,6 +160,14 @@ TOOLS:
         post:
           - dataagent.actions.tools.hooks.truncator.truncator
 
+    # Schema linking 数据探查:对单表拉 LIMIT N 行样例,用于确认列存在/类型/取值/空值
+    # 仅 SELECT,不做排序/聚合/JOIN;失败不会抛错(返回 ok=False,skipped=True,reason=...)
+    - module: dataagent.actions.tools.local_tool.dataops_probe_tool
+      function: dataops_probe_table
+      hooks:
+        post:
+          - dataagent.actions.tools.hooks.truncator.truncator
+
   skills:
     custom_dirs:
       - core/suite/builtin_suites/data_analysis/skill
@@ -172,6 +180,20 @@ RESOURCES:
     operations: {submit: submit_job, poll: poll_job, collect: collect_job, cancel: cancel_job}
     capacity: {total: 8, unit: query}
     consumption: {sql_query: 1, "*": 1}
+  # dataops: schema linking 探查工具(走 dataops_probe_table)需要此 resource
+  # - 联调环境:需先启动自建 DataOps MCP server + .env 中设置 DATAOPS_MCP_URL
+  # - 生产环境(DATAOPS_ENV=prod):不走该 resource,直接调官方 DataOps MCP,所以 prod 模式下 enabled 状态不影响 probe
+  - id: dataops
+    name: DataOps AdHoc SQL (probe only)
+    category: executable
+    metadata:
+      enabled: true
+      exec_user: ""
+      table_suffix: ""
+      timeout_s: 1800
+      poll_interval_ms: 30000
+    transport: {type: mcp, url: "$env{DATAOPS_MCP_URL}"}
+    operations: {submit: submit_job, poll: poll_job, collect: collect_job, cancel: cancel_job}
 
 GOVERNANCE:
   invisibility: [start_data_analysis_workflow, advance_data_analysis_workflow, control_data_analysis_workflow, inspect_data_analysis_workflow, submit_subagent, poll_subagent, collect_subagent, cancel_subagent]

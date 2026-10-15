@@ -10,9 +10,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import sqlglot
@@ -22,6 +24,23 @@ from sqlglot import exp
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
 from dataagent.core.managers.llm_manager import llm_manager
+
+# ============================================================================
+# validate_deliverables orchestration constants
+#
+# [设计] validate_deliverables 把"静态校验 + DataOps 语义校验"合并成单一入口,
+#        整个工具在一次会话内最多跑 MAX_VALIDATE_DELIVERABLES_ATTEMPTS 次。
+#        之前 DataOps 内部对每条 SQL 最多重试 3 次的设计废弃:
+#        现在 retry 由 validate_deliverables 在工具层统一调度,
+#        DataOps wrapper 内部 3 次上限保留作为兜底防御。
+# ============================================================================
+MAX_VALIDATE_DELIVERABLES_ATTEMPTS = 3
+_VALIDATE_DELIVERABLES_STATE_KEY = "validate_deliverables_state"
+_DELIVERY_DELIVERABLES_WARNING_FILENAME = "validate_deliverables_warning.md"
+_DELIVERY_DELIVERABLES_WARNING_HEADER = (
+    "⚠️ 本次交付物未通过 validate_deliverables 校验（重试 {n} 次仍失败），仅作 best-effort，下游使用前必须人工复核"
+)
+_DELIVERY_DELIVERABLES_REPORT_FILENAME = "validate_deliverables_report.json"
 
 # 质量门禁校验的 system prompt
 _QUALITY_GATE_SYSTEM_PROMPT = """你是一位资深数据仓库质量校验专家。你的任务是严格审查 DDL 和 DML 代码，按以下标准进行全面质量检查。
@@ -289,11 +308,23 @@ def _resolve_quality_gate_include_suggestions(_tool_context: ToolExecutionContex
 
 def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContext | None = None) -> dict[str, str]:
     """
-    Check if final deliverables satisfy basic quality requirements. Call this function when you think you
-    have finished all steps. Errors reported from this function are required to be fixed, while suggestions
-    reported can be taken into consideration at will. If this tool is not invoked for the first time,
-    it can be invoked again only after all the problems detected in the previous invocation are resolved.
-    This ensures that the problems detected in the previous verification are resolved as much as possible.
+    Check if final deliverables satisfy basic quality requirements **and**
+    pass DataOps semantic validation. Call this function when you think you
+    have finished all steps. Errors reported from this function are required
+    to be fixed, while suggestions reported can be taken into consideration
+    at will.
+
+    **Single-entry retry semantics (NEW):**
+    - The full check (static checks + DataOps semantic validation) runs as
+      one unit. If validation fails, **fix the SQL in workspace** and call
+      this tool again.
+    - This tool will run **at most MAX_VALIDATE_DELIVERABLES_ATTEMPTS (3)
+      times per session**; after that it returns best-effort verdict and
+      stops accepting further calls.
+    - The internal per-SQL DataOps retry budget is preserved as a safety
+      net (wrapper enforces its own 3-attempt cap) but is normally unused
+      because each ``validate_deliverables`` invocation starts the DataOps
+      wrapper from attempt=1.
 
     Args:
         query: The user's original requirement text, used by the LLM quality gate to verify
@@ -312,23 +343,460 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
         msg = "当前为 ALTER/ADD_COLUMN 场景，validate_deliverables 不适用。ALTER 场景无需调用此工具，请跳过此步骤。"
         return {"original_msg": msg, "frontend_msg": msg}
 
+    state = _load_validate_deliverables_state(_tool_context)
+
+    # [重试上限] 单次会话最多跑 MAX_VALIDATE_DELIVERABLES_ATTEMPTS 次。
+    # state.attempts 已经在 _bump_attempt 中预递增过；如果超过上限说明 agent
+    # 不顾警告还在继续调用，直接返回 best-effort 拒绝。
+    if state["attempts"] > MAX_VALIDATE_DELIVERABLES_ATTEMPTS:
+        msg = (
+            f"validate_deliverables 已达到本会话最大重试上限 "
+            f"({MAX_VALIDATE_DELIVERABLES_ATTEMPTS} 次)，不再接受新调用。"
+            "如需重新启动校验，请清空 runtime cache 或开新 session。"
+        )
+        logger.warning(f"[validate_deliverables] {msg} state={state}")
+        return {"original_msg": msg, "frontend_msg": msg}
+
+    current_attempt = state["attempts"]
+    logger.info(
+        f"[validate_deliverables] === START attempt={current_attempt}/"
+        f"{MAX_VALIDATE_DELIVERABLES_ATTEMPTS} ==="
+    )
+
     include_suggestions = _resolve_quality_gate_include_suggestions(_tool_context)
-    result, error, warning = _validate_deliverables(
+
+    # === Step 1: 静态校验（DDL/DML 文件存在性 + 规范 + LLM 质量门禁） ===
+    static_passed, static_err, static_warn = _validate_deliverables(
         workspace_dir=workspace_dir,
         user_query=query,
         include_suggestions=include_suggestions,
         _tool_context=_tool_context,
     )
-    out = "最终产物校验通过。" if result else "最终产物校验不通过。"
-    if warning:
-        out += "\n" + warning
-    if error:
-        out += "\n" + error
 
+    # 静态校验失败 → 不跑 dataops（先解决 schema/语法问题），保存状态后让 agent 修
+    if not static_passed:
+        state["last_static_passed"] = False
+        state["last_static_err"] = static_err
+        state["last_static_warn"] = static_warn
+        state["last_failure_kind"] = "static"
+        state["last_updated_at"] = time.time()
+        _save_validate_deliverables_state(_tool_context, state)
+
+        out = (
+            f"[validate_deliverables attempt {current_attempt}/"
+            f"{MAX_VALIDATE_DELIVERABLES_ATTEMPTS}] 静态校验不通过，请修复后再次调用。\n"
+            f"{static_err}"
+        )
+        if static_warn:
+            out += "\n" + static_warn
+        logger.info(f"[validate_deliverables] === END attempt={current_attempt} static=FAIL ===")
+        return {"original_msg": out, "frontend_msg": out}
+
+    # === Step 2: DataOps 语义校验（仅静态通过后才执行；DDL+DML 都跑） ===
+    DDL, DML = _locate_sql(workspace=workspace_dir)
+    dataops_summary = _run_dataops_validation_round(
+        ddl_path=DDL,
+        dml_path=DML,
+        state=state,
+        _tool_context=_tool_context,
+    )
+
+    dataops_passed = dataops_summary["passed"]
+    dataops_err = dataops_summary["error"]
+    dataops_warn = dataops_summary["warning"]
+    dataops_log_summary = dataops_summary["log_summary"]
+
+    # === Step 3: 汇总结果 ===
+    if dataops_passed:
+        # 通过 → 清空 cache 里的失败历史（保持状态一致，但允许下次再被覆写）
+        state["last_static_passed"] = True
+        state["last_static_err"] = ""
+        state["last_static_warn"] = static_warn
+        state["last_failure_kind"] = None
+        state["last_updated_at"] = time.time()
+        _save_validate_deliverables_state(_tool_context, state)
+
+        out = (
+            f"[validate_deliverables attempt {current_attempt}/"
+            f"{MAX_VALIDATE_DELIVERABLES_ATTEMPTS}] ✅ 最终产物校验通过。"
+        )
+        merged_warn = _merge_warnings(static_warn, dataops_warn)
+        if merged_warn:
+            out += "\n" + merged_warn
+        logger.info(f"[validate_deliverables] === END attempt={current_attempt} result=PASSED ===")
+        return {"original_msg": out, "frontend_msg": out}
+
+    # DataOps 失败 → 是否达到本会话上限？
+    state["last_static_passed"] = True
+    state["last_static_err"] = ""
+    state["last_static_warn"] = static_warn
+    state["last_failure_kind"] = "dataops"
+    state["last_dataops_err"] = dataops_err
+    state["last_dataops_log_summary"] = dataops_log_summary
+    state["last_updated_at"] = time.time()
+
+    if current_attempt >= MAX_VALIDATE_DELIVERABLES_ATTEMPTS:
+        # 已达上限：写 best-effort 报告 + warning 文件 + 返回 best-effort 文案
+        report_paths = _dump_validate_deliverables_artifacts(
+            state=state,
+            workspace_dir=workspace_dir,
+            ddl_path=DDL,
+            dml_path=DML,
+            _tool_context=_tool_context,
+        )
+        if report_paths.get("report_path"):
+            state["last_report_path"] = report_paths["report_path"]
+        if report_paths.get("warning_path"):
+            state["last_warning_path"] = report_paths["warning_path"]
+        _save_validate_deliverables_state(_tool_context, state)
+
+        out = (
+            f"[validate_deliverables attempt {current_attempt}/"
+            f"{MAX_VALIDATE_DELIVERABLES_ATTEMPTS}] ❌ DataOps 校验失败且已达到"
+            f"本会话最大重试上限 ({MAX_VALIDATE_DELIVERABLES_ATTEMPTS} 次)，"
+            "本次交付仅作 best-effort，下游使用前必须人工复核。\n"
+        )
+        out += f"- DataOps 错误: {dataops_err}\n" if dataops_err else ""
+        if dataops_log_summary:
+            out += f"- 日志分析摘要: {dataops_log_summary}\n"
+        merged_warn = _merge_warnings(static_warn, dataops_warn)
+        if merged_warn:
+            out += "\n" + merged_warn
+        if report_paths.get("warning_path"):
+            out += (
+                f"\n详细报告已写入 `{report_paths['warning_path']}`，"
+                "请把本次提交到 workspace 的 SQL 作为最终交付物（best-effort）。"
+            )
+        logger.warning(
+            f"[validate_deliverables] === END attempt={current_attempt} result=BEST_EFFORT_FAIL "
+            f"report={report_paths} ==="
+        )
+        return {"original_msg": out, "frontend_msg": out}
+
+    # 还未到上限：保存历史，让 agent 修复 SQL 后再次调用本工具
+    _save_validate_deliverables_state(_tool_context, state)
+
+    out = (
+        f"[validate_deliverables attempt {current_attempt}/"
+        f"{MAX_VALIDATE_DELIVERABLES_ATTEMPTS}] ❌ DataOps 校验失败，请按下面诊断"
+        f"修复 workspace 中的 DDL/DML 后再次调用本工具。\n"
+    )
+    if dataops_err:
+        out += f"- DataOps 错误: {dataops_err}\n"
+    if dataops_log_summary:
+        out += f"- 日志分析摘要: {dataops_log_summary}\n"
+    merged_warn = _merge_warnings(static_warn, dataops_warn)
+    if merged_warn:
+        out += "\n" + merged_warn
+    remaining = MAX_VALIDATE_DELIVERABLES_ATTEMPTS - current_attempt
+    out += f"\n（剩余可重试次数: {remaining}）"
+    logger.info(f"[validate_deliverables] === END attempt={current_attempt} dataops=FAIL ===")
+    return {"original_msg": out, "frontend_msg": out}
+
+
+# ============================================================================
+# validate_deliverables orchestration helpers
+# ============================================================================
+
+
+def _new_validate_deliverables_state() -> dict:
+    """Initialize a fresh retry state. ``attempts`` 是本工具已累计调用次数，
+    由 ``_bump_attempt`` 在加载时预递增，所以新对象此处为 0。"""
     return {
-        "original_msg": out,
-        "frontend_msg": out,
+        "attempts": 0,
+        "dataops_attempts": [],   # 累计的 dataops 尝试摘要（跨 validate_deliverables 复用）
+        "last_static_passed": None,
+        "last_static_err": "",
+        "last_static_warn": "",
+        "last_failure_kind": None,    # "static" | "dataops" | None
+        "last_dataops_err": "",
+        "last_dataops_log_summary": "",
+        "last_report_path": None,
+        "last_warning_path": None,
+        "last_updated_at": 0.0,
     }
+
+
+def _load_validate_deliverables_state(_tool_context: ToolExecutionContext) -> dict:
+    """从 runtime cache 读取重试状态；如果不存在则初始化并写回。
+
+    调用本函数时已隐含"本工具被调用一次"，所以这里直接预递增 attempts。"""
+    runtime = _tool_context.runtime
+    state = runtime.get_cache(_VALIDATE_DELIVERABLES_STATE_KEY)
+    if not isinstance(state, dict) or "attempts" not in state:
+        state = _new_validate_deliverables_state()
+    state["attempts"] = int(state.get("attempts", 0)) + 1
+    if not isinstance(state.get("dataops_attempts"), list):
+        state["dataops_attempts"] = []
+    return state
+
+
+def _save_validate_deliverables_state(_tool_context: ToolExecutionContext, state: dict) -> None:
+    """把当前状态写回 runtime cache，供下一次 validate_deliverables 调用读取。"""
+    runtime = _tool_context.runtime
+    runtime.set_cache(_VALIDATE_DELIVERABLES_STATE_KEY, state)
+
+
+def _merge_warnings(static_warn: str, dataops_warn: str) -> str:
+    """合并静态校验和 DataOps 的 warning 输出，过滤空段。"""
+    parts = []
+    if static_warn and static_warn.strip():
+        parts.append(static_warn.strip())
+    if dataops_warn and dataops_warn.strip():
+        parts.append(dataops_warn.strip())
+    return "\n\n".join(parts)
+
+
+# ============================================================================
+# DDL 重跑时预清理（fire-and-forget）
+#
+# 当 agent 修改 SQL 后再次调用 validate_deliverables 时：
+#   - DDL 重跑时 adhoctemp 临时表已存在（上次 CREATE 失败但表留下了）
+#   - dataops wrapper 的 drop_before_create 需要 resource.metadata 控制，
+#     不一定每次都开启
+# → 因此在提交 DDL 之前主动 DROP 同名 adhoctemp 表，不等返回、不阻塞主流程
+# ============================================================================
+
+def _ddl_pre_cleanup(ddl_sql: str, _tool_context: ToolExecutionContext) -> None:
+    """从 DDL SQL 提取 adhoctemp 临时表名并 fire-and-forget DROP。
+
+    不影响后续 dataops wrapper 校验结果；若 DROP 失败（表不存在 / 权限问题）
+    也只记 debug 日志，不抛异常。
+    """
+    import threading
+
+    def _fire():
+        try:
+            from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
+                prod_execute_sql,
+            )
+            from dataagent.actions.tools.local_tool.dataops_validate_tool import (
+                _build_drop_sql,
+                _get_user_account,
+            )
+
+            user_account = _get_user_account(_tool_context.runtime)
+            table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
+            drop_sql = _build_drop_sql(ddl_sql, user_account, table_suffix)
+            if not drop_sql:
+                logger.debug("[validate_deliverables] _ddl_pre_cleanup: could not extract temp table")
+                return
+            logger.info(f"[validate_deliverables] pre-DROP before DDL retry: {drop_sql}")
+            # 同步调用，fire-and-forget 变体：在线程里跑，不 join 回主线程
+            asyncio.run(prod_execute_sql(drop_sql))
+        except Exception as exc:
+            logger.debug(f"[validate_deliverables] _ddl_pre_cleanup failed (ignored): {exc}")
+
+    thread = threading.Thread(target=_fire, daemon=True)
+    thread.start()
+
+
+def _run_dataops_validation_round(
+    *,
+    ddl_path: Path | None,
+    dml_path: Path | None,
+    state: dict,
+    _tool_context: ToolExecutionContext,
+) -> dict:
+    """执行一轮 DataOps 校验（DDL + DML 各一次），汇总结果。
+
+    本函数自身不负责 retry 编排 —— retry 由上层 validate_deliverables 控制：
+    本工具每被调用一次，对每条 SQL 的 dataops wrapper 都从 attempt=1 开始。
+
+    Returns:
+        {
+            "passed": bool,        # True 表示两 SQL 都通过/跳过
+            "error": str,          # 失败原因（首条失败即可）
+            "warning": str,        # DataOps 自己的警告
+            "log_summary": str,    # 日志分析摘要（供前端展示）
+        }
+    """
+    from dataagent.actions.tools.local_tool.dataops_validate_tool import (
+        dataops_validate_sql_with_log_analysis,
+    )
+
+    summary: dict = {
+        "passed": True,
+        "error": "",
+        "warning": "",
+        "log_summary": "",
+    }
+
+    # 顺序：DDL 先校验；如果 DDL 失败 → 跳过 DML（DDL 是 DML 的前置）
+    sql_jobs: list[tuple[str, Path]] = []
+    if ddl_path is not None and not _is_empty(ddl_path):
+        sql_jobs.append(("ddl", ddl_path))
+    if dml_path is not None and not _is_empty(dml_path):
+        sql_jobs.append(("dml", dml_path))
+
+    if not sql_jobs:
+        # 没有 SQL 文件可校验：理论上静态校验不会让代码走到这里，留作防御
+        return summary
+
+    # ------------------------------------------------------------------
+    # DDL 重跑时，adhoctemp 临时表可能已被上次失败的 CREATE TABLE 创建，
+    # 直接重跑会报"Table already exists"。在正式提交 DDL 之前先
+    # fire-and-forget 清理同名的 adhoctemp 表，不影响主流程。
+    # ------------------------------------------------------------------
+    for kind, path in sql_jobs:
+        if kind == "ddl":
+            ddl_sql_text = path.read_text(encoding="utf-8")
+            _ddl_pre_cleanup(ddl_sql_text, _tool_context)
+            break
+
+    # 对每条 SQL 各跑一次 wrapper；wrapper 内部会按 attempt 维护历史。
+    # 因为每次 validate_deliverables 都从 attempt=1 开始，prior_attempts
+    # 这里也总是空列表。
+    for kind, path in sql_jobs:
+        sql_text = path.read_text(encoding="utf-8")
+        try:
+            # dataops_validate_sql_with_log_analysis 是 async coro;
+            # validate_deliverables 是 sync tool,正常情况下用 asyncio.run 创建临时 loop。
+            # 但若上游恰好在 running loop 里调用本工具,asyncio.run 会 RuntimeError,
+            # 这里做兜底:有 running loop 时改用 thread 隔离 + asyncio.run。
+            try:
+                asyncio.get_running_loop()
+                in_running_loop = True
+            except RuntimeError:
+                in_running_loop = False
+
+            if in_running_loop:
+                import concurrent.futures as _cf
+
+                with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+                    result = _pool.submit(
+                        asyncio.run,
+                        dataops_validate_sql_with_log_analysis(
+                            sql_text,
+                            attempt=1,
+                            prior_attempts=[],
+                            _tool_context=_tool_context,
+                        ),
+                    ).result()
+            else:
+                result = asyncio.run(
+                    dataops_validate_sql_with_log_analysis(
+                        sql_text,
+                        attempt=1,
+                        prior_attempts=[],
+                        _tool_context=_tool_context,
+                    )
+                )
+        except Exception as exc:
+            logger.exception(f"[validate_deliverables] dataops call crashed kind={kind}")
+            result = {"passed": False, "error": f"dataops wrapper crashed: {exc}"}
+
+        # 记录到 state 里（跨 validate_deliverables 调用累计）
+        state["dataops_attempts"].append(
+            {
+                "kind": kind,
+                "sql_path": str(path),
+                "passed": bool(result.get("passed")),
+                "skipped": bool(result.get("skipped")),
+                "error": (result.get("error") or "")[:500],
+                "job_id": result.get("job_id"),
+                "log_summary": result.get("log_analysis_summary") or "",
+                "attempts": result.get("attempts"),
+                "failed_after_max_retries": bool(result.get("failed_after_max_retries")),
+            }
+        )
+
+        # 短路：失败立即返回
+        passed = bool(result.get("passed"))
+        skipped = bool(result.get("skipped"))
+        if not (passed or skipped):
+            summary["passed"] = False
+            summary["error"] = (
+                result.get("error")
+                or (result.get("log_analysis_summary") or "DataOps validation failed (no detail)")
+            )[:800]
+            summary["log_summary"] = result.get("log_analysis_summary") or ""
+            return summary
+
+    return summary
+
+
+def _dump_validate_deliverables_artifacts(
+    *,
+    state: dict,
+    workspace_dir: Path,
+    ddl_path: Path | None,
+    dml_path: Path | None,
+    _tool_context: ToolExecutionContext,
+) -> dict:
+    """达到上限时把完整 retry 历史 dump 到 workspace，best-effort，不抛异常。
+
+    产出：
+      - validate_deliverables_report.json：完整结构化重试历史（含每次 dataops 摘要）
+      - validate_deliverables_warning.md：人类可读的 best-effort 警告（含修复建议）
+    """
+    out: dict = {"report_path": None, "warning_path": None}
+    try:
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        logger.warning(f"[validate_deliverables] cannot create workspace {workspace_dir}: {exc}")
+        return out
+
+    report_path = workspace_dir / _DELIVERY_DELIVERABLES_REPORT_FILENAME
+    warning_path = workspace_dir / _DELIVERY_DELIVERABLES_WARNING_FILENAME
+
+    ddl_excerpt = ""
+    if ddl_path is not None and ddl_path.exists():
+        ddl_excerpt = ddl_path.read_text(encoding="utf-8")[:500]
+    dml_excerpt = ""
+    if dml_path is not None and dml_path.exists():
+        dml_excerpt = dml_path.read_text(encoding="utf-8")[:500]
+
+    report = {
+        "validation_status": "failed_after_max_retries",
+        "max_attempts": MAX_VALIDATE_DELIVERABLES_ATTEMPTS,
+        "attempts_count": state.get("attempts", 0),
+        "last_static_err": state.get("last_static_err", ""),
+        "last_dataops_err": state.get("last_dataops_err", ""),
+        "last_dataops_log_summary": state.get("last_dataops_log_summary", ""),
+        "dataops_attempts": state.get("dataops_attempts", []),
+        "ddl_excerpt": ddl_excerpt,
+        "dml_excerpt": dml_excerpt,
+        "generated_at": time.time(),
+    }
+    try:
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        out["report_path"] = str(report_path)
+    except Exception as exc:
+        logger.warning(f"[validate_deliverables] failed to write report {report_path}: {exc}")
+
+    # 人类可读警告
+    attempt_lines: list[str] = []
+    for entry in state.get("dataops_attempts", []):
+        kind = entry.get("kind", "?")
+        passed = entry.get("passed")
+        skipped = entry.get("skipped")
+        err = (entry.get("error") or "")[:200]
+        log_summary = entry.get("log_summary") or ""
+        verdict = "passed" if passed else ("skipped" if skipped else "failed")
+        attempt_lines.append(f"- {kind.upper()} attempt [{verdict}]: {err}")
+        if log_summary:
+            attempt_lines.append(f"  - 日志分析: {log_summary[:200]}")
+
+    warning_body = (
+        f"# {_DELIVERY_DELIVERABLES_WARNING_HEADER.format(n=MAX_VALIDATE_DELIVERABLES_ATTEMPTS)}\n\n"
+        f"## 失败摘要\n\n"
+        + ("\n".join(attempt_lines) if attempt_lines else "(无 DataOps 数据)")
+        + "\n\n## 详细报告\n\n"
+        f"见 `{report_path.name}`（含本次会话 validate_deliverables 累计的 attempts、"
+        f"dataops_attempts 历史、最后一次 DDL/DML 摘要）。\n"
+        f"下游使用本批 SQL 前必须人工复核。\n"
+    )
+    try:
+        warning_path.write_text(warning_body, encoding="utf-8")
+        out["warning_path"] = str(warning_path)
+    except Exception as exc:
+        logger.warning(f"[validate_deliverables] failed to write warning {warning_path}: {exc}")
+
+    return out
 
 
 def _validate_deliverables(
@@ -881,7 +1349,7 @@ def _validate_insert_overwrite_partition(file_path: Path) -> tuple[bool, str, in
         if first_insert_pos < first_with_pos:
             return (
                 False,
-                f"DML校验失败: WITH/CTE 必须位于 INSERT OVERWRITE 之前。"
+                "DML校验失败: WITH/CTE 必须位于 INSERT OVERWRITE 之前。"
                 "当 INSERT 语句使用 WITH/CTE 时，无论 SparkSQL 使用什么版本，"
                 "都要保证 WITH/CTE 必须位于 INSERT OVERWRITE 之前，"
                 "正确示例（correct syntax）是 "
@@ -1201,7 +1669,7 @@ def _validate_concat_with_rank_udf(file_path: Path) -> tuple[bool, str, int]:
             continue
         return (
             False,
-            f"使用 ConcatWithRank UDF 时必须携带 `bicoredata.` 前缀，"
+            "使用 ConcatWithRank UDF 时必须携带 `bicoredata.` 前缀，"
             "请使用 `bicoredata.ConcatWithRank(value, rank_col, separator)` "
             "而非 `ConcatWithRank(value, rank_col, separator)`。",
             _line_no(content, match.start()),

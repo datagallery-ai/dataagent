@@ -17,17 +17,20 @@ description: |
 - 当你需要写INSERT SQL语句的时候，你必须要使用wrapped_nl2sql_sub_agent_tool工具。
 - 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用前已经调用过metadata_recall工具。
 - 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用后调用过1次或多次validate_deliverables工具。
+- **数据探查**（写 SQL 前确认字段真实存在 / 取值分布 / 空值情况）：
+  - 何时调、调用硬约束（`partition_filter` / `columns` / 占位符）、返回结果解读、工具签名，详见 `skill/dataops_probe/SKILL.md`。
+  - 调用入口：`dataops_probe_table`，仅 SELECT LIMIT，失败自动跳过不抛错。
+  - 与 metadata_recall 的分工：metadata_recall 回答"表/列是什么"，dataops_probe_table 回答"字段实际长什么样"。
 - wrapped_nl2sql_sub_agent_tool 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
   - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
   - 最终输出列语义 = 已确认特征主键（identity.components，必选前缀，即使未出现在 output_features 中）+ expand(output_features) 业务/指标语义；多时间窗口 × 多特征等交叉场景必须以 IR 中确定性展开后的字段条数为准（如 3×3=9），不得在 query 中压缩成更少的“代表列”。IR 给出的展开列名（field_name / name_pattern）仅供主 Agent 对照参考，query/SQL/DDL **不要求**照抄同名。
   - 若展开后各特征 aggregation.grain 不同，query/SQL 必须按列分别说明并实现各自聚合粒度；禁止用单一全局 GROUP BY 覆盖全部特征。
-- **DataOps 校验**：
-  - 何时调：完成「8 类质量自检」且全部 PASS 后，对生成的每条 DDL/DML 调一次 `dataops_validate_sql_with_log_analysis(sql, attempt=1, prior_attempts=...)`。
-  - 调用约定：每次调用必须传入两个参数：`attempt`（从 1 开始的第几次尝试）和 `prior_attempts`（上一次调用返回的 `attempts` 列表，首次调用传 `None`）。首次失败后，de_agent 必须把上一次的 `attempts` 字段原样回传，作为下一次调用的 `prior_attempts`，以便 wrapper 累加失败历史。wrapper 会自动维护 `attempts` / `failed_after_max_retries` / `validation_report_path` / `delivery_warning_path` 四个返回字段。
-  - 失败处理：返回 `passed: false` 时**必须**读取 `log_analysis`，按 `suggestions` → `error_type` / `location` → `error` 字段的优先级定位失败原因，**实际修改 SQL 后再次调用**该工具；禁止原样 SQL 重跑，也禁止把 `log_analysis.suggestions` 当"诊断总结"复读后结束任务。
-  - 重试上限：每条 SQL 最多调用 3 次（含首次），具体次数由 wrapper 强制；超限（attempt > 3）后 wrapper 直接返回 `passed: false` + `failed_after_max_retries: true` 而不发起第 4 次校验。
-  - 退出条件：任一次返回 `passed=true` 或 `skipped=true` 才能正常交付；wrapper 标记 `failed_after_max_retries: true` 时只能 best-effort 交付。
-  - **best-effort 交付**：当第 3 次仍失败时，wrapper 会自动在 workspace 写入 `validate_<table>.json`（含 3 次的 `job_id` / `elapsed` / `error_type` / `error` / `suggestions`）和 `delivery_warning.md`（首行写「⚠️ 本次交付物未通过 DataOps 校验（重试 3 次仍失败），仅作 best-effort，下游使用前必须人工复核」）。de_agent 此时只需把最后一次提交的 SQL 作为交付物写入 workspace，并在交付报告中说明实际执行的修复动作（diff 简述）。
+- **DataOps 校验（合并到 validate_deliverables 内）**：
+  - **入口统一**：DataOps 语义校验已经在 `validate_deliverables` 内部作为最后一步执行，**de_agent 不再单独调用 `dataops_validate_sql_with_log_analysis`**。
+  - **单入口重试语义（NEW）**：校验失败时，`validate_deliverables` 会在错误信息里附带 DataOps `log_analysis`/`log_analysis_summary` 摘要。de_agent **必须按摘要修改 workspace 里的 DDL/DML 后再次调用 `validate_deliverables`**，整个"静态校验 + DataOps 校验"会作为整体重跑。
+  - **重试上限**：`validate_deliverables` 单次会话最多执行 **3 次**（含首次）。超过 3 次后工具直接返回最佳实践失败信息，不再发起第 4 次校验。第 3 次仍失败时，工具会自动在 workspace 写入 `validate_deliverables_report.json`（含累计 attempts、dataops_attempts 历史、最后一次 DDL/DML 摘要）和 `validate_deliverables_warning.md`（首行写「⚠️ 本次交付物未通过 validate_deliverables 校验（重试 3 次仍失败），仅作 best-effort，下游使用前必须人工复核」）。此时 de_agent 只需把最后一次提交的 SQL 作为交付物写入 workspace，并在交付报告中说明实际执行的修复动作（diff 简述）。
+  - **失败处理**：错误信息中含 `日志分析摘要` 时，按 `suggestions` → `error_type` / `location` → `error` 字段的优先级定位失败原因，**实际修改 SQL 后再次调用** `validate_deliverables`；禁止原样 SQL 重跑，也禁止把 `log_analysis_summary` 当"诊断总结"复读后结束任务。
+  - **退出条件**：任意一次 `validate_deliverables` 返回 `最终产物校验通过` 才能正常交付；返回 `最佳实践失败`（第 3 次仍失败）时只能 best-effort 交付。
   - **临时表自动清理**：DataOps 校验工具在 DML（INSERT）一次完整校验结束后（DML 通过 / DML 三次重试均失败），会自动 DROP 该次生成的 `adhoctemp.tmp_<user>_<date>_<table>` 临时表，避免 adhoctemp 库累积残留。
     - **CREATE TABLE 永远不清理**：DDL 校验（成功或失败）后临时表**保留**，因为同一条交付的 DML（INSERT OVERWRITE）必须针对这张临时表——如果先 DROP，DML 会找不到目标表失败。
     - **DML 清理时机**：DML 单次校验通过后立即清理；DML 三次重试全部失败（达到 `MAX_VALIDATE_ATTEMPTS`）后清理。三次重试过程中的中途失败不清理——下次重试还需要写同一张表。
