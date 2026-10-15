@@ -66,16 +66,23 @@ export function isPlaceholderSecret(value) {
   return value == null || PLACEHOLDER_SECRETS.has(String(value).trim());
 }
 
-export function isCompleteDeploymentConfig(env = {}) {
+export function deploymentConfigGaps(env = {}) {
+  const gaps = [];
+  for (const key of ["WEB_PORT", "API_PORT", "AUTH_PUBLIC_BASE_URL"]) {
+    if (!String(env[key] ?? "").trim()) gaps.push(key);
+  }
   const registrationMode = String(env.AUTH_REGISTRATION_MODE ?? "").trim();
-  return Boolean(
-    String(env.WEB_PORT ?? "").trim() &&
-      String(env.API_PORT ?? "").trim() &&
-      String(env.AUTH_PUBLIC_BASE_URL ?? "").trim() &&
-      (registrationMode === "open" || registrationMode === "closed") &&
-      !isPlaceholderSecret(env.AUTH_SESSION_SECRET) &&
-      !isPlaceholderSecret(env.SECRET_MASTER_KEY)
-  );
+  if (registrationMode !== "open" && registrationMode !== "closed") {
+    gaps.push("AUTH_REGISTRATION_MODE");
+  }
+  for (const key of SECRET_KEYS) {
+    if (isPlaceholderSecret(env[key])) gaps.push(key);
+  }
+  return gaps;
+}
+
+export function isCompleteDeploymentConfig(env = {}) {
+  return deploymentConfigGaps(env).length === 0;
 }
 
 function maskSecret(value = "") {

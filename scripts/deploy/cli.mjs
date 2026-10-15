@@ -10,6 +10,7 @@ import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
   assertNativeAuthPublicBaseUrl,
   assertNativeBindHosts,
+  deploymentConfigGaps,
   ensureDeploymentEnvironment,
   isCompleteDeploymentConfig,
   isPlaceholderSecret,
@@ -376,6 +377,45 @@ async function loadRootEnvText(root) {
   }
 }
 
+export function formatStartBlocked(gaps, missingFiles = []) {
+  const parts = [];
+  if (gaps.length > 0) {
+    parts.push(`缺少合法完整的 .env 配置，缺：${gaps.join(", ")}`);
+  }
+  if (missingFiles.length > 0) {
+    parts.push(`缺少文件：${missingFiles.join(", ")}`);
+  }
+  if (parts.length === 0) return "";
+  return `${parts.join("；")}。请先运行 ./deploy.sh deploy`;
+}
+
+/**
+ * Start refuses an incomplete .env by name. When the env is already complete
+ * and the web build exists, write the missing apps/web/.env.local from it.
+ * Secrets are not generated here; ./deploy.sh deploy still does that.
+ */
+export async function prepareStartEnvironment(root, diskEnv = {}) {
+  const gaps = deploymentConfigGaps(diskEnv);
+  const missingFiles = [];
+  if (!existsSync(path.join(root, "apps/api/dist/index.js"))) {
+    missingFiles.push("apps/api/dist/index.js");
+  }
+  if (!existsSync(path.join(root, "apps/web/.next/BUILD_ID"))) {
+    missingFiles.push("apps/web/.next/BUILD_ID");
+  }
+  if (gaps.length > 0 || missingFiles.length > 0) {
+    throw new Error(formatStartBlocked(gaps, missingFiles));
+  }
+  const webEnvLocal = path.join(root, "apps/web/.env.local");
+  if (!existsSync(webEnvLocal)) {
+    await mkdir(path.dirname(webEnvLocal), { recursive: true });
+    await writeFile(webEnvLocal, renderWebEnvironment(diskEnv), {
+      encoding: "utf8",
+      mode: 0o600
+    });
+  }
+}
+
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -443,16 +483,8 @@ function createRealDeps(context) {
     },
     async preflight(current, options) {
       if (options?.command === "start") {
-        const apiDist = path.join(root, "apps/api/dist/index.js");
-        const webBuild = path.join(root, "apps/web/.next/BUILD_ID");
-        const webEnvLocal = path.join(root, "apps/web/.env.local");
-        if (!existsSync(apiDist) || !existsSync(webBuild) || !existsSync(webEnvLocal)) {
-          throw new Error("请先运行 ./deploy.sh deploy");
-        }
         const diskEnv = parseDeploymentEnvironment(current.sourceText ?? "");
-        if (!isCompleteDeploymentConfig(diskEnv)) {
-          throw new Error("缺少合法完整的 .env 配置，请先运行 ./deploy.sh deploy");
-        }
+        await prepareStartEnvironment(root, diskEnv);
       }
     },
     async configure(current) {

@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from process_helpers import stop_child
 from test_api import client_for, query, sse, terminal
 from test_launch import MODEL, config
-from test_launcher import config_file
+from test_launcher import config_file, open_listener, spawn_inherited
 
 from dataagent import LaunchOptions, build_agent, load_mcp_tools, prepare_runtime
 from dataagent.agent import load_extensions
@@ -184,10 +184,11 @@ async def test_documented_local_example_is_runnable(tmp_path, monkeypatch):
 
 def test_real_backend_discovers_mcp_before_ready_then_exits_with_parent(tmp_path):
     prepare(tmp_path, {"calc": stdio(env={"MCP_TEST_PIDS": str(tmp_path / "pids")})})
-    path, _ = config_file(tmp_path)
-    child = subprocess.Popen([
+    listener = open_listener()
+    path, _ = config_file(tmp_path, listener)
+    child = spawn_inherited([
         sys.executable, "-m", "restapi", "serve", "--stdio-ready", "--config", str(path),
-    ], env={**os.environ, "DATAAGENT_V2_INSTANCE_ID": "mcp-startup-test"},
+    ], listener, env={**os.environ, "DATAAGENT_V2_INSTANCE_ID": "mcp-startup-test"},
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     try:
         assert select.select([child.stdout], [], [], 15)[0], "No readiness message"
@@ -346,11 +347,16 @@ async def test_invalid_or_duplicate_final_tool_names_fail(tmp_path, monkeypatch,
 
 @pytest.mark.parametrize("transport,endpoint", [("http", "/mcp"), ("sse", "/sse")])
 async def test_remote_transports_and_configured_headers(tmp_path, transport, endpoint):
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    child = subprocess.Popen([sys.executable, str(SERVER), transport, str(port)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    listener = open_listener()
+    port = listener.getsockname()[1]
+    child = spawn_inherited(
+        [sys.executable, str(SERVER), transport, str(port)],
+        listener,
+        env=os.environ,
+        fd_env="MCP_LISTEN_FD",
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     try:
         deadline = time.monotonic() + 10
         while True:

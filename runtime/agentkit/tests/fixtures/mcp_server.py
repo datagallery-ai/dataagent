@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -71,4 +72,11 @@ if __name__ == "__main__":
                     return
                 await self.wrapped(scope, receive, send)
 
-        uvicorn.run(TestHeader(app), host="127.0.0.1", port=server.settings.port, log_level="error")
+        wrapped = TestHeader(app)
+        raw_fd = os.environ.get("MCP_LISTEN_FD", "")
+        if raw_fd:
+            # Parent still holds this listening socket until we inherit it.
+            inherited = socket.socket(fileno=int(raw_fd))
+            uvicorn.Server(uvicorn.Config(wrapped, log_level="error")).run(sockets=[inherited])
+        else:
+            uvicorn.run(wrapped, host="127.0.0.1", port=server.settings.port, log_level="error")

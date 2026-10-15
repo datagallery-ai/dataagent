@@ -474,6 +474,14 @@ def test_full_product_with_deterministic_chat_completions_provider(tmp_path, com
     assert len(requests) == 8
 
 
+def _is_tui_node(command: str) -> bool:
+    """Match the Node TUI, not the ``sh -c`` line that merely contains the same text."""
+    parts = command.split()
+    if not parts or "dist/index.js" not in command or "--v2" not in command:
+        return False
+    return parts[0].rsplit("/", 1)[-1] == "node"
+
+
 @pytest.mark.parametrize("shutdown_signal", [signal.SIGTERM, signal.SIGHUP])
 def test_tui_signal_shutdown_restores_terminal_and_stops_owned_backend(tmp_path, shutdown_signal):
     from test_launcher import config_file
@@ -488,7 +496,7 @@ def test_tui_signal_shutdown_restores_terminal_and_stops_owned_backend(tmp_path,
                 pid = parents[pid]
             return pid == terminal.process.pid
         node_pid = next(int(pid) for pid, _, command in entries
-                        if "node -- dist/index.js --v2" in command and owned(int(pid)))
+                        if _is_tui_node(command) and owned(int(pid)))
         os.kill(node_pid, shutdown_signal)
         terminal.wait_for_exit(expected_code=130)
         assert termios.tcgetattr(terminal.descriptor)[3] & termios.ICANON
