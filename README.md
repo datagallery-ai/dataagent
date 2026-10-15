@@ -191,16 +191,6 @@ Ask → Align semantics → Execute under control → Materialize output → Rep
   <img src="docs/assets/readme/runtime-flow.png" alt="DataAgent runtime flow" width="100%">
 </p>
 
-## 🖥️ More Than A Chat Box
-
-The **Web workbench** fits day-to-day analysis and demos, the **TUI** fits terminals and remote servers, and the **API / CopilotKit / AG-UI** path lets you embed the same trusted runtime into your own product.
-
-<p align="center">
-  <a href="docs/assets/readme/tui-demo.mp4">
-    <img src="docs/assets/readme/tui-demo.gif" alt="DataAgent TUI demo" width="100%">
-  </a>
-</p>
-
 ## 🗄️ Bring Your Data Stack, No Rebuild
 
 Connect through Data Gateway adapters: the built-in DTC Growth Review case works out of the box; DuckDB, SQLite, CSV, Excel, PostgreSQL, and MySQL fit local trials; cloud warehouses, search engines, and NoSQL systems plug in with their own services and credentials.
