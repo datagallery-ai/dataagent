@@ -46,7 +46,7 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 - 环境变量优先级：进程 > `--env-file` > 显式配置旁的 `.env` > Home `.env`。空值不覆盖低层非空值。
 - 引用写为 JSON 字符串 `"$env{LLM_MODEL}"`，不是 `${LLM_MODEL}`。启动时仅展开默认模型的环境引用；工具选择其他模型时延迟解析。
 - 扩展相关配置在 REST/TUI 的下一轮请求前刷新；模型、宿主路径和服务配置仍需重启。
-  具体范围见[扩展刷新说明](../docs/extension-refresh.md)。未知字段、重复键（含嵌套对象）、非法 JSON 和非有限数值都会报错。
+  具体范围见[扩展生命周期](../docs/architecture/extension-lifecycle.md)。未知字段、重复键（含嵌套对象）、非法 JSON 和非有限数值都会报错。字段表见[配置参考](../docs/reference/configuration.md)。
 
 ## 产品字段
 
@@ -145,7 +145,7 @@ Hooks 不支持 command、handler/events/match、单 Hook timeout、middleware/c
 
 ## MCP
 
-格式与语义见 [MCP 配置说明](../docs/mcp.md)。可运行本地示例见
+格式与语义见 [MCP 配置](../docs/reference/mcp-configuration.md)。可运行本地示例见
 [mcp/.mcp.json](mcp/.mcp.json) 与 [math_server.py](mcp/math_server.py)。
 MCP 服务声明不写入产品 `config.json` 或插件 `.plugin.json`。
 覆盖 stdio、HTTP、SSE 全部支持字段的模板见 [mcp/mcp.full.json](mcp/mcp.full.json)，

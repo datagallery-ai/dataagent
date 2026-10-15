@@ -70,7 +70,7 @@ uses a single bullet without repeated role/timestamp headers. Tools show an
 action, target and a short output preview; **Ctrl+O** toggles input/output details.
 Produced artifacts appear as compact `/outputs` entries below their source reply;
 artifacts without a source association appear under Session outputs.
-See the [V2 architecture and configuration guide](../../runtime/agentkit/docs/architecture-and-configuration.md)
+See the [AgentKit docs](../../runtime/agentkit/docs/README.md)
 for the frontend/backend boundary and workspace configuration.
 
 A separate `Run completed`, `Run failed`, or `Interrupted — completion unknown`
@@ -103,5 +103,5 @@ The Python suite includes a real PTY probe for the locked Ink 7.1.0 fullscreen c
 workaround, including an unpatched control. Run it before changing Ink: if upstream
 fixes the one-row offset, remove the workaround instead of applying it twice.
 
-See the [V2 architecture and configuration guide](../../runtime/agentkit/docs/architecture-and-configuration.md)
+See the [AgentKit docs](../../runtime/agentkit/docs/README.md)
 for verification entrypoints; IME candidate-window behavior still needs a manual check.

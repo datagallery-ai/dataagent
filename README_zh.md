@@ -190,16 +190,6 @@ Coding agent 改代码，SQL chatbot 回答问题，DataAgent 跑数据任务—
   <img src="docs/assets/readme/runtime-flow.png" alt="DataAgent 运行流程" width="100%">
 </p>
 
-## 🖥️ 不止一个聊天框
-
-**Web 工作台**适合日常分析和演示，**TUI** 适合终端和远程服务器，**API / CopilotKit / AG-UI** 让你把同一套可信运行时嵌进自己的产品。
-
-<p align="center">
-  <a href="docs/assets/readme/tui-demo.mp4">
-    <img src="docs/assets/readme/tui-demo.gif" alt="DataAgent TUI 演示" width="100%">
-  </a>
-</p>
-
 ## 🗄️ 接入现有数据栈，不重构
 
 通过 Data Gateway 适配器接入：内置 DTC 增长经营复盘案例开箱即用；DuckDB、SQLite、CSV、Excel、PostgreSQL、MySQL 适合本地试用；云数仓、搜索引擎和 NoSQL 按需配置服务与凭据。

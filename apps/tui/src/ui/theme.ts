@@ -1,36 +1,52 @@
-import { themeManager } from './themes/theme-manager.js';
-import type { TuiThemeTokens } from './themes/types.js';
 import chalk from 'chalk';
 
 // Ink's locked Chalk version does not detect NO_COLOR itself.
 if (process.env.NO_COLOR) chalk.level = 0;
 
-/**
- * 动态语义主题访问层。组件应优先使用这里的语义分组，而不是直接写色值。
- */
-export const tuiTheme: TuiThemeTokens = {
-  get background() {
-    return themeManager.getTokens().background;
+/** Fixed default palette. Components use semantic colors rather than raw values. */
+export const tuiTheme = {
+  background: {
+    canvas: '#1E1E1E',
+    surface: '#343434',
+    overlay: '#262626',
   },
-  get text() {
-    return themeManager.getTokens().text;
+  text: {
+    primary: '#E6E6E6',
+    emphasis: '#DCC99F',
+    secondary: '#9A9A9A',
+    muted: '#777777',
+    disabled: '#777777',
   },
-  get border() {
-    return themeManager.getTokens().border;
+  border: {
+    default: '#555555',
+    focused: '#9A9A9A',
+    overlay: '#555555',
   },
-  get structure() {
-    return themeManager.getTokens().structure;
+  structure: {
+    accent: '#6CA8E8',
+    focus: '#496783',
   },
-  get interaction() {
-    return themeManager.getTokens().interaction;
+  interaction: {
+    accent: '#79A5A9',
   },
-  get status() {
-    return themeManager.getTokens().status;
+  status: {
+    success: '#88C980',
+    warning: '#D8B76A',
+    error: '#F87171',
   },
-  get selection() {
-    return themeManager.getTokens().selection;
+  selection: {
+    background: '#262626',
+    selectedBackground: '#3A3A3A',
+    border: '#555555',
+    heading: '#D5DEDE',
+    selectedTitle: '#D5DEDE',
+    title: '#A9B8B9',
+    accent: '#79A5A9',
+    selectedDescription: '#98A6A8',
+    description: '#707C81',
+    disabled: '#586368',
   },
-};
+} as const;
 
 /**
  * 颜色使用映射

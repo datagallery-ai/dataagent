@@ -25,7 +25,6 @@ import {
 import { installTerminalRedrawOptimizer } from "./terminal-redraw-optimizer.js";
 import { withAlternateScreen } from "./terminal-screen.js";
 import { App } from "./ui/App.js";
-import { themeManager } from "./ui/themes/theme-manager.js";
 import type { AgentClient } from "./protocol/types.js";
 import type { V2AppContext } from "./protocol/v2-session-client.js";
 import { runV2Tui } from "./v2.js";
@@ -144,8 +143,6 @@ Options:
                           (default: backend run-defaults)
   --agent <name>          Agent name
                           (default: dataFoundry)
-  --theme <name>          TUI color theme
-                          (mist-dark or legacy-dark; env: DATAFOUNDRY_TUI_THEME)
   --resume [sessionId]    Resume the latest server session, or a specific session
   --no-auto-login         Ignore cached session and show the login menu
   --help, -h              Show this help message
@@ -154,7 +151,6 @@ Examples:
   datafoundry-tui
   datafoundry-tui --runtime-url http://localhost:8787/api/copilotkit
   datafoundry-tui --datasource-id my-database
-  datafoundry-tui --theme mist-dark
   datafoundry-tui --resume
   datafoundry-tui --resume thread-001
   datafoundry-tui --no-auto-login
@@ -223,13 +219,6 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     console.error(
       "Offline demo mode has been removed. Sign in with a password account against a running API.",
     );
-    return 1;
-  }
-
-  const requestedTheme = getOptionalArg(args, "--theme") ?? process.env.DATAFOUNDRY_TUI_THEME;
-  if (requestedTheme && !themeManager.setActiveTheme(requestedTheme)) {
-    const availableThemes = themeManager.getAvailableThemes().map((theme) => theme.name).join(", ");
-    console.error(`Unknown TUI theme "${requestedTheme}". Available themes: ${availableThemes}.`);
     return 1;
   }
 

@@ -11,7 +11,6 @@ import { SessionPicker } from '../SessionPicker.js';
 import { SlashCommandPopover } from '../SlashCommandPopover.js';
 import { StatusBar } from '../StatusBar.js';
 import { selectionColors } from '../theme.js';
-import { themeManager } from '../themes/theme-manager.js';
 import { EnhancedInputBox, inputLineFragments } from './EnhancedInputBox.js';
 
 const waitForInput = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -555,15 +554,9 @@ describe('shared selection theme', () => {
     }
   });
 
-  it('switches all semantic colors through one preset manager', () => {
-    assert.equal(themeManager.setActiveTheme('legacy'), true);
-    assert.equal(selectionColors.accent, '#6CA8E8');
-    assert.equal(selectionColors.background, '#121820');
-
-    assert.equal(themeManager.setActiveTheme('mist-dark'), true);
+  it('uses the fixed default palette for selection colors', () => {
     assert.equal(selectionColors.accent, '#79A5A9');
     assert.equal(selectionColors.background, '#262626');
-    assert.equal(themeManager.setActiveTheme('unknown-theme'), false);
   });
 });
 

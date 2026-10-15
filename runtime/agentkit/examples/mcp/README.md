@@ -64,4 +64,4 @@ LEGACY_MCP_API_KEY=replace-with-your-service-api-key
 本地示例配置好后，从仓库根运行 `npm run start:tui -- --v2`，输入：
 `Use mcp__user__math_add to add 12 and 30.`
 
-完整配置语义及 SDK 用法见 [MCP 配置与接入](../../docs/mcp.md)。
+完整配置语义及 SDK 用法见 [MCP 接入](../../docs/extensions/mcp.md) 和 [MCP 配置](../../docs/reference/mcp-configuration.md)。
