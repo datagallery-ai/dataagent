@@ -9,6 +9,7 @@
 # 实现：须在 hooks/*.py 中提供可调用对象；hooks/__init__.py 建议保留便于本地调试
 # 加载：运行期按文件直载 hooks/custom_hooks.py，不支持包内相对导入（见 custom_hooks.py）
 # Hook 签名：(state) 或 (state, runtime)，不可用 **kwargs 作第二参
+# 节点级条目在配置无对应节点时自动跳过（warning，不报错），不影响其他配置
 # =============================================================================
 
 HOOKS:
@@ -17,6 +18,20 @@ HOOKS:
       - name: hooks.checker.check_metadata
     post:
       - name: dataagent.core.flex.hooks.organize_workspace.organize_workspace
+  nodes:
+    human_feedback:
+      pre:
+        # HITL 自动应答（sql_feature_eval 无人值守场景）：读 AGENT_CONFIG.hitl_* 与
+        # per-task golden（runtime config 通道），分类 action 后程序化优先/LLM 兜底。
+        # hook 内部自判启用条件（hitl_auto_resolve），未启用的配置注册后为 no-op；
+        # 配置无 human_feedback 节点时注册自动跳过（warning）。
+        - hooks.hitl_auto_resolver.hitl_auto_resolver
+    planner:
+      post:
+        # 最终回复以"等待用户答复"收尾（文本提问、未走 HITL 工具）时，把提问
+        # 转换为 request_human_feedback 交由 hitl_auto_resolver 受 budget 约束作答，
+        # 避免 actor loop 带着未决问题终止（NO_SQL 死胡同）。仅在无人值守 HITL 生效。
+        - hooks.text_question_guard.text_question_guard
   # nodes:
   #   planner:
   #     post:

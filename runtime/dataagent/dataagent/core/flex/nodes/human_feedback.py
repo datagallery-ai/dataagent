@@ -115,6 +115,10 @@ class HumanFeedbackNode(BaseNode):
             "hitl_auto_resolved": True,
             "hitl_resolved_info": state.get("hitl_resolved_info", {}),
             "need_human_feedback": False,
+            # 自动解析路径同样计一轮 HITL：hitl_count 是 FlexState 真实累加器，
+            # hitl_auto_resolver 用它做 budget=4 的超限强制收敛；此前该路径不递增，
+            # budget 机制永远不触发。
+            "hitl_count": 1,
         }
 
     async def _collect_feedback(self, state: FlexState, runtime: Any, request_info: dict) -> tuple[str, int]:
