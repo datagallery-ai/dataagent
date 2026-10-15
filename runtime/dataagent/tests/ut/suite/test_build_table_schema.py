@@ -73,7 +73,6 @@ def test_build_schema_from_download_dump(tmp_path: Path) -> None:
         "src_db",
         mod._load_inventory(inventory_path, None),
         {},
-        mod.load_scene_config(),
     )
     out.write_text(__import__("json").dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -81,7 +80,7 @@ def test_build_schema_from_download_dump(tmp_path: Path) -> None:
     assert schema["table_names"] == ["user_info", "game_info"]
     user_cols = {col["name"]: col for col in schema["tables"][0]["columns"]}
     assert user_cols["usid"]["description"] == "用户ID（含枚举 A/B）"
-    assert user_cols["usid"]["valueType"] == "Int64"
+    assert user_cols["usid"]["valueType"] == "bigint"
     assert user_cols["city"]["description"] is None
     assert schema["join_hints"] == [
         {"left": "user_info.usid", "right": "game_info.usid", "note": "user_info.usid = game_info.usid"}
@@ -91,7 +90,7 @@ def test_build_schema_from_download_dump(tmp_path: Path) -> None:
         "label_event",
         "activity_event",
         "conversion_event",
-        "game_dim",
+        "entity_dim",
     }
 
 
@@ -103,7 +102,7 @@ def test_missing_columns_uses_catalog_file() -> None:
             {"name": "id", "valueType": "Int64", "description": None, "isPrimaryKey": False},
         ]
     }
-    schema = mod.build_schema(dump, "src_db", ["only_in_warehouse"], extra, mod.load_scene_config())
+    schema = mod.build_schema(dump, "src_db", ["only_in_warehouse"], extra)
     assert schema["tables"][0]["columns"][0]["name"] == "id"
     assert mod._missing_columns(schema["tables"]) == []
 
@@ -137,3 +136,47 @@ def test_exit_code_2_when_columns_missing(tmp_path: Path, monkeypatch: pytest.Mo
         mod.main()
     assert caught.value.code == 2
     assert out.is_file()
+
+
+def test_catalog_columns_build_schema_without_dump(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+    import sys
+
+    mod = _load_module()
+    inventory = tmp_path / "tables.json"
+    inventory.write_text('["user_info"]\n', encoding="utf-8")
+    columns = tmp_path / "columns.json"
+    columns.write_text(
+        json.dumps([{"table_name": "user_info", "column_name": "usid", "data_type": "Int64"}]),
+        encoding="utf-8",
+    )
+    out = tmp_path / "schema.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_table_schema.py",
+            "--source-database",
+            "src",
+            "--inventory-file",
+            str(inventory),
+            "--columns-file",
+            str(columns),
+            "--out",
+            str(out),
+        ],
+    )
+    mod.main()
+    schema = json.loads(out.read_text(encoding="utf-8"))
+    assert schema["table_names"] == ["user_info"]
+    assert schema["tables"][0]["columns"] == [
+        {"name": "usid", "valueType": "Int64", "description": None, "isPrimaryKey": False}
+    ]
+    assert schema["join_hints"] == []
+    assert set(schema["role_candidates"]) == {
+        "user_table",
+        "label_event",
+        "activity_event",
+        "conversion_event",
+        "entity_dim",
+    }

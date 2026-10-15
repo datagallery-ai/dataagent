@@ -49,7 +49,7 @@ ACTOR_LOOP:
             你是一个在数据分析工作流中运行的专业子代理。
 
             - 只关注主代理分配的目标，不要越界。
-            - 每个步骤至少产出一个持久化物件（本地文件或供下游使用的 ClickHouse 表），工作流会拒绝空的产物列表。
+            - 每个步骤至少产出一个持久化物件（本地文件或供下游使用的 `<warehouse>` 表），工作流会拒绝空的产物列表。
             - 当前任务工作区是你可以创建、修改、复制或移动文件的唯一位置。所有最终产物必须写入此处。
             - 禁止在 `.metadata/`、其他 `subagents/<session>` 目录或只读共享输出区下创建、修改、复制或移动文件。平台会在完成后将验收通过的产物发布到共享输出区。
             - 如果输入路径、前序步骤产物、任务指令或脚本默认值指向了其他输出目录，将该路径视为只读输入，将所有生成的输出重定向到当前任务工作区。
@@ -57,8 +57,8 @@ ACTOR_LOOP:
             - 禁止添加 `results`、`metrics`、`next_steps`、`key_insights` 等其他顶层字段到 `receipt.json`。
             - 每个 `receipt.json` 产物条目使用以下格式之一：
               - 本地文件：`{"kind":"file","path":"relative/path/to/file.json","type":"json"}`。路径必须指向工作区内真实存在的文件。
-              - ClickHouse 表：`{"kind":"clickhouse_table","uri":"clickhouse://<output_database>/<table>","name":"<output_database>.<table>"}`。仅用于为下游创建的表。
-            - 不要将 ClickHouse 表写入共享输出区，也不要将其表示为本地文件产物。
+              - `<warehouse>` 表：`{"kind":"<table_kind>","uri":"<uri_scheme>://<output_database>/<table>","name":"<output_database>.<table>"}`。仅用于为下游创建的表。
+            - 不要将 `<warehouse>` 表写入共享输出区，也不要将其表示为本地文件产物。
             - 如果无法完成目标，请说明阻塞原因，不要编造回执。
 
             ## 原生套件运行时适配
@@ -77,12 +77,13 @@ ACTOR_LOOP:
             ## 运行时硬约束
 
             <下面的约束非常重要!!!/>
-            1. **ClickHouse 唯一通道**：业务 SQL **仅**允许 `submit_resource_job` → `poll_job` → `collect_job`（`resource_id="clickhouse"`）。**严禁**用 Bash/shell、`curl`、`wget`、`python`/`requests`/`urllib`/`clickhouse_connect`/`clickhouse-driver` 或任何客户端直连 ClickHouse。失败时只允许修正 SQL 后重提 MCP，或按 Skill 写阻塞说明；禁止降级为直连旁路。
-            2. **语句白名单**：每次恰好一条 SQL，顶层关键字只能是 `CREATE` 或 `SELECT`。严禁 `INSERT` / `DROP` / `TRUNCATE` / `ALTER` / `DESCRIBE` / `DESC` / `SHOW` / `EXPLAIN` / `USE` / `FORMAT …` 后缀及多语句。覆盖旧表用单条 `CREATE OR REPLACE TABLE ... AS SELECT`，不可拆成「空表 + INSERT」。
-            3. **禁止自写执行脚本**：不得 `write`/`edit` 任何用于连库或执行采样的 `.py` / `.sh`；不得用 Bash 将 SQL 写到临时目录后执行。Bash 仅可用于当前 workspace 内的本地文件操作，以及运行 skill 自带脚本。
+            1. **`<warehouse>` 唯一通道**：业务 SQL **仅**允许 `submit_resource_job` → `poll_job` → `collect_job`（`resource_id="<resource_id>"`）。严禁 shell、HTTP 客户端、Python 驱动或其它客户端直连仓。
+            2. **语句白名单**：每次恰好一条 SQL，顶层关键字只能是 `CREATE` 或 `SELECT`。严禁 `INSERT` / `DROP` / `TRUNCATE` / `ALTER` / `DESCRIBE` / `DESC` / `SHOW` / `EXPLAIN` / `USE` / `FORMAT …` 后缀及多语句。物化方式按当前仓能力编译。
+            3. **占位符与编译门禁**：提交前读取工作区 `data_source.md`；按当前值解析仓、资源、receipt 和 catalog 占位符。按 `resources/logical_sql.md` 编译，SQL 中不得残留 `<LOGICAL_*>`、任务/表/列占位符；任一算子无法等价实现时阻塞。
+            4. **禁止自写执行脚本**：不得 `write`/`edit` 任何用于连库或执行采样的 `.py` / `.sh`；不得用 Bash 将 SQL 写到临时目录后执行。
             </上面的约束非常重要!!!>
 
-            具体查询顺序、语义落盘、schema 保真、采样比例、投影和定稿门禁均以 user_sampling Skill 对应步骤文档为准，不在本文件重复定义。
+            具体查询顺序、逻辑 SQL、schema 保真、采样比例、实体过滤和定稿门禁均以 user_sampling Skill 的六步文档为准。目标使用 `target_entity`，模式只允许 `prelabeled` / `regular`。
   - node: executor
     module: dataagent.core.flex.nodes.executor.Executor
     max_tool_result_length: 100000000   # 基本不走 Executor 的 IR 替换/截断
@@ -130,8 +131,8 @@ TOOLS:
           SEMANTIC_SERVICE_BASE_URL: $env{SEMANTIC_SERVICE_BASE_URL}
 
 RESOURCES:
-  - id: clickhouse
-    name: ClickHouse Query Pool
+  - id: sql_warehouse
+    name: SQL Warehouse Query Pool
     category: executable
     transport: {type: mcp, url: http://127.0.0.1:8766/mcp}
     operations: {submit: submit_job, poll: poll_job, collect: collect_job, cancel: cancel_job}

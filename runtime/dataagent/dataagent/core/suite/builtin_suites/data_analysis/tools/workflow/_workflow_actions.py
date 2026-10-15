@@ -19,6 +19,7 @@ from dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.status imp
     MAX_STEP_RETRIES,
     STEP_STATUS_FAILED,
     STEP_STATUS_IN_PROGRESS,
+    is_warehouse_table_kind,
     validate_receipt,
 )
 from dataagent.core.workspace.publish import load_publish_manifest, publish_subagent_artifacts
@@ -564,25 +565,25 @@ def _dispatch_task(
         lines.extend(["", "Previous step summary:", previous_summary])
     if previous_artifacts:
         lines.extend(["", "Previous step artifacts:"])
-        has_clickhouse_table = False
+        has_warehouse_table = False
         for artifact in previous_artifacts:
-            if str(artifact.get("kind") or "file") == "clickhouse_table":
-                has_clickhouse_table = True
+            if is_warehouse_table_kind(str(artifact.get("kind") or "file")):
+                has_warehouse_table = True
                 uri = str(artifact.get("uri") or "").strip()
                 name = str(artifact.get("name") or "").strip()
                 if uri and name:
-                    lines.append(f"- ClickHouse table: {name} ({uri})")
+                    lines.append(f"- warehouse table: {name} ({uri})")
                 elif uri:
-                    lines.append(f"- ClickHouse table: {uri}")
+                    lines.append(f"- warehouse table: {uri}")
                 continue
             artifact_path = str(artifact.get("path") or "").strip()
             artifact_type = str(artifact.get("type") or "").strip()
             if artifact_path:
                 label = f" ({artifact_type})" if artifact_type else ""
                 lines.append(f"- published local artifact{label}: {artifact_path}")
-        if has_clickhouse_table:
+        if has_warehouse_table:
             lines.append(
-                "Read listed ClickHouse tables through the ClickHouse resource; do not treat their URIs as local files."
+                "Read listed warehouse tables through the SQL warehouse resource; do not treat their URIs as local files."
             )
     return "\n".join(lines).strip()
 
@@ -678,10 +679,11 @@ def _map_published_receipt_artifacts(
     workspace_dir = Path(getattr(runtime, "workspace_dir", "")).resolve()
     mapped_artifacts: list[dict[str, str]] = []
     for artifact in receipt.get("artifacts", []):
-        if str(artifact.get("kind") or "file") == "clickhouse_table":
+        kind = str(artifact.get("kind") or "file").strip().lower()
+        if is_warehouse_table_kind(kind):
             mapped_artifacts.append(
                 {
-                    "kind": "clickhouse_table",
+                    "kind": kind,
                     "uri": str(artifact.get("uri") or "").strip(),
                     "name": str(artifact.get("name") or "").strip(),
                 }

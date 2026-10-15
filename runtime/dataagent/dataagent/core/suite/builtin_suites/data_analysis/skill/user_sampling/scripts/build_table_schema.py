@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Convert a semantic ontology download dump into step1_0_table_schema.json.
+"""Convert a semantic_download dump into step1_0_table_schema.json.
 
-The output is isomorphic to step1_output_meta.json: table_names, tables[].columns,
-join_hints, role_candidates, column_aliases. Reads the dump file that
-semantic_download wrote under .dataagent/tool_outputs/.
+Reads the file written by the local tool (receipt ``path``). Does not bind a
+warehouse dialect or scene vocabulary; optional inventory/columns files only
+restrict or fill tables already required by the warehouse list.
 """
 
 from __future__ import annotations
@@ -15,21 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-from scene_config import SceneConfig, SceneConfigError, add_config_argument, load_scene_config
-
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EQ_SPLIT = re.compile(r"\s*=\s*")
-_CH_TYPE = re.compile(
-    r"^(?:Nullable\()?("
-    r"UInt\d+|Int\d+|Float\d+|Decimal(?:\([^)]+\))?|String|FixedString\(\d+\)|"
-    r"Date|Date32|DateTime(?:64)?(?:\([^)]+\))?|UUID|Boolean|Bool|"
-    r"Array\([^)]+\)|LowCardinality\([^)]+\)|Enum\d*\([^)]+\)"
-    r")\)?$",
-    re.I,
-)
 
 
 def _load_json(path: Path) -> Any:
@@ -184,38 +171,7 @@ def _order_pk_first(columns: list[dict[str, Any]], primary_keys: list[str]) -> l
 
 
 def _map_value_type(raw: Any) -> str:
-    text = str(raw or "").strip()
-    if not text:
-        return ""
-    lowered = text.lower().replace(" ", "")
-    mapping = {
-        "bigint": "Int64",
-        "int": "Int32",
-        "integer": "Int32",
-        "smallint": "Int16",
-        "tinyint": "Int8",
-        "float": "Float64",
-        "double": "Float64",
-        "real": "Float64",
-        "str": "String",
-        "string": "String",
-        "varchar": "String",
-        "text": "String",
-        "bool": "UInt8",
-        "boolean": "UInt8",
-        "date": "Date",
-        "datetime": "DateTime",
-        "timestamp": "DateTime",
-        "list[str]": "Array(String)",
-        "list[string]": "Array(String)",
-        "array(string)": "Array(String)",
-    }
-    mapped = mapping.get(lowered)
-    if mapped:
-        return mapped
-    if _CH_TYPE.match(text):
-        return text
-    return text
+    return str(raw or "").strip()
 
 
 def _column_from_property(prop: dict[str, Any], primary_keys: list[str]) -> dict[str, Any] | None:
@@ -229,10 +185,7 @@ def _column_from_property(prop: dict[str, Any], primary_keys: list[str]) -> dict
         return None
     api_name = str(prop.get("api_name") or "").strip()
     description = prop.get("description")
-    if description is None or str(description).strip() == "":
-        description = None
-    else:
-        description = str(description)
+    description = None if description is None or str(description).strip() == "" else str(description)
     is_pk = bool(prop.get("isPrimaryKey")) or name in primary_keys or api_name in primary_keys
     return {
         "name": name,
@@ -267,10 +220,7 @@ def _tables_from_entities(root: dict[str, Any]) -> dict[str, dict[str, Any]]:
         columns = _order_pk_first(columns, primary_keys)
         property_columns = {
             str(prop.get("api_name") or "").strip(): str(
-                _identifier_name(prop.get("column_name"))
-                or prop.get("column_name")
-                or prop.get("api_name")
-                or ""
+                _identifier_name(prop.get("column_name")) or prop.get("column_name") or prop.get("api_name") or ""
             ).strip()
             for prop in (entity.get("properties") or [])
             if isinstance(prop, dict) and str(prop.get("api_name") or "").strip()
@@ -317,10 +267,7 @@ def _tables_from_data_access_plan(root: dict[str, Any]) -> dict[str, dict[str, A
                 continue
             seen.add(col_name)
             description = col.get("description")
-            if description is None or str(description).strip() == "":
-                description = None
-            else:
-                description = str(description)
+            description = None if description is None or str(description).strip() == "" else str(description)
             columns.append(
                 {
                     "name": col_name,
@@ -418,12 +365,8 @@ def _join_hints_from_relations(
             source_props = mapping.get("source_properties") or []
             target_props = mapping.get("target_properties") or []
             if source_table and target_table and source_props and target_props:
-                source_col = tables[source_table]["property_columns"].get(str(source_props[0])) or str(
-                    source_props[0]
-                )
-                target_col = tables[target_table]["property_columns"].get(str(target_props[0])) or str(
-                    target_props[0]
-                )
+                source_col = tables[source_table]["property_columns"].get(str(source_props[0])) or str(source_props[0])
+                target_col = tables[target_table]["property_columns"].get(str(target_props[0])) or str(target_props[0])
                 if source_col and target_col:
                     _add(
                         f"{source_table}.{source_col}",
@@ -501,7 +444,7 @@ def _load_columns_file(path: Path | None) -> dict[str, list[dict[str, Any]]]:
         if not isinstance(item, dict):
             continue
         table = _table_name_from_full(item.get("table") or item.get("table_name"))
-        name = str(item.get("name") or item.get("column") or "").strip()
+        name = str(item.get("name") or item.get("column") or item.get("column_name") or "").strip()
         if not table or not name:
             continue
         if name in seen.setdefault(table, set()):
@@ -510,7 +453,7 @@ def _load_columns_file(path: Path | None) -> dict[str, list[dict[str, Any]]]:
         grouped.setdefault(table, []).append(
             {
                 "name": name,
-                "valueType": _map_value_type(item.get("type") or item.get("valueType")),
+                "valueType": _map_value_type(item.get("type") or item.get("valueType") or item.get("data_type")),
                 "description": None,
                 "isPrimaryKey": False,
             }
@@ -549,12 +492,18 @@ def _missing_columns(tables: list[dict[str, Any]]) -> list[str]:
     return missing
 
 
+def _empty_role_candidates() -> dict[str, list[str]]:
+    return {
+        key: []
+        for key in ("user_table", "label_event", "activity_event", "conversion_event", "entity_dim")
+    }
+
+
 def build_schema(
     dump: Any,
     source_database: str,
     inventory: list[str] | None,
     extra_columns: dict[str, list[dict[str, Any]]],
-    config: SceneConfig,
 ) -> dict[str, Any]:
     root = _ontology_root(dump)
     ontology_tables = _tables_from_entities(root)
@@ -577,35 +526,38 @@ def build_schema(
     allowed = set(table_names)
     return {
         "source_database": source_database,
-        "scene_config": config.schema_metadata(),
         "table_names": table_names,
         "tables": tables,
         "join_hints": _join_hints_from_relations(root, ontology_tables, allowed),
-        "role_candidates": config.role_candidates(tables),
-        "column_aliases": config.column_aliases(tables),
+        "role_candidates": _empty_role_candidates(),
+        "column_aliases": {"user_id_columns": []},
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Build step1_0_table_schema.json from a semantic_download dump"
+    parser = argparse.ArgumentParser(description="Build step1_0_table_schema.json from a semantic_download dump")
+    parser.add_argument(
+        "--dump",
+        type=Path,
+        default=None,
+        help="Path from semantic_download receipt. Omit when building from --columns-file only.",
     )
-    parser.add_argument("--dump", type=Path, required=True, help="Path from semantic_download receipt")
     parser.add_argument("--source-database", required=True)
     parser.add_argument("--out", type=Path, required=True, help="Path to step1_0_table_schema.json")
     parser.add_argument("--inventory-file", type=Path, default=None)
     parser.add_argument("--inventory", default=None, help="Comma-separated table names")
-    parser.add_argument("--columns-file", type=Path, default=None, help="CH system.columns JSON dump")
-    add_config_argument(parser)
+    parser.add_argument("--columns-file", type=Path, default=None, help="Catalog column dump for missing tables")
     args = parser.parse_args()
 
+    if args.dump is None and args.columns_file is None:
+        raise SystemExit("build_table_schema failed: pass --dump or --columns-file")
+
     try:
-        config = load_scene_config(args.config)
-        dump = _load_json(args.dump)
+        dump = _load_json(args.dump) if args.dump is not None else {}
         inventory = _load_inventory(args.inventory_file, args.inventory)
         extra_columns = _load_columns_file(args.columns_file)
-        schema = build_schema(dump, args.source_database, inventory, extra_columns, config)
-    except (SceneConfigError, OSError, json.JSONDecodeError, ValueError) as exc:
+        schema = build_schema(dump, args.source_database, inventory, extra_columns)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise SystemExit(f"build_table_schema failed: {exc}") from exc
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -1,151 +1,70 @@
 # 口径：negative_samples（多群体负样本）
 
-**目的**：按 SKILL §5 构造语义区分的多群体负样本，而非将候选池内全部非正样本混合为单一群体。
+群体选择来自 plan.`sampling_config.label_family`，SQL 由
+`step1_1_build_training_set.md` 组合。所有群体排除正样本；每群体不限量，
+总量由 step1_1 的 `<LOGICAL_TAKE>` 统一控制。稳定抽样、anti join 和分位数按
+`logical_sql.md` 编译。表列只来自 plan 的 `sampling_sources`、`keys`、
+`sql_fragments`。
 
-**公共约束**：所有群体排除正样本；每群体输出**不限量**（`ORDER BY cityHash64` 后不加 LIMIT），负样本总量由 `step1_3` 中 `neg_sampled` 的全局 `LIMIT (SELECT count() * 4 FROM pos_limited)` 统一控制。`neg_k` 为各群体预估配额，仅作参考，不可写成 LIMIT。
-
-**ClickHouse 方言**：
-排除集合统一用：
-```sql
-LEFT ANTI JOIN <excluded_set> AS x ON outer.<user_id> = x.<user_id>
-```
-
-等价写法：`outer.<user_id> NOT IN (SELECT <user_id> FROM <excluded_set>)`（子查询内避免产出 NULL 键）。**禁止**再写相关 `NOT EXISTS`。
-
-**表/列来源**：plan 的 `sampling_sources` + `keys`（语义服务确认后 step1_0 填入）。
-
-**参数**：`{{source_database}}`、`T0`、`label_window_days`、`game_scope`；SQL 片段用 plan 的 `sql_fragments`。
-
-各群体模板仅在所需逻辑角色经语义层解析成功时可选。`negative_populations` 记录实际采用的来源表、表级键映射与口径；缺失的事件流不由其它固定表名替代。
-
-| 代号 | 群体 | 构造口径 |
+| 代号 | 群体 | 口径 |
 |---|---|---|
-| N1 | 域内未转化 | 来自 `pool`，`LEFT ANTI JOIN pos` |
-| N2 | 曝光未转化 | 曝光目标/相似游戏但未点击/无下游转化 |
-| N3 | 高活跃不玩目标 | 近 90 天行为量高分位，窗口内不碰目标/相似游戏 |
-| N4 | 高付费不付目标 | 付费大盘用户，窗口内不为目标/相似游戏付费 |
-| N5 | 随机背景 | 全体用户哈希抽样，排除正样本 |
-| N6 | 兴趣错配 | 画像与目标游戏明显不同，且非正样本 |
+| N1 | 域内未转化 | 候选池排除正样本 |
+| N2 | 曝光未转化 | 曝光目标实体但无下游转化 |
+| N3 | 高活跃不碰目标 | lookback 高分位活跃且不碰目标 |
+| N4 | 全局转化但未转化目标 | 全局发生目标类行为但未对目标实体转化 |
+| N5 | 随机背景 | 用户全集稳定抽样并排除正样本 |
+| N6 | 兴趣错配 | 画像与目标实体不同且非正样本 |
 
-**按目标点名（SKILL §5）**：付费必含 N4；点击/CTR 以 N2 为主；安装/留存/时长以 N3+N2 为主；至少一 hard + 一 N5。
-`scripts/step1_3_build_training_set.md` 的 `combined` **仅 UNION plan 中选用的 `neg_*` CTE**。
+写入 `neg_pool` 的群体来自 plan 的 label family，并且 schema 里已经有对应的事件表和列。表名、列名从 plan 的 `sampling_sources` 读取。
 
----
+## N1
 
-## N1 域内未转化
-
-```sql
-neg_N1 AS (
-  SELECT p.user_key
-  FROM pool AS p
-  LEFT ANTI JOIN pos AS pos_ex
-    ON p.user_key = pos_ex.user_key
-)
+```text
+SELECT p.user_key
+FROM pool AS p
+<LOGICAL_ANTI_JOIN right="pos AS pos_ex" on="p.user_key = pos_ex.user_key">
 ```
 
-## N2 曝光未转化
+## N2
 
-```sql
-neg_N2 AS (
-  SELECT <canonical_user_key_exposure> AS user_key
-  FROM {{source_database}}.<exposure_event> AS e
-  LEFT ANTI JOIN pos AS pos_ex
-    ON <canonical_user_key_exposure> = pos_ex.user_key
-  WHERE <valid_user_key_predicate_exposure>
-    AND <game_filter_predicate_exposure>
-    AND <negative_exposure_window_predicate>
-    AND <exposure_not_converted_predicate>
-)
+```text
+SELECT <canonical_user_key_exposure> AS user_key
+FROM {{source_database}}.<exposure_event> AS e
+<LOGICAL_ANTI_JOIN right="pos AS pos_ex"
+  on="<canonical_user_key_exposure> = pos_ex.user_key">
+WHERE <valid_user_key_predicate_exposure>
+  AND <entity_filter_predicate_exposure>
+  AND <negative_exposure_window_predicate>
+  AND <exposure_not_converted_predicate>
 ```
 
-## N3 高活跃不玩目标
+## N3
 
-```sql
-neg_N3 AS (
-  SELECT h.user_key
-  FROM (
-    SELECT <canonical_user_key_activity> AS user_key, count() AS act_cnt
-    FROM {{source_database}}.<activity_source>
-    WHERE <valid_user_key_predicate_activity>
-      AND <pre_t0_lookback_predicate_activity>
-    GROUP BY user_key
-  ) AS h
-  LEFT ANTI JOIN (
-    SELECT DISTINCT <canonical_user_key_activity> AS user_key
-    FROM {{source_database}}.<activity_source>
-    WHERE <valid_user_key_predicate_activity>
-      AND <game_filter_predicate_activity>
-      AND <label_window_predicate_activity>
-  ) AS touched
-    ON h.user_key = touched.user_key
-  LEFT ANTI JOIN pos AS pos_ex
-    ON h.user_key = pos_ex.user_key
-  WHERE h.act_cnt >= (
-    SELECT quantileExact(0.9)(act_cnt)
-    FROM (
-      SELECT count() AS act_cnt
-      FROM {{source_database}}.<activity_source>
-      WHERE <valid_user_key_predicate_activity>
-        AND <pre_t0_lookback_predicate_activity>
-      GROUP BY <canonical_user_key_activity>
-    ) AS q
-  )
-)
+先构造目标实体触达用户；再按用户统计 lookback 活跃量，保留
+`<LOGICAL_PERCENTILE(act_cnt, 0.9)>` 以上，并对触达用户及正样本分别执行
+`<LOGICAL_ANTI_JOIN>`。
+
+## N4
+
+从全局命中目标类行为的用户中，anti join 目标实体转化用户和正样本。目标实体
+条件必须使用 plan 的 `entity_filter`。
+
+## N5
+
+```text
+SELECT <canonical_background_user_key> AS user_key
+FROM {{source_database}}.<background_user_source> AS u
+<LOGICAL_ANTI_JOIN right="pos AS pos_ex"
+  on="<canonical_background_user_key> = pos_ex.user_key">
+WHERE <valid_background_user_key_predicate>
 ```
 
-## N4 高付费不付目标
+`background_user_source` 必须是语义层解析出的用户全集来源。
 
-```sql
-neg_N4 AS (
-  SELECT p.user_key
-  FROM (
-    SELECT <canonical_user_key_pay> AS user_key
-    FROM {{source_database}}.<pay_booking_event>
-    WHERE <valid_user_key_predicate_pay>
-      AND <positive_pay_predicate>
-    GROUP BY user_key
-  ) AS p
-  LEFT ANTI JOIN pos AS pos_ex
-    ON p.user_key = pos_ex.user_key
-  LEFT ANTI JOIN (
-    SELECT DISTINCT <canonical_user_key_pay> AS user_key
-    FROM {{source_database}}.<pay_booking_event>
-    WHERE <valid_user_key_predicate_pay>
-      AND <game_filter_predicate_pay>
-      AND <positive_pay_predicate>
-      AND <label_window_predicate_pay>
-  ) AS paid_target
-    ON p.user_key = paid_target.user_key
-)
-```
+## N6
 
-## N5 随机背景
+N5 口径再加 `<interest_mismatch_predicate>`；仅当来源含语义确认的兴趣属性时
+可用。
 
-```sql
-neg_N5 AS (
-  SELECT <canonical_background_user_key> AS user_key
-  FROM {{source_database}}.{{background_user_source}} AS u
-  LEFT ANTI JOIN pos AS pos_ex
-    ON <canonical_background_user_key> = pos_ex.user_key
-  WHERE <valid_background_user_key_predicate>
-)
-```
-
-`{{background_user_source}}` 是语义层解析出的用户全集来源；可为用户维表，也可为业务源表用户键的去重子查询。
-
-## N6 兴趣错配
-
-```sql
-neg_N6 AS (
-  SELECT <canonical_background_user_key> AS user_key
-  FROM {{source_database}}.{{background_user_source}} AS u
-  LEFT ANTI JOIN pos AS pos_ex
-    ON <canonical_background_user_key> = pos_ex.user_key
-  WHERE <valid_background_user_key_predicate>
-    AND <interest_mismatch_predicate>
-)
-```
-
-N6 仅适用于 `{{background_user_source}}` 含有语义层确认的用户兴趣属性；否则该群体不进入 plan。
-
-**每群体产出**：`SELECT user_key, toUInt8(0) AS label, '<代号>' AS neg_pop`（`neg_pop` 仅统计用，不进投影表）。口径、来源表、抽样量写入 `step1_0_sampling_plan.json.negative_populations`。
+每群体输出 `user_key, 0 AS label, '<代号>' AS neg_pop`。`neg_pop` 仅统计用，
+不进入投影表。step1_1 只 UNION plan 中实际启用的群体。
