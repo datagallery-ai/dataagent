@@ -100,6 +100,14 @@ TOOLS:
       hooks:
         pre:
           - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready
+    # Schema linking 数据探查:对单表拉 LIMIT N 行样例(SELECT only)
+    # 注意:de_agent 当前未声明 dataops RESOURCE,联调环境会返回 no_dataops_resource 自动跳过;
+    #   生产环境(DATAOPS_ENV=prod)不受影响,直接调官方 MCP
+    - name: "dataops_probe_table"
+      module: "dataagent.actions.tools.local_tool.dataops_probe_tool"
+      function: "dataops_probe_table"
+      config:
+        default_sample_size: 5
     # 将 Agent 编写的口径冻结表融入 DataTaskIR（方案 B：Agent 主动调用）
     - name: "freeze_calibration_to_ir"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.calibration_ir"
