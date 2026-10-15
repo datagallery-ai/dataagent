@@ -15,10 +15,33 @@ from restapi.__main__ import check_port
 from restapi.sessions import workspace_lock
 
 
-def config_file(tmp_path):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+def open_listener():
+    """Bind an ephemeral port and keep listening until the child inherits the socket."""
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    sock.set_inheritable(True)
+    return sock
+
+
+def spawn_inherited(argv, listener, *, env, fd_env="DATAAGENT_LISTEN_FD", **kwargs):
+    """Hand a still-open listener to the child, then close this process's copy."""
+    forwarded = {**env, fd_env: str(listener.fileno())}
+    try:
+        return subprocess.Popen(argv, env=forwarded, pass_fds=(listener.fileno(),), **kwargs)
+    finally:
+        listener.close()
+
+
+def config_file(tmp_path, listener=None):
+    if listener is None:
+        # System tests still release the port and let the TUI bind it. They stay serial.
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+    else:
+        port = listener.getsockname()[1]
     path = tmp_path / "config.json"
     path.write_text(json.dumps({
         "models": {"primary": {
@@ -51,10 +74,12 @@ def test_workspace_lock_is_live_os_lock_not_stale_file(tmp_path):
 
 
 def test_real_backend_ready_and_graceful_cleanup(tmp_path):
-    path, port = config_file(tmp_path)
+    listener = open_listener()
+    path, port = config_file(tmp_path, listener)
     identity = str(uuid4())
-    child = subprocess.Popen(
+    child = spawn_inherited(
         [sys.executable, "-m", "restapi", "serve", "--config", str(path), "--workspace", str(tmp_path)],
+        listener,
         env={**os.environ, "DATAAGENT_V2_TOKEN": "test-token", "DATAAGENT_V2_INSTANCE_ID": identity},
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
@@ -75,22 +100,26 @@ def test_real_backend_ready_and_graceful_cleanup(tmp_path):
 
 
 def test_real_backend_exits_when_launcher_parent_dies(tmp_path):
-    path, port = config_file(tmp_path)
+    listener = open_listener()
+    path, port = config_file(tmp_path, listener)
     identity = str(uuid4())
     parent_script = """
 import os, subprocess, sys
+fd = int(os.environ["DATAAGENT_LISTEN_FD"])
 child = subprocess.Popen(
     [sys.executable, '-m', 'restapi', 'serve', '--stdio-ready', '--config', sys.argv[1], '--workspace', sys.argv[2]],
     stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     start_new_session=True,
+    pass_fds=(fd,),
 )
 print(child.pid, flush=True)
 child.wait()
 """
-    parent = subprocess.Popen(
-        [sys.executable, "-c", parent_script, str(path), str(tmp_path)], stdout=subprocess.PIPE, text=True,
+    parent = spawn_inherited(
+        [sys.executable, "-c", parent_script, str(path), str(tmp_path)],
+        listener,
         env={**os.environ, "DATAAGENT_V2_TOKEN": "test-token", "DATAAGENT_V2_INSTANCE_ID": identity},
-        start_new_session=True,
+        stdout=subprocess.PIPE, text=True, start_new_session=True,
     )
     child_pid = int(parent.stdout.readline().strip())
     original_identity = subprocess.check_output(["ps", "-p", str(child_pid), "-o", "lstart=,command="], text=True)

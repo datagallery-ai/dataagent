@@ -8,7 +8,9 @@ import {
   configureDeploymentInteractively,
   collectManagedPorts,
   createDeployLogWriter,
+  formatStartBlocked,
   inspectWritablePath,
+  prepareStartEnvironment,
   resolveAuthPublicBaseUrl,
   resolveTuiRuntimeUrl,
   runDeploymentDoctor
@@ -595,4 +597,53 @@ test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
     resolveTuiRuntimeUrl({ API_PORT: "8877" }, "http://example/api/copilotkit"),
     "http://example/api/copilotkit"
   );
+});
+
+const COMPLETE_ENV = {
+  WEB_PORT: "3310",
+  API_PORT: "8877",
+  API_HOST: "127.0.0.1",
+  AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3310",
+  AUTH_REGISTRATION_MODE: "open",
+  AUTH_SESSION_SECRET: "existing-session-secret-value",
+  SECRET_MASTER_KEY: "existing-master-secret-value"
+};
+
+test("start names missing .env variables and does not write .env.local", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
+  await mkdir(path.join(root, "apps/api/dist"), { recursive: true });
+  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "apps/api/dist/index.js"), "");
+  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
+  await assert.rejects(
+    () => prepareStartEnvironment(root, {}),
+    (error) => {
+      assert.match(error.message, /缺少合法完整的 \.env 配置，缺：/);
+      assert.match(error.message, /WEB_PORT/);
+      assert.match(error.message, /API_PORT/);
+      assert.match(error.message, /AUTH_PUBLIC_BASE_URL/);
+      assert.match(error.message, /AUTH_REGISTRATION_MODE/);
+      assert.match(error.message, /AUTH_SESSION_SECRET/);
+      assert.match(error.message, /SECRET_MASTER_KEY/);
+      assert.match(error.message, /请先运行 \.\/deploy\.sh deploy/);
+      return true;
+    }
+  );
+  assert.equal(existsSync(path.join(root, "apps/web/.env.local")), false);
+  assert.equal(
+    formatStartBlocked(["AUTH_SESSION_SECRET"], ["apps/api/dist/index.js"]),
+    "缺少合法完整的 .env 配置，缺：AUTH_SESSION_SECRET；缺少文件：apps/api/dist/index.js。请先运行 ./deploy.sh deploy"
+  );
+});
+
+test("start writes apps/web/.env.local from a complete .env without new secrets", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
+  await mkdir(path.join(root, "apps/api/dist"), { recursive: true });
+  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "apps/api/dist/index.js"), "");
+  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
+  await prepareStartEnvironment(root, COMPLETE_ENV);
+  const webEnv = await readFile(path.join(root, "apps/web/.env.local"), "utf8");
+  assert.match(webEnv, /API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8877/);
+  assert.equal(existsSync(path.join(root, ".env")), false);
 });

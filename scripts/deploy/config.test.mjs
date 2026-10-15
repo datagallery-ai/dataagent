@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   assertNativeAuthPublicBaseUrl,
   assertNativeBindHosts,
+  deploymentConfigGaps,
   ensureDeploymentEnvironment,
   isCompleteDeploymentConfig,
   parseDeploymentEnvironment,
@@ -201,6 +202,39 @@ test("ensureDeploymentEnvironment can skip secret generation", () => {
   assert.equal(result.env.SECRET_MASTER_KEY, undefined);
   assert.ok(result.generatedKeys.includes("WEB_HOST"));
   assert.ok(!result.generatedKeys.includes("AUTH_SESSION_SECRET"));
+});
+
+test("deploymentConfigGaps names every missing or placeholder variable", () => {
+  assert.deepEqual(deploymentConfigGaps({}), [
+    "WEB_PORT",
+    "API_PORT",
+    "AUTH_PUBLIC_BASE_URL",
+    "AUTH_REGISTRATION_MODE",
+    "AUTH_SESSION_SECRET",
+    "SECRET_MASTER_KEY"
+  ]);
+  assert.deepEqual(
+    deploymentConfigGaps({
+      WEB_PORT: "3000",
+      API_PORT: "8787",
+      AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+      AUTH_REGISTRATION_MODE: "open",
+      AUTH_SESSION_SECRET: "change-me",
+      SECRET_MASTER_KEY: "replace-me"
+    }),
+    ["AUTH_SESSION_SECRET", "SECRET_MASTER_KEY"]
+  );
+  assert.deepEqual(
+    deploymentConfigGaps({
+      WEB_PORT: "3000",
+      API_PORT: "8787",
+      AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+      AUTH_REGISTRATION_MODE: "open",
+      AUTH_SESSION_SECRET: "existing-session-secret-value",
+      SECRET_MASTER_KEY: "existing-master-secret-value"
+    }),
+    []
+  );
 });
 
 test("isCompleteDeploymentConfig rejects placeholders and partial env", () => {

@@ -22,6 +22,35 @@ def check_port(host: str, port: int):
             raise RuntimeError(f"Port {host}:{port} is occupied; no existing process was changed") from None
 
 
+def inherited_listener(host: str, port: int):
+    """Use a socket the parent kept open across spawn, when DATAAGENT_LISTEN_FD is set.
+
+    The fd is already bound and listening, so startup does not bind a second time
+    and the port is never released between the parent's bind and this process.
+    """
+    raw = os.environ.get("DATAAGENT_LISTEN_FD", "")
+    if raw == "":
+        return None
+    try:
+        fd = int(raw)
+    except ValueError:
+        raise RuntimeError("DATAAGENT_LISTEN_FD must be an integer file descriptor") from None
+    if fd < 3:
+        raise RuntimeError("DATAAGENT_LISTEN_FD must not be stdin, stdout, or stderr")
+    sock = socket.socket(fileno=fd)
+    try:
+        bound_host, bound_port = sock.getsockname()[:2]
+    except OSError:
+        sock.close()
+        raise RuntimeError("DATAAGENT_LISTEN_FD is not a bound TCP socket") from None
+    if (bound_host, bound_port) != (host, port):
+        sock.close()
+        raise RuntimeError(
+            f"DATAAGENT_LISTEN_FD is bound to {bound_host}:{bound_port}, not {host}:{port}"
+        )
+    return sock
+
+
 def configure_logging(runtime: Runtime):
     for path in (runtime.paths.state_dir, runtime.paths.state_dir / "logs"):
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -49,7 +78,9 @@ def serve(runtime: Runtime, *, stdio_ready=False):
     if stdio_ready and not os.environ.get("DATAAGENT_V2_INSTANCE_ID"):
         raise ValueError("A launch instance identity is required for the startup protocol")
     settings = runtime.settings.server
-    check_port(settings.host, settings.port)
+    inherited = inherited_listener(settings.host, settings.port)
+    if inherited is None:
+        check_port(settings.host, settings.port)
     configure_logging(runtime)
     app = create_app(runtime, instance_id=os.environ.get("DATAAGENT_V2_INSTANCE_ID"))
     server = uvicorn.Server(uvicorn.Config(
@@ -82,9 +113,14 @@ def serve(runtime: Runtime, *, stdio_ready=False):
         threading.Thread(target=announce_ready, daemon=True).start()
         threading.Thread(target=watch_frontend, daemon=True).start()
     try:
-        server.run()
+        if inherited is None:
+            server.run()
+        else:
+            server.run(sockets=[inherited])
     finally:
         stopped.set()
+        if inherited is not None:
+            inherited.close()
     return 0 if server.started else 1
 
 

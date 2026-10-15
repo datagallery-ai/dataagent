@@ -66,6 +66,7 @@
     "smoke:native-deploy": "node scripts/deploy/smoke-native-deploy.mjs",
     "test:web": "npm --workspace @datafoundry/web run test",
     "test:packages": "vitest run packages apps/api",
+    "test:product": "uv run --project runtime/agentkit python scripts/run_product_tests.py",
     "dev:tui": "npm --workspace @datafoundry/tui run dev",
     "start:tui": "npm --workspace @datafoundry/tui run start --",
     "build:tui": "npm --workspace @datafoundry/tui run build",
