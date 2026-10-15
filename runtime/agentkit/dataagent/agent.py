@@ -5,7 +5,7 @@ extensions with native host policies and a session-scoped filesystem backend.
 No custom Agent runner.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -14,6 +14,7 @@ from langchain.agents.middleware import (
     ToolCallLimitMiddleware,
     ToolErrorMiddleware,
 )
+from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool, ToolException
 
 from dataagent.bootstrap import Runtime
@@ -25,6 +26,7 @@ from dataagent.extensions.skills import VersionedSkillsMiddleware
 from dataagent.extensions.tracing import LocalLangChainTracer
 from dataagent.models import ModelContext
 from dataagent.prompts import render_agent_prompt, render_filesystem_prompt, render_subagent_prompt
+from dataagent.semantic_client import SemanticServiceClient
 from dataagent.settings import Limits
 
 
@@ -51,8 +53,19 @@ def build_native_middleware(
     ]
 
 
-def load_extensions(runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = None) -> dict:
-    """Compile Python extensions with already discovered native MCP tools."""
+def load_extensions(
+    runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = None,
+    semantic_client: SemanticServiceClient | None = None,
+    model_resolver: Callable[[str], BaseChatModel] | None = None,
+) -> dict:
+    """Compile Python extensions with already discovered native MCP tools.
+
+    ``semantic_client`` is the host-owned semantic-service client handed to
+    compiled-subagent factories; build_agent supplies the context's client.
+    ``model_resolver`` maps model aliases to models for compiled subagents;
+    build_agent supplies the context's cached resolver, so environment
+    expansion, alias errors and caching stay in ModelContext.
+    """
     settings, extensions = runtime.settings, runtime.extensions
     if extensions.mcp_servers and mcp_tools is None:
         raise ValueError(
@@ -68,6 +81,9 @@ def load_extensions(runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = 
         skill_sources=extensions.skill_sources,
         hook_entries=tuple((binding.base_dir, binding.spec) for binding in extensions.hooks),
         mcp_tools=mcp_tools or (),
+        plugin_params=dict(settings.plugins.config),
+        model_resolver=model_resolver if model_resolver is not None else ModelContext(runtime).get_model,
+        semantic_client=semantic_client,
     )
 
 
@@ -92,11 +108,17 @@ def build_agent(
         )
     workspaces = runtime.paths.workspaces if input_workspaces is None else input_workspaces
     session = session or runtime.paths.for_session("sdk")
-    kwargs = load_extensions(runtime, mcp_tools=mcp_tools)
+    kwargs = load_extensions(
+        runtime, mcp_tools=mcp_tools, semantic_client=context.semantic_client,
+        model_resolver=context.get_model,
+    )
     backend = build_filesystem_backend(runtime, session)
     filesystem_prompt = render_filesystem_prompt(outputs=session.outputs, workspaces=workspaces)
     limits = settings.dataagent.limits
     for child in kwargs["subagents"]:
+        if "runnable" in child:
+            # Compiled subagents arrive as complete runnables; the core applies its own policies.
+            continue
         child["system_prompt"] = render_subagent_prompt(
             filesystem_instructions=filesystem_prompt,
             subagent_instructions=child.get("system_prompt"),

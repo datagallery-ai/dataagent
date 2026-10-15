@@ -1,9 +1,10 @@
 """Selected declarations to native Deep Agents kwargs, without host policy."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from dataagent.declarations import HookSpec, PluginSpec, SubAgentSpec
@@ -12,6 +13,7 @@ from dataagent.extensions.loading import PythonLoader, contained_path
 from dataagent.extensions.skills import collect_loose_skills, compile_skill_sources
 from dataagent.extensions.subagents import collect_subagents, materialize_subagents
 from dataagent.extensions.tools import collect_tools
+from dataagent.semantic_client import SemanticServiceClient
 
 ROOT_AGENT_NAME = "dataagent-v2"
 
@@ -21,8 +23,16 @@ def compile_extensions(
     skill_sources: Sequence[tuple[str, str]] = (),
     hook_entries: Sequence[tuple[Path, HookSpec]] = (),
     mcp_tools: Sequence[BaseTool] = (),
+    plugin_params: dict[str, dict[str, Any]] | None = None,
+    model_resolver: Callable[[str], BaseChatModel] | None = None,
+    semantic_client: SemanticServiceClient | None = None,
 ) -> dict[str, Any]:
-    """Combine plugins and standalone resources without adding host execution policy."""
+    """Combine plugins and standalone resources without adding host execution policy.
+
+    ``plugin_params`` (Agent configuration ``plugins.config``), ``model_resolver``
+    and ``semantic_client`` (the host-owned semantic-service client) reach
+    compiled-subagent graph factories; standard declarations ignore them.
+    """
     loader = PythonLoader()
     tool_registry: dict[str, BaseTool] = {}
     for tool in mcp_tools:
@@ -54,6 +64,8 @@ def compile_extensions(
     children = materialize_subagents(
         child_specs, tool_registry=tool_registry, loader=loader,
         skill_sources=compiled_skill_sources,
+        plugin_params=plugin_params, model_resolver=model_resolver,
+        semantic_client=semantic_client,
     )
     return {
         "name": ROOT_AGENT_NAME,

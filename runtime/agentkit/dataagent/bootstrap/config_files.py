@@ -113,6 +113,22 @@ def expand_env(value, env, *, source, home, location=()):
     return value
 
 
+def _expand_model_value(value, field_sources, location):
+    """Expand the selected model's environment references with each leaf's own layer.
+
+    ``overlay`` records a source per scalar leaf and per whole array, so
+    mapping fields (e.g. ``extra_body``) resolve each leaf with the layer
+    that wrote that leaf, while an array and everything nested inside it
+    (elements, objects, deeper arrays) expands with the layer that wrote
+    the array.
+    """
+    if isinstance(value, Mapping):
+        return {key: _expand_model_value(item, field_sources, (*location, key))
+                for key, item in value.items()}
+    source = field_sources[location]
+    return expand_env(value, source.env, source=source.path, home=source.home, location=location)
+
+
 def load_layers(home: Path, env: Mapping, cli_config: Path | None) -> tuple[Layer, ...]:
     """Load present files in low-to-high order: Home, explicit config."""
     layers = []
@@ -157,15 +173,7 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
     selected = merged.get("dataagent", {}).get("model", {}).get("default", "primary")
     model_values = merged.get("models", {}).get(selected, {})
     for key, value in model_values.items():
-        location = ("models", selected, key)
-        source = field_sources[location]
-        model_values[key] = expand_env(
-            value,
-            source.env,
-            source=source.path,
-            home=source.home,
-            location=location,
-        )
+        model_values[key] = _expand_model_value(value, field_sources, ("models", selected, key))
 
     # Defaults fill only still-absent fields; no layer's defaults can mask earlier values.
     sources = ", ".join(str(layer.path) for layer in layers) or "Effective configuration"

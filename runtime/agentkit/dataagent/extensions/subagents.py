@@ -1,8 +1,17 @@
-"""Translate declarative SubAgents; native host policies are added later by agent.py."""
+"""Translate declarative SubAgents; native host policies are added later by agent.py.
 
+Standard declarations become prompt-driven agent children. Compiled
+declarations (``kind="compiled"``) call the plugin's graph factory with its
+parameters and host services, and pass the returned Runnable to the core as a
+native ``CompiledSubAgent``.
+"""
+
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
+from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 
 from dataagent.declarations import PluginSpec, SubAgentSpec
@@ -10,6 +19,7 @@ from dataagent.extensions.hooks import compile_hooks
 from dataagent.extensions.loading import PythonLoader, contained_path
 from dataagent.extensions.skills import compile_skill_sources
 from dataagent.extensions.tools import resolve_tool_refs
+from dataagent.semantic_client import SemanticServiceClient
 from dataagent.strict_json import read_json
 
 
@@ -25,12 +35,68 @@ def collect_subagents(
         child_specs.append((root, spec.id, child))
 
 
+@dataclass(frozen=True)
+class SubagentServices:
+    """Host services available to compiled-subagent factories.
+
+    ``get_model`` resolves a model alias from the effective Agent configuration;
+    factories call it for the aliases their parameters name. ``semantic_client``
+    is the host-owned semantic-service client (None when no semantic service is
+    configured); factories consume it without owning its lifecycle.
+    """
+
+    get_model: Callable[[str], BaseChatModel]
+    semantic_client: SemanticServiceClient | None = None
+
+
+def _unresolvable_model(alias: str) -> BaseChatModel:
+    raise ValueError(f"No models are configured; cannot resolve SubAgent model alias {alias!r}")
+
+
+_NO_SERVICES = SubagentServices(get_model=_unresolvable_model)
+
+
+def _compiled_child(
+    root: Path, plugin_id: str, spec: SubAgentSpec, *, loader: PythonLoader,
+    plugin_params: dict[str, dict[str, Any]] | None, services: SubagentServices,
+) -> dict[str, Any]:
+    params = dict((plugin_params or {}).get(plugin_id) or {})
+    factory = loader.load(root, spec.entrypoint)
+    if not callable(factory):
+        raise TypeError(
+            f"Compiled SubAgent entrypoint {spec.entrypoint!r} of plugin {plugin_id!r} "
+            f"resolved to non-callable {type(factory).__name__}"
+        )
+    runnable = factory(params, services)
+    if not isinstance(runnable, Runnable):
+        raise TypeError(
+            f"Compiled SubAgent factory for {spec.name!r} must return a langchain Runnable, "
+            f"got {type(runnable).__name__}"
+        )
+    return {"name": spec.name, "description": spec.description, "runnable": runnable}
+
+
 def materialize_subagents(
     child_specs: list[tuple[Path, str, SubAgentSpec]], *, tool_registry: dict[str, BaseTool],
     loader: PythonLoader, skill_sources: list[tuple[str, str]],
+    plugin_params: dict[str, dict[str, Any]] | None = None,
+    model_resolver: Callable[[str], BaseChatModel] | None = None,
+    semantic_client: SemanticServiceClient | None = None,
 ) -> list[dict[str, Any]]:
+    if model_resolver or semantic_client:
+        services = SubagentServices(
+            get_model=model_resolver or _unresolvable_model, semantic_client=semantic_client,
+        )
+    else:
+        services = _NO_SERVICES
     children = []
     for root, plugin_id, spec in child_specs:
+        if spec.kind == "compiled":
+            children.append(_compiled_child(
+                root, plugin_id, spec, loader=loader,
+                plugin_params=plugin_params, services=services,
+            ))
+            continue
         ids = (resolve_tool_refs(spec.tools, plugin_id, tool_registry, agent_name=spec.name)
                if spec.tools is not None else list(tool_registry))
         compiled_hooks = compile_hooks([(root, hook) for hook in spec.hooks], loader, agent_name=spec.name)

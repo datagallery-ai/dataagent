@@ -67,12 +67,12 @@ class ToolSpec(StrictModel):
     entrypoint: str = Field(min_length=1)
 
 
-def _json_containers(value):
+def json_containers(value):
     """Convert frozen configuration-layer containers, without accepting arbitrary objects."""
     if isinstance(value, Mapping):
-        return {key: _json_containers(item) for key, item in value.items()}
+        return {key: json_containers(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
-        return [_json_containers(item) for item in value]
+        return [json_containers(item) for item in value]
     return value
 
 
@@ -82,7 +82,7 @@ class ExtensionConfig(StrictModel):
     @field_validator("params", mode="before")
     @classmethod
     def plain_params(cls, value):
-        return _json_containers(value)
+        return json_containers(value)
 
 
 HookEvent = Literal[
@@ -149,9 +149,21 @@ RESERVED_PLUGIN_IDS = frozenset({"user", "cli"})
 
 
 class SubAgentSpec(StrictModel):
+    """One SubAgent declaration: a standard prompt-driven agent or a compiled graph factory.
+
+    ``kind="compiled"`` declares a plugin-provided graph factory: ``entrypoint``
+    names a ``file.py:symbol`` whose callable receives the plugin's parameters
+    and host services and returns a langchain Runnable. Compiled declarations
+    take no ``system_prompt``, ``tools``, ``skills`` or ``hooks`` — the returned
+    graph owns its prompts and execution. Declarations without ``kind`` keep the
+    existing standard meaning.
+    """
+
+    kind: Literal["standard", "compiled"] = "standard"
     name: str = Field(pattern=f"^{RESOURCE_ID_PATTERN}$")
     description: str = Field(min_length=1)
-    system_prompt: str
+    system_prompt: str | None = None
+    entrypoint: str | None = Field(default=None, min_length=1)
     tools: list[str] | None = None
     # Omitted sources inherit the root's compiled Skills; [] explicitly opts out.
     skills: list[str] | None = None
@@ -163,6 +175,34 @@ class SubAgentSpec(StrictModel):
         if isinstance(value, Mapping) and "hooks" in value:
             return {**value, "hooks": normalize_hooks(value["hooks"])}
         return value
+
+    @model_validator(mode="after")
+    def check_kind(self):
+        if self.kind == "compiled":
+            if self.entrypoint is None:
+                raise ValueError(
+                    f"Compiled SubAgent {self.name!r} requires an entrypoint (file.py:symbol)"
+                )
+            if self.system_prompt is not None:
+                raise ValueError(
+                    f"Compiled SubAgent {self.name!r} does not take system_prompt; the graph owns its prompts"
+                )
+            if self.tools is not None or self.skills is not None or self.hooks:
+                raise ValueError(
+                    f"Compiled SubAgent {self.name!r} does not take tools, skills or hooks; "
+                    "the graph owns its execution"
+                )
+        else:
+            if self.system_prompt is None:
+                raise ValueError(
+                    f"SubAgent {self.name!r} requires system_prompt; "
+                    "declare kind='compiled' for a graph factory instead"
+                )
+            if self.entrypoint is not None:
+                raise ValueError(
+                    f"SubAgent {self.name!r} uses entrypoint only with kind='compiled'"
+                )
+        return self
 
 
 class PluginSpec(StrictModel):

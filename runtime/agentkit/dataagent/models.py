@@ -37,6 +37,13 @@ def build_model(runtime: Runtime, name: str | None = None) -> BaseChatModel:
         ),
         f"models.{alias}",
     )
+    kwargs = {}
+    if config.temperature is not None:
+        kwargs["temperature"] = config.temperature
+    if config.max_tokens is not None:
+        kwargs["max_tokens"] = config.max_tokens
+    if config.extra_body:
+        kwargs["extra_body"] = dict(config.extra_body)
     return ChatOpenAI(
         model=config.name,
         base_url=config.base_url,
@@ -44,6 +51,7 @@ def build_model(runtime: Runtime, name: str | None = None) -> BaseChatModel:
         use_responses_api=False,
         max_retries=config.max_retries,
         timeout=settings.dataagent.limits.timeout_seconds,
+        **kwargs,
     )
 
 
