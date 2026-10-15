@@ -41,10 +41,12 @@ async def _await_close_quietly(awaitable: Any, *, what: str) -> None:
     """Await a close call and log failures without raising.
 
     Used while dropping a streamable-HTTP session so a later reconnect can proceed.
+    A broken session often closes with ``CancelledError``; that must not abort the
+    rest of the reset.
     """
     try:
         await awaitable
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         logger.warning(f"Error closing {what} during streamable-HTTP reset: {exc}")
 
 
@@ -409,7 +411,11 @@ class MCPClientWrapper:
             raise ValueError(f"Unsupported transport type: {self.transport_type}")
 
     async def _ensure_streamable_http_session(self) -> None:
-        """Reuse the streamable-HTTP session when the current event loop still owns it."""
+        """Reuse the streamable-HTTP session when the current event loop still owns it.
+
+        A failed connect drops the half-open session before the error propagates, so the
+        next call opens a new session instead of closing the broken one first.
+        """
         if not self._reuse_streamable_http_session:
             raise DataAgentError(
                 source="tool",
@@ -423,24 +429,28 @@ class MCPClientWrapper:
         if self._session is not None and self._session_loop is loop:
             return
         await self._reset_streamable_http_session()
-        params = cast(dict[str, Any], self._transport_params)
-        headers = params.get("headers") or {}
-        timeout = float(params.get("timeout", 30))
-        self._http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout))
-        self._client_context = streamable_http_client(
-            params["url"],
-            http_client=self._http_client,
-            terminate_on_close=False,
-        )
-        read_stream, write_stream, _get_session_id = await self._client_context.__aenter__()
-        del _get_session_id
-        self._read_stream = read_stream
-        self._write_stream = write_stream
-        self._session = ClientSession(read_stream, write_stream)
-        await self._session.__aenter__()
-        await self._session.initialize()
-        self._session_loop = loop
-        self._connected = True
+        try:
+            params = cast(dict[str, Any], self._transport_params)
+            headers = params.get("headers") or {}
+            timeout = float(params.get("timeout", 30))
+            self._http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout))
+            self._client_context = streamable_http_client(
+                params["url"],
+                http_client=self._http_client,
+                terminate_on_close=False,
+            )
+            read_stream, write_stream, _get_session_id = await self._client_context.__aenter__()
+            del _get_session_id
+            self._read_stream = read_stream
+            self._write_stream = write_stream
+            self._session = ClientSession(read_stream, write_stream)
+            await self._session.__aenter__()
+            await self._session.initialize()
+            self._session_loop = loop
+            self._connected = True
+        except BaseException:
+            await self._reset_streamable_http_session()
+            raise
 
     async def _reset_streamable_http_session(self) -> None:
         """Drop a streamable-HTTP session so the next call can reconnect."""
