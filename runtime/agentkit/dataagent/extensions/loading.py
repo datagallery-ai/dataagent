@@ -7,6 +7,7 @@ shared by tools and Hooks; this module does not execute Agent tasks.
 import hashlib
 import importlib.util
 import sys
+from itertools import count
 from pathlib import Path
 
 from dataagent.declarations import PluginSpec
@@ -47,11 +48,37 @@ def select_plugins(settings: PluginSettings, plugin_roots=()) -> list[tuple[Path
     return selected
 
 
+_PLUGIN_NAMESPACE = "_dataagent_v2_plugin_"
+_loader_ids = count()
+
+
 class PythonLoader:
-    """Import `file.py:symbol` entrypoints confined to a root; one module object per file."""
+    """Import `file.py:symbol` entrypoints confined to a root; one module object per file.
+
+    Each plugin directory loads inside one namespace per compilation: the same
+    internal package name in two plugins never collides, and a new compilation
+    executes fresh code while graphs built by earlier compilations keep working
+    through their own module references. The plugin root stays importable while
+    an entrypoint executes, so factory files can import their sibling plugin
+    packages (``from my_plugin.graph import ...``) without modifying global
+    ``sys.path`` themselves: afterwards the path entry and the plugin's plain
+    module names are gone; only the namespaced modules remain, so internal
+    imports must be eager.
+    """
 
     def __init__(self):
         self.modules = {}
+        self._namespaces = {}
+
+    def _namespace(self, root: Path) -> str:
+        """One namespace per plugin root per loader; recompiling gets a fresh module graph."""
+        key = root.resolve()
+        if key not in self._namespaces:
+            self._namespaces[key] = (
+                f"{_PLUGIN_NAMESPACE}{next(_loader_ids)}_"
+                f"{hashlib.sha256(str(key).encode()).hexdigest()}"
+            )
+        return self._namespaces[key]
 
     def load(self, root: Path, entrypoint: str):
         path_text, separator, symbol = entrypoint.partition(":")
@@ -61,13 +88,49 @@ class PythonLoader:
         if path.suffix != ".py":
             raise ValueError("Only Python plugin entrypoints are supported")
         if path not in self.modules:
-            name = "_dataagent_v2_plugin_" + hashlib.sha256(str(path).encode()).hexdigest()
-            spec = importlib.util.spec_from_file_location(name, path)
-            if spec is None or spec.loader is None:
-                raise ValueError(f"Cannot load Python entrypoint: {path.name}")
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[name] = module
-            # Read source directly: same-second, same-size edits must not reuse stale .pyc.
-            exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
-            self.modules[path] = module
+            self.modules[path] = self._exec_module(root, path)
         return getattr(self.modules[path], symbol)
+
+    def _exec_module(self, root: Path, path: Path):
+        namespace = self._namespace(root)
+        name = f"{namespace}._entry_{hashlib.sha256(str(path).encode()).hexdigest()}"
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Cannot load Python entrypoint: {path.name}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        prefix = namespace + "."
+        # Earlier entrypoints of this plugin already executed in this
+        # compilation: expose their namespaced modules under plain names so
+        # this entrypoint attaches submodules to those same package objects
+        # instead of executing second copies.
+        exposed = [
+            key for key in sys.modules
+            if key.startswith(prefix) and not key[len(prefix):].startswith("_entry_")
+            and key[len(prefix):] not in sys.modules
+        ]
+        for key in exposed:
+            sys.modules[key[len(prefix):]] = sys.modules[key]
+        before = set(sys.modules)
+        # Read source directly: same-second, same-size edits must not reuse stale .pyc.
+        root_text = str(root)
+        resolved_root = root.resolve()
+        added = root_text not in sys.path
+        if added:
+            sys.path.insert(0, root_text)
+        try:
+            exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
+        finally:
+            if added and root_text in sys.path:
+                sys.path.remove(root_text)
+            for key in exposed:
+                sys.modules.pop(key[len(prefix):], None)
+            # Modules this entrypoint imported from the plugin directory move
+            # into the plugin namespace; host and third-party imports stay put.
+            for key in list(sys.modules):
+                if key in before or key.startswith(_PLUGIN_NAMESPACE):
+                    continue
+                origin = getattr(sys.modules[key], "__file__", None)
+                if origin and Path(origin).resolve().is_relative_to(resolved_root):
+                    sys.modules[prefix + key] = sys.modules.pop(key)
+        return module

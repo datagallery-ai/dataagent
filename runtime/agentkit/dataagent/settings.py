@@ -9,9 +9,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_serializer, field_validator, model_validator
+from pydantic import Field, JsonValue, SecretStr, field_serializer, field_validator, model_validator
 
-from dataagent.declarations import HookSpec, StrictModel, normalize_hooks
+from dataagent.declarations import HookSpec, StrictModel, json_containers, normalize_hooks
 
 
 class ModelSelection(StrictModel):
@@ -60,11 +60,24 @@ class ModelSettings(StrictModel):
     base_url: str = Field(min_length=1)
     api_key: SecretStr = Field(min_length=1)
     max_retries: int = Field(default=2, ge=0, strict=True)
+    # Optional call parameters; omitted fields keep the provider defaults instead of
+    # being silently dropped when configuration migrates from a plugin-specific format.
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, gt=0)
+    extra_body: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class PluginSettings(StrictModel):
     enabled: tuple[str, ...] = ()
     paths: tuple[Path, ...] = ()
+    # Per-plugin business parameters keyed by plugin ID; the plugin validates its own section.
+    config: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+
+    @field_validator("config", mode="before")
+    @classmethod
+    def plain_params(cls, value):
+        """Accept frozen configuration-layer containers (tuples) as JSON values."""
+        return json_containers(value)
 
     @model_validator(mode="after")
     def unique_enabled(self):

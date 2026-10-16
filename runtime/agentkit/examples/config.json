@@ -40,14 +40,18 @@
       "name": "$env{LLM_MODEL}",
       "base_url": "$env{LLM_BASE_URL}",
       "api_key": "$env{LLM_API_KEY}",
-      "max_retries": 2
+      "max_retries": 2,
+      "temperature": null,
+      "max_tokens": null,
+      "extra_body": {}
     }
   },
   "plugins": {
     "enabled": [
       "common"
     ],
-    "paths": []
+    "paths": [],
+    "config": {}
   },
   "server": {
     "host": "127.0.0.1",

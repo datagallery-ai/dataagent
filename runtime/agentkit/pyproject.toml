@@ -24,7 +24,11 @@ dependencies = [
   "uvicorn==0.52.4",
   "pydantic>=2.12,<3",
   "python-dotenv>=1.1,<2",
+  "pyyaml>=6,<7",
   "wcmatch>=11,<12",
+  "jinja2>=3.1,<4",
+  "loguru>=0.7,<1",
+  "sqlglot==28.1.0",
   "httpx>=0.28,<1",
 ]
 
