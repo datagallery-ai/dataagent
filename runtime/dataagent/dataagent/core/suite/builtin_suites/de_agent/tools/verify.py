@@ -15,6 +15,8 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 
 import sqlglot
@@ -23,7 +25,8 @@ from sqlglot import exp
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
-from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.managers.llm_manager import ChatModel, llm_manager
+from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 
 # ============================================================================
 # validate_deliverables orchestration constants
@@ -358,10 +361,7 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
         return {"original_msg": msg, "frontend_msg": msg}
 
     current_attempt = state["attempts"]
-    logger.info(
-        f"[validate_deliverables] === START attempt={current_attempt}/"
-        f"{MAX_VALIDATE_DELIVERABLES_ATTEMPTS} ==="
-    )
+    logger.info(f"[validate_deliverables] === START attempt={current_attempt}/{MAX_VALIDATE_DELIVERABLES_ATTEMPTS} ===")
 
     include_suggestions = _resolve_quality_gate_include_suggestions(_tool_context)
 
@@ -504,11 +504,11 @@ def _new_validate_deliverables_state() -> dict:
     由 ``_bump_attempt`` 在加载时预递增，所以新对象此处为 0。"""
     return {
         "attempts": 0,
-        "dataops_attempts": [],   # 累计的 dataops 尝试摘要（跨 validate_deliverables 复用）
+        "dataops_attempts": [],  # 累计的 dataops 尝试摘要（跨 validate_deliverables 复用）
         "last_static_passed": None,
         "last_static_err": "",
         "last_static_warn": "",
-        "last_failure_kind": None,    # "static" | "dataops" | None
+        "last_failure_kind": None,  # "static" | "dataops" | None
         "last_dataops_err": "",
         "last_dataops_log_summary": "",
         "last_report_path": None,
@@ -556,6 +556,7 @@ def _merge_warnings(static_warn: str, dataops_warn: str) -> str:
 #     不一定每次都开启
 # → 因此在提交 DDL 之前主动 DROP 同名 adhoctemp 表，不等返回、不阻塞主流程
 # ============================================================================
+
 
 def _ddl_pre_cleanup(ddl_sql: str, _tool_context: ToolExecutionContext) -> None:
     """从 DDL SQL 提取 adhoctemp 临时表名并 fire-and-forget DROP。
@@ -707,8 +708,7 @@ def _run_dataops_validation_round(
         if not (passed or skipped):
             summary["passed"] = False
             summary["error"] = (
-                result.get("error")
-                or (result.get("log_analysis_summary") or "DataOps validation failed (no detail)")
+                result.get("error") or (result.get("log_analysis_summary") or "DataOps validation failed (no detail)")
             )[:800]
             summary["log_summary"] = result.get("log_analysis_summary") or ""
             return summary
@@ -835,6 +835,18 @@ def _validate_deliverables(
     return (len(errors) == 0, err_msg, warn_msg)
 
 
+def _run_quality_gate_stream(llm: ChatModel, prompts: list[dict[str, str]]) -> str:
+    """Bridge the synchronous tool to streaming while retaining tracing and model context."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(collect_llm_stream(llm, prompts))
+
+    context = copy_context()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(context.run, asyncio.run, collect_llm_stream(llm, prompts)).result()
+
+
 def _validate_deliverables_quality_gate(
     ddl_file: Path | None,
     dml_file: Path | None,
@@ -896,10 +908,10 @@ def _validate_deliverables_quality_gate(
     llm = llm_manager.get_default_llm()
     for attempt in range(2):
         try:
-            response = llm.invoke(
-                [{"role": "user", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+            content = _run_quality_gate_stream(
+                llm, [{"role": "user", "content": system_prompt}, {"role": "user", "content": user_prompt}]
             )
-            raw_result = response.content.split("</think>")[-1].strip()
+            raw_result = content.strip()
             _parse_quality_gate_result(raw_result, warnings, include_suggestions)
             break  # 解析成功，退出循环
         except json.JSONDecodeError:

@@ -7,8 +7,5 @@ CORE:
     user_sql_rules: "sql_rules"
   generator:
     strategies: ["prompt"]
-  validator:
-    read_only: false
-  reflector: {}
 DATABASE:
   dialect: "hive"
