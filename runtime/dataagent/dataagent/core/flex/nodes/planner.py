@@ -24,7 +24,7 @@ from dataagent.core.flex.utils.context_from_state import get_context_for_flex_st
 from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.context import get_stream_writer
-from dataagent.core.managers.llm_manager.adapters import LLMResponse, normalize_usage_metadata
+from dataagent.core.managers.llm_manager.adapters import LLMResponse, normalize_usage_metadata, _in_react_llm_call
 from dataagent.core.managers.llm_manager.llm_client import LLMCallError
 from dataagent.core.managers.prompt_manager import PROMPT_MD_PREFIX, PromptTemplate
 from dataagent.utils.compression_utils import infer_state_and_unpack_ir
@@ -157,6 +157,7 @@ class Planner(BaseNode):
         reasoning_emitted = False
         break_after_thinking_emitted = False
         final_resp: LLMResponse | None = None
+        react_token = _in_react_llm_call.set(True)
         try:
             if terminal_mode:
                 self._emit_planner_stream_event(writer, phase="start")
@@ -220,6 +221,8 @@ class Planner(BaseNode):
 
             logger.error(f"Error traceback: {traceback.format_exc()}")
             return self._build_error_result(writer, e, terminal_mode=terminal_mode)
+        finally:
+            _in_react_llm_call.reset(react_token)
 
     def _prepare_messages_to_process(
         self, state: FlexState, context: Context, runtime: Any, unpacked_data_ir: str = ""
