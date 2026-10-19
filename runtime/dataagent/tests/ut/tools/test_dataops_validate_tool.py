@@ -30,7 +30,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -41,6 +41,14 @@ from dataagent.resources.catalog.models import Resource
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def collected_stream(monkeypatch):
+    """Isolate response parsing from transport; live streaming is covered by the E2E tests."""
+    collector = AsyncMock(return_value="")
+    monkeypatch.setattr(vt, "collect_llm_stream", collector)
+    return collector
 
 
 def _make_resource(
@@ -655,16 +663,14 @@ class TestAnalyzeLogDirectly:
         # The raw log must NEVER leak into the return — only an error string.
         assert "log_content" not in result
 
-    def test_llm_returns_json_normalized(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"AnalysisException",'
-                    '"error_message":"col foo not found",'
-                    '"location":{"tables":["tbl1"],"columns":["foo"]},'
-                    '"suggestions":["rename to bar","use qualified name"]}'
-                )
-            )
+    def test_llm_returns_json_normalized(self, collected_stream):
+        """Llm returns json normalized."""
+        llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"AnalysisException",'
+            '"error_message":"col foo not found",'
+            '"location":{"tables":["tbl1"],"columns":["foo"]},'
+            '"suggestions":["rename to bar","use qualified name"]}'
         )
         with (
             patch.object(
@@ -677,7 +683,7 @@ class TestAnalyzeLogDirectly:
                 "llm_manager",
             ) as mock_llm_manager,
         ):
-            mock_llm_manager.get_default_llm.return_value = fake_llm
+            mock_llm_manager.get_default_llm.return_value = llm
             result = asyncio.run(
                 vt._analyze_log_directly(
                     log_file_info={"url": "https://x", "headers": {"a": "b"}},
@@ -692,15 +698,14 @@ class TestAnalyzeLogDirectly:
         assert analysis["location"]["tables"] == ["tbl1"]
         assert len(analysis["suggestions"]) == 2
         assert all(len(s) <= 120 for s in analysis["suggestions"])
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
-    def test_strips_markdown_fences_from_llm_output(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '```json\n{"error_type":"ParseException","error_message":"bad sql",'
-                    '"location":{},"suggestions":["fix the syntax"]}\n```'
-                )
-            )
+    def test_strips_markdown_fences_from_llm_output(self, collected_stream):
+        """Strips markdown fences from llm output."""
+        llm = object()
+        collected_stream.return_value = (
+            '```json\n{"error_type":"ParseException","error_message":"bad sql",'
+            '"location":{},"suggestions":["fix the syntax"]}\n```'
         )
         with (
             patch.object(
@@ -710,7 +715,7 @@ class TestAnalyzeLogDirectly:
             ),
             patch.object(vt, "llm_manager") as mock_llm_manager,
         ):
-            mock_llm_manager.get_default_llm.return_value = fake_llm
+            mock_llm_manager.get_default_llm.return_value = llm
             result = asyncio.run(
                 vt._analyze_log_directly(
                     log_file_info={"url": "https://x", "headers": {"a": "b"}},
@@ -720,11 +725,14 @@ class TestAnalyzeLogDirectly:
             )
         assert result["status"] == "ok"
         assert result["analysis"]["error_type"] == "ParseException"
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
-    def test_invalid_json_falls_back_to_text_parse(self):
+    def test_invalid_json_falls_back_to_text_parse(self, collected_stream):
+        """Invalid json falls back to text parse."""
         # LLM returns garbage → _parse_analysis_from_text still produces a
         # structured dict (error_type=unknown). Better than failing entirely.
-        fake_llm = MagicMock(invoke=MagicMock(return_value=_FakeLLMResp("not json and no markers")))
+        llm = object()
+        collected_stream.return_value = "not json and no markers"
         with (
             patch.object(
                 vt,
@@ -733,7 +741,7 @@ class TestAnalyzeLogDirectly:
             ),
             patch.object(vt, "llm_manager") as mock_llm_manager,
         ):
-            mock_llm_manager.get_default_llm.return_value = fake_llm
+            mock_llm_manager.get_default_llm.return_value = llm
             result = asyncio.run(
                 vt._analyze_log_directly(
                     log_file_info={"url": "https://x", "headers": {"a": "b"}},
@@ -743,9 +751,12 @@ class TestAnalyzeLogDirectly:
             )
         assert result["status"] == "ok"
         assert result["analysis"]["error_type"] == "unknown"
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
-    def test_llm_exception_returns_llm_error(self):
-        fake_llm = MagicMock(invoke=MagicMock(side_effect=RuntimeError("LLM down")))
+    def test_llm_exception_returns_llm_error(self, collected_stream):
+        """Llm exception returns llm error."""
+        llm = object()
+        collected_stream.side_effect = RuntimeError("LLM down")
         with (
             patch.object(
                 vt,
@@ -754,7 +765,7 @@ class TestAnalyzeLogDirectly:
             ),
             patch.object(vt, "llm_manager") as mock_llm_manager,
         ):
-            mock_llm_manager.get_default_llm.return_value = fake_llm
+            mock_llm_manager.get_default_llm.return_value = llm
             result = asyncio.run(
                 vt._analyze_log_directly(
                     log_file_info={"url": "https://x", "headers": {"a": "b"}},
@@ -764,6 +775,7 @@ class TestAnalyzeLogDirectly:
             )
         assert result["status"] == "llm_error"
         assert "LLM down" in result["error"]
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_no_llm_available_falls_back_to_regex(self):
         with (
@@ -786,23 +798,14 @@ class TestAnalyzeLogDirectly:
         # _parse_analysis_from_text detects "AnalysisException" from the log
         assert result["analysis"]["error_type"] == "AnalysisException"
 
-    def test_prefers_runtime_llm_over_llm_manager(self):
+    def test_prefers_runtime_llm_over_llm_manager(self, collected_stream):
         """The main agent's LLM (runtime.llm('planner')) must be reused, not re-instantiated."""
-        runtime_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"AnalysisException","error_message":"missing foo",'
-                    '"location":{"tables":["t"],"columns":["foo"]},"suggestions":["add foo"]}'
-                )
-            )
+        runtime_llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"AnalysisException","error_message":"missing foo",'
+            '"location":{"tables":["t"],"columns":["foo"]},"suggestions":["add foo"]}'
         )
-        manager_llm = MagicMock(
-            invoke=MagicMock(
-                side_effect=AssertionError(
-                    "llm_manager.get_default_llm() should NOT be called when runtime.llm succeeds"
-                )
-            )
-        )
+        manager_llm = object()
         runtime = MagicMock()
         runtime.llm = MagicMock(return_value=runtime_llm)
         ctx = MagicMock()
@@ -828,15 +831,13 @@ class TestAnalyzeLogDirectly:
         runtime.llm.assert_called_once_with("planner")
         mock_llm_manager.get_default_llm.assert_not_called()
         assert result["status"] == "ok"
+        collected_stream.assert_awaited_once_with(runtime_llm, ANY)
 
-    def test_runtime_llm_failure_falls_back_to_manager(self):
-        fallback_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"ParseException","error_message":"bad sql",'
-                    '"location":{},"suggestions":["fix syntax"]}'
-                )
-            )
+    def test_runtime_llm_failure_falls_back_to_manager(self, collected_stream):
+        """Runtime llm failure falls back to manager."""
+        fallback_llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"ParseException","error_message":"bad sql","location":{},"suggestions":["fix syntax"]}'
         )
         runtime = MagicMock()
         runtime.llm = MagicMock(side_effect=RuntimeError("runtime not ready"))
@@ -863,14 +864,13 @@ class TestAnalyzeLogDirectly:
         mock_llm_manager.get_default_llm.assert_called_once()
         assert result["status"] == "ok"
         assert result["analysis"]["error_type"] == "ParseException"
+        collected_stream.assert_awaited_once_with(fallback_llm, ANY)
 
-    def test_raw_log_never_leaked_to_caller(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}'
-                )
-            )
+    def test_raw_log_never_leaked_to_caller(self, collected_stream):
+        """Raw log never leaked to caller."""
+        llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}'
         )
         with (
             patch.object(
@@ -880,7 +880,7 @@ class TestAnalyzeLogDirectly:
             ),
             patch.object(vt, "llm_manager") as mock_llm_manager,
         ):
-            mock_llm_manager.get_default_llm.return_value = fake_llm
+            mock_llm_manager.get_default_llm.return_value = llm
             result = asyncio.run(
                 vt._analyze_log_directly(
                     log_file_info={"url": "https://x", "headers": {"a": "b"}},
@@ -891,18 +891,20 @@ class TestAnalyzeLogDirectly:
         # The raw log content (or any substantial excerpt) must not be in the return.
         for forbidden in ("log_content", _SAMPLE_LOG[:50]):
             assert forbidden not in result, f"raw log leaked: {forbidden!r}"
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
-    def test_log_truncated_at_32kb(self):
+    def test_log_truncated_at_32kb(self, collected_stream):
         """Huge logs are capped at 32KB before being sent to the LLM."""
         huge_log = "X" * 50_000
         captured_prompt = {}
 
-        def capture_invoke(messages):
-            # Capture the user prompt for inspection.
-            captured_prompt["content"] = messages[1]["content"]
-            return _FakeLLMResp('{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}')
+        def _capture_stream(_model, messages):
+            """Capture the user prompt passed to the streaming text collector."""
+            captured_prompt["content"] = messages[1].get("content", "")
+            return '{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}'
 
-        fake_llm = MagicMock(invoke=MagicMock(side_effect=capture_invoke))
+        llm = object()
+        collected_stream.side_effect = _capture_stream
         with (
             patch.object(
                 vt,
@@ -911,7 +913,7 @@ class TestAnalyzeLogDirectly:
             ),
             patch.object(vt, "llm_manager") as mock_llm_manager,
         ):
-            mock_llm_manager.get_default_llm.return_value = fake_llm
+            mock_llm_manager.get_default_llm.return_value = llm
             asyncio.run(
                 vt._analyze_log_directly(
                     log_file_info={"url": "https://x", "headers": {"a": "b"}},
@@ -921,7 +923,8 @@ class TestAnalyzeLogDirectly:
             )
         # The user prompt is truncated to ~32KB of log content.
         # raw_error stays at the top so the log portion is bounded.
-        assert len(captured_prompt["content"]) < 35_000
+        assert 32_000 < len(captured_prompt.get("content", "")) < 35_000
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
 
 # ===========================================================================
@@ -1161,7 +1164,8 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert "log_analysis" not in result
         assert "log_file_info" not in result
 
-    def test_failed_with_log_file_info_adds_analysis(self):
+    def test_failed_with_log_file_info_adds_analysis(self, collected_stream):
+        """Failed with log file info adds analysis."""
         info = {"url": "https://obs/x", "headers": {"Authorization": "x"}}
         resource = _make_resource(timeout_s=5, poll_interval_ms=50)
         coordinator = _wired_coordinator(
@@ -1178,19 +1182,16 @@ class TestDataopsValidateSqlWithLogAnalysis:
         runtime = _make_runtime(resource=resource, coordinator=coordinator)
         ctx = _make_context(runtime)
 
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"TableNotFoundException",'
-                    '"error_message":"missing_t not found",'
-                    '"location":{"tables":["missing_t"]},'
-                    '"suggestions":["check the table name"]}'
-                )
-            )
+        llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"TableNotFoundException",'
+            '"error_message":"missing_t not found",'
+            '"location":{"tables":["missing_t"]},'
+            '"suggestions":["check the table name"]}'
         )
-        # Make the runtime's LLM resolver return our fake_llm so the
+        # Make the runtime's LLM resolver return our llm so the
         # in-process analyzer reuses the main agent's LLM (its primary path).
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
 
         with patch.object(
             vt,
@@ -1207,6 +1208,7 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert result["log_analysis"]["error_type"] == "TableNotFoundException"
         assert "log_analysis_summary" in result
         assert "log_file_info" in result
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_log_analysis_error_recorded_on_obs_failure(self):
         info = {"url": "https://obs/x", "headers": {"Authorization": "x"}}
@@ -1242,7 +1244,7 @@ class TestDataopsValidateSqlWithLogAnalysis:
         # log_file_info is still present for the caller.
         assert "log_file_info" in result
 
-    def test_failed_response_orders_fields_with_analysis_before_log_file_info(self):
+    def test_failed_response_orders_fields_with_analysis_before_log_file_info(self, collected_stream):
         """Field ordering matters: actionable analysis must come before the
         bulky log_file_info so the result is readable when truncated."""
         info = {"url": "https://obs/x", "headers": {"Authorization": "x"}}
@@ -1261,17 +1263,14 @@ class TestDataopsValidateSqlWithLogAnalysis:
         runtime = _make_runtime(resource=resource, coordinator=coordinator)
         ctx = _make_context(runtime)
 
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"TableNotFoundException",'
-                    '"error_message":"missing_t not found",'
-                    '"location":{"tables":["missing_t"]},'
-                    '"suggestions":["check the table name"]}'
-                )
-            )
+        llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"TableNotFoundException",'
+            '"error_message":"missing_t not found",'
+            '"location":{"tables":["missing_t"]},'
+            '"suggestions":["check the table name"]}'
         )
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
         with patch.object(
             vt,
             "dataops_fetch_obs_log",
@@ -1288,10 +1287,11 @@ class TestDataopsValidateSqlWithLogAnalysis:
         idx_lfi = keys.index("log_file_info")
         assert "log_analysis" in keys[:idx_lfi]
         assert "log_analysis_summary" in keys[:idx_lfi]
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     # ----- prod path: inline errorLog (no OBS) --------------------------
 
-    def test_prod_failed_with_inline_error_log_runs_analysis(self, monkeypatch):
+    def test_prod_failed_with_inline_error_log_runs_analysis(self, monkeypatch, collected_stream):
         """Prod MCP returns errorLog inline; wrapper must analyze it in-process
         and attach structured log_analysis, even when log_file_info is absent.
         Regression: previously the wrapper only entered the analysis branch
@@ -1312,17 +1312,14 @@ class TestDataopsValidateSqlWithLogAnalysis:
                 "log_source": "inline",
             }
 
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"error_type":"AnalysisException",'
-                    '"error_message":"foo not found",'
-                    '"location":{"columns":["foo"]},'
-                    '"suggestions":["use an existing column"]}'
-                )
-            )
+        llm = object()
+        collected_stream.return_value = (
+            '{"error_type":"AnalysisException",'
+            '"error_message":"foo not found",'
+            '"location":{"columns":["foo"]},'
+            '"suggestions":["use an existing column"]}'
         )
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
 
         with (
             patch.object(vt, "_dataops_validate_sql_prod", side_effect=_fake_prod),
@@ -1345,6 +1342,7 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert result["log_analysis"]["error_type"] == "AnalysisException"
         assert result["log_analysis_summary"]
         assert "suggestions" in result["log_analysis"]
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_prod_failed_no_log_source_returns_inner_as_is(self, monkeypatch):
         """If prod failed but returned neither log_file_info nor errorLog,
@@ -1957,8 +1955,12 @@ class TestDataopsValidateSqlPostValidate:
                 # (it only skips log analysis when both log_file_info and
                 # errorLog are absent). With log info present, the wrapper
                 # proceeds to the MAX_VALIDATE_ATTEMPTS branch where cleanup fires.
-                {"status": "failed", "job_id": "j-dml-3", "error": "bad sql",
-                 "logFileInfo": {"url": "http://obs/log.txt", "headers": {}}},
+                {
+                    "status": "failed",
+                    "job_id": "j-dml-3",
+                    "error": "bad sql",
+                    "logFileInfo": {"url": "http://obs/log.txt", "headers": {}},
+                },
                 {"status": "completed", "job_id": "j-cleanup"},
             ],
         )
@@ -1993,18 +1995,16 @@ class TestAnalyzeCountZeroWithLlm:
     """_analyze_count_zero_with_llm resolves LLM and parses the response."""
 
     @pytest.mark.asyncio
-    async def test_returns_has_mismatch_true(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"has_mismatch":true,'
-                    '"mismatch_reason":"WHERE condition filters out all rows",'
-                    '"fix_suggestion":"Change pt_d to 20260817"}'
-                )
-            )
+    async def test_returns_has_mismatch_true(self, collected_stream):
+        """Returns has mismatch true."""
+        llm = object()
+        collected_stream.return_value = (
+            '{"has_mismatch":true,'
+            '"mismatch_reason":"WHERE condition filters out all rows",'
+            '"fix_suggestion":"Change pt_d to 20260817"}'
         )
         runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
         result = await vt._analyze_count_zero_with_llm(
             original_query="insert today data",
             generated_sql="INSERT INTO t SELECT * FROM src WHERE pt_d='20260801'",
@@ -2013,16 +2013,15 @@ class TestAnalyzeCountZeroWithLlm:
         assert result["has_mismatch"] is True
         assert "WHERE condition" in result["mismatch_reason"]
         assert "pt_d to 20260817" in result["fix_suggestion"]
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     @pytest.mark.asyncio
-    async def test_returns_has_mismatch_false_when_llm_says_so(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp('{"has_mismatch":false,"mismatch_reason":"","fix_suggestion":""}')
-            )
-        )
+    async def test_returns_has_mismatch_false_when_llm_says_so(self, collected_stream):
+        """Returns has mismatch false when llm says so."""
+        llm = object()
+        collected_stream.return_value = '{"has_mismatch":false,"mismatch_reason":"","fix_suggestion":""}'
         runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
         result = await vt._analyze_count_zero_with_llm(
             original_query="insert today data",
             generated_sql="INSERT INTO t SELECT * FROM src WHERE pt_d='20260817'",
@@ -2031,15 +2030,14 @@ class TestAnalyzeCountZeroWithLlm:
         assert result["has_mismatch"] is False
         assert result["mismatch_reason"] == ""
         assert result["fix_suggestion"] == ""
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     @pytest.mark.asyncio
-    async def test_no_runtime_llm_falls_back_to_llm_manager(self):
-        fallback_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"has_mismatch":true,"mismatch_reason":"wrong table","fix_suggestion":"use src instead of dst"}'
-                )
-            )
+    async def test_no_runtime_llm_falls_back_to_llm_manager(self, collected_stream):
+        """No runtime llm falls back to llm manager."""
+        fallback_llm = object()
+        collected_stream.return_value = (
+            '{"has_mismatch":true,"mismatch_reason":"wrong table","fix_suggestion":"use src instead of dst"}'
         )
         runtime = MagicMock()
         runtime.llm = MagicMock(side_effect=RuntimeError("not ready"))
@@ -2053,6 +2051,7 @@ class TestAnalyzeCountZeroWithLlm:
         mock_llm_manager.get_default_llm.assert_called_once()
         assert result["has_mismatch"] is True
         assert "wrong table" in result["mismatch_reason"]
+        collected_stream.assert_awaited_once_with(fallback_llm, ANY)
 
     @pytest.mark.asyncio
     async def test_no_llm_returns_no_mismatch(self):
@@ -2068,46 +2067,51 @@ class TestAnalyzeCountZeroWithLlm:
         assert result["has_mismatch"] is False
 
     @pytest.mark.asyncio
-    async def test_invalid_json_returns_no_mismatch(self):
-        fake_llm = MagicMock(invoke=MagicMock(return_value=_FakeLLMResp("not json output")))
+    async def test_invalid_json_returns_no_mismatch(self, collected_stream):
+        """Invalid json returns no mismatch."""
+        llm = object()
+        collected_stream.return_value = "not json output"
         runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
         result = await vt._analyze_count_zero_with_llm(
             original_query="insert today data",
             generated_sql="INSERT INTO t SELECT * FROM src",
             runtime=runtime,
         )
         assert result["has_mismatch"] is False
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     @pytest.mark.asyncio
-    async def test_llm_exception_returns_no_mismatch(self):
-        fake_llm = MagicMock(invoke=MagicMock(side_effect=RuntimeError("LLM down")))
+    async def test_llm_exception_returns_no_mismatch(self, collected_stream):
+        """Llm exception returns no mismatch."""
+        llm = object()
+        collected_stream.side_effect = RuntimeError("LLM down")
         runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
         result = await vt._analyze_count_zero_with_llm(
             original_query="insert today data",
             generated_sql="INSERT INTO t SELECT * FROM src",
             runtime=runtime,
         )
         assert result["has_mismatch"] is False
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
     @pytest.mark.asyncio
-    async def test_strips_markdown_fences(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '```json\n{"has_mismatch":true,"mismatch_reason":"bad","fix_suggestion":"fix"}\n```'
-                )
-            )
+    async def test_strips_markdown_fences(self, collected_stream):
+        """Strips markdown fences."""
+        llm = object()
+        collected_stream.return_value = (
+            '```json\n{"has_mismatch":true,"mismatch_reason":"bad","fix_suggestion":"fix"}\n```'
         )
         runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
         result = await vt._analyze_count_zero_with_llm(
             original_query="q",
             generated_sql="INSERT INTO t SELECT * FROM src",
             runtime=runtime,
         )
         assert result["has_mismatch"] is True
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
 
 class TestRunPostValidateCountZeroWithLlm:
@@ -2136,18 +2140,14 @@ class TestRunPostValidateCountZeroWithLlm:
         assert result["has_mismatch"] is False
 
     @pytest.mark.asyncio
-    async def test_count_zero_with_original_query_calls_llm(self):
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"has_mismatch":true,'
-                    '"mismatch_reason":"date range too narrow",'
-                    '"fix_suggestion":"extend to last 7 days"}'
-                )
-            )
+    async def test_count_zero_with_original_query_calls_llm(self, collected_stream):
+        """Count zero with original query calls llm."""
+        llm = object()
+        collected_stream.return_value = (
+            '{"has_mismatch":true,"mismatch_reason":"date range too narrow","fix_suggestion":"extend to last 7 days"}'
         )
         runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
 
         coordinator = MagicMock()
         coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-6"}
@@ -2171,6 +2171,7 @@ class TestRunPostValidateCountZeroWithLlm:
         assert result["has_mismatch"] is True
         assert "date range" in result["mismatch_reason"]
         assert "last 7 days" in result["fix_suggestion"]
+        collected_stream.assert_awaited_once_with(llm, ANY)
 
 
 class TestDataopsValidateSqlCountZeroAnalysis:

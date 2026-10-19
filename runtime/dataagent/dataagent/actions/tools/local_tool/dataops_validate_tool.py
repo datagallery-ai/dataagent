@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.core.managers import llm_manager
+from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 from dataagent.utils.log import logger
 
 if TYPE_CHECKING:
@@ -679,8 +680,7 @@ async def _analyze_count_zero_with_llm(
             f"[_analyze_count_zero_with_llm] invoking LLM source={llm_source} "
             f"query_len={len(original_query)} sql_len={len(generated_sql)}"
         )
-        response = await asyncio.to_thread(llm.invoke, messages)
-        raw_text = str(getattr(response, "content", response) or "").strip()
+        raw_text = (await collect_llm_stream(llm, messages)).strip()
         logger.debug(f"[_analyze_count_zero_with_llm] LLM response[:200]={raw_text[:200]!r}")
 
         raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
@@ -1201,10 +1201,7 @@ async def _cleanup_temp_table_wrapper(
     resource = _get_dataops_resource(runtime)
     coordinator = runtime.ensure_resource_coordinator() if hasattr(runtime, "ensure_resource_coordinator") else None
     if coordinator is None:
-        logger.debug(
-            "[dataops_validate_sql_with_log_analysis] cleanup skipped: "
-            "no resource coordinator available"
-        )
+        logger.debug("[dataops_validate_sql_with_log_analysis] cleanup skipped: no resource coordinator available")
         return None
     POLL_INTERVAL_SEC = 30.0
     MAX_TIMEOUT_SEC = 30 * 60
@@ -1354,9 +1351,7 @@ async def dataops_validate_sql_with_log_analysis(
         # and this is the final outcome. CREATE TABLE leaves the temp
         # table in place so the corresponding INSERT OVERWRITE can target it.
         if not _is_create_sql(sql):
-            cleanup_job_id = await _cleanup_temp_table_wrapper(
-                sql, _tool_context=_tool_context
-            )
+            cleanup_job_id = await _cleanup_temp_table_wrapper(sql, _tool_context=_tool_context)
             if cleanup_job_id:
                 validate_result["cleanup_job_id"] = cleanup_job_id
         return validate_result
@@ -1460,9 +1455,7 @@ async def dataops_validate_sql_with_log_analysis(
         # DDL is NEVER dropped here — its temp table must remain for the
         # matching DML (which may run on a separate wrapper invocation).
         if not _is_create_sql(sql):
-            cleanup_job_id = await _cleanup_temp_table_wrapper(
-                sql, _tool_context=_tool_context
-            )
+            cleanup_job_id = await _cleanup_temp_table_wrapper(sql, _tool_context=_tool_context)
             if cleanup_job_id:
                 validate_result["cleanup_job_id"] = cleanup_job_id
 
@@ -1507,7 +1500,9 @@ async def dataops_validate_sql_with_log_analysis(
 
     MAX_LEN_ERROR_LOG = 250
     if len(ordered_result.get("errorLog", "")) > MAX_LEN_ERROR_LOG:
-        ordered_result["errorLog"] = ordered_result["errorLog"][:MAX_LEN_ERROR_LOG] + f"... truncated at {MAX_LEN_ERROR_LOG} chars."
+        ordered_result["errorLog"] = (
+            ordered_result.get("errorLog", "")[:MAX_LEN_ERROR_LOG] + f"... truncated at {MAX_LEN_ERROR_LOG} chars."
+        )
 
     MAX_LEN_ERROR = 500
     if len(ordered_result.get("error", "")) > MAX_LEN_ERROR:
@@ -1616,7 +1611,7 @@ async def _analyze_log_directly(
             f"[_analyze_log_directly] Log truncated job_id={job_id!r} original_len={len(log_content)} kept=32000",
         )
 
-    # 2) LLM analysis — run in thread to avoid blocking event loop
+    # 2) LLM analysis — collect the complete asynchronous stream before parsing JSON
     system_prompt = (
         "You are a Spark SQL / DataOps log analyzer. Given an execution log and an original "
         "error message, produce a structured JSON object with EXACTLY these keys:\n"
@@ -1670,8 +1665,7 @@ async def _analyze_log_directly(
         logger.debug(
             f"[_analyze_log_directly] Invoking LLM job_id={job_id!r} source={llm_source} prompt_len={len(user_prompt)}",
         )
-        response = await asyncio.to_thread(llm.invoke, messages)
-        raw_text = str(getattr(response, "content", response) or "").strip()
+        raw_text = (await collect_llm_stream(llm, messages)).strip()
         logger.debug(
             f"[_analyze_log_directly] LLM responded job_id={job_id!r} response_len={len(raw_text)}",
         )
@@ -1927,7 +1921,10 @@ async def _dataops_validate_sql_prod(
     # --- Execute -> poll -> collect (扁平函数) ---
     logger.debug(f"[_dataops_validate_sql_prod] submitting SQL (first 200 chars): {sql_for_submit[:200]}")
     result_status, job_id, result = await _submit_and_poll_prod(sql_for_submit, timeout_sec, poll_interval)
-    logger.debug(f"[_dataops_validate_sql_prod] _submit_and_poll_prod returned result_status={result_status!r} job_id={job_id!r} raw result={result}")
+    logger.debug(
+        f"[_dataops_validate_sql_prod] _submit_and_poll_prod returned result_status={result_status!r} "
+        f"job_id={job_id!r} raw result={result}"
+    )
 
     # --- Outcome dispatch ---
     if result_status == "timed_out":
@@ -2001,7 +1998,10 @@ async def _submit_and_poll_prod(
         logger.debug(f"[_submit_and_poll_prod] job_id={job_id} poll_count={poll_count} raw polled={polled}")
         if status in {"completed", "failed"}:
             # Step 3: 到达 terminal,取最终结果(含 inline data 或 errorLog)
-            logger.debug(f"[_submit_and_poll_prod] job_id={job_id} Step3: terminal reached ({status}), calling prod_collect_result")
+            logger.debug(
+                f"[_submit_and_poll_prod] job_id={job_id} Step3: terminal reached ({status}), "
+                "calling prod_collect_result"
+            )
             result = await prod_collect_result(job_id)
             logger.debug(f"[_submit_and_poll_prod] job_id={job_id} Step3 raw result={result}")
             return status, job_id, result
@@ -2082,7 +2082,10 @@ async def _run_post_validate_prod(
             }
         await asyncio.sleep(poll_interval)
     else:
-        logger.debug(f"[post_validate] count_job_id={count_job_id} poll timed out after {count_timeout}s, poll_count={poll_count}")
+        logger.debug(
+            f"[post_validate] count_job_id={count_job_id} poll timed out after {count_timeout}s, "
+            f"poll_count={poll_count}"
+        )
         return {
             "ok": False,
             "count": None,
@@ -2113,10 +2116,15 @@ async def _run_post_validate_prod(
             original_query = str(getattr(runtime, "user_query", "") or "").strip()
             if not original_query:
                 original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
-        logger.debug(f"[post_validate] count_job_id={count_job_id} count=0, original_query={original_query[:100]!r} calling LLM analysis")
+        logger.debug(
+            f"[post_validate] count_job_id={count_job_id} count=0, "
+            f"original_query={original_query[:100]!r} calling LLM analysis"
+        )
         if original_query:
             analysis = await _analyze_count_zero_with_llm(original_query, original_sql or count_sql, runtime=runtime)
-            logger.debug(f"[post_validate] count_job_id={count_job_id} LLM analysis result keys={list(analysis.keys())}")
+            logger.debug(
+                f"[post_validate] count_job_id={count_job_id} LLM analysis result keys={list(analysis.keys())}"
+            )
             return {
                 "ok": True,
                 "count": 0,
