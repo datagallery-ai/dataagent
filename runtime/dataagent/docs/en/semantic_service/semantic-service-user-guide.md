@@ -85,28 +85,28 @@ For a general ReAct main Agent that calls NL2SQL only when SQL is needed, regist
 dataagent/agents/nl2sql/nl2sql_agent.yaml
 ```
 
-At runtime it **overwrites the temporary NL2SQL sub-agent YAML with `DATABASE` and `SEMANTIC_LAYER` from the main Agent config**, then starts the NL2SQL sub-agent via `sub_agent_tool`. So the main Agent needs its own `DATABASE` and `SEMANTIC_LAYER`; you do not edit the source NL2SQL YAML directly.
+At runtime, `DATABASE` and `SEMANTIC_LAYER` are merged field by field: non-empty sub-agent values take precedence, while missing, null, and blank-string fields inherit from the main Agent. The tool then starts the NL2SQL sub-agent via `sub_agent_tool`.
 
 The main Agent only needs three configuration areas:
 
 | Configuration | Role |
 | --- | --- |
 | `TOOLS.local_functions[].function: nl2sql_sub_agent_tool` | Register the NL2SQL sub-agent tool. |
-| `DATABASE` | Business database for the main Agent; overwritten onto the NL2SQL sub-agent at runtime. |
-| `SEMANTIC_LAYER` | Semantic Service REST settings; overwritten onto the NL2SQL sub-agent at runtime. |
+| `DATABASE` | Supplies business-database fields that are missing or empty in the sub-agent config. |
+| `SEMANTIC_LAYER` | Supplies Semantic Service fields that are missing or empty in the sub-agent config. |
 
 `nl2sql_sub_agent_tool` does three key things:
 
 1. Reads `dataagent/agents/nl2sql/nl2sql_agent.yaml` as the NL2SQL sub-agent base config.
-2. Reads `DATABASE` and `SEMANTIC_LAYER` from the main Agent `config_manager` and overwrites the temporary sub-agent YAML.
+2. Reads `DATABASE` and `SEMANTIC_LAYER` from the main Agent `config_manager` to fill missing or empty sub-agent fields.
 3. If `config.llm_model` is set on the tool, reads `MODEL.<llm_model>` from the main Agent and writes it into the sub-agent config.
 
-So the main Agent config is the runtime source of truth for the NL2SQL sub-agent:
+Non-empty sub-agent fields take precedence; the main Agent fills remaining fields:
 
 | Main Agent Config | Effect on Sub-Agent |
 | --- | --- |
-| `DATABASE` | Overwrites NL2SQL sub-agent database config |
-| `SEMANTIC_LAYER` | Overwrites NL2SQL sub-agent Semantic Service config |
+| `DATABASE` | Fills missing, null, or blank-string sub-agent fields |
+| `SEMANTIC_LAYER` | Fills missing, null, or blank-string sub-agent fields |
 | `TOOLS.local_functions[].config.llm_model` | Binds the model slot used by the sub-agent |
 | `MODEL.<llm_model>` | Written into the temporary sub-agent YAML `MODEL` |
 

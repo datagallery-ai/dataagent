@@ -8,4 +8,4 @@ CORE:
   generator:
     strategies: ["prompt"]
 DATABASE:
-  dialect: "hive"
+  dialect: "spark"

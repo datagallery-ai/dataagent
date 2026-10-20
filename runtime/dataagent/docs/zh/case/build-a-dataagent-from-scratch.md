@@ -35,14 +35,14 @@ FlexAgent（AGENT_CONFIG.type = react）
   │   nl2sql_sub_agent_tool
   │       │
   │       ├─ 读取内置 NL2SQL 配置
-  │       ├─ 用主 Agent 的 DATABASE / SEMANTIC_LAYER 覆盖子 Agent 配置
+  │       ├─ 子 Agent 非空字段优先，主 Agent 补齐 DATABASE / SEMANTIC_LAYER
   │       ├─ 拉起 NL2SQLAgent 执行查询
   │       └─ 保存 SQL 文件和 CSV 结果文件
   │
   └─ 汇总最终回答
 ```
 
-这个模式的关键点是：`DATABASE` 和 `SEMANTIC_LAYER` 配在主 Agent YAML 中，工具运行时会把它们覆盖到临时 NL2SQL 子 Agent 配置里。因此，同一个 NL2SQL 子 Agent 能被不同业务主 Agent 复用。
+这个模式中，`DATABASE` 和 `SEMANTIC_LAYER` 逐字段合并：子 Agent 的非空字段优先，缺失、`null` 和空字符串字段从主 Agent 继承。因此，同一个 NL2SQL 子 Agent 能被不同业务主 Agent 复用。
 
 ## 3. 准备工作
 
@@ -76,7 +76,7 @@ dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml
 | `MODEL` | 至少配置主 Agent 使用的模型，以及 NL2SQL 子 Agent 绑定的模型槽位。 |
 | `SCENARIO` | 告诉主 Agent 何时调用 NL2SQL，以及调用时要传哪些参数。 |
 | `TOOLS.local_functions` | 注册 `nl2sql_sub_agent_tool`。 |
-| `DATABASE` / `SEMANTIC_LAYER` | 主 Agent 持有运行时数据库和 Semantic Service 配置，并覆盖给子 Agent。 |
+| `DATABASE` / `SEMANTIC_LAYER` | 主 Agent 补齐子 Agent 缺失或为空的运行时数据库和 Semantic Service 字段。 |
 
 示例配置（结构与仓库 `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml` 一致；`demo_db` 与路径按场景教程替换）：
 
@@ -142,7 +142,7 @@ SWARM:
 
 1. 读取内置 NL2SQL 配置：`dataagent/agents/nl2sql/nl2sql_agent.yaml`。
 2. 从主 Agent 当前配置中读取 `DATABASE` 和 `SEMANTIC_LAYER`。
-3. 用主 Agent 的配置覆盖临时 NL2SQL 子 Agent YAML。
+3. 逐字段合并主、子 Agent 配置；子 Agent 非空字段优先，缺失、`null` 和空字符串字段从主 Agent 继承。
 4. 如果工具配置了 `config.llm_model`，从主 Agent 的 `MODEL.<llm_model>` 读取模型配置，并写入子 Agent。
 5. 调用 `sub_agent_tool` 拉起 NL2SQL 子 Agent。
 6. 将子 Agent 返回的 SQL 和查询结果保存到 `workspace` 下。
@@ -221,7 +221,7 @@ ls -lh /tmp/dataagent-nl2sql-demo
 | --- | --- | --- |
 | `AGENT_CONFIG.type` | `nl2sql` | `react` |
 | 主要职责 | 直接完成自然语言转 SQL。 | 主 Agent 规划任务，必要时调用 NL2SQL。 |
-| 配置位置 | `DATABASE` / `SEMANTIC_LAYER` 写在 NL2SQL Agent 配置中。 | `DATABASE` / `SEMANTIC_LAYER` 写在主 Agent 配置中，再覆盖给子 Agent。 |
+| 配置位置 | `DATABASE` / `SEMANTIC_LAYER` 写在 NL2SQL Agent 配置中。 | 主、子 Agent 的对应字段逐项合并。 |
 | 输出形态 | 返回 NL2SQL 状态和查询结果。 | 主 Agent 汇总回答，并可保存 SQL/CSV 文件。 |
 | 适合场景 | 单一查库问题。 | 多步骤任务中的数据库查询子任务。 |
 
@@ -237,7 +237,7 @@ ls -lh /tmp/dataagent-nl2sql-demo
 
 ### 9.3 子 Agent 数据库配置不对
 
-检查主 Agent YAML 中的 `DATABASE` 和 `SEMANTIC_LAYER`。工具会用主 Agent 的这两段配置覆盖子 Agent，因此问题通常不在临时 YAML，而在主 Agent 的运行时配置。
+同时检查主、子 Agent 的 `DATABASE` 和 `SEMANTIC_LAYER`。子 Agent 的非空字段优先；缺失、`null` 和空字符串字段继承主 Agent。
 
 ### 9.4 Semantic Service 连接失败
 
