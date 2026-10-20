@@ -53,7 +53,9 @@ describe("workbench shell i18n", () => {
   it("exposes language toggle in the user bar", () => {
     const source = readFileSync(join(dataTasksRoot, "data-task-identity.tsx"), "utf8");
     expect(source).toContain("LanguageToggle");
-    expect(source).toContain('t("userBar.settings")');
+    expect(source).toContain('t("userBar.currentUser")');
+    expect(source).not.toContain('t("userBar.settings")');
+    expect(source).not.toContain('t("userBar.signOut")');
   });
 
   it("resolves workspace resource nav labels through translate", () => {

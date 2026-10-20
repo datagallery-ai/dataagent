@@ -50,8 +50,8 @@ const TUI_ENTRY = "apps/tui/dist/index.js";
 export function resolveTuiRuntimeUrl(env = {}, runtimeUrl = null) {
   const explicit = String(runtimeUrl ?? "").trim();
   if (explicit) return explicit;
-  const port = Number(env.API_PORT || 8787);
-  return `http://127.0.0.1:${port}/api/copilotkit`;
+  const port = String(env.API_PORT || "8787").trim() || "8787";
+  return `http://127.0.0.1:${port}/dataagent/stream`;
 }
 
 export async function inspectWritablePath(targetPath) {
@@ -397,9 +397,6 @@ export function formatStartBlocked(gaps, missingFiles = []) {
 export async function prepareStartEnvironment(root, diskEnv = {}) {
   const gaps = deploymentConfigGaps(diskEnv);
   const missingFiles = [];
-  if (!existsSync(path.join(root, "apps/api/dist/index.js"))) {
-    missingFiles.push("apps/api/dist/index.js");
-  }
   if (!existsSync(path.join(root, "apps/web/.next/BUILD_ID"))) {
     missingFiles.push("apps/web/.next/BUILD_ID");
   }
@@ -561,9 +558,10 @@ function createRealDeps(context) {
       }
     },
     async startTui(current, parsed) {
+      ask.close?.();
       const runtimeUrl = resolveTuiRuntimeUrl(current.env, parsed?.runtimeUrl);
       print(`Starting TUI against ${runtimeUrl} (foreground client; Ctrl+C exits TUI only).`);
-      await runCommand("npm", ["run", "start:tui", "--", "--runtime-url", runtimeUrl], {
+      await runCommand("npm", ["run", "start:tui", "--", "--v2", "--runtime-url", runtimeUrl], {
         cwd: root,
         stdio: "inherit"
       });
@@ -619,10 +617,14 @@ function createRealDeps(context) {
       await writeDeploymentState(root, { ...inspection.state, status: "healthy" });
       if (deployLog) await deployLog.finalize();
       print(`DataFoundry is healthy at ${current.env.AUTH_PUBLIC_BASE_URL}`);
-      print("Next: open Web, register/login, then create and enable a model profile.");
+      const ready = await probeHttp(`http://127.0.0.1:${current.env.API_PORT}/ready`);
+      if (!(ready.ok && ready.status === 200)) {
+        print("Next: put LLM_MODEL, LLM_BASE_URL and LLM_API_KEY in .env, then run ./deploy.sh restart and open the Web UI.");
+      } else {
+        print(`Open the Web UI at ${current.env.AUTH_PUBLIC_BASE_URL}`);
+      }
       print("TUI is built and ready. Start it in another terminal (foreground client, not a background service):");
       print("  ./deploy.sh tui");
-      print("  # or: npm run start:tui");
     },
 
     async status() {

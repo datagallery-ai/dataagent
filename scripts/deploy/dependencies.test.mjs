@@ -17,17 +17,35 @@ function runner(map) {
   };
 }
 
-test("requires Node 22 and npm only", async () => {
+test("requires Node 22, npm, and uv", async () => {
   const entries = await inspectDependencies({
     run: runner({
       "node --version": { stdout: "v22.14.0\n" },
-      "npm --version": { stdout: "10.9.0\n" }
+      "npm --version": { stdout: "10.9.0\n" },
+      "uv --version": { stdout: "uv 0.8.0\n" }
     })
   });
   assert.equal(entries.find((e) => e.name === "node").status, "ok");
   assert.equal(entries.find((e) => e.name === "npm").status, "ok");
+  assert.equal(entries.find((e) => e.name === "uv").status, "ok");
   assert.equal(entries.find((e) => e.name === "python"), undefined);
-  assert.equal(entries.find((e) => e.name === "uv"), undefined);
+});
+
+test("missing uv fails before any install", async () => {
+  await assert.rejects(
+    () => ensureDependencies({
+      nonInteractive: true,
+      uid: 0,
+      ask: async () => assert.fail("must not prompt"),
+      run: runner({
+        "node --version": { stdout: "v22.14.0\n" },
+        "npm --version": { stdout: "10.9.0\n" },
+        "uv --version": Object.assign(new Error("uv missing"), { code: "ENOENT" })
+      }),
+      install: async () => assert.fail("must not install uv")
+    }),
+    /uv/
+  );
 });
 
 test("interactive refusal returns corrective install command", async () => {
@@ -37,7 +55,8 @@ test("interactive refusal returns corrective install command", async () => {
       ask: async () => "n",
       run: runner({
         "node --version": { stdout: "v20.0.0\n" },
-        "npm --version": { stdout: "10.0.0\n" }
+        "npm --version": { stdout: "10.0.0\n" },
+        "uv --version": { stdout: "uv 0.8.0\n" }
       }),
       install: async () => assert.fail("must not install")
     }),
@@ -54,6 +73,7 @@ test("non-interactive install requires root or passwordless sudo", async () => {
       run: runner({
         "node --version": { stdout: "v20.0.0\n" },
         "npm --version": { stdout: "10.0.0\n" },
+        "uv --version": { stdout: "uv 0.8.0\n" },
         "sudo -n true": Object.assign(new Error("sudo failed"), { code: 1 })
       }),
       install: async () => assert.fail("must not install")
@@ -76,6 +96,7 @@ test("non-interactive install passes --non-interactive to install-dependency.sh"
         return nodeCalls === 1 ? { stdout: "v20.0.0\n" } : { stdout: "v22.14.0\n" };
       }
       if (key === "npm --version") return { stdout: "10.9.0\n" };
+      if (key === "uv --version") return { stdout: "uv 0.8.0\n" };
       throw new Error(`missing mock for ${key}`);
     },
     install: async (action, installOptions) => {

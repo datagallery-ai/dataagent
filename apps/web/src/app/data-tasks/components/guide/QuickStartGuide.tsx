@@ -16,13 +16,10 @@ import {
   type QuickStartStepId,
 } from "./quick-start-guide-state";
 
-type ConfigPanel = "db" | "llm";
-
 type QuickStartGuideProps = {
   workspaceConfig: WorkspaceConfigStore;
   liveRun: Pick<LiveRun, "runStatus">;
   hasSubmittedTask: boolean;
-  onOpenConfigPanel: (panel: ConfigPanel) => void;
   onOpenTaskConsole: () => void;
   onUseExampleQuery: (query: string) => void;
 };
@@ -72,7 +69,6 @@ export function QuickStartGuide({
   workspaceConfig,
   liveRun,
   hasSubmittedTask,
-  onOpenConfigPanel,
   onOpenTaskConsole,
   onUseExampleQuery,
 }: QuickStartGuideProps) {
@@ -141,14 +137,6 @@ export function QuickStartGuide({
 
   const advance = () => {
     if (step.blocked) return;
-    if (stepId === "datasource" && !readiness.hasDatasource) {
-      onOpenConfigPanel("db");
-      return;
-    }
-    if (stepId === "model" && !readiness.hasModel) {
-      onOpenConfigPanel("llm");
-      return;
-    }
     if (stepId === "console") {
       onOpenTaskConsole();
     }

@@ -591,7 +591,7 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
 test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
   assert.equal(
     resolveTuiRuntimeUrl({ API_PORT: "8877" }),
-    "http://127.0.0.1:8877/api/copilotkit"
+    "http://127.0.0.1:8877/dataagent/stream"
   );
   assert.equal(
     resolveTuiRuntimeUrl({ API_PORT: "8877" }, "http://example/api/copilotkit"),
@@ -611,9 +611,7 @@ const COMPLETE_ENV = {
 
 test("start names missing .env variables and does not write .env.local", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
-  await mkdir(path.join(root, "apps/api/dist"), { recursive: true });
   await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "apps/api/dist/index.js"), "");
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
   await assert.rejects(
     () => prepareStartEnvironment(root, {}),
@@ -631,16 +629,14 @@ test("start names missing .env variables and does not write .env.local", async (
   );
   assert.equal(existsSync(path.join(root, "apps/web/.env.local")), false);
   assert.equal(
-    formatStartBlocked(["AUTH_SESSION_SECRET"], ["apps/api/dist/index.js"]),
-    "缺少合法完整的 .env 配置，缺：AUTH_SESSION_SECRET；缺少文件：apps/api/dist/index.js。请先运行 ./deploy.sh deploy"
+    formatStartBlocked(["AUTH_SESSION_SECRET"], ["apps/web/.next/BUILD_ID"]),
+    "缺少合法完整的 .env 配置，缺：AUTH_SESSION_SECRET；缺少文件：apps/web/.next/BUILD_ID。请先运行 ./deploy.sh deploy"
   );
 });
 
 test("start writes apps/web/.env.local from a complete .env without new secrets", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
-  await mkdir(path.join(root, "apps/api/dist"), { recursive: true });
   await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "apps/api/dist/index.js"), "");
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
   await prepareStartEnvironment(root, COMPLETE_ENV);
   const webEnv = await readFile(path.join(root, "apps/web/.env.local"), "utf8");

@@ -16,42 +16,32 @@ export function performChatRunCancellation(
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let fallbackUsed = false;
     const fallback = () => {
-      if (settled || fallbackUsed) {
-        return;
-      }
-      fallbackUsed = true;
+      if (settled) return;
+      settled = true;
       options.onStopFrontend?.();
       resolve();
     };
     const timeout = setTimeout(fallback, options.fallbackTimeoutMs ?? 5000);
 
-    try {
-      void Promise.resolve(onCancelRun()).then(
-        () => {
-          settled = true;
-          clearTimeout(timeout);
-          resolve();
-        },
-        (error) => {
-          clearTimeout(timeout);
-          if (options.throwOnCancelFailure) {
-            settled = true;
-            reject(error);
-            return;
-          }
-          fallback();
-        },
-      );
-    } catch (error) {
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
-      if (options.throwOnCancelFailure) {
-        settled = true;
+      options.onStopFrontend?.();
+      if (error !== undefined && options.throwOnCancelFailure) {
         reject(error);
         return;
       }
-      fallback();
+      resolve();
+    };
+    try {
+      void Promise.resolve(onCancelRun()).then(
+        () => finish(),
+        (error) => finish(error),
+      );
+    } catch (error) {
+      finish(error);
     }
   });
 }

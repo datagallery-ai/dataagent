@@ -59,7 +59,6 @@ import {
 } from "../../table-rows";
 import { RunConfigurationPanel } from "./RunConfigurationPanel";
 import { TraceList } from "./TraceList";
-import { EmbeddedTraceDag } from "./TraceOverlay";
 import { ArtifactMarkdownPreview } from "./ArtifactMarkdownPreview";
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
 import { IconDots, IconOpen } from "./console-icons";
@@ -175,14 +174,11 @@ export function TaskConsole({
   onMentionArtifact,
   onOpenArtifactPage,
   onPreviewArtifact,
-  onOpenTrace,
   onPromoteArtifact,
   onArtifactExportJob,
   onSelectEvent,
   onSelectToolGroup,
   promotedArtifactIds,
-  sessionId,
-  onCreateCheckpointBranch,
 }: TaskConsoleProps) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<ConsoleTab>("overview");
@@ -333,11 +329,8 @@ export function TaskConsole({
           <EvidenceZone
             artifacts={artifacts}
             liveRun={liveRun}
-            onCreateCheckpointBranch={onCreateCheckpointBranch}
-            onOpenTrace={onOpenTrace}
             onSelectArtifact={openArtifactOrOutputs}
             onSelectEvent={onSelectEvent}
-            sessionId={sessionId}
           />
         ) : null}
 
@@ -808,32 +801,17 @@ function StepStatusDot({
 function EvidenceZone({
   artifacts,
   liveRun,
-  onCreateCheckpointBranch,
-  onOpenTrace,
   onSelectArtifact,
   onSelectEvent,
-  sessionId,
 }: {
   artifacts: DataArtifact[];
   liveRun: LiveRun;
-  onCreateCheckpointBranch?: (checkpointId: string) => Promise<void> | void;
-  onOpenTrace: () => void;
   onSelectArtifact: (artifactId: string) => void;
   onSelectEvent: (eventId: string) => void;
-  sessionId?: string;
 }) {
   const t = useT();
   return (
     <div className="grid gap-4">
-      <EmbeddedTraceDag
-        artifacts={artifacts}
-        liveRun={liveRun}
-        onCreateCheckpointBranch={onCreateCheckpointBranch}
-        onOpenFullscreen={onOpenTrace}
-        onSelectArtifact={onSelectArtifact}
-        onSelectEvent={onSelectEvent}
-        sessionId={sessionId}
-      />
       <RunConfigurationPanel liveRun={liveRun} />
       <ConsoleSection title={t("console.dataTrail")}>
         <TraceList

@@ -464,8 +464,11 @@ export function mergeServerChatSessions(
     const local = localById.get(server.id) ?? localByThreadId.get(server.threadId);
     if (!local) return server;
     matchedLocalIds.add(local.id);
+    const title = mergedSessionTitle(local, server);
     return {
       ...server,
+      title: title.title,
+      titleSource: title.titleSource,
       pinned: local.pinned,
       pinnedAt: local.pinnedAt,
       config: local.config,
@@ -473,6 +476,66 @@ export function mergeServerChatSessions(
   });
   const localOnly = localSessions.filter((session) => !matchedLocalIds.has(session.id));
   return sortChatSessions(dedupeChatSessions([...mergedServer, ...localOnly]));
+}
+
+const PLACEHOLDER_SESSION_TITLES = new Set(["New data task", "新数据任务", "新会话"]);
+
+function isPlaceholderSessionTitle(title: string): boolean {
+  const normalized = title.replace(/\s+/g, " ").trim();
+  return normalized.length === 0 || PLACEHOLDER_SESSION_TITLES.has(normalized);
+}
+
+export function mergedSessionTitle(
+  local: ChatSession,
+  server: ChatSession,
+): Pick<ChatSession, "title" | "titleSource"> {
+  if (local.titleSource === "user" && server.titleSource !== "user") {
+    return { title: local.title, titleSource: local.titleSource };
+  }
+  if (isPlaceholderSessionTitle(server.title) && local.title !== server.title) {
+    return { title: local.title, titleSource: local.titleSource };
+  }
+  return { title: server.title, titleSource: server.titleSource };
+}
+
+const ACTIVE_SESSION_STORAGE_KEY = "data-tasks:active-session:v1";
+
+function activeSessionStorageKey(scopeKey: string): string {
+  return `${ACTIVE_SESSION_STORAGE_KEY}:${scopeKey}`;
+}
+
+export function loadActiveSessionId(scopeKey: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.localStorage.getItem(activeSessionStorageKey(scopeKey));
+    return value?.trim() ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistActiveSessionId(scopeKey: string, sessionId: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = activeSessionStorageKey(scopeKey);
+    if (!sessionId) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, sessionId);
+  } catch {
+    // Ignore storage failures; the in-memory selection still works.
+  }
+}
+
+export function pickActiveSessionId(
+  sessions: Array<{ id: string }>,
+  preferred: string | null | undefined,
+  current?: string | null,
+): string | null {
+  if (current && sessions.some((session) => session.id === current)) return current;
+  if (preferred && sessions.some((session) => session.id === preferred)) return preferred;
+  return sessions[0]?.id ?? current ?? null;
 }
 
 export function dedupeChatSessions(sessions: ChatSession[]): ChatSession[] {

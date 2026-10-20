@@ -268,7 +268,7 @@ def test_tui_restores_terminal_when_its_backend_exits(tmp_path):
     with product(config, {**os.environ, "LLM_API_KEY": "fake-test-key"}) as terminal:
         log = (Path(os.environ["DATAAGENT_HOME"]) / "runtime/logs/backend.log").read_text()
         backend_pid = int(re.search(r"Started server process \[(\d+)\]", log)[1])
-        command = subprocess.check_output(["ps", "-p", str(backend_pid), "-o", "command="], text=True)
+        command = subprocess.check_output(["ps", "-ww", "-p", str(backend_pid), "-o", "command="], text=True)
         assert "serve --stdio-ready" in command and str(config) in command
         os.kill(backend_pid, signal.SIGTERM)
         terminal.read_until("V2 backend exited", timeout=10)

@@ -99,6 +99,35 @@ class Sessions:
             await self.db.commit()
 
 
+class SessionTurn:
+    """One GUI or TUI turn against the shared session index.
+
+    Cancellation leaves ``status`` as ``interrupted`` so ``release`` matches the
+    terminal route. A successful checkpoint is written only through ``complete``.
+    """
+
+    def __init__(self, sessions: Sessions, user_id: str, thread_id: str):
+        self.sessions = sessions
+        self.user_id = user_id
+        self.thread_id = thread_id
+        self.status = "interrupted"
+
+    async def start(self, run_id: str, text: str) -> None:
+        await self.sessions.start(self.user_id, self.thread_id, run_id, text)
+
+    async def complete(self, checkpoint_id: str) -> None:
+        self.status = "complete"
+        await self.sessions.finish(self.user_id, self.thread_id, "complete", checkpoint_id)
+
+    async def fail(self) -> None:
+        self.status = "error"
+        await self.sessions.finish(self.user_id, self.thread_id, "error")
+
+    async def release(self) -> None:
+        if self.status != "complete":
+            await self.sessions.finish(self.user_id, self.thread_id, self.status)
+
+
 def public_session(row: dict) -> dict:
     return {
         "threadId": row["thread_id"], "title": row["title"],

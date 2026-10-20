@@ -8,14 +8,10 @@ export const QUICK_START_PROMPT_SEEN_STORAGE_KEY =
 export const QUICK_START_DISMISSED_STORAGE_KEY =
   "data-tasks:quick-start:dismissed:v1";
 
-export const QUICK_START_EXAMPLE_PROMPT =
-  "Query total orders in the last 30 days, grouped by date";
+
 
 export type QuickStartStepId =
   | "welcome"
-  | "resources"
-  | "model"
-  | "datasource"
   | "query"
   | "send"
   | "console"
@@ -23,9 +19,6 @@ export type QuickStartStepId =
 
 export const QUICK_START_STEP_ORDER: QuickStartStepId[] = [
   "welcome",
-  "resources",
-  "datasource",
-  "model",
   "query",
   "send",
   "console",
@@ -103,7 +96,6 @@ export function getQuickStartInitialStep(
 export function resolveQuickStartStep(
   step: QuickStartStepId,
   {
-    readiness,
     runStatus,
     hasSubmittedTask = runStatus !== "idle",
     t,
@@ -122,38 +114,6 @@ export function resolveQuickStartStep(
         title: t("guide.welcome.title"),
         body: t("guide.welcome.body"),
         cta: t("guide.next"),
-      };
-    case "resources":
-      return {
-        id: step,
-        targetId: "workspace-resources",
-        title: t("guide.resources.title"),
-        body: t("guide.resources.body"),
-        cta: t("guide.next"),
-      };
-    case "datasource":
-      return {
-        id: step,
-        targetId: "datasource-config",
-        title: t("guide.datasource.title"),
-        body: readiness.preferredDatasourceId
-          ? t("guide.datasource.bodyReady", { id: readiness.preferredDatasourceId })
-          : t("guide.datasource.bodyMissing"),
-        cta: readiness.hasDatasource
-          ? t("guide.next")
-          : t("guide.openDatasourceConfig"),
-      };
-    case "model":
-      return {
-        id: step,
-        targetId: "model-picker",
-        title: readiness.hasModel
-          ? t("guide.model.titleReady")
-          : t("guide.model.titleMissing"),
-        body: readiness.hasModel
-          ? t("guide.model.bodyReady")
-          : t("guide.model.bodyMissing"),
-        cta: readiness.hasModel ? t("guide.next") : t("guide.openModelConfig"),
       };
     case "query":
       return {
@@ -188,7 +148,7 @@ export function resolveQuickStartStep(
     case "output":
       return {
         id: step,
-        targetId: "run-output",
+        targetId: "run-console",
         title:
           runStatus === "failed"
             ? t("guide.output.titleFailed")

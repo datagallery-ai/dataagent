@@ -9,12 +9,8 @@ describe("data task identity menu", () => {
   it("keeps the account menu focused on the current user and core actions", () => {
     const file = source();
 
-    for (const label of [
-      't("userBar.settings")',
-      't("userBar.signOut")',
-    ]) {
-      expect(file).toContain(label);
-    }
+    expect(file).not.toContain('t("userBar.settings")');
+    expect(file).not.toContain('t("userBar.signOut")');
 
     expect(file).toContain("LanguageToggle");
     expect(file).toContain("AccountMoreIcon");
@@ -37,8 +33,9 @@ describe("data task identity menu", () => {
     expect(page).toContain("DataTaskUserBar");
     expect(page).toContain("compact");
     expect(page).toMatch(
-      /onOpenSettings=\{\(\) => \{\s*onToggleCollapse\(\);\s*onOpenConfigPanel\("llm"\);\s*\}\}/,
+      /onOpenSettings=\{\(\) => \{\s*onToggleCollapse\(\);\s*\}\}/,
     );
+    expect(page).not.toContain('onOpenConfigPanel("llm")');
   });
 
   it("does not expose development identity paths", () => {

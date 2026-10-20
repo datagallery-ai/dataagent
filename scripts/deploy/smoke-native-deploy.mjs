@@ -115,8 +115,12 @@ async function main() {
     AUTH_SESSION_SECRET: FIXTURE_SECRET,
     SECRET_MASTER_KEY: FIXTURE_SECRET,
     CI: "true",
-    SKIP_POSTINSTALL_BUILD: "1"
+    SKIP_POSTINSTALL_BUILD: "1",
+    DATAAGENT_HOME: path.join(tempRoot, "dataagent-home")
   };
+  for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) {
+    delete env[key];
+  }
 
   try {
     console.log(`[smoke:native-deploy] checkout=${tempRoot}`);
@@ -158,7 +162,8 @@ async function main() {
     const ready = await httpGet(`http://127.0.0.1:${apiPort}/ready`);
     const web = await httpGet(`http://127.0.0.1:${webPort}/`);
     assert.equal(healthz.status, 200);
-    assert.equal(ready.status, 200);
+    // No LLM_* in the fixture env, so the Python control plane stays up but not ready.
+    assert.equal(ready.status, 503);
     assert.ok(web.ok, `Web should be reachable, got ${web.status}`);
 
     const envText = await readFile(path.join(tempRoot, ".env"), "utf8");

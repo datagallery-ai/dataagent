@@ -297,8 +297,16 @@ def _command(
         command.extend(pytest_args)
         return tuple(command)
     if name == "api":
-        # new 分支的控制面是 TypeScript，用例在 apps/api/src/*.test.ts。
-        return ("npm", "exec", "--", "vitest", "run", "apps/api", *node_args)
+        command = [
+            *uv,
+            "--project",
+            str(ROOT / "runtime" / "agentkit"),
+            "pytest",
+            str(ROOT / "apps" / "api" / "tests"),
+            "-q",
+        ]
+        command.extend(pytest_args)
+        return tuple(command)
     if name == "web":
         # test:web 再套一层 npm --workspace run test，外层会吃掉一个 --。
         return _with_node_args(["npm", "run", "test:web"], node_args, separators=2)
@@ -324,8 +332,8 @@ def _with_node_args(command: list[str], node_args: tuple[str, ...], *, separator
 
 
 def _require_tools(selected: Sequence[str]) -> None:
-    needs_uv = any(name.startswith("agentkit") for name in selected)
-    needs_npm = any(name in {"api", "web", "tui", "packages", "deploy", "agentkit-st"} for name in selected)
+    needs_uv = any(name.startswith("agentkit") or name == "api" for name in selected)
+    needs_npm = any(name in {"web", "tui", "packages", "deploy", "agentkit-st"} for name in selected)
     if needs_uv and shutil.which("uv") is None:
         raise SystemExit("uv is not on PATH")
     if needs_npm and shutil.which("npm") is None:
@@ -338,6 +346,9 @@ def _run(name: str, command: tuple[str, ...]) -> SuiteResult:
     env = dict(os.environ)
     # ps -o command= truncates to the terminal width. Agentkit checks the full command line.
     env.setdefault("COLUMNS", "1000")
+    # Ink skips the real terminal when CI is set, so TUI system tests never see Enter.
+    if name == "agentkit-st":
+        env.pop("CI", None)
     completed = subprocess.run(command, cwd=ROOT, env=env)
     return SuiteResult(name, command, completed.returncode, time.monotonic() - started)
 

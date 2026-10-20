@@ -43,7 +43,8 @@ async def test_health_and_no_credential_disclosure(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
         health = await client.get("/healthz")
         assert health.json()["instanceId"] == "test-instance"
-        assert health.json()["stateDir"] == str(runtime.paths.state_dir)
+        assert "stateDir" not in health.json()
+        assert "home" not in health.json()
         assert health.json()["user"] == runtime.paths.user_id
         assert "sources" not in health.json()
         assert "test-secret" not in health.text
@@ -71,11 +72,6 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
             "status": "ready", "protocol": "dataagent-v2", "instanceId": "test-instance",
             "model": "replacement-model", "plugins": [],
             "user": runtime.paths.user_id,
-            "home": str(runtime.paths.home),
-            "workspaces": [
-                {"name": item.name, "path": str(item.path)} for item in runtime.paths.workspaces
-            ],
-            "stateDir": str(runtime.paths.state_dir),
             "timeoutSeconds": runtime.timeout_seconds,
         }
 

@@ -27,9 +27,6 @@
     },
     {
       "path": "packages/agent-runtime"
-    },
-    {
-      "path": "apps/api"
     }
   ]
 }

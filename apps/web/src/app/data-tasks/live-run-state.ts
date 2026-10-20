@@ -12,7 +12,7 @@ import type {
   TimelineEvent,
 } from "./data-task-state";
 import { dataStepKindForTool, emptyStepPayload, toolDisplayTitle } from "./data-task-state";
-import { formatRunErrorMessage } from "./run-error-message";
+import { formatRunErrorMessage, isSessionRunBusyMessage } from "./run-error-message";
 import { parseToolResultRecord } from "./tool-result-normalize";
 
 export type LiveTaskStatus = "pending" | "running" | "completed" | "failed";
@@ -449,6 +449,15 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
       });
     case "RUN_ERROR":
       if (shouldIgnoreStaleRunError(state, event)) {
+        return state;
+      }
+      if (stringValue(event.code) === "abort") {
+        return applyTerminalRunStatus(state, "canceled", {
+          runFinishedAt: Date.now(),
+          errorMessage: undefined,
+        });
+      }
+      if (isSessionRunBusyMessage(stringValue(event.message))) {
         return state;
       }
       return applyTerminalRunStatus(state, "failed", {

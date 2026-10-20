@@ -583,6 +583,7 @@ export type SessionConversationDto = {
   branch?: Omit<ConversationBranchDto, "isOriginal"> & { id: string };
   branches?: ConversationBranchDto[];
   toolCalls: ConversationToolCallDto[];
+  agentMessages?: unknown[];
   pendingInteractions?: PendingInteractionDto[];
   restorableCustomEvents?: RestorableCustomEventDto[];
   activeRun?: SessionActiveRunDto | null;

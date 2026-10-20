@@ -25,7 +25,7 @@ export type DataTaskChatInputBindings = {
   activeLlmId: string | null;
   llmOptions: WorkspaceConfigItem[];
   onActiveLlmChange: (llmId: string) => void;
-  onOpenLlmConfig: () => void;
+  onOpenLlmConfig?: () => void;
   mentionResources: MentionResource[];
   perRunSelection: PerRunSelection;
   onTogglePerRunMention: (kind: PerRunMentionKind, id: string) => void;

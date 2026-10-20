@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   formatStackEndpoints,
+  pythonControlPlaneLaunch,
   resolveStackRuntimeConfig,
   webProcessEnvironment,
 } from "./stack-runtime-config.mjs";
@@ -36,11 +37,12 @@ export async function runStack({ mode, args = [] }) {
 
   const children = [];
   if (startApi) {
-    const command =
-      mode === "development"
-        ? ["--workspace", "@datafoundry/api", "run", "dev"]
-        : ["--prefix", "apps/api", "run", "start"];
-    children.push(spawnProcess("DataFoundry API", "npm", command, { ...process.env, ...runtimeConfig }));
+    const launch = pythonControlPlaneLaunch(
+      root,
+      { ...process.env, ...runtimeConfig },
+      mode === "development",
+    );
+    children.push(spawnProcess("DataFoundry API", launch.command, launch.args, launch.env));
   }
   if (startWeb) {
     const webScript = mode === "development" ? "dev" : "start";
