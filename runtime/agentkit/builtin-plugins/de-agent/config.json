@@ -1,0 +1,46 @@
+{
+  "plugins": {
+    "config": {
+      "de-agent": {
+        "allowed_databases": [],
+        "quality_gate": true,
+        "quality_gate_include_suggestions": false,
+        "model": "primary"
+      },
+      "nl2sql": {
+        "model": "primary",
+        "database": {
+          "dialect": "hive"
+        },
+        "nodes": [
+          "perceptor",
+          "generator",
+          "validator",
+          "reflector"
+        ],
+        "generator": {
+          "strategies": [
+            "prompt"
+          ]
+        },
+        "validator": {
+          "read_only": false,
+          "db_explain": false,
+          "sql_security_enabled": false
+        },
+        "hooks": {
+          "before_run": [
+            {
+              "entrypoint": "hooks/nl2sql.py:prepare_input"
+            }
+          ],
+          "after_run": [
+            {
+              "entrypoint": "hooks/nl2sql.py:finish_output"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

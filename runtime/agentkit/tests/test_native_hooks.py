@@ -9,6 +9,7 @@ from typing import Annotated
 import pytest
 from conftest import ScriptedModel, call
 from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.errors import NodeCancelledError
@@ -90,14 +91,17 @@ async def test_async_state_hook_preserves_native_command(event):
     assert await getattr(compiled_hook, f"a{event}")(state, runtime) is command
 
 
-@pytest.mark.parametrize("handler", [
-    None,
-    lambda event, params: None,
-    lambda state, runtime, params: None,
-    lambda state, runtime, **kwargs: None,
-    lambda state, runtime, *, params, extra: None,
-    partial(lambda state, runtime, *, params: None),
-])
+@pytest.mark.parametrize(
+    "handler",
+    [
+        None,
+        lambda event, params: None,
+        lambda state, runtime, params: None,
+        lambda state, runtime, **kwargs: None,
+        lambda state, runtime, *, params, extra: None,
+        partial(lambda state, runtime, *, params: None),
+    ],
+)
 def test_invalid_state_signatures_fail_at_compilation(handler):
     with pytest.raises(TypeError, match=r"plain def/async def.*\*, params"):
         compile_function("before_agent", handler)
@@ -119,20 +123,29 @@ def test_generator_functions_and_callable_instances_are_not_plain_hooks():
             compile_function("before_model", handler)
 
 
-@pytest.mark.parametrize("event,handler", [
-    ("before_tool", lambda event, params: None),
-    ("before_tool", lambda request, result, *, params: None),
-    ("after_tool", lambda request, *, params: None),
-    ("after_tool", lambda request, result, params: None),
-])
+@pytest.mark.parametrize(
+    "event,handler",
+    [
+        ("before_tool", lambda event, params: None),
+        ("before_tool", lambda request, result, *, params: None),
+        ("after_tool", lambda request, *, params: None),
+        ("after_tool", lambda request, result, params: None),
+    ],
+)
 def test_invalid_tool_signatures_fail_at_compilation(event, handler):
     with pytest.raises(TypeError, match="migrate old handle"):
         compile_function(event, handler)
 
 
-@pytest.mark.parametrize("result", [
-    {"action": "continue"}, {"action": "deny", "reason": "blocked"}, "continue", True,
-])
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"action": "continue"},
+        {"action": "deny", "reason": "blocked"},
+        "continue",
+        True,
+    ],
+)
 def test_state_hooks_reject_old_protocol_and_invalid_updates(result):
     def handler(state, runtime, *, params):
         return result
@@ -158,9 +171,12 @@ async def test_native_state_schema_context_and_reducer_are_preserved(is_async):
 
     def second_update(state, runtime, *, params):
         assert state["entries"] == ["initial", "before"]
-        return {"entries": ["second"], "messages": [
-            HumanMessage(content="updated context", id="context"),
-        ]}
+        return {
+            "entries": ["second"],
+            "messages": [
+                HumanMessage(content="updated context", id="context"),
+            ],
+        }
 
     def finish(state, runtime, *, params):
         assert state["entries"] == ["initial", "before", "second"]
@@ -168,7 +184,9 @@ async def test_native_state_schema_context_and_reducer_are_preserved(is_async):
 
     model = ScriptedModel(responses=[AIMessage(content="done")])
     graph = create_deep_agent(
-        model=model, state_schema=CustomState, context_schema=SimpleNamespace,
+        model=model,
+        state_schema=CustomState,
+        context_schema=SimpleNamespace,
         middleware=[
             compile_function("before_agent", aupdate if is_async else update, name="Before"),
             compile_function("before_agent", second_update, name="SecondBefore"),
@@ -180,7 +198,11 @@ async def test_native_state_schema_context_and_reducer_are_preserved(is_async):
         context=context,
     )
     assert result["entries"] == ["initial", "before", "second", "after"]
-    assert [message.content for message in result["messages"]] == ["hello", "updated context", "done"]
+    assert [message.content for message in result["messages"]] == [
+        "hello",
+        "updated context",
+        "done",
+    ]
 
 
 def test_sync_native_graph_invocation_accepts_sync_state_hook():
@@ -228,10 +250,15 @@ async def test_state_hook_failures_follow_native_graph_semantics(async_hook, err
         finished.append(True)
 
     model = ScriptedModel(responses=[AIMessage(content="not reached")])
-    graph = create_deep_agent(model=model, middleware=[
-        compile_function("before_model", async_handler if async_hook else handler, name="Before"),
-        compile_function("after_agent", after, name="After"),
-    ])
+    graph = create_deep_agent(
+        model=model,
+        middleware=[
+            compile_function(
+                "before_model", async_handler if async_hook else handler, name="Before"
+            ),
+            compile_function("after_agent", after, name="After"),
+        ],
+    )
     expected = NodeCancelledError if error_type is asyncio.CancelledError else error_type
     with pytest.raises(expected) as raised:
         await graph.ainvoke({"messages": [("user", "hello")]})
@@ -253,8 +280,10 @@ async def test_actual_cancellation_of_async_hook_propagates_and_skips_after():
 
     graph = create_deep_agent(
         model=ScriptedModel(responses=[AIMessage(content="not reached")]),
-        middleware=[compile_function("before_model", wait, name="Before"),
-                    compile_function("after_agent", after, name="After")],
+        middleware=[
+            compile_function("before_model", wait, name="Before"),
+            compile_function("after_agent", after, name="After"),
+        ],
     )
     task = asyncio.create_task(graph.ainvoke({"messages": [("user", "hello")]}))
     await asyncio.wait_for(entered.wait(), 2)
@@ -269,9 +298,11 @@ async def test_actual_cancellation_of_async_hook_propagates_and_skips_after():
 @pytest.mark.parametrize("result_type", ["success", "error", "command"])
 async def test_tool_hooks_receive_actual_request_and_result(event, async_hook, result_type):
     request = SimpleNamespace(tool_call={"name": "tool"}, runtime=object())
-    message = ToolMessage(content="output", tool_call_id="call", status=(
-        "error" if result_type == "error" else "success"
-    ))
+    message = ToolMessage(
+        content="output",
+        tool_call_id="call",
+        status=("error" if result_type == "error" else "success"),
+    )
     result = Command(update={"messages": [message]}) if result_type == "command" else message
     seen = []
 
@@ -295,8 +326,10 @@ async def test_tool_hooks_receive_actual_request_and_result(event, async_hook, r
         assert actual_request is request
         return result
 
-    handler = (async_before if async_hook else before) if event == "before_tool" else (
-        async_after if async_hook else after
+    handler = (
+        (async_before if async_hook else before)
+        if event == "before_tool"
+        else (async_after if async_hook else after)
     )
     compiled_hook = compile_function(event, handler, params={"nested": ["original"]})
     assert compiled_hook.name == "ConfiguredHook"
@@ -361,19 +394,69 @@ async def test_tool_hook_failure_is_not_wrapped_or_swallowed(event):
     assert executed == ([] if event == "before_tool" else [True])
 
 
-async def test_tool_hook_must_not_return_old_decision_or_replace_result():
+@pytest.mark.parametrize("is_async", [False, True])
+async def test_tool_hook_rejects_old_decision_and_uncorrelated_replacement(is_async):
+    """Legacy decisions and replacements for another call remain invalid in both wrappers."""
+    request = ToolCallRequest(
+        tool_call={"name": "tool", "id": "original", "args": {}},
+        tool=None,
+        state={},
+        runtime=Runtime(),
+    )
+
     def before(request, *, params):
         return {"action": "continue"}
 
     def after(request, result, *, params):
         return ToolMessage(content="replacement", tool_call_id="call")
 
-    async def execute(request):
-        return object()
+    def execute(request):
+        return ToolMessage(content="original", tool_call_id="original")
+
+    async def aexecute(request):
+        return execute(request)
 
     for event, function in [("before_tool", before), ("after_tool", after)]:
         with pytest.raises(TypeError, match="Tool Hook must return None"):
-            await compile_function(event, function).awrap_tool_call(object(), execute)
+            adapter = compile_function(event, function)
+            if is_async:
+                await adapter.awrap_tool_call(request, aexecute)
+            else:
+                adapter.wrap_tool_call(request, execute)
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+async def test_after_tool_accepts_correlated_replacement(is_async):
+    """The declared native result replacement reaches the caller without rerunning the tool."""
+    request = ToolCallRequest(
+        tool_call={"name": "tool", "id": "call", "args": {}},
+        tool=None,
+        state={},
+        runtime=Runtime(),
+    )
+    original = ToolMessage(content="original", tool_call_id="call")
+    replacement = ToolMessage(content="replacement", tool_call_id="call")
+    executed = []
+
+    def after(request, result, *, params):
+        assert result is original
+        return replacement
+
+    def execute(actual):
+        executed.append(actual)
+        return original
+
+    async def aexecute(actual):
+        return execute(actual)
+
+    adapter = compile_function("after_tool", after)
+    result = (
+        await adapter.awrap_tool_call(request, aexecute)
+        if is_async
+        else adapter.wrap_tool_call(request, execute)
+    )
+    assert result is replacement
+    assert executed == [request]
 
 
 async def test_native_multiple_declaration_order_before_forward_after_reverse():
@@ -393,23 +476,45 @@ async def test_native_multiple_declaration_order_before_forward_after_reverse():
         """Return the provided value."""
         return value
 
-    events = ["before_agent", "before_model", "before_tool", "after_tool", "after_model", "after_agent"]
+    events = [
+        "before_agent",
+        "before_model",
+        "before_tool",
+        "after_tool",
+        "after_model",
+        "after_agent",
+    ]
     compiled_hooks = [
         compile_function(
-            event, before if event == "before_tool" else after if event == "after_tool" else state_hook,
-            params={"label": f"{event}-{index}"}, name=f"Configured_{event}_{index}",
+            event,
+            before if event == "before_tool" else after if event == "after_tool" else state_hook,
+            params={"label": f"{event}-{index}"},
+            name=f"Configured_{event}_{index}",
         )
-        for event in events for index in (1, 2)
+        for event in events
+        for index in (1, 2)
     ]
     graph = create_deep_agent(
         model=ScriptedModel(responses=[call("echo", {"value": "hi"}), AIMessage(content="done")]),
-        tools=[echo], middleware=compiled_hooks,
+        tools=[echo],
+        middleware=compiled_hooks,
     )
     await graph.ainvoke({"messages": [("user", "echo hi")]})
-    expected_events = ["before_agent", "before_model", "after_model", "before_tool", "after_tool",
-                       "before_model", "after_model", "after_agent"]
-    assert seen == [f"{event}-{index}" for event in expected_events
-                    for index in ((1, 2) if event.startswith("before") else (2, 1))]
+    expected_events = [
+        "before_agent",
+        "before_model",
+        "after_model",
+        "before_tool",
+        "after_tool",
+        "before_model",
+        "after_model",
+        "after_agent",
+    ]
+    assert seen == [
+        f"{event}-{index}"
+        for event in expected_events
+        for index in ((1, 2) if event.startswith("before") else (2, 1))
+    ]
 
 
 @pytest.mark.parametrize("root", [False, True])
@@ -417,15 +522,22 @@ def test_native_assembly_preserves_compiled_hook_identity_order_and_independent_
     def handler(state, runtime, *, params):
         return None
 
-    compiled_hooks = tuple(compile_function("before_model", handler, name=f"Hook_{index}")
-                           for index in (1, 2))
+    compiled_hooks = tuple(
+        compile_function("before_model", handler, name=f"Hook_{index}") for index in (1, 2)
+    )
     native_middleware = build_native_middleware(Limits(), root=root, compiled_hooks=compiled_hooks)
     assert [item.name for item in native_middleware] == [
         *(["TodoListMiddleware"] if root else []),
-        "ModelCallLimitMiddleware", "ToolCallLimitMiddleware", "Hook_1", "Hook_2", "ToolErrorMiddleware",
+        "ModelCallLimitMiddleware",
+        "ToolCallLimitMiddleware",
+        "Hook_1",
+        "Hook_2",
+        "ToolErrorMiddleware",
     ]
     offset = 3 if root else 2
-    assert all(native_middleware[offset + index] is item for index, item in enumerate(compiled_hooks))
+    assert all(
+        native_middleware[offset + index] is item for index, item in enumerate(compiled_hooks)
+    )
     again = build_native_middleware(Limits(), root=root, compiled_hooks=compiled_hooks)
     assert all(again[index] is not native_middleware[index] for index in (*range(offset), -1))
     assert len(compiled_hooks) == 2  # Assembly does not append policies into the caller's list.

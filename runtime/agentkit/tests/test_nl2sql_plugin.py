@@ -45,11 +45,15 @@ PLUGIN_ROOT = BUILTIN_ROOT / "nl2sql"
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
-EXPECTED_SQL = "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department ORDER BY cnt DESC"
+EXPECTED_SQL = (
+    "SELECT department, COUNT(*) AS cnt FROM employees GROUP BY department ORDER BY cnt DESC"
+)
 
 _PLUGIN_RESPONSES = [
     AIMessage(content=f"```sql\n{EXPECTED_SQL}\n```"),  # generator
-    AIMessage(content='```json\n[{"id": 0, "score": 1, "issues": []}]\n```'),  # validator: validate_semantic
+    AIMessage(
+        content='```json\n[{"id": 0, "score": 1, "issues": []}]\n```'
+    ),  # validator: validate_semantic
     AIMessage(content='```json\n[{"score": 1, "issues": []}]\n```'),  # selector
 ]
 
@@ -94,16 +98,29 @@ async def test_native_stream_reports_nl2sql_steps_while_model_is_waiting(tmp_pat
     db, schema = _sqlite_fixture(tmp_path)
     graph = _build_agent(
         _plugin_params(db, schema),
-        ScriptedModel(responses=[
-            call("task", {"subagent_type": "nl2sql", "description": "count staff"}, id="delegate"),
-            AIMessage(content="root answer"),
-        ]),
+        ScriptedModel(
+            responses=[
+                call(
+                    "task", {"subagent_type": "nl2sql", "description": "count staff"}, id="delegate"
+                ),
+                AIMessage(content="root answer"),
+            ]
+        ),
         WaitingModel(responses=list(_PLUGIN_RESPONSES)),
     )
     graph.checkpointer = InMemorySaver()
-    adapter = LangGraphAgent(name="test", graph=graph, emit_raw_events=False, subagent_visibility="attributed")
-    body = RunAgentInput(thread_id="thread", run_id="root", messages=[UserMessage(id="u", content="count staff")],
-                         tools=[], context=[], state={}, forwarded_props={})
+    adapter = LangGraphAgent(
+        name="test", graph=graph, emit_raw_events=False, subagent_visibility="attributed"
+    )
+    body = RunAgentInput(
+        thread_id="thread",
+        run_id="root",
+        messages=[UserMessage(id="u", content="count staff")],
+        tools=[],
+        context=[],
+        state={},
+        forwarded_props={},
+    )
     updates = []
 
     async def consume():
@@ -127,7 +144,12 @@ async def test_native_stream_reports_nl2sql_steps_while_model_is_waiting(tmp_pat
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert [event["stepName"] for event in updates if event["type"] == "STEP_STARTED"] == [
-        "perceptor", "generator", "validator", "reflector", "executor", "selector",
+        "perceptor",
+        "generator",
+        "validator",
+        "reflector",
+        "executor",
+        "selector",
     ]
     assert updates[-1]["type"] == "SUBAGENT_FINISHED"
 
@@ -171,9 +193,14 @@ async def test_executed_query_writes_a_session_result_file(tmp_path):
     # every fetched row with raw values, not just the five-row preview
     assert header == ["department", "cnt"]
     assert len(rows) == 6 and rows[0] == ["Engineering", "2"]
-    assert "result_file" in payload["rows_note"] and "do not dispatch the question again" in payload["rows_note"]
+    assert (
+        "result_file" in payload["rows_note"]
+        and "do not dispatch the question again" in payload["rows_note"]
+    )
 
-    meta = json.loads(result_file.with_name(f"{payload['query_id']}.meta.json").read_text(encoding="utf-8"))
+    meta = json.loads(
+        result_file.with_name(f"{payload['query_id']}.meta.json").read_text(encoding="utf-8")
+    )
     assert meta["question"] == "每个部门的员工人数"
     assert meta["sql"] == EXPECTED_SQL
     assert (meta["db_id"], meta["dialect"], meta["engine"]) == ("staff", "sqlite", "sqlite")
@@ -192,11 +219,14 @@ async def test_result_files_can_be_disabled(tmp_path):
 async def test_failed_execution_writes_no_result_file(tmp_path):
     outputs = tmp_path / "outputs"
     payload, _ = await _run_task(
-        tmp_path, outputs_dir=outputs, plugin_responses=[
+        tmp_path,
+        outputs_dir=outputs,
+        plugin_responses=[
             AIMessage(content="```sql\nSELECT missing_column FROM employees\n```"),
             AIMessage(content='```json\n[{"id": 0, "score": 1, "issues": []}]\n```'),
             AIMessage(content='```json\n[{"score": 1, "issues": []}]\n```'),
-        ], params={"validator": {"db_explain": False}},
+        ],
+        params={"validator": {"db_explain": False}},
     )
 
     assert payload["error"]
@@ -228,24 +258,33 @@ async def test_task_builds_schema_from_host_semantic_client(tmp_path):
         if request.url.path.endswith("/advanced-search/table-list"):
             return httpx.Response(200, json=[{"staff.employees": {"table_description": "员工表"}}])
         if request.url.path.endswith("/advanced-search/table-columns-info"):
-            return httpx.Response(200, json={
-                "staff.employees.department": {
-                    "column_short_description": "部门", "value_type": "TEXT",
-                    "value_description": "Engineering",
+            return httpx.Response(
+                200,
+                json={
+                    "staff.employees.department": {
+                        "column_short_description": "部门",
+                        "value_type": "TEXT",
+                        "value_description": "Engineering",
+                    },
+                    "staff.employees.salary": {
+                        "column_short_description": "薪资",
+                        "value_type": "REAL",
+                        "value_description": "120.0",
+                    },
                 },
-                "staff.employees.salary": {
-                    "column_short_description": "薪资", "value_type": "REAL",
-                    "value_description": "120.0",
-                },
-            })
+            )
         return httpx.Response(200, json=[])
 
-    client = SemanticServiceClient("http://semantic.internal", transport=httpx.MockTransport(handler))
+    client = SemanticServiceClient(
+        "http://semantic.internal", transport=httpx.MockTransport(handler)
+    )
     with client:
         payload, _ = await _run_task(
             tmp_path,
             params={
-                "perceptor": {"schema_mode": "full_schema"},  # no user_schema: schema from the service
+                "perceptor": {
+                    "schema_mode": "full_schema"
+                },  # no user_schema: schema from the service
                 "semantic": {"base_url": "http://plugin-config.invalid"},  # legacy section, ignored
             },
             semantic_client=client,
@@ -254,7 +293,9 @@ async def test_task_builds_schema_from_host_semantic_client(tmp_path):
     assert payload["sql"] == EXPECTED_SQL
     assert payload["row_count"] == 6
     assert [path.rsplit("/", 1)[-1] for path in requests_seen] == [
-        "table-list", "table-columns-info", "joinable-tables",
+        "table-list",
+        "table-columns-info",
+        "joinable-tables",
     ]
 
 
@@ -272,9 +313,14 @@ async def test_missing_host_semantic_client_is_a_config_error(tmp_path):
     assert "semantic 服务未配置" in payload["error"]
 
 
-def test_parent_agent_sees_bound_database_and_routing_without_connection_keys(tmp_path):
+@pytest.mark.parametrize("execute", [False, True])
+def test_parent_agent_sees_bound_database_and_routing_without_connection_keys(tmp_path, execute):
+    """The parent sees the effective execution mode and routing, without connection secrets."""
     db_path, schema_path = _sqlite_fixture(tmp_path)
-    extensions = _compile(_plugin_params(db_path, schema_path), ScriptedModel(responses=[]))
+    params = _plugin_params(db_path, schema_path)
+    if not execute:
+        params.update(nodes=["perceptor", "generator"])
+    extensions = _compile(params, ScriptedModel(responses=[]))
 
     (child,) = extensions["subagents"]
     assert "db_id=staff, dialect=sqlite, engine=sqlite" in child["description"]
@@ -282,7 +328,13 @@ def test_parent_agent_sees_bound_database_and_routing_without_connection_keys(tm
     # how to use the subagent lives in its description; the root prompt only
     # restricts the parent's other tools, scoped to the configured database
     assert "result_file" in child["description"] and "one SQL query" in child["description"]
-    assert "fetches data only" in child["description"]
+    description = child.get("description")
+    assert "It does not analyze, explain or summarize the data" in description
+    mode = "query and execute" if execute else "generate SQL only"
+    assert f"**Current mode: {mode}**" in description
+    other_mode = "generate SQL only" if execute else "query and execute"
+    assert f"**Current mode: {other_mode}**" not in description
+    assert "SQL has not been executed" in description
     assert "do not translate them" in child["description"]
     assert "only way to query the configured database" in extensions["system_prompt"]
     assert "write_todos" not in extensions["system_prompt"]
@@ -293,7 +345,9 @@ def test_legacy_yaml_sections_rejected_with_migration_hint():
     from nl2sql.config_manager import NL2SQLConfig
 
     with pytest.raises(ValueError, match="plugins.config.nl2sql"):
-        NL2SQLConfig({"MODEL": {}, "CORE": {}, "model": "primary", "database": {"dialect": "sqlite"}})
+        NL2SQLConfig(
+            {"MODEL": {}, "CORE": {}, "model": "primary", "database": {"dialect": "sqlite"}}
+        )
 
 
 def test_result_files_switch_must_be_boolean():
@@ -309,7 +363,10 @@ def test_node_sections_default_to_full_chain_and_require_prefix():
     base = {"model": "primary", "database": {"dialect": "sqlite", "path": "/tmp/x.db"}}
     full_chain = ["perceptor", "generator", "validator", "reflector", "executor", "selector"]
     assert NL2SQLConfig(base).enabled_nodes == full_chain
-    assert NL2SQLConfig({**base, "perceptor": {}, "generator": {}}).enabled_nodes == ["perceptor", "generator"]
+    assert NL2SQLConfig({**base, "perceptor": {}, "generator": {}}).enabled_nodes == [
+        "perceptor",
+        "generator",
+    ]
     # the node-chain checks are lazy: they fire when the graph is assembled
     with pytest.raises(ValueError, match="prefix"):
         NL2SQLConfig({**base, "generator": {}, "executor": {}}).enabled_nodes
@@ -320,27 +377,42 @@ def test_node_sections_default_to_full_chain_and_require_prefix():
 def test_connection_config_strips_reserved_database_keys():
     from nl2sql.config_manager import NL2SQLConfig
 
-    config = NL2SQLConfig({
-        "model": "primary",
-        "database": {"db_id": "staff", "dialect": "sqlite", "engine": "sqlite", "path": "/tmp/staff.db"},
-    })
+    config = NL2SQLConfig(
+        {
+            "model": "primary",
+            "database": {
+                "db_id": "staff",
+                "dialect": "sqlite",
+                "engine": "sqlite",
+                "path": "/tmp/staff.db",
+            },
+        }
+    )
     assert config.connection_config() == {"path": "/tmp/staff.db"}
 
 
 # --------------------------------------------------------------------------- helpers
 
 
-async def _run_task(tmp_path, *, params=None, plugin_responses=None, semantic_client=None, outputs_dir=None):
+async def _run_task(
+    tmp_path, *, params=None, plugin_responses=None, semantic_client=None, outputs_dir=None
+):
     """Run one delegated task through the full pipeline; return (reply payload, plugin model)."""
     db_path, schema_path = _sqlite_fixture(tmp_path)
     merged = {**_plugin_params(db_path, schema_path), **(params or {})}
     plugin_model = ScriptedModel(responses=list(plugin_responses or _PLUGIN_RESPONSES))
-    parent_model = ScriptedModel(responses=[
-        call("task", {"subagent_type": "nl2sql", "description": "每个部门的员工人数"}),
-        AIMessage(content="按部门统计的员工人数已经给出。"),
-    ])
+    parent_model = ScriptedModel(
+        responses=[
+            call("task", {"subagent_type": "nl2sql", "description": "每个部门的员工人数"}),
+            AIMessage(content="按部门统计的员工人数已经给出。"),
+        ]
+    )
     graph = _build_agent(
-        merged, parent_model, plugin_model, semantic_client=semantic_client, outputs_dir=outputs_dir,
+        merged,
+        parent_model,
+        plugin_model,
+        semantic_client=semantic_client,
+        outputs_dir=outputs_dir,
     )
     result = await graph.ainvoke({"messages": [HumanMessage(content="每个部门的员工人数")]})
 
@@ -351,19 +423,27 @@ async def _run_task(tmp_path, *, params=None, plugin_responses=None, semantic_cl
 
 
 def _build_agent(params, parent_model, plugin_model, *, semantic_client=None, outputs_dir=None):
-    extensions = _compile(params, plugin_model, semantic_client=semantic_client, outputs_dir=outputs_dir)
+    extensions = _compile(
+        params, plugin_model, semantic_client=semantic_client, outputs_dir=outputs_dir
+    )
     assert [child["name"] for child in extensions["subagents"]] == ["nl2sql"]
     assert "runnable" in extensions["subagents"][0]
     return create_deep_agent(model=parent_model, **extensions)
 
 
 def _compile(params, plugin_model, *, semantic_client=None, outputs_dir=None):
-    settings = Settings.model_validate({
-        "models": {"primary": {
-            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
-        }},
-        "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": params}},
-    })
+    settings = Settings.model_validate(
+        {
+            "models": {
+                "primary": {
+                    "name": "test-model",
+                    "base_url": "https://example.invalid/v1",
+                    "api_key": "test-secret",
+                }
+            },
+            "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": params}},
+        }
+    )
     return compile_extensions(
         select_plugins(settings.plugins, [PLUGIN_ROOT]),
         plugin_params=dict(settings.plugins.config),

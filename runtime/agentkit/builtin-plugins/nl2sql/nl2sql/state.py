@@ -56,6 +56,9 @@ class NL2SQLState(MessagesState):
     issues: list[str]
     error: str | None
 
+    # Names explicitly supplied by the task boundary, including empty values.
+    context_overrides: list[str]
+
     # perceptor
     keywords: list[str]
     schema: dict
@@ -101,6 +104,7 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "truncated": False,
         "issues": [],
         "error": None,
+        "context_overrides": [],
         "keywords": [],
         "schema": {},
         "joins": [],

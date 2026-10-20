@@ -57,10 +57,6 @@ class PerceptorNode(BaseNL2SQLNode):
         self.user_sql_rules = kwargs.pop("user_sql_rules", None)
         self.user_few_shot_examples = kwargs.pop("user_few_shot_examples", None)
 
-    def bind_semantic_client(self, client: SemanticServiceClient) -> None:
-        """Bind the host-owned semantic-layer client injected through the factory."""
-        self._semantic_client = client
-
     @property
     def semantic_client(self) -> SemanticServiceClient:
         """The host-owned semantic-layer client; required unless the schema is user-supplied."""
@@ -72,19 +68,27 @@ class PerceptorNode(BaseNL2SQLNode):
             )
         return self._semantic_client
 
+    def bind_semantic_client(self, client: SemanticServiceClient) -> None:
+        """Bind the host-owned semantic-layer client injected through the factory."""
+        self._semantic_client = client
+
     def schema_linking(self, keywords: list[str] | None) -> tuple[dict, list[tuple[str, str]]]:
         """Retrieve the schema and joins relevant to semantic search keywords."""
         if not keywords:
             return {}, []
         dt_set, tc_set, j_set, dt_desc, schema = set(), set(), set(), {}, {}
-        raw = self._call_semantic_service(self.semantic_client.semantic_search_columns, self.db, keywords, self.top_k)
+        raw = self._call_semantic_service(
+            self.semantic_client.semantic_search_columns, self.db, keywords, self.top_k
+        )
         for payload in iter_semantic_column_payloads(raw):
             for entry in payload.get("column_name_search") or []:
                 if not isinstance(entry, dict) or not entry:
                     continue
                 parts = next(iter(entry)).split(".")
                 if len(parts) != 3:
-                    logger.warning(f"Perceptor: malformed column_name_search entry (expected d.t.c): {entry}")
+                    logger.warning(
+                        f"Perceptor: malformed column_name_search entry (expected d.t.c): {entry}"
+                    )
                     continue
                 d, t, c = parts
                 dt_set.add(f"{d}.{t}")
@@ -121,11 +125,15 @@ class PerceptorNode(BaseNL2SQLNode):
                 j_set.add((src, tgt))
         return schema, sorted(j_set)
 
-    def full_schema(self, allow_tables: list[str] | None = None) -> tuple[dict, list[tuple[str, str]]]:
+    def full_schema(
+        self, allow_tables: list[str] | None = None
+    ) -> tuple[dict, list[tuple[str, str]]]:
         """Retrieve the complete schema and joins, optionally limited to selected tables."""
         j_set, dt_desc, schema = set(), {}, {}
         allow_set = {str(t).strip() for t in (allow_tables or []) if str(t).strip()} or None
-        allow_names = {t.split(".", 1)[1] if "." in t else t for t in allow_set} if allow_set else None
+        allow_names = (
+            {t.split(".", 1)[1] if "." in t else t for t in allow_set} if allow_set else None
+        )
         for item in self._get_table_list():
             if not isinstance(item, dict) or not item:
                 continue
@@ -177,12 +185,20 @@ class PerceptorNode(BaseNL2SQLNode):
             ("sql_rules", self.user_sql_rules),
             ("few_shot_examples", self.user_few_shot_examples),
         ]:
-            state[attr] = await asyncio.to_thread(self._load_prompt, key)
-        if not state.get("schema_str", "").strip():
+            if attr not in state.get("context_overrides", []):
+                state[attr] = await asyncio.to_thread(self._load_prompt, key)
+        provided = set(state.get("context_overrides", []))
+        if "schema" in provided and "schema_str" not in provided:
+            state["schema_str"] = schema_to_ddl(state.get("schema", {}), state.get("joins", []))
+        if not state.get("schema_str", "").strip() and not provided.intersection(
+            {"schema", "schema_str"}
+        ):
             logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
             if self.schema_mode == _SCHEMA_MODE_LINKING:
                 question = state.get("question", "").strip()
-                schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
+                schema, joins = await asyncio.to_thread(
+                    self.schema_linking, [question] if question else []
+                )
                 if not schema:
                     raise DataAgentError(
                         source="config",
@@ -219,7 +235,9 @@ class PerceptorNode(BaseNL2SQLNode):
 
     def _get_table_list(self) -> list:
         return self._call_semantic_service(
-            self.semantic_client.get_table_list, self.db, limit=DEFAULT_NL2SQL_SEMANTIC_TABLE_LIST_LIMIT
+            self.semantic_client.get_table_list,
+            self.db,
+            limit=DEFAULT_NL2SQL_SEMANTIC_TABLE_LIST_LIMIT,
         )
 
     def _get_table_columns_info(self, table_name: str) -> dict:

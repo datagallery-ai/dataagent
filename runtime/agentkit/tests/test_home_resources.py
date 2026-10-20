@@ -1,6 +1,5 @@
 """Real native graph checks for automatic resources and native file access."""
 
-
 from unittest.mock import patch
 
 import pytest
@@ -11,9 +10,11 @@ from test_launch import MODEL, config, options
 from dataagent import safe_error
 from dataagent.agent import build_agent
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
+from dataagent.bootstrap.discovery import locate_extensions
 from dataagent.core.graph import create_deep_agent
 from dataagent.declarations import PluginSpec
 from dataagent.extensions import select_plugins
+from dataagent.settings import PluginSettings
 
 
 def skill(root, name, content="Read this independent Skill."):
@@ -45,32 +46,46 @@ def test_installed_common_requires_explicit_enablement(tmp_path, common_plugin):
 
 
 @pytest.mark.parametrize("delegate", [False, True])
-async def test_loose_skills_have_distinct_labels_and_are_actually_read(tmp_path, delegate, common_plugin):
+async def test_loose_skills_have_distinct_labels_and_are_actually_read(
+    tmp_path, delegate, common_plugin
+):
     user = skill(tmp_path / "home/skills", "personal", "User skill evidence 42.")
     skill(tmp_path / ".dataagent/skills", "project-guide", "Ignored cwd skill evidence 73.")
     config(tmp_path / "home/config.json", {"plugins": {"enabled": ["common"]}})
     runtime = prepare_runtime(options(tmp_path))
     kwargs = compile_runtime(runtime)
     assert [label for _, label in kwargs["skills"]] == ["common", "User"]
-    general, = kwargs["subagents"]
+    (general,) = kwargs["subagents"]
     assert general["skills"] == kwargs["skills"]
     responses = [call("read_file", {"file_path": str(user)}), AIMessage(content="Read the Skill.")]
     if delegate:
-        responses = [call("task", {"subagent_type": "general-purpose", "description": "Read personal Skill."}),
-                     *responses, AIMessage(content="Delegate finished.")]
+        responses = [
+            call(
+                "task", {"subagent_type": "general-purpose", "description": "Read personal Skill."}
+            ),
+            *responses,
+            AIMessage(content="Delegate finished."),
+        ]
     model = ScriptedModel(responses=responses)
-    await build_agent(runtime, model=model).ainvoke({"messages": [HumanMessage(content="Read Skill")]})
+    await build_agent(runtime, model=model).ainvoke(
+        {"messages": [HumanMessage(content="Read Skill")]}
+    )
     prompts = "\n".join(str(request[0].content) for request in model.requests)
     assert "User" in prompts and "project-guide" not in prompts
-    assert any(isinstance(message, ToolMessage) and "User skill evidence 42" in str(message.content)
-               for request in model.requests for message in request)
+    assert any(
+        isinstance(message, ToolMessage) and "User skill evidence 42" in str(message.content)
+        for request in model.requests
+        for message in request
+    )
 
 
 def test_skill_symlinks_dedup_and_same_name_conflict(tmp_path):
     shared = tmp_path / "shared"
     skill(shared, "shared-guide")
     (tmp_path / "home/skills").mkdir(parents=True)
-    (tmp_path / "home/skills/shared-guide").symlink_to(shared / "shared-guide", target_is_directory=True)
+    (tmp_path / "home/skills/shared-guide").symlink_to(
+        shared / "shared-guide", target_is_directory=True
+    )
     (tmp_path / "home/skills/alias").symlink_to(shared / "shared-guide", target_is_directory=True)
     runtime = prepare_runtime(options(tmp_path))
     compile_runtime(runtime)
@@ -95,29 +110,35 @@ def test_disabled_plugins_hidden_dirs_and_unreferenced_hooks_are_not_imported(tm
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
     # Builtin plugin directories come first, then user ones; hidden and non-directory
     # entries are ignored and disabled manifests are never parsed.
-    user_roots = [root.name for root in runtime.extensions.plugin_roots
-                  if root.is_relative_to(tmp_path)]
+    user_roots = [
+        root.name for root in runtime.extensions.plugin_roots if root.is_relative_to(tmp_path)
+    ]
     assert user_roots == ["broken"]
     assert runtime.extensions.plugin_roots[0].parent == runtime.paths.builtin_plugins
     compile_runtime(runtime)
 
 
 def test_plugin_conflicts_and_enabled_order(tmp_path):
+    """Enabled order is stable and ambiguous plugins fail before defaults are merged."""
     for name in ("first", "second"):
         config(tmp_path / "home/plugins" / name / ".plugin.json", {"id": name})
     cli = config(tmp_path / "config.json", {**MODEL, "plugins": {"enabled": ["second", "first"]}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    assert [spec.id for _, spec in select_plugins(runtime.settings.plugins, runtime.extensions.plugin_roots)] == ["second", "first"]
+    assert [
+        spec.id
+        for _, spec in select_plugins(runtime.settings.plugins, runtime.extensions.plugin_roots)
+    ] == ["second", "first"]
     config(tmp_path / "external/first/.plugin.json", {"id": "first"})
     config(cli, {**MODEL, "plugins": {"enabled": ["first"], "paths": ["./external/first"]}})
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     with pytest.raises(ValueError, match="exactly one directory") as error:
-        compile_runtime(runtime)
+        prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert str(tmp_path / "home/plugins/first") in str(error.value)
     assert str(tmp_path / "external/first") in str(error.value)
 
 
 def test_plugin_candidate_origins_keep_enabled_order_and_unique_scope_labels(tmp_path):
+    """Discovery reports ambiguous candidates without claiming that bootstrap can load them."""
+    runtime = prepare_runtime(options(tmp_path))
     for scope in ("home", ".dataagent"):
         (tmp_path / scope / "plugins/common").mkdir(parents=True)
     explicit_common = tmp_path / "external/common"
@@ -125,19 +146,31 @@ def test_plugin_candidate_origins_keep_enabled_order_and_unique_scope_labels(tmp
     explicit_common.mkdir(parents=True)
     explicit_custom.mkdir()
     config(explicit_custom / ".plugin.json", {"id": "custom"})
-    cli = config(tmp_path / "config.json", {**MODEL, "plugins": {
-        "enabled": ["custom", "common"],
-        "paths": [str(explicit_common), str(explicit_common), str(explicit_custom)],
-    }})
+    cli = config(
+        tmp_path / "config.json",
+        {
+            **MODEL,
+            "plugins": {
+                "enabled": ["custom", "common"],
+                "paths": [str(explicit_common), str(explicit_common), str(explicit_custom)],
+            },
+        },
+    )
 
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    assert runtime.report.plugin_origins == (
+    plugins = PluginSettings(
+        enabled=("custom", "common"), paths=(explicit_common, explicit_common, explicit_custom)
+    )
+    settings = runtime.settings.model_copy(update={"plugins": plugins})
+    locations, origins = locate_extensions(runtime.paths, (), settings)
+    assert origins == (
         ("custom", ("explicit",)),
         ("common", ("user", "explicit")),
     )
     # These are candidate categories, not a record of successful plugin compilation.
     with pytest.raises(ValueError, match="exactly one directory"):
-        select_plugins(runtime.settings.plugins, runtime.extensions.plugin_roots)
+        select_plugins(plugins, locations.plugin_roots)
+    with pytest.raises(ValueError, match="exactly one directory"):
+        prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
 
 
 @pytest.mark.parametrize("name", ["user", "cli"])
@@ -155,21 +188,38 @@ async def test_hook_sources_accumulate_and_repeated_registrations_all_execute(tm
             f"from pathlib import Path\nasync def handle(state, runtime, *, params):\n"
             f"    with Path({str(output)!r}).open('a') as stream: stream.write({scope!r} + '\\n')\n"
         )
-        config(root / "config.json", {**(MODEL if scope == "user" else {}), "dataagent": {
-            "hooks": [{"entrypoint": "hooks/audit.py:handle", "event": "before_agent"},
-                      {"entrypoint": "hooks/audit.py:handle", "event": "before_agent"}],
-        }})
+        config(
+            root / "config.json",
+            {
+                **(MODEL if scope == "user" else {}),
+                "dataagent": {
+                    "hooks": [
+                        {"entrypoint": "hooks/audit.py:handle", "event": "before_agent"},
+                        {"entrypoint": "hooks/audit.py:handle", "event": "before_agent"},
+                    ],
+                },
+            },
+        )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.json"))
-    await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke({
-        "messages": [HumanMessage(content="hello")],
-    })
+    await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
+        {
+            "messages": [HumanMessage(content="hello")],
+        }
+    )
     assert output.read_text().splitlines() == ["user", "user", "cli", "cli"]
 
 
 @pytest.mark.parametrize("transport", ["sdk", "http"])
 async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, transport):
     output = tmp_path / "events.txt"
-    events = ("before_agent", "after_agent", "before_model", "after_model", "before_tool", "after_tool")
+    events = (
+        "before_agent",
+        "after_agent",
+        "before_model",
+        "after_model",
+        "before_tool",
+        "after_tool",
+    )
     for scope, root in [("user", tmp_path / "home"), ("cli", tmp_path)]:
         hook = root / "hooks/audit.py"
         hook.parent.mkdir(parents=True, exist_ok=True)
@@ -182,26 +232,54 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
             "def before_tool(request, *, params): record(params)\n"
             "def after_tool(request, result, *, params): record(params)\n"
         )
-        config(root / "config.json", {**(MODEL if scope == "user" else {}), "dataagent": {
-            "hooks": [{"event": event, "params": {"event": event},
-                       "entrypoint": "hooks/audit.py:" + (event if event.endswith("_tool") else "state_hook")}
-                      for event in events],
-        }})
+        config(
+            root / "config.json",
+            {
+                **(MODEL if scope == "user" else {}),
+                "dataagent": {
+                    "hooks": [
+                        {
+                            "event": event,
+                            "params": {"event": event},
+                            "entrypoint": "hooks/audit.py:"
+                            + (event if event.endswith("_tool") else "state_hook"),
+                        }
+                        for event in events
+                    ],
+                },
+            },
+        )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.json"))
-    model = ScriptedModel(responses=[
-        call("common__summarize_numbers", {"numbers": [1, 2, 3]}), AIMessage(content="Sum: 6"),
-    ])
+    model = ScriptedModel(
+        responses=[
+            call("common__summarize_numbers", {"numbers": [1, 2, 3]}),
+            AIMessage(content="Sum: 6"),
+        ]
+    )
     if transport == "sdk":
-        await build_agent(runtime, model=model).ainvoke({"messages": [HumanMessage(content="Sum numbers")]})
+        await build_agent(runtime, model=model).ainvoke(
+            {"messages": [HumanMessage(content="Sum numbers")]}
+        )
     else:
         from test_api import client_for, query, sse, terminal
 
         async with client_for(runtime, model) as (client, app):
-            assert terminal(sse(await client.post("/dataagent/stream", json=query("Sum numbers")))) == ["RUN_FINISHED"]
-    phases = ("before_agent", "before_model", "after_model", "before_tool", "after_tool",
-              "before_model", "after_model", "after_agent")
+            assert terminal(
+                sse(await client.post("/dataagent/stream", json=query("Sum numbers")))
+            ) == ["RUN_FINISHED"]
+    phases = (
+        "before_agent",
+        "before_model",
+        "after_model",
+        "before_tool",
+        "after_tool",
+        "before_model",
+        "after_model",
+        "after_agent",
+    )
     assert output.read_text().splitlines() == [
-        f"{event}:{scope}" for event in phases
+        f"{event}:{scope}"
+        for event in phases
         for scope in (("user", "cli") if event.startswith("before_") else ("cli", "user"))
     ]
 
@@ -215,23 +293,37 @@ async def test_missing_or_empty_upper_hooks_do_not_disable_user_hook(tmp_path, u
         "from pathlib import Path\ndef handle(state, runtime, *, params):\n"
         f"    Path({str(output)!r}).write_text('user hook executed')\n"
     )
-    config(home / "config.json", {**MODEL, "dataagent": {"hooks": [{
-        "entrypoint": "audit.py:handle", "event": "before_agent",
-    }]}})
+    config(
+        home / "config.json",
+        {
+            **MODEL,
+            "dataagent": {
+                "hooks": [
+                    {
+                        "entrypoint": "audit.py:handle",
+                        "event": "before_agent",
+                    }
+                ]
+            },
+        },
+    )
     upper = {"dataagent": {"hooks": upper_hooks}} if upper_hooks is not None else {}
     cli = config(tmp_path / "config.json", upper)
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke({
-        "messages": [HumanMessage(content="test")],
-    })
+    await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
+        {
+            "messages": [HumanMessage(content="test")],
+        }
+    )
     assert output.read_text() == "user hook executed"
 
 
 def test_standalone_skills_accumulate_even_when_plugins_are_disabled(tmp_path):
     user = skill(tmp_path / "home/skills", "user-guide")
     skill(tmp_path / ".dataagent/skills", "project-guide")
-    cli = config(tmp_path / "config.json", {**MODEL, "plugins": {"enabled": []},
-                                               "dataagent": {"hooks": []}})
+    cli = config(
+        tmp_path / "config.json", {**MODEL, "plugins": {"enabled": []}, "dataagent": {"hooks": []}}
+    )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert compile_runtime(runtime)["skills"] == [
         (str(user.parent.parent), "User"),
@@ -245,9 +337,15 @@ def test_subscribed_loose_hook_cannot_escape_source_root(tmp_path, entry):
     home = tmp_path / "home"
     (home / "hooks").mkdir(parents=True)
     (home / "hooks/link.py").symlink_to(outside)
-    config(home / "config.json", {**MODEL, "dataagent": {
-        "hooks": [{"entrypoint": entry, "event": "before_agent"}],
-    }})
+    config(
+        home / "config.json",
+        {
+            **MODEL,
+            "dataagent": {
+                "hooks": [{"entrypoint": entry, "event": "before_agent"}],
+            },
+        },
+    )
     with pytest.raises(ValueError, match="escapes"):
         compile_runtime(prepare_runtime(LaunchOptions(cwd=tmp_path)))
 
@@ -273,11 +371,21 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
         AIMessage(content="finished"),
     ]
     if agent != "root":
-        calls = [call("task", {"subagent_type": agent, "description": "Check local files"}),
-                 *calls, AIMessage(content="finished")]
+        calls = [
+            call("task", {"subagent_type": agent, "description": "Check local files"}),
+            *calls,
+            AIMessage(content="finished"),
+        ]
     model = ScriptedModel(responses=calls)
-    await build_agent(runtime, model=model).ainvoke({"messages": [HumanMessage(content="Check files")]})
-    messages = [message for request in model.requests for message in request if isinstance(message, ToolMessage)]
+    await build_agent(runtime, model=model).ainvoke(
+        {"messages": [HumanMessage(content="Check files")]}
+    )
+    messages = [
+        message
+        for request in model.requests
+        for message in request
+        if isinstance(message, ToolMessage)
+    ]
     assert messages
     assert any("secret-content" in str(message.content) for message in messages)
     assert all(message.status == "success" for message in messages if message.name == "read_file")

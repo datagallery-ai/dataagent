@@ -1,12 +1,12 @@
 """Static checks that the package layout keeps its dependency direction.
 
-    declarations / strict_json / diagnostics   leaves, import nothing from dataagent
-    settings                                  -> declarations
-    bootstrap                                 -> foundation only; never LangChain
-    extensions                                -> foundation (+ semantic_client for compile/subagents);
-                                                filesystem/mcp host adapters -> bootstrap paths
-    agent                                   -> everything
-    serve                                   -> the `dataagent` package root only
+declarations / strict_json / diagnostics   leaves, import nothing from dataagent
+settings                                  -> declarations
+bootstrap                                 -> foundation only; never LangChain
+extensions                                -> foundation (+ semantic_client for compile/subagents);
+                                            filesystem/mcp host adapters -> bootstrap paths
+agent                                   -> everything
+serve                                   -> the `dataagent` package root only
 """
 
 import ast
@@ -19,7 +19,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "dataagent"
 LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.diagnostics"}
-FOUNDATION = LEAVES | {"dataagent.settings"}
+FOUNDATION = LEAVES | {"dataagent.settings", "dataagent.plugin_config"}
 MODEL_TOOLING = ("langchain", "langgraph", "deepagents", "ag_ui", "mcp")
 EXTENSION_DEPENDENCIES = {
     "tracing": {"trace_exporter"},
@@ -30,7 +30,8 @@ EXTENSION_DEPENDENCIES = {
     "skills": {"loading"},
     "tools": {"loading"},
     "hooks": {"loading"},
-    "subagents": {"loading", "skills", "tools", "hooks"},
+    "run_hooks": {"hooks"},
+    "subagents": {"loading", "skills", "tools", "hooks", "run_hooks"},
     "compiler": {"loading", "skills", "tools", "subagents", "hooks"},
     "__init__": {"compiler", "loading"},
 }
@@ -39,10 +40,11 @@ EXTENSION_CORE_DEPENDENCIES = {
     "trace_exporter": set(),
     "mcp": {"bootstrap", "diagnostics"},
     "filesystem_backend": {"bootstrap", "core"},
-    "loading": {"declarations", "settings", "strict_json"},
+    "loading": {"declarations", "settings", "plugin_config"},
     "skills": {"core"},
     "tools": {"declarations"},
     "hooks": {"declarations"},
+    "run_hooks": set(),
     "subagents": {"declarations", "strict_json", "semantic_client"},
     "compiler": {"declarations", "semantic_client"},
     "__init__": set(),
@@ -69,8 +71,9 @@ def imports(path: Path, *, root: Path = ROOT) -> list[str]:
             module = node.module or ""
             if node.level:
                 parents = path.relative_to(root).parts[:-1]
-                module = ".".join((*parents[:len(parents) - node.level + 1],
-                                   *filter(None, module.split("."))))
+                module = ".".join(
+                    (*parents[: len(parents) - node.level + 1], *filter(None, module.split(".")))
+                )
             for alias in node.names:
                 candidate = f"{module}.{alias.name}"
                 location = root.joinpath(*candidate.split("."))
@@ -106,20 +109,26 @@ def test_bootstrap_depends_only_on_foundation_and_never_on_model_tooling():
         for module in imports(path):
             assert not module.startswith(MODEL_TOOLING), (path, module)
             if module.startswith("dataagent"):
-                assert module in FOUNDATION or module.startswith("dataagent.bootstrap"), (path, module)
+                assert module in FOUNDATION or module.startswith("dataagent.bootstrap"), (
+                    path,
+                    module,
+                )
 
 
 def test_bootstrap_types_live_with_their_concern_without_reverse_dependencies():
     assert core_imports(CORE / "bootstrap/paths.py") == set()
     assert core_imports(CORE / "bootstrap/options.py") == set()
     assert core_imports(CORE / "bootstrap/discovery.py") <= FOUNDATION | {
-        "dataagent.bootstrap.paths", "dataagent.bootstrap.config_files",
+        "dataagent.bootstrap.paths",
+        "dataagent.bootstrap.config_files",
     }
     assert core_imports(CORE / "bootstrap/config_files.py") <= FOUNDATION | {
         "dataagent.bootstrap.paths",
     }
     assert core_imports(CORE / "bootstrap/runtime.py") <= FOUNDATION | {
-        "dataagent.bootstrap.paths", "dataagent.bootstrap.discovery", "dataagent.bootstrap.config_files",
+        "dataagent.bootstrap.paths",
+        "dataagent.bootstrap.discovery",
+        "dataagent.bootstrap.config_files",
     }
 
 
@@ -127,7 +136,7 @@ def test_bootstrap_class_ownership_is_explicit():
     expected = {
         "options": {"LaunchOptions"},
         "runtime": {"Runtime", "StartupReport"},
-        "discovery": {"ExtensionLocations", "HookBinding"},
+        "discovery": {"ExtensionLocations", "HookBinding", "RunHookBinding"},
         "config_files": {"ConfigSource", "Layer"},
     }
     for module, names in expected.items():
@@ -199,17 +208,23 @@ def test_runtime_preparation_has_one_public_entrypoint():
     assert "prepare_runtime" in bootstrap.__all__
 
 
-@pytest.mark.parametrize("source,target", [
-    ("import dataagent.extensions.tools as tools", "dataagent.extensions.tools"),
-    ("from dataagent.extensions.tools import resolve_tool_refs", "dataagent.extensions.tools"),
-    ("from dataagent.extensions import tools", "dataagent.extensions.tools"),
-    ("from .tools import resolve_tool_refs", "dataagent.extensions.tools"),
-    ("from . import tools", "dataagent.extensions.tools"),
-    ("from ..settings import Limits", "dataagent.settings"),
-    ("from dataagent.extensions import compile_extensions", "dataagent.extensions"),
-    ("from dataagent.extensions.tools import BaseTool", "dataagent.extensions.tools"),
-    ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n from . import tools", "dataagent.extensions.tools"),
-])
+@pytest.mark.parametrize(
+    "source,target",
+    [
+        ("import dataagent.extensions.tools as tools", "dataagent.extensions.tools"),
+        ("from dataagent.extensions.tools import resolve_tool_refs", "dataagent.extensions.tools"),
+        ("from dataagent.extensions import tools", "dataagent.extensions.tools"),
+        ("from .tools import resolve_tool_refs", "dataagent.extensions.tools"),
+        ("from . import tools", "dataagent.extensions.tools"),
+        ("from ..settings import Limits", "dataagent.settings"),
+        ("from dataagent.extensions import compile_extensions", "dataagent.extensions"),
+        ("from dataagent.extensions.tools import BaseTool", "dataagent.extensions.tools"),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n from . import tools",
+            "dataagent.extensions.tools",
+        ),
+    ],
+)
 def test_import_resolver_handles_modules_without_importing_them(tmp_path, source, target):
     package = tmp_path / "dataagent/extensions"
     package.mkdir(parents=True)
@@ -217,8 +232,10 @@ def test_import_resolver_handles_modules_without_importing_them(tmp_path, source
     path = package / "subagents.py"
     path.write_text(source)
     assert target in imports(path, root=tmp_path)
-    assert all(not name.endswith(("compile_extensions", "BaseTool", "Limits"))
-               for name in imports(path, root=tmp_path))
+    assert all(
+        not name.endswith(("compile_extensions", "BaseTool", "Limits"))
+        for name in imports(path, root=tmp_path)
+    )
 
 
 def test_cli_help_does_not_load_model_tooling():
@@ -245,15 +262,18 @@ def test_extension_concerns_follow_dependency_table():
         assert_extension_dependencies(path)
 
 
-@pytest.mark.parametrize("source", [
-    "import dataagent.extensions.subagents",
-    "from dataagent.extensions.subagents import materialize_subagents",
-    "from dataagent.extensions import subagents",
-    "from .subagents import materialize_subagents",
-    "from . import subagents",
-    "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n from . import subagents",
-    "from .compiler import compile_extensions",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import dataagent.extensions.subagents",
+        "from dataagent.extensions.subagents import materialize_subagents",
+        "from dataagent.extensions import subagents",
+        "from .subagents import materialize_subagents",
+        "from . import subagents",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n from . import subagents",
+        "from .compiler import compile_extensions",
+    ],
+)
 def test_dependency_guard_rejects_reverse_edges(tmp_path, source):
     package = tmp_path / "dataagent/extensions"
     package.mkdir(parents=True)
@@ -274,11 +294,14 @@ def test_dependency_guard_accepts_declared_subagent_edge(tmp_path):
     assert_extension_dependencies(path, root=tmp_path)
 
 
-@pytest.mark.parametrize("source", [
-    "from dataagent.agent import build_native_middleware",
-    "from ..agent import build_native_middleware",
-    "from dataagent import build_agent",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from dataagent.agent import build_native_middleware",
+        "from ..agent import build_native_middleware",
+        "from dataagent import build_agent",
+    ],
+)
 @pytest.mark.parametrize("module", ["loading", "hooks"])
 def test_dependency_guard_rejects_undeclared_core_edges(tmp_path, source, module):
     path = tmp_path / f"dataagent/extensions/{module}.py"

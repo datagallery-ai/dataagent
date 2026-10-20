@@ -6,7 +6,8 @@ parameters and host services, and pass the returned Runnable to the core as a
 native ``CompiledSubAgent``; a factory may also return a description supplement.
 """
 
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,6 +18,7 @@ from langchain_core.tools import BaseTool
 from dataagent.declarations import PluginSpec, SubAgentSpec
 from dataagent.extensions.hooks import compile_hooks
 from dataagent.extensions.loading import PythonLoader, contained_path
+from dataagent.extensions.run_hooks import RunHook, compile_run_hooks
 from dataagent.extensions.skills import compile_skill_sources
 from dataagent.extensions.tools import resolve_tool_refs
 from dataagent.semantic_client import SemanticServiceClient
@@ -24,15 +26,20 @@ from dataagent.strict_json import read_json
 
 
 def collect_subagents(
-    root: Path, spec: PluginSpec, child_specs: list[tuple[Path, str, SubAgentSpec]],
+    root: Path,
+    spec: PluginSpec,
+    child_specs: list[tuple[Path, str, SubAgentSpec]],
     agent_names: set[str],
 ) -> None:
+    """Collect named child declarations without executing their factories."""
     for relative in spec.subagents:
         child = SubAgentSpec.model_validate(read_json(contained_path(root, relative)))
         if child.description_file:
             text = contained_path(root, child.description_file).read_text(encoding="utf-8").strip()
             if not text:
-                raise ValueError(f"SubAgent {child.name!r} description_file is empty: {child.description_file}")
+                raise ValueError(
+                    f"SubAgent {child.name!r} description_file is empty: {child.description_file}"
+                )
             child = child.model_copy(update={"description": text})
         if child.name in agent_names:
             raise ValueError(f"Duplicate or reserved SubAgent name: {child.name}")
@@ -55,6 +62,8 @@ class SubagentServices:
     get_model: Callable[[str], BaseChatModel]
     semantic_client: SemanticServiceClient | None = None
     outputs_dir: Path | None = None
+    context: Any = None
+    run_hooks: tuple[RunHook, ...] = ()
 
 
 def _unresolvable_model(alias: str) -> BaseChatModel:
@@ -65,10 +74,29 @@ _NO_SERVICES = SubagentServices(get_model=_unresolvable_model)
 
 
 def _compiled_child(
-    root: Path, plugin_id: str, spec: SubAgentSpec, *, loader: PythonLoader,
-    plugin_params: dict[str, dict[str, Any]] | None, services: SubagentServices,
+    root: Path,
+    plugin_id: str,
+    spec: SubAgentSpec,
+    *,
+    loader: PythonLoader,
+    plugin_params: dict[str, dict[str, Any]] | None,
+    services: SubagentServices,
+    run_hook_entries,
 ) -> dict[str, Any]:
-    params = dict((plugin_params or {}).get(plugin_id) or {})
+    params = deepcopy((plugin_params or {}).get(plugin_id) or {})
+    configured_hooks = params.pop("hooks", None)
+    if configured_hooks and plugin_id not in run_hook_entries:
+        raise ValueError(
+            f"Workflow Hooks for {plugin_id!r} require source bindings from prepare_runtime()"
+        )
+    services = replace(
+        services,
+        run_hooks=compile_run_hooks(
+            run_hook_entries.get(plugin_id, ()),
+            loader,
+            services.context,
+        ),
+    )
     factory = loader.load(root, spec.entrypoint)
     if not callable(factory):
         raise TypeError(
@@ -93,21 +121,32 @@ def _compiled_child(
             f"Compiled SubAgent factory for {spec.name!r} must return a langchain Runnable, "
             f"got {type(result).__name__}"
         )
-    description = f"{spec.description}\n{extra.strip()}" if extra and extra.strip() else spec.description
+    description = (
+        f"{spec.description}\n{extra.strip()}" if extra and extra.strip() else spec.description
+    )
     return {"name": spec.name, "description": description, "runnable": result}
 
 
 def materialize_subagents(
-    child_specs: list[tuple[Path, str, SubAgentSpec]], *, tool_registry: dict[str, BaseTool],
-    loader: PythonLoader, skill_sources: list[tuple[str, str]],
+    child_specs: list[tuple[Path, str, SubAgentSpec]],
+    *,
+    tool_registry: dict[str, BaseTool],
+    loader: PythonLoader,
+    skill_sources: list[tuple[str, str]],
     plugin_params: dict[str, dict[str, Any]] | None = None,
     model_resolver: Callable[[str], BaseChatModel] | None = None,
     semantic_client: SemanticServiceClient | None = None,
     outputs_dir: Path | None = None,
+    context=None,
+    run_hook_entries=None,
 ) -> list[dict[str, Any]]:
-    if model_resolver or semantic_client or outputs_dir:
+    """Build standard agents and compiled workflows with shared host services."""
+    run_hook_entries = run_hook_entries or {}
+    if model_resolver or semantic_client or context is not None or outputs_dir is not None:
         services = SubagentServices(
-            get_model=model_resolver or _unresolvable_model, semantic_client=semantic_client,
+            get_model=model_resolver or _unresolvable_model,
+            semantic_client=semantic_client,
+            context=context,
             outputs_dir=outputs_dir,
         )
     else:
@@ -115,24 +154,41 @@ def materialize_subagents(
     children = []
     for root, plugin_id, spec in child_specs:
         if spec.kind == "compiled":
-            children.append(_compiled_child(
-                root, plugin_id, spec, loader=loader,
-                plugin_params=plugin_params, services=services,
-            ))
+            children.append(
+                _compiled_child(
+                    root,
+                    plugin_id,
+                    spec,
+                    loader=loader,
+                    plugin_params=plugin_params,
+                    services=services,
+                    run_hook_entries=run_hook_entries,
+                )
+            )
             continue
-        ids = (resolve_tool_refs(spec.tools, plugin_id, tool_registry, agent_name=spec.name)
-               if spec.tools is not None else list(tool_registry))
-        compiled_hooks = compile_hooks([(root, hook) for hook in spec.hooks], loader, agent_name=spec.name)
+        ids = (
+            resolve_tool_refs(spec.tools, plugin_id, tool_registry, agent_name=spec.name)
+            if spec.tools is not None
+            else list(tool_registry)
+        )
+        compiled_hooks = compile_hooks(
+            [(root, hook) for hook in spec.hooks], loader, agent_name=spec.name
+        )
         child = {
             "name": spec.name,
             "description": spec.description,
             "system_prompt": contained_path(root, spec.system_prompt).read_text(encoding="utf-8"),
-            "skills": (list(skill_sources) if spec.skills is None
-                       else compile_skill_sources(root, spec.skills, label=plugin_id)),
+            "skills": (
+                list(skill_sources)
+                if spec.skills is None
+                else compile_skill_sources(root, spec.skills, label=plugin_id)
+            ),
             "middleware": compiled_hooks,
         }
         # Upstream distinguishes omitted tools (inherit) from [] (no explicit tools).
         if spec.tools is not None:
             child["tools"] = [tool_registry[name] for name in ids]
+        if spec.filesystem_tools is not None:
+            child["filesystem_tools"] = list(spec.filesystem_tools)
         children.append(child)
     return children

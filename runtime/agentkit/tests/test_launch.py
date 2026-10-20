@@ -15,9 +15,15 @@ from dataagent.bootstrap import (
 from dataagent.bootstrap.paths import WorkspaceInput, absolute
 from dataagent.bootstrap.paths import directory as resolve_directory
 
-MODEL = {"models": {"primary": {
-    "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "private-test-value",
-}}}
+MODEL = {
+    "models": {
+        "primary": {
+            "name": "test-model",
+            "base_url": "https://example.invalid/v1",
+            "api_key": "private-test-value",
+        }
+    }
+}
 
 
 def config(path, value):
@@ -68,9 +74,18 @@ def test_switching_home_switches_configuration_extensions_and_state(tmp_path, mo
     runtimes = []
     for name in ("first", "second"):
         home = tmp_path / name
-        config(home / "config.json", {"models": {"primary": {
-            "name": name, "base_url": "https://example.invalid/v1", "api_key": "test",
-        }}})
+        config(
+            home / "config.json",
+            {
+                "models": {
+                    "primary": {
+                        "name": name,
+                        "base_url": "https://example.invalid/v1",
+                        "api_key": "test",
+                    }
+                }
+            },
+        )
         skill = home / "skills/example/SKILL.md"
         skill.parent.mkdir(parents=True)
         skill.write_text("---\nname: example\ndescription: test\n---\nExample skill")
@@ -86,9 +101,15 @@ def test_switching_home_switches_configuration_extensions_and_state(tmp_path, mo
 
 
 def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path):
-    config(tmp_path / "home/config.json", {**MODEL, "dataagent": {
-        "workspaces": [{"name": "data", "path": str(tmp_path)}],
-    }})
+    config(
+        tmp_path / "home/config.json",
+        {
+            **MODEL,
+            "dataagent": {
+                "workspaces": [{"name": "data", "path": str(tmp_path)}],
+            },
+        },
+    )
     cli = config(tmp_path / "empty.json", {"dataagent": {"workspaces": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.paths.workspaces == runtime.settings.dataagent.workspaces == ()
@@ -98,15 +119,26 @@ def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path)
 def test_runtime_separates_settings_paths_extensions_and_report(tmp_path):
     runtime = prepare_runtime(options(tmp_path))
     assert {field.name for field in fields(runtime)} == {
-        "settings", "paths", "extensions", "report", "model_environment",
+        "settings",
+        "paths",
+        "extensions",
+        "report",
+        "model_environment",
     }
     assert {field.name for field in fields(runtime.report)} == {
-        "configs", "plugin_origins", "env_file",
+        "configs",
+        "plugin_origins",
+        "env_file",
     }
     assert {field.name for field in fields(runtime.extensions)} == {
-        "plugin_roots", "skill_sources", "hooks", "mcp_servers",
+        "plugin_roots",
+        "skill_sources",
+        "hooks",
+        "run_hooks",
+        "mcp_servers",
     }
     assert runtime.extensions.hooks == ()
+    assert not runtime.extensions.run_hooks
     assert not hasattr(runtime, "sources")
     assert not hasattr(runtime, "resources")
     assert not hasattr(runtime, "provenance")
@@ -120,7 +152,12 @@ def test_home_initialization_is_exclusive_and_non_overwriting(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(initialize_home, [home] * 8))
     assert {item.name for item in home.iterdir()} == {
-        "config.json", ".env", "skills", "hooks", "plugins", "runtime",
+        "config.json",
+        ".env",
+        "skills",
+        "hooks",
+        "plugins",
+        "runtime",
     }
     assert home.stat().st_mode & 0o777 == 0o700
     assert (home / ".env").stat().st_mode & 0o777 == 0o600
@@ -157,18 +194,36 @@ def test_template_error_has_variable_field_and_help_path_without_values(tmp_path
 
 def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
     cli = options(tmp_path).config
-    config(tmp_path / "home/config.json", {
-        **MODEL, "models": {**MODEL["models"], "unused": {
-            "name": "$env{NOT_SET}", "base_url": "https://example.invalid", "api_key": "$env{NO_KEY}",
-        }},
-        "dataagent": {"limits": {"timeout_seconds": 90},
-                      "hooks": [{"entrypoint": "hooks/audit.py:handle", "event": "after_agent"}]},
-        "plugins": {"enabled": ["common"], "paths": ["./user-extra"]},
-    })
-    config(cli, {"models": {"primary": {"name": "explicit-model"}},
-                 "plugins": {"enabled": []}, "server": {"port": 8801}, "dataagent": {
-        "hooks": [{"entrypoint": "hooks/cli.py:handle", "event": "after_agent"}],
-    }})
+    config(
+        tmp_path / "home/config.json",
+        {
+            **MODEL,
+            "models": {
+                **MODEL["models"],
+                "unused": {
+                    "name": "$env{NOT_SET}",
+                    "base_url": "https://example.invalid",
+                    "api_key": "$env{NO_KEY}",
+                },
+            },
+            "dataagent": {
+                "limits": {"timeout_seconds": 90},
+                "hooks": [{"entrypoint": "hooks/audit.py:handle", "event": "after_agent"}],
+            },
+            "plugins": {"enabled": ["common"], "paths": ["./user-extra"]},
+        },
+    )
+    config(
+        cli,
+        {
+            "models": {"primary": {"name": "explicit-model"}},
+            "plugins": {"enabled": []},
+            "server": {"port": 8801},
+            "dataagent": {
+                "hooks": [{"entrypoint": "hooks/cli.py:handle", "event": "after_agent"}],
+            },
+        },
+    )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspace=tmp_path, config=cli))
     assert runtime.model_name == "explicit-model"
     assert runtime.settings.server.port == 8801
@@ -176,13 +231,19 @@ def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
     assert runtime.settings.plugins.enabled == ()
     assert runtime.settings.plugins.paths == (tmp_path / "home/user-extra",)
     assert [hook.entrypoint for hook in runtime.settings.dataagent.hooks] == [
-        "hooks/audit.py:handle", "hooks/cli.py:handle",
+        "hooks/audit.py:handle",
+        "hooks/cli.py:handle",
     ]
     assert [binding.base_dir for binding in runtime.extensions.hooks] == [
-        tmp_path / "home", tmp_path,
+        tmp_path / "home",
+        tmp_path,
     ]
-    assert all(binding.spec is spec for binding, spec in
-               zip(runtime.extensions.hooks, runtime.settings.dataagent.hooks, strict=True))
+    assert all(
+        binding.spec is spec
+        for binding, spec in zip(
+            runtime.extensions.hooks, runtime.settings.dataagent.hooks, strict=True
+        )
+    )
     with pytest.raises(FrozenInstanceError):
         runtime.extensions.hooks[0].base_dir = tmp_path / "other"
     assert [item.scope for item in runtime.report.configs if item.applied] == ["user", "cli"]
@@ -191,8 +252,7 @@ def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
 @pytest.mark.parametrize("scope", ["user", "cli"])
 def test_workspace_field_is_rejected_in_every_layer(tmp_path, scope):
     opts = options(tmp_path)
-    path = {"user": tmp_path / "home/config.json",
-            "cli": opts.config}[scope]
+    path = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
     config(path, {**MODEL, "workspace": {"path": str(tmp_path)}})
     with pytest.raises(ValueError) as error:
         prepare_runtime(opts)
@@ -202,8 +262,7 @@ def test_workspace_field_is_rejected_in_every_layer(tmp_path, scope):
 @pytest.mark.parametrize("scope", ["user", "cli"])
 def test_invalid_overridden_fields_still_fail_at_their_source(tmp_path, scope):
     opts = options(tmp_path)
-    path = {"user": tmp_path / "home/config.json",
-            "cli": opts.config}[scope]
+    path = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
     config(path, {"dataagent": {"limits": {"model_calls_per_agent": "secret-invalid-value"}}})
     with pytest.raises(ValueError) as error:
         prepare_runtime(opts)
@@ -222,7 +281,9 @@ def test_duplicate_plugins_fail_at_source_even_when_cli_overrides_them(tmp_path,
     assert str(error.value) == f"{path}: plugins.enabled contains duplicates"
 
 
-def test_environment_precedence_empty_values_dedup_and_process_unchanged(tmp_path, monkeypatch, capsys):
+def test_environment_precedence_empty_values_dedup_and_process_unchanged(
+    tmp_path, monkeypatch, capsys
+):
     opts = options(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
@@ -230,9 +291,18 @@ def test_environment_precedence_empty_values_dedup_and_process_unchanged(tmp_pat
     (tmp_path / ".env").write_text("LLM_MODEL=sibling\nLLM_API_KEY=\n")
     env_file = tmp_path / "explicit.env"
     env_file.write_text("LLM_MODEL=explicit\nDATAAGENT_HOME=/ignored\n")
-    config(opts.config, {"models": {"primary": {
-        "name": "$env{LLM_MODEL}", "base_url": "https://example.invalid", "api_key": "$env{LLM_API_KEY}",
-    }}})
+    config(
+        opts.config,
+        {
+            "models": {
+                "primary": {
+                    "name": "$env{LLM_MODEL}",
+                    "base_url": "https://example.invalid",
+                    "api_key": "$env{LLM_API_KEY}",
+                }
+            }
+        },
+    )
     before = dict(os.environ)
     runtime = prepare_runtime(replace(opts, env_file=env_file))
     assert runtime.model_name == "explicit"
@@ -283,12 +353,16 @@ def test_relative_workspace_from_env_uses_launch_cwd_not_env_directory(tmp_path,
     workspace = cwd / "work"
     workspace.mkdir(parents=True)
     cli = config(tmp_path / "configuration/config.json", MODEL)
-    env_file = {"home": tmp_path / "home/.env", "config": cli.with_name(".env"),
-                "explicit": tmp_path / "environment/settings.env"}[source]
+    env_file = {
+        "home": tmp_path / "home/.env",
+        "config": cli.with_name(".env"),
+        "explicit": tmp_path / "environment/settings.env",
+    }[source]
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text("DATAAGENT_WORKSPACE=work\n")
-    runtime = prepare_runtime(LaunchOptions(cwd=cwd, config=cli,
-                                    env_file=env_file if source == "explicit" else None))
+    runtime = prepare_runtime(
+        LaunchOptions(cwd=cwd, config=cli, env_file=env_file if source == "explicit" else None)
+    )
     assert runtime.paths.workspaces[0].path == workspace
     assert not (env_file.parent / "work").exists()
 
@@ -307,9 +381,15 @@ def test_hidden_empty_project_and_legacy_paths_are_ignored(tmp_path):
 
 
 def test_explicit_symlinks_keep_declaration_anchor(tmp_path):
-    target = config(tmp_path / "storage/config.json", {**MODEL, "dataagent": {
-        "hooks": [{"entrypoint": "hooks/check.py:handle", "event": "before_model"}],
-    }})
+    target = config(
+        tmp_path / "storage/config.json",
+        {
+            **MODEL,
+            "dataagent": {
+                "hooks": [{"entrypoint": "hooks/check.py:handle", "event": "before_model"}],
+            },
+        },
+    )
     env_target = tmp_path / "storage/settings.env"
     env_target.write_text("UNUSED_TEST_SETTING=value\n")
     declared = tmp_path / "declared"
@@ -322,7 +402,9 @@ def test_explicit_symlinks_keep_declaration_anchor(tmp_path):
     assert runtime.extensions.hooks[0].base_dir == declared
     assert runtime.settings.dataagent.hooks[0].entrypoint == "hooks/check.py:handle"
     assert runtime.report.env_file == env_file
-    assert [(item.scope, item.path) for item in runtime.report.configs if item.applied] == [("cli", cli)]
+    assert [(item.scope, item.path) for item in runtime.report.configs if item.applied] == [
+        ("cli", cli)
+    ]
 
 
 def test_default_prepare_uses_call_time_cwd_and_does_not_init_home(tmp_path, monkeypatch):
@@ -348,8 +430,10 @@ def test_home_fallback_and_missing_os_home(tmp_path, monkeypatch):
     monkeypatch.setenv("DATAAGENT_HOME", "  ")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "fake-user"))
     assert prepare_runtime(opts).paths.home == tmp_path / "fake-user/.dataagent"
+
     def missing_home(cls):
         raise RuntimeError("unavailable")
+
     monkeypatch.setattr(Path, "home", classmethod(missing_home))
     with pytest.raises(ValueError, match="set DATAAGENT_HOME"):
         prepare_runtime(opts)
@@ -418,21 +502,38 @@ def test_empty_hook_list_adds_nothing_and_preserves_lower_layer_without_importin
     config(tmp_path / "home/config.json", {**MODEL, "dataagent": {"hooks": [entry]}})
     cli = config(tmp_path / "override.json", {"dataagent": {"hooks": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    hook, = runtime.settings.dataagent.hooks
+    (hook,) = runtime.settings.dataagent.hooks
     assert hook.entrypoint == "missing.py:handle"
-    binding, = runtime.extensions.hooks
+    (binding,) = runtime.extensions.hooks
     assert binding.base_dir == tmp_path / "home" and binding.spec is hook
 
 
 def test_hook_merge_is_repeatable_without_mutating_layers_or_hook_config(tmp_path):
     from dataagent.bootstrap.config_files import Layer, freeze, merge
 
-    layers = tuple(Layer(scope, tmp_path / scope / "config.json", freeze({
-        **(MODEL if scope == "user" else {}), "dataagent": {"hooks": [{
-            "event": "before_agent", "entrypoint": "audit.py:handle",
-            "params": {"dataagent": {"hooks": [scope]}},
-        }]},
-    }), {}, tmp_path / "home") for scope in ("user", "cli"))
+    layers = tuple(
+        Layer(
+            scope,
+            tmp_path / scope / "config.json",
+            freeze(
+                {
+                    **(MODEL if scope == "user" else {}),
+                    "dataagent": {
+                        "hooks": [
+                            {
+                                "event": "before_agent",
+                                "entrypoint": "audit.py:handle",
+                                "params": {"dataagent": {"hooks": [scope]}},
+                            }
+                        ]
+                    },
+                }
+            ),
+            {},
+            tmp_path / "home",
+        )
+        for scope in ("user", "cli")
+    )
     first, second = merge(layers), merge(layers)
     assert first == second
     assert [hook.params for hook in first.dataagent.hooks] == [
@@ -444,10 +545,11 @@ def test_hook_merge_is_repeatable_without_mutating_layers_or_hook_config(tmp_pat
 @pytest.mark.parametrize("scope", ["user", "cli"])
 @pytest.mark.parametrize("field", ["middleware", "callbacks"])
 @pytest.mark.parametrize("value", [[], [{"entrypoint": "must-not-import.py:create"}]])
-def test_removed_factory_fields_fail_at_every_source_even_when_overridden(tmp_path, scope, field, value):
+def test_removed_factory_fields_fail_at_every_source_even_when_overridden(
+    tmp_path, scope, field, value
+):
     opts = options(tmp_path)
-    source = {"user": tmp_path / "home/config.json",
-              "cli": opts.config}[scope]
+    source = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
     config(source, {**MODEL, "dataagent": {field: value}})
     with pytest.raises(ValueError) as caught:
         prepare_runtime(opts)
@@ -463,35 +565,69 @@ def test_hook_lists_accumulate_with_each_declarations_own_directory(tmp_path, sc
     applied = []
     for layer in ("user", "cli"):
         applied.append(layer)
-        config(roots[layer] / "hooks.json" if layer == "cli" else roots[layer] / "config.json", {
-            **(MODEL if layer == "user" else {}), "dataagent": {"hooks": [
-                {"event": event, "entrypoint": f"{layer}.py:handle"}
-                for event in ("before_agent", "after_agent")
-            ]},
-        })
+        config(
+            roots[layer] / "hooks.json" if layer == "cli" else roots[layer] / "config.json",
+            {
+                **(MODEL if layer == "user" else {}),
+                "dataagent": {
+                    "hooks": [
+                        {"event": event, "entrypoint": f"{layer}.py:handle"}
+                        for event in ("before_agent", "after_agent")
+                    ]
+                },
+            },
+        )
         if layer == scope:
             break
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspace=tmp_path,
-                                   config=roots["cli"] / "hooks.json" if scope == "cli" else None))
+    runtime = prepare_runtime(
+        LaunchOptions(
+            cwd=tmp_path,
+            workspace=tmp_path,
+            config=roots["cli"] / "hooks.json" if scope == "cli" else None,
+        )
+    )
     assert [binding.base_dir for binding in runtime.extensions.hooks] == [
         roots[layer] for layer in applied for _ in range(2)
     ]
     assert [hook.entrypoint for hook in runtime.settings.dataagent.hooks] == [
         f"{layer}.py:handle" for layer in applied for _ in range(2)
     ]
-    assert [hook.event for hook in runtime.settings.dataagent.hooks] == ["before_agent", "after_agent"] * len(applied)
-    assert all(binding.spec is spec for binding, spec in
-               zip(runtime.extensions.hooks, runtime.settings.dataagent.hooks, strict=True))
+    assert [hook.event for hook in runtime.settings.dataagent.hooks] == [
+        "before_agent",
+        "after_agent",
+    ] * len(applied)
+    assert all(
+        binding.spec is spec
+        for binding, spec in zip(
+            runtime.extensions.hooks, runtime.settings.dataagent.hooks, strict=True
+        )
+    )
     assert not hasattr(runtime.extensions, "hooks_base_dir")
 
 
 def test_higher_layer_without_hooks_preserves_lower_hook_directory(tmp_path):
-    config(tmp_path / "home/config.json", {**MODEL, "dataagent": {"hooks": [{
-        "event": "before_agent", "entrypoint": "hooks/audit.py:handle",
-    }]}})
-    cli = config(tmp_path / "explicit/config.json", {"dataagent": {
-        "limits": {"timeout_seconds": 60},
-    }})
+    config(
+        tmp_path / "home/config.json",
+        {
+            **MODEL,
+            "dataagent": {
+                "hooks": [
+                    {
+                        "event": "before_agent",
+                        "entrypoint": "hooks/audit.py:handle",
+                    }
+                ]
+            },
+        },
+    )
+    cli = config(
+        tmp_path / "explicit/config.json",
+        {
+            "dataagent": {
+                "limits": {"timeout_seconds": 60},
+            }
+        },
+    )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.extensions.hooks[0].base_dir == tmp_path / "home"
     assert runtime.settings.dataagent.hooks[0].entrypoint == "hooks/audit.py:handle"
@@ -509,7 +645,9 @@ def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, exp
     captured = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        entry, "serve", lambda runtime, *args, **kwargs: captured.append(runtime) or 0,
+        entry,
+        "serve",
+        lambda runtime, *args, **kwargs: captured.append(runtime) or 0,
     )
     args = ["serve", "--config", str(opts.config)]
     if explicit_workspace:
@@ -522,10 +660,12 @@ def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, exp
 def test_home_creation_failure_preserves_already_created_items(tmp_path, monkeypatch):
     home = tmp_path / "new-home"
     original_open = os.open
+
     def fail_env(path, *args, **kwargs):
         if Path(path).name == ".env":
             raise PermissionError("test failure")
         return original_open(path, *args, **kwargs)
+
     monkeypatch.setattr(os, "open", fail_env)
     with pytest.raises(PermissionError):
         initialize_home(home)

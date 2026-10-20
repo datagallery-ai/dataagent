@@ -21,6 +21,7 @@ from langchain_core.tools import BaseTool, ToolException
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
 from dataagent.core.graph import create_deep_agent
+from dataagent.core.middleware.filesystem.filesystem import FilesystemMiddleware
 from dataagent.extensions import compile_extensions, select_plugins
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 from dataagent.extensions.skills import VersionedSkillsMiddleware
@@ -55,10 +56,13 @@ def build_native_middleware(
 
 
 def load_extensions(
-    runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = None,
+    runtime: Runtime,
+    *,
+    mcp_tools: Sequence[BaseTool] | None = None,
     semantic_client: SemanticServiceClient | None = None,
     model_resolver: Callable[[str], BaseChatModel] | None = None,
     outputs_dir: Path | None = None,
+    context: ModelContext | None = None,
 ) -> dict:
     """Compile Python extensions with already discovered native MCP tools.
 
@@ -86,9 +90,16 @@ def load_extensions(
         hook_entries=tuple((binding.base_dir, binding.spec) for binding in extensions.hooks),
         mcp_tools=mcp_tools or (),
         plugin_params=dict(settings.plugins.config),
-        model_resolver=model_resolver if model_resolver is not None else ModelContext(runtime).get_model,
+        model_resolver=model_resolver
+        if model_resolver is not None
+        else ModelContext(runtime).get_model,
         semantic_client=semantic_client,
         outputs_dir=outputs_dir,
+        context=context,
+        run_hook_entries={
+            key: [(binding.base_dir, binding.spec) for binding in bindings]
+            for key, bindings in extensions.run_hooks.items()
+        },
     )
 
 
@@ -104,7 +115,14 @@ def build_agent(
     context: ModelContext | None = None,
 ):
     """Return the native graph; raw callers pass context on invocation or use create_agent."""
-    context = context if context is not None else ModelContext(runtime, model=model)
+    session = session or (
+        context.session if context is not None else runtime.paths.for_session("sdk")
+    )
+    context = (
+        context if context is not None else ModelContext(runtime, model=model, session=session)
+    )
+    if context.session != session:
+        raise ValueError("Agent context and filesystem must refer to the same session")
     settings = runtime.settings
     if settings.semantic is not None and context.semantic_client is None:
         raise ValueError(
@@ -112,10 +130,13 @@ def build_agent(
             "with a host-owned semantic_client to build_agent() and native graph invocations"
         )
     workspaces = runtime.paths.workspaces if input_workspaces is None else input_workspaces
-    session = session or runtime.paths.for_session("sdk")
     kwargs = load_extensions(
-        runtime, mcp_tools=mcp_tools, semantic_client=context.semantic_client,
-        model_resolver=context.get_model, outputs_dir=session.outputs,
+        runtime,
+        mcp_tools=mcp_tools,
+        semantic_client=context.semantic_client,
+        model_resolver=context.get_model,
+        context=context,
+        outputs_dir=session.outputs,
     )
     backend = build_filesystem_backend(runtime, session)
     filesystem_prompt = render_filesystem_prompt(outputs=session.outputs, workspaces=workspaces)
@@ -131,6 +152,11 @@ def build_agent(
         child["middleware"] = [
             *build_native_middleware(limits, root=False, compiled_hooks=child["middleware"]),
         ]
+        filesystem_tools = child.pop("filesystem_tools", None)
+        if filesystem_tools is not None:
+            child["middleware"].append(
+                FilesystemMiddleware(backend=backend, tools=filesystem_tools)
+            )
         if extension_revision is not None:
             child["middleware"].append(
                 VersionedSkillsMiddleware(

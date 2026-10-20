@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "id": "de-agent",
+  "requires": [
+    "nl2sql"
+  ],
+  "config": "config.json",
+  "system_prompt": "prompts/agent.md",
+  "skills": [
+    "skills"
+  ],
+  "subagents": [
+    "subagents/metadata-recall.json"
+  ],
+  "tools": {
+    "get_table_schema": {
+      "entrypoint": "tools/metadata.py:get_table_schema",
+      "scope": "subagents"
+    },
+    "get_join_relations": {
+      "entrypoint": "tools/metadata.py:get_join_relations",
+      "scope": "subagents"
+    },
+    "search_udf_function_by_name_keyword": {
+      "entrypoint": "tools/metadata.py:search_udf_function_by_name_keyword",
+      "scope": "subagents"
+    },
+    "search_udf_function_by_dsl": {
+      "entrypoint": "tools/metadata.py:search_udf_function_by_dsl",
+      "scope": "subagents"
+    },
+    "validate_table_name": {
+      "entrypoint": "tools/metadata.py:validate_table_name"
+    },
+    "check_table_existence": {
+      "entrypoint": "tools/metadata.py:check_table_existence"
+    },
+    "query_sql_process": {
+      "entrypoint": "tools/metadata.py:query_sql_process"
+    },
+    "validate_deliverables": {
+      "entrypoint": "tools/deliverables.py:validate_deliverables"
+    }
+  },
+  "hooks": {
+    "after_tool": [
+      {
+        "entrypoint": "hooks/files.py:check_ddl",
+        "matcher": "write_file"
+      },
+      {
+        "entrypoint": "hooks/files.py:check_ddl",
+        "matcher": "edit_file"
+      }
+    ],
+    "before_tool": [
+      {
+        "entrypoint": "hooks/metadata.py:prepare_recall",
+        "matcher": "task"
+      },
+      {
+        "entrypoint": "hooks/files.py:guard_insert",
+        "matcher": "write_file"
+      }
+    ]
+  }
+}

@@ -5,6 +5,7 @@ messages, checkpoint state or client-supplied configuration. No global client ca
 """
 
 from _thread import LockType
+from copy import deepcopy
 from threading import Lock
 
 from langchain_core.language_models import BaseChatModel
@@ -13,6 +14,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.config_files import expand_env, validate_against
+from dataagent.bootstrap.paths import SessionPaths
 from dataagent.semantic_client import SemanticServiceClient
 from dataagent.settings import ModelSettings
 
@@ -66,6 +68,7 @@ class ModelContext(BaseModel):
     """
 
     _runtime: Runtime = PrivateAttr()
+    _session: SessionPaths = PrivateAttr()
     _models: dict[str, BaseChatModel] = PrivateAttr(default_factory=dict)
     _lock: LockType = PrivateAttr(default_factory=Lock)
     _semantic_client: SemanticServiceClient | None = PrivateAttr(default=None)
@@ -76,13 +79,20 @@ class ModelContext(BaseModel):
         *,
         model: BaseChatModel | None = None,
         semantic_client: SemanticServiceClient | None = None,
+        session: SessionPaths | None = None,
     ):
         """Retain startup model settings and an optional externally owned semantic client."""
         super().__init__()
         self._runtime = runtime
+        self._session = session or runtime.paths.for_session("sdk")
         self._semantic_client = semantic_client
         if model is not None:
             self._models[runtime.settings.dataagent.model.default] = model
+
+    @property
+    def session(self) -> SessionPaths:
+        """Return the immutable session paths bound to this Agent handle."""
+        return self._session
 
     @property
     def semantic_client(self) -> SemanticServiceClient | None:
@@ -96,6 +106,12 @@ class ModelContext(BaseModel):
             self._semantic_client.redaction_secrets if self._semantic_client is not None else ()
         )
         return (*self._runtime.redaction_secrets, *semantic)
+
+    def get_plugin_config(self, plugin_id: str) -> dict:
+        """Return isolated effective parameters for an enabled plugin."""
+        if plugin_id not in self._runtime.settings.plugins.enabled:
+            raise ValueError(f"Plugin {plugin_id!r} is not enabled")
+        return deepcopy(self._runtime.settings.plugins.config.get(plugin_id, {}))
 
     def get_model(self, name: str | None = None) -> BaseChatModel:
         """Return the configured, unbound model without changing Agent model selection."""

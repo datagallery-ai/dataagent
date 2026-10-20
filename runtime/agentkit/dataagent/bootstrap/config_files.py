@@ -26,7 +26,7 @@ from dataagent.settings import (
 from dataagent.strict_json import read_json
 
 ENV_REFERENCE = re.compile(r"\$env\{([A-Za-z_][A-Za-z0-9_]*)\}")
-Scope = Literal["user", "cli"]
+Scope = Literal["user", "cli", "plugin"]
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class Layer:
     data: Mapping = field(repr=False)
     env: Mapping = field(repr=False)
     home: Path
+    base_dir: Path | None = None
 
 
 def freeze(value):
@@ -123,8 +124,10 @@ def _expand_model_value(value, field_sources, location):
     the array.
     """
     if isinstance(value, Mapping):
-        return {key: _expand_model_value(item, field_sources, (*location, key))
-                for key, item in value.items()}
+        return {
+            key: _expand_model_value(item, field_sources, (*location, key))
+            for key, item in value.items()
+        }
     source = field_sources[location]
     return expand_env(value, source.env, source=source.path, home=source.home, location=location)
 
@@ -157,8 +160,15 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
                 if not isinstance(target.get(key), dict):
                     target[key] = {}
                 overlay(target.get(key), value, source, location)
-            elif location == ("dataagent", "hooks"):
+            elif location == ("dataagent", "hooks") or (
+                len(location) == 5
+                and location[:2] == ("plugins", "config")
+                and location[3] == "hooks"
+                and location[4] in {"before_run", "after_run"}
+            ):
                 # Each registration keeps its position; repeated events/functions are valid.
+                if not isinstance(value, (tuple, list)):
+                    raise ValueError(f"{source.path}: {'.'.join(location)} must be a list")
                 target.setdefault(key, []).extend(value)
             else:
                 # No other list changes semantics: the later layer wins.
@@ -200,6 +210,12 @@ def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer 
         raise ValueError(f"Expected a configuration file: {path}")
 
     raw = read_json(path)
+    if scope == "plugin" and (
+        set(raw) - {"plugins"}
+        or not isinstance(raw.get("plugins", {}), dict)
+        or set(raw.get("plugins", {})) - {"config"}
+    ):
+        raise ValueError(f"{path}: plugin defaults may only contribute plugins.config")
     # File-level migration checks; individual Hook declarations use the shared schema below.
     if raw.get("schema_version", 3) != 3:
         raise ValueError(
