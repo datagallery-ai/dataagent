@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import AsyncIterator, Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast, runtime_checkable
 from uuid import uuid4
@@ -22,6 +23,8 @@ from uuid import uuid4
 from loguru import logger
 
 from dataagent.core.utils.performance import get_current_collector, summarize_llm_usage
+
+_in_react_llm_call: ContextVar[bool] = ContextVar("in_react_llm_call", default=False)
 
 
 def log_llm_done(phase: str, resp: LLMResponse, *, rid: str | None = None) -> None:
@@ -436,6 +439,13 @@ class LangChainChatModelAdapter:
             logger.debug("Failed to get OTel recorder from runtime context.")
         return None
 
+    @staticmethod
+    def _should_record_llm() -> Any:
+        """Return the OTel recorder only when inside a react-round planner LLM call."""
+        if not _in_react_llm_call.get():
+            return None
+        return LangChainChatModelAdapter._get_otel_recorder()
+
     @classmethod
     def messages_to_openai_dicts(cls, chat_input: Any) -> Any:
         """非 langchain 后端：LangChain Message / dict 列表 → OpenAI dict messages。"""
@@ -562,51 +572,93 @@ class LangChainChatModelAdapter:
 
     def invoke(self, chat_input: Any, **kwargs: Any) -> LLMResponse:
         """规范化输入并同步调用模型。"""
-        recorder = self._get_otel_recorder()
+        recorder = self._should_record_llm()
         if recorder:
             recorder.record_llm_start(model=self._llm_perf_name, messages=self._serialize_otel_input(chat_input))
-        with get_current_collector().measure("llm", self._llm_perf_name, call_mode="invoke") as h:
-            resp = self._invoke_inner(chat_input, kwargs)
-            self._fill_llm_extra(h, resp)
-        if recorder:
-            recorder.record_llm_end(
-                usage=resp.usage_metadata,
-                finish_reason=self._infer_finish_reason(resp),
-                content=resp.content,
-                reasoning_content=resp.reasoning_content,
-            )
+        resp: LLMResponse | None = None
+        try:
+            with get_current_collector().measure("llm", self._llm_perf_name, call_mode="invoke") as h:
+                resp = self._invoke_inner(chat_input, kwargs)
+                self._fill_llm_extra(h, resp)
+        finally:
+            if recorder is not None:
+                recorder.record_llm_end(
+                    usage=resp.usage_metadata if resp is not None else None,
+                    finish_reason=self._infer_finish_reason(resp) if resp is not None else "error",
+                    content=resp.content if resp is not None else "",
+                    reasoning_content=resp.reasoning_content if resp is not None else "",
+                )
         return resp
 
     async def ainvoke(self, chat_input: Any, **kwargs: Any) -> LLMResponse:
         """规范化输入并异步调用模型。"""
-        recorder = self._get_otel_recorder()
+        recorder = self._should_record_llm()
         if recorder:
             recorder.record_llm_start(model=self._llm_perf_name, messages=self._serialize_otel_input(chat_input))
-        with get_current_collector().measure("llm", self._llm_perf_name, call_mode="ainvoke") as h:
-            norm_input = self._normalize_input_for_langchain(chat_input)
-            resp = await self._ainvoke_normalized(norm_input, kwargs)
-            self._fill_llm_extra(h, resp)
-        if recorder:
-            recorder.record_llm_end(
-                usage=resp.usage_metadata,
-                finish_reason=self._infer_finish_reason(resp),
-                content=resp.content,
-                reasoning_content=resp.reasoning_content,
-            )
+        resp: LLMResponse | None = None
+        try:
+            with get_current_collector().measure("llm", self._llm_perf_name, call_mode="ainvoke") as h:
+                    norm_input = self._normalize_input_for_langchain(chat_input)
+                    resp = await self._ainvoke_normalized(norm_input, kwargs)
+                    self._fill_llm_extra(h, resp)
+        finally:
+            if recorder is not None:
+                recorder.record_llm_end(
+                    usage=resp.usage_metadata if resp is not None else None,
+                    finish_reason=self._infer_finish_reason(resp) if resp is not None else "error",
+                    content=resp.content if resp is not None else "",
+                    reasoning_content=resp.reasoning_content if resp is not None else "",
+                )
         return resp
 
     async def astream(self, chat_input: Any, **kwargs: Any) -> AsyncIterator[LLMStreamChunk]:
         """规范化输入并优先使用底层流式能力；不支持时回退到一次性调用。"""
-        recorder = self._get_otel_recorder()
+        recorder = self._should_record_llm()
         if recorder:
             recorder.record_llm_start(model=self._llm_perf_name, messages=self._serialize_otel_input(chat_input))
         norm_input = self._normalize_input_for_langchain(chat_input)
         raw_fn = getattr(self._raw, "astream", None)
 
-        with get_current_collector().measure("llm", self._llm_perf_name, call_mode="astream") as h:
-            if not callable(raw_fn):
-                final_resp = await self._ainvoke_normalized(norm_input, kwargs)
+        final_resp: LLMResponse | None = None
+        try:
+            with get_current_collector().measure("llm", self._llm_perf_name, call_mode="astream") as h:
+                if not callable(raw_fn):
+                    final_resp = await self._ainvoke_normalized(norm_input, kwargs)
+                    self._fill_llm_extra(h, final_resp)
+                    if recorder:
+                        recorder.record_llm_end(
+                            usage=final_resp.usage_metadata,
+                            finish_reason=self._infer_finish_reason(final_resp),
+                            content=final_resp.content,
+                            reasoning_content=final_resp.reasoning_content,
+                        )
+                    yield LLMStreamChunk(final_response=final_resp, done=True)
+                    return
+
+                rid = uuid4().hex[:8]
+                logger.debug("Start to stream llm rid={}", rid)
+                stream = raw_fn(norm_input, **kwargs)
+                logger.debug("LLM stream created rid={} stream_type={}", rid, type(stream).__name__)
+
+                accumulated: _StreamAccum | None = None
+                chunk_count = 0
+                if hasattr(stream, "__aiter__"):
+                    async for out in cast(AsyncIterator[Any], stream):
+                        chunk_count += 1
+                        accumulated, stream_chunk = self._stream_out_step(accumulated, out)
+                        if stream_chunk is not None:
+                            yield stream_chunk
+                else:
+                    for out in cast(Iterator[Any], stream):
+                        chunk_count += 1
+                        accumulated, stream_chunk = self._stream_out_step(accumulated, out)
+                        if stream_chunk is not None:
+                            yield stream_chunk
+
+                final_resp = accumulated.to_llm_response() if accumulated is not None else self._wrap_output(None)
+                log_llm_done("LLM stream finished", final_resp, rid=rid)
                 self._fill_llm_extra(h, final_resp)
+                h["chunk_count"] = chunk_count
                 if recorder:
                     recorder.record_llm_end(
                         usage=final_resp.usage_metadata,
@@ -614,41 +666,15 @@ class LangChainChatModelAdapter:
                         content=final_resp.content,
                         reasoning_content=final_resp.reasoning_content,
                     )
-                yield LLMStreamChunk(final_response=final_resp, done=True)
-                return
-
-            rid = uuid4().hex[:8]
-            logger.debug("Start to stream llm rid={}", rid)
-            stream = raw_fn(norm_input, **kwargs)
-            logger.debug("LLM stream created rid={} stream_type={}", rid, type(stream).__name__)
-
-            accumulated: _StreamAccum | None = None
-            chunk_count = 0
-            if hasattr(stream, "__aiter__"):
-                async for out in cast(AsyncIterator[Any], stream):
-                    chunk_count += 1
-                    accumulated, stream_chunk = self._stream_out_step(accumulated, out)
-                    if stream_chunk is not None:
-                        yield stream_chunk
-            else:
-                for out in cast(Iterator[Any], stream):
-                    chunk_count += 1
-                    accumulated, stream_chunk = self._stream_out_step(accumulated, out)
-                    if stream_chunk is not None:
-                        yield stream_chunk
-
-            final_resp = accumulated.to_llm_response() if accumulated is not None else self._wrap_output(None)
-            log_llm_done("LLM stream finished", final_resp, rid=rid)
-            self._fill_llm_extra(h, final_resp)
-            h["chunk_count"] = chunk_count
-            if recorder:
+                yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
+        finally:
+            if recorder is not None and final_resp is None:
                 recorder.record_llm_end(
-                    usage=final_resp.usage_metadata,
-                    finish_reason=self._infer_finish_reason(final_resp),
-                    content=final_resp.content,
-                    reasoning_content=final_resp.reasoning_content,
+                    usage=None,
+                    finish_reason="error",
+                    content="",
+                    reasoning_content="",
                 )
-            yield LLMStreamChunk(final_response=final_resp, raw=final_resp.raw, done=True)
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> LangChainChatModelAdapter:
         """绑定工具，委托底层 bind_tools。"""
