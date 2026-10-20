@@ -14,7 +14,7 @@
 }
 ```
 
-`name` 匹配 `[a-z][a-z0-9_-]*`。`description` 不能空。`system_prompt` 是相对插件根的文件。名称不能和根名 `dataagent-v2` 或其他子代理重复。
+`name` 匹配 `[a-z][a-z0-9_-]*`。`description` 不能空。描述较长时改用 `description_file`（相对插件根的文件，内容不能空），两者只能写一个。`system_prompt` 是相对插件根的文件。名称不能和根名 `dataagent-v2` 或其他子代理重复。
 
 ## 继承
 
@@ -27,6 +27,19 @@
 `"tools": []` 表示不附加声明工具。省略和空列表是两种结果。
 
 子代理使用与根 Agent 相同的模型配置。它有自己的系统提示，并附上同一份文件系统说明。
+
+## 编译型子代理
+
+`"kind": "compiled"` 声明一个图工厂，例如 [nl2sql](../../builtin-plugins/nl2sql/subagents/nl2sql.json)。`entrypoint` 写成 `file.py:symbol`，不写 `system_prompt`、`tools`、`skills`、`hooks`。
+
+工厂接收 `plugins.config.<plugin-id>` 参数和宿主服务。宿主服务包括：`get_model`（按别名取模型）、`semantic_client`（未配置语义服务时为空）、`outputs_dir`（当前会话的 `outputs/`，没有会话时为空；工厂可以在这里写主代理能读取的结果文件）。
+
+工厂返回以下之一：
+
+- langchain `Runnable`
+- `{"runnable": Runnable, "description": "..."}`：`description` 追加到声明的描述之后，用于告诉主代理运行期事实，例如已绑定的数据源。不要写入密码、主机、文件路径等连接参数
+
+其他返回值或多余的键会使编译失败。
 
 ## 执行限制
 

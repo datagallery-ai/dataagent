@@ -209,6 +209,53 @@ it('Ink V2 reconciles failed tool status from the authoritative final snapshot',
   assert.match(store.getState().messages.map(getMessageTextContent).join('\n'), /Please provide a list/);
 });
 
+for (const error of [null, 'Query failed']) {
+  it(`Ink V2 keeps nl2sql outcome stable through result, snapshot and completion (error=${error})`, async () => {
+    let releaseSnapshot!: () => void;
+    let releaseFinish!: () => void;
+    const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+    const finishGate = new Promise<void>((resolve) => { releaseFinish = resolve; });
+    const content = JSON.stringify({ row_count: error ? 0 : 5, error });
+    const expected = error ? 'failed' : 'success';
+    const current = view({ async *runAgent(input) {
+      yield { type: 'TOOL_CALL_START', toolCallId: 'nl2sql-call', toolCallName: 'task' } as BaseEvent;
+      yield { type: 'TOOL_CALL_ARGS', toolCallId: 'nl2sql-call', delta: '{"subagent_type":"nl2sql"}' } as BaseEvent;
+      yield { type: 'TOOL_CALL_END', toolCallId: 'nl2sql-call' } as BaseEvent;
+      yield { type: 'TOOL_CALL_RESULT', toolCallId: 'nl2sql-call', messageId: 't', content } as BaseEvent;
+      await snapshotGate;
+      yield { type: 'MESSAGES_SNAPSHOT', messages: [
+        ...input.messages,
+        { id: 'a', role: 'assistant', toolCalls: [{ id: 'nl2sql-call', type: 'function', function: { name: 'task', arguments: '{"subagent_type":"nl2sql"}' } }] },
+        { id: 't', role: 'tool', toolCallId: 'nl2sql-call', content },
+        { id: 'answer', role: 'assistant', content: 'Query response' },
+      ] } as BaseEvent;
+      await finishGate;
+      yield { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId } as BaseEvent;
+    } });
+    const checkStatus = () => {
+      assert.equal(store.getState().toolCalls[0]?.status, expected);
+      const tool = store.getState().messages.flatMap((message) => message.elements)
+        .find((element) => element.type === 'tool_call');
+      assert.equal(tool?.toolCall?.status, expected, 'inline transcript badge');
+    };
+    await tick();
+    try {
+      await submit(current, '数据源有几个表');
+      await until(() => store.getState().toolCalls[0]?.result === content);
+      checkStatus();
+      releaseSnapshot();
+      await until(() => transcript().includes('Query response'));
+      checkStatus();
+      releaseFinish();
+      await until(() => store.getState().runStatus === 'completed');
+      checkStatus();
+    } finally {
+      releaseSnapshot();
+      releaseFinish();
+    }
+  });
+}
+
 async function submit(current: ReturnType<typeof view>, text: string) {
   current.stdin.write(text);
   await tick();

@@ -1579,7 +1579,8 @@ export const App: React.FC<AppProps> = ({
           } else if (v2 && event.type === 'MESSAGES_SNAPSHOT') {
             flushTextBuffer(false);
             // AG-UI result deltas omit LangChain's error status; the authoritative
-            // snapshot carries it. Correct tool badges without replacing the text.
+            // snapshot carries it. Combine it with payload errors using the live
+            // result rules, without replacing the streamed text.
             store.reconcileToolResults(restoreV2Messages(runtimeEvent.messages as Message[]).toolCalls);
             const snapshot = runtimeEvent.messages as Message[];
             const boundary = snapshot.findIndex((message) => message.role === 'user' && message.id === userMessageId);

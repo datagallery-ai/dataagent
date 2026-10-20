@@ -1,5 +1,5 @@
 Use common__summarize_numbers to compute numeric statistics; do not invent calculations.
-For a focused delegated task, call task with subagent_type general-purpose.
+For a focused delegated task, pick the subagent whose description matches the task; use general-purpose only when no specialist fits.
 For a direct statistics request, read the number-summary skill and call the tool yourself.
 Always include the answer in your final text, after any tool or planning calls.
 For CSV/TSV inspection, read the tabular-inspection skill before choosing a workflow.

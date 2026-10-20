@@ -26,12 +26,14 @@ def compile_extensions(
     plugin_params: dict[str, dict[str, Any]] | None = None,
     model_resolver: Callable[[str], BaseChatModel] | None = None,
     semantic_client: SemanticServiceClient | None = None,
+    outputs_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Combine plugins and standalone resources without adding host execution policy.
 
-    ``plugin_params`` (Agent configuration ``plugins.config``), ``model_resolver``
-    and ``semantic_client`` (the host-owned semantic-service client) reach
-    compiled-subagent graph factories; standard declarations ignore them.
+    ``plugin_params`` (Agent configuration ``plugins.config``), ``model_resolver``,
+    ``semantic_client`` (the host-owned semantic-service client) and ``outputs_dir``
+    (the session output directory) reach compiled-subagent graph factories;
+    standard declarations ignore them.
     """
     loader = PythonLoader()
     tool_registry: dict[str, BaseTool] = {}
@@ -65,7 +67,7 @@ def compile_extensions(
         child_specs, tool_registry=tool_registry, loader=loader,
         skill_sources=compiled_skill_sources,
         plugin_params=plugin_params, model_resolver=model_resolver,
-        semantic_client=semantic_client,
+        semantic_client=semantic_client, outputs_dir=outputs_dir,
     )
     return {
         "name": ROOT_AGENT_NAME,

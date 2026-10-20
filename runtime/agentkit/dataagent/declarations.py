@@ -153,7 +153,8 @@ class SubAgentSpec(StrictModel):
 
     ``kind="compiled"`` declares a plugin-provided graph factory: ``entrypoint``
     names a ``file.py:symbol`` whose callable receives the plugin's parameters
-    and host services and returns a langchain Runnable. Compiled declarations
+    and host services and returns a langchain Runnable (or a mapping with
+    ``runnable`` and an optional ``description`` supplement). Compiled declarations
     take no ``system_prompt``, ``tools``, ``skills`` or ``hooks`` — the returned
     graph owns its prompts and execution. Declarations without ``kind`` keep the
     existing standard meaning.
@@ -161,7 +162,9 @@ class SubAgentSpec(StrictModel):
 
     kind: Literal["standard", "compiled"] = "standard"
     name: str = Field(pattern=f"^{RESOURCE_ID_PATTERN}$")
-    description: str = Field(min_length=1)
+    description: str | None = Field(default=None, min_length=1)
+    # A file relative to the plugin root; collect_subagents reads it into description.
+    description_file: str | None = Field(default=None, min_length=1)
     system_prompt: str | None = None
     entrypoint: str | None = Field(default=None, min_length=1)
     tools: list[str] | None = None
@@ -178,6 +181,8 @@ class SubAgentSpec(StrictModel):
 
     @model_validator(mode="after")
     def check_kind(self):
+        if (self.description is None) == (self.description_file is None):
+            raise ValueError(f"SubAgent {self.name!r} requires exactly one of description or description_file")
         if self.kind == "compiled":
             if self.entrypoint is None:
                 raise ValueError(

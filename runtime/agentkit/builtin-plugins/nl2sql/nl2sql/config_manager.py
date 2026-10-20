@@ -33,7 +33,7 @@ _LEGACY_SECTIONS = frozenset({
 
 _NODE_ORDER = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
 
-_KNOWN_KEYS = frozenset({"model", "model_call_budget", "database", "semantic", *_NODE_ORDER})
+_KNOWN_KEYS = frozenset({"model", "model_call_budget", "result_files", "database", "semantic", *_NODE_ORDER})
 
 _CONNECTION_RESERVED = frozenset({"db_id", "dialect", "engine"})
 
@@ -66,6 +66,9 @@ class NL2SQLConfig:
         if not isinstance(budget, int) or isinstance(budget, bool) or budget <= 0:
             raise ValueError(f"model_call_budget must be a positive integer, got {budget!r}")
 
+        if not isinstance(raw.get("result_files", True), bool):
+            raise ValueError(f"result_files must be true or false, got {raw['result_files']!r}")
+
         database = raw.get("database")
         if not isinstance(database, Mapping):
             raise ValueError("nl2sql requires 'database': {db_id, dialect, engine, ...connection keys}")
@@ -86,6 +89,11 @@ class NL2SQLConfig:
     def model_call_budget(self) -> int:
         """The per-task model-call budget (validated positive integer)."""
         return int(self._data.get("model_call_budget", DEFAULT_NL2SQL_MODEL_CALL_BUDGET))
+
+    @property
+    def result_files(self) -> bool:
+        """Whether each executed query writes its fetched rows to a session result file."""
+        return bool(self._data.get("result_files", True))
 
     @property
     def enabled_nodes(self) -> list[str]:

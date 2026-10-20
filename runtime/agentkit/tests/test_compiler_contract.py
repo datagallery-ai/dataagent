@@ -261,3 +261,61 @@ def test_general_purpose_is_not_reserved_but_must_be_unique(contract):
 def test_disabled_common_contributes_no_compiled_capabilities():
     kwargs = compile_extensions([])
     assert kwargs["subagents"] == kwargs["tools"] == kwargs["skills"] == kwargs["middleware"] == []
+
+
+FACTORIES = '''from langchain_core.runnables import RunnableLambda
+
+def plain(params, services):
+    return RunnableLambda(lambda state: state)
+
+def described(params, services):
+    return {"runnable": plain(params, services), "description": f"Bound to {params['db']}."}
+
+def extra_key(params, services):
+    return {"runnable": plain(params, services), "secret": "x"}
+
+def not_runnable(params, services):
+    return {"runnable": "graph"}
+
+def outputs(params, services):
+    return {"runnable": plain(params, services), "description": f"Writes to {services.outputs_dir}."}
+'''
+
+
+def compile_factory(tmp_path, symbol, **options):
+    root = tmp_path / "graphs"
+    root.mkdir()
+    (root / "factories.py").write_text(FACTORIES)
+    (root / "child.json").write_text(json.dumps({
+        "kind": "compiled", "name": "graph", "description": "Declared.",
+        "entrypoint": f"factories.py:{symbol}",
+    }))
+    spec = PluginSpec(id="graphs", subagents=["child.json"])
+    kwargs = compile_extensions([(root, spec)], plugin_params={"graphs": {"db": "sales"}}, **options)
+    return kwargs["subagents"][0]
+
+
+@pytest.mark.parametrize(("symbol", "description"), [
+    ("plain", "Declared."),
+    ("described", "Declared.\nBound to sales."),
+])
+def test_compiled_factory_may_supplement_the_declared_description(tmp_path, symbol, description):
+    child = compile_factory(tmp_path, symbol)
+    assert child["description"] == description
+    assert child["runnable"].invoke({"messages": []}) == {"messages": []}
+
+
+@pytest.mark.parametrize(("symbol", "message"), [
+    ("extra_key", "invalid mapping"),
+    ("not_runnable", "must return a langchain Runnable"),
+])
+def test_compiled_factory_rejects_malformed_results(tmp_path, symbol, message):
+    with pytest.raises(TypeError, match=message):
+        compile_factory(tmp_path, symbol)
+
+
+@pytest.mark.parametrize("outputs_dir", [None, "session/outputs"])
+def test_compiled_factory_receives_the_session_output_directory(tmp_path, outputs_dir):
+    expected = None if outputs_dir is None else tmp_path / outputs_dir
+    child = compile_factory(tmp_path, "outputs", outputs_dir=expected)
+    assert child["description"] == f"Declared.\nWrites to {expected}."
