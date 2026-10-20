@@ -85,28 +85,28 @@ SEMANTIC_LAYER:
 dataagent/agents/nl2sql/nl2sql_agent.yaml
 ```
 
-运行时再把**主 Agent 当前配置中的 `DATABASE` 和 `SEMANTIC_LAYER` 覆盖写入临时 NL2SQL 子 Agent YAML**，然后通过 `sub_agent_tool` 启动 NL2SQL 子 Agent。因此，主 Agent 需要配置自己的 `DATABASE` 和 `SEMANTIC_LAYER`，不需要直接修改源 NL2SQL YAML。
+运行时会逐字段合并主、子 Agent 的 `DATABASE` 和 `SEMANTIC_LAYER`：子 Agent 的非空字段优先，缺失、`null` 或空字符串字段继承主 Agent；随后通过 `sub_agent_tool` 启动 NL2SQL 子 Agent。
 
 主 Agent 侧只需要关注三类配置：
 
 | 配置 | 作用 |
 | --- | --- |
 | `TOOLS.local_functions[].function: nl2sql_sub_agent_tool` | 注册 NL2SQL 子 Agent 工具。 |
-| `DATABASE` | 指定主 Agent 当前业务数据库，运行时覆盖给 NL2SQL 子 Agent。 |
-| `SEMANTIC_LAYER` | 指定 Semantic Service REST 服务，运行时覆盖给 NL2SQL 子 Agent。 |
+| `DATABASE` | 为子 Agent 未配置或为空的字段提供当前业务数据库配置。 |
+| `SEMANTIC_LAYER` | 为子 Agent 未配置或为空的字段提供 Semantic Service REST 配置。 |
 
 `nl2sql_sub_agent_tool` 会做三件关键事情：
 
 1. 读取 `dataagent/agents/nl2sql/nl2sql_agent.yaml` 作为 NL2SQL 子 Agent 基础配置。
-2. 从主 Agent 的 `config_manager` 读取 `DATABASE` 和 `SEMANTIC_LAYER`，覆盖到临时子 Agent YAML。
+2. 从主 Agent 的 `config_manager` 读取 `DATABASE` 和 `SEMANTIC_LAYER`，补齐子 Agent 的缺失或空字段。
 3. 如果工具配置中设置了 `config.llm_model`，从主 Agent 的 `MODEL.<llm_model>` 读取模型配置，并将该模型作为子 Agent 的模型配置。
 
-因此，主 Agent 中的配置是 NL2SQL 子 Agent 实际运行时的最终来源：
+子 Agent 的非空字段优先，主 Agent 补齐其他字段：
 
 | 主 Agent 配置 | 子 Agent 中的效果 |
 | --- | --- |
-| `DATABASE` | 覆盖 NL2SQL 子 Agent 的数据库配置 |
-| `SEMANTIC_LAYER` | 覆盖 NL2SQL 子 Agent 的 Semantic Service 配置 |
+| `DATABASE` | 补齐子 Agent 未配置、`null` 或空字符串字段 |
+| `SEMANTIC_LAYER` | 补齐子 Agent 未配置、`null` 或空字符串字段 |
 | `TOOLS.local_functions[].config.llm_model` | 绑定子 Agent 使用的模型槽位 |
 | `MODEL.<llm_model>` | 写入临时子 Agent YAML 的 `MODEL` |
 

@@ -11,4 +11,4 @@ CORE:
     read_only: false
   reflector: {}
 DATABASE:
-  dialect: "hive"
+  dialect: "spark"

@@ -36,6 +36,7 @@ from dataagent.actions.tools.local_tool.sub_agent_entry import (
     _run_agent,
 )
 from dataagent.actions.tools.local_tool.tools import (
+    _build_nl2sql_sub_agent_config,
     _run_subprocess_async,
     nl2sql_sub_agent_tool,
     reset_subagent_runtime_context,
@@ -1008,9 +1009,9 @@ def test_public_reconfigure_keeps_process_name(monkeypatch):
     assert captured["requested_process_name"] == "subagent"
 
 
-def test_nl2sql_sub_agent_tool_overrides_runtime_model_database_and_semantic_layer(monkeypatch, tmp_path):
-    """nl2sql_sub_agent_tool 应按主配置中的 llm_model 等，将运行时的 MODEL / DATABASE / SEMANTIC_LAYER
-    写入临时合并后的子 Agent YAML，再交给内部 sub_agent_tool；源 nl2sql 配置磁盘文件不被破坏；
+def test_nl2sql_sub_agent_tool_preserves_subagent_database_and_semantic_fields(monkeypatch, tmp_path):
+    """子 Agent 的字段优先，主 Agent 仅补齐 DATABASE / SEMANTIC_LAYER 的缺失字段；
+    源 nl2sql 配置磁盘文件不被破坏；
     SQL/CSV 与 frontend_msg 符合预期。
     """
     package_root = tmp_path / "pkg"
@@ -1067,12 +1068,13 @@ TOOLS:
 
     runtime_database = {
         "db_id": "runtime_db",
-        "dialect": "sqlite",
+        "dialect": "mysql",
         "config": {"host": "127.0.0.1", "port": 5432},
     }
     runtime_semantic_layer = {
         "base_url": "runtime-semantic",
-        "timeout": 30,
+        "timeout": 60,
+        "scenario": "runtime-scene",
     }
     runtime_model = {
         "model_type": "chat",
@@ -1139,8 +1141,16 @@ TOOLS:
     expected_model = {**runtime_model, "params": {**runtime_model.get("params", {}), "temperature": 0.1}}
     assert captured.get("config", {}).get("MODEL") == {"deepseek": expected_model}
     assert runtime_model.get("params", {}).get("temperature") == 0.0
-    assert captured["config"]["DATABASE"] == runtime_database
-    assert captured["config"]["SEMANTIC_LAYER"] == runtime_semantic_layer
+    assert captured["config"]["DATABASE"] == {
+        "db_id": "default_db",
+        "dialect": "sqlite",
+        "config": {"host": "127.0.0.1", "port": 5432, "path": "/tmp/default.sqlite"},
+    }
+    assert captured["config"]["SEMANTIC_LAYER"] == {
+        "base_url": "default-semantic",
+        "timeout": 30,
+        "scenario": "runtime-scene",
+    }
     assert yaml.safe_load(source_config_path.read_text(encoding="utf-8"))["MODEL"] == {
         "qwen3_coder": {
             "model_type": "chat",
@@ -1155,6 +1165,76 @@ TOOLS:
     assert sql_text == "SELECT 1 AS value"
     assert "value" in csv_path.read_text(encoding="utf-8")
     assert "SQL 文件已保存到" in result["frontend_msg"]
+
+
+def test_de_nl2sql_config_preserves_spark_dialect_and_inherits_db_id():
+    from dataagent.config.config_manager import ConfigManager
+
+    package = Path(__file__).resolve().parents[3] / "dataagent"
+    source = yaml.safe_load(
+        (package / "core/suite/builtin_suites/de_agent/documents/zdy.yaml").read_text(encoding="utf-8")
+    )
+    manager = ConfigManager()
+    manager.set("DATABASE", {"db_id": ["biods"], "dialect": "sqlite"})
+
+    config = _build_nl2sql_sub_agent_config(source, config_manager=manager)
+
+    assert config["DATABASE"] == {"db_id": ["biods"], "dialect": "spark"}
+
+
+def test_nl2sql_sub_agent_config_keeps_parent_values_for_nested_empty_fields():
+    from dataagent.config.config_manager import ConfigManager
+
+    manager = ConfigManager()
+    manager.set(
+        "DATABASE",
+        {
+            "db_id": "biods",
+            "dialect": "spark",
+            "config": {"host": "warehouse", "path": "/warehouse"},
+        },
+    )
+    manager.set("SEMANTIC_LAYER", {"base_url": "http://semantic", "timeout": 30})
+    source = {
+        "DATABASE": {"dialect": "   ", "config": {"host": None, "path": ""}},
+        "SEMANTIC_LAYER": {"base_url": "", "timeout": None},
+    }
+
+    config = _build_nl2sql_sub_agent_config(source, config_manager=manager)
+
+    assert config["DATABASE"] == manager.get("DATABASE")
+    assert config["SEMANTIC_LAYER"] == manager.get("SEMANTIC_LAYER")
+
+
+def test_nl2sql_sub_agent_config_keeps_parent_sections_for_top_level_empty_values():
+    from dataagent.config.config_manager import ConfigManager
+
+    manager = ConfigManager()
+    manager.set("DATABASE", {"dialect": "spark"})
+    manager.set("SEMANTIC_LAYER", {"base_url": "http://semantic"})
+
+    config = _build_nl2sql_sub_agent_config(
+        {"DATABASE": None, "SEMANTIC_LAYER": "   "},
+        config_manager=manager,
+    )
+
+    assert config["DATABASE"] == {"dialect": "spark"}
+    assert config["SEMANTIC_LAYER"] == {"base_url": "http://semantic"}
+
+
+def test_deep_merge_core_config_keeps_explicit_empty_values():
+    from dataagent.config.config_manager import ConfigManager
+
+    manager = ConfigManager()
+    source = {"CORE": {"perceptor": {"user_sql_rules": "sql_rules"}}}
+
+    config = _build_nl2sql_sub_agent_config(
+        source,
+        config_manager=manager,
+        tool_config={"core_config": {"perceptor": {"user_sql_rules": None}}},
+    )
+
+    assert config["CORE"]["perceptor"]["user_sql_rules"] is None
 
 
 def test_nl2sql_sub_agent_tool_passes_internal_subagent_context(monkeypatch, tmp_path):

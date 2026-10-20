@@ -2801,11 +2801,22 @@ def _resolve_bound_llm_model_name(*, tool_config: dict[str, Any] | None = None) 
     return bound or None
 
 
-def _deep_merge_dict(target: dict, source: dict) -> None:
-    """Recursively merge ``source`` into ``target`` in place."""
+def _is_empty_config_value(value: Any) -> bool:
+    """Return whether a configuration value means no override was supplied."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _deep_merge_dict(target: dict, source: dict, *, keep_target_for_empty: bool = False) -> None:
+    """Recursively merge ``source`` into ``target`` in place.
+
+    When ``keep_target_for_empty`` is true, ``None`` and blank strings in
+    ``source`` do not replace values already present in ``target``.
+    """
     for key, value in source.items():
+        if keep_target_for_empty and _is_empty_config_value(value):
+            continue
         if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-            _deep_merge_dict(target[key], value)
+            _deep_merge_dict(target[key], value, keep_target_for_empty=keep_target_for_empty)
         else:
             target[key] = value
 
@@ -2818,16 +2829,21 @@ def _build_nl2sql_sub_agent_config(
     user_id: str | None = None,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    """Build the NL2SQL sub-agent runtime config by deep-merging runtime DATABASE/semantic overrides."""
+    """Build the NL2SQL sub-agent runtime config with sub-agent field precedence."""
     temp_config = copy.deepcopy(source_config)
 
-    # 用当前主 Agent 的 DATABASE 和 SEMANTIC_LAYER 配置做内存级覆盖
-    runtime_database = config_manager.get("DATABASE")
-    runtime_semantic_layer = config_manager.get("SEMANTIC_LAYER")
-    if isinstance(runtime_database, dict) and runtime_database:
-        temp_config["DATABASE"] = copy.deepcopy(runtime_database)
-    if isinstance(runtime_semantic_layer, dict) and runtime_semantic_layer:
-        temp_config["SEMANTIC_LAYER"] = copy.deepcopy(runtime_semantic_layer)
+    # 子 Agent 配置优先，主 Agent 的设置仅用于补充缺失的字段。
+    for section in ("DATABASE", "SEMANTIC_LAYER"):
+        runtime_section = config_manager.get(section)
+        if not isinstance(runtime_section, dict) or not runtime_section:
+            continue
+        subagent_section = temp_config.get(section)
+        if section not in temp_config or _is_empty_config_value(subagent_section):
+            temp_config[section] = copy.deepcopy(runtime_section)
+        elif isinstance(subagent_section, dict):
+            merged_section = copy.deepcopy(runtime_section)
+            _deep_merge_dict(merged_section, subagent_section, keep_target_for_empty=True)
+            temp_config[section] = merged_section
 
     bound_llm_model_name = _resolve_bound_llm_model_name(tool_config=tool_config)
     if bound_llm_model_name:

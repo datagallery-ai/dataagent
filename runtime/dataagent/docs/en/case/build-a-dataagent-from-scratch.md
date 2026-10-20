@@ -28,21 +28,21 @@ The main Agent must clarify the task goal, call `nl2sql_sub_agent_tool`, obtain 
   ▼
 FlexAgent（AGENT_CONFIG.type = react）
   │
-  ├─ Planner：判断是否需要查数据库
-  ├─ Executor：调用工具
+  ├─ Planner: determines whether a database query is needed
+  ├─ Executor: calls the tool
   │       │
   │       ▼
   │   nl2sql_sub_agent_tool
   │       │
-  │       ├─ 读取内置 NL2SQL 配置
-  │       ├─ 用主 Agent 的 DATABASE / SEMANTIC_LAYER 覆盖子 Agent 配置
-  │       ├─ 拉起 NL2SQLAgent 执行查询
-  │       └─ 保存 SQL 文件和 CSV 结果文件
+  │       ├─ Loads the built-in NL2SQL configuration
+  │       ├─ Uses non-empty sub-agent fields first; missing, null, and blank fields inherit DATABASE / SEMANTIC_LAYER values from the main Agent
+  │       ├─ Launches NL2SQLAgent to run the query
+  │       └─ Saves SQL and CSV result files
   │
-  └─ 汇总最终回答
+  └─ Produces the final response
 ```
 
-The key point of this pattern: `DATABASE` and `SEMANTIC_LAYER` live in the main Agent YAML; at runtime the tool overlays them onto the temporary NL2SQL sub-Agent config. The same NL2SQL sub-Agent can therefore be reused by different business main Agents.
+`DATABASE` and `SEMANTIC_LAYER` are merged field by field: non-empty sub-agent values take precedence, while missing, null, and blank-string fields inherit from the main Agent. The same NL2SQL sub-Agent can therefore be reused by different business main Agents.
 
 ## 3. Prerequisites
 
@@ -76,7 +76,7 @@ A main Agent that calls an NL2SQL sub-Agent has four main configuration blocks.
 | `MODEL` | Configure at least the main Agent model and the model slot bound to the NL2SQL sub-Agent. |
 | `SCENARIO` | Tell the main Agent when to call NL2SQL and which parameters to pass. |
 | `TOOLS.local_functions` | Register `nl2sql_sub_agent_tool`. |
-| `DATABASE` / `SEMANTIC_LAYER` | The main Agent holds runtime database and Semantic Service settings and overlays them onto the sub-Agent. |
+| `DATABASE` / `SEMANTIC_LAYER` | The main Agent fills runtime database and Semantic Service fields that are missing or empty in the sub-agent. |
 
 Example configuration (same structure as repository `dataagent/core/flex/examples/nl2sql_flex_e2e_subagent.yaml`; replace `demo_db` and paths for your scenario):
 
@@ -142,7 +142,7 @@ Inside `nl2sql_sub_agent_tool`, the following happens:
 
 1. Load the built-in NL2SQL config: `dataagent/agents/nl2sql/nl2sql_agent.yaml`.
 2. Read `DATABASE` and `SEMANTIC_LAYER` from the main Agent's current configuration.
-3. Overlay the main Agent settings onto the temporary NL2SQL sub-Agent YAML.
+3. Merge the settings field by field: non-empty sub-agent values take precedence, while missing, null, and blank-string fields inherit from the main Agent.
 4. If the tool defines `config.llm_model`, read `MODEL.<llm_model>` from the main Agent and write it into the sub-Agent.
 5. Invoke `sub_agent_tool` to launch the NL2SQL sub-Agent.
 6. Save SQL and query results returned by the sub-Agent under `workspace`.
@@ -221,7 +221,7 @@ If the tool fails, check the message for:
 | --- | --- | --- |
 | `AGENT_CONFIG.type` | `nl2sql` | `react` |
 | Primary role | Convert natural language to SQL directly. | Main Agent plans the task and calls NL2SQL when needed. |
-| Config location | `DATABASE` / `SEMANTIC_LAYER` in the NL2SQL Agent config. | `DATABASE` / `SEMANTIC_LAYER` in the main Agent config, overlaid onto the sub-Agent. |
+| Config location | `DATABASE` / `SEMANTIC_LAYER` in the NL2SQL Agent config. | Matching main- and sub-agent fields are merged individually. |
 | Output shape | Returns NL2SQL state and query results. | Main Agent summarizes the answer and can save SQL/CSV files. |
 | Best fit | Single database lookup questions. | Database query subtasks within multi-step workflows. |
 
@@ -237,7 +237,7 @@ Check that `SCENARIO.chat.instructions` tells the model to call `nl2sql_sub_agen
 
 ### 9.3 Sub-Agent database configuration is wrong
 
-Check `DATABASE` and `SEMANTIC_LAYER` in the main Agent YAML. The tool overlays these onto the sub-Agent, so issues usually come from the main Agent runtime config, not the temporary YAML.
+Check `DATABASE` and `SEMANTIC_LAYER` in both configs. Non-empty sub-agent values take precedence; missing, null, and blank-string fields inherit from the main Agent.
 
 ### 9.4 Semantic Service connection failure
 
