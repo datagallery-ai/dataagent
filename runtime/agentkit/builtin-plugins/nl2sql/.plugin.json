@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "id": "nl2sql",
+  "system_prompt": "prompts/routing.md",
   "subagents": [
     "subagents/nl2sql.json"
   ]

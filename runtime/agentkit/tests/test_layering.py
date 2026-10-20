@@ -4,6 +4,7 @@
     settings                                  -> declarations
     bootstrap                                 -> foundation only; never LangChain
     extensions                                -> foundation; filesystem host adapter -> bootstrap paths
+                                              compiler / subagents -> semantic_client (host service)
     agent                                   -> everything
     restapi                                 -> the `dataagent` package root only
 """
@@ -42,8 +43,8 @@ EXTENSION_CORE_DEPENDENCIES = {
     "skills": {"core"},
     "tools": {"declarations"},
     "hooks": {"declarations"},
-    "subagents": {"declarations", "strict_json"},
-    "compiler": {"declarations"},
+    "subagents": {"declarations", "semantic_client", "strict_json"},
+    "compiler": {"declarations", "semantic_client"},
     "__init__": set(),
 }
 
@@ -143,6 +144,9 @@ def test_only_host_adapters_consume_runtime_and_bootstrap_paths():
         host_types = {
             "filesystem_backend": {"dataagent.bootstrap", "dataagent.bootstrap.paths"},
             "mcp": {"dataagent.bootstrap"},
+            # The host-owned semantic client is passed through to compiled subagents.
+            "subagents": {"dataagent.semantic_client"},
+            "compiler": {"dataagent.semantic_client"},
         }.get(path.stem, set())
         core_root = rewritten_core.get(path.stem)
         for module in core_imports(path):

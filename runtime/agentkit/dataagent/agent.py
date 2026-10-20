@@ -6,6 +6,7 @@ No custom Agent runner.
 """
 
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -57,6 +58,7 @@ def load_extensions(
     runtime: Runtime, *, mcp_tools: Sequence[BaseTool] | None = None,
     semantic_client: SemanticServiceClient | None = None,
     model_resolver: Callable[[str], BaseChatModel] | None = None,
+    outputs_dir: Path | None = None,
 ) -> dict:
     """Compile Python extensions with already discovered native MCP tools.
 
@@ -65,6 +67,8 @@ def load_extensions(
     ``model_resolver`` maps model aliases to models for compiled subagents;
     build_agent supplies the context's cached resolver, so environment
     expansion, alias errors and caching stay in ModelContext.
+    ``outputs_dir`` is the session output directory for compiled-subagent
+    result files; build_agent supplies the session's ``outputs``.
     """
     settings, extensions = runtime.settings, runtime.extensions
     if extensions.mcp_servers and mcp_tools is None:
@@ -84,6 +88,7 @@ def load_extensions(
         plugin_params=dict(settings.plugins.config),
         model_resolver=model_resolver if model_resolver is not None else ModelContext(runtime).get_model,
         semantic_client=semantic_client,
+        outputs_dir=outputs_dir,
     )
 
 
@@ -110,7 +115,7 @@ def build_agent(
     session = session or runtime.paths.for_session("sdk")
     kwargs = load_extensions(
         runtime, mcp_tools=mcp_tools, semantic_client=context.semantic_client,
-        model_resolver=context.get_model,
+        model_resolver=context.get_model, outputs_dir=session.outputs,
     )
     backend = build_filesystem_backend(runtime, session)
     filesystem_prompt = render_filesystem_prompt(outputs=session.outputs, workspaces=workspaces)

@@ -7,6 +7,7 @@ import { runTui } from "./index.js";
 import { store } from "./state/store.js";
 import { runV2Tui, v2Transport } from "./v2.js";
 import { restoreV2Messages, V2SessionClient } from "./protocol/v2-session-client.js";
+import { createInitialLiveRun, reduceLiveRunEvent } from "./state/live-run-state.js";
 
 it("V2 startup bypasses auth and legacy config, retaining actual model/Home", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-tui-"));
@@ -117,3 +118,34 @@ it("restored error ToolMessages remain failed instead of becoming successful", (
   assert.equal(restored.toolCalls[0]?.status, "failed");
   assert.equal(restored.toolCalls[0]?.result, "Invalid input");
 });
+
+for (const [payload, expected] of [
+  [{ row_count: 5 }, "success"],
+  [{ row_count: 5, error: null }, "success"],
+  [{ error: "" }, "success"],
+  [{ error: false }, "success"],
+  [{ result: { row_count: 5, error: null } }, "success"],
+  [{ error: "Query failed" }, "failed"],
+  [{ result: { error: { message: "Query failed" } } }, "failed"],
+  [{ status: "error", error: null }, "failed"],
+  [{ status: "failed" }, "failed"],
+  [{ isError: true, error: null }, "failed"],
+  [{ result: { status: "error" } }, "failed"],
+  [{ result: { isError: true } }, "failed"],
+] as const) {
+  it(`tool outcome agrees between live result and restored history: ${JSON.stringify(payload)}`, () => {
+    const content = JSON.stringify(payload);
+    let live = reduceLiveRunEvent(createInitialLiveRun(), {
+      type: "TOOL_CALL_START", toolCallId: "call", toolCallName: "task",
+    });
+    live = reduceLiveRunEvent(live, { type: "TOOL_CALL_RESULT", toolCallId: "call", content });
+    const restored = restoreV2Messages([
+      { id: "a", role: "assistant", toolCalls: [{ id: "call", type: "function", function: { name: "task", arguments: '{"subagent_type":"nl2sql"}' } }] },
+      { id: "t", role: "tool", toolCallId: "call", content },
+    ]);
+    assert.equal(live.toolCalls[0]?.status, expected, "streamed result");
+    assert.equal(restored.toolCalls[0]?.status, expected, "restored result");
+    assert.equal(live.events[0]?.summary === "执行失败。", expected === "failed");
+    assert.equal(reduceLiveRunEvent(live, { type: "RUN_FINISHED" }).toolCalls[0]?.status, expected);
+  });
+}

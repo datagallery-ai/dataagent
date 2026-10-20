@@ -157,3 +157,20 @@ def test_python_hooks_are_path_confined(tmp_path):
     spec = PluginSpec.model_validate({"id": "bad", "hooks": [entry]})
     with pytest.raises(ValueError, match="escapes"):
         compile_extensions([(root, spec)])
+
+
+def test_subagent_description_file_is_read_from_plugin_root(runtime, tmp_path):
+    (tmp_path / "child.json").write_text(
+        '{"name": "child", "description_file": "child.md", "system_prompt": "prompt.md"}'
+    )
+    (tmp_path / "child.md").write_text("Long description.\n")
+    (tmp_path / "prompt.md").write_text("Help")
+    spec = PluginSpec.model_validate({"id": "example", "subagents": ["child.json"]})
+    (child,) = compile_test(runtime, [(tmp_path, spec)])["subagents"]
+    assert child["description"] == "Long description."
+
+
+@pytest.mark.parametrize("fields", [{}, {"description": "Inline", "description_file": "child.md"}])
+def test_subagent_requires_exactly_one_description_source(fields):
+    with pytest.raises(ValidationError, match="exactly one of description or description_file"):
+        SubAgentSpec.model_validate({"name": "child", "system_prompt": "prompt.md", **fields})

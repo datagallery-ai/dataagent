@@ -526,6 +526,16 @@ function toolResultRows(toolCall: LiveToolCallRecord): string[] {
     rows.push(`rows: ${rowCount.toLocaleString('en-US')}`);
   }
 
+  // File references must survive the generic field limit and long SQL previews.
+  const resultFile = stringField(value, 'result_file');
+  if (resultFile) {
+    rows.push(`result file: ${resultFile}`);
+  }
+  const resultFileError = stringField(value, 'result_file_error');
+  if (resultFileError) {
+    rows.push(`result file error: ${compactWhitespace(resultFileError)}`);
+  }
+
   const elapsedMs =
     numberField(value, 'elapsed_ms') ??
     numberField(value, 'elapsedMs') ??
@@ -546,6 +556,8 @@ function toolResultRows(toolCall: LiveToolCallRecord): string[] {
     'row_count',
     'rowCount',
     'rows_scanned',
+    'result_file',
+    'result_file_error',
     'elapsed_ms',
     'elapsedMs',
     'duration_ms',

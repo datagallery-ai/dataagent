@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { SessionListItem } from "../config/index.js";
 import type { DisplayMessage } from "../state/tui-state.js";
 import type { LiveToolCallRecord } from "../state/live-run-state.js";
+import { toolResultPayloadLooksFailed } from "../state/tool-result.js";
 import type { DataArtifact } from "../state/data-task-state.js";
 import { AguiClientError } from "./agui-client.js";
 
@@ -85,7 +86,7 @@ export function restoreV2Messages(input: Message[]) {
     } else if (message.role === "tool") {
       const record = tools.get(message.toolCallId);
       if (record) {
-        record.status = message.error ? "failed" : "success";
+        record.status = message.error || toolResultPayloadLooksFailed(message.content) ? "failed" : "success";
         record.result = message.content;
       }
     }

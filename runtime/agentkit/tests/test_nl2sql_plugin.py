@@ -19,6 +19,7 @@ native ``task`` tool, then assertions on the JSON reply the compiled graph
 returns. The plugin's business-parameter validation is covered separately.
 """
 
+import csv
 import json
 import sqlite3
 import sys
@@ -64,6 +65,10 @@ async def test_task_end_to_end_on_sqlite(tmp_path):
     assert payload["issues"] == []
     assert payload["error"] is None
     assert payload["rows_preview"][0] == ["Engineering", 2]  # ordered by cnt DESC
+    # preview_limit 5 shows five of six rows; the reply says so instead of leaving it implicit
+    assert len(payload["rows_preview"]) == 5
+    assert "has 6 rows" in payload["rows_note"] and "first 5" in payload["rows_note"]
+    assert "result_file" not in payload  # no session output directory → no snapshot
 
     # the compiled graph made exactly its three scripted model calls, each
     # opening with the node's system prompt
@@ -80,6 +85,7 @@ async def test_task_reports_truncation_with_bounded_fetch(tmp_path):
     assert payload["total_known"] is False
     assert payload["truncated"] is True
     assert len(payload["rows_preview"]) == 3
+    assert "exceeds the fetch limit" in payload["rows_note"]
 
 
 async def test_bounded_fetch_below_the_limit_still_knows_its_total(tmp_path):
@@ -89,6 +95,58 @@ async def test_bounded_fetch_below_the_limit_still_knows_its_total(tmp_path):
     assert payload["row_count"] == 6
     assert payload["total_known"] is True
     assert payload["truncated"] is False
+
+
+async def test_preview_covering_the_whole_result_has_no_rows_note(tmp_path):
+    payload, _ = await _run_task(tmp_path, params={"executor": {"limit": -1, "preview_limit": 10}})
+
+    assert len(payload["rows_preview"]) == payload["row_count"] == 6
+    assert "rows_note" not in payload
+
+
+async def test_executed_query_writes_a_session_result_file(tmp_path):
+    outputs = tmp_path / "outputs"
+    payload, _ = await _run_task(tmp_path, outputs_dir=outputs)
+
+    result_file = Path(payload["result_file"])
+    assert result_file.parent == outputs / "nl2sql"
+    assert result_file.name == f"{payload['query_id']}.csv"
+    with result_file.open(encoding="utf-8", newline="") as file:
+        header, *rows = list(csv.reader(file))
+    # every fetched row with raw values, not just the five-row preview
+    assert header == ["department", "cnt"]
+    assert len(rows) == 6 and rows[0] == ["Engineering", "2"]
+    assert "result_file" in payload["rows_note"] and "do not dispatch the question again" in payload["rows_note"]
+
+    meta = json.loads(result_file.with_name(f"{payload['query_id']}.meta.json").read_text(encoding="utf-8"))
+    assert meta["question"] == "每个部门的员工人数"
+    assert meta["sql"] == EXPECTED_SQL
+    assert (meta["db_id"], meta["dialect"], meta["engine"]) == ("staff", "sqlite", "sqlite")
+    assert (meta["row_count"], meta["total_known"], meta["truncated"]) == (6, True, False)
+    assert "staff.sqlite" not in json.dumps(meta)  # no connection parameters
+
+
+async def test_result_files_can_be_disabled(tmp_path):
+    outputs = tmp_path / "outputs"
+    payload, _ = await _run_task(tmp_path, params={"result_files": False}, outputs_dir=outputs)
+
+    assert "result_file" not in payload and "query_id" not in payload
+    assert not (outputs / "nl2sql").exists()
+
+
+async def test_failed_execution_writes_no_result_file(tmp_path):
+    outputs = tmp_path / "outputs"
+    payload, _ = await _run_task(
+        tmp_path, outputs_dir=outputs, plugin_responses=[
+            AIMessage(content="```sql\nSELECT missing_column FROM employees\n```"),
+            AIMessage(content='```json\n[{"id": 0, "score": 1, "issues": []}]\n```'),
+            AIMessage(content='```json\n[{"score": 1, "issues": []}]\n```'),
+        ], params={"validator": {"db_explain": False}},
+    )
+
+    assert payload["error"]
+    assert "result_file" not in payload
+    assert not (outputs / "nl2sql").exists()
 
 
 async def test_model_call_budget_surfaces_as_error_reply(tmp_path):
@@ -159,11 +217,35 @@ async def test_missing_host_semantic_client_is_a_config_error(tmp_path):
     assert "semantic 服务未配置" in payload["error"]
 
 
+def test_parent_agent_sees_bound_database_and_routing_without_connection_keys(tmp_path):
+    db_path, schema_path = _sqlite_fixture(tmp_path)
+    extensions = _compile(_plugin_params(db_path, schema_path), ScriptedModel(responses=[]))
+
+    (child,) = extensions["subagents"]
+    assert "db_id=staff, dialect=sqlite, engine=sqlite" in child["description"]
+    assert str(db_path) not in child["description"]
+    # how to use the subagent lives in its description; the root prompt only
+    # restricts the parent's other tools, scoped to the configured database
+    assert "result_file" in child["description"] and "one SQL query" in child["description"]
+    assert "fetches data only" in child["description"]
+    assert "do not translate them" in child["description"]
+    assert "only way to query the configured database" in extensions["system_prompt"]
+    assert "write_todos" not in extensions["system_prompt"]
+    assert "rows_note" not in extensions["system_prompt"]
+
+
 def test_legacy_yaml_sections_rejected_with_migration_hint():
     from nl2sql.config_manager import NL2SQLConfig
 
     with pytest.raises(ValueError, match="plugins.config.nl2sql"):
         NL2SQLConfig({"MODEL": {}, "CORE": {}, "model": "primary", "database": {"dialect": "sqlite"}})
+
+
+def test_result_files_switch_must_be_boolean():
+    from nl2sql.config_manager import NL2SQLConfig
+
+    with pytest.raises(ValueError, match="result_files"):
+        NL2SQLConfig({"model": "primary", "database": {"dialect": "sqlite"}, "result_files": "yes"})
 
 
 def test_node_sections_default_to_full_chain_and_require_prefix():
@@ -193,7 +275,7 @@ def test_connection_config_strips_reserved_database_keys():
 # --------------------------------------------------------------------------- helpers
 
 
-async def _run_task(tmp_path, *, params=None, plugin_responses=None, semantic_client=None):
+async def _run_task(tmp_path, *, params=None, plugin_responses=None, semantic_client=None, outputs_dir=None):
     """Run one delegated task through the full pipeline; return (reply payload, plugin model)."""
     db_path, schema_path = _sqlite_fixture(tmp_path)
     merged = {**_plugin_params(db_path, schema_path), **(params or {})}
@@ -202,7 +284,9 @@ async def _run_task(tmp_path, *, params=None, plugin_responses=None, semantic_cl
         call("task", {"subagent_type": "nl2sql", "description": "每个部门的员工人数"}),
         AIMessage(content="按部门统计的员工人数已经给出。"),
     ])
-    graph = _build_agent(merged, parent_model, plugin_model, semantic_client=semantic_client)
+    graph = _build_agent(
+        merged, parent_model, plugin_model, semantic_client=semantic_client, outputs_dir=outputs_dir,
+    )
     result = await graph.ainvoke({"messages": [HumanMessage(content="每个部门的员工人数")]})
 
     reply = next(message for message in result["messages"] if isinstance(message, ToolMessage))
@@ -211,22 +295,27 @@ async def _run_task(tmp_path, *, params=None, plugin_responses=None, semantic_cl
     return payload, plugin_model
 
 
-def _build_agent(params, parent_model, plugin_model, *, semantic_client=None):
+def _build_agent(params, parent_model, plugin_model, *, semantic_client=None, outputs_dir=None):
+    extensions = _compile(params, plugin_model, semantic_client=semantic_client, outputs_dir=outputs_dir)
+    assert [child["name"] for child in extensions["subagents"]] == ["nl2sql"]
+    assert "runnable" in extensions["subagents"][0]
+    return create_deep_agent(model=parent_model, **extensions)
+
+
+def _compile(params, plugin_model, *, semantic_client=None, outputs_dir=None):
     settings = Settings.model_validate({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
         "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": params}},
     })
-    extensions = compile_extensions(
+    return compile_extensions(
         select_plugins(settings.plugins, [PLUGIN_ROOT]),
         plugin_params=dict(settings.plugins.config),
         model_resolver=lambda alias: plugin_model,
         semantic_client=semantic_client,
+        outputs_dir=outputs_dir,
     )
-    assert [child["name"] for child in extensions["subagents"]] == ["nl2sql"]
-    assert "runnable" in extensions["subagents"][0]
-    return create_deep_agent(model=parent_model, **extensions)
 
 
 def _plugin_params(db_path: Path, schema_path: Path) -> dict:

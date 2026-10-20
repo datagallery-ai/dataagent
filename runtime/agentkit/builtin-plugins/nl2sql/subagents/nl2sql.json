@@ -1,6 +1,6 @@
 {
   "kind": "compiled",
   "name": "nl2sql",
-  "description": "自然语言转 SQL 专家子代理：将业务数据问题（统计、聚合、查询、报表）翻译为可信 SQL，在配置的数据库上执行校验，返回 SQL、置信度、行数与结果预览。请在用户提出任何数据相关问题时主动使用它；即使输出目录为空、会话中没有数据文件，数据库也是可查的，不要因此直接回答无法计算。返回结果中的 rows_preview 只是前几行预览，完整行数以 row_count 为准，不要因预览行数少于 row_count 而重复派发任务。",
+  "description_file": "subagents/nl2sql.description.md",
   "entrypoint": "subagents/nl2sql.py:build_subagent"
 }

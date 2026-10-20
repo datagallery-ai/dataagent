@@ -7,6 +7,7 @@ import type {
   TimelineStep,
 } from "./data-task-state.js";
 import { dataStepKindForTool, emptyStepPayload } from "./data-task-state.js";
+import { toolResultPayloadLooksFailed } from "./tool-result.js";
 
 type ArtifactDetailValue = NonNullable<DataArtifact["detail"]>;
 
@@ -691,24 +692,6 @@ function toolResultFromActivityContent(
   const output = content.content ?? content.output;
   const payload = resultPayloadString(output);
   return payload || undefined;
-}
-
-function toolResultPayloadLooksFailed(parsed: Record<string, unknown> | null): boolean {
-  if (!parsed) return false;
-  const status = stringValue(parsed.status);
-  if (status === "error" || status === "failed") return true;
-  if (parsed.isError === true) return true;
-  if (parsed.error !== undefined) return true;
-
-  const result = recordValue(parsed.result);
-  if (!result) return false;
-  const resultStatus = stringValue(result.status);
-  return (
-    resultStatus === "error" ||
-    resultStatus === "failed" ||
-    result.isError === true ||
-    result.error !== undefined
-  );
 }
 
 function summarizeSqlResult(

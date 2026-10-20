@@ -61,6 +61,49 @@ it('tool preview is bounded and the detail view retains the hidden output and ar
   assert.match(frame(false), /Output line 10/);
 });
 
+for (const columns of [60, 80, 160]) {
+  it(`nl2sql result file survives the field limit in compact and expanded output at ${columns} columns`, () => {
+    const resultFile = '/workspace/用户目录/runtime/users/default/sessions/test-session/outputs/nl2sql/query-001.csv';
+    const delegated: LiveToolCallRecord = {
+      ...tool, name: 'task', args: { subagent_type: 'nl2sql' },
+      result: JSON.stringify({
+        sql: 'SELECT name FROM sqlite_master WHERE type = \'table\'',
+        confidence: 1, columns: ['name'], rows_preview: [['orders'], ['customers']],
+        row_count: 2, total_known: true, truncated: false, issues: [], error: null,
+        query_id: 'query-001', result_file: resultFile,
+      }),
+    };
+    for (const compactMode of [true, false]) {
+      const lines = buildChatLines({ messages: [action], toolCalls: [delegated], artifacts: [], columns, compactMode });
+      const frame = renderPlain(lines.map((line) => line.node), chatContentWidth(columns));
+      assert.match(frame, /result file:/);
+      assert.equal(frame.match(/result file:/g)?.length, 1);
+      if (!compactMode) assert.ok(frame.replace(/\s+/gu, '').includes(resultFile));
+      if (compactMode) assert.match(frame, /Ctrl\+O details/);
+      for (const line of lines) {
+        const rendered = renderPlain(line.node, chatContentWidth(columns));
+        assert.equal(rendered.split('\n').length, 1);
+        assert.ok(textWidth(rendered) <= chatContentWidth(columns));
+      }
+    }
+  });
+}
+
+it('nl2sql result file write errors remain visible in the output details', () => {
+  const delegated: LiveToolCallRecord = {
+    ...tool, name: 'task', args: { subagent_type: 'nl2sql' }, result: JSON.stringify({
+      sql: 'SELECT 1', confidence: 1, columns: ['value'], rows_preview: [[1]],
+      row_count: 1, total_known: true, truncated: false, issues: [], error: null,
+      query_id: 'query-001', result_file_error: 'Permission denied',
+    }),
+  };
+  const frame = renderPlain(buildChatLines({
+    messages: [action], toolCalls: [delegated], artifacts: [], columns: 80, compactMode: false,
+  }).map((line) => line.node), 76);
+  assert.match(frame, /result file error: Permission denied/);
+  assert.doesNotMatch(frame, /Failed · Delegate/);
+});
+
 it('failed tool state and reason remain visible in the compact monochrome transcript', () => {
   const failed: LiveToolCallRecord = { ...tool, status: 'failed', result: JSON.stringify({ error: 'Permission denied' }) };
   const frame = renderPlain(buildChatLines({
