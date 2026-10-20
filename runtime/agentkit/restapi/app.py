@@ -19,7 +19,7 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph.utils import langchain_messages_to_agui
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import ConfigDict, model_validator
 from starlette.background import BackgroundTask
@@ -27,7 +27,7 @@ from starlette.background import BackgroundTask
 from dataagent import Runtime, SemanticServiceClient, load_mcp_tools, safe_error
 from restapi.agents import SessionAgents
 from restapi.outputs import list_outputs, preview_output
-from restapi.sessions import Sessions, public_session, workspace_lock
+from restapi.sessions import Sessions, SessionTurn, public_session, workspace_lock
 
 logger = logging.getLogger("dataagent.api")
 
@@ -90,67 +90,296 @@ class QueryInput(RunAgentInput):
         return self
 
 
-def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
-    """Create a REST host sharing one semantic client across native Agent contexts."""
-    identity = instance_id or str(uuid4())
-    user_id = runtime.paths.user_id
-    busy: set[tuple[str, str]] = set()
+def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
+    """Read model and plugin readiness from an in-process runtime. Does not start a process."""
+    return {
+        "status": "ready",
+        "protocol": "dataagent-v2",
+        "instanceId": instance_id,
+        "model": runtime.model_name,
+        "plugins": runtime.settings.plugins.enabled,
+        "user": runtime.paths.user_id,
+        "timeoutSeconds": runtime.timeout_seconds,
+    }
 
-    @asynccontextmanager
-    async def lifespan(app):
-        with workspace_lock(runtime.paths.state_dir):
-            async with AsyncExitStack() as resources:
-                semantic_client = (
-                    SemanticServiceClient.from_settings(runtime.settings.semantic)
-                    if runtime.settings.semantic is not None
-                    else None
+
+@asynccontextmanager
+async def conversation_lifespan(app, runtime: Runtime, *, model=None):
+    """Open the session index, checkpointer and agent cache. Close them when the host exits."""
+    with workspace_lock(runtime.paths.state_dir):
+        async with AsyncExitStack() as resources:
+            semantic_client = (
+                SemanticServiceClient.from_settings(runtime.settings.semantic)
+                if runtime.settings.semantic is not None
+                else None
+            )
+            if semantic_client is not None:
+                resources.push_async_callback(asyncio.to_thread, semantic_client.close)
+            mcp_tools = await load_mcp_tools(runtime)
+            async with (
+                Sessions(runtime.paths.state_dir / "sessions.sqlite") as sessions,
+                AsyncSqliteSaver.from_conn_string(
+                    str(runtime.paths.state_dir / "checkpoints.sqlite")
+                ) as saver,
+            ):
+                await saver.setup()
+                app.state.sessions = sessions
+                app.state.checkpointer = saver
+                app.state.agents = SessionAgents(
+                    runtime,
+                    checkpointer=saver,
+                    model=model,
+                    mcp_tools=mcp_tools,
+                    semantic_client=semantic_client,
                 )
-                if semantic_client is not None:
-                    resources.push_async_callback(asyncio.to_thread, semantic_client.close)
-                mcp_tools = await load_mcp_tools(runtime)
-                async with (
-                    Sessions(runtime.paths.state_dir / "sessions.sqlite") as sessions,
-                    AsyncSqliteSaver.from_conn_string(
-                        str(runtime.paths.state_dir / "checkpoints.sqlite")
-                    ) as saver,
-                ):
-                    await saver.setup()
-                    app.state.sessions = sessions
-                    app.state.checkpointer = saver
-                    app.state.agents = SessionAgents(
-                        runtime,
-                        checkpointer=saver,
-                        model=model,
-                        mcp_tools=mcp_tools,
-                        semantic_client=semantic_client,
-                    )
-                    try:
-                        yield
-                    finally:
-                        app.state.agents.cache.clear()
+                try:
+                    yield
+                finally:
+                    app.state.agents.cache.clear()
 
-    app = FastAPI(lifespan=lifespan)
 
-    @app.get("/healthz")
-    async def health():
-        runtime = app.state.agents.runtime
-        return {
-            "status": "ready",
-            "protocol": "dataagent-v2",
-            "instanceId": identity,
-            "model": runtime.model_name,
-            "plugins": runtime.settings.plugins.enabled,
-            "user": user_id,
-            "home": str(runtime.paths.home),
-            "workspaces": [
-                {"name": item.name, "path": str(item.path)} for item in runtime.paths.workspaces
-            ],
-            "stateDir": str(runtime.paths.state_dir),
-            "timeoutSeconds": runtime.timeout_seconds,
-        }
+def _turn_text(messages) -> str:
+    selected = None
+    for message in messages or ():
+        if getattr(message, "role", None) == "user":
+            selected = message
+    if selected is None and messages:
+        selected = messages[-1]
+    if selected is None:
+        return ""
+    content = getattr(selected, "content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+        if isinstance(text, str):
+            parts.append(text)
+    return " ".join(parts)
+
+
+def _release_turn(
+    turn: SessionTurn,
+    busy: set[tuple[str, str]],
+    key: tuple[str, str],
+    *,
+    unregister=None,
+):
+    async def release():
+        # Also runs if sending response headers fails before the body starts.
+        try:
+            await turn.release()
+        finally:
+            busy.discard(key)
+            if unregister is not None:
+                unregister()
+
+    return release
+
+
+class _RunCancelled(Exception):
+    """The caller asked this run to stop before it reaches a success terminal."""
+
+
+class _ActiveRun:
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
+
+
+_STREAM_END = object()
+
+
+def _register_run(app, run_id: str) -> _ActiveRun:
+    handle = _ActiveRun()
+    app.state.active_runs[run_id] = handle
+    return handle
+
+
+def _unregister_run(app, run_id: str, handle: _ActiveRun) -> None:
+    runs = getattr(app.state, "active_runs", None)
+    if isinstance(runs, dict) and runs.get(run_id) is handle:
+        del runs[run_id]
+
+
+def cancel_active_run(app, run_id: str) -> bool:
+    """Stop one live turn. Missing and already finished runs are not success."""
+    runs = getattr(app.state, "active_runs", None)
+    if not isinstance(runs, dict):
+        return False
+    handle = runs.get(run_id)
+    if handle is None:
+        return False
+    handle.event.set()
+    return True
+
+
+async def _pull(iterator):
+    try:
+        return await iterator.__anext__()
+    except StopAsyncIteration:
+        return _STREAM_END
+
+
+async def _pull_or_cancel(iterator, handle: _ActiveRun):
+    if handle.event.is_set():
+        raise _RunCancelled
+    pull = asyncio.create_task(_pull(iterator))
+    stop = asyncio.create_task(handle.event.wait())
+    try:
+        await asyncio.wait((pull, stop), return_when=asyncio.FIRST_COMPLETED)
+    except asyncio.CancelledError:
+        with anyio.CancelScope(shield=True):
+            pull.cancel()
+            stop.cancel()
+            await asyncio.gather(pull, stop, return_exceptions=True)
+        raise
+    if handle.event.is_set():
+        if not pull.done():
+            pull.cancel()
+        await asyncio.gather(pull, return_exceptions=True)
+        if not stop.done():
+            stop.cancel()
+        await asyncio.gather(stop, return_exceptions=True)
+        raise _RunCancelled
+    if not stop.done():
+        stop.cancel()
+    await asyncio.gather(stop, return_exceptions=True)
+    return pull.result()
+
+
+async def _iter_until_cancelled(upstream, handle: _ActiveRun):
+    iterator = upstream.__aiter__()
+    while True:
+        event = await _pull_or_cancel(iterator, handle)
+        if event is _STREAM_END:
+            return
+        if handle.event.is_set():
+            raise _RunCancelled
+        yield event
+
+
+def _public_run_error(event, secrets: tuple[str, ...]) -> RunErrorEvent:
+    """Return a terminal error without credentials or the upstream raw payload."""
+    message = safe_error(
+        RuntimeError(str(getattr(event, "message", "") or "RUN_ERROR")), secrets,
+    )["message"]
+    code = safe_error(
+        RuntimeError(str(getattr(event, "code", "") or "RUN_ERROR")), secrets,
+    )["message"]
+    return RunErrorEvent(message=message, code=code)
+
+
+async def load_session_checkpoint(app, user_id: str, thread_id: str, *, latest: bool = False):
+    """Return the session row and AG-UI messages.
+
+    The TUI path keeps the last successful checkpoint. Web refresh passes
+    ``latest=True`` so the transcript matches the thread state the model sees,
+    including a user message from a run that was stopped.
+    """
+    row = await app.state.sessions.get(user_id, thread_id)
+    if row is None:
+        raise HTTPException(404, "Session not found")
+    busy = getattr(app.state, "conversation_busy", ())
+    if (user_id, thread_id) in busy and not latest:
+        raise HTTPException(409, "Session is currently running")
+    try:
+        opened = await app.state.agents.get(thread_id, create=False)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+    if opened is None:
+        raise HTTPException(409, "Session binding is missing. Start a new conversation.")
+    if (user_id, thread_id) in busy and not latest:
+        raise HTTPException(409, "Session is currently running")
+    _, agent, _ = opened
+
+    async def read_messages(configurable: dict) -> list:
+        state = await agent.graph.aget_state({"configurable": configurable})
+        return [
+            message.model_dump(by_alias=True)
+            for message in langchain_messages_to_agui(state.values.get("messages", []))
+        ]
+
+    messages = []
+    if latest:
+        messages = await read_messages({"thread_id": thread_id})
+    elif row["last_checkpoint_id"]:
+        messages = await read_messages({
+            "thread_id": thread_id,
+            "checkpoint_id": row["last_checkpoint_id"],
+        })
+    return row, messages
+
+
+async def _acquire_run(app, sessions, busy, user_id: str, thread_id: str, *, rejected_status: int):
+    """Reserve one session, then open or create its agent. Release the reservation on failure."""
+    if (user_id, thread_id) in busy:
+        raise HTTPException(409, "A run is already active for this session")
+    busy.add((user_id, thread_id))
+    try:
+        await _reject_foreign_session(sessions, user_id, thread_id)
+        opened = await app.state.agents.get(thread_id, create=True)
+    except ValueError as error:
+        busy.discard((user_id, thread_id))
+        raise HTTPException(rejected_status, str(error)) from None
+    except BaseException:
+        busy.discard((user_id, thread_id))
+        raise
+    if opened is None:
+        busy.discard((user_id, thread_id))
+        raise HTTPException(409, "Session binding is missing. Start a new conversation.")
+    return opened
+
+
+async def _reject_foreign_session(sessions: Sessions, user_id: str, thread_id: str) -> None:
+    owner = await sessions.owner(thread_id)
+    if owner is not None and owner != user_id:
+        raise HTTPException(
+            409,
+            f"Session {thread_id} is not in profile {user_id}. "
+            "Choose an existing session for this profile or start a new one.",
+        )
+
+
+async def _record_success(turn: SessionTurn, graph):
+    """Store this thread's latest checkpoint. Callers resume from that row."""
+    latest = await graph.aget_state({"configurable": {"thread_id": turn.thread_id}})
+    if latest.next:
+        raise RuntimeError("Agent stopped with unfinished work or an unsupported interrupt")
+    checkpoint_id = latest.config["configurable"]["checkpoint_id"]
+    await turn.complete(checkpoint_id)
+    return latest
+
+
+def register_conversation_routes(
+    app: FastAPI,
+    runtime: Runtime,
+    *,
+    instance_id: str | None = None,
+    include_health: bool = True,
+):
+    """Register AG-UI routes on an existing app. The host owns process startup and lifespan."""
+    identity = instance_id or str(uuid4())
+    busy: set[tuple[str, str]] = set()
+    app.state.conversation_busy = busy
+    app.state.active_runs = {}
+
+    def local_user_id() -> str:
+        return runtime.paths.user_id
+
+    if include_health:
+
+        @app.get("/healthz")
+        async def health():
+            return agentkit_health_body(app.state.agents.runtime, identity)
 
     @app.get("/sessions")
     async def list_sessions(limit: int = Query(default=50, ge=1, le=100)):
+        user_id = local_user_id()
         return {
             "sessions": [
                 public_session(row) for row in await app.state.sessions.list(user_id, limit)
@@ -158,6 +387,7 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
         }
 
     async def outputs_root(thread_id: str):
+        user_id = local_user_id()
         try:
             session = runtime.paths.for_session(thread_id)
         except ValueError:
@@ -190,35 +420,8 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
 
     @app.get("/sessions/{thread_id}")
     async def get_session(thread_id: str):
-        row = await app.state.sessions.get(user_id, thread_id)
-        if row is None:
-            raise HTTPException(404, "Session not found")
-        if (user_id, thread_id) in busy:
-            raise HTTPException(409, "Session is currently running")
-        try:
-            opened = await app.state.agents.get(thread_id, create=False)
-        except ValueError as error:
-            raise HTTPException(409, str(error)) from None
-        if opened is None:
-            raise HTTPException(409, "Session binding is missing. Start a new conversation.")
-        if (user_id, thread_id) in busy:
-            raise HTTPException(409, "Session is currently running")
-        _, agent, _ = opened
-        graph = agent.graph
-        messages = []
-        if row["last_checkpoint_id"]:
-            state = await graph.aget_state(
-                {
-                    "configurable": {
-                        "thread_id": thread_id,
-                        "checkpoint_id": row["last_checkpoint_id"],
-                    }
-                }
-            )
-            messages = [
-                message.model_dump(by_alias=True)
-                for message in langchain_messages_to_agui(state.values.get("messages", []))
-            ]
+        user_id = local_user_id()
+        row, messages = await load_session_checkpoint(app, user_id, thread_id)
         interrupted = row["status"] != "complete"
         return {
             **public_session(row),
@@ -234,28 +437,14 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
         }
 
     @app.post("/dataagent/stream")
-    async def stream(body: QueryInput, request: Request):
+    async def stream(body: QueryInput):
+        user_id = local_user_id()
         thread_id = body.thread_id
-        if (user_id, thread_id) in busy:
-            raise HTTPException(409, "A run is already active for this session")
-        busy.add((user_id, thread_id))
         sessions = app.state.sessions
-        try:
-            owner = await sessions.owner(thread_id)
-            if owner is not None and owner != user_id:
-                raise HTTPException(
-                    409,
-                    f"Session {thread_id} is not in profile {user_id}. "
-                    "Choose an existing session for this profile or start a new one.",
-                )
-            opened = await app.state.agents.get(thread_id, create=True)
-        except ValueError as error:
-            busy.discard((user_id, thread_id))
-            raise HTTPException(409, str(error)) from None
-        except BaseException:
-            busy.discard((user_id, thread_id))
-            raise
-        session, agent, run_runtime = opened
+        opened = await _acquire_run(
+            app, sessions, busy, user_id, thread_id, rejected_status=409,
+        )
+        _session, agent, run_runtime = opened
         graph = agent.graph
         secrets = agent.context.redaction_secrets
         config = {
@@ -268,6 +457,7 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
         # limit. Forward only this default: bound callbacks already propagate natively.
         if graph.config and "recursion_limit" in graph.config:
             config["recursion_limit"] = graph.config["recursion_limit"]
+        turn = SessionTurn(sessions, user_id, thread_id)
         try:
             row = await sessions.get(user_id, thread_id)
             if row:
@@ -284,7 +474,7 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
                     for message in state.values.get("messages", [])
                 ):
                     raise HTTPException(409, "Message replay or editing is not supported")
-            await sessions.start(user_id, thread_id, body.run_id, body.messages[0].content)
+            await turn.start(body.run_id, _turn_text(body.messages))
         except HTTPException:
             busy.discard((user_id, thread_id))
             raise
@@ -295,18 +485,13 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
             busy.discard((user_id, thread_id))
             raise
 
-        status = "interrupted"
-
-        async def release_session():
-            # Also runs if sending response headers fails before events() starts.
-            try:
-                if status != "complete":
-                    await sessions.finish(user_id, thread_id, status)
-            finally:
-                busy.discard((user_id, thread_id))
+        handle = _register_run(app, body.run_id)
+        release_session = _release_turn(
+            turn, busy, (user_id, thread_id),
+            unregister=lambda: _unregister_run(app, body.run_id, handle),
+        )
 
         async def events():
-            nonlocal status
             encoder = EventEncoder()
             started = time.monotonic()
             adapter = agent.as_agui(
@@ -321,7 +506,7 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
                 async with asyncio.timeout(run_runtime.timeout_seconds):
                     upstream = adapter.run(body)
                     terminal = None
-                    async for event in upstream:
+                    async for event in _iter_until_cancelled(upstream, handle):
                         if event is None:
                             continue
                         if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
@@ -345,29 +530,18 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
                             "INCOMPLETE_STREAM: upstream ended without a terminal event"
                         )
                     if terminal.type == EventType.RUN_ERROR:
-                        status = "error"
-                        await sessions.finish(user_id, thread_id, status)
-                        message = safe_error(RuntimeError(terminal.message), secrets)["message"]
-                        code = safe_error(RuntimeError(terminal.code or "RUN_ERROR"), secrets)[
-                            "message"
-                        ]
+                        await turn.fail()
+                        public = _public_run_error(terminal, secrets)
                         logger.error(
                             "RUN_ERROR run=%s thread=%s stage=agent_stream code=%s message=%s",
                             body.run_id,
                             thread_id,
-                            code,
-                            message,
+                            public.code,
+                            public.message,
                         )
-                        yield encoder.encode(RunErrorEvent(message=message, code=code))
+                        yield encoder.encode(public)
                         return
-                    latest = await graph.aget_state({"configurable": {"thread_id": thread_id}})
-                    if latest.next:
-                        raise RuntimeError(
-                            "Agent stopped with unfinished work or an unsupported interrupt"
-                        )
-                    checkpoint_id = latest.config["configurable"]["checkpoint_id"]
-                    await sessions.finish(user_id, thread_id, "complete", checkpoint_id)
-                    status = "complete"
+                    latest = await _record_success(turn, graph)
                     yield encoder.encode(
                         MessagesSnapshotEvent(
                             messages=langchain_messages_to_agui(latest.values.get("messages", [])),
@@ -380,10 +554,12 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
                             metadata={"durationMs": round((time.monotonic() - started) * 1000)},
                         )
                     )
+            except _RunCancelled:
+                return
             except (asyncio.CancelledError, GeneratorExit):
                 raise
             except Exception as error:
-                status = "error"
+                turn.status = "error"
                 details = safe_error(error, secrets)
                 logger.error(
                     "RUN_ERROR run=%s thread=%s stage=agent_stream code=%s message=%s",
@@ -394,6 +570,7 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
                 )
                 yield encoder.encode(RunErrorEvent(**details))
             finally:
+                _unregister_run(app, body.run_id, handle)
                 with anyio.CancelScope(shield=True):
                     if upstream is not None:
                         await upstream.aclose()
@@ -408,4 +585,132 @@ def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
             },
         )
 
+    @app.get("/api/copilotkit/info")
+    async def copilotkit_info():
+        return JSONResponse(_copilotkit_info())
+
+    @app.post("/api/copilotkit")
+    async def copilotkit(request: Request):
+        """Run one GUI turn on the same core graph as ``/dataagent/stream``."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Invalid JSON body.") from None
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "JSON object is required.")
+        try:
+            body = RunAgentInput.model_validate({
+                "tools": [],
+                "context": [],
+                "forwardedProps": {},
+                **payload,
+            })
+        except ValueError:
+            raise HTTPException(400, "Invalid RunAgentInput.") from None
+
+        user_id = local_user_id()
+        thread_id = body.thread_id
+        sessions = app.state.sessions
+        opened = await _acquire_run(
+            app, sessions, busy, user_id, thread_id, rejected_status=400,
+        )
+        _session, agent, run_runtime = opened
+        graph = agent.graph
+        config = {"configurable": {"thread_id": thread_id}}
+        if graph.config and "recursion_limit" in graph.config:
+            config["recursion_limit"] = graph.config["recursion_limit"]
+        turn = SessionTurn(sessions, user_id, thread_id)
+        try:
+            await turn.start(body.run_id, _turn_text(body.messages))
+        except ValueError as error:
+            busy.discard((user_id, thread_id))
+            raise HTTPException(409, str(error)) from None
+        except BaseException:
+            busy.discard((user_id, thread_id))
+            raise
+        encoder = EventEncoder(accept=request.headers.get("accept"))
+        handle = _register_run(app, body.run_id)
+        secrets = agent.context.redaction_secrets
+        release_gui = _release_turn(
+            turn, busy, (user_id, thread_id),
+            unregister=lambda: _unregister_run(app, body.run_id, handle),
+        )
+
+        async def gui_events():
+            adapter = agent.as_agui(
+                name="dataagent-v2", config=config, emit_raw_events=False,
+            )
+            upstream = None
+            finished_event = None
+            try:
+                async with asyncio.timeout(run_runtime.timeout_seconds):
+                    upstream = adapter.run(body)
+                    async for event in _iter_until_cancelled(upstream, handle):
+                        if event is None:
+                            continue
+                        if event.type == EventType.RUN_FINISHED:
+                            finished_event = event
+                            continue
+                        if event.type == EventType.RUN_ERROR:
+                            await turn.fail()
+                            public = _public_run_error(event, secrets)
+                            logger.error(
+                                "RUN_ERROR run=%s thread=%s stage=copilotkit code=%s message=%s",
+                                body.run_id, thread_id, public.code, public.message,
+                            )
+                            yield encoder.encode(public)
+                            return
+                        yield encoder.encode(event)
+                    if turn.status == "error":
+                        return
+                    if finished_event is None:
+                        raise RuntimeError(
+                            "INCOMPLETE_STREAM: upstream ended without a terminal event"
+                        )
+                    await _record_success(turn, graph)
+                    yield encoder.encode(finished_event)
+            except _RunCancelled:
+                return
+            except (asyncio.CancelledError, GeneratorExit):
+                raise
+            except Exception as error:
+                turn.status = "error"
+                details = safe_error(error, run_runtime.redaction_secrets)
+                logger.error(
+                    "RUN_ERROR run=%s thread=%s stage=copilotkit code=%s message=%s",
+                    body.run_id, thread_id, details["code"], details["message"],
+                )
+                yield encoder.encode(RunErrorEvent(**details))
+            finally:
+                _unregister_run(app, body.run_id, handle)
+                with anyio.CancelScope(shield=True):
+                    if upstream is not None:
+                        await upstream.aclose()
+
+        return DisconnectAwareResponse(
+            gui_events(),
+            background=BackgroundTask(release_gui),
+            media_type=encoder.get_content_type(),
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+
+def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
+    """Create a REST host sharing one semantic client across native Agent contexts."""
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async with conversation_lifespan(app, runtime, model=model):
+            yield
+
+    app = FastAPI(lifespan=lifespan)
+    register_conversation_routes(app, runtime, instance_id=instance_id, include_health=True)
     return app
+
+
+def _copilotkit_info():
+    # Empty agents keeps a client-registered HttpAgent from being replaced.
+    return {"version": "1.0.0", "agents": {}}

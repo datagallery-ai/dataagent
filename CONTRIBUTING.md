@@ -25,9 +25,7 @@ Run the broad checks before opening a larger pull request:
 
 ```bash
 npm run build
-npm run smoke:config-api
-npm run smoke:data-gateway
-npm run smoke:copilotkit
+npm run test:web
 npm run smoke:docs
 ```
 

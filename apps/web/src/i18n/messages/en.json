@@ -158,6 +158,7 @@
     "saveQueued": "Save",
     "cancelQueued": "Cancel",
     "dropFiles": "Drop files here to upload",
+    "sessionBusyElsewhere": "This chat is already running in another window. Wait, or start a new chat.",
     "sessionBusyTitle": "This chat is busy on another device",
     "sessionBusyBody": "Only one active run is allowed per chat. You can wait in queue, interrupt the other run and send, or cancel.",
     "sessionBusyPreview": "Other device is working on: {{preview}}",
@@ -541,26 +542,9 @@
     "finish": "Finish",
     "useThisQuery": "Use this query",
     "waitingForSend": "Waiting for send",
-    "openDatasourceConfig": "Open datasource config",
-    "openModelConfig": "Open model config",
     "welcome": {
       "title": "Start with the workspace map",
-      "body": "Left is where you configure resources, middle is where you ask the data question, and right is where you watch the task run and review outputs."
-    },
-    "resources": {
-      "title": "Understand workspace resources",
-      "body": "The left panel covers Data Sources, Knowledge, Agent Tools / MCP, Skills, Models, and Assets / Files. These are the building blocks the agent can use for each task."
-    },
-    "datasource": {
-      "title": "Confirm the datasource",
-      "bodyReady": "A datasource is ready: {{id}}. This is what the agent will query for the first task.",
-      "bodyMissing": "Add or enable a datasource before running the sample task. Open datasource config, create and test the connection, then return to this guide. The demo datasource is the fastest path when it is available."
-    },
-    "model": {
-      "titleReady": "Confirm the model",
-      "titleMissing": "Connect a model",
-      "bodyReady": "A model profile is available. The model understands the request, helps generate SQL, and summarizes the result.",
-      "bodyMissing": "Quick start needs an enabled LLM profile. Open model configuration, create and test a profile, then return to this guide."
+      "body": "Left lists conversations, the middle is where you ask a question, and the right side shows the run and its output."
     },
     "query": {
       "title": "Use a sample query",

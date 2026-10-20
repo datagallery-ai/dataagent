@@ -1,5 +1,17 @@
+import type { TranslateFn } from "../../i18n/types";
+
 /** Map backend run failure codes to user-facing copy. */
-export function formatRunErrorMessage(message?: string): string {
+export function isSessionRunBusyMessage(message?: string): boolean {
+  if (!message?.trim()) return false;
+  const text = message.trim();
+  return (
+    /a run is already active/i.test(text)
+    || /^RUN_ALREADY_ACTIVE\b/i.test(text)
+    || (/409/.test(text) && /already active|conflict|run/i.test(text))
+  );
+}
+
+export function formatRunErrorMessage(message?: string, t?: TranslateFn): string {
   if (!message?.trim()) {
     return "Agent run failed";
   }
@@ -12,8 +24,10 @@ export function formatRunErrorMessage(message?: string): string {
   if (trimmed === "RUN_CANCELLED") {
     return "Run was cancelled.";
   }
-  if (/^RUN_ALREADY_ACTIVE\b/u.test(trimmed)) {
-    return "This chat already has an active run. Wait for it to finish, or interrupt it to take over.";
+  if (isSessionRunBusyMessage(trimmed)) {
+    return t
+      ? t("chatInput.sessionBusyElsewhere")
+      : "该会话正在其他窗口运行，请稍后或新建会话";
   }
   if (trimmed.startsWith("RUN_SUBSCRIBER_CLOSED")) {
     return "Run stopped because the connection closed. Retry the query or refresh the page.";

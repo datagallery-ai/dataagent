@@ -57,10 +57,11 @@ export async function collectDeploymentHealth(config, options = {}) {
   const apiHealth = health.ok && health.status === 200 ? "healthy" : "unhealthy";
   const apiReady = ready.ok && ready.status === 200 ? "ready" : "unhealthy";
   const webStatus = web.ok ? "reachable" : "unreachable";
+  // /ready is the conversation engine. A deploy without LLM_* still brings the
+  // process up; status keeps apiReady so that case is not reported as ready.
   const ok =
     processStatus === "running" &&
     apiHealth === "healthy" &&
-    apiReady === "ready" &&
     webStatus === "reachable";
 
   return {

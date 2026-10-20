@@ -119,6 +119,24 @@ describe("live run state reducer", () => {
     expect(canceledByFinished.runFinishedAt).toBeTypeOf("number");
   });
 
+  it("treats only an abort code as canceled and ignores a busy-session error", () => {
+    const started = reduceLiveRunEvent(createInitialLiveRun(), { type: "RUN_STARTED" });
+    const canceled = reduceLiveRunEvent(started, {
+      type: "RUN_ERROR",
+      code: "abort",
+      message: "This operation was aborted",
+    });
+    expect(canceled.runStatus).toBe("canceled");
+    expect(canceled.errorMessage).toBeUndefined();
+
+    const busy = reduceLiveRunEvent(started, {
+      type: "RUN_ERROR",
+      message: "A run is already active for this session",
+    });
+    expect(busy.runStatus).toBe(started.runStatus);
+    expect(busy.errorMessage).toBeUndefined();
+  });
+
   it("parses slim artifact references without inline preview data", () => {
     let run = createInitialLiveRun();
     run = reduceLiveRunEvent(run, {

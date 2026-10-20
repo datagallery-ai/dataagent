@@ -45,7 +45,7 @@ if (!existsSync(join(root, "node_modules"))) {
   fail("node_modules missing. Run: npm install");
 }
 
-for (const bin of ["tsx", "next"]) {
+for (const bin of ["next"]) {
   if (!localBinExists(root, bin)) {
     fail(`${bin} not found in node_modules/.bin — run: npm install`);
   }

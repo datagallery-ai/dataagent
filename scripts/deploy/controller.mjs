@@ -104,6 +104,9 @@ export function createDeploymentController(deps) {
   async function runStart() {
     const config = await deps.loadConfiguration({ reconfigure: false });
     await deps.preflight(config, { command: "start" });
+    if (typeof deps.checkDependencies === "function") {
+      await deps.checkDependencies(config, { command: "start" });
+    }
     await deps.start(config, { command: "start" });
     await deps.waitForHealth(config, { command: "start" });
     await deps.markHealthy(config, { command: "start" });

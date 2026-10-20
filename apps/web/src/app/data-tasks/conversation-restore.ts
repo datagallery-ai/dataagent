@@ -1019,6 +1019,11 @@ function dedupeRestoredToolCalls(toolCalls: RestoredToolCall[]): RestoredToolCal
   return deduped;
 }
 
+/** Checkpoint AG-UI messages win. Text-only DTOs remain the fallback. */
+export function preferredRestoredMessages(dto: SessionConversationDto): Message[] {
+  return (dto.agentMessages as Message[] | undefined) ?? conversationToAgentMessages(dto);
+}
+
 /**
  * Maps server-authoritative conversation messages to AG-UI chat messages.
  * Tool calls from `dto.toolCalls` are attached to the nearest preceding

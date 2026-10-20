@@ -73,6 +73,18 @@ export async function inspectDependencies(options = {}) {
     installAction: "node"
   });
 
+  const uv = await safeRun(run, "uv", ["--version"]);
+  const uvVersion = /uv\s+([0-9][^\s]*)/i.exec(`${uv.stdout || ""}\n${uv.stderr || ""}`)?.[1]
+    ?? ((uv.stdout || "").trim() || null);
+  entries.push({
+    name: "uv",
+    required: true,
+    foundVersion: uv.error ? null : uvVersion,
+    minimumVersion: "any",
+    status: uv.error ? "missing" : "ok",
+    installAction: "uv"
+  });
+
   return entries;
 }
 
@@ -99,6 +111,11 @@ export async function ensureDependencies(options = {}) {
   if (missing.length === 0) return entries;
 
   for (const entry of missing) {
+    if (entry.name === "uv") {
+      throw new Error(
+        "缺少 uv。请先安装（https://docs.astral.sh/uv/getting-started/installation/）后重试。"
+      );
+    }
     const action = entry.installAction;
     const commandHint = `bash scripts/deploy/install-dependency.sh ${action}`;
     if (options.nonInteractive) {

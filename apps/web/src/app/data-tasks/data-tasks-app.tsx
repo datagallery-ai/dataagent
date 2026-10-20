@@ -44,12 +44,15 @@ import {
   hasCapability,
   toolDisplayTitle,
   loadActiveLlmId,
+  loadActiveSessionId,
   loadChatSessions,
   mergeServerChatSessions,
   normalizeLlmSettings,
   normalizeMcpSettings,
   persistActiveLlmId,
+  persistActiveSessionId,
   persistChatSessions,
+  pickActiveSessionId,
   isWorkspaceConfigItemValid,
   renameChatSession,
   serverSessionDtoToChatSession,
@@ -201,7 +204,7 @@ import {
 import type { SessionActiveRunDto } from "../../lib/config-api/types";
 import { scheduleChatTextareaResize } from "./components/chat/use-chat-textarea-autoresize";
 import { invokeWithReportedError } from "./invoke-with-reported-error";
-import { formatRunErrorMessage } from "./run-error-message";
+import { formatRunErrorMessage, isSessionRunBusyMessage } from "./run-error-message";
 import {
   DataTaskChatInputBindingsProvider,
   useDataTaskChatInputBindings,
@@ -326,35 +329,22 @@ import {
   translateConfigField,
   translateConfigFieldOptions,
 } from "../../i18n/config-labels";
+import { HttpAgent } from "@ag-ui/client";
 import {
-  getAgentRuntimeUrl,
   getBackendCapabilities,
   isResourcePanelSupported,
 } from "../../lib/config-api";
+import {
+  createSessionHttpAgent,
+  dataTaskSessionAgentId,
+  runtimeAgentId,
+  threadIdFromDataTaskSessionAgentId,
+} from "../../lib/session-http-agents";
 
-const runtimeAgentId = "dataFoundry";
-const sessionAgentIdPrefix = `${runtimeAgentId}:session:`;
-const runtimeUrl = getAgentRuntimeUrl();
+const EnsureSessionAgentContext = createContext<(threadId: string) => void>(() => {});
 
-type CopilotSessionAgentRegistry = {
-  getAgent: (agentId: string) => ({ threadId?: string } & Record<string, unknown>) | undefined;
-  registerProxiedAgent: (params: { agentId: string; runtimeAgentId: string }) => unknown;
-};
-
-function dataTaskSessionAgentId(threadId: string): string {
-  return `${sessionAgentIdPrefix}${encodeURIComponent(threadId)}`;
-}
-
-function threadIdFromDataTaskSessionAgentId(agentId: unknown): string | null {
-  if (typeof agentId !== "string" || !agentId.startsWith(sessionAgentIdPrefix)) {
-    return null;
-  }
-  try {
-    return decodeURIComponent(agentId.slice(sessionAgentIdPrefix.length));
-  } catch {
-    return null;
-  }
-}
+/** Config CRUD is not on the Python control plane. Keep the components, hide the entries. */
+const workspaceResourceNavEnabled = false;
 
 function reportDataFoundryRunError(
   error: unknown,
@@ -376,43 +366,31 @@ function reportDataFoundryRunError(
   );
 }
 
-function useSessionAgentRegistry(threadIds: readonly string[]): boolean {
+function useReadySessionAgent(threadId: string): boolean {
+  const ensure = useContext(EnsureSessionAgentContext);
   const { copilotkit } = useCopilotKit();
-  const threadKey = threadIds.join("\n");
-  const [generation, setGeneration] = useState(0);
-
-  useLayoutEffect(() => {
-    const registry = copilotkit as unknown as CopilotSessionAgentRegistry;
-    let registered = false;
-    for (const threadId of threadIds) {
-      const localAgentId = dataTaskSessionAgentId(threadId);
-      const existing = registry.getAgent(localAgentId);
-      if (existing) {
-        existing.threadId = threadId;
-        continue;
+  const agentId = dataTaskSessionAgentId(threadId);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    ensure(threadId);
+    let cancelled = false;
+    let timer = 0;
+    const check = () => {
+      if (cancelled) return;
+      const registry = copilotkit as { getAgent?: (id: string) => unknown };
+      if (registry.getAgent?.(agentId)) {
+        setReady(true);
+        return;
       }
-      try {
-        registry.registerProxiedAgent({ agentId: localAgentId, runtimeAgentId });
-        const agent = registry.getAgent(localAgentId);
-        if (agent) {
-          agent.threadId = threadId;
-        }
-        registered = true;
-      } catch (error) {
-        if (!registry.getAgent(localAgentId)) {
-          console.warn("[data-tasks] failed to register session agent", error);
-        }
-      }
-    }
-    if (registered) {
-      setGeneration((current) => current + 1);
-    }
-  }, [copilotkit, threadKey]);
-
-  return useMemo(() => {
-    const registry = copilotkit as unknown as CopilotSessionAgentRegistry;
-    return threadIds.every((threadId) => Boolean(registry.getAgent(dataTaskSessionAgentId(threadId))));
-  }, [copilotkit, generation, threadKey]);
+      timer = window.setTimeout(check, 16);
+    };
+    timer = window.setTimeout(check, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [agentId, copilotkit, ensure, threadId]);
+  return ready;
 }
 
 export type TaskSelection =
@@ -504,7 +482,7 @@ function StableDataTaskChatInput({
       onUpload: onUpload as never,
       onUploadFailed: ({ message }) => {
         const error = new Error(message);
-        setSubmitError(formatRunErrorMessage(message));
+        setSubmitError(message);
         reportDataFoundryRunError(error, bindings.activeThreadId, { source: "client" });
       },
     },
@@ -514,7 +492,10 @@ function StableDataTaskChatInput({
     awaitingQueuedRunCompletionRef.current = false;
     queuedRunSawActiveRef.current = false;
     const message = error instanceof Error ? error.message : String(error);
-    setSubmitError(formatRunErrorMessage(message));
+    setSubmitError(message);
+    if (isSessionRunBusyMessage(message)) {
+      return;
+    }
     reportDataFoundryRunError(error, bindings.activeThreadId, { source: "client" });
   }, [bindings.activeThreadId]);
 
@@ -539,6 +520,27 @@ function StableDataTaskChatInput({
       return null;
     }
   }, [agent?.isRunning, bindings.activeThreadId, bindings.liveRunRunId, bindings.liveRunStatus]);
+
+  const lastSentTextRef = useRef<string | null>(null);
+
+  const restoreRejectedSend = useCallback((text: string | null) => {
+    if (!text) return;
+    if (agent) {
+      const messages = agent.messages ?? [];
+      let removeAt = -1;
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message?.role === "user" && messageTextContent(message.content) === text) {
+          removeAt = index;
+          break;
+        }
+      }
+      if (removeAt >= 0) {
+        agent.setMessages(messages.filter((_, index) => index !== removeAt));
+      }
+    }
+    setDraftText(text);
+  }, [agent]);
 
   const clearPerRunSelections = useCallback(() => {
     bindings.onClearPerRunMentions();
@@ -604,6 +606,7 @@ function StableDataTaskChatInput({
       const pending: PendingBusySubmit = { text, attachments, forwardedProps };
       invokeWithReportedError(() => {
         if (!agent) return;
+        lastSentTextRef.current = text;
         bindings.onUserMessageSubmitted(text);
         agent.setState(buildAgentRunStatePatch(forwardedProps, agent.state));
         if (attachments.length > 0) {
@@ -615,11 +618,17 @@ function StableDataTaskChatInput({
         void copilotkit
           .runAgent({ agent, forwardedProps })
           .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (isSessionRunBusyMessage(message) || /\b409\b/.test(message)) {
+              restoreRejectedSend(text);
+              reportRunError(error);
+              return;
+            }
             void unlockOrReportActiveRunError(error, pending);
           });
       }, reportRunError);
     },
-    [agent, bindings, copilotkit, reportRunError, unlockOrReportActiveRunError],
+    [agent, bindings, copilotkit, reportRunError, restoreRejectedSend, unlockOrReportActiveRunError],
   );
 
   useEffect(() => {
@@ -628,6 +637,17 @@ function StableDataTaskChatInput({
     }
     bindings.stopActiveChatRunRef.current = inputProps.onStop;
   }, [bindings.stopActiveChatRunRef, inputProps.onStop]);
+
+  useEffect(() => {
+    const onBusy = (event: Event) => {
+      const threadId = (event as CustomEvent<{ threadId?: string | null }>).detail?.threadId;
+      if (threadId && threadId !== bindings.activeThreadId) return;
+      restoreRejectedSend(lastSentTextRef.current);
+      setSubmitError("HTTP 409 Conflict");
+    };
+    window.addEventListener("datafoundry-session-busy", onBusy);
+    return () => window.removeEventListener("datafoundry-session-busy", onBusy);
+  }, [bindings.activeThreadId, restoreRejectedSend]);
 
   useEffect(() => {
     const threadId = bindings.activeThreadId;
@@ -879,7 +899,11 @@ function StableDataTaskChatInput({
       onEditQueuedPrompt={handleEditQueuedPrompt}
       onDeleteQueuedPrompt={handleDeleteQueuedPrompt}
       onSendQueuedPromptNow={handleSendQueuedPromptNow}
-      submitError={submitError ?? bindings.liveRunErrorMessage}
+      submitError={
+        (submitError ?? bindings.liveRunErrorMessage)
+          ? formatRunErrorMessage(submitError ?? bindings.liveRunErrorMessage ?? undefined, t)
+          : null
+      }
       showDisclaimer={false}
       sessionLockSlot={sessionLockSlot}
     />
@@ -975,19 +999,37 @@ function DataTasksCopilotShell() {
   const [copilotProperties, setCopilotProperties] = useState<Record<string, unknown>>(
     {},
   );
-  const { authHeaders, scopeKey } = useDataTaskIdentity();
+  const { scopeKey } = useDataTaskIdentity();
+  const sessionAgentsRef = useRef(new Map<string, HttpAgent>());
+  const [sessionAgentVersion, setSessionAgentVersion] = useState(0);
+  const defaultAgent = useMemo(
+    () => new HttpAgent({ url: "/api/copilotkit", agentId: "default" }),
+    [],
+  );
+  const ensureSessionAgent = useCallback((threadId: string) => {
+    const agentId = dataTaskSessionAgentId(threadId);
+    if (sessionAgentsRef.current.has(agentId)) return;
+    sessionAgentsRef.current.set(agentId, createSessionHttpAgent(threadId));
+    setSessionAgentVersion((version) => version + 1);
+  }, []);
+  const selfManagedAgents = useMemo(() => {
+    const agents: Record<string, HttpAgent> = { default: defaultAgent };
+    for (const [agentId, agent] of sessionAgentsRef.current) agents[agentId] = agent;
+    return agents;
+  }, [defaultAgent, sessionAgentVersion]);
 
   useEffect(() => {
     setCopilotProperties({});
   }, [scopeKey]);
 
   return (
+    <EnsureSessionAgentContext.Provider value={ensureSessionAgent}>
     <CopilotKit
       key={scopeKey}
-      runtimeUrl={runtimeUrl}
-      agent={runtimeAgentId}
-      headers={() => authHeaders}
-      useSingleEndpoint
+      agent="default"
+      runtimeUrl="/api/copilotkit"
+      useSingleEndpoint={false}
+      selfManagedAgents={selfManagedAgents}
       showDevConsole={false}
       enableInspector={false}
       properties={copilotProperties}
@@ -998,6 +1040,17 @@ function DataTasksCopilotShell() {
             ? event.message
             : String((event as { error?: unknown }).error ?? event);
         if (message.includes("Run ended without emitting a terminal event")) {
+          return;
+        }
+        if (message.includes("aborted") || message.includes("AbortError")) {
+          return;
+        }
+        if (isSessionRunBusyMessage(message) || /\b409\b/.test(message)) {
+          window.dispatchEvent(
+            new CustomEvent("datafoundry-session-busy", {
+              detail: { threadId: threadIdFromDataTaskSessionAgentId(contextAgentId) },
+            }),
+          );
           return;
         }
         if (
@@ -1027,6 +1080,7 @@ function DataTasksCopilotShell() {
         </LiveRunProvider>
       </CollaborationResponsesProvider>
     </CopilotKit>
+    </EnsureSessionAgentContext.Provider>
   );
 }
 
@@ -1319,7 +1373,7 @@ function DataTaskWorkspace({
     const stored = loadChatSessions(identityScopeKey);
     if (stored.length > 0) {
       setSessions(stored);
-      setActiveSessionId(stored[0].id);
+      setActiveSessionId(pickActiveSessionId(stored, loadActiveSessionId(identityScopeKey)));
       return;
     }
     const first = createChatSession(defaultSessionTitle);
@@ -1344,10 +1398,9 @@ function DataTaskWorkspace({
         }
         setSessions((current) => {
           const merged = mergeServerChatSessions(current, response.sessions);
-          setActiveSessionId((active) => {
-            if (active && merged.some((session) => session.id === active)) return active;
-            return merged[0]?.id ?? active;
-          });
+          setActiveSessionId((active) =>
+            pickActiveSessionId(merged, loadActiveSessionId(identityScopeKey), active),
+          );
           return merged;
         });
         setSessionSyncError(null);
@@ -1365,6 +1418,11 @@ function DataTaskWorkspace({
   useEffect(() => {
     if (sessions.length > 0) persistChatSessions(sessions, identityScopeKey);
   }, [identityScopeKey, sessions]);
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    persistActiveSessionId(identityScopeKey, activeSessionId);
+  }, [activeSessionId, identityScopeKey]);
 
   useEffect(() => {
     if (workspaceLoading) return;
@@ -1440,8 +1498,6 @@ function DataTaskWorkspace({
     null;
   const activeThreadId = activeSession?.threadId;
   const activeAgentId = activeThreadId ? dataTaskSessionAgentId(activeThreadId) : runtimeAgentId;
-  const sessionThreadIds = useMemo(() => sessions.map((session) => session.threadId), [sessions]);
-  const sessionAgentsReady = useSessionAgentRegistry(sessionThreadIds);
   const activeDatasourceId = resolveActiveDatasourceId(
     workspaceConfig,
     activeSession,
@@ -1626,6 +1682,7 @@ function DataTaskWorkspace({
 
   const renameSession = useCallback((sessionId: string, title: string) => {
     setSessions((current) => renameChatSession(current, sessionId, title));
+    if (!workspaceResourceNavEnabled) return;
     void configApi.patchSessionTitle(sessionId, title)
       .then((updated) => {
         setSessions((current) =>
@@ -1674,7 +1731,7 @@ function DataTaskWorkspace({
   }, [clearDraftPromptRequest]);
 
   const createBranchRewrite = useCallback(async ({ runId, text }: BranchRewriteRequest) => {
-    if (!activeThreadId) return;
+    if (!workspaceResourceNavEnabled || !activeThreadId) return;
     const created = await configApi.createSessionBranch(activeThreadId, { runId });
     const branchSession = serverSessionDtoToChatSession(created.session);
     setSessions((current) => {
@@ -1686,7 +1743,7 @@ function DataTaskWorkspace({
   }, [activeThreadId, switchConversationBranch]);
 
   const createCheckpointBranch = useCallback(async (checkpointId: string) => {
-    if (!activeThreadId) return;
+    if (!workspaceResourceNavEnabled || !activeThreadId) return;
     const created = await configApi.createSessionBranch(activeThreadId, { checkpointId });
     const branchSession = serverSessionDtoToChatSession(created.session);
     setSessions((current) => {
@@ -1723,6 +1780,7 @@ function DataTaskWorkspace({
       });
       setSelection(null);
 
+      if (!workspaceResourceNavEnabled) return;
       void configApi.deleteSession(serverSessionId)
         .then((result) => {
           const deletedIds = new Set(result.deletedSessionIds ?? [serverSessionId]);
@@ -1939,7 +1997,9 @@ function DataTaskWorkspace({
       activeLlmId,
       llmOptions: enabledLlmOptions,
       onActiveLlmChange: setActiveLlmId,
-      onOpenLlmConfig: () => openConfigPanel("llm"),
+      onOpenLlmConfig: workspaceResourceNavEnabled
+        ? () => openConfigPanel("llm")
+        : undefined,
       mentionResources,
       perRunSelection,
       onTogglePerRunMention: togglePerRunMentionItem,
@@ -2160,7 +2220,6 @@ function DataTaskWorkspace({
               liveRun.runStatus !== "idle" ||
               sessionUsage.runCount > 0
             }
-            onOpenConfigPanel={openConfigPanel}
             onOpenTaskConsole={openTaskConsole}
             onUseExampleQuery={(text) =>
               setDraftPromptRequest((current) => ({
@@ -2274,7 +2333,6 @@ function DataTaskWorkspace({
       <div className="relative z-10 min-h-0 min-w-0 overflow-hidden">
       <ChatPane
         activeThreadId={activeThreadId}
-        sessionAgentsReady={sessionAgentsReady}
         sessions={sessions}
         title={activeSession?.title ?? "Data Tasks"}
         workspaceConfig={workspaceConfig}
@@ -4587,14 +4645,10 @@ function TrashMenuIcon() {
 function SessionActionMenu({
   session,
   forceVisible,
-  onRename,
-  onDelete,
   onTogglePin,
 }: {
   session: ChatSession;
   forceVisible?: boolean;
-  onRename: () => void;
-  onDelete: () => void;
   onTogglePin: () => void;
 }) {
   const t = useT();
@@ -4668,48 +4722,6 @@ function SessionActionMenu({
             <PinMenuIcon />
             {session.pinned ? t("session.unpin") : t("session.pin")}
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled
-            className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-muted-light opacity-50"
-            title={t("session.sharingDisabled")}
-          >
-            <ShareMenuIcon />
-            {t("session.share")}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={menuItemClass}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              runMenuAction(onRename);
-            }}
-          >
-            <PencilMenuIcon />
-            {t("session.rename")}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-step-error transition-colors duration-150 hover:bg-step-error/8"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              runMenuAction(onDelete);
-            }}
-          >
-            <TrashMenuIcon />
-            {t("session.delete")}
-          </button>
         </div>
       ) : null}
     </div>
@@ -4722,7 +4734,6 @@ function SessionListItem({
   running,
   onSelect,
   onRename,
-  onDelete,
   onTogglePin,
 }: {
   session: ChatSession;
@@ -4819,8 +4830,6 @@ function SessionListItem({
       <SessionActionMenu
         session={session}
         forceVisible={active}
-        onRename={() => setEditing(true)}
-        onDelete={onDelete}
         onTogglePin={onTogglePin}
       />
     </div>
@@ -4939,7 +4948,6 @@ function SessionPane({
           quickStartGuide={quickStartGuide}
           onOpenSettings={() => {
             onToggleCollapse();
-            onOpenConfigPanel("llm");
           }}
         />
       </aside>
@@ -5084,7 +5092,7 @@ function SessionPaneContent({
         </button>
       </div>
 
-      <div
+      {workspaceResourceNavEnabled ? <div
         data-guide-id="workspace-resources"
         className="border-b border-border px-2.5 pt-1.5 pb-1"
       >
@@ -5100,7 +5108,7 @@ function SessionPaneContent({
             />
           ))}
         </div>
-      </div>
+      </div> : null}
 
       <div className="border-b border-border px-2.5 py-2">
         <button
@@ -5152,7 +5160,7 @@ function SessionPaneContent({
       </div>
       {!preview ? (
         <DataTaskUserBar
-          onOpenSettings={() => onOpenConfigPanel("llm")}
+          onOpenSettings={() => undefined}
           quickStartGuide={quickStartGuide}
         />
       ) : null}
@@ -7642,9 +7650,13 @@ function SessionChatRuntime({
   onUseExamplePrompt: (prompt: string) => void;
 }) {
   const agentId = dataTaskSessionAgentId(threadId);
+  const sessionAgentReady = useReadySessionAgent(threadId);
   const { liveRun } = useLiveRun(threadId);
   const liveRunStatus = liveRun.runStatus;
   const autoScrollMode = useChatAutoScrollMode();
+  if (!sessionAgentReady) {
+    return null;
+  }
 
   return (
     <ChatRunStatusContext.Provider value={liveRunStatus}>
@@ -7726,7 +7738,6 @@ function SessionChatRuntime({
 
 function ChatPane({
   activeThreadId,
-  sessionAgentsReady,
   sessions,
   title,
   workspaceConfig,
@@ -7747,7 +7758,6 @@ function ChatPane({
   onUserMessageSubmitted,
 }: {
   activeThreadId?: string;
-  sessionAgentsReady: boolean;
   sessions: ChatSession[];
   title: string;
   workspaceConfig: WorkspaceConfigStore;
@@ -7876,7 +7886,7 @@ function ChatPane({
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <CollaborationResponseBridge />
-        {activeThreadId && sessionAgentsReady ? (
+        {activeThreadId ? (
           <div className="relative flex min-h-0 flex-1 overflow-hidden">
             {chatThreadIds.map((threadId) => {
               const isActive = threadId === activeThreadId;

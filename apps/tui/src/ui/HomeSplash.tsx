@@ -29,7 +29,7 @@ export function HomeSplash({ rows, columns, startup, input, canResume = false, l
             <Text><Text color={inkColors.muted}>›_ </Text><Text color={inkColors.text} bold>{title}</Text></Text>
             <Text> </Text>
             <Text><Text color={inkColors.muted}>model:     </Text><Text color={inkColors.text}>{truncateToWidth(startup.modelName, valueWidth)}</Text></Text>
-            <Text><Text color={inkColors.muted}>directory: </Text><Text color={inkColors.text}>{truncateToWidth(startup.directory, valueWidth)}</Text></Text>
+            {startup.directory ? <Text><Text color={inkColors.muted}>directory: </Text><Text color={inkColors.text}>{truncateToWidth(startup.directory, valueWidth)}</Text></Text> : null}
           </Box>
         ) : <Text color={inkColors.text} bold>›_ {title}</Text>}
         <Box marginTop={1} paddingX={1} flexDirection="column" flexShrink={0}>

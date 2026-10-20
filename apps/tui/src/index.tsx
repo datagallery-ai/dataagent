@@ -204,6 +204,23 @@ function resolveResumeRequest(
   return explicit ? { enabled: true, sessionId: explicit } : undefined;
 }
 
+async function runningControlPlaneHint(
+  fetchImpl: typeof fetch,
+  baseUrl: string,
+): Promise<string | null> {
+  try {
+    const response = await fetchImpl(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(800) });
+    if (!response.ok) return null;
+    const body = await response.json() as { success?: unknown; data?: { conversation?: unknown } };
+    if (body?.success === true && body.data && typeof body.data === "object" && "conversation" in body.data) {
+      return `控制面已在 ${baseUrl} 运行。请用 ./deploy.sh tui 或 --v2 --runtime-url ${baseUrl}/dataagent/stream`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   const args = options.argv ?? process.argv.slice(2);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -235,6 +252,12 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
       }
       if (runtimeUrl && ["--config", "--env-file", "--workspace", "--user", "--session"].some((flag) => args.includes(flag))) {
         throw new Error("Local startup options cannot be combined with --runtime-url");
+      }
+      const localStartup = ["--config", "--env-file", "--workspace", "--user", "--session"].some((flag) => args.includes(flag));
+      if (!runtimeUrl && !localStartup) {
+        const port = process.env.API_PORT || "8787";
+        const hint = await runningControlPlaneHint(fetchImpl, `http://127.0.0.1:${port}`);
+        if (hint) throw new Error(hint);
       }
       const backend = runtimeUrl ? undefined : await startV2Backend({
         configPath: getOptionalArg(args, "--config"), envFile: getOptionalArg(args, "--env-file"),
@@ -268,6 +291,11 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   }
   let runtimeUrl = initialRuntime.url;
   let configBaseUrl = configBaseUrlFromRuntime(runtimeUrl);
+  const controlPlaneHint = await runningControlPlaneHint(fetchImpl, configBaseUrl);
+  if (controlPlaneHint) {
+    console.error(controlPlaneHint);
+    return 1;
+  }
   const explicitDatasourceId = getOptionalArg(args, "--datasource-id");
   const agent = getArg(args, "--agent", "dataFoundry");
   const cliNoAutoLogin = args.includes("--no-auto-login");

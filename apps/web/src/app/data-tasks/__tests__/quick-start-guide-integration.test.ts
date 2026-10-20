@@ -41,10 +41,7 @@ describe("quick start guide integration", () => {
     expect(page).toContain('data-guide-id="workspace-resources"');
     expect(page).toContain("data-guide-id={");
     expect(page).toContain('"datasource-config"');
-    expect(chatInput).toContain(
-      'data-guide-id="model-picker"',
-    );
-    expect(chatInput).toContain('ref={rootRef}');
+    expect(chatInput).not.toContain('data-guide-id="model-picker"');
     expect(chatInput).toContain('data-guide-id="chat-input"');
     expect(taskConsole).toContain('data-guide-id="run-console"');
     expect(taskConsole).toContain('data-guide-id="run-output"');

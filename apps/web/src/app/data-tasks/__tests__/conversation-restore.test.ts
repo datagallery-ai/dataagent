@@ -13,6 +13,7 @@ import {
   pendingInteractionsFromConversation,
   replayRestorableCustomEvents,
   shouldHydrateLiveRunFromConversation,
+  preferredRestoredMessages,
   shouldRestoreConversation,
   shouldRestoreConversationMessages,
 } from "../conversation-restore";
@@ -2455,5 +2456,22 @@ describe("hydrateSessionUsageFromConversation", () => {
     expect(usage.tokens.inputTokens).toBe(400);
     expect(usage.tokens.outputTokens).toBe(60);
     expect(usage.models).toEqual(["model-a", "model-b"]);
+  });
+});
+
+describe("preferredRestoredMessages", () => {
+  it("prefers checkpoint agent messages so tool steps survive refresh", () => {
+    const agentMessages = [
+      { id: "u", role: "user" as const, content: "mr1 tool" },
+      { id: "a", role: "assistant" as const, content: "Tool finished" },
+    ];
+    const dto = {
+      sessionId: "thread-tools",
+      messages: [],
+      runEventRefs: [],
+      toolCalls: [],
+      agentMessages,
+    } as unknown as SessionConversationDto;
+    expect(preferredRestoredMessages(dto)).toBe(agentMessages);
   });
 });

@@ -158,6 +158,7 @@
     "saveQueued": "保存",
     "cancelQueued": "取消",
     "dropFiles": "将文件拖放到此处上传",
+    "sessionBusyElsewhere": "该会话正在其他窗口运行，请稍后或新建会话",
     "sessionBusyTitle": "会话正在其他端运行",
     "sessionBusyBody": "同一对话同时只能有一个进行中的任务。你可以排队等待、中断对方任务后发送，或取消本次发送。",
     "sessionBusyPreview": "对方正在处理：{{preview}}",
@@ -541,26 +542,9 @@
     "finish": "完成",
     "useThisQuery": "使用此查询",
     "waitingForSend": "等待发送",
-    "openDatasourceConfig": "打开数据源配置",
-    "openModelConfig": "打开模型配置",
     "welcome": {
       "title": "先看清工作区布局",
-      "body": "左侧配置资源，中间提出数据问题，右侧查看任务运行过程与输出结果。"
-    },
-    "resources": {
-      "title": "了解工作区资源",
-      "body": "左侧面板包含数据源、知识库、Agent 工具 / MCP、Skills、模型与资源文件。这些是 Agent 执行任务时可使用的基础能力。"
-    },
-    "datasource": {
-      "title": "确认数据源",
-      "bodyReady": "数据源已就绪：{{id}}。首次任务将基于它进行查询。",
-      "bodyMissing": "运行示例任务前，请先添加或启用数据源。打开数据源配置，创建并测试连接，然后返回本引导。若有演示数据源，这是最快路径。"
-    },
-    "model": {
-      "titleReady": "确认模型",
-      "titleMissing": "连接模型",
-      "bodyReady": "已有可用模型配置。模型会理解问题、协助生成 SQL，并总结结果。",
-      "bodyMissing": "快速入门需要已启用的 LLM 配置。打开模型配置，创建并测试一个配置，然后返回本引导。"
+      "body": "左侧是会话列表，中间提出问题，右侧查看运行过程与输出。"
     },
     "query": {
       "title": "使用示例问题",

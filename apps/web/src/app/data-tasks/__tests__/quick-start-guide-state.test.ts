@@ -106,9 +106,6 @@ describe("quick start guide state", () => {
   it("starts by orienting users to the left, middle, and right work areas", () => {
     expect(QUICK_START_STEP_ORDER).toEqual([
       "welcome",
-      "resources",
-      "datasource",
-      "model",
       "query",
       "send",
       "console",
@@ -137,25 +134,6 @@ describe("quick start guide state", () => {
       runStatus: "idle",
       t,
     });
-    const resources = resolveQuickStartStep("resources", {
-      readiness: resolveQuickStartReadiness(workspaceConfig()),
-      runStatus: "idle",
-      t,
-    });
-    const datasource = resolveQuickStartStep("datasource", {
-      readiness: resolveQuickStartReadiness(
-        workspaceConfig({ db: [item("api-duckdb-demo")] }),
-      ),
-      runStatus: "idle",
-      t,
-    });
-    const model = resolveQuickStartStep("model", {
-      readiness: resolveQuickStartReadiness(
-        workspaceConfig({ llm: [item("llm")], db: [item("api-duckdb-demo")] }),
-      ),
-      runStatus: "idle",
-      t,
-    });
     const query = resolveQuickStartStep("query", {
       readiness: resolveQuickStartReadiness(
         workspaceConfig({ llm: [item("llm")], db: [item("api-duckdb-demo")] }),
@@ -176,19 +154,11 @@ describe("quick start guide state", () => {
     expect(welcome.body).toContain("Left");
     expect(welcome.body).toContain("middle");
     expect(welcome.body).toContain("right");
-    expect(resources.targetId).toBe("workspace-resources");
-    expect(resources.body).toContain("Knowledge");
-    expect(resources.body).toContain("Agent Tools");
-    expect(resources.body).toContain("Skills");
-    expect(resources.body).toContain("Assets");
-    expect(datasource.targetId).toBe("datasource-config");
-    expect(datasource.title).toBe("Confirm the datasource");
-    expect(model.targetId).toBe("model-picker");
-    expect(model.title).toBe("Confirm the model");
+    expect(welcome.body).toContain("conversations");
     expect(query.targetId).toBe("chat-input");
     expect(query.body).toContain(t("welcome.runSqlPrompt"));
     expect(query.cta).toBe("Use this query");
-    expect(output.targetId).toBe("run-output");
+    expect(output.targetId).toBe("run-console");
     expect(output.title).toBe("Review the result");
   });
 
@@ -215,26 +185,6 @@ describe("quick start guide state", () => {
     expect(waiting.body).toContain("send arrow");
     expect(submitted.cta).toBe("Next");
     expect(submitted.blocked).toBe(false);
-  });
-
-  it("explains how to return from missing configuration setup", () => {
-    const datasource = resolveQuickStartStep("datasource", {
-      readiness: resolveQuickStartReadiness(workspaceConfig()),
-      runStatus: "idle",
-      hasSubmittedTask: false,
-      t,
-    });
-    const model = resolveQuickStartStep("model", {
-      readiness: resolveQuickStartReadiness(workspaceConfig()),
-      runStatus: "idle",
-      hasSubmittedTask: false,
-      t,
-    });
-
-    expect(datasource.body).toContain("create and test");
-    expect(datasource.body).toContain("return to this guide");
-    expect(model.body).toContain("create and test");
-    expect(model.body).toContain("return to this guide");
   });
 
   it("resolves Chinese shell copy for the welcome step", () => {

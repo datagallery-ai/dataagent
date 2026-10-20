@@ -189,8 +189,12 @@ export function useWorkspaceConfigApi(): WorkspaceApiState & WorkspaceApiActions
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    // The Python control plane has no workspace-config surface. Keep conversation
+    // restore on, and do not call the missing config routes.
+    applyBackendCapabilities({ "conversation.memory": true });
+    setCapabilitiesReady(true);
+    setLoading(false);
+  }, []);
 
   // Deduplicate concurrent auto/manual tests for the same item so two probes
   // cannot race on expected_revision and surface REVISION_CONFLICT.

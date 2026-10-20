@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { basename, dirname, isAbsolute } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { AguiClient } from "./protocol/agui-client.js";
 import { V2SessionClient } from "./protocol/v2-session-client.js";
@@ -26,6 +27,22 @@ export function v2Transport(runtimeUrl: string, fetchImpl: typeof fetch): typeof
   };
 }
 
+/** Accept the control-plane envelope and the standalone `dataagent serve` health body. */
+export function v2HealthPayload(body: unknown): unknown {
+  if (!body || typeof body !== "object" || !("success" in body)) return body;
+  const record = body as { success?: unknown; data?: unknown };
+  if (record.success !== true || !record.data || typeof record.data !== "object") {
+    throw new Error("Invalid control-plane health response");
+  }
+  const conversation = (record.data as { conversation?: unknown }).conversation;
+  if (!conversation || typeof conversation !== "object" || (conversation as { ready?: unknown }).ready !== true) {
+    throw new Error(
+      "Control plane is up, but the conversation engine is not ready.",
+    );
+  }
+  return conversation;
+}
+
 export async function runV2Tui(options: {
   runtimeUrl: string;
   fetchImpl: typeof fetch;
@@ -36,26 +53,38 @@ export async function runV2Tui(options: {
 }): Promise<number> {
   const transport = v2Transport(options.runtimeUrl, options.fetchImpl);
   const baseUrl = new URL(options.runtimeUrl).origin;
-  const response = await transport(baseUrl + "/healthz", { signal: AbortSignal.any([
-    AbortSignal.timeout(10_000), ...(options.shutdownSignal ? [options.shutdownSignal] : []),
-  ]) });
-  if (!response.ok) throw new Error(`V2 backend is unavailable (${response.status})`);
+  let response: Response;
+  try {
+    response = await transport(baseUrl + "/healthz", { signal: AbortSignal.any([
+      AbortSignal.timeout(10_000), ...(options.shutdownSignal ? [options.shutdownSignal] : []),
+    ]) });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Control plane is not reachable at ${baseUrl}. Start it with npm start (one Python process on that address). The TUI does not start a second backend. ${detail}`,
+    );
+  }
+  if (!response.ok) throw new Error(`Control plane is unavailable (${response.status}) at ${baseUrl}/healthz`);
   const parsed = z.object({
     protocol: z.literal("dataagent-v2"), status: z.literal("ready"), instanceId: z.string(),
-    model: z.string(), home: z.string().refine(isAbsolute),
+    model: z.string(), home: z.string().refine(isAbsolute).optional(),
     workspaces: z.array(z.object({
       name: z.string().min(1), path: z.string().refine(isAbsolute),
     }).strict()).optional(),
     user: z.string().optional(),
-    stateDir: z.string().refine(isAbsolute), timeoutSeconds: z.number().positive(),
-  }).safeParse(await response.json());
+    stateDir: z.string().refine(isAbsolute).optional(), timeoutSeconds: z.number().positive(),
+  }).safeParse(v2HealthPayload(await response.json()));
   if (!parsed.success) throw new Error("Invalid V2 health response: absolute home and stateDir are required");
   const health = parsed.data;
   const identity = options.instanceId ?? process.env.DATAAGENT_V2_INSTANCE_ID;
   if (identity && health.instanceId !== identity) {
     throw new Error("Backend instance identity does not match the launcher");
   }
-  const logPath = process.env.DATAAGENT_V2_LOG_PATH ?? `${health.stateDir}/logs/tui.log`;
+  const envHome = process.env.DATAAGENT_HOME?.trim();
+  const stateDir = health.stateDir
+    ?? (envHome && isAbsolute(envHome) ? join(envHome, "runtime") : undefined);
+  const logPath = process.env.DATAAGENT_V2_LOG_PATH
+    ?? (stateDir ? join(stateDir, "logs", "tui.log") : join(tmpdir(), "dataagent-tui.log"));
   if (!isAbsolute(logPath)) throw new Error("V2 log path must be absolute");
   initLogger({ logDir: dirname(logPath), logFileName: basename(logPath), debugMode: false }).info("V2 terminal connected");
   store.setWorkspaceConfig({ llm: [], db: [], skill: [], kb: [], mcp: [] });
@@ -65,7 +94,7 @@ export async function runV2Tui(options: {
   try {
     await options.renderApp({
       client, datasourceId: undefined, initialDatasourceId: undefined, onExit: () => {},
-      v2: { sessions: new V2SessionClient(baseUrl, transport), model: health.model, home: health.home,
+      v2: { sessions: new V2SessionClient(baseUrl, transport), model: health.model, home: health.home ?? "",
         mounts: health.workspaces?.map((item) => `${item.name}: ${item.path}`).join("  ") },
       shutdownSignal: options.shutdownSignal,
       ...(options.initialResume ? { initialResume: options.initialResume } : {}),

@@ -612,9 +612,16 @@ export const configApi = {
   },
 
   cancelRun(id: string, reason?: string): Promise<RunCancelDto> {
-    return requestEnvelope<RunCancelDto>(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
+    return requestRaw(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
       body: JSON.stringify(reason ? { reason } : {}),
+    }).then((response) => {
+      if (!response.ok && response.status !== 204) {
+        return response.text().then((text) => {
+          throw new ConfigApiErrorClass("INTERNAL_ERROR", text || "Cancel failed", response.status);
+        });
+      }
+      return { canceled: true, runId: id, ...(reason ? { reason } : {}) };
     });
   },
 

@@ -12,7 +12,16 @@ describe("performChatRunCancellation", () => {
     await performChatRunCancellation({ onCancelRun, onStopFrontend });
 
     expect(onCancelRun).toHaveBeenCalledTimes(1);
-    expect(onStopFrontend).not.toHaveBeenCalled();
+    expect(onStopFrontend).toHaveBeenCalledTimes(1);
+  });
+
+  it("still stops the frontend stream when cancel returns 204", async () => {
+    const onStopFrontend = vi.fn();
+    const onCancelRun = vi.fn().mockResolvedValue({ canceled: true });
+
+    await performChatRunCancellation({ onCancelRun, onStopFrontend });
+
+    expect(onStopFrontend).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to frontend stop when backend cancellation rejects", async () => {
@@ -25,7 +34,7 @@ describe("performChatRunCancellation", () => {
     expect(onStopFrontend).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects without frontend fallback when strict cancellation rejects", async () => {
+  it("rejects after stopping the frontend when strict cancellation rejects", async () => {
     const onStopFrontend = vi.fn();
     const onCancelRun = vi.fn().mockRejectedValue(new Error("cancel failed"));
 
@@ -38,7 +47,7 @@ describe("performChatRunCancellation", () => {
     ).rejects.toThrow("cancel failed");
 
     expect(onCancelRun).toHaveBeenCalledTimes(1);
-    expect(onStopFrontend).not.toHaveBeenCalled();
+    expect(onStopFrontend).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to frontend stop when backend cancellation times out", async () => {
@@ -62,7 +71,7 @@ describe("performChatRunCancellation", () => {
 });
 
 describe("createChatStopHandler", () => {
-  it("requests backend cancellation without stopping the frontend stream when cancellation succeeds", async () => {
+  it("stops the frontend stream after backend cancellation succeeds", async () => {
     const onStopFrontend = vi.fn();
     const onCancelRun = vi.fn().mockResolvedValue(undefined);
     const stop = createChatStopHandler({ onCancelRun, onStopFrontend });
@@ -71,7 +80,7 @@ describe("createChatStopHandler", () => {
     await Promise.resolve();
 
     expect(onCancelRun).toHaveBeenCalledTimes(1);
-    expect(onStopFrontend).not.toHaveBeenCalled();
+    expect(onStopFrontend).toHaveBeenCalledTimes(1);
   });
 
   it("still stops the frontend stream when backend cancel is unavailable", () => {

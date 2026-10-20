@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRunErrorMessage } from "../run-error-message";
+import { formatRunErrorMessage, isSessionRunBusyMessage } from "../run-error-message";
 
 describe("formatRunErrorMessage", () => {
   it("explains RUN_TIMEOUT with seconds and guidance", () => {
@@ -31,7 +31,13 @@ describe("formatRunErrorMessage", () => {
     expect(formatRunErrorMessage()).toBe("Agent run failed");
   });
 
-  it("explains RUN_ALREADY_ACTIVE session locks", () => {
-    expect(formatRunErrorMessage("RUN_ALREADY_ACTIVE:run-1")).toContain("active run");
+  it("explains a busy session in the active locale", () => {
+    const zh = (key: string) => (key === "chatInput.sessionBusyElsewhere" ? "该会话正在其他窗口运行，请稍后或新建会话" : key);
+    const en = (key: string) => (key === "chatInput.sessionBusyElsewhere" ? "another window" : key);
+    expect(isSessionRunBusyMessage("A run is already active for this session")).toBe(true);
+    expect(isSessionRunBusyMessage("HTTP 409 Conflict")).toBe(true);
+    expect(isSessionRunBusyMessage("provider failed")).toBe(false);
+    expect(formatRunErrorMessage("RUN_ALREADY_ACTIVE:run-1", zh)).toContain("其他窗口");
+    expect(formatRunErrorMessage("A run is already active for this session", en)).toContain("another window");
   });
 });

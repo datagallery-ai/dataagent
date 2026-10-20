@@ -9,7 +9,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
 import {
   clearConfigApiIdentity,
   configApi,
@@ -55,7 +54,6 @@ export function DataTaskIdentityProvider({ children }: { children: ReactNode }) 
 }
 
 function PasswordIdentityProvider({ children }: { children: ReactNode }) {
-  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<ConfigApiIdentity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,9 +67,7 @@ function PasswordIdentityProvider({ children }: { children: ReactNode }) {
       clearConfigApiIdentity();
     } catch (err) {
       setCurrentUser(null);
-      if (err instanceof Error && !err.message.includes("Authentication required")) {
-        setError(err.message);
-      }
+      setError(err instanceof Error ? err.message : "Unable to load the local account.");
     } finally {
       setLoading(false);
     }
@@ -82,16 +78,12 @@ function PasswordIdentityProvider({ children }: { children: ReactNode }) {
   }, [loadMe]);
 
   const signOut = useCallback(() => {
-    void configApi.logout().finally(() => {
-      setCurrentUser(null);
-    });
-  }, []);
+    void loadMe();
+  }, [loadMe]);
 
   const signOutAll = useCallback(() => {
-    void configApi.logoutAll().finally(() => {
-      setCurrentUser(null);
-    });
-  }, []);
+    void loadMe();
+  }, [loadMe]);
 
   const changePassword = useCallback(async (input: { currentPassword: string; newPassword: string }) => {
     await configApi.changePassword(input);
@@ -112,17 +104,11 @@ function PasswordIdentityProvider({ children }: { children: ReactNode }) {
     };
   }, [changePassword, currentUser, error, loading, signOut, signOutAll]);
 
-  useEffect(() => {
-    if (!loading && (!currentUser || !value)) {
-      router.replace("/login");
-    }
-  }, [loading, currentUser, value, router]);
-
   if (loading) {
     return <PasswordAuthShell title="Loading account..." />;
   }
   if (!currentUser || !value) {
-    return <PasswordAuthShell title="Redirecting to sign in..." />;
+    return <PasswordAuthShell title={error ?? "Unable to load the local account."} />;
   }
   return (
     <DataTaskIdentityContext.Provider value={value}>
@@ -161,7 +147,6 @@ export function DataTaskUserBar({
   const {
     currentUser,
     error,
-    signOut,
   } = useDataTaskIdentity();
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -203,22 +188,6 @@ export function DataTaskUserBar({
               </span>
             </div>
           </div>
-          <div className="pt-1.5">
-            <AccountMenuItem
-              label={t("userBar.settings")}
-              onClick={() => {
-                onOpenSettings?.();
-                setOpen(false);
-              }}
-            />
-            <AccountMenuItem
-              label={t("userBar.signOut")}
-              onClick={() => {
-                signOut();
-                setOpen(false);
-              }}
-            />
-          </div>
           {error ? <p className="mt-2 text-xs text-rose-700">{error}</p> : null}
         </div>
       ) : null}
@@ -255,37 +224,5 @@ function AccountMoreIcon() {
       <circle cx="10" cy="10" r="1.2" />
       <circle cx="15.5" cy="10" r="1.2" />
     </svg>
-  );
-}
-
-function AccountMenuItem({
-  detail,
-  disabled = false,
-  label,
-  onClick,
-  shortcut,
-  trailing,
-}: {
-  detail?: string;
-  disabled?: boolean;
-  label: string;
-  onClick?: () => void;
-  shortcut?: string;
-  trailing?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-foreground transition-colors enabled:hover:bg-surface-subtle disabled:cursor-not-allowed disabled:text-muted-light"
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block truncate">{label}</span>
-        {detail ? <span className="block truncate text-[11px] font-normal text-muted-light">{detail}</span> : null}
-      </span>
-      {shortcut ? <span className="shrink-0 text-muted-light">{shortcut}</span> : null}
-      {trailing ? <span className="shrink-0 text-muted-light">{trailing}</span> : null}
-    </button>
   );
 }

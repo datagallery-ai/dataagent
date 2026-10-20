@@ -1,6 +1,6 @@
 # HTTP 接口
 
-服务只监听 `127.0.0.1`。没有登录和 Bearer 校验。`/healthz` 会返回 Home、输入目录和 `stateDir` 的路径，不返回配置正文或密钥。
+默认监听 `127.0.0.1`，也可以绑定其他地址。`/healthz` 不返回 Home、输入目录或 `stateDir`。
 
 默认基址：`http://127.0.0.1:8790`。
 
@@ -14,9 +14,6 @@
   "model": "<provider model name>",
   "plugins": ["common"],
   "user": "default",
-  "home": "/Users/me/.dataagent",
-  "workspaces": [{"name": "workspace-0", "path": "/data"}],
-  "stateDir": "/Users/me/.dataagent/runtime",
   "timeoutSeconds": 180
 }
 ```

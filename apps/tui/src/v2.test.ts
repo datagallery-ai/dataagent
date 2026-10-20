@@ -56,18 +56,57 @@ it("V2 output paths are session-relative, not fabricated virtual mounts", async 
   });
 });
 
-for (const stateDir of [undefined, "relative/state"]) {
-  it(`V2 rejects missing or relative stateDir (${stateDir}) without rendering`, async () => {
-    await assert.rejects(runV2Tui({
-      runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
-      fetchImpl: async () => Response.json({
-        protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "test",
-        home: "/workspace", stateDir, timeoutSeconds: 180,
-      }),
-      renderApp: async () => { assert.fail("Invalid health must not enter Ink"); },
-    }), /Invalid V2 health response/);
+it("V2 unwraps a control-plane health envelope", async () => {
+  const code = await runV2Tui({
+    runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
+    fetchImpl: async () => Response.json({
+      success: true,
+      data: {
+        status: "ok",
+        conversation: {
+          ready: true,
+          protocol: "dataagent-v2",
+          status: "ready",
+          instanceId: "test",
+          model: "fake",
+          timeoutSeconds: 180,
+        },
+      },
+    }),
+    renderApp: async (options) => {
+      assert.equal(options.v2?.model, "fake");
+      return "exit";
+    },
   });
-}
+  assert.equal(code, 0);
+});
+
+it("V2 accepts control-plane health without home or stateDir", async () => {
+  const code = await runV2Tui({
+    runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
+    fetchImpl: async () => Response.json({
+      protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "test",
+      timeoutSeconds: 180,
+    }),
+    renderApp: async (options) => {
+      assert.equal(options.v2?.model, "test");
+      assert.equal(options.v2?.home, "");
+      return "exit";
+    },
+  });
+  assert.equal(code, 0);
+});
+
+it("V2 rejects a relative stateDir without rendering", async () => {
+  await assert.rejects(runV2Tui({
+    runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
+    fetchImpl: async () => Response.json({
+      protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "test",
+      home: "/workspace", stateDir: "relative/state", timeoutSeconds: 180,
+    }),
+    renderApp: async () => { assert.fail("Invalid health must not enter Ink"); },
+  }), /Invalid V2 health response/);
+});
 
 for (const flags of [
   ["--workspace", "/project"], ["--config", "/config.json"], ["--env-file", "/provider.env"],

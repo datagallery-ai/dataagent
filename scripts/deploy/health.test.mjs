@@ -163,6 +163,42 @@ test("waitForDeployment rechecks processAlive each round via callback", async ()
   }
 });
 
+test("collectDeploymentHealth keeps the stack up when the conversation engine is not ready", async () => {
+  const api = http.createServer((req, res) => {
+    if (req.url === "/healthz") {
+      res.writeHead(200);
+      res.end("ok");
+      return;
+    }
+    if (req.url === "/ready") {
+      res.writeHead(503);
+      res.end("not ready");
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const web = http.createServer((_req, res) => {
+    res.writeHead(200);
+    res.end("web");
+  });
+  const apiPort = await listen(api);
+  const webPort = await listen(web);
+  try {
+    const summary = await collectDeploymentHealth({
+      processAlive: true,
+      apiBaseUrl: `http://127.0.0.1:${apiPort}`,
+      webUrl: `http://127.0.0.1:${webPort}`
+    });
+    assert.equal(summary.apiHealth, "healthy");
+    assert.equal(summary.apiReady, "unhealthy");
+    assert.equal(summary.ok, true);
+  } finally {
+    api.close();
+    web.close();
+  }
+});
+
 test("TCP probe fails for closed ports", async () => {
   const server = net.createServer();
   const port = await new Promise((resolve) => {

@@ -6,7 +6,7 @@ import { configApi } from "../../../../lib/config-api/client";
 import { getRuntimeCapabilities } from "../../../../lib/config-api/capabilities";
 import {
   collaborationResponsesFromConversation,
-  conversationToAgentMessages,
+  preferredRestoredMessages,
   hydrateLiveRunFromConversation,
   hydratePendingInteractionLiveRun,
   hydrateSessionUsageFromConversation,
@@ -130,7 +130,7 @@ export function SessionConversationRestore({
     void (async () => {
       try {
         const conversation = await configApi.getSessionConversation(threadId);
-        if (cancelled || fetchGenerationRef.current !== generation) {
+        if (cancelled || fetchGenerationRef.current !== generation || agentRef.current.isRunning) {
           return;
         }
         setConversationBranchSnapshot(threadId, conversation);
@@ -147,7 +147,7 @@ export function SessionConversationRestore({
             dto: conversation,
           })
         ) {
-          const restored = conversationToAgentMessages(conversation);
+          const restored = preferredRestoredMessages(conversation);
           if (restored.length > 0) {
             currentAgent.setMessages(restored);
           }
