@@ -7,11 +7,19 @@ its optional block separator. No template engine, config discovery or Skill
 loading lives here.
 """
 
+import sys
 from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
 
 from dataagent.bootstrap.paths import WorkspaceInput
+
+# Injected only on win32; keeps non-Windows renders identical to the shared bullets.
+_WINDOWS_HOST_NOTES = """
+Windows host paths and cmd.exe:
+- File tools require the drive-letter absolute paths shown above (for example `C:/Users/...`). Do not invent virtual mounts such as `/workspace` or `/workspace-0`; workspace names are labels, not mount points.
+- `execute` runs under cmd.exe (not bash). Prefer `dir` and `type`. Do not use `ls`, `find`, or `2>/dev/null`. Chain commands with `&` or `&&`; `;` is not a command separator.
+""".strip("\n")
 
 
 def _render(name: str, **values: str) -> str:
@@ -21,10 +29,14 @@ def _render(name: str, **values: str) -> str:
 
 def render_filesystem_prompt(*, outputs: Path, workspaces: Sequence[WorkspaceInput]) -> str:
     """Render actual session paths, keeping workspace order and an empty list valid."""
+    windows_notes = _WINDOWS_HOST_NOTES if sys.platform == "win32" else ""
+    if windows_notes:
+        windows_notes = "\n" + windows_notes
     return _render(
         "filesystem.md",
         output_directory=str(outputs),
         input_workspaces="".join(f"- {item.name}: {item.path}\n" for item in workspaces),
+        windows_host_notes=windows_notes,
     )
 
 

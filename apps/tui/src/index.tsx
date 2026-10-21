@@ -23,7 +23,7 @@ import {
   preflightRuntimeConnection,
 } from "./startup-preflight.js";
 import { installTerminalRedrawOptimizer } from "./terminal-redraw-optimizer.js";
-import { withAlternateScreen } from "./terminal-screen.js";
+import { restoreTerminalForParentShell, withAlternateScreen } from "./terminal-screen.js";
 import { App } from "./ui/App.js";
 import type { AgentClient } from "./protocol/types.js";
 import type { V2AppContext } from "./protocol/v2-session-client.js";
@@ -89,7 +89,10 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
           // Ink 7.1 auto-detection can replay early input during its 200ms probe.
           // Direct CSI-u opt-in is ignored by unsupported terminals; Ctrl+J remains
           // the newline fallback. Ink restores the protocol on exit/suspend.
-          ...(options.v2 ? { kittyKeyboard: { mode: 'enabled' as const } } : {}),
+          // Windows ConPTY: kitty keyboard has caused host/session teardown on exit.
+          ...(options.v2 && process.platform !== "win32"
+            ? { kittyKeyboard: { mode: "enabled" as const } }
+            : {}),
         },
       );
       if (options.transport) {
@@ -101,9 +104,11 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
         });
       }
       const stop = () => instance.unmount();
-      if (options.v2) {
+      if (options.v2 && process.platform !== "win32") {
         process.once("SIGTERM", stop);
         process.once("SIGHUP", stop);
+      }
+      if (options.v2) {
         options.shutdownSignal?.addEventListener("abort", stop, { once: true });
         if (options.shutdownSignal?.aborted) stop();
       }
@@ -118,6 +123,7 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
   } finally {
     unbindAuthRequired?.();
     restoreTerminalRedrawOptimizer();
+    restoreTerminalForParentShell();
   }
 
   return exitReason;
@@ -529,5 +535,10 @@ const isDirectLaunch = process.argv[1]
 
 if (isDirectLaunch) {
   const code = await runTui();
+  restoreTerminalForParentShell();
   process.exitCode = code;
+  if (process.platform === "win32") {
+    // Let ConPTY finish leaving raw mode before this process drops the console.
+    await new Promise<void>((done) => setImmediate(done));
+  }
 }

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { terminalText } from "./utils/terminal-text.js";
@@ -13,6 +14,81 @@ const startupSchema = z.object({
 type BackendSpawner = (
   args: string[], options: { cwd: string; env: NodeJS.ProcessEnv },
 ) => ChildProcessWithoutNullStreams;
+
+function backendSpawnOptions(): {
+  detached: boolean;
+  stdio: ["pipe", "pipe", "pipe"];
+  windowsHide: true;
+} {
+  return {
+    // Unix: own process group so stop() can signal with a negative PID.
+    // Windows: do not detach — a detached console process + force tree-kill on
+    // /exit can take down the parent terminal session in ConPTY hosts.
+    detached: process.platform !== "win32",
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  };
+}
+
+export function windowsVenvPython(backendPackage: string): string {
+  return join(backendPackage, ".venv", "Scripts", "python.exe");
+}
+
+export type EnsureWindowsPythonDeps = {
+  existsSync?: (path: string) => boolean;
+  spawn?: typeof spawn;
+};
+
+/**
+ * Sync agentkit deps, then return the venv interpreter for a direct Windows spawn.
+ * Always runs `uv sync`: a pre-existing python.exe does not mean packages match the
+ * lockfile (empty/partial venvs, interrupted installs, or outdated deps after pull).
+ * Spawning python.exe afterward still avoids the dataagent.exe console flash.
+ */
+export function ensureWindowsBackendPython(
+  backendPackage: string,
+  options: { cwd: string; env: NodeJS.ProcessEnv },
+  deps: EnsureWindowsPythonDeps = {},
+): Promise<string> {
+  const exists = deps.existsSync ?? existsSync;
+  const spawnImpl = deps.spawn ?? spawn;
+  const python = windowsVenvPython(backendPackage);
+  return new Promise((done, fail) => {
+    const child = spawnImpl("uv", ["sync", "--project", backendPackage], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr = (stderr + chunk).slice(-2000);
+    });
+    child.once("error", fail);
+    child.once("close", (code) => {
+      if (code === 0 && exists(python)) done(python);
+      else fail(new Error(stderr.trim() || `uv sync failed with code ${code ?? "null"}`));
+    });
+  });
+}
+
+function spawnDefaultBackend(
+  backendPackage: string,
+  argv: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv },
+  windowsPython?: string,
+): ChildProcessWithoutNullStreams {
+  if (process.platform === "win32") {
+    // `uv run dataagent` launches Scripts\dataagent.exe, a console shim that always
+    // allocates its own window (windowsHide on the uv parent does not propagate).
+    // Spawn the venv interpreter with -m restapi so CREATE_NO_WINDOW applies.
+    const serveAt = argv.indexOf("serve");
+    const serveArgs = serveAt >= 0 ? argv.slice(serveAt) : ["serve", "--stdio-ready"];
+    const python = windowsPython ?? windowsVenvPython(backendPackage);
+    return spawn(python, ["-m", "restapi", ...serveArgs], { ...options, ...backendSpawnOptions() });
+  }
+  return spawn("uv", argv, { ...options, ...backendSpawnOptions() });
+}
 
 /** Start only the backend: this Node process is already the actual TUI. */
 export async function startV2Backend(options: {
@@ -38,15 +114,23 @@ export async function startV2Backend(options: {
   for (const path of workspaces) args.push("--workspace", resolve(cwd, path));
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
+  const env = { ...process.env, DATAAGENT_V2_INSTANCE_ID: instanceId };
+  const launchOpts = { cwd, env };
+  let windowsPython: string | undefined;
+  if (!options.spawnBackend && process.platform === "win32") {
+    windowsPython = await ensureWindowsBackendPython(backendPackage, launchOpts);
+  }
   const launch: BackendSpawner = options.spawnBackend ?? ((argv, opts) =>
-    spawn("uv", argv, { ...opts, detached: true, stdio: ["pipe", "pipe", "pipe"] }));
-  const child = launch(args, {
-    cwd, env: { ...process.env, DATAAGENT_V2_INSTANCE_ID: instanceId },
-  });
+    spawnDefaultBackend(backendPackage, argv, opts, windowsPython));
+  const child = launch(args, launchOpts);
   const shutdown = new AbortController();
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const interrupted = () => shutdown.abort(new DOMException("TUI interrupted", "AbortError"));
-  for (const signal of signals) process.on(signal, interrupted);
+  // Windows: installing SIGINT hooks changes the console Ctrl handler and can make
+  // process teardown take down the parent ConPTY / PowerShell session on /exit.
+  if (process.platform !== "win32") {
+    for (const signal of signals) process.on(signal, interrupted);
+  }
   let closing = false;
   let finished = false;
   let stderr = "";
@@ -55,7 +139,11 @@ export async function startV2Backend(options: {
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
   child.stdin.on("error", (error) => { if (!closing) shutdown.abort(error); });
   const closed = new Promise<void>((done) => {
-    child.once("error", (error) => { finished = true; shutdown.abort(error); done(); });
+    child.once("error", (error) => {
+      finished = true;
+      if (!closing) shutdown.abort(error);
+      done();
+    });
     child.once("close", () => {
       finished = true;
       if (!closing) shutdown.abort(new Error(safe(
@@ -67,11 +155,24 @@ export async function startV2Backend(options: {
   let stopping: Promise<void> | undefined;
   const stop = (): Promise<void> => stopping ??= (async () => {
     closing = true;
-    for (const signal of signals) process.removeListener(signal, interrupted);
+    if (process.platform !== "win32") {
+      for (const signal of signals) process.removeListener(signal, interrupted);
+    }
+    if (process.platform === "win32") {
+      // Soft kill only — never taskkill /T (that flash-closed Cursor ConPTY tabs).
+      try { child.stdin.end(); } catch { /* ignore */ }
+      try { if (child.pid && !finished) child.kill(); } catch { /* ignore */ }
+      try { child.unref(); } catch { /* ignore */ }
+      await Promise.race([closed, new Promise<void>((done) => setTimeout(done, 1000))]);
+      return;
+    }
     const kill = (signal: NodeJS.Signals) => {
       if (!child.pid || finished) return;
-      try { process.kill(-child.pid, signal); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      try {
+        process.kill(-child.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
     };
     child.stdin.destroy();
     kill("SIGTERM");

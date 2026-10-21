@@ -68,13 +68,27 @@ def test_subagent_without_instructions():
 
 
 @pytest.mark.parametrize("name, expected", [
-    ("filesystem.md", ["output_directory", "input_workspaces"]),
+    ("filesystem.md", ["output_directory", "input_workspaces", "windows_host_notes"]),
     ("subagent.md", ["filesystem_instructions", "subagent_instructions"]),
 ])
 def test_filesystem_and_subagent_keep_existing_injection_slots(name, expected):
     template = files("dataagent.prompts").joinpath(name).read_text(encoding="utf-8")
     fields = [field for _, field, _, _ in Formatter().parse(template) if field is not None]
     assert fields == expected
+
+
+def test_filesystem_prompt_windows_notes_only_on_win32(monkeypatch):
+    outputs = Path("/home/session/outputs")
+    monkeypatch.setattr("dataagent.prompts.sys.platform", "linux")
+    linux = render_filesystem_prompt(outputs=outputs, workspaces=())
+    assert "cmd.exe" not in linux
+    assert "Do not invent virtual mounts" not in linux
+    monkeypatch.setattr("dataagent.prompts.sys.platform", "win32")
+    windows = render_filesystem_prompt(outputs=outputs, workspaces=())
+    assert "cmd.exe" in windows
+    assert "Do not invent virtual mounts" in windows
+    assert "Use absolute paths in file tools" in windows
+    assert "Use absolute paths in file tools" in linux
 
 
 def test_agent_assembly_keeps_root_and_child_prompt_scopes(runtime, monkeypatch):

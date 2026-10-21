@@ -191,6 +191,13 @@ export const KEYBINDINGS: KeybindingAction[] = [
   { key: 'Ctrl+N', description: 'New session', category: 'session' },
   { key: 'Ctrl+R', description: 'Reset session', category: 'session' },
 
+  // Navigation
+  { key: 'PageUp', description: 'Scroll chat up', category: 'navigation' },
+  { key: 'PageDown', description: 'Scroll chat down', category: 'navigation' },
+  { key: 'Shift+↑/↓', description: 'Scroll chat by line', category: 'navigation' },
+  { key: 'Ctrl+↑/↓', description: 'Scroll chat by page', category: 'navigation' },
+  { key: 'Mouse wheel', description: 'Scroll chat (when terminal supports it)', category: 'navigation' },
+
   // Input shortcuts
   { key: 'Terminal paste', description: 'Paste text into input', category: 'input' },
   { key: '↑', description: 'Previous command', category: 'input' },

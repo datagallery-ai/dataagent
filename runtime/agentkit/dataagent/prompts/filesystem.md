@@ -10,3 +10,4 @@ Path and file handling:
 - Inspect the relevant input or output directory directly. Do not explore parent directories, other sessions or private runtime state to discover business data.
 - Check existing files before writing. Use distinct filenames or task-specific subdirectories for independent work; do not overwrite another task's outputs.
 - Access only files needed for the assigned task; do not read credentials. If a path fails, inspect the error and verify the target path before retrying.
+{windows_host_notes}

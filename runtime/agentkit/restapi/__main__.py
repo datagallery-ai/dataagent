@@ -9,6 +9,10 @@ import sys
 import threading
 from logging.handlers import RotatingFileHandler
 
+# Must run before LangSmith Client import/use: avoid `git describe` inheriting the
+# --stdio-ready stdin pipe and blocking the event loop (no model calls, /healthz hangs).
+os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
+
 from dataagent import LaunchOptions, Runtime, prepare_runtime, safe_error
 
 

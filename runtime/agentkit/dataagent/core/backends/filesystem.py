@@ -47,8 +47,10 @@ import json
 import logging
 import os
 import pathlib
+import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
@@ -237,6 +239,18 @@ class FilesystemBackend(contracts.BackendProtocol):
                 raise ValueError(f"Path:{full} outside root directory: {self.cwd}") from None
             _raise_if_symlink_loop(full)
             return full
+        # win32 + 宿主路径模式：无盘符的 /foo 会落到当前盘根（如 C:\workspace），拒绝。
+        if (
+            sys.platform == "win32"
+            and key.startswith("/")
+            and not key.startswith("//")
+            and not re.match(r"^[a-zA-Z]:", key)
+        ):
+            raise ValueError(
+                f"POSIX-style absolute paths are not supported on Windows with host "
+                f"path mode: {key}. Use drive-letter absolute paths from the prompt "
+                f"(e.g., C:/Users/...)."
+            )
         candidate = Path(key)
         if candidate.is_absolute():
             _raise_if_symlink_loop(candidate)
@@ -674,9 +688,15 @@ class FilesystemBackend(contracts.BackendProtocol):
             command += ["--", pattern, str(base_full)]
             workdir = None
         try:
-            proc = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=workdir
-            )
+            popen_kwargs: dict = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "cwd": workdir,
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            proc = subprocess.Popen(command, **popen_kwargs)
         except (FileNotFoundError, PermissionError, NotADirectoryError) as exc:
             logger.warning(
                 "ripgrep subprocess failed (%s: %s); using Python grep fallback",

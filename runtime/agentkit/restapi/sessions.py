@@ -1,27 +1,56 @@
 """A small durable session index. Conversation state belongs to LangGraph."""
 
 import asyncio
-import fcntl
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
+
+def _acquire_workspace_lock(handle) -> None:
+    if sys.platform == "win32":
+        # msvcrt locks a byte range from the current offset.
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            raise RuntimeError("Another DataAgent V2 backend owns this workspace") from None
+        return
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise RuntimeError("Another DataAgent V2 backend owns this workspace") from None
+
+
+def _release_workspace_lock(handle) -> None:
+    if sys.platform == "win32":
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    fcntl.flock(handle, fcntl.LOCK_UN)
+
 
 @contextmanager
 def workspace_lock(state_dir: Path):
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (state_dir / "backend.lock").open("a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError("Another DataAgent V2 backend owns this workspace") from None
+    lock_path = state_dir / "backend.lock"
+    # Windows byte-range locks need an existing byte; r+b avoids append-mode seek limits.
+    if not lock_path.exists() or lock_path.stat().st_size == 0:
+        lock_path.write_bytes(b"\0")
+    with lock_path.open("r+b") as handle:
+        _acquire_workspace_lock(handle)
         try:
             yield
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            _release_workspace_lock(handle)
 
 
 class Sessions:

@@ -45,6 +45,7 @@ export function openBrowserUrl(
       shell: false,
       detached: true,
       stdio: "ignore",
+      windowsHide: true,
     });
     // Missing binaries (e.g. xdg-open) emit 'error' asynchronously; without a
     // listener Node can crash the process even though spawn() returned.
