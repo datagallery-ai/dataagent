@@ -81,13 +81,13 @@ async def nl2sql_sub_agent_tool(
     workspace = str(guard.workspace_root)
     ws_config = source_config.setdefault("WORKSPACE", {})
     shutil.copytree(user_prompt_path, workspace, dirs_exist_ok=True)
-    # 将suite路径下 sql_rules skill 的规范文档复制到 workspace 下（basename 仍为 sql_rules.md，
-    # 供子 agent 通过 CORE.perceptor.user_sql_rules="sql_rules" 读取，与主 agent 共用同一份规范）
+    # 将子 agent 配置指定的 SQL 规范复制到 workspace，供 PerceptorNode 加载。
+    sql_rules_name = source_config["CORE"]["perceptor"]["user_sql_rules"]
     tool_cfg = _tool_context.tool_config or {}
     suite_name = str(tool_cfg.get("suite_name") or "example_suite").strip()
     config_manager = _tool_context.config_manager
     suite_root = config_manager.get_activated_suite_root(suite_name)
-    sql_rules_path = suite_root / "skill" / "sql_rules" / "references" / "sql_rules.md"
+    sql_rules_path = suite_root / "skill" / "sql_rules" / "references" / f"{sql_rules_name}.md"
     shutil.copy2(sql_rules_path, workspace)
     ws_config["path"] = workspace
     # 若启用 metadata_recall 或 search_udf，确保 schema_udf_basic.md 存在（可空），供 nl2sql 配置 user_evidence 使用
