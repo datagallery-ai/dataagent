@@ -10,7 +10,7 @@ description: |
 ## 文档内容
 
 - `references/ddl_rules.md`：DDL 的建表语法规则。
-- `references/dml_rules.md`：DML 的 INSERT 语法规则和通用规则。
+- `references/dml_rules.md`：DML 的 INSERT 语法规则和通用规则（含空值判断、CAST 方言类型约束等）。
 
 ## 读取原则
 

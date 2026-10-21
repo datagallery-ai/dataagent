@@ -13,4 +13,5 @@
 ## SQL 构造
 - DDL 使用 Hive：`CREATE EXTERNAL TABLE IF NOT EXISTS`、字段 `COMMENT`、`PARTITIONED BY (pt_* string COMMENT ...)`、`STORED AS ORC`。
 - 普通字段类型只使用 `STRING`、`TINYINT`、`SMALLINT`、`INT`、`BIGINT`、`DECIMAL(p,s)`。
+- **禁止使用当前方言不支持的类型做列声明**：Hive DDL 不得使用 `REAL`、`NUMERIC`、`FLOAT`、`DOUBLE`、`TEXT`、`VARCHAR`、`BOOLEAN`、`DATE`、`TIMESTAMP` 等白名单外类型（`REAL` 常见于 PostgreSQL/SQLite，Hive 不支持）。小数落表用 `DECIMAL(p,s)`。
 - 输出：DDL 草案

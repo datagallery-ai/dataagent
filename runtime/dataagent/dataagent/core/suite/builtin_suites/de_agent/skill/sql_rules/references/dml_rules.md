@@ -15,6 +15,7 @@
 - **禁止本地执行验证**：你没有任何本地数据库（包括 SQLite）可供执行 SQL。不要尝试执行 DDL/DML 来验证语法，不要将 SQL 改写为 SQLite 兼容语法。SQL 的正确性通过人工审查和 Gate Check 清单保证，而非本地执行。
 严禁在交付 SQL 中使用 SQLite 语法（如 `INSERT OR REPLACE`、`CREATE TABLE ... PRIMARY KEY`、无 `PARTITIONED BY` 的建表语句）。
 当前 SparkSQL 使用的是 3.1 的版本，所以请保证你输出的 SQL 语法是符合这个版本标准的，且额外必须保证WITH/CTE 位于 INSERT OVERWRITE 之前。
+- **禁止使用当前方言不支持的类型做声明或 CAST**：DDL 列类型、`CAST(... AS type)`、`AS type` 等目标类型必须属于当前方言（Hive DDL / Spark DML）支持且符合本规范白名单的类型。禁止把其他引擎类型直接拿来用——典型反例：Hive/Spark **不支持** `REAL`（常见于 PostgreSQL/SQLite），不得写 `CAST(x AS REAL)` 或列类型 `REAL`；应改用本规范允许的 `DOUBLE`（仅过程计算）或 `DECIMAL(p,s)`（落表）。同理禁止方言外的 `NUMERIC`、`MONEY`、`SERIAL`、`TEXT`（应用 `STRING`）等。
 
 ## 通用 SQL 生成硬规则（从历史问题抽象）
 这些规则只描述可复用的工程模式，不绑定具体表名或具体业务列名。生成 SQL 时必须优先套用，除非用户给出更高优先级的明确业务约束。
@@ -38,7 +39,10 @@
    - 通过维表补齐分类、标签、层级属性后，若该属性参与分组或作为目标字段，空值默认使用 `WHERE !bicoredata.IsEmpty(field)` 过滤。
    - 禁止将关键业务分类补成占位值（e.g. `'<unknown>'`、`'<empty>'`）后继续入表，除非用户明确要求保留未知分类并说明下游含义。
 5. **平台 UDF 必须优先于通用函数**：
-   - 空值判断使用  `bicoredata.IsEmpty`，不要用 `IS NOT NULL AND <> ''` 替代关键字段判断。
+   - **字符串类型空值判断**必须使用 `bicoredata.IsEmpty(field)`（保留侧写 `!bicoredata.IsEmpty(field)`，或经元数据确认的等价写法）；禁止用 `IS NULL` / `IS NOT NULL`、`= ''` / `<> ''`、`IS NOT NULL AND <> ''`、`TRIM(field) <> ''` 等替代。`bicoredata.IsEmpty` 只适用于字符串存储类型，不是所有类型的通用判空。
+   - **区分“语义类型”与“存储类型”**：
+     - **语义非字符串、但按字符串存储**（schema/元数据为 STRING，即便业务上像时间、次数、金额、状态码）→ 仍按字符串空值，必须用 `bicoredata.IsEmpty`；禁止因“看起来像数值/时间”改用仅判 SQL NULL。
+     - **非字符串类型存储**（元数据证实为 BIGINT/INT/DECIMAL/TIMESTAMP 等）→ 不适用 `bicoredata.IsEmpty`；按该类型空值语义判断（通常 `IS NULL` / `IS NOT NULL`），并以元数据为据。
    - 设备 ID 合法性过滤使用 `bicoredata.isDeviceIdLegal(device_id)`。
    - SHA256 加密使用 `bicoredata.SHA256(raw_id)` 这类平台 UDF，不要自行换成通用 `SHA2`。如果用户没有明确指定，优先使用 `bicoredata.SHA256`。
    - 序列拼接优先使用 `bicoredata.ConcatWithRank`，不要自行用不稳定的 `collect_list` 排序拼接。
@@ -123,7 +127,8 @@
    - 示例：7d/14d/30d三个窗口分别按各自窗口过滤非零得分后，用户集合互不相同；应先用三个窗口的用户做UNION得到全部用户，再LEFT JOIN各窗口序列，禁止以单个窗口（如30d）为左表拼接其他窗口。
 
 ## 空值处理矩阵（必须先定策略再写 SQL）
-所有判空逻辑必须写进需求表的“空值/去重策略”，并在自检中逐项核对。不要把所有空值都机械地 `COALESCE`。字符串类型的空值判断，必须使用`bicoredata.IsEmpty()`。
+所有判空逻辑必须写进需求表的“空值/去重策略”，并在自检中逐项核对。不要把所有空值都机械地 `COALESCE`。
+**字符串类型空值判断硬规则**：对 **STRING（字符串存储）** 字段判空/判非空，必须使用 `bicoredata.IsEmpty(field)` / `!bicoredata.IsEmpty(field)`；禁止 `IS NULL` / `IS NOT NULL` / `= ''` / `<> ''` 等替代（空字符串也算空）。注意区分：① **语义非字符串但按字符串存储**（如时间/次数/金额存成 STRING）→ 仍必须用 `bicoredata.IsEmpty`；② **非字符串类型存储**（元数据为数值/时间戳等）→ 不适用 `bicoredata.IsEmpty`，按该存储类型判空。不得用业务语义代替 schema 存储类型。
 先按字段角色选择以下策略之一：
 - **过滤**：主键、JOIN key、业务对象、分类/映射输出、序列对象等缺失会改变粒度或语义的字段，默认过滤，除非用户明确说明不要过滤。
 - **合法回退派生**：同一业务实体有优先级字段和备用字段时，可按证据定义 `if(<primary>可用, <primary>, derive(<backup>))`，但备用字段必须先通过空值/合法性校验，派生函数必须用平台 UDF。
@@ -131,7 +136,7 @@
 - **省略过滤也需要解释**：当可信参考逻辑只过滤分区/窗口而不额外过滤目标键或排序字段时，应先确认这是上游质量保证、业务保留要求，还是遗漏；不要因为字段出现在 SELECT/GROUP BY 就自动添加判空。
 1. **主键 / 粒度字段默认过滤**：
    - 目标表主键、分组粒度、JOIN key、设备 ID、业务对象 ID、分类维度、派生维度为空时，默认过滤该行。
-   - 字符串字段使用 `!bicoredata.IsEmpty(field)` 判断；不要只写 `field IS NOT NULL`，因为空字符串也应视为空。
+   - 字符串存储字段的空值判断统一写 `bicoredata.IsEmpty(field)`（保留侧 `!bicoredata.IsEmpty(field)`）；不要只写 `field IS NULL` / `field IS NOT NULL`（空字符串也会被视为空）。时间/次数/金额等若 schema 仍为 STRING（语义非字符串、按字符串存储），同样必须用 `bicoredata.IsEmpty`；仅当元数据证明为非字符串类型存储时，才改用该类型的判空方式并记录证据。
    - 对 JOIN key，必须在 JOIN 前过滤或归一化空值，避免空 key 造成数据倾斜、错误匹配或无效输出。
    - 若上游表、样例 SQL 或数据规范已经证明字段在源表中清洗完成，不要机械追加无证据过滤条件；任何可能改变保留行数的额外过滤都必须写明证据，证据不足时进入 HITL。
 2. **设备 ID 必须合法性优先**：
@@ -149,13 +154,14 @@
    - 参与序列拼接的业务对象为空时，先过滤；空对象不得进入 `ConcatWithRank`。
    - `HAVING seq IS NOT NULL AND seq != ''` 这类最终判空应优先改为上游对象过滤 + `ConcatWithRank` 结果校验，避免掩盖明细质量问题。
 6. **判空函数大小写和证据**：
-   - UDF 手册中有 `IsEmpty` / `isDeviceIdLegal` 线索；实际函数名、大小写、参数必须通过 `metadata_recall` 确认。
+   - UDF 手册中有 `bicoredata.IsEmpty` / `bicoredata.isDeviceIdLegal` 线索；实际函数名、大小写、参数必须通过 `metadata_recall` 确认。
    - 同一条 SQL 中判空 UDF 大小写尽量保持一致；若沿用参考 SQL 的大小写，需在说明证据来源。
 
 ## SQL 构造
 - DML 使用 Spark：`INSERT OVERWRITE {db}.{table} PARTITION ... SELECT ...`，SELECT 中不输出 `pt_d` 等时间分区列。
 - 多事实合并优先使用 UNION ALL 预聚合模式；禁止明细 N:N 直接 JOIN。
-- 普通字段类型只使用 `STRING`、`TINYINT`、`SMALLINT`、`INT`、`BIGINT`、`DECIMAL(p,s)`。
+- 普通字段类型（DDL 列类型）只使用 `STRING`、`TINYINT`、`SMALLINT`、`INT`、`BIGINT`、`DECIMAL(p,s)`。
+- **CAST / 类型转换目标类型也必须方言合法**：禁止 `CAST(... AS REAL)`、`CAST(... AS NUMERIC)` 等当前 Hive/Spark 方言不支持或不在白名单内的类型；浮点过程计算用 `DOUBLE`，落表用 `DECIMAL(p,s)`，整型用 `TINYINT`/`SMALLINT`/`INT`/`BIGINT`，字符串用 `STRING`。
 - 字符串类型的列，如果实际存储的数据为整数或浮点数，可在 SELECT 表达式中 CAST 为 DOUBLE 后再参与 SUM/AVG 计算。
 - 对结果中的小数，必须使用 DOUBLE 作为过程计算的中间类型，落表前再按本模块下文的精度规则 CAST 为 DECIMAL(p,s)。
 - 选用聚合函数 AVG / MIN / MAX / SUM 时应该结合字段的名称和描述，例如平均值字段使用AVG，总值字段使用SUM，最大值字段使用MAX，最小值字段使用MIN。当对于已采样的样本进行聚合时，要考虑原始表列语义和聚合函数的搭配使用，如已有列语义已经是最大最小值，且目标计算结果仍然是最大最小值，那么通常来说应该要对各样本的最大值取最大值，各样本的最小值取最小值。

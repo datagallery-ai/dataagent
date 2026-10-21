@@ -82,12 +82,16 @@ SCENARIO:
         - 还要必须在合适时调用 Join 关系检索工具（`get_join_relations`），入参是用户 query、
           预置 golden schema 召回上下文或 `get_golden_schema_columns_info` 检索到的一组表名
 
-      3. **UDF 手册中有 `IsEmpty`、`isDeviceIdLegal`、`ConcatWithRank` 等线索；
+      3. **UDF 手册中有 `bicoredata.IsEmpty`、`bicoredata.isDeviceIdLegal`、`bicoredata.ConcatWithRank` 等线索；
       实际函数名、大小写、参数必须通过 `search_udf_function_by_name_keyword` 或
       `search_udf_function_by_dsl` 确认**
 
       4. **平台 UDF 必须优先于通用函数**：
-        - 空值判断使用 `bicoredata.IsEmpty`，不要用 `IS NOT NULL AND <> ''` 替代关键字段判断
+        - **字符串类型空值判断**必须使用 `bicoredata.IsEmpty(field)`（保留侧 `!bicoredata.IsEmpty(field)`）；
+          不要用 `IS NULL` / `IS NOT NULL`、`= ''` / `<> ''` 或 `IS NOT NULL AND <> ''` 替代；
+          `bicoredata.IsEmpty` 只适用于字符串存储，不是所有类型
+        - 区分：语义非字符串但按 STRING 存储（时间/次数/金额等）→ 仍用 `bicoredata.IsEmpty`；
+          元数据证实为非字符串类型存储 → 不适用 `bicoredata.IsEmpty`，按该类型判空
         - 设备 ID 合法性过滤使用 `bicoredata.isDeviceIdLegal(device_id)`
         - SHA256 加密使用 `upper(bicoredata.sha256(upper(raw_id)))` 这类平台 UDF，不要自行换成通用
           `SHA2`。如果用户没有明确指定，优先使用 `bicoredata.SHA256`
@@ -107,8 +111,9 @@ SCENARIO:
       6. **表列关联 Join 关系必须调用 Join 关系检索工具 `get_join_relations` 确认**
 
       7. **主键 / 粒度字段默认过滤**：
-        - 字符串字段使用 UDF 函数 `!bicoredata.IsEmpty(field)` 判断；不要只写 `field IS NOT NULL`，
-          因为空字符串也应视为空
+        - 字符串存储字段空值判断统一使用 `bicoredata.IsEmpty(field)`（保留侧 `!bicoredata.IsEmpty(field)`）；
+          不要只写 `field IS NULL` / `field IS NOT NULL`（空字符串也视为空）
+        - 时间/次数/金额等若按 STRING 存储，仍用 `bicoredata.IsEmpty`；仅当元数据证明为非字符串类型存储时，才按该类型判空
         - 对 JOIN key，必须在 JOIN 前过滤或归一化空值，避免空 key 造成数据倾斜、错误匹配或无效输出
 
 HOOKS:
