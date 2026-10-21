@@ -2523,3 +2523,268 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
         assert result["passed"] is False
         assert result["failed_after_max_retries"] is True
         assert "attempt must be a positive int" in result["error"]
+
+
+# ===========================================================================
+# _pre_drop_for_create_prod
+# ===========================================================================
+# NOTE: These tests patch the adapter at its canonical source location so that
+# _pre_drop_for_create_prod (which imports the adapter *inside* the function)
+# picks up the mocks correctly.
+
+
+class TestPreDropForCreateProd:
+    """Unit tests for the production-path pre-DROP helper."""
+
+    @pytest.mark.asyncio
+    async def test_non_create_sql_returns_none_immediately(self):
+        """Non-CREATE SQL must not trigger any adapter call."""
+        drop_job_id = await vt._pre_drop_for_create_prod(
+            original_sql="INSERT OVERWRITE TABLE biads.x SELECT 1",
+            user_account="alice",
+            table_suffix="",
+            timeout_sec=60,
+            poll_interval=2.0,
+        )
+        assert drop_job_id is None
+
+    @pytest.mark.asyncio
+    async def test_create_sql_drop_completed_returns_job_id(self):
+        """CREATE SQL -> DROP submitted and poll completed -> returns drop_job_id."""
+        async def fake_execute(sql: str):
+            # First call is DROP, second call would be CREATE (never reached here)
+            assert "DROP TABLE IF EXISTS" in sql
+            return {"success": True, "job_id": "j-drop-1"}
+
+        poll_states = iter(["running", "completed"])
+
+        async def fake_poll(job_id: str):
+            return {"status": next(poll_states)}
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            with patch(
+                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
+                fake_poll,
+            ):
+                drop_job_id = await vt._pre_drop_for_create_prod(
+                    original_sql="CREATE TABLE biads.x (id INT)",
+                    user_account="alice",
+                    table_suffix="",
+                    timeout_sec=60,
+                    poll_interval=2.0,
+                )
+        assert drop_job_id == "j-drop-1"
+
+    @pytest.mark.asyncio
+    async def test_create_sql_drop_poll_failed_continues_with_job_id(self):
+        """DROP poll returns 'failed' -> returns drop_job_id, does not raise."""
+        async def fake_execute(sql: str):
+            return {"success": True, "job_id": "j-drop-2"}
+
+        async def fake_poll(job_id: str):
+            return {"status": "failed", "error": "table not found"}
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            with patch(
+                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
+                fake_poll,
+            ):
+                drop_job_id = await vt._pre_drop_for_create_prod(
+                    original_sql="CREATE TABLE IF NOT EXISTS biads.y (name STRING)",
+                    user_account="bob",
+                    table_suffix="_dm",
+                    timeout_sec=60,
+                    poll_interval=2.0,
+                )
+        # Should return the job_id so caller can see it was attempted
+        assert drop_job_id == "j-drop-2"
+
+    @pytest.mark.asyncio
+    async def test_create_sql_drop_submit_error_returns_none(self):
+        """DROP submit fails -> returns None, does not raise."""
+        async def fake_execute(sql: str):
+            return {"success": False, "error": "connection refused"}
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            drop_job_id = await vt._pre_drop_for_create_prod(
+                original_sql="CREATE TABLE biads.z (id INT)",
+                user_account="carol",
+                table_suffix="",
+                timeout_sec=60,
+                poll_interval=2.0,
+            )
+        assert drop_job_id is None
+
+    @pytest.mark.asyncio
+    async def test_create_sql_drop_timeout_returns_job_id(self):
+        """DROP poll times out -> returns drop_job_id so caller knows it was attempted."""
+        async def fake_execute(sql: str):
+            return {"success": True, "job_id": "j-drop-3"}
+
+        # Always return "running" so the deadline is hit
+        async def fake_poll(job_id: str):
+            return {"status": "running"}
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            with patch(
+                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
+                fake_poll,
+            ):
+                drop_job_id = await vt._pre_drop_for_create_prod(
+                    original_sql="CREATE TABLE biads.w (id BIGINT)",
+                    user_account="dave",
+                    table_suffix="",
+                    timeout_sec=1,  # 1 second, short enough to hit deadline quickly
+                    poll_interval=0.1,
+                )
+        # Should return the job_id even on timeout
+        assert drop_job_id == "j-drop-3"
+
+
+class TestDataopsValidateSqlProdPreDrop:
+    """Integration-level tests: _dataops_validate_sql_prod with CREATE TABLE."""
+
+    @pytest.mark.asyncio
+    async def test_create_passed_includes_drop_job_id_in_result(self):
+        """CREATE passed -> drop_job_id is present in the response."""
+        job_counter = iter(["j-drop-main", "j-create-main"])
+
+        async def fake_execute(sql: str):
+            return {"success": True, "job_id": next(job_counter)}
+
+        # Sequence: DROP running -> DROP completed -> CREATE running -> CREATE completed
+        poll_states = iter([
+            {"status": "running"},
+            {"status": "completed"},
+            {"status": "running"},
+            {"status": "completed"},
+        ])
+
+        async def fake_poll(job_id: str):
+            return next(poll_states)
+
+        async def fake_collect(job_id: str):
+            return {"status": "completed", "data": [], "error": None, "errorLog": None}
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            with patch(
+                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
+                fake_poll,
+            ):
+                with patch(
+                    "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_collect_result",
+                    fake_collect,
+                ):
+                    runtime = MagicMock()
+                    ctx = _make_context(runtime)
+                    result = await vt._dataops_validate_sql_prod(
+                        "CREATE TABLE biads.test_tbl (id INT)",
+                        _tool_context=ctx,
+                    )
+
+        assert result["passed"] is True
+        assert result["job_id"] == "j-create-main"
+        assert result.get("drop_job_id") == "j-drop-main"
+
+    @pytest.mark.asyncio
+    async def test_create_failed_still_includes_drop_job_id(self):
+        """CREATE failed -> drop_job_id is still present in the failure response."""
+        job_counter = iter(["j-drop-err", "j-create-err"])
+
+        async def fake_execute(sql: str):
+            return {"success": True, "job_id": next(job_counter)}
+
+        # Sequence: DROP completed -> CREATE failed
+        poll_states = iter([
+            {"status": "completed"},
+            {"status": "failed", "error": "AnalysisException: table exists"},
+        ])
+
+        async def fake_poll(job_id: str):
+            return next(poll_states)
+
+        async def fake_collect(job_id: str):
+            return {
+                "status": "failed",
+                "data": None,
+                "error": "AnalysisException: table exists",
+                "errorLog": "stack trace...",
+            }
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            with patch(
+                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
+                fake_poll,
+            ):
+                with patch(
+                    "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_collect_result",
+                    fake_collect,
+                ):
+                    runtime = MagicMock()
+                    ctx = _make_context(runtime)
+                    result = await vt._dataops_validate_sql_prod(
+                        "CREATE TABLE biads.err_tbl (id INT)",
+                        _tool_context=ctx,
+                    )
+
+        assert result["passed"] is False
+        assert result["job_id"] == "j-create-err"
+        assert result.get("drop_job_id") == "j-drop-err"
+        assert "table exists" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_non_create_sql_no_drop_submitted(self):
+        """INSERT OVERWRITE -> no DROP submitted, drop_job_id not in response."""
+        job_counter = iter(["j-insert-1"])
+
+        async def fake_execute(sql: str):
+            return {"success": True, "job_id": next(job_counter)}
+
+        async def fake_poll(job_id: str):
+            return {"status": "completed"}
+
+        async def fake_collect(job_id: str):
+            return {"status": "completed", "data": [], "error": None, "errorLog": None}
+
+        with patch(
+            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
+            fake_execute,
+        ):
+            with patch(
+                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
+                fake_poll,
+            ):
+                with patch(
+                    "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_collect_result",
+                    fake_collect,
+                ):
+                    runtime = MagicMock()
+                    ctx = _make_context(runtime)
+                    result = await vt._dataops_validate_sql_prod(
+                        "INSERT OVERWRITE TABLE biads.dml_tbl SELECT 1 FROM src",
+                        _tool_context=ctx,
+                    )
+
+        assert result["passed"] is True
+        assert result["job_id"] == "j-insert-1"
+        # Non-CREATE should not trigger pre-drop
+        assert "drop_job_id" not in result
+

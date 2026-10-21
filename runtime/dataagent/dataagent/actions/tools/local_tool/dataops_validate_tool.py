@@ -1918,6 +1918,16 @@ async def _dataops_validate_sql_prod(
     sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
     sql_for_submit = await _expand_cte_for_dml(sql_for_submit, timeout_sec=min(timeout_sec, 60), runtime=runtime)
 
+    # --- Pre-submit: DROP temp table for CREATE TABLE (无条件,DROP 失败仅记录警告) ---
+    # 生产环境下 DROP-before-CREATE 为硬约束:即使 adhoctemp 已存在残留 tmp_*,CREATE
+    # 也会再次失败,因此必须先尝试清理。DROP 自身出错时静默继续 CREATE,把责任
+    # 交给 CREATE 阶段的 DataOps 报错。
+    drop_job_id: str | None = None
+    if _is_create_sql(sql):
+        drop_job_id = await _pre_drop_for_create_prod(
+            sql, user_account, table_suffix, timeout_sec, poll_interval
+        )
+
     # --- Execute -> poll -> collect (扁平函数) ---
     logger.debug(f"[_dataops_validate_sql_prod] submitting SQL (first 200 chars): {sql_for_submit[:200]}")
     result_status, job_id, result = await _submit_and_poll_prod(sql_for_submit, timeout_sec, poll_interval)
@@ -1933,13 +1943,21 @@ async def _dataops_validate_sql_prod(
             "error": f"dataops(prod) execution timed out after {timeout_sec}s",
             "job_id": job_id,
             "timed_out": True,
+            "drop_job_id": drop_job_id,
         }
     if result_status == "error":
         err = result or {}
-        return {"passed": False, "error": err.get("error", "unknown error"), "job_id": job_id}
+        return {
+            "passed": False,
+            "error": err.get("error", "unknown error"),
+            "job_id": job_id,
+            "drop_job_id": drop_job_id,
+        }
 
     if result_status == "completed":
         final_result: dict[str, Any] = {"passed": True, "job_id": job_id}
+        if drop_job_id:
+            final_result["drop_job_id"] = drop_job_id
         pv = await _run_post_validate_prod(
             sql_for_submit,
             sql,
@@ -1956,7 +1974,79 @@ async def _dataops_validate_sql_prod(
         return final_result
 
     # failed — return as-is, no cleanup here either (see note above).
-    return _build_failure_response_prod(result_status, job_id, result, sql)
+    failed = _build_failure_response_prod(result_status, job_id, result, sql)
+    if drop_job_id:
+        failed["drop_job_id"] = drop_job_id
+    return failed
+
+
+async def _pre_drop_for_create_prod(
+    original_sql: str,
+    user_account: str,
+    table_suffix: str,
+    timeout_sec: int,
+    poll_interval: float,
+) -> str | None:
+    """生产环境下的 pre-drop:对 CREATE TABLE 先 DROP TABLE IF EXISTS adhoctemp 临时表。
+
+    与联调版 (_pre_drop_for_create) 行为对齐:
+        - 仅当 SQL 为 CREATE TABLE 时触发
+        - DROP 失败时仅记录 warning,返回 None,不抛错
+        - DROP 成功 / 失败 / 超时均不阻塞主流程,CREATE 阶段会自行报回真实问题
+
+    Returns:
+        drop_job_id (str) 如果 DROP 已提交(含后续轮询);否则 None。
+    """
+    from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
+        prod_execute_sql,
+        prod_get_query_result,
+    )
+
+    if not _is_create_sql(original_sql):
+        return None
+
+    drop_sql = _build_drop_sql(original_sql, user_account, table_suffix)
+    if not drop_sql:
+        return None
+
+    drop_timeout = min(timeout_sec, 60)
+    try:
+        logger.debug(f"[_pre_drop_for_create_prod] Submitting DROP for CREATE TABLE: {drop_sql}")
+        submit_result = await prod_execute_sql(drop_sql)
+        logger.debug(f"[_pre_drop_for_create_prod] DROP submit_result={submit_result}")
+        if not submit_result.get("success") or not submit_result.get("job_id"):
+            logger.warning(
+                f"[_pre_drop_for_create_prod] DROP submit failed, continuing with CREATE anyway: "
+                f"{submit_result.get('error', 'no job_id')}"
+            )
+            return None
+        drop_job_id = submit_result["job_id"]
+    except Exception as drop_exc:
+        logger.warning(f"[_pre_drop_for_create_prod] DROP submission raised, continuing with CREATE: {drop_exc}")
+        return None
+
+    deadline = asyncio.get_event_loop().time() + drop_timeout
+    while asyncio.get_event_loop().time() < deadline:
+        polled = await prod_get_query_result(drop_job_id)
+        status = polled["status"]
+        logger.debug(f"[_pre_drop_for_create_prod] DROP job_id={drop_job_id} polled status={status!r}")
+        if status in {"completed", "failed", "error"}:
+            if status == "completed":
+                logger.debug(f"[_pre_drop_for_create_prod] DROP completed job_id={drop_job_id}")
+            else:
+                logger.warning(
+                    f"[_pre_drop_for_create_prod] DROP ended with status={status}, "
+                    f"proceeding with CREATE anyway job_id={drop_job_id} "
+                    f"error={polled.get('error')!r}"
+                )
+            return drop_job_id
+        await asyncio.sleep(poll_interval)
+
+    logger.warning(
+        f"[_pre_drop_for_create_prod] DROP poll timed out after {drop_timeout}s, "
+        f"proceeding with CREATE anyway job_id={drop_job_id}"
+    )
+    return drop_job_id
 
 
 async def _submit_and_poll_prod(
