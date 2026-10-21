@@ -24,6 +24,9 @@ description: |
 - wrapped_nl2sql_sub_agent_tool 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
   - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
   - 最终输出列语义 = 已确认特征主键（identity.components，必选前缀，即使未出现在 output_features 中）+ expand(output_features) 业务/指标语义；多时间窗口 × 多特征等交叉场景必须以 IR 中确定性展开后的字段条数为准（如 3×3=9），不得在 query 中压缩成更少的“代表列”。IR 给出的展开列名（field_name / name_pattern）仅供主 Agent 对照参考，query/SQL/DDL **不要求**照抄同名。
+  - **主键/分组键防重复**：identity.components 是主键列唯一权威；禁止在 output_features（measures/extras/features）再写同名输出列。aggregation.grain 可引用主键 field_ref（表示按该键聚合），这不等于还要再输出一列同名键。query 中也不要把主键既当“已确认主键前缀”又当“业务特征列”各写一遍。
+  - **仅当用户明确要求不要去重时**：IR 的 `aggregation.grain` 与 sources/sequence dedup 均应保持未确认（null）；禁止因“每个应用/设备”或 identity 在 query/SQL 中 invent GROUP BY 折叠、DISTINCT、ROW_NUMBER 去重。这是特例，不是默认。
+  - **常规聚合（默认）**：用户多数情况下不会显式说“要聚合/GROUP BY”；只要有求和/计数/均值等聚合语义，IR 应照常填写 grain，query/SQL 按已确认 grain 实现。禁止把“禁止去重时不填 grain”误用成漏填聚合粒度。
   - 若展开后各特征 aggregation.grain 不同，query/SQL 必须按列分别说明并实现各自聚合粒度；禁止用单一全局 GROUP BY 覆盖全部特征。
 - **DataOps 校验（合并到 validate_deliverables 内）**：
   - **入口统一**：DataOps 语义校验已经在 `validate_deliverables` 内部作为最后一步执行，**de_agent 不再单独调用 `dataops_validate_sql_with_log_analysis`**。
@@ -45,7 +48,9 @@ description: |
   - 事实表中已存在所需要的列时，默认无需关联对应的维度表，除非用户明确要求。例如事实表中已提供应用三级分类时，默认无需使用应用信息维表。
 
 ## SQL 规范
-编写或修改任何 DDL、DML SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，按要求加载对应的 SQL 编写规范。
+编写或修改任何 DDL、DML SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，按要求加载对应的 SQL 编写规范（DDL 读 `ddl_rules.md`，DML 读 `dml_rules.md`）；生成后逐条对照自检。
+- **字符串类型空值判断 → `bicoredata.IsEmpty(field)`**（保留侧 `!bicoredata.IsEmpty(field)`）：仅针对字符串存储；禁止对 STRING 用 `IS NULL` / `IS NOT NULL` / `= ''` / `<> ''` 替代。**语义非字符串但按字符串存储**（时间/次数/金额等存 STRING）仍必须用 `bicoredata.IsEmpty`；**非字符串类型存储**（元数据为数值/时间戳等）不适用 `bicoredata.IsEmpty`，按该类型判空。
+- **禁止方言不支持的类型**：DDL 列类型与 `CAST` 目标类型必须属于 Hive/Spark 白名单；禁止 `REAL`/`NUMERIC`/`TEXT` 等跨方言类型（过程浮点用 `DOUBLE`，落表用 `DECIMAL`）。
 
 ## 任务路由与冲突裁决
 - 目标：识别目标粒度、时间窗口、产出表、源表线索、原始 SQL/样例 SQL、用户硬约束。
@@ -67,7 +72,7 @@ description: |
 内容：仅包含一条 Hive 方言的建表语句，必须包含：
 - `CREATE EXTERNAL TABLE IF NOT EXISTS {db}.{table_name} (...)`
 - 库名{db}。如果库名难以确定，默认使用 biads 作为库名。
-- 字段类型必须使用以下白名单；除分区列外，禁止使用 DOUBLE、FLOAT、BOOLEAN、DATE、TIMESTAMP、VARCHAR、CHAR、ARRAY、MAP、STRUCT 等未列出的类型：
+- 字段类型必须使用以下白名单；除分区列外，禁止使用 DOUBLE、FLOAT、REAL、BOOLEAN、DATE、TIMESTAMP、VARCHAR、CHAR、ARRAY、MAP、STRUCT、NUMERIC 等未列出的类型：
    | 字段类型 | 使用范围 |
    | --- | --- |
    | STRING | 字符串型 |
@@ -82,6 +87,7 @@ description: |
 - 时间窗口不同的特征，在DDL中要输出为不同的列。
 - 行为类型不同的特征，在DDL中要输出为不同的列。
 - 禁止在 DDL 中声明 `PRIMARY KEY`（Hive 不支持）
+- 禁止使用当前方言不支持的类型（如 Hive 的 `REAL`）做列声明或 `CAST(... AS ...)`；INSERT 中过程浮点可用 `DOUBLE`，落表对齐 DDL 白名单
 - 用户未要求输出的中间列不要放在DDL中
 
 ### INSERT 文件 `insert_<table_name>.sql`（Spark SQL 方言）
@@ -92,6 +98,7 @@ description: |
 - 可包含子查询（UNION ALL 预聚合模式）
 - 比率字段统一分母保护：`IF(分母!=0, 分子/分母, 0)`
 - 禁止使用 `INSERT OR REPLACE`（SQLite 方言，Hive/Spark 不支持）、`INSERT INTO`（非幂等）
+- `CAST` 目标类型必须是 Spark/Hive 支持且符合规范的类型；禁止 `CAST(... AS REAL)` 等跨方言类型
 
 其中 `<table_name>` 由实际目标表名决定（如 `<domain>_<subject>_<metric>_<window>_dm`）。字段类型必须与对应DDL一一对齐。
 

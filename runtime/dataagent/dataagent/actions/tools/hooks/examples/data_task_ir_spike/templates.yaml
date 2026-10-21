@@ -46,8 +46,9 @@ predicate_protocol:
   - null
   mapping_rules_inherited:
   - “非零/不等于零/忽略为零” → operator=ne, operands=["0"]；禁止写成 gt
-  - “非空” → operator=not, operands=["bicoredata.IsEmpty(xxx)"]（或与现网等价写法）
-  - operands 一律用字符串保存；between 恰好两个值；is_null/is_not_null 用 []
+  - 字符串类型空值判断（“为空/非空/不为空/过滤空值”且字段为字符串存储）→ 统一用 bicoredata.IsEmpty：判空表达 `bicoredata.IsEmpty(xxx)`；判非空为 operator=not, operands=["bicoredata.IsEmpty(xxx)"]（或经元数据确认的等价写法）。禁止对 STRING 字段用 is_null / is_not_null 或 IS NULL / IS NOT NULL、= '' / <> '' 凑合
+  - 区分存储类型与业务语义：① 语义非字符串但按字符串存储（时间/次数/金额等存 STRING）→ 仍映射 bicoredata.IsEmpty；② 元数据证实为非字符串类型存储 → 不适用 bicoredata.IsEmpty，用 is_null / is_not_null。不得用业务语义代替 schema
+  - operands 一律用字符串保存；between 恰好两个值；is_null/is_not_null 用 []（仅用于非字符串类型存储、且空值仅为 SQL NULL；字符串存储的空值/非空默认走 bicoredata.IsEmpty）
   required_always:
   - field_ref
   - operator
@@ -90,20 +91,30 @@ predicate_protocol:
 fields:
 - field_id: identity
   title: 特征主键
-  purpose: 定义最终特征记录的逻辑主键；已确认组件是最终输出的必选前缀列。
+  purpose: >
+    定义最终特征记录的逻辑主键（分组键/实体键）。已确认 components 是最终输出的唯一定义处与必选前缀列；
+    不得在 output_features 中再作为业务列重复出现。
   field_instructions:
     global_rules:
     - 只填最终逻辑主键，不得把源表物理主键、去重键、join 键自动当成特征主键。
-    - 已确认 components 必须作为 INSERT SELECT 前缀列输出；不要为了“能输出”而抄到 output_features。
+    - 已确认 components 必须作为 INSERT SELECT 前缀列输出；这是主键列在 IR 中的唯一权威位置。
+    - '【禁止双写】identity.components[].field_ref 不得再出现在 output_features 的 measures/extras/features 的 measure_id、field_name，或作为“单独一列指标/维度特征”重复描述（包括把分组键再写成 role=metric/derived）。唯一例外：用户明确要求输出主键别名列时可用 role=key_alias，且 field_name 必须与 field_ref 不同。'
+    - 聚合维度与主键的关系：若某列既是最终记录主键又是聚合分组键，只在 identity 声明；
+      output_features 的 aggregation.grain 可以**引用**同一 field_ref（表示按该键聚合），但不得再把它展开成输出特征列。
+    - identity 只定义输出前缀键。仅当用户**明确要求不要去重**时：不得因 identity 存在而要求 output_features 填写 grain
+      或 sources 填写 dedup。常规聚合任务用户往往不显式说“要聚合/GROUP BY”，有求和/计数/均值等聚合语义时仍可正常填 grain。
+    - 不要为了“用户输出列表里写了 device_id”就把主键抄进 output_features；列表中的主键项由 identity 覆盖。
     - 冲突且无优先级时 components 置空并 unresolved。
     subfields:
-      components: 联合键顺序的 field_ref / semantic_role / null_semantics
+      components: 联合键顺序的 field_ref / semantic_role / null_semantics（= 最终输出前缀列清单）
       uniqueness_scope: final_dataset | within_statistic_period | within_sequence_partition
     completion_conditions:
     - 有主键证据时提取 components；null_semantics/uniqueness_scope 无证据时留空，不为确认主键强制补齐这些子字段
     common_errors:
     - 因主键未出现在用户输出列表而省略
     - 把明细行 id 当作用户/设备特征主键
+    - 把主键/分组键同时写进 identity 与 output_features（列重复）
+    - 误以为 grain 引用主键不够、还必须在 features 再出一列同名键
   few_shots:
   - input: 每个设备一条特征；device_id 不允许为空
     output:
@@ -171,6 +182,8 @@ fields:
     - 在 facts[i]/dimensions[i] 内写过滤时，谓词可省略 source_ref（默认外层 source_ref）。
     - 维表关联键不唯一时 cardinality 必须标 one_to_many / many_to_many，不得掩盖扇出。
     - 事实层 dedup 作用于 JOIN 前事实行；是否先去重再 JOIN 由 pipeline.deduplication_before_join 决定。
+    - 仅当用户明确要求不要去重时：facts/dimensions 的 dedup 必须为 null，禁止 invent 去重键或 record_selection。
+      常规任务有去重证据时仍可按证据填写；不要把本条理解成默认禁止 dedup。
     - 无维度关联时 dimensions 填空数组。
     subfields:
       facts: 事实源列表（source_ref/filters/derived/dedup）
@@ -182,6 +195,7 @@ fields:
     - 把列级指标过滤写进 facts.filters，污染其他指标
     - 有扇出却标 many_to_one
     - 为填满可选字段而编造 operand_type / null_semantics
+    - 用户要求不要去重却仍填写 facts/dimensions.dedup
   few_shots:
   - input: 事实表 evt 需 event_type=download；维表 dim_cat 按 category_id LEFT JOIN，一类目多行
     output:
@@ -512,10 +526,10 @@ fields:
               - 'null'
 - field_id: output_features
   title: 输出特征目录
-  purpose: '定义除主键前缀外的全部输出列口径。多维交叉（如多窗口×多指标）以 axes+measures 紧凑描述，由代码确定性展开；独立列用 layout=flat 的 features[]，或
-    cartesian 下的 extras[]。
-
-    '
+  purpose: >
+    定义除特征主键前缀以外的全部业务/指标输出列口径（最终输出 = identity.components 前缀 + expand(本字段)）。
+    多维交叉（如多窗口×多指标）以 axes+measures 紧凑描述并由代码确定性展开；独立列用 layout=flat 的 features[]，
+    或 cartesian 下的 extras[]。分组键/主键列不属于本字段的输出列清单。
   field_instructions:
     global_rules:
     - layout 二选一权威：cartesian（默认用于窗口×指标等可因子化交叉）或 flat（列彼此独立）。
@@ -527,27 +541,31 @@ fields:
       展开列名不是 SQL/DDL 强制约束，下游可按规范另命名，不得因未照抄同名判失败。
     - 期望业务列数 = ∏|axis.values| × |measures|（每个 measure×轴组合一列）+ |extras|；若 measure.attach_rank 非 null，
       再为每个轴组合追加 1 个 rank 列（name_pattern 默认 "{measure_id}_{window}_pct"），禁止对跨窗口汇总值打一个分位替代分窗口分位。
+      **上述列数不含 identity 主键前缀**。
     - overrides 仅用于极少数格子与模板不同；不得用 overrides 穷举笛卡尔积，也不得用 overrides“删掉”不需要的轴组合。
     - extras[]：不参与笛卡尔积的独立列，包括 (1) 多阶段 Top1/全局比率/key_alias；(2) **只需轴上部分取值的指标**（如 A/B 要 7/14/21，C/D 只要 21 → C/D 进 extras 且 window_ref=w21d，禁止因 w21d∈axes 而把 C/D 放进 measures）。
     - layout=flat 时：使用 features[] 逐列描述（同旧 features 语义）；axes/measures 必须为空。
     - calc.intent 语义级，禁止可执行 SQL；aggregation.grain 为该 measure/列的粒度权威（[]=已确认全局聚合；null/未填写本身不确认粒度或是否聚合）。
+    - '【grain 是聚合元数据，不是输出列】aggregation.grain 中的 field_ref 表示 GROUP BY / 聚合维度，可与 identity.components 相同或为其超集；这不意味着要在 measures/extras/features 再生成同名输出列。最终输出列清单仍是 identity 前缀 + expand(本字段业务列)。'
+    - '【仅当用户明确要求不要去重时，禁止填写 aggregation.grain】（适用范围很窄）用户原话出现“不要去重 / 不去重 / 保留重复行 / 不去重后再算”等时，grain 必须保持 null，且不得因 identity 或“每个应用/设备”而 invent 分组键。此时已确认 grain 易被 nl2sql/质检当成按键折叠（等价去重），与“保留同键多行参与计算”冲突。【默认情况（用户未禁止去重）】多数聚合任务不会显式说“要聚合”；只要有求和/计数/均值/按主体汇总等聚合语义，仍应照常填写 grain，不要因为用户没写“GROUP BY/聚合”就留空 grain。'
+    - '【与 identity 防重复（硬规则）】(1) measures[].measure_id、展开后的 field_name、extras[].field_name、features[].field_name 均不得等于任何已确认的 identity.components[].field_ref；(2) 不得把“分组键/实体键/主键”再写成一条 metric/derived 特征；(3) 仅当用户明确要求主键别名输出列时，可用 role=key_alias，且 field_name ≠ 原 field_ref；(4) 用户输出列表里若同时写了主键与指标，主键归 identity，指标归本字段——不要两侧各写一遍主键；(5) 仅在用户明确禁止去重时：不得把 identity 键抄进 grain；常规聚合不受此条限制。'
     - 不同 measure 允许不同 grain；禁止用单一全局粒度覆盖。
     - 列私有过滤放 measure.filters / feature.filters；共享过滤放 sources。
     - filters 使用 predicate_protocol；有 window 轴时展开列自动绑定对应 window_ref。
     - based_on/depends_on 在模板层引用 measure_id 或 extras.field_name；展开后映射到具体列名。
     - TopN 截断写 sequence.truncation，不写本字段。
-    - identity 主键列不要抄进 measures/features（除非 role=key_alias）。
     subfields:
       layout: cartesian | flat
       axes: 交叉轴（cartesian）
-      measures: 指标模板（cartesian）
+      measures: 指标模板（cartesian；不含主键/分组键列）
       overrides: 稀疏格子覆盖（cartesian）
-      extras: 非交叉独立列（cartesian）
-      features: 逐列清单（flat）
+      extras: 非交叉独立业务列（cartesian；不含主键列）
+      features: 逐列清单（flat；不含主键列）
     completion_conditions:
     - cartesian：axes/measures 完整，窗口 id 可解析，name_pattern 可展开且无冲突
-    - flat：features 覆盖全部独立输出列
-    - 聚合 measure 的 grain 与 count 语义明确；需要百分位时 attach_rank 已填
+    - flat：features 覆盖全部独立业务输出列（不含 identity 前缀）
+    - 有聚合语义时填写 grain（用户通常不显式说“聚合”）；仅当用户明确要求不要去重时 grain 必须为 null
+    - 展开后的业务列名与 identity.components.field_ref 无交集（key_alias 除外）
     common_errors:
     - 5×3 交叉却逐列写 15 行 features（重复口径）
     - 把近 N 天写进 grain
@@ -556,6 +574,10 @@ fields:
     - cartesian 与 flat 混用且两边都填满造成双权威
     - 部分窗口指标因与 axes 有交集（如只要 w21d，而轴含 w7d/w14d/w21d）被误放进 measures，导致展开列数变成 ∏|axis|×全部指标，与“3×2+2=8”类口径不符；此类必须进 extras
     - rationale 写对了列数（如 3×2+2=8）但 value 把本应 extras 的指标放进 measures（展开会变成 3×4=12）——以 value 槽位为准，必须纠正到 extras
+    - 把 device_id/user_id 等主键既写入 identity 又写入 measures/extras/features（或 field_name 与 field_ref 同名）
+    - 把 aggregation.grain 中的分组维误当成还要再出一列同名输出特征
+    - 用户明确要求不要去重，却仍填写 grain（因 identity/“每个应用”）误导下游折叠多行；或反过来：常规聚合任务因用户未显式说“聚合”而漏填 grain
+    - 把“仅禁止去重时不填 grain”误用成默认永远不填 grain
   expansion_spec:
     description: render/verify 使用的确定性展开（非 LLM）
     algorithm: "if layout == flat:\n  columns = features\nelse:  # cartesian\n  columns = []\n  for each\
@@ -1256,6 +1278,8 @@ fields:
     - 禁止在此填写 aggregation_key / group_by / count_semantics / input_grain / stages。
     - 粒度与计数只在 output_features；本字段只回答“先做什么、作用在哪一层”。
     - sources 中事实层去重按其作用层级解释；除此之外，不凭默认习惯填写执行顺序。JOIN 扇出必须保留，除非证据明确要求 JOIN 后去重且去重键含扇出维度。
+    - 仅当用户明确要求不要去重时：deduplication_before_join / deduplication_before_aggregation 保持 null，禁止 invent 为 true；
+      有去重证据的常规任务不受此限。
     - 有 window_rank（role=rank）时，依据已确认的指标依赖确定 operation_order；不能确定先后关系时留空，不默认添加 aggregate。
     - 无聚合任务时 operation_order 可不含 aggregate。
     subfields:
@@ -1267,6 +1291,7 @@ fields:
     common_errors:
     - 把 grain 写回本字段
     - JOIN 后按事实键折叠扇出
+    - 用户禁止去重仍把 deduplication_before_* 填 true
   few_shots:
   - input: 先事实去重，再 LEFT JOIN 维表（保留扇出），再按设备聚合，再 NTILE
     output:
