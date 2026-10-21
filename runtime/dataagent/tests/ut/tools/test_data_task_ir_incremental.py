@@ -206,6 +206,34 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.fill_mock.await_args.kwargs["reuse_field_ids"])
         self.assertIsNone(self.fill_mock.await_args.kwargs["current_values"])
 
+    async def test_calibration_tables_read_file_excluded_from_ir_evidence(self):
+        self.nodes.extend([
+            SimpleNamespace(
+                action="read_file",
+                params={"path": "skill/feature_engineering/references/calibration_tables.md"},
+                success=True,
+                output="口径冻结表模板内容",
+            ),
+            SimpleNamespace(
+                action="read_file",
+                params={"path": "skill/sql_rules/references/ddl_rules.md"},
+                success=True,
+                output="ddl rules content",
+            ),
+            SimpleNamespace(
+                action="metadata_recall",
+                params={"query": "q"},
+                success=True,
+                output="table meta",
+            ),
+        ])
+        await ir_hooks.update_ir(self.inv)
+        evidence = self.fill_mock.await_args.kwargs["tool_evidence"]
+        self.assertNotIn("口径冻结表模板内容", evidence)
+        self.assertNotIn("calibration_tables", evidence)
+        self.assertIn("ddl rules content", evidence)
+        self.assertIn("table meta", evidence)
+
     async def test_failed_evidence_refresh_does_not_advance_committed_inputs(self):
         self.nodes.append(SimpleNamespace(action="read_file", params={"path": "a.md"},
                                           success=True, output="first"))
