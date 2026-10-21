@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
@@ -57,22 +57,14 @@ _INTEGRATION_POLL_INTERVAL_SEC = 1.0
 # 等占位符,DataOps 后端不替换它们,只会被原样透传到底层查询引擎,导致
 # `pt_d = 'literal_$date'` 永远查不到数据)。
 #
-# 接受的格式(整串匹配,逐 token 校验):
+# 接受的格式(整串匹配):
 #   pt_d = 'YYYYMMDD'
-#   pt_d = 'YYYYMMDD' AND pt_h = 'YYYYMMDDHH'
-#   pt_d = 'YYYYMMDD' AND pt_h = 'YYYYMMDDHH' AND pt_i = 'YYYYMMDDHHMM'
 # 默认值自动生成规则(``partition_filter=None`` 时):
-#   - 当前日期为 ``dt``,``target = dt - 1 day``(默认探查前一天,数据已落盘)
-#   - 表名后缀决定形态:
-#       `_im` → pt_d=YYYYMMDD AND pt_h=YYYYMMDD00 AND pt_i=YYYYMMDD0000
-#       `_hm` → pt_d=YYYYMMDD AND pt_h=YYYYMMDD00
-#       其他  → pt_d=YYYYMMDD
-# 工具不读用户业务口径,只按"系统前一天 + 后缀规则"生成字面值;LLM 拿到返回结果
-# 后,如发现不符合业务(比如要查"今天"或"上周"),可显式传 ``partition_filter`` 覆盖。
+#   - 当前日期为 ``dt``,``target = dt - 7 days``(默认探查近一周,数据已落盘)
+#   - 所有表统一只约束 pt_d,不再区分 _dm/_hm/_im 等后缀;
+#     业务如需特定小时/分钟粒度探查,可显式传 ``partition_filter`` 覆盖。
 _PARTITION_FILTER_RE = re.compile(
-    r"^\s*pt_d\s*=\s*'(?P<d>\d{8})'"
-    r"(?:\s+AND\s+pt_h\s*=\s*'(?P<h>\d{10})')?"
-    r"(?:\s+AND\s+pt_i\s*=\s*'(?P<i>\d{12})')?\s*$"
+    r"^\s*pt_d\s*=\s*'(?P<d>\d{8})'\s*$"
 )
 
 # Identifier whitelist: starts with letter, then letters/digits/underscores.
@@ -159,22 +151,6 @@ async def dataops_probe_table(
             except ValueError:
                 return _err(common, "invalid_partition_filter", start=start,
                             error=f"partition_filter 日期段 {m['d']!r} 不合法")
-            if m["h"]:
-                try:
-                    # m["h"] = 'YYYYMMDDHH' —— 第 8-9 位是小时,需要 datetime() 而不是 date()
-                    datetime(int(m["h"][:4]), int(m["h"][4:6]), int(m["h"][6:8]),
-                             int(m["h"][8:10]))
-                except (ValueError, TypeError):
-                    return _err(common, "invalid_partition_filter", start=start,
-                                error=f"partition_filter 小时段 {m['h']!r} 不合法")
-            if m["i"]:
-                try:
-                    # m["i"] = 'YYYYMMDDHHMM' —— 第 8-9 位是小时、10-11 位是分钟,需要 datetime()
-                    datetime(int(m["i"][:4]), int(m["i"][4:6]), int(m["i"][6:8]),
-                             int(m["i"][8:10]), int(m["i"][10:12]))
-                except (ValueError, TypeError):
-                    return _err(common, "invalid_partition_filter", start=start,
-                                error=f"partition_filter 分钟段 {m['i']!r} 不合法")
 
         # 校验 columns(不允许 None —— DataOps 平台禁止 SELECT *,LLM 必须先通过
         # metadata_recall 拿到表的列名列表再显式传入)。空 list [] 按 None 处理。
@@ -440,33 +416,26 @@ def _clamp_int(v: Any, default: int, lo: int, hi: int) -> int:
 
 
 def _default_partition_filter(table: str) -> str:
-    """``partition_filter`` 默认值自动生成器:表后缀 + 系统前一天。
+    """``partition_filter`` 默认值自动生成器:系统前7天 + 统一 pt_d。
 
     Args:
-        table: 形如 ``db.tbl`` 的表名,只取最后一段判后缀。
+        table: 形如 ``db.tbl`` 的表名(后缀仅用于日志记录,不再区分行为)。
 
     Returns:
-        整串字面日期,可直接喂给 ``_PARTITION_FILTER_RE`` 校验。
+        整串 ``pt_d = 'YYYYMMDD'``,可直接喂给 ``_PARTITION_FILTER_RE`` 校验。
 
-    规则:
-        - ``_im`` → ``pt_d=YYYYMMDD AND pt_h=YYYYMMDD00 AND pt_i=YYYYMMDD0000``
-        - ``_hm`` → ``pt_d=YYYYMMDD AND pt_h=YYYYMMDD00``
-        - 其他   → ``pt_d=YYYYMMDD``(天级;00 时 / 0000 分是兜底,业务如要"今天 14:30"
-          探查由 LLM 显式传覆盖)
+    注意:不再按表后缀(_dm/_hm/_im/_od 等)区分分区列组合,所有表统一只
+    约束 pt_d。如此可避免:表后缀命名与实际分区策略不一致时探查失败,
+    或业务需要跨小时/跨分钟扫描时必须手动传 partition_filter 的心智负担。
 
     Examples:
         >>> _default_partition_filter("dws.user_action_dm")
-        "pt_d = '20261006'"
-        >>> _default_partition_filter("dws.user_action_im")
-        "pt_d = '20261006' AND pt_h = '2026100600' AND pt_i = '202610060000'"
+        "pt_d = '20261013'"
+        >>> _default_partition_filter("ads.click_hm")
+        "pt_d = '20261013'"
     """
     target = date.today() - timedelta(days=7)
     d = target.strftime("%Y%m%d")
-    tbl = table.rsplit(".", 1)[-1] if "." in table else table
-    if tbl.endswith("_im"):
-        return f"pt_d = '{d}' AND pt_h = '{d}00' AND pt_i = '{d}0000'"
-    if tbl.endswith("_hm"):
-        return f"pt_d = '{d}' AND pt_h = '{d}00'"
     return f"pt_d = '{d}'"
 
 
