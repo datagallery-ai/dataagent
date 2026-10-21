@@ -31,9 +31,10 @@
 
 import os  # noqa: I001  # I001 记在导入块首行；logging 单独成段是模块级副作用的来源
 import re
+import sys
 from datetime import UTC, datetime
 from functools import lru_cache
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Final, Literal, overload
 
 import logging  # 与上面分开写，logger 是模块级副作用的来源
@@ -112,11 +113,48 @@ def to_posix_path(path: str) -> str:
     return path.replace("\\", "/")
 
 
+def _windows_absolute_shape(path: str) -> bool:
+    """盘符绝对路径（``C:/...``）或 UNC（``//server/share/...``）。不含盘符相对 ``C:foo``。"""
+    if re.match(r"^[a-zA-Z]:[\\/]", path):
+        return True
+    posix = to_posix_path(path)
+    return bool(re.match(r"^//[^/]", posix))
+
+
+def _validate_windows_host_path(
+    path: str, *, allowed_prefixes: Sequence[str] | None = None,
+) -> str:
+    """仅 win32：把宿主盘符/UNC 路径收成正斜杠绝对形式。"""
+    if path.startswith("~"):
+        msg = f"Path traversal not allowed: {path}"
+        raise ValueError(msg)
+    # Check ``..`` before normpath: Windows normpath collapses ``\..`` away.
+    if ".." in PureWindowsPath(path).parts:
+        msg = f"Path traversal not allowed: {path}"
+        raise ValueError(msg)
+    windows = PureWindowsPath(os.path.normpath(path))
+    if ".." in windows.parts:
+        msg = f"Path traversal not allowed: {path}"
+        raise ValueError(msg)
+    if not windows.is_absolute():
+        msg = f"Windows absolute paths are not supported: {path}. Please use a drive-letter or UNC path."
+        raise ValueError(msg)
+    canonical = windows.as_posix()
+    if allowed_prefixes is not None:
+        variants = (canonical, str(windows), to_posix_path(path), path)
+        if not any(variant.startswith(prefix) for prefix in allowed_prefixes for variant in variants):
+            msg = f"Path must start with one of {allowed_prefixes}: {path}"
+            raise ValueError(msg)
+    return canonical
+
+
 def validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) -> str:
     r"""把虚拟路径收成以 `/` 开头的正斜杠形式，并拒绝穿越。
 
     `allowed_prefixes` 若给出，收完之后必须命中其中某一条。盘符路径（`C:/...`）
-    不收：虚拟文件系统里这种写法有歧义。`~` 以及作为路径组件的 `..` 直接拒绝。
+    在非 Windows 上不收：虚拟文件系统里这种写法有歧义。仅在 ``win32`` 上接受
+    盘符绝对路径与 UNC，供 ``virtual_mode=False`` 的宿主路径模式使用。
+    `~` 以及作为路径组件的 `..` 直接拒绝。
 
     Args:
         path: 原始路径。
@@ -126,7 +164,7 @@ def validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) -
         收干净之后的绝对路径。
 
     Raises:
-        ValueError: 穿越、家目录展开、盘符路径，或前缀不在允许列表里。
+        ValueError: 穿越、家目录展开、盘符路径（非 win32），或前缀不在允许列表里。
 
     Examples:
         >>> validate_path("foo/bar")
@@ -134,6 +172,9 @@ def validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) -
         >>> validate_path("/./foo//bar")
         '/foo/bar'
     """
+    if sys.platform == "win32" and _windows_absolute_shape(path):
+        return _validate_windows_host_path(path, allowed_prefixes=allowed_prefixes)
+
     # "foo..bar.txt" 里有连续的两个点，但不是一个路径组件。用子串判断会误伤这种文件名。
     if ".." in PurePosixPath(to_posix_path(path)).parts or path.startswith("~"):
         msg = f"Path traversal not allowed: {path}"
@@ -216,7 +257,14 @@ def _paths_overlap(call_path: str, rule_anchor: str) -> bool:
 
     相等，或者按 `PurePosixPath` 的组件看其中一棵包含另一棵，算相交。
     `/secret` 碰不到 `/secrets`。`/` 和谁都相交。
+    仅在 win32 且至少一侧是盘符/UNC 时改用 `PureWindowsPath`，其余平台逻辑不变。
     """
+    if sys.platform == "win32" and (
+        _windows_absolute_shape(call_path) or _windows_absolute_shape(rule_anchor)
+    ):
+        left = PureWindowsPath(to_posix_path(call_path))
+        right = PureWindowsPath(to_posix_path(rule_anchor))
+        return left == right or left.is_relative_to(right) or right.is_relative_to(left)
     left, right = PurePosixPath(call_path), PurePosixPath(rule_anchor)
     return left == right or left.is_relative_to(right) or right.is_relative_to(left)
 

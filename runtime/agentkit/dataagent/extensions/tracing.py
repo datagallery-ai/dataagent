@@ -1,6 +1,12 @@
-"""Native LangChain instrumentation → LangSmith OTEL conversion → local OTLP JSON."""
+"""Native LangChain instrumentation → LangSmith OTEL conversion → local OTLP JSON.
+
+When ``DATAAGENT_OTLP_TRACES_ENDPOINT`` (or config ``otlp_endpoint``) is set, ended
+spans are also pushed live via OTLP/HTTP in addition to the completion-time file.
+Live OTLP export applies the same secret redaction as the local JSON file.
+"""
 
 import logging
+import os
 from pathlib import Path
 
 from langchain_core.tracers.langchain import LangChainTracer
@@ -8,14 +14,62 @@ from langsmith import Client, RunTree
 from langsmith.schemas import LangSmithInfo
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 
 from dataagent.diagnostics import safe_error
-from dataagent.extensions.trace_exporter import LocalFileExporter
+from dataagent.extensions.trace_exporter import LocalFileExporter, RedactingSpanExporter
 
 logger = logging.getLogger(__name__)
 
+# LangSmith's Client.create_run() calls `git describe` via subprocess with inherited
+# stdin. Under --stdio-ready the backend stdin is a pipe from the TUI, so git blocks
+# forever on the asyncio main thread and the run never reaches the model.
+# Setting an explicit revision skips that subprocess entirely.
+os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
+
+# Eval frameworks inject a per-task receiver URL; standard OTEL_* vars are ignored
+# by this dedicated provider unless we read them explicitly below.
+_OTLP_ENDPOINT_ENV = "DATAAGENT_OTLP_TRACES_ENDPOINT"
+_OTLP_HEADERS_ENV = "DATAAGENT_OTLP_HEADERS"
+
+
+def resolve_otlp_endpoint(explicit: str | None = None) -> str | None:
+    """Return a non-empty OTLP/HTTP traces endpoint, or None to disable live export."""
+    # Flag marks OTEL_EXPORTER_OTLP_ENDPOINT (base URL); do not use `is` on
+    # os.environ values — Unix _Environ may allocate a new str on each get.
+    for candidate, base_url in (
+        (explicit, False),
+        (os.environ.get(_OTLP_ENDPOINT_ENV), False),
+        (os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"), False),
+        (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"), True),
+    ):
+        if candidate and (value := candidate.strip()):
+            if base_url and not value.rstrip("/").endswith("/v1/traces"):
+                value = value.rstrip("/") + "/v1/traces"
+            return value
+    return None
+
+
+def _parse_otlp_headers(raw: str | None = None) -> dict[str, str] | None:
+    text = (raw if raw is not None else os.environ.get(_OTLP_HEADERS_ENV) or "").strip()
+    if not text:
+        return None
+    headers: dict[str, str] = {}
+    for part in text.split(","):
+        if not part.strip():
+            continue
+        if "=" not in part:
+            raise ValueError(f"Invalid {_OTLP_HEADERS_ENV} entry (expected key=value): {part!r}")
+        key, value = part.split("=", 1)
+        headers[key.strip()] = value.strip()
+    return headers or None
+
+
+def _build_otlp_exporter(endpoint: str, headers: dict[str, str] | None = None) -> SpanExporter:
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    return OTLPSpanExporter(endpoint=endpoint, headers=headers)
 
 class _LocalOTELClient(Client):
     def __init__(self, *args, agent_names=(), **kwargs):
@@ -49,10 +103,23 @@ class _LocalOTELClient(Client):
 
 
 class LocalLangChainTracer(LangChainTracer):
-    """Reuse native callbacks and SDK conversion, with request-scoped file commits."""
+    """Reuse native callbacks and SDK conversion, with request-scoped file commits.
 
-    def __init__(self, directory: Path | None = None, secrets: tuple[str, ...] = (),
-                 agent_names: tuple[str, ...] = (), **kwargs):
+    Optional live OTLP/HTTP export: pass ``otlp_endpoint`` or set
+    ``DATAAGENT_OTLP_TRACES_ENDPOINT``. Ended spans are pushed immediately via
+    ``SimpleSpanProcessor``; the local JSON file is still written on root finish.
+    """
+
+    def __init__(
+        self,
+        directory: Path | None = None,
+        secrets: tuple[str, ...] = (),
+        agent_names: tuple[str, ...] = (),
+        *,
+        otlp_endpoint: str | None = None,
+        otlp_headers: dict[str, str] | str | None = None,
+        **kwargs,
+    ):
         if kwargs.get("client") is None:
             self.exporter = LocalFileExporter(directory, secrets)
             self.provider = TracerProvider(
@@ -60,6 +127,27 @@ class LocalLangChainTracer(LangChainTracer):
                 shutdown_on_exit=False,
             )
             self.provider.add_span_processor(SimpleSpanProcessor(self.exporter))
+            endpoint = resolve_otlp_endpoint(otlp_endpoint)
+            self.otlp_exporter: SpanExporter | None = None
+            if endpoint is not None:
+                if isinstance(otlp_headers, str):
+                    headers = _parse_otlp_headers(otlp_headers)
+                elif otlp_headers is not None:
+                    headers = dict(otlp_headers)
+                else:
+                    headers = _parse_otlp_headers()
+                try:
+                    remote = _build_otlp_exporter(endpoint, headers)
+                    self.otlp_exporter = RedactingSpanExporter(remote, secrets)
+                    self.provider.add_span_processor(SimpleSpanProcessor(self.otlp_exporter))
+                    logger.info("OTLP live export enabled endpoint=%s", endpoint)
+                except Exception as error:
+                    logger.warning(
+                        "OTLP_EXPORTER_INIT_ERROR endpoint=%s message=%s",
+                        endpoint,
+                        safe_error(error, secrets)["message"],
+                    )
+                    self.otlp_exporter = None
             kwargs["client"] = _LocalOTELClient(
                 agent_names=agent_names,
                 api_url="http://localhost", tracing_mode="otel",
@@ -70,10 +158,14 @@ class LocalLangChainTracer(LangChainTracer):
                     "scale_up_qsize_trigger": 1000, "scale_down_nempty_trigger": 4,
                 }),
             )
+        else:
+            self.otlp_exporter = None
         super().__init__(**kwargs)
         self.directory = directory
         self.secrets = secrets
         self.agent_names = agent_names
+        if not hasattr(self, "otlp_exporter"):
+            self.otlp_exporter = None
 
     def copy_with_metadata_defaults(self, *, metadata=None, tags=None):
         clone = super().copy_with_metadata_defaults(metadata=metadata, tags=tags)
@@ -82,6 +174,7 @@ class LocalLangChainTracer(LangChainTracer):
         clone.agent_names = self.agent_names
         clone.exporter = self.exporter
         clone.provider = self.provider
+        clone.otlp_exporter = self.otlp_exporter
         return clone
 
     def on_llm_new_token(self, token, **kwargs) -> None:

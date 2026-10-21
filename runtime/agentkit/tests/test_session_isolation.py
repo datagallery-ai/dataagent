@@ -28,6 +28,26 @@ def runtime_for(tmp_path, *workspaces, user_id="default", session_id=None):
     ))
 
 
+def _cmd_quote(value: str) -> str:
+    """Double-quote a path/command token for cmd.exe (shlex.quote uses single quotes)."""
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _system_text(content) -> str:
+    """Flatten system message content whether it is a string or text blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(str(block.get("text", "")))
+            else:
+                parts.append(str(block))
+        return "\n".join(parts)
+    return str(content)
+
+
 def test_home_is_working_root_without_synthetic_input_workspaces(tmp_path):
     default = runtime_for(tmp_path)
     alice = runtime_for(tmp_path, user_id="alice")
@@ -132,7 +152,16 @@ async def test_file_tools_and_shell_share_real_paths(tmp_path, child, common_plu
     runtime = runtime_for(tmp_path, root)
     session = runtime.paths.for_session("same-path")
     output = session.outputs / "自我介绍 [1].md"
-    command = f"wc -m {shlex.quote(str(output))} && printf shell >> {shlex.quote(str(output))}"
+    if sys.platform == "win32":
+        # cmd.exe: count/append via Python so paths with spaces stay valid.
+        py = _cmd_quote(sys.executable)
+        out = str(output)
+        command = (
+            f'{py} -c "print(len(open(r\'{out}\', encoding=\'utf-8\').read()))" '
+            f'&& {py} -c "open(r\'{out}\', \'a\', encoding=\'utf-8\').write(\'shell\')"'
+        )
+    else:
+        command = f"wc -m {shlex.quote(str(output))} && printf shell >> {shlex.quote(str(output))}"
     responses = [
         call("write_file", {"file_path": str(output), "content": "hello"}),
         call("execute", {"command": command}),
@@ -152,10 +181,12 @@ async def test_file_tools_and_shell_share_real_paths(tmp_path, child, common_plu
     assert any(message.name == "execute" and "5" in str(message.content) for message in messages)
     assert all(message.artifact["exit_code"] == 0 for message in messages if message.name == "execute")
     for request in model.requests:
-        prompt = "\n".join(str(message.content) for message in request if message.type == "system")
+        prompt = "\n".join(_system_text(message.content) for message in request if message.type == "system")
         assert str(session.outputs) in prompt
         assert str(root) in prompt
         assert "/workspace/<n>" not in prompt and "under /output" not in prompt
+        if sys.platform == "win32":
+            assert "cmd.exe" in prompt
 
 
 def test_backend_uses_native_file_operations_without_access_filters(tmp_path):
@@ -230,13 +261,27 @@ def test_native_shell_can_cd_to_absolute_output_and_share_file_paths(tmp_path, m
     session = runtime.paths.for_session("native-shell")
     backend = build_filesystem_backend(runtime, session)
     assert type(backend.default).execute is LocalShellBackend.execute
-    assert backend.execute("pwd").output.strip() == str(session.outputs)
+    if sys.platform == "win32":
+        cwd_probe = "cd"
+        assert str(session.outputs) in backend.execute(cwd_probe).output
+    else:
+        assert backend.execute("pwd").output.strip() == str(session.outputs)
     assert backend.write(str(session.outputs / "result.txt"), "file-evidence").error is None
-    result = backend.execute(
-        f"cd {shlex.quote(str(session.outputs))} && "
-        f"cat {shlex.quote(str(source / 'input.txt'))} && "
-        'cat result.txt && printf "%s" "$DATAAGENT_SHELL_TEST" >> result.txt',
-    )
+    if sys.platform == "win32":
+        py = _cmd_quote(sys.executable)
+        input_file = str(source / "input.txt")
+        result = backend.execute(
+            f"cd /d {_cmd_quote(str(session.outputs))} && "
+            f"{py} -c \"print(open(r'{input_file}', encoding='utf-8').read(), end='')\" && "
+            f"{py} -c \"print(open('result.txt', encoding='utf-8').read(), end='')\" && "
+            f"{py} -c \"import os; open('result.txt','a',encoding='utf-8').write(os.environ['DATAAGENT_SHELL_TEST'])\"",
+        )
+    else:
+        result = backend.execute(
+            f"cd {shlex.quote(str(session.outputs))} && "
+            f"cat {shlex.quote(str(source / 'input.txt'))} && "
+            'cat result.txt && printf "%s" "$DATAAGENT_SHELL_TEST" >> result.txt',
+        )
     assert result.exit_code == 0
     assert "input-evidence" in result.output and "file-evidence" in result.output
     assert "file-evidenceinherited" in str(backend.read(str(session.outputs / "result.txt")))
@@ -247,14 +292,17 @@ def test_native_shell_preserves_error_timeout_and_truncation_results(tmp_path):
     runtime = runtime_for(tmp_path)
     session = runtime.paths.for_session("shell-results")
     backend = build_filesystem_backend(runtime, session)
-    result = backend.execute("printf problem >&2; exit 7")
+    if sys.platform == "win32":
+        result = backend.execute("echo problem 1>&2 & exit /b 7")
+    else:
+        result = backend.execute("printf problem >&2; exit 7")
     assert result.exit_code == 7
     assert "[stderr] problem" in result.output
     assert not result.truncated
     assert backend.execute("").exit_code == 1
-    python = shlex.quote(sys.executable)
+    python = _cmd_quote(sys.executable) if sys.platform == "win32" else shlex.quote(sys.executable)
     result = backend.execute(f'{python} -c "import time; time.sleep(0.2)"', timeout=0.01)
     assert result.exit_code == 124 and "timed out" in result.output
     assert backend.default._default_timeout == runtime.timeout_seconds
-    result = backend.execute(f'{python} -c "print(\'x\' * 100001)"')
+    result = backend.execute(f'{python} -c "print(chr(120) * 100001)"')
     assert result.exit_code == 0 and result.truncated

@@ -481,7 +481,7 @@ LLM_API_KEY=replace-with-your-key
 | 配置 `hooks` 的 entrypoint | **声明该列表的配置文件目录**；必须为根内相对 Python 路径，不能借符号链接越界 |
 | 插件中的 prompt、skills、subagents、tool/hook entrypoint | 插件根目录；SubAgent JSON 的内部引用也以插件根为基准，不以 subagents 子目录为基准 |
 | 独立 Skills | Home 的 `skills`；允许符号链接，按真实文件去重 |
-| 原生文件工具与 Shell | 共用真实路径；`virtual_mode=False`，当前 session outputs 为默认 cwd；输入只读和产出位置由 prompt 约定，不限制宿主路径访问 |
+| 原生文件工具与 Shell | 共用真实路径；`virtual_mode=False`，当前 session outputs 为默认 cwd；输入只读和产出位置由 prompt 约定，不限制宿主路径访问。仅 Windows：file tools 接受盘符/UNC 绝对路径，宿主模式下拒绝无盘符的 `/...`（避免落到盘根）；`execute` 为 cmd.exe，失败时对典型 bash 语法给出提示。非 Windows 路径与 shell 语义不变 |
 
 CLI 中的 `~` 通常由 shell 展开；SDK 推荐传 `Path.home()` 组成的路径或绝对路径。不要向 LaunchOptions 传包含字面量 `~` 的相对路径。
 

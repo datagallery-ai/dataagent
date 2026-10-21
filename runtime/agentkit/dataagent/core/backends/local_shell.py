@@ -107,6 +107,27 @@ def _failure_message(exc: BaseException) -> str:
     return f"Error executing command ({type(exc).__name__}): {exc}"
 
 
+_CMD_HINT = (
+    "\n\n[Hint] This shell is cmd.exe on Windows. Use dir/type, &/&& for chaining; "
+    "bash syntax (ls, find, 2>/dev/null, ;) is not supported."
+)
+
+_CMD_HINT_MARKERS = (
+    "is not recognized as an internal or external command",
+    "The syntax of the command is incorrect",
+)
+
+
+def _maybe_append_cmd_hint(text: str, returncode: int) -> str:
+    """Append a short cmd.exe reminder on typical Windows shell mistakes only."""
+    if sys.platform != "win32" or returncode == 0:
+        return text
+    lowered = text.lower()
+    if any(marker.lower() in lowered for marker in _CMD_HINT_MARKERS):
+        return text.rstrip() + _CMD_HINT
+    return text
+
+
 class LocalShellBackend(FilesystemBackend, SandboxBackendProtocol):
     """父类负责文件，本类负责在 ``cwd`` 里跑一条不过滤的 shell 命令。"""
 
@@ -141,11 +162,15 @@ class LocalShellBackend(FilesystemBackend, SandboxBackendProtocol):
             "cwd": str(self.cwd),
             "start_new_session": sys.platform != "win32",
         }
+        # Hide the cmd.exe console that shell=True would otherwise flash on Windows.
+        if sys.platform == "win32":
+            launch["creationflags"] = subprocess.CREATE_NO_WINDOW
         try:
             completed = subprocess.run(command, **launch)
             merged = _merge_streams(completed.stdout, completed.stderr)
             shown, truncated = _clip_output(merged, self._output_limit)
             shown = _attach_exit_line(shown, completed.returncode)
+            shown = _maybe_append_cmd_hint(shown, completed.returncode)
         except subprocess.TimeoutExpired:
             return ExecuteResponse(
                 output=_timeout_message(chosen, timeout is not None),

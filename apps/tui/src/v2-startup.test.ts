@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import { it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { startV2Backend } from "./v2-backend.js";
+import {
+  ensureWindowsBackendPython,
+  startV2Backend,
+  windowsVenvPython,
+} from "./v2-backend.js";
 import { terminalText } from "./utils/terminal-text.js";
 
 const header = `
@@ -15,7 +20,9 @@ process.stdin.on('end',()=>process.exit(0));
 `;
 function fake(script: string) {
   return (args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) =>
-    spawn(process.execPath, ["-e", header + script], { ...options, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    spawn(process.execPath, ["-e", header + script], {
+      ...options, detached: true, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+    });
 }
 
 it("startup only forwards explicit paths, user and session without an interactive decision", async () => {
@@ -95,4 +102,80 @@ it("backend startup failure preserves a sanitized diagnostic", async () => {
     spawnBackend: fake("process.stderr.write('model failed sk-abcdefghijklmnopqrstuv'); process.exit(1);"),
   }), /model failed \[REDACTED\]/);
   assert.equal(terminalText("/中文 path/\x1b[31mbad\n\x07"), "/中文 path/bad");
+});
+
+function fakeSyncChild(result: {
+  code: number | null;
+  stderr?: string;
+  error?: Error;
+}): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+  const stderr = new EventEmitter() as ChildProcessWithoutNullStreams["stderr"];
+  (stderr as { setEncoding: (encoding: BufferEncoding) => typeof stderr }).setEncoding = () => stderr;
+  child.stderr = stderr;
+  queueMicrotask(() => {
+    if (result.error) {
+      child.emit("error", result.error);
+      return;
+    }
+    if (result.stderr) stderr.emit("data", result.stderr);
+    child.emit("close", result.code);
+  });
+  return child;
+}
+
+it("Windows ensure always uv-syncs even when the venv interpreter already exists", async () => {
+  const backendPackage = "C:\\fake\\agentkit";
+  const python = windowsVenvPython(backendPackage);
+  const syncCalls: string[][] = [];
+  const path = await ensureWindowsBackendPython(
+    backendPackage,
+    { cwd: "C:\\cwd", env: { PATH: "x" } },
+    {
+      existsSync: (candidate) => candidate === python,
+      spawn: ((command, args, options) => {
+        assert.equal(command, "uv");
+        syncCalls.push(args as string[]);
+        assert.equal(options?.windowsHide, true);
+        assert.deepEqual(options?.stdio, ["ignore", "ignore", "pipe"]);
+        return fakeSyncChild({ code: 0 });
+      }) as typeof spawn,
+    },
+  );
+  assert.equal(path, python);
+  assert.deepEqual(syncCalls, [["sync", "--project", backendPackage]]);
+});
+
+it("Windows ensure rejects when sync fails despite a pre-existing interpreter", async () => {
+  const backendPackage = "/tmp/agentkit";
+  const python = windowsVenvPython(backendPackage);
+  await assert.rejects(
+    ensureWindowsBackendPython(
+      backendPackage,
+      { cwd: "/tmp", env: {} },
+      {
+        // Interpreter present (empty/partial/outdated venv) but sync reports failure.
+        existsSync: (candidate) => candidate === python,
+        spawn: (() => fakeSyncChild({
+          code: 1,
+          stderr: "error: Failed to install pydantic==2.12.0",
+        })) as unknown as typeof spawn,
+      },
+    ),
+    /Failed to install pydantic/,
+  );
+});
+
+it("Windows ensure rejects when sync succeeds but the interpreter is still missing", async () => {
+  await assert.rejects(
+    ensureWindowsBackendPython(
+      "/tmp/agentkit",
+      { cwd: "/tmp", env: {} },
+      {
+        existsSync: () => false,
+        spawn: (() => fakeSyncChild({ code: 0 })) as unknown as typeof spawn,
+      },
+    ),
+    /uv sync failed/,
+  );
 });

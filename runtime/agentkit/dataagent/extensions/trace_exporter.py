@@ -23,9 +23,109 @@ def _redact(value, secrets: tuple[str, ...]):
         return re.sub(r"(?i)(bearer\s+)\S+", r"\1[REDACTED]", value)
     if isinstance(value, list):
         return [_redact(item, secrets) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact(item, secrets) for item in value)
     if isinstance(value, dict):
         return {_redact(key, secrets): _redact(item, secrets) for key, item in value.items()}
     return value
+
+
+def _redact_attributes(attributes, secrets: tuple[str, ...]):
+    if not attributes:
+        return attributes
+    return {_redact(key, secrets): _redact(item, secrets) for key, item in attributes.items()}
+
+
+class _RedactedEvent:
+    """Minimal Event surface for OTLP encoding with redacted fields."""
+
+    __slots__ = ("name", "timestamp", "attributes", "dropped_attributes")
+
+    def __init__(self, event, secrets: tuple[str, ...]):
+        self.name = _redact(event.name, secrets)
+        self.timestamp = event.timestamp
+        self.attributes = _redact_attributes(event.attributes, secrets)
+        self.dropped_attributes = event.dropped_attributes
+
+
+class _RedactedLink:
+    """Minimal Link surface for OTLP encoding with redacted attributes."""
+
+    __slots__ = ("context", "attributes", "dropped_attributes")
+
+    def __init__(self, link, secrets: tuple[str, ...]):
+        self.context = link.context
+        self.attributes = _redact_attributes(link.attributes, secrets)
+        self.dropped_attributes = link.dropped_attributes
+
+
+class _RedactedReadableSpan:
+    """Proxy ReadableSpan so live OTLP export applies the same redaction as finish()."""
+
+    __slots__ = ("_span", "_secrets")
+
+    def __init__(self, span, secrets: tuple[str, ...]):
+        object.__setattr__(self, "_span", span)
+        object.__setattr__(self, "_secrets", secrets)
+
+    def __getattr__(self, name):
+        return getattr(self._span, name)
+
+    def get_span_context(self):
+        return self._span.get_span_context()
+
+    @property
+    def name(self):
+        return _redact(self._span.name, self._secrets)
+
+    @property
+    def attributes(self):
+        return _redact_attributes(self._span.attributes, self._secrets)
+
+    @property
+    def events(self):
+        events = self._span.events
+        if not events:
+            return events
+        return tuple(_RedactedEvent(event, self._secrets) for event in events)
+
+    @property
+    def links(self):
+        links = self._span.links
+        if not links:
+            return links
+        return tuple(_RedactedLink(link, self._secrets) for link in links)
+
+    @property
+    def status(self):
+        from opentelemetry.trace import Status
+
+        status = self._span.status
+        if status is None or not status.description:
+            return status
+        return Status(
+            status_code=status.status_code,
+            description=_redact(status.description, self._secrets),
+        )
+
+
+class RedactingSpanExporter(SpanExporter):
+    """Apply LocalFileExporter redaction rules before forwarding to another exporter."""
+
+    def __init__(self, wrapped: SpanExporter, secrets: tuple[str, ...] = ()):
+        self._wrapped = wrapped
+        self.secrets = secrets
+
+    def export(self, spans):
+        return self._wrapped.export(
+            tuple(_RedactedReadableSpan(span, self.secrets) for span in spans)
+        )
+
+    def shutdown(self):
+        return self._wrapped.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000):
+        return self._wrapped.force_flush(timeout_millis)
 
 
 class LocalFileExporter(SpanExporter):

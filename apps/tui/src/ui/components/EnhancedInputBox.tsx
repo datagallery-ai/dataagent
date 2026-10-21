@@ -716,6 +716,15 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
         return;
       }
 
+      // Leave Shift/Ctrl+Arrows and PageUp/PageDown for App chat scrolling.
+      if (
+        key.pageUp
+        || key.pageDown
+        || ((key.shift || key.ctrl) && (key.upArrow || key.downArrow))
+      ) {
+        return;
+      }
+
       if (key.upArrow || (key.ctrl && input === 'p')) {
         if (showSlashPopover) {
           const filtered = getFilteredCommands();

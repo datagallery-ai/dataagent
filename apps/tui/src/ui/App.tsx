@@ -17,7 +17,8 @@ import { ResourcePicker, type ResourcePickerItem } from './ResourcePicker.js';
 import { HomeSplash } from './HomeSplash.js';
 import { CommandHistory, DEFAULT_COMMANDS } from './keybindings.js';
 import { AssistantTextStreamBuffer, type AssistantTextFlush } from './assistant-stream-buffer.js';
-import { createWheelScrollDecoder } from '../input/mouse-wheel.js';
+import { createWheelScrollDecoder, WHEEL_LINES_PER_TICK } from '../input/mouse-wheel.js';
+import { enableMouseTracking } from '../terminal-screen.js';
 import { inkColors } from './theme.js';
 import {
   restoreSessionConversation,
@@ -721,6 +722,11 @@ export const App: React.FC<AppProps> = ({
   }, [configClient, state.workspaceConfig.skill, activeSkillId]);
 
   useEffect(() => {
+    // Re-assert after Ink raw-mode setup; ConPTY/Ink can clear modes on start/resize.
+    enableMouseTracking(stdout);
+    const onResize = () => enableMouseTracking(stdout);
+    stdout.on('resize', onResize);
+
     const decoder = createWheelScrollDecoder();
     let pendingRows = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -747,7 +753,8 @@ export const App: React.FC<AppProps> = ({
     }
 
     const onData = (chunk: Buffer | string) => {
-      const deltas = decoder.push(chunk.toString());
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('latin1');
+      const deltas = decoder.push(text);
       if (deltas.length === 0) return;
 
       for (const delta of deltas) {
@@ -762,13 +769,14 @@ export const App: React.FC<AppProps> = ({
 
     stdin.prependListener('data', onData);
     return () => {
+      stdout.off('resize', onResize);
       stdin.off('data', onData);
       decoder.reset();
       if (timer !== null) {
         clearTimeout(timer);
       }
     };
-  }, [stdin]);
+  }, [stdin, stdout]);
 
   // Initialize connection monitoring if client supports it
   useEffect(() => {
@@ -1147,18 +1155,31 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    // Ignore input when typing in the input box
-    if (pickerOpen || inputFocused) return;
-
-    if (key.pageUp) {
+    // Chat scroll must work while the composer is focused (the normal state).
+    // Otherwise PageUp/PageDown are swallowed by the input box and never scroll.
+    // Shift/Ctrl+Arrows are a wheel fallback when ConPTY does not emit mouse events.
+    if (!pickerOpen && key.pageUp) {
       scrollChatBy(Math.max(3, Math.floor(chatViewportRowCount * 0.8)));
       return;
     }
 
-    if (key.pageDown) {
+    if (!pickerOpen && key.pageDown) {
       scrollChatBy(-Math.max(3, Math.floor(chatViewportRowCount * 0.8)));
       return;
     }
+
+    if (!pickerOpen && (key.shift || key.ctrl) && key.upArrow) {
+      scrollChatBy(key.ctrl ? Math.max(3, Math.floor(chatViewportRowCount * 0.8)) : WHEEL_LINES_PER_TICK);
+      return;
+    }
+
+    if (!pickerOpen && (key.shift || key.ctrl) && key.downArrow) {
+      scrollChatBy(-(key.ctrl ? Math.max(3, Math.floor(chatViewportRowCount * 0.8)) : WHEEL_LINES_PER_TICK));
+      return;
+    }
+
+    // Ignore remaining shortcuts while typing in the input box
+    if (pickerOpen || inputFocused) return;
 
     if (key.home) {
       chatAreaRef.current?.scrollToTop();

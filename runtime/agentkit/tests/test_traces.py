@@ -22,10 +22,16 @@ from dataagent.extensions.tracing import LocalLangChainTracer
 
 @pytest.fixture(autouse=True)
 def no_trace_network(monkeypatch):
-    attempts = []
+    """Block accidental remote tracing; allow local OTLP /v1/traces for live-export tests."""
+    import requests
 
-    def blocked(*args, **kwargs):
-        attempts.append((args, kwargs))
+    attempts = []
+    original = requests.sessions.Session.request
+
+    def blocked(self, method, url, *args, **kwargs):
+        if "/v1/traces" in str(url):
+            return original(self, method, url, *args, **kwargs)
+        attempts.append(((self, method, url), kwargs))
         raise AssertionError("Trace must not make HTTP requests")
 
     monkeypatch.setattr("requests.sessions.Session.request", blocked)
@@ -396,3 +402,106 @@ async def test_large_parallel_trace_survives_sdk_batch_boundaries(tmp_path):
     assert len(spans(data)) == 121
     assert all(s.get("parentSpanId") == root(data)["spanId"]
                for s in spans(data) if s is not root(data))
+
+def test_resolve_otlp_endpoint_prefers_dataagent_env(monkeypatch):
+    from dataagent.extensions.tracing import resolve_otlp_endpoint
+
+    monkeypatch.delenv("DATAAGENT_OTLP_TRACES_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    assert resolve_otlp_endpoint() is None
+    assert resolve_otlp_endpoint(" http://127.0.0.1:9/v1/traces ") == "http://127.0.0.1:9/v1/traces"
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
+    assert resolve_otlp_endpoint() == "http://127.0.0.1:1/v1/traces"
+    monkeypatch.setenv("DATAAGENT_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:2/v1/traces")
+    assert resolve_otlp_endpoint() == "http://127.0.0.1:2/v1/traces"
+
+
+def _otlp_capture_server():
+    """Start a localhost OTLP HTTP sink; returns (endpoint, received, shutdown)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            received.append((self.path, body, dict(self.headers)))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = f"http://127.0.0.1:{port}/v1/traces"
+    return endpoint, received, server.shutdown
+
+
+def test_otlp_live_export_posts_ended_spans(tmp_path, monkeypatch):
+    """SimpleSpanProcessor must POST ended spans to the configured OTLP endpoint."""
+    import time
+
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    from dataagent.extensions.tracing import LocalLangChainTracer
+
+    endpoint, received, shutdown = _otlp_capture_server()
+    monkeypatch.setenv("DATAAGENT_OTLP_TRACES_ENDPOINT", endpoint)
+    try:
+        tracer = LocalLangChainTracer(tmp_path)
+        assert tracer.otlp_exporter is not None
+        graph = RunnableLambda(lambda _: AIMessage(content="ok")).with_config(callbacks=[tracer])
+        graph.invoke({"messages": [("user", "hello")]})
+        # Root finish also force_flushes; give the HTTP handler a moment.
+        deadline = time.time() + 5
+        while not received and time.time() < deadline:
+            time.sleep(0.05)
+        assert received, "expected at least one OTLP POST"
+        path, body, headers = received[0]
+        assert path == "/v1/traces"
+        assert body  # protobuf ExportTraceServiceRequest
+        assert list(tmp_path.glob("*.json")), "local file export must still run"
+    finally:
+        shutdown()
+
+
+def test_otlp_live_export_redacts_configured_secrets(tmp_path, monkeypatch):
+    """Remote OTLP payloads must apply the same redaction as the local JSON file."""
+    import time
+
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    from dataagent.extensions.trace_exporter import RedactingSpanExporter
+    from dataagent.extensions.tracing import LocalLangChainTracer
+
+    secret = "otlp-live-secret-value"
+    endpoint, received, shutdown = _otlp_capture_server()
+    monkeypatch.setenv("DATAAGENT_OTLP_TRACES_ENDPOINT", endpoint)
+    try:
+        tracer = LocalLangChainTracer(tmp_path, secrets=(secret,))
+        assert isinstance(tracer.otlp_exporter, RedactingSpanExporter)
+        graph = RunnableLambda(
+            lambda _: AIMessage(content=f"answer {secret}")
+        ).with_config(callbacks=[tracer])
+        graph.invoke({"messages": [("user", f"prompt {secret}")]})
+        deadline = time.time() + 5
+        while not received and time.time() < deadline:
+            time.sleep(0.05)
+        assert received, "expected at least one OTLP POST"
+        remote = b"".join(body for _, body, _ in received)
+        assert secret.encode() not in remote
+        assert b"[REDACTED]" in remote
+        local_text = "".join(path.read_text(encoding="utf-8") for path in tmp_path.glob("*.json"))
+        assert secret not in local_text
+        assert "[REDACTED]" in local_text
+    finally:
+        shutdown()
