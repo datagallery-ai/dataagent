@@ -1,21 +1,16 @@
-# SQL 规范（DDL / DML 统一规范）
-
-> 本文档为数仓生产 SQL 的统一规范，DDL（建表）与 DML（INSERT）规则均在此维护，供主 agent 与 nl2sql 子 agent 共用。
+# SQL 规范（DML）
 
 ## 绝对禁令（Zero-Tolerance，违反即交付失败）
 以下规则具有最高优先级，必须在写任何 SQL 之前内化：
-1. **DDL 必须包含 PARTITIONED BY**：每张目标表的 DDL 必须显式声明 `PARTITIONED BY (pt_* string COMMENT ...)`。没有 PARTITIONED BY 的 DDL 一律视为交付失败。*需要根据目标场景填写，见下文sql生成规则。
 2. **DML 必须使用 INSERT OVERWRITE + PARTITION**：每条 INSERT 必须写成 `INSERT OVERWRITE {db}.{table} PARTITION ... SELECT ...`。使用 `INSERT INTO`、`INSERT OR REPLACE`、或省略 PARTITION 子句的 INSERT 一律视为交付失败。
 3. **WITH/CTE 必须位于 INSERT OVERWRITE 之前**：当 INSERT 语句使用 WITH/CTE 时，无论 SparkSQL 使用什么版本，都要保证 WITH/CTE 必须位于 INSERT OVERWRITE 之前，正确示例（correct syntax）是 `WITH ... INSERT OVERWRITE ... PARTITION ... SELECT ...`。
 4. **JOIN 前必须预聚合，禁止明细直连**：多事实表（或事实表与维表关联键存在重复行）场景下，每张参与 JOIN 的子表必须先按 JOIN 键 GROUP BY 聚合到唯一粒度，再做 JOIN。未预聚合的明细表直接 JOIN 导致笛卡尔积膨胀，一律视为交付失败。具体要求：
 - 每个 JOIN 的两侧子查询/CTE 必须在 JOIN 键上已做 GROUP BY 或可证明唯一（如维表主键）。
 - 若两张表在 JOIN 键上都有多行（N:N），必须各自先聚合到 JOIN 键粒度。
 - 维表若在关联键上有重复（如一个业务对象 ID 对应多行），也必须先去重或聚合。
-规则 1-2 存在因果关系：DDL 先声明了分区列，INSERT 才能引用分区。**先写 DDL、确认 PARTITIONED BY 存在，再写 INSERT。**
 
 ## SQL 方言配置（最高优先级）
-本项目的 SQL 方言由 DATABASE.sql_dialect 配置决定：
-- **DDL 使用 Hive SQL 方言**：必须使用 `CREATE EXTERNAL TABLE IF NOT EXISTS`、`PARTITIONED BY`、`STORED AS ORC` 等 Hive 语法
+本项目的 SQL 方言由 DATABASE.dialect 配置决定：
 - **DML 使用 Spark SQL 方言**：必须使用 `INSERT OVERWRITE ... PARTITION ...` 语法
 - **禁止本地执行验证**：你没有任何本地数据库（包括 SQLite）可供执行 SQL。不要尝试执行 DDL/DML 来验证语法，不要将 SQL 改写为 SQLite 兼容语法。SQL 的正确性通过人工审查和 Gate Check 清单保证，而非本地执行。
 严禁在交付 SQL 中使用 SQLite 语法（如 `INSERT OR REPLACE`、`CREATE TABLE ... PRIMARY KEY`、无 `PARTITIONED BY` 的建表语句）。
@@ -158,7 +153,6 @@
    - 同一条 SQL 中判空 UDF 大小写尽量保持一致；若沿用参考 SQL 的大小写，需在说明证据来源。
 
 ## SQL 构造
-- DDL 使用 Hive：`CREATE EXTERNAL TABLE IF NOT EXISTS`、字段 `COMMENT`、`PARTITIONED BY (pt_* string COMMENT ...)`、`STORED AS ORC`。
 - DML 使用 Spark：`INSERT OVERWRITE {db}.{table} PARTITION ... SELECT ...`，SELECT 中不输出 `pt_d` 等时间分区列。
 - 多事实合并优先使用 UNION ALL 预聚合模式；禁止明细 N:N 直接 JOIN。
 - 普通字段类型只使用 `STRING`、`TINYINT`、`SMALLINT`、`INT`、`BIGINT`、`DECIMAL(p,s)`。
@@ -169,5 +163,5 @@
 - 用户没有明确要求时不要使用ROUND，保留小数应该使用 `CAST (x as DECIMAL(n,d))`。特征为比率时默认使用 `CAST (x as DECIMAL(38,6))` 来保留6位小数，百分数也默认保留6位小数，除非用户有其他显式要求。用户没有明确要求时，除了比率外的特征不要用 CAST / ROUND 修改精度。
 - 进行数值比较时，如果列是字符串类型，先转换成数值类型再比较。
 - 禁止 `INSERT INTO`、`INSERT OR REPLACE`、SQLite `PRIMARY KEY` 语法。
-- 输出：DDL 草案、INSERT 草案。
+- 输出：INSERT 草案。
 - JOIN 类型：明确写出 JOIN 的类型，如 LEFT JOIN , FULL OUTER JOIN 。事实表关联维表必须使用 LEFT JOIN，任何情况下（包括过滤空值或源表已聚合时）都不能使用 INNER JOIN，这是为了避免丢弃事实表中未匹配的记录。注意：该 LEFT JOIN 规则仅适用于事实表关联维表（维表是主键超集）；多时间窗口/多分区范围的事实数据拼接不属于此场景，必须先按规则 22 判断各侧集合包含关系再选 JOIN 类型，禁止直接套用“事实表一律作左表”。

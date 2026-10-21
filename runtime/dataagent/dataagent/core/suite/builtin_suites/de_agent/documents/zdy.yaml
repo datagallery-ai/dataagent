@@ -4,7 +4,7 @@ AGENT_CONFIG:
   type: "nl2sql"
 CORE:
   perceptor:
-    user_sql_rules: "sql_rules"
+    user_sql_rules: "dml_rules"
   generator:
     strategies: ["prompt"]
 DATABASE:

@@ -45,7 +45,7 @@ description: |
   - 事实表中已存在所需要的列时，默认无需关联对应的维度表，除非用户明确要求。例如事实表中已提供应用三级分类时，默认无需使用应用信息维表。
 
 ## SQL 规范
-编写或修改任何 DDL、INSERT SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，并据其加载 `skill/sql_rules/references/sql_rules.md` 中的适用规则（绝对禁令、SQL 方言配置、通用 SQL 生成硬规则、空值处理矩阵、SQL 构造）；生成后逐条对照自检。
+编写或修改任何 DDL、DML SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，按要求加载对应的 SQL 编写规范。
 
 ## 任务路由与冲突裁决
 - 目标：识别目标粒度、时间窗口、产出表、源表线索、原始 SQL/样例 SQL、用户硬约束。

@@ -12,6 +12,6 @@
 - 如果用户要求你给出数据源选择方案，则无需询问用户，使用 metadata_recall 等工具探索完毕后，直接给出方案即可。
 - 当你需要检索元数据实体证据（任务相关指标、表列信息等内容）时，你要使用 metadata_recall 工具检索表列信息。
 - 当你需要检索 UDF 函数信息时，你要使用 metadata_recall 工具。
-- 编写或修改任何 DDL、INSERT SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，并据其加载 `skill/sql_rules/references/sql_rules.md` 中的适用规则（绝对禁令、SQL 方言配置、通用 SQL 生成硬规则、空值处理矩阵、SQL 构造）；生成后逐条对照自检。
+- 编写或修改任何 DDL、DML SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，按要求加载对应的 SQL 编写规范。
 - 在你认为 SQL 质量无问题后，将 SQL 打印出来给用户看，与用户交互确认是否完成任务，等待用户确认是否结束。
 - 结束之前告诉用户生成的文件、工作目录在哪里。
