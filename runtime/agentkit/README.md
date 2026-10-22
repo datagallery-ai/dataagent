@@ -27,7 +27,7 @@ npm run start:tui -- --v2 --env-file .env --workspace "$PWD"
 uv run --project runtime/agentkit dataagent serve --workspace /existing/data
 ```
 
-默认地址是 `http://127.0.0.1:8790`。端口被占用时启动失败，不会改动其他进程。
+默认地址是 `http://127.0.0.1:8790`，来自 `config.json` 的 `server.host` 和 `server.port`。端口被占用时启动失败，不会改动其他进程。
 
 ## 文档
 

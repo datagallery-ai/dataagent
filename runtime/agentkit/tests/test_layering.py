@@ -6,7 +6,7 @@
     extensions                                -> foundation (+ semantic_client for compile/subagents);
                                                 filesystem/mcp host adapters -> bootstrap paths
     agent                                   -> everything
-    restapi                                 -> the `dataagent` package root only
+    serve                                   -> the `dataagent` package root only
 """
 
 import ast
@@ -161,7 +161,7 @@ def test_only_host_adapters_consume_runtime_and_bootstrap_paths():
 
 
 def test_rest_host_uses_only_the_package_root():
-    for path in (ROOT / "restapi").glob("*.py"):
+    for path in (ROOT / "serve").glob("*.py"):
         source = path.read_text()
         for module in imports(path):
             assert not module.startswith(("yaml", "dotenv")), (path, module)
@@ -223,7 +223,7 @@ def test_import_resolver_handles_modules_without_importing_them(tmp_path, source
 
 def test_cli_help_does_not_load_model_tooling():
     script = (
-        "import sys\nfrom restapi.__main__ import main\n"
+        "import sys\nfrom serve.__main__ import main\n"
         "try:\n main(['--help'])\n"
         "except SystemExit as error:\n assert error.code == 0\n"
         "assert not [m for m in sys.modules if m.startswith(%r)]\n"

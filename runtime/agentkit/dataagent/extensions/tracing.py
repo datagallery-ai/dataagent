@@ -23,9 +23,8 @@ from dataagent.extensions.trace_exporter import LocalFileExporter, RedactingSpan
 logger = logging.getLogger(__name__)
 
 # LangSmith's Client.create_run() calls `git describe` via subprocess with inherited
-# stdin. Under --stdio-ready the backend stdin is a pipe from the TUI, so git blocks
-# forever on the asyncio main thread and the run never reaches the model.
-# Setting an explicit revision skips that subprocess entirely.
+# stdin. A closed or piped stdin makes git block on the asyncio main thread, so the
+# run never reaches the model. Setting an explicit revision skips that subprocess.
 os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
 
 # Eval frameworks inject a per-task receiver URL; standard OTEL_* vars are ignored

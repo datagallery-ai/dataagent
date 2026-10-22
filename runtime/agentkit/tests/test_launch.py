@@ -500,7 +500,7 @@ def test_higher_layer_without_hooks_preserves_lower_hook_directory(tmp_path):
 
 @pytest.mark.parametrize("explicit_workspace", [False, True])
 def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, explicit_workspace):
-    from restapi import __main__ as entry
+    from serve import __main__ as entry
 
     opts = options(tmp_path, init_home=True)
     if not explicit_workspace:
@@ -508,7 +508,9 @@ def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, exp
     expected = prepare_runtime(opts)
     captured = []
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(entry, "serve", lambda runtime, **kwargs: captured.append(runtime) or 0)
+    monkeypatch.setattr(
+        entry, "serve", lambda runtime, *args, **kwargs: captured.append(runtime) or 0,
+    )
     args = ["serve", "--config", str(opts.config)]
     if explicit_workspace:
         args.extend(["--workspace", str(opts.workspace)])

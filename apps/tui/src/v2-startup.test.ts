@@ -33,6 +33,8 @@ it("startup only forwards explicit paths, user and session without an interactiv
     spawnBackend: (args, options) => {
       captured = args;
       assert.equal(options.cwd, cwd);
+      assert.equal(options.env.API_HOST, undefined);
+      assert.equal(options.env.API_PORT, undefined);
       return fake("emit(ready);")(args, options);
     },
   });

@@ -40,9 +40,9 @@ def wait_ready(child, url, token, instance_id, *, stopped, timeout=30):
         try:
             with opener.open(request, timeout=0.5) as response:
                 value = json.load(response)
-            assert value["instanceId"] == instance_id
-            assert value["protocol"] == "dataagent-v2"
-            if value.get("status") == "ready":
+            conversation = (value.get("data") or {}).get("conversation") or {}
+            if conversation.get("ready") is True and conversation.get("instanceId") == instance_id:
+                assert conversation.get("protocol") == "dataagent-v2"
                 return
         except (urllib.error.URLError, TimeoutError, ConnectionError):
             pass

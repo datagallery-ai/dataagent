@@ -1,10 +1,24 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { terminalText } from "./utils/terminal-text.js";
+
+export function configuredListenPort(env: NodeJS.ProcessEnv = process.env, configPath?: string): string {
+  const file = configPath
+    ?? env.DATAAGENT_CONFIG?.trim()
+    ?? join(env.DATAAGENT_HOME?.trim() || join(homedir(), ".dataagent"), "config.json");
+  try {
+    const port = JSON.parse(readFileSync(file, "utf8"))?.server?.port;
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
+  } catch {
+    // Missing or invalid config uses the template default.
+  }
+  return "8790";
+}
 
 const identity = { protocol: z.literal("dataagent-v2"), instanceId: z.string().min(1) };
 const startupSchema = z.object({
@@ -81,11 +95,11 @@ function spawnDefaultBackend(
   if (process.platform === "win32") {
     // `uv run dataagent` launches Scripts\dataagent.exe, a console shim that always
     // allocates its own window (windowsHide on the uv parent does not propagate).
-    // Spawn the venv interpreter with -m restapi so CREATE_NO_WINDOW applies.
+    // Spawn the venv interpreter with -m serve so CREATE_NO_WINDOW applies.
     const serveAt = argv.indexOf("serve");
     const serveArgs = serveAt >= 0 ? argv.slice(serveAt) : ["serve", "--stdio-ready"];
     const python = windowsPython ?? windowsVenvPython(backendPackage);
-    return spawn(python, ["-m", "restapi", ...serveArgs], { ...options, ...backendSpawnOptions() });
+    return spawn(python, ["-m", "serve", ...serveArgs], { ...options, ...backendSpawnOptions() });
   }
   return spawn("uv", argv, { ...options, ...backendSpawnOptions() });
 }
@@ -114,7 +128,9 @@ export async function startV2Backend(options: {
   for (const path of workspaces) args.push("--workspace", resolve(cwd, path));
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
-  const env = { ...process.env, DATAAGENT_V2_INSTANCE_ID: instanceId };
+  const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_V2_INSTANCE_ID: instanceId };
+  delete env.API_HOST;
+  delete env.API_PORT;
   const launchOpts = { cwd, env };
   let windowsPython: string | undefined;
   if (!options.spawnBackend && process.platform === "win32") {

@@ -109,8 +109,6 @@ async function main() {
     ...process.env,
     WEB_HOST: "127.0.0.1",
     WEB_PORT: String(webPort),
-    API_HOST: "127.0.0.1",
-    API_PORT: String(apiPort),
     AUTH_PUBLIC_BASE_URL: `http://127.0.0.1:${webPort}`,
     AUTH_SESSION_SECRET: FIXTURE_SECRET,
     SECRET_MASTER_KEY: FIXTURE_SECRET,
@@ -126,6 +124,12 @@ async function main() {
     console.log(`[smoke:native-deploy] checkout=${tempRoot}`);
     console.log(`[smoke:native-deploy] web=${webPort} api=${apiPort}`);
     await copyCheckout(tempRoot);
+    const home = path.join(tempRoot, "dataagent-home");
+    await mkdir(home, { recursive: true });
+    await writeFile(
+      path.join(home, "config.json"),
+      `${JSON.stringify({ server: { host: "127.0.0.1", port: apiPort } })}\n`
+    );
 
     // Inject fixture secret into the same redacting deploy-log path used in production.
     const redactProbe = await createDeployLogWriter(tempRoot, { timestamp: "smoke-redact-probe" });

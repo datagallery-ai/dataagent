@@ -17,7 +17,6 @@ from dataagent.settings import (
     ModelSelection,
     ModelSettings,
     PluginSettings,
-    ServerSettings,
     Settings,
 )
 from dataagent.strict_json import read_json
@@ -27,17 +26,20 @@ EXAMPLE = Path(__file__).resolve().parents[1] / "examples/config.json"
 
 def test_full_config_example_explicitly_covers_all_settings_fields():
     raw = read_json(EXAMPLE)
+    assert "server" not in raw
     sections = (
         (raw, Settings),
         (raw["dataagent"], AgentSettings),
         (raw["dataagent"]["model"], ModelSelection),
         (raw["dataagent"]["limits"], Limits),
         (raw["plugins"], PluginSettings),
-        (raw["server"], ServerSettings),
         *((model, ModelSettings) for model in raw["models"].values()),
     )
     for values, schema in sections:
-        assert set(values) == set(schema.model_fields), schema.__name__
+        expected = set(schema.model_fields)
+        if schema is Settings:
+            expected -= {"server"}
+        assert set(values) == expected, schema.__name__
     hooks = normalize_hooks(raw["dataagent"]["hooks"])
     assert set().union(*(set(hook) for hook in hooks)) == set(HookSpec.model_fields)
 

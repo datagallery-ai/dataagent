@@ -1,3 +1,5 @@
+"""Product routes mounted on the same process as the conversation engine."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -7,22 +9,29 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from datafoundry_api.conversation import (
-    ConversationMount,
-    conversation_status,
-    is_conversation_path,
-)
-from datafoundry_api.envelopes import error, success
-from datafoundry_api.settings import Settings
+from serve.envelopes import error, success
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Create the control plane. Conversation routes from agentkit run in this same process."""
-    resolved = settings or Settings.from_env()
-    conversation = ConversationMount()
-    app = FastAPI(title="DataFoundry API", version="0.3.0", lifespan=conversation.lifespan)
-    app.state.settings = resolved
-    app.add_middleware(ConversationReadyGuard)
+def is_conversation_path(path: str) -> bool:
+    """True for agent routes that require a live engine."""
+    if path in {"/dataagent/stream", "/api/copilotkit", "/sessions"}:
+        return True
+    return path.startswith(("/dataagent/stream/", "/api/copilotkit/", "/sessions/"))
+
+
+def conversation_status(app: FastAPI) -> dict:
+    """Report whether the in-process engine is ready."""
+    runtime = getattr(getattr(app.state, "agents", None), "runtime", None)
+    if runtime is None:
+        return {"ready": False}
+    from serve.app import agentkit_health_body
+
+    instance_id = getattr(app.state, "conversation_instance_id", "")
+    return {"ready": True, **agentkit_health_body(runtime, instance_id)}
+
+
+def register_product_routes(app: FastAPI) -> None:
+    """Register /healthz, /ready, and /api/v1 routes. Conversation routes stay separate."""
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
@@ -55,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def session_conversation(thread_id: str) -> JSONResponse:
         if getattr(app.state, "sessions", None) is None or getattr(app.state, "agents", None) is None:
             return error("CONVERSATION_UNAVAILABLE", "对话引擎未就绪。", 503)
-        from restapi.app import load_session_checkpoint
+        from serve.app import load_session_checkpoint
 
         try:
             row, messages = await load_session_checkpoint(
@@ -86,22 +95,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> Response:
-        try:
-            from restapi.app import cancel_active_run
-        except ImportError:
-            return error("RESOURCE_NOT_FOUND", "该运行未在执行。", 404)
+        from serve.app import cancel_active_run
+
         if not cancel_active_run(app, run_id):
             return error("RESOURCE_NOT_FOUND", "该运行未在执行。", 404)
         return Response(status_code=204)
 
-    conversation.register(app)
+
+def register_not_found(app: FastAPI) -> None:
+    """Catch-all registered after real routes so unknown paths use the error envelope."""
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     async def not_found(path: str) -> JSONResponse:
         del path
         return error("RESOURCE_NOT_FOUND", "Route not found.", 404)
-
-    return app
 
 
 class ConversationReadyGuard:

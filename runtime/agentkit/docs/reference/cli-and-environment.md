@@ -2,7 +2,7 @@
 
 ## `dataagent serve`
 
-入口是 `restapi.__main__:main`。`python -m restapi` 调用同一实现。
+入口是 `serve.__main__:main`。`python -m serve` 调用同一实现。这是 Web 和当前 TUI 共用的后端。
 
 ```bash
 uv run --project runtime/agentkit dataagent serve \
@@ -23,7 +23,7 @@ uv run --project runtime/agentkit dataagent serve \
 | `--env-file` | 无 | 后端读取的环境文件。文件必须存在 |
 | `--stdio-ready` | 关 | TUI 内部协议。帮助里隐藏 |
 
-没有 `--host`。监听地址只来自配置，且只能是 `127.0.0.1`。端口来自 `server.port`。
+没有 `--host`。`npm run dev`、`./deploy.sh`、网页转发和 TUI 都读 `config.json` 的 `server.host` 与 `server.port`。默认 `127.0.0.1:8790`。`--stdio-ready` 仍给当前 TUI 的一键拉起使用。
 
 SDK 的 `LaunchOptions` 还有 `cwd`、`init_home` 和单个 `workspace`。`workspace` 与 `workspaces` 不能同时传。CLI 只暴露可重复的 `--workspace`。CLI 启动使用 `init_home=True`。SDK 默认 `init_home=False`。
 

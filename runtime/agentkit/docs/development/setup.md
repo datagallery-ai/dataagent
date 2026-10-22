@@ -6,7 +6,7 @@
 uv sync --project runtime/agentkit --locked
 ```
 
-Python 要求 `>=3.12,<3.13`。项目用 hatchling 打包 `dataagent` 和 `restapi`。控制台命令是 `dataagent`。
+Python 要求 `>=3.12,<3.13`。项目用 hatchling 打包 `dataagent` 和 `serve`。控制台命令是 `dataagent`。
 
 Node 侧只在你要跑 TUI 时需要：
 
@@ -25,7 +25,7 @@ uv run --project runtime/agentkit dataagent serve \
   --workspace "$PWD"
 ```
 
-然后看 `http://127.0.0.1:8790/healthz`。
+然后看 `http://127.0.0.1:8790/healthz`。端口来自 `config.json` 的 `server.port`。
 
 SDK 路径不初始化 Home。调试配置层时显式传入 `LaunchOptions(config=..., env_file=..., init_home=True)`。
 
@@ -33,7 +33,7 @@ SDK 路径不初始化 Home。调试配置层时显式传入 `LaunchOptions(conf
 
 - `dataagent.bootstrap.startup.prepare_runtime`：配置和路径
 - `dataagent.extensions.compiler.compile_extensions`：插件编译
-- `restapi.app.create_app` 里的 `stream`：一轮 HTTP
+- `serve.app.create_app` 里的 `stream`：一轮 HTTP
 - `dataagent.agent.build_agent`：图装配
 
 `import dataagent` 不会加载 LangChain。要在导入后的属性上断点，先访问 `build_agent` 或 `create_agent`。

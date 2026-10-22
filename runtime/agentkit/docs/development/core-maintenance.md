@@ -16,7 +16,7 @@
 | `dataagent/bootstrap/`、`settings.py`、`declarations.py` | 配置、路径和扩展声明 |
 | `dataagent/extensions/`、`agent.py`、`prompts/` | 把声明编译进图，并加上限额、会话目录和 Trace |
 | `dataagent/semantic_client/` | 语义服务 HTTP 客户端 |
-| `restapi/` | 本机 HTTP 服务 |
+| `serve/` | 本机 HTTP 服务，同时提供产品路由和对话路由 |
 
 宿主策略放在 `build_native_middleware` 和提示中，执行循环使用 `create_deep_agent`。
 

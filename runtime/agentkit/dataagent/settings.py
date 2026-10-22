@@ -87,10 +87,20 @@ class PluginSettings(StrictModel):
 
 
 class ServerSettings(StrictModel):
-    """The only section owned by the REST host; the core validates it but never reads it."""
+    """Listen address. Web and deploy read these same fields from config.json."""
 
-    host: Literal["127.0.0.1"] = "127.0.0.1"
+    host: str = "127.0.0.1"
     port: int = Field(default=8790, ge=1, le=65535)
+
+    @field_validator("host")
+    @classmethod
+    def bind_host(cls, value: str) -> str:
+        host = value.strip()
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1].strip()
+        if not host or any(char.isspace() for char in host) or "/" in host:
+            raise ValueError("server.host must be a bind address such as 127.0.0.1 or 0.0.0.0.")
+        return host
 
 
 class SemanticTLSSettings(StrictModel):

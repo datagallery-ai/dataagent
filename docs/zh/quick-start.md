@@ -33,7 +33,7 @@ cd datafoundry
 
 ### 交互与配置规则
 
-- 首次部署：脚本生成 `.env` 与 `apps/web/.env.local`，并确认端口 / 公开访问地址。部署阶段不要求填写模型 Key。
+- 首次部署：脚本生成 `.env` 与 `apps/web/.env.local`，并确认端口 / 公开访问地址。Home 还没有 `config.json` 时，按默认模板写入完整配置，再把所选监听地址写入 `server.host` 和 `server.port`。已有配置只更新这两个字段；文件无法解析时停止写入并保留原文件。部署阶段不要求填写模型 Key。
 - 之后再执行交互式 `./deploy.sh` / `./deploy.sh deploy`：若已有完整 `.env`，会跳过配置问答。
 - 需要重新配置端口或公开访问地址时（保留现有密钥，并先备份 `.env`）：
 

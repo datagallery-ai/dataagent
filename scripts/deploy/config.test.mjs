@@ -19,9 +19,10 @@ import {
 test("creates safe defaults without model settings", () => {
   const result = ensureDeploymentEnvironment("", { randomSecret: () => "generated-secret-value" });
   assert.equal(result.env.WEB_HOST, "127.0.0.1");
-  assert.equal(result.env.API_HOST, "127.0.0.1");
   assert.equal(result.env.WEB_PORT, "3000");
-  assert.equal(result.env.API_PORT, "8787");
+  assert.equal(result.env.API_HOST, undefined);
+  assert.equal(result.env.API_PORT, undefined);
+  assert.doesNotMatch(result.text, /API_HOST|API_PORT/);
   assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "http://127.0.0.1:3000");
   assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
   assert.equal(result.env.AUTH_EMAIL_DELIVERY, "test");
@@ -49,9 +50,10 @@ test("strips legacy DATAFOUNDRY_AUTH_MODE from upgraded env text", () => {
   assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
   assert.equal(result.env.NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE, undefined);
   assert.equal(result.env.CUSTOM_VALUE, "keep-me");
-  assert.doesNotMatch(result.text, /DATAFOUNDRY_AUTH_MODE|NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE/);
+  assert.doesNotMatch(result.text, /DATAFOUNDRY_AUTH_MODE|NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE|API_PORT/);
   assert.match(result.text, /^CUSTOM_VALUE=keep-me$/m);
   assert.deepEqual(result.removedKeys.sort(), [
+    "API_PORT",
     "DATAFOUNDRY_AUTH_MODE",
     "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE"
   ]);
@@ -86,12 +88,12 @@ test("preserves existing secrets and unrelated values", () => {
 
 test("renders same-origin Web BFF configuration", () => {
   const text = renderWebEnvironment({
-    API_HOST: "127.0.0.1",
-    API_PORT: "8877"
+    DATAAGENT_HOME: "/no/such/dataagent-home",
+    DATAAGENT_CONFIG: new URL("../fixtures/server-listen.json", import.meta.url).pathname,
   });
   assert.match(text, /NEXT_PUBLIC_AGENT_RUNTIME_URL=$/m);
   assert.match(text, /NEXT_PUBLIC_CONFIG_API_URL=$/m);
-  assert.match(text, /API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8877/);
+  assert.match(text, /API_PROXY_TARGET=http:\/\/0\.0\.0\.0:8877/);
   assert.doesNotMatch(text, /NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE/);
 });
 
@@ -207,7 +209,6 @@ test("ensureDeploymentEnvironment can skip secret generation", () => {
 test("deploymentConfigGaps names every missing or placeholder variable", () => {
   assert.deepEqual(deploymentConfigGaps({}), [
     "WEB_PORT",
-    "API_PORT",
     "AUTH_PUBLIC_BASE_URL",
     "AUTH_REGISTRATION_MODE",
     "AUTH_SESSION_SECRET",

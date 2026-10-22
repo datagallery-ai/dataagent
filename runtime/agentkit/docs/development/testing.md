@@ -19,7 +19,7 @@ uv run --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
 | 语义配置和客户端 | `test_semantic_configuration.py`、`test_semantic_client.py` |
 | 会话、产物、Trace | `test_session_isolation.py`、`test_outputs.py`、`test_traces.py` |
 | 扩展刷新 | `test_agent_refresh.py` |
-| HTTP | `test_api.py` |
+| HTTP | `test_api.py`、`test_product_api.py` |
 | 示例仍能装配 | `test_examples.py` |
 
 `test_product_e2e.py` 里未标 `live` 的用例走脚本化的提供者，覆盖 TUI、后端、工具、Skill、子代理、Checkpoint 和重启。标了 `live` 的用例才打真实提供者。

@@ -6,7 +6,7 @@ AgentKit 把一次本地运行分成五层。上层可以调用下层。下层�
 flowchart TB
   subgraph hosts [宿主]
     TUI[apps/tui]
-    REST[restapi]
+    REST[serve]
     SDK[Python SDK]
   end
   subgraph product [产品装配]
@@ -49,7 +49,7 @@ flowchart TB
 | `agent.py` | 加上限额、会话目录和 Trace，调用 `create_deep_agent` |
 | `models.py` / `semantic_client/` | 提供模型客户端和语义 HTTP 客户端 |
 | `client.py` | 向 SDK 调用和 AG-UI 适配器注入运行上下文 |
-| `restapi/` | 提供健康检查、会话索引和事件流 |
+| `serve/` | 提供健康检查、产品路由、会话索引和事件流 |
 | `dataagent/core/` | 提供 Deep Agents 图、文件工具、摘要和子代理 |
 
 依赖方向：宿主 → `client`/`agent` → `extensions` 与 `core`。`bootstrap` 只依赖 `settings` 和 `declarations`。`import dataagent` 保持轻量，LangChain 相关对象懒加载。

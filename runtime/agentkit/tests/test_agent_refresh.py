@@ -11,7 +11,7 @@ from test_home_resources import skill
 from test_mcp import stdio
 
 from dataagent import LaunchOptions, extension_revision, prepare_runtime
-from restapi import agents
+from serve import agents
 
 
 def home_config(runtime, value):
@@ -99,7 +99,8 @@ async def test_install_enabled_plugin_and_remove_its_tools(runtime):
         home_config(runtime, {"plugins": {"enabled": ["common", "extra"]}})
         await ask(client)
         assert "extra__ping" in model.tool_schemas[-1]
-        assert (await client.get("/healthz")).json()["plugins"] == ["common", "extra"]
+        conversation = (await client.get("/healthz")).json()["data"]["conversation"]
+        assert conversation["plugins"] == ["common", "extra"]
         home_config(runtime, {"plugins": {"enabled": ["common"]}})
         await ask(client)
         assert "extra__ping" not in model.tool_schemas[-1]

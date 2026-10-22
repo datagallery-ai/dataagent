@@ -52,9 +52,11 @@ export async function runStack({ mode, args = [] }) {
         : ["--prefix", "apps/web", "run", webScript];
     const webEnv = {
       ...process.env,
-      ...runtimeConfig,
       ...webProcessEnvironment(runtimeConfig),
+      API_PROXY_TARGET: `http://${runtimeConfig.API_HOST}:${runtimeConfig.API_PORT}`,
     };
+    delete webEnv.API_HOST;
+    delete webEnv.API_PORT;
     children.push(spawnProcess("DataFoundry Web", "npm", command, webEnv));
   }
 
