@@ -5,6 +5,7 @@ import { afterEach, it } from 'node:test';
 import { stripVTControlCharacters } from 'node:util';
 import { render } from 'ink';
 import type { BaseEvent } from '@ag-ui/core';
+import type { AgentEvent } from '../protocol/agui-events.js';
 import { App } from './App.js';
 import { store } from '../state/store.js';
 import { getMessageTextContent } from '../state/message-history.js';
@@ -264,6 +265,60 @@ async function submit(current: ReturnType<typeof view>, text: string) {
 }
 const transcript = () => store.getState().messages.map(getMessageTextContent).join('\n');
 const summaries = () => store.getState().messages.filter((message) => message.runSummary);
+
+it('V2 shows native child progress before the task, expands steps and keeps child output out of the answer', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const current = view({ async *runAgent(input) {
+    const events = [
+      { type: 'SUBAGENT_STARTED', subagentRunId: 'child', parentToolCallId: 'delegate', name: 'nl2sql' },
+      { type: 'STEP_STARTED', subagentRunId: 'child', stepName: 'perceptor' },
+      { type: 'STEP_FINISHED', subagentRunId: 'child', stepName: 'perceptor' },
+      { type: 'STEP_STARTED', subagentRunId: 'child', stepName: 'generator' },
+      { type: 'TEXT_MESSAGE_CONTENT', subagentRunId: 'child', messageId: 'private', delta: 'child-private-answer' },
+      { type: 'REASONING_MESSAGE_CONTENT', subagentRunId: 'child', messageId: 'private-reasoning', delta: 'child-private-reasoning' },
+      { type: 'TOOL_CALL_START', subagentRunId: 'child', toolCallId: 'child-tool', toolCallName: 'read_file' },
+    ];
+    for (const event of events) yield event as AgentEvent;
+    await gate;
+    for (const event of [
+      { type: 'SUBAGENT_FINISHED', subagentRunId: 'child' },
+      { type: 'TOOL_CALL_START', toolCallId: 'delegate', toolCallName: 'task' },
+      { type: 'TOOL_CALL_ARGS', toolCallId: 'delegate', delta: '{"subagent_type":"nl2sql"}' },
+      { type: 'TOOL_CALL_RESULT', toolCallId: 'delegate', messageId: 'result', content: '{"error":"Query failed"}' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'root-answer', delta: 'Root answer' },
+      { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId },
+    ]) yield event as AgentEvent;
+  } }, 80, 34);
+  await tick();
+  try {
+    await submit(current, 'How many tables?');
+    await until(() => current.frames.join('').includes('generator'));
+    assert.equal(store.getState().toolCalls.length, 1);
+    assert.equal(store.getState().toolCalls[0]?.id, 'delegate');
+    assert.equal(store.getState().runStatus, 'running');
+    const before = store.getState().toolCalls[0]?.progress;
+    store.handleLiveRunEvent({ type: 'SUBAGENT_ERROR', subagentRunId: 'child', message: 'stale', _clientRunId: 'old-run' });
+    assert.equal(store.getState().toolCalls[0]?.progress, before, 'old stream cannot update current progress');
+    current.stdin.write('draft');
+    await tick();
+    current.stdin.write('\x0f');
+    await until(() => current.frames.join('').includes('perceptor'));
+    assert.doesNotMatch(transcript(), /child-private/);
+    assert.doesNotMatch(current.frames.join(''), /child-private|child-tool/);
+    release();
+    await until(() => store.getState().runStatus === 'completed');
+    assert.equal(store.getState().toolCalls.length, 1);
+    assert.equal(store.getState().toolCalls[0]?.status, 'failed');
+    assert.equal(store.getState().toolCalls[0]?.progress?.steps.length, 2);
+    assert.equal(summaries().length, 1);
+    assert.match(transcript(), /Root answer/);
+    assert.doesNotMatch(transcript(), /child-private/);
+    await until(() => latestOutputFrame(current).includes('draft'));
+  } finally {
+    release();
+  }
+});
 
 it('V2 keeps repeated deltas and interleaved tools once across repeated snapshots', async () => {
   const current = view({ async *runAgent(input) {

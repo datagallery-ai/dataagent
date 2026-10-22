@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { BaseEvent } from "@ag-ui/core";
+import type { AgentEvent } from "./agui-events.js";
 import { AguiClient } from "./agui-client.js";
 import type { RunAgentInput } from "./types.js";
 
@@ -13,6 +13,32 @@ const input: RunAgentInput = {
 };
 const started = { type: "RUN_STARTED", threadId: "thread", runId: "run" };
 const finished = { type: "RUN_FINISHED", threadId: "thread", runId: "run" };
+
+it('preserves native subagent identity and lifecycle through chunked SSE', async () => {
+  const events = [started,
+    { type: 'SUBAGENT_STARTED', subagentRunId: 'child', name: 'nl2sql', parentToolCallId: 'task' },
+    { type: 'STEP_STARTED', subagentRunId: 'child', stepName: 'generator' },
+    { type: 'STEP_FINISHED', subagentRunId: 'child', stepName: 'generator' },
+    { type: 'SUBAGENT_STARTED', subagentRunId: 'nested', name: '校验', parentSubagentRunId: 'child' },
+    { type: 'SUBAGENT_ERROR', subagentRunId: 'nested', message: 'Query failed', code: 'QueryError' },
+    { type: 'SUBAGENT_FINISHED', subagentRunId: 'child', outcome: { type: 'success' } }, finished,
+  ];
+  const client = new AguiClient('http://127.0.0.1/stream', async () => stream(events, true));
+  const seen: AgentEvent[] = [];
+  for await (const event of client.runAgent(input)) seen.push(event);
+  assert.deepEqual(seen, events);
+});
+
+it('rejects malformed native lifecycle instead of silently losing progress', async () => {
+  const client = new AguiClient('http://127.0.0.1/stream', async () => stream([
+    started, { type: 'SUBAGENT_STARTED', name: 'nl2sql' }, finished,
+  ]));
+  const seen: AgentEvent[] = [];
+  await assert.rejects(async () => {
+    for await (const event of client.runAgent(input)) seen.push(event);
+  }, { code: 'STREAM_ERROR' });
+  assert.deepEqual(seen, [started]);
+});
 
 function stream(events: object[], byteByByte = false) {
   const bytes = new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\r\n\r\n`).join(""));
@@ -67,7 +93,7 @@ describe("V2 direct AG-UI transport", () => {
 
   it("rejects duplicate terminal events before reporting success", async () => {
     const client = new AguiClient("http://127.0.0.1:8787/dataagent/stream", async () => stream([started, finished, finished]));
-    const events: BaseEvent[] = [];
+    const events: AgentEvent[] = [];
     await assert.rejects(async () => {
       for await (const event of client.runAgent(input)) events.push(event);
     }, /after the terminal/);

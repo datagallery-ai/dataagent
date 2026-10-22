@@ -1,4 +1,4 @@
-import { EventSchemas, type BaseEvent } from "@ag-ui/core";
+import { parseAgentEvent, type AgentEvent } from "./agui-events.js";
 import type { AgentClient, RunAgentInput } from "./types.js";
 
 export class AguiClientError extends Error {
@@ -23,7 +23,7 @@ export class AguiClient implements AgentClient {
     this.controllers.clear();
   }
 
-  async *runAgent(input: RunAgentInput): AsyncGenerator<BaseEvent> {
+  async *runAgent(input: RunAgentInput): AsyncGenerator<AgentEvent> {
     const user = input.messages.filter((message) => message.role === "user").at(-1);
     if (!user) throw new AguiClientError("A new user message is required", "VALIDATION_ERROR");
     const controller = new AbortController();
@@ -54,7 +54,7 @@ export class AguiClient implements AgentClient {
       reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let terminal: BaseEvent | undefined;
+      let terminal: AgentEvent | undefined;
       while (true) {
         const { done, value } = await reader.read();
         buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
@@ -65,9 +65,9 @@ export class AguiClient implements AgentClient {
           const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:"))
             .map((line) => line.slice(5).trimStart()).join("\n");
           if (!data || data === "[DONE]") continue;
-          let event: BaseEvent;
+          let event: AgentEvent;
           try {
-            event = EventSchemas.parse(JSON.parse(data));
+            event = parseAgentEvent(JSON.parse(data));
           } catch {
             throw new AguiClientError("Invalid AG-UI event", "STREAM_ERROR");
           }

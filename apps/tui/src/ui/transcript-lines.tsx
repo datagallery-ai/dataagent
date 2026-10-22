@@ -8,6 +8,7 @@ import type {
   LiveToolCallRecord,
 } from '../state/index.js';
 import { InlineToolCall } from './InlineToolCall.js';
+import { SubagentProgressLine, stepHistoryLabel } from './SubagentProgress.js';
 import { Spinner } from './components/ProgressView.js';
 import {
   graphemeWidth,
@@ -385,6 +386,10 @@ function pushToolCallLines(
   push: (key: string, node: React.ReactNode) => void,
 ): void {
   push(keyBase, <InlineToolCall key={keyBase} toolCall={toolCall} showName maxWidth={width} />);
+  if (toolCall.progress && (toolCall.status === 'running' || toolCall.status === 'pending')) {
+    const key = `${keyBase}:progress`;
+    push(key, <SubagentProgressLine key={key} progress={toolCall.progress} width={width} />);
+  }
   const detailWidth = Math.max(1, width - 4);
   if (compactMode) {
     // The preview is deliberately bounded; Ctrl+O retains the existing detail view.
@@ -403,6 +408,10 @@ function pushToolCallLines(
     return;
   }
   const parameterRows = toolParameterRows(toolCall);
+  if (toolCall.progress?.steps.length) {
+    pushPayloadBlock('Steps', toolCall.progress.steps.map((step) => stepHistoryLabel(step, toolCall.progress!.steps)),
+      width, `${keyBase}:steps`, push);
+  }
   if (parameterRows.length > 0) pushPayloadBlock('Input', parameterRows, width, `${keyBase}:args`, push);
   const resultRows = toolResultRows(toolCall);
   if (resultRows.length > 0) pushPayloadBlock('Output', resultRows, width, `${keyBase}:result`, push);

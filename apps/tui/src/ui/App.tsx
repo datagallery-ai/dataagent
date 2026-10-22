@@ -1532,6 +1532,14 @@ export const App: React.FC<AppProps> = ({
             continue;
           }
 
+          // Native child progress belongs beneath its task. Never append a
+          // child's text/reasoning or terminal event to the root conversation.
+          if (typeof runtimeEvent.subagentRunId === 'string' || runtimeEvent.type?.startsWith('SUBAGENT_')) {
+            if (runtimeEvent.type === 'SUBAGENT_STARTED') startNextTextSegment();
+            storeCurrentRunEvent(runtimeEvent);
+            continue;
+          }
+
           // Handle specific event types for message streaming
           if (isReasoningStartEvent(runtimeEvent)) {
             flushTextBuffer();

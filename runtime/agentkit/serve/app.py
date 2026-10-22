@@ -99,6 +99,7 @@ def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
         "instanceId": instance_id,
         "model": runtime.model_name,
         "plugins": runtime.settings.plugins.enabled,
+        "home": str(runtime.paths.home),
         "user": runtime.paths.user_id,
         "timeoutSeconds": runtime.timeout_seconds,
     }
@@ -492,7 +493,7 @@ def register_conversation_routes(
             adapter = agent.as_agui(
                 name="dataagent-v2",
                 emit_raw_events=False,
-                subagent_visibility="hidden",
+                subagent_visibility="attributed",
             )
             adapter.config = config
             upstream = None
@@ -519,6 +520,17 @@ def register_conversation_routes(
                             EventType.STATE_SNAPSHOT,
                         ):
                             continue
+                        # Keep AG-UI's native lifecycle/step identities. Child text,
+                        # tools and state stay out of the parent conversation stream.
+                        if getattr(event, "subagent_run_id", None) and event.type not in (
+                            EventType.SUBAGENT_STARTED, EventType.SUBAGENT_FINISHED,
+                            EventType.SUBAGENT_ERROR, EventType.STEP_STARTED, EventType.STEP_FINISHED,
+                        ):
+                            continue
+                        if event.type == EventType.SUBAGENT_ERROR:
+                            event.message = safe_error(RuntimeError(event.message), secrets)["message"]
+                            if event.code:
+                                event.code = safe_error(RuntimeError(event.code), secrets)["message"]
                         yield encoder.encode(event)
                     if terminal is None:
                         raise RuntimeError(
