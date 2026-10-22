@@ -9,6 +9,8 @@ import { ChatArea } from './ChatArea.js';
 import { buildChatLines, chatContentWidth } from './transcript-lines.js';
 import { textWidth } from './text-width.js';
 import { StatusBar } from './StatusBar.js';
+import { SubagentProgressLine } from './SubagentProgress.js';
+import type { SubagentProgress } from '../state/subagent-progress.js';
 
 const text = (id: string, role: 'user' | 'assistant', content: string): DisplayMessage => ({
   id, role, timestamp: 1, elements: [{ type: 'text', content, timestamp: 1 }],
@@ -26,6 +28,41 @@ const action: DisplayMessage = {
 const renderPlain = (node: React.ReactNode, columns: number) => stripVTControlCharacters(
   renderToString(<Box width={columns} flexDirection="column">{node}</Box>, { columns }),
 );
+
+for (const [agentName, stepName] of [['nl2sql', 'validator'], ['report_writer', 'generator']] as const)
+for (const columns of [60, 80, 160]) it(`${agentName} progress uses backend step names, one bounded row and retry history at ${columns} columns`, (t) => {
+  let now = 2000;
+  t.mock.method(performance, 'now', () => now);
+  const progress: SubagentProgress = {
+    agentName, nextStepId: 2, updatedAtMs: 1000, status: 'running',
+    runs: [{ id: 'child', name: agentName, status: 'running' }],
+    steps: [
+      { id: 'first', subagentRunId: 'child', name: stepName, status: 'completed', startedAtMs: 0, durationMs: 300 },
+      { id: 'second', subagentRunId: 'child', name: stepName, status: 'running', startedAtMs: 1000 },
+    ],
+  };
+  const delegated: LiveToolCallRecord = { ...tool, name: 'task', status: 'running', result: undefined, progress };
+  const contentWidth = chatContentWidth(columns);
+  const lines = (compactMode: boolean) => buildChatLines({
+    messages: [action], toolCalls: [delegated], artifacts: [], columns, compactMode,
+  });
+  assert.equal(lines(true).filter((line) => line.key.endsWith(':progress')).length, 1);
+  assert.ok(renderPlain(lines(true).map((line) => line.node), contentWidth).includes(`${stepName} (attempt 2)`));
+  assert.ok(renderPlain(lines(false).map((line) => line.node), contentWidth).includes(`✓ ${stepName} · 0.3s`));
+  for (const line of lines(false)) {
+    const frame = renderPlain(line.node, contentWidth);
+    assert.equal(frame.split('\n').length, 1);
+    assert.ok(textWidth(frame) <= contentWidth);
+  }
+  const frames = [10_000, 11_000, 60_000, 61_000].map((time) => {
+    now = time;
+    return renderPlain(<SubagentProgressLine progress={progress} width={contentWidth} />, contentWidth);
+  });
+  assert.equal(new Set(frames.map(textWidth)).size, 1, 'timer changes keep the right edge fixed');
+  assert.match(frames.at(-1)!, /waiting/);
+  delegated.status = 'success';
+  assert.equal(lines(true).filter((line) => line.key.endsWith(':progress')).length, 0);
+});
 
 for (const columns of [60, 80, 160]) for (const compactMode of [true, false]) it(`conversation keeps exact rows at ${columns} columns (compact: ${compactMode})`, () => {
   const messages = [

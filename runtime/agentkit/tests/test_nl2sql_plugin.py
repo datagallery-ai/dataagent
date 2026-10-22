@@ -19,6 +19,7 @@ native ``task`` tool, then assertions on the JSON reply the compiled graph
 returns. The plugin's business-parameter validation is covered separately.
 """
 
+import asyncio
 import csv
 import json
 import sqlite3
@@ -75,6 +76,60 @@ async def test_task_end_to_end_on_sqlite(tmp_path):
     assert len(plugin_model.requests) == 3
     assert all(isinstance(request[0], SystemMessage) for request in plugin_model.requests)
     assert all(isinstance(request[1], HumanMessage) for request in plugin_model.requests)
+
+
+async def test_native_stream_reports_nl2sql_steps_while_model_is_waiting(tmp_path):
+    from ag_ui.core import RunAgentInput, UserMessage
+    from ag_ui_langgraph import LangGraphAgent
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    release = asyncio.Event()
+    generating = asyncio.Event()
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            await release.wait()
+            return await super()._agenerate(messages, stop, run_manager, **kwargs)
+
+    db, schema = _sqlite_fixture(tmp_path)
+    graph = _build_agent(
+        _plugin_params(db, schema),
+        ScriptedModel(responses=[
+            call("task", {"subagent_type": "nl2sql", "description": "count staff"}, id="delegate"),
+            AIMessage(content="root answer"),
+        ]),
+        WaitingModel(responses=list(_PLUGIN_RESPONSES)),
+    )
+    graph.checkpointer = InMemorySaver()
+    adapter = LangGraphAgent(name="test", graph=graph, emit_raw_events=False, subagent_visibility="attributed")
+    body = RunAgentInput(thread_id="thread", run_id="root", messages=[UserMessage(id="u", content="count staff")],
+                         tools=[], context=[], state={}, forwarded_props={})
+    updates = []
+
+    async def consume():
+        async for event in adapter.run(body):
+            if event is not None and getattr(event, "subagent_run_id", None):
+                updates.append(event.model_dump(mode="json", by_alias=True, exclude_none=True))
+                if event.type == "STEP_STARTED" and event.step_name == "generator":
+                    generating.set()
+
+    task = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(generating.wait(), 5)
+        assert not task.done()
+        child = next(event for event in updates if event["type"] == "SUBAGENT_STARTED")
+        assert child["parentToolCallId"] == "delegate"
+        assert updates[-1]["subagentRunId"] == child["subagentRunId"]
+        release.set()
+        await asyncio.wait_for(task, 5)
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert [event["stepName"] for event in updates if event["type"] == "STEP_STARTED"] == [
+        "perceptor", "generator", "validator", "reflector", "executor", "selector",
+    ]
+    assert updates[-1]["type"] == "SUBAGENT_FINISHED"
 
 
 async def test_task_reports_truncation_with_bounded_fetch(tmp_path):

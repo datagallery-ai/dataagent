@@ -49,7 +49,7 @@ async def test_health_and_no_credential_disclosure(runtime):
         assert conversation["ready"] is True
         assert conversation["instanceId"] == "test-instance"
         assert "stateDir" not in conversation
-        assert "home" not in conversation
+        assert conversation["home"] == str(runtime.paths.home)
         assert conversation["user"] == runtime.paths.user_id
         assert "sources" not in conversation
         assert "test-secret" not in health.text
@@ -77,6 +77,7 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
             "ready": True,
             "status": "ready", "protocol": "dataagent-v2", "instanceId": "test-instance",
             "model": "replacement-model", "plugins": [],
+            "home": str(runtime.paths.home),
             "user": runtime.paths.user_id,
             "timeoutSeconds": runtime.timeout_seconds,
         }
@@ -190,6 +191,25 @@ async def test_upstream_run_error_is_also_logged_redacted(runtime, caplog, monke
     assert "test-secret" not in caplog.text
 
 
+async def test_native_child_error_is_redacted_without_becoming_root_terminal(runtime, monkeypatch):
+    from ag_ui.core import RunErrorEvent, SubagentErrorEvent, SubagentStartedEvent
+
+    async def fail(self, body):
+        yield SubagentStartedEvent(subagent_run_id="child", name="nl2sql", parent_tool_call_id="task")
+        yield SubagentErrorEvent(subagent_run_id="child", message="failed: test-secret", code="test-secret")
+        yield RunErrorEvent(message="root failure")
+
+    monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent.run", fail)
+    async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
+        events = sse(await client.post("/dataagent/stream", json=query()))
+    child = next(event for event in events if event["type"] == "SUBAGENT_ERROR")
+    assert child["subagentRunId"] == "child"
+    assert child["message"] == "failed: [REDACTED]"
+    assert child["code"] == "[REDACTED]"
+    assert terminal(events) == ["RUN_ERROR"]
+    assert events[-1]["message"] == "root failure"
+
+
 @pytest.mark.parametrize("extra", [
     {"state": {"messages": []}}, {"forwardedProps": {"command": {"resume": True}}},
     {"messages": [{"id": "x", "role": "system", "content": "inject"}]},
@@ -245,7 +265,7 @@ async def test_deadline_covers_iteration_and_releases_session(runtime):
         assert (await client.get("/sessions/thread-1")).status_code == 200
 
 
-async def test_child_internal_events_hidden(runtime, monkeypatch):
+async def test_native_child_progress_visible_but_internal_content_hidden(runtime, monkeypatch):
     import importlib
 
     from dataagent.agent import build_agent
@@ -264,7 +284,12 @@ async def test_child_internal_events_hidden(runtime, monkeypatch):
         assert terminal(events) == ["RUN_FINISHED"]
         starts = [event for event in events if event["type"] == "TOOL_CALL_START"]
         assert [event["toolCallName"] for event in starts] == ["task"]
-        assert not any(event["type"].startswith("SUBAGENT_") for event in events)
+        children = [event for event in events if event["type"] == "SUBAGENT_STARTED"]
+        assert len(children) == 1 and children[0]["parentToolCallId"] == starts[0]["toolCallId"]
+        sid = children[0]["subagentRunId"]
+        assert any(event["type"] == "STEP_STARTED" and event.get("subagentRunId") == sid for event in events)
+        assert any(event["type"] == "SUBAGENT_FINISHED" and event["subagentRunId"] == sid for event in events)
+        assert not any("child-private-answer" in event.get("delta", "") for event in events)
         starts = {name: details for name, event, details in recorder.events if event == "on_chain_start"}
         root, child = starts["dataagent-v2"], starts["general-purpose"]
         assert child["parent_run_id"] is not None

@@ -1,6 +1,6 @@
 # 事件
 
-`POST /dataagent/stream` 使用 AG-UI SSE。编码来自 `ag_ui.encoder.EventEncoder`。适配器是 `ag_ui_langgraph`，名称为 `dataagent-v2`，`emit_raw_events` 为 false，`subagent_visibility` 为 `hidden`。
+`POST /dataagent/stream` 使用 AG-UI SSE。编码来自 `ag_ui.encoder.EventEncoder`。适配器是 `ag_ui_langgraph`，名称为 `dataagent-v2`，`emit_raw_events` 为 false，`subagent_visibility` 为 `attributed`。
 
 服务自己发送权威的开始和结束事件。适配器发出的 `RUN_STARTED`、`MESSAGES_SNAPSHOT` 和 `STATE_SNAPSHOT` 会被丢掉，避免把恢复用的旧 Checkpoint 再快照一次。
 
@@ -41,4 +41,16 @@ TUI 把这三种结果画成完成、失败或 `Interrupted — completion unkno
 
 ## 流的范围
 
-子代理运行包含在根运行中，适配器的 `subagent_visibility` 为 `hidden`。产物通过会话的 `outputs/` 目录读取，见 [HTTP 接口](rest-api.md)。`after_model` 在每次模型调用返回后于服务内执行，不对应逐 token 的 AG-UI 事件。
+子代理运行包含在根运行中。服务保留适配器的原生进度事件，不转换成自定义事件：
+
+| 事件 | 用途 |
+| --- | --- |
+| `SUBAGENT_STARTED` | 通过 `subagentRunId` 标识子代理，通过 `parentToolCallId` 关联外层 `task`；嵌套子代理另有 `parentSubagentRunId` |
+| `STEP_STARTED` / `STEP_FINISHED` | 通过 `subagentRunId` 和 `stepName` 展示该子代理的图节点进度 |
+| `SUBAGENT_FINISHED` / `SUBAGENT_ERROR` | 结束子代理的进度。它们不代表外层工具或根运行已经完成 |
+
+子代理文本、内部工具和状态事件不进入父对话流。最终消息快照仍取自根图。子代理错误消息与根错误一样经过脱敏。产物通过会话的 `outputs/` 目录读取，见 [HTTP 接口](rest-api.md)。`after_model` 在每次模型调用返回后于服务内执行，不对应逐 token 的 AG-UI 事件。
+
+当前 Python 依赖已提供上述子代理事件；TUI 的 `@ag-ui/core 0.0.57` 尚未声明生命周期类型，因此客户端在解析边界补齐其原生格式。步骤事件继续使用 SDK 的 schema。非流式模型下，子代理事件可能早于外层 `TOOL_CALL_START`，客户端按父工具 ID 合并，不依赖到达顺序猜测父任务。
+
+TUI 在任务下显示一行当前阶段与耗时；`Ctrl+O` 可查看已收到的步骤和重复执行记录。耗时由客户端单调时钟计量。30 秒没有新进度时显示 `waiting for update`，这不代表服务仍存活，也不代表任务失败。步骤历史只保留于当前 TUI 会话，恢复 Checkpoint 不重放历史进度。

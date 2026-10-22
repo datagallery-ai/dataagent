@@ -8,6 +8,7 @@ import type {
 } from "./data-task-state.js";
 import { dataStepKindForTool, emptyStepPayload } from "./data-task-state.js";
 import { toolResultPayloadLooksFailed } from "./tool-result.js";
+import { finishSubagentProgress, updateSubagentProgress, type SubagentProgress } from "./subagent-progress.js";
 
 type ArtifactDetailValue = NonNullable<DataArtifact["detail"]>;
 
@@ -52,6 +53,7 @@ export type LiveToolCallRecord = {
   resultPreview?: string | undefined;
   startedAtMs?: number | undefined;
   finishedAtMs?: number | undefined;
+  progress?: SubagentProgress | undefined;
 };
 
 export type ToolCallStats = {
@@ -220,6 +222,10 @@ export function deriveLiveSessionView(
 }
 
 export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
+  // Attributed child events never mutate root tools, snapshots or run status.
+  if (typeof event.subagentRunId === "string" || event.type?.startsWith("SUBAGENT_")) {
+    return reduceSubagentEvent(state, event);
+  }
   switch (event.type) {
     case "RUN_STARTED":
       if (state.runId && state.runId === runIdFromEvent(event)) return state;
@@ -739,6 +745,35 @@ function parseSchemaTables(parsed: Record<string, unknown> | null): SchemaTable[
     tables.push({ name, description: "", fields });
   }
   return tables;
+}
+
+function reduceSubagentEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
+  if (state.runStatus !== "running") return state;
+  const sid = stringValue(event.subagentRunId);
+  if (!sid) return state;
+  let existing = state.toolCalls.find((call) => call.progress?.runs.some((run) => run.id === sid));
+  let id = existing?.id;
+  if (event.type === "SUBAGENT_STARTED" && !existing) {
+    const parentSid = stringValue(event.parentSubagentRunId);
+    if (parentSid) {
+      existing = state.toolCalls.find((call) => call.progress?.runs.some((run) => run.id === parentSid));
+      id = existing?.id;
+    } else {
+      id = stringValue(event.parentToolCallId);
+      existing = state.toolCalls.find((call) => call.id === id);
+    }
+  }
+  if (!id || (existing && isTerminalToolCallStatus(existing.status))) return state;
+  const progress = updateSubagentProgress(existing?.progress, event);
+  if (!progress) return state;
+  // Non-streaming models may announce the task after its child starts. Native
+  // parentToolCallId lets that late event merge into the same row, without guessing.
+  return upsertToolCallRecord(state, {
+    id, name: existing?.name ?? "task", status: "running", runId: state.runId,
+    startedAtMs: existing?.startedAtMs ?? Date.now(),
+    args: existing?.args ?? { subagent_type: progress.agentName },
+    progress,
+  });
 }
 
 function reduceCustomEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
@@ -1717,6 +1752,10 @@ function upsertToolCallRecord(
   const existing = toolCalls[existingIndex];
   if (!existing) return state;
   toolCalls[existingIndex] = mergeToolCallRecord(existing, record);
+  const merged = toolCalls[existingIndex];
+  if (merged.progress && isTerminalToolCallStatus(merged.status)) {
+    toolCalls[existingIndex] = { ...merged, progress: finishSubagentProgress(merged.progress, merged.status !== "success") };
+  }
   return { ...state, toolCalls };
 }
 
@@ -1727,7 +1766,10 @@ function finalizeRunningToolCalls(
   const finishedAtMs = Date.now();
   return toolCalls.map((call) =>
     !isTerminalToolCallStatus(call.status)
-      ? { ...call, status: finalStatus, finishedAtMs: call.finishedAtMs ?? finishedAtMs }
+      ? {
+        ...call, status: finalStatus, finishedAtMs: call.finishedAtMs ?? finishedAtMs,
+        ...(call.progress ? { progress: finishSubagentProgress(call.progress, finalStatus === "failed") } : {}),
+      }
       : call,
   );
 }

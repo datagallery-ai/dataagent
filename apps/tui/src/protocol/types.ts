@@ -1,14 +1,14 @@
 import type {
-  BaseEvent,
   Context,
   Message,
   ResumeEntry,
   Tool,
 } from "@ag-ui/core";
+import type { AgentEvent } from "./agui-events.js";
 
 export type AgentMessage = Message;
 export type AgentContext = Context;
-export type CopilotKitEvent = BaseEvent;
+export type CopilotKitEvent = AgentEvent;
 
 export interface RunAgentInput {
   threadId: string;
