@@ -395,8 +395,11 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
         if action_node.success and tool_name in white_list:
             tool_args = action_node.params or {}
             tool_output = action_node.output
-            if tool_name == "read_file" and not str(tool_args.get("path", "")).endswith(".md"):
-                continue
+            if tool_name == "read_file":
+                path = str(tool_args.get("path", "")).replace("\\", "/")
+                # 仅 .md 进证据；口径冻结表模板/填写内容不进 IR，避免污染 DataTaskIR
+                if not path.endswith(".md") or "calibration_tables" in path:
+                    continue
             tool_evidence_parts.append(json.dumps({
                 "tool": tool_name, "params": tool_args, "output": tool_output,
             }, ensure_ascii=False, sort_keys=True, default=str))

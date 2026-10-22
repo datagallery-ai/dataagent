@@ -9,7 +9,7 @@ description: |
 
 根据用户的需求进行特征开发。计划内容包含但不仅限于：
 - 查询相关的元数据、表、知识、命名规范等信息
-- 根据查询到的相关内容，编写口径冻结表，并调用 `freeze_calibration_to_ir` 将其融入 DataTaskIR
+- 根据查询到的相关内容，编写口径冻结表（仅作写 SQL 的前置契约，不写入 / 不驱动 DataTaskIR）
 - 编写DDL/INSERT的SQL, 必须先写DDL，再写INSERT SQL
 - 根据查询到的相关规范内容，对生成的SQL进行校验，是否符合规范和要求
 - 在你认为SQL质量无问题后，将SQL打印出来给用户看，与用户交互确认是否完成任务，等待用户确认是否结束
@@ -60,7 +60,7 @@ description: |
 ### 口径冻结表（SQL 前置契约）
 使用 `read_file` 读取本 skill 目录下的 `references/calibration_tables.md`，根据查询到的相关内容编写口径冻结表；表格只描述字段角色和业务规则，不绑定具体物理表名或具体字段名；每个适用任务都必须填写，不适用时写明“不适用 + 原因”。
 
-编写完口径冻结表后、调用 `wrapped_nl2sql_sub_agent_tool` 之前，必须调用一次 `freeze_calibration_to_ir` 工具，把这份已填好的口径冻结表（连同用户原始需求 `user_query`）融入 DataTaskIR：该工具会把冻结表作为最高优先级的已确认口径写入 DataTaskIR，供后续 SQL 生成与交付校验强制遵循。若后续（如用户反馈、口径修正）冻结表内容发生变化，需用更新后的冻结表再次调用 `freeze_calibration_to_ir` 刷新 DataTaskIR。
+口径冻结表只服务你自己编写/校对 SQL，**不得**当作 DataTaskIR 的输入或已确认口径来源；禁止把冻结表内容写入 query 的「已确认口径」段落去覆盖 IR。DataTaskIR 仅由常规 IR 刷新路径（如 `metadata_recall` 等证据）生成与更新。
 
 ## 最终交付内容
 最终交付物使用 write_file 写入 workspace 目录下，交付内容：
