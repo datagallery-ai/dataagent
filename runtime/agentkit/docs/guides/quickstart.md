@@ -62,7 +62,7 @@ Summarize 1, 2, 3.
 uv run --project runtime/agentkit dataagent serve
 ```
 
-就绪后可访问 `http://127.0.0.1:8790/healthz`。响应包含 `status: ready`、模型别名、Home 和 `stateDir`，不包含密钥。
+就绪后可访问 `http://127.0.0.1:8790/healthz`。端口来自 `config.json` 的 `server.port`。响应里的对话状态在 `data.conversation`，不包含密钥。
 
 ## 可选输入目录
 

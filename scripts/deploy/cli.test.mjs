@@ -38,7 +38,9 @@ test("first run selects Web and API ports with defaults", async () => {
     probe: async () => ({ available: true, owner: null })
   });
   assert.equal(result.env.WEB_PORT, "3000");
-  assert.equal(result.env.API_PORT, "8787");
+  assert.equal(result.env.API_PORT, undefined);
+  assert.equal(result.listen.port, "8790");
+  assert.doesNotMatch(result.envText, /API_PORT/);
 });
 
 test("existing complete config skips prompts unless reconfigure", async () => {
@@ -144,7 +146,7 @@ test("non-interactive never calls ask and uses loopback defaults", async () => {
   });
   assert.equal(result.env.WEB_PORT, "3000");
   assert.equal(result.env.WEB_HOST, "127.0.0.1");
-  assert.equal(result.env.API_HOST, "127.0.0.1");
+  assert.equal(result.env.API_HOST, undefined);
   assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "http://127.0.0.1:3000");
   assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
   assert.equal(result.env.DATALINK_ENABLED, undefined);
@@ -335,6 +337,12 @@ test("reconfigure reuses managed listening ports only for a verified running sta
     "STORAGE_ROOT_DIR=storage",
     "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
   ].join("\n");
+  const home = path.join(root, "dataagent-home");
+  await mkdir(home, { recursive: true });
+  await writeFile(
+    path.join(home, "config.json"),
+    `${JSON.stringify({ server: { host: "127.0.0.1", port: 8877 } })}\n`
+  );
   await writeFile(
     path.join(root, "storage/run/deployment.json"),
     `${JSON.stringify({
@@ -359,10 +367,12 @@ test("reconfigure reuses managed listening ports only for a verified running sta
     collectManagedPortsOptions: {
       readLaunchId: async () => "launch-managed",
       forceLaunchIdCheck: true
-    }
+    },
+    processEnv: { DATAAGENT_HOME: home }
   });
   assert.equal(result.env.WEB_PORT, "3310");
-  assert.equal(result.env.API_PORT, "8877");
+  assert.equal(result.env.API_PORT, undefined);
+  assert.equal(result.listen.port, "8877");
   assert.ok(probes.includes(3310));
   assert.ok(probes.includes(8877));
 });
@@ -590,11 +600,14 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
 });
 test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
   assert.equal(
-    resolveTuiRuntimeUrl({ API_PORT: "8877" }),
+    resolveTuiRuntimeUrl({
+      DATAAGENT_HOME: "/no/such/dataagent-home",
+      DATAAGENT_CONFIG: new URL("../fixtures/server-listen.json", import.meta.url).pathname,
+    }),
     "http://127.0.0.1:8877/dataagent/stream"
   );
   assert.equal(
-    resolveTuiRuntimeUrl({ API_PORT: "8877" }, "http://example/api/copilotkit"),
+    resolveTuiRuntimeUrl({ API_PORT: "1" }, "http://example/api/copilotkit"),
     "http://example/api/copilotkit"
   );
 });
@@ -618,7 +631,6 @@ test("start names missing .env variables and does not write .env.local", async (
     (error) => {
       assert.match(error.message, /缺少合法完整的 \.env 配置，缺：/);
       assert.match(error.message, /WEB_PORT/);
-      assert.match(error.message, /API_PORT/);
       assert.match(error.message, /AUTH_PUBLIC_BASE_URL/);
       assert.match(error.message, /AUTH_REGISTRATION_MODE/);
       assert.match(error.message, /AUTH_SESSION_SECRET/);
@@ -640,6 +652,6 @@ test("start writes apps/web/.env.local from a complete .env without new secrets"
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
   await prepareStartEnvironment(root, COMPLETE_ENV);
   const webEnv = await readFile(path.join(root, "apps/web/.env.local"), "utf8");
-  assert.match(webEnv, /API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8877/);
+  assert.match(webEnv, /API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8790/);
   assert.equal(existsSync(path.join(root, ".env")), false);
 });

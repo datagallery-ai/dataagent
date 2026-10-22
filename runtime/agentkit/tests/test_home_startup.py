@@ -34,8 +34,13 @@ def test_backend_ready_without_project_handshake_and_eof_cleanup(tmp_path):
     cwd, marker = ignored_cwd(tmp_path)
     identity = str(uuid4())
     child = subprocess.Popen([
-        sys.executable, "-m", "restapi", "serve", "--stdio-ready", "--config", str(path),
-    ], cwd=cwd, env={**os.environ, "DATAAGENT_V2_INSTANCE_ID": identity},
+        sys.executable, "-m", "serve", "serve", "--stdio-ready", "--config", str(path),
+    ], cwd=cwd, env={
+        **os.environ,
+        "DATAAGENT_V2_INSTANCE_ID": identity,
+        "API_HOST": "127.0.0.1",
+        "API_PORT": str(port),
+    },
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True)
     try:
@@ -60,7 +65,10 @@ def test_tui_starts_without_project_prompt_and_restores_terminal(tmp_path, colum
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, columns, 0, 0))
     process = subprocess.Popen([
         "node", str(REPOSITORY / "apps/tui/dist/index.js"), "--v2", "--config", str(path),
-    ], cwd=cwd, env={**os.environ, "INIT_CWD": str(cwd), "NO_COLOR": "1", "TERM": "xterm-256color"},
+    ], cwd=cwd, env={
+        **os.environ, "INIT_CWD": str(cwd), "NO_COLOR": "1", "TERM": "xterm-256color",
+        "API_HOST": "127.0.0.1", "API_PORT": str(port),
+    },
         stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
         preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
     os.close(slave)

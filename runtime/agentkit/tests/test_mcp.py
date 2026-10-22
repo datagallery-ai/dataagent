@@ -3,25 +3,28 @@
 import asyncio
 import json
 import os
-import select
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, ToolMessage
-from process_helpers import stop_child
+from process_helpers import stop_child, wait_ready
 from test_api import client_for, query, sse, terminal
 from test_launch import MODEL, config
-from test_launcher import config_file, open_listener, spawn_inherited
+from test_launcher import check_port, config_file, open_listener, spawn_inherited
 
 from dataagent import LaunchOptions, build_agent, load_mcp_tools, prepare_runtime
 from dataagent.agent import load_extensions
+from serve.app import create_app
 
 SERVER = Path(__file__).parent / "fixtures/mcp_server.py"
 
@@ -182,29 +185,34 @@ async def test_documented_local_example_is_runnable(tmp_path, monkeypatch):
     assert result.status == "success" and "42" in str(result.content)
 
 
-def test_real_backend_discovers_mcp_before_ready_then_exits_with_parent(tmp_path):
+def test_real_backend_discovers_mcp_before_ready_then_sigterm(tmp_path):
     prepare(tmp_path, {"calc": stdio(env={"MCP_TEST_PIDS": str(tmp_path / "pids")})})
     listener = open_listener()
-    path, _ = config_file(tmp_path, listener)
+    path, port = config_file(tmp_path, listener)
     child = spawn_inherited([
-        sys.executable, "-m", "restapi", "serve", "--stdio-ready", "--config", str(path),
-    ], listener, env={**os.environ, "DATAAGENT_V2_INSTANCE_ID": "mcp-startup-test"},
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        sys.executable, "-m", "serve", "serve", "--config", str(path),
+    ], listener, env={
+        **os.environ,
+        "DATAAGENT_V2_INSTANCE_ID": "mcp-startup-test",
+        "API_HOST": "127.0.0.1",
+        "API_PORT": str(port),
+    }, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     try:
-        assert select.select([child.stdout], [], [], 15)[0], "No readiness message"
-        ready = json.loads(child.stdout.readline())
-        assert ready["type"] == "ready" and ready["instanceId"] == "mcp-startup-test"
+        wait_ready(
+            child, f"http://127.0.0.1:{port}/healthz", "unused", "mcp-startup-test",
+            stopped=threading.Event(), timeout=15,
+        )
         pids = (tmp_path / "pids").read_text().splitlines()
-        assert len(pids) == 1  # Discovery occurred before the parent was notified.
+        assert len(pids) == 1  # Discovery occurred before /healthz reported ready.
         for pid in pids:
             with pytest.raises(ProcessLookupError):
                 os.kill(int(pid), 0)
-        child.stdin.close()
-        assert child.wait(timeout=10) == 0
+        os.kill(child.pid, signal.SIGTERM)
+        # Uvicorn shuts down, then re-raises SIGTERM so the status is the signal.
+        assert child.wait(timeout=10) in (0, -signal.SIGTERM)
+        check_port("127.0.0.1", port)
     finally:
         stop_child(child, process_group=True)
-        for pipe in (child.stdin, child.stdout, child.stderr):
-            pipe.close()
 
 
 async def test_rest_tool_error_and_session_restore_use_native_messages(tmp_path):
@@ -224,9 +232,17 @@ async def test_rest_tool_error_and_session_restore_use_native_messages(tmp_path)
 
 async def test_discovery_failure_prevents_ready(tmp_path):
     runtime = prepare(tmp_path, {"missing": stdio(command="/nonexistent/dataagent-mcp-test")})
-    with pytest.raises(ValueError, match="MCP discovery failed for mcp__user__missing"):
-        async with client_for(runtime, ScriptedModel(responses=[])):
-            pytest.fail("Backend became ready with missing MCP tools")
+    app = create_app(runtime, model=ScriptedModel(responses=[]))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8787",
+        ) as client:
+            health = await client.get("/healthz")
+            chat = await client.post("/dataagent/stream", json={})
+    assert health.status_code == 200
+    assert health.json()["data"]["conversation"]["ready"] is False
+    assert chat.status_code == 503
+    assert app.state.agents is None
 
 
 async def test_cancelled_tool_call_closes_stdio_process(tmp_path):

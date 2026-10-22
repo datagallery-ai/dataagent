@@ -11,7 +11,7 @@ npm test --workspace @datafoundry/tui
 
 持有模型凭据时，可额外运行带 `-m live` 的测试，见 [测试](testing.md)。
 
-构建使用 hatchling。wheel 包含 `dataagent` 和 `restapi`，并把 `builtin-plugins` 装到 `dataagent/builtin-plugins`。
+构建使用 hatchling。wheel 包含 `dataagent` 和 `serve`，并把 `builtin-plugins` 装到 `dataagent/builtin-plugins`。
 
 ## 配置兼容
 

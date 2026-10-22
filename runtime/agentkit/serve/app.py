@@ -25,9 +25,10 @@ from pydantic import ConfigDict, model_validator
 from starlette.background import BackgroundTask
 
 from dataagent import Runtime, SemanticServiceClient, load_mcp_tools, safe_error
-from restapi.agents import SessionAgents
-from restapi.outputs import list_outputs, preview_output
-from restapi.sessions import Sessions, SessionTurn, public_session, workspace_lock
+from serve.agents import SessionAgents
+from serve.outputs import list_outputs, preview_output
+from serve.product import ConversationReadyGuard, register_not_found, register_product_routes
+from serve.sessions import Sessions, SessionTurn, public_session, workspace_lock
 
 logger = logging.getLogger("dataagent.api")
 
@@ -360,22 +361,16 @@ def register_conversation_routes(
     runtime: Runtime,
     *,
     instance_id: str | None = None,
-    include_health: bool = True,
 ):
     """Register AG-UI routes on an existing app. The host owns process startup and lifespan."""
-    identity = instance_id or str(uuid4())
+    if instance_id is not None:
+        app.state.conversation_instance_id = instance_id
     busy: set[tuple[str, str]] = set()
     app.state.conversation_busy = busy
     app.state.active_runs = {}
 
     def local_user_id() -> str:
         return runtime.paths.user_id
-
-    if include_health:
-
-        @app.get("/healthz")
-        async def health():
-            return agentkit_health_body(app.state.agents.runtime, identity)
 
     @app.get("/sessions")
     async def list_sessions(limit: int = Query(default=50, ge=1, le=100)):
@@ -698,16 +693,39 @@ def register_conversation_routes(
         )
 
 
-def create_app(runtime: Runtime, *, instance_id: str | None = None, model=None):
-    """Create a REST host sharing one semantic client across native Agent contexts."""
+def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model=None):
+    """Create the product backend. Web and TUI share this process."""
+    identity = instance_id or str(uuid4())
 
     @asynccontextmanager
-    async def lifespan(app):
-        async with conversation_lifespan(app, runtime, model=model):
+    async def lifespan(app: FastAPI):
+        app.state.conversation_runtime = runtime
+        app.state.conversation_instance_id = identity
+        if runtime is None:
+            yield
+            return
+        started = False
+        try:
+            async with conversation_lifespan(app, runtime, model=model):
+                started = True
+                yield
+        except Exception as exc:
+            if started:
+                raise
+            logger.warning("Conversation engine failed during startup: %s", exc)
+            app.state.agents = None
+            app.state.sessions = None
+            app.state.checkpointer = None
             yield
 
-    app = FastAPI(lifespan=lifespan)
-    register_conversation_routes(app, runtime, instance_id=instance_id, include_health=True)
+    app = FastAPI(title="DataFoundry API", version="0.3.0", lifespan=lifespan)
+    app.state.conversation_runtime = runtime
+    app.state.conversation_instance_id = identity
+    app.add_middleware(ConversationReadyGuard)
+    register_product_routes(app)
+    if runtime is not None:
+        register_conversation_routes(app, runtime, instance_id=identity)
+    register_not_found(app)
     return app
 
 

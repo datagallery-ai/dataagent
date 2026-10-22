@@ -8,9 +8,9 @@ import {
 } from "./stack-runtime-config.mjs";
 
 test("uses native deployment defaults", () => {
-  const config = resolveStackRuntimeConfig({});
+  const config = resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/dataagent-home" });
   assert.equal(config.API_HOST, "127.0.0.1");
-  assert.equal(config.API_PORT, "8787");
+  assert.equal(config.API_PORT, "8790");
   assert.equal(config.WEB_HOST, "127.0.0.1");
   assert.equal(config.WEB_PORT, "3000");
 });
@@ -21,9 +21,13 @@ test("projects configured host and port into the Next.js child", () => {
 });
 
 test("prints actual configured endpoints", () => {
-  const config = resolveStackRuntimeConfig({ API_PORT: "8877", WEB_PORT: "3310" });
+  const config = resolveStackRuntimeConfig({
+    DATAAGENT_HOME: "/no/such/dataagent-home",
+    DATAAGENT_CONFIG: new URL("./fixtures/server-listen.json", import.meta.url).pathname,
+    WEB_PORT: "3310",
+  });
   const output = formatStackEndpoints(config, { startApi: true, startWeb: true });
-  assert.match(output, /http:\/\/127\.0\.0\.1:8877/);
+  assert.match(output, /http:\/\/0\.0\.0\.0:8877/);
   assert.match(output, /http:\/\/127\.0\.0\.1:3310/);
 });
 
@@ -32,17 +36,23 @@ test("rejects invalid ports", () => {
 });
 
 test("dev and start:api both default the API to loopback", () => {
-  const dev = resolveStackRuntimeConfig({});
-  const startApi = pythonControlPlaneLaunch("/repo", {});
+  const env = { DATAAGENT_HOME: "/no/such/dataagent-home" };
+  const dev = resolveStackRuntimeConfig(env);
+  const startApi = pythonControlPlaneLaunch("/repo", env);
   assert.equal(dev.API_HOST, "127.0.0.1");
-  assert.equal(startApi.env.API_HOST, "127.0.0.1");
-  assert.equal(startApi.env.API_PORT, "8787");
+  assert.equal(startApi.env.API_PORT, undefined);
+  assert.deepEqual(startApi.args.slice(-2), ["dataagent", "serve"]);
 });
 
-test("an explicit API_HOST is preserved for public bind", () => {
-  const dev = resolveStackRuntimeConfig({ API_HOST: "0.0.0.0", API_PORT: "9000" });
-  const startApi = pythonControlPlaneLaunch("/repo", { API_HOST: "0.0.0.0", API_PORT: "9000" });
+test("server.host and server.port come from config.json", () => {
+  const env = {
+    DATAAGENT_HOME: "/no/such/dataagent-home",
+    DATAAGENT_CONFIG: new URL("./fixtures/server-listen.json", import.meta.url).pathname,
+  };
+  const dev = resolveStackRuntimeConfig(env);
+  const startApi = pythonControlPlaneLaunch("/repo", { ...env, API_HOST: "10.0.0.8", API_PORT: "1" });
   assert.equal(dev.API_HOST, "0.0.0.0");
-  assert.equal(startApi.env.API_HOST, "0.0.0.0");
-  assert.equal(startApi.env.API_PORT, "9000");
+  assert.equal(dev.API_PORT, "8877");
+  assert.equal(startApi.env.API_HOST, undefined);
+  assert.equal(startApi.env.API_PORT, undefined);
 });

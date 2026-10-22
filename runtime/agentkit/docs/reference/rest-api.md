@@ -1,24 +1,46 @@
 # HTTP 接口
 
-默认监听 `127.0.0.1`，也可以绑定其他地址。`/healthz` 不返回 Home、输入目录或 `stateDir`。
-
-默认基址：`http://127.0.0.1:8790`。
+默认监听 `127.0.0.1:8787`。`API_HOST` 可以改成其他地址，`API_PORT` 可以改端口。`/healthz` 不返回 Home、输入目录或 `stateDir`。
 
 ## `GET /healthz`
 
+始终返回 200 信封。
+
 ```json
 {
-  "status": "ready",
-  "protocol": "dataagent-v2",
-  "instanceId": "<uuid-or-launch-id>",
-  "model": "<provider model name>",
-  "plugins": ["common"],
-  "user": "default",
-  "timeoutSeconds": 180
+  "success": true,
+  "data": {
+    "status": "ok",
+    "conversation": {
+      "ready": true,
+      "status": "ready",
+      "protocol": "dataagent-v2",
+      "instanceId": "<uuid-or-launch-id>",
+      "model": "<provider model name>",
+      "plugins": ["common"],
+      "user": "default",
+      "timeoutSeconds": 180
+    }
+  }
 }
 ```
 
-`model` 是解析后的服务商模型名。`plugins` 是启用 ID。
+引擎未就绪时 `conversation` 只有 `ready: false`。`model` 是解析后的服务商模型名。`plugins` 是启用 ID。
+
+## `GET /ready`
+
+引擎就绪时返回 200，`data.status` 和 `data.control_plane` 都是 `ready`。未就绪时返回 503，错误码 `CONVERSATION_UNAVAILABLE`。
+
+## `/api/v1`
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/api/v1/me` | 当前用户。引擎未就绪时 id 为 `default` |
+| `GET` | `/api/v1/sessions` | 当前用户的会话列表，包在成功信封里 |
+| `GET` | `/api/v1/sessions/{threadId}/conversation` | 网页可读的对话。未知会话返回空消息 |
+| `POST` | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。成功是 204。没有这一轮时是 404 |
+
+未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。对话路径在引擎未就绪时返回 503。
 
 ## `POST /dataagent/stream`
 

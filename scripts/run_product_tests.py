@@ -121,7 +121,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--no-sync",
         action="store_true",
-        help="Pass --no-sync to uv. Use when agentkit and apps/api environments already exist.",
+        help="Pass --no-sync to uv. Use when the agentkit environment already exists.",
     )
     parser.add_argument("--fail-fast", action="store_true", help="Stop after the first failing suite.")
     parser.add_argument("--list", action="store_true", help="Print the selected commands and exit.")
@@ -278,7 +278,7 @@ def _command(
             "not live",
             f"--junitxml={ARTIFACTS / 'agentkit-ut-junit.xml'}",
         ]
-        for path in ST_FILES:
+        for path in (*ST_FILES, ROOT / "runtime" / "agentkit" / "tests" / "test_product_api.py"):
             command.extend(["--ignore", str(path)])
         command.extend(pytest_args)
         return tuple(command)
@@ -302,7 +302,7 @@ def _command(
             "--project",
             str(ROOT / "runtime" / "agentkit"),
             "pytest",
-            str(ROOT / "apps" / "api" / "tests"),
+            str(ROOT / "runtime" / "agentkit" / "tests" / "test_product_api.py"),
             "-q",
         ]
         command.extend(pytest_args)

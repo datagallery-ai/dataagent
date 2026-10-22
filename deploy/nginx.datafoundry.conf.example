@@ -5,7 +5,7 @@
 #
 # Usage sketch:
 #   upstream web  -> next start :3000
-#   upstream api  -> node API   :8787
+#   upstream api  -> backend    :8787
 #   browser       -> this nginx :443 (or :80)
 
 upstream datafoundry_web {
@@ -13,7 +13,7 @@ upstream datafoundry_web {
     keepalive 32;
 }
 
-upstream datafoundry_api {
+upstream dataagent_serve {
     server 127.0.0.1:8787;
     keepalive 32;
 }
@@ -45,14 +45,14 @@ server {
     location = /healthz {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_pass http://datafoundry_api;
+        proxy_pass http://dataagent_serve;
     }
 
     # Readiness: Mastra + builtin resources finished; safe to send traffic.
     location = /ready {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_pass http://datafoundry_api;
+        proxy_pass http://dataagent_serve;
     }
 
     # Long-cache fingerprinted Next assets.

@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage
 
 import dataagent.agent as agent_module
 from dataagent.core.graph import create_deep_agent
-from restapi.app import create_app
+from serve.app import create_app
 
 
 def gui_body(text="只回复：GUI集成测试通过", thread="gui-thread"):
@@ -51,7 +51,7 @@ async def client_for(runtime, model):
     app = create_app(runtime, instance_id="test-instance", model=model)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8790",
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8787",
         ) as client:
             yield client
 

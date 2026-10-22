@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readServerListen } from "../server-listen.mjs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -25,8 +26,6 @@ export function parseDeploymentEnvironment(sourceText = "") {
 const DEFAULTS = {
   WEB_HOST: "127.0.0.1",
   WEB_PORT: "3000",
-  API_HOST: "127.0.0.1",
-  API_PORT: "8787",
   AUTH_EMAIL_DELIVERY: "test",
   AUTH_REGISTRATION_MODE: "open",
   STORAGE_ROOT_DIR: "storage",
@@ -36,6 +35,7 @@ const DEFAULTS = {
 const SECRET_KEYS = ["AUTH_SESSION_SECRET", "SECRET_MASTER_KEY"];
 /** Removed by password-only cutover; strip on ensure so upgraded .env can boot. */
 const REMOVED_LEGACY_AUTH_KEYS = ["DATAFOUNDRY_AUTH_MODE", "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE"];
+const RETIRED_LISTEN_KEYS = ["API_HOST", "API_PORT"];
 const PLACEHOLDER_SECRETS = new Set(["", "change-me", "replace-me"]);
 const SENSITIVE_KEY_PATTERN = /KEY|SECRET|TOKEN|PASSWORD|COOKIE|AUTHORIZATION/i;
 const SENSITIVE_JSON_KEY_PATTERN = /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|token|password|authorization|auth)$/i;
@@ -68,7 +68,7 @@ export function isPlaceholderSecret(value) {
 
 export function deploymentConfigGaps(env = {}) {
   const gaps = [];
-  for (const key of ["WEB_PORT", "API_PORT", "AUTH_PUBLIC_BASE_URL"]) {
+  for (const key of ["WEB_PORT", "AUTH_PUBLIC_BASE_URL"]) {
     if (!String(env[key] ?? "").trim()) gaps.push(key);
   }
   const registrationMode = String(env.AUTH_REGISTRATION_MODE ?? "").trim();
@@ -126,7 +126,7 @@ export function updateDeploymentEnvironment(sourceText, updates) {
 export function ensureDeploymentEnvironment(sourceText, options = {}) {
   const randomSecret = options.randomSecret ?? (() => randomBytes(32).toString("base64url"));
   const generateSecrets = options.generateSecrets !== false;
-  const stripped = removeEnvKeys(sourceText ?? "", REMOVED_LEGACY_AUTH_KEYS);
+  const stripped = removeEnvKeys(sourceText ?? "", [...REMOVED_LEGACY_AUTH_KEYS, ...RETIRED_LISTEN_KEYS]);
   const workingText = stripped.text;
   const removedKeys = stripped.removedKeys;
   const parsed = parseDeploymentEnvironment(workingText);
@@ -168,9 +168,9 @@ export function ensureDeploymentEnvironment(sourceText, options = {}) {
   return { text, env, generatedKeys, removedKeys };
 }
 
-export function renderWebEnvironment(env) {
-  const apiHost = env.API_HOST?.trim() || "127.0.0.1";
-  const apiPort = env.API_PORT?.trim() || "8787";
+export function renderWebEnvironment(env, listen = readServerListen(env)) {
+  const apiHost = listen.host;
+  const apiPort = listen.port;
   return [
     "NEXT_PUBLIC_AGENT_RUNTIME_URL=",
     "NEXT_PUBLIC_CONFIG_API_URL=",

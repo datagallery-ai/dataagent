@@ -53,9 +53,5 @@
     "paths": [],
     "config": {}
   },
-  "server": {
-    "host": "127.0.0.1",
-    "port": 8790
-  },
   "semantic": null
 }

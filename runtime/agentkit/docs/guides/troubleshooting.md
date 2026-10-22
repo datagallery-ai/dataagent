@@ -11,7 +11,8 @@
 | `schema_version must be 3` | 把产品配置改为 JSON，并把 Hook 改成事件加 Python 入口。只改后缀不够 |
 | `unknown field` 或重复键 | 删掉未知字段。JSON 不允许重复键，包括嵌套对象 |
 | `missing environment variable LLM_...` | 在 Home `.env`、`--env-file` 或进程环境中提供该变量 |
-| `Port 127.0.0.1:8790 is occupied` | 换 `server.port`，或停掉占用进程。启动不会接管已有服务 |
+| `Port 127.0.0.1:8787 is occupied` | 换 `API_PORT`，或停掉占用进程。启动不会接管已有服务 |
+| 引擎未就绪 | 进程仍在。`/healthz` 为 200，`data.conversation.ready` 为 false。`/ready` 和对话返回 503。看标准错误里的 `DataAgent:` |
 | `Another DataAgent V2 backend owns this workspace` | 同一个 `stateDir` 已有后端持有 `backend.lock`。停掉它，或换 `DATAAGENT_HOME` |
 | `Expected a directory` | Home 下的 `skills`、`hooks`、`plugins` 或 `runtime` 被文件占用 |
 
@@ -32,9 +33,9 @@
 
 | 现象 | 处理 |
 | --- | --- |
-| TUI 连不上 `--runtime-url` | URL 使用 `http://127.0.0.1:8790/dataagent/stream`。先确认 `/healthz` 返回 `ready` |
+| TUI 连不上 `--runtime-url` | URL 使用 `http://127.0.0.1:<API_PORT>/dataagent/stream`。先确认 `/healthz` 里 `conversation.ready` 为 true |
 | 外部模式仍试图读本地配置 | `--runtime-url` 不能和 `--config`、`--env-file`、`--workspace` 一起用 |
-| MCP 导致后端起不来 | 修正 `<home>/.mcp.json` 或插件 `.mcp.json`。发现失败会阻止启动 |
+| MCP 发现失败 | 修正 `<home>/.mcp.json` 或插件 `.mcp.json` 后重启。发现失败时进程仍在，对话路径返回 503 |
 | 语义服务 TLS 失败 | `verify_server` 为 false 时不校验服务端证书。要校验时同时提供可达的 `ca_file`。客户端证书和私钥必须成对出现 |
 
 ## 恢复

@@ -9,7 +9,7 @@ import pytest
 from conftest import RecordingCallback, ScriptedModel, call
 from langchain_core.messages import AIMessage
 
-from restapi.app import create_app
+from serve.app import create_app
 
 
 def query(text="hello", thread="thread-1", **kwargs):
@@ -25,7 +25,7 @@ async def client_for(runtime, model):
     app = create_app(runtime, instance_id="test-instance", model=model)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8790",
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8787",
         ) as client:
             yield client, app
 
@@ -42,11 +42,16 @@ def terminal(events):
 async def test_health_and_no_credential_disclosure(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
         health = await client.get("/healthz")
-        assert health.json()["instanceId"] == "test-instance"
-        assert "stateDir" not in health.json()
-        assert "home" not in health.json()
-        assert health.json()["user"] == runtime.paths.user_id
-        assert "sources" not in health.json()
+        body = health.json()
+        conversation = body["data"]["conversation"]
+        assert body["success"] is True
+        assert body["data"]["status"] == "ok"
+        assert conversation["ready"] is True
+        assert conversation["instanceId"] == "test-instance"
+        assert "stateDir" not in conversation
+        assert "home" not in conversation
+        assert conversation["user"] == runtime.paths.user_id
+        assert "sources" not in conversation
         assert "test-secret" not in health.text
         assert (await client.get("/healthz", headers={"authorization": ""})).status_code == 200
         assert (await client.get("/healthz", headers={"origin": "https://example.com"})).status_code == 200
@@ -68,7 +73,8 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
     assert runtime.model_name == "replacement-model"
 
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
-        assert (await client.get("/healthz")).json() == {
+        assert (await client.get("/healthz")).json()["data"]["conversation"] == {
+            "ready": True,
             "status": "ready", "protocol": "dataagent-v2", "instanceId": "test-instance",
             "model": "replacement-model", "plugins": [],
             "user": runtime.paths.user_id,

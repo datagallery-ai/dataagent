@@ -7,7 +7,7 @@ from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage
 from test_api import client_for, query, sse, terminal
 
-from restapi.outputs import PREVIEW_BYTES, list_outputs
+from serve.outputs import PREVIEW_BYTES, list_outputs
 
 
 async def test_native_output_listing_and_preview_survive_restart(runtime):
@@ -90,6 +90,6 @@ def test_listing_errors_are_not_hidden_as_empty(tmp_path, monkeypatch):
     def failed_walk(root, *, onerror, followlinks):
         onerror(PermissionError("denied"))
         return []
-    monkeypatch.setattr("restapi.outputs.os.walk", failed_walk)
+    monkeypatch.setattr("serve.outputs.os.walk", failed_walk)
     with pytest.raises(PermissionError):
         list_outputs(tmp_path)

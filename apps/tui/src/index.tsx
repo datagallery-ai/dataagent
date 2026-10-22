@@ -28,7 +28,7 @@ import { App } from "./ui/App.js";
 import type { AgentClient } from "./protocol/types.js";
 import type { V2AppContext } from "./protocol/v2-session-client.js";
 import { runV2Tui } from "./v2.js";
-import { startV2Backend } from "./v2-backend.js";
+import { configuredListenPort, startV2Backend } from "./v2-backend.js";
 import { terminalText } from "./utils/terminal-text.js";
 
 export type RunTuiOptions = {
@@ -261,7 +261,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
       }
       const localStartup = ["--config", "--env-file", "--workspace", "--user", "--session"].some((flag) => args.includes(flag));
       if (!runtimeUrl && !localStartup) {
-        const port = process.env.API_PORT || "8787";
+        const port = configuredListenPort();
         const hint = await runningControlPlaneHint(fetchImpl, `http://127.0.0.1:${port}`);
         if (hint) throw new Error(hint);
       }

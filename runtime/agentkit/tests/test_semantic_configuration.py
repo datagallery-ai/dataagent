@@ -20,7 +20,7 @@ from dataagent.extensions.hooks import compile_hook
 from dataagent.semantic_client import SemanticServiceClient
 from dataagent.semantic_client.tls import build_ssl_context
 from dataagent.settings import SemanticSettings, SemanticTLSSettings
-from restapi.app import create_app
+from serve.app import create_app
 
 
 def test_config_layers_merge_auth_and_resolve_tls_paths(tmp_path):
@@ -282,8 +282,8 @@ def test_sdk_without_semantic_configuration_has_no_client(runtime):
 
 
 def test_rest_startup_failure_closes_semantic_client(runtime, monkeypatch):
-    """Close host resources even when startup fails before creating the session cache."""
-    import restapi.app as rest_app
+    """A startup failure keeps the process up and still closes host resources."""
+    import serve.app as rest_app
 
     created = []
     factory = SemanticServiceClient.from_settings
@@ -298,11 +298,11 @@ def test_rest_startup_failure_closes_semantic_client(runtime, monkeypatch):
 
     monkeypatch.setattr(SemanticServiceClient, "from_settings", record)
     monkeypatch.setattr(rest_app, "load_mcp_tools", fail)
-    with (
-        pytest.raises(ValueError, match="discovery failed"),
-        TestClient(create_app(_with_semantic(runtime))),
-    ):
-        pytest.fail("Startup must fail")
+    app = create_app(_with_semantic(runtime))
+    with TestClient(app) as http:
+        health = http.get("/healthz")
+        assert health.status_code == 200
+        assert health.json()["data"]["conversation"]["ready"] is False
     assert len(created) == 1 and created[0].client.is_closed
 
 

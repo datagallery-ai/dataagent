@@ -63,4 +63,4 @@ REST 和 TUI 在下一轮查询前比较扩展指纹。插件文件、启用列�
 
 SDK 不会自动刷新。调用 `refresh_extensions`，见 [SDK](../guides/sdk.md)。
 
-模型、`server`、Home 和输入目录不在这轮刷新里。改它们要重启进程。
+模型、Home 和输入目录不在这轮刷新里。改它们要重启进程。配置里的 `server` 不决定监听地址。

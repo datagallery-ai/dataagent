@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from dataagent import LaunchOptions, create_agent, prepare_runtime
-from restapi.app import create_app
+from serve.app import create_app
 
 
 @pytest.mark.live

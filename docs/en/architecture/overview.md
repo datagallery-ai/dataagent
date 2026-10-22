@@ -21,7 +21,7 @@ A curated architecture diagram is available in the repository home runtime flow 
 | --- | --- |
 | `apps/web` | Web data task workbench: graphical conversation, resource management, trace, and outputs. |
 | `apps/tui` | Terminal UI: CLI conversation, data source and Skill selection, stats, and outputs. |
-| `apps/api` | Backend HTTP service: `/api/copilotkit` and `/api/v1/*`. |
+| `runtime/agentkit/serve` | Backend HTTP service: `/api/copilotkit`, `/dataagent/stream`, and `/api/v1/*`. |
 | Agent Runtime | Creates DataFoundry, manages tools, run context, and AG-UI events. |
 | Data Gateway | Data sources, schema checks, preview, and read-only SQL execution. |
 | Knowledge | Knowledge base documents, chunking, retrieval, and citation boundaries. |

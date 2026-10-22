@@ -14,7 +14,7 @@
 | `dataagent` | 对象 | 见下表 | 模型选择、限额、Hook、只读输入 |
 | `models` | 对象 | 必填 | 模型 ID 到连接。至少要能解析 `dataagent.model.default` |
 | `plugins` | 对象 | `enabled: []`，`paths: []` | 启用列表和额外插件目录 |
-| `server` | 对象 | 见下表 | 只被 REST 进程读取 |
+| `server` | 对象 | 见下表 | 唯一的监听地址。网页和部署读同一字段 |
 | `semantic` | 对象或省略 | 省略 | 省略时不创建语义客户端 |
 
 ## `dataagent`
@@ -63,12 +63,12 @@
 
 ## `server`
 
+`npm run dev`、`./deploy.sh`、网页转发和 TUI 都读这里。仓库 `.env` 里的 `API_HOST`、`API_PORT` 不参与监听。首次部署在 Home 没有 `config.json` 时，用 `dataagent/bootstrap/templates/config.json` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。
+
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
-| `host` | `"127.0.0.1"` | `"127.0.0.1"` | 不能改成其他地址 |
+| `host` | 字符串 | `"127.0.0.1"` | 绑定地址，例如 `127.0.0.1` 或 `0.0.0.0` |
 | `port` | 整数 | `8790` | 1 到 65535。占用则启动失败 |
-
-核心校验这段配置，但不读取它。只有 `dataagent serve` 使用。
 
 ## `semantic`
 
