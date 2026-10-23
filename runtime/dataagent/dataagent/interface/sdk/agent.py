@@ -242,8 +242,10 @@ class DataAgent:
                 run_id=initial_state.get("run_id"),
                 sub_id=initial_state.get("sub_id"),
             ):
+                stream = None
                 try:
-                    async for item in self._chat_agent.astream(*args, **kwargs):
+                    stream = self._chat_agent.astream(*args, **kwargs)
+                    async for item in stream:
                         yield item
                 except DataAgentError as exc:
                     logger.exception(
@@ -261,7 +263,12 @@ class DataAgent:
                     )
                     raise error from exc
                 finally:
-                    self._release_session_workspace_lock(lock)
+                    try:
+                        close = getattr(stream, "aclose", None)
+                        if close is not None:
+                            await close()
+                    finally:
+                        self._release_session_workspace_lock(lock)
 
         return _bound_astream()
 
