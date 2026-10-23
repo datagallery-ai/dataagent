@@ -1,0 +1,13 @@
+{
+  "name": "metadata-recall",
+  "description": "召回表、列、指标、UDF 和 Join 关系，只返回有来源的元数据证据。生成 SQL 前先使用此子 Agent。",
+  "system_prompt": "prompts/metadata.md",
+  "tools": [
+    "get_table_schema",
+    "get_join_relations",
+    "search_udf_function_by_name_keyword",
+    "search_udf_function_by_dsl"
+  ],
+  "skills": [],
+  "filesystem_tools": ["ls", "read_file"]
+}

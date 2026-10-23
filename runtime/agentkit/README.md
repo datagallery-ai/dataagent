@@ -38,6 +38,7 @@ uv run --project runtime/agentkit dataagent serve --workspace /existing/data
 | 安装并完成第一次对话 | [快速启动](docs/guides/quickstart.md) |
 | 修改配置 | [配置操作](docs/guides/configuration.md) |
 | 增加插件、Skill、Hook 或 MCP | [扩展选择](docs/extensions/overview.md) |
+| 用插件运行数据工程流程 | [de-agent 插件](builtin-plugins/de-agent/README.md)、[迁移与验证说明](docs/de-agent-migration.md) |
 | 查字段和接口 | [配置参考](docs/reference/configuration.md)、[HTTP 接口](docs/reference/rest-api.md) |
 | 理解运行过程 | [架构概览](docs/architecture/overview.md) |
 | 修改代码并验证 | [开发环境](docs/development/setup.md) |

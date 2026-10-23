@@ -63,6 +63,7 @@ class _CallCounter:
         self.used = 0
 
     def spend(self) -> None:
+        """Charge one call to this task before invoking the host model."""
         if self.used >= self.budget:
             raise DataAgentError(
                 source="llm",
@@ -83,6 +84,7 @@ class _BudgetedModel:
         self._model = model
 
     async def ainvoke(self, messages, config=None, **kwargs):
+        """Invoke the unchanged host model after checking the task budget."""
         counter = _current_counter.get()
         if counter is not None:
             counter.spend()
@@ -95,9 +97,7 @@ def _message_text(message: Any) -> str:
     if isinstance(content, str):
         return content.strip()
     if isinstance(content, list):
-        return "".join(
-            part.get("text", "") for part in content if isinstance(part, dict)
-        ).strip()
+        return "".join(part.get("text", "") for part in content if isinstance(part, dict)).strip()
     return str(content).strip()
 
 
@@ -122,7 +122,11 @@ _RESULT_DIR = "nl2sql"
 
 
 def _write_result_file(
-    outputs_dir: Path, *, question: str, final: Mapping[str, Any], database: Mapping[str, Any],
+    outputs_dir: Path,
+    *,
+    question: str,
+    final: Mapping[str, Any],
+    database: Mapping[str, Any],
 ) -> tuple[str, Path]:
     """Write ``<outputs_dir>/nl2sql/<query_id>.csv`` plus its meta; return (query_id, csv path).
 
@@ -137,7 +141,7 @@ def _write_result_file(
     csv_path = directory / f"{query_id}.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(final["columns"])
+        writer.writerow(final.get("columns"))
         writer.writerows(final.get("rows") or [])
     meta = {
         "query_id": query_id,
@@ -147,19 +151,23 @@ def _write_result_file(
         "dialect": database.get("dialect"),
         "engine": database.get("engine") or database.get("dialect"),
         "executed_at": executed_at.isoformat(timespec="seconds"),
-        "columns": final["columns"],
+        "columns": final.get("columns"),
         "row_count": final.get("row_count", 0),
         "total_known": final.get("total_known", False),
         "truncated": final.get("truncated", False),
         "file": csv_path.name,
     }
     meta_path = directory / f"{query_id}.meta.json"
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    meta_path.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
     return query_id, csv_path
 
 
-def _task_reply(final: Mapping[str, Any], result_file: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """The SubAgent result: only ``messages`` with one JSON AIMessage.
+def _task_payload(
+    final: Mapping[str, Any], result_file: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """Build the public payload before result Hook transformations.
 
     The parent agent sees only this reply. ``rows_note`` appears only when the
     preview is not the whole result (a truncated fetch, or fewer preview rows
@@ -184,8 +192,12 @@ def _task_reply(final: Mapping[str, Any], result_file: Mapping[str, str] | None 
         **(result_file or {}),
     }
     if not preview_is_whole and final.get("columns") is not None:
-        fetched_note = "The result exceeds the fetch limit; fetched only" if truncated else "The result has"
-        missing = f"{fetched_note} {row_count} rows; rows_preview holds the first {len(rows_preview)}. "
+        fetched_note = (
+            "The result exceeds the fetch limit; fetched only" if truncated else "The result has"
+        )
+        missing = (
+            f"{fetched_note} {row_count} rows; rows_preview holds the first {len(rows_preview)}. "
+        )
         if "result_file" in payload:
             payload["rows_note"] = (
                 missing + f"All {row_count} fetched rows are in result_file (CSV). "
@@ -196,7 +208,7 @@ def _task_reply(final: Mapping[str, Any], result_file: Mapping[str, str] | None 
                 missing + "Dispatching the same question again returns no more rows. "
                 "For the full data, narrow the scope or aggregate."
             )
-    return {"messages": [AIMessage(content=json.dumps(payload, ensure_ascii=False, default=str))]}
+    return payload
 
 
 def _error_reply(exc: Exception) -> dict[str, Any]:
@@ -216,11 +228,17 @@ def _run_config(config: RunnableConfig | None) -> dict[str, Any]:
 
 
 def _database_summary(config: NL2SQLConfig, engine: str) -> str:
-    """Non-sensitive facts about the bound database for the parent agent; no connection keys."""
+    """Describe the configured execution mode and database without connection keys."""
     db_id = config.get("database.db_id") or "unnamed"
+    mode = (
+        "**Current mode: query and execute**. It queries only this database."
+        if "executor" in config.enabled_nodes
+        else "**Current mode: generate SQL only**. It does not execute SQL or return query rows/CSV. "
+        "Follow the configured input Hook's task format when one is present."
+    )
     return (
         f"**Bound database**: db_id={db_id}, dialect={config.get('database.dialect')}, engine={engine}. "
-        "It queries only this database."
+        f"{mode}"
     )
 
 
@@ -235,12 +253,16 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
     """
     nl2sql_config = NL2SQLConfig(params)
     engine = str(nl2sql_config.get("database.engine") or nl2sql_config.get("database.dialect"))
-    check_engine_driver(engine)
+    if "executor" in nl2sql_config.enabled_nodes or nl2sql_config.get(
+        "validator.db_explain", False
+    ):
+        check_engine_driver(engine)
     model = _BudgetedModel(services.get_model(str(nl2sql_config.get("model"))))
     budget = nl2sql_config.model_call_budget
     semantic_client = services.semantic_client
     workflow = build_nl2sql_graph(nl2sql_config, model=model, semantic_client=semantic_client)
     defaults = state_defaults(nl2sql_config)
+    hooks = services.run_hooks
     outputs_dir = services.outputs_dir if nl2sql_config.result_files else None
     database = nl2sql_config.section("database")
 
@@ -250,7 +272,11 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
             return None
         try:
             query_id, path = await asyncio.to_thread(
-                _write_result_file, outputs_dir, question=question, final=final, database=database,
+                _write_result_file,
+                outputs_dir,
+                question=question,
+                final=final,
+                database=database,
             )
         except OSError as exc:
             return {"result_file_error": f"结果文件写入失败：{exc}"}
@@ -261,15 +287,43 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
     # is async, so the Runnable supports ainvoke (the host executes agents
     # asynchronously); langchain-core refuses a synchronous invoke of a
     # coroutine lambda.
-    async def run_task(state: dict[str, Any], config: RunnableConfig | None = None) -> dict[str, Any]:
+    async def run_task(
+        state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> dict[str, Any]:
         token = _current_counter.set(_CallCounter(budget))
         try:
             question = _question_from_task(state)
-            final = await workflow.ainvoke(
-                get_default_state(question=question, **defaults),
-                config=_run_config(config),
-            )
-            return _task_reply(final, await save_result(question, final))
+            inputs = {"question": question}
+            for hook in hooks:
+                if hook.event == "before_run":
+                    inputs = await hook.ainvoke(inputs)
+            allowed = {
+                "question",
+                "schema",
+                "schema_str",
+                "joins",
+                "evidence",
+                "sql_rules",
+                "few_shot_examples",
+            }
+            unknown = set(inputs) - allowed
+            if unknown:
+                raise ValueError(f"Unsupported NL2SQL before_run fields: {sorted(unknown)}")
+            initial = get_default_state(**{**defaults, **inputs, "context_overrides": list(inputs)})
+            final = await workflow.ainvoke(initial, config=_run_config(config))
+            payload = {
+                **_task_payload(final, await save_result(inputs.get("question"), final)),
+                "question": inputs.get("question"),
+                "executed": bool(final.get("execution_results")),
+            }
+            for hook in reversed(hooks):
+                if hook.event == "after_run":
+                    payload = await hook.ainvoke(payload)
+            return {
+                "messages": [
+                    AIMessage(content=json.dumps(payload, ensure_ascii=False, default=str))
+                ]
+            }
         except Exception as exc:
             return _error_reply(exc)
         finally:

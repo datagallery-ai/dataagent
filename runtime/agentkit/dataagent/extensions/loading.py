@@ -11,41 +11,13 @@ from itertools import count
 from pathlib import Path
 
 from dataagent.declarations import PluginSpec
+from dataagent.plugin_config import contained_path, resolve_plugins
 from dataagent.settings import PluginSettings
-from dataagent.strict_json import read_json
-
-
-def contained_path(root: Path, relative: str) -> Path:
-    if Path(relative).is_absolute():
-        raise ValueError("Plugin resource paths must be relative to the plugin directory")
-    path = (root / relative).resolve(strict=True)
-    if not path.is_relative_to(root.resolve()):
-        raise ValueError("Plugin resource escapes its root directory")
-    return path
 
 
 def select_plugins(settings: PluginSettings, plugin_roots=()) -> list[tuple[Path, PluginSpec]]:
-    """Resolve `plugins.enabled` against candidate plugin directories, in enabled order.
-
-    `plugin_roots` are plugin directories (builtin, user) discovered by bootstrap;
-    `settings.paths` are explicitly configured plugin directories. The same real
-    directory counts once; one ID matching two directories is a conflict, never a priority.
-    """
-    directories = list(dict.fromkeys(
-        path.resolve(strict=True) for path in (*plugin_roots, *settings.paths)
-    ))
-    selected = []
-    for plugin_id in settings.enabled:
-        matches = [path for path in directories if path.name == plugin_id]
-        if len(matches) != 1:
-            locations = ", ".join(map(str, matches)) or "not found"
-            raise ValueError(f"Plugin {plugin_id!r} must resolve to exactly one directory: {locations}")
-        root = matches[0].resolve()
-        spec = PluginSpec.model_validate(read_json(contained_path(root, ".plugin.json")))
-        if spec.id != plugin_id:
-            raise ValueError(f"Plugin directory and manifest ID disagree: {plugin_id}")
-        selected.append((root, spec))
-    return selected
+    """Resolve explicitly enabled plugins and their local dependencies in dependency order."""
+    return resolve_plugins(settings, plugin_roots)
 
 
 _PLUGIN_NAMESPACE = "_dataagent_v2_plugin_"
@@ -105,12 +77,14 @@ class PythonLoader:
         # this entrypoint attaches submodules to those same package objects
         # instead of executing second copies.
         exposed = [
-            key for key in sys.modules
-            if key.startswith(prefix) and not key[len(prefix):].startswith("_entry_")
-            and key[len(prefix):] not in sys.modules
+            key
+            for key in sys.modules
+            if key.startswith(prefix)
+            and not key[len(prefix) :].startswith("_entry_")
+            and key[len(prefix) :] not in sys.modules
         ]
         for key in exposed:
-            sys.modules[key[len(prefix):]] = sys.modules[key]
+            sys.modules[key[len(prefix) :]] = sys.modules[key]
         before = set(sys.modules)
         # Read source directly: same-second, same-size edits must not reuse stale .pyc.
         root_text = str(root)
@@ -124,7 +98,7 @@ class PythonLoader:
             if added and root_text in sys.path:
                 sys.path.remove(root_text)
             for key in exposed:
-                sys.modules.pop(key[len(prefix):], None)
+                sys.modules.pop(key[len(prefix) :], None)
             # Modules this entrypoint imported from the plugin directory move
             # into the plugin namespace; host and third-party imports stay put.
             for key in list(sys.modules):

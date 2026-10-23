@@ -11,10 +11,17 @@ from types import MappingProxyType
 
 from dataagent.bootstrap.config_files import Layer
 from dataagent.bootstrap.paths import RuntimePaths
-from dataagent.declarations import HookSpec
+from dataagent.declarations import HookSpec, RunHookSpec
 from dataagent.settings import Settings
 
-_IGNORED_RESOURCES = {"__pycache__", ".git", ".venv", "node_modules", ".pytest_cache", ".ruff_cache"}
+_IGNORED_RESOURCES = {
+    "__pycache__",
+    ".git",
+    ".venv",
+    "node_modules",
+    ".pytest_cache",
+    ".ruff_cache",
+}
 
 
 def extension_revision(runtime) -> str:
@@ -29,13 +36,24 @@ def extension_revision(runtime) -> str:
     roots.update(item.path.with_name(".env") for item in runtime.report.configs)
     if runtime.report.env_file:
         roots.add(runtime.report.env_file)
-    roots.update(root for root in (*runtime.extensions.plugin_roots, *runtime.settings.plugins.paths)
-                 if root.name in runtime.settings.plugins.enabled)
+    roots.update(
+        root
+        for root in (*runtime.extensions.plugin_roots, *runtime.settings.plugins.paths)
+        if root.name in runtime.settings.plugins.enabled
+    )
     plugins = home / "plugins"
     if plugins.is_dir():
-        roots.update(root for root in plugins.iterdir() if root.name in runtime.settings.plugins.enabled)
-    roots.update(binding.base_dir / binding.spec.entrypoint.partition(":")[0]
-                 for binding in runtime.extensions.hooks)
+        roots.update(
+            root for root in plugins.iterdir() if root.name in runtime.settings.plugins.enabled
+        )
+    roots.update(
+        binding.base_dir / binding.spec.entrypoint.partition(":")[0]
+        for binding in runtime.extensions.hooks
+    )
+    for bindings in runtime.extensions.run_hooks.values():
+        roots.update(
+            binding.base_dir / binding.spec.entrypoint.partition(":")[0] for binding in bindings
+        )
     digest = hashlib.sha256()
 
     def visit(path: Path, parents=frozenset()):
@@ -69,6 +87,14 @@ class HookBinding:
 
 
 @dataclass(frozen=True)
+class RunHookBinding:
+    """One compiled workflow Hook and the directory that declared it."""
+
+    base_dir: Path
+    spec: RunHookSpec
+
+
+@dataclass(frozen=True)
 class ExtensionLocations:
     """Plugin/Skill locations, source-bound Hooks and resolved native MCP connections.
 
@@ -80,11 +106,14 @@ class ExtensionLocations:
     plugin_roots: tuple[Path, ...] = ()
     skill_sources: tuple[tuple[str, str], ...] = ()
     hooks: tuple[HookBinding, ...] = field(default=(), repr=False)
+    run_hooks: Mapping[str, tuple[RunHookBinding, ...]] = field(default_factory=dict, repr=False)
     mcp_servers: Mapping = field(default_factory=lambda: MappingProxyType({}), repr=False)
 
 
 def locate_extensions(
-    paths: RuntimePaths, layers: tuple[Layer, ...], settings: Settings,
+    paths: RuntimePaths,
+    layers: tuple[Layer, ...],
+    settings: Settings,
 ) -> tuple[ExtensionLocations, tuple[tuple[str, tuple[str, ...]], ...]]:
     """Locate extensions and classify candidate plugin origins after configuration merging.
 
@@ -93,7 +122,10 @@ def locate_extensions(
     roots: list[Path] = []
     categories: dict[Path, str] = {}
     skill_sources: list[tuple[str, str]] = []
-    for scope, root, label in (("builtin", paths.builtin_plugins, None), ("user", paths.home, "User")):
+    for scope, root, label in (
+        ("builtin", paths.builtin_plugins, None),
+        ("user", paths.home, "User"),
+    ):
         _collect_plugin_roots(scope, root, roots, categories)
         _collect_skill_source(root, label, skill_sources)
     origins = _plugin_origins(settings, roots, categories)
@@ -102,12 +134,16 @@ def locate_extensions(
         plugin_roots=tuple(roots),
         skill_sources=tuple(skill_sources),
         hooks=_bind_hooks(layers, settings.dataagent.hooks),
+        run_hooks=_bind_run_hooks(layers),
     )
     return locations, origins
 
 
 def _collect_plugin_roots(
-    scope: str, root: Path, roots: list[Path], categories: dict[Path, str],
+    scope: str,
+    root: Path,
+    roots: list[Path],
+    categories: dict[Path, str],
 ) -> None:
     plugins = root if scope == "builtin" else root / "plugins"
     for real in _plugin_directories(plugins):
@@ -119,12 +155,17 @@ def _collect_plugin_roots(
 def _plugin_directories(root: Path) -> list[Path]:
     if not root.is_dir():
         return []
-    return [child.resolve() for child in sorted(root.iterdir())
-            if child.is_dir() and not child.name.startswith(".")]
+    return [
+        child.resolve()
+        for child in sorted(root.iterdir())
+        if child.is_dir() and not child.name.startswith(".")
+    ]
 
 
 def _collect_skill_source(
-    root: Path, label: str | None, skill_sources: list[tuple[str, str]],
+    root: Path,
+    label: str | None,
+    skill_sources: list[tuple[str, str]],
 ) -> None:
     if label is not None and _has_skills(root / "skills"):
         source = str((root / "skills").resolve())
@@ -139,7 +180,9 @@ def _has_skills(source: Path) -> bool:
 
 
 def _plugin_origins(
-    settings: Settings, roots: list[Path], categories: dict[Path, str],
+    settings: Settings,
+    roots: list[Path],
+    categories: dict[Path, str],
 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
     origins = []
     for plugin_id in settings.plugins.enabled:
@@ -156,4 +199,27 @@ def _bind_hooks(layers: tuple[Layer, ...], hooks: tuple[HookSpec, ...]) -> tuple
         for layer in layers
         for _ in layer.data.get("dataagent", {}).get("hooks", ())
     )
-    return tuple(HookBinding(base_dir, spec) for base_dir, spec in zip(base_dirs, hooks, strict=True))
+    return tuple(
+        HookBinding(base_dir, spec) for base_dir, spec in zip(base_dirs, hooks, strict=True)
+    )
+
+
+def _bind_run_hooks(layers: tuple[Layer, ...]) -> Mapping[str, tuple[RunHookBinding, ...]]:
+    bindings = {}
+    for layer in layers:
+        base = layer.base_dir or layer.path.parent.resolve()
+        for plugin_id, params in layer.data.get("plugins", {}).get("config", {}).items():
+            groups = params.get("hooks", {})
+            if not isinstance(groups, Mapping):
+                raise ValueError(f"{layer.path}: {plugin_id}.hooks must group before_run/after_run")
+            for event, entries in groups.items():
+                if event not in {"before_run", "after_run"} or not isinstance(
+                    entries, (tuple, list)
+                ):
+                    raise ValueError(f"{layer.path}: invalid workflow Hook group {event!r}")
+                for entry in entries:
+                    if not isinstance(entry, Mapping) or "event" in entry:
+                        raise ValueError(f"{layer.path}: workflow Hook group supplies its event")
+                    spec = RunHookSpec.model_validate({**entry, "event": event})
+                    bindings.setdefault(plugin_id, []).append(RunHookBinding(base, spec))
+    return MappingProxyType({key: tuple(value) for key, value in bindings.items()})

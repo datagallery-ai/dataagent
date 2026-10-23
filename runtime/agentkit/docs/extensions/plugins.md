@@ -35,16 +35,34 @@
 }
 ```
 
-`paths` 只增加候选。只有 `enabled` 里的 ID 会编译。ID 不能重复。保留 ID 是 `user` 和 `cli`。
+`paths` 只增加候选。`enabled` 里的 ID 及其传递依赖会编译。ID 不能重复。保留 ID 是 `user` 和 `cli`。
 
 候选目录来自包内 `builtin-plugins`、Home `plugins/` 和 `plugins.paths`。同一个真实目录只计一次。同一个启用 ID 对应两个不同目录时，启动失败，不会静默覆盖。
 
-运行时不自动安装插件依赖。
+清单 `requires` 声明加载依赖。宿主在已有候选目录中查找它们，按依赖优先顺序加载，每个 ID 只加载一次。
+依赖缺失、重复来源或循环依赖会在启动时失败。不会联网安装，也不建立跨插件 Python import 路径。
+
+```json
+{"schema_version": 2, "id": "de-agent", "requires": ["nl2sql"], "config": "config.json"}
+```
+
+`config` 指向只含 `plugins.config` 的 JSON 默认配置片段，可以配置自身和已依赖插件。合并顺序：
+依赖默认值 → 依赖它的插件默认值 → Home 配置 → 显式配置。对象递归合并，普通数组替换；
+`plugins.config.<id>.hooks.before_run/after_run` 按来源追加，空数组不清除已有 Hook。
+同级插件按 `enabled` 声明顺序合并，后者覆盖前者；需要固定值时在 Agent 配置中显式指定。
+片段不能修改模型、宿主连接、`enabled` 或 `paths`，因此不会引发第二轮依赖发现。
+
+工具和 Hook 通过 `runtime.context.get_plugin_config("de-agent")` 读取最终配置的独立副本，
+通过 `runtime.context.session.outputs` 访问当前会话产物目录。模型和语义客户端仍使用
+`runtime.context.get_model(alias)` 和 `runtime.context.semantic_client`。
+这些是宿主提供的公开接口，不需要插件 setup 或共享插件实例。
 
 ## 清单里可以声明什么
 
 | 字段 | 作用 |
 | --- | --- |
+| `requires` | 依赖插件 ID 数组，默认空 |
+| `config` | 只贡献 plugins.config 的 JSON 文件，相对插件根 |
 | `system_prompt` | 相对插件根的 Markdown，拼进根 Agent 提示 |
 | `tools` | 本地 ID 到 `file.py:函数` |
 | `skills` | 相对插件根的 Skill 目录 |

@@ -54,10 +54,13 @@ class MCPConfig(StrictModel):
     @classmethod
     def default_stdio(cls, value):
         if isinstance(value, Mapping) and isinstance(value.get("mcpServers"), Mapping):
-            return {**value, "mcpServers": {
-                name: {"type": "stdio", **spec} if isinstance(spec, Mapping) else spec
-                for name, spec in value["mcpServers"].items()
-            }}
+            return {
+                **value,
+                "mcpServers": {
+                    name: {"type": "stdio", **spec} if isinstance(spec, Mapping) else spec
+                    for name, spec in value["mcpServers"].items()
+                },
+            }
         return value
 
 
@@ -65,6 +68,7 @@ class ToolSpec(StrictModel):
     """A Python function or native tool reference, not a second tool argument schema."""
 
     entrypoint: str = Field(min_length=1)
+    scope: Literal["all", "subagents"] = "all"
 
 
 def json_containers(value):
@@ -86,8 +90,12 @@ class ExtensionConfig(StrictModel):
 
 
 HookEvent = Literal[
-    "before_agent", "after_agent", "before_model", "after_model",
-    "before_tool", "after_tool",
+    "before_agent",
+    "after_agent",
+    "before_model",
+    "after_model",
+    "before_tool",
+    "after_tool",
 ]
 
 HOOK_EVENTS = get_args(HookEvent)
@@ -106,7 +114,9 @@ def normalize_hooks(value):
                 if not isinstance(declaration, Mapping):
                     raise ValueError(f"Hook declaration for {event} must be a mapping")
                 if "event" in declaration:
-                    raise ValueError(f"Hook group {event} already declares the event; remove inner event")
+                    raise ValueError(
+                        f"Hook group {event} already declares the event; remove inner event"
+                    )
                 entries.append({**declaration, "event": event})
         return entries
     if isinstance(value, (list, tuple)):
@@ -127,7 +137,11 @@ class HookSpec(ExtensionConfig):
         if isinstance(value, Mapping) and "config" in value:
             raise ValueError("Hook params field is now `params`; rename `config` to `params`")
         if isinstance(value, Mapping) and set(value) & {
-            "command", "timeout_seconds", "handler", "events", "match",
+            "command",
+            "timeout_seconds",
+            "handler",
+            "events",
+            "match",
         }:
             raise ValueError(
                 "Hooks support Python functions only: use event + entrypoint + params; "
@@ -171,6 +185,14 @@ class SubAgentSpec(StrictModel):
     # Omitted sources inherit the root's compiled Skills; [] explicitly opts out.
     skills: list[str] | None = None
     hooks: list[HookSpec] = Field(default_factory=list)
+    filesystem_tools: (
+        list[
+            Literal[
+                "ls", "read_file", "write_file", "edit_file", "delete", "glob", "grep", "execute"
+            ]
+        ]
+        | None
+    ) = None
 
     @model_validator(mode="before")
     @classmethod
@@ -182,7 +204,9 @@ class SubAgentSpec(StrictModel):
     @model_validator(mode="after")
     def check_kind(self):
         if (self.description is None) == (self.description_file is None):
-            raise ValueError(f"SubAgent {self.name!r} requires exactly one of description or description_file")
+            raise ValueError(
+                f"SubAgent {self.name!r} requires exactly one of description or description_file"
+            )
         if self.kind == "compiled":
             if self.entrypoint is None:
                 raise ValueError(
@@ -192,12 +216,19 @@ class SubAgentSpec(StrictModel):
                 raise ValueError(
                     f"Compiled SubAgent {self.name!r} does not take system_prompt; the graph owns its prompts"
                 )
-            if self.tools is not None or self.skills is not None or self.hooks:
+            if (
+                self.tools is not None
+                or self.skills is not None
+                or self.hooks
+                or self.filesystem_tools is not None
+            ):
                 raise ValueError(
-                    f"Compiled SubAgent {self.name!r} does not take tools, skills or hooks; "
+                    f"Compiled SubAgent {self.name!r} does not take tools, skills, hooks or filesystem_tools; "
                     "the graph owns its execution"
                 )
         else:
+            if self.filesystem_tools is not None and "read_file" not in self.filesystem_tools:
+                raise ValueError("filesystem_tools must include read_file for large tool results")
             if self.system_prompt is None:
                 raise ValueError(
                     f"SubAgent {self.name!r} requires system_prompt; "
@@ -210,9 +241,20 @@ class SubAgentSpec(StrictModel):
         return self
 
 
+class RunHookSpec(ExtensionConfig):
+    """A source-bound transformation at a compiled workflow boundary."""
+
+    event: Literal["before_run", "after_run"]
+    entrypoint: str = Field(min_length=1)
+
+
 class PluginSpec(StrictModel):
     schema_version: Literal[2] = 2
     id: str = Field(pattern=f"^{RESOURCE_ID_PATTERN}$")
+    requires: list[Annotated[str, Field(pattern=f"^{RESOURCE_ID_PATTERN}$")]] = Field(
+        default_factory=list
+    )
+    config: str | None = Field(default=None, min_length=1)
     system_prompt: str | None = None
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
     skills: list[str] = Field(default_factory=list)
@@ -227,9 +269,11 @@ class PluginSpec(StrictModel):
         hooks = value.get("hooks", []) if isinstance(value, dict) else []
         hooks = hooks if isinstance(hooks, (list, tuple)) else []
         if isinstance(value, dict) and (
-            value.get("schema_version", 2) != 2 or "hook_handlers" in value
-            or any(isinstance(item, dict) and ("handler" in item or "events" in item)
-                   for item in hooks)
+            value.get("schema_version", 2) != 2
+            or "hook_handlers" in value
+            or any(
+                isinstance(item, dict) and ("handler" in item or "events" in item) for item in hooks
+            )
         ):
             raise ValueError(
                 "Migrate plugin to schema_version: 2 and hooks with event plus "

@@ -94,7 +94,12 @@ def create_agent(
         owned_client = SemanticServiceClient.from_settings(runtime.settings.semantic)
         semantic_client = owned_client
     try:
-        context = ModelContext(runtime, model=kwargs.get("model"), semantic_client=semantic_client)
+        context = ModelContext(
+            runtime,
+            model=kwargs.get("model"),
+            semantic_client=semantic_client,
+            session=kwargs.get("session"),
+        )
         graph = build_agent(runtime, context=context, **kwargs)
         return Agent(graph, context, _owned_semantic_client=owned_client)
     except BaseException:

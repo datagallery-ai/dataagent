@@ -19,7 +19,8 @@ ROOT_AGENT_NAME = "dataagent-v2"
 
 
 def compile_extensions(
-    selected_plugins: list[tuple[Path, PluginSpec]], *,
+    selected_plugins: list[tuple[Path, PluginSpec]],
+    *,
     skill_sources: Sequence[tuple[str, str]] = (),
     hook_entries: Sequence[tuple[Path, HookSpec]] = (),
     mcp_tools: Sequence[BaseTool] = (),
@@ -27,6 +28,8 @@ def compile_extensions(
     model_resolver: Callable[[str], BaseChatModel] | None = None,
     semantic_client: SemanticServiceClient | None = None,
     outputs_dir: Path | None = None,
+    context=None,
+    run_hook_entries=None,
 ) -> dict[str, Any]:
     """Combine plugins and standalone resources without adding host execution policy.
 
@@ -47,6 +50,7 @@ def compile_extensions(
     child_specs: list[tuple[Path, str, SubAgentSpec]] = []
     agent_names = {ROOT_AGENT_NAME}
     plugin_ids: set[str] = set()
+    child_only_tools: set[str] = set()
     prompts = []
     for root, spec in selected_plugins:
         if spec.id in plugin_ids:
@@ -54,8 +58,13 @@ def compile_extensions(
         plugin_ids.add(spec.id)
         if spec.system_prompt:
             prompts.append(contained_path(root, spec.system_prompt).read_text(encoding="utf-8"))
-        compiled_skill_sources.extend(compile_skill_sources(root, spec.skills, skill_names, label=spec.id))
+        compiled_skill_sources.extend(
+            compile_skill_sources(root, spec.skills, skill_names, label=spec.id)
+        )
         collect_tools(root, spec, loader, tool_registry)
+        child_only_tools.update(
+            f"{spec.id}__{name}" for name, entry in spec.tools.items() if entry.scope == "subagents"
+        )
         all_hook_entries.extend((root, entry) for entry in spec.hooks)
         collect_subagents(root, spec, child_specs, agent_names)
     compiled_skill_sources.extend(collect_loose_skills(skill_sources, skill_names))
@@ -64,15 +73,21 @@ def compile_extensions(
 
     compiled_hooks = compile_hooks(all_hook_entries, loader, agent_name=ROOT_AGENT_NAME)
     children = materialize_subagents(
-        child_specs, tool_registry=tool_registry, loader=loader,
+        child_specs,
+        tool_registry=tool_registry,
+        loader=loader,
         skill_sources=compiled_skill_sources,
-        plugin_params=plugin_params, model_resolver=model_resolver,
-        semantic_client=semantic_client, outputs_dir=outputs_dir,
+        plugin_params=plugin_params,
+        model_resolver=model_resolver,
+        semantic_client=semantic_client,
+        context=context,
+        run_hook_entries=run_hook_entries,
+        outputs_dir=outputs_dir,
     )
     return {
         "name": ROOT_AGENT_NAME,
         "system_prompt": "\n\n".join(prompts),
-        "tools": list(tool_registry.values()),
+        "tools": [tool for name, tool in tool_registry.items() if name not in child_only_tools],
         "skills": compiled_skill_sources,
         "subagents": children,
         "middleware": compiled_hooks,  # Deep Agents' native parameter, not another extension kind.

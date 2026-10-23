@@ -26,14 +26,24 @@ from typing import Any
 
 from nl2sql.constants import DEFAULT_NL2SQL_MODEL_CALL_BUDGET
 
-_LEGACY_SECTIONS = frozenset({
-    "MODEL", "CORE", "DATABASE", "SEMANTIC_LAYER", "WORKSPACE", "AGENT_CONFIG", "SESSION_ID",
-})
+_LEGACY_SECTIONS = frozenset(
+    {
+        "MODEL",
+        "CORE",
+        "DATABASE",
+        "SEMANTIC_LAYER",
+        "WORKSPACE",
+        "AGENT_CONFIG",
+        "SESSION_ID",
+    }
+)
 """Legacy YAML top-level sections; their presence means an unmigrated config."""
 
 _NODE_ORDER = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
 
-_KNOWN_KEYS = frozenset({"model", "model_call_budget", "result_files", "database", "semantic", *_NODE_ORDER})
+_KNOWN_KEYS = frozenset(
+    {"model", "model_call_budget", "result_files", "database", "semantic", "nodes", *_NODE_ORDER}
+)
 
 _CONNECTION_RESERVED = frozenset({"db_id", "dialect", "engine"})
 
@@ -56,7 +66,9 @@ class NL2SQLConfig:
             raise ValueError(f"legacy section(s) {legacy}: {_MIGRATION_HINT}")
         unknown = sorted(set(raw) - _KNOWN_KEYS)
         if unknown:
-            raise ValueError(f"unknown nl2sql parameter(s) {unknown}; known keys: {sorted(_KNOWN_KEYS)}")
+            raise ValueError(
+                f"unknown nl2sql parameter(s) {unknown}; known keys: {sorted(_KNOWN_KEYS)}"
+            )
 
         model = raw.get("model")
         if not isinstance(model, str) or not model.strip():
@@ -67,23 +79,36 @@ class NL2SQLConfig:
             raise ValueError(f"model_call_budget must be a positive integer, got {budget!r}")
 
         if not isinstance(raw.get("result_files", True), bool):
-            raise ValueError(f"result_files must be true or false, got {raw['result_files']!r}")
+            raise ValueError(f"result_files must be true or false, got {raw.get('result_files')!r}")
 
         database = raw.get("database")
         if not isinstance(database, Mapping):
-            raise ValueError("nl2sql requires 'database': {db_id, dialect, engine, ...connection keys}")
+            raise ValueError(
+                "nl2sql requires 'database': {db_id, dialect, engine, ...connection keys}"
+            )
         dialect = database.get("dialect")
         if not isinstance(dialect, str) or not dialect.strip():
             raise ValueError("database.dialect is required (e.g. sqlite, mysql, gaussvector)")
         for key in ("db_id", "engine"):
-            if key in database and not isinstance(database[key], str):
-                raise ValueError(f"database.{key} must be a string, got {database[key]!r}")
+            if key in database and not isinstance(database.get(key), str):
+                raise ValueError(f"database.{key} must be a string, got {database.get(key)!r}")
 
         for section in ("semantic", *_NODE_ORDER):
-            if section in raw and not isinstance(raw[section], Mapping):
-                raise ValueError(f"nl2sql parameter {section!r} must be a mapping, got {raw[section]!r}")
+            if section in raw and not isinstance(raw.get(section), Mapping):
+                raise ValueError(
+                    f"nl2sql parameter {section!r} must be a mapping, got {raw.get(section)!r}"
+                )
 
+        nodes = raw.get("nodes")
+        if nodes is not None:
+            if not isinstance(nodes, (list, tuple)) or len(nodes) < 2:
+                raise ValueError("nodes must include at least perceptor and generator")
+            if list(nodes) != list(_NODE_ORDER[: len(nodes)]):
+                raise ValueError(f"nodes must be a prefix of {_NODE_ORDER}")
         self._data: dict[str, Any] = raw
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"NL2SQLConfig(sections={sorted(self._data)})"
 
     @property
     def model_call_budget(self) -> int:
@@ -102,6 +127,9 @@ class NL2SQLConfig:
         With no node sections configured the full six-node chain runs; otherwise
         the present sections must form a prefix and include the generator.
         """
+        explicit = self._data.get("nodes")
+        if explicit is not None:
+            return list(explicit)
         present = [name for name in _NODE_ORDER if name in self._data]
         if not present:
             return list(_NODE_ORDER)
@@ -114,9 +142,22 @@ class NL2SQLConfig:
             raise ValueError("nl2sql requires at least the perceptor and generator nodes")
         return present
 
+    @classmethod
+    def load(cls, path: str | Path) -> NL2SQLConfig:
+        """Load parameters from a JSON file (YAML is no longer supported)."""
+        file = Path(path)
+        data = json.loads(file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"nl2sql config must be a mapping: {file}")
+        return cls(data)
+
     def connection_config(self) -> dict[str, Any]:
         """Database connection kwargs: the database section minus its reserved keys."""
-        return {key: value for key, value in self.section("database").items() if key not in _CONNECTION_RESERVED}
+        return {
+            key: value
+            for key, value in self.section("database").items()
+            if key not in _CONNECTION_RESERVED
+        }
 
     def get(self, key: str, default: Any = None) -> Any:
         """Return the value at a dotted key path, or ``default`` when missing."""
@@ -124,7 +165,7 @@ class NL2SQLConfig:
         for part in key.split("."):
             if not isinstance(current, Mapping) or part not in current:
                 return default
-            current = current[part]
+            current = current.get(part)
         return current
 
     def section(self, name: str) -> Mapping[str, Any]:
@@ -135,15 +176,3 @@ class NL2SQLConfig:
     def as_dict(self) -> dict[str, Any]:
         """Return the underlying configuration dict (shallow copy)."""
         return dict(self._data)
-
-    @classmethod
-    def load(cls, path: str | Path) -> NL2SQLConfig:
-        """Load parameters from a JSON file (YAML is no longer supported)."""
-        file = Path(path)
-        data = json.loads(file.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"nl2sql config must be a mapping: {file}")
-        return cls(data)
-
-    def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return f"NL2SQLConfig(sections={sorted(self._data)})"

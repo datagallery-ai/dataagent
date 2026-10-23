@@ -9,7 +9,13 @@ from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 
-from dataagent.bootstrap.config_files import ENV_REFERENCE, ConfigSource, load_layers, merge
+from dataagent.bootstrap.config_files import (
+    ENV_REFERENCE,
+    ConfigSource,
+    _load_layer,
+    load_layers,
+    merge,
+)
 from dataagent.bootstrap.discovery import locate_extensions
 from dataagent.bootstrap.environment import load_env
 from dataagent.bootstrap.mcp import load_mcp_config
@@ -26,9 +32,11 @@ from dataagent.bootstrap.paths import (
     session_paths,
 )
 from dataagent.bootstrap.runtime import Runtime, StartupReport
+from dataagent.plugin_config import contained_path, resolve_plugins
 
 
 def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
+    """Prepare effective configuration and declarations without executing plugin Python code."""
     options = options or LaunchOptions()
     # Step1. Resolve launch inputs; Home initialization is the only optional write here.
     user_id = opaque_id(options.user_id, "user id")
@@ -55,33 +63,51 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     # A resumed session keeps the binding recorded when it was created.
     explicit = [options.workspace] if options.workspace is not None else []
     explicit.extend(options.workspaces)
-    explicit_inputs = bool(explicit) or bool(environment.values.get("DATAAGENT_WORKSPACE", "").strip())
+    explicit_inputs = bool(explicit) or bool(
+        environment.values.get("DATAAGENT_WORKSPACE", "").strip()
+    )
     if explicit:
         workspaces = tuple(
             WorkspaceInput(f"workspace-{index}", absolute(value, cwd, expand_home=True))
             for index, value in enumerate(explicit)
         )
     elif environment.values.get("DATAAGENT_WORKSPACE", "").strip():
-        workspaces = (WorkspaceInput(
-            "workspace-0", absolute(environment.values["DATAAGENT_WORKSPACE"], cwd, expand_home=True),
-        ),)
+        workspaces = (
+            WorkspaceInput(
+                "workspace-0",
+                absolute(environment.values["DATAAGENT_WORKSPACE"], cwd, expand_home=True),
+            ),
+        )
     else:
-        workspaces = tuple(WorkspaceInput(item.name, item.path) for item in settings.dataagent.workspaces)
+        workspaces = tuple(
+            WorkspaceInput(item.name, item.path) for item in settings.dataagent.workspaces
+        )
     if options.session_id is not None:
         workspaces = _resume_workspaces(
-            home, user_id, options.session_id, workspaces, explicit=explicit_inputs,
+            home,
+            user_id,
+            options.session_id,
+            workspaces,
+            explicit=explicit_inputs,
         )
     paths = RuntimePaths.resolve(home, workspaces, user_id=user_id)
 
     # Step3. Only Home supplies automatic user extensions; cwd and inputs are data paths.
     for name in ("skills", "hooks", "plugins"):
         directory(home / name)
-    extensions, plugin_origins = locate_extensions(paths, layers, settings)
-    mcp_roots = tuple(dict.fromkeys(
-        root.resolve() for root in (*extensions.plugin_roots, *settings.plugins.paths)
-        if root.name in settings.plugins.enabled
-    ))
-    extensions = replace(extensions, mcp_servers=load_mcp_config(home, mcp_roots, environment.values))
+    settings, extensions, plugin_origins, plugin_sources = _configure_plugins(
+        paths, layers, settings, environment.values
+    )
+    mcp_roots = tuple(
+        dict.fromkeys(
+            root.resolve()
+            for root in (*extensions.plugin_roots, *settings.plugins.paths)
+            if root.name in settings.plugins.enabled
+        )
+    )
+    extensions = replace(
+        extensions, mcp_servers=load_mcp_config(home, mcp_roots, environment.values)
+    )
 
     # Step4. Keep applied configuration sources visible in the returned Runtime.
     applied = {layer.scope for layer in layers}
@@ -91,20 +117,28 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     if cli_config is not None:
         configs.append(ConfigSource("cli", cli_config, True))
     report = StartupReport(
-        configs=tuple(configs),
+        configs=(*plugin_sources, *configs),
         plugin_origins=plugin_origins,
         env_file=env_file,
     )
     # Retain only model-referenced values, not the entire process environment. Resolve
     # secondary models on first use without rereading dotenv or changing os.environ.
-    model_environment = MappingProxyType({
-        name: environment.values[name]
-        for model in settings.models.values()
-        for value in (model.name, model.base_url, model.api_key.get_secret_value())
-        for name in ENV_REFERENCE.findall(value) if name in environment.values
-    })
-    return Runtime(settings=settings, paths=paths, report=report, extensions=extensions,
-                   model_environment=model_environment)
+    model_environment = MappingProxyType(
+        {
+            name: environment.values[name]
+            for model in settings.models.values()
+            for value in (model.name, model.base_url, model.api_key.get_secret_value())
+            for name in ENV_REFERENCE.findall(value)
+            if name in environment.values
+        }
+    )
+    return Runtime(
+        settings=settings,
+        paths=paths,
+        report=report,
+        extensions=extensions,
+        model_environment=model_environment,
+    )
 
 
 def refresh_extensions(runtime: Runtime) -> Runtime:
@@ -119,25 +153,48 @@ def refresh_extensions(runtime: Runtime) -> Runtime:
     environment = load_env(env_paths, runtime.report.env_file)
     layers = load_layers(home, environment.values, cli_config)
     loaded = merge(layers)
-    settings = runtime.settings.model_copy(update={
-        "plugins": loaded.plugins,
-        "dataagent": runtime.settings.dataagent.model_copy(update={"hooks": loaded.dataagent.hooks}),
-    })
-    extensions, origins = locate_extensions(runtime.paths, layers, settings)
-    roots = tuple(dict.fromkeys(
-        root.resolve() for root in (*extensions.plugin_roots, *settings.plugins.paths)
-        if root.name in settings.plugins.enabled
-    ))
+    settings = runtime.settings.model_copy(
+        update={
+            "plugins": loaded.plugins,
+            "dataagent": runtime.settings.dataagent.model_copy(
+                update={"hooks": loaded.dataagent.hooks}
+            ),
+        }
+    )
+    settings, extensions, origins, plugin_sources = _configure_plugins(
+        runtime.paths, layers, settings, environment.values
+    )
+    roots = tuple(
+        dict.fromkeys(
+            root.resolve()
+            for root in (*extensions.plugin_roots, *settings.plugins.paths)
+            if root.name in settings.plugins.enabled
+        )
+    )
     extensions = replace(extensions, mcp_servers=load_mcp_config(home, roots, environment.values))
     applied = {layer.scope for layer in layers}
-    report = replace(runtime.report, plugin_origins=origins, configs=tuple(
-        replace(item, applied=item.scope in applied) for item in runtime.report.configs
-    ))
+    report = replace(
+        runtime.report,
+        plugin_origins=origins,
+        configs=(
+            *plugin_sources,
+            *(
+                replace(item, applied=item.scope in applied)
+                for item in runtime.report.configs
+                if item.scope != "plugin"
+            ),
+        ),
+    )
     return replace(runtime, settings=settings, extensions=extensions, report=report)
 
 
 def _resume_workspaces(
-    home: Path, user_id: str, thread_id: str, launched: tuple[WorkspaceInput, ...], *, explicit: bool,
+    home: Path,
+    user_id: str,
+    thread_id: str,
+    launched: tuple[WorkspaceInput, ...],
+    *,
+    explicit: bool,
 ) -> tuple[WorkspaceInput, ...]:
     """Use the saved input list. An explicit different list is a startup error, not a rebind."""
     session = session_paths(home, user_id, thread_id)
@@ -169,3 +226,28 @@ def _explicit_file(value, cwd: Path, kind: str, *, must_exist: bool = True) -> P
     if must_exist and not path.is_file():
         raise ValueError(f"{kind} file does not exist or is not a file: {path}")
     return path
+
+
+def _configure_plugins(paths, layers, settings, environment):
+    candidates, _ = locate_extensions(paths, layers, settings)
+    selected = resolve_plugins(settings.plugins, candidates.plugin_roots)
+    defaults = []
+    for root, spec in selected:
+        if spec.config is not None:
+            layer = _load_layer(
+                "plugin",
+                contained_path(root, spec.config),
+                env=environment,
+                home=paths.home,
+            )
+            defaults.append(replace(layer, base_dir=root))
+    combined = (*defaults, *layers)
+    effective = merge(combined)
+    # Refresh only replaces plugin settings; host models, input paths and policy stay fixed.
+    plugins = effective.plugins.model_copy(
+        update={"enabled": tuple(spec.id for _, spec in selected)}
+    )
+    settings = settings.model_copy(update={"plugins": plugins})
+    locations, origins = locate_extensions(paths, combined, settings)
+    sources = tuple(ConfigSource("plugin", layer.path, True) for layer in defaults)
+    return settings, locations, origins, sources
