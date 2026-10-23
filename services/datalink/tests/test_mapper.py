@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from datalink.config import DataLinkConfig, EmbeddingConfig, LLMConfig
 from datalink.mapper.llm_mapper import LLMMapper
 from datalink.models.edge import Edge, EdgeType
@@ -201,26 +203,60 @@ class TestMergeWithExisting:
         assert len(result_entities) == 1
         assert len(result_edges) == 1
 
-    def test_merge_empty_new(self):
-        """When no new nodes, merge should return empty lists."""
+    @pytest.mark.parametrize(
+        ("has_concepts", "has_entities"),
+        [(True, False), (False, True), (True, True), (False, False)],
+        ids=["concepts-only", "entities-only", "concepts-and-entities", "empty-graph"],
+    )
+    def test_merge_empty_new_preserves_existing_graph(self, has_concepts, has_entities):
+        """An empty incoming batch must preserve the accumulated graph without model calls."""
         config = _make_config()
         mapper = LLMMapper(config)
+        mapper._embedding_prefilter = MagicMock()
+        mapper._llm_merge_judge = MagicMock()
 
-        existing_concepts = [
-            ConceptNode(id="concept:person_id", name="person_id", description="Person ID"),
-        ]
+        existing_concepts = (
+            [ConceptNode(id="concept:person_id", name="person_id", description="Person ID")] if has_concepts else []
+        )
+        existing_entities = (
+            [EntityNode(id="entity:customer", name="customer", description="A customer")] if has_entities else []
+        )
+        existing_edges = []
+        if has_concepts:
+            existing_edges.append(
+                Edge(
+                    id="edge:represents:col1:concept:person_id",
+                    source_id="col1",
+                    target_id="concept:person_id",
+                    type=EdgeType.REPRESENTS,
+                    confidence=0.9,
+                )
+            )
+        if has_concepts and has_entities:
+            existing_edges.append(
+                Edge(
+                    id="edge:has_concept:entity:customer:concept:person_id",
+                    source_id="entity:customer",
+                    target_id="concept:person_id",
+                    type=EdgeType.HAS_CONCEPT,
+                    confidence=0.8,
+                )
+            )
 
         result_concepts, result_entities, result_edges = mapper.merge_with_existing(
             [],
             [],
             [],
             existing_concepts,
-            [],
+            existing_entities,
+            existing_edges=existing_edges,
         )
 
-        assert len(result_concepts) == 0
-        assert len(result_entities) == 0
-        assert len(result_edges) == 0
+        assert result_concepts == existing_concepts
+        assert result_entities == existing_entities
+        assert result_edges == existing_edges
+        mapper._embedding_prefilter.assert_not_called()
+        mapper._llm_merge_judge.assert_not_called()
 
     def test_execute_merge_plan_concept_merge(self):
         """Execute a merge plan that merges one concept into an existing one."""
