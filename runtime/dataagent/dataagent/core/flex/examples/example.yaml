@@ -240,6 +240,7 @@ TOOLS:
   skills:
     builtin:
       - pdf
+      - word-root-validator
       # - docx
     custom_dirs:
       - /abs/path/to/custom_skills
@@ -274,6 +275,23 @@ TOOLS:
       function: "search_tables_and_columns"
       name: "search_tables_and_columns"
       category: "semantic"
+
+    # 词根校验示例：csv_path 和列名按实际词根表结构配置。
+    - module: "dataagent.actions.tools.local_tool.word_root_validator"
+      function: "validate_word_roots"
+      name: "validate_word_roots"
+      category: "semantic"
+      config:
+        # csv_path 可省略；默认读取仓库根目录的 word_dict_list.csv
+        english_name_column: "词根英文名"
+        chinese_name_column: "词根中文名"
+        description_column: "描述"
+        type_column: "词根类型"
+        regex_column: "特殊词根规则"
+        special_type_value: "特殊词根"
+        llm_model: "planner"
+        llm_call_params:
+          enable_thinking: false
 
   mcp_servers:
     - server_id: "nl2sql"
