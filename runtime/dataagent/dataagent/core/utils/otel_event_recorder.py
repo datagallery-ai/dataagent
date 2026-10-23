@@ -38,6 +38,7 @@ Output file structure (``work_dir/.otel/``)::
 
     trajectory.json              ← main agent (one group per round)
     trajectory_{sub_id}_{run_id}.json  ← sub-agents (one group per round)
+    trajectory*.progress.jsonl    ← immediate start/end metadata, even mid-round
 
 Each file is a JSON array of event groups, where each group represents one
 agent round::
@@ -345,6 +346,29 @@ class OtelEventRecorder:
 
     # ── LLM Events ──────────────────────────────────────────────────────────
 
+    def _record_event(self, event: dict[str, Any]) -> None:
+        """Keep the replay format buffered, but persist live progress immediately.
+
+        No prompts, arguments or results enter this journal. A missing end event
+        identifies an in-flight call even when the current round never finishes.
+        Each recorder uses its own file, just like its replay trajectory.
+        """
+        with self._lock:
+            self._events.append(event)
+            progress = {
+                key: event[key]
+                for key in ("type", "timestamp", "tool_name", "tool_call_id", "model", "is_error")
+                if key in event
+            }
+            progress.update(session_id=self._session_id, run_id=self._run_id, round_index=self._round_index)
+            try:
+                self._output_dir.mkdir(parents=True, exist_ok=True)
+                path = self._resolve_output_path().with_suffix(".progress.jsonl")
+                with path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(progress, ensure_ascii=False) + "\n")
+            except OSError as exc:
+                logger.warning("OtelEventRecorder: failed to persist live progress: {}", exc)
+
     def record_llm_start(self, model: str, messages: Any = None) -> None:
         """Record an LLM call start event.
 
@@ -362,8 +386,7 @@ class OtelEventRecorder:
         }
         if messages is not None:
             event["input"] = messages
-        with self._lock:
-            self._events.append(event)
+        self._record_event(event)
 
     def record_llm_end(
         self,
@@ -399,8 +422,7 @@ class OtelEventRecorder:
             event["content"] = content
         if reasoning_content:
             event["reasoning_content"] = reasoning_content
-        with self._lock:
-            self._events.append(event)
+        self._record_event(event)
 
     # ── Tool Events ──────────────────────────────────────────────────────────
 
@@ -425,8 +447,7 @@ class OtelEventRecorder:
         }
         if arguments:
             event["arguments"] = arguments
-        with self._lock:
-            self._events.append(event)
+        self._record_event(event)
 
     def record_tool_end(
         self,
@@ -450,8 +471,7 @@ class OtelEventRecorder:
             event["result"] = result
         if is_error:
             event["is_error"] = True
-        with self._lock:
-            self._events.append(event)
+        self._record_event(event)
 
     # ── Incremental round flush ─────────────────────────────────────────────
 
