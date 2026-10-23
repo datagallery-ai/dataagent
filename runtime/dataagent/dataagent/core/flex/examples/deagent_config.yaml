@@ -86,6 +86,9 @@ SEMANTIC_LAYER:
   verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
 
 TOOLS:
+  # DataTaskIR 开关：create_plan 的 create_ir 与 complete_current_todo 的 update_ir
+  # 必须同时保留（开启）或同时注释（关闭）；启用 data_engineering Suite 时，
+  # 只配置一个会在 Agent pre-hook 报错并阻止本轮任务执行。
   builtin:
     - name: "list_files"
       module: "dataagent.actions.tools.local_tool.tools"
