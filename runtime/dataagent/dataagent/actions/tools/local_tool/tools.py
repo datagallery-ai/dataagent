@@ -2821,6 +2821,30 @@ def _deep_merge_dict(target: dict, source: dict, *, keep_target_for_empty: bool 
             target[key] = value
 
 
+def _carry_source_extra_body(source_config: dict[str, Any], runtime_model: dict[str, Any]) -> None:
+    """Merge the source agent model's ``params.extra_body`` into ``runtime_model`` in place.
+
+    Keys already set in the runtime model's ``extra_body`` win.
+    """
+    source_extra_body: dict[str, Any] = {}
+    source_models = source_config.get("MODEL")
+    if isinstance(source_models, dict):
+        for entry in source_models.values():
+            params = entry.get("params") if isinstance(entry, dict) else None
+            if isinstance(params, dict) and isinstance(params.get("extra_body"), dict):
+                source_extra_body = copy.deepcopy(params["extra_body"])
+                break
+    if not source_extra_body:
+        return
+    runtime_params = runtime_model.get("params")
+    if not isinstance(runtime_params, dict):
+        runtime_params = runtime_model["params"] = {}
+    runtime_extra_body = runtime_params.get("extra_body")
+    if isinstance(runtime_extra_body, dict):
+        _deep_merge_dict(source_extra_body, runtime_extra_body)
+    runtime_params["extra_body"] = source_extra_body
+
+
 def _build_nl2sql_sub_agent_config(
     source_config: dict[str, Any],
     *,
@@ -2853,6 +2877,8 @@ def _build_nl2sql_sub_agent_config(
             runtime_params = runtime_model_copy.get("params")
             if isinstance(runtime_params, dict):
                 runtime_params["temperature"] = 0.1
+            # 整体替换 MODEL 会丢掉子 Agent 模型的 extra_body（如关闭 thinking），在此保留。
+            _carry_source_extra_body(source_config, runtime_model_copy)
             temp_config["MODEL"] = {
                 bound_llm_model_name: runtime_model_copy,
             }
