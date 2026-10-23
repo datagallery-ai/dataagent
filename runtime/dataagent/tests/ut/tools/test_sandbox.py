@@ -600,10 +600,10 @@ class TestBubblewrapIntegration:
         assert target.exists()
 
 
-@requires_bwrap
 class TestRunSubprocessAsyncIntegration:
     """Test _run_subprocess_async with sandbox via contextvars."""
 
+    @requires_bwrap
     @pytest.mark.asyncio
     async def test_subprocess_with_sandbox(self, tmp_path: Path):
         from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
@@ -627,6 +627,7 @@ class TestRunSubprocessAsyncIntegration:
         finally:
             reset_current_sandbox(token)
 
+    @requires_bwrap
     @pytest.mark.asyncio
     async def test_subprocess_sandbox_blocks_home(self, tmp_path: Path):
         from dataagent.actions.tools.local_tool.tools import _run_subprocess_async
@@ -659,11 +660,12 @@ class TestRunSubprocessAsyncIntegration:
         token = set_current_sandbox(sandbox)
         try:
             result = await _run_subprocess_async(
-                ["/bin/sh", "-c", "ls /home"],
+                [sys.executable, "-c", "print('noop-ok')"],
                 timeout=10,
                 cwd=str(tmp_path),
             )
             assert result["returncode"] == 0
+            assert "noop-ok" in result["stdout"]
         finally:
             reset_current_sandbox(token)
 

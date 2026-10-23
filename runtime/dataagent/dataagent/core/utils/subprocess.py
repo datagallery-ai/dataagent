@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import signal
 import subprocess
 from pathlib import Path
+
+import psutil
 
 
 def terminate_process_group(pgid: int) -> None:
@@ -57,15 +60,15 @@ def terminate_processes_with_cwd_under(root: Path) -> list[int]:
         PIDs that were targeted for termination (best-effort; some may already
         have exited).
     """
+    # This cwd sweep uses Unix process groups. Windows registered children are
+    # cleaned by terminate_process_tree_async/taskkill, as before.
+    if os.name == "nt":
+        return []
     try:
         resolved_root = Path(root).expanduser().resolve()
     except OSError:
         return []
     if not resolved_root.is_dir():
-        return []
-
-    proc_root = Path("/proc")
-    if not proc_root.is_dir():
         return []
 
     my_pid = os.getpid()
@@ -75,23 +78,29 @@ def terminate_processes_with_cwd_under(root: Path) -> list[int]:
         my_pgid = None
     targeted: list[int] = []
     seen_pgids: set[int] = set()
-    for entry in proc_root.iterdir():
-        name = entry.name
-        if not name.isdigit():
-            continue
-        pid = int(name)
+    # psutil is already a runtime dependency and exposes cwd on macOS as well
+    # as Linux. Scanning /proc silently did nothing on macOS.
+    try:
+        processes = list(psutil.process_iter())
+    except (psutil.Error, OSError) as exc:
+        logging.getLogger(__name__).warning("Cannot inspect processes for workspace cleanup: %s", exc)
+        return []
+    for process in processes:
+        pid = process.pid
         if pid <= 1 or pid == my_pid:
             continue
         try:
-            cwd_raw = os.readlink(entry / "cwd")
+            cwd_raw = process.cwd()
+            if not cwd_raw:
+                continue
             cwd_path = Path(cwd_raw).resolve()
             cwd_path.relative_to(resolved_root)
-        except (OSError, ValueError):
+        except (psutil.Error, OSError, ValueError):
             continue
         targeted.append(pid)
         try:
             pgid = os.getpgid(pid)
-        except ProcessLookupError:
+        except OSError:
             continue
         # 跳过本进程组：未 setsid 的进程本就由 Ctrl+C 的 SIGINT（前台进程组）覆盖，
         # 不会成为孤儿；若在此处 killpg 自身 pgid，timeout/cancel 路径会把整个
