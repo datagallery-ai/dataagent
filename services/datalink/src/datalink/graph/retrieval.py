@@ -528,7 +528,7 @@ class GraphRetrieval:
     ) -> list[dict[str, Any]]:
         """Find paths between two nodes using BFS graph traversal.
 
-        Uses SQLite WITH RECURSIVE CTE for efficient traversal.
+        Traversal uses the in-memory BFS over stored edges.
 
         Args:
             source_id: Starting node ID (masked IDs and short aliases are auto-resolved).
@@ -557,49 +557,7 @@ class GraphRetrieval:
         # CTE-based cycle prevention (comma-separated strings, nested CTEs)
         # is either unreliable or unsupported inside a recursive CTE. Python
         # BFS is simpler, correct, and fast enough for DataLink's graph size.
-        return self._python_bfs_paths(source_id, target_id, max_depth, edge_types, limit)
-
-        # Convert results to structured paths
-        paths = []
-        for row in rows:
-            path_edges_json, confidence, depth = row
-            try:
-                path_edge_ids = json.loads(path_edges_json)
-            except Exception:
-                path_edge_ids = []
-
-            # Build detailed path
-            path_nodes = [source_id]
-            path_edges_detail = []
-            current_confidence = 1.0
-
-            for edge_id in path_edge_ids:
-                edge = self.storage.get_edge(edge_id)
-                if edge:
-                    path_edges_detail.append(
-                        {
-                            "id": edge.id,
-                            "type": edge.type.value,
-                            "source_id": edge.source_id,
-                            "target_id": edge.target_id,
-                            "confidence": edge.confidence,
-                        }
-                    )
-                    # Add the next node
-                    if edge.source_id == path_nodes[-1]:
-                        path_nodes.append(edge.target_id)
-                    else:
-                        path_nodes.append(edge.source_id)
-                    current_confidence *= edge.confidence
-
-            paths.append(
-                {
-                    "nodes": path_nodes,
-                    "edges": path_edges_detail,
-                    "length": depth,
-                    "confidence": float(confidence),
-                }
-            )
+        paths = self._python_bfs_paths(source_id, target_id, max_depth, edge_types, limit)
 
         if mask_credential:
             paths = mask_result(paths)
@@ -614,10 +572,7 @@ class GraphRetrieval:
         edge_types: list[EdgeType] | None = None,
         limit: int = 3,
     ) -> list[dict[str, Any]]:
-        """Fallback BFS path finder in pure Python.
-
-        Used when the SQL CTE approach fails.
-        """
+        """BFS path finder in pure Python; callers apply output masking."""
         # BFS to find shortest paths
         visited_paths = []
         queue = [(source_id, [], 1.0)]  # (current_node, edge_path, confidence)
