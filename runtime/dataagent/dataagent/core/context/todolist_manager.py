@@ -201,6 +201,16 @@ class TodoListManager:
                 todos = list(self.todolist.todos)
                 todos[index] = replace(todo, completed=True)
                 self._set_plan(replace(self.todolist, todos=todos))
+                if all(item.completed for item in todos):
+                    # The reply after this tool result is what the user receives as the answer. Without
+                    # saying so, models tend to put the result in the message that carries this tool
+                    # call and then close with a summary that only refers back to it.
+                    return (
+                        f"Todo '{todo.title}' completed successfully. All todos in the plan are now completed. "
+                        "Your next reply is the final answer the user receives. Write the complete result once, "
+                        "in full (conclusions, tables, file links). Do not only summarize the process or refer "
+                        "to earlier messages."
+                    )
                 return f"Todo '{todo.title}' completed successfully."
 
         return "No incomplete todos found. All todos are already completed."

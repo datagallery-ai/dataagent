@@ -20,7 +20,7 @@ If the user query is simple and can be answered directly without tools, respond 
 All todos in the current plan are **completed**.
 
 For this turn:
-- **Summarize** what was accomplished and deliver the user's requested outcome; or
+- If this plan was made for the user's latest request (a completed plan can remain from an earlier one), this reply is the **final answer the user receives**; your earlier messages are not shown as the answer. Write the complete result once, in full (conclusions, tables, file links, caveats). Do **not** summarize the process or refer back to earlier messages ("as above"); or
 - If the user goal is not fully satisfied, call **`create_plan`** or **`update_plan`** to define the **next** phase, then continue.
 - Call **`delete_plan`** only if the plan should be discarded entirely.
 {% else %}
@@ -33,6 +33,8 @@ For this turn:
 
 **Full todo list:**
 {{ plan_todos_overview }}
+
+When calling **`complete_current_todo`**, keep the accompanying message to a brief step status; reserve the full answer, tables, and file links for the reply after all todos are confirmed complete.
 
 Focus this turn on completing **only** the current todo. When that step's work is done, call **`complete_current_todo`** before starting the next item. Do not skip ahead or redo completed todos unless the user or new evidence requires **`update_plan`**.
 {% endif %}
