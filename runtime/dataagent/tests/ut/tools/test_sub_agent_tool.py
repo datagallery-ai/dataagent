@@ -1237,6 +1237,50 @@ def test_deep_merge_core_config_keeps_explicit_empty_values():
     assert config["CORE"]["perceptor"]["user_sql_rules"] is None
 
 
+def test_nl2sql_sub_agent_config_keeps_shipped_thinking_setting_for_bound_model():
+    """绑定主 Agent 模型时，nl2sql_agent.yaml 中关闭 thinking 的 extra_body 不能被整体替换丢掉。"""
+    from dataagent.config.config_manager import ConfigManager
+
+    package = Path(__file__).resolve().parents[3] / "dataagent"
+    source = yaml.safe_load((package / "agents/nl2sql/nl2sql_agent.yaml").read_text(encoding="utf-8"))
+    manager = ConfigManager()
+    manager.set("MODEL.main_llm", {"model_type": "chat", "params": {"model": "main-model", "temperature": 0.0}})
+
+    config = _build_nl2sql_sub_agent_config(source, config_manager=manager, tool_config={"llm_model": "main_llm"})
+
+    assert config["MODEL"] == {
+        "main_llm": {
+            "model_type": "chat",
+            "params": {
+                "model": "main-model",
+                "temperature": 0.1,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        }
+    }
+    assert "extra_body" not in manager.get("MODEL.main_llm")["params"]
+
+
+@pytest.mark.parametrize(
+    ("runtime_extra_body", "expected_extra_body"),
+    [
+        ({"top_k": 20}, {"thinking": {"type": "disabled"}, "top_k": 20}),
+        ({"thinking": {"type": "enabled"}}, {"thinking": {"type": "enabled"}}),
+        ({"enable_thinking": True}, {"thinking": {"type": "disabled"}, "enable_thinking": True}),
+    ],
+)
+def test_nl2sql_sub_agent_config_runtime_extra_body_keys_win(runtime_extra_body, expected_extra_body):
+    from dataagent.config.config_manager import ConfigManager
+
+    source = {"MODEL": {"nl2sql_llm": {"params": {"model": "m", "extra_body": {"thinking": {"type": "disabled"}}}}}}
+    manager = ConfigManager()
+    manager.set("MODEL.main_llm", {"params": {"model": "main-model", "extra_body": runtime_extra_body}})
+
+    config = _build_nl2sql_sub_agent_config(source, config_manager=manager, tool_config={"llm_model": "main_llm"})
+
+    assert config["MODEL"]["main_llm"]["params"]["extra_body"] == expected_extra_body
+
+
 def test_nl2sql_sub_agent_tool_passes_internal_subagent_context(monkeypatch, tmp_path):
     """在已设置 set_subagent_runtime_context 的前提下调用 nl2sql_sub_agent_tool：query 正确传入，
     流程能完成 SQL/CSV 写入（内部 mock sub_agent_tool），frontend_msg 含「SQL 文件已保存到」。
