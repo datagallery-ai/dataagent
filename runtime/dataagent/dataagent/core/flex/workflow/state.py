@@ -19,6 +19,9 @@ from dataagent.core.cbb.base_state import BaseState
 
 class FlexState(BaseState):
     complete: bool
+    # Planner failure message. Declared so LangGraph keeps it in the final state;
+    # complete only means the graph stopped, not that the request succeeded.
+    error: str | None
     num_turns: Annotated[int, add]
     num_valid_tool_calls: Annotated[int, add]
     num_invalid_tool_calls: Annotated[int, add]
