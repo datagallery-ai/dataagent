@@ -40,7 +40,11 @@ from dataagent.core.managers.action_manager.base import (
     ToolType,
     tool_failure,
 )
-from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
+from dataagent.core.managers.action_manager.schemas import (
+    ToolSchema,
+    json_type_to_python_type,
+    parameter_from_json_schema_property,
+)
 
 A2A_AVAILABLE = True
 
@@ -324,6 +328,7 @@ class A2AToolWrapper(BaseTool):
                     component="tool",
                 )
 
+            arguments = self._omit_unset_nullable_args(kwargs)
             result_data = None
 
             try:
@@ -337,7 +342,9 @@ class A2AToolWrapper(BaseTool):
                     try:
                         temp_client = A2AClientWrapper(self.a2a_client.config)
                         try:
-                            result = new_loop.run_until_complete(temp_client.call_tool(self.remote_tool_name, kwargs))
+                            result = new_loop.run_until_complete(
+                                temp_client.call_tool(self.remote_tool_name, arguments)
+                            )
                             return result
                         finally:
                             try:
@@ -357,7 +364,7 @@ class A2AToolWrapper(BaseTool):
                 async def run_with_temp_client():
                     temp_client = A2AClientWrapper(self.a2a_client.config)
                     try:
-                        return await temp_client.call_tool(self.remote_tool_name, kwargs)
+                        return await temp_client.call_tool(self.remote_tool_name, arguments)
                     finally:
                         await temp_client.close()
 
@@ -389,7 +396,7 @@ class A2AToolWrapper(BaseTool):
             # Always create fresh client to avoid connection state issues
             temp_client = A2AClientWrapper(self.a2a_client.config)
             try:
-                result_data = await temp_client.call_tool(self.remote_tool_name, kwargs)
+                result_data = await temp_client.call_tool(self.remote_tool_name, self._omit_unset_nullable_args(kwargs))
 
                 return ToolResult(
                     data=result_data,
@@ -419,22 +426,43 @@ class A2AToolWrapper(BaseTool):
             required_fields = self.parameters_schema.get("required", [])
 
             for prop_name, prop_def in self.parameters_schema["properties"].items():
-                param_type = self._json_type_to_python_type(prop_def.get("type", "string"))
-                is_required = prop_name in required_fields
-                default_value = prop_def.get("default")
-                description = prop_def.get("description", f"Parameter {prop_name}")
-
                 parameters.append(
-                    ParameterSchema(
-                        name=prop_name,
-                        type=param_type,
-                        required=is_required,
-                        default=default_value,
-                        description=description,
-                    )
+                    parameter_from_json_schema_property(prop_name, prop_def, required=prop_name in required_fields)
                 )
 
         return ToolSchema(self.name, self.description, parameters, "a2a_tool")
+
+    def _omit_unset_nullable_args(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Drop the ``None``s that mean "unset" so the remote agent sees only real arguments.
+
+        A model shown ``"default": null`` routinely sends the null back rather
+        than omitting the argument. Only arguments whose own declared default is
+        already ``None`` are dropped, matching ``MCPToolWrapper`` so the two
+        transports treat one schema the same way; a property with a real default
+        is left alone, because there ``None`` and the default differ and the
+        explicit null is the caller saying so.
+
+        On this path the null is worse than noise. ``A2AClientWrapper.call_tool``
+        picks the outgoing text with ``parameters.get("message", json.dumps(...))``,
+        and ``get`` falls back only on a *missing* key — so an optional ``message``
+        sent as an explicit ``None`` resolves to ``None`` and the remote agent is
+        handed an empty message instead of the serialized parameters.
+        """
+        properties = self.parameters_schema.get("properties") if isinstance(self.parameters_schema, dict) else None
+        if not isinstance(properties, dict):
+            return arguments
+
+        required_fields = self.parameters_schema.get("required") or []
+        return {
+            name: value
+            for name, value in arguments.items()
+            if not (
+                value is None
+                and name not in required_fields
+                and isinstance(properties.get(name), dict)
+                and properties[name].get("default") is None
+            )
+        }
 
     def _build_failure_result(self, exc: Exception) -> ToolResult:
         if isinstance(exc, DataAgentError):
@@ -445,8 +473,7 @@ class A2AToolWrapper(BaseTool):
 
     def _json_type_to_python_type(self, json_type: str) -> type:
         """Map JSON Schema types to Python types."""
-        type_mapping = {"string": str, "integer": int, "number": float, "boolean": bool, "array": list, "object": dict}
-        return type_mapping.get(json_type, str)
+        return json_type_to_python_type(json_type)
 
 
 class A2AToolRegistry:

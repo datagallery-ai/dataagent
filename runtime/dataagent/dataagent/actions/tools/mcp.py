@@ -34,7 +34,11 @@ from dataagent.core.managers.action_manager.base import (
     ToolType,
     tool_failure,
 )
-from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
+from dataagent.core.managers.action_manager.schemas import (
+    ToolSchema,
+    json_type_to_python_type,
+    parameter_from_json_schema_property,
+)
 
 
 async def _await_close_quietly(awaitable: Any, *, what: str) -> None:
@@ -574,27 +578,42 @@ class MCPToolWrapper(BaseTool):
             required_fields = self.input_schema.get("required", [])
 
             for prop_name, prop_def in self.input_schema["properties"].items():
-                param_type = self._json_type_to_python_type(prop_def.get("type", "string"))
-                is_required = prop_name in required_fields
-                default_value = prop_def.get("default")
-                description = prop_def.get("description", f"Parameter {prop_name}")
-
                 parameters.append(
-                    ParameterSchema(
-                        name=prop_name,
-                        type=param_type,
-                        required=is_required,
-                        default=default_value,
-                        description=description,
-                    )
+                    parameter_from_json_schema_property(prop_name, prop_def, required=prop_name in required_fields)
                 )
 
         return ToolSchema(self.name, self.description, parameters, "mcp_tool")
 
+    def _omit_unset_nullable_args(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Drop the ``None``s that mean "unset" so the server applies its own default.
+
+        A model shown ``"default": null`` routinely sends the null back rather
+        than omitting the argument. Only arguments whose own declared default is
+        already ``None`` are dropped, so this can never change a value: for those
+        the server would have filled in ``None`` anyway. A property with a real
+        default is left alone, because there ``None`` and the default differ and
+        the explicit null is the caller saying so.
+        """
+        properties = self.input_schema.get("properties") if isinstance(self.input_schema, dict) else None
+        if not isinstance(properties, dict):
+            return arguments
+
+        required_fields = self.input_schema.get("required") or []
+        return {
+            name: value
+            for name, value in arguments.items()
+            if not (
+                value is None
+                and name not in required_fields
+                and isinstance(properties.get(name), dict)
+                and properties[name].get("default") is None
+            )
+        }
+
     async def _async_call(self, **kwargs) -> Any:
         """异步调用MCP工具 - 使用持久化连接"""
         # 直接调用MCP工具，连接管理由MCPClientWrapper处理
-        response = await self.mcp_client.call_tool(self.mcp_tool.name, kwargs)
+        response = await self.mcp_client.call_tool(self.mcp_tool.name, self._omit_unset_nullable_args(kwargs))
         if getattr(response, "isError", False):
             raise DataAgentError(
                 source="tool",
@@ -621,8 +640,7 @@ class MCPToolWrapper(BaseTool):
 
     def _json_type_to_python_type(self, json_type: str) -> type:
         """将JSON Schema类型转换为Python类型"""
-        type_mapping = {"string": str, "integer": int, "number": float, "boolean": bool, "array": list, "object": dict}
-        return type_mapping.get(json_type, str)
+        return json_type_to_python_type(json_type)
 
 
 class MCPToolRegistry:
