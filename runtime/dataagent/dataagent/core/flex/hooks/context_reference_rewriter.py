@@ -63,7 +63,8 @@ ANALYZE_PROMPT_TEMPLATE = """你是数据分析对话中的用户问题意图分
 任务：
 1. 判断用户问题是否引用前文中的数据产物、操作或结论（如「刚才那个表」「第一个生成的文件」「上一步结果」）。
 2. 若是直接请求新操作、无上下文依赖的问题，needs_rewrite=false。
-3. 若存在指代，列出每个指代表达及其可能的目标类型与时间语义。
+3. 仅解析对轨迹产物、操作或结论本身的指代。业务主体、属性、地域与期间指代（如「这家公司」「该产品」「当地」「同期」）不是轨迹节点，不能用最近的 Table、Response 或 State 替代；保留原文由主 Agent 结合对话理解。若只有这类指代，needs_rewrite=false。
+4. 若存在可解析的轨迹指代，列出每个指代表达及其可能的目标类型与时间语义。
 
 指代目标类型（target_types）只能从以下选取一个或多个：Table, File, Script, Action, Tool, Response, State。
 时间语义（temporal_hint）：
@@ -137,6 +138,7 @@ PROMPT_TEMPLATE = """你是数据分析对话中的上下文指代查询助手�
 - rewrite_query 可由系统根据 resolved_refs 自动生成，可填占位或与原文相同。
 - decision="skip" 时填写 skip_reason，rewrite_query 可为空字符串。
 - 同一 mention 只能对应一个 target_node；多个指代各自唯一时可同时替换。
+- 业务主体、属性、地域或期间不是轨迹产物；不能将「这家公司」「该产品」「当地」「同期」绑定到 Table、Response 或 State。此类 mention 保留原文，不以整个历史结果替代主体或范围。
 - 不确定时务必 skip，宁可漏改不要错改。
 
 输出必须是合法 JSON，不要输出 markdown 代码块外的解释：
