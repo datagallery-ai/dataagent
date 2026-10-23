@@ -15,6 +15,8 @@
 HOOKS:
   agent:
     pre:
+      # 场景配置先校验，再访问语义服务；单开一个 IR hook 时拒绝执行本轮任务。
+      - name: hooks.ir_config.validate_data_task_ir_config
       - name: hooks.checker.check_metadata
     post:
       - name: dataagent.core.flex.hooks.organize_workspace.organize_workspace
