@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import json
 import os
 import traceback
@@ -767,17 +768,21 @@ class FlexAgent(BaseAgent):
             latest["state"] = initial_state
             self._bind_workflow_runtime(runtime)
             stream = self.workflow_backend.astream(initial_state, runtime=runtime, start_at=start_at, **kwargs)
+            finalized_stream = self._stream_with_finalization(
+                stream,
+                initial_state_for_persist=initial_state_for_persist,
+                runtime=runtime,
+                log_parse_error=True,
+                latest_state=latest,
+            )
             try:
-                async for item in self._stream_with_finalization(
-                    stream,
-                    initial_state_for_persist=initial_state_for_persist,
-                    runtime=runtime,
-                    log_parse_error=True,
-                    latest_state=latest,
-                ):
+                async for item in finalized_stream:
                     yield item
             finally:
-                self._flush_otel_recorder(otel_recorder)
+                try:
+                    await finalized_stream.aclose()
+                finally:
+                    self._flush_otel_recorder(otel_recorder)
 
     def _create_call_runtime(self) -> "Runtime":
         """Create a fresh Runtime for a single chat()/astream() call.
@@ -1300,7 +1305,13 @@ class FlexAgent(BaseAgent):
                     if mode == "values" and isinstance(data, dict):
                         stream_final_state = data
                 yield item
+        except (asyncio.CancelledError, GeneratorExit):
+            interrupted = True
+            raise
         finally:
+            close = getattr(stream, "aclose", None)
+            if close is not None:
+                await close()
             resolved_final_state: dict[str, Any] = {}
             if not interrupted:
                 resolved_final_state = await self._read_langgraph_final_state_after_stream(

@@ -183,13 +183,17 @@ class LangGraphWorkflow:
         call_runtime = self._resolve_runtime(runtime)
         run_config = self.merge_run_config(kwargs.pop("config", None), call_runtime)
         with self._activate_runtime(call_runtime):
-            async for result in compiled.astream(
+            stream = compiled.astream(
                 initial_state,
                 config=run_config,
                 context=self._build_run_context(call_runtime),
                 **kwargs,
-            ):
-                yield result
+            )
+            try:
+                async for result in stream:
+                    yield result
+            finally:
+                await stream.aclose()
 
     def get_graph_info(self) -> dict[str, Any]:
         """
