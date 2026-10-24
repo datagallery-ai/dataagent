@@ -11,11 +11,13 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
+import math
 import threading
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 from weakref import WeakKeyDictionary
 
+import anyio
 import httpx
 from loguru import logger
 
@@ -35,19 +37,6 @@ from dataagent.core.managers.action_manager.base import (
     tool_failure,
 )
 from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
-
-
-async def _await_close_quietly(awaitable: Any, *, what: str) -> None:
-    """Await a close call and log failures without raising.
-
-    Used while dropping a streamable-HTTP session so a later reconnect can proceed.
-    A broken session often closes with ``CancelledError``; that must not abort the
-    rest of the reset.
-    """
-    try:
-        await awaitable
-    except (Exception, asyncio.CancelledError) as exc:
-        logger.warning(f"Error closing {what} during streamable-HTTP reset: {exc}")
 
 
 def _mcp_call_error_fact(tool_name: str, response: CallToolResult) -> str:
@@ -107,6 +96,14 @@ class MCPServerConfig:
     def _validate_config(self):
         """根据transport类型验证配置"""
         config = self.config or {}
+        operation_timeout = config.get("operation_timeout", 60)
+        if (
+            isinstance(operation_timeout, bool)
+            or not isinstance(operation_timeout, (int, float))
+            or not math.isfinite(operation_timeout)
+            or operation_timeout <= 0
+        ):
+            raise ValueError("MCP operation_timeout must be a positive finite number of seconds")
         if self.transport_type == "stdio":
             required = ["command"]
             missing = [k for k in required if k not in config]
@@ -144,22 +141,17 @@ class MCPClientWrapper:
 
         Args:
             config: Server connection configuration.
-            reuse_streamable_http_session: Only relevant for ``streamable_http``
-                transport. When ``True``, ``_execute_with_connection`` will keep a
-                single :class:`ClientSession` alive across calls as long as the
-                same event loop is running. Use this only for long-lived clients
-                that own their event loop (e.g. resource-job coordinators that
-                pin a dedicated loop with :class:`_ResourceMcpEventLoop`).
-                Default ``False``: each call opens and tears down its own
-                ``streamable_http_client`` / ``ClientSession`` inside ``async
-                with`` blocks, matching ``stdio`` / ``sse`` semantics so an
-                outer cancel scope cannot strand the MCP internal streams.
+            reuse_streamable_http_session: Only relevant for ``streamable_http``.
+                Default ``False`` opens and closes a session for each tool call.
+                Resource-job coordinators with a dedicated event loop can opt
+                in to reusing a session owned and closed by a separate task.
         """
         self.config = config
         self._reuse_streamable_http_session = reuse_streamable_http_session
         self._session: ClientSession | None = None
-        self._session_loop: asyncio.AbstractEventLoop | None = None
-        self._http_client: httpx.AsyncClient | None = None
+        self._http_sessions: dict[
+            asyncio.AbstractEventLoop, tuple[asyncio.Task[None], asyncio.Future[ClientSession]]
+        ] = {}
         self._connected = False
         self._client_context = None
         self._read_stream = None
@@ -216,7 +208,8 @@ class MCPClientWrapper:
                         ),
                         component="tool",
                     )
-                await self._ensure_streamable_http_session()
+                # Use the same deadline/locking path as a regular request.
+                await self._execute_with_connection(lambda _session: asyncio.sleep(0))
                 return
             else:
                 raise ValueError(
@@ -246,9 +239,9 @@ class MCPClientWrapper:
         """断开与MCP服务器的连接"""
         if self.transport_type == "streamable_http":
             if not self._reuse_streamable_http_session:
-                # 单次调用路径下没有长期持有的 session,直接 no-op。
                 return
-            await self._reset_streamable_http_session()
+            async with self._get_connection_lock():
+                await self._reset_streamable_http_session()
             return
         if not self._connected:
             return
@@ -324,7 +317,24 @@ class MCPClientWrapper:
             return lock
 
     async def _execute_with_connection(self, operation):
-        """使用连接执行操作的通用方法"""
+        """Bound the entire operation, including lock wait, setup and teardown.
+
+        HTTP read timeouts only bound idle reads. An SSE stream can stay alive
+        indefinitely without returning a tool result. Use the same AnyIO cancel
+        scope as the MCP transports so cancellation also reaches their tasks.
+        Never automatically retry here: a timed-out tool may have side effects.
+        """
+        deadline = float(self.config.get_config("operation_timeout", 60))
+        try:
+            with anyio.fail_after(deadline):
+                return await self._execute_connection_operation(operation)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"MCP operation timed out after {deadline:g}s (including connection and lock wait)"
+            ) from exc
+
+    async def _execute_connection_operation(self, operation):
+        """Serialize requests; reusable HTTP contexts live in an owning task."""
         async with self._get_connection_lock():
             if self.transport_type == "stdio":
                 async with stdio_client(cast(StdioServerParameters, self._transport_params)) as (  # noqa: SIM117
@@ -347,17 +357,32 @@ class MCPClientWrapper:
                         return await operation(session)
 
             if self.transport_type == "streamable_http":
-                if self._reuse_streamable_http_session:
-                    # 长生命周期客户端(目前只有 resource-job 协调器在专用事件循环上
-                    # 持有的 MCPClientWrapper):复用同一条 streamable-HTTP 会话。
-                    await self._ensure_streamable_http_session()
+                if not self._reuse_streamable_http_session:
+                    params = cast(dict[str, Any], self._transport_params)
+                    headers = params.get("headers") or {}
+                    timeout = float(params.get("timeout", 30))
                     try:
-                        return await operation(self._session)
+                        async with httpx.AsyncClient(  # noqa: SIM117
+                            headers=headers,
+                            timeout=httpx.Timeout(timeout),
+                        ) as http_client:
+                            async with streamable_http_client(  # noqa: SIM117
+                                params["url"],
+                                http_client=http_client,
+                                terminate_on_close=True,
+                            ) as (
+                                read_stream,
+                                write_stream,
+                                _get_session_id,
+                            ):
+                                del _get_session_id
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+                                    return await operation(session)
                     except Exception as exc:
-                        await self._reset_streamable_http_session()
                         inner = exc
-                        if hasattr(exc, "exceptions") and exc.exceptions:
-                            inner = exc.exceptions[0]
+                        while isinstance(inner, BaseExceptionGroup) and inner.exceptions:
+                            inner = inner.exceptions[0]
                         fact = f"MCP streamable_http call failed: {inner}"
                         if hasattr(inner, "response") and hasattr(inner.response, "status_code"):
                             fact = f"MCP streamable_http HTTP {inner.response.status_code}: {inner}"
@@ -367,38 +392,18 @@ class MCPClientWrapper:
                             component="mcp",
                         ) from exc
 
-                # 单次调用路径(工具调用场景,如 DataOps prod 适配器):每次新建一条
-                # session,在嵌套 ``async with`` 中随外层 task 一起被清理。这样当
-                # LangGraph/pregel 的外层 cancel scope 撤销时,所有 MCP 内部 stream
-                # 都会随 ``httpx.AsyncClient`` / ``streamable_http_client`` /
-                # ``ClientSession`` 的 __aexit__ 一起被 cancel,不会留下挂在
-                # MemoryObjectSendStream backpressure 上的协程。
-                params = cast(dict[str, Any], self._transport_params)
-                headers = params.get("headers") or {}
-                timeout = float(params.get("timeout", 30))
                 try:
-                    async with httpx.AsyncClient(  # noqa: SIM117
-                        headers=headers,
-                        timeout=httpx.Timeout(timeout),
-                    ) as http_client:
-                        async with streamable_http_client(  # noqa: SIM117
-                            params["url"],
-                            http_client=http_client,
-                            terminate_on_close=True,
-                        ) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ):
-                            del _get_session_id
-                            async with ClientSession(read_stream, write_stream) as session:
-                                await session.initialize()
-                                return await operation(session)
-                except Exception as exc:
-                    # Unwrap ExceptionGroup (anyio's task group wraps HTTP errors)
+                    session = await self._ensure_streamable_http_session()
+                    return await operation(session)
+                except BaseException as exc:
+                    # Cancellation must drop the in-flight connection as well.
+                    # The next request may reconnect, but this one is never retried.
+                    await self._reset_streamable_http_session()
+                    if not isinstance(exc, Exception):
+                        raise
                     inner = exc
-                    if hasattr(exc, "exceptions") and exc.exceptions:
-                        inner = exc.exceptions[0]
+                    while isinstance(inner, BaseExceptionGroup) and inner.exceptions:
+                        inner = inner.exceptions[0]
                     fact = f"MCP streamable_http call failed: {inner}"
                     if hasattr(inner, "response") and hasattr(inner.response, "status_code"):
                         fact = f"MCP streamable_http HTTP {inner.response.status_code}: {inner}"
@@ -410,11 +415,12 @@ class MCPClientWrapper:
 
             raise ValueError(f"Unsupported transport type: {self.transport_type}")
 
-    async def _ensure_streamable_http_session(self) -> None:
-        """Reuse the streamable-HTTP session when the current event loop still owns it.
+    async def _ensure_streamable_http_session(self) -> ClientSession:
+        """Reuse one session per loop without leaking its cancel scopes to callers.
 
-        A failed connect drops the half-open session before the error propagates, so the
-        next call opens a new session instead of closing the broken one first.
+        MCP transports use AnyIO task groups. Their contexts must be entered and
+        exited by the same task, outside each request's shorter deadline scope.
+        Resource jobs explicitly opt in to reuse on their dedicated loop.
         """
         if not self._reuse_streamable_http_session:
             raise DataAgentError(
@@ -426,54 +432,55 @@ class MCPClientWrapper:
                 component="tool",
             )
         loop = asyncio.get_running_loop()
-        if self._session is not None and self._session_loop is loop:
-            return
-        await self._reset_streamable_http_session()
+        state = self._http_sessions.get(loop)
+        if state is None:
+            ready: asyncio.Future[ClientSession] = loop.create_future()
+            owner = loop.create_task(self._own_streamable_http_session(ready))
+            state = (owner, ready)
+            self._http_sessions[loop] = state
+        return await asyncio.shield(state[1])
+
+    async def _own_streamable_http_session(self, ready: asyncio.Future[ClientSession]) -> None:
+        """Enter and close all persistent HTTP resources in this single task."""
+        loop = asyncio.get_running_loop()
         try:
             params = cast(dict[str, Any], self._transport_params)
             headers = params.get("headers") or {}
             timeout = float(params.get("timeout", 30))
-            self._http_client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout))
-            self._client_context = streamable_http_client(
-                params["url"],
-                http_client=self._http_client,
-                terminate_on_close=False,
-            )
-            read_stream, write_stream, _get_session_id = await self._client_context.__aenter__()
-            del _get_session_id
-            self._read_stream = read_stream
-            self._write_stream = write_stream
-            self._session = ClientSession(read_stream, write_stream)
-            await self._session.__aenter__()
-            await self._session.initialize()
-            self._session_loop = loop
-            self._connected = True
-        except BaseException:
-            await self._reset_streamable_http_session()
+            async with (
+                httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout)) as http_client,
+                streamable_http_client(params["url"], http_client=http_client, terminate_on_close=False) as (
+                    read_stream,
+                    write_stream,
+                    _get_session_id,
+                ),
+                ClientSession(read_stream, write_stream) as session,
+            ):
+                await session.initialize()
+                ready.set_result(session)
+                await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if not ready.done():
+                ready.cancel()
             raise
+        except Exception as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+            else:
+                logger.warning(f"MCP streamable-HTTP session closed: {exc}")
+        finally:
+            state = self._http_sessions.get(loop)
+            if state is not None and state[0] is asyncio.current_task():
+                self._http_sessions.pop(loop, None)
 
     async def _reset_streamable_http_session(self) -> None:
-        """Drop a streamable-HTTP session so the next call can reconnect."""
-        if not self._reuse_streamable_http_session and self._session is None:
-            # 单次调用路径本来就没有长期持有的 session 状态,直接 no-op。
-            return
-        session = self._session
-        self._session = None
-        self._session_loop = None
-        self._connected = False
-        if session is not None:
-            await _await_close_quietly(session.__aexit__(None, None, None), what="MCP session")
-        if self._client_context is not None:
-            await _await_close_quietly(
-                self._client_context.__aexit__(None, None, None),
-                what="MCP client context",
-            )
-            self._client_context = None
-        if self._http_client is not None:
-            await _await_close_quietly(self._http_client.aclose(), what="MCP HTTP client")
-            self._http_client = None
-        self._read_stream = None
-        self._write_stream = None
+        """Ask the owning task to close, even when the caller's deadline expired."""
+        state = self._http_sessions.pop(asyncio.get_running_loop(), None)
+        if state is not None:
+            owner, _ready = state
+            owner.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(owner, return_exceptions=True)
 
     async def _cleanup_on_error(self):
         """错误时清理资源"""
