@@ -80,4 +80,7 @@ class ReflectorNode(BaseNL2SQLNode):
         cases = json.dumps(cases, ensure_ascii=False, separators=(",", ":"))
         context = {"cases": cases, "prompt": val_res[0].prompt}
         response = await self.execute_with_llm_json(context)
+        if isinstance(response, dict) and "sql" in response:
+            # The model sometimes sends a single case without its enclosing array.
+            response = [response]
         return [quote_sql_placeholders(x["sql"]) for x in response]
