@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,16 @@ def write_json_object(path: Path, payload: dict[str, Any], *, atomic: bool = Tru
     if not atomic:
         path.write_text(content, encoding="utf-8")
         return
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    tmp_path.replace(path)
+    # Concurrent cancellation/completion can publish the same job result. Each
+    # writer needs its own sibling file until its atomic replacement succeeds.
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        ) as temporary:
+            tmp_path = Path(temporary.name)
+            temporary.write(content)
+        tmp_path.replace(path)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
