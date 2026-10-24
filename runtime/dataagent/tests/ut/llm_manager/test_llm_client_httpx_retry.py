@@ -12,6 +12,7 @@
 # ============================================================================
 """httpx 定制 chat client 的重试 / 异常映射 / 重复检测单元测试。"""
 
+import contextlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,7 +149,7 @@ async def _collect_mock_sse(lines: list[str], *, num_retries: int = 0) -> list:
 
     async_client_class = httpx.AsyncClient
 
-    def client_factory(**kwargs):  # noqa: ANN003
+    def client_factory(**kwargs):
         kwargs.pop("verify", None)
         return async_client_class(transport=httpx.MockTransport(handler), **kwargs)
 
@@ -160,6 +161,33 @@ async def _collect_mock_sse(lines: list[str], *, num_retries: int = 0) -> list:
 def _sse_data(payload: dict) -> str:
     """Encode one JSON object as a single SSE data line."""
     return f"data: {json.dumps(payload)}"
+
+
+def _text_chunk(text: str, finish_reason: str | None = None) -> str:
+    """Encode one streamed text delta as a single SSE data line."""
+    return _sse_data({"choices": [{"index": 0, "delta": {"content": text}, "finish_reason": finish_reason}]})
+
+
+def _sse_response(request: httpx.Request, lines: list[str]) -> httpx.Response:
+    """Build one mocked HTTP SSE response from data lines."""
+    body = ("\n\n".join(lines) + "\n\n").encode()
+    return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body, request=request)
+
+
+@contextlib.contextmanager
+def _mock_http(handler):
+    """Answer every streamed request the client sends with ``handler``; retry backoff does not sleep."""
+    async_client_class = httpx.AsyncClient
+
+    def client_factory(**kwargs):
+        kwargs.pop("verify", None)
+        return async_client_class(transport=httpx.MockTransport(handler), **kwargs)
+
+    with (
+        patch("dataagent.core.managers.llm_manager.llm_client.httpx.AsyncClient", side_effect=client_factory),
+        patch("dataagent.core.managers.llm_manager.llm_client.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        yield
 
 
 class TestAinvokeRetryBehavior:
@@ -389,6 +417,86 @@ class TestAstreamRetryContinuationMessage:
 
         assert len(set(retry_contents)) == len(retry_contents)
         assert payload.get("messages", []) == [{"role": "user", "content": "solve"}]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["connect_error", "http_503", "done_without_output"])
+    async def test_retry_before_any_output_resends_original_request(self, failure):
+        """An attempt that failed before writing anything leaves nothing to continue."""
+        original_messages = [{"role": "user", "content": "solve the task"}]
+        sent_messages: list[list[dict]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            sent_messages.append(json.loads(request.content)["messages"])
+            if len(sent_messages) > 1:
+                return _sse_response(request, [_text_chunk("answer", "stop"), "data: [DONE]"])
+            if failure == "connect_error":
+                raise httpx.ConnectError("refused", request=request)
+            if failure == "http_503":
+                return httpx.Response(503, text="Service Unavailable", request=request)
+            return _sse_response(request, ["data: [DONE]"])
+
+        with _mock_http(handler):
+            client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=1)
+            chunks = [chunk async for chunk in client.astream(original_messages)]
+
+        assert "".join(chunk.content for chunk in chunks) == "answer"
+        assert sent_messages == [original_messages, original_messages]
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected"),
+        [
+            ("content_parts", ["partial answer"], True),
+            ("by_index", {0: {"id": "call_1", "name": "lookup", "arguments": '{"query":'}}, True),
+            ("content_parts", ["\n", "  "], False),
+            ("reasoning_parts", ["thinking"], False),
+        ],
+        ids=["answer_text", "tool_call_fragment", "whitespace_only", "reasoning_only"],
+    )
+    def test_partial_answer_is_answer_text_or_tool_call_fragments(self, field, value, expected):
+        """Reasoning or whitespace alone is not an answer a retry could continue."""
+        state = llm_client_module._AStreamState()
+        setattr(state, field, value)
+        assert llm_client_module._partial_answer(state) is expected
+
+
+class TestAstreamRepetitionCheckAtFinish:
+    """The complete streamed text is checked for repetition, not only every 20th chunk."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "texts",
+        [
+            pytest.param(["the same row; " * 50] * 3, id="fewer_than_20_chunks"),
+            pytest.param(
+                [f"step {i} done. " for i in range(20)] + ["the same row; " * 50] * 3,
+                id="tail_after_last_periodic_check",
+            ),
+        ],
+    )
+    async def test_repetitive_text_is_detected_when_stream_ends(self, texts):
+        """A loop the periodic check never sees must still raise once the stream ends."""
+        lines = [_text_chunk(text) for text in texts] + [_text_chunk("", "stop"), "data: [DONE]"]
+
+        with pytest.raises(LLMRepetitionError):
+            await _collect_mock_sse(lines)
+
+    @pytest.mark.asyncio
+    async def test_repetition_found_when_stream_ends_is_retried_as_continuation(self):
+        """Repetition is found in written text, so the retry asks the model to continue."""
+        original_messages = [{"role": "user", "content": "solve the task"}]
+        sent_messages: list[list[dict]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            sent_messages.append(json.loads(request.content)["messages"])
+            text = "the same row; " * 50 if len(sent_messages) == 1 else "answer"
+            return _sse_response(request, [_text_chunk(text, "stop"), "data: [DONE]"])
+
+        with _mock_http(handler):
+            client = LLMClient(model="m", api_base="http://t", api_key="k", num_retries=1)
+            async for _ in client.astream(original_messages):
+                pass
+
+        assert sent_messages == [original_messages, [*original_messages, {"role": "user", "content": "继续"}]]
 
 
 class TestAstreamAcloseDoesNotMask:
