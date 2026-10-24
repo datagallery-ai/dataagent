@@ -139,6 +139,7 @@ class Planner(BaseNode):
                 "intent_slots": state.get("intent_slots", {}),
                 "missing_slots": state.get("missing_slots", []),
                 "intent_missing_message": state.get("intent_missing_message", ""),
+                "error": None,  # 缺口提示不是失败，清除此前尝试遗留的 error
             }
 
         writer = get_stream_writer()
@@ -214,7 +215,8 @@ class Planner(BaseNode):
                 terminal_mode=terminal_mode,
                 reasoning_already_emitted=reasoning_emitted,
             )
-            return self._build_result(context, ai_message, state, current_state)
+            # 正常结果同样清除此前尝试遗留的 error，避免恢复的状态把成功回复报告为失败
+            return {**self._build_result(context, ai_message, state, current_state), "error": None}
 
         except Exception as e:
             import traceback
