@@ -107,6 +107,106 @@ class ParameterSchema:
         return "string"
 
 
+_JSON_TYPE_TO_PYTHON: dict[str, type] = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
+def json_type_to_python_type(json_type: str) -> type:
+    """将单个JSON Schema类型名转换为Python类型（未知类型退化为str）"""
+    return _JSON_TYPE_TO_PYTHON.get(json_type, str)
+
+
+def _resolve_json_schema_type(prop_def: Any) -> tuple[type | None, bool]:
+    """Read one property as ``(concrete type or None, accepts null)``.
+
+    ``None`` for the type means the property constrains nothing, which is not
+    the same as ``"null"`` — that constrains it to null alone.
+    """
+    if not isinstance(prop_def, dict):
+        return (None, False)
+
+    declared = prop_def.get("type")
+    if isinstance(declared, str):
+        if declared == "null":
+            return (None, True)
+        return (json_type_to_python_type(declared), False)
+    if isinstance(declared, list):
+        nullable = "null" in declared
+        for entry in declared:
+            if entry != "null":
+                return (json_type_to_python_type(entry), nullable)
+        return (None, nullable)
+
+    for keyword in ("anyOf", "oneOf"):
+        branches = prop_def.get(keyword)
+        if not isinstance(branches, list):
+            continue
+        resolved: type | None = None
+        nullable = False
+        for branch in branches:
+            branch_type, branch_nullable = _resolve_json_schema_type(branch)
+            nullable = nullable or branch_nullable
+            if resolved is None:
+                resolved = branch_type
+        return (resolved, nullable)
+
+    return (None, False)
+
+
+def python_type_from_json_schema(prop_def: Any) -> Any:
+    """Resolve the Python type a JSON Schema property accepts.
+
+    Covers the shapes a tool's ``inputSchema`` actually arrives in:
+
+    - ``{"type": "integer"}`` -> ``int``
+    - ``{"type": ["integer", "null"]}`` -> ``int | None``
+    - ``{"anyOf": [{"type": "integer"}, {"type": "null"}], "default": None}``
+      -> ``int | None``, which is what FastMCP emits for an ``Optional[int]``
+      parameter; ``oneOf`` is read the same way
+    - a property that declares no type at all -> ``Any``
+
+    Reading only the top-level ``type`` key is what made all of these degrade to
+    ``str``: none of them has that key, so every one of them came back a string
+    and then rejected the integer the model was supposed to send. An untyped
+    property becomes ``Any`` for the same reason — with no declared type there
+    is nothing to narrow it to, and ``str`` is a narrowing.
+
+    The first non-null branch wins. A union of several concrete types has no
+    single ``ParameterSchema.type`` to be, and taking the first keeps the type
+    the model is shown in the order the server declared it.
+    """
+    resolved, nullable = _resolve_json_schema_type(prop_def)
+    if resolved is None:
+        # Unconstrained already admits null; there is nothing to widen.
+        return Any
+    if nullable or _declares_null_default(prop_def):
+        return resolved | None
+    return resolved
+
+
+def _declares_null_default(prop_def: Any) -> bool:
+    """Whether a property defaults to null, which is a null it has to accept."""
+    return isinstance(prop_def, dict) and "default" in prop_def and prop_def["default"] is None
+
+
+def parameter_from_json_schema_property(prop_name: str, prop_def: Any, *, required: bool) -> ParameterSchema:
+    """Build one :class:`ParameterSchema` from a JSON Schema property definition."""
+    definition = prop_def if isinstance(prop_def, dict) else {}
+    return ParameterSchema(
+        name=prop_name,
+        type=python_type_from_json_schema(definition),
+        required=required,
+        default=definition.get("default"),
+        description=definition.get("description", f"Parameter {prop_name}"),
+    )
+
+
 class ToolSchema:
     """工具Schema"""
 
@@ -127,8 +227,7 @@ class ToolSchema:
     @staticmethod
     def _json_type_to_python_type(json_type: str) -> type:
         """将JSON Schema类型转换为Python类型"""
-        type_mapping = {"string": str, "integer": int, "number": float, "boolean": bool, "array": list, "object": dict}
-        return type_mapping.get(json_type, str)
+        return json_type_to_python_type(json_type)
 
     @classmethod
     def from_function(cls, func: callable, name: str | None = None) -> "ToolSchema":
@@ -177,19 +276,8 @@ class ToolSchema:
             required_fields = input_schema.get("required", [])
 
             for prop_name, prop_def in input_schema["properties"].items():
-                param_type = cls._json_type_to_python_type(prop_def.get("type", "string"))
-                is_required = prop_name in required_fields
-                default_value = prop_def.get("default")
-                param_description = prop_def.get("description", f"Parameter {prop_name}")
-
                 parameters.append(
-                    ParameterSchema(
-                        name=prop_name,
-                        type=param_type,
-                        required=is_required,
-                        default=default_value,
-                        description=param_description,
-                    )
+                    parameter_from_json_schema_property(prop_name, prop_def, required=prop_name in required_fields)
                 )
 
         metadata = {"server_id": server_id, "original_definition": tool_definition}
@@ -208,19 +296,8 @@ class ToolSchema:
             required_fields = parameters_schema.get("required", [])
 
             for prop_name, prop_def in parameters_schema["properties"].items():
-                param_type = cls._json_type_to_python_type(prop_def.get("type", "string"))
-                is_required = prop_name in required_fields
-                default_value = prop_def.get("default")
-                param_description = prop_def.get("description", f"Parameter {prop_name}")
-
                 parameters.append(
-                    ParameterSchema(
-                        name=prop_name,
-                        type=param_type,
-                        required=is_required,
-                        default=default_value,
-                        description=param_description,
-                    )
+                    parameter_from_json_schema_property(prop_name, prop_def, required=prop_name in required_fields)
                 )
 
         metadata = {"agent_id": agent_id, "original_definition": tool_definition}
