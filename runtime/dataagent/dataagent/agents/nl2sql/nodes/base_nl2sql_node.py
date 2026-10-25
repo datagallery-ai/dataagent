@@ -23,6 +23,7 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.managers.llm_manager.llm_client import LLMCallError, LLMErrorCategory
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, TZ_CN
 from dataagent.utils.env_utils import get_env_bool
@@ -34,6 +35,13 @@ _TYPE_LABELS = {
     AIMessage: "AI",
     ToolMessage: "TOOL",
 }
+
+# How often a collected stream that was cut off after answer text is started over.
+_MAX_STREAM_RESTARTS = 2
+# Failures that mean the stream stopped part-way, as opposed to the request being rejected.
+_STREAM_RESTART_CATEGORIES = frozenset(
+    {LLMErrorCategory.CONNECTION, LLMErrorCategory.TIMEOUT, LLMErrorCategory.STREAM_INTERRUPTED}
+)
 
 
 class BaseNL2SQLNode(BaseNode):
@@ -106,15 +114,37 @@ class BaseNL2SQLNode(BaseNode):
         return None
 
     async def _collect_llm_stream(self, prompts: list[dict[str, str]]) -> str:
-        """Consume all chunks before returning text, preserving stream failures and cancellation."""
-        parts: list[str] = []
-        final_content: str | None = None
-        async for chunk in llm_manager.get_default_llm().astream(prompts):
-            if chunk.final_response is not None:
-                final_content = chunk.final_response.content
-            elif chunk.content:
-                parts.append(chunk.content)
-        return final_content if final_content is not None else "".join(parts)
+        """Consume all chunks before returning text, preserving stream failures and cancellation.
+
+        The LLM client does not retry a stream once it has emitted output, because a caller that forwards
+        deltas would see them twice. Nothing is forwarded from here, so an attempt cut off after answer text
+        is discarded and the call is started over, at most ``_MAX_STREAM_RESTARTS`` times. Any other failure
+        propagates as it arrives.
+        """
+        restarts = 0
+        while True:
+            parts: list[str] = []
+            final_content: str | None = None
+            try:
+                async for chunk in llm_manager.get_default_llm().astream(prompts):
+                    if chunk.final_response is not None:
+                        final_content = chunk.final_response.content
+                    elif chunk.content:
+                        parts.append(chunk.content)
+                return final_content if final_content is not None else "".join(parts)
+            except LLMCallError as exc:
+                partial = "".join(parts)
+                if (
+                    restarts == _MAX_STREAM_RESTARTS
+                    or exc.category not in _STREAM_RESTART_CATEGORIES
+                    or not partial.strip()
+                ):
+                    raise
+                restarts += 1
+                logger.warning(
+                    f"NL2SQL stream cut off after {len(partial)} chars of answer text, "
+                    f"restarting the call ({restarts}/{_MAX_STREAM_RESTARTS}): {exc}"
+                )
 
     def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
         """Persist the (system, user, AI) prompt triple to the node's context-dump file."""
