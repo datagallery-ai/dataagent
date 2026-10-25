@@ -11,7 +11,13 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, SecretStr, field_serializer, field_validator, model_validator
 
-from dataagent.declarations import HookSpec, StrictModel, json_containers, normalize_hooks
+from dataagent.declarations import (
+    RESOURCE_ID_PATTERN,
+    HookSpec,
+    StrictModel,
+    json_containers,
+    normalize_hooks,
+)
 
 
 class ModelSelection(StrictModel):
@@ -37,6 +43,8 @@ class AgentSettings(StrictModel):
     limits: Limits = Field(default_factory=Limits)
     hooks: tuple[HookSpec, ...] = ()  # Independent registrations accumulate across config layers.
     workspaces: tuple[WorkspaceSettings, ...] = ()
+    # Compiled subagent used as the whole graph. None keeps the Deep Agents root.
+    entry: str | None = Field(default=None, pattern=f"^{RESOURCE_ID_PATTERN}$")
 
     @field_validator("hooks", mode="before")
     @classmethod

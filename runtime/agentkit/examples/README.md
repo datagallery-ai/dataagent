@@ -12,6 +12,7 @@
 | Home 初始化模板 | `dataagent/bootstrap/templates/config.json` | 首次初始化时复制，不覆盖已有目标文件 |
 | 最小配置示例 | `config.example.json` | 手动复制或显式指定 |
 | 完整配置示例 | `examples/config.json` | 显式指定，随附 `hooks/` |
+| nl2sql 入口 | `examples/nl2sql-entry.json` | 显式指定；`dataagent.entry` 为 `nl2sql` |
 | 插件清单 | `<plugin>/.plugin.json` | Compiler 读取已启用插件 |
 | 子 Agent 声明 | 如 `subagents/statistics.json` | 由插件 `subagents` 引用 |
 | MCP 服务配置 | `<home>/.mcp.json`、启用插件的 `<plugin_root>/.mcp.json` | 只加载这两处；使用 `mcpServers`，不参与 config.json 合并 |
@@ -37,6 +38,17 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 在 `~/.dataagent/.env` 设置 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY`，或用 `--env-file` 指定文件。
 复制完整示例到其他目录时，需同时复制 `hooks/`，或修改/移除两个示例 Hook。
 
+nl2sql 入口示例不带 Hook：
+
+```bash
+npm run start:tui -- --v2 --config runtime/agentkit/examples/nl2sql-entry.json
+```
+
+除模型的 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` 外，再设置 `SEMANTIC_BASE_URL` 和 `NL2SQL_DATABASE_PATH`。
+`NL2SQL_DATABASE_PATH` 是 sqlite 文件路径。这一层会把 `plugins.enabled` 换成 `["nl2sql"]`。
+它只写入口会用到的限额：`limits.timeout_seconds` 是 REST 整轮时限，`plugins.config.nl2sql.model_call_budget` 是单次任务的模型调用上限。
+低层里的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 留在配置中，不装进这张图。
+
 配置由低到高：字段默认值 → Home `config.json` → `--config`。
 启动目录的 `config.json` 不会自动读取。相同真实文件被显式选择时，只在最高层应用一次。
 
@@ -45,7 +57,7 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 - 完整示例列出了默认值，作为最高层使用会覆盖低层相应字段。
 - 环境变量优先级：进程 > `--env-file` > 显式配置旁的 `.env` > Home `.env`。空值不覆盖低层非空值。
 - 引用写为 JSON 字符串 `"$env{LLM_MODEL}"`，不是 `${LLM_MODEL}`。启动时仅展开默认模型的环境引用；工具选择其他模型时延迟解析。
-- 扩展相关配置在 REST/TUI 的下一轮请求前刷新；模型、宿主路径和服务配置仍需重启。
+- 扩展相关配置在 REST/TUI 的下一轮请求前刷新；模型、宿主路径、`dataagent.entry` 和服务配置仍需重启。
   具体范围见[扩展生命周期](../docs/architecture/extension-lifecycle.md)。未知字段、重复键（含嵌套对象）、非法 JSON 和非有限数值都会报错。字段表见[配置参考](../docs/reference/configuration.md)。
 
 ## 产品字段
@@ -58,6 +70,7 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 | `dataagent.limits.model_calls_per_agent` | `128`；每个 Agent 每次调用的模型循环上限，非整棵子 Agent 树的预算；不覆盖摘要器所有内部调用 |
 | `dataagent.limits.tool_calls_per_agent` | `128`；每个 Agent 每次调用的工具次数上限；主/子 Agent 独立计数，新一轮重置；超限抛错 |
 | `dataagent.workspaces` | `[]`；可选只读输入列表，在 Home 或显式配置声明；空列表不创建默认输入目录 |
+| `dataagent.entry` | `null`；编译型子代理名。设置后图只有该子代理。本示例保持 `null`，仍装配 Deep Agents 根。入口示例见 [nl2sql-entry.json](nl2sql-entry.json) |
 | `dataagent.hooks` | 默认空；六事件分组，见下一节 |
 | `models.<id>.provider` | `"openai"`；当前唯一支持值，OpenAI-compatible 服务也使用它 |
 | `models.<id>.name` | 必填非空；服务商实际模型名 |

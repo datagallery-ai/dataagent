@@ -7,7 +7,6 @@ import type {
   TableResult
 } from "../types.js";
 import type * as MsSqlModule from "mssql";
-import type * as OdbcModule from "odbc";
 import type * as OracleDbModule from "oracledb";
 
 export class SqlServerAdapter implements DataSourceAdapter {
@@ -186,7 +185,7 @@ export class AccessAdapter implements DataSourceAdapter {
   }
 
   private async withConnection<T>(
-    callback: (connection: OdbcModule.Connection) => Promise<T>,
+    callback: (connection: OdbcConnection) => Promise<T>,
     signal?: AbortSignal | undefined
   ): Promise<T> {
     const odbc = await loadOdbc();
@@ -220,9 +219,47 @@ const loadOracleDb = async (): Promise<typeof OracleDbModule> => {
   return loaded.default ?? loaded;
 };
 
-const loadOdbc = async (): Promise<typeof OdbcModule> => {
-  const loaded = await import("odbc") as unknown as { default?: typeof OdbcModule } & typeof OdbcModule;
-  return loaded.default ?? loaded;
+type OdbcResult<T> = ReadonlyArray<T>;
+
+interface OdbcConnection {
+  tables(
+    catalog: string | null,
+    schema: string | null,
+    table: string | null,
+    type: string | null
+  ): Promise<OdbcResult<Record<string, unknown>>>;
+  columns(
+    catalog: string | null,
+    schema: string | null,
+    table: string | null,
+    column: string | null
+  ): Promise<OdbcResult<Record<string, unknown>>>;
+  query<T>(sql: string): Promise<OdbcResult<T>>;
+  setIsolationLevel(level: number): Promise<void>;
+  close(): Promise<void>;
+}
+
+interface OdbcBinding {
+  connect(connectionObject: {
+    connectionString: string;
+    connectionTimeout: number;
+    loginTimeout: number;
+  }): Promise<OdbcConnection>;
+  SQL_TXN_READ_COMMITTED: number;
+}
+
+const ODBC_SPECIFIER = "odbc";
+
+const loadOdbc = async (): Promise<OdbcBinding> => {
+  try {
+    const loaded = await import(ODBC_SPECIFIER) as { default?: OdbcBinding } & OdbcBinding;
+    return loaded.default ?? loaded;
+  } catch (error) {
+    throw new Error(
+      "Access sources need the optional odbc binding and unixODBC.",
+      { cause: error }
+    );
+  }
 };
 
 const applyTopLimit = (sql: string, limit: number): string => {

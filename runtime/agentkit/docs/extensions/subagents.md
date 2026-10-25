@@ -53,3 +53,27 @@
 未声明名为 `general-purpose` 的子代理时，运行时会加入内置的 general-purpose。它使用父级工具和 Skill。插件中为其他子代理声明的 Hook 不会套用到它。若要为这个名字配置 Hook 和限额，请在插件中声明同名子代理；声明之后使用插件中的定义。
 
 子代理可见性在 AG-UI 适配器里是 `hidden`。客户端看到的是根运行的事件，不把子代理运行展开成独立的用户回合。
+
+## 入口模式
+
+`dataagent.entry` 设成某个编译型子代理的 `name` 时，`build_agent` 不再调用 `create_deep_agent`。它只调用 `build_entry_graph`。每个编译型入口走同一层壳，宿主不按入口名重建插件图。
+
+工厂交回的是 Runnable，不是插件自己的 `StateGraph`。这个 Runnable 从状态里读 `messages`，返回值里只放要写入 checkpoint 的 `messages`。插件内部的工作流、循环上限和结果文件留在 Runnable 里。壳的形状固定：`MessagesState`，上下文类型是 `ModelContext`，边是 `START` → 入口名 → `END`。`recursion_limit` 与 Deep Agents 根相同（9999），写在 `graph.config` 里，REST 只转发这一个值。
+
+```json
+{ "dataagent": { "entry": "nl2sql" } }
+```
+
+名字必须匹配 `[a-z][a-z0-9_-]*`，并且是已启用插件里 `kind` 为 `compiled` 的子代理。标准子代理不能当入口。找不到时，错误列出当前可用的编译型子代理名。
+
+限制：
+
+- 只接受带 `runnable` 的编译型子代理。
+- `dataagent.hooks`、`limits.model_calls_per_agent` / `limits.tool_calls_per_agent`、`workspaces`，以及插件里的 Skill、工具（含 MCP）、`system_prompt`、其他子代理和根中间件，仍按原路径编译或留在配置里，不装进入口图，也不因此报错。`limits.timeout_seconds` 仍然是整轮时限。
+- 不要用同一个 `thread_id` 在 Deep Agents 根和入口图之间恢复。两边的 Checkpoint 状态形状不同，根图还有 `messages` 以外的通道。
+- 只保证异步调用（`ainvoke`、`astream`）。nl2sql 这类只实现了 async 的 Runnable，同步 `invoke` / `stream` 可能失败。
+- Trace 的根名称变成入口名，不再是 `dataagent-v2`。
+- 入口不隐藏内部流。节点不设置 `emit-messages` 或 `emit-tool-calls`。工厂使用 `ModelContext.get_model` 返回的原模型。正文 token、工具调用和推理是否出现，跟这次模型调用的 chunk 一致。节点返回的回复仍在最终 `MESSAGES_SNAPSHOT`。`STEP_STARTED` 和 `STEP_FINISHED` 仍会发出。
+- 名字在插件工厂之前对照声明核对。写错的名字不会被某个工厂的参数错误盖住。MCP 连接和全部插件工厂仍会执行；名字对上之后，工厂失败仍使这次装配失败。MCP 在 REST 进程启动时连接，失败则进程起不来。
+- 错误的入口名不会让 `/healthz` 失败。响应里的 `entry` 是配置值，未设置时为 `null`。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。`POST /api/copilotkit` 对同一次装配错误返回 HTTP 400。
+- 修改 `entry` 要重启。`refresh_extensions` 会重读插件和 Hook，但保留原来的 `entry`。

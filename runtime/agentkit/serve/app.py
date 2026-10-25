@@ -100,6 +100,7 @@ def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
         "model": runtime.model_name,
         "plugins": runtime.settings.plugins.enabled,
         "home": str(runtime.paths.home),
+        "entry": runtime.settings.dataagent.entry,
         "user": runtime.paths.user_id,
         "timeoutSeconds": runtime.timeout_seconds,
     }

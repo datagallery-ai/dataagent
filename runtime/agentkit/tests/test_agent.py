@@ -1,6 +1,7 @@
 import asyncio
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from conftest import RecordingCallback, ScriptedModel, call
@@ -9,7 +10,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
 from dataagent.agent import build_agent
+from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.declarations import HookSpec
+from dataagent.models import ModelContext
 
 
 def test_build_returns_native_graph_without_callback_adapter(runtime):
@@ -341,3 +344,195 @@ async def test_compiled_hook_exceptions_propagate_without_swallowing_or_retry(ru
     assert len(model.requests) == (0 if event in {"before_agent", "before_model"}
                                    else 2 if event == "after_agent" else 1)
     assert not hooks.active
+
+
+def _with_entry(runtime, entry, **fields):
+    dataagent = runtime.settings.dataagent.model_copy(update={"entry": entry, **fields})
+    settings = runtime.settings.model_copy(update={"dataagent": dataagent})
+    return replace(runtime, settings=settings)
+
+
+def test_unknown_entry_lists_compiled_subagents(runtime):
+    with pytest.raises(ValueError, match="missing") as error:
+        build_agent(_with_entry(runtime, "missing"), model=ScriptedModel(responses=[]))
+    message = str(error.value)
+    assert "Available compiled subagents: (none)" in message
+    assert "general-purpose" not in message
+
+
+def test_standard_subagent_cannot_be_an_entry(runtime):
+    with pytest.raises(ValueError, match="general-purpose") as error:
+        build_agent(_with_entry(runtime, "general-purpose"), model=ScriptedModel(responses=[]))
+    assert "only compiled subagents can be entries" in str(error.value)
+
+
+def _write_direct_plugin(root: Path):
+    (root / "prompts").mkdir(parents=True)
+    (root / "prompts" / "agent.md").write_text("Route work to specialists.\n", encoding="utf-8")
+    (root / "prompts" / "notes.md").write_text("Take notes.\n", encoding="utf-8")
+    skill = root / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Unused when this plugin is the entry.\n---\n\n# Demo\n",
+        encoding="utf-8",
+    )
+    (root / "tools.py").write_text(
+        'def ping() -> str:\n    """Return a ping."""\n    return "pong"\n',
+        encoding="utf-8",
+    )
+    (root / "subagents").mkdir()
+    (root / "subagents" / "direct.json").write_text(json.dumps({
+        "kind": "compiled", "name": "direct", "description": "Compiled entry.",
+        "entrypoint": "subagents/direct.py:build",
+    }))
+    (root / "subagents" / "notes.json").write_text(json.dumps({
+        "name": "notes", "description": "Standard sibling.", "system_prompt": "prompts/notes.md",
+    }))
+    (root / "subagents" / "direct.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "from langchain_core.messages import AIMessage\n"
+        "from langchain_core.runnables import RunnableLambda\n"
+        "\n"
+        "def build(params, services):\n"
+        "    seen = services.get_model()\n"
+        "    seen_none = services.get_model(None)\n"
+        "    Path(params['evidence']).write_text(json.dumps({\n"
+        "        'model_id': id(seen),\n"
+        "        'none_alias_id': id(seen_none),\n"
+        "        'disable_streaming': seen.disable_streaming,\n"
+        "    }), encoding='utf-8')\n"
+        "\n"
+        "    def run(state):\n"
+        "        text = state['messages'][-1].content\n"
+        "        return {'messages': [AIMessage(content=f'reply:{text}')]}\n"
+        "\n"
+        "    return RunnableLambda(run)\n",
+        encoding="utf-8",
+    )
+    (root / ".plugin.json").write_text(json.dumps({
+        "id": "direct",
+        "system_prompt": "prompts/agent.md",
+        "tools": {"ping": {"entrypoint": "tools.py:ping"}},
+        "skills": ["skills"],
+        "subagents": ["subagents/direct.json", "subagents/notes.json"],
+    }))
+
+
+def _runtime_with_entry(runtime, tmp_path, entry):
+    _write_direct_plugin(tmp_path / "home" / "plugins" / "direct")
+    evidence = tmp_path / "evidence.json"
+    (tmp_path / "home" / "config.json").write_text(json.dumps({
+        "plugins": {"enabled": ["direct"], "config": {"direct": {"evidence": str(evidence)}}},
+        "dataagent": {"entry": entry},
+    }))
+    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
+    return prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli)), evidence
+
+
+async def test_entry_leaves_root_settings_unmounted(runtime, tmp_path):
+    _write_direct_plugin(tmp_path / "home" / "plugins" / "direct")
+    evidence = tmp_path / "evidence.json"
+    marker = tmp_path / "hook-ran"
+    workspace = tmp_path / "input"
+    workspace.mkdir()
+    hooks = tmp_path / "home" / "hooks"
+    hooks.mkdir()
+    (hooks / "mark.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "def handle(state, runtime, *, params):\n"
+        "    Path(params['marker']).write_text('ran', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "home" / "config.json").write_text(json.dumps({
+        "plugins": {"enabled": ["direct"], "config": {"direct": {"evidence": str(evidence)}}},
+        "dataagent": {
+            "entry": "direct",
+            "limits": {"model_calls_per_agent": 3, "tool_calls_per_agent": 4},
+            "workspaces": [{"name": "input", "path": str(workspace), "read_only": True}],
+            "hooks": {"before_agent": [{
+                "entrypoint": "hooks/mark.py:handle",
+                "params": {"marker": str(marker)},
+            }]},
+        },
+    }))
+    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
+    prepared = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    assert prepared.settings.dataagent.limits.model_calls_per_agent == 3
+    assert prepared.settings.dataagent.workspaces[0].name == "input"
+    assert prepared.settings.dataagent.hooks
+    graph = build_agent(prepared, model=ScriptedModel(responses=[]))
+    assert set(graph.nodes) == {"__start__", "direct"}
+    result = await graph.ainvoke({"messages": [HumanMessage(content="ping")]})
+    assert result["messages"][-1].content == "reply:ping"
+    assert not marker.exists()
+
+
+def test_unknown_entry_fails_before_a_broken_factory(runtime, tmp_path):
+    root = tmp_path / "home" / "plugins" / "direct"
+    root.mkdir(parents=True)
+    (root / "subagents").mkdir()
+    (root / ".plugin.json").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.json"],
+    }))
+    (root / "subagents" / "direct.json").write_text(json.dumps({
+        "kind": "compiled", "name": "direct", "description": "Factory must not run.",
+        "entrypoint": "subagents/direct.py:build",
+    }))
+    (root / "subagents" / "direct.py").write_text(
+        "def build(params, services):\n"
+        "    raise RuntimeError('factory exploded')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "home" / "config.json").write_text(json.dumps({
+        "plugins": {"enabled": ["direct"]},
+        "dataagent": {"entry": "missing"},
+    }))
+    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
+    prepared = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    with pytest.raises(ValueError, match="missing") as error:
+        build_agent(prepared, model=ScriptedModel(responses=[]))
+    message = str(error.value)
+    assert "Available compiled subagents: direct" in message
+    assert "factory exploded" not in message
+
+
+def test_unknown_compiled_name_lists_only_compiled_subagents(runtime, tmp_path):
+    prepared, _evidence = _runtime_with_entry(runtime, tmp_path, "missing")
+    with pytest.raises(ValueError, match="missing") as error:
+        build_agent(prepared, model=ScriptedModel(responses=[]))
+    message = str(error.value)
+    assert "Available compiled subagents: direct" in message
+    assert "notes" not in message
+
+
+async def test_entry_graph_checkpoints_and_keeps_the_cached_model(runtime, tmp_path):
+    prepared, evidence = _runtime_with_entry(runtime, tmp_path, "direct")
+    dataagent = prepared.settings.dataagent.model_copy(update={
+        "limits": prepared.settings.dataagent.limits.model_copy(update={"timeout_seconds": 30}),
+    })
+    prepared = replace(prepared, settings=prepared.settings.model_copy(update={"dataagent": dataagent}))
+    model = ScriptedModel(responses=[])
+    context = ModelContext(prepared, model=model)
+    graph = build_agent(prepared, context=context, checkpointer=InMemorySaver())
+    assert isinstance(graph, CompiledStateGraph)
+    assert graph.config["recursion_limit"] == 9999
+    assert set(graph.nodes) == {"__start__", "direct"}
+    assert set(graph.get_graph().nodes) == {"__start__", "direct", "__end__"}
+    assert context.get_model() is model and model.disable_streaming is False
+    assert json.loads(evidence.read_text(encoding="utf-8")) == {
+        "model_id": id(model),
+        "none_alias_id": id(model),
+        "disable_streaming": False,
+    }
+    config = {"configurable": {"thread_id": "persist"}}
+    for index, text in enumerate(("first", "second"), start=1):
+        await graph.ainvoke({"messages": [HumanMessage(content=text)]}, config)
+        state = await graph.aget_state(config)
+        assert state.next == ()
+        assert set(state.values) == {"messages"}
+        assert len(state.values["messages"]) == index * 2
+    assert [message.content for message in state.values["messages"]] == [
+        "first", "reply:first", "second", "reply:second",
+    ]

@@ -25,13 +25,9 @@ from dataagent.semantic_client import SemanticServiceClient
 from dataagent.strict_json import read_json
 
 
-def collect_subagents(
-    root: Path,
-    spec: PluginSpec,
-    child_specs: list[tuple[Path, str, SubAgentSpec]],
-    agent_names: set[str],
-) -> None:
-    """Collect named child declarations without executing their factories."""
+def load_declared_subagents(root: Path, spec: PluginSpec) -> list[SubAgentSpec]:
+    """Read SubAgent declarations. Does not import factories or compile tools."""
+    declared = []
     for relative in spec.subagents:
         child = SubAgentSpec.model_validate(read_json(contained_path(root, relative)))
         if child.description_file:
@@ -41,6 +37,16 @@ def collect_subagents(
                     f"SubAgent {child.name!r} description_file is empty: {child.description_file}"
                 )
             child = child.model_copy(update={"description": text})
+        declared.append(child)
+    return declared
+
+
+def collect_subagents(
+    root: Path, spec: PluginSpec, child_specs: list[tuple[Path, str, SubAgentSpec]],
+    agent_names: set[str],
+) -> None:
+    """Collect named child declarations without executing their factories."""
+    for child in load_declared_subagents(root, spec):
         if child.name in agent_names:
             raise ValueError(f"Duplicate or reserved SubAgent name: {child.name}")
         agent_names.add(child.name)

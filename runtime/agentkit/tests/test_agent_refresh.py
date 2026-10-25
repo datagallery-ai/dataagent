@@ -10,7 +10,7 @@ from test_api import client_for, query, sse, terminal
 from test_home_resources import skill
 from test_mcp import stdio
 
-from dataagent import LaunchOptions, extension_revision, prepare_runtime
+from dataagent import LaunchOptions, extension_revision, prepare_runtime, refresh_extensions
 from serve import agents
 
 
@@ -261,6 +261,49 @@ async def test_cancelling_reload_releases_preparation_lock_and_session_busy_flag
         path.write_text('{"mcpServers": {}}')
         await ask(client, "recovered")
         assert [m.content for m in model.requests[-1] if isinstance(m, HumanMessage)] == ["hello", "recovered"]
+
+
+def _write_direct_entry(root):
+    root.mkdir(parents=True)
+    (root / "subagents").mkdir()
+    (root / ".plugin.json").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.json"],
+    }))
+    (root / "subagents" / "direct.json").write_text(json.dumps({
+        "kind": "compiled", "name": "direct", "description": "Refresh keeps this entry.",
+        "entrypoint": "subagents/direct.py:build",
+    }))
+    (root / "subagents" / "direct.py").write_text(
+        "from langchain_core.messages import AIMessage\n"
+        "from langchain_core.runnables import RunnableLambda\n"
+        "def build(params, services):\n"
+        "    return RunnableLambda(lambda state: {'messages': [AIMessage(content='from-entry')]})\n",
+        encoding="utf-8",
+    )
+
+
+async def test_refresh_keeps_compiled_entry(runtime, tmp_path):
+    _write_direct_entry(runtime.paths.home / "plugins" / "direct")
+    home_config(runtime, {"plugins": {"enabled": ["direct"]}, "dataagent": {"entry": "direct"}})
+    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    assert runtime.settings.dataagent.entry == "direct"
+    model = ScriptedModel(responses=[])
+    with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
+        async with client_for(runtime, model) as (client, app):
+            first = await client.post("/dataagent/stream", json=query("hello"))
+            assert terminal(sse(first)) == ["RUN_FINISHED"] and "from-entry" in first.text
+            home_config(runtime, {
+                "plugins": {"enabled": ["direct"]}, "dataagent": {"entry": "switched"},
+            })
+            second = await client.post("/dataagent/stream", json=query("again"))
+            assert terminal(sse(second)) == ["RUN_FINISHED"] and "from-entry" in second.text
+            assert build.call_count == 2
+            published = app.state.agents.runtime
+            assert published.settings.dataagent.entry == "direct"
+            graph = next(iter(app.state.agents.cache.values())).graph
+            assert "direct" in graph.nodes and "model" not in graph.nodes
+    assert refresh_extensions(published).settings.dataagent.entry == "direct"
 
 
 def test_revision_ignores_business_outputs_and_bytecode(runtime):

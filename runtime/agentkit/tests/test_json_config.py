@@ -79,6 +79,7 @@ def test_all_shipped_json_and_document_examples_are_valid():
     product = Path(__file__).resolve().parents[1]
     for path in [
         product / "config.example.json", product / "examples/config.json",
+        product / "examples/nl2sql-entry.json",
         product / "dataagent/bootstrap/templates/config.json",
         *list((product / "builtin-plugins").rglob("*.json")),
         *list((product / "examples/plugins").rglob("*.json")),

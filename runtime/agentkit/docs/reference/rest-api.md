@@ -19,6 +19,7 @@
       "model": "<provider model name>",
       "plugins": ["common"],
       "home": "/absolute/path/to/.dataagent",
+      "entry": null,
       "user": "default",
       "timeoutSeconds": 180
     }
@@ -26,7 +27,7 @@
 }
 ```
 
-引擎未就绪时 `conversation` 只有 `ready: false`。`model` 是解析后的服务商模型名。`plugins` 是启用 ID。
+引擎未就绪时 `conversation` 只有 `ready: false`。`model` 是解析后的服务商模型名。`plugins` 是启用 ID。`entry` 是 `dataagent.entry`，未设置时为 `null`；这里不检查这个名字是否对应一个编译型子代理。
 
 ## `GET /ready`
 

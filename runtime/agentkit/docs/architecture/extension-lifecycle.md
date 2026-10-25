@@ -44,4 +44,4 @@ SDK 没有这层缓存。调用方比较 `extension_revision`，自行 `refresh_
 
 ## 仍然要重启的变更
 
-模型连接、限额、`server`、`semantic`、Home 和输入目录留在原来的 Runtime 上。`refresh_extensions` 不更新它们。
+模型连接、限额、`dataagent.entry`、`server`、`semantic`、Home 和输入目录留在原来的 Runtime 上。`refresh_extensions` 不更新它们。改入口要重新 `prepare_runtime`。

@@ -1,8 +1,8 @@
-"""Native graph assembly shared by SDK and hosts: `Runtime` in, Deep Agents graph out.
+"""Native graph assembly shared by SDK and hosts: `Runtime` in, one graph out.
 
 The bridge between bootstrap's Runtime and extension compilation. Combines compiled
 extensions with native host policies and a session-scoped filesystem backend.
-No custom Agent runner.
+No custom Agent runner. ``dataagent.entry`` mounts that compiled subagent instead.
 """
 
 from collections.abc import Callable, Sequence
@@ -17,14 +17,16 @@ from langchain.agents.middleware import (
 )
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool, ToolException
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
-from dataagent.core.graph import create_deep_agent
+from dataagent.core.graph import _RECURSION_LIMIT, create_deep_agent
 from dataagent.core.middleware.filesystem.filesystem import FilesystemMiddleware
 from dataagent.extensions import compile_extensions, select_plugins
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 from dataagent.extensions.skills import VersionedSkillsMiddleware
+from dataagent.extensions.subagents import load_declared_subagents
 from dataagent.extensions.tracing import LocalLangChainTracer
 from dataagent.models import ModelContext
 from dataagent.prompts import render_agent_prompt, render_filesystem_prompt, render_subagent_prompt
@@ -69,8 +71,7 @@ def load_extensions(
     ``semantic_client`` is the host-owned semantic-service client handed to
     compiled-subagent factories; build_agent supplies the context's client.
     ``model_resolver`` maps model aliases to models for compiled subagents;
-    build_agent supplies the context's cached resolver, so environment
-    expansion, alias errors and caching stay in ModelContext.
+    build_agent supplies the context's cached resolver.
     ``outputs_dir`` is the session output directory for compiled-subagent
     result files; build_agent supplies the session's ``outputs``.
     """
@@ -103,6 +104,68 @@ def load_extensions(
     )
 
 
+def _require_declared_entry(runtime, entry):
+    """Reject an unknown or standard entry before plugin factories run."""
+    compiled, standard = [], []
+    selected = select_plugins(runtime.settings.plugins, runtime.extensions.plugin_roots)
+    for root, spec in selected:
+        for child in load_declared_subagents(root, spec):
+            (compiled if child.kind == "compiled" else standard).append(child.name)
+    if entry in compiled:
+        return
+    if entry in standard:
+        raise ValueError(
+            f"dataagent.entry {entry!r} is a standard subagent; "
+            "only compiled subagents can be entries."
+        )
+    names = ", ".join(compiled) if compiled else "(none)"
+    raise ValueError(
+        f"dataagent.entry {entry!r} does not match a compiled subagent. "
+        f"Available compiled subagents: {names}."
+    )
+
+
+def build_entry_graph(runnable, *, entry, checkpointer, session, context):
+    """Mount one compiled-subagent Runnable as the whole graph."""
+    graph = StateGraph(MessagesState, context_schema=ModelContext)
+    graph.add_node(entry, runnable)
+    graph.add_edge(START, entry)
+    graph.add_edge(entry, END)
+    compiled = graph.compile(checkpointer=checkpointer, name=entry)
+    return compiled.with_config(
+        recursion_limit=_RECURSION_LIMIT,
+        callbacks=[
+            LocalLangChainTracer(
+                session.traces, context.redaction_secrets, agent_names=(entry,),
+            )
+        ],
+    )
+
+
+def _build_compiled_entry(runtime, *, checkpointer, session, context, mcp_tools):
+    """Resolve ``dataagent.entry`` and mount it with ``build_entry_graph``."""
+    entry = runtime.settings.dataagent.entry
+    _require_declared_entry(runtime, entry)
+    kwargs = load_extensions(
+        runtime, mcp_tools=mcp_tools, semantic_client=context.semantic_client,
+        model_resolver=context.get_model, outputs_dir=session.outputs,
+        context=context,
+    )
+    try:
+        runnable = next(
+            child["runnable"] for child in kwargs["subagents"]
+            if child.get("name") == entry and "runnable" in child
+        )
+    except StopIteration:
+        raise ValueError(
+            f"dataagent.entry {entry!r} did not produce a compiled runnable"
+        ) from None
+    return build_entry_graph(
+        runnable, entry=entry, checkpointer=checkpointer,
+        session=session, context=context,
+    )
+
+
 def build_agent(
     runtime: Runtime,
     *,
@@ -128,6 +191,11 @@ def build_agent(
         raise ValueError(
             "Semantic service is configured: use create_agent(), or supply a ModelContext "
             "with a host-owned semantic_client to build_agent() and native graph invocations"
+        )
+    if settings.dataagent.entry:
+        return _build_compiled_entry(
+            runtime, checkpointer=checkpointer, session=session, context=context,
+            mcp_tools=mcp_tools,
         )
     workspaces = runtime.paths.workspaces if input_workspaces is None else input_workspaces
     kwargs = load_extensions(
