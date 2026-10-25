@@ -10,6 +10,27 @@ from dataagent.bootstrap.paths import RuntimePaths, WorkspaceInput
 from dataagent.strict_json import read_json
 
 
+NL2SQL_ENTRY = Path(__file__).resolve().parents[1] / "examples/nl2sql-entry.json"
+
+
+def test_nl2sql_entry_example_loads(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "example-model")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("LLM_API_KEY", "example-test-secret")
+    monkeypatch.setenv("SEMANTIC_BASE_URL", "http://semantic.invalid")
+    monkeypatch.setenv("NL2SQL_DATABASE_PATH", str(tmp_path / "app.db"))
+    settings = prepare_runtime(LaunchOptions(cwd=tmp_path, config=NL2SQL_ENTRY)).settings
+    assert settings.dataagent.entry == "nl2sql"
+    assert settings.plugins.enabled == ("nl2sql",)
+    nl2sql = settings.plugins.config["nl2sql"]
+    assert nl2sql["model"] == "primary"
+    assert nl2sql["database"]["path"] == str(tmp_path / "app.db")
+    assert nl2sql["database"]["dialect"] == "sqlite"
+    assert settings.semantic is not None
+    assert settings.semantic.base_url == "http://semantic.invalid"
+    assert settings.dataagent.limits.timeout_seconds == 180
+
+
 def test_config_environment_precedence_and_path_anchor(tmp_path, monkeypatch):
     config = tmp_path / "config.json"
     config.write_text(json.dumps({
@@ -212,6 +233,49 @@ def test_merge_expands_only_final_model_using_each_fields_source_environment(tmp
     assert settings.models["primary"].name == "$env{UNUSED}"
     assert first.data["models"]["alternate"]["name"] == "$env{SHADOWED}"
     assert last.data["models"]["alternate"]["name"] == "$env{VALUE}"
+
+
+def test_entry_defaults_to_none(settings):
+    assert settings.dataagent.entry is None
+
+
+@pytest.mark.parametrize("value", ["nl2sql", "a", "a_b-c"])
+def test_entry_accepts_resource_ids(tmp_path, merge_data, value):
+    settings = merge((merge_layer(tmp_path, "user", {**merge_data, "dataagent": {"entry": value}}),))
+    assert settings.dataagent.entry == value
+
+
+@pytest.mark.parametrize("value", ["", "NL2SQL", "1sql", "has space", "a.b"])
+def test_entry_rejects_invalid_ids(tmp_path, merge_data, value):
+    with pytest.raises(ValueError, match="dataagent.entry"):
+        merge((merge_layer(tmp_path, "user", {**merge_data, "dataagent": {"entry": value}}),))
+
+
+def test_entry_higher_layer_overrides_lower(tmp_path, merge_data):
+    low = merge_layer(tmp_path, "user", {**merge_data, "dataagent": {"entry": "lower"}})
+    high = merge_layer(tmp_path, "cli", {"dataagent": {"entry": "higher"}})
+    assert merge((low, high)).dataagent.entry == "higher"
+    kept = merge_layer(tmp_path, "cli", {"server": {"port": 8801}})
+    assert merge((low, kept)).dataagent.entry == "lower"
+
+
+def test_entry_config_file_is_accepted_and_overridden(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "k",
+        }},
+        "dataagent": {"entry": "lower"},
+    }))
+    assert prepare_runtime(LaunchOptions(cwd=tmp_path)).settings.dataagent.entry == "lower"
+    override = tmp_path / "override.json"
+    override.write_text(json.dumps({"dataagent": {"entry": "higher"}}))
+    assert prepare_runtime(LaunchOptions(cwd=tmp_path, config=override)).settings.dataagent.entry == "higher"
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"dataagent": {"entry": "Not-valid"}}))
+    with pytest.raises(ValueError, match="dataagent.entry"):
+        prepare_runtime(LaunchOptions(cwd=tmp_path, config=bad))
 
 
 def test_merge_missing_model_variable_reports_field_source_file_and_home(tmp_path, merge_data):

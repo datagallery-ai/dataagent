@@ -15,7 +15,7 @@
 | `extension_revision` | 扩展来源的 SHA-256 指纹。不含业务输入和会话状态 |
 | `create_agent` | 创建 `Agent`。配置了语义服务时拥有客户端，除非调用方传入 |
 | `Agent` | `graph` 加 `ModelContext`。提供 invoke/stream 和 `as_agui` |
-| `build_agent` | 返回原生 `CompiledStateGraph`。不启动服务 |
+| `build_agent` | 返回原生 `CompiledStateGraph`。`dataagent.entry` 有值时，`build_entry_graph` 只挂该工厂 Runnable。不启动服务 |
 | `load_extensions` | 把已发现的声明编译成 Deep Agents 参数 |
 | `load_mcp_tools` | 按 Runtime 里的 MCP 连接加载工具。异步 |
 | `ModelContext` | `get_model` 和 `semantic_client`。不进入 Checkpoint |

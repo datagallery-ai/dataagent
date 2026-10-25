@@ -49,6 +49,40 @@ nl2sql/                      插件根
 4. 子代理描述末尾带有已绑定数据库摘要（`db_id`、`dialect`、`engine`，不含连接参数），
    主代理据此知道查的是哪个库；连接是否正常只由实际查询结果说明。
 
+### 作为 Agent 入口
+
+设置 `dataagent.entry` 为 `nl2sql` 时，不再经主代理的 `task` 工具委派。宿主仍只挂 `build_subagent` 返回的 Runnable，不调用 `build_nl2sql_graph`。用户消息直接进入这个 Runnable，回复仍是一条 JSON `AIMessage`。结果文件仍写到当前会话的 `outputs/nl2sql/`（宿主把 `outputs_dir` 传给工厂）。
+
+```json
+{
+  "dataagent": {"entry": "nl2sql"},
+  "plugins": {
+    "enabled": ["nl2sql"],
+    "config": {
+      "nl2sql": {
+        "model": "primary",
+        "database": {
+          "db_id": "mydb",
+          "dialect": "sqlite",
+          "engine": "sqlite",
+          "path": "/data/app.db"
+        }
+      }
+    }
+  }
+}
+```
+
+可复制的产品配置是 [examples/nl2sql-entry.json](../../examples/nl2sql-entry.json)。这种模式下没有主代理可读 `prompts/routing.md` 或子代理描述，这些内容被忽略。`dataagent.hooks`、调用上限和 `workspaces` 留在配置里，不装进这张图。请用 `ainvoke` / `astream`；`run_task` 是 async，同步 `invoke` 可能失败。模型的 token 和推理按模型本身的流式设置发出，最终回复也在消息快照里。不要把 Deep Agents 根上的线程恢复到这张图。改 `entry` 要重启。
+
+| 旧版 | 现在 |
+| --- | --- |
+| `AGENT_CONFIG.type: "nl2sql"` | `dataagent.entry: "nl2sql"`，且 `plugins.enabled` 包含 `nl2sql` |
+| 独立 YAML 中的模型、库和节点参数 | 根级 `models`、`semantic`，以及 `plugins.config.nl2sql` |
+| 主代理把问题派给 nl2sql | 入口图没有 Deep Agents 根；用户消息就是问题 |
+
+入口模式的其余限制见 [子代理](../../docs/extensions/subagents.md#入口模式)。
+
 ### 主代理提示放在哪里
 
 主代理从三处读到 nl2sql 的说明。每条规则只写在一处：

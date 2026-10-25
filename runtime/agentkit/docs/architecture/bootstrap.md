@@ -47,6 +47,6 @@ CLI 的 workspace 列表优先。否则看 `DATAAGENT_WORKSPACE`。否则用配�
 
 ## 刷新
 
-`refresh_extensions` 按 Runtime 里记下的 Home、显式配置和 env 文件再走一遍扩展相关步骤。它替换 `plugins`、`dataagent.hooks`、扩展位置和 MCP。模型、限额、`server`、语义设置和路径对象保持原样。
+`refresh_extensions` 按 Runtime 里记下的 Home、显式配置和 env 文件再走一遍扩展相关步骤。它替换 `plugins`、`dataagent.hooks`、扩展位置和 MCP。模型、限额、`dataagent.entry`、`server`、语义设置和路径对象保持原样。
 
 宿主负责在发布新 Runtime 之前完成编译。见 [扩展生命周期](extension-lifecycle.md)。

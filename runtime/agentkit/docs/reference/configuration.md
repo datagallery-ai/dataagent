@@ -11,7 +11,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `schema_version` | `3` | `3` | 唯一接受的产品配置版本 |
-| `dataagent` | 对象 | 见下表 | 模型选择、限额、Hook、只读输入 |
+| `dataagent` | 对象 | 见下表 | 模型选择、限额、Hook、只读输入、入口 |
 | `models` | 对象 | 必填 | 模型 ID 到连接。至少要能解析 `dataagent.model.default` |
 | `plugins` | 对象 | `enabled: []`，`paths: []` | 启用列表和额外插件目录 |
 | `server` | 对象 | 见下表 | 唯一的监听地址。网页和部署读同一字段 |
@@ -27,6 +27,7 @@
 | `limits.tool_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的工具次数上限 |
 | `hooks` | 分组对象或列表 | `[]` | 见 [扩展声明](extension-schema.md)。跨配置层追加 |
 | `workspaces` | 数组 | `[]` | 只读输入。空数组不创建目录 |
+| `entry` | 字符串或省略 | 省略 | `[a-z][a-z0-9_-]*`。已启用插件里某个编译型子代理的 `name`。省略则装配 Deep Agents 根。见 [入口模式](../extensions/subagents.md#入口模式) |
 
 `workspaces[]`：
 
@@ -35,6 +36,8 @@
 | `name` | 字符串 | `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`，列表内唯一 |
 | `path` | 字符串 | 必须是已存在且可读的目录，解析后唯一 |
 | `read_only` | `true` | 只能是 `true` |
+
+`entry` 由高层替换；省略则继承低层。改它要重启进程，`refresh_extensions` 不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
 
 `middleware`、`callbacks`、`hook_handlers` 以及 Hook 上的 `command`、`handler`、`events`、`match` 会使该文件校验失败。
 
@@ -92,7 +95,7 @@
 
 - 对象按字段递归合并，包括每个模型 ID
 - `dataagent.hooks` 追加。空列表不清除低层
-- 其他数组和标量由高层替换
+- 其他数组和标量由高层替换，包括 `dataagent.entry`
 - 同一真实文件被 `--config` 指到时，去掉它作为 Home 层的那一次
 
 配置来自内置默认值、Home `config.json` 和 `--config`。启动目录中的 `config.json` 不参与合并。

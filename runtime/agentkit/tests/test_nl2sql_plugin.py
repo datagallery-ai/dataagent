@@ -31,6 +31,8 @@ import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from dataagent.bootstrap import LaunchOptions, prepare_runtime
+from dataagent.client import create_agent
 from dataagent.core.graph import create_deep_agent
 from dataagent.extensions import compile_extensions, select_plugins
 from dataagent.semantic_client import SemanticServiceClient
@@ -372,6 +374,30 @@ def test_node_sections_default_to_full_chain_and_require_prefix():
         NL2SQLConfig({**base, "generator": {}, "executor": {}}).enabled_nodes
     with pytest.raises(ValueError, match="generator"):
         NL2SQLConfig({**base, "perceptor": {}}).enabled_nodes
+
+
+async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path):
+    db_path, schema_path = _sqlite_fixture(tmp_path)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
+        }},
+        "dataagent": {"entry": "nl2sql"},
+        "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": _plugin_params(db_path, schema_path)}},
+    }))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config))
+    result = await create_agent(runtime, model=ScriptedModel(responses=list(_PLUGIN_RESPONSES))).ainvoke(
+        {"messages": [HumanMessage(content="每个部门的员工人数")]},
+    )
+    message = result["messages"][-1]
+    assert isinstance(message, AIMessage)
+    payload = json.loads(message.content)
+    assert payload["query_id"] and payload["error"] is None
+    result_file = Path(payload["result_file"])
+    assert result_file.is_file()
+    assert result_file.parent == runtime.paths.for_session("sdk").outputs / "nl2sql"
+    assert result_file.name == f"{payload['query_id']}.csv"
 
 
 def test_connection_config_strips_reserved_database_keys():

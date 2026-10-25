@@ -7,8 +7,10 @@ from uuid import uuid4
 import httpx
 import pytest
 from conftest import RecordingCallback, ScriptedModel, call
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 
+from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from serve.app import create_app
 
 
@@ -77,7 +79,7 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
             "ready": True,
             "status": "ready", "protocol": "dataagent-v2", "instanceId": "test-instance",
             "model": "replacement-model", "plugins": [],
-            "home": str(runtime.paths.home),
+            "home": str(runtime.paths.home), "entry": None,
             "user": runtime.paths.user_id,
             "timeoutSeconds": runtime.timeout_seconds,
         }
@@ -442,3 +444,101 @@ async def test_configured_hook_error_reaches_http_without_false_success_or_retry
         assert (await client.get("/sessions/thread-1")).json()["newThreadRequired"]
     assert len(model.requests) == (0 if event in {"before_agent", "before_model"}
                                    else 2 if event == "after_agent" else 1)
+
+
+class StreamingScriptedModel(ScriptedModel):
+    """Scripted replies that also implement streaming, so AG-UI would see tokens."""
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        result = ScriptedModel._generate(self, messages, stop, run_manager, **kwargs)
+        message = result.generations[0].message
+        text = message.content if isinstance(message.content, str) else ""
+        yield ChatGenerationChunk(message=AIMessageChunk(
+            content="", additional_kwargs={"reasoning_content": "hidden-thought"}, id=message.id,
+        ))
+        yield ChatGenerationChunk(message=AIMessageChunk(content=text, id=message.id))
+
+
+def _write_entry_stream_plugin(root, *, model_source="services"):
+    root.mkdir(parents=True)
+    (root / "subagents").mkdir()
+    (root / ".plugin.json").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.json"],
+    }))
+    (root / "subagents" / "direct.json").write_text(json.dumps({
+        "kind": "compiled", "name": "direct", "description": "Entry model calls.",
+        "entrypoint": "subagents/direct.py:build",
+    }))
+    lookup = (
+        "runtime.context.get_model()" if model_source == "runtime"
+        else "services.get_model()"
+    )
+    signature = "state, runtime" if model_source == "runtime" else "state"
+    (root / "subagents" / "direct.py").write_text(
+        "from langchain_core.messages import AIMessage, HumanMessage\n"
+        "from langgraph.graph import END, START, MessagesState, StateGraph\n"
+        "\n"
+        "def build(params, services):\n"
+        f"    async def work({signature}):\n"
+        f"        model = {lookup}\n"
+        "        await model.ainvoke([HumanMessage(content='internal')])\n"
+        "        return {'messages': [AIMessage(content='visible-reply')]}\n"
+        "\n"
+        "    graph = StateGraph(MessagesState)\n"
+        "    graph.add_node('work', work)\n"
+        "    graph.add_edge(START, 'work')\n"
+        "    graph.add_edge('work', END)\n"
+        "    return graph.compile()\n",
+        encoding="utf-8",
+    )
+
+
+def _entry_runtime(runtime, tmp_path, **plugin):
+    _write_entry_stream_plugin(tmp_path / "home" / "plugins" / "direct", **plugin)
+    (tmp_path / "home" / "config.json").write_text(json.dumps({
+        "plugins": {"enabled": ["direct"]},
+        "dataagent": {"entry": "direct"},
+    }))
+    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
+    return prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+
+
+def _assert_model_stream_visible(events):
+    assert terminal(events) == ["RUN_FINISHED"]
+    text = [event.get("delta", "") for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
+    assert any("secret-token" in delta for delta in text)
+    reasoning = [
+        event.get("delta", "") for event in events
+        if "REASONING" in event["type"] or "THINKING" in event["type"]
+    ]
+    assert any("hidden-thought" in delta for delta in reasoning)
+    snapshots = [event for event in events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshots and "visible-reply" in json.dumps(snapshots[-1])
+
+
+async def test_unknown_entry_fails_the_request_not_health(runtime):
+    runtime = replace(runtime, settings=runtime.settings.model_copy(update={
+        "dataagent": runtime.settings.dataagent.model_copy(update={"entry": "missing"}),
+    }))
+    async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
+        health = await client.get("/healthz")
+        assert health.status_code == 200
+        assert health.json()["data"]["conversation"]["entry"] == "missing"
+        response = await client.post("/dataagent/stream", json=query())
+    assert response.status_code == 409 and "missing" in response.text
+
+
+@pytest.mark.parametrize("model_source", ["services", "runtime"])
+async def test_compiled_entry_streams_model_chunks(runtime, tmp_path, model_source):
+    runtime = _entry_runtime(runtime, tmp_path, model_source=model_source)
+    model = StreamingScriptedModel(responses=[AIMessage(content="secret-token")] * 2)
+    assert type(model)._astream is not ScriptedModel._astream
+    async with client_for(runtime, model) as (client, _):
+        stream = sse(await client.post(
+            "/dataagent/stream", json=query("ask", thread=f"{model_source}-entry"),
+        ))
+        gui = sse(await client.post(
+            "/api/copilotkit", json=query("ask", thread=f"{model_source}-gui"),
+        ))
+    _assert_model_stream_visible(stream)
+    _assert_model_stream_visible(gui)

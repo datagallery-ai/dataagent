@@ -6,6 +6,7 @@
 
 - 最小模板：[config.example.json](../../config.example.json)
 - 覆盖当前产品字段并带两个 Hook 的示例：[examples/config.json](../../examples/config.json)
+- nl2sql 作为整张图：[examples/nl2sql-entry.json](../../examples/nl2sql-entry.json)
 - 示例字段怎么配合文件：[examples/README.md](../../examples/README.md)
 
 配置是标准 JSON。不支持注释、尾逗号和重复键。
@@ -57,7 +58,7 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 
 启动时只展开默认模型的 `$env{...}`。其他模型在工具第一次调用 `get_model("别名")` 时，用启动时捕获的环境值解析。未使用的模型可以暂缺变量；真正用到且缺失时，那次调用失败。
 
-改模型、服务地址、端口、Home 或输入目录后，重新启动进程。插件、Skill、Hook 和 MCP 声明可以在下一轮请求前刷新，见 [扩展生命周期](../architecture/extension-lifecycle.md)。
+改模型、服务地址、端口、Home、输入目录或 `dataagent.entry` 后，重新启动进程。插件、Skill、Hook 和 MCP 声明可以在下一轮请求前刷新，见 [扩展生命周期](../architecture/extension-lifecycle.md)。`refresh_extensions` 不改 `entry`。
 
 ## 最小可运行内容
 
@@ -90,6 +91,10 @@ npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
 **启用插件。** 把插件目录放到 `<home>/plugins/<id>/`，或把插件自身目录写进 `plugins.paths`。再把 ID 写入 `plugins.enabled`。只加路径不会启用。示例见 [插件](../extensions/plugins.md)。
 
 **接入语义服务。** 增加 `semantic` 对象。客户端用法、认证和 TLS 见 [语义服务](../extensions/semantic-service.md)。字段见配置参考。未配置 `semantic` 时，运行时不创建客户端。
+
+**把编译型子代理当作整张图。** 在 `dataagent.entry` 写已启用插件里的编译型子代理名，然后重启。省略 `entry` 仍是 Deep Agents 根。可运行示例是 [nl2sql-entry.json](../../examples/nl2sql-entry.json)：`entry` 为 `nl2sql`，并带上模型、sqlite 库和语义服务地址。
+
+高层配置里的 `entry` 替换低层。Hook、调用上限、工作区、Skill、工具、MCP 工具、插件系统提示和其他子代理留在配置里，不装进这张图。`limits.timeout_seconds` 仍然是整轮时限。限制见 [入口模式](../extensions/subagents.md#入口模式)。
 
 ## 写在其他文件里的设置
 
