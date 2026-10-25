@@ -13,6 +13,7 @@
 import json
 import os
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, HTTPException
@@ -50,16 +51,17 @@ def sse_event(event: str, data: Any) -> str:
 
 async def stream_agent_events(query: str, service: DataAgentService) -> AsyncGenerator[str, None]:
     """Yield DataAgent server-sent events."""
-    async for item in service.stream_query(query):
-        event = item.get("event")
-        data = item.get("data")
-        if event is None:
-            continue
-        if event in ("result", "error"):
-            yield sse_event("result", data)
-            continue
-        if event == "message":
-            yield sse_event("message", data)
+    async with aclosing(service.stream_query(query)) as stream:
+        async for item in stream:
+            event = item.get("event")
+            data = item.get("data")
+            if event is None:
+                continue
+            if event in ("result", "error"):
+                yield sse_event("result", data)
+                continue
+            if event == "message":
+                yield sse_event("message", data)
 
 
 app = FastAPI(

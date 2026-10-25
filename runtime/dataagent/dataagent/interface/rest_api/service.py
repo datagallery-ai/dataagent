@@ -147,41 +147,46 @@ class DataAgentService:
                     stream = self._agent.astream(
                         initial_state={"user_query": query}, stream_mode=["updates", "custom", "values"]
                     )
-                async for item in stream:
-                    if isinstance(item, dict) and "error" in item:
-                        raise self._coerce_error(item.get("error"))
+                try:
+                    async for item in stream:
+                        if isinstance(item, dict) and "error" in item:
+                            raise self._coerce_error(item.get("error"))
 
-                    if isinstance(item, tuple) and len(item) == 3:
-                        _, stream_mode, data = item
-                    elif isinstance(item, tuple) and len(item) == 2:
-                        stream_mode, data = item
-                    else:
-                        message = str(item)
-                        if message and message != last_message:
-                            yield {"event": "message", "data": {"message": message}}
-                            last_message = message
-                        continue
+                        if isinstance(item, tuple) and len(item) == 3:
+                            _, stream_mode, data = item
+                        elif isinstance(item, tuple) and len(item) == 2:
+                            stream_mode, data = item
+                        else:
+                            message = str(item)
+                            if message and message != last_message:
+                                yield {"event": "message", "data": {"message": message}}
+                                last_message = message
+                            continue
 
-                    if stream_mode == "values":
-                        final_state = data
-                        continue
+                        if stream_mode == "values":
+                            final_state = data
+                            continue
 
-                    if stream_mode == "updates":
-                        if isinstance(data, dict):
-                            for value in data.values():
-                                if isinstance(value, dict):
-                                    update_state.update(value)
-                        message = self._extract_stream_message(data)
-                        if message and message != last_message:
-                            yield {"event": "message", "data": {"message": message}}
-                            last_message = message
-                        continue
+                        if stream_mode == "updates":
+                            if isinstance(data, dict):
+                                for value in data.values():
+                                    if isinstance(value, dict):
+                                        update_state.update(value)
+                            message = self._extract_stream_message(data)
+                            if message and message != last_message:
+                                yield {"event": "message", "data": {"message": message}}
+                                last_message = message
+                            continue
 
-                    if stream_mode == "custom":
-                        message = self._extract_custom_message(data)
-                        if message and message != last_message:
-                            yield {"event": "message", "data": {"message": message}}
-                            last_message = message
+                        if stream_mode == "custom":
+                            message = self._extract_custom_message(data)
+                            if message and message != last_message:
+                                yield {"event": "message", "data": {"message": message}}
+                                last_message = message
+                finally:
+                    close = getattr(stream, "aclose", None)
+                    if close is not None:
+                        await close()
 
             result_state = final_state if final_state is not None else update_state
             if result_state:
