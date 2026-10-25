@@ -10,6 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import json
 import re
 from typing import Any
 
@@ -63,11 +64,23 @@ def xml_parser(content: str) -> list[str]:
 
 
 def json_parser(content: str) -> str:
-    """Extract a JSON object/array string from model output."""
+    """Extract a JSON object/array string from model output.
+
+    A closed ```json block is preferred. Without one, a reply that is nothing but a JSON object or array, bare
+    or inside a single code fence of any language (closed or not), is accepted too; text around it still raises.
+    """
     m = re.search(r"```json\s*(.*?)\s*```", content, re.S | re.I)
-    if not m:
-        raise DataAgentError(source="internal", fact="No JSON found", component="nl2sql")
-    return m.group(1).strip()
+    if m:
+        return m.group(1).strip()
+    candidate = re.sub(r"^```[ \t]*[\w+-]*\s*|\s*```$", "", content.strip())
+    if candidate.startswith(("{", "[")):
+        try:
+            json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+        else:
+            return candidate
+    raise DataAgentError(source="internal", fact="No JSON found", component="nl2sql")
 
 
 def metadata_parser(text: str) -> list[dict[str, set[str]]]:
