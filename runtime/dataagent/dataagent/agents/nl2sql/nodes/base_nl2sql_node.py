@@ -23,6 +23,7 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import json_parser
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.errors import DataAgentError
 from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.managers.llm_manager.adapters import LLMResponse
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX, TZ_CN
 from dataagent.utils.env_utils import get_env_bool
@@ -85,8 +86,11 @@ class BaseNL2SQLNode(BaseNode):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        content = await self._collect_llm_stream(prompts)
-        self._dump_llm_context(system_prompt, user_prompt, content, self.name, action)
+        response = await self._collect_llm_stream(prompts)
+        content = response.content
+        self._dump_llm_context(
+            system_prompt, user_prompt, content, self.name, action, reasoning_content=response.reasoning_content
+        )
         return content
 
     async def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
@@ -105,19 +109,33 @@ class BaseNL2SQLNode(BaseNode):
                     ) from exc
         return None
 
-    async def _collect_llm_stream(self, prompts: list[dict[str, str]]) -> str:
-        """Consume all chunks before returning text, preserving stream failures and cancellation."""
+    async def _collect_llm_stream(self, prompts: list[dict[str, str]]) -> LLMResponse:
+        """Collect text and reasoning, preferring the normalized final streamed response."""
         parts: list[str] = []
-        final_content: str | None = None
+        reasoning_parts: list[str] = []
+        final_response: LLMResponse | None = None
         async for chunk in llm_manager.get_default_llm().astream(prompts):
             if chunk.final_response is not None:
-                final_content = chunk.final_response.content
-            elif chunk.content:
-                parts.append(chunk.content)
-        return final_content if final_content is not None else "".join(parts)
+                final_response = chunk.final_response
+            else:
+                if chunk.content:
+                    parts.append(chunk.content)
+                if chunk.reasoning_content:
+                    reasoning_parts.append(chunk.reasoning_content)
+        if final_response is not None:
+            return final_response
+        return LLMResponse(content="".join(parts), reasoning_content="".join(reasoning_parts), usage_metadata={})
 
-    def _dump_llm_context(self, system_prompt: str, user_prompt: str, result: str, node_name: str, action: str) -> None:
-        """Persist the (system, user, AI) prompt triple to the node's context-dump file."""
+    def _dump_llm_context(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        result: str,
+        node_name: str,
+        action: str,
+        reasoning_content: str = "",
+    ) -> None:
+        """Persist prompts, reasoning, and the final AI response to the node's context-dump file."""
         if not self._context_dump_enabled:
             return
         if self._nl2sql_context_dump_dir is None:
@@ -137,6 +155,9 @@ class BaseNL2SQLNode(BaseNode):
                 f.write(f"{system_prompt}\n\n")
                 f.write("--- [1] HUMAN ---\n")
                 f.write(f"{user_prompt}\n\n")
+                if reasoning_content:
+                    f.write("--- REASONING ---\n")
+                    f.write(f"{reasoning_content}\n\n")
                 f.write("--- [2] AI ---\n")
                 f.write(f"{result}\n\n")
                 f.write(f"{separator}\n")
