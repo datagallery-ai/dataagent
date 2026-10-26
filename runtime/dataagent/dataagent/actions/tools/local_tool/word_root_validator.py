@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from loguru import logger
 
 _PROMPT_VERSION = "word-root-candidate-ranking-full-table-topk-v3"
 _MAX_K = 20
@@ -84,6 +85,8 @@ async def validate_word_root(
 
     Returns:
         A JSON-serializable result containing exact/regex matches or ranked candidates.
+        If the CSV file is missing, returns ``validation_status="skipped"`` without
+        blocking the caller.
     """
     english_name = english_name.strip()
     if not english_name:
@@ -95,7 +98,11 @@ async def validate_word_root(
         raise ValueError(f"k must be between 1 and {_MAX_K}")
 
     config = dict(_tool_context.tool_config or {})
-    table = _load_word_root_table(config)
+    try:
+        table = _load_word_root_table(config)
+    except FileNotFoundError as exc:
+        logger.warning("Word-root CSV is missing; skipping validation: {}", exc)
+        return _validation_skipped_result()
     llm_call_params = _llm_call_params(config)
     normalized_name = _normalize_name(english_name)
 
@@ -184,6 +191,8 @@ async def validate_word_roots(
 
     Returns:
         An object with a ``results`` array, one validation result per original input item.
+        If the CSV file is missing, returns ``validation_status="skipped"`` and
+        marks each item's ``found`` as null without blocking the caller.
     """
     if not isinstance(items, list) or not items:
         raise ValueError("items must be a non-empty list")
@@ -226,7 +235,22 @@ async def validate_word_roots(
         )
 
     config = dict(_tool_context.tool_config or {})
-    table = _load_word_root_table(config)
+    try:
+        table = _load_word_root_table(config)
+    except FileNotFoundError as exc:
+        logger.warning("Word-root CSV is missing; skipping batch validation: {}", exc)
+        skipped_items = []
+        for original_index, unique_index in enumerate(original_to_unique_index):
+            skipped_items.append({
+                "index": original_index,
+                **unique_items[unique_index],
+                **_validation_skipped_item_result(),
+            })
+        return {
+            "validation_status": "skipped",
+            "reason": "word_root_csv_missing",
+            "results": skipped_items,
+        }
     llm_call_params = _llm_call_params(config)
     results: list[dict[str, Any] | None] = [None] * len(unique_items)
     pending: list[dict[str, Any]] = []
@@ -637,6 +661,23 @@ def _matched_result(match_type: str, matches: list[_WordRootRecord]) -> dict[str
         "found": True,
         "match_type": match_type,
         "matches": [record.values for record in matches],
+        "candidates": [],
+    }
+
+
+def _validation_skipped_result() -> dict[str, Any]:
+    return {
+        **_validation_skipped_item_result(),
+        "validation_status": "skipped",
+        "reason": "word_root_csv_missing",
+    }
+
+
+def _validation_skipped_item_result() -> dict[str, Any]:
+    return {
+        "found": None,
+        "match_type": None,
+        "matches": [],
         "candidates": [],
     }
 
