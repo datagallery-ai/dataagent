@@ -34,6 +34,7 @@ from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_descr
 from dataagent.actions.tools.semantic_tool.search_tables_with_schema import get_table_schema
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.suite.builtin_suites.de_agent.tools.schema_ddl import schema_to_ddl
 from dataagent.utils.runtime_paths import dataagent_package_root
 
 
@@ -547,14 +548,10 @@ def _build_schema_ir_for_nl2sql_v2(
         join_result = get_join_relations(table_names=table_names, _tool_context=_tool_context)
         join_relations = join_result.get("data", {}).get("joins", [])
 
-    # 保存 schema_ir 和 join_relations 中间表示
+    # 保留文件名契约，将模型读取的 schema 内容统一为 DDL。
     if save_file and schema_ir:
         save_path = os.path.join(workspace_path, "schema_schemair.md")
         with open(save_path, "w", encoding="utf-8") as f:
-            f.write("schema_ir = ")
-            f.write(json.dumps(schema_ir, ensure_ascii=False, indent=2))
-            f.write("\n\n")
-            f.write("join_relations = ")
-            f.write(json.dumps(join_relations, ensure_ascii=False, indent=2))
+            f.write(schema_to_ddl(schema_ir, join_relations))
 
     return schema_ir
