@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote
 
@@ -77,6 +78,30 @@ class SemanticServiceClient:
             auth=auth,
             timeout=timeout,
             scenario=config_manager.get("SEMANTIC_LAYER.scenario"),
+        )
+
+    @classmethod
+    def from_settings(cls, settings: Mapping[str, Any]) -> SemanticServiceClient:
+        """Build a client from a bare SEMANTIC_LAYER mapping (no ConfigManager).
+
+        Used by standalone entry points (e.g. the history-SQL downloader CLI)
+        that read the agent YAML directly instead of a ConfigManager.
+        """
+        raw_base_url = settings.get("base_url")
+        if not raw_base_url:
+            raise ValueError("validation error: SEMANTIC_LAYER.base_url must be configured")
+        username = settings.get("username")
+        password = settings.get("password")
+        if (username is None or not str(username).strip()) != (password is None or not str(password).strip()):
+            raise ValueError(
+                "validation error: SEMANTIC_LAYER.username and SEMANTIC_LAYER.password must both be configured"
+            )
+        auth = (str(username), str(password)) if username and password else None
+        return cls(
+            str(raw_base_url),
+            auth=auth,
+            timeout=_as_float(settings.get("timeout", 30.0), 30.0),
+            scenario=settings.get("scenario"),
         )
 
     def get_table_list(self, database_name: str, *, limit: int = DEFAULT_SEMANTIC_SERVICE_TABLE_LIST_LIMIT) -> list:
@@ -266,6 +291,32 @@ class SemanticServiceClient:
     def search_basic(self, payload: dict[str, Any]) -> dict:
         """Run semantic-service basic search."""
         return self.post("search/basic", json=payload, headers={"Content-Type": "application/json"})
+
+    def search_entities(self, type_name: str, *, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        """Enumerate entities of a type via GET search/basic (server-side paging)
+
+        Unlike the POST ``search/basic`` (query payload), this lists all
+        entities page by page with ``typeName/limit/offset`` params; used to
+        bulk-download the history-SQL corpus.
+        """
+        payload = self.get(
+            "search/basic",
+            params={"typeName": type_name, "limit": limit, "offset": offset},
+        )
+        if isinstance(payload, dict):
+            entities = payload.get("entities")
+            if entities is None:
+                raise ValueError(
+                    f"search/basic response missing 'entities' key (got keys: {list(payload)[:10]})"
+                )
+            if isinstance(entities, list):
+                return entities
+            logger.warning("search/basic: 'entities' is not a list, got {}", type(entities).__name__)
+            return []
+        if isinstance(payload, list):
+            return payload
+        logger.warning("search/basic: unexpected payload type {}", type(payload).__name__)
+        return []
 
     def search_dsl(self, query: str) -> dict:
         """Run semantic-service DSL search."""

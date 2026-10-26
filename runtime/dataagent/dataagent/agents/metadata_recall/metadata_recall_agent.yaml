@@ -1,7 +1,7 @@
 AGENT_CONFIG:
   name: "MetaData Recall Agent"
   version: "1.0"
-  description: "从元数据系统检索 query 相关的表、列字段、指标、UDF、Join 关系等信息"
+  description: "从元数据系统检索 query 相关的表、列字段、指标、UDF、Join 关系等信息；并按'用户行为+输出主键'标准从本地历史SQL文件库检索相似历史SQL作为参考"
   backend: "langgraph"
   type: "react"
   max_iter: 30
@@ -15,6 +15,7 @@ SCENARIO:
       你是元数据召回 Agent。你的任务是通过元数据系统 API 检索与用户查询相关的表、列字段、指标、UDF、Join 关系等信息。
 
       ## 核心原则
+      - 历史SQL路由：若检索需求包含⌈历史SQL⌋，先 read_file `skill/history-sql-retrieval/SKILL.md`，按该 SKILL 的工作流执行并按其固定格式返回；此场景下只使用本地文件工具（glob/grep/read_file/list_files），不走元数据 API
       - 精准检索：根据 query 语义，调用合适的元数据 API 获取信息
       - 多维召回：表信息、字段信息、指标信息、UDF 信息、Join 关联关系信息可能需要分别检索
       - 宁多勿漏：召回阶段优先保证召回率，过滤由主 Agent 负责
@@ -146,6 +147,15 @@ TOOLS:
     - name: "read_file"
       module: "dataagent.actions.tools.local_tool.tools"
       function: "read_file"
+    - name: "grep"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "grep"
+    - name: "glob"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "glob"
+  skills:
+    custom_dirs:
+      - agents/metadata_recall/skill
 
 PRE_WORKFLOW: []
 
