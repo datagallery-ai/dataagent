@@ -236,6 +236,8 @@ import {
   useDataTaskIdentity,
 } from "./data-task-identity";
 import type { LiveRun } from "./live-run-state";
+import { SubagentProgressNotes } from "./subagent-progress-line";
+import { shouldCoverTranscriptWithLoading } from "./conversation-restore";
 import {
   buildProcessToolGroups,
   processToolGroupsEqual,
@@ -329,7 +331,8 @@ import {
   translateConfigField,
   translateConfigFieldOptions,
 } from "../../i18n/config-labels";
-import { HttpAgent } from "@ag-ui/client";
+import type { HttpAgent } from "@ag-ui/client";
+import { StreamHttpAgent } from "../../lib/stream-http-agent";
 import {
   getBackendCapabilities,
   isResourcePanelSupported,
@@ -619,7 +622,7 @@ function StableDataTaskChatInput({
           .runAgent({ agent, forwardedProps })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            if (isSessionRunBusyMessage(message) || /\b409\b/.test(message)) {
+            if (isSessionRunBusyMessage(message)) {
               restoreRejectedSend(text);
               reportRunError(error);
               return;
@@ -1003,7 +1006,7 @@ function DataTasksCopilotShell() {
   const sessionAgentsRef = useRef(new Map<string, HttpAgent>());
   const [sessionAgentVersion, setSessionAgentVersion] = useState(0);
   const defaultAgent = useMemo(
-    () => new HttpAgent({ url: "/api/copilotkit", agentId: "default" }),
+    () => new StreamHttpAgent({ agentId: "default" }),
     [],
   );
   const ensureSessionAgent = useCallback((threadId: string) => {
@@ -1042,10 +1045,14 @@ function DataTasksCopilotShell() {
         if (message.includes("Run ended without emitting a terminal event")) {
           return;
         }
-        if (message.includes("aborted") || message.includes("AbortError")) {
+        if (
+          message.includes("aborted") ||
+          message.includes("AbortError") ||
+          message.includes("The run was cancelled")
+        ) {
           return;
         }
-        if (isSessionRunBusyMessage(message) || /\b409\b/.test(message)) {
+        if (isSessionRunBusyMessage(message)) {
           window.dispatchEvent(
             new CustomEvent("datafoundry-session-busy", {
               detail: { threadId: threadIdFromDataTaskSessionAgentId(contextAgentId) },
@@ -3927,15 +3934,21 @@ function StepAssistantMessage({
             </button>
           ) : null}
           {displayHasToolCalls ? (
-            <div className="flex min-w-0 flex-wrap gap-1.5">
-              {collapsedToolChips.map((chip) => (
-                <ToolSummaryChip
-                  key={chip.id}
-                  chip={chip}
-                  onSelectToolAction={selectToolAction}
-                />
-              ))}
-            </div>
+            <>
+              <div className="flex min-w-0 flex-wrap gap-1.5">
+                {collapsedToolChips.map((chip) => (
+                  <ToolSummaryChip
+                    key={chip.id}
+                    chip={chip}
+                    onSelectToolAction={selectToolAction}
+                  />
+                ))}
+              </div>
+              <SubagentProgressNotes
+                toolCallIds={messageToolCallIds(effectiveToolCalls)}
+                liveRun={liveRun}
+              />
+            </>
           ) : (
             <button
               type="button"
@@ -3980,6 +3993,10 @@ function StepAssistantMessage({
                     />
                   ))}
                 </div>
+                <SubagentProgressNotes
+                  toolCallIds={messageToolCallIds(effectiveToolCalls)}
+                  liveRun={liveRun}
+                />
               </StepSubPanel>
             </>
           ) : processContent ? (
@@ -4008,6 +4025,10 @@ function StepAssistantMessage({
                   />
                 ))}
               </div>
+              <SubagentProgressNotes
+                toolCallIds={messageToolCallIds(effectiveToolCalls)}
+                liveRun={liveRun}
+              />
             </StepSubPanel>
           ) : null}
         </>
@@ -4122,6 +4143,10 @@ function StepSubPanel({
       <div className="px-3 py-2.5">{children}</div>
     </section>
   );
+}
+
+function messageToolCallIds(toolCalls: AssistantToolCallLike[]): string[] {
+  return toolCalls.flatMap((call) => (call.id ? [call.id] : []));
 }
 
 function ToolSummaryChip({
@@ -7547,7 +7572,13 @@ function ChatWelcomeOverlay({
   // Until the first restore cycle finishes, keep loading — never flash welcome.
   const awaitingFirstRestore = Boolean(threadId) && !isThreadRestored(threadId);
 
-  if (isRestoringConversation || awaitingFirstRestore) {
+  if (
+    shouldCoverTranscriptWithLoading({
+      restoring: isRestoringConversation,
+      awaitingFirstRestore,
+      hasVisibleMessages,
+    })
+  ) {
     return (
       <div
         data-testid="conversation-restore-loading"

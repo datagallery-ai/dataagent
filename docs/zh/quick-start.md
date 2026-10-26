@@ -171,7 +171,7 @@ AUTH_SMTP_USER=
 AUTH_SMTP_PASSWORD=
 ```
 
-前端保持空公开 API URL + `API_PROXY_TARGET`（同源 BFF + Cookie 会话）。对外入口请用反代，样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
+前端保持空公开 API URL + `API_PROXY_TARGET`（同源 BFF + Cookie 会话）。对外入口请用反代，样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径 `/dataagent/stream` 与 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
 
 ### 3. 构建并启动（正式测试 / 真实生产相同）
 

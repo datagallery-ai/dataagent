@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   // `text/event-stream`. Even with flush hooks, compression is the wrong layer
   // for AG-UI SSE. Disable here; terminate TLS/gzip at the reverse proxy for
   // HTML/assets (see deploy/nginx.datafoundry.conf.example), and leave
-  // `/api/copilotkit` uncompressed.
+  // `/api/copilotkit` and `/dataagent/stream` uncompressed.
   compress: false,
   // Production / test builds: tree-shake heavy package entrypoints.
   experimental: {

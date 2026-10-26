@@ -14,6 +14,7 @@ import {
   replayRestorableCustomEvents,
   shouldHydrateLiveRunFromConversation,
   preferredRestoredMessages,
+  shouldCoverTranscriptWithLoading,
   shouldRestoreConversation,
   shouldRestoreConversationMessages,
 } from "../conversation-restore";
@@ -2473,5 +2474,48 @@ describe("preferredRestoredMessages", () => {
       agentMessages,
     } as unknown as SessionConversationDto;
     expect(preferredRestoredMessages(dto)).toBe(agentMessages);
+  });
+
+  it("falls back to the text transcript when checkpoint messages are empty", () => {
+    const dto: SessionConversationDto = {
+      sessionId: "thread-1",
+      messages: [
+        {
+          id: "m1",
+          runId: "run-1",
+          role: "user",
+          source: "client",
+          messageId: "msg-user-1",
+          contentText: "keep this question",
+          position: 1,
+          createdAt: "2026-06-25T10:00:01Z",
+        },
+      ],
+      runEventRefs: [],
+      toolCalls: [],
+      agentMessages: [],
+    };
+    expect(preferredRestoredMessages(dto)).toEqual([
+      { id: "msg-user-1", role: "user", content: "keep this question" },
+    ]);
+  });
+});
+
+describe("shouldCoverTranscriptWithLoading", () => {
+  it("leaves a visible transcript uncovered while history refreshes", () => {
+    expect(
+      shouldCoverTranscriptWithLoading({
+        restoring: true,
+        awaitingFirstRestore: true,
+        hasVisibleMessages: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldCoverTranscriptWithLoading({
+        restoring: true,
+        awaitingFirstRestore: false,
+        hasVisibleMessages: false,
+      }),
+    ).toBe(true);
   });
 });

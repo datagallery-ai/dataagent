@@ -73,22 +73,31 @@ export function parseToolResultError(result?: string): ParsedToolResultError | n
       };
     }
 
-    if (parsed.error !== undefined) {
+    const described = describedToolError(parsed.error);
+    if (described) {
       return {
         kind: "tool",
         title: "Tool execution failed",
         message:
           typeof parsed.message === "string" && parsed.message.trim()
             ? parsed.message
-            : typeof parsed.error === "string"
-              ? parsed.error
-              : "Tool execution failed.",
+            : described,
       };
     }
   } catch {
     return null;
   }
   return null;
+}
+
+/** Blank and null `error` fields mean there is no failure. A non-empty string is the message. */
+export function describedToolError(error: unknown): string | undefined {
+  if (error == null) return undefined;
+  if (typeof error === "string") {
+    const text = error.trim();
+    return text || undefined;
+  }
+  return "Tool execution failed.";
 }
 
 export function toolResultLooksLikeError(result?: string): boolean {

@@ -358,6 +358,30 @@ async def _record_success(turn: SessionTurn, graph):
     return latest
 
 
+async def _remember_reached_checkpoint(turn: SessionTurn, graph) -> None:
+    """Point a cancel or model error at the checkpoint the graph reached.
+
+    The web transcript reads the latest graph state. The next
+    ``/dataagent/stream`` pins ``last_checkpoint_id``. Storing that id keeps
+    the two on the same messages. A turn that never stored a message leaves
+    the previous checkpoint in place.
+    """
+    try:
+        latest = await graph.aget_state({"configurable": {"thread_id": turn.thread_id}})
+        checkpoint_id = (latest.config or {}).get("configurable", {}).get("checkpoint_id")
+        if not checkpoint_id or not (latest.values or {}).get("messages"):
+            return
+        await turn.sessions.finish(
+            turn.user_id, turn.thread_id, turn.status, checkpoint_id,
+        )
+    except Exception:
+        logger.warning(
+            "checkpoint was not recorded for thread=%s status=%s",
+            turn.thread_id,
+            turn.status,
+        )
+
+
 def register_conversation_routes(
     app: FastAPI,
     runtime: Runtime,
@@ -425,7 +449,7 @@ def register_conversation_routes(
             "messages": messages,
             "newThreadRequired": not bool(row["last_checkpoint_id"]),
             "notice": (
-                "Previous run did not complete. Restored the last successful checkpoint; no work was replayed."
+                "Previous run did not complete. Restored the saved checkpoint."
                 if interrupted and messages
                 else "No successful checkpoint exists. Start a new conversation."
                 if interrupted
@@ -460,12 +484,14 @@ def register_conversation_routes(
             if row:
                 if row["last_run_id"] == body.run_id:
                     raise HTTPException(409, "Run replay is not supported; use a new runId")
-                if not row["last_checkpoint_id"]:
-                    raise HTTPException(
-                        409, "No successful checkpoint exists; start a new conversation"
-                    )
-                config["configurable"]["checkpoint_id"] = row["last_checkpoint_id"]
-                state = await graph.aget_state(config)
+                # A missing checkpoint is a failed or not-yet-saved turn. Resume
+                # from the latest graph state so a recovered model can accept a
+                # new message on this thread. Replay of the same message stays rejected.
+                read_config = {"configurable": {"thread_id": thread_id}}
+                if row["last_checkpoint_id"]:
+                    read_config["configurable"]["checkpoint_id"] = row["last_checkpoint_id"]
+                    config["configurable"]["checkpoint_id"] = row["last_checkpoint_id"]
+                state = await graph.aget_state(read_config)
                 if any(
                     message.id == body.messages[0].id
                     for message in state.values.get("messages", [])
@@ -582,6 +608,8 @@ def register_conversation_routes(
                 with anyio.CancelScope(shield=True):
                     if upstream is not None:
                         await upstream.aclose()
+                    if turn.status in {"interrupted", "error"}:
+                        await _remember_reached_checkpoint(turn, graph)
 
         return DisconnectAwareResponse(
             events(),
@@ -694,6 +722,8 @@ def register_conversation_routes(
                 with anyio.CancelScope(shield=True):
                     if upstream is not None:
                         await upstream.aclose()
+                    if turn.status in {"interrupted", "error"}:
+                        await _remember_reached_checkpoint(turn, graph)
 
         return DisconnectAwareResponse(
             gui_events(),

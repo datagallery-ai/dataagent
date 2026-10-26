@@ -13,6 +13,8 @@ import type {
 } from "./data-task-state";
 import { dataStepKindForTool, emptyStepPayload, toolDisplayTitle } from "./data-task-state";
 import { formatRunErrorMessage, isSessionRunBusyMessage } from "./run-error-message";
+import { finishSubagentProgress, updateSubagentProgress, type SubagentProgress } from "./subagent-progress";
+import { describedToolError } from "./tool-call-display";
 import { parseToolResultRecord } from "./tool-result-normalize";
 
 export type LiveTaskStatus = "pending" | "running" | "completed" | "failed";
@@ -43,6 +45,8 @@ export type LiveToolCallRecord = {
   result?: string;
   startedAtMs?: number;
   finishedAtMs?: number;
+  /** Native subagent lifecycle attached to the parent task tool. */
+  progress?: SubagentProgress;
 };
 
 export type ToolCallStats = {
@@ -374,6 +378,8 @@ export function deriveLiveSessionView(
 }
 
 export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
+  const child = childProgressEvent(event);
+  if (child) return reduceSubagentEvent(state, child);
   switch (event.type) {
     case "RUN_STARTED":
       const runId = eventRunId(event) ?? state.runId;
@@ -425,7 +431,8 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
       if (state.runStatus === "completed" || state.runStatus === "canceled") {
         // STATE_DELTA may mark the run completed before RUN_FINISHED; still finalize
         // any tool calls left at "running" (e.g. TOOL_CALL_END without RESULT).
-        return applyTerminalRunStatus(state, state.runStatus);
+        const settled = applyTerminalRunStatus(state, state.runStatus);
+        return state.runStatus === "completed" ? downgradeCompletedRunIfToolFailed(settled) : settled;
       }
       if (stringValue(event.status) === "cancelled" || stringValue(event.status) === "canceled") {
         return applyTerminalRunStatus(state, "canceled", {
@@ -438,7 +445,7 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
           runFinishedAt: Date.now(),
         };
       }
-      return applyTerminalRunStatus(state, "completed", {
+      return downgradeCompletedRunIfToolFailed(applyTerminalRunStatus(state, "completed", {
         runFinishedAt: Date.now(),
         errorMessage: undefined,
         plan: state.plan.map((task) =>
@@ -446,7 +453,7 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
             ? { ...task, status: "completed" }
             : task,
         ),
-      });
+      }));
     case "RUN_ERROR":
       if (shouldIgnoreStaleRunError(state, event)) {
         return state;
@@ -475,8 +482,9 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
     case "TOOL_CALL_START":
     case "TOOL_CALL_ARGS":
     case "TOOL_CALL_END":
-    case "TOOL_CALL_RESULT":
       return reduceToolEvent(state, event);
+    case "TOOL_CALL_RESULT":
+      return downgradeCompletedRunIfToolFailed(reduceToolEvent(state, event));
     case "CUSTOM":
       return reduceCustomEvent(state, event);
     default:
@@ -492,6 +500,18 @@ function terminalToolCallStatus(
   if (runStatus === "completed") return "success";
   if (runStatus === "failed" || runStatus === "canceled") return "failed";
   return undefined;
+}
+
+function segmentHasFailedTool(state: LiveRun): boolean {
+  return state.toolCalls
+    .slice(getSegmentToolCallStartIndex(state))
+    .some((call) => call.status === "failed");
+}
+
+/** A finished run with a failed tool is failed. Leave the assistant explanation in place. */
+function downgradeCompletedRunIfToolFailed(state: LiveRun): LiveRun {
+  if (state.runStatus !== "completed" || !segmentHasFailedTool(state)) return state;
+  return { ...state, runStatus: "failed" };
 }
 
 function applyTerminalRunStatus(
@@ -553,6 +573,9 @@ export function shouldSkipAgUiReplayDuringRestore(
   event: AgUiLikeEvent,
 ): boolean {
   const type = stringValue(event.type);
+  if (event.name === "subagent" || (type?.startsWith("SUBAGENT_") ?? false) || typeof event.subagentRunId === "string") {
+    return true;
+  }
   if (
     type === "RUN_STARTED" ||
     type === "RUN_FINISHED" ||
@@ -930,7 +953,7 @@ function parseResultObject(result: string): Record<string, unknown> | null {
 function toolResultPayloadLooksFailed(parsed: Record<string, unknown> | null): boolean {
   if (!parsed) return false;
   if (parsed.status === "error") return true;
-  return parsed.error !== undefined;
+  return describedToolError(parsed.error) !== undefined;
 }
 
 function summarizeSqlResult(
@@ -2612,9 +2635,59 @@ function finalizeRunningToolCalls(
   toolCalls: LiveToolCallRecord[],
   finalStatus: "success" | "failed",
 ): LiveToolCallRecord[] {
-  return toolCalls.map((call) =>
-    call.status === "running" ? { ...call, status: finalStatus } : call,
-  );
+  const failed = finalStatus === "failed";
+  return toolCalls.map((call) => {
+    const progress =
+      call.progress?.status === "running" ? finishSubagentProgress(call.progress, failed) : call.progress;
+    if (call.status !== "running" && progress === call.progress) return call;
+    return {
+      ...call,
+      ...(call.status === "running" ? { status: finalStatus } : {}),
+      ...(progress !== call.progress ? { progress } : {}),
+    };
+  });
+}
+
+function childProgressEvent(event: AgUiLikeEvent): AgUiLikeEvent | undefined {
+  if (event.type === "CUSTOM" && event.name === "subagent") {
+    return recordValue(event.value) ?? undefined;
+  }
+  if (typeof event.subagentRunId === "string" && event.subagentRunId) return event;
+  if (typeof event.type === "string" && event.type.startsWith("SUBAGENT_")) return event;
+  return undefined;
+}
+
+function reduceSubagentEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
+  if (state.runStatus !== "running") return state;
+  const sid = stringValue(event.subagentRunId);
+  if (!sid) return state;
+  const stepName = stringValue(event.rawStepName) ?? stringValue(event.stepName);
+  const progressEvent = stepName ? { ...event, stepName } : event;
+  let existing = state.toolCalls.find((call) => call.progress?.runs.some((run) => run.id === sid));
+  let id = existing?.id;
+  if (event.type === "SUBAGENT_STARTED" && !existing) {
+    const parentSid = stringValue(event.parentSubagentRunId);
+    if (parentSid) {
+      existing = state.toolCalls.find((call) => call.progress?.runs.some((run) => run.id === parentSid));
+      id = existing?.id;
+    } else {
+      id = stringValue(event.parentToolCallId);
+      existing = id ? state.toolCalls.find((call) => call.id === id) : undefined;
+    }
+  }
+  if (!id || (existing && existing.status !== "running")) return state;
+  const progress = updateSubagentProgress(existing?.progress, progressEvent);
+  if (!progress) return state;
+  return upsertToolCallRecord(state, {
+    id,
+    name: existing?.name ?? "task",
+    status: "running",
+    startedAtMs: existing?.startedAtMs ?? Date.now(),
+    ...(existing?.finishedAtMs !== undefined ? { finishedAtMs: existing.finishedAtMs } : {}),
+    ...(existing?.result ? { result: existing.result } : {}),
+    ...(existing?.stepId ? { stepId: existing.stepId } : {}),
+    progress,
+  });
 }
 
 function toolCallsToStats(toolCalls: LiveToolCallRecord[]): ToolCallStats {

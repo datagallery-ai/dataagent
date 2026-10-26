@@ -130,6 +130,16 @@ export function sortRestorableCustomEvents(
   return [...events].sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
 }
 
+/** Loading covers an empty thread only. A visible answer stays readable while history refreshes. */
+export function shouldCoverTranscriptWithLoading(input: {
+  restoring: boolean;
+  awaitingFirstRestore: boolean;
+  hasVisibleMessages: boolean;
+}): boolean {
+  if (input.hasVisibleMessages) return false;
+  return input.restoring || input.awaitingFirstRestore;
+}
+
 /** Whether the client should fetch server conversation history for this thread. */
 export function shouldRestoreConversation(input: {
   conversationMemoryEnabled: boolean;
@@ -1019,9 +1029,11 @@ function dedupeRestoredToolCalls(toolCalls: RestoredToolCall[]): RestoredToolCal
   return deduped;
 }
 
-/** Checkpoint AG-UI messages win. Text-only DTOs remain the fallback. */
+/** Checkpoint AG-UI messages win. An empty list falls back to the text transcript. */
 export function preferredRestoredMessages(dto: SessionConversationDto): Message[] {
-  return (dto.agentMessages as Message[] | undefined) ?? conversationToAgentMessages(dto);
+  const agentMessages = dto.agentMessages as Message[] | undefined;
+  if (agentMessages && agentMessages.length > 0) return agentMessages;
+  return conversationToAgentMessages(dto);
 }
 
 /**

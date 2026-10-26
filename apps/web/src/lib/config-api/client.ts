@@ -62,7 +62,7 @@ export function getConfigApiBaseUrl(): string {
 }
 
 export function getAgentRuntimeUrl(): string {
-  return "/api/copilotkit";
+  return "/dataagent/stream";
 }
 
 function csrfHeader(method: string | undefined): Record<string, string> {

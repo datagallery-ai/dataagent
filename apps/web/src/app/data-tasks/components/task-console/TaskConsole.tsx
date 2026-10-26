@@ -73,6 +73,7 @@ import {
 import { ToolFormattedResult, ToolFailureResult } from "../../tool-result-format";
 import { parseSqlToolResult, sqlFromToolPayload } from "../../tool-result-normalize";
 import { toolResultLooksLikeError } from "../../tool-call-display";
+import { SubagentToolProgress } from "../../subagent-progress-line";
 import {
   btnGhostClass,
   btnPrimaryClass,
@@ -664,6 +665,9 @@ function DynamicStepsList({
                         })
                       : t("steps.stepMeta", { n: group.stepNumber, kind: kindLabel })}
                   </span>
+                  {calls.map((call) =>
+                    call.progress ? <SubagentToolProgress key={call.id} call={call} /> : null,
+                  )}
                 </span>
                 <span className="shrink-0 text-right text-[10px] text-muted-light">
                   <span className="block">{toolStatusLabel(group.status, t)}</span>
@@ -1483,6 +1487,7 @@ function ToolGroupDetailView({
                   <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-light">
                     {call.name}
                   </span>
+                  {call.progress ? <SubagentToolProgress call={call} /> : null}
                 </span>
                 <span className="shrink-0 text-right text-[10px] text-muted-light">
                   <span className="block">{toolStatusLabel(call.status, t)}</span>

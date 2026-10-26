@@ -171,7 +171,7 @@ AUTH_SMTP_USER=
 AUTH_SMTP_PASSWORD=
 ```
 
-Keep empty public API URLs and `API_PROXY_TARGET`. Put a reverse proxy in front; see [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE.
+Keep empty public API URLs and `API_PROXY_TARGET`. Put a reverse proxy in front; see [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; keep `/dataagent/stream` and `/api/copilotkit` uncompressed and unbuffered for SSE.
 
 ### 3. Build and start (same for formal test and real production)
 

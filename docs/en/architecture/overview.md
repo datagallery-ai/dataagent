@@ -37,7 +37,7 @@ The backend exposes two interface types to clients:
 
 | Interface | Path | Description |
 | --- | --- | --- |
-| Agent run | `/api/copilotkit` | Start one agent analysis run; returns AG-UI event stream. |
+| Agent run | `/dataagent/stream` | Start one agent analysis run; returns an AG-UI event stream. Web and TUI both use this path. `/api/copilotkit` remains for CopilotKit runtime info. |
 | REST configuration API | `/api/v1/*` | Manage workspace resources, files, tasks, outputs, and configuration. |
 
 Web and TUI do not read backend internal SQLite, Data Gateway implementation classes, or Knowledge implementation classes directly. They interact only through HTTP.

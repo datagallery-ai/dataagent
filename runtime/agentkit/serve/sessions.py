@@ -133,6 +133,8 @@ class SessionTurn:
 
     Cancellation leaves ``status`` as ``interrupted`` so ``release`` matches the
     terminal route. A successful checkpoint is written only through ``complete``.
+    A stop or a model error stores the checkpoint the graph actually reached,
+    so the next turn reads the same messages the transcript shows.
     """
 
     def __init__(self, sessions: Sessions, user_id: str, thread_id: str):

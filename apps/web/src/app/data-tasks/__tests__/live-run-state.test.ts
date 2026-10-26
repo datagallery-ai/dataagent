@@ -2155,6 +2155,68 @@ describe("live run state reducer", () => {
     expect(run.errorMessage).toBeUndefined();
   });
 
+  it("marks the run failed when the current segment has a failed tool", () => {
+    let run = reduceLiveRunEvent(createInitialLiveRun(), { type: "RUN_STARTED" });
+    run = reduceLiveRunEvent(run, {
+      type: "TOOL_CALL_START",
+      toolCallId: "task-1",
+      toolCallName: "task",
+    });
+    run = reduceLiveRunEvent(run, {
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "task-1",
+      content: JSON.stringify({ error: "No SQL found" }),
+    });
+    run = reduceLiveRunEvent(run, { type: "RUN_FINISHED" });
+
+    expect(run.toolCalls[0]?.status).toBe("failed");
+    expect(run.runStatus).toBe("failed");
+    expect(run.errorMessage).toBeUndefined();
+  });
+
+  it("does not let a failed tool from the previous segment fail the next run", () => {
+    let run = reduceLiveRunEvent(createInitialLiveRun(), { type: "RUN_STARTED" });
+    run = reduceLiveRunEvent(run, {
+      type: "TOOL_CALL_START",
+      toolCallId: "task-1",
+      toolCallName: "task",
+    });
+    run = reduceLiveRunEvent(run, {
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "task-1",
+      content: JSON.stringify({ error: "No SQL found" }),
+    });
+    run = reduceLiveRunEvent(run, { type: "RUN_FINISHED" });
+    expect(run.runStatus).toBe("failed");
+
+    run = reduceLiveRunEvent(run, { type: "RUN_STARTED" });
+    run = reduceLiveRunEvent(run, { type: "RUN_FINISHED" });
+
+    expect(run.runStatus).toBe("completed");
+    expect(run.errorMessage).toBeUndefined();
+  });
+
+  it("downgrades an already completed run when a tool result arrives failed", () => {
+    let run = reduceLiveRunEvent(createInitialLiveRun(), { type: "RUN_STARTED" });
+    run = reduceLiveRunEvent(run, {
+      type: "TOOL_CALL_START",
+      toolCallId: "task-1",
+      toolCallName: "task",
+    });
+    run = reduceLiveRunEvent(run, { type: "RUN_FINISHED" });
+    expect(run.runStatus).toBe("completed");
+
+    run = reduceLiveRunEvent(run, {
+      type: "TOOL_CALL_RESULT",
+      toolCallId: "task-1",
+      content: JSON.stringify({ error: "No SQL found" }),
+    });
+
+    expect(run.toolCalls[0]?.status).toBe("failed");
+    expect(run.runStatus).toBe("failed");
+    expect(run.errorMessage).toBeUndefined();
+  });
+
   it("names collaboration tools from interaction.requested", () => {
     let run = createInitialLiveRun();
     run = reduceLiveRunEvent(run, { type: "RUN_STARTED" });

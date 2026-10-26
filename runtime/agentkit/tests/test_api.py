@@ -138,22 +138,35 @@ async def test_error_terminal_and_last_successful_checkpoint(runtime):
         assert "ran out" in events[-1]["message"]
         assert len(model.requests) == 2
         restored = (await client.get("/sessions/thread-1")).json()
-        assert len(restored["messages"]) == 2
-        assert "no work was replayed" in restored["notice"]
+        assert restored["status"] == "error"
+        contents = [message.get("content") for message in restored["messages"]]
+        assert "saved" in contents and "will fail" in contents
+        assert "Restored the saved checkpoint" in restored["notice"]
+        conversation = await client.get("/api/v1/sessions/thread-1/conversation")
+        assert conversation.status_code == 200
+        assert "will fail" in conversation.text
     model = ScriptedModel(responses=[AIMessage(content="recovered")])
     async with client_for(runtime, model) as (client, app):
         events = sse(await client.post("/dataagent/stream", json=query("continue")))
         assert terminal(events) == ["RUN_FINISHED"]
         contents = [message.content for message in model.requests[0]]
-        assert "will fail" not in contents
+        assert "will fail" in contents
         assert "saved" in contents and "continue" in contents
 
 
-async def test_first_run_failure_requires_new_thread(runtime):
+async def test_first_run_failure_can_be_retried_on_the_same_thread(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
-        assert terminal(sse(await client.post("/dataagent/stream", json=query()))) == ["RUN_ERROR"]
-        assert (await client.get("/sessions/thread-1")).json()["newThreadRequired"]
-        assert (await client.post("/dataagent/stream", json=query())).status_code == 409
+        assert terminal(sse(await client.post("/dataagent/stream", json=query("first")))) == ["RUN_ERROR"]
+        restored = (await client.get("/sessions/thread-1")).json()
+        assert restored["status"] == "error"
+        assert any(message.get("content") == "first" for message in restored["messages"])
+    model = ScriptedModel(responses=[AIMessage(content="recovered")])
+    async with client_for(runtime, model) as (client, app):
+        events = sse(await client.post("/dataagent/stream", json=query("again")))
+        assert terminal(events) == ["RUN_FINISHED"]
+        seen = [message.content for message in model.requests[-1]]
+        assert "first" in seen
+        assert "again" in seen
 
 
 async def test_failure_log_and_sse_include_only_redacted_exception_chain(runtime, caplog):
@@ -234,6 +247,72 @@ async def test_replay_rejected_and_session_isolation(runtime):
         sse(await client.post("/dataagent/stream", json=query("other", thread="other")))
         messages = (await client.get("/sessions/other")).json()["messages"]
         assert len(messages) == 2 and messages[0]["content"] == "other"
+
+
+async def test_cancel_before_completion_keeps_the_user_message(runtime):
+    ready = asyncio.Event()
+    calls = {"n": 0}
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                ready.set()
+                await asyncio.Event().wait()
+            return await super()._agenerate(*args, **kwargs)
+
+    model = WaitingModel(responses=[AIMessage(content="continued")])
+    async with client_for(runtime, model) as (client, app):
+        body = query("keep-me")
+        running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+        await asyncio.wait_for(ready.wait(), 5)
+        cancel = await client.post(f"/api/v1/runs/{body['runId']}/cancel")
+        assert cancel.status_code == 204
+        response = await asyncio.wait_for(running, 5)
+        assert response.status_code == 200
+        assert "RUN_FINISHED" not in response.text
+        restored = (await client.get("/sessions/thread-1")).json()
+        assert restored["status"] == "interrupted"
+        assert restored["newThreadRequired"] is False
+        assert any(message.get("content") == "keep-me" for message in restored["messages"])
+        follow = sse(await client.post("/dataagent/stream", json=query("next")))
+        assert terminal(follow) == ["RUN_FINISHED"]
+        assert any(message.content == "keep-me" for message in model.requests[-1] if getattr(message, "type", None) == "human")
+
+
+async def test_cancel_after_success_keeps_the_cancelled_message_for_the_next_turn(runtime):
+    ready = asyncio.Event()
+    calls = {"n": 0}
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                ready.set()
+                await asyncio.Event().wait()
+            return await super()._agenerate(*args, **kwargs)
+
+    model = WaitingModel(responses=[
+        AIMessage(content="saved answer"),
+        AIMessage(content="continued"),
+    ])
+    async with client_for(runtime, model) as (client, app):
+        sse(await client.post("/dataagent/stream", json=query("saved")))
+        body = query("BLUE-42")
+        running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+        await asyncio.wait_for(ready.wait(), 5)
+        assert (await client.post(f"/api/v1/runs/{body['runId']}/cancel")).status_code == 204
+        response = await asyncio.wait_for(running, 5)
+        assert "RUN_FINISHED" not in response.text
+        restored = (await client.get("/sessions/thread-1")).json()
+        assert restored["status"] == "interrupted"
+        assert restored["newThreadRequired"] is False
+        contents = [message.get("content") for message in restored["messages"]]
+        assert "saved" in contents and "BLUE-42" in contents
+        follow = sse(await client.post("/dataagent/stream", json=query("what was the code")))
+        assert terminal(follow) == ["RUN_FINISHED"]
+        seen = [message.content for message in model.requests[-1]]
+        assert "BLUE-42" in seen and "saved" in seen
 
 
 async def test_concurrent_same_thread_rejected(runtime):
@@ -441,7 +520,7 @@ async def test_configured_hook_error_reaches_http_without_false_success_or_retry
         assert terminal(events) == ["RUN_ERROR"]
         assert events[-1]["code"] == "RuntimeError"
         assert "Policy failure" in events[-1]["message"]
-        assert (await client.get("/sessions/thread-1")).json()["newThreadRequired"]
+        assert (await client.get("/sessions/thread-1")).json()["status"] == "error"
     assert len(model.requests) == (0 if event in {"before_agent", "before_model"}
                                    else 2 if event == "after_agent" else 1)
 
