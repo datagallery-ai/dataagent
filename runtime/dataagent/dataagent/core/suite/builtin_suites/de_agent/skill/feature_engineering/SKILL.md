@@ -16,13 +16,22 @@ description: |
 - 结束之前告诉用户生成的文件、工作目录在哪里。
 - 当你需要写INSERT SQL语句的时候，你必须要使用wrapped_nl2sql_sub_agent_tool工具。
 - 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用前已经调用过metadata_recall工具。
+- **历史SQL检索（强制步骤）**：schema linking 完成后、调用 wrapped_nl2sql_sub_agent_tool 之前，你必须再调用一次 metadata_recall 检索相似历史SQL，把检索结果作为过滤口径、列用法、UDF 用法的参考。步骤：
+   1. 从口径冻结表提取⌈输出特征名称表⌋（第 9 项）与目标粒度（本次输出主键）。
+   2. 对每个输出特征标注用户行为（曝光/点击/下载/激活/使用/卸载/通话/搜索/推送/计费/注册…，依据特征名、业务目标与源表语义）。
+   3. 一次调用 metadata_recall 携带全部特征（该工具要求整合后单次调用），query 按模板书写：
+      "检索历史SQL作为参考，要求：输出特征1：<特征名>（用户行为：<行为>）；…；本次输出主键：<主键字段组合>；加分项：<特征类型/时间周期/排序维度>；源表必须包含：<已确认源表>（源表已确认时填写）"
+   4. 检索有匹配时，wrapped_nl2sql_sub_agent_tool 的 query 中**必须**包含⌈## 历史SQL参考⌋段落：写入子代理返回的过滤口径摘录、列用法摘录、UDF 用法摘录（合计不超过 2000 字符），并注明"历史SQL仅供参考，与已确认口径/DataTaskIR 冲突时以 DataTaskIR 为准"；无匹配时如实说明"未找到相似历史SQL"，query 不带该段落；工具返回"历史SQL检索功能未启用"时，说明当前部署未开启该能力（并非"已检索但无匹配"），直接跳过历史SQL检索与引用，query 不带该段落。
+   - 历史SQL检索必须委托 metadata_recall 子代理完成，**禁止**自己用read_file/grep/glob 直接翻历史SQL目录文件。
+   - 自由调用：多个候选源表且元数据无法定夺时，可在选表阶段提前调用 metadata_recall，请求改为"检索使用了表 X/Y/Z 的历史SQL并对比它们在各历史SQL中的实际用法（过滤口径、列用法、粒度）"，用返回证据辅助选表。
 - 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用后调用过1次或多次validate_deliverables工具。
 - **数据探查**（写 SQL 前确认字段真实存在 / 取值分布 / 空值情况）：
   - 何时调、调用硬约束（`partition_filter` / `columns` / 占位符）、返回结果解读、工具签名，详见 `skill/dataops_probe/SKILL.md`。
   - 调用入口：`dataops_probe_table`，仅 SELECT LIMIT，失败自动跳过不抛错。
   - 与 metadata_recall 的分工：metadata_recall 回答"表/列是什么"，dataops_probe_table 回答"字段实际长什么样"。
 - wrapped_nl2sql_sub_agent_tool 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
-  - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
+  - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作--口径类内容含源表选择、过滤口径、时间窗口、去重、聚合粒度，均在约束范围内；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据；IR 未记录时间窗口时，禁止在 query 中写入任何具体时间窗口（近N天/单天/自定义区间），交给 nl2sql 按其默认规则处理或经 question 向用户澄清。
+  - 历史SQL检索结果是参考级证据，不是口径来源：其时间窗口、源表选择、过滤条件、聚合实现不得写入 query 的“已确认口径”“业务口径”段落，不得据此改写或补充 IR 已记录/未记录的任何口径，也不得作为口径冻结表的口径依据（freeze_calibration_to_ir 冻结的口径只能来自用户原始需求与已确认上下文）；用户原话与 IR 均无对应口径时保持留空，禁止把历史SQL 的口径当作默认值填充。历史SQL 的正确用法是写法参考：UDF 调用形态、列用法、序列拼接方式只放在⌈## 历史SQL参考⌋段落传达，并保留“仅供参考，与已确认口径/DataTaskIR 冲突时以 DataTaskIR 为准”的声明。
   - 最终输出列语义 = 已确认特征主键（identity.components，必选前缀，即使未出现在 output_features 中）+ expand(output_features) 业务/指标语义；多时间窗口 × 多特征等交叉场景必须以 IR 中确定性展开后的字段条数为准（如 3×3=9），不得在 query 中压缩成更少的“代表列”。IR 给出的展开列名（field_name / name_pattern）仅供主 Agent 对照参考，query/SQL/DDL **不要求**照抄同名。
   - **主键/分组键防重复**：identity.components 是主键列唯一权威；禁止在 output_features（measures/extras/features）再写同名输出列。aggregation.grain 可引用主键 field_ref（表示按该键聚合），这不等于还要再输出一列同名键。query 中也不要把主键既当“已确认主键前缀”又当“业务特征列”各写一遍。
   - **仅当用户明确要求不要去重时**：IR 的 `aggregation.grain` 与 sources/sequence dedup 均应保持未确认（null）；禁止因“每个应用/设备”或 identity 在 query/SQL 中 invent GROUP BY 折叠、DISTINCT、ROW_NUMBER 去重。这是特例，不是默认。

@@ -85,6 +85,9 @@ SEMANTIC_LAYER:
   timeout: 1800
   verify_ssl: false                   # 测试/自签证书环境可关闭；生产环境建议开启
 
+HISTORY_SQL:
+  enabled: false    # 历史SQL检索能力总开关；未配置时缺省 false（关闭）。关闭时 metadata_recall 子代理移除历史SQL路由/SKILL/grep/glob，历史SQL类 query 直接返回"功能未启用"提示
+
 TOOLS:
   # DataTaskIR 开关：create_plan 的 create_ir 与 complete_current_todo 的 update_ir
   # 必须同时保留（开启）或同时注释（关闭）；启用 data_engineering Suite 时，

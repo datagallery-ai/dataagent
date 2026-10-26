@@ -26,7 +26,131 @@ from dataagent.actions.tools.local_tool.tools import _resolve_bound_llm_model_na
 from dataagent.actions.tools.semantic_tool.search_tables_with_schema import inject_enum_values_config
 from dataagent.utils.constants import DEFAULT_SUBAGENT_TOOL_TIMEOUT
 from dataagent.utils.info_utils import get_current_query
-from dataagent.utils.runtime_paths import dataagent_package_root
+from dataagent.utils.runtime_paths import dataagent_package_root, resolve_history_sql_corpus_path
+
+HISTORY_SQL_MARKER = "历史sql"
+HISTORY_SQL_DISABLED_MSG = (
+    "历史SQL检索功能未启用（HISTORY_SQL.enabled=false）。当前部署未开启该能力--"
+    "这不是⌈已检索但无匹配⌋，请勿据此推断不存在相关历史SQL，直接跳过历史SQL引用即可。"
+)
+_HISTORY_SQL_TOOL_NAMES = frozenset({"grep", "glob"})
+_HISTORY_SQL_SKILL_DIR_SUFFIX = "metadata_recall/skill"
+_HISTORY_SQL_ROUTE_PREFIXES = ("历史SQL路由", "- 历史SQL路由")
+
+
+def _history_sql_enabled(config_manager: Any) -> bool:
+    """Return whether HISTORY_SQL.enabled is on; defaults to false when unset."""
+    value = config_manager.get("HISTORY_SQL.enabled", False)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _is_history_sql_query(query: str) -> bool:
+    """"Return whether the recall query asks for history-SQL workflow."""
+    return isinstance(query, str) and HISTORY_SQL_MARKER in query.lower()
+
+
+def _instructions_have_history_sql_route(instructions: str) -> bool:
+    """Return whether any instruction line routes to the history-SQL workflow."""
+    return any(line.lstrip().startswith(_HISTORY_SQL_ROUTE_PREFIXES) for line in instructions.splitlines())
+
+
+def _has_history_sql_bits(config: dict[str, Any]) -> bool:
+    """Return whether the sub-agent config still carries any history-SQL bits.
+
+    Detection is permissive on purpose (any of the four bits counts) so that
+    the OFF-state strip cannot silently miss a drifted anchor; the golden
+    schema variant yaml carries none of these bits and stays untouched.
+    """
+    agent_config = config.get("AGENT_CONFIG")
+    if isinstance(agent_config, dict):
+        description = agent_config.get("description")
+        if isinstance(description, str) and HISTORY_SQL_MARKER in description.lower():
+            return True
+    scenario = config.get("SCENARIO")
+    if isinstance(scenario, dict):
+        chat = scenario.get("chat")
+        if isinstance(chat, dict):
+            instructions = chat.get("instructions")
+            if isinstance(instructions, str) and _instructions_have_history_sql_route(instructions):
+                return True
+    tools = config.get("TOOLS")
+    if not isinstance(tools, dict):
+        return False
+    builtin = tools.get("builtin")
+    if isinstance(builtin, list) and any(
+        isinstance(item, dict) and item.get("name") in _HISTORY_SQL_TOOL_NAMES for item in builtin
+    ):
+        return True
+    skills = tools.get("skills")
+    if isinstance(skills, dict):
+        custom_dirs = skills.get("custom_dirs")
+        if isinstance(custom_dirs, list) and any(
+            isinstance(item, str) and item.rstrip("/").endswith(_HISTORY_SQL_SKILL_DIR_SUFFIX)
+            for item in custom_dirs
+        ):
+            return True
+    return False
+
+
+def _strip_history_sql_bits(config: dict[str, Any]) -> None:
+    """Remove history-SQL bits from the sub-agent config in place (enabled=false).
+
+    Anchors tolerate upstream text drift: description is rebuilt from
+    ``；``-separeted segments, the routing instruction line is dropped by its
+    line prefix, builtin grep/glob are filtered structurally by name, and the
+    skill dir is dropped by its suffix.
+    """
+    agent_config = config.get("AGENT_CONFIG")
+    if isinstance(agent_config, dict):
+        description = agent_config.get("description")
+        if isinstance(description, str) and HISTORY_SQL_MARKER in description.lower():
+            kept_segments = [seg for seg in description.split("；") if HISTORY_SQL_MARKER not in seg.lower()]
+            agent_config["description"] = "；".join(kept_segments)
+    scenario = config.get("SCENARIO")
+    if isinstance(scenario, dict):
+        chat = scenario.get("chat")
+        if isinstance(chat, dict):
+            instructions = chat.get("instructions")
+            if isinstance(instructions, str) and _instructions_have_history_sql_route(instructions):
+                chat["instructions"] = _strip_history_sql_route_lines(instructions)
+    tools = config.get("TOOLS")
+    if not isinstance(tools, dict):
+        return
+    builtin = tools.get("builtin")
+    if isinstance(builtin, list):
+        tools["builtin"] = [
+            item
+            for item in builtin
+            if not (isinstance(item, dict) and item.get("name") in _HISTORY_SQL_TOOL_NAMES)
+        ]
+    skills = tools.get("skills")
+    if isinstance(skills, dict):
+        custom_dirs = skills.get("custom_dirs")
+        if isinstance(custom_dirs, list):
+            remaining = [
+                item
+                for item in custom_dirs
+                if not (isinstance(item, str) and item.rstrip("/").endswith(_HISTORY_SQL_SKILL_DIR_SUFFIX))
+            ]
+            if remaining:
+                skills["custom_dirs"] = remaining
+            else:
+                skills.pop("custom_dirs", None)
+            if not skills:
+                tools.pop("skills", None)
+
+
+def _strip_history_sql_route_lines(instructions: str) -> str:
+    """Drop history-SQL routing instruction lines, preserving the trailing newline."""
+    kept_lines = [
+        line for line in instructions.split("\n") if not line.lstrip().startswith(_HISTORY_SQL_ROUTE_PREFIXES)
+    ]
+    result = "\n".join(kept_lines)
+    if instructions.endswith("\n") and not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 async def metadata_recall(
@@ -36,13 +160,15 @@ async def metadata_recall(
     *,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
-    """从元数据系统检索与查询相关的表、列字段、指标、UDF、Join 关系等信息。
+    """从元数据系统检索与查询相关的表、列字段、指标、UDF、Join 关系等信息；或按"用户行为+输出主键"标准从本地历史SQL文件库检索相似历史SQL作为参考。
 
     适用场景：
     - 需要从元数据系统获取表、列字段、指标等业务语义信息
     - NL2SQL 任务需要表列 Schema 信息作为背景知识
     - 需要检索 UDF 函数的功能和使用方式
     - 需要检索表之间的可连接列的 Join 关系
+    - 需要检索相似历史SQL作为新特征开发任务的参考（继承过滤口径、模仿列用法与 UDF 用法、辅助选表甄别）。检索标准：必须满足"用户行为相同 + 历史SQL输出主键与本次输出主键相同"，源表已确认时可要求"历史SQL源表必须包含该表"；特征类型/时间周期/排序维度相同为加分项。query 写法示例：
+      "检索历史SQL作为参考。要求：输出特征1：exposure_cnt_23d（用户行为：曝光）；本次输出主键：imei + app_id；加分项：统计特征、23填周期；源表必须包含：biads.ads_noah_common_user_exposure_cnt_one_day_dm"
 
     注意：
     - 不可以频繁调用这个工具，需要全面理解用户意图并整理好所有的检索需求，再一次性调用这个工具，太多次调用这个工具会导致召回精度差，但是漏召回相关信息会导致召回准确率差
@@ -56,13 +182,16 @@ async def metadata_recall(
     3. 返回结构化的召回结果
 
     Args:
-        query: 自然语言表达需要查询的元数据表、列字段、指标、UDF、Join 关系等信息，可以额外加入一些检索逻辑的指示
+        query: 自然语言表达需要查询的元数据表、列字段、指标、UDF、Join 关系等信息，或历史SQL检索需求（含特征+行为标注、本次输出主键、可选源表要求、加分项），可以额外加入一些检索逻辑的指示
         add_user_query: 是否需要将原始的完整用户 query 信息一起告诉 subagent，默认为 False
         timeout (int): 超时秒数，默认 3600
 
     Returns:
         {"original_msg": 召回结果摘要, "frontend_msg": 前端展示摘要, "data": 结构化数据}
     """
+    if not _history_sql_enabled(_tool_context.config_manager) and _is_history_sql_query(query):
+        return {"original_msg": HISTORY_SQL_DISABLED_MSG, "frontend_msg": HISTORY_SQL_DISABLED_MSG, "data": {}}
+
     source_config_path = dataagent_package_root() / "agents" / "metadata_recall" / "metadata_recall_agent.yaml"
     with source_config_path.open(encoding="utf-8") as f:
         source_config = yaml.safe_load(f) or {}
@@ -126,7 +255,31 @@ def _build_metadata_recall_sub_agent_config(
                     if isinstance(chat_model, dict):
                         chat_model["name"] = bound_llm_model_name
 
-    temp_config["WORKSPACE"] = {"path": str(workspace_root.resolve())}
+    # 保留主配置的 WORKSPACE.allow_path：历史SQL检索等本地文件工具依赖这些只读根目录，
+    # 丢失会导致子 Agent 既无读权限、prompt 中也看不到路径，只能盲搜 workspace 而漏召回
+    workspace_config: dict[str, Any] = {"path": str(workspace_root.resolve())}
+    main_allow_paths = config_manager.get("WORKSPACE.allow_path")
+    if isinstance(main_allow_paths, (list, tuple)):
+        workspace_config["allow_path"] = list(main_allow_paths)
+    elif main_allow_paths:
+        workspace_config["allow_path"] = [str(main_allow_paths)]
+    temp_config["WORKSPACE"] = workspace_config
+
+    # 历史SQL三层门控：子代理 yaml 带历史SQL bits时，ON = 注入语料只读根；
+    # OFF = 原地摘除全部 bits（含残留检测告警）。golden 变体 yaml 无 bits，整块跳过
+    if _has_history_sql_bits(temp_config):
+        if _history_sql_enabled(config_manager):
+            corpus_path = resolve_history_sql_corpus_path()
+            allow_paths = workspace_config.setdefault("allow_path", [])
+            if str(corpus_path) not in allow_paths:
+                allow_paths.append(str(corpus_path))
+        else:
+            _strip_history_sql_bits(temp_config)
+            if _has_history_sql_bits(temp_config):
+                logger.warning(
+                    "metadata_recall_tool: HISTORY_SQL.enabled=false 但摘除后仍检测到历史SQL残留，"
+                    "strip 锚点可能随 metadata_recall_agent.yaml 上游漂移，请核对"
+                )
 
     semantic_layer = config_manager.get("SEMANTIC_LAYER")
     database_id = config_manager.get("DATABASE.db_id")

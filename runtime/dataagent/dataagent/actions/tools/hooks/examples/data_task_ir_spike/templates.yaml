@@ -11,6 +11,8 @@ contract:
 - completion_conditions 仅描述信息齐备状态，不是必须填满的要求；只提取已有证据，不为满足齐备条件而发明口径。
 - 未涉及的操作不新增、不强制追问；只有影响当前任务正确实现的缺失或冲突才写 unresolved/question。
 - 禁止把“通常/默认/建议/prefer”写成已确认口径。
+- 证据分级--口径级：【用户原始问题】与【已确认上下文】中用户的直接表述，是输出契约与业务口径的唯一合法依据；映射级：工具证据中表/列/指标/UDF 的语义描述，仅用于把用户概念映射到具体字段名、表名或函数名；参考级：工具证据中对既有实现的结构描述--源表物理主键、GROUP BY 键、去重键、join 键、分区键，以及历史SQL/参考SQL 的源表选择、过滤条件 、时间窗口、输出列结构--只反映“该实现当时怎么写”，不构成本次任务任何输出契约或业务口径的证据。
+- 参考级证据不得作为填写依据：其键不得当输出主键，其列结构不得当输出字段结构，其过滤条件/时间窗口/源表选择不得当业务口径；与口径级证据冲突时一律以口径级为准；口径级无表述时相关槽位保持 null 或空数组写入 unresolved，禁止从参考级证据中挑选内容充当口径。
 - 冲突时受影响槽位保持 null/空数组，并写 unresolved，禁止选边。
 - few-shot 只演示协议，禁止复制业务值。
 - 禁止在多个 field unit 中重复填写同一口径；若某信息已有权威位置，其他字段只引用。
@@ -98,6 +100,9 @@ fields:
     global_rules:
     - 只填最终逻辑主键，不得把源表物理主键、去重键、join 键自动当成特征主键。
     - 已确认 components 必须作为 INSERT SELECT 前缀列输出；这是主键列在 IR 中的唯一权威位置。
+    - components 的身份主体只认口径级证据：【用户原始问题】与【已确认上下文】中对输出记录身份主体的直接表述（如“每个X”“按X聚合”“主键为X”“X粒度”“基于X构建”）；参考级证据中的各类键一律不算（见【模板公共契约】证据分级）。用户表述中的主体词（如“用户”“门店”）可通过映射级证据映射到具体字段名，但身份主体本身必须来自用户侧表述。
+    - 用户侧没有任何身份主体表述时（既无直接表述，聚合内容也无归属主体，或用户明确要求把整体聚合成单条序列），components 必须为空并写入 unresolved、提出 question，禁止从工具证据中挑选字段充当主键；序列/键值对的成员字段（如“X与Y的键值对序列”中的 X、Y）是序列内容而非记录主键，集合限定词（如“当天新鲜游戏的”“单框的”）是过滤范围而非身份主体，二者都禁止提示为主键组件。
+    - 用户要求把多个维度拼接为组合键输出时（如“各X和Y（用#拼接）”），components 仍逐项列出各维度并在 semantic_role 注明拼接要求（如“X与Y（用户要求用#拼接为组合键）”）；禁止把用户所述维度之外的字段（如序列成员字段）加进 components。
     - '【禁止双写】identity.components[].field_ref 不得再出现在 output_features 的 measures/extras/features 的 measure_id、field_name，或作为“单独一列指标/维度特征”重复描述（包括把分组键再写成 role=metric/derived）。唯一例外：用户明确要求输出主键别名列时可用 role=key_alias，且 field_name 必须与 field_ref 不同。'
     - 聚合维度与主键的关系：若某列既是最终记录主键又是聚合分组键，只在 identity 声明；
       output_features 的 aggregation.grain 可以**引用**同一 field_ref（表示按该键聚合），但不得再把它展开成输出特征列。
@@ -115,6 +120,9 @@ fields:
     - 把明细行 id 当作用户/设备特征主键
     - 把主键/分组键同时写进 identity 与 output_features（列重复）
     - 误以为 grain 引用主键不够、还必须在 features 再出一列同名键
+    - 把工具证据中源表的 GROUP BY 键/物理主键直接抄成特征主键（如源表按三键建模就把三键当输出主键，或以“源表 schema 含这些字段”为主键依据）。
+    - 用户要求“X与Y的键值对序列”时，把序列成员 X 提示为记录主键；或把“当天新鲜游戏的”等集合限定词当成身份主体。
+    - 用户侧无身份主体表述时，从源表 schema 中挑选字段充当主键，而不是留空并记 unresolved。
   few_shots:
   - input: 每个设备一条特征；device_id 不允许为空
     output:
@@ -127,6 +135,32 @@ fields:
         uniqueness_scope: final_dataset
       unresolved: []
       rationale: 用户要求设备级特征，证据说明 device_id 非空，故为主键。
+  - input: 用户要求“聚合各榜单和搜索词（用#拼接）下的单框应用及其点击率键值对序列”；工具证据：源表 schema 含 site_id、search_words、app_id。历史SQL 的GROUP BY 为site_id、search_words、app_id三键。
+    output:
+      field_id: identity
+      value:
+        components:
+        - field_ref: site_id
+          semantic_role: 榜单ID（用户要求用#拼接为组合键）
+          null_semantics: null
+        - field_ref: search_words
+          semantic_role: 搜索词（用户要求用#拼接为组合键）
+          null_semantics: null
+        uniqueness_scope: null
+      unresolved:
+      - 主键字段 site_id/search_words 的空值语义与唯一范围未说明
+      question: 用户要求按榜单和搜索词聚合，但没有说明这两个字段的空值处理与唯一范围；请补充这些主键口径。
+      rationale: “各榜单和搜索词（用#拼接）”下是用户侧身份主体表述，components 只含 site_id/search_words 并在 semantic_role 注明拼接要求；app_id 是键值对序列成员而非主键，源表与历史SQL 的三键 GROUP BY 是源表结构描述，不构成主键证据；空值语义与唯一范围无证据，保持 null 并记入 unresolved。
+  - input: 用户要求“聚合当天新鲜游戏的单框应用ID和加权值的键值对序列，同时写入'weight_game_v1'作为插入键”；工具证据：源表表主键为（app_id, pt_d）。
+    output:
+      field_id: identity
+      value:
+        components: []
+        uniqueness_scope: null
+      unresolved:
+      - 用户未说明输出记录的身份主体；源表表主键 (app_id, pt_d) 不能充当输出主键
+      question: 用户问题要求把当天新鲜游戏整体聚合成键值对序列，没有说明每条输出记录的身份主体；请确认输出主键粒度（如整表每天单行或其他）。
+      rationale: 用户要求把整体聚合成单条序列，“单框应用ID”是序列成员、“当天新鲜游戏的”是集合限定词，都不是身份主体；源表表主键 (app_id, pt_d) 是源表结构而非输出主键证据，components 留空并记入 unresolved。
   writable_template:
     field_id: identity
     value:
@@ -545,6 +579,8 @@ fields:
     - overrides 仅用于极少数格子与模板不同；不得用 overrides 穷举笛卡尔积，也不得用 overrides“删掉”不需要的轴组合。
     - extras[]：不参与笛卡尔积的独立列，包括 (1) 多阶段 Top1/全局比率/key_alias；(2) **只需轴上部分取值的指标**（如 A/B 要 7/14/21，C/D 只要 21 → C/D 进 extras 且 window_ref=w21d，禁止因 w21d∈axes 而把 C/D 放进 measures）。
     - layout=flat 时：使用 features[] 逐列描述（同旧 features 语义）；axes/measures 必须为空。
+    - 输出列数与列结构由用户表述的特征清单决定，两个方向都必须遵守：用户列举的多个特征（如“A、B、C 的序列特征”、多个指标名）各对应一个独立 features 项、各占一列，禁止合并成一个复合列、只输出“代表项”或按维度基数少列；单个特征内部的成员字段（如“X与Y的键值对序列”中的 X、Y）是该特征的拼接输入，综合为该特征的一个 features 项（description/calc.intent 说明构成与分隔符），禁止拆成源表裸列逐列透传。区分依据：用户列举的每一项若各自带“序列/特征/指标/得分”等特征词修饰，即为多个独立特征；“X与Y的键值对序列”中由同一个键值对绑定的 X、Y 是单特征的成员。源表或历史SQL 的输出列清单、裸列结构是参考级证据，不改变上述列结构判定（见【模板公共契约】证据分级）。
+    - 用户明确要求的每个输出要素对应独立的 features 项：“同时写入/同时输出/新增一列 X 作为 Y”类表述是附件常量列（如插入键、标记列、null 值列）的用户侧证据，必须单独立项（source 为 null，description 说明常量取值），禁止把 X 并入另一列的 field_name 或 description，也不得遗漏。
     - calc.intent 语义级，禁止可执行 SQL；aggregation.grain 为该 measure/列的粒度权威（[]=已确认全局聚合；null/未填写本身不确认粒度或是否聚合）。
     - '【grain 是聚合元数据，不是输出列】aggregation.grain 中的 field_ref 表示 GROUP BY / 聚合维度，可与 identity.components 相同或为其超集；这不意味着要在 measures/extras/features 再生成同名输出列。最终输出列清单仍是 identity 前缀 + expand(本字段业务列)。'
     - '【仅当用户明确要求不要去重时，禁止填写 aggregation.grain】（适用范围很窄）用户原话出现“不要去重 / 不去重 / 保留重复行 / 不去重后再算”等时，grain 必须保持 null，且不得因 identity 或“每个应用/设备”而 invent 分组键。此时已确认 grain 易被 nl2sql/质检当成按键折叠（等价去重），与“保留同键多行参与计算”冲突。【默认情况（用户未禁止去重）】多数聚合任务不会显式说“要聚合”；只要有求和/计数/均值/按主体汇总等聚合语义，仍应照常填写 grain，不要因为用户没写“GROUP BY/聚合”就留空 grain。'
@@ -568,6 +604,9 @@ fields:
     - 展开后的业务列名与 identity.components.field_ref 无交集（key_alias 除外）
     common_errors:
     - 5×3 交叉却逐列写 15 行 features（重复口径）
+    - 把用户要求的序列/键值对特征拆成源表裸列逐列透传（如把“应用及点击率键值对序列拆成 app_id、ctr两列”）。
+    - 把用户列举的多个独立序列/统计特征合并成一个复合列（如“A、B、C 的序列特征”只填 1 个拼接了 A/B/C 的字段），列数少于用户列举的特征数。
+    - 用户要求“同时写入 X 作为插入键/新增一列 X”时，把 X 合并进序列列的名称或描述而漏掉独立常量列。
     - 把近 N 天写进 grain
     - invent SQL 到 calc.intent
     - 用跨窗口汇总值打一个全局百分位替代分窗口百分位
@@ -888,6 +927,128 @@ fields:
           depends_on: []
       unresolved: []
       rationale: 单列全局聚合，flat + grain=[]。
+  - input: 用户要求“聚合当天新鲜游戏的单框应用ID和加权值的键值对序列，同时写入'weight_game_v1'作为插入键”；源表有 app_id、final_weight 列。
+    output:
+      field_id: output_features
+      value:
+        layout: flat
+        axes: []
+        measures: []
+        overrides: []
+        extras: []
+        features:
+        - field_name: fresh_game_weight
+          role: metric
+          output_type: string
+          description: 当天全部新鲜游戏的应用ID与加权值键值对序列（整表聚合成单条，键值对内部用冒号分隔，按加权值降序）
+          source: src.app_id, src.final_weight
+          calc:
+            intent: 应用ID与加权值的键值对序列拼接（app_id/final_weight 是序列成员，综合一列，不拆裸列）
+            "on": app_id
+          aggregation:
+            grain: []
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: null
+          ratio: null
+          rank: null
+          depends_on: []
+        - field_name: insert_key
+          role: metric
+          output_type: string
+          description: 插入键常量列，取值固定为 weight_game_v1
+          source: null
+          calc:
+            intent: 固定常量值 weight_game_v1
+            "on": null
+          aggregation:
+            grain: null
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: null
+          ratio: null
+          rank: null
+          depends_on: []
+      unresolved: []
+      rationale: 用户要求两个输出要素--键值对序列综合为一列（app_id/final_weight 是序列成员，不逐列透传，整表聚合故 grain 为空数组）；“同时写入‘weight_game_v1’作为插入键”是附加常量列的用户侧证据，单独立项目 source 为 null。
+  - input: 用户要求“按用户聚合，输出下载应用ID、应用二级分类、应用中文名称的三个序列特征，每个序列按下载时间降序”；工具证据：源表含 app_id、second_class、app_name 列；历史SQL 参考把同类内容写成了一个复合拼接列。
+    output: 
+      field_id: output_features
+      value:
+        layout: flat
+        axes: []
+        measures: []
+        overrides: []
+        extras: []
+        features:
+        - field_name: app_id_seq
+          role: metric
+          output_type: string
+          description: 下载应用ID序列特征
+          source: src.app_id
+          calc:
+            intent: 按 user_id 聚合的下载应用ID序列（按下载时间降序）
+            "on": app_id
+          aggregation:
+            grain:
+            - user_id
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: null
+          ratio: null
+          rank: null
+          depends_on: []
+        - field_name: second_class_seq
+          role: metric
+          output_type: string
+          description: 应用二级分类序列特征
+          source: src.second_class
+          calc:
+            intent: 按 user_id 聚合的应用二级分类序列（按下载时间降序）
+            "on": second_class
+          aggregation:
+            grain:
+            - user_id
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: null
+          ratio: null
+          rank: null
+          depends_on: []
+        - field_name: app_name_seq
+          role: metric
+          output_type: string
+          description: 应用中文名称序列特征
+          source: src.app_name
+          calc:
+            intent: 按 user_id 聚合的应用中文名称序列（按下载时间降序）
+            "on": app_name
+          aggregation: 
+            grain:
+            - user_id
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: null
+          ratio: null
+          rank: null
+          depends_on: []
+      unresolved: []
+      rationale: 用户列举了三个各自带“序列特征”修饰的独立特征（应用ID、二级分类、中文名称），各建一个 features 项、共 3 列；历史SQL 把同类内容写成一个复合拼接列属参考级证据，不改变按用户列举展开的列结构。
   writable_template:
     field_id: output_features
     value:

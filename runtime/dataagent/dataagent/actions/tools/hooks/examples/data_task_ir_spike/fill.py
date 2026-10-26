@@ -41,6 +41,15 @@ COMPACT_JSON_INSTRUCTION = (
     "这只是序列化格式要求，字符串内的空格、全部键和值、数组元素及业务表达式必须完整保留。"
 )
 
+TOOL_EVIDENCE_GRADING_NOTE = (
+    "（证据分级提示：以下工具证据中，表/列/指标/UDF 的语义描述属映射级，"
+    "仅用于把用户概念映射到具体字段名、表名或函数名；对既有实现的结构描述--"
+    "源表物理主键、GROUP BY键、去重键、join键、分区键，以及历史SQL/参考SQL 的"
+    "源表选择、过滤条件、时间窗口、输出列结构--属参考级，只反映该实现当时怎么写，"
+    "不构成输出主键、输出字段结构或业务口径的依据；口径依据只认【用户原始问题】"
+    "与【已确认上下文】中的用户表述，详见【模板公共契约】证据分级。）"
+)
+
 
 # Structural integrity only: absent leaves are normalized to unknown locally.
 # Unknown values and empty arrays never request business-content completion.
@@ -256,7 +265,7 @@ unresolved 只能记录当前 Field Unit 的直接问题；其他字段的缺失
         "已确认上下文": confirmed_context or "（无）",
         # Keep the complete common input before field-specific content so providers
         # with prefix caching can share it across fields and completion calls.
-        "工具证据": tool_evidence or "（无）",
+        "工具证据": (TOOL_EVIDENCE_GRADING_NOTE + "\n" + tool_evidence) if tool_evidence else "（无）",
     }
     field_sections = {
         "当前字段值": current_value if current_value is not None else "（无）",

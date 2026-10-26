@@ -15,10 +15,15 @@
 Function groups and when to use them:
 
 1. Runtime hierarchy
-   - ``dataagent_home()``, ``resolve_user_root()``, ``resolve_session_root()``
+   - ``dataagent_home()``, ``resolve_user_root()``, ``resolve_session_root()``, 
+     ``resolve_history_sql_corpus_path()``
    - Use when deriving DataAgent-managed writable directories.
    - These functions define the fixed path hierarchy:
      ``dataagent_home -> user_root -> session_root``.
+   - ``resolve_history_sql_corpus_path()`` resolves the history-SQL corpus root
+     with priority ``$DATAAGENT_HISTORY_SQL_CORPUS`` >
+     ``dataagent_home()/history_sql``; used by the metadata-recall sub-agent
+     gating and the history-SQL downloader CLI.
 
 2. Active workspace resolution
    - ``resolve_effective_workspace_root()``, ``resolve_session_framework_workspace()``
@@ -67,6 +72,7 @@ from dataagent.utils.env_utils import get_env
 
 FLEX_PERSISTENCE_ROOT_ENV = "DATAAGENT_FLEX_PERSISTENCE_ROOT"
 SUBAGENT_OUTPUT_DIR_ENV = "DATAAGENT_SUBAGENT_OUTPUT_DIR"
+HISTORY_SQL_CORPUS_ENV = "DATAAGENT_HISTORY_SQL_CORPUS"
 
 LayoutSegment = Literal[
     "session_memory_dir",
@@ -104,6 +110,19 @@ def dataagent_home() -> Path:
     if custom_home:
         return Path(custom_home).expanduser().resolve()
     return (Path.home() / ".dataagent").resolve()
+
+
+def resolve_history_sql_corpus_path() -> Path:
+    """Resolve the history-SQL corpus root (always absolute).
+
+    Priority: env ``$DATAAGENT_HISTORY_SQL_CORPUS`` >
+    ``dataagent_home()/history_sql``. The env override exists so an
+    evaluation run can pin a per-run corpus snapshot without editing configs.
+    """
+    env_corpus = get_env(HISTORY_SQL_CORPUS_ENV)
+    if env_corpus and str(env_corpus).strip():
+        return Path(str(env_corpus).strip()).expanduser().resolve()
+    return (dataagent_home() / "history_sql").resolve()
 
 
 def resolve_runtime_user_id(config: Mapping[str, Any] | None) -> str:
