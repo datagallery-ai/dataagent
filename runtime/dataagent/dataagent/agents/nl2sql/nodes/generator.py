@@ -37,8 +37,11 @@ class GeneratorNode(BaseNL2SQLNode):
             f"{NL2SQL_PROMPT_PREFIX}/generator/{strategy}_user"
         ).apply_prompt_template(**context)
         prompts = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
-        content = await self._collect_llm_stream(prompts)
-        self._dump_llm_context(system_prompt, user_prompt, content, self.name, strategy)
+        response = await self._collect_llm_stream(prompts)
+        content = response.content
+        self._dump_llm_context(
+            system_prompt, user_prompt, content, self.name, strategy, reasoning_content=response.reasoning_content
+        )
         expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
         parser = xml_parser if strategy in {"dc", "skeleton", "icl"} else sql_parser
         sqls = parser(content)[-expected_num_sql:]
