@@ -109,13 +109,16 @@ TOOLS:
     - name: "query_sql_process"
       module: "dataagent.actions.tools.semantic_tool.query_sql_process"
       function: "query_sql_process"
-    # SQL校验
-    - name: "validate_deliverables"
-      module: "dataagent.core.suite.builtin_suites.de_agent.tools.verify"
-      function: "validate_deliverables"
-      hooks:
-        pre:
-          - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready
+    # SQL checker: deterministic rules + bounded model repair
+    - name: "check_and_repair_sql"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.sql_checkers"
+      function: "check_and_repair_sql"
+      config:
+        suite_name: "data_engineering"
+        runtime_llm: "planner"
+        max_model_calls: 6
+        # 开启后由 checker 内部依次调用 DataOps 校验 DDL/DML；关闭时不访问 DataOps。
+        dataops_validation_enabled: true
     # Schema linking 数据探查:对单表拉 LIMIT N 行样例(SELECT only)
     # 注意:de_agent 当前未声明 dataops RESOURCE,联调环境会返回 no_dataops_resource 自动跳过;
     #   生产环境(DATAOPS_ENV=prod)不受影响,直接调官方 MCP

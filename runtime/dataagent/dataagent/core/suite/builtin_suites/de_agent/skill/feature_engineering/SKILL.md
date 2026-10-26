@@ -25,7 +25,7 @@ description: |
    4. 检索有匹配时，wrapped_nl2sql_sub_agent_tool 的 query 中**必须**包含⌈## 历史SQL参考⌋段落：写入子代理返回的过滤口径摘录、列用法摘录、UDF 用法摘录（合计不超过 2000 字符），并注明"历史SQL仅供参考，与已确认口径/DataTaskIR 冲突时以 DataTaskIR 为准"；无匹配时如实说明"未找到相似历史SQL"，query 不带该段落；工具返回"历史SQL检索功能未启用"时，说明当前部署未开启该能力（并非"已检索但无匹配"），直接跳过历史SQL检索与引用，query 不带该段落。
    - 历史SQL检索必须委托 metadata_recall 子代理完成，**禁止**自己用read_file/grep/glob 直接翻历史SQL目录文件。
    - 自由调用：多个候选源表且元数据无法定夺时，可在选表阶段提前调用 metadata_recall，请求改为"检索使用了表 X/Y/Z 的历史SQL并对比它们在各历史SQL中的实际用法（过滤口径、列用法、粒度）"，用返回证据辅助选表。
-- 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用后调用过1次或多次validate_deliverables工具。
+- 你需要保证在 wrapped_nl2sql_sub_agent_tool 工具调用后，至少调用过 1 次 `check_and_repair_sql`。
 - **数据探查**（写 SQL 前确认字段真实存在 / 取值分布 / 空值情况）：
   - 何时调、调用硬约束（`partition_filter` / `columns` / 占位符）、返回结果解读、工具签名，详见 `skill/dataops_probe/SKILL.md`。
   - 调用入口：`dataops_probe_table`，仅 SELECT LIMIT，失败自动跳过不抛错。
@@ -38,22 +38,14 @@ description: |
   - **仅当用户明确要求不要去重时**：IR 的 `aggregation.grain` 与 sources/sequence dedup 均应保持未确认（null）；禁止因“每个应用/设备”或 identity 在 query/SQL 中 invent GROUP BY 折叠、DISTINCT、ROW_NUMBER 去重。这是特例，不是默认。
   - **常规聚合（默认）**：用户多数情况下不会显式说“要聚合/GROUP BY”；只要有求和/计数/均值等聚合语义，IR 应照常填写 grain，query/SQL 按已确认 grain 实现。禁止把“禁止去重时不填 grain”误用成漏填聚合粒度。
   - 若展开后各特征 aggregation.grain 不同，query/SQL 必须按列分别说明并实现各自聚合粒度；禁止用单一全局 GROUP BY 覆盖全部特征。
-- **DataOps 校验（合并到 validate_deliverables 内）**：
-  - **入口统一**：DataOps 语义校验已经在 `validate_deliverables` 内部作为最后一步执行，**de_agent 不再单独调用 `dataops_validate_sql_with_log_analysis`**。
-  - **单入口重试语义（NEW）**：校验失败时，`validate_deliverables` 会在错误信息里附带 DataOps `log_analysis`/`log_analysis_summary` 摘要。de_agent **必须按摘要修改 workspace 里的 DDL/DML 后再次调用 `validate_deliverables`**，整个"静态校验 + DataOps 校验"会作为整体重跑。
-  - **重试上限**：`validate_deliverables` 单次会话最多执行 **3 次**（含首次）。超过 3 次后工具直接返回最佳实践失败信息，不再发起第 4 次校验。第 3 次仍失败时，工具会自动在 workspace 写入 `validate_deliverables_report.json`（含累计 attempts、dataops_attempts 历史、最后一次 DDL/DML 摘要）和 `validate_deliverables_warning.md`（首行写「⚠️ 本次交付物未通过 validate_deliverables 校验（重试 3 次仍失败），仅作 best-effort，下游使用前必须人工复核」）。此时 de_agent 只需把最后一次提交的 SQL 作为交付物写入 workspace，并在交付报告中说明实际执行的修复动作（diff 简述）。
-  - **失败处理**：错误信息中含 `日志分析摘要` 时，按 `suggestions` → `error_type` / `location` → `error` 字段的优先级定位失败原因，**实际修改 SQL 后再次调用** `validate_deliverables`；禁止原样 SQL 重跑，也禁止把 `log_analysis_summary` 当"诊断总结"复读后结束任务。
-  - **退出条件**：任意一次 `validate_deliverables` 返回 `最终产物校验通过` 才能正常交付；返回 `最佳实践失败`（第 3 次仍失败）时只能 best-effort 交付。
-  - **临时表自动清理**：DataOps 校验工具在 DML（INSERT）一次完整校验结束后（DML 通过 / DML 三次重试均失败），会自动 DROP 该次生成的 `adhoctemp.tmp_<user>_<date>_<table>` 临时表，避免 adhoctemp 库累积残留。
-    - **CREATE TABLE 永远不清理**：DDL 校验（成功或失败）后临时表**保留**，因为同一条交付的 DML（INSERT OVERWRITE）必须针对这张临时表——如果先 DROP，DML 会找不到目标表失败。
-    - **DML 清理时机**：DML 单次校验通过后立即清理；DML 三次重试全部失败（达到 `MAX_VALIDATE_ATTEMPTS`）后清理。三次重试过程中的中途失败不清理——下次重试还需要写同一张表。
-    - **SELECT 不触发清理**：SELECT 不创建临时表，自然不清理。
-    - **timed_out / 提交错误不清理**：避免与仍在运行的原 SQL 抢锁。
-    - **清理失败只记 warning 日志**，不影响校验结果返回。
-    - 响应里 `cleanup_job_id` 字段即为清理 DROP 的 job_id，用于追查清理执行情况。
-  - **关闭临时表清理（调试用）**：若需要保留 `adhoctemp` 临时表以观察残留内容（例如排查某次校验为何成功 / 失败），可在运行环境（DataOps 工具所在的 Python 进程）设置 `DATAOPS_DISABLE_TEMP_CLEANUP=true`（接受 true/1/yes/on/y/t，大小写不敏感），关闭后不会再提交清理 DROP。默认行为是清理开启，**仅在调试 adhoctemp 残留时临时打开**。
-  - **绝对禁止**：
-    - ❌ DDL 失败却继续提交对应的 DML（DDL 与对应 DML 必须视为同一交付单元，要么一起交付要么一起标注未通过）
+- **SQL checker**：DDL/DML 写完后调用 `check_and_repair_sql`，只按它返回的 issues 修 SQL；PASS 才继续，BLOCKED/ERROR 不得当作通过。
+  - checker 做确定性规则检查和有界模型修复，最多 6 次模型调用；不要用自然语言推断替代规则。
+  - DDL 与对应 DML 必须作为同一交付单元，DDL 未通过不得继续提交 DML。
+- **DataOps 校验（checker 内部阶段）**：由 `check_and_repair_sql.config.dataops_validation_enabled` 控制，默认开启；仅需静态检查时设为 `false`。
+  - 开启后，程序规则检查通过才会在 DataOps 临时表上按 DDL → DML 顺序校验；DDL 失败不提交 DML。
+  - 失败返回 BLOCKED 及 `dataops.results` 中的日志分析摘要；处理问题后重新调用 checker。同一交付文件对每条 SQL 最多提交 3 次，修改 SQL 不重置预算。
+  - 开启但服务未配置/校验被跳过时不得当作通过；配置关闭时报告 DISABLED，不声称完成 DataOps 验证。
+  - checker 未通过时不自动发布候选补丁。
 - 维度表选表经验：
   - 事实表中已存在所需要的列时，默认无需关联对应的维度表，除非用户明确要求。例如事实表中已提供应用三级分类时，默认无需使用应用信息维表。
 
@@ -123,7 +115,7 @@ description: |
 - 多个维度特征被同一业务场景同时使用时，强制合到一张表。
 
 ## 交付检查清单（DDL-DML 对齐 + 方言合规 + JOIN 安全）
-你需要调用validate_deliverables工具完成静态的交付件检查。同时，在写入文件前，必须**逐条**自检。其中的 Gate Check 不通过则禁止写入文件。
+你需要调用 `check_and_repair_sql` 完成静态的交付件检查。同时，在写入文件前，必须**逐条**自检。其中的 Gate Check 不通过则禁止写入文件。
 
 ## Final Delivery
 在最后一个 step 中，必须：
