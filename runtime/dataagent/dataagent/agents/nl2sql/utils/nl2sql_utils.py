@@ -43,23 +43,29 @@ def quote_sql_placeholders(sql: str) -> str:
     return sql
 
 
+def _normalize_sql_candidate(sql: str) -> str:
+    """Apply the same SQL preprocessing regardless of the response wrapper."""
+    sql = sql.replace("\xa0", " ").strip().rstrip(";")
+    sql = re.sub(r"/\*.*?\*/|--.*?$", "", sql, flags=re.S | re.M)
+    sql = re.sub(r"\s+", " ", sql).strip()
+    return quote_sql_placeholders(sql)
+
+
 def sql_parser(content: str) -> list[str]:
     """Extract SQL statements from model output text."""
     m = re.findall(r"```sql\s*(.*?)\s*```", content, re.S | re.I)
     if not m:
         raise DataAgentError(source="internal", fact="No SQL found", component="nl2sql")
-    sqls = []
-    for sql in m:
-        sql = sql.replace("\xa0", " ").strip().rstrip(";")
-        sql = re.sub(r"/\*.*?\*/|--.*?$", "", sql, flags=re.S | re.M)
-        sql = re.sub(r"\s+", " ", sql).strip()
-        sql = quote_sql_placeholders(sql)
-        sqls.append(sql)
-    return sqls
+    return [_normalize_sql_candidate(sql) for sql in m]
 
 
 def xml_parser(content: str) -> list[str]:
-    return [x.strip() for x in re.findall(r"<result>\s*(.*?)\s*</result>", content, re.S | re.I) if x.strip()]
+    """Extract XML-wrapped candidates with the usual SQL normalization."""
+    return [
+        _normalize_sql_candidate(sql)
+        for sql in re.findall(r"<result>\s*(.*?)\s*</result>", content, re.S | re.I)
+        if sql.strip()
+    ]
 
 
 def json_parser(content: str) -> str:
