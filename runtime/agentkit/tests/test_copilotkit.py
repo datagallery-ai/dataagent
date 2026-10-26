@@ -197,7 +197,8 @@ async def test_copilotkit_error_redacts_secrets(runtime):
     row = _session_row(runtime, "gui-error")
     assert row["user_id"] == runtime.paths.user_id
     assert row["status"] == "error"
-    assert row["last_checkpoint_id"] is None
+    assert row["last_checkpoint_id"]
+    assert all("sk-testsecretvalue" not in str(value) for value in row.values())
     assert any(item["threadId"] == "gui-error" for item in listed.json()["sessions"])
 
 

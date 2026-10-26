@@ -28,7 +28,7 @@ NEXT_PUBLIC_CONFIG_API_URL=
 API_PROXY_TARGET=http://127.0.0.1:8787
 ```
 
-The browser uses the same-origin Next BFF (`/api/v1/*`, `/api/copilotkit`). Point the BFF upstream with `API_PROXY_TARGET` (default `http://127.0.0.1:8787`).
+The browser uses the same-origin Next BFF (`/api/v1/*`, conversation `POST /dataagent/stream`, CopilotKit runtime info `/api/copilotkit`). Point the BFF upstream with `API_PROXY_TARGET` (default `http://127.0.0.1:8787`).
 
 Probes:
 

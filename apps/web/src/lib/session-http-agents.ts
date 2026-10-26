@@ -1,4 +1,5 @@
-import { HttpAgent } from "@ag-ui/client";
+import type { HttpAgent } from "@ag-ui/client";
+import { StreamHttpAgent } from "./stream-http-agent";
 
 export const runtimeAgentId = "dataFoundry";
 const sessionAgentIdPrefix = `${runtimeAgentId}:session:`;
@@ -19,8 +20,7 @@ export function threadIdFromDataTaskSessionAgentId(agentId: unknown): string | n
 }
 
 export function createSessionHttpAgent(threadId: string): HttpAgent {
-  return new HttpAgent({
-    url: "/api/copilotkit",
+  return new StreamHttpAgent({
     agentId: dataTaskSessionAgentId(threadId),
     threadId,
   });

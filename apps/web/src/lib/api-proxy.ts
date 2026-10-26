@@ -25,7 +25,11 @@ export function getApiProxyTarget(): string {
 }
 
 export function isStreamingProxyPath(pathname: string): boolean {
-  return pathname === "/api/copilotkit" || pathname.startsWith("/api/copilotkit/");
+  return (
+    pathname === "/dataagent/stream" ||
+    pathname === "/api/copilotkit" ||
+    pathname.startsWith("/api/copilotkit/")
+  );
 }
 
 export function isStreamingContentType(contentType: string | null): boolean {

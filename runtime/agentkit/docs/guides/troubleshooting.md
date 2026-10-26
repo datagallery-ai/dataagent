@@ -44,7 +44,7 @@
 | --- | --- |
 | `Session ... is not in profile` | `threadId` 属于另一个 `--user`。换对应用户，或新开对话 |
 | `bound to a different workspace list` | 恢复时不要换输入目录。新输入请新开会话 |
-| `No successful checkpoint exists` | 上次没有成功结束。新开对话 |
+| 首轮报错后同一会话发不出去 | 用新的 `runId` 再发一条新消息。没有检查点时 `/dataagent/stream` 从最新图状态继续。取消会把会话指到图里当时的检查点，界面和下一轮读同一段历史 |
 | `Session is currently running` 或 HTTP 409 | 等当前轮结束。同一会话不能并行两轮 |
 | `Run replay is not supported` | 使用新的 `runId`，并发送一条新的用户消息 |
 | `Extension reload failed` | 这一轮拒绝新查询。正在跑的轮次仍用旧图。修好插件或 Hook 后再发 |

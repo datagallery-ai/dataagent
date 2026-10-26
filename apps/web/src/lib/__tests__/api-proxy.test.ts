@@ -8,6 +8,7 @@ import {
 
 describe("api-proxy streaming contract", () => {
   it("recognizes CopilotKit paths as streaming", () => {
+    expect(isStreamingProxyPath("/dataagent/stream")).toBe(true);
     expect(isStreamingProxyPath("/api/copilotkit")).toBe(true);
     expect(isStreamingProxyPath("/api/copilotkit/info")).toBe(true);
     expect(isStreamingProxyPath("/api/v1/sessions")).toBe(false);

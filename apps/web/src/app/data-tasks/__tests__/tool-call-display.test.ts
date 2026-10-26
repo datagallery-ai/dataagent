@@ -81,6 +81,20 @@ describe("parseToolResultError", () => {
     expect(failure?.title).toBe("Result sync failed");
     expect(toolResultLooksLikeError(JSON.stringify({ status: "error" }))).toBe(true);
   });
+
+  it("treats a null or blank error field as success", () => {
+    const success = JSON.stringify({
+      sql: "SELECT department, COUNT(*) FROM employees GROUP BY department",
+      error: null,
+      row_count: 6,
+    });
+    expect(parseToolResultError(success)).toBeNull();
+    expect(toolResultLooksLikeError(success)).toBe(false);
+    expect(toolResultLooksLikeError(JSON.stringify({ error: "   " }))).toBe(false);
+    expect(parseToolResultError(JSON.stringify({ error: "query failed" }))?.message).toBe(
+      "query failed",
+    );
+  });
 });
 
 describe("toolDisplayStatusLabel", () => {

@@ -115,7 +115,15 @@
     "toolCountPlural": "{{count}} tools · {{elapsed}}",
     "expandStep": "Expand step",
     "collapseStep": "Collapse step",
-    "viewStepDetails": "View step details in the task console"
+    "viewStepDetails": "View step details in the task console",
+    "subagentStarting": "Starting",
+    "subagentReturning": "Returning result",
+    "subagentError": "Subagent error",
+    "subagentSuspended": "Subagent suspended",
+    "subagentStep": {
+      "model": "Model response",
+      "tools": "Execute tools"
+    }
   },
   "tools": {
     "list_data_sources": "List data sources",

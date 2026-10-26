@@ -115,7 +115,15 @@
     "toolCountPlural": "{{count}} 个工具 · {{elapsed}}",
     "expandStep": "展开步骤",
     "collapseStep": "收起步骤",
-    "viewStepDetails": "在任务控制台查看步骤详情"
+    "viewStepDetails": "在任务控制台查看步骤详情",
+    "subagentStarting": "正在启动",
+    "subagentReturning": "正在返回结果",
+    "subagentError": "子代理出错",
+    "subagentSuspended": "子代理已暂停",
+    "subagentStep": {
+      "model": "模型响应",
+      "tools": "执行工具"
+    }
   },
   "tools": {
     "list_data_sources": "列出数据源",

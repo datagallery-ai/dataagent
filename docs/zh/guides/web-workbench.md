@@ -28,7 +28,7 @@ NEXT_PUBLIC_CONFIG_API_URL=
 API_PROXY_TARGET=http://127.0.0.1:8787
 ```
 
-浏览器走同源 Next BFF（`/api/v1/*`、`/api/copilotkit`）。BFF 上游用 `API_PROXY_TARGET`（默认 `http://127.0.0.1:8787`）。
+浏览器走同源 Next BFF（`/api/v1/*`、对话 `POST /dataagent/stream`、CopilotKit runtime info `/api/copilotkit`）。BFF 上游用 `API_PROXY_TARGET`（默认 `http://127.0.0.1:8787`）。
 
 就绪探针：
 

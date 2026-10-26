@@ -40,7 +40,7 @@ Web 工作台 / TUI / 其他客户端
 
 | 接口          | 路径                | 说明                            |
 | ----------- | ----------------- | ----------------------------- |
-| Agent run   | `/api/copilotkit` | 启动一次 Agent 分析运行，返回 AG-UI 事件流。 |
+| Agent run   | `/dataagent/stream` | 启动一次 Agent 分析运行，返回 AG-UI 事件流。Web 与 TUI 都走这里。`/api/copilotkit` 只保留 CopilotKit runtime info。 |
 | REST 配置 API | `/api/v1/*`       | 管理工作区资源、文件、任务、产出和配置。          |
 
 

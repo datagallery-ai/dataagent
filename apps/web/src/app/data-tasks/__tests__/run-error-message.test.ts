@@ -36,6 +36,12 @@ describe("formatRunErrorMessage", () => {
     const en = (key: string) => (key === "chatInput.sessionBusyElsewhere" ? "another window" : key);
     expect(isSessionRunBusyMessage("A run is already active for this session")).toBe(true);
     expect(isSessionRunBusyMessage("HTTP 409 Conflict")).toBe(true);
+    expect(isSessionRunBusyMessage("HTTP 409: A run is already active for this session")).toBe(true);
+    expect(
+      isSessionRunBusyMessage(
+        "HTTP 409: No successful checkpoint exists; start a new conversation",
+      ),
+    ).toBe(false);
     expect(isSessionRunBusyMessage("provider failed")).toBe(false);
     expect(formatRunErrorMessage("RUN_ALREADY_ACTIVE:run-1", zh)).toContain("其他窗口");
     expect(formatRunErrorMessage("A run is already active for this session", en)).toContain("another window");
