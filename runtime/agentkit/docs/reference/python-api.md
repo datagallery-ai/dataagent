@@ -51,6 +51,18 @@
 
 `build_agent` 在配置了 MCP 且未传 `mcp_tools` 时失败。配置了语义服务且上下文没有客户端时失败。
 
+## A2A 服务
+
+`a2a_server` 不随 `import dataagent` 加载。
+
+```python
+from a2a_server import create_a2a_server, run_a2a_server
+```
+
+`dataagent serve` 在同一个进程上挂 Agent Card 和 `POST /a2a/jsonrpc`。`create_a2a_server(runtime, *, host, port, ...)` 返回只含这组路由的 Starlette 应用，`run_a2a_server` 用 uvicorn 跑起来。命令行入口是 `dataagent serve-a2a`。
+
+`A2ACaller(base_url)` 调用另一个 A2A 1.0 agent。配置里的 `a2a.agents` 由 `load_extensions` 收成名为 `a2a__<id>` 的工具。约定见 [A2A](a2a.md)。
+
 ## `ModelContext`
 
 ```python

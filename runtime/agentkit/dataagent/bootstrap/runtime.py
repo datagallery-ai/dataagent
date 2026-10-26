@@ -58,6 +58,10 @@ class Runtime:
             secrets.extend(connection.get("args", ()))
             if connection.get("url"):
                 secrets.append(connection["url"])
+        for agent in self.settings.a2a.agents:
+            secrets.append(str(agent.url))
+            if agent.auth_token is not None:
+                secrets.append(agent.auth_token.get_secret_value())
         return tuple(dict.fromkeys(value for value in secrets if value))
 
     @property

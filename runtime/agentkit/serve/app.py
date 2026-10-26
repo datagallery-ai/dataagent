@@ -348,38 +348,12 @@ async def _reject_foreign_session(sessions: Sessions, user_id: str, thread_id: s
         )
 
 
-async def _record_success(turn: SessionTurn, graph):
-    """Store this thread's latest checkpoint. Callers resume from that row."""
-    latest = await graph.aget_state({"configurable": {"thread_id": turn.thread_id}})
-    if latest.next:
-        raise RuntimeError("Agent stopped with unfinished work or an unsupported interrupt")
-    checkpoint_id = latest.config["configurable"]["checkpoint_id"]
-    await turn.complete(checkpoint_id)
-    return latest
-
-
-async def _remember_reached_checkpoint(turn: SessionTurn, graph) -> None:
-    """Point a cancel or model error at the checkpoint the graph reached.
-
-    The web transcript reads the latest graph state. The next
-    ``/dataagent/stream`` pins ``last_checkpoint_id``. Storing that id keeps
-    the two on the same messages. A turn that never stored a message leaves
-    the previous checkpoint in place.
-    """
+async def _settle(turn: SessionTurn, graph) -> None:
+    """Record a checkpoint during cleanup. The turn's own error stays in dataagent.api."""
     try:
-        latest = await graph.aget_state({"configurable": {"thread_id": turn.thread_id}})
-        checkpoint_id = (latest.config or {}).get("configurable", {}).get("checkpoint_id")
-        if not checkpoint_id or not (latest.values or {}).get("messages"):
-            return
-        await turn.sessions.finish(
-            turn.user_id, turn.thread_id, turn.status, checkpoint_id,
-        )
+        await turn.settle(graph)
     except Exception:
-        logger.warning(
-            "checkpoint was not recorded for thread=%s status=%s",
-            turn.thread_id,
-            turn.status,
-        )
+        logger.warning("checkpoint was not recorded for thread=%s", turn.thread_id)
 
 
 def register_conversation_routes(
@@ -564,7 +538,7 @@ def register_conversation_routes(
                             "INCOMPLETE_STREAM: upstream ended without a terminal event"
                         )
                     if terminal.type == EventType.RUN_ERROR:
-                        await turn.fail()
+                        turn.status = "error"
                         public = _public_run_error(terminal, secrets)
                         logger.error(
                             "RUN_ERROR run=%s thread=%s stage=agent_stream code=%s message=%s",
@@ -575,7 +549,7 @@ def register_conversation_routes(
                         )
                         yield encoder.encode(public)
                         return
-                    latest = await _record_success(turn, graph)
+                    latest = await turn.settle(graph, complete=True)
                     yield encoder.encode(
                         MessagesSnapshotEvent(
                             messages=langchain_messages_to_agui(latest.values.get("messages", [])),
@@ -609,7 +583,7 @@ def register_conversation_routes(
                     if upstream is not None:
                         await upstream.aclose()
                     if turn.status in {"interrupted", "error"}:
-                        await _remember_reached_checkpoint(turn, graph)
+                        await _settle(turn, graph)
 
         return DisconnectAwareResponse(
             events(),
@@ -688,7 +662,7 @@ def register_conversation_routes(
                             finished_event = event
                             continue
                         if event.type == EventType.RUN_ERROR:
-                            await turn.fail()
+                            turn.status = "error"
                             public = _public_run_error(event, secrets)
                             logger.error(
                                 "RUN_ERROR run=%s thread=%s stage=copilotkit code=%s message=%s",
@@ -703,7 +677,7 @@ def register_conversation_routes(
                         raise RuntimeError(
                             "INCOMPLETE_STREAM: upstream ended without a terminal event"
                         )
-                    await _record_success(turn, graph)
+                    await turn.settle(graph, complete=True)
                     yield encoder.encode(finished_event)
             except _RunCancelled:
                 return
@@ -723,7 +697,7 @@ def register_conversation_routes(
                     if upstream is not None:
                         await upstream.aclose()
                     if turn.status in {"interrupted", "error"}:
-                        await _remember_reached_checkpoint(turn, graph)
+                        await _settle(turn, graph)
 
         return DisconnectAwareResponse(
             gui_events(),
@@ -734,6 +708,10 @@ def register_conversation_routes(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    from a2a_server.server import register_a2a_routes
+
+    register_a2a_routes(app, runtime)
 
 
 def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model=None):

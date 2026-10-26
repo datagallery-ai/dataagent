@@ -1,0 +1,254 @@
+import asyncio
+from contextlib import asynccontextmanager
+from uuid import uuid4
+
+import httpx
+import pytest
+from conftest import ScriptedModel
+from langchain_core.messages import AIMessage
+
+from a2a_server import create_a2a_server
+from a2a_server.agent_executor import AgentKitExecutor, final_text
+from serve.app import create_app
+
+
+def message(text, context_id):
+    return {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "role": "ROLE_USER",
+                "messageId": str(uuid4()),
+                "contextId": context_id,
+                "parts": [{"text": text}],
+            }
+        },
+    }
+
+
+def rpc(client, payload, **kwargs):
+    headers = {"A2A-Version": "1.0", **kwargs.pop("headers", {})}
+    return client.post("/a2a/jsonrpc", json=payload, headers=headers, **kwargs)
+
+
+def task_of(response):
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "error" not in body, body
+    return body["result"]["task"]
+
+
+@asynccontextmanager
+async def client_for(runtime, model, **kwargs):
+    app = create_a2a_server(runtime, host="127.0.0.1", port=9999, model=model, **kwargs)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:9999"
+        ) as client:
+            yield client
+
+
+def test_final_text_prefers_the_last_ai_message():
+    assert final_text({"messages": [
+        AIMessage(content="older"),
+        AIMessage(content=[{"type": "text", "text": "newer"}]),
+    ]}) == "newer"
+
+
+async def test_agent_card_uses_the_request_host(runtime):
+    async with client_for(runtime, ScriptedModel(responses=[])) as client:
+        response = await client.get(
+            "/.well-known/agent-card.json", headers={"host": "agents.example:9999"}
+        )
+    assert response.status_code == 200
+    card = response.json()
+    assert card["name"] == "DataAgent"
+    assert card["skills"][0]["id"] == "chat"
+    assert card["capabilities"]["streaming"] is False
+    interfaces = card["supportedInterfaces"]
+    assert len(interfaces) == 1
+    assert interfaces[0]["protocolBinding"] == "JSONRPC"
+    assert interfaces[0]["protocolVersion"] == "1.0"
+    assert interfaces[0]["url"] == "http://agents.example:9999/a2a/jsonrpc"
+    assert "test-secret" not in response.text
+
+
+async def test_blank_message_and_unsafe_context_fail_without_calling_the_model(runtime):
+    model = ScriptedModel(responses=[])
+    async with client_for(runtime, model) as client:
+        blank = task_of(await rpc(client, message("   ", "thread-a2a-3")))
+        unsafe = task_of(await rpc(client, message("hi", "bad/context")))
+    assert blank["status"]["state"] == "TASK_STATE_FAILED"
+    assert "No user message" in blank["status"]["message"]["parts"][0]["text"]
+    assert unsafe["status"]["state"] == "TASK_STATE_FAILED"
+    assert "context id" in unsafe["status"]["message"]["parts"][0]["text"]
+    assert model.requests == []
+
+
+async def test_invocation_failure_redacts_secrets(runtime):
+    async def boom(_thread_id, _text):
+        raise RuntimeError("upstream returned test-secret")
+
+    executor = AgentKitExecutor(boom, secrets=("test-secret",))
+    async with client_for(runtime, ScriptedModel(responses=[]), executor=executor) as client:
+        task = task_of(await rpc(client, message("hello", "thread-a2a-5")))
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    text = task["status"]["message"]["parts"][0]["text"]
+    assert "test-secret" not in text
+    assert "[REDACTED]" in text
+
+
+async def test_bearer_token_protects_invocation_and_not_discovery(runtime):
+    model = ScriptedModel(responses=[AIMessage(content="ok")])
+    async with client_for(runtime, model, auth_token="secret-token") as client:
+        denied = await rpc(client, message("hello", "thread-a2a-4"))
+        opened = await client.get("/.well-known/agent-card.json")
+        accepted = await rpc(
+            client,
+            message("hello", "thread-a2a-4"),
+            headers={"Authorization": "Bearer secret-token"},
+        )
+    assert denied.status_code == 401
+    assert opened.status_code == 200
+    assert task_of(accepted)["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert "secret-token" not in accepted.text
+
+
+def test_serve_a2a_help_has_no_legacy_bindings(capsys):
+    from serve.__main__ import main
+
+    with pytest.raises(SystemExit) as raised:
+        main(["serve-a2a", "--help"])
+    assert raised.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--auth-token" in help_text
+    assert "--jsonrpc-path" not in help_text
+    assert "--rest-path" not in help_text
+    assert "--enable-v0-3-compat" not in help_text
+
+
+class _GatedModel(ScriptedModel):
+    """Block inside the first model call until the test releases it."""
+
+    entered: asyncio.Event = None
+    release: asyncio.Event = None
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.entered.set()
+        await self.release.wait()
+        return await super()._agenerate(messages, stop, run_manager, **kwargs)
+
+
+def gui_turn(thread_id):
+    return {
+        "threadId": thread_id,
+        "runId": str(uuid4()),
+        "messages": [{"id": str(uuid4()), "role": "user", "content": "from gui"}],
+    }
+
+
+async def test_gui_cannot_enter_a_session_while_a2a_is_running(runtime):
+    entered, release = asyncio.Event(), asyncio.Event()
+    model = _GatedModel(
+        responses=[AIMessage(content="from-a2a"), AIMessage(content="from-gui")],
+        entered=entered,
+        release=release,
+    )
+    app = create_app(runtime, instance_id="test-instance", model=model)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8790") as a2a_client,
+            httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8790") as gui_client,
+        ):
+            a2a_task = asyncio.create_task(rpc(a2a_client, message("from a2a", "shared-thread")))
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            rejected = await gui_client.post("/api/copilotkit", json=gui_turn("shared-thread"))
+            assert rejected.status_code == 409
+            assert "already active" in rejected.text
+            assert len(model.requests) == 0
+            release.set()
+            completed = task_of(await a2a_task)
+            follow = await gui_client.post("/api/copilotkit", json=gui_turn("shared-thread"))
+            assert follow.status_code == 200
+            await follow.aread()
+    assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert completed["artifacts"][0]["parts"][0]["text"] == "from-a2a"
+    assert len(model.requests) == 2
+
+
+def stream_turn(text, thread_id):
+    return {
+        "threadId": thread_id,
+        "runId": str(uuid4()),
+        "state": {},
+        "messages": [{"id": str(uuid4()), "role": "user", "content": text}],
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+    }
+
+
+async def test_a2a_checkpoint_record_matches_the_stream(runtime):
+    class FailThird(ScriptedModel):
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            if len(self.requests) == 2:
+                self.requests.append(messages)
+                raise RuntimeError("model exploded")
+            return await super()._agenerate(messages, stop, run_manager, **kwargs)
+
+    model = FailThird(responses=[
+        AIMessage(content="saved answer"),
+        AIMessage(content="from-a2a"),
+        AIMessage(content="continued"),
+    ])
+    thread_id = "thread-a2a-archive"
+    app = create_app(runtime, instance_id="test-instance", model=model)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8790") as client:
+            saved = await client.post("/dataagent/stream", json=stream_turn("saved", thread_id))
+            assert saved.status_code == 200
+            assert "RUN_FINISHED" in saved.text
+            noted = task_of(await rpc(client, message("CODE-7", thread_id)))
+            assert noted["status"]["state"] == "TASK_STATE_COMPLETED"
+            assert "saved" in [item.content for item in model.requests[1]]
+            failed = task_of(await rpc(client, message("BLUE-42", thread_id)))
+            assert failed["status"]["state"] == "TASK_STATE_FAILED"
+            restored = (await client.get(f"/sessions/{thread_id}")).json()
+            assert restored["status"] == "error"
+            contents = [item.get("content") for item in restored["messages"]]
+            assert "saved" in contents and "CODE-7" in contents and "BLUE-42" in contents
+            follow = await client.post("/dataagent/stream", json=stream_turn("what was it", thread_id))
+            assert follow.status_code == 200
+            assert "RUN_FINISHED" in follow.text
+            seen = [item.content for item in model.requests[-1]]
+            assert "BLUE-42" in seen and "CODE-7" in seen and "saved" in seen
+
+
+async def test_other_profile_cannot_read_the_same_context(tmp_path, common_plugin):
+    import json
+
+    from dataagent import LaunchOptions, prepare_runtime
+
+    (tmp_path / "home/config.json").write_text(json.dumps({"plugins": {"enabled": ["common"]}}))
+    path = tmp_path / "test-config.json"
+    path.write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
+        }},
+    }))
+    alice = prepare_runtime(LaunchOptions(cwd=tmp_path, config=path, user_id="alice"))
+    bob = prepare_runtime(LaunchOptions(cwd=tmp_path, config=path, user_id="bob"))
+    alice_model = ScriptedModel(responses=[AIMessage(content="alice-answer")])
+    bob_model = ScriptedModel(responses=[AIMessage(content="bob-should-not-run")])
+    async with client_for(alice, alice_model) as client:
+        first = task_of(await rpc(client, message("secret history", "shared-context")))
+    async with client_for(bob, bob_model) as client:
+        second = task_of(await rpc(client, message("read it", "shared-context")))
+    assert first["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert second["status"]["state"] == "TASK_STATE_FAILED"
+    assert "not in profile" in second["status"]["message"]["parts"][0]["text"]
+    assert bob_model.requests == []

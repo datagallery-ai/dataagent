@@ -163,4 +163,5 @@ def test_backend_entrypoints_share_serve_module():
     assert result.returncode == 0
     assert "usage: dataagent" in result.stdout
     assert "DataAgent backend" in result.stdout
+    assert "serve-a2a" in result.stdout
     assert not Path(os.environ["DATAAGENT_HOME"]).exists()

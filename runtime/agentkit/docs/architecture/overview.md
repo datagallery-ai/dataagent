@@ -50,6 +50,7 @@ flowchart TB
 | `models.py` / `semantic_client/` | 提供模型客户端和语义 HTTP 客户端 |
 | `client.py` | 向 SDK 调用和 AG-UI 适配器注入运行上下文 |
 | `serve/` | 提供健康检查、产品路由、会话索引和事件流 |
+| `a2a_server/` | 把同一张图暴露为 A2A 1.0 服务。`dataagent serve` 挂这组路由，`serve-a2a` 单独起进程 |
 | `dataagent/core/` | 提供 Deep Agents 图、文件工具、摘要和子代理 |
 
 依赖方向：宿主 → `client`/`agent` → `extensions` 与 `core`。`bootstrap` 只依赖 `settings` 和 `declarations`。`import dataagent` 保持轻量，LangChain 相关对象懒加载。

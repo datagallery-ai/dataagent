@@ -12,6 +12,7 @@ from test_api import client_for, query, sse, terminal
 from dataagent import LaunchOptions, build_agent, prepare_runtime
 from dataagent.declarations import HookSpec, normalize_hooks
 from dataagent.settings import (
+    A2ASettings,
     AgentSettings,
     Limits,
     ModelSelection,
@@ -33,6 +34,7 @@ def test_full_config_example_explicitly_covers_all_settings_fields():
         (raw["dataagent"]["model"], ModelSelection),
         (raw["dataagent"]["limits"], Limits),
         (raw["plugins"], PluginSettings),
+        (raw["a2a"], A2ASettings),
         *((model, ModelSettings) for model in raw["models"].values()),
     )
     for values, schema in sections:

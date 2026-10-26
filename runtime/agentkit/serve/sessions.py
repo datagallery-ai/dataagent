@@ -150,13 +150,29 @@ class SessionTurn:
         self.status = "complete"
         await self.sessions.finish(self.user_id, self.thread_id, "complete", checkpoint_id)
 
-    async def fail(self) -> None:
-        self.status = "error"
-        await self.sessions.finish(self.user_id, self.thread_id, "error")
-
     async def release(self) -> None:
         if self.status != "complete":
             await self.sessions.finish(self.user_id, self.thread_id, self.status)
+
+    async def settle(self, graph, *, complete: bool = False):
+        """Point the session row at the checkpoint this turn reached.
+
+        ``complete`` is a successful end: a graph with pending work is an error.
+        A turn that stored no messages leaves the previous checkpoint in place.
+        """
+        latest = await graph.aget_state({"configurable": {"thread_id": self.thread_id}})
+        configurable = (latest.config or {}).get("configurable") or {}
+        checkpoint_id = configurable.get("checkpoint_id")
+        if complete:
+            if latest.next:
+                raise RuntimeError("Agent stopped with unfinished work or an unsupported interrupt")
+            await self.complete(latest.config["configurable"]["checkpoint_id"])
+            return latest
+        if checkpoint_id and (latest.values or {}).get("messages"):
+            await self.sessions.finish(
+                self.user_id, self.thread_id, self.status, checkpoint_id,
+            )
+        return latest
 
 
 def public_session(row: dict) -> dict:

@@ -156,6 +156,7 @@ def refresh_extensions(runtime: Runtime) -> Runtime:
     settings = runtime.settings.model_copy(
         update={
             "plugins": loaded.plugins,
+            "a2a": loaded.a2a,
             "dataagent": runtime.settings.dataagent.model_copy(
                 update={"hooks": loaded.dataagent.hooks}
             ),

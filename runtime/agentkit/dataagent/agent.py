@@ -85,11 +85,17 @@ def load_extensions(
             "Independent Hook bindings do not match settings.dataagent.hooks; "
             "use prepare_runtime() or update both settings and extensions.hooks"
         )
+    a2a_tools = ()
+    if settings.a2a.agents:
+        from a2a_server.client import load_a2a_tools
+
+        a2a_tools = load_a2a_tools(runtime)
     return compile_extensions(
         select_plugins(settings.plugins, extensions.plugin_roots),
         skill_sources=extensions.skill_sources,
         hook_entries=tuple((binding.base_dir, binding.spec) for binding in extensions.hooks),
         mcp_tools=mcp_tools or (),
+        a2a_tools=a2a_tools,
         plugin_params=dict(settings.plugins.config),
         model_resolver=model_resolver
         if model_resolver is not None
