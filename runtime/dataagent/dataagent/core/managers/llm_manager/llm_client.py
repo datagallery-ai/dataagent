@@ -379,6 +379,11 @@ _RETRYABLE_CATEGORIES = frozenset(
 _STREAM_RETRYABLE_CATEGORIES = _RETRYABLE_CATEGORIES | frozenset({LLMErrorCategory.STREAM_INTERRUPTED})
 
 
+def _partial_answer(state: _AStreamState) -> bool:
+    """Whether an interrupted attempt left answer text or tool-call fragments."""
+    return bool(state.by_index) or any(part.strip() for part in state.content_parts)
+
+
 def _should_retry_stream_error(mapped: LLMCallError, *, attempt: int, max_attempts: int) -> bool:
     """流式建流/读流是否在抛出 ``LLMCallError`` 前继续重试（对齐 litellm 版 ``astream``）。"""
     if attempt >= max_attempts:
@@ -1664,9 +1669,13 @@ class LLMClient:
         max_attempts = self._resolve_max_attempts(kwargs)
         request_url = self._endpoint()
 
+        # Whether the next attempt continues a partial answer or resends the
+        # request: repetition is always detected in written text, while an
+        # attempt that failed before writing any answer has nothing to continue.
+        continuing = False
         for attempt in range(max_attempts + 1):
             stream_state = _AStreamState()
-            attempt_payload = self._astream_payload_for_attempt(payload, attempt)
+            attempt_payload = self._astream_payload_for_attempt(payload, attempt if continuing else 0)
             try:
                 async for msg in self._astream_iter(
                     payload=attempt_payload,
@@ -1687,6 +1696,7 @@ class LLMClient:
                     detail=e.detail,
                     snippet=e.content_snippet[:200],
                 )
+                continuing = True
                 continue
             except Exception as e:
                 mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base)
@@ -1698,6 +1708,7 @@ class LLMClient:
                         detail=mapped.message,
                         status_code=mapped.status_code,
                     )
+                    continuing = _partial_answer(stream_state)
                     continue
                 self._audit_llm_call(success=False, stream=True)
                 raise mapped from e
@@ -1712,6 +1723,7 @@ class LLMClient:
                         detail=finish_error.message,
                         status_code=finish_error.status_code,
                     )
+                    continuing = _partial_answer(stream_state)
                     continue
                 self._audit_llm_call(success=False, stream=True)
                 raise finish_error
@@ -1730,6 +1742,7 @@ class LLMClient:
                     detail=e.detail,
                     snippet=e.content_snippet[:200],
                 )
+                continuing = True
                 continue
             self._audit_llm_call(success=True, stream=True)
             return
@@ -1842,8 +1855,10 @@ class LLMClient:
             state.by_index,
             state.finish_reason,
         )
+        # Text is checked only on every 20th chunk; check the complete response
+        # here so a short reply or the tail after the last check is not skipped.
+        self._check_repetition("".join(state.content_parts), messages, tool_calls=[*final_tc, *final_invalid])
         if final_tc or final_invalid:
-            self._check_repetition("", messages, tool_calls=[*final_tc, *final_invalid])
             yield LLMClientMessage(
                 content="",
                 reasoning_content="",
