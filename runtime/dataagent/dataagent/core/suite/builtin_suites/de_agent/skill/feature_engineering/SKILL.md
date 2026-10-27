@@ -53,6 +53,7 @@ description: |
 编写或修改任何 DDL、DML SQL 之前，必须先读取 `sql_rules` skill 的 SKILL.md，按要求加载对应的 SQL 编写规范（DDL 读 `ddl_rules.md`，DML 读 `dml_rules.md`）；生成后逐条对照自检。
 - **字符串类型空值判断 → `bicoredata.IsEmpty(field)`**（保留侧 `!bicoredata.IsEmpty(field)`）：仅针对字符串存储；禁止对 STRING 用 `IS NULL` / `IS NOT NULL` / `= ''` / `<> ''` 替代。**语义非字符串但按字符串存储**（时间/次数/金额等存 STRING）仍必须用 `bicoredata.IsEmpty`；**非字符串类型存储**（元数据为数值/时间戳等）不适用 `bicoredata.IsEmpty`，按该类型判空。
 - **禁止方言不支持的类型**：DDL 列类型与 `CAST` 目标类型必须属于 Hive/Spark 白名单；禁止 `REAL`/`NUMERIC`/`TEXT` 等跨方言类型（过程浮点用 `DOUBLE`，落表用 `DECIMAL`）。
+- **小数连算禁止中间 CAST 截断**：先算完整表达式再对最终值 CAST；禁止 `A * CAST(B/C AS DECIMAL(...))` 这类对中间结果提前 CAST，应写 `CAST(A * B / C AS DECIMAL(...))`（细则见 `dml_rules.md`）。
 
 ## 任务路由与冲突裁决
 - 目标：识别目标粒度、时间窗口、产出表、源表线索、原始 SQL/样例 SQL、用户硬约束。

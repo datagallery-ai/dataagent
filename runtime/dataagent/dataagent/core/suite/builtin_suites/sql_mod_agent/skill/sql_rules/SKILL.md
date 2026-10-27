@@ -70,7 +70,10 @@ description: |
    - SHA256 加密使用 `upper(bicoredata.SHA256(upper(raw_id)))` 这类平台 UDF，不要自行换成通用 `SHA2`。如果用户没有明确指定，优先使用 `bicoredata.SHA256`。
    - 序列拼接优先使用 `bicoredata.ConcatWithRank`，不要自行用不稳定的 `collect_list` 排序拼接。
    - JSON字符串解析优先使用平台UDF `bicoredata.getJsonObject`，不要使用通用的 `get_json_object`。
-   - 使用平台UDF函数 `bicoredata.DateFormat` 做日期格式转换时，只能传入日期字符串一个参数。
+   - 使用平台UDF函数 `bicoredata.DateFormat` 做日期格式转换时，只能传入日期字符串一个参数；且**仅允许**以下两种转换：
+     1. `yyyyMMdd` 与 `yyyy-MM-dd` 互相转换
+     2. 从 `yyyyMMddHHmmss` 转换到 `yyyy-MM-dd HH:mm:ss`
+     其余格式转换应使用合适的 SQL 内置函数（如 `date_format` / `from_unixtime` 等），禁止滥用 `bicoredata.DateFormat`。
 6. **字段名和映射方向必须以 schema/元数据证据为准**：
    - 遇到相近字段、同义字段、层级分类字段、映射表左右字段时，必须先用元数据证据确认真实字段名和映射方向。
    - 禁止凭业务语义臆造字段名，或把映射表的输入列、输出列方向写反。

@@ -48,7 +48,10 @@
    - SHA256 加密使用 `bicoredata.SHA256(raw_id)` 这类平台 UDF，不要自行换成通用 `SHA2`。如果用户没有明确指定，优先使用 `bicoredata.SHA256`。
    - 序列拼接优先使用 `bicoredata.ConcatWithRank`，不要自行用不稳定的 `collect_list` 排序拼接。
    - JSON字符串解析优先使用平台UDF `bicoredata.getJsonObject`，不要使用通用的 `get_json_object`。
-   - 使用平台UDF函数 `bicoredata.DateFormat` 做日期格式转换时，只能传入日期字符串一个参数。
+   - 使用平台UDF函数 `bicoredata.DateFormat` 做日期格式转换时，只能传入日期字符串一个参数；且**仅允许**以下两种转换：
+     1. `yyyyMMdd` 与 `yyyy-MM-dd` 互相转换
+     2. 从 `yyyyMMddHHmmss` 转换到 `yyyy-MM-dd HH:mm:ss`
+     其余格式转换应使用合适的 SQL 内置函数（如 `date_format` / `from_unixtime` 等），禁止滥用 `bicoredata.DateFormat`。
 6. **字段名和映射方向必须以 schema/元数据证据为准**：
    - 遇到相近字段、同义字段、层级分类字段、映射表左右字段时，必须先用元数据证据确认真实字段名和映射方向。
    - 禁止凭业务语义臆造字段名，或把映射表的输入列、输出列方向写反。
@@ -165,6 +168,10 @@
 - **CAST / 类型转换目标类型也必须方言合法**：禁止 `CAST(... AS REAL)`、`CAST(... AS NUMERIC)` 等当前 Hive/Spark 方言不支持或不在白名单内的类型；浮点过程计算用 `DOUBLE`，落表用 `DECIMAL(p,s)`，整型用 `TINYINT`/`SMALLINT`/`INT`/`BIGINT`，字符串用 `STRING`。
 - 字符串类型的列，如果实际存储的数据为整数或浮点数，可在 SELECT 表达式中 CAST 为 DOUBLE 后再参与 SUM/AVG 计算。
 - 对结果中的小数，必须使用 DOUBLE 作为过程计算的中间类型，落表前再按本模块下文的精度规则 CAST 为 DECIMAL(p,s)。
+- **禁止对算术中间结果提前 CAST 截断精度**：乘除加减等连算时，先在 DOUBLE（或必要的数值类型）上算出完整表达式，仅对最终结果做一次落表 CAST（如 `DECIMAL(p,s)`）。禁止先把子表达式 CAST 成低精度再继续运算，以免中间截断把误差放大到最终结果。
+  - 正例：`CAST(A * B / C AS DECIMAL(38,6))`；或先 `A * B / C`（过程为 DOUBLE）再在外层 CAST。
+  - 反例：`A * CAST(B / C AS DECIMAL(38,6))`、`CAST(A * B AS DECIMAL(38,6)) / C`、对每一步子结果分别 `CAST(... AS DECIMAL(...))` 再继续乘除。
+  - 说明：把 STRING 列先 `CAST(... AS DOUBLE)` 再参与运算是允许且推荐的；本条禁止的是对**已参与运算的中间结果**做精度截断 CAST，不是禁止操作数类型转换。
 - 选用聚合函数 AVG / MIN / MAX / SUM 时应该结合字段的名称和描述，例如平均值字段使用AVG，总值字段使用SUM，最大值字段使用MAX，最小值字段使用MIN。当对于已采样的样本进行聚合时，要考虑原始表列语义和聚合函数的搭配使用，如已有列语义已经是最大最小值，且目标计算结果仍然是最大最小值，那么通常来说应该要对各样本的最大值取最大值，各样本的最小值取最小值。
 - 过滤时间时优先使用分区时间字段，除非用户显式地要求使用其他字段过滤。
 - 用户没有明确要求时不要使用ROUND，保留小数应该使用 `CAST (x as DECIMAL(n,d))`。特征为比率时默认使用 `CAST (x as DECIMAL(38,6))` 来保留6位小数，百分数也默认保留6位小数，除非用户有其他显式要求。用户没有明确要求时，除了比率外的特征不要用 CAST / ROUND 修改精度。
