@@ -86,7 +86,10 @@ SCENARIO:
         - SHA256 加密使用 `upper(bicoredata.sha256(upper(raw_id)))` 这类平台 UDF，不要自行换成通用 `SHA2`。如果用户没有明确指定，优先使用 `bicoredata.SHA256`
         - 序列拼接优先使用 `bicoredata.ConcatWithRank`，不要自行用不稳定的 `collect_list` 排序拼接
         - JSON 字符串解析优先使用平台 UDF `bicoredata.getJsonObject`，不要使用通用的 `get_json_object`
-        - 使用平台 UDF 函数 `bicoredata.DateFormat` 做日期格式转换时，只能传入日期字符串一个参数
+        - 使用平台 UDF 函数 `bicoredata.DateFormat` 做日期格式转换时，只能传入日期字符串一个参数；且仅允许以下两种转换：
+          1. `yyyyMMdd` 与 `yyyy-MM-dd` 互相转换
+          2. 从 `yyyyMMddHHmmss` 转换到 `yyyy-MM-dd HH:mm:ss`
+          其余格式转换应使用合适的 SQL 内置函数（如 `date_format` / `from_unixtime` 等），禁止滥用 `bicoredata.DateFormat`
         - 使用 DATE_ADD 时需要注意日期格式，例如使用 `pt_d` 做计算时需要先使用 `bicoredata.DateFormat` UDF 将其从 `yyyyMMdd` 格式转换为 `yyyy-MM-dd` 格式
 
       5. **设备 ID 必须合法性优先**：
