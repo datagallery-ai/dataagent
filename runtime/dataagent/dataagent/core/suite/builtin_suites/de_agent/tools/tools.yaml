@@ -41,6 +41,22 @@ TOOLS:
         llm_model: "planner"
         llm_call_params:
           enable_thinking: false
+    # 新建目标表时校验 DDL 列名词根；与表名共用同一词根字典
+    - module: "dataagent.core.suite.builtin_suites.de_agent.tools.table_word_roots"
+      function: "validate_column_word_roots"
+      name: "validate_column_word_roots"
+      category: "semantic"
+      config:
+        # csv_path: 可省略；默认读取仓库根目录的 word_dict_list.csv
+        english_name_column: "词根英文名"
+        chinese_name_column: "词根中文名"
+        description_column: "描述"
+        type_column: "词根类型"
+        regex_column: "特殊词根规则"
+        special_type_value: "特殊词根"
+        llm_model: "planner"
+        llm_call_params:
+          enable_thinking: false
     # golden schema linking 召回子 agent
     # - name: "metadata_recall"
     #   module: "dataagent.core.suite.builtin_suites.de_agent.tools.golden_schema_metadata_recall"
