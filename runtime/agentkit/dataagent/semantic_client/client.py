@@ -48,21 +48,34 @@ class SemanticServiceClient:
         timeout: float = 30.0,
         verify: bool | ssl.SSLContext = False,
         transport: httpx.BaseTransport | None = None,
+        scenario: str | None = None,
+        _shared: SemanticServiceClient | None = None,
     ) -> None:
-        """Create a client for the configured semantic-service base URL."""
+        """Create a client for the configured semantic-service base URL.
+
+        ``scenario`` tags outgoing requests with ``X-Semantic-Scenario`` (the
+        health check is exempt). ``_shared`` is internal: a scenario view
+        borrows the owner's connection pool and lifecycle instead of building
+        its own.
+        """
         self.base_url = normalize_semantic_base_url(base_url)
         self.timeout = timeout
         self.auth = auth
-        self._condition = Condition()
-        self._active_requests = 0
-        self._closing = False
-        self.client = httpx.Client(
-            timeout=timeout,
-            auth=auth,
-            headers={"Accept": "application/json"},
-            verify=verify,
-            transport=transport,
-        )
+        self.scenario = normalize_semantic_scenario(scenario)
+        self._owner = _shared if _shared is not None else self
+        if _shared is None:
+            self._condition = Condition()
+            self._active_requests = 0
+            self._closing = False
+            self.client = httpx.Client(
+                timeout=timeout,
+                auth=auth,
+                headers={"Accept": "application/json"},
+                verify=verify,
+                transport=transport,
+            )
+        else:
+            self.client = _shared.client
 
     def __enter__(self) -> SemanticServiceClient:
         """Use the client as a context-managed connection pool."""
@@ -94,8 +107,29 @@ class SemanticServiceClient:
             verify=build_ssl_context(settings.tls),
         )
 
+    def with_scenario(self, scenario: str) -> SemanticServiceClient:
+        """Return a view of this client whose requests carry the scenario header.
+
+        The view is a full client sharing this instance's connection pool and
+        in-flight accounting: closing the view is a no-op, and the owner's
+        ``close()`` keeps waiting for in-flight view requests. Wrapping a view
+        again rebinds the scenario on the same underlying pool.
+        """
+        return type(self)(
+            self.base_url,
+            auth=self.auth,
+            timeout=self.timeout,
+            scenario=scenario,
+            _shared=self._owner,
+        )
+
     def close(self) -> None:
-        """Reject new requests and close the pool once active synchronous requests finish."""
+        """Reject new requests and close the pool once active synchronous requests finish.
+
+        Scenario views borrow the pool; closing a view is a no-op.
+        """
+        if self._owner is not self:
+            return
         with self._condition:
             self._closing = True
             while self._active_requests:
@@ -347,16 +381,17 @@ class SemanticServiceClient:
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
         """Track in-flight requests so closing never races a worker thread."""
-        with self._condition:
-            if self._closing:
+        owner = self._owner
+        with owner._condition:
+            if owner._closing:
                 raise RuntimeError("SemanticServiceClient is closed")
-            self._active_requests += 1
+            owner._active_requests += 1
         try:
             return self._send_request(method, path, **kwargs)
         finally:
-            with self._condition:
-                self._active_requests -= 1
-                self._condition.notify_all()
+            with owner._condition:
+                owner._active_requests -= 1
+                owner._condition.notify_all()
 
     def _send_request(
         self,
@@ -368,6 +403,7 @@ class SemanticServiceClient:
         headers: dict[str, str] | None = None,
     ) -> Any:
         """Send a request with JSON completeness checks and audit logging."""
+        headers = _scenario_headers(self.scenario, path, headers)
         url = self._url(path)
         started = time.perf_counter()
         try:
@@ -398,11 +434,12 @@ class SemanticServiceClient:
             _assert_minimal_json_shape(payload, path=path)
             elapsed_ms = (time.perf_counter() - started) * 1000
             logger.info(
-                "semantic.audit method=%s path=%s status=%s elapsed_ms=%.1f success=true",
+                "semantic.audit method=%s path=%s status=%s elapsed_ms=%.1f scenario=%s success=true",
                 method,
                 path,
                 getattr(response, "status_code", "-"),
                 elapsed_ms,
+                self.scenario or "-",
             )
             return payload
         except DataAgentError:
@@ -460,6 +497,26 @@ def normalize_semantic_base_url(raw_url: str) -> str:
         return f"{base}/semantic/v1"
 
     return f"{base}/api/semantic/v1"
+
+
+def normalize_semantic_scenario(value: Any) -> str | None:
+    """Normalize a scenario header value; blank values mean no scenario."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("validation error: semantic scenario must be a string")
+    return value.strip() or None
+
+
+def _scenario_headers(
+    scenario: str | None, path: str, headers: dict[str, str] | None
+) -> dict[str, str] | None:
+    """Attach ``X-Semantic-Scenario`` to every request except the health check."""
+    if not scenario or path.strip("/") == "health":
+        return headers
+    merged = dict(headers or {})
+    merged.setdefault("X-Semantic-Scenario", scenario)
+    return merged
 
 
 def _assert_json_content_type(response: httpx.Response) -> None:

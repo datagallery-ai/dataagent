@@ -22,6 +22,7 @@ directly as a langgraph graph node.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -31,6 +32,7 @@ from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.constants import NL2SQL_PROMPT_PREFIX
 from nl2sql.errors import DataAgentError
 from nl2sql.prompt_manager import PromptTemplate
+from nl2sql.state import NL2SQLState
 from nl2sql.utils.nl2sql_utils import json_parser
 
 
@@ -49,10 +51,15 @@ class BaseNL2SQLNode:
         self.config = kwargs
         self._config = config
         self._model: BaseChatModel | None = None  # noqa: UP045
+        self._hooks: dict[str, Callable[..., Any]] = {}
 
     def bind_model(self, model: BaseChatModel) -> None:
         """Bind the chat model resolved by the host factory."""
         self._model = model
+
+    def bind_hooks(self, hooks: Mapping[str, Callable[..., Any]] | None) -> None:
+        """Bind scenario handlers (``{hook point: handler}``); ``None`` keeps base behavior."""
+        self._hooks = dict(hooks) if hooks else {}
 
     @property
     def model(self) -> BaseChatModel:
@@ -63,7 +70,7 @@ class BaseNL2SQLNode:
             )
         return self._model
 
-    async def run(self, state: dict[str, Any]) -> dict[str, Any]:
+    async def run(self, state: NL2SQLState) -> dict[str, Any]:
         """Execute the node and return the state update for langgraph.
 
         ``_aprocess`` returns the full (mutated) state; ``messages`` is stripped
@@ -118,6 +125,6 @@ class BaseNL2SQLNode:
                     ) from exc
         return None
 
-    async def _aprocess(self, state: dict[str, Any]) -> dict[str, Any]:
+    async def _aprocess(self, state: NL2SQLState) -> NL2SQLState:
         """Override this in subclasses to implement the node's work."""
         raise NotImplementedError("The async process is not implemented")

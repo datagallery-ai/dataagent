@@ -25,6 +25,7 @@ from nl2sql.constants import (
     DEFAULT_NL2SQL_SEMANTIC_TABLE_LIST_LIMIT,
 )
 from nl2sql.errors import DataAgentError
+from nl2sql.hooks import PERCEPTOR_SCHEMA_CONTEXT
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.prompt_manager import PromptTemplate
 from nl2sql.state import NL2SQLState
@@ -193,23 +194,41 @@ class PerceptorNode(BaseNL2SQLNode):
         if not state.get("schema_str", "").strip() and not provided.intersection(
             {"schema", "schema_str"}
         ):
-            logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
-            if self.schema_mode == _SCHEMA_MODE_LINKING:
-                question = state.get("question", "").strip()
-                schema, joins = await asyncio.to_thread(
-                    self.schema_linking, [question] if question else []
-                )
-                if not schema:
+            question = state.get("question", "").strip()
+            # Scenario hook (perceptor.schema_context): takes over schema acquisition; no fallback.
+            handler = self._hooks.get(PERCEPTOR_SCHEMA_CONTEXT)
+            if handler is not None:
+                schema_context = await handler(question)
+                if not schema_context.schema_str.strip():
                     raise DataAgentError(
                         source="config",
-                        fact=f"schema_mode={self.schema_mode}",
                         component="nl2sql",
+                        fact="场景 schema_context 处理器返回了空 schema_str",
+                    )
+                schema, joins = schema_context.schema, list(schema_context.joins)
+                schema_str = schema_context.schema_str
+                if schema_context.extra_rules:
+                    rules = state.get("sql_rules") or ""
+                    state["sql_rules"] = (
+                        f"{rules}\n{schema_context.extra_rules}" if rules else schema_context.extra_rules
                     )
             else:
-                schema, joins = await asyncio.to_thread(self.full_schema)
+                logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
+                if self.schema_mode == _SCHEMA_MODE_LINKING:
+                    schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
+                    if not schema:
+                        raise DataAgentError(
+                            source="config",
+                            fact=f"schema_mode={self.schema_mode}",
+                            component="nl2sql",
+                        )
+                else:
+                    schema, joins = await asyncio.to_thread(self.full_schema)
+                schema_str = schema_to_ddl(schema, joins)
+            # Both paths commit the same schema slice; only its source differs.
             state["schema"] = schema
             state["joins"] = joins
-            state["schema_str"] = schema_to_ddl(schema, joins)
+            state["schema_str"] = schema_str
         message = f"=== Perceptor ===\n{state.get('schema_str', '')}"
         logger.info(message)
         state["stream_message"] = message

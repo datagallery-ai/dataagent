@@ -43,6 +43,11 @@ def quote_sql_placeholders(sql: str) -> str:
     return sql
 
 
+def normalize_sql(sql: str) -> str:
+    """Collapse whitespace and trailing semicolons for SQL equality checks."""
+    return re.sub(r"\s+", " ", (sql or "").strip()).strip(" ;").casefold()
+
+
 def sql_parser(content: str) -> list[str]:
     """Extract SQL statements from model output text."""
     m = re.findall(r"```sql\s*(.*?)\s*```", content, re.S | re.I)

@@ -21,6 +21,8 @@ from sqlglot import Tokenizer, TokenType, exp
 from sqlglot.errors import ErrorLevel, ParseError
 from sqlglot.expressions import Expression
 
+from nl2sql.security.qualify import qualify_with_semantic_schema
+
 _COLUMN_CONTEXT_FUNCTION_NAMES = frozenset(
     {"current_catalog", "current_database", "current_path", "current_role", "session_user", "user"}
 )
@@ -34,8 +36,6 @@ def normalize_semantic_column_references(
     schema: dict[str, Any],
 ) -> Optional[str]:
     """Quote bare keyword-shaped names only when semantic metadata resolves them as columns."""
-    from nl2sql.security.checker import qualify_with_semantic_schema
-
     normalized_sql = sql
     for name in sorted(_candidate_names(statement)):
         candidate_sql = _quote_candidate_tokens(normalized_sql, dialect, name)

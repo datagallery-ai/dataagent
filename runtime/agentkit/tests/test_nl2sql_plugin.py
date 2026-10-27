@@ -84,6 +84,66 @@ async def test_task_end_to_end_on_sqlite(tmp_path):
     assert all(isinstance(request[1], HumanMessage) for request in plugin_model.requests)
 
 
+async def test_sql_security_check_runs_in_the_compiled_plugin(tmp_path):
+    # The plugin loader drops plain ``nl2sql`` module names once assembly
+    # finishes, so the security check must not import anything lazily at run
+    # time: it used to fail the whole task with "No module named 'nl2sql'".
+    # Reproduce the server's import environment: no plugin root on sys.path
+    # and no plain-name nl2sql modules left in sys.modules.
+    secured_sql = (
+        "SELECT department, COUNT(*) AS cnt FROM employees "
+        "WHERE salary > 0 GROUP BY department ORDER BY cnt DESC"
+    )
+
+    def handler(request):
+        if request.url.path.endswith("/advanced-search/table-list"):
+            return httpx.Response(200, json=[{"staff.employees": {"table_description": "员工表"}}])
+        if request.url.path.endswith("/advanced-search/table-columns-info"):
+            return httpx.Response(
+                200,
+                json={
+                    "staff.employees.id": {"column_short_description": "ID", "value_type": "INTEGER", "value_description": "1"},
+                    "staff.employees.name": {"column_short_description": "姓名", "value_type": "TEXT", "value_description": "Alice"},
+                    "staff.employees.department": {"column_short_description": "部门", "value_type": "TEXT", "value_description": "Engineering"},
+                    "staff.employees.salary": {"column_short_description": "薪资", "value_type": "REAL", "value_description": "120.0"},
+                },
+            )
+        return httpx.Response(200, json=[])
+
+    client = SemanticServiceClient(
+        "http://semantic.internal", transport=httpx.MockTransport(handler)
+    )
+    saved_path = list(sys.path)
+    saved_modules = {
+        key: module for key, module in sys.modules.items()
+        if key == "nl2sql" or key.startswith("nl2sql.")
+    }
+    sys.path[:] = [entry for entry in sys.path if entry != str(PLUGIN_ROOT)]
+    for key in saved_modules:
+        sys.modules.pop(key, None)
+    try:
+        with client:
+            payload, _ = await _run_task(
+                tmp_path,
+                params={
+                    "perceptor": {"schema_mode": "full_schema"},  # schema dict from the service
+                    "validator": {"sql_security_enabled": True, "db_explain": True},
+                },
+                plugin_responses=[
+                    AIMessage(content=f"```sql\n{secured_sql}\n```"),  # generator
+                    AIMessage(content='```json\n[{"id": 0, "score": 1, "issues": []}]\n```'),
+                    AIMessage(content='```json\n[{"score": 1, "issues": []}]\n```'),
+                ],
+                semantic_client=client,
+            )
+    finally:
+        sys.path[:] = saved_path
+        sys.modules.update(saved_modules)
+
+    assert payload["sql"] == secured_sql
+    assert payload["error"] is None
+
+
 async def test_native_stream_reports_nl2sql_steps_while_model_is_waiting(tmp_path):
     from ag_ui.core import RunAgentInput, UserMessage
     from ag_ui_langgraph import LangGraphAgent

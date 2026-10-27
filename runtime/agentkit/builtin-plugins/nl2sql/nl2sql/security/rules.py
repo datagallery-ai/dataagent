@@ -22,6 +22,7 @@ from sqlglot.optimizer.scope import traverse_scope
 from sqlglot.tokens import TokenType
 
 from nl2sql.security.models import SecurityViolation
+from nl2sql.security.qualify import qualify_with_semantic_schema
 
 _ALLOWED_FUNCTIONS = frozenset(
     {
@@ -280,8 +281,6 @@ def check_semantic_schema(
     schema: dict[str, Any],
 ) -> list[SecurityViolation]:
     """Require every source table and source column to exist in semantic metadata."""
-    from nl2sql.security.checker import qualify_with_semantic_schema
-
     normalized_schema = {_normalize_identifier(table_name): table_meta for table_name, table_meta in schema.items()}
     allowed_tables = set(normalized_schema)
     has_base_relation = False
