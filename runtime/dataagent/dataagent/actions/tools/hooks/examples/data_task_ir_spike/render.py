@@ -425,9 +425,7 @@ def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> st
     if key_refs:
         parts.append(
             f"先按顺序输出特征主键列 [{', '.join(key_refs)}]"
-            "（即使未出现在输出特征目录中也必须输出，不得遗漏或后置到指标列之后；"
-            "用户原始需求明确要求把主键成分拼接/组合为单列时，按用户要求的组合形式输出，"
-            "但每个主键成分都必须出现在组合列中）"
+            "（即使未出现在输出特征目录中也必须输出，不得遗漏或后置到指标列之后）"
         )
     else:
         parts.append("本任务暂无已确认特征主键前缀列")
@@ -442,17 +440,11 @@ def _render_final_output_column_contract(by_id: dict[str, dict[str, Any]]) -> st
     else:
         parts.append("本任务暂无已确认业务/指标输出列")
     total = len(key_refs) + len(business_names)
-    total_clause = f"当前已记录的输出语义项共 {total}（不含分区列）"
-    if len(key_refs) > 1:
-        total_clause += (
-            f"；用户原始需求明确要求把全部主键成分拼接为单列时，拼接组合列按 1 列计"
-            f"（共 {1 + len(business_names)} 列）"
-        )
-    total_clause += (
-        "；此数只用于核对已确认部分，不能视为信息不完备时的任务总列数；"
+    parts.append(
+        f"当前已记录的输出语义项共 {total}（不含分区列）；"
+        "此数只用于核对已确认部分，不能视为信息不完备时的任务总列数；"
         "列名是否与 IR 参考名一致不作为约束"
     )
-    parts.append(total_clause)
     return "；".join(parts) + "。"
 
 
