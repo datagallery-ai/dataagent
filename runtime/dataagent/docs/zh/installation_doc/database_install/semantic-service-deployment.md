@@ -90,7 +90,7 @@ java -version
 **服务包下载地址**（版本以实际分发链接为准）：
 
 ```text
-https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz
+https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/releases/semantic-service/v0.1.0/semantic-layer-0.1.0.tar.gz
 ```
 
 可选：并行预下载向量模型（完整路径，约 228 MB）与 PostgreSQL 镜像，节省等待时间：
@@ -100,7 +100,7 @@ export DOWNLOAD_DIR="${DOWNLOAD_DIR:-./downloads}"
 mkdir -p "$DOWNLOAD_DIR" && cd "$DOWNLOAD_DIR"
 
 wget -c -O semantic-layer.tar.gz \
-  'https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz'
+  'https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/releases/semantic-service/v0.1.0/semantic-layer-0.1.0.tar.gz'
 
 wget -c -O bge-base-zh-v1.5.tar.gz \
   https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/models/BAAI/bge-base-zh-v1.5.tar.gz
@@ -111,7 +111,7 @@ docker pull pgvector/pgvector:pg16
 下载并解压服务包：
 
 ```bash
-export SERVICE_PKG_URL='https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/semantic-service/semantic-layer-0.1.0.tar.gz'
+export SERVICE_PKG_URL='https://datagallery.obs.cn-southwest-2.myhuaweicloud.com/releases/semantic-service/v0.1.0/semantic-layer-0.1.0.tar.gz'
 
 wget -O semantic-layer.tar.gz "$SERVICE_PKG_URL"
 tar xzf semantic-layer.tar.gz
