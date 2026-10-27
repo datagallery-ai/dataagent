@@ -23,6 +23,7 @@ from pathlib import Path
 from loguru import logger
 
 from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolPostHookOutcome, ToolPreHookOutcome
+from dataagent.actions.tools.semantic_tool.metadata_recall import HISTORY_SQL_MARKER
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.context.context import ContextFactory
 from dataagent.core.context.context_ir import ActionNode
@@ -399,6 +400,13 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
                 path = str(tool_args.get("path", "")).replace("\\", "/")
                 # 仅 .md 进证据；口径冻结表模板/填写内容不进 IR，避免污染 DataTaskIR
                 if not path.endswith(".md") or "calibration_tables" in path:
+                    continue
+            if tool_name == "metadata_recall":
+                # 历史SQL检索结果只经主 Agent 摘录进 nl2sql query 的⌈## 历史SQL参考⌋段落；
+                # 其输出是参考级证据（GROUP BY/过滤/源表/列结构），进 IR 填充 prompt 会被抄进
+                # 主键/口径/列结构字段污染 IR，故整体不进 IR 证据（"参考级不得作为填写依据"的机械执行）
+                if HISTORY_SQL_MARKER in str(tool_args.get("query") or "").lower():
+                    logger.info("[update_ir] history-SQL recall evidence excluded from IR fill")
                     continue
             tool_evidence_parts.append(json.dumps({
                 "tool": tool_name, "params": tool_args, "output": tool_output,
