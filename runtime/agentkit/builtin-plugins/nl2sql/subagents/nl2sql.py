@@ -50,6 +50,7 @@ from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.constants import DEFAULT_WORKFLOW_RECURSION_LIMIT
 from nl2sql.errors import DataAgentError
 from nl2sql.graph import build_nl2sql_graph, state_defaults
+from nl2sql.hooks import HookContext, load_scenario
 from nl2sql.state import get_default_state
 from nl2sql.utils.sql_service import check_engine_driver
 
@@ -249,7 +250,9 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
     database, so the parent agent can answer "which database" without tools.
     The semantic-service client is host-owned: ``services.semantic_client`` comes
     from the root ``semantic`` settings (``None`` when unconfigured) and is shared,
-    not built from plugin parameters.
+    not built from plugin parameters. A configured ``scenario`` assembles the
+    named scenario pack here, at build time — an unknown pack or an invalid
+    handler mapping fails the build with a clear error.
     """
     nl2sql_config = NL2SQLConfig(params)
     engine = str(nl2sql_config.get("database.engine") or nl2sql_config.get("database.dialect"))
@@ -260,7 +263,22 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
     model = _BudgetedModel(services.get_model(str(nl2sql_config.get("model"))))
     budget = nl2sql_config.model_call_budget
     semantic_client = services.semantic_client
-    workflow = build_nl2sql_graph(nl2sql_config, model=model, semantic_client=semantic_client)
+    scenario = nl2sql_config.scenario
+    scenario_hooks = (
+        load_scenario(
+            HookContext(
+                scenario=scenario,
+                model=model,
+                config=nl2sql_config,
+                semantic_client=semantic_client,
+            )
+        )
+        if scenario
+        else None
+    )
+    workflow = build_nl2sql_graph(
+        nl2sql_config, model=model, semantic_client=semantic_client, hooks=scenario_hooks
+    )
     defaults = state_defaults(nl2sql_config)
     hooks = services.run_hooks
     outputs_dir = services.outputs_dir if nl2sql_config.result_files else None

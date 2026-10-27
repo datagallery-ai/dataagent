@@ -16,22 +16,21 @@ from typing import Any, cast
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ErrorLevel, OptimizeError
+from sqlglot.errors import ErrorLevel
 from sqlglot.expressions import Expression
-from sqlglot.optimizer.qualify import qualify
 
 from nl2sql.security.models import SecurityCheckResult, SecurityViolation
+from nl2sql.security.rules import (
+    check_allowed_functions,
+    check_allowed_query_syntax,
+    check_resource_usage,
+    check_semantic_schema,
+)
 from nl2sql.security.semantic_resolver import normalize_semantic_column_references
 
 
 def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityCheckResult:
     """Check one SQL candidate using deterministic SQLGlot rules."""
-    from nl2sql.security.rules import (
-        check_allowed_functions,
-        check_allowed_query_syntax,
-        check_resource_usage,
-        check_semantic_schema,
-    )
 
     if len((sql or "").encode("utf-8")) > 1024 * 1024:
         return SecurityCheckResult([SecurityViolation("RESOURCE-001", "SQL text exceeds 1 MiB.")])
@@ -69,42 +68,6 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
         return SecurityCheckResult(violations)
     violations.extend(check_semantic_schema(statement, dialect=dialect, schema=schema))
     return SecurityCheckResult(violations, normalized_sql=normalized_sql if not violations else None)
-
-
-def qualify_with_semantic_schema(
-    statement: Expression,
-    *,
-    dialect: str,
-    schema: dict[str, Any],
-) -> Expression:
-    """Qualify table aliases, columns, and stars using semantic metadata."""
-    sqlglot_schema: dict[str, Any] = {}
-    for table_name, table_meta in schema.items():
-        columns = dict.fromkeys(table_meta.get("columns", {}), "UNKNOWN")
-        _insert_sqlglot_schema(sqlglot_schema, str(table_name), columns)
-    try:
-        return qualify(
-            statement.copy(),
-            dialect=dialect,
-            schema=sqlglot_schema,
-            identify=False,
-            validate_qualify_columns=True,
-        )
-    except OptimizeError as exc:
-        raise ValueError(str(exc)) from exc
-
-
-def _insert_sqlglot_schema(target: dict[str, Any], table_name: str, columns: dict[str, str]) -> None:
-    parts = [part for part in table_name.split(".") if part]
-    current = target
-    for qualifier in parts[:-1]:
-        child = current.get(qualifier, {})
-        if not isinstance(child, dict):
-            child = {}
-        current.update({qualifier: child})
-        current = child
-    if parts:
-        current.update({parts[-1]: columns})
 
 
 def _check_read_only_structure(statement: Expression) -> list[SecurityViolation]:

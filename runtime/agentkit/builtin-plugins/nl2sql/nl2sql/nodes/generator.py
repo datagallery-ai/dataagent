@@ -22,6 +22,7 @@ from nl2sql.constants import (
     NL2SQL_PROMPT_PREFIX,
 )
 from nl2sql.errors import DataAgentError
+from nl2sql.hooks import GENERATOR_POST_SQL
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.prompt_manager import PromptTemplate
 from nl2sql.state import NL2SQLState, Result
@@ -140,9 +141,27 @@ class GeneratorNode(BaseNL2SQLNode):
                 source="llm",
                 component="nl2sql",
             ) from last_exc
-        for i, (sql, prompt, strategy) in enumerate(results):
-            state["generation_results"].append(Result(id=i, sql=sql, prompt=prompt, strategy=strategy))
-        state["sql"] = state["generation_results"][0].sql
+        candidates = [
+            Result(id=i, sql=sql, prompt=prompt, strategy=strategy)
+            for i, (sql, prompt, strategy) in enumerate(results)
+        ]
+        # Scenario hook (generator.post_sql): rewrites the candidates; failure keeps the originals.
+        handler = self._hooks.get(GENERATOR_POST_SQL)
+        if handler is not None:
+            try:
+                rewritten = list(await handler(candidates, state))
+                if not rewritten:
+                    raise ValueError("rewrote the candidates into nothing")
+                for i, result in enumerate(rewritten):
+                    result.id = i
+                candidates = rewritten
+            except Exception as exc:
+                logger.warning(
+                    f"Generator scenario hook failed; "
+                    f"keeping {len(candidates)} original candidate(s): {exc}"
+                )
+        state["generation_results"].extend(candidates)
+        state["sql"] = candidates[0].sql
         p = "\n".join([f"[{s.strategy}]\n{s.sql}" for s in state["generation_results"]])
         message = f"=== Generator ===\n{p}"
         logger.info(message)

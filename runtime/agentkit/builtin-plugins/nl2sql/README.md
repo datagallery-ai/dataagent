@@ -21,10 +21,15 @@ nl2sql/                      插件根
 │                            任务协议适配（messages→question，JSON AIMessage 出参）、
 │                            会话结果文件（已取行写成 CSV 快照 + meta）、
 │                            向描述追加已绑定数据库摘要（db_id/dialect/engine，不含连接参数）
+├── scenarios/                场景包挂载点：`scenario` 键按点分名路由
+│                             （`udn.business_twin` → `scenarios/udn/business_twin/`）；
+│                             udn/ 收编 business_twin、traffic_insight 两场景 + common/ 共用机制
+├── docs/                     特性设计文档（udn-scenario-packs.md：钩子位机制与场景包规则）
 └── nl2sql/                  Python 包
     ├── graph.py             StateGraph 组装（节点链实例化、路由规则 → 普通边/条件边）
     ├── state.py             NL2SQLState（langgraph MessagesState 派生）+ Result
     ├── config_manager.py    NL2SQLConfig（plugins.config.nl2sql 参数校验与点号路径读取）
+    ├── hooks.py             场景钩子位契约（点位常量、SchemaContext/HookContext）与 load_scenario 加载器
     ├── prompt_manager.py    PromptTemplate（包内相对路径解析）
     ├── errors.py / constants.py
     ├── nodes/               BaseNL2SQLNode 基类 + 6 个工作流节点（perceptor→…→selector）
@@ -163,6 +168,7 @@ nl2sql/                      插件根
 | `model` | 必填。`models` 别名，由宿主解析并注入所有节点 |
 | `model_call_budget` | 单次任务内模型调用上限（默认 64），超出即报错返回 |
 | `result_files` | 是否为每次成功查询写会话结果文件（默认 `true`，见上文） |
+| `scenario` | 可选。场景包点名（点分名一段一级目录：`udn.business_twin` → `scenarios/udn/business_twin/`，目录须含 `scenario.py` 入口）；缺省走默认流程，配置后选表与生成后改写由场景包接管，见 `docs/udn-scenario-packs.md` |
 | `database.db_id` / `dialect` / `engine` | 语义层库名 / SQL 方言（必填）/ 执行引擎（默认同方言：`sqlite`、`mysql`、`gaussvector`、`hive`/`spark`；非 sqlite 引擎的驱动 `pymysql`/`psycopg2`/`pyspark` 为可选依赖，构建时缺失会明确报错） |
 | `database.*`（其余键） | 引擎连接参数，如 sqlite 的 `path`、mysql 的 `host/port/user/password/database` |
 | `perceptor.schema_mode` | `full_schema` 或 `schema_linking` |
@@ -190,7 +196,9 @@ nl2sql/                      插件根
   `plugins.config.nl2sql.semantic` 段被忽略。
 - 执行器受限取数：引擎最多取 `limit+1` 行，结果统一携带
   `row_count`（已取行数）、`total_known`（是否全量）、`truncated`（是否截断）。
-- 观测（JSONL 轨迹记录、性能采集、上下文转储）与场景变体
-  （`business_twin`、`traffic_insight`、cloud_core 引擎）移除；
+- 观测（JSONL 轨迹记录、性能采集、上下文转储）与 cloud_core 引擎移除；
   场景 SQL 规则示例保留在 `nl2sql/examples/sql_rules/`。
+- 场景变体以场景包方式回归：`business_twin`、`traffic_insight` 收编为
+  `scenarios/udn/` 下的场景包，`scenario` 键一行挂载；基座只发布钩子位
+  （`nl2sql/hooks.py`），不配置场景时行为不变。设计见 `docs/udn-scenario-packs.md`。
 - checkpoint/resume 路径未移植（旧实现中为死代码：无中断点、未配置 checkpointer）。

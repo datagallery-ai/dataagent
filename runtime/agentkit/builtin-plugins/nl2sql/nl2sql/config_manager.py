@@ -42,7 +42,16 @@ _LEGACY_SECTIONS = frozenset(
 _NODE_ORDER = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
 
 _KNOWN_KEYS = frozenset(
-    {"model", "model_call_budget", "result_files", "database", "semantic", "nodes", *_NODE_ORDER}
+    {
+        "model",
+        "model_call_budget",
+        "result_files",
+        "database",
+        "semantic",
+        "nodes",
+        "scenario",
+        *_NODE_ORDER,
+    }
 )
 
 _CONNECTION_RESERVED = frozenset({"db_id", "dialect", "engine"})
@@ -80,6 +89,10 @@ class NL2SQLConfig:
 
         if not isinstance(raw.get("result_files", True), bool):
             raise ValueError(f"result_files must be true or false, got {raw.get('result_files')!r}")
+
+        scenario = raw.get("scenario")
+        if scenario is not None and (not isinstance(scenario, str) or not scenario.strip()):
+            raise ValueError(f"scenario must be a dotted scenario name, got {scenario!r}")
 
         database = raw.get("database")
         if not isinstance(database, Mapping):
@@ -119,6 +132,12 @@ class NL2SQLConfig:
     def result_files(self) -> bool:
         """Whether each executed query writes its fetched rows to a session result file."""
         return bool(self._data.get("result_files", True))
+
+    @property
+    def scenario(self) -> str | None:
+        """The dotted scenario-pack name to assemble (``None`` = base behavior, no pack)."""
+        value = self._data.get("scenario")
+        return value if isinstance(value, str) and value.strip() else None
 
     @property
     def enabled_nodes(self) -> list[str]:

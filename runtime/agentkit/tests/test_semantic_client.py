@@ -82,6 +82,109 @@ def test_all_semantic_endpoints(method, args, verb, path):
     assert request.headers.get("accept") == "application/json"
 
 
+def test_scenario_view_tags_requests_and_skips_health():
+    """with_scenario() stamps X-Semantic-Scenario on every request except health."""
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    with SemanticServiceClient(
+        "http://semantic.test/api", transport=httpx.MockTransport(respond)
+    ) as client:
+        client.get_table_list("db")
+        view = client.with_scenario("business_twin")
+        view.get_table_list("db")
+        view.search_basic({"query": "orders"})
+        view.get("health")
+    assert [request.headers.get("X-Semantic-Scenario") for request in requests] == [
+        None,
+        "business_twin",
+        "business_twin",
+        None,
+    ]
+
+
+def test_scenario_view_keeps_explicit_headers_and_blank_scenario_is_dropped():
+    """An explicit scenario header wins over the view's; a blank scenario sends none."""
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    with SemanticServiceClient(
+        "http://semantic.test/api", transport=httpx.MockTransport(respond)
+    ) as client:
+        view = client.with_scenario("business_twin")
+        view.get("search/fulltext", headers={"X-Semantic-Scenario": "traffic_insight"})
+        client.with_scenario("  ").get("search/fulltext")
+    assert [request.headers.get("X-Semantic-Scenario") for request in requests] == [
+        "traffic_insight",
+        None,
+    ]
+
+
+@pytest.mark.parametrize("scenario", [123, ["business_twin"]])
+def test_scenario_must_be_a_string(scenario):
+    """Non-string scenario values fail fast instead of corrupting a header."""
+    with pytest.raises(ValueError, match="semantic scenario must be a string"):
+        SemanticServiceClient("http://semantic.test/api", scenario=scenario)
+
+
+def test_scenario_view_borrows_the_pool_and_closing_it_is_a_noop():
+    """Views share the owner's pool: view.close() does nothing, owner.close() rejects views."""
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    client = SemanticServiceClient("http://semantic.test/api", transport=httpx.MockTransport(respond))
+    view = client.with_scenario("business_twin")
+    assert view.client is client.client
+    view.close()
+    assert not client.client.is_closed
+    view.get_table_list("db")
+    client.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        view.get_table_list("db")
+
+
+def test_close_waits_for_active_view_request_then_rejects_new_work():
+    """The owner's close() also waits for in-flight scenario-view requests."""
+    started, release, closed = threading.Event(), threading.Event(), threading.Event()
+
+    def respond(request):
+        assert request.headers.get("X-Semantic-Scenario") == "business_twin"
+        started.set()
+        assert release.wait(5)
+        return httpx.Response(200, json={"ok": True})
+
+    client = SemanticServiceClient("semantic.test", transport=httpx.MockTransport(respond))
+    view = client.with_scenario("business_twin")
+
+    def close():
+        client.close()
+        closed.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        request = pool.submit(view.list_retrieval_tables)
+        assert started.wait(2)
+        closing = pool.submit(close)
+        try:
+            assert not closed.wait(0.05)
+        finally:
+            release.set()
+        assert request.result(timeout=2) == {"ok": True}
+        closing.result(timeout=2)
+    assert client.client.is_closed
+    client.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        view.list_retrieval_tables()
+
+
 def test_query_encoding_defaults_samples_and_post_payload():
     """Preserve repeated query keys, sample normalization, defaults and request bodies."""
     requests = []

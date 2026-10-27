@@ -20,6 +20,7 @@ semantic client.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.language_models import BaseChatModel
@@ -63,6 +64,7 @@ def build_nl2sql_graph(
     *,
     model: BaseChatModel,
     semantic_client: SemanticServiceClient | None = None,
+    hooks: Mapping[str, Callable[..., Any]] | None = None,
 ) -> CompiledStateGraph:
     """Assemble the nl2sql StateGraph from validated parameters.
 
@@ -73,6 +75,9 @@ def build_nl2sql_graph(
         model: Chat model resolved by the host factory; bound to every node.
         semantic_client: Host-owned semantic-service client injected through
             ``SubagentServices``; ``None`` is valid when the schema is user-supplied.
+        hooks: Scenario handlers (``{hook point: handler}``) from
+            :func:`nl2sql.hooks.load_scenario`; bound to every node, which
+            looks up its own points (``None`` keeps base behavior).
 
     Returns:
         The compiled langgraph workflow.
@@ -85,6 +90,7 @@ def build_nl2sql_graph(
     for name in enabled_nodes:
         node = _build_node(config, name, security_enabled=security_enabled)
         node.bind_model(model)
+        node.bind_hooks(hooks)
         if isinstance(node, PerceptorNode):
             node.bind_semantic_client(semantic_client)
         graph.add_node(name, node.run)
