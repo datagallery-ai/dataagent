@@ -39,7 +39,7 @@ uv run -m dataagent \
 
 - 写入目标由 yaml 里的 `CORE.perceptor.user_sql_rules` 决定，配置的是包内文件名（不带 `.md`，加载时自动补后缀），不是外部绝对路径；这条解析规则同样登记在 `EDITABLE_PROMPTS` 开放清单里（文档名 `sql_rules`）。
 - 覆盖包内文件要求进程能写安装目录；镜像重建会恢复旧文件。生产环境改前建议先备份原文件。
-- **前置条件**：view/update 只在多场景启动（`--config scenario=yaml`）下可用。单配置启动（`--config path` 不带等号）时没有场景名可寻址，view/update 一律 422（unknown scenario）；query 不受影响
+- **前置条件**：operation 上的 `view`、`update`、`query` 都要带已登记的 `content.scenario`，只在 `--config 场景名=yaml` 下可用。单配置启动（`--config path` 不带等号）时没有场景名，这些请求一律 422。旧的 `POST /api/agent/query` 不带 `scenario`，不受影响
 
 ### 2.2 操作一：查看 prompt（type=view）
 

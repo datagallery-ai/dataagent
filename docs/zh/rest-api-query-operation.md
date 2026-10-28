@@ -22,16 +22,18 @@ curl -sS -X POST "http://127.0.0.1:8010/api/agent/query" \
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `type` | 字符串 | 操作类型。取值示例：`query`（当前已实现的一种） |
-| `content` | 对象 | 该操作的内容。query 时里面只有 `query`、`stream` |
+| `content` | 对象 | 该操作的内容 |
 | `content.query` | 字符串 | 提问文本，必填，长度至少 1 |
 | `content.stream` | 布尔 | 仅 query 的 content 里有。`false` 一次返回 JSON；`true` 用 SSE |
+| `content.scenario` | 字符串 | 必填，长度至少 1。必须是 `--config` 等号左边的已登记场景名，不走默认场景 |
 
 ```json
 {
   "type": "query",
   "content": {
     "query": "上个月销量最高的产品是什么？",
-    "stream": false
+    "stream": false,
+    "scenario": "business_twin"
   }
 }
 ```
@@ -45,7 +47,8 @@ curl -sS -X POST "http://127.0.0.1:8010/api/agent/operation" \
     "type": "query",
     "content": {
       "query": "上个月销量最高的产品是什么？",
-      "stream": false
+      "stream": false,
+      "scenario": "business_twin"
     }
   }'
 ```
@@ -60,7 +63,8 @@ curl -sS -N -X POST "http://127.0.0.1:8010/api/agent/operation" \
     "type": "query",
     "content": {
       "query": "上个月销量最高的产品是什么？",
-      "stream": true
+      "stream": true,
+      "scenario": "business_twin"
     }
   }'
 ```
