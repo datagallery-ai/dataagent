@@ -4,9 +4,9 @@
 
 `POST /api/agent/query` 的请求体是 `query` 和 `stream`。`query` 必填，长度至少 1。`stream` 默认 `false`。没有 `type`，没有 `content`，也没有 `scenario`。
 
-在这个入口之外使用 `POST /api/agent/operation`。同一个入口用 `type` 区分操作。`type` 选出操作，`content` 放这次操作的内容。查询操作是 `type=query`。`content` 里有 `query`、`stream`，以及可选的 `scenario`。两条查询最后都进 `_dispatch_query`，问句和流式开关相同，结果包相同。
+在这个入口之外使用 `POST /api/agent/operation`。同一个入口用 `type` 区分操作。`type` 选出操作，`content` 放这次操作的内容。查询操作是 `type=query`。`content` 里有 `query`、`stream`，以及必填的 `scenario`。两条查询最后都进 `_dispatch_query`，问句和流式开关相同，结果包相同。
 
-多场景挂在 operation 上。一次启动加载多份场景 yaml。进程里按场景名持有多个 DataAgent。调用方要选场景时，只在 `type=query` 的 `content.scenario` 里带场景名。`POST /api/agent/query` 不能选场景，始终打到默认场景。多份 `--config scenario=path` 时，默认场景是命令行里的第一个。单个 `--config path`（路径里不带等号）仍是原来的启动方式，这一份配置就是默认场景。没有 `--default-scenario`。
+operation 上已登记的每种 `type`，`content.scenario` 都必填，长度至少 1。省略或空字符串返回 422，不走默认场景。`POST /api/agent/query` 不能选场景，始终打到默认场景。多份 `--config 场景名=yaml` 时，默认场景只给这条旧 query 使用，是命令行里的第一个。单个 `--config path`（路径里不带等号）没有场景名，operation 上任何请求都无法给出已登记的 `scenario`。没有 `--default-scenario`。
 
 `semantic_status` 与 `ingestion_status` 见 [REST 状态查询串讲](rest-api-status-walkthrough.md)。
 
@@ -27,14 +27,14 @@
 
 `extra=forbid`。多出来的字段会 422。旧请求体里不能加 `scenario`、`type` 或 `content`。
 
-`POST /api/agent/operation` 且 `type=query` 时，模型是 `QueryRequest`。`content` 的模型是 `QueryContent`。`query` 与 `stream` 放在 `content` 里。`scenario` 放在同一层 `content` 上，可以省略。
+`POST /api/agent/operation` 且 `type=query` 时，模型是 `QueryRequest`。`content` 的模型是 `QueryContent`。`query`、`stream` 和 `scenario` 放在 `content` 里。`scenario` 不能省略。
 
 | 字段 | 约束 |
 | --- | --- |
 | `type` | 字符串，取 `query` |
 | `content.query` | 字符串，长度至少 1 |
 | `content.stream` | 布尔，默认 `false`。只放在 query 的 `content` 里 |
-| `content.scenario` | 字符串，可省略。省略时与旧 query 一样走默认场景 |
+| `content.scenario` | 字符串，必填，长度至少 1。必须是已登记场景名，不走默认场景 |
 
 `QueryRequest` 与 `QueryContent` 都是 `extra=forbid`。未声明的字段返回 422。
 
@@ -83,9 +83,9 @@
 
 ### 2.2 场景路由
 
-场景路由是一个进程重复加载多份 yaml。进程内按场景名持有多个 DataAgent。调用方只在 `POST /api/agent/operation` 且 `type=query` 时用 `content.scenario` 选择。`POST /api/agent/query` 仍是 `query` 和 `stream`，固定用默认场景。
+场景路由是一个进程重复加载多份 yaml。进程内按场景名持有多个 DataAgent。operation 的每种 `type` 都用 `content.scenario` 选择，不能省略。`POST /api/agent/query` 仍是 `query` 和 `stream`，固定用默认场景。
 
-一个进程启动。`--config` 重复传递，每一项写成 `场景名=yaml路径`。等号左边是请求里的 `content.scenario`，右边是该场景的 yaml 文件。场景名由这项参数给定，不是从文件名推出来的。第一个 `--config` 是默认场景，供旧 query 以及省略 `content.scenario` 的 `type=query` 使用。
+一个进程启动。`--config` 重复传递，每一项写成 `场景名=yaml路径`。等号左边、该 yaml 的 `DATABASE.perceptor_type`、请求里的 `content.scenario` 必须是同一个名字。场景名由这项参数给定，不是从文件名推出来的。第一个 `--config` 只作为旧 `POST /api/agent/query` 的默认场景。
 
 也可以只传一个不带等号的 `--config path`。这时没有场景表，进程只加载这一份 yaml。旧 query 跑的就是它。这时 operation 上任何 `content.scenario` 都是未知场景。
 
@@ -176,7 +176,7 @@ curl -sS -X POST "http://127.0.0.1:8010/api/agent/operation" \
   }'
 ```
 
-`content.scenario` 为 `traffic_insight` 时，走 `--config traffic_insight=dataagent/agents/nl2sql/traffic_insight.yaml`。不传 `content.scenario` 时与旧 query 相同，走 `business_twin`。响应里不回写 `scenario`。未登记的名字返回 HTTP 422，体是 `{"detail": "unknown scenario: <名字>"}`。
+`content.scenario` 为 `traffic_insight` 时，走 `--config traffic_insight=dataagent/agents/nl2sql/traffic_insight.yaml`。不传 `content.scenario` 或写成空字符串时返回 422，不走 `business_twin`。响应里不回写 `scenario`。未登记的名字返回 HTTP 422，体是 `{"detail": "unknown scenario: <名字>"}`。
 
 成功时 HTTP 200。字段与 `_format_nl2sql_result` 一致。旧 query 与 `type=query` 的结果包相同。下面的 SQL 和空值是示例，键是结果包里的键：
 
@@ -224,14 +224,14 @@ curl -sS -X POST "http://127.0.0.1:8010/api/agent/operation" \
 ## 4. 规格约束与边界
 
 - 旧 query 的请求体只有 `query` 和 `stream`。它不能在多个场景里选择，固定使用第一个 `--config`；单个不带等号的 `--config` 时使用那一份 yaml。
-- `type=query` 的 `content.scenario` 必须和启动参数 `--config` 等号左边的场景名一致。没有这项名字时 HTTP 422，体是 `{"detail": "unknown scenario: <名字>"}`。同一个场景名或同一份 yaml 在启动参数里出现两次，启动失败，后一次不覆盖前一次。场景名必须等于该 yaml 的 `DATABASE.perceptor_type`。
+- operation 每种 `type` 的 `content.scenario` 都必填。它必须和 `--config` 等号左边、以及该 yaml 的 `DATABASE.perceptor_type` 相同。省略或空字符串返回 422，不走默认场景。未登记时 HTTP 422，体是 `{"detail": "unknown scenario: <名字>"}`。同一个场景名或同一份 yaml 在启动参数里出现两次，启动失败，后一次不覆盖前一次。
 - 各场景的模型缓存名必须不同。缓存名是 `MODEL` 段名或该段的 `name`。同名会互相覆盖。取模型时按各自的缓存名取。
 - 出站证书按同一套材料共用。入站 TLS、监听端口、限流是整个进程一套。
 - `extra=forbid` 保持。`content` 里未声明的字段返回 422。`POST /api/agent/query` 不带 `scenario`。
 
 ## 5. 测试建议
 
-- 同样的 `query`、`stream`，旧 `/api/agent/query` 与省略 `content.scenario` 的 `type=query`，都打到第一个 `--config`，结果包一致。
+- 旧 `/api/agent/query` 不带 `scenario`，打到第一个 `--config`。`type=query` 不写 `scenario` 是 422，不会打到这份默认场景。写了已登记的 `scenario` 后，两边结果包的字段一致。
 - `scenario` 为 `business_twin`、`traffic_insight` 时分别走到启动参数里同名的那份 yaml，规则和库不串。
 - 请求里的 `scenario` 在启动参数里没有同名项时，HTTP 422，体是 `{"detail": "unknown scenario: ..."}`。
 - 旧 query 请求体多写 `scenario` 或 `type` 时，422 的类型是 `extra_forbidden`。

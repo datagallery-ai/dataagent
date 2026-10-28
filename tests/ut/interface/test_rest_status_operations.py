@@ -202,10 +202,19 @@ def test_semantic_status_downstream_failure_returns_agent_envelope(
         _Http.response = response_body
         response = client.post(OPERATION_PATH, json={"type": "semantic_status", "content": {}})
 
-    _assert_failure(response, "semantic service is not UP")
-    assert "semantic exploded" not in response.text
-    assert "errorCode" not in response.text
-    assert "errorMessage" not in response.text
+    downstream = response_body.json()
+    assert response.status_code == response_body.status_code
+    result = response.json()["result"]
+    assert result["success"] is False
+    assert result["http_status"] == response_body.status_code
+    assert result["component"] == "agent"
+    assert result["retryable"] is False
+    if response_body.status_code >= 400:
+        assert result["code"] == downstream["errorCode"]
+        assert result["message"] == downstream["errorMessage"]
+    else:
+        assert result["code"] == "WORKFLOW-AGENT-001"
+        assert result["message"] == downstream["status"]
 
 
 @pytest.mark.parametrize(
@@ -336,25 +345,29 @@ def test_ingestion_status_on_bare_config_is_unknown_scenario(tmp_path, monkeypat
     assert _Http.calls == []
 
 
-def test_ingestion_trace_not_found_returns_agent_envelope(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ingestion_trace_not_found_passes_through_semantic_body(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+    body = {
+        "error": "METAVISOR-404-00-040",
+        "errorCode": "INGESTION_TRACE_NOT_FOUND",
+        "errorMessage": "ingestion trace not found: T1",
+    }
 
     with _install(monkeypatch, service) as client:
-        _Http.response = _Response(
-            {
-                "error": "METAVISOR-404-00-040",
-                "errorCode": "INGESTION_TRACE_NOT_FOUND",
-                "errorMessage": "ingestion trace not found: T1",
-            },
-            status_code=404,
-        )
+        _Http.response = _Response(body, status_code=404)
         response = client.post(
             OPERATION_PATH,
             json={"type": "ingestion_status", "content": {"scenario": "traffic_insight", "traceId": "T1"}},
         )
 
-    _assert_failure(response, "ingestion trace not found")
-    assert "METAVISOR-404-00-040" not in response.text
-    assert "errorCode" not in response.text
-    assert "errorMessage" not in response.text
-    assert "ingestion trace not found: T1" not in response.text
+    assert response.status_code == 404
+    assert response.json() == {
+        "result": {
+            "success": False,
+            "code": "INGESTION_TRACE_NOT_FOUND",
+            "message": "ingestion trace not found: T1",
+            "http_status": 404,
+            "component": "agent",
+            "retryable": False,
+        }
+    }

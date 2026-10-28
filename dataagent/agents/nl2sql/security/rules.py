@@ -245,8 +245,17 @@ def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolat
     for distinct in statement.find_all(exp.Distinct):
         if isinstance(distinct.parent, exp.Select) and (distinct.args.get("on") is not None or distinct.expressions):
             return [SecurityViolation("SYNTAX-001", "Only plain DISTINCT is in the syntax allowlist.")]
+    grouping_modifiers = []
+    for name in ("Rollup", "Cube", "GroupingSets"):
+        node_type = getattr(exp, name, None)
+        if node_type is not None:
+            grouping_modifiers.append(node_type)
     for group in statement.find_all(exp.Group):
         if any(group.args.get(name) for name in ("grouping_sets", "cube", "rollup", "totals", "all")):
+            return [SecurityViolation("SYNTAX-001", "GROUP BY modifier is not in the allowlist.")]
+        if grouping_modifiers and any(
+            isinstance(expression, tuple(grouping_modifiers)) for expression in group.expressions
+        ):
             return [SecurityViolation("SYNTAX-001", "GROUP BY modifier is not in the allowlist.")]
     for order in statement.find_all(exp.Order):
         if order.args.get("siblings"):

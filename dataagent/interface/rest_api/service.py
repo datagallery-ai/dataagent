@@ -43,7 +43,6 @@ _INGESTION_COMPLETED = {
     "failed": False,
 }
 _SEMANTIC_NOT_UP = "semantic service is not UP"
-_TRACE_NOT_FOUND = "ingestion trace not found"
 _INGESTION_UNAVAILABLE = "failed to query ingestion status"
 
 
@@ -71,9 +70,27 @@ def _ingestion_result(status: str) -> dict[str, Any]:
     }
 
 
-def _trace_missing(exc: SemanticServiceError) -> bool:
-    """True when semantic reports that the trace id does not exist."""
-    return exc.status_code == 404 or exc.error_code == "INGESTION_TRACE_NOT_FOUND"
+def _downstream_json(exc: SemanticServiceError) -> Any | None:
+    """Return the semantic-service JSON body when the HTTP error has one."""
+    response = exc.response
+    if response is None or not isinstance(exc.status_code, int):
+        return None
+    try:
+        body = response.json()
+    except Exception:
+        return None
+    if body is None or isinstance(body, (dict, list)):
+        return body
+    return None
+
+
+def _downstream_text(body: dict[str, Any], *keys: str) -> str | None:
+    """Return the first non-empty string among ``keys``."""
+    for key in keys:
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 _PUBLIC_ERROR_FIELD_TYPES = {
@@ -236,13 +253,13 @@ class DataAgentService:
             payload = await asyncio.to_thread(self._semantic_get, agent, "health")
         except SemanticServiceError as exc:
             logger.warning("semantic status failed: status={} error_code={}", exc.status_code, exc.error_code)
-            return self._format_error(_SEMANTIC_NOT_UP, agent=agent)
+            return self._format_downstream_error(exc, fallback=_SEMANTIC_NOT_UP, agent=agent)
         except Exception as exc:
             logger.exception("semantic status failed: {}", {"type": exc.__class__.__name__})
             return self._format_error(_SEMANTIC_NOT_UP, agent=agent)
-        if not (isinstance(payload, dict) and payload.get("status") == "UP"):
-            return self._format_error(_SEMANTIC_NOT_UP, agent=agent)
-        return {"result": {"success": True, "status": "UP"}}
+        if isinstance(payload, dict) and payload.get("status") == "UP":
+            return {"result": {"success": True, "status": "UP"}}
+        return self._format_downstream_body(payload, status_code=200, fallback=_SEMANTIC_NOT_UP, agent=agent)
 
     async def ingestion_status(self, scenario: str, trace_id: str) -> dict[str, Any]:
         """Report one ingestion job. ``normal`` is complete; ``updating`` and ``failed`` stay distinct."""
@@ -258,13 +275,12 @@ class DataAgentService:
         except UnknownScenarioError:
             raise
         except SemanticServiceError as exc:
-            message = _TRACE_NOT_FOUND if _trace_missing(exc) else _INGESTION_UNAVAILABLE
             logger.warning(
                 "ingestion status failed: status={} error_code={}",
                 exc.status_code,
                 exc.error_code,
             )
-            return self._format_error(message, agent=agent)
+            return self._format_downstream_error(exc, fallback=_INGESTION_UNAVAILABLE, agent=agent)
         except Exception as exc:
             logger.exception("ingestion status failed: {}", {"type": exc.__class__.__name__})
             return self._format_error(_INGESTION_UNAVAILABLE, agent=agent)
@@ -537,6 +553,44 @@ class DataAgentService:
                 "retryable": False,
             }
         }
+
+    def _format_downstream_error(
+        self,
+        exc: SemanticServiceError,
+        *,
+        fallback: str,
+        agent: DataAgent | None,
+    ) -> dict[str, Any]:
+        """Keep the agent error envelope and fill it from a semantic HTTP error."""
+        status_code = exc.status_code if isinstance(exc.status_code, int) else 500
+        return self._format_downstream_body(
+            _downstream_json(exc),
+            status_code=status_code,
+            fallback=fallback,
+            agent=agent,
+        )
+
+    def _format_downstream_body(
+        self,
+        body: Any,
+        *,
+        status_code: int,
+        fallback: str,
+        agent: DataAgent | None,
+    ) -> dict[str, Any]:
+        """Keep the agent error envelope and fill code, message, and status from downstream."""
+        payload = self._format_error(fallback, agent=agent)
+        result = payload["result"]
+        result["http_status"] = status_code
+        if not isinstance(body, dict):
+            return payload
+        code = _downstream_text(body, "errorCode", "error_code")
+        message = _downstream_text(body, "errorMessage", "error_message", "message", "error", "status")
+        if code:
+            result["code"] = code
+        if message:
+            result["message"] = message
+        return payload
 
     def _normalize_error_payload(self, error: Any, agent: DataAgent | None = None) -> dict[str, Any]:
         """Normalize agent stream error payloads."""
