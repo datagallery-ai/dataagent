@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Unit tests for the table-name wrapper; no dictionary or LLM is needed."""
+"""Unit tests for the identifier wrapper; no dictionary or LLM is needed."""
 
 import sys
 from types import ModuleType
@@ -19,9 +19,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from dataagent.actions.tools.context import ToolExecutionContext
-from dataagent.core.suite.builtin_suites.de_agent.tools.table_word_roots import (
-    validate_column_word_roots,
-    validate_table_word_roots,
+from dataagent.core.suite.builtin_suites.de_agent.hooks.word_roots import (
+    validate_identifier_word_roots,
 )
 
 
@@ -47,66 +46,6 @@ def matched(index, name, match_type="exact"):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("table_name", ["ads_user_user_30d", " db.ads_user_user_30d "])
-async def test_all_roots_match_and_default_batch_size_is_omitted(validator, context, table_name):
-    roots = ["ads", "user", "user", "30d"]
-    validator.return_value = {"results": [
-        matched(i, root, "regex" if root == "30d" else "exact") for i, root in enumerate(roots)
-    ]}
-
-    result = await validate_table_word_roots(table_name, _tool_context=context)
-
-    assert result == {"pass": True, "failed_roots": [], "error_msg": ""}
-    validator.assert_awaited_once_with(
-        items=[{"english_name": root} for root in roots], _tool_context=context
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("batch_size", [None, 2])
-async def test_unmatched_results_preserve_candidates_and_forward_options(validator, context, batch_size):
-    miss = {
-        "index": 1, "english_name": "usr", "found": False, "match_type": None,
-        "candidates": [{"record": {"词根英文名": "user", "词根中文名": "用户"}, "relevance": 95}],
-    }
-    validator.return_value = {"results": [matched(0, "ads"), miss]}
-
-    result = await validate_table_word_roots(
-        "db.ads_usr", k=10, llm_batch_size=batch_size, _tool_context=context
-    )
-
-    assert result == {"pass": False, "failed_roots": [miss], "error_msg": ""}
-    options = {} if batch_size is None else {"llm_batch_size": batch_size}
-    validator.assert_awaited_once_with(
-        items=[{"english_name": "ads"}, {"english_name": "usr"}],
-        k=10, _tool_context=context, **options,
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kwargs, error", [
-    ({"table_name": ""}, "表名应为"),
-    ({"table_name": "   "}, "表名应为"),
-    ({"table_name": "ads__user"}, "表名应为"),
-    ({"table_name": "a.b.c"}, "表名应为"),
-    ({"k": 0}, "k 必须"),
-    ({"k": 21}, "k 必须"),
-    ({"k": True}, "k 必须"),
-    ({"llm_batch_size": 0}, "llm_batch_size 必须"),
-    ({"llm_batch_size": "2"}, "llm_batch_size 必须"),
-])
-async def test_invalid_parameters_do_not_call_validator(validator, context, kwargs, error):
-    result = await validate_table_word_roots(
-        **{"table_name": "ads_user", **kwargs}, _tool_context=context
-    )
-
-    assert result["pass"] is False
-    assert result["failed_roots"] == []
-    assert error in result["error_msg"]
-    validator.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("response, error", [
     ({}, "results 数组"),
     ({"results": None}, "results 数组"),
@@ -122,50 +61,12 @@ async def test_invalid_parameters_do_not_call_validator(validator, context, kwar
 async def test_malformed_response_never_passes(validator, context, response, error):
     validator.return_value = response
 
-    result = await validate_table_word_roots("ads_user", _tool_context=context)
+    result = await validate_identifier_word_roots(["ads_user"], _tool_context=context)
 
     assert result["pass"] is False
-    assert result["failed_roots"] == []
+    assert result["names"] == []
     assert error in result["error_msg"]
     validator.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_service_exception_is_returned_as_error(validator, context):
-    validator.side_effect = RuntimeError("service unavailable")
-
-    result = await validate_table_word_roots("ads_user", _tool_context=context)
-
-    assert result == {
-        "pass": False, "failed_roots": [],
-        "error_msg": "词根校验不可用：RuntimeError: service unavailable",
-    }
-    validator.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_table_skipped_validation_degrades_cleanly(validator, context):
-    # Missing dictionary: the underlying tool returns skipped with found=None.
-    # The wrapper must report a degraded message, not a "found 异常" error.
-    validator.return_value = {
-        "validation_status": "skipped",
-        "reason": "word_root_csv_missing",
-        "results": [
-            {"index": 0, "english_name": "ads", "found": None, "match_type": None},
-            {"index": 1, "english_name": "user", "found": None, "match_type": None},
-        ],
-    }
-
-    result = await validate_table_word_roots("ads_user", _tool_context=context)
-
-    assert result == {
-        "pass": False, "failed_roots": [],
-        "error_msg": "词根字典缺失，已跳过词根校验。",
-    }
-    validator.assert_awaited_once()
-
-
-# --- validate_column_word_roots -------------------------------------------------
 
 
 def _match_items(items, found_overrides=None):
@@ -182,17 +83,17 @@ def _match_items(items, found_overrides=None):
 
 
 @pytest.mark.asyncio
-async def test_columns_all_match_dedup_roots_and_omit_default_k(validator, context):
-    # "user" appears in both columns but must be validated only once.
+async def test_names_all_match_dedup_roots_and_omit_default_k(validator, context):
+    # "user" appears in both names but must be validated only once.
     validator.side_effect = lambda *, items, _tool_context, **opts: _match_items(items)
 
-    result = await validate_column_word_roots(["ads_user", "user_id"], _tool_context=context)
+    result = await validate_identifier_word_roots(["ads_user", "user_id"], _tool_context=context)
 
     assert result == {
         "pass": True,
-        "columns": [
-            {"column": "ads_user", "pass": True, "failed_roots": []},
-            {"column": "user_id", "pass": True, "failed_roots": []},
+        "names": [
+            {"name": "ads_user", "pass": True, "failed_roots": []},
+            {"name": "user_id", "pass": True, "failed_roots": []},
         ],
         "error_msg": "",
     }
@@ -203,7 +104,7 @@ async def test_columns_all_match_dedup_roots_and_omit_default_k(validator, conte
 
 
 @pytest.mark.asyncio
-async def test_columns_report_per_column_failures_with_in_column_index(validator, context):
+async def test_names_report_per_name_failures_with_in_name_index(validator, context):
     miss = {
         "found": False, "match_type": None,
         "candidates": [{"record": {"词根英文名": "user", "词根中文名": "用户"}, "relevance": 90}],
@@ -212,16 +113,16 @@ async def test_columns_report_per_column_failures_with_in_column_index(validator
         items, found_overrides={"usr": miss}
     )
 
-    result = await validate_column_word_roots(
+    result = await validate_identifier_word_roots(
         ["ads_user", "usr_cnt"], k=10, llm_batch_size=2, _tool_context=context
     )
 
     assert result == {
         "pass": False,
-        "columns": [
-            {"column": "ads_user", "pass": True, "failed_roots": []},
+        "names": [
+            {"name": "ads_user", "pass": True, "failed_roots": []},
             {
-                "column": "usr_cnt",
+                "name": "usr_cnt",
                 "pass": False,
                 # index rewritten to the root's position inside "usr_cnt".
                 "failed_roots": [{"index": 0, "english_name": "usr", **miss}],
@@ -239,37 +140,102 @@ async def test_columns_report_per_column_failures_with_in_column_index(validator
 
 
 @pytest.mark.asyncio
-async def test_columns_chunk_unique_roots_over_the_batch_limit(validator, context):
-    validator.side_effect = lambda *, items, _tool_context, **opts: _match_items(items)
-    columns = [f"c{n}" for n in range(25)]  # 25 unique single roots → chunks of 20 + 5
+async def test_shared_failed_root_is_reported_at_every_position(validator, context):
+    miss = {
+        "found": False, "match_type": None,
+        "candidates": [{"record": {"词根英文名": "user", "词根中文名": "用户"}, "relevance": 90}],
+    }
+    response = _match_items(
+        [{"english_name": root} for root in ["ads", "usr", "id", "cnt"]],
+        found_overrides={"usr": miss},
+    )
+    validator.return_value = response
 
-    result = await validate_column_word_roots(columns, _tool_context=context)
+    result = await validate_identifier_word_roots(
+        ["ads_usr_usr", "usr_id", "cnt_usr", "id_cnt"], _tool_context=context
+    )
 
-    assert result["pass"] is True
-    assert [c["column"] for c in result["columns"]] == columns
-    assert validator.await_count == 2
-    calls = validator.await_args_list
-    assert len(calls[0].kwargs["items"]) == 20
-    assert len(calls[1].kwargs["items"]) == 5
+    assert result == {
+        "pass": False,
+        "names": [
+            {
+                "name": "ads_usr_usr", "pass": False,
+                "failed_roots": [
+                    {"index": 1, "english_name": "usr", **miss},
+                    {"index": 2, "english_name": "usr", **miss},
+                ],
+            },
+            {
+                "name": "usr_id", "pass": False,
+                "failed_roots": [{"index": 0, "english_name": "usr", **miss}],
+            },
+            {
+                "name": "cnt_usr", "pass": False,
+                "failed_roots": [{"index": 1, "english_name": "usr", **miss}],
+            },
+            {"name": "id_cnt", "pass": True, "failed_roots": []},
+        ],
+        "error_msg": "",
+    }
+    validator.assert_awaited_once_with(
+        items=[{"english_name": root} for root in ["ads", "usr", "id", "cnt"]],
+        _tool_context=context,
+    )
+    # Reporting each occurrence must not mutate the shared source result.
+    assert response["results"][1] == {"index": 1, "english_name": "usr", **miss}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("columns", [[], "ads_user", None])
-async def test_columns_require_non_empty_list(validator, context, columns):
-    result = await validate_column_word_roots(columns, _tool_context=context)
+@pytest.mark.parametrize("failed_root", [None, "c22"])
+async def test_names_chunk_unique_roots_over_the_batch_limit(validator, context, failed_root):
+    miss = {
+        "found": False, "match_type": None,
+        "candidates": [{"record": {"词根英文名": "cnt", "词根中文名": "数量"}, "relevance": 90}],
+    }
+    validator.side_effect = lambda *, items, _tool_context, **opts: _match_items(
+        items, found_overrides={failed_root: miss} if failed_root else None
+    )
+    names = [f"c{n}" for n in range(25)]  # 25 unique single roots → chunks of 20 + 5
 
-    assert result == {"pass": False, "columns": [], "error_msg": "columns 必须是非空列表。"}
+    result = await validate_identifier_word_roots(names, _tool_context=context)
+
+    assert result == {
+        "pass": failed_root is None,
+        "names": [
+            {
+                "name": name,
+                "pass": name != failed_root,
+                # c22 has batch-local index 2, but index 0 within its name.
+                "failed_roots": [{"index": 0, "english_name": name, **miss}]
+                if name == failed_root else [],
+            }
+            for name in names
+        ],
+        "error_msg": "",
+    }
+    assert validator.await_count == 2
+    calls = validator.await_args_list
+    assert calls[0].kwargs["items"] == [{"english_name": name} for name in names[:20]]
+    assert calls[1].kwargs["items"] == [{"english_name": name} for name in names[20:]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("names", [[], "ads_user", None])
+async def test_names_require_non_empty_list(validator, context, names):
+    result = await validate_identifier_word_roots(names, _tool_context=context)
+
+    assert result == {"pass": False, "names": [], "error_msg": "names 必须是非空列表。"}
     validator.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", ["Bad", "ads__user", "a.b", "_ads", "ads_", "1ads", ""])
-async def test_columns_reject_invalid_identifiers(validator, context, bad):
-    result = await validate_column_word_roots(["ads_user", bad], _tool_context=context)
+async def test_names_reject_invalid_identifiers(validator, context, bad):
+    result = await validate_identifier_word_roots(["ads_user", bad], _tool_context=context)
 
     assert result["pass"] is False
-    assert result["columns"] == []
-    assert "列名 1" in result["error_msg"]
+    assert result["names"] == []
+    assert "名称 1" in result["error_msg"]
     validator.assert_not_awaited()
 
 
@@ -281,40 +247,40 @@ async def test_columns_reject_invalid_identifiers(validator, context, bad):
     ({"llm_batch_size": 0}, "llm_batch_size 必须"),
     ({"llm_batch_size": "2"}, "llm_batch_size 必须"),
 ])
-async def test_columns_invalid_parameters_do_not_call_validator(validator, context, kwargs, error):
-    result = await validate_column_word_roots(["ads_user"], **kwargs, _tool_context=context)
+async def test_names_invalid_parameters_do_not_call_validator(validator, context, kwargs, error):
+    result = await validate_identifier_word_roots(["ads_user"], **kwargs, _tool_context=context)
 
     assert result["pass"] is False
-    assert result["columns"] == []
+    assert result["names"] == []
     assert error in result["error_msg"]
     validator.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_columns_skipped_validation_degrades_cleanly(validator, context):
+async def test_names_skipped_validation_degrades_cleanly(validator, context):
     validator.return_value = {
         "validation_status": "skipped",
         "reason": "word_root_csv_missing",
         "results": [{"index": 0, "english_name": "ads", "found": None, "match_type": None}],
     }
 
-    result = await validate_column_word_roots(["ads_user"], _tool_context=context)
+    result = await validate_identifier_word_roots(["ads_user"], _tool_context=context)
 
     assert result == {
-        "pass": False, "columns": [],
+        "pass": False, "names": [],
         "error_msg": "词根字典缺失，已跳过词根校验。",
     }
     validator.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_columns_service_exception_is_returned_as_error(validator, context):
+async def test_names_service_exception_is_returned_as_error(validator, context):
     validator.side_effect = RuntimeError("service unavailable")
 
-    result = await validate_column_word_roots(["ads_user"], _tool_context=context)
+    result = await validate_identifier_word_roots(["ads_user"], _tool_context=context)
 
     assert result == {
-        "pass": False, "columns": [],
+        "pass": False, "names": [],
         "error_msg": "词根校验不可用：RuntimeError: service unavailable",
     }
     validator.assert_awaited_once()
