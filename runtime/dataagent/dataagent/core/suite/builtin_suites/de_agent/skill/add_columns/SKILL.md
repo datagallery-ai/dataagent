@@ -9,6 +9,8 @@ description: |
 
 > **前置要求**：执行本 skill 前，必须先确认已阅读并遵守 instructions.md 中的通用规则，本 skill 不重复上述内容。当发生冲突时，以本 skill 要求为准。
 
+编写、修改或审核 SQL 前，读取 `sql_rules` skill 的 SKILL.md：ALTER DDL 使用 `references/ddl_rules.md` 中适用的字段类型、命名及词根校验规则；INSERT 使用 `references/dml_rules.md`。新建表专属的 CREATE、PARTITIONED BY、STORED AS 等声明要求不适用于 ALTER ADD COLUMNS。已有表的分区策略、已有列定义和顺序保持不变。
+
 ## 何时使用
 
 - 用户明确要求给已有表添加新字段/新列
@@ -94,9 +96,9 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 - 交付件需包含 `alter_<table_name>.sql` 和 `modified_insert_<table_name>.sql`
 - 如修改涉及前置原始表，需包含 `alter_<origin_table_name>.sql` 和 `modified_insert_<origin_table_name>.sql`
 - 检查生成的 DDL/DML 是否满足用户需求
-- 对照 `instructions.md` 中的相关规范对 DDL 和 DML 进行质量校验，跳过不适用规则（如 create table 相关规则）
-- **`check_and_repair_sql` 不适用本场景，禁止调用它做本 skill 的交付校验**
-- 如校验不通过，修正后重新调用直到通过
+- 对照 `sql_rules/references/ddl_rules.md` 和 `sql_rules/references/dml_rules.md` 中适用的规范检查 DDL/DML，跳过新建表专属规则；新列的类型和 COMMENT、ALTER 与 INSERT 的新列顺序、前置原始表和目标表的字段衔接需逐项核对
+- **`validate_deliverables` 不适用 ALTER 场景，不要调用；也不要使用 `check_and_repair_sql` 作为本场景交付校验入口**
+- 如存在真实校验失败，修正并保存文件后重新检查；字典缺失、服务不可用等非结论性异常按 DDL 规则降级，不反复写入重试
 
 ### Step 9: 输出变更 Diff
 
@@ -120,8 +122,8 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 
 ## 降级：目标表不存在时回退新建表流程
 
-当 Step 1 中使用 `check_table_existence` 校验目标表时，如果返回 `exists=False`（表不存在）：
+当 Step 2 中使用 `check_table_existence` 校验目标表时，如果返回 `exists=False`（表不存在）：
 1. 告知用户目标表在元数据中未找到，无法执行加列操作
 2. 询问用户是否需要改为创建新表
-3. 如用户确认，退出本 skill，回到 instructions.md 主流程，按新建表逻辑生成 `create_*.sql` + `insert_*.sql`
+3. 如用户确认，退出本 skill，读取并按 `feature_engineering` skill 的新建表流程生成 `create_*.sql` + `insert_*.sql`
 4. 不自动降级，必须经用户确认

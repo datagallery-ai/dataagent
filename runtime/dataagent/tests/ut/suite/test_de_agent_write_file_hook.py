@@ -8,6 +8,8 @@ import yaml
 
 from dataagent.actions.tools.hooks.base import ToolHookInvocation, ToolHookRunner
 from dataagent.actions.tools.hooks.config import load_tool_hooks_from_config
+from dataagent.actions.tools.hooks.examples.ddl_hooks import ddl_post
+from dataagent.core.suite.builtin_suites.de_agent.hooks.word_roots import ddl_word_roots_post
 from dataagent.utils.runtime_paths import dataagent_package_path
 
 
@@ -28,7 +30,7 @@ async def test_write_file_hook_blocks_new_insert_and_allows_other_writes(tmp_pat
     assert entry.get("function") == "write_file"
     hooks = load_tool_hooks_from_config(entry.get("hooks"))
     assert len(hooks.pre) == 1
-    assert len(hooks.post) == 1
+    assert hooks.post == [ddl_post, ddl_word_roots_post]
 
     insert_path = tmp_path / "insert_feature.sql"
     invocation = ToolHookInvocation(

@@ -102,6 +102,7 @@ TOOLS:
       hooks:
         post:
           - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post
+          - dataagent.core.suite.builtin_suites.de_agent.hooks.word_roots.ddl_word_roots_post
           - dataagent.actions.tools.hooks.examples.sql_syntax_hooks.sql_edit_post
     - name: "read_file"
       module: "dataagent.actions.tools.local_tool.tools"

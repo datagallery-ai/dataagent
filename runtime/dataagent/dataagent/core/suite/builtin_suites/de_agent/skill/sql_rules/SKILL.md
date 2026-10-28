@@ -9,24 +9,25 @@ description: |
 
 ## 文档内容
 
-- `references/ddl_rules.md`：DDL 的建表语法规则。
+- `references/ddl_rules.md`：DDL 的建表、加列适用规则及词根校验约定。
 - `references/dml_rules.md`：DML 的 INSERT 语法规则和通用规则（含空值判断、CAST 方言类型约束等）。
 
 ## 读取原则
 
-- 编写、修改或审核 DDL（`create_<table>.sql`）之前，使用 `read_file` 读取：
+- 编写、修改或审核 DDL（`create_<table>.sql`、`alter_<table>.sql`）之前，使用 `read_file` 读取：
 
 ```
 skill/sql_rules/references/ddl_rules.md
 ```
 
-- 编写、修改或审核 DML（`insert_<table>.sql`）之前，使用 `read_file` 读取：
+- 编写、修改或审核 DML（`insert_<table>.sql`、`modified_insert_<table>.sql`）之前，使用 `read_file` 读取：
 
 ```
 skill/sql_rules/references/dml_rules.md
 ```
 
 - 同时交付 DDL 和 DML 时，先读取 DDL 规则编写 DDL；审核或修改 DML 前再读取 DML 规则，并核对两者的分区列集合和字段顺序。
+- 加列场景按 `add_columns` skill 执行，只应用适用规则，不在 ALTER 中补写新建表的分区、存储声明，也不改变已有 INSERT 的无关逻辑。
 
 ## 使用约定
 

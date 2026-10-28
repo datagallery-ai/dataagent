@@ -25,26 +25,10 @@ TOOLS:
         # metadata_recall 子代理与主进程内直接调用均读取此处
         enum_values_enabled: true
         enum_values_max_length: 500
-    # 新建目标表时校验表名词根；实际词根检索由语义层提供
-    - module: "dataagent.core.suite.builtin_suites.de_agent.tools.table_word_roots"
-      function: "validate_table_word_roots"
-      name: "validate_table_word_roots"
-      category: "semantic"
-      config:
-        # csv_path: 可省略；默认读取仓库根目录的 word_dict_list.csv
-        english_name_column: "词根英文名"
-        chinese_name_column: "词根中文名"
-        description_column: "描述"
-        type_column: "词根类型"
-        regex_column: "特殊词根规则"
-        special_type_value: "特殊词根"
-        llm_model: "planner"
-        llm_call_params:
-          enable_thinking: false
-    # 新建目标表时校验 DDL 列名词根；与表名共用同一词根字典
-    - module: "dataagent.core.suite.builtin_suites.de_agent.tools.table_word_roots"
-      function: "validate_column_word_roots"
-      name: "validate_column_word_roots"
+    # 原始批量词根校验，支持中文描述；DDL hook 复用此配置
+    - module: "dataagent.actions.tools.local_tool.word_root_validator"
+      function: "validate_word_roots"
+      name: "validate_word_roots"
       category: "semantic"
       config:
         # csv_path: 可省略；默认读取仓库根目录的 word_dict_list.csv
@@ -113,6 +97,7 @@ TOOLS:
           - dataagent.core.suite.builtin_suites.de_agent.hooks.write_file.require_nl2sql_for_new_insert
         post:
           - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post
+          - dataagent.core.suite.builtin_suites.de_agent.hooks.word_roots.ddl_word_roots_post
     # 表名格式校验 + 数据库名校验
     - name: "validate_table_name"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.check_table_existence"
