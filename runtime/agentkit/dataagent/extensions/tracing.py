@@ -3,6 +3,8 @@
 When ``DATAAGENT_OTLP_TRACES_ENDPOINT`` (or config ``otlp_endpoint``) is set, ended
 spans are also pushed live via OTLP/HTTP in addition to the completion-time file.
 Live OTLP export applies the same secret redaction as the local JSON file.
+Models inside ordinary tools are omitted from both sinks; agent and subagent
+model calls remain visible, as do tool results, errors and total duration.
 """
 
 import logging
@@ -178,6 +180,22 @@ class LocalLangChainTracer(LangChainTracer):
 
     def on_llm_new_token(self, token, **kwargs) -> None:
         """Full model messages are exported; per-token events are not retained."""
+
+    def _start_trace(self, run: RunTree) -> None:
+        super()._start_trace(run)
+        if run.run_type != "llm":
+            return
+        parent = self.run_map.get(str(run.parent_run_id))
+        while parent is not None:
+            # A registered subagent is a new boundary, even below the task tool.
+            if parent.run_type == "chain" and parent.name in self.agent_names:
+                return
+            if parent.run_type == "tool":
+                # langchain-core 1.6.1 checks this before both POST and PATCH. Keep
+                # native bookkeeping, but never export this model to either sink.
+                run.extra["__disabled"] = True
+                return
+            parent = self.run_map.get(str(parent.parent_run_id))
 
     def _persist_run(self, run: RunTree) -> None:
         # BaseTracer calls this BEFORE the native root PATCH callback. Wait until

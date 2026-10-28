@@ -444,6 +444,66 @@ def _otlp_capture_server():
     return endpoint, received, server.shutdown
 
 
+@pytest.mark.parametrize("model_error", [False, True])
+@pytest.mark.parametrize("sync", [False, True])
+async def test_tool_models_are_omitted_before_live_export(tmp_path, model_error, sync):
+    from langchain_core.runnables import RunnableConfig, RunnableLambda
+    from langchain_core.tools import tool
+
+    endpoint, received, shutdown = _otlp_capture_server()
+    model = ScriptedModel(responses=[] if model_error else [AIMessage(content="helper result")] * 2)
+    # A chain between tool and model must not bypass the filter.
+    helper = RunnableLambda(lambda value: value) | model
+
+    @tool
+    def sync_helper(text: str, config: RunnableConfig) -> str:
+        """Call a model through a chain."""
+        return helper.invoke(text, config=config).text
+
+    @tool
+    async def async_helper(text: str, config: RunnableConfig) -> str:
+        """Call a model through a chain."""
+        return (await helper.ainvoke(text, config=config)).text
+
+    async def parallel_tools(text, config):
+        return await asyncio.gather(*[
+            async_helper.ainvoke({"text": text}, config=config) for _ in range(2)
+        ], return_exceptions=True)
+
+    tracer = LocalLangChainTracer(tmp_path, otlp_endpoint=endpoint)
+    graph = (sync_helper if sync else RunnableLambda(parallel_tools)).with_config(callbacks=[tracer])
+    try:
+        if sync:
+            if model_error:
+                with pytest.raises(RuntimeError, match="ran out of responses"):
+                    graph.invoke({"text": "input"})
+            else:
+                assert graph.invoke({"text": "input"}) == "helper result"
+        else:
+            results = await graph.ainvoke("input")
+            if model_error:
+                assert all(isinstance(result, RuntimeError) for result in results)
+            else:
+                assert results == ["helper result", "helper result"]
+        assert len(model.requests) == (1 if sync else 2)  # Calls still execute.
+        data = validate_file(next(tmp_path.glob("*.json")))
+        assert not any(attributes(s).get("langsmith.span.kind") == "llm" for s in spans(data))
+        assert any(attributes(s).get("langsmith.span.kind") == "tool" for s in spans(data))
+        assert_collector_empty(graph)
+        # Inspect every HTTP payload: the model must never reach the live sink,
+        # even if it finishes (or fails) before the enclosing tool.
+        assert received
+        remote = []
+        for _, body, _ in received:
+            request = ExportTraceServiceRequest.FromString(body)
+            remote.extend(s for r in request.resource_spans for scope in r.scope_spans for s in scope.spans)
+        kinds = [a.value.string_value for s in remote for a in s.attributes if a.key == "langsmith.span.kind"]
+        assert "tool" in kinds
+        assert "llm" not in kinds
+    finally:
+        shutdown()
+
+
 def test_otlp_live_export_posts_ended_spans(tmp_path, monkeypatch):
     """SimpleSpanProcessor must POST ended spans to the configured OTLP endpoint."""
     import time
