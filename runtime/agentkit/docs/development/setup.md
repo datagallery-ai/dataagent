@@ -6,7 +6,7 @@
 uv sync --project runtime/agentkit --locked
 ```
 
-Python 要求 `>=3.12,<3.13`。项目用 hatchling 打包 `dataagent` 和 `serve`。控制台命令是 `dataagent`。
+Python 要求 `>=3.12,<3.13`。项目用 hatchling 打包 `dataagent`、`serve` 和 `a2a_server`。控制台命令是 `dataagent`。
 
 Node 侧只在你要跑 TUI 时需要：
 

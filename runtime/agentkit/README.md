@@ -29,6 +29,14 @@ uv run --project runtime/agentkit dataagent serve --workspace /existing/data
 
 默认地址是 `http://127.0.0.1:8790`，来自 `config.json` 的 `server.host` 和 `server.port`。端口被占用时启动失败，不会改动其他进程。
 
+让其他 agent 通过 A2A 1.0 调用本机 Agent：
+
+```bash
+uv run --project runtime/agentkit dataagent serve-a2a --workspace /existing/data
+```
+
+默认监听 `http://127.0.0.1:9999`。发现地址是 `/.well-known/agent-card.json`，JSON-RPC 在 `/a2a/jsonrpc`。`dataagent serve` 也会挂上这两条路由。这些进程共用同一份状态目录锁，不能同时开。
+
 ## 文档
 
 文档在 [docs/README.md](docs/README.md)。

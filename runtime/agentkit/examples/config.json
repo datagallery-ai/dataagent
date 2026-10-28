@@ -54,5 +54,8 @@
     "paths": [],
     "config": {}
   },
-  "semantic": null
+  "semantic": null,
+  "a2a": {
+    "agents": []
+  }
 }

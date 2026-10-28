@@ -25,6 +25,30 @@ uv run --project runtime/agentkit dataagent serve \
 
 没有 `--host`。`npm run dev`、`./deploy.sh`、网页转发和 TUI 都读 `config.json` 的 `server.host` 与 `server.port`。默认 `127.0.0.1:8790`。`--stdio-ready` 仍给当前 TUI 的一键拉起使用。
 
+## `dataagent serve-a2a`
+
+把同一个运行时暴露成 A2A 1.0 服务，供其他 agent 调用。准备配置、用户和输入目录的参数与 `serve` 相同。不接受 `--session`：每个 A2A `contextId` 自己对应一条会话。
+
+```bash
+uv run --project runtime/agentkit dataagent serve-a2a \
+  --config path/to/config.json \
+  --user default \
+  --workspace /existing/data \
+  --env-file /path/.env \
+  --host 127.0.0.1 \
+  --port 9999
+```
+
+| 参数 | 默认 | 作用 |
+| --- | --- | --- |
+| `--host` | `127.0.0.1` | 绑定地址。需要被其他机器访问时再改为 `0.0.0.0` |
+| `--port` | `9999` | 绑定端口。被占用则失败 |
+| `--auth-token` | 无 | 设置后，除 Agent Card 外都要带 `Authorization: Bearer <token>` |
+
+JSON-RPC 固定在 `/a2a/jsonrpc`，请求头必须是 `A2A-Version: 1.0`。`--config`、`--user`、`--workspace`、`--env-file` 的含义与 `serve` 相同。这条命令占用 `<home>/runtime/backend.lock`，不能和 `dataagent serve` 同时使用同一 Home。`dataagent serve` 自己也会挂上同一组 A2A 路由。
+
+调用约定见 [A2A](a2a.md)。
+
 SDK 的 `LaunchOptions` 还有 `cwd`、`init_home` 和单个 `workspace`。`workspace` 与 `workspaces` 不能同时传。CLI 只暴露可重复的 `--workspace`。CLI 启动使用 `init_home=True`。SDK 默认 `init_home=False`。
 
 ## TUI

@@ -31,6 +31,7 @@ dependencies = [
   "sqlglot==28.1.0",
   "httpx>=0.28,<1",
   "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
+  "a2a-sdk[http-server]>=1.0.2",
 ]
 
 [project.scripts]
@@ -40,7 +41,7 @@ dataagent = "serve.__main__:main"
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist>=3,<4", "httpx>=0.28,<1", "ruff>=0.12"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["dataagent", "serve"]
+packages = ["dataagent", "serve", "a2a_server"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "builtin-plugins" = "dataagent/builtin-plugins"

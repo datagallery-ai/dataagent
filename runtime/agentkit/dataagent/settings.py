@@ -94,6 +94,35 @@ class PluginSettings(StrictModel):
         return self
 
 
+class A2AAgentSettings(StrictModel):
+    """One remote agent this process can call. The tool name is ``a2a__<id>``."""
+
+    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+    url: str = Field(min_length=1)
+    description: str = ""
+    auth_token: SecretStr | None = Field(default=None, repr=False)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def http_url(self):
+        if not self.url.startswith(("http://", "https://")):
+            raise ValueError("a2a.agents.url must start with http:// or https://")
+        return self
+
+
+class A2ASettings(StrictModel):
+    """Remote agents compiled into the graph. An empty list adds no tools."""
+
+    agents: tuple[A2AAgentSettings, ...] = ()
+
+    @model_validator(mode="after")
+    def unique_agents(self):
+        names = [item.id for item in self.agents]
+        if len(set(names)) != len(names):
+            raise ValueError("a2a.agents contains duplicate ids")
+        return self
+
+
 class ServerSettings(StrictModel):
     """Listen address. Web and deploy read these same fields from config.json."""
 
@@ -154,6 +183,7 @@ class Settings(StrictModel):
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
     semantic: SemanticSettings | None = None
+    a2a: A2ASettings = Field(default_factory=A2ASettings)
 
     @field_serializer("models", mode="wrap")
     def serialize_models(self, value, handler):
@@ -176,6 +206,7 @@ SECTION_MODELS = frozenset(
         ServerSettings,
         SemanticSettings,
         SemanticTLSSettings,
+        A2ASettings,
     }
 )
 """Nested sections that configuration layers may declare partially."""

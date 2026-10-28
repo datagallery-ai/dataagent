@@ -55,6 +55,7 @@ async def test_health_and_no_credential_disclosure(runtime):
         assert conversation["user"] == runtime.paths.user_id
         assert "sources" not in conversation
         assert "test-secret" not in health.text
+        assert (await client.get("/.well-known/agent-card.json")).status_code == 200
         assert (await client.get("/healthz", headers={"authorization": ""})).status_code == 200
         assert (await client.get("/healthz", headers={"origin": "https://example.com"})).status_code == 200
 

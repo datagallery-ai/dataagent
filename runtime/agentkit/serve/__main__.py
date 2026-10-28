@@ -118,6 +118,20 @@ def _parser() -> argparse.ArgumentParser:
     api.add_argument("--env-file", help="Environment file resolved by the backend")
     # The TUI on this branch still launches the backend and waits for one ready line.
     api.add_argument("--stdio-ready", action="store_true", help=argparse.SUPPRESS)
+    a2a = commands.add_parser("serve-a2a", help="Expose this agent over the A2A 1.0 protocol")
+    a2a.add_argument(
+        "--config", default=config_default,
+        help="Additional configuration above Home defaults",
+    )
+    a2a.add_argument("--user", default="default", help="Local profile id (default: default)")
+    a2a.add_argument(
+        "--workspace", action="append", default=None,
+        help="Read-only input workspace; repeat for more than one",
+    )
+    a2a.add_argument("--env-file", help="Environment file resolved by the backend")
+    a2a.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    a2a.add_argument("--port", "-p", type=int, default=9999, help="Bind port (default: 9999)")
+    a2a.add_argument("--auth-token", default=None, help="Require Authorization: Bearer <token>")
     return parser
 
 
@@ -127,7 +141,7 @@ def _prepare(args):
             config=args.config or None,
             workspaces=tuple(args.workspace or ()),
             user_id=args.user,
-            session_id=args.session,
+            session_id=getattr(args, "session", None),
             env_file=args.env_file,
             init_home=True,
         ))
@@ -215,6 +229,22 @@ def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = 
     return 0 if server.started else 1
 
 
+def serve_a2a(runtime: Runtime, args) -> int:
+    """Expose this runtime over A2A. Holds the same workspace lock as ``serve``."""
+    from a2a_server import run_a2a_server
+    from a2a_server.agent_card import JSONRPC_PATH
+
+    if not args.host:
+        raise ValueError("Host must be specified")
+    check_port(args.host, args.port)
+    configure_logging(runtime)
+    logging.getLogger("dataagent.a2a").info(
+        "A2A JSON-RPC http://%s:%s%s", args.host, args.port, JSONRPC_PATH
+    )
+    run_a2a_server(runtime, host=args.host, port=args.port, auth_token=args.auth_token)
+    return 0
+
+
 def _run_reload(argv, host: str, port: int) -> int:
     payload = list(argv) if argv is not None else sys.argv[1:]
     os.environ["DATAAGENT_SERVE_ARGV"] = json.dumps(payload)
@@ -231,7 +261,11 @@ def _run_reload(argv, host: str, port: int) -> int:
         host=host,
         port=port,
         reload=True,
-        reload_dirs=[str(SOURCE_ROOT / "serve"), str(SOURCE_ROOT / "dataagent")],
+        reload_dirs=[
+            str(SOURCE_ROOT / "serve"),
+            str(SOURCE_ROOT / "dataagent"),
+            str(SOURCE_ROOT / "a2a_server"),
+        ],
         log_config=None,
         access_log=False,
         timeout_graceful_shutdown=5,
@@ -245,6 +279,10 @@ def main(argv=None) -> int:
     runtime = None
     try:
         runtime = _prepare(args)
+        if args.command == "serve-a2a":
+            if runtime is None:
+                return 1
+            return serve_a2a(runtime, args)
         if args.stdio_ready and runtime is None:
             return 1
         host, port = _listen(runtime)

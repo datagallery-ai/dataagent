@@ -51,6 +51,7 @@ AgentKit 是本地数据 Agent 运行时。你可以用终端界面提问，用 
 | [命令与环境变量](reference/cli-and-environment.md) | CLI 参数和环境变量 |
 | [Python API](reference/python-api.md) | 公开 Python 接口 |
 | [HTTP 接口](reference/rest-api.md) | 路径、请求、响应和错误 |
+| [A2A](reference/a2a.md) | 把本机 Agent 暴露给其他 agent |
 | [事件](reference/events.md) | AG-UI 事件和终止状态 |
 | [扩展声明](reference/extension-schema.md) | 插件、工具、Hook、子代理 |
 | [MCP 配置](reference/mcp-configuration.md) | `.mcp.json` 字段和连接 |

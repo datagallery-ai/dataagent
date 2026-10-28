@@ -24,6 +24,7 @@ def compile_extensions(
     skill_sources: Sequence[tuple[str, str]] = (),
     hook_entries: Sequence[tuple[Path, HookSpec]] = (),
     mcp_tools: Sequence[BaseTool] = (),
+    a2a_tools: Sequence[BaseTool] = (),
     plugin_params: dict[str, dict[str, Any]] | None = None,
     model_resolver: Callable[[str], BaseChatModel] | None = None,
     semantic_client: SemanticServiceClient | None = None,
@@ -43,6 +44,10 @@ def compile_extensions(
     for tool in mcp_tools:
         if tool.name in tool_registry:
             raise ValueError(f"Duplicate MCP tool: {tool.name}")
+        tool_registry[tool.name] = tool
+    for tool in a2a_tools:
+        if tool.name in tool_registry:
+            raise ValueError(f"Duplicate A2A tool: {tool.name}")
         tool_registry[tool.name] = tool
     skill_names: dict[str, Path] = {}
     compiled_skill_sources: list[tuple[str, str]] = []
