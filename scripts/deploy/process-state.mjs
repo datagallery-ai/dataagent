@@ -213,7 +213,8 @@ export async function startManagedStack(root, options = {}) {
     status: "starting",
     startedAt: new Date().toISOString(),
     commitSha: options.commitSha ?? null,
-    ports: options.ports ?? null
+    ports: options.ports ?? null,
+    listen: options.listen ?? null
   };
   await writeDeploymentState(root, state);
   return state;

@@ -120,7 +120,7 @@ type AgUiLikeEvent = {
 
 const defaultPlan: LivePlanTask[] = [
   { id: "schema", title: "检查数据源 schema", status: "pending" },
-  { id: "sql", title: "生成并执行只读 SQL", status: "pending" },
+  { id: "sql", title: "执行请求的工具", status: "pending" },
   { id: "final", title: "生成最终回答", status: "pending" },
 ];
 
@@ -607,7 +607,7 @@ function reduceToolEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
       toolName,
       title,
       summary: summarizeSqlResult(result, parsed, event.type),
-      thought: "Agent 将自然语言问题转换成只读 SQL，并通过后端 Data Gateway 执行。",
+      thought: "Agent 正在执行这个工具。",
       payload: {
         question: "",
         sql: sql || extractSql(existing),
@@ -711,7 +711,7 @@ function summarizeSqlResult(
   // Non-JSON results are usually human-readable text (or an error); keep them.
   if (result && !parsed) return result;
   if (eventType === "TOOL_CALL_RESULT") return "SQL 已执行。";
-  return "正在准备只读 SQL 查询。";
+  return "正在等待工具结果。";
 }
 
 function summarizeSchemaResult(
@@ -1628,18 +1628,12 @@ function thoughtForActivityStatus(
   kind: DataStepKind,
 ): string {
   if (status === "failed") {
-    return kind === "query"
-      ? "只读 SQL 执行未成功，Agent 将根据错误信息调整策略。"
-      : "数据工具步骤未成功完成。";
+    return "工具步骤没有成功完成。";
   }
   if (status === "completed") {
-    return kind === "query"
-      ? "Agent 已通过后端 Data Gateway 完成只读 SQL 查询。"
-      : "Agent 已通过后端数据工具完成当前步骤。";
+    return "Agent 完成了这个工具步骤。";
   }
-  return kind === "query"
-    ? "Agent 将自然语言问题转换成只读 SQL，并通过后端 Data Gateway 执行。"
-    : "Agent 正在通过后端数据工具推进当前分析。";
+  return "Agent 正在执行这个工具。";
 }
 
 function mergeActivityPayload(

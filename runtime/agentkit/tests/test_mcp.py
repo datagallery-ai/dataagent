@@ -194,8 +194,6 @@ def test_real_backend_discovers_mcp_before_ready_then_sigterm(tmp_path):
     ], listener, env={
         **os.environ,
         "DATAAGENT_V2_INSTANCE_ID": "mcp-startup-test",
-        "API_HOST": "127.0.0.1",
-        "API_PORT": str(port),
     }, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         wait_ready(

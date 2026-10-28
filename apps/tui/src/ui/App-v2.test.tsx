@@ -170,6 +170,56 @@ it('Ink V2 resumes native saved messages, rejects unsupported commands, and clea
   assert.equal(store.getState().messages.length, 0);
 });
 
+it('V2 /resume list opens the picker and does not load a session id named list', async () => {
+  const requests: string[] = [];
+  const sessions = new V2SessionClient('http://127.0.0.1:8790', async (url) => {
+    requests.push(String(url));
+    const href = String(url);
+    if (href.includes('/sessions?')) {
+      return Response.json({ sessions: [{
+        threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
+        status: 'complete', hasCheckpoint: true,
+      }] });
+    }
+    if (href.endsWith('/sessions/saved-thread')) {
+      return Response.json({
+        threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
+        status: 'complete', hasCheckpoint: true, newThreadRequired: false, notice: null,
+        messages: [{ id: 'saved-user', role: 'user', content: 'Previous question' }],
+      });
+    }
+    return Response.json({ detail: 'missing' }, { status: 404 });
+  });
+  const current = view({ async *runAgent() { throw new Error('Commands must not invoke the model'); } }, 80, 24, sessions);
+  const shown = () => current.frames.map(stripVTControlCharacters).filter((frame) =>
+    frame.includes('Resume Session') || frame.includes('GLM-5.2') || frame.includes('Resume failed')).at(-1) ?? '';
+  await tick();
+  await submit(current, '/resume list');
+  await until(() => shown().includes('Resume Session') && shown().includes('Saved statistics'));
+  assert.equal(store.getState().threadId, 'v2-ui-test');
+  assert.ok(requests.some((url) => url.includes('/sessions?limit=50')));
+  assert.ok(requests.every((url) => !url.includes('/sessions/list')));
+  current.stdin.write('\x1b');
+  await until(() => shown().includes('GLM-5.2') && !shown().includes('Resume Session'));
+  requests.length = 0;
+  await submit(current, '/resume');
+  await until(() => shown().includes('Resume Session'));
+  assert.ok(requests.some((url) => url.includes('/sessions?limit=50')));
+  assert.equal(store.getState().threadId, 'v2-ui-test');
+  current.stdin.write('\x1b');
+  await until(() => shown().includes('GLM-5.2') && !shown().includes('Resume Session'));
+  requests.length = 0;
+  await submit(current, '/resume missing-id');
+  await until(() => shown().includes('Resume failed'));
+  assert.ok(requests.some((url) => url.endsWith('/sessions/missing-id')));
+  assert.equal(store.getState().threadId, 'v2-ui-test');
+  requests.length = 0;
+  await submit(current, '/resume latest');
+  await until(() => store.getState().threadId === 'saved-thread');
+  assert.ok(requests.some((url) => url.includes('/sessions?limit=1')));
+  assert.ok(requests.some((url) => url.endsWith('/sessions/saved-thread')));
+});
+
 it('Ink V2 accepts Chinese multiline input and Shift+Enter does not submit', async () => {
   const requests: RunAgentInput[] = [];
   const current = view({ async *runAgent(input) {

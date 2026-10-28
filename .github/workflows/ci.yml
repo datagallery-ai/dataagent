@@ -37,20 +37,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build TypeScript workspaces
-        run: npm run build
-
-      - name: Run package unit tests
-        run: npm run test:packages
-
       - name: Run Web tests
         run: npm run test:web
 
       - name: Run TUI unit tests
-        run: npm --workspace @datafoundry/tui test
+        run: npm run test:tui
 
-      - name: Build Web application
-        run: npm run build:web
+      - name: Build web and TUI
+        run: npm run build
 
   native-deploy-smoke:
     name: Native Deploy Smoke

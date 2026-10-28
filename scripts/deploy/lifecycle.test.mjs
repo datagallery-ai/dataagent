@@ -15,7 +15,7 @@ function createFakeDeployDeps(overrides = {}) {
     storage,
     async loadConfiguration() {
       calls.push("load-config");
-      return { env: { WEB_PORT: "3000", API_PORT: "8787" }, envText: "", webText: "" };
+      return { env: {}, envText: "" };
     },
     async preflight(_config, options) {
       calls.push("preflight");
@@ -47,14 +47,6 @@ function createFakeDeployDeps(overrides = {}) {
     },
     async installProject() {
       calls.push("install");
-    },
-    async buildTypeScript() {
-      calls.push("build-typescript");
-      if (overrides.failBuild) {
-        const error = new Error("TypeScript build failed");
-        error.logPath = "storage/logs/deploy-20260722-143000.log";
-        throw error;
-      }
     },
     async buildWeb() {
       calls.push("build-web");
@@ -143,7 +135,6 @@ test("fresh deploy runs configure through healthy state", async () => {
     "select-ports",
     "write-config",
     "install",
-    "build-typescript",
     "build-web",
     "build-tui",
     "verify-ports-again",
@@ -164,7 +155,7 @@ test("update deploy stops only after preflight and before install/build", async 
   assert.ok(stopIndex > result.calls.indexOf("preflight"));
   assert.ok(stopIndex > result.calls.indexOf("write-config"));
   assert.ok(installIndex > stopIndex);
-  assert.ok(result.calls.indexOf("build-typescript") > stopIndex);
+  assert.ok(result.calls.indexOf("build-web") > stopIndex);
 });
 
 test("build failure keeps storage intact and reports maintenance window", async () => {
@@ -211,7 +202,7 @@ test("start with missing build artifact fails with deploy hint", async () => {
   const controller = createDeploymentController(deps);
   await assert.rejects(() => controller.run({ command: "start" }), /请先运行 \.\/deploy\.sh deploy/);
   assert.ok(!deps.calls.includes("install"));
-  assert.ok(!deps.calls.includes("build-typescript"));
+  assert.ok(!deps.calls.includes("build-web"));
 });
 
 test("start with incomplete config fails with deploy hint and never starts", async () => {
@@ -250,7 +241,6 @@ test("restart does not install or build", async () => {
   assert.ok(deps.calls.includes("stop"));
   assert.ok(deps.calls.includes("start"));
   assert.ok(!deps.calls.includes("install"));
-  assert.ok(!deps.calls.includes("build-typescript"));
   assert.ok(!deps.calls.includes("build-web"));
 });
 
@@ -264,11 +254,11 @@ test("stop twice succeeds both times", async () => {
 
 test("runtime and deploy logs redact fixture secrets", () => {
   const text = redactSensitiveText(
-    "AUTH_SESSION_SECRET=fixture-deploy-secret-at-least-32-chars\nLLM_API_KEY=sk-test\nWEB_PORT=3000\n"
+    "LLM_API_KEY=sk-test\nNOTE=3000\n"
   );
   assert.doesNotMatch(text, /fixture-deploy-secret-at-least-32-chars/);
   assert.doesNotMatch(text, /sk-test/);
-  assert.match(text, /WEB_PORT=3000/);
+  assert.match(text, /NOTE=3000/);
 });
 
 test("deploy failure uses beginDeployLog path", async () => {
@@ -294,10 +284,9 @@ test("deploy failure uses beginDeployLog path", async () => {
     },
     async stop() {},
     async installProject() {},
-    async buildTypeScript() {
-      throw new Error("TypeScript build failed");
+    async buildWeb() {
+      throw new Error("Web build failed");
     },
-    async buildWeb() {},
     async buildTui() {},
     async verifyPorts() {},
     async start() {},
@@ -310,7 +299,7 @@ test("deploy failure uses beginDeployLog path", async () => {
 
   await assert.rejects(
     () => controller.run({ command: "deploy", reconfigure: false, nonInteractive: true }),
-    /TypeScript build failed/
+    /Web build failed/
   );
   assert.equal(failure.logPath, "storage/logs/deploy-20260722143000.log");
 });

@@ -53,14 +53,6 @@ export function configApiIdentityHeaders(): Record<string, string> {
   return {};
 }
 
-export function getConfigApiBaseUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_CONFIG_API_URL;
-  if (configured !== undefined) {
-    return configured.replace(/\/$/u, "");
-  }
-  return "";
-}
-
 export function getAgentRuntimeUrl(): string {
   return "/dataagent/stream";
 }
@@ -110,9 +102,8 @@ async function requestEnvelope<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const baseUrl = getConfigApiBaseUrl();
   const identityHeaders = configApiIdentityHeaders();
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(path, {
     ...init,
     credentials: "same-origin",
     headers: {
@@ -136,8 +127,7 @@ async function requestEnvelope<T>(
 }
 
 async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
-  const baseUrl = getConfigApiBaseUrl();
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(path, {
     ...init,
     credentials: "same-origin",
     headers: {

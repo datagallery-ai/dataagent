@@ -16,7 +16,7 @@ import {
   useFrontendTool,
   useRenderTool,
 } from "@copilotkit/react-core/v2";
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../../lib/evidence-ref";
 import nextDynamic from "next/dynamic";
 import { Children, cloneElement, isValidElement, useCallback, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps, ComponentType, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";

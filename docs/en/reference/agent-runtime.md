@@ -36,8 +36,8 @@ Example:
   ],
   "forwardedProps": {
     "run_config": {
-      "activeDatasourceId": "dtc-growth-demo",
-      "enabledDatasourceIds": ["dtc-growth-demo"],
+      "activeDatasourceId": "orders",
+      "enabledDatasourceIds": ["orders"],
       "activeLlmProfileId": "server-default"
     }
   }

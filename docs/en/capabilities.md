@@ -6,7 +6,7 @@ Status is based on current code:
 
 | Status | How to verify |
 | --- | --- |
-| Ready to try | After local startup, with a model key configured, the built-in DTC Growth Review runs end to end. |
+| Ready to try | After local startup, with a model key and a data source configured, a question runs end to end. |
 | Requires configuration | Feature entry exists but needs a model key, database credentials, files, MCP server, or Skill package. |
 | Capability-controlled | Read `GET /api/v1/capabilities` and enable or hide related entry points from the response. |
 | Password auth boundary | Cookie-based password sessions cover account registration, login, reset, and CSRF. Production deployments still need secret management, audit export, access control policy, and operations monitoring. |
@@ -15,8 +15,7 @@ Status is based on current code:
 
 | Capability | Web workbench | TUI | Backend/API | How to verify |
 | --- | --- | --- | --- | --- |
-| Natural-language data analysis | Ready to try | Ready to try | Ready to try | Configure an LLM key and ask questions with `dtc-growth-demo`. |
-| Built-in DTC growth case | Ready to try | Ready to try | Ready to try | Data source list includes `DTC Growth Review`; each user gets a read-only workspace copy. |
+| Natural-language data analysis | Ready to try | Ready to try | Ready to try | Configure an LLM key and a data source, then ask a question. |
 | Data source registration and test | Ready to try | Select configured sources | Ready to try | `GET /api/v1/datasource-types`, `POST /api/v1/datasources/:id/test`. |
 | Schema fetch and table preview | Ready to try | Via agent tool results | Ready to try | `POST /api/v1/datasources/:id/introspect`, `GET /schema`, `GET /tables/:table/preview`. |
 | Read-only SQL analysis | Ready to try | Ready to try | Ready to try | Agent run inspects schema first, then runs queries through tools. |

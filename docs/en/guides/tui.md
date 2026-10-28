@@ -1,28 +1,16 @@
 # TUI guide
 
-This guide is for terminal users, remote server users, and developers. After reading it, you can start the TUI, connect to the backend, select data sources or Skills, restore server sessions, and view runs and outputs in the terminal.
+This guide is for terminal users, remote server users, and developers. After reading it, you can start the V2 TUI, restore sessions, and view runs and outputs in the terminal.
 
 ## How to start
 
-Start the API in formal mode first ([Quick start](../quick-start.md): `npm run start:api` or `./deploy.sh deploy`). Do not treat `npm run dev` as the formal entry; contributor hot-reload is in the Quick start appendix.
-
-Start the TUI:
+The TUI is V2 only. With no extra flags it connects to `/dataagent/stream` from `config.json`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
 
 ```bash
 npm run start:tui
 ```
 
-Point at a specific runtime URL:
-
-```bash
-npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
-```
-
-Set default data source and agent name:
-
-```bash
-npm run start:tui -- --datasource-id dtc-growth-demo --agent dataFoundry
-```
+The address comes from Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. `--runtime-url` only attaches; its host must be `server.host` or `127.0.0.1`.
 
 Resume the latest server session:
 
@@ -34,12 +22,6 @@ Resume a specific thread/session:
 
 ```bash
 npm run start:tui -- --resume thread-001
-```
-
-The TUI requires a running API and password sign-in (offline demo mode was removed):
-
-```bash
-npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
 ```
 
 View CLI flags:
@@ -59,31 +41,13 @@ Type `/` and use `Tab` to complete. Built-in commands:
 | Command | Action | Example |
 | --- | --- | --- |
 | `/help` | List available commands. | `/help` |
-| `/clear` | Clear current chat display. | `/clear` |
-| `/status` | Show thread, message count, current data source and Skill. | `/status` |
+| `/clear` | Start a new conversation. Saved sessions stay on disk. | `/clear` |
 | `/outputs` | Open the outputs page for the current session. | `/outputs` |
-| `/datasource` | Open the data source picker. | `/datasource` |
-| `/skill` | Open Skill picker, list, or select a Skill. | `/skill show` |
-| `/reset` | Create a new local session. | `/reset` |
-| `/resume [latest\|list\|sessionId]` | Restore a server session. | `/resume list` |
+| `/resume` | Open the session picker. | `/resume` |
+| `/resume list` | Open the session picker. | `/resume list` |
+| `/resume latest` | Restore the most recent server session. | `/resume latest` |
+| `/resume <id>` | Restore that session. | `/resume thread-001` |
 | `/exit` | Exit the TUI. | `/exit` |
-
-`/datasource` usage:
-
-```text
-/datasource
-```
-
-`/skill` usage:
-
-```text
-/skill
-/skill show
-/skill current
-/skill select <id>
-/skill <id>
-/<skill-id>
-```
 
 ## Shortcuts
 
@@ -103,26 +67,22 @@ Type `/` and use `Tab` to complete. Built-in commands:
 
 ## Runtime behavior
 
-When connected to a real backend, the TUI sends natural-language input to `/api/copilotkit` and writes the current data source, enabled resources, and Skill selection into `run_config`. AG-UI events from the backend appear in Chat as text and tool calls; session outputs are available through `/outputs`.
+The TUI sends natural-language input to the control plane's `/dataagent/stream` and shares the session list with the Web UI. Session outputs are available through `/outputs`.
 
-`/resume` depends on `/api/v1/sessions` and `/api/v1/sessions/:id/conversation`. If the backend is unavailable or sessions are unsupported, the TUI shows an error in the command hint area.
-
-Offline demo mode has been removed. The TUI always requires a running API and password sign-in.
+`/resume` calls `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) with no authentication. There is no login prompt.
 
 ## Typical flow
 
-1. Start backend and TUI.
-2. Run `/status` to see thread, data source, and Skill.
-3. Run `/datasource` to open the data source picker.
-4. When needed, select `dtc-growth-demo` in the picker and press Enter.
-5. Ask a question:
+1. Start the TUI. It launches the local backend.
+2. Ask a question:
 
 ```text
 List tables in the current data source and compute GMV by channel from the orders table.
 ```
 
-6. Watch streaming replies and tool calls in Chat.
-7. Run `/outputs` for outputs.
+3. Watch streaming replies and tool calls in Chat.
+4. Run `/outputs` for outputs.
+5. Run `/resume` or `/resume list` to open the session picker. Use `/resume latest` for the newest session, or `/resume <id>` for a specific one.
 
 ## Compared with the Web workbench
 
@@ -131,16 +91,16 @@ List tables in the current data source and compute GMV by channel from the order
 | Environment | Browser, local demos, business analysis. | SSH, remote servers, terminal workflows. |
 | Interaction | Clicks, input box, console. | Keyboard and slash commands. |
 | Trace | Right console, step details, trace list. | Chat transcript and `/outputs` page. |
-| Resources | Forms for create, test, import, preview. | Select data source and Skill; view config state. |
+| Resources | Forms for create, test, import, preview. | `/resume` for sessions and `/outputs` for files. |
 
 Use the Web workbench for full visual demos. Use the TUI to verify agent runtime over SSH or lightweight terminal environments.
 
 ## Troubleshooting
 
-- Cannot connect: confirm the formal API (`npm run start:api` or one-click deploy) is running; use `npm run dev:api` only for contributor hot-reload.
-- Backend URL changed: pass full `/api/copilotkit` URL with `--runtime-url`.
-- Model not responding: check `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
-- Session restore fails: confirm `/api/v1/sessions` is reachable and that you are signed in against the same `--runtime-url`.
+- Cannot connect: run `npm run start:tui`. It uses `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`, and starts a backend when nothing is listening there.
+- Attach without starting: pass `--runtime-url`. The host must be `server.host` or `127.0.0.1`.
+- Model not responding: check `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
+- Session restore fails: confirm `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) answers. The TUI sends that request with no authentication.
 - Command has no effect: run `/help` and check errors in the command hint area.
 
 Continue with [Web workbench guide](web-workbench.md).

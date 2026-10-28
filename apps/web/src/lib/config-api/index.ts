@@ -1,4 +1,4 @@
-export { configApi, getAgentRuntimeUrl, getConfigApiBaseUrl } from "./client";
+export { configApi, getAgentRuntimeUrl } from "./client";
 export { ConfigApiError } from "./types";
 export {
   applyBackendCapabilities,

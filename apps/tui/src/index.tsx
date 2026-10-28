@@ -1,44 +1,25 @@
 #!/usr/bin/env node
 import { render } from "ink";
-import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import React from "react";
-import {
-  bindTransportAuthRequired,
-  bootstrapTuiAuth,
-  createAuthController,
-  createSecurePrompt,
-  runInteractiveLogin,
-  type AppExitReason,
-  type AuthCommandController,
-  type AuthenticatedTransport,
-} from "./auth/index.js";
 import { ConfigClient } from "./config/index.js";
-import { CopilotKitClient } from "./protocol/copilotkit-client.js";
-import { store } from "./state/store.js";
-import { validateRuntimeUrl } from "./runtime-url.js";
-import {
-  configBaseUrlFromRuntime,
-  preflightDefaultDatasourceId,
-  preflightRuntimeConnection,
-} from "./startup-preflight.js";
 import { installTerminalRedrawOptimizer } from "./terminal-redraw-optimizer.js";
 import { restoreTerminalForParentShell, withAlternateScreen } from "./terminal-screen.js";
 import { App } from "./ui/App.js";
 import type { AgentClient } from "./protocol/types.js";
 import type { V2AppContext } from "./protocol/v2-session-client.js";
-import { runV2Tui } from "./v2.js";
-import { configuredListenPort, startV2Backend } from "./v2-backend.js";
+import { normalizeRuntimeUrl, runV2Tui } from "./v2.js";
+import { configuredListen, formatListenBase, startV2Backend } from "./v2-backend.js";
 import { terminalText } from "./utils/terminal-text.js";
+
+export type AppExitReason = "exit";
 
 export type RunTuiOptions = {
   argv?: string[];
   fetchImpl?: typeof fetch;
-  stdout?: NodeJS.WritableStream;
-  stdin?: NodeJS.ReadableStream;
-  prompt?: import("./auth/interactive-login.js").PromptFn;
-  sessionStore?: import("./auth/session-store.js").TuiSessionStore;
-  renderApp?: typeof renderAuthenticatedApp;
+  renderApp?: typeof renderTuiApp;
+  env?: NodeJS.ProcessEnv;
+  startBackend?: typeof startV2Backend;
 };
 
 export type RenderAppOptions = {
@@ -47,14 +28,12 @@ export type RenderAppOptions = {
   datasourceId: string | undefined;
   initialDatasourceId: string | undefined;
   initialResume?: { enabled: boolean; sessionId?: string | undefined };
-  authController?: AuthCommandController | undefined;
   v2?: V2AppContext | undefined;
-  transport?: AuthenticatedTransport;
   shutdownSignal?: AbortSignal | undefined;
   onExit: (reason: AppExitReason) => void;
 };
 
-async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExitReason> {
+async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
   if (options.v2 && !process.stdin.isTTY) {
     throw new Error("The TUI requires an interactive terminal. Use the serve command for headless access.");
   }
@@ -62,7 +41,6 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
   const restoreTerminalRedrawOptimizer = process.stdout.isTTY
     ? installTerminalRedrawOptimizer(process.stdout)
     : () => {};
-  let unbindAuthRequired: (() => void) | undefined;
 
   try {
     await withAlternateScreen(async () => {
@@ -72,7 +50,6 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
           configClient: options.configClient,
           datasourceId: options.datasourceId,
           initialDatasourceId: options.initialDatasourceId,
-          authController: options.authController,
           v2: options.v2,
           onExit: (reason) => {
             exitReason = reason;
@@ -86,24 +63,20 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
             process.env.DATAFOUNDRY_TUI_INCREMENTAL_RENDERING !== "0",
           maxFps: 30,
           patchConsole: false,
-          // Ink 7.1 auto-detection can replay early input during its 200ms probe.
-          // Direct CSI-u opt-in is ignored by unsupported terminals; Ctrl+J remains
-          // the newline fallback. Ink restores the protocol on exit/suspend.
+          // "enabled" opts into CSI-u immediately. Ink's "auto" mode probes for
+          // ~200ms and replays that buffer with stdin.unshift, which repeats
+          // keystrokes typed during startup. Unsupported terminals ignore the
+          // sequence. Ctrl+J remains the newline fallback. Ink restores the
+          // protocol on exit/suspend.
           // Windows ConPTY: kitty keyboard has caused host/session teardown on exit.
           ...(options.v2 && process.platform !== "win32"
             ? { kittyKeyboard: { mode: "enabled" as const } }
             : {}),
         },
       );
-      if (options.transport) {
-        unbindAuthRequired = bindTransportAuthRequired(options.transport, () => {
-          if (exitReason === "exit") {
-            exitReason = "auth-required";
-          }
-          instance.unmount();
-        });
-      }
-      const stop = () => instance.unmount();
+      const stop = () => {
+        instance.unmount();
+      };
       if (options.v2 && process.platform !== "win32") {
         process.once("SIGTERM", stop);
         process.once("SIGHUP", stop);
@@ -121,13 +94,14 @@ async function renderAuthenticatedApp(options: RenderAppOptions): Promise<AppExi
       }
     });
   } finally {
-    unbindAuthRequired?.();
     restoreTerminalRedrawOptimizer();
     restoreTerminalForParentShell();
   }
 
   return exitReason;
 }
+
+const LOCAL_START_FLAGS = ["--config", "--env-file", "--workspace", "--user", "--session"] as const;
 
 function printHelp(): void {
   console.log(`
@@ -137,42 +111,29 @@ Usage:
   datafoundry-tui [options]
 
 Options:
-  --v2                    Start and connect to the local DataAgent V2 backend
-  --config <path>         Additional V2 config above Home defaults
+  --config <path>         Additional config above Home defaults
   --env-file <path>       Optional V2 environment file, resolved by the backend
   --user <id>             V2 local profile (default: default)
   --workspace <path>      V2 read-only input; repeat to mount more than one
   --session <id>          Resume a V2 session in the selected profile
-  --runtime-url <url>     CopilotKit runtime URL
-                          (default: http://127.0.0.1:8787/api/copilotkit)
-  --datasource-id <id>    Datasource ID
-                          (default: backend run-defaults)
-  --agent <name>          Agent name
-                          (default: dataFoundry)
-  --resume [sessionId]    Resume the latest server session, or a specific session
-  --no-auto-login         Ignore cached session and show the login menu
+  --runtime-url <url>     Attach to this control plane and do not start
+                          a backend. Omit it to use config.json
+                          server.host and server.port
+  --resume [sessionId]    Resume a V2 session
   --help, -h              Show this help message
 
 Examples:
   datafoundry-tui
-  datafoundry-tui --runtime-url http://localhost:8787/api/copilotkit
-  datafoundry-tui --datasource-id my-database
-  datafoundry-tui --resume
-  datafoundry-tui --resume thread-001
-  datafoundry-tui --no-auto-login
+  datafoundry-tui --workspace /existing/data
+  datafoundry-tui --runtime-url http://127.0.0.1:8790
 
 Notes:
-  Session cache keys treat localhost, 127.0.0.1, and ::1 as different API endpoints.
-  Keep --runtime-url consistent with the address you used when signing in.
+  With no arguments the TUI uses config.json server.host and server.port
+  (default http://127.0.0.1:8790). It starts dataagent serve when that
+  address is down, and connects when it is already up. --runtime-url
+  attaches and does not start a backend. Its host must be server.host
+  or 127.0.0.1.
 `);
-}
-
-function getArg(args: string[], name: string, defaultValue: string): string {
-  const index = args.indexOf(name);
-  if (index !== -1 && index + 1 < args.length) {
-    return args[index + 1]!;
-  }
-  return defaultValue;
 }
 
 function getRepeatedArg(args: string[], name: string): string[] {
@@ -198,335 +159,105 @@ function getOptionalArg(args: string[], name: string): string | undefined {
 function resolveResumeRequest(
   args: string[],
 ): { enabled: boolean; sessionId?: string | undefined } | undefined {
-  if (args.includes("--resume")) {
-    return {
-      enabled: true,
-      ...(getOptionalArg(args, "--resume")
-        ? { sessionId: getOptionalArg(args, "--resume") }
-        : {}),
-    };
-  }
-  const explicit = getOptionalArg(args, "--resume-session");
-  return explicit ? { enabled: true, sessionId: explicit } : undefined;
+  if (!args.includes("--resume")) return undefined;
+  const sessionId = getOptionalArg(args, "--resume");
+  return sessionId ? { enabled: true, sessionId } : { enabled: true };
 }
 
-async function runningControlPlaneHint(
-  fetchImpl: typeof fetch,
-  baseUrl: string,
-): Promise<string | null> {
+const VALUE_FLAGS = ["--config", "--env-file", "--workspace", "--user", "--session", "--runtime-url"] as const;
+
+/** Accept the V2 flags. Anything else is an unknown option. */
+export function parseTuiArgs(args: string[]): void {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg?.startsWith("-")) throw new Error(`Unexpected argument: ${arg}`);
+    if (arg === "--help" || arg === "-h") continue;
+    if (arg === "--resume") {
+      const value = args[index + 1];
+      if (value && !value.startsWith("-")) index += 1;
+      continue;
+    }
+    if ((VALUE_FLAGS as readonly string[]).includes(arg)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} requires a value`);
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+}
+
+async function controlPlaneIsRunning(fetchImpl: typeof fetch, baseUrl: string): Promise<boolean> {
   try {
     const response = await fetchImpl(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(800) });
-    if (!response.ok) return null;
+    if (!response.ok) return false;
     const body = await response.json() as { success?: unknown; data?: { conversation?: unknown } };
-    if (body?.success === true && body.data && typeof body.data === "object" && "conversation" in body.data) {
-      return `控制面已在 ${baseUrl} 运行。请用 ./deploy.sh tui 或 --v2 --runtime-url ${baseUrl}/dataagent/stream`;
-    }
+    return body?.success === true && !!body.data && typeof body.data === "object" && "conversation" in body.data;
   } catch {
-    return null;
+    return false;
   }
-  return null;
 }
 
 export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   const args = options.argv ?? process.argv.slice(2);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-  const renderApp = options.renderApp ?? renderAuthenticatedApp;
+  const renderApp = options.renderApp ?? renderTuiApp;
+  const launchBackend = options.startBackend ?? startV2Backend;
 
   if (args.includes("--help") || args.includes("-h")) {
     printHelp();
     return 0;
   }
 
-  const legacyOfflineDemoFlag = `--${"demo"}`;
-  if (args.includes(legacyOfflineDemoFlag)) {
-    console.error(
-      "Offline demo mode has been removed. Sign in with a password account against a running API.",
-    );
-    return 1;
-  }
-
-  if (args.includes("--v2")) {
-    try {
-      for (const flag of ["--config", "--env-file", "--workspace", "--runtime-url", "--user", "--session"]) {
-        if (args.includes(flag) && !getOptionalArg(args, flag)) throw new Error(`${flag} requires a value`);
-      }
-      const runtimeUrl = getOptionalArg(args, "--runtime-url");
-      const session = getOptionalArg(args, "--session");
-      const resume = resolveResumeRequest(args);
-      if (session && resume?.sessionId && resume.sessionId !== session) {
-        throw new Error("--session and --resume name different sessions");
-      }
-      if (runtimeUrl && ["--config", "--env-file", "--workspace", "--user", "--session"].some((flag) => args.includes(flag))) {
-        throw new Error("Local startup options cannot be combined with --runtime-url");
-      }
-      const localStartup = ["--config", "--env-file", "--workspace", "--user", "--session"].some((flag) => args.includes(flag));
-      if (!runtimeUrl && !localStartup) {
-        const port = configuredListenPort();
-        const hint = await runningControlPlaneHint(fetchImpl, `http://127.0.0.1:${port}`);
-        if (hint) throw new Error(hint);
-      }
-      const backend = runtimeUrl ? undefined : await startV2Backend({
-        configPath: getOptionalArg(args, "--config"), envFile: getOptionalArg(args, "--env-file"),
-        workspaces: getRepeatedArg(args, "--workspace"), user: getOptionalArg(args, "--user"),
-        session,
-      });
-      try {
-        const code = await runV2Tui({
-          runtimeUrl: backend?.runtimeUrl ?? runtimeUrl!, fetchImpl, renderApp,
-          initialResume: session ? { enabled: true, sessionId: session } : resume,
-          instanceId: backend?.instanceId, shutdownSignal: backend?.signal,
-        });
-        if (backend?.signal.aborted) throw backend.signal.reason;
-        return code;
-      } finally {
-        await backend?.stop();
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return 130;
-      console.error(`DataAgent V2: ${terminalText(error instanceof Error ? error.message : String(error))}`);
-      return 1;
-    }
-  }
-
-  const initialRuntime = validateRuntimeUrl(
-    getArg(args, "--runtime-url", "http://127.0.0.1:8787/api/copilotkit"),
-  );
-  if (!initialRuntime.ok) {
-    console.error(initialRuntime.reason);
-    return 1;
-  }
-  let runtimeUrl = initialRuntime.url;
-  let configBaseUrl = configBaseUrlFromRuntime(runtimeUrl);
-  const controlPlaneHint = await runningControlPlaneHint(fetchImpl, configBaseUrl);
-  if (controlPlaneHint) {
-    console.error(controlPlaneHint);
-    return 1;
-  }
-  const explicitDatasourceId = getOptionalArg(args, "--datasource-id");
-  const agent = getArg(args, "--agent", "dataFoundry");
-  const cliNoAutoLogin = args.includes("--no-auto-login");
-  let forceInteractiveLogin = cliNoAutoLogin;
-  const initialResume = resolveResumeRequest(args);
-
-  const stdout = options.stdout ?? process.stdout;
-  const stdin = options.stdin ?? process.stdin;
-
-  while (true) {
-    let bootstrap: Awaited<ReturnType<typeof bootstrapTuiAuth>>;
-    try {
-      bootstrap = await bootstrapTuiAuth({
-        apiBaseUrl: configBaseUrl,
-        noAutoLogin: forceInteractiveLogin,
-        fetchImpl,
-        ...(options.sessionStore ? { sessionStore: options.sessionStore } : {}),
-      });
-    } catch (error) {
-      const recovered = await promptApiUnreachableRecovery({
-        apiBaseUrl: configBaseUrl,
-        error,
-        stdout,
-        stdin,
-        ...(options.prompt ? { prompt: options.prompt } : {}),
-      });
-      if (recovered.action === "quit") {
-        return 1;
-      }
-      if (recovered.action === "other-address") {
-        runtimeUrl = recovered.runtimeUrl;
-        configBaseUrl = configBaseUrlFromRuntime(runtimeUrl);
-      }
-      continue;
-    }
-
-    if (bootstrap.kind === "login-required") {
-      const interactive = await runInteractiveLogin({
-        apiBaseUrl: configBaseUrl,
-        status: bootstrap.status,
-        ...(bootstrap.previousSession
-          ? { previousSession: bootstrap.previousSession }
-          : {}),
-        deps: {
-          fetchImpl,
-          sessionStore: bootstrap.sessionStore,
-          ...(options.stdout ? { stdout: options.stdout } : {}),
-          ...(options.stdin ? { stdin: options.stdin } : {}),
-          ...(options.prompt ? { prompt: options.prompt } : {}),
-        },
-      });
-      if (interactive.kind === "exit") {
-        return 0;
-      }
-      if (interactive.kind === "unreachable") {
-        const recovered = await promptApiUnreachableRecovery({
-          apiBaseUrl: configBaseUrl,
-          error: interactive.error,
-          stdout,
-          stdin,
-          ...(options.prompt ? { prompt: options.prompt } : {}),
-        });
-        if (recovered.action === "quit") {
-          return 1;
-        }
-        if (recovered.action === "other-address") {
-          runtimeUrl = recovered.runtimeUrl;
-          configBaseUrl = configBaseUrlFromRuntime(runtimeUrl);
-        }
-        continue;
-      }
-      bootstrap = {
-        kind: "authenticated",
-        session: interactive.session,
-        transport: interactive.transport,
-        authClient: interactive.authClient,
-        cookieJar: interactive.cookieJar,
-        sessionStore: bootstrap.sessionStore,
-        ...(interactive.warning ? { warning: interactive.warning } : {}),
-      };
-    }
-
-    if (bootstrap.kind !== "authenticated") {
-      return 1;
-    }
-
-    const transportFetch = bootstrap.transport.fetch.bind(bootstrap.transport);
-    const authController = createAuthController({
-      apiBaseUrl: configBaseUrl,
-      authClient: bootstrap.authClient,
-      sessionStore: bootstrap.sessionStore,
-    });
-
-    const configClient = new ConfigClient({
-      baseUrl: configBaseUrl,
-      fetchImpl: transportFetch,
-    });
-    const client = new CopilotKitClient({
-      runtimeUrl,
-      agent,
-      fetchImpl: transportFetch,
-      onConnectionStatusChange: (status) => {
-        store.setConnectionStatus(status === "reconnecting" ? "disconnected" : status);
-      },
-    });
-
-    let initialDatasourceId = explicitDatasourceId;
-    const [runtimeConnected, preflightDatasourceId] = await Promise.all([
-      preflightRuntimeConnection(runtimeUrl, transportFetch),
-      !initialDatasourceId
-        ? preflightDefaultDatasourceId(configBaseUrl, transportFetch)
-        : Promise.resolve(undefined),
-    ]);
-
-    if (!initialDatasourceId && preflightDatasourceId) {
-      initialDatasourceId = preflightDatasourceId;
-    }
-
-    store.setConnectionStatus(runtimeConnected ? "connected" : "disconnected");
-    if (!initialResume?.enabled) {
-      store.setThreadId(randomUUID());
-    }
-
-    if (bootstrap.warning) {
-      console.log(bootstrap.warning);
-    }
-    console.log(
-      `Authenticated as ${bootstrap.session.user.email} (${bootstrap.session.workspace.id})`,
-    );
-
-    const exitReason = await renderApp({
-      client,
-      configClient,
-      datasourceId: explicitDatasourceId,
-      initialDatasourceId,
-      authController,
-      transport: bootstrap.transport,
-      onExit: () => {},
-      ...(initialResume ? { initialResume } : {}),
-    });
-
-    if ("dispose" in client && typeof client.dispose === "function") {
-      client.dispose();
-    }
-
-    if (exitReason === "logout" || exitReason === "auth-required") {
-      store.reset();
-      if (exitReason === "auth-required") {
-        console.log("Session expired or revoked. Please sign in again.");
-      }
-      // Re-enter auth menu; never silently restore a possibly-stale disk session.
-      forceInteractiveLogin = true;
-      continue;
-    }
-    return 0;
-  }
-}
-
-type ApiUnreachableRecovery =
-  | { action: "retry" }
-  | { action: "quit" }
-  | { action: "other-address"; runtimeUrl: string };
-
-async function promptApiUnreachableRecovery(options: {
-  apiBaseUrl: string;
-  error: unknown;
-  stdout: NodeJS.WritableStream;
-  stdin: NodeJS.ReadableStream;
-  prompt?: import("./auth/interactive-login.js").PromptFn;
-}): Promise<ApiUnreachableRecovery> {
-  const message = errorMessage(options.error);
-  options.stdout.write(
-    `Cannot reach API at ${options.apiBaseUrl}: ${message}\n`
-      + "Options: [r]etry, [o]ther address, [q]uit\n",
-  );
-
-  const ownsPrompt = !options.prompt;
-  const prompt = options.prompt ?? createSecurePrompt({
-    stdin: options.stdin,
-    stdout: options.stdout,
-  });
   try {
-    while (true) {
-      const answer = (await prompt.question("Select an option: ")).trim().toLowerCase();
-      if (answer === "r" || answer === "retry" || answer === "") {
-        return { action: "retry" };
-      }
-      if (answer === "o" || answer === "other" || answer === "address") {
-        const runtimeUrl = await promptRuntimeUrl(prompt, options.stdout);
-        if (runtimeUrl) {
-          return { action: "other-address", runtimeUrl };
-        }
-        continue;
-      }
-      if (answer === "q" || answer === "quit" || answer === "exit") {
-        return { action: "quit" };
-      }
-      options.stdout.write("Please choose [r]etry, [o]ther address, or [q]uit.\n");
+    parseTuiArgs(args);
+    const env = options.env ?? process.env;
+    const runtimeUrl = (() => {
+      const explicit = getOptionalArg(args, "--runtime-url");
+      return explicit ? normalizeRuntimeUrl(explicit, env) : undefined;
+    })();
+    const session = getOptionalArg(args, "--session");
+    const resume = resolveResumeRequest(args);
+    if (session && resume?.sessionId && resume.sessionId !== session) {
+      throw new Error("--session and --resume name different sessions");
     }
-  } finally {
-    if (ownsPrompt) {
-      await prompt.close();
+    if (runtimeUrl && LOCAL_START_FLAGS.some((flag) => args.includes(flag))) {
+      throw new Error("Local startup options cannot be combined with --runtime-url");
     }
+    const localStartup = LOCAL_START_FLAGS.some((flag) => args.includes(flag));
+    let attachUrl = runtimeUrl;
+    if (!attachUrl && !localStartup) {
+      const listen = configuredListen(env);
+      const baseUrl = formatListenBase(listen.host, listen.port);
+      if (await controlPlaneIsRunning(fetchImpl, baseUrl)) attachUrl = normalizeRuntimeUrl(baseUrl, env);
+    }
+    const backend = attachUrl ? undefined : await launchBackend({
+      configPath: getOptionalArg(args, "--config"),
+      envFile: getOptionalArg(args, "--env-file"),
+      workspaces: getRepeatedArg(args, "--workspace"),
+      user: getOptionalArg(args, "--user"),
+      session,
+    });
+    try {
+      const code = await runV2Tui({
+        runtimeUrl: backend?.runtimeUrl ?? attachUrl!,
+        fetchImpl,
+        renderApp,
+        env,
+        initialResume: session ? { enabled: true, sessionId: session } : resume,
+        instanceId: backend?.instanceId,
+        shutdownSignal: backend?.signal,
+      });
+      if (backend?.signal.aborted) throw backend.signal.reason;
+      return code;
+    } finally {
+      await backend?.stop();
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return 130;
+    console.error(`DataAgent V2: ${terminalText(error instanceof Error ? error.message : String(error))}`);
+    return 1;
   }
-}
-
-async function promptRuntimeUrl(
-  prompt: import("./auth/interactive-login.js").PromptFn,
-  stdout: NodeJS.WritableStream,
-): Promise<string | undefined> {
-  while (true) {
-    const raw = (await prompt.question("Enter runtime URL (empty to cancel): ")).trim();
-    if (!raw) {
-      return undefined;
-    }
-    const validated = validateRuntimeUrl(raw);
-    if (validated.ok) {
-      return validated.url;
-    }
-    stdout.write(`${validated.reason}\n`);
-  }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 const isDirectLaunch = process.argv[1]

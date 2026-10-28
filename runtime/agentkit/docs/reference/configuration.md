@@ -66,7 +66,7 @@
 
 ## `server`
 
-`npm run dev`、`./deploy.sh`、网页转发和 TUI 都读这里。仓库 `.env` 里的 `API_HOST`、`API_PORT` 不参与监听。首次部署在 Home 没有 `config.json` 时，用 `dataagent/bootstrap/templates/config.json` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。
+`npm run start`、`./deploy.sh`、网页转发和 TUI 都读这里。首次部署在 Home 没有 `config.json` 时，用 `dataagent/bootstrap/templates/config.json` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |

@@ -16,7 +16,7 @@ from types import MappingProxyType
 from dotenv import dotenv_values
 from dotenv.parser import parse_stream
 
-RESERVED_ENV = frozenset({"DATAAGENT_HOME", "DATAAGENT_V2_TOKEN", "DATAAGENT_V2_INSTANCE_ID"})
+RESERVED_ENV = frozenset({"DATAAGENT_HOME", "DATAAGENT_V2_INSTANCE_ID"})
 """Read only from the original process environment; env files cannot redefine them."""
 
 

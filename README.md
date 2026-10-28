@@ -65,13 +65,13 @@ DataAgent 0.2 turns the first usable workbench into a more complete, stateful da
 - **Evidence-first follow-ups** — Reference a complete output or a selected table/text region in the next question; resolved evidence is carried into the governed run context with diagnostics.
 - **Semantic trace and DataLink integration** — Inspect checkpoint-backed run structure in a semantic Trace DAG. Connect an external DataLink service to map tables and columns to business concepts, entities, joinable paths, and confidence-scored relationships for stronger agent grounding.
 - **Reusable outputs and workspace assets** — Preview and export tables, charts, reports, SQL, and files; upload files into an active session, then promote supported files for reuse across sessions.
-- **Production-facing Web foundation** — Built-in password authentication, same-origin API proxying, bilingual UI, model connection tests, onboarding, and an auto-provisioned DTC growth analysis case.
+- **Production-facing Web foundation** — Built-in password authentication, same-origin API proxying, bilingual UI, model connection tests, and onboarding.
 
 See the [v0.2.0 release notes](docs/en/releases/v0.2.0.md) for the complete capability and documentation audit.
 
 ## 🚀 Formal deploy
 
-Formal mode has two paths (do **not** run `npm run dev`). Docker / Compose is not provided in this release.
+Formal mode has two paths. Docker / Compose is not provided in this release.
 
 ### Recommended: Ubuntu / Debian one-click
 
@@ -100,7 +100,7 @@ Common management commands:
 ./deploy.sh tui      # optional: foreground TUI client (API must already be up)
 ```
 
-Open `http://127.0.0.1:3000/login`, register or sign in, create an OpenAI-compatible model profile, then go to `/data-tasks`. For remote hosts set `AUTH_PUBLIC_BASE_URL`. Re-running `./deploy.sh deploy` uses a maintenance window (stop the managed process group before install/build).
+Open `http://127.0.0.1:3000/login`, register or sign in, create an OpenAI-compatible model profile, then go to `/data-tasks`. Re-running `./deploy.sh deploy` uses a maintenance window (stop the managed process group before install/build).
 
 ### Windows / macOS / other: manual npm
 
@@ -111,37 +111,21 @@ git clone https://github.com/datagallery-lab/datafoundry.git
 cd datafoundry
 npm install
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
 ```
 
-Configure any OpenAI-compatible model in the root `.env`, plus auth for formal test or real production (sample defaults lean formal test):
+Configure an optional server-side model in the root `.env` (you can also configure the model only in the Web UI):
 
 ```bash
-LLM_PROVIDER=openai-compatible
 LLM_MODEL=qwen-plus                # or deepseek-chat, gpt-4o, ...
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=replace-with-your-key
-
-AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
-AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000   # real production: https://your.domain
-AUTH_REGISTRATION_MODE=open
-AUTH_EMAIL_DELIVERY=test                     # real production: smtp + AUTH_SMTP_*
 ```
 
-`apps/web/.env.local`:
-
-```bash
-NEXT_PUBLIC_AGENT_RUNTIME_URL=
-NEXT_PUBLIC_CONFIG_API_URL=
-API_PROXY_TARGET=http://127.0.0.1:8787
-```
-
-Build and start:
+Build and start. `npm install` syncs the control-plane Python dependencies when it finishes. `npm run build` compiles the web app and TUI:
 
 ```bash
 npm run build
-npm run build:web
-npm run start        # Web :3000 + API :8787
+npm run start        # web defaults to 127.0.0.1:3000; override with --web-host / --web-port
 ```
 
 Open `http://127.0.0.1:3000/login`, register or sign in, go to `/data-tasks`, and ask:
@@ -154,7 +138,7 @@ You will see the full chain: schema inspection → read-only SQL → SQL audit �
 
 For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.datafoundry.conf.example`](deploy/nginx.datafoundry.conf.example) (gzip/brotli static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE).
 
-> Full steps, the two-environment matrix, and optional external DataLink notes: [Quick Start](docs/en/quick-start.md). Contributor hot-reload (`npm run dev`) is appendix-only. Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
+> Full steps, the two-environment matrix, and optional external DataLink notes: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
 
 
 ## 🆚 How It Differs From Coding Agents And SQL Chatbots
@@ -193,7 +177,7 @@ Ask → Align semantics → Execute under control → Materialize output → Rep
 
 ## 🗄️ Bring Your Data Stack, No Rebuild
 
-Connect through Data Gateway adapters: the built-in DTC Growth Review case works out of the box; DuckDB, SQLite, CSV, Excel, PostgreSQL, and MySQL fit local trials; cloud warehouses, search engines, and NoSQL systems plug in with their own services and credentials.
+Connect through Data Gateway adapters: DuckDB, SQLite, CSV, Excel, PostgreSQL, and MySQL fit local trials; cloud warehouses, search engines, and NoSQL systems plug in with their own services and credentials.
 
 <p align="center">
   <img src="docs/assets/readme/database-wall.png" alt="Supported DataAgent data sources" width="100%">
@@ -236,7 +220,7 @@ DataAgent moves quickly, so small, well-scoped PRs are the easiest to merge:
 
 1. Open an issue or discussion first for behavioral, protocol, datasource-adapter, or agent-policy changes.
 2. Keep each PR focused on one runtime boundary or feature area.
-3. Run `npm run build` plus the targeted smoke checks for what you touched (e.g. `npm run smoke:data-gateway`).
+3. Run `npm run build` plus the targeted smoke checks for what you touched (e.g. `npm run smoke:docs`).
 4. Update docs when a change affects setup, APIs, datasource configuration, or user-visible output.
 5. Do not commit credentials, local databases, generated storage, or private benchmark data.
 

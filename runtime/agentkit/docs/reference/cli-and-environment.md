@@ -21,9 +21,10 @@ uv run --project runtime/agentkit dataagent serve \
 | `--workspace` | 无 | 可重复。已存在的只读输入。与配置列表互斥于更高优先级 |
 | `--session` | 无 | 恢复属于该 profile 的会话，并沿用其输入绑定 |
 | `--env-file` | 无 | 后端读取的环境文件。文件必须存在 |
-| `--stdio-ready` | 关 | TUI 内部协议。帮助里隐藏 |
+| `--reload` | 关 | 源码变化时重启 `serve`、`dataagent`、`a2a_server`。`npm run start` 和 `./deploy.sh` 不传。继承了监听套接字时忽略 |
+| `--stdio-ready` | 关 | TUI 拉起后端时使用的隐藏握手。帮助里不显示 |
 
-没有 `--host`。`npm run dev`、`./deploy.sh`、网页转发和 TUI 都读 `config.json` 的 `server.host` 与 `server.port`。默认 `127.0.0.1:8790`。`--stdio-ready` 仍给当前 TUI 的一键拉起使用。
+没有 `--host`。`npm run start`、`./deploy.sh`、网页转发和 TUI 都读 `config.json` 的 `server.host` 与 `server.port`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。
 
 ## `dataagent serve-a2a`
 
@@ -53,18 +54,14 @@ SDK 的 `LaunchOptions` 还有 `cwd`、`init_home` 和单个 `workspace`。`work
 
 ## TUI
 
-TUI 参数由 `apps/tui` 解析，再转成后端启动参数或远程 URL。
+TUI 只保留 v2。没有参数时拉起本机后端并连接 `/dataagent/stream`。
 
 | 参数 | 作用 |
 | --- | --- |
-| `--v2` | 使用 AgentKit 后端 |
-| `--config` | 传给后端的额外配置 |
-| `--env-file` | 传给后端。不配置 TUI 自身 |
-| `--workspace` | 传给后端的只读输入 |
-| `--resume [threadId]` | 启动时恢复。省略时走恢复流程 |
-| `--runtime-url` | 连接已有流地址。不管理该进程的配置、环境或输入 |
-
-`--runtime-url` 与 `--config`、`--env-file`、`--workspace` 不能组合。
+| （无参数） | 读 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。该地址上已有控制面就连上，否则拉起后端 |
+| `--config`、`--env-file`、`--workspace`、`--user`、`--session` | 传给拉起的后端。即使该地址上已有控制面，也会再启动一个 |
+| `--resume [threadId]` | 启动时恢复会话 |
+| `--runtime-url` | 连接这个地址，不再启动后端。不能和上一行的启动参数一起用 |
 
 ## 环境变量
 
@@ -72,8 +69,7 @@ TUI 参数由 `apps/tui` 解析，再转成后端启动参数或远程 URL。
 | --- | --- | --- |
 | `DATAAGENT_HOME` | 后端进程环境 | Home。默认 `~/.dataagent`。相对值相对启动 cwd。写在 env 文件里会被忽略并警告 |
 | `DATAAGENT_WORKSPACE` | 后端有效环境 | 单个只读输入。低于 CLI `--workspace`，高于配置 `workspaces` |
-| `DATAAGENT_V2_INSTANCE_ID` | 后端进程环境 | TUI 启动协议要求的实例 ID。env 文件不能设置 |
-| `DATAAGENT_V2_TOKEN` | 进程环境 | 保留给进程。写在 env 文件里会被忽略。HTTP API 不读取访问令牌 |
+| `DATAAGENT_V2_INSTANCE_ID` | 后端进程环境 | TUI 拉起后端时写入的实例 ID。env 文件不能设置 |
 | `DATAAGENT_V2_LOG_PATH` | TUI 进程 | 界面日志。后端 `--env-file` 不生效 |
 | `INIT_CWD` | TUI 进程 | 路径基准相关。必须在 TUI 进程里 |
 | `NO_COLOR` | TUI 进程 | `1` 时关闭颜色 |

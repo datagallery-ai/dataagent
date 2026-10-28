@@ -10,11 +10,13 @@ Thanks for helping improve this project.
 
 ## Local Setup
 
+Node.js 22+ and uv are required. `npm install` syncs the AgentKit Python environment. `npm run build` compiles the web app and TUI.
+
 ```bash
 npm install
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
-npm run dev
+npm run build
+npm run start
 ```
 
 Open the workbench at <http://127.0.0.1:3000/data-tasks>.

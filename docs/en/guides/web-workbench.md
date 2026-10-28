@@ -6,8 +6,15 @@ This guide is for users trying DataFoundry in the browser. After reading it, you
 
 Default path is the **formal** stack (`password` + `build` / `start`). Formal test and real production share the same commands; email and public URL differ in the root `.env` — see [Quick start](../quick-start.md).
 
+One command (GUI is served, TUI is ready in another terminal):
+
 ```bash
-npm run build && npm run build:web
+npm run start
+```
+
+Separately:
+
+```bash
 npm run start:api
 npm run start:web
 ```
@@ -20,15 +27,7 @@ http://127.0.0.1:3000/login
 
 Then go to `/data-tasks` after sign-in.
 
-Formal frontend settings (`apps/web/.env.local`; re-run `build:web` after changing `NEXT_PUBLIC_*`):
-
-```bash
-NEXT_PUBLIC_AGENT_RUNTIME_URL=
-NEXT_PUBLIC_CONFIG_API_URL=
-API_PROXY_TARGET=http://127.0.0.1:8787
-```
-
-The browser uses the same-origin Next BFF (`/api/v1/*`, conversation `POST /dataagent/stream`, CopilotKit runtime info `/api/copilotkit`). Point the BFF upstream with `API_PROXY_TARGET` (default `http://127.0.0.1:8787`).
+The browser uses the same-origin Next BFF (`/api/v1/*`, conversation `POST /dataagent/stream`, CopilotKit runtime info `/api/copilotkit`). `npm run start:web` sets the upstream from `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`.
 
 Probes:
 
@@ -36,8 +35,6 @@ Probes:
 - Readiness: `GET /ready` (includes `startup_ms` / `phases`)
 
 Reverse-proxy sample (real production): [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example).
-
-Contributor hot-reload (not formal; do not mix with `start:*`): [Quick start appendix](../quick-start.md).
 
 ## Identity and first-run guide
 
@@ -62,7 +59,7 @@ On narrow windows, the right console collapses into a drawer. Use the console en
 ## Run your first task
 
 1. Click **New data task** on the left.
-2. Select the built-in **DTC Growth Review** data source.
+2. Select a registered data source.
 3. Select **Server default** or your configured model next to the input box.
 4. Enter a question and send.
 

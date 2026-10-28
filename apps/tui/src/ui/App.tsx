@@ -37,7 +37,6 @@ import { classifyError, formatErrorMessage, errorLogger } from '../protocol/erro
 import { commandProcessor } from '../commands/index.js';
 import type { CommandContext, CommandResult } from '../commands/types.js';
 import { ConfigClientError, type ConfigClient, type Datasource, type SessionListItem, type Skill } from '../config/index.js';
-import type { AppExitReason, AuthCommandController } from '../auth/types.js';
 import { restoreV2Messages, type V2AppContext } from '../protocol/v2-session-client.js';
 import type { Message } from '@ag-ui/core';
 import { V2_COMMANDS } from '../v2.js';
@@ -46,11 +45,12 @@ import { AguiClientError } from '../protocol/agui-client.js';
 import { getLogger } from '../utils/logger.js';
 import { installFullscreenCursorCorrection } from './fullscreen-cursor.js';
 
+type AppExitReason = 'exit';
+
 interface AppProps {
   client: AgentClient;
   v2?: V2AppContext | undefined;
   configClient?: ConfigClient | undefined;
-  authController?: AuthCommandController | undefined;
   onExit?: ((reason: AppExitReason) => void) | undefined;
   datasourceId: string | undefined;
   initialDatasourceId?: string | undefined;
@@ -330,7 +330,6 @@ export const App: React.FC<AppProps> = ({
   client,
   v2,
   configClient,
-  authController,
   onExit,
   datasourceId,
   initialDatasourceId,
@@ -349,19 +348,6 @@ export const App: React.FC<AppProps> = ({
   const [state, setState] = useState<TuiAppState>(store.getState());
   const [inputFocused, setInputFocused] = useState(false);
   const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null);
-  const [logoutConfirm, setLogoutConfirm] = useState<
-    | {
-        kind: "remote-failed";
-        clearLocalOnly: () => Promise<void>;
-      }
-    | {
-        kind: "local-cleanup-failed";
-        storePath: string;
-        error: string;
-        retry: () => Promise<void>;
-      }
-    | null
-  >(null);
   const [activeDatasourceId, setActiveDatasourceId] = useState<string | undefined>(
     () => datasourceId
       ?? initialDatasourceId
@@ -550,39 +536,6 @@ export const App: React.FC<AppProps> = ({
     onExit?.(reason);
     exit();
   }, [clearCtrlCExitTimer, client, exit, onExit]);
-
-  const handleLogoutAction = useCallback(async () => {
-    if (!authController) {
-      setCommandNotice({
-        message: 'Logout is unavailable because no auth controller was provided.',
-        kind: 'error',
-      });
-      return;
-    }
-    const result = await authController.logout();
-    if (result.kind === 'complete') {
-      exitApplication('logout');
-      return;
-    }
-    if (result.kind === 'local-cleanup-failed') {
-      setLogoutConfirm({
-        kind: 'local-cleanup-failed',
-        storePath: result.storePath,
-        error: result.error,
-        retry: result.retry,
-      });
-      setCommandNotice({
-        message: `Signed out remotely, but local session cleanup failed: ${result.error}`,
-        kind: 'error',
-      });
-      return;
-    }
-    setLogoutConfirm({ kind: 'remote-failed', clearLocalOnly: result.clearLocalOnly });
-    setCommandNotice({
-      message: 'Unable to reach the server. The remote session may still be valid.',
-      kind: 'error',
-    });
-  }, [authController, exitApplication]);
 
   const clearQueuedPrompts = useCallback((): void => {
     queuedPromptsRef.current = [];
@@ -1113,31 +1066,6 @@ export const App: React.FC<AppProps> = ({
 
   // Handle global keyboard shortcuts
   useInput((input, key) => {
-    if (logoutConfirm) {
-      if (input === '1') {
-        const action = logoutConfirm.kind === 'remote-failed'
-          ? logoutConfirm.clearLocalOnly
-          : logoutConfirm.retry;
-        setLogoutConfirm(null);
-        void action()
-          .then(() => exitApplication('logout'))
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
-            setCommandNotice({
-              message: `Local session cleanup still failing: ${message}`,
-              kind: 'error',
-            });
-          });
-        return;
-      }
-      if (input === '2' || key.escape) {
-        setLogoutConfirm(null);
-        setCommandNotice(null);
-        return;
-      }
-      return;
-    }
-
     if (key.ctrl && input === 'c') {
       if (pickerOpen || !inputFocused) {
         requestCtrlCExit();
@@ -1237,7 +1165,7 @@ export const App: React.FC<AppProps> = ({
       if (command === '/exit' && !argument) {
         exitApplication('exit');
       } else if (command === '/help' && !argument) {
-        setCommandNotice({ kind: 'info', message: '/help · /clear (new conversation) · /resume [id] · /outputs · /exit' });
+        setCommandNotice({ kind: 'info', message: '/help · /clear (new conversation) · /resume [list|latest|id] · /outputs · /exit' });
       } else if (command === '/outputs' && !argument) {
         const threadId = store.getState().threadId;
         if (!threadId) {
@@ -1265,8 +1193,8 @@ export const App: React.FC<AppProps> = ({
           chatAreaRef.current?.reset();
         }
       } else if (command === '/resume' && extra.length === 0) {
-        if (argument) await restoreHistoricalSession(argument === 'latest' ? undefined : argument);
-        else await openSessionPicker();
+        if (!argument || argument === 'list') await openSessionPicker();
+        else await restoreHistoricalSession(argument === 'latest' ? undefined : argument);
       } else {
         setCommandNotice({ kind: 'error', message: 'This command is not supported in V2. Use /help.' });
       }
@@ -1279,7 +1207,6 @@ export const App: React.FC<AppProps> = ({
       const commandContext: CommandContext = {
         client,
         ...(configClient ? { configClient } : {}),
-        ...(authController ? { authController } : {}),
         ...(activeDatasourceId ? { datasourceId: activeDatasourceId } : {}),
         ...(activeSkillId ? { activeSkillId } : {}),
         workspaceConfig: currentState.workspaceConfig,
@@ -1311,9 +1238,6 @@ export const App: React.FC<AppProps> = ({
             clearQueuedPrompts();
             store.startNewSession(createThreadId());
             chatAreaRef.current?.reset();
-          } else if (action === 'logout') {
-            await handleLogoutAction();
-            return;
           } else if (action === 'exit_application') {
             exitApplication('exit');
             return;
@@ -1790,27 +1714,6 @@ export const App: React.FC<AppProps> = ({
         events: [],
       };
   const chatPaneColumns = terminalColumns;
-
-  if (logoutConfirm) {
-    if (logoutConfirm.kind === 'local-cleanup-failed') {
-      return (
-        <Box flexDirection="column" height={appRows} width={terminalColumns} paddingX={1} paddingY={1}>
-          <Text color={inkColors.error}>远端已注销，但本地 Session 清理失败。</Text>
-          <Text>{`路径: ${logoutConfirm.storePath}`}</Text>
-          <Text>{`错误: ${logoutConfirm.error}`}</Text>
-          <Text>[1] 重试清理本地登录</Text>
-          <Text>[2] 返回</Text>
-        </Box>
-      );
-    }
-    return (
-      <Box flexDirection="column" height={appRows} width={terminalColumns} paddingX={1} paddingY={1}>
-        <Text color={inkColors.error}>无法连接服务端，远端 Session 可能仍有效。</Text>
-        <Text>[1] 仅清除此设备的登录</Text>
-        <Text>[2] 返回</Text>
-      </Box>
-    );
-  }
 
   return (
     <Box flexDirection="column" height={appRows} width={terminalColumns} overflowY="hidden">

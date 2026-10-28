@@ -4,7 +4,7 @@ import {
   LEFT_PANEL_DEFAULT_WIDTH,
   RIGHT_PANEL_DEFAULT_WIDTH,
 } from "./workspace-layout";
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../../lib/evidence-ref";
 import type { TranslateFn } from "../../i18n/types";
 
 export type ArtifactKind = "chart" | "csv" | "memo" | "dashboard" | "file";
@@ -1239,8 +1239,8 @@ export const MCP_AUTH_TYPE_OPTIONS = [
 ] as const;
 
 /** Chat models use one OpenAI-compatible provider path; vendor choice lives in baseUrl/modelName. */
-export const LLM_PROVIDER_OPTIONS = [
-  { value: "openai-compatible", label: "OpenAI compatible (LLM_PROVIDER=openai-compatible)" },
+export const LLM_PROFILE_OPTIONS = [
+  { value: "openai-compatible", label: "OpenAI compatible" },
 ] as const;
 
 function normalizeLlmProvider(provider?: string): string {
@@ -1896,7 +1896,7 @@ export const WORKSPACE_CONFIG_FIELDS: Record<
       key: "provider",
       label: "Provider",
       inputType: "select",
-      options: [...LLM_PROVIDER_OPTIONS],
+      options: [...LLM_PROFILE_OPTIONS],
       helpText:
         "All chat models use the OpenAI-compatible /chat/completions path.",
       required: true,

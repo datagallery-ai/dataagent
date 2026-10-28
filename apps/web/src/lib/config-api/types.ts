@@ -1,4 +1,4 @@
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../evidence-ref";
 
 export type ApiErrorCode =
   | "BAD_REQUEST"
@@ -17,7 +17,6 @@ export type ApiErrorCode =
   | "REINDEX_REQUIRED"
   | "RESOURCE_NOT_FOUND"
   | "REVISION_CONFLICT"
-  | "SECRET_MASTER_KEY_REQUIRED"
   | "SQL_BLOCKED"
   | "SQL_TIMEOUT"
   | "UNAUTHORIZED"

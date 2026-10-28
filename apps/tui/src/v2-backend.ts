@@ -7,17 +7,76 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { terminalText } from "./utils/terminal-text.js";
 
-export function configuredListenPort(env: NodeJS.ProcessEnv = process.env, configPath?: string): string {
-  const file = configPath
-    ?? env.DATAAGENT_CONFIG?.trim()
-    ?? join(env.DATAAGENT_HOME?.trim() || join(homedir(), ".dataagent"), "config.json");
-  try {
-    const port = JSON.parse(readFileSync(file, "utf8"))?.server?.port;
-    if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
-  } catch {
-    // Missing or invalid config uses the template default.
+const DEFAULT_SERVER_HOST = "127.0.0.1";
+const DEFAULT_SERVER_PORT = "8790";
+
+function homeDir(env: NodeJS.ProcessEnv): string | null {
+  if (Object.prototype.hasOwnProperty.call(env, "DATAAGENT_HOME")) {
+    return env.DATAAGENT_HOME?.trim() || null;
   }
-  return "8790";
+  return join(homedir(), ".dataagent");
+}
+
+function readServer(file: string | null | undefined): { host?: unknown; port?: unknown } {
+  if (!file || !existsSync(file)) return {};
+  try {
+    const server = JSON.parse(readFileSync(file, "utf8"))?.server;
+    return server && typeof server === "object" ? server : {};
+  } catch {
+    return {};
+  }
+}
+
+function bareHost(value: string): string {
+  return value.trim().replace(/^\[(.*)\]$/u, "$1");
+}
+
+function pickHost(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  return bareHost(value) || fallback;
+}
+
+function pickPort(value: unknown, fallback: string): string {
+  const port = Number(value);
+  if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
+  return fallback;
+}
+
+/** Listen address from Home config.json, with DATAAGENT_CONFIG overlaid. */
+export function configuredListen(env: NodeJS.ProcessEnv = process.env): { host: string; port: string } {
+  const home = homeDir(env);
+  const base = readServer(home ? join(home, "config.json") : null);
+  const explicit = env.DATAAGENT_CONFIG?.trim();
+  const over = explicit ? readServer(explicit) : {};
+  return {
+    host: pickHost(over.host, pickHost(base.host, DEFAULT_SERVER_HOST)),
+    port: pickPort(over.port, pickPort(base.port, DEFAULT_SERVER_PORT)),
+  };
+}
+
+export function formatListenBase(host: string, port: string): string {
+  const bare = bareHost(host);
+  const shown = bare.includes(":") ? `[${bare}]` : bare;
+  return `http://${shown}:${port}`;
+}
+
+/** Host and port of an HTTP listen URL. A missing port is 80. */
+export function readHttpListen(value: string): { host: string; port: string } | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/u, "");
+  if (url.protocol !== "http:" || url.username || url.password || url.search || url.hash) return null;
+  if (path !== "" && path !== "/dataagent/stream") return null;
+  return { host: bareHost(url.hostname), port: url.port || "80" };
+}
+
+export function configuredListenPort(env: NodeJS.ProcessEnv = process.env, configPath?: string): string {
+  if (configPath) return pickPort(readServer(configPath).port, DEFAULT_SERVER_PORT);
+  return configuredListen(env).port;
 }
 
 const identity = { protocol: z.literal("dataagent-v2"), instanceId: z.string().min(1) };
@@ -129,8 +188,6 @@ export async function startV2Backend(options: {
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
   const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_V2_INSTANCE_ID: instanceId };
-  delete env.API_HOST;
-  delete env.API_PORT;
   const launchOpts = { cwd, env };
   let windowsPython: string | undefined;
   if (!options.spawnBackend && process.platform === "win32") {

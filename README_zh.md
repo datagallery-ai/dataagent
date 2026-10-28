@@ -65,13 +65,13 @@ DataAgent 0.2 在首个可用版本上，进一步补齐了有状态、可追溯
 - **证据驱动的追问** — 可将完整产出，或选中的表格区域、文本片段引用到下一个问题；证据解析结果和诊断信息会进入受控 run context。
 - **语义 Trace 与 DataLink 集成** — 通过基于 checkpoint 的语义 Trace DAG 复盘执行结构；连接外部 DataLink 服务，把表和字段映射到业务概念、实体、可 JOIN 路径和带置信度的关系，为 Agent 提供更强语义支撑。
 - **可复用的产出与工作区资产** — 统一预览和导出表格、图表、报告、SQL 和文件；文件可先上传到当前会话，再提升为跨会话复用的工作区资产。
-- **面向正式部署的 Web 基础** — 内置密码认证、同源 API 代理、中英双语界面、模型连接测试、首次引导，并自动准备 DTC 增长分析案例。
+- **面向正式部署的 Web 基础** — 内置密码认证、同源 API 代理、中英双语界面、模型连接测试和首次引导。
 
 完整能力与文档盘点见 [v0.2.0 发布说明](docs/zh/releases/v0.2.0.md)。
 
 ## 🚀 正式态跑通
 
-正式态有两条路径（都不要跑 `npm run dev`）。本版本不提供 Docker / Compose。
+正式态有两条路径。本版本不提供 Docker / Compose。
 
 ### 推荐：Ubuntu / Debian 一键部署
 
@@ -100,7 +100,7 @@ cd datafoundry
 ./deploy.sh tui      # 可选：前台启动 TUI（需 API 已在运行）
 ```
 
-打开 `http://127.0.0.1:3000/login` 注册登录，在模型配置中创建 OpenAI-compatible Profile，然后进入 `/data-tasks`。远程部署请设置 `AUTH_PUBLIC_BASE_URL`；重复执行 `./deploy.sh deploy` 会进入维护窗口（先停止旧进程再安装/构建）。
+打开 `http://127.0.0.1:3000/login` 注册登录，在模型配置中创建 OpenAI-compatible Profile，然后进入 `/data-tasks`。重复执行 `./deploy.sh deploy` 会进入维护窗口（先停止旧进程再安装/构建）。
 
 ### Windows / macOS / 其他：手动 npm
 
@@ -111,37 +111,21 @@ git clone https://github.com/datagallery-lab/datafoundry.git
 cd datafoundry
 npm install
 cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
 ```
 
-在根目录 `.env` 配置模型，并按正式测试或真实生产填好认证（样例默认偏正式测试）：
+在根目录 `.env` 配置可选的服务端模型（也可以只在网页里配置）：
 
 ```bash
-LLM_PROVIDER=openai-compatible
 LLM_MODEL=qwen-plus                # 或 deepseek-chat、gpt-4o……
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=replace-with-your-key
-
-AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
-AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000   # 真实生产改为 https://你的域名
-AUTH_REGISTRATION_MODE=open
-AUTH_EMAIL_DELIVERY=test                     # 真实生产改为 smtp，并填 AUTH_SMTP_*
 ```
 
-`apps/web/.env.local`：
-
-```bash
-NEXT_PUBLIC_AGENT_RUNTIME_URL=
-NEXT_PUBLIC_CONFIG_API_URL=
-API_PROXY_TARGET=http://127.0.0.1:8787
-```
-
-构建并启动：
+构建并启动。`npm install` 结束时同步控制面的 Python 依赖。`npm run build` 编译网页和 TUI：
 
 ```bash
 npm run build
-npm run build:web
-npm run start        # Web :3000 + API :8787
+npm run start        # 网页默认 127.0.0.1:3000，可用 --web-host / --web-port 改
 ```
 
 打开 `http://127.0.0.1:3000/login` 注册登录后进入 `/data-tasks`，提问：
@@ -154,7 +138,7 @@ npm run start        # Web :3000 + API :8787
 
 真实生产请再配 SMTP 与反代：[`deploy/nginx.datafoundry.conf.example`](deploy/nginx.datafoundry.conf.example)（静态 gzip/brotli；`/api/copilotkit` 关压缩与缓冲以保护 SSE）。
 
-> 完整步骤与两种环境对照见 [快速开始](docs/zh/quick-start.md)；贡献者热更新（`npm run dev`）仅见该文档附录。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
+> 完整步骤与两种环境对照见 [快速开始](docs/zh/quick-start.md)。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
 
 ## 🆚 和 Coding Agent、SQL Chatbot 有什么不同
 
@@ -192,7 +176,7 @@ Coding agent 改代码，SQL chatbot 回答问题，DataAgent 跑数据任务—
 
 ## 🗄️ 接入现有数据栈，不重构
 
-通过 Data Gateway 适配器接入：内置 DTC 增长经营复盘案例开箱即用；DuckDB、SQLite、CSV、Excel、PostgreSQL、MySQL 适合本地试用；云数仓、搜索引擎和 NoSQL 按需配置服务与凭据。
+通过 Data Gateway 适配器接入：DuckDB、SQLite、CSV、Excel、PostgreSQL、MySQL 适合本地试用；云数仓、搜索引擎和 NoSQL 按需配置服务与凭据。
 
 <p align="center">
   <img src="docs/assets/readme/database-wall.png" alt="DataAgent 支持的数据源" width="100%">
@@ -235,7 +219,7 @@ DataAgent 迭代很快，小而聚焦的 PR 最容易被合入：
 
 1. 行为、协议、数据源适配器和 Agent 策略变更，请先开 issue 或 discussion。
 2. 每个 PR 聚焦一个运行时边界或功能区。
-3. 提交前运行 `npm run build` 和改动区域对应的 smoke 检查（如 `npm run smoke:data-gateway`）。
+3. 提交前运行 `npm run build` 和改动区域对应的 smoke 检查（如 `npm run smoke:docs`）。
 4. 改动 setup、API、数据源配置或用户可见输出时，同步更新文档。
 5. 不提交凭据、本地数据库、生成的 storage 或私有 benchmark 数据。
 

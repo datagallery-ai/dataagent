@@ -485,7 +485,7 @@
     "mcpNotesPersist": "配置通过 POST /api/v1/mcp-servers 持久化；令牌保存在 secretRef",
     "mcpNotesRuns": "运行时通过 run_config.enabledMcpServerIds 挂载 MCP 工具",
     "llmNotesTitle": "AG-UI / dataFoundry 对齐说明",
-    "llmNotesEnv": "服务端环境变量：LLM_PROVIDER、LLM_BASE_URL、LLM_API_KEY、LLM_MODEL",
+    "llmNotesEnv": "服务端环境变量：LLM_MODEL、LLM_BASE_URL、LLM_API_KEY",
     "llmNotesPersist": "模型配置通过 POST /api/v1/model-profiles 管理；API Key 保存在 secretRef",
     "llmNotesRuns": "运行时通过 run_config.activeLlmProfileId 切换模型",
     "llmNotesBuiltin": "服务端默认项只读，对应服务端环境变量中的 LLM 配置",
@@ -1051,7 +1051,7 @@
     },
     "llm": {
       "provider": {
-        "openai-compatible": "OpenAI 兼容（LLM_PROVIDER=openai-compatible）"
+        "openai-compatible": "OpenAI 兼容"
       },
       "fallbackProfileId": {
         "__none__": "无"

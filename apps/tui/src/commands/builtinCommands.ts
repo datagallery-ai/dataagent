@@ -376,19 +376,6 @@ export const exitCommand: Command = {
   },
 };
 
-export const logoutCommand: Command = {
-  name: 'logout',
-  description: 'Sign out of the current account',
-  execute: async () => {
-    return {
-      success: true,
-      message: 'Logging out...',
-      data: { action: 'logout' },
-    };
-  },
-};
-
-// Export all built-in commands
 function getAllCommands(): Command[] {
   return [
     helpCommand,
@@ -399,7 +386,6 @@ function getAllCommands(): Command[] {
     skillCommand,
     resetCommand,
     resumeCommand,
-    logoutCommand,
     exitCommand,
   ];
 }

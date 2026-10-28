@@ -116,7 +116,12 @@ def _parser() -> argparse.ArgumentParser:
         help="Adopt that session's recorded workspace binding as the process default",
     )
     api.add_argument("--env-file", help="Environment file resolved by the backend")
-    # The TUI on this branch still launches the backend and waits for one ready line.
+    api.add_argument(
+        "--reload",
+        action="store_true",
+        help="Restart when serve, dataagent, or a2a_server source changes",
+    )
+    # Hidden handshake used when the TUI launches this backend.
     api.add_argument("--stdio-ready", action="store_true", help=argparse.SUPPRESS)
     a2a = commands.add_parser("serve-a2a", help="Expose this agent over the A2A 1.0 protocol")
     a2a.add_argument(
@@ -165,7 +170,7 @@ def _listen(runtime: Runtime | None) -> tuple[str, int]:
 
 
 def reload_app():
-    """Uvicorn factory for API_RELOAD=1. Rebuilds the app from DATAAGENT_SERVE_ARGV."""
+    """Uvicorn factory for ``dataagent serve --reload``. Rebuilds the app from DATAAGENT_SERVE_ARGV."""
     raw = os.environ.get("DATAAGENT_SERVE_ARGV", "")
     if not raw:
         raise RuntimeError("DATAAGENT_SERVE_ARGV is required to reload the backend")
@@ -286,7 +291,7 @@ def main(argv=None) -> int:
         if args.stdio_ready and runtime is None:
             return 1
         host, port = _listen(runtime)
-        if os.environ.get("API_RELOAD") == "1" and not os.environ.get("DATAAGENT_LISTEN_FD"):
+        if args.reload and not os.environ.get("DATAAGENT_LISTEN_FD"):
             return _run_reload(argv, host, port)
         return serve(runtime, host, port, stdio_ready=args.stdio_ready)
     except KeyboardInterrupt:

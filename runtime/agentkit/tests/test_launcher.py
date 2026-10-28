@@ -83,10 +83,7 @@ def test_real_backend_ready_and_graceful_cleanup(tmp_path):
         listener,
         env={
             **os.environ,
-            "DATAAGENT_V2_TOKEN": "test-token",
             "DATAAGENT_V2_INSTANCE_ID": identity,
-            "API_HOST": "127.0.0.1",
-            "API_PORT": str(port),
         },
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
@@ -112,7 +109,7 @@ def test_missing_config_stays_up_without_an_engine(tmp_path):
     log_file = log_path.open("w")
     child = subprocess.Popen(
         [sys.executable, "-m", "serve", "serve", "--config", str(tmp_path / "missing.json")],
-        env={key: value for key, value in os.environ.items() if key not in {"API_HOST", "API_PORT"}},
+        env=os.environ,
         stdout=subprocess.DEVNULL, stderr=log_file, start_new_session=True,
     )
     try:
@@ -164,4 +161,9 @@ def test_backend_entrypoints_share_serve_module():
     assert "usage: dataagent" in result.stdout
     assert "DataAgent backend" in result.stdout
     assert "serve-a2a" in result.stdout
+    reloaded = subprocess.run(
+        [sys.executable, "-m", "serve", "serve", "--help"],
+        capture_output=True, text=True, timeout=5,
+    )
+    assert reloaded.returncode == 0 and "--reload" in reloaded.stdout
     assert not Path(os.environ["DATAAGENT_HOME"]).exists()

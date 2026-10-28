@@ -308,11 +308,6 @@ export function useWorkspaceConfigApi(): WorkspaceApiState & WorkspaceApiActions
 
   const formatConfigActionError = useCallback((err: unknown): Error => {
     if (err instanceof ConfigApiError) {
-      if (err.code === "SECRET_MASTER_KEY_REQUIRED") {
-        return new Error(
-          "SECRET_MASTER_KEY is not configured on the server, so API keys cannot be saved. Set it in .env and restart the API.",
-        );
-      }
       if (err.code === "REVISION_CONFLICT" || err.message.startsWith("REVISION_CONFLICT:")) {
         return new Error(
           "This configuration was updated elsewhere (for example by a connection test). Refresh and try again.",
@@ -446,11 +441,6 @@ export function useWorkspaceConfigApi(): WorkspaceApiState & WorkspaceApiActions
           await refresh();
           throw new Error(
             "This configuration does not exist on the backend. The list has been refreshed; create it again.",
-          );
-        }
-        if (err instanceof ConfigApiError && err.code === "SECRET_MASTER_KEY_REQUIRED") {
-          throw new Error(
-            "SECRET_MASTER_KEY is not configured on the server, so API keys cannot be saved. Set it in .env and restart the API.",
           );
         }
         throw err;

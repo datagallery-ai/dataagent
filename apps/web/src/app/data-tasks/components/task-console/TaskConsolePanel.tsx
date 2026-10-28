@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../../../../lib/evidence-ref";
 import { useT } from "../../../../i18n/locale-context";
 import { CONSOLE_PEER_PAGE_ID, shouldRevealConsoleForSelection } from "../../task-console-layout";
 import { artifactToneForType } from "../../ui-tokens";

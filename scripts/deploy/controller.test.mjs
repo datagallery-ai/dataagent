@@ -21,7 +21,6 @@ test("deploy update path uses exact maintenance-window ordering", async () => {
     },
     async stop() {},
     async installProject() {},
-    async buildTypeScript() {},
     async buildWeb() {},
     async buildTui() {},
     async verifyPorts() {},
@@ -41,7 +40,6 @@ test("deploy update path uses exact maintenance-window ordering", async () => {
     "write-config",
     "stop-old",
     "install",
-    "build-typescript",
     "build-web",
     "build-tui",
     "verify-ports-again",
@@ -72,12 +70,11 @@ test("build failure after stop never starts and reports maintenance window", asy
     },
     async stop() {},
     async installProject() {},
-    async buildTypeScript() {
+    async buildWeb() {
       const error = new Error("build failed");
       error.logPath = "storage/logs/deploy-20260722.log";
       throw error;
     },
-    async buildWeb() {},
     async buildTui() {},
     async verifyPorts() {},
     async start() {},
@@ -97,7 +94,7 @@ test("build failure after stop never starts and reports maintenance window", asy
   assert.ok(failure.calls.includes("stop-old"));
   assert.equal(failure.maintenanceWindow, true);
   assert.equal(failure.serviceStopped, true);
-  assert.equal(failure.stage, "build-typescript");
+  assert.equal(failure.stage, "build-web");
   assert.equal(storage.sentinel.toString(), "keep-me");
 });
 
@@ -121,7 +118,7 @@ test("optional tui command checks readiness and API then starts foreground clien
   const controller = createDeploymentController({
     async loadConfiguration() {
       calls.push("load-config");
-      return { env: { API_PORT: "8787" } };
+      return { env: {} };
     },
     async ensureTuiReady() {
       calls.push("ensure-tui-ready");
@@ -151,7 +148,7 @@ test("tui aborts before start when API check fails", async () => {
   const calls = [];
   const controller = createDeploymentController({
     async loadConfiguration() {
-      return { env: { API_PORT: "8787" } };
+      return { env: {} };
     },
     async ensureTuiReady() {
       calls.push("ensure-tui-ready");

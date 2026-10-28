@@ -46,7 +46,7 @@ DataFoundry emphasizes data safety and traceability by default:
 - Queries are read-only by default, with SQL guard, row limits, timeouts, field masking, and audit.
 - Data source credentials are submitted only on create or update; read APIs do not return plaintext secrets.
 
-Public docs cover local trials, open-source integration, development demos, and the built-in password-auth path. Production deployments still need deployment-specific access policy, centralized secret management, monitoring, and operations design. For a first trial, use the built-in DTC Growth Review data source to experience the core flow.
+Public docs cover local trials, open-source integration, development demos, and the built-in password-auth path. Production deployments still need deployment-specific access policy, centralized secret management, monitoring, and operations design.
 
 ## Next steps
 

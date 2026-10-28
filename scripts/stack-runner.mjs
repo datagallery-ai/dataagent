@@ -6,65 +6,71 @@ import { fileURLToPath } from "node:url";
 
 import {
   formatStackEndpoints,
+  httpOrigin,
   pythonControlPlaneLaunch,
   resolveStackRuntimeConfig,
-  webProcessEnvironment,
+  webLaunch,
 } from "./stack-runtime-config.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-export async function runStack({ mode, args = [] }) {
+export function pythonEnvironmentSyncCommand(env = process.env) {
+  const python = String(env.UV_PYTHON || env.PYTHON_VERSION || "3.12").trim();
+  if (!/^\d+(?:\.\d+){1,2}$/.test(python)) {
+    throw new Error(`Python version must look like 3.12, received ${python}`);
+  }
+  return `uv sync --project runtime/agentkit --frozen --no-dev --python ${python}`;
+}
+
+export const PYTHON_ENVIRONMENT_SYNC = pythonEnvironmentSyncCommand({ UV_PYTHON: "3.12" });
+
+export async function controlPlaneIsRunning(baseUrl, fetchImpl = globalThis.fetch) {
+  try {
+    const response = await fetchImpl(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(800) });
+    if (!response.ok) return false;
+    const body = await response.json();
+    return body?.success === true && !!body.data && typeof body.data === "object" && "conversation" in body.data;
+  } catch {
+    return false;
+  }
+}
+
+export async function runStack({ args = [] }) {
   loadRootEnv();
   const apiOnly = args.includes("--api");
   const webOnly = args.includes("--web");
-  const startApi = !webOnly || apiOnly;
-  const startWeb = !apiOnly || webOnly;
-  const runtimeConfig = resolveStackRuntimeConfig();
-
-  if (mode === "development") {
-    execSync("node scripts/ensure-dev-environment.mjs", {
-      cwd: root,
-      stdio: "inherit",
-      env: process.env,
-      shell: true,
-    });
-    const ports = [
-      ...(startApi ? [Number(runtimeConfig.API_PORT)] : []),
-      ...(startWeb ? [Number(runtimeConfig.WEB_PORT)] : []),
-    ];
-    for (const port of ports) freePort(port);
+  const oneClick = !apiOnly && !webOnly;
+  const runtimeConfig = resolveStackRuntimeConfig(process.env, args);
+  const apiBase = httpOrigin(runtimeConfig.apiHost, runtimeConfig.apiPort);
+  const apiUp = apiOnly ? false : await controlPlaneIsRunning(apiBase);
+  if (oneClick) {
+    ensurePythonEnvironment();
+    ensureArtifact("web");
+    ensureArtifact("tui");
   }
+
+  const startApi = apiOnly || !apiUp;
+  const startWeb = !apiOnly;
 
   const children = [];
   if (startApi) {
-    const launch = pythonControlPlaneLaunch(
-      root,
-      { ...process.env, ...runtimeConfig },
-      mode === "development",
-    );
+    const launch = pythonControlPlaneLaunch(root, process.env);
     children.push(spawnProcess("DataFoundry API", launch.command, launch.args, launch.env));
   }
   if (startWeb) {
-    const webScript = mode === "development" ? "dev" : "start";
-    const command =
-      mode === "development"
-        ? ["--workspace", "@datafoundry/web", "run", webScript]
-        : ["--prefix", "apps/web", "run", webScript];
-    const webEnv = {
-      ...process.env,
-      ...webProcessEnvironment(runtimeConfig),
-      API_PROXY_TARGET: `http://${runtimeConfig.API_HOST}:${runtimeConfig.API_PORT}`,
-    };
-    delete webEnv.API_HOST;
-    delete webEnv.API_PORT;
-    children.push(spawnProcess("DataFoundry Web", "npm", command, webEnv));
+    const launch = webLaunch(runtimeConfig, process.env);
+    children.push(spawnProcess("DataFoundry Web", launch.command, launch.args, launch.env));
   }
 
   if (children.length === 0) {
     throw new Error("Nothing to start. Use --api and/or --web.");
   }
 
-  console.log(formatStackEndpoints(runtimeConfig, { startApi, startWeb }));
+  console.log(formatStackEndpoints(runtimeConfig, {
+    startApi: startApi || apiUp,
+    startWeb,
+    tuiReady: oneClick,
+  }));
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
@@ -86,6 +92,24 @@ export async function runStack({ mode, args = [] }) {
   }
 }
 
+export function ensurePythonEnvironment(rootDir = root, run = runInherited) {
+  if (existsSync(join(rootDir, "runtime/agentkit/.venv"))) return false;
+  run(pythonEnvironmentSyncCommand());
+  return true;
+}
+
+function runInherited(command) {
+  execSync(command, { cwd: root, stdio: "inherit", env: process.env, shell: true });
+}
+
+function ensureArtifact(kind) {
+  const ready = kind === "web"
+    ? existsSync(join(root, "apps/web/.next/BUILD_ID"))
+    : existsSync(join(root, "apps/tui/dist/index.js"));
+  if (ready) return;
+  execSync(`npm run build:${kind}`, { cwd: root, stdio: "inherit", env: process.env, shell: true });
+}
+
 function loadRootEnv() {
   const envPath = join(root, ".env");
   if (existsSync(envPath)) loadEnvFile(envPath);
@@ -100,27 +124,4 @@ function spawnProcess(label, command, args, env) {
   });
   child.on("error", (error) => console.error(`[stack] Unable to start ${label}: ${error.message}`));
   return { child, label };
-}
-
-function freePort(port) {
-  try {
-    if (process.platform === "win32") {
-      const output = execSync(`netstat -ano | findstr :${port}`, {
-        encoding: "utf8",
-        shell: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const pids = new Set();
-      for (const line of output.split(/\r?\n/u)) {
-        if (!/\bLISTENING\b/u.test(line)) continue;
-        const pid = line.trim().split(/\s+/u).at(-1);
-        if (pid && /^\d+$/u.test(pid) && pid !== "0") pids.add(pid);
-      }
-      for (const pid of pids) execSync(`taskkill /F /PID ${pid}`, { stdio: "ignore", shell: true });
-      return;
-    }
-    execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { cwd: root, stdio: "ignore", shell: true });
-  } catch {
-    // The port was already free.
-  }
 }

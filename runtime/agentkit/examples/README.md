@@ -31,11 +31,9 @@ Deep Agents 原生 `SKILL.md` 的 YAML frontmatter。`session.json` 已是 JSON�
 
 从仓库根目录运行：
 
-```bash
-npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
-```
+`npm run start:tui` 连接 `/dataagent/stream`（默认 `http://127.0.0.1:8790`，地址来自 `config.json` 的 `server.host` 和 `server.port`）。示例配置用 `--config` 传给它拉起的后端。
 
-在 `~/.dataagent/.env` 设置 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY`，或用 `--env-file` 指定文件。
+在控制面的 `DATAAGENT_HOME/.env` 设置 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY`。
 复制完整示例到其他目录时，需同时复制 `hooks/`，或修改/移除两个示例 Hook。
 
 nl2sql 入口示例不带 Hook：

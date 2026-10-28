@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { EvidenceRef, EvidenceSelection } from "@datafoundry/contracts";
+import type { EvidenceRef, EvidenceSelection } from "../../../../lib/evidence-ref";
 import type { ArtifactDetail, DataArtifact } from "../../data-task-state";
 import { hasCapability } from "../../data-task-state";
 import { artifactExportClient } from "../../artifact-export-client";

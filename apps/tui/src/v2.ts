@@ -1,30 +1,53 @@
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { AguiClient } from "./protocol/agui-client.js";
 import { V2SessionClient } from "./protocol/v2-session-client.js";
 import { store } from "./state/store.js";
 import { initLogger } from "./utils/logger.js";
-import type { RenderAppOptions } from "./index.js";
-import type { AppExitReason } from "./auth/types.js";
+import type { AppExitReason, RenderAppOptions } from "./index.js";
+import { configuredListen, formatListenBase, readHttpListen } from "./v2-backend.js";
 
 export const V2_COMMANDS = ["/help", "/clear", "/resume", "/outputs", "/exit"];
 
-/** Keep V2 requests on the loopback backend and reject redirects. */
-export function v2Transport(runtimeUrl: string, fetchImpl: typeof fetch): typeof fetch {
-  const runtime = new URL(runtimeUrl);
-  if (runtime.protocol !== "http:" || runtime.hostname !== "127.0.0.1"
-    || runtime.pathname !== "/dataagent/stream" || runtime.username || runtime.password
-    || runtime.search || runtime.hash) {
-    throw new Error("V2 requires a loopback URL: http://127.0.0.1:<port>/dataagent/stream");
+/** Accept `http://<server.host>:<server.port>` or the same origin plus `/dataagent/stream`. */
+export function normalizeRuntimeUrl(value: string, env: NodeJS.ProcessEnv = process.env): string {
+  const listen = configuredListen(env);
+  const expected = formatListenBase(listen.host, listen.port);
+  const target = readHttpListen(value);
+  const allowed = new Set([listen.host, "127.0.0.1"]);
+  if (!target || !allowed.has(target.host)) {
+    throw new Error(`V2 requires the configured listen URL: ${expected}`);
   }
+  return `${formatListenBase(target.host, target.port)}/dataagent/stream`;
+}
+
+/** Keep V2 requests on the configured backend and reject redirects. */
+export function v2Transport(
+  runtimeUrl: string,
+  fetchImpl: typeof fetch,
+  env: NodeJS.ProcessEnv = process.env,
+): typeof fetch {
+  const runtime = new URL(normalizeRuntimeUrl(runtimeUrl, env));
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.origin !== runtime.origin) throw new Error("Refusing to send a V2 request to another origin");
     const headers = new Headers(init?.headers);
     return fetchImpl(input, { ...init, headers, redirect: "error" });
   };
+}
+
+/** Log path comes only from this machine, never from the health response. */
+export function resolveTuiLogPath(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.DATAAGENT_V2_LOG_PATH?.trim();
+  if (explicit) {
+    if (!isAbsolute(explicit)) throw new Error("V2 log path must be absolute");
+    return explicit;
+  }
+  const envHome = env.DATAAGENT_HOME?.trim();
+  if (envHome && isAbsolute(envHome)) return join(envHome, "runtime", "logs", "tui.log");
+  return join(homedir(), ".datafoundry", "tui.log");
 }
 
 /** Accept the control-plane envelope and the standalone `dataagent serve` health body. */
@@ -47,11 +70,12 @@ export async function runV2Tui(options: {
   runtimeUrl: string;
   fetchImpl: typeof fetch;
   renderApp: (options: RenderAppOptions) => Promise<AppExitReason>;
+  env?: NodeJS.ProcessEnv | undefined;
   instanceId?: string | undefined;
   shutdownSignal?: AbortSignal | undefined;
   initialResume?: { enabled: boolean; sessionId?: string | undefined } | undefined;
 }): Promise<number> {
-  const transport = v2Transport(options.runtimeUrl, options.fetchImpl);
+  const transport = v2Transport(options.runtimeUrl, options.fetchImpl, options.env ?? process.env);
   const baseUrl = new URL(options.runtimeUrl).origin;
   let response: Response;
   try {
@@ -61,7 +85,7 @@ export async function runV2Tui(options: {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Control plane is not reachable at ${baseUrl}. Start it with npm start (one Python process on that address). The TUI does not start a second backend. ${detail}`,
+      `Control plane is not reachable at ${baseUrl}. Start it with npm run start or ./deploy.sh start. ${detail}`,
     );
   }
   if (!response.ok) throw new Error(`Control plane is unavailable (${response.status}) at ${baseUrl}/healthz`);
@@ -74,18 +98,13 @@ export async function runV2Tui(options: {
     user: z.string().optional(),
     stateDir: z.string().refine(isAbsolute).optional(), timeoutSeconds: z.number().positive(),
   }).safeParse(v2HealthPayload(await response.json()));
-  if (!parsed.success) throw new Error("Invalid V2 health response: absolute home and stateDir are required");
+  if (!parsed.success) throw new Error("Invalid V2 health response");
   const health = parsed.data;
   const identity = options.instanceId ?? process.env.DATAAGENT_V2_INSTANCE_ID;
   if (identity && health.instanceId !== identity) {
     throw new Error("Backend instance identity does not match the launcher");
   }
-  const envHome = process.env.DATAAGENT_HOME?.trim();
-  const stateDir = health.stateDir
-    ?? (envHome && isAbsolute(envHome) ? join(envHome, "runtime") : undefined);
-  const logPath = process.env.DATAAGENT_V2_LOG_PATH
-    ?? (stateDir ? join(stateDir, "logs", "tui.log") : join(tmpdir(), "dataagent-tui.log"));
-  if (!isAbsolute(logPath)) throw new Error("V2 log path must be absolute");
+  const logPath = resolveTuiLogPath();
   initLogger({ logDir: dirname(logPath), logFileName: basename(logPath), debugMode: false }).info("V2 terminal connected");
   store.setWorkspaceConfig({ llm: [], db: [], skill: [], kb: [], mcp: [] });
   store.startNewSession(randomUUID());

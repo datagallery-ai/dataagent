@@ -12,8 +12,6 @@
 - 可以从数据中验证的预期发现。
 - 关于治理、隐私、权限控制或生产边界的说明。
 
-[DTC 增长经营复盘](../examples/dtc-growth-demo.md) 是当前参考案例。它把订单、广告投放、商品、客服工单和目标数据组合成一个可追溯的经营复盘。
-
 ## 如何提交建议
 
 通过 [GitHub issue](https://github.com/datagallery-lab/datafoundry/issues) 提交：

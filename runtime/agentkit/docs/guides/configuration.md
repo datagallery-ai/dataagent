@@ -20,13 +20,7 @@
 
 用进程环境变量 `DATAAGENT_HOME` 指定 Home。写在 `.env` 文件里的 `DATAAGENT_HOME` 会被忽略，并在标准错误打出警告。
 
-显式增加一层配置：
-
-```bash
-npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
-```
-
-`--config` 是更高的一层，不是整文件替换。启动目录下的 `config.json` 不会被自动读取。输入目录也不提供配置。
+额外配置层由控制面读取（`dataagent serve --config`，或 TUI 拉起后端时的 `--config`）。启动目录里的 `config.json` 不会自动读取。连到已有控制面时，配置由那份进程决定。
 
 ## 优先级
 

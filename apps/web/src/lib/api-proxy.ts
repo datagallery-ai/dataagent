@@ -17,11 +17,7 @@ function readProxyTarget(...values: Array<string | undefined>): string {
 }
 
 export function getApiProxyTarget(): string {
-  return readProxyTarget(
-    process.env.API_PROXY_TARGET,
-    process.env.NEXT_PUBLIC_CONFIG_API_URL,
-    process.env.NEXT_PUBLIC_AGENT_RUNTIME_URL?.replace(/\/api\/copilotkit\/?$/u, ""),
-  );
+  return readProxyTarget(process.env.API_PROXY_TARGET);
 }
 
 export function isStreamingProxyPath(pathname: string): boolean {

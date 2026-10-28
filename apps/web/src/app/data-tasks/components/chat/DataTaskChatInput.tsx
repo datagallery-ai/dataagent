@@ -5,7 +5,7 @@ import {
   type CopilotChatInputProps,
   type UseAttachmentsReturn,
 } from "@copilotkit/react-core/v2";
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../../../../lib/evidence-ref";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {

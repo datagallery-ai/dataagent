@@ -60,34 +60,9 @@ When creating resources through REST API, put credentials in resource configurat
 
 ## Identity and sessions
 
-DataFoundry only supports cookie-based password sessions. Dev tokens, `/api/v1/dev/*`, and `DATAFOUNDRY_AUTH_MODE` are removed.
+The workbench does not read accounts, mail, or database paths from environment variables. Optional server model settings are `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY`. The control plane address is `server.host` and `server.port` in Home `config.json`. The web address uses `--web-host` and `--web-port`, default `127.0.0.1:3000`.
 
-Required settings:
-
-```text
-AUTH_SESSION_SECRET=replace-with-at-least-32-random-characters
-AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000
-AUTH_REGISTRATION_MODE=open
-AUTH_EMAIL_DELIVERY=test
-AUTH_EMAIL_FROM=DataFoundry <no-reply@example.com>
-```
-
-`AUTH_REGISTRATION_MODE` is required (`open` = self-register, `closed` = reject register with `REGISTRATION_CLOSED`). Deploy defaults to `open` for formal local/test; set `closed` for internet-facing installs that should not accept public signup. `GET /api/v1/me` returns the current user; `GET /api/v1/auth/status` exposes `registrationEnabled` without secrets.
-
-Two formal environments share the same start commands:
-
-| Environment | `AUTH_EMAIL_DELIVERY` | `AUTH_PUBLIC_BASE_URL` | Typical `AUTH_REGISTRATION_MODE` |
-| --- | --- | --- | --- |
-| Formal test | `test` (links in API console) | Loopback HTTP URL | `open` |
-| Real production | `smtp` (plus `AUTH_SMTP_*`) | Public HTTPS origin | `closed` unless self-signup is intentional |
-
-`/api/v1/auth/*` covers registration, login, email verification, password reset, logout, session listing, and password change. Unsafe requests require `X-CSRF-Token` from the `df_csrf` cookie. The session cookie is `df_session`. Cookie `Path` / `Secure` follow `AUTH_PUBLIC_BASE_URL` (HTTPS ⇒ `Secure`; pathname prefix becomes cookie path). `AUTH_EMAIL_DELIVERY=test` is rejected unless `AUTH_PUBLIC_BASE_URL` is loopback.
-
-Leave `NEXT_PUBLIC_AGENT_RUNTIME_URL` / `NEXT_PUBLIC_CONFIG_API_URL` empty so the browser uses the same-origin Next BFF; point the upstream API with `API_PROXY_TARGET` in `apps/web/.env.local`. Start with `npm run build && npm run build:web && npm run start:api && npm run start:web`. Real-production reverse-proxy sample: `deploy/nginx.datafoundry.conf.example`.
-
-If an old `.env` still has `DATAFOUNDRY_AUTH_MODE=password`, the API ignores that value; `./deploy.sh deploy` strips it from written config. `DATAFOUNDRY_AUTH_MODE=dev` fails startup.
-
-Password-only does **not** migrate Metadata databases that still have `users.dev_token`. Opening such a DB fails with `METADATA_SCHEMA_INCOMPATIBLE`. Stop the stack, reset `STORAGE_ROOT_DIR` / `METADATA_DB_PATH` / `MASTRA_STORAGE_PATH` / `FILE_ASSET_STORAGE_ROOT` / `WORKSPACE_ROOT` (or point them at empty paths), restart, and register again. There is no in-place schema upgrade for this cutover.
+The browser uses the same-origin proxy. Start with `npm run build && npm run start`. Split processes use `npm run start:api` and `npm run start:web`.
 
 Real production also needs secret management, audit export, access control, and operations monitoring.
 

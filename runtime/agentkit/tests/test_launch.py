@@ -287,7 +287,7 @@ def test_environment_precedence_empty_values_dedup_and_process_unchanged(
     opts = options(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".env").write_text("LLM_MODEL=home\nLLM_API_KEY=home-key\nDATAAGENT_V2_TOKEN=bad\n")
+    (home / ".env").write_text("LLM_MODEL=home\nLLM_API_KEY=home-key\n")
     (tmp_path / ".env").write_text("LLM_MODEL=sibling\nLLM_API_KEY=\n")
     env_file = tmp_path / "explicit.env"
     env_file.write_text("LLM_MODEL=explicit\nDATAAGENT_HOME=/ignored\n")
@@ -309,8 +309,8 @@ def test_environment_precedence_empty_values_dedup_and_process_unchanged(
     assert runtime.redaction_secrets == ("home-key",)
     assert dict(os.environ) == before
     stderr = capsys.readouterr().err
-    assert "DATAAGENT_HOME" in stderr and "DATAAGENT_V2_TOKEN" in stderr
-    assert "/ignored" not in stderr and "bad" not in stderr
+    assert "DATAAGENT_HOME" in stderr
+    assert "/ignored" not in stderr
     monkeypatch.setenv("LLM_MODEL", "process")
     assert prepare_runtime(replace(opts, env_file=env_file)).model_name == "process"
     monkeypatch.setenv("LLM_MODEL", "")

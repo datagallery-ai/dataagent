@@ -6,18 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { readServerListen, writeServerListen } from "../server-listen.mjs";
+import { httpOrigin, readServerListen, writeServerListen } from "../server-listen.mjs";
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
-  assertNativeAuthPublicBaseUrl,
-  assertNativeBindHosts,
   deploymentConfigGaps,
   ensureDeploymentEnvironment,
   isCompleteDeploymentConfig,
-  isPlaceholderSecret,
   parseDeploymentEnvironment,
   redactSensitiveText,
-  renderWebEnvironment,
   updateDeploymentEnvironment,
   writeDeploymentConfiguration
 } from "./config.mjs";
@@ -36,20 +32,32 @@ import {
   verifyManagedProcessForStop,
   writeDeploymentState
 } from "./process-state.mjs";
-
-const SECRET_OVERLAY_KEYS = ["AUTH_SESSION_SECRET", "SECRET_MASTER_KEY"];
-const PROCESS_OVERLAY_KEYS = [
-  "WEB_HOST",
-  "WEB_PORT",
-  "AUTH_PUBLIC_BASE_URL"
-];
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const TUI_ENTRY = "apps/tui/dist/index.js";
 
 export function resolveTuiRuntimeUrl(env = {}, runtimeUrl = null) {
   const explicit = String(runtimeUrl ?? "").trim();
   if (explicit) return explicit;
-  return `http://127.0.0.1:${readServerListen(env).port}/dataagent/stream`;
+  const listen = readServerListen(env);
+  return `${httpOrigin(listen.host, listen.port)}/dataagent/stream`;
+}
+
+export function healthProbeUrls(env = {}, web = {}) {
+  const api = readServerListen(env);
+  return {
+    apiBaseUrl: httpOrigin(api.host, api.port),
+    webUrl: httpOrigin(web.host || "127.0.0.1", web.port || "3000")
+  };
+}
+
+export function webListenFromState(state, fallback = { host: "127.0.0.1", port: "3000" }) {
+  if (state?.ports?.web == null || state.ports.web === "") {
+    return { host: fallback.host || "127.0.0.1", port: String(fallback.port || "3000") };
+  }
+  return {
+    host: state.listen?.webHost || "127.0.0.1",
+    port: String(state.ports.web)
+  };
 }
 
 export async function inspectWritablePath(targetPath) {
@@ -73,45 +81,24 @@ export async function inspectWritablePath(targetPath) {
   }
 }
 
-function envFlagEnabled(value) {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
+export function webListenFromArgs(parsed = {}) {
+  const host = String(parsed.webHost ?? "").trim() || "127.0.0.1";
+  const port = String(parsed.webPort ?? "").trim() || "3000";
+  if (/\s/u.test(host)) throw new Error("--web-host must be a host name or address");
+  const parsedPort = Number(port);
+  if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+    throw new Error("--web-port must be an integer between 1 and 65535");
+  }
+  return { host, port: String(parsedPort) };
 }
 
-/**
- * Overlay process env onto disk .env text.
- * Non-secret bind/port/public URL keys may always overlay.
- * Secrets overlay only when disk value is empty/placeholder, or when explicitly allowed.
- */
-export function overlayProcessEnv(text, processEnv = {}, options = {}) {
-  const updates = {};
-  for (const key of PROCESS_OVERLAY_KEYS) {
-    if (processEnv[key] != null && String(processEnv[key]).trim() !== "") {
-      updates[key] = String(processEnv[key]);
-    }
-  }
-
-  const parsed = parseDeploymentEnvironment(text ?? "");
-  const allowSecretOverlay =
-    options.allowProcessSecretOverlay === true ||
-    envFlagEnabled(processEnv.DATAFOUNDRY_ALLOW_PROCESS_SECRET_OVERLAY);
-
-  for (const key of SECRET_OVERLAY_KEYS) {
-    if (processEnv[key] == null || String(processEnv[key]).trim() === "") continue;
-    if (allowSecretOverlay || isPlaceholderSecret(parsed[key])) {
-      updates[key] = String(processEnv[key]);
-    }
-  }
-
-  return Object.keys(updates).length > 0 ? updateDeploymentEnvironment(text ?? "", updates) : text;
+export function managedWebStartArgs(web = {}) {
+  const webHost = String(web.host || "127.0.0.1").trim() || "127.0.0.1";
+  const webPort = String(web.port || "3000").trim() || "3000";
+  return ["run", "start", "--", "--web-host", webHost, "--web-port", webPort];
 }
 
-/**
- * Ports are "managed" only when deployment.json exists, pid is alive, and
- * (on Linux) launchId verification passes. Bare .env WEB_PORT/API_PORT are never owned.
- */
+/** Managed ports come from deployment.json when the pid is alive and launchId matches. */
 export async function collectManagedPorts(env = {}, state = null, options = {}) {
   const ports = new Set();
   void env;
@@ -135,29 +122,6 @@ export async function collectManagedPorts(env = {}, state = null, options = {}) 
     if (Number.isInteger(port) && port > 0) ports.add(port);
   }
   return ports;
-}
-export function resolveAuthPublicBaseUrl(existing, oldWebPort, newWebPort) {
-  const url = String(existing ?? "").trim();
-  if (!url) return `http://127.0.0.1:${newWebPort}`;
-
-  try {
-    const parsed = new URL(url);
-    const isLoopback = /^(127\.0\.0\.1|localhost)$/i.test(parsed.hostname);
-    const explicitPort = parsed.port;
-
-    if (isLoopback && url.includes(`:${oldWebPort}`)) {
-      return url.replace(`:${oldWebPort}`, `:${newWebPort}`);
-    }
-    if (!explicitPort && !isLoopback) {
-      return url;
-    }
-    if (isLoopback) {
-      return `http://127.0.0.1:${newWebPort}`;
-    }
-    return url;
-  } catch {
-    return `http://127.0.0.1:${newWebPort}`;
-  }
 }
 
 function formatDeployLogTimestamp(date = new Date()) {
@@ -249,41 +213,27 @@ export async function configureDeploymentInteractively(options) {
     timestamp
   } = options;
 
-  const overlaySource = processEnv ?? {};
   const listenEnv = processEnv ?? { DATAAGENT_HOME: "" };
-  let text = overlayProcessEnv(sourceText ?? "", overlaySource);
+  let text = sourceText ?? "";
   const originalEnv = parseDeploymentEnvironment(text);
   const completeBeforeFill = isCompleteDeploymentConfig(originalEnv);
   let ensured = ensureDeploymentEnvironment(text);
   text = ensured.text;
   let env = ensured.env;
-  const oldWebPort = env.WEB_PORT;
-
-  // Soft upgrade: AUTH_REGISTRATION_MODE fill and legacy auth-mode key removal may
-  // proceed without re-prompting ports. Broader DEFAULTS fills still need port selection.
-  const softUpgradeKeys = new Set(["AUTH_REGISTRATION_MODE"]);
-  const filledOnlySoftUpgradeKeys =
-    !completeBeforeFill &&
-    isCompleteDeploymentConfig(env) &&
-    ensured.generatedKeys.length > 0 &&
-    ensured.generatedKeys.every((key) => softUpgradeKeys.has(key));
-  const onlyLegacyAuthModeCleanup =
-    completeBeforeFill &&
-    (ensured.removedKeys?.length ?? 0) > 0 &&
-    ensured.generatedKeys.length === 0;
+  const savedWeb = options.web ?? { host: "127.0.0.1", port: "3000" };
 
   if (
     !reconfigure &&
     !nonInteractive &&
-    (completeBeforeFill || filledOnlySoftUpgradeKeys || onlyLegacyAuthModeCleanup) &&
+    completeBeforeFill &&
     sourceText?.trim()
   ) {
     return {
       env,
       envText: text,
-      webText: renderWebEnvironment(listenEnv),
       wrote: false,
-      listen: readServerListen(listenEnv)
+      listen: readServerListen(listenEnv),
+      web: savedWeb
     };
   }
 
@@ -297,7 +247,7 @@ export async function configureDeploymentInteractively(options) {
   const reserved = new Set();
   const webPort = await selectPortWithHint({
     label: "Web",
-    defaultPort: Number(env.WEB_PORT || 3000),
+    defaultPort: Number(savedWeb.port || 3000),
     reserved,
     managedPorts,
     nonInteractive,
@@ -318,50 +268,23 @@ export async function configureDeploymentInteractively(options) {
   });
   reserved.add(apiPort);
 
-  const updates = {
-    WEB_PORT: String(webPort),
-    AUTH_PUBLIC_BASE_URL: resolveAuthPublicBaseUrl(env.AUTH_PUBLIC_BASE_URL, oldWebPort, webPort)
-  };
+  const web = { host: savedWeb.host || "127.0.0.1", port: String(webPort) };
   const listen = { host: readServerListen(listenEnv).host, port: String(apiPort) };
 
-  if (!nonInteractive) {
-    const defaultUrl = updates.AUTH_PUBLIC_BASE_URL;
-    const answer = String((await ask(`浏览器公开访问地址 [${defaultUrl}]：`)) ?? "").trim();
-    if (answer) {
-      const url = assertNativeAuthPublicBaseUrl(answer);
-      const urlPort = url.port || (url.protocol === "https:" ? "443" : "80");
-      if (String(urlPort) !== String(webPort)) {
-        const confirm = String(
-          (await ask(`公开地址端口 ${urlPort} 与 Web 端口 ${webPort} 不一致。确认为反向代理？[y/N]：`)) ?? ""
-        )
-          .trim()
-          .toLowerCase();
-        if (confirm !== "y" && confirm !== "yes") {
-          throw new Error("Public URL port must match the selected Web port");
-        }
-      }
-      updates.AUTH_PUBLIC_BASE_URL = answer;
-    }
-  }
-
-  text = updateDeploymentEnvironment(text, updates);
   ensured = ensureDeploymentEnvironment(text);
   text = ensured.text;
   env = ensured.env;
-  assertNativeAuthPublicBaseUrl(env.AUTH_PUBLIC_BASE_URL);
-  assertNativeBindHosts(env);
 
-  const webText = renderWebEnvironment(listenEnv, listen);
   let wrote = false;
-  if (write) {
-    await writeDeploymentConfiguration(root, text, webText, {
+  if (write && root) {
+    await writeDeploymentConfiguration(root, text, {
       backup: Boolean(reconfigure),
       timestamp
     });
     wrote = true;
   }
 
-  return { env, envText: text, webText, wrote, listen };
+  return { env, envText: text, wrote, listen, web };
 }
 
 function createReadlineAsk() {
@@ -395,11 +318,7 @@ export function formatStartBlocked(gaps, missingFiles = []) {
   return `${parts.join("；")}。请先运行 ./deploy.sh deploy`;
 }
 
-/**
- * Start refuses an incomplete .env by name. When the env is already complete
- * and the web build exists, write the missing apps/web/.env.local from it.
- * Secrets are not generated here; ./deploy.sh deploy still does that.
- */
+/** Start refuses a missing web build. */
 export async function prepareStartEnvironment(root, diskEnv = {}) {
   const gaps = deploymentConfigGaps(diskEnv);
   const missingFiles = [];
@@ -408,14 +327,6 @@ export async function prepareStartEnvironment(root, diskEnv = {}) {
   }
   if (gaps.length > 0 || missingFiles.length > 0) {
     throw new Error(formatStartBlocked(gaps, missingFiles));
-  }
-  const webEnvLocal = path.join(root, "apps/web/.env.local");
-  if (!existsSync(webEnvLocal)) {
-    await mkdir(path.dirname(webEnvLocal), { recursive: true });
-    await writeFile(webEnvLocal, renderWebEnvironment(diskEnv), {
-      encoding: "utf8",
-      mode: 0o600
-    });
   }
 }
 
@@ -471,16 +382,14 @@ function createRealDeps(context) {
     },
     async loadConfiguration() {
       const sourceText = await loadRootEnvText(root);
-      const overlaid = overlayProcessEnv(sourceText, process.env, {
-        allowProcessSecretOverlay: envFlagEnabled(process.env.DATAFOUNDRY_ALLOW_PROCESS_SECRET_OVERLAY)
-      });
-      const generateSecrets = parsed.command === "deploy";
-      const ensured = ensureDeploymentEnvironment(overlaid, { generateSecrets });
+      const ensured = ensureDeploymentEnvironment(sourceText);
       config = {
         env: ensured.env,
         envText: ensured.text,
         sourceText,
-        generatedKeys: ensured.generatedKeys
+        generatedKeys: ensured.generatedKeys,
+        web: webListenFromArgs(parsed),
+        ask,
       };
       return config;
     },
@@ -499,7 +408,8 @@ function createRealDeps(context) {
         ask,
         print,
         processEnv: process.env,
-        write: false
+        write: false,
+        web: webListenFromArgs(parsed)
       });
       config = { ...current, ...configured };
       return config;
@@ -515,7 +425,7 @@ function createRealDeps(context) {
       return current;
     },
     async writeConfiguration(current) {
-      await writeDeploymentConfiguration(root, current.envText, current.webText, {
+      await writeDeploymentConfiguration(root, current.envText, {
         backup: parsed.reconfigure,
         // Redeploy without --reconfigure must not silently lose disk secrets.
         backupExistingSecrets: !parsed.reconfigure
@@ -541,14 +451,10 @@ function createRealDeps(context) {
     async installProject() {
       await runCommand("npm", ["ci"], commandOptions());
     },
-    async buildTypeScript() {
+    async buildWeb() {
       await runCommand("npm", ["run", "build"], commandOptions());
     },
-    async buildWeb() {
-      await runCommand("npm", ["run", "build:web"], commandOptions());
-    },
     async buildTui() {
-      await runCommand("npm", ["run", "build:tui"], commandOptions());
       const entry = path.join(root, TUI_ENTRY);
       if (!existsSync(entry)) {
         throw new Error(`TUI build did not produce ${TUI_ENTRY}`);
@@ -561,7 +467,7 @@ function createRealDeps(context) {
       }
     },
     async checkApiForTui(current) {
-      const apiBaseUrl = `http://127.0.0.1:${readServerListen(current.env).port}`;
+      const apiBaseUrl = healthProbeUrls(current.env, current.web).apiBaseUrl;
       const health = await probeHttp(`${apiBaseUrl}/healthz`);
       if (!(health.ok && health.status === 200)) {
         throw new Error(
@@ -573,16 +479,18 @@ function createRealDeps(context) {
       ask.close?.();
       const runtimeUrl = resolveTuiRuntimeUrl(current.env, parsed?.runtimeUrl);
       print(`Starting TUI against ${runtimeUrl} (foreground client; Ctrl+C exits TUI only).`);
-      await runCommand("npm", ["run", "start:tui", "--", "--v2", "--runtime-url", runtimeUrl], {
+      await runCommand("npm", ["run", "start:tui", "--", "--runtime-url", runtimeUrl], {
         cwd: root,
         stdio: "inherit"
       });
     },
 
     async verifyPorts(current) {
+      const web = current.web ?? { host: "127.0.0.1", port: "3000" };
+      const api = readServerListen(current.env);
       const services = [
-        { label: "Web", port: current.env.WEB_PORT },
-        { label: "API", port: readServerListen(current.env).port }
+        { label: "Web", host: web.host, port: web.port },
+        { label: "API", host: api.host, port: api.port }
       ];
       // Only verified running managed ports are owned. After stop-old, TIME_WAIT is
       // handled by short retries inside verifySelectedPorts — not by treating .env as owned.
@@ -595,23 +503,27 @@ function createRealDeps(context) {
       });
     },
     async start(current) {
+      const web = current.web ?? webListenFromArgs(parsed);
+      const args = managedWebStartArgs(web);
       await startManagedStack(root, {
         env: { ...process.env, ...current.env },
+        args,
         ports: {
-          web: Number(current.env.WEB_PORT),
+          web: Number(web.port),
           api: Number(readServerListen(current.env).port)
-        }
+        },
+        listen: { webHost: web.host }
       });
     },
     async waitForHealth(current) {
       try {
+        const web = current.web ?? webListenFromArgs(parsed);
         return await waitForDeployment({
           checkProcessAlive: async () => {
             const inspection = await inspectManagedRuntime(root);
             return inspection.running;
           },
-          apiBaseUrl: `http://127.0.0.1:${readServerListen(current.env).port}`,
-          webUrl: `http://127.0.0.1:${current.env.WEB_PORT}`
+          ...healthProbeUrls(current.env, web)
         });
       } catch (error) {
         const latest = await readDeploymentState(root);
@@ -628,12 +540,15 @@ function createRealDeps(context) {
       }
       await writeDeploymentState(root, { ...inspection.state, status: "healthy" });
       if (deployLog) await deployLog.finalize();
-      print(`DataFoundry is healthy at ${current.env.AUTH_PUBLIC_BASE_URL}`);
-      const ready = await probeHttp(`http://127.0.0.1:${readServerListen(current.env).port}/ready`);
+      const web = current.web ?? { host: "127.0.0.1", port: "3000" };
+      const probes = healthProbeUrls(current.env, web);
+      const webUrl = probes.webUrl;
+      print(`DataFoundry is healthy at ${webUrl}`);
+      const ready = await probeHttp(`${probes.apiBaseUrl}/ready`);
       if (!(ready.ok && ready.status === 200)) {
         print("Next: put LLM_MODEL, LLM_BASE_URL and LLM_API_KEY in .env, then run ./deploy.sh restart and open the Web UI.");
       } else {
-        print(`Open the Web UI at ${current.env.AUTH_PUBLIC_BASE_URL}`);
+        print(`Open the Web UI at ${webUrl}`);
       }
       print("TUI is built and ready. Start it in another terminal (foreground client, not a background service):");
       print("  ./deploy.sh tui");
@@ -644,11 +559,13 @@ function createRealDeps(context) {
       const state = inspection.state;
       const env =
         config?.env ??
-        ensureDeploymentEnvironment(await loadRootEnvText(root), { generateSecrets: false }).env;
+        ensureDeploymentEnvironment(await loadRootEnvText(root)).env;
+      const web = inspection.running
+        ? webListenFromState(state, config?.web ?? webListenFromArgs(parsed))
+        : (config?.web ?? webListenFromArgs(parsed));
       const summary = await collectDeploymentHealth({
         checkProcessAlive: async () => inspection.running,
-        apiBaseUrl: `http://127.0.0.1:${readServerListen(env).port}`,
-        webUrl: `http://127.0.0.1:${env.WEB_PORT}`
+        ...healthProbeUrls(env, web)
       });
       print(`进程        ${summary.process}`);
       print(`API         ${summary.apiHealth}/${summary.apiReady}`);
@@ -662,7 +579,7 @@ function createRealDeps(context) {
       await runCommand("tail", ["-n", "200", "-F", logPath]);
     },
     async doctor() {
-      await runDeploymentDoctor(root, { print });
+      await runDeploymentDoctor(root, { print, web: webListenFromArgs(parsed) });
     },
     async printHelp(text) {
       print(text);
@@ -688,7 +605,7 @@ export async function runDeploymentDoctor(root, options = {}) {
   record(`arch: ${os.arch()}`);
 
   const envText = await loadRootEnvText(root).catch(() => "");
-  const ensured = ensureDeploymentEnvironment(envText, { generateSecrets: false });
+  const ensured = ensureDeploymentEnvironment(envText);
   const env = ensured.env;
 
   const deps = await inspectDependencies({ run: options.run });
@@ -698,24 +615,21 @@ export async function runDeploymentDoctor(root, options = {}) {
     );
   }
 
-  const configIssues = [];
-  if (!env.WEB_PORT) configIssues.push("WEB_PORT missing");
-  if (!env.AUTH_PUBLIC_BASE_URL) configIssues.push("AUTH_PUBLIC_BASE_URL missing");
-  const registrationMode = String(env.AUTH_REGISTRATION_MODE ?? "").trim();
-  if (registrationMode !== "open" && registrationMode !== "closed") {
-    configIssues.push("AUTH_REGISTRATION_MODE missing or invalid");
-  }
-  record(`config: ${configIssues.length === 0 ? "ok" : configIssues.join(", ")}`);
-  record(
-    `config web=${env.WEB_PORT} api=${readServerListen(env).port} public=${env.AUTH_PUBLIC_BASE_URL} registration=${registrationMode || "(unset)"}`
-  );
-
   const inspection = await inspectManagedRuntime(root);
   const state = inspection.state;
+  const api = readServerListen(env);
+  const web = inspection.running
+    ? webListenFromState(state, options.web ?? { host: "127.0.0.1", port: "3000" })
+    : (options.web ?? { host: "127.0.0.1", port: "3000" });
+  record("config: ok");
+  record(
+    `config web=${httpOrigin(web.host, web.port)} api=${httpOrigin(api.host, api.port)}`
+  );
+
   const managedPorts = await collectManagedPorts(env, state);
   const portServices = [
-    { label: "web", port: env.WEB_PORT },
-    { label: "api", port: readServerListen(env).port }
+    { label: "web", host: web.host, port: web.port },
+    { label: "api", host: api.host, port: api.port }
   ];
 
   const probe = options.probe ?? ((host, port) => probePort(host, port));
@@ -725,7 +639,7 @@ export async function runDeploymentDoctor(root, options = {}) {
       record(`port ${service.label}: invalid (${service.port})`);
       continue;
     }
-    const result = await probe("0.0.0.0", port);
+    const result = await probe(service.host || "0.0.0.0", port);
     if (result.available) {
       record(`port ${service.label} ${port}: available`);
     } else if (managedPorts.has(port)) {
@@ -735,7 +649,7 @@ export async function runDeploymentDoctor(root, options = {}) {
     }
   }
 
-  const storageRoot = path.join(root, env.STORAGE_ROOT_DIR || "storage");
+  const storageRoot = path.join(root, "storage");
   const envPath = path.join(root, ".env");
   const storageWritability = await inspectWritablePath(storageRoot);
   if (storageWritability.writable) {
@@ -794,8 +708,7 @@ export async function runDeploymentDoctor(root, options = {}) {
     const summary = await collectDeploymentHealth(
       {
         processAlive: true,
-        apiBaseUrl: `http://127.0.0.1:${readServerListen(env).port}`,
-        webUrl: `http://127.0.0.1:${env.WEB_PORT}`
+        ...healthProbeUrls(env, web)
       },
       options.healthOptions
     );

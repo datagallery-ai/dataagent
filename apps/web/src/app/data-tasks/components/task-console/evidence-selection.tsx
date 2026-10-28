@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { EvidenceSelection } from "@datafoundry/contracts";
+import type { EvidenceSelection } from "../../../../lib/evidence-ref";
 import { useT } from "../../../../i18n/locale-context";
 import { describeEvidenceSelection } from "../../evidence";
 import { consoleTableShellClass } from "./console-scroll-styles";

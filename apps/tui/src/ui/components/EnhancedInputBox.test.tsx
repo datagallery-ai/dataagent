@@ -381,7 +381,7 @@ describe('EnhancedInputBox layout', () => {
         <EnhancedInputBox
           value={'first\nsecond\nthird'}
           inputWidth={88}
-          datasourceId="dtc-growth-demo"
+          datasourceId="orders"
           onChange={() => {}}
           onSubmit={() => {}}
         />
@@ -399,7 +399,7 @@ describe('EnhancedInputBox layout', () => {
         <EnhancedInputBox
           inputWidth={76}
           modelName="GLM-5.2"
-          datasourceId="dtc-growth-demo"
+          datasourceId="orders"
           onChange={() => {}}
           onSubmit={() => {}}
         />
@@ -410,7 +410,7 @@ describe('EnhancedInputBox layout', () => {
     const output = view.output.join('');
     assert.doesNotMatch(output, /ANALYZE/);
     assert.match(output, /GLM-5.2/);
-    assert.match(output, /dtc-growth-demo/);
+    assert.match(output, /orders/);
     assert.doesNotMatch(output, /\[Enter\]/);
     assert.doesNotMatch(output, /\[Shift\+Enter\]/);
   });
@@ -445,7 +445,7 @@ describe('StatusBar', () => {
     runStatus: 'running',
     modelName: 'Qwen3-32B',
     directory: '/tmp',
-    datasourceId: 'dtc-growth-demo',
+    datasourceId: 'orders-file',
   } as const;
 
   it('shows model and optional datasource without a healthy connection badge', async () => {
@@ -459,7 +459,7 @@ describe('StatusBar', () => {
     const output = view.output.join('');
     assert.doesNotMatch(output, /Running|Ready|●/);
     assert.match(output, /source: /);
-    assert.match(output, /dtc-growth-demo/);
+    assert.match(output, /orders/);
     assert.match(output, /Qwen3-32B/);
     assert.match(output, /Qwen3-32B/);
   });
@@ -506,9 +506,9 @@ describe('shared selection theme', () => {
           title="Select a data source"
           items={[
             {
-              id: 'dtc-growth-demo',
-              name: 'DTC Growth Demo',
-              description: 'Built-in analytics data source',
+              id: 'orders',
+              name: 'Orders',
+              description: 'SQLite orders file',
               enabled: true,
             },
           ]}

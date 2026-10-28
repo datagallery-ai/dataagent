@@ -16,6 +16,8 @@ export function parseDeployArgs(argv = []) {
   let reconfigure = false;
   let nonInteractive = false;
   let runtimeUrl = null;
+  let webHost = null;
+  let webPort = null;
   let sawCommand = false;
 
   for (let i = 0; i < tokens.length; i += 1) {
@@ -28,12 +30,14 @@ export function parseDeployArgs(argv = []) {
       nonInteractive = true;
       continue;
     }
-    if (token === "--runtime-url") {
+    if (token === "--runtime-url" || token === "--web-host" || token === "--web-port") {
       const value = tokens[i + 1];
       if (!value || value.startsWith("-")) {
-        throw new Error("--runtime-url requires a URL value");
+        throw new Error(`${token} requires a value`);
       }
-      runtimeUrl = value;
+      if (token === "--runtime-url") runtimeUrl = value;
+      if (token === "--web-host") webHost = value;
+      if (token === "--web-port") webPort = value;
       i += 1;
       continue;
     }
@@ -62,26 +66,31 @@ export function parseDeployArgs(argv = []) {
   if (runtimeUrl != null && command !== "tui") {
     throw new Error("--runtime-url is only valid with tui");
   }
+  if ((webHost != null || webPort != null) && !["deploy", "start", "restart"].includes(command)) {
+    throw new Error("--web-host and --web-port are only valid with deploy, start, or restart");
+  }
 
-  return { command, reconfigure, nonInteractive, runtimeUrl };
+  return { command, reconfigure, nonInteractive, runtimeUrl, webHost, webPort };
 }
 
 export function deploymentHelp() {
-  return `./deploy.sh [deploy] [--reconfigure | --non-interactive]
-./deploy.sh start|stop|restart|status|logs|doctor|tui|help
+  return `./deploy.sh [deploy] [--reconfigure | --non-interactive] [--web-host <host>] [--web-port <port>]
+./deploy.sh start|restart [--web-host <host>] [--web-port <port>]
+./deploy.sh stop|status|logs|doctor|tui|help
 ./deploy.sh tui [--runtime-url <url>]
 
 deploy   Configure, install, build (including TUI), start, and verify. Existing deployments use a maintenance window.
-start    Start an existing build. Does not install or build.
+start    Start an existing build. Does not install or build. Web defaults to 127.0.0.1:3000.
 stop     Stop only the managed DataFoundry process group. Keeps configuration and data.
 restart  Stop and start an existing build. Does not install or build.
 status   Read process state and probe actual service health.
 logs     Show recent runtime logs and continue following them. Ctrl+C does not stop DataFoundry.
 doctor   Run read-only dependency, configuration, port, permission, disk, and health checks.
-tui      Optional: start the TUI client in the foreground after deploy (not a managed background service).
+tui      Start the local TUI in the foreground. It connects to the control plane /dataagent/stream and does not use /api/copilotkit.
 help     Show this help.
 
 One-click deploy builds the TUI so it is ready. Start it in another terminal with ./deploy.sh tui
-(or npm run start:tui). It does not stay running with the Web/API stack.
+(or npm run start:tui). Both attach to the control plane and do not start a second Python process.
+The TUI does not stay running with the Web/API stack.
 `;
 }

@@ -27,7 +27,7 @@ DataFoundry 是一个面向数据分析场景的 AI 工作台。它把自然语�
 第一次试用建议按下面的顺序阅读：
 
 1. 阅读 [产品概览](overview.md)，确认它解决的问题和能力边界。
-2. 按 [快速开始](quick-start.md) 配置模型 API Key，并使用内置 DTC Growth Review 数据源跑通第一个问题。
+2. 按 [快速开始](quick-start.md) 配置模型 API Key，注册数据源，再跑通第一个问题。
 3. 查看 [能力全览](capabilities.md)，了解 Web 工作台、TUI 和后端 API 的能力覆盖。
 4. 根据使用入口选择 [Web 工作台指南](guides/web-workbench.md) 或 [TUI 指南](guides/tui.md)。
 5. 需要接入自有数据时，再阅读 [数据源指南](guides/data-sources.md)。

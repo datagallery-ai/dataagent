@@ -105,25 +105,26 @@ Artifacts are managed by the Artifact service—common types include tables, cha
 
 ## Formal deploy boundary
 
-The default path is formal deploy (`build` / `start`); do not run `npm run dev`. Formal test and real production share the same start commands:
+Formal test and real production share the same start commands:
 
 ```bash
-npm run build && npm run build:web
-npm run start:api
-npm run start:web
+npm run build
+npm run start
 ```
 
-| Environment | Email | Public URL |
-| --- | --- | --- |
-| Formal test | `AUTH_EMAIL_DELIVERY=test` | Local / private |
-| Real production | `AUTH_EMAIL_DELIVERY=smtp` | Public HTTPS + reverse proxy |
+Start them separately with `npm run start:api`, then `npm run start:web`. The web proxy reads `server.host` and `server.port` from `config.json`, default `http://127.0.0.1:8790`.
+
+| Environment | Network |
+| --- | --- |
+| Formal test | Local / private |
+| Real production | Public HTTPS + reverse proxy |
 
 The browser reaches REST and CopilotKit SSE through the same-origin Next BFF. Probes:
 
 - `GET /healthz` — process liveness
 - `GET /ready` — Mastra and builtin resources ready (response includes `startup_ms` / `phases`)
 
-Reverse-proxy sample: [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; leave the SSE path uncompressed and unbuffered. Contributor hot-reload: [Quick start appendix](../quick-start.md).
+Reverse-proxy sample: [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; leave the SSE path uncompressed and unbuffered.
 
 Real production typically also needs:
 

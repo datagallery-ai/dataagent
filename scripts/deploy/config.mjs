@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-import { readServerListen } from "../server-listen.mjs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -23,62 +21,16 @@ export function parseDeploymentEnvironment(sourceText = "") {
   return env;
 }
 
-const DEFAULTS = {
-  WEB_HOST: "127.0.0.1",
-  WEB_PORT: "3000",
-  AUTH_EMAIL_DELIVERY: "test",
-  AUTH_REGISTRATION_MODE: "open",
-  STORAGE_ROOT_DIR: "storage",
-  METADATA_DB_PATH: "storage/metadata/workbench.sqlite"
-};
-
-const SECRET_KEYS = ["AUTH_SESSION_SECRET", "SECRET_MASTER_KEY"];
-/** Removed by password-only cutover; strip on ensure so upgraded .env can boot. */
-const REMOVED_LEGACY_AUTH_KEYS = ["DATAFOUNDRY_AUTH_MODE", "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE"];
-const RETIRED_LISTEN_KEYS = ["API_HOST", "API_PORT"];
 const PLACEHOLDER_SECRETS = new Set(["", "change-me", "replace-me"]);
 const SENSITIVE_KEY_PATTERN = /KEY|SECRET|TOKEN|PASSWORD|COOKIE|AUTHORIZATION/i;
 const SENSITIVE_JSON_KEY_PATTERN = /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|token|password|authorization|auth)$/i;
-
-export function removeEnvKeys(sourceText, keys) {
-  const keySet = new Set(keys);
-  const lines = String(sourceText ?? "").length > 0
-    ? String(sourceText).replace(/\r\n/g, "\n").split("\n")
-    : [];
-  if (lines.length > 0 && lines.at(-1) === "") lines.pop();
-  const removedKeys = [];
-  const next = [];
-  for (const line of lines) {
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (match && keySet.has(match[1])) {
-      if (!removedKeys.includes(match[1])) removedKeys.push(match[1]);
-      continue;
-    }
-    next.push(line);
-  }
-  return {
-    text: next.length > 0 ? `${next.join("\n")}\n` : "",
-    removedKeys
-  };
-}
 
 export function isPlaceholderSecret(value) {
   return value == null || PLACEHOLDER_SECRETS.has(String(value).trim());
 }
 
-export function deploymentConfigGaps(env = {}) {
-  const gaps = [];
-  for (const key of ["WEB_PORT", "AUTH_PUBLIC_BASE_URL"]) {
-    if (!String(env[key] ?? "").trim()) gaps.push(key);
-  }
-  const registrationMode = String(env.AUTH_REGISTRATION_MODE ?? "").trim();
-  if (registrationMode !== "open" && registrationMode !== "closed") {
-    gaps.push("AUTH_REGISTRATION_MODE");
-  }
-  for (const key of SECRET_KEYS) {
-    if (isPlaceholderSecret(env[key])) gaps.push(key);
-  }
-  return gaps;
+export function deploymentConfigGaps() {
+  return [];
 }
 
 export function isCompleteDeploymentConfig(env = {}) {
@@ -123,103 +75,9 @@ export function updateDeploymentEnvironment(sourceText, updates) {
   return upsertEnvText(sourceText ?? "", updates);
 }
 
-export function ensureDeploymentEnvironment(sourceText, options = {}) {
-  const randomSecret = options.randomSecret ?? (() => randomBytes(32).toString("base64url"));
-  const generateSecrets = options.generateSecrets !== false;
-  const stripped = removeEnvKeys(sourceText ?? "", [...REMOVED_LEGACY_AUTH_KEYS, ...RETIRED_LISTEN_KEYS]);
-  const workingText = stripped.text;
-  const removedKeys = stripped.removedKeys;
-  const parsed = parseDeploymentEnvironment(workingText);
-  const updates = {};
-  const generatedKeys = [];
-
-  for (const [key, value] of Object.entries(DEFAULTS)) {
-    if (parsed[key] == null || String(parsed[key]).trim() === "") {
-      updates[key] = value;
-      generatedKeys.push(key);
-    }
-  }
-
-  for (const key of SECRET_KEYS) {
-    if (isPlaceholderSecret(parsed[key])) {
-      if (!generateSecrets) continue;
-      updates[key] = randomSecret();
-      generatedKeys.push(key);
-    }
-  }
-
-  if (parsed.AUTH_PUBLIC_BASE_URL == null || String(parsed.AUTH_PUBLIC_BASE_URL).trim() === "") {
-    const webPort = updates.WEB_PORT ?? parsed.WEB_PORT ?? DEFAULTS.WEB_PORT;
-    updates.AUTH_PUBLIC_BASE_URL = `http://127.0.0.1:${webPort}`;
-    if (!generatedKeys.includes("AUTH_PUBLIC_BASE_URL")) {
-      generatedKeys.push("AUTH_PUBLIC_BASE_URL");
-    }
-  }
-
-  const text = Object.keys(updates).length > 0
-    ? updateDeploymentEnvironment(workingText, updates)
-    : workingText?.endsWith("\n") || workingText === ""
-      ? workingText
-      : `${workingText}\n`;
-
-  const env = { ...parseDeploymentEnvironment(text) };
-  delete env.DATAFOUNDRY_AUTH_MODE;
-  delete env.NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE;
-  return { text, env, generatedKeys, removedKeys };
-}
-
-export function renderWebEnvironment(env, listen = readServerListen(env)) {
-  const apiHost = listen.host;
-  const apiPort = listen.port;
-  return [
-    "NEXT_PUBLIC_AGENT_RUNTIME_URL=",
-    "NEXT_PUBLIC_CONFIG_API_URL=",
-    `API_PROXY_TARGET=http://${apiHost}:${apiPort}`,
-    ""
-  ].join("\n");
-}
-
-function isLoopbackHost(hostname) {
-  const host = String(hostname ?? "")
-    .toLowerCase()
-    .replace(/^\[(.*)\]$/u, "$1");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1";
-}
-
-/**
- * Native deploy allows HTTP only on loopback. Non-loopback hosts must use HTTPS
- * (or SSH port forwarding to a loopback listener).
- */
-export function assertNativeAuthPublicBaseUrl(raw) {
-  let url;
-  try {
-    url = new URL(String(raw ?? "").trim());
-  } catch {
-    throw new Error("AUTH_PUBLIC_BASE_URL must be a valid absolute URL");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("AUTH_PUBLIC_BASE_URL must use http or https");
-  }
-  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
-    throw new Error(
-      "AUTH_PUBLIC_BASE_URL HTTP is only allowed for loopback hosts (127.0.0.1, localhost, ::1). " +
-        "For remote access use SSH port forwarding to the loopback listener, or configure HTTPS."
-    );
-  }
-  return url;
-}
-
-export function assertNativeBindHosts(env = {}) {
-  for (const key of ["WEB_HOST", "API_HOST"]) {
-    const host = String(env[key] ?? "").trim();
-    if (!host) continue;
-    if (host === "0.0.0.0" || host === "::") {
-      throw new Error(
-        `${key}=${host} exposes the service on all interfaces over plain HTTP. ` +
-          "Native password-only installs bind loopback by default; use SSH forwarding or a TLS reverse proxy."
-      );
-    }
-  }
+export function ensureDeploymentEnvironment(sourceText = "") {
+  const text = sourceText.endsWith("\n") || sourceText === "" ? sourceText : `${sourceText}\n`;
+  return { text, env: parseDeploymentEnvironment(text), generatedKeys: [] };
 }
 
 async function writeAtomic(filePath, content, mode = 0o600) {
@@ -237,9 +95,8 @@ async function writeAtomic(filePath, content, mode = 0o600) {
   }
 }
 
-export async function writeDeploymentConfiguration(root, rootText, webText, options = {}) {
+export async function writeDeploymentConfiguration(root, rootText, options = {}) {
   const envPath = path.join(root, ".env");
-  const webPath = path.join(root, "apps/web/.env.local");
   let backupPath;
   const { readFile } = await import("node:fs/promises");
 
@@ -251,7 +108,9 @@ export async function writeDeploymentConfiguration(root, rootText, webText, opti
   }
 
   const existingEnv = parseDeploymentEnvironment(existing);
-  const hasExistingSecrets = SECRET_KEYS.some((key) => !isPlaceholderSecret(existingEnv[key]));
+  const hasExistingSecrets = Object.entries(existingEnv).some(([key, value]) =>
+    SENSITIVE_KEY_PATTERN.test(key) && !isPlaceholderSecret(value)
+  );
   const shouldBackup = Boolean(options.backup) || Boolean(options.backupExistingSecrets && hasExistingSecrets);
 
   if (shouldBackup) {
@@ -261,8 +120,7 @@ export async function writeDeploymentConfiguration(root, rootText, webText, opti
   }
 
   await writeAtomic(envPath, rootText, 0o600);
-  await writeAtomic(webPath, webText, 0o600);
-  return { envPath, webPath, backupPath };
+  return { envPath, backupPath };
 }
 export function redactSensitiveText(text) {
   let result = String(text ?? "");

@@ -78,10 +78,12 @@ export const SessionBanner: React.FC<SessionBannerProps> = ({
         <Text>{modelName}</Text>
       </Box>
 
-      <Box>
-        <Text dimColor>directory: </Text>
-        <Text>{directory}</Text>
-      </Box>
+      {directory ? (
+        <Box>
+          <Text dimColor>directory: </Text>
+          <Text>{directory}</Text>
+        </Box>
+      ) : null}
 
       <Box>
         <Text color={connDisplay.color}>
@@ -178,10 +180,12 @@ export const Header: React.FC<HeaderProps> = ({
         <Text>{modelName}</Text>
       </Box>
 
-      <Box>
-        <Text dimColor>directory: </Text>
-        <Text>{directory}</Text>
-      </Box>
+      {directory ? (
+        <Box>
+          <Text dimColor>directory: </Text>
+          <Text>{directory}</Text>
+        </Box>
+      ) : null}
 
       <Box>
         <Text color={connDisplay.color}>

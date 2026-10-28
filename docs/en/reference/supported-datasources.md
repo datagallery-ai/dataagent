@@ -8,8 +8,7 @@ DataFoundry manages data sources through Data Gateway. Clients register, test, a
 
 | Stage | Types | Best for |
 | --- | --- | --- |
-| First trial | Built-in DTC Growth Review (SQLite) | Run the analysis path without preparing a database. |
-| Local files | SQLite, CSV, Excel, DuckDB file | File analysis, upload, and table outputs. |
+| First trial | SQLite, CSV, Excel, DuckDB file | Run analysis, upload, and table output from a local file. |
 | Common server databases | PostgreSQL, MySQL | Real connections, schema fetch, and read-only SQL. |
 | External services | Cloud warehouses, search, NoSQL, lakehouse | Requires service, network, account, and credentials. |
 

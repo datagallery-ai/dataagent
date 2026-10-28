@@ -6,8 +6,15 @@
 
 默认按**正式态**启动（`password` + `build` / `start`）。正式测试与真实生产启动命令相同，差别在根目录 `.env` 的邮箱与公网地址，见 [快速开始](../quick-start.md)。
 
+一键（网页和 TUI 都可用；TUI 另开终端）：
+
 ```bash
-npm run build && npm run build:web
+npm run start
+```
+
+分开：
+
+```bash
 npm run start:api
 npm run start:web
 ```
@@ -20,15 +27,7 @@ http://127.0.0.1:3000/login
 
 登录后进入 `/data-tasks`。
 
-正式态前端配置（`apps/web/.env.local`，改 `NEXT_PUBLIC_*` 后需重新 `build:web`）：
-
-```bash
-NEXT_PUBLIC_AGENT_RUNTIME_URL=
-NEXT_PUBLIC_CONFIG_API_URL=
-API_PROXY_TARGET=http://127.0.0.1:8787
-```
-
-浏览器走同源 Next BFF（`/api/v1/*`、对话 `POST /dataagent/stream`、CopilotKit runtime info `/api/copilotkit`）。BFF 上游用 `API_PROXY_TARGET`（默认 `http://127.0.0.1:8787`）。
+浏览器走同源 Next BFF（`/api/v1/*`、对话 `POST /dataagent/stream`、CopilotKit runtime info `/api/copilotkit`）。`npm run start:web` 按 `config.json` 的 `server.host` 和 `server.port` 设置上游，默认 `http://127.0.0.1:8790`。
 
 就绪探针：
 
@@ -36,8 +35,6 @@ API_PROXY_TARGET=http://127.0.0.1:8787
 - 就绪：`GET /ready`（含 `startup_ms` / `phases`）
 
 反代样例（真实生产）：[`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)。
-
-贡献者本地热更新（非正式态，勿与 `start:*` 混开）见 [快速开始附录](../quick-start.md)。
 
 ## 身份和首次引导
 
@@ -62,7 +59,7 @@ Web 工作台分三栏：
 ## 跑第一个任务
 
 1. 点击左侧「新建数据任务」。
-2. 选择内置 **DTC Growth Review** 数据源。
+2. 选择已注册的数据源。
 3. 在输入框旁选择「服务端默认」或你配置的模型。
 4. 输入问题并发送。
 
