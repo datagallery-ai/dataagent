@@ -39,6 +39,24 @@ _STATUS_MAP = {
     "Failed": "failed",
 }
 
+# ``error`` 字段回显给 LLM 时的长度上限(见 ``_summarize_error_log``)。
+_ERROR_SUMMARY_MAX_CHARS = 500
+
+
+def _summarize_error_log(error_log: str) -> str:
+    """把可能非常大的 Spark 错误日志压成一句短摘要,用于 ``error`` 字段。
+
+    只取日志头部:异常类型/消息和栈顶在这里,也就是根因。完整日志仍保留在
+    ``errorLog`` 字段里(下游会再按 agent 边界收敛),这里只保证 ``error``
+    不会变成几百 KB 的整份日志。
+    """
+    if not error_log:
+        return ""
+    text = error_log.strip()
+    if len(text) <= _ERROR_SUMMARY_MAX_CHARS:
+        return text
+    return text[:_ERROR_SUMMARY_MAX_CHARS] + " ...(truncated)"
+
 
 # ============================================================================
 # 核心辅助函数
@@ -215,7 +233,10 @@ async def prod_collect_result(job_id: str) -> dict[str, Any]:
             "job_id": job_id,
             "data": None,
             "data_meta": None,
-            "error": error_log or "status=failed",
+            # ``error`` 与 ``errorLog`` 同源,不要把整份 Spark 日志复制到
+            # ``error`` 里(下游会把 ``error`` 当作一句错误摘要直接回显给
+            # LLM)。这里只放一个短摘要,完整日志仍在 ``errorLog``。
+            "error": _summarize_error_log(error_log) or "status=failed",
             "errorLog": error_log,
             "raw_result": raw,
         }

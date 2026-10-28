@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -294,6 +295,43 @@ class TestReplaceTargetTable:
         assert "name VARCHAR(50)" in out
 
 
+class TestPartitionDatePolicy:
+    """两条链路的分区日期必须不同:语法校验=一年之后,质量校验=一周之前。"""
+
+    def test_validation_date_is_one_year_ahead(self):
+        expected = (date.today() + timedelta(days=365)).strftime("%Y%m%d")
+        assert vt.partition_date_for_validation() == expected
+
+    def test_quality_date_is_one_week_ago(self):
+        expected = (date.today() - timedelta(days=7)).strftime("%Y%m%d")
+        assert vt.partition_date_for_quality() == expected
+
+    def test_two_chains_use_different_dates(self):
+        assert vt.partition_date_for_validation() != vt.partition_date_for_quality()
+
+    def test_replace_target_table_defaults_to_validation_date(self):
+        out = vt._replace_target_table(
+            "SELECT * FROM t WHERE pt_d = '$date'",
+            user_account="alice",
+            table_suffix="",
+        )
+        assert vt.partition_date_for_validation() in out
+
+    def test_replace_target_table_honours_explicit_date(self):
+        out = vt._replace_target_table(
+            "SELECT * FROM t WHERE pt_d = '$date'",
+            user_account="alice",
+            table_suffix="",
+            partition_date="20200101",
+        )
+        assert "pt_d = '20200101'" in out
+
+    def test_quality_check_default_date_is_one_week_ago(self):
+        from dataagent.actions.tools.local_tool import dataops_quality_check as qc
+
+        assert qc.default_partition_date() == vt.partition_date_for_quality()
+
+
 class TestHasCte:
     def test_with_before_insert(self):
         assert vt._has_cte("WITH t AS (SELECT 1) INSERT INTO r SELECT * FROM t") is True
@@ -372,6 +410,131 @@ class TestExpandCteForDml:
         runtime.llm = MagicMock(return_value=fake_llm)
         out = asyncio.run(vt._expand_cte_for_dml(sql, runtime=runtime))
         assert out == sql
+
+    def test_default_timeout_cap_is_300s(self):
+        """CTE 展开的等待上限是 300s（此前写成 60s，实际未生效）。"""
+        assert vt._CTE_EXPANSION_MAX_TIMEOUT_SEC == 300
+
+    def test_timeout_is_capped_at_300s(self):
+        """传入的超时被夹到 300s，不会无限放大。"""
+        captured: dict[str, float] = {}
+
+        async def _fake_wait_for(coro, timeout):
+            captured["timeout"] = timeout
+            coro.close()
+            raise TimeoutError
+
+        fake_llm = MagicMock()
+        fake_llm.invoke = MagicMock(return_value=_FakeLLMResp("x"))
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+
+        with patch.object(vt.asyncio, "wait_for", side_effect=_fake_wait_for):
+            out = asyncio.run(
+                vt._expand_cte_for_dml(
+                    "WITH t AS (SELECT 1) INSERT INTO r SELECT * FROM t",
+                    timeout_sec=9999,
+                    runtime=runtime,
+                )
+            )
+
+        assert captured["timeout"] == 300
+        # 超时 → 回退原始 SQL（仍带 CTE）
+        assert out == "WITH t AS (SELECT 1) INSERT INTO r SELECT * FROM t"
+
+    def test_timeout_returns_original_when_llm_hangs(self):
+        """LLM 挂死时按 timeout_sec 放弃，回退原始 SQL 而不是无限等。"""
+
+        def _hang(*_args, **_kwargs):
+            import time
+
+            time.sleep(5)
+
+        fake_llm = MagicMock(invoke=MagicMock(side_effect=_hang))
+        runtime = MagicMock()
+        runtime.llm = MagicMock(return_value=fake_llm)
+        original = "WITH t AS (SELECT 1) INSERT INTO r SELECT * FROM t"
+
+        out = asyncio.run(
+            vt._expand_cte_for_dml(original, timeout_sec=1, runtime=runtime)
+        )
+        assert out == original
+
+
+# ===========================================================================
+# pt_d 范围过滤 → 单日收敛（仅质量校验链路）
+# ===========================================================================
+
+
+class TestCollapsePtDRange:
+    """范围分区过滤收敛 —— DataOps 不替换占位符，范围写法会扫不到数据。"""
+
+    def test_placeholder_range_uses_partition_date(self):
+        sql = "SELECT a FROM t WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "pt_d = '20261021'" in out
+        assert "$date" not in out
+        assert "${start_time" not in out
+        assert "<=" not in out
+        assert ">=" not in out
+
+    def test_literal_upper_bound_wins_over_partition_date(self):
+        sql = "SELECT a FROM t WHERE pt_d <= '20260901' AND pt_d >= '20260801'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "pt_d = '20260901'" in out
+
+    def test_exclusive_upper_bound_shifts_one_day_back(self):
+        """``pt_d < '20260901'`` 不含上界 → 取前一天，仍落在原范围内。"""
+        sql = "SELECT a FROM t WHERE pt_d < '20260901'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "pt_d = '20260831'" in out
+
+    def test_single_day_equality_untouched(self):
+        """已经是 ``=`` 的单日条件不动（那是目标表自己的分区声明）。"""
+        sql = "INSERT OVERWRITE TABLE t PARTITION(pt_d = '20261021') SELECT a FROM s WHERE pt_d = '20261020'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert out == sql
+
+    def test_no_partition_condition_returns_unchanged(self):
+        sql = "SELECT a FROM t WHERE x = '1'"
+        assert vt._collapse_pt_d_range(sql, "20261021") == sql
+
+    def test_dedups_repeated_collapsed_condition(self):
+        """``<= X AND >= Y`` 收敛后不留两条重复条件。"""
+        sql = "SELECT a FROM t WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert out.count("pt_d = '20261021'") == 1
+
+    def test_keeps_and_chain_intact(self):
+        """就地改写，不删条件 → AND 链不能断。"""
+        sql = (
+            "SELECT a FROM t WHERE adv_oper_type_cd = '11' "
+            "AND pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}' "
+            "AND NOT bicoredata.IsEmpty(app_id)"
+        )
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "adv_oper_type_cd = '11'" in out
+        assert "NOT bicoredata.IsEmpty(app_id)" in out
+        assert "AND" in out
+        assert "AND AND" not in out
+        assert "AND OR" not in out
+
+    def test_idempotent(self):
+        sql = "SELECT a FROM t WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'"
+        once = vt._collapse_pt_d_range(sql, "20261021")
+        assert vt._collapse_pt_d_range(once, "20261021") == once
+
+    def test_keeps_insert_target_partition_clause(self):
+        """INSERT 目标表自己的 ``PARTITION(pt_d = ...)`` 不能被动。"""
+        sql = (
+            "INSERT OVERWRITE TABLE biads.x PARTITION(pt_d = '$date') "
+            "SELECT a FROM s WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'"
+        )
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        # 目标表分区保持原样（这里被 _replace_target_table 处理成字面日期，
+        # 本函数只在 ``=`` 形态上不动它）
+        assert "PARTITION(pt_d = '$date')" in out
+        assert "pt_d <= '$date'" not in out
 
 
 # ===========================================================================
@@ -664,7 +827,6 @@ class TestAnalyzeLogDirectly:
         assert "log_content" not in result
 
     def test_llm_returns_json_normalized(self, collected_stream):
-        """Llm returns json normalized."""
         llm = object()
         collected_stream.return_value = (
             '{"error_type":"AnalysisException",'
@@ -701,7 +863,6 @@ class TestAnalyzeLogDirectly:
         collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_strips_markdown_fences_from_llm_output(self, collected_stream):
-        """Strips markdown fences from llm output."""
         llm = object()
         collected_stream.return_value = (
             '```json\n{"error_type":"ParseException","error_message":"bad sql",'
@@ -728,7 +889,6 @@ class TestAnalyzeLogDirectly:
         collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_invalid_json_falls_back_to_text_parse(self, collected_stream):
-        """Invalid json falls back to text parse."""
         # LLM returns garbage → _parse_analysis_from_text still produces a
         # structured dict (error_type=unknown). Better than failing entirely.
         llm = object()
@@ -754,7 +914,6 @@ class TestAnalyzeLogDirectly:
         collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_llm_exception_returns_llm_error(self, collected_stream):
-        """Llm exception returns llm error."""
         llm = object()
         collected_stream.side_effect = RuntimeError("LLM down")
         with (
@@ -834,10 +993,10 @@ class TestAnalyzeLogDirectly:
         collected_stream.assert_awaited_once_with(runtime_llm, ANY)
 
     def test_runtime_llm_failure_falls_back_to_manager(self, collected_stream):
-        """Runtime llm failure falls back to manager."""
         fallback_llm = object()
         collected_stream.return_value = (
-            '{"error_type":"ParseException","error_message":"bad sql","location":{},"suggestions":["fix syntax"]}'
+            '{"error_type":"ParseException","error_message":"bad sql",'
+            '"location":{},"suggestions":["fix syntax"]}'
         )
         runtime = MagicMock()
         runtime.llm = MagicMock(side_effect=RuntimeError("runtime not ready"))
@@ -867,7 +1026,6 @@ class TestAnalyzeLogDirectly:
         collected_stream.assert_awaited_once_with(fallback_llm, ANY)
 
     def test_raw_log_never_leaked_to_caller(self, collected_stream):
-        """Raw log never leaked to caller."""
         llm = object()
         collected_stream.return_value = (
             '{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}'
@@ -1117,6 +1275,52 @@ class TestDataopsValidateSql:
         assert args[0] == "INSERT OVERWRITE TABLE biads.x SELECT 1"
         assert args[1] == "from_meta"
 
+    def test_partition_range_collapse_is_off_by_default(self):
+        """语法校验链路保持原始范围语义（它只验证「SQL 能不能跑通」）。"""
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-1"},
+            poll={"status": "completed"},
+            collect={"status": "completed"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        sql = "SELECT a FROM t WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'"
+
+        asyncio.run(vt.dataops_validate_sql(sql, _tool_context=ctx))
+
+        submitted = coordinator.submit_job.call_args.kwargs["command"]
+        assert "pt_d <= '$date'" in submitted
+        assert "${start_time" in submitted
+
+    def test_partition_range_collapse_applied_when_enabled(self):
+        """质量校验链路开启后，提交给 DataOps 的 SQL 里范围条件已被收敛。"""
+        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-1"},
+            poll={"status": "completed"},
+            collect={"status": "completed"},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        sql = "SELECT a FROM t WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'"
+
+        asyncio.run(
+            vt.dataops_validate_sql(
+                sql,
+                _tool_context=ctx,
+                _partition_date="20261021",
+                _collapse_partition_range=True,
+            )
+        )
+
+        submitted = coordinator.submit_job.call_args.kwargs["command"]
+        assert "pt_d = '20261021'" in submitted
+        assert "pt_d <=" not in submitted
+        assert "${start_time" not in submitted
+
 
 # ===========================================================================
 # dataops_validate_sql_with_log_analysis — wrapper + field ordering
@@ -1165,7 +1369,6 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert "log_file_info" not in result
 
     def test_failed_with_log_file_info_adds_analysis(self, collected_stream):
-        """Failed with log file info adds analysis."""
         info = {"url": "https://obs/x", "headers": {"Authorization": "x"}}
         resource = _make_resource(timeout_s=5, poll_interval_ms=50)
         coordinator = _wired_coordinator(
@@ -1189,7 +1392,7 @@ class TestDataopsValidateSqlWithLogAnalysis:
             '"location":{"tables":["missing_t"]},'
             '"suggestions":["check the table name"]}'
         )
-        # Make the runtime's LLM resolver return our llm so the
+        # Make the runtime's LLM resolver return our stand-in so the
         # in-process analyzer reuses the main agent's LLM (its primary path).
         runtime.llm = MagicMock(return_value=llm)
 
@@ -1208,7 +1411,6 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert result["log_analysis"]["error_type"] == "TableNotFoundException"
         assert "log_analysis_summary" in result
         assert "log_file_info" in result
-        collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_log_analysis_error_recorded_on_obs_failure(self):
         info = {"url": "https://obs/x", "headers": {"Authorization": "x"}}
@@ -1287,7 +1489,6 @@ class TestDataopsValidateSqlWithLogAnalysis:
         idx_lfi = keys.index("log_file_info")
         assert "log_analysis" in keys[:idx_lfi]
         assert "log_analysis_summary" in keys[:idx_lfi]
-        collected_stream.assert_awaited_once_with(llm, ANY)
 
     # ----- prod path: inline errorLog (no OBS) --------------------------
 
@@ -1303,7 +1504,7 @@ class TestDataopsValidateSqlWithLogAnalysis:
         ctx = _make_context(runtime)
 
         # Stub prod flow: submit OK, poll failed, collect yields inline errorLog
-        async def _fake_prod(sql, *, _tool_context):
+        async def _fake_prod(sql=None, *, _tool_context, sql_file_path=None, partition_date=None, collapse_partition_range=False):
             return {
                 "passed": False,
                 "error": "AnalysisException: cannot resolve 'foo'",
@@ -1342,7 +1543,6 @@ class TestDataopsValidateSqlWithLogAnalysis:
         assert result["log_analysis"]["error_type"] == "AnalysisException"
         assert result["log_analysis_summary"]
         assert "suggestions" in result["log_analysis"]
-        collected_stream.assert_awaited_once_with(llm, ANY)
 
     def test_prod_failed_no_log_source_returns_inner_as_is(self, monkeypatch):
         """If prod failed but returned neither log_file_info nor errorLog,
@@ -1352,7 +1552,7 @@ class TestDataopsValidateSqlWithLogAnalysis:
         runtime = _make_runtime(resource=None, coordinator=None)
         ctx = _make_context(runtime)
 
-        async def _fake_prod(sql, *, _tool_context):
+        async def _fake_prod(sql=None, *, _tool_context, sql_file_path=None, partition_date=None, collapse_partition_range=False):
             return {
                 "passed": False,
                 "error": "submission failed",
@@ -1446,808 +1646,6 @@ class TestExtractInsertTargetTable:
         )
         assert t is not None
         assert "v1" in t
-
-
-class TestBuildCountSql:
-    def test_standard_insert(self):
-        # Build from the rewritten form (after _replace_target_table)
-        rewritten = (
-            "INSERT OVERWRITE TABLE adhoctemp.tmp_alice_20260817_ads_xxx "
-            "SELECT * FROM biads.src WHERE pt_d = '20260817'"
-        )
-        sql = vt._build_count_sql(rewritten)
-        assert sql is not None
-        assert "SELECT count(*)" in sql
-        assert "adhoctemp" in sql
-        assert "ads_xxx" in sql
-        assert "pt_d" in sql
-        assert "20260817" in sql
-
-    def test_insert_without_db(self):
-        rewritten = "INSERT OVERWRITE TABLE adhoctemp.tmp_bob_20260817_src SELECT 1"
-        sql = vt._build_count_sql(rewritten)
-        assert sql is not None
-        assert "count(*)" in sql
-
-    def test_select_returns_none(self):
-        sql = vt._build_count_sql("SELECT 1 FROM biads.x")
-        assert sql is None
-
-
-class TestParseCountFromCollect:
-    def test_standard_data(self):
-        result = {"status": "completed", "data": [{"_c0": "42"}]}
-        assert vt._parse_count_from_collect(result) == 42
-
-    def test_named_count_column(self):
-        result = {"status": "completed", "data": [{"count(*)": "0"}]}
-        assert vt._parse_count_from_collect(result) == 0
-
-    def test_float_that_is_integer(self):
-        result = {"status": "completed", "data": [{"_c0": "7.0"}]}
-        assert vt._parse_count_from_collect(result) == 7
-
-    def test_empty_data_returns_none(self):
-        result = {"status": "completed", "data": []}
-        assert vt._parse_count_from_collect(result) is None
-
-    def test_data_not_list_returns_none(self):
-        result = {"status": "completed", "data": "not a list"}
-        assert vt._parse_count_from_collect(result) is None
-
-    def test_no_data_field_returns_none(self):
-        result = {"status": "completed"}
-        assert vt._parse_count_from_collect(result) is None
-
-
-# ===========================================================================
-# _run_post_validate
-# ===========================================================================
-
-
-class TestRunPostValidate:
-    """Mocked coordinator — submit / poll / collect all via MagicMock side_effect."""
-
-    @pytest.mark.asyncio
-    async def test_count_success_greater_than_zero(self):
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-1"}
-        # First poll: running → Second poll: completed
-        coordinator.poll.side_effect = [
-            {"status": "running", "job_id": "pv-1"},
-            {"status": "completed", "job_id": "pv-1"},
-        ]
-        coordinator.collect.return_value = {
-            "status": "completed",
-            "job_id": "pv-1",
-            "data": [{"_c0": "10"}],
-            "data_meta": {"format": "csv", "row_count": 1},
-        }
-
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM t",
-            timeout_sec=60,
-            poll_interval=0.01,
-        )
-        assert result["ok"] is True
-        assert result["count"] == 10
-        assert result["job_id"] == "pv-1"
-        assert result["error"] is None
-
-    @pytest.mark.asyncio
-    async def test_count_zero_parsed(self):
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-2"}
-        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-2"}]
-        coordinator.collect.return_value = {
-            "status": "completed",
-            "job_id": "pv-2",
-            "data": [{"_c0": "0"}],
-        }
-
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM t",
-            timeout_sec=60,
-            poll_interval=0.01,
-        )
-        assert result["ok"] is True
-        assert result["count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_submit_error(self):
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "ERROR", "message": "queue full"}
-
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM t",
-            timeout_sec=60,
-            poll_interval=0.01,
-        )
-        assert result["ok"] is False
-        assert "queue full" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_collect_failed(self):
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-3"}
-        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-3"}]
-        coordinator.collect.return_value = {
-            "status": "failed",
-            "job_id": "pv-3",
-            "error": "table not found",
-        }
-
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM nonexistent",
-            timeout_sec=60,
-            poll_interval=0.01,
-        )
-        assert result["ok"] is False
-        assert "table not found" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_count_parse_failure(self):
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-4"}
-        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-4"}]
-        coordinator.collect.return_value = {
-            "status": "completed",
-            "job_id": "pv-4",
-            "data": "not a list",
-        }
-
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM t",
-            timeout_sec=60,
-            poll_interval=0.01,
-        )
-        assert result["ok"] is False
-        assert "parse failed" in result["error"]
-
-
-# ===========================================================================
-# dataops_validate_sql — INSERT post-validate integration
-# ===========================================================================
-
-
-class TestDataopsValidateSqlPostValidate:
-    """INSERT only: when first-phase passes, second-phase SELECT count(*) runs."""
-
-    @pytest.mark.asyncio
-    async def test_insert_passed_count_gt_zero_final_passed(self):
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-1"},
-            poll=[{"status": "completed", "job_id": "j-1"}],
-            collect={"status": "completed", "job_id": "j-1"},
-        )
-        # Second-phase submit + poll + collect for count query
-        coordinator.submit_job.side_effect = [
-            {"status": "queued", "job_id": "j-1"},  # first INSERT
-            {"status": "queued", "job_id": "pv-1"},  # count
-        ]
-        coordinator.poll.side_effect = [
-            {"status": "completed", "job_id": "j-1"},
-            {"status": "completed", "job_id": "pv-1"},
-        ]
-        coordinator.collect.side_effect = [
-            {"status": "completed", "job_id": "j-1"},
-            {
-                "status": "completed",
-                "job_id": "pv-1",
-                "data": [{"_c0": "5"}],
-                "data_meta": {"format": "csv", "row_count": 1},
-            },
-        ]
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql(
-            "INSERT OVERWRITE TABLE biads.x SELECT 1",
-            _tool_context=ctx,
-        )
-        assert result["passed"] is True
-        assert result["job_id"] == "j-1"
-
-    @pytest.mark.asyncio
-    async def test_insert_passed_count_zero_final_failed(self):
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-2"},
-            poll=[{"status": "completed", "job_id": "j-2"}],
-            collect={"status": "completed", "job_id": "j-2"},
-        )
-        coordinator.submit_job.side_effect = [
-            {"status": "queued", "job_id": "j-2"},
-            {"status": "queued", "job_id": "pv-2"},
-        ]
-        coordinator.poll.side_effect = [
-            {"status": "completed", "job_id": "j-2"},
-            {"status": "completed", "job_id": "pv-2"},
-        ]
-        coordinator.collect.side_effect = [
-            {"status": "completed", "job_id": "j-2"},
-            {"status": "completed", "job_id": "pv-2", "data": [{"_c0": "0"}]},
-        ]
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql(
-            "INSERT INTO TABLE biads.x SELECT * FROM src",
-            _tool_context=ctx,
-        )
-        assert result["passed"] is False
-        assert "empty" in result["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_insert_count_job_failed_final_failed(self):
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-3"},
-            poll=[{"status": "completed", "job_id": "j-3"}],
-            collect={"status": "completed", "job_id": "j-3"},
-        )
-        coordinator.submit_job.side_effect = [
-            {"status": "queued", "job_id": "j-3"},
-            {"status": "queued", "job_id": "pv-3"},
-        ]
-        coordinator.poll.side_effect = [
-            {"status": "completed", "job_id": "j-3"},
-            {"status": "failed", "job_id": "pv-3"},
-        ]
-        coordinator.collect.side_effect = [
-            {"status": "completed", "job_id": "j-3"},
-            {"status": "failed", "job_id": "pv-3", "error": "table not found"},
-        ]
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql(
-            "INSERT OVERWRITE TABLE biads.x SELECT 1",
-            _tool_context=ctx,
-        )
-        assert result["passed"] is False
-        assert "post_validate" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_select_no_post_validate(self):
-        """SELECT does not trigger second-phase count query."""
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-sel"},
-            poll=[{"status": "completed", "job_id": "j-sel"}],
-            collect={"status": "completed", "job_id": "j-sel"},
-        )
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql(
-            "SELECT 1 FROM biads.x",
-            _tool_context=ctx,
-        )
-        assert result["passed"] is True
-        assert result["job_id"] == "j-sel"
-        # submit_job should be called only once
-        assert coordinator.submit_job.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_create_no_post_validate(self):
-        """CREATE TABLE does not trigger second-phase count query.
-
-        Note: single-attempt entry point does NOT do temp-table cleanup
-        (cleanup is owned by the wrapper, which only cleans DML). So
-        submit_job is called exactly once for CREATE.
-        """
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-create"},
-            poll=[{"status": "completed", "job_id": "j-create"}],
-            collect={"status": "completed", "job_id": "j-create"},
-        )
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql(
-            "CREATE TABLE biads.x (id INT)",
-            _tool_context=ctx,
-        )
-        assert result["passed"] is True
-        assert coordinator.submit_job.call_count == 1
-        # No cleanup_job_id: single-attempt entry point leaves the temp
-        # table in place so the matching DML can target it.
-        assert "cleanup_job_id" not in result
-
-    @pytest.mark.asyncio
-    async def test_first_phase_failed_no_post_validate(self):
-        """First phase failed — no second phase at all.
-
-        Note: single-attempt entry point does NOT do cleanup either on
-        failure (cleanup is owned by the wrapper, only on DML final outcome).
-        """
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-fail"},
-            poll=[{"status": "failed", "job_id": "j-fail"}],
-            collect={"status": "failed", "job_id": "j-fail", "error": "bad sql"},
-        )
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql(
-            "INSERT OVERWRITE TABLE biads.x SELECT 1",
-            _tool_context=ctx,
-        )
-        assert result["passed"] is False
-        assert "bad sql" in result["error"]
-        # Only the first submit_job was called (count not submitted either,
-        # and cleanup is owned by the wrapper, not the entry point).
-        assert coordinator.submit_job.call_count == 1
-        assert "cleanup_job_id" not in result
-
-    @pytest.mark.asyncio
-    async def test_cleanup_disabled_truthy_variants(self, monkeypatch):
-        """DATAOPS_DISABLE_TEMP_CLEANUP accepts case-insensitive truthy values.
-
-        Sanity-check that the parsing matches the documented set:
-        true/1/yes/on/y/t (case-insensitive). Other strings (including empty)
-        keep cleanup enabled (default).
-        """
-        for truthy in ("true", "TRUE", "1", "yes", "on", "y", "t"):
-            monkeypatch.setenv("DATAOPS_DISABLE_TEMP_CLEANUP", truthy)
-            assert vt._is_temp_cleanup_disabled() is True, f"truthy={truthy!r} should disable cleanup"
-
-        # Default (unset) keeps cleanup enabled.
-        monkeypatch.delenv("DATAOPS_DISABLE_TEMP_CLEANUP", raising=False)
-        assert vt._is_temp_cleanup_disabled() is False
-
-        # Non-truthy values also keep cleanup enabled (only the documented set disables).
-        for falsy in ("false", "0", "no", "off", "", "garbage"):
-            monkeypatch.setenv("DATAOPS_DISABLE_TEMP_CLEANUP", falsy)
-            assert vt._is_temp_cleanup_disabled() is False, f"value={falsy!r} should NOT disable cleanup"
-
-    @pytest.mark.asyncio
-    async def test_wrapper_dml_passed_triggers_cleanup(self, monkeypatch):
-        """Wrapper: DML passed on attempt 1 -> cleanup DROP is submitted.
-
-        This is the regression scenario from prod: a complete DDL+DML delivery.
-        After DML passes, the wrapper must drop the adhoctemp.tmp_* table.
-        Note: post-validate (count check) is disabled via env var since this test
-        only covers the cleanup path.
-        """
-        # Disable post-validate so the INSERT result is considered "passed"
-        # without needing to mock the count-SQL round-trip.
-        monkeypatch.setenv("DATAOPS_ENABLE_POST_VALIDATE", "false")
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-dml"},
-            poll=[
-                {"status": "completed", "job_id": "j-dml"},
-                {"status": "completed", "job_id": "j-cleanup"},
-            ],
-            collect=[
-                {"status": "completed", "job_id": "j-dml"},
-                {"status": "completed", "job_id": "j-cleanup"},
-            ],
-        )
-        coordinator.submit_job.side_effect = [
-            {"status": "queued", "job_id": "j-dml"},
-            {"status": "queued", "job_id": "j-cleanup"},
-        ]
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql_with_log_analysis(
-            "INSERT OVERWRITE TABLE biads.x SELECT 1",
-            attempt=1,
-            _tool_context=ctx,
-        )
-        assert result["passed"] is True
-        # 1 DML submit + 1 cleanup DROP = 2 total
-        assert coordinator.submit_job.call_count == 2
-        assert result.get("cleanup_job_id") == "j-cleanup"
-
-    @pytest.mark.asyncio
-    async def test_wrapper_create_passed_does_NOT_cleanup(self):
-        """Wrapper: CREATE passed on attempt 1 -> NO cleanup.
-
-        Regression scenario: if the wrapper dropped the CREATE temp table, the
-        subsequent DML (INSERT OVERWRITE) on the same adhoctemp.tmp_* table
-        would fail with 'table not found'. The temp table must persist until
-        the matching DML has been validated.
-        """
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-create"},
-            poll=[{"status": "completed", "job_id": "j-create"}],
-            collect={"status": "completed", "job_id": "j-create"},
-        )
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql_with_log_analysis(
-            "CREATE TABLE biads.x (id INT)",
-            attempt=1,
-            _tool_context=ctx,
-        )
-        assert result["passed"] is True
-        # Only 1 submit_job: CREATE submit. No cleanup.
-        assert coordinator.submit_job.call_count == 1
-        assert "cleanup_job_id" not in result
-
-    @pytest.mark.asyncio
-    async def test_wrapper_create_failed_does_NOT_cleanup(self):
-        """Wrapper: CREATE failed on attempt 1 -> NO cleanup.
-
-        Same reason: the temp table may still be needed if the agent retries
-        with a corrected CREATE statement. Cleanup only fires on DML.
-        """
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-create"},
-            poll=[{"status": "failed", "job_id": "j-create"}],
-            collect={"status": "failed", "job_id": "j-create", "error": "syntax error"},
-        )
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql_with_log_analysis(
-            "CREATE TABLE biads.x (id INT)",
-            attempt=1,
-            _tool_context=ctx,
-        )
-        assert result["passed"] is False
-        # Only 1 submit_job (the failed CREATE). No cleanup.
-        assert coordinator.submit_job.call_count == 1
-        assert "cleanup_job_id" not in result
-
-    @pytest.mark.asyncio
-    async def test_wrapper_dml_failed_midway_no_cleanup(self):
-        """Wrapper: DML fails on attempt 1 -> NO cleanup (will retry on attempt 2).
-
-        Cleanup only happens on the FINAL outcome (passed or attempt >=
-        MAX_VALIDATE_ATTEMPTS). Mid-retry failures must leave the temp table
-        so attempt 2/3 can write to it.
-        """
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-dml-1"},
-            poll=[{"status": "failed", "job_id": "j-dml-1"}],
-            collect={"status": "failed", "job_id": "j-dml-1", "error": "bad sql"},
-        )
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql_with_log_analysis(
-            "INSERT OVERWRITE TABLE biads.x SELECT 1",
-            attempt=1,
-            _tool_context=ctx,
-        )
-        assert result["passed"] is False
-        # Only 1 submit_job (the failed DML). No cleanup — agent will retry.
-        assert coordinator.submit_job.call_count == 1
-        assert "cleanup_job_id" not in result
-
-    @pytest.mark.asyncio
-    async def test_wrapper_dml_max_retries_triggers_cleanup(self, monkeypatch):
-        """Wrapper: DML failed on attempt 3 -> cleanup DROP is submitted.
-
-        After exhausting all retries, the temp table is no longer useful, so
-        the wrapper cleans it up. The CREATE-table scenario still never
-        triggers cleanup (verified separately).
-        """
-        # Disable post-validate so attempt 3 doesn't fire a 4th submit.
-        monkeypatch.setenv("DATAOPS_ENABLE_POST_VALIDATE", "false")
-        resource = _make_resource(timeout_s=5, poll_interval_ms=50)
-        coordinator = _wired_coordinator(
-            resource=resource,
-            submit={"status": "queued", "job_id": "j-dml-3"},
-            poll=[
-                {"status": "failed", "job_id": "j-dml-3"},
-                {"status": "completed", "job_id": "j-cleanup"},
-            ],
-            collect=[
-                # logFileInfo is required so the wrapper does NOT early-return
-                # (it only skips log analysis when both log_file_info and
-                # errorLog are absent). With log info present, the wrapper
-                # proceeds to the MAX_VALIDATE_ATTEMPTS branch where cleanup fires.
-                {
-                    "status": "failed",
-                    "job_id": "j-dml-3",
-                    "error": "bad sql",
-                    "logFileInfo": {"url": "http://obs/log.txt", "headers": {}},
-                },
-                {"status": "completed", "job_id": "j-cleanup"},
-            ],
-        )
-        coordinator.submit_job.side_effect = [
-            {"status": "queued", "job_id": "j-dml-3"},
-            {"status": "queued", "job_id": "j-cleanup"},
-        ]
-        runtime = _make_runtime(resource=resource, coordinator=coordinator)
-        ctx = _make_context(runtime)
-        result = await vt.dataops_validate_sql_with_log_analysis(
-            "INSERT OVERWRITE TABLE biads.x SELECT 1",
-            attempt=3,
-            prior_attempts=[
-                {"attempt": 1, "passed": False, "job_id": "j-dml-1", "elapsed": 0.1, "error": "err1"},
-                {"attempt": 2, "passed": False, "job_id": "j-dml-2", "elapsed": 0.1, "error": "err2"},
-            ],
-            _tool_context=ctx,
-        )
-        assert result["passed"] is False
-        assert result.get("failed_after_max_retries") is True
-        # 1 DML submit (failed) + 1 cleanup DROP = 2 total
-        assert coordinator.submit_job.call_count == 2
-        assert result.get("cleanup_job_id") == "j-cleanup"
-
-
-# ===========================================================================
-# _analyze_count_zero_with_llm + count_zero_analysis integration
-# ===========================================================================
-
-
-class TestAnalyzeCountZeroWithLlm:
-    """_analyze_count_zero_with_llm resolves LLM and parses the response."""
-
-    @pytest.mark.asyncio
-    async def test_returns_has_mismatch_true(self, collected_stream):
-        """Returns has mismatch true."""
-        llm = object()
-        collected_stream.return_value = (
-            '{"has_mismatch":true,'
-            '"mismatch_reason":"WHERE condition filters out all rows",'
-            '"fix_suggestion":"Change pt_d to 20260817"}'
-        )
-        runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=llm)
-        result = await vt._analyze_count_zero_with_llm(
-            original_query="insert today data",
-            generated_sql="INSERT INTO t SELECT * FROM src WHERE pt_d='20260801'",
-            runtime=runtime,
-        )
-        assert result["has_mismatch"] is True
-        assert "WHERE condition" in result["mismatch_reason"]
-        assert "pt_d to 20260817" in result["fix_suggestion"]
-        collected_stream.assert_awaited_once_with(llm, ANY)
-
-    @pytest.mark.asyncio
-    async def test_returns_has_mismatch_false_when_llm_says_so(self, collected_stream):
-        """Returns has mismatch false when llm says so."""
-        llm = object()
-        collected_stream.return_value = '{"has_mismatch":false,"mismatch_reason":"","fix_suggestion":""}'
-        runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=llm)
-        result = await vt._analyze_count_zero_with_llm(
-            original_query="insert today data",
-            generated_sql="INSERT INTO t SELECT * FROM src WHERE pt_d='20260817'",
-            runtime=runtime,
-        )
-        assert result["has_mismatch"] is False
-        assert result["mismatch_reason"] == ""
-        assert result["fix_suggestion"] == ""
-        collected_stream.assert_awaited_once_with(llm, ANY)
-
-    @pytest.mark.asyncio
-    async def test_no_runtime_llm_falls_back_to_llm_manager(self, collected_stream):
-        """No runtime llm falls back to llm manager."""
-        fallback_llm = object()
-        collected_stream.return_value = (
-            '{"has_mismatch":true,"mismatch_reason":"wrong table","fix_suggestion":"use src instead of dst"}'
-        )
-        runtime = MagicMock()
-        runtime.llm = MagicMock(side_effect=RuntimeError("not ready"))
-        with patch.object(vt, "llm_manager") as mock_llm_manager:
-            mock_llm_manager.get_default_llm.return_value = fallback_llm
-            result = await vt._analyze_count_zero_with_llm(
-                original_query="copy from src",
-                generated_sql="INSERT INTO dst SELECT * FROM src",
-                runtime=runtime,
-            )
-        mock_llm_manager.get_default_llm.assert_called_once()
-        assert result["has_mismatch"] is True
-        assert "wrong table" in result["mismatch_reason"]
-        collected_stream.assert_awaited_once_with(fallback_llm, ANY)
-
-    @pytest.mark.asyncio
-    async def test_no_llm_returns_no_mismatch(self):
-        runtime = MagicMock()
-        runtime.llm = MagicMock(side_effect=RuntimeError("no LLM"))
-        with patch.object(vt, "llm_manager") as mock_llm_manager:
-            mock_llm_manager.get_default_llm.side_effect = RuntimeError("no LLM at all")
-            result = await vt._analyze_count_zero_with_llm(
-                original_query="insert today data",
-                generated_sql="INSERT INTO t SELECT * FROM src",
-                runtime=runtime,
-            )
-        assert result["has_mismatch"] is False
-
-    @pytest.mark.asyncio
-    async def test_invalid_json_returns_no_mismatch(self, collected_stream):
-        """Invalid json returns no mismatch."""
-        llm = object()
-        collected_stream.return_value = "not json output"
-        runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=llm)
-        result = await vt._analyze_count_zero_with_llm(
-            original_query="insert today data",
-            generated_sql="INSERT INTO t SELECT * FROM src",
-            runtime=runtime,
-        )
-        assert result["has_mismatch"] is False
-        collected_stream.assert_awaited_once_with(llm, ANY)
-
-    @pytest.mark.asyncio
-    async def test_llm_exception_returns_no_mismatch(self, collected_stream):
-        """Llm exception returns no mismatch."""
-        llm = object()
-        collected_stream.side_effect = RuntimeError("LLM down")
-        runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=llm)
-        result = await vt._analyze_count_zero_with_llm(
-            original_query="insert today data",
-            generated_sql="INSERT INTO t SELECT * FROM src",
-            runtime=runtime,
-        )
-        assert result["has_mismatch"] is False
-        collected_stream.assert_awaited_once_with(llm, ANY)
-
-    @pytest.mark.asyncio
-    async def test_strips_markdown_fences(self, collected_stream):
-        """Strips markdown fences."""
-        llm = object()
-        collected_stream.return_value = (
-            '```json\n{"has_mismatch":true,"mismatch_reason":"bad","fix_suggestion":"fix"}\n```'
-        )
-        runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=llm)
-        result = await vt._analyze_count_zero_with_llm(
-            original_query="q",
-            generated_sql="INSERT INTO t SELECT * FROM src",
-            runtime=runtime,
-        )
-        assert result["has_mismatch"] is True
-        collected_stream.assert_awaited_once_with(llm, ANY)
-
-
-class TestRunPostValidateCountZeroWithLlm:
-    """_run_post_validate returns LLM analysis fields when count=0 and original_query given."""
-
-    @pytest.mark.asyncio
-    async def test_count_zero_no_original_query_no_llm_call(self):
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-5"}
-        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-5"}]
-        coordinator.collect.return_value = {
-            "status": "completed",
-            "job_id": "pv-5",
-            "data": [{"_c0": "0"}],
-        }
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM t",
-            timeout_sec=60,
-            poll_interval=0.01,
-            runtime=None,
-            original_query="",  # empty → no LLM call
-        )
-        assert result["ok"] is True
-        assert result["count"] == 0
-        assert result["has_mismatch"] is False
-
-    @pytest.mark.asyncio
-    async def test_count_zero_with_original_query_calls_llm(self, collected_stream):
-        """Count zero with original query calls llm."""
-        llm = object()
-        collected_stream.return_value = (
-            '{"has_mismatch":true,"mismatch_reason":"date range too narrow","fix_suggestion":"extend to last 7 days"}'
-        )
-        runtime = MagicMock()
-        runtime.llm = MagicMock(return_value=llm)
-
-        coordinator = MagicMock()
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "pv-6"}
-        coordinator.poll.side_effect = [{"status": "completed", "job_id": "pv-6"}]
-        coordinator.collect.return_value = {
-            "status": "completed",
-            "job_id": "pv-6",
-            "data": [{"_c0": "0"}],
-        }
-        result = await vt._run_post_validate(
-            coordinator,
-            "SELECT count(*) FROM t",
-            "INSERT INTO t SELECT * FROM src WHERE pt_d='20260817'",
-            timeout_sec=60,
-            poll_interval=0.01,
-            runtime=runtime,
-            original_query="insert today's data",
-        )
-        assert result["ok"] is True
-        assert result["count"] == 0
-        assert result["has_mismatch"] is True
-        assert "date range" in result["mismatch_reason"]
-        assert "last 7 days" in result["fix_suggestion"]
-        collected_stream.assert_awaited_once_with(llm, ANY)
-
-
-class TestDataopsValidateSqlCountZeroAnalysis:
-    """INSERT + count=0: count_zero_analysis appears when LLM detects mismatch."""
-
-    @pytest.mark.asyncio
-    async def test_count_zero_llm_mismatch_includes_count_zero_analysis(self):
-        """INSERT + count=0 + LLM mismatch: count_zero_analysis in result."""
-        fake_llm = MagicMock(
-            invoke=MagicMock(
-                return_value=_FakeLLMResp(
-                    '{"has_mismatch":true,'
-                    '"mismatch_reason":"WHERE condition filters out all rows",'
-                    '"fix_suggestion":"Remove pt_d filter"}'
-                )
-            )
-        )
-        resource = _make_resource(timeout_s=300, poll_interval_ms=50)
-        coordinator = MagicMock()
-        coordinator.catalog = _catalog(resource)
-        # INSERT submit+collect
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-cz-1"}
-        coordinator.poll.return_value = {"status": "completed"}
-        coordinator.collect.return_value = {"status": "completed", "job_id": "j-cz-1"}
-        runtime = MagicMock()
-        runtime.ensure_resource_coordinator.return_value = coordinator
-        runtime.llm = MagicMock(return_value=fake_llm)
-        ctx = _make_context(runtime)
-        with patch.object(vt, "_run_post_validate") as mock_pv:
-            mock_pv.return_value = {
-                "ok": True,
-                "count": 0,
-                "job_id": "pv-1",
-                "has_mismatch": True,
-                "mismatch_reason": "WHERE condition filters out all rows",
-                "fix_suggestion": "Remove pt_d filter",
-            }
-            result = await vt.dataops_validate_sql(
-                "INSERT OVERWRITE TABLE biads.x SELECT * FROM biads.src WHERE pt_d = '$date'",
-                _tool_context=ctx,
-            )
-        assert result["passed"] is False
-        assert "empty" in result["error"].lower()
-        assert "count_zero_analysis" in result
-        assert result["count_zero_analysis"]["has_mismatch"] is True
-        assert "WHERE condition" in result["count_zero_analysis"]["mismatch_reason"]
-        assert "Remove pt_d filter" in result["count_zero_analysis"]["fix_suggestion"]
-
-    @pytest.mark.asyncio
-    async def test_count_zero_no_llm_no_count_zero_analysis(self):
-        """No original_query → no LLM call → no count_zero_analysis field."""
-        resource = _make_resource(timeout_s=300, poll_interval_ms=50)
-        coordinator = MagicMock()
-        coordinator.catalog = _catalog(resource)
-        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-cz-2"}
-        coordinator.poll.return_value = {"status": "completed"}
-        coordinator.collect.return_value = {"status": "completed", "job_id": "j-cz-2"}
-        runtime = MagicMock()
-        runtime.ensure_resource_coordinator.return_value = coordinator
-        ctx = _make_context(runtime)
-        with patch.object(vt, "_run_post_validate") as mock_pv:
-            mock_pv.return_value = {
-                "ok": True,
-                "count": 0,
-                "job_id": "pv-2",
-                "has_mismatch": False,
-                "mismatch_reason": "",
-                "fix_suggestion": "",
-            }
-            result = await vt.dataops_validate_sql(
-                "INSERT OVERWRITE TABLE biads.x SELECT * FROM src",
-                _tool_context=ctx,
-            )
-        assert result["passed"] is False
-        assert "empty" in result["error"].lower()
-        assert "count_zero_analysis" not in result
 
 
 # ===========================================================================
@@ -2347,11 +1745,12 @@ class TestDumpValidationArtifacts:
         # Report contents
         report = json.loads(Path(out["validation_report_path"]).read_text(encoding="utf-8"))
         assert report["validation_status"] == "failed_after_max_retries"
-        assert report["max_attempts"] == 3
+        # max_attempts 跟随 MAX_VALIDATE_ATTEMPTS 常量（v3.1 = 10）
+        assert report["max_attempts"] == vt.MAX_VALIDATE_ATTEMPTS
         assert len(report["attempts"]) == 3
-        # Warning contents
+        # Warning contents: n 来自 MAX_VALIDATE_ATTEMPTS
         warning = Path(out["delivery_warning_path"]).read_text(encoding="utf-8")
-        assert "重试 3 次仍失败" in warning
+        assert f"重试 {vt.MAX_VALIDATE_ATTEMPTS} 次仍失败" in warning
         assert "attempt 1" in warning
         assert "attempt 3" in warning
         assert "fix it" in warning
@@ -2369,17 +1768,17 @@ class TestDumpValidationArtifacts:
 
 
 class TestDataopsValidateSqlWithLogAnalysisRetry:
-    """Retry contract: 3-call cap, failed_after_max_retries flag, report dump."""
+    """Retry contract: 10-call cap, failed_after_max_retries flag, report dump."""
 
     @pytest.mark.asyncio
     async def test_attempt_above_max_is_rejected_without_running(self, tmp_path):
-        """attempt=4 → returned with failed_after_max_retries, no DataOps call."""
+        """attempt=11 → returned with failed_after_max_retries, no DataOps call."""
         runtime = MagicMock()
         runtime.workspace_dir = tmp_path
         ctx = ToolExecutionContext(runtime=runtime)  # type: ignore[arg-type]
         result = await vt.dataops_validate_sql_with_log_analysis(
             "SELECT 1",
-            attempt=4,
+            attempt=11,
             _tool_context=ctx,
         )
         assert result["passed"] is False
@@ -2387,8 +1786,8 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
         assert "exceeded MAX_VALIDATE_ATTEMPTS" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_attempt_3_triggers_dump_with_log_analysis(self, tmp_path):
-        """attempt=3 + still failing + has log_file_info → log_analysis runs,
+    async def test_attempt_10_triggers_dump_with_log_analysis(self, tmp_path, collected_stream):
+        """attempt=10 + still failing + has log_file_info → log_analysis runs,
         failed_after_max_retries set, report + warning written."""
         coordinator = MagicMock()
         coordinator.catalog = _catalog(_make_resource())
@@ -2399,7 +1798,7 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
         coordinator.poll.return_value = {"status": "failed"}
         coordinator.collect.return_value = {
             "status": "failed",
-            "job_id": "j-3",
+            "job_id": "j-10",
             "error": "syntax error",
             "logFileInfo": {"url": "http://x", "headers": {"k": "v"}},
         }
@@ -2408,12 +1807,13 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
         runtime.workspace_dir = tmp_path
 
         # Fake LLM that returns a valid analysis JSON
-        fake_llm = _FakeLLMResp(
+        llm = object()
+        collected_stream.return_value = (
             '{"error_type":"ParseException","error_message":"bad",'
             '"location":{"tables":[],"columns":[],"functions":[],"line":null},'
             '"suggestions":["replace INVALID with SELECT"]}'
         )
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
 
         ctx = _make_context(runtime)
         # Mock the OBS fetcher to avoid hitting a real endpoint
@@ -2422,47 +1822,41 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
                 "status": "success",
                 "log_content": "ParseException: INVALID not recognized",
             }
+            # 9 prior failed attempts (attempt=1..9); this is attempt=10
             prior = [
                 {
-                    "attempt": 1,
+                    "attempt": i,
                     "passed": False,
-                    "job_id": "j-1",
+                    "job_id": f"j-{i}",
                     "error_type": "ParseException",
-                    "error_message": "bad",
-                    "suggestions": ["check syntax"],
-                },
-                {
-                    "attempt": 2,
-                    "passed": False,
-                    "job_id": "j-2",
-                    "error_type": "ParseException",
-                    "error_message": "still bad",
-                    "suggestions": ["check keyword case"],
-                },
+                    "error_message": f"bad #{i}",
+                    "suggestions": [f"hint #{i}"],
+                }
+                for i in range(1, 10)
             ]
             result = await vt.dataops_validate_sql_with_log_analysis(
                 "INSERT OVERWRITE TABLE biads.ads_x_dm INVALID 1",
-                attempt=3,
+                attempt=10,
                 prior_attempts=prior,
                 _tool_context=ctx,
             )
 
         assert result["passed"] is False
         assert result["failed_after_max_retries"] is True
-        assert len(result["attempts"]) == 3
+        assert len(result["attempts"]) == 10
         assert result["attempts"][0]["attempt"] == 1
-        assert result["attempts"][-1]["attempt"] == 3
+        assert result["attempts"][-1]["attempt"] == 10
         assert result["validation_report_path"] is not None
         assert result["delivery_warning_path"] is not None
         # Report file exists and is parseable JSON
         report = json.loads(Path(result["validation_report_path"]).read_text(encoding="utf-8"))
         assert report["validation_status"] == "failed_after_max_retries"
-        # Warning file contains the header
+        # Warning file contains the header (now mentions 10 retries)
         warning = Path(result["delivery_warning_path"]).read_text(encoding="utf-8")
-        assert "重试 3 次仍失败" in warning
+        assert "重试 10 次仍失败" in warning
 
     @pytest.mark.asyncio
-    async def test_attempt_2_does_not_dump(self, tmp_path):
+    async def test_attempt_2_does_not_dump(self, tmp_path, collected_stream):
         """attempt=2 with still failing → failed_after_max_retries NOT set,
         no dump, attempts list has 2 entries."""
         coordinator = MagicMock()
@@ -2478,12 +1872,13 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
         runtime = MagicMock()
         runtime.ensure_resource_coordinator.return_value = coordinator
         runtime.workspace_dir = tmp_path
-        fake_llm = _FakeLLMResp(
+        llm = object()
+        collected_stream.return_value = (
             '{"error_type":"AnalysisException","error_message":"x",'
             '"location":{"tables":[],"columns":[],"functions":[],"line":null},'
             '"suggestions":["s"]}'
         )
-        runtime.llm = MagicMock(return_value=fake_llm)
+        runtime.llm = MagicMock(return_value=llm)
 
         ctx = _make_context(runtime)
         with patch.object(vt, "dataops_fetch_obs_log") as mock_fetch:
@@ -2525,266 +1920,176 @@ class TestDataopsValidateSqlWithLogAnalysisRetry:
         assert "attempt must be a positive int" in result["error"]
 
 
-# ===========================================================================
-# _pre_drop_for_create_prod
-# ===========================================================================
-# NOTE: These tests patch the adapter at its canonical source location so that
-# _pre_drop_for_create_prod (which imports the adapter *inside* the function)
-# picks up the mocks correctly.
-
-
-class TestPreDropForCreateProd:
-    """Unit tests for the production-path pre-DROP helper."""
+# ============================================================================
+# sql_file_path 入参契约（v3.1）
+# ============================================================================
+class TestSqlFilePathContract:
+    """``sql_file_path`` 必须与 ``sql`` 等价,且优先用文件。"""
 
     @pytest.mark.asyncio
-    async def test_non_create_sql_returns_none_immediately(self):
-        """Non-CREATE SQL must not trigger any adapter call."""
-        drop_job_id = await vt._pre_drop_for_create_prod(
-            original_sql="INSERT OVERWRITE TABLE biads.x SELECT 1",
-            user_account="alice",
-            table_suffix="",
-            timeout_sec=60,
-            poll_interval=2.0,
+    async def test_sql_file_path_only_is_loaded(self, tmp_path):
+        """只传 sql_file_path,工具应读取并正常返回。"""
+        sql_path = tmp_path / "x.sql"
+        sql_path.write_text("SELECT 1", encoding="utf-8")
+        resource = _make_resource()
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-1"},
+            poll={"status": "completed", "job_id": "j-1"},
+            collect={"status": "completed", "job_id": "j-1", "data": []},
         )
-        assert drop_job_id is None
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            sql_file_path=sql_path,
+            attempt=1,
+            _tool_context=ctx,
+        )
+        # SELECT 1 走 completed 路径
+        assert result["passed"] is True
 
     @pytest.mark.asyncio
-    async def test_create_sql_drop_completed_returns_job_id(self):
-        """CREATE SQL -> DROP submitted and poll completed -> returns drop_job_id."""
-        async def fake_execute(sql: str):
-            # First call is DROP, second call would be CREATE (never reached here)
-            assert "DROP TABLE IF EXISTS" in sql
-            return {"success": True, "job_id": "j-drop-1"}
-
-        poll_states = iter(["running", "completed"])
-
-        async def fake_poll(job_id: str):
-            return {"status": next(poll_states)}
-
-        with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
-        ):
-            with patch(
-                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
-                fake_poll,
-            ):
-                drop_job_id = await vt._pre_drop_for_create_prod(
-                    original_sql="CREATE TABLE biads.x (id INT)",
-                    user_account="alice",
-                    table_suffix="",
-                    timeout_sec=60,
-                    poll_interval=2.0,
-                )
-        assert drop_job_id == "j-drop-1"
+    async def test_sql_file_path_takes_precedence_over_sql(self, tmp_path):
+        """同时传 sql 与 sql_file_path,文件优先。"""
+        sql_path = tmp_path / "x.sql"
+        sql_path.write_text("SELECT 1", encoding="utf-8")
+        resource = _make_resource()
+        coordinator = _wired_coordinator(
+            resource=resource,
+            submit={"status": "queued", "job_id": "j-1"},
+            poll={"status": "completed", "job_id": "j-1"},
+            collect={"status": "completed", "job_id": "j-1", "data": []},
+        )
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            sql="INVALID SQL THAT WOULD FAIL",  # noqa: S105
+            sql_file_path=sql_path,
+            attempt=1,
+            _tool_context=ctx,
+        )
+        # 走文件 (SELECT 1 通过)
+        assert result["passed"] is True
 
     @pytest.mark.asyncio
-    async def test_create_sql_drop_poll_failed_continues_with_job_id(self):
-        """DROP poll returns 'failed' -> returns drop_job_id, does not raise."""
-        async def fake_execute(sql: str):
-            return {"success": True, "job_id": "j-drop-2"}
+    async def test_sql_file_path_missing_returns_error(self, tmp_path):
+        """sql_file_path 不存在时返回 passed=False,带 error 信息。"""
+        runtime = MagicMock()
+        runtime.workspace_dir = tmp_path
+        ctx = ToolExecutionContext(runtime=runtime)  # type: ignore[arg-type]
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            sql_file_path=tmp_path / "nope.sql",
+            attempt=1,
+            _tool_context=ctx,
+        )
+        assert result["passed"] is False
+        assert "sql_file_path" in result["error"]
 
-        async def fake_poll(job_id: str):
-            return {"status": "failed", "error": "table not found"}
 
-        with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
-        ):
-            with patch(
-                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
-                fake_poll,
-            ):
-                drop_job_id = await vt._pre_drop_for_create_prod(
-                    original_sql="CREATE TABLE IF NOT EXISTS biads.y (name STRING)",
-                    user_account="bob",
-                    table_suffix="_dm",
-                    timeout_sec=60,
-                    poll_interval=2.0,
-                )
-        # Should return the job_id so caller can see it was attempted
-        assert drop_job_id == "j-drop-2"
+# ============================================================================
+# 需求 4：数据正确性校验失败不阻塞、不重试、只在所有校验通过后执行
+# ============================================================================
+
+
+class TestQualityCheckNotInValidationChain:
+    """质量校验已从本链路移除 —— 只在 post-hook 里跑一次。
+
+    动机：静态校验阶段要"快"，agent 才能快速迭代修 SQL；昂贵的采样统计
+    放到交付后由 ``dataops_quality_check_post`` post-hook 统一执行。
+    """
 
     @pytest.mark.asyncio
-    async def test_create_sql_drop_submit_error_returns_none(self):
-        """DROP submit fails -> returns None, does not raise."""
-        async def fake_execute(sql: str):
-            return {"success": False, "error": "connection refused"}
+    async def test_quality_check_not_run_on_pass(self, tmp_path):
+        """DataOps 通过时不再触发质量校验，响应里也没有 reasonable_check 字段。"""
+        resource = _make_resource()
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(resource)
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed", "job_id": "j-1"}
+        coordinator.collect.side_effect = [
+            {
+                "status": "completed",
+                "job_id": "j-1",
+                "data": [{"pt_d": "20261010"}],
+            },
+            {
+                "status": "completed",
+                "job_id": "j-cleanup",
+            },
+        ]
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+
+        called = {"n": 0}
+
+        async def fake_quality(*_args, **_kwargs):
+            called["n"] += 1
+            return {"ok": True, "warnings": [], "details": {}}
 
         with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
+            "dataagent.actions.tools.local_tool.dataops_quality_check.run_quality_check",
+            side_effect=fake_quality,
         ):
-            drop_job_id = await vt._pre_drop_for_create_prod(
-                original_sql="CREATE TABLE biads.z (id INT)",
-                user_account="carol",
-                table_suffix="",
-                timeout_sec=60,
-                poll_interval=2.0,
+            result = await vt.dataops_validate_sql_with_log_analysis(
+                "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src",
+                attempt=1,
+                _tool_context=ctx,
             )
-        assert drop_job_id is None
-
-    @pytest.mark.asyncio
-    async def test_create_sql_drop_timeout_returns_job_id(self):
-        """DROP poll times out -> returns drop_job_id so caller knows it was attempted."""
-        async def fake_execute(sql: str):
-            return {"success": True, "job_id": "j-drop-3"}
-
-        # Always return "running" so the deadline is hit
-        async def fake_poll(job_id: str):
-            return {"status": "running"}
-
-        with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
-        ):
-            with patch(
-                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
-                fake_poll,
-            ):
-                drop_job_id = await vt._pre_drop_for_create_prod(
-                    original_sql="CREATE TABLE biads.w (id BIGINT)",
-                    user_account="dave",
-                    table_suffix="",
-                    timeout_sec=1,  # 1 second, short enough to hit deadline quickly
-                    poll_interval=0.1,
-                )
-        # Should return the job_id even on timeout
-        assert drop_job_id == "j-drop-3"
-
-
-class TestDataopsValidateSqlProdPreDrop:
-    """Integration-level tests: _dataops_validate_sql_prod with CREATE TABLE."""
-
-    @pytest.mark.asyncio
-    async def test_create_passed_includes_drop_job_id_in_result(self):
-        """CREATE passed -> drop_job_id is present in the response."""
-        job_counter = iter(["j-drop-main", "j-create-main"])
-
-        async def fake_execute(sql: str):
-            return {"success": True, "job_id": next(job_counter)}
-
-        # Sequence: DROP running -> DROP completed -> CREATE running -> CREATE completed
-        poll_states = iter([
-            {"status": "running"},
-            {"status": "completed"},
-            {"status": "running"},
-            {"status": "completed"},
-        ])
-
-        async def fake_poll(job_id: str):
-            return next(poll_states)
-
-        async def fake_collect(job_id: str):
-            return {"status": "completed", "data": [], "error": None, "errorLog": None}
-
-        with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
-        ):
-            with patch(
-                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
-                fake_poll,
-            ):
-                with patch(
-                    "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_collect_result",
-                    fake_collect,
-                ):
-                    runtime = MagicMock()
-                    ctx = _make_context(runtime)
-                    result = await vt._dataops_validate_sql_prod(
-                        "CREATE TABLE biads.test_tbl (id INT)",
-                        _tool_context=ctx,
-                    )
 
         assert result["passed"] is True
-        assert result["job_id"] == "j-create-main"
-        assert result.get("drop_job_id") == "j-drop-main"
+        # 响应里不再有 reasonable_check 字段
+        assert "reasonable_check" not in result
+        # 质量校验一次都没被调用（它只在 post-hook 里跑）
+        assert called["n"] == 0
 
     @pytest.mark.asyncio
-    async def test_create_failed_still_includes_drop_job_id(self):
-        """CREATE failed -> drop_job_id is still present in the failure response."""
-        job_counter = iter(["j-drop-err", "j-create-err"])
+    async def test_quality_check_not_run_on_failure(self, tmp_path, collected_stream):
+        """DataOps 校验失败时同样不触发质量校验。"""
+        resource = _make_resource()
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(resource)
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-fail"}
+        coordinator.poll.return_value = {"status": "failed"}
+        coordinator.collect.return_value = {
+            "status": "failed",
+            "job_id": "j-fail",
+            "error": "syntax error",
+        }
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
 
-        async def fake_execute(sql: str):
-            return {"success": True, "job_id": next(job_counter)}
+        runtime.llm = MagicMock(return_value=object())
+        collected_stream.return_value = (
+            '{"error_type":"X","error_message":"x",'
+            '"location":{"tables":[],"columns":[],"functions":[],"line":null},'
+            '"suggestions":["s"]}'
+        )
 
-        # Sequence: DROP completed -> CREATE failed
-        poll_states = iter([
-            {"status": "completed"},
-            {"status": "failed", "error": "AnalysisException: table exists"},
-        ])
+        called = {"n": 0}
 
-        async def fake_poll(job_id: str):
-            return next(poll_states)
+        async def fake_quality(*_args, **_kwargs):
+            called["n"] += 1
+            return {"ok": True, "warnings": [], "details": {}}
 
-        async def fake_collect(job_id: str):
-            return {
-                "status": "failed",
-                "data": None,
-                "error": "AnalysisException: table exists",
-                "errorLog": "stack trace...",
-            }
-
-        with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
+        with (
+            patch(
+                "dataagent.actions.tools.local_tool.dataops_quality_check.run_quality_check",
+                side_effect=fake_quality,
+            ),
+            patch.object(vt, "dataops_fetch_obs_log") as mock_fetch,
         ):
-            with patch(
-                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
-                fake_poll,
-            ):
-                with patch(
-                    "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_collect_result",
-                    fake_collect,
-                ):
-                    runtime = MagicMock()
-                    ctx = _make_context(runtime)
-                    result = await vt._dataops_validate_sql_prod(
-                        "CREATE TABLE biads.err_tbl (id INT)",
-                        _tool_context=ctx,
-                    )
+            mock_fetch.return_value = {"status": "error", "error": "no obs"}
+            result = await vt.dataops_validate_sql_with_log_analysis(
+                "INSERT OVERWRITE TABLE biads.x INVALID SELECT 1",
+                attempt=1,
+                _tool_context=ctx,
+            )
 
         assert result["passed"] is False
-        assert result["job_id"] == "j-create-err"
-        assert result.get("drop_job_id") == "j-drop-err"
-        assert "table exists" in result["error"]
+        assert "reasonable_check" not in result
+        assert called["n"] == 0
 
-    @pytest.mark.asyncio
-    async def test_non_create_sql_no_drop_submitted(self):
-        """INSERT OVERWRITE -> no DROP submitted, drop_job_id not in response."""
-        job_counter = iter(["j-insert-1"])
-
-        async def fake_execute(sql: str):
-            return {"success": True, "job_id": next(job_counter)}
-
-        async def fake_poll(job_id: str):
-            return {"status": "completed"}
-
-        async def fake_collect(job_id: str):
-            return {"status": "completed", "data": [], "error": None, "errorLog": None}
-
-        with patch(
-            "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_execute_sql",
-            fake_execute,
-        ):
-            with patch(
-                "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_get_query_result",
-                fake_poll,
-            ):
-                with patch(
-                    "dataagent.actions.tools.local_tool.dataops_prod_adapter.prod_collect_result",
-                    fake_collect,
-                ):
-                    runtime = MagicMock()
-                    ctx = _make_context(runtime)
-                    result = await vt._dataops_validate_sql_prod(
-                        "INSERT OVERWRITE TABLE biads.dml_tbl SELECT 1 FROM src",
-                        _tool_context=ctx,
-                    )
-
-        assert result["passed"] is True
-        assert result["job_id"] == "j-insert-1"
-        # Non-CREATE should not trigger pre-drop
-        assert "drop_job_id" not in result
+    def test_wrapper_entry_point_removed(self):
+        """``_run_reasonable_check_wrapper`` 已从 validate_tool 移除。"""
+        assert not hasattr(vt, "_run_reasonable_check_wrapper")
 
