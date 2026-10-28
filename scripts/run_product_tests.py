@@ -3,7 +3,7 @@
 
 Tiers:
 - ``ut``: unit tests (agentkit except the product TUI flows, plus API, web, and TUI).
-- ``st``: system tests that start the real TUI and agentkit backend.
+- ``st``: system tests that start a Python control plane, then attach the real TUI.
 - ``test``: ut + st.
 
 CI example::
@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS = ROOT / "artifacts" / "product"
 
 # Component order. agentkit is split into unit files and system files.
-COMPONENTS = ("agentkit", "api", "web", "tui", "packages", "deploy")
+COMPONENTS = ("agentkit", "api", "web", "tui", "deploy")
 DEFAULT_COMPONENTS = ("agentkit", "api", "web", "tui")
 TIERS = ("ut", "st", "test")
 ST_FILES = (
@@ -108,7 +108,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--scope",
         default="all",
         help=(
-            "Comma-separated components: agentkit, api, web, tui, packages, deploy, all. "
+            "Comma-separated components: agentkit, api, web, tui, deploy, all. "
             "Default all is agentkit,api,web,tui."
         ),
     )
@@ -158,7 +158,7 @@ def _selected_suites(scope: str, tier: str) -> tuple[str, ...]:
     if tier in {"ut", "test"} and "agentkit" in chosen:
         names.append("agentkit-ut")
     if tier in {"ut", "test"}:
-        names.extend(name for name in ("api", "web", "tui", "packages", "deploy") if name in chosen)
+        names.extend(name for name in ("api", "web", "tui", "deploy") if name in chosen)
     if tier in {"st", "test"} and "agentkit" in chosen:
         names.append("agentkit-st")
     if not names:
@@ -311,13 +311,8 @@ def _command(
         # test:web 再套一层 npm --workspace run test，外层会吃掉一个 --。
         return _with_node_args(["npm", "run", "test:web"], node_args, separators=2)
     if name == "tui":
-        return _with_node_args(
-            ["npm", "test", "--workspace", "@datafoundry/tui"],
-            node_args,
-            separators=1,
-        )
-    if name == "packages":
-        return ("npm", "exec", "--", "vitest", "run", "packages", *node_args)
+        # test:tui 和 test:web 一样，里面再套一层 workspace 的 npm run test。
+        return _with_node_args(["npm", "run", "test:tui"], node_args, separators=2)
     if name == "deploy":
         return _with_node_args(["npm", "run", "test:deploy"], node_args, separators=1)
     raise SystemExit(f"unknown suite: {name}")
@@ -333,7 +328,7 @@ def _with_node_args(command: list[str], node_args: tuple[str, ...], *, separator
 
 def _require_tools(selected: Sequence[str]) -> None:
     needs_uv = any(name.startswith("agentkit") or name == "api" for name in selected)
-    needs_npm = any(name in {"web", "tui", "packages", "deploy", "agentkit-st"} for name in selected)
+    needs_npm = any(name in {"web", "tui", "deploy", "agentkit-st"} for name in selected)
     if needs_uv and shutil.which("uv") is None:
         raise SystemExit("uv is not on PATH")
     if needs_npm and shutil.which("npm") is None:

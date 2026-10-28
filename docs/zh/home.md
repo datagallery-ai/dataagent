@@ -61,7 +61,7 @@ Web 工作台适合可视化复盘，TUI 适合 SSH 和终端工作流，API / A
 
 <div class="df-card" markdown>
 ### 本地试用
-启动工作台，并基于内置 DTC Growth Review 完成第一次数据分析。
+启动工作台，注册数据源后完成第一次数据分析。
 
 [开始快速体验](quick-start.md){ .df-card-action }
 </div>

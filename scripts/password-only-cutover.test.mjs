@@ -1,18 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { createMetadataStore } from "../packages/metadata/dist/index.js";
-import { loadPasswordAuthConfig } from "../apps/api/dist/auth/config.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const FORBIDDEN = [
-  "DATAFOUNDRY_AUTH_MODE",
-  "NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE",
   "X-Dev-Token",
   "dev-token",
   "DEFAULT_DEV_USER",
@@ -22,9 +16,9 @@ const FORBIDDEN = [
   "--demo",
 ];
 
-const CODE_ROOTS = ["apps", "packages", "scripts"];
+const CODE_ROOTS = ["apps", "scripts"];
 const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json"]);
-const ENV_FILES = [".env.example", "apps/web/.env.example"];
+const ENV_FILES = [".env.example"];
 
 const EXCLUDED_DIR_NAMES = new Set([
   "node_modules",
@@ -46,10 +40,6 @@ function isAllowlistedSource(relativePath) {
   if (normalized === "scripts/deploy/config.test.mjs") return true;
   if (normalized === "scripts/deploy/config.mjs") return true;
   if (normalized === "apps/tui/src/no-bare-fetch.guard.test.ts") return true;
-  if (normalized === "apps/api/src/auth/config.ts") return true;
-  if (normalized === "apps/api/dist/auth/config.js") return true;
-  if (normalized.startsWith("packages/metadata/src/index.ts")) return true;
-  if (normalized.startsWith("packages/metadata/dist/index.js")) return true;
   if (normalized.startsWith("docs/")) return true;
   if (normalized === "README.md" || normalized === "README_zh.md") return true;
   return false;
@@ -70,16 +60,6 @@ function walkFiles(dir, out = []) {
     }
   }
   return out;
-}
-
-function extractFencedBlocks(markdown) {
-  const blocks = [];
-  const re = /```[^\n]*\n([\s\S]*?)```/g;
-  let match;
-  while ((match = re.exec(markdown))) {
-    blocks.push(match[1]);
-  }
-  return blocks;
 }
 
 test("product code and scripts have no runnable development auth bypasses", () => {
@@ -109,56 +89,6 @@ test("product code and scripts have no runnable development auth bypasses", () =
   assert.deepEqual(violations, [], `Forbidden development auth tokens remain:\n${violations.join("\n")}`);
 });
 
-test("CI workflow does not set DATAFOUNDRY_AUTH_MODE", () => {
-  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
-  assert.equal(ci.includes("DATAFOUNDRY_AUTH_MODE"), false);
-});
-
-test("loadPasswordAuthConfig rejects removed auth modes and requires password settings", () => {
-  assert.doesNotThrow(() =>
-    loadPasswordAuthConfig({
-      DATAFOUNDRY_AUTH_MODE: "password",
-      AUTH_SESSION_SECRET: "x".repeat(32),
-      AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-      AUTH_REGISTRATION_MODE: "open",
-      AUTH_EMAIL_DELIVERY: "test",
-    })
-  );
-  assert.throws(
-    () =>
-      loadPasswordAuthConfig({
-        DATAFOUNDRY_AUTH_MODE: "dev",
-        AUTH_SESSION_SECRET: "x".repeat(32),
-        AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-        AUTH_REGISTRATION_MODE: "open",
-        AUTH_EMAIL_DELIVERY: "test",
-      }),
-    /DATAFOUNDRY_AUTH_MODE/
-  );
-  assert.throws(
-    () =>
-      loadPasswordAuthConfig({
-        AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-        AUTH_REGISTRATION_MODE: "open",
-        AUTH_EMAIL_DELIVERY: "test",
-      }),
-    /AUTH_SESSION_SECRET/
-  );
-});
-
-test("fresh metadata schema has no dev_token and no default user", () => {
-  const root = mkdtempSync(join(tmpdir(), "password-only-schema-"));
-  try {
-    const store = createMetadataStore({ database_path: join(root, "metadata.sqlite") });
-    const columns = store.db.prepare("PRAGMA table_info(users)").all().map((row) => row.name);
-    assert.ok(!columns.includes("dev_token"));
-    assert.equal(store.users.list().length, 0);
-    store.close();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 function walkMarkdownFiles(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     if (EXCLUDED_DIR_NAMES.has(entry)) continue;
@@ -172,23 +102,6 @@ function walkMarkdownFiles(dir, out = []) {
   }
   return out;
 }
-
-test("markdown fenced blocks omit runnable DATAFOUNDRY_AUTH_MODE examples", () => {
-  const violations = [];
-  const files = [join(ROOT, "README.md"), join(ROOT, "README_zh.md")];
-  walkMarkdownFiles(join(ROOT, "docs"), files);
-  for (const full of files) {
-    const rel = relative(ROOT, full);
-    const source = readFileSync(full, "utf8");
-    for (const block of extractFencedBlocks(source)) {
-      if (block.includes("DATAFOUNDRY_AUTH_MODE") || block.includes("NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE")) {
-        violations.push(rel);
-        break;
-      }
-    }
-  }
-  assert.deepEqual(violations, [], `Runnable auth-mode examples remain in fenced docs:\n${violations.join("\n")}`);
-});
 
 const FORBIDDEN_DOC_PHRASES = [
   "switch local development users",

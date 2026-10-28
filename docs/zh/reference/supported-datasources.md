@@ -8,8 +8,7 @@ DataFoundry 通过 Data Gateway 管理数据源。客户端负责注册、测试
 
 | 阶段 | 类型 | 适合场景 |
 | --- | --- | --- |
-| 第一次试用 | 内置 DTC Growth Review（SQLite） | 不准备数据库，直接跑通分析链路。 |
-| 本地文件 | SQLite、CSV、Excel、DuckDB file | 验证文件分析、上传和表格产出。 |
+| 第一次试用 | SQLite、CSV、Excel、DuckDB 文件 | 用本地文件跑通分析、上传和表格产出。 |
 | 常见服务端数据库 | PostgreSQL、MySQL | 验证真实连接、schema 抓取和只读 SQL。 |
 | 外部服务 | 云数仓、搜索、NoSQL、湖仓 | 需要服务、网络、账号和凭据。 |
 

@@ -10,41 +10,24 @@ From the repository root:
 ```bash
 npm install
 npm run start:tui
-npm run start:tui -- --runtime-url http://127.0.0.1:8787/api/copilotkit
-npm run start:tui -- --no-auto-login
 ```
 
-## DataAgent V2 local mode
+`npm run start:tui` is V2. It connects to `/dataagent/stream` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused. It does not open `/api/copilotkit`.
 
-The existing TUI directly starts and manages `runtime/agentkit`'s backend.
-No registration, web service, runtime UI directory or Python TUI forwarding is needed.
+## DataAgent V2
 
-Using the repository-root `.env` with your model configuration:
+Home defaults live in `~/.dataagent`. Add `--resume` or `--resume <threadId>` to restore a session. `--config`, `--env-file`, `--workspace`, `--user` and `--session` are forwarded to a backend this TUI starts, so they do not attach to one that is already running.
+
+`--runtime-url` attaches and does not start a backend. The host must be `server.host` from `config.json`, or `127.0.0.1`.
 
 ```bash
-uv sync --project runtime/agentkit
-npm run start:tui -- --v2 --env-file .env --workspace "$PWD"
+npm run start:tui -- --runtime-url http://127.0.0.1:8790
 ```
-
-Home defaults live in `~/.dataagent`; the first local launch creates non-overwriting
-templates. Fill in its `.env`, then `npm run start:tui -- --v2` works without a config flag.
-Optional `--config /absolute/path/config.json` adds a partial layer above Home;
-its sibling `.env` is also loaded by the backend. Home is the single working root,
-selected with `DATAAGENT_HOME` (default `~/.dataagent`). Optional `--workspace` paths
-are existing read-only inputs; without them the input list is empty. Relative paths
-resolve from the npm launch directory, which supplies no configuration or extensions.
-Add `--resume` or `--resume <threadId>` to restore
-a session. `/exit` closes the UI and its owned backend. An occupied port fails without
-attaching to or stopping another service.
-
-For an already running V2 backend, use `--v2 --runtime-url http://127.0.0.1:8790/dataagent/stream`
-without a login or token. That mode does not own or stop the service;
-do not combine it with `--config`, `--env-file` or `--workspace`.
 
 There is no project configuration layer or trust prompt. Logs/checkpoints live in
 `<home>/runtime`; session outputs live in `runtime/users/<user>/sessions/<session>/outputs`.
-Existing session input bindings are retained; no files are migrated or deleted. The backend
-owns `--env-file` parsing, so TUI theme/log variables must be in the TUI process environment.
+Existing session input bindings are retained; no files are migrated or deleted. TUI theme
+and log variables stay in the TUI process environment. `--env-file` is forwarded to the backend that this TUI starts.
 
 See the [V2 configuration and plugin guide](../../runtime/agentkit/README.md).
 
@@ -59,7 +42,7 @@ is four rows. Both home and chat support
 - Enter submits. Shift+Enter (CSI-u or xterm modifyOtherKeys), Alt+Enter and Ctrl+J insert a newline.
 - Multi-line bracketed paste stays one editable draft; large pastes keep the existing fold/expand behavior.
 - Up/Down navigate the draft and command history. Messages entered during a run remain queued.
-- `/` opens commands and Tab completes. V2 exposes `/help`, `/clear`, `/resume [id]`, `/outputs` and `/exit`.
+- `/` opens commands and Tab completes. V2 exposes `/help`, `/clear`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/resume` and `/resume list` open the session picker.
 - `/outputs` opens the full output list at any width. Enter previews a result; Esc returns to the list, then chat; q closes the view. Chat always uses a single column, with no output sidebar or extra footer indicators.
 - Ctrl+C keeps the existing two-press exit flow; Ctrl+Z/fg restores the terminal and input cursor in V2.
 
@@ -92,7 +75,7 @@ text and symbols.
 From the repository root:
 
 ```bash
-npm --workspace @datafoundry/tui test
+npm run test:tui
 uv run --project runtime/agentkit --locked pytest runtime/agentkit/tests -m 'not live'
 ```
 

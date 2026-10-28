@@ -485,7 +485,7 @@
     "mcpNotesPersist": "Configuration is persisted through POST /api/v1/mcp-servers; tokens are stored in secretRef",
     "mcpNotesRuns": "Runs use run_config.enabledMcpServerIds to mount MCP tools",
     "llmNotesTitle": "AG-UI / dataFoundry alignment notes",
-    "llmNotesEnv": "Server env: LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY, LLM_MODEL",
+    "llmNotesEnv": "Server env: LLM_MODEL, LLM_BASE_URL, LLM_API_KEY",
     "llmNotesPersist": "Model profiles are managed through POST /api/v1/model-profiles; API keys are stored in secretRef",
     "llmNotesRuns": "Runs switch models through run_config.activeLlmProfileId",
     "llmNotesBuiltin": "The Server default item is read-only and maps to LLM configuration from server env",
@@ -1051,7 +1051,7 @@
     },
     "llm": {
       "provider": {
-        "openai-compatible": "OpenAI compatible (LLM_PROVIDER=openai-compatible)"
+        "openai-compatible": "OpenAI compatible"
       },
       "fallbackProfileId": {
         "__none__": "None"

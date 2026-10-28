@@ -9,8 +9,10 @@ From the repository root:
 
 ```bash
 npm install
-cp apps/web/.env.example apps/web/.env.local
-npm run dev:web
+npm run build
+npm run start:web
 ```
 
-Open <http://localhost:3000/data-tasks>.
+`npm run start:web` starts only the web app and proxies to `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. `npm run start` starts the control plane and the web app together.
+
+Open <http://127.0.0.1:3000/data-tasks>.

@@ -10,6 +10,12 @@ const HOME_CONFIG_TEMPLATE = fileURLToPath(
 export const DEFAULT_SERVER_HOST = "127.0.0.1";
 export const DEFAULT_SERVER_PORT = "8790";
 
+export function httpOrigin(host, port) {
+  const bare = String(host).trim().replace(/^\[(.*)\]$/u, "$1");
+  const shown = bare.includes(":") ? `[${bare}]` : bare;
+  return `http://${shown}:${port}`;
+}
+
 function homeDir(env) {
   if (Object.prototype.hasOwnProperty.call(env, "DATAAGENT_HOME")) {
     return env.DATAAGENT_HOME?.trim() || null;

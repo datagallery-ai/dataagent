@@ -12,8 +12,6 @@ A strong case should be concrete enough to reproduce and polished enough to show
 - Expected findings that can be validated from the data.
 - Notes about governance, privacy, access control, or production boundaries.
 
-The [DTC growth operating review](../examples/dtc-growth-demo.md) is the current reference case. It combines orders, ad spend, products, support tickets, and targets into one traceable operating review.
-
 ## How to propose one
 
 Open a [GitHub issue](https://github.com/datagallery-lab/datafoundry/issues) with:

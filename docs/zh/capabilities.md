@@ -6,7 +6,7 @@
 
 | 状态 | 判断方式 |
 | --- | --- |
-| 可直接试用 | 本地启动后，配好模型 Key，用内置 DTC Growth Review 可以跑通。 |
+| 可直接试用 | 本地启动后，配好模型 Key 和数据源，一个问题可以跑通。 |
 | 需要配置 | 功能入口已接入，需要你提供模型 Key、数据库凭据、文件、MCP Server 或 Skill package。 |
 | 受 capability 控制 | 读取 `GET /api/v1/capabilities`，按返回值启用或隐藏相关入口。 |
 | 密码认证边界 | 基于 Cookie 的密码会话覆盖账号注册、登录、重置和 CSRF；生产部署仍需 Secret 管理、审计导出、访问控制策略和运维监控。 |
@@ -15,8 +15,7 @@
 
 | 能力 | Web 工作台 | TUI | 后端/API | 检查方式 |
 | --- | --- | --- | --- | --- |
-| 自然语言数据分析 | 可直接试用 | 可直接试用 | 可直接试用 | 配好 LLM Key，使用 `dtc-growth-demo` 提问。 |
-| 内置 DTC 增长案例 | 可直接试用 | 可直接试用 | 可直接试用 | 数据源列表包含 `DTC Growth Review`；每个用户获得只读 workspace 副本。 |
+| 自然语言数据分析 | 可直接试用 | 可直接试用 | 可直接试用 | 配好 LLM Key 和数据源，然后提问。 |
 | 数据源注册与测试 | 可直接试用 | 可选择已配置数据源 | 可直接试用 | `GET /api/v1/datasource-types`，`POST /api/v1/datasources/:id/test`。 |
 | schema 抓取与表预览 | 可直接试用 | 通过 Agent 工具查看结果 | 可直接试用 | `POST /api/v1/datasources/:id/introspect`，`GET /schema`，`GET /tables/:table/preview`。 |
 | 只读 SQL 分析 | 可直接试用 | 可直接试用 | 可直接试用 | Agent run 先检查 schema，再通过工具执行查询。 |

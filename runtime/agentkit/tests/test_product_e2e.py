@@ -116,16 +116,11 @@ class Terminal:
         assert self.process.wait(timeout=5) == expected_code
 
 
-def bind_env(environment, port):
-    """Same port path as npm and deploy: the process API_PORT, not server.port."""
-    return {**environment, "API_HOST": "127.0.0.1", "API_PORT": str(port)}
-
-
 @contextmanager
 def product(config, environment, resume=None, env_file=None):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
-    arguments = ["npm", "run", "start:tui", "--", "--v2", "--config", os.path.relpath(config, REPOSITORY),
+    arguments = ["npm", "run", "start:tui", "--", "--config", os.path.relpath(config, REPOSITORY),
                  "--workspace", str(config.parent)]
     if env_file:
         arguments += ["--env-file", os.path.relpath(env_file, REPOSITORY)]
@@ -189,7 +184,7 @@ def test_cli_accepts_plain_enter_without_a_model_call(tmp_path):
     from test_launcher import config_file
 
     config, port = config_file(tmp_path)
-    environment = bind_env({**os.environ, "LLM_API_KEY": "fake-test-key"}, port)
+    environment = {**os.environ, "LLM_API_KEY": "fake-test-key"}
     with product(config, environment) as terminal:
         terminal.submit("/help")
         terminal.read_until("/clear (new conversation)", timeout=5)
@@ -208,8 +203,8 @@ def test_tui_resolves_explicit_env_file_from_npm_launch_directory(tmp_path):
         f"LLM_MODEL=env-file-model\nLLM_BASE_URL=https://example.invalid/v1\n"
         f"LLM_API_KEY=fake-test-key\nDATAAGENT_WORKSPACE={tmp_path}\n"
     )
-    environment = bind_env({key: value for key, value in os.environ.items()
-                   if key not in {"LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "DATAAGENT_WORKSPACE"}}, port)
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in {"LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "DATAAGENT_WORKSPACE"}}
     with product(config, environment, env_file=env_file) as terminal:
         terminal.read_until("env-file-model", timeout=5)
         terminal.submit("/help")
@@ -225,8 +220,8 @@ def test_tui_reports_occupied_port_without_reusing_or_stopping_service(tmp_path)
         service.bind(("127.0.0.1", port))
         service.listen()
         result = subprocess.run([
-            "node", str(REPOSITORY / "apps/tui/dist/index.js"), "--v2", "--config", str(config), "--workspace", str(tmp_path),
-        ], capture_output=True, text=True, timeout=15, env=bind_env(os.environ, port))
+            "node", str(REPOSITORY / "apps/tui/dist/index.js"), "--config", str(config), "--workspace", str(tmp_path),
+        ], capture_output=True, text=True, timeout=15, env=os.environ)
         assert result.returncode == 1
         assert "occupied; no existing process was changed" in result.stderr
         assert service.fileno() >= 0
@@ -246,7 +241,7 @@ await new Promise(() => {{}});
     parent = subprocess.Popen(
         ["node", "--input-type=module", "-e", source, str(config), str(tmp_path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
-        env=bind_env(os.environ, port),
+        env=os.environ,
     )
     try:
         assert select.select([parent.stdout], [], [], 15)[0], "TUI did not start its backend"
@@ -271,7 +266,7 @@ def test_tui_restores_terminal_when_its_backend_exits(tmp_path):
     from test_launcher import config_file
 
     config, port = config_file(tmp_path)
-    with product(config, bind_env({**os.environ, "LLM_API_KEY": "fake-test-key"}, port)) as terminal:
+    with product(config, {**os.environ, "LLM_API_KEY": "fake-test-key"}) as terminal:
         log = (Path(os.environ["DATAAGENT_HOME"]) / "runtime/logs/backend.log").read_text()
         backend_pid = int(re.search(r"Started server process \[(\d+)\]", log)[1])
         command = subprocess.check_output(["ps", "-ww", "-p", str(backend_pid), "-o", "command="], text=True)
@@ -287,7 +282,7 @@ def test_cli_suspend_restores_terminal_and_resumes_input(tmp_path):
     from test_launcher import config_file
 
     config, port = config_file(tmp_path)
-    with product(config, bind_env({**os.environ, "LLM_API_KEY": "fake-test-key"}, port)) as terminal:
+    with product(config, {**os.environ, "LLM_API_KEY": "fake-test-key"}) as terminal:
         try:
             os.write(terminal.descriptor, b"\x1a")
             deadline = time.monotonic() + 5
@@ -338,10 +333,7 @@ def exercise_query_and_resume(tmp_path, values):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    environment = bind_env(
-        {**os.environ, **{key: values[key] for key in required}, "DATAAGENT_WORKSPACE": str(tmp_path)},
-        port,
-    )
+    environment = {**os.environ, **{key: values[key] for key in required}, "DATAAGENT_WORKSPACE": str(tmp_path)}
     config = tmp_path / "config.json"
     config_data = json.loads((PROJECT / "config.example.json").read_text())
     config_data["plugins"] = {"enabled": ["common"], "paths": []}
@@ -486,7 +478,7 @@ def test_full_product_with_deterministic_chat_completions_provider(tmp_path, com
 def _is_tui_node(command: str) -> bool:
     """Match the Node TUI, not the ``sh -c`` line that merely contains the same text."""
     parts = command.split()
-    if not parts or "dist/index.js" not in command or "--v2" not in command:
+    if not parts or "dist/index.js" not in command:
         return False
     return parts[0].rsplit("/", 1)[-1] == "node"
 
@@ -496,7 +488,7 @@ def test_tui_signal_shutdown_restores_terminal_and_stops_owned_backend(tmp_path,
     from test_launcher import config_file
 
     config, port = config_file(tmp_path)
-    with product(config, bind_env({**os.environ, "LLM_API_KEY": "fake-test-key"}, port)) as terminal:
+    with product(config, {**os.environ, "LLM_API_KEY": "fake-test-key"}) as terminal:
         processes = subprocess.check_output(["ps", "-Ao", "pid=,ppid=,command="], text=True)
         entries = [line.strip().split(maxsplit=2) for line in processes.splitlines()]
         parents = {int(pid): int(parent) for pid, parent, _ in entries}

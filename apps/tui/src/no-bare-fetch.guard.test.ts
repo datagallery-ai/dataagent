@@ -33,11 +33,7 @@ function walk(dir: string, predicate: (name: string) => boolean): string[] {
 }
 
 describe("no bare fetch on protected TUI API paths", () => {
-  it("keeps production modules on injected fetch / AuthenticatedTransport", () => {
-    const allowed = new Set([
-      "auth/authenticated-transport.ts",
-      "auth/auth-client.ts",
-    ]);
+  it("keeps production modules on injected fetch", () => {
     const offenders: string[] = [];
     const files = walk(srcRoot, (name) => /\.(ts|tsx)$/.test(name));
     assert.ok(files.length > 0, `expected source files under ${srcRoot}`);
@@ -47,14 +43,11 @@ describe("no bare fetch on protected TUI API paths", () => {
       if (rel.endsWith(".test.ts") || rel.endsWith(".test.tsx")) {
         continue;
       }
-      if (allowed.has(rel)) {
-        continue;
-      }
       const source = readFileSync(file, "utf8");
       if (/\bawait\s+fetch\s*\(/.test(source) || /\bfetch\s*\(\s*[`'"][^`'"]*\/api\//.test(source)) {
         offenders.push(rel);
       }
-      if (/\bglobalThis\.fetch\s*\(/.test(source) && !rel.includes("auth/")) {
+      if (/\bglobalThis\.fetch\s*\(/.test(source)) {
         // Defaults in constructors are OK; bare invocation is not.
         if (/globalThis\.fetch\s*\([^)]*\/api\//.test(source)) {
           offenders.push(rel);

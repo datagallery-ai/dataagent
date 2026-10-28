@@ -35,8 +35,6 @@ DataFoundry 通过 Data Gateway 管理数据源。数据源可以在 Web 工作�
 6. 执行 schema 检查，确认表和字段可见。
 7. 回到数据任务，在输入框底部确认该数据源已启用。
 
-首次体验可以使用内置 DTC Growth Review，不需要添加自有数据库。
-
 ## 在 TUI 中使用
 
 TUI 当前支持列出和选择已配置数据源：
@@ -149,7 +147,7 @@ Web 和 TUI 会把本次运行选中的数据源传给后端。推荐通过 `run
 | `oceanbase` | OceanBase MySQL-compatible。 |
 | `greenplum` | Greenplum PostgreSQL-compatible。 |
 
-外部服务需要对应服务、网络和凭据。对外演示建议优先使用内置 DTC Growth Review，或配置 DuckDB、SQLite、CSV / Excel、PostgreSQL 或 MySQL。
+外部服务需要对应服务、网络和凭据。本地试用可以配置 DuckDB、SQLite、CSV / Excel、PostgreSQL 或 MySQL。
 
 ## 非 SQL 数据源边界
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, type MutableRefObject, type ReactNode } from "react";
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../../../../lib/evidence-ref";
 import type {
   ChatSession,
   FileMentionResource,

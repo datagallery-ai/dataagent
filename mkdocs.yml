@@ -76,8 +76,6 @@ nav:
           - TUI: en/guides/tui.md
           - Data sources: en/guides/data-sources.md
           - DataLink: en/guides/datalink.md
-      - Examples:
-          - DTC growth operating review: en/examples/dtc-growth-demo.md
   - Developer Guide:
       - Architecture:
           - Overview: en/architecture/overview.md

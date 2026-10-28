@@ -121,7 +121,7 @@ describe("restoreTerminalForParentShell", () => {
 describe("direct-launch TTY early exits", () => {
   for (const [name, argv, expectedCode] of [
     ["--help", ["--help"], 0],
-    ["argument error", ["--v2", "--config"], 1],
+    ["argument error", ["--config"], 1],
   ] as const) {
     it(`${name} exits under TTY stdin without hanging`, async () => {
       const indexUrl = new URL("./index.js", import.meta.url).href;

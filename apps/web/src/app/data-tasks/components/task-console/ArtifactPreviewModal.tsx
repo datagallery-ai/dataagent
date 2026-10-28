@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
-import type { EvidenceRef } from "@datafoundry/contracts";
+import type { EvidenceRef } from "../../../../lib/evidence-ref";
 import { useT } from "../../../../i18n/locale-context";
 import type { DataArtifact } from "../../data-task-state";
 import type { JobDto } from "../../../../lib/config-api";

@@ -2,7 +2,7 @@ import type {
   EvidenceKind,
   EvidenceRef,
   EvidenceSelection,
-} from "@datafoundry/contracts";
+} from "../../lib/evidence-ref";
 
 import type { DataArtifact } from "./data-task-state";
 import type { LiveAudit, LiveRun } from "./live-run-state";

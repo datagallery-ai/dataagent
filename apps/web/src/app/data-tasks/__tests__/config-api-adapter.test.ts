@@ -16,12 +16,10 @@ import {
 afterEach(() => {
   vi.unstubAllGlobals();
   clearConfigApiIdentity();
-  delete process.env.NEXT_PUBLIC_CONFIG_API_URL;
 });
 
 describe("config api adapter", () => {
   it("does not add development auth headers to REST requests", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "";
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: { "chat.fileUpload": true },
@@ -50,7 +48,6 @@ describe("config api adapter", () => {
   });
 
   it("uses cookie credentials and csrf headers", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "";
     vi.stubGlobal("document", { cookie: "df_csrf=csrf-token" });
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
@@ -386,7 +383,6 @@ describe("config api adapter", () => {
   });
 
   it("loads server authoritative session conversation through the config client", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "http://config.test";
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: {
@@ -412,7 +408,7 @@ describe("config api adapter", () => {
     const conversation = await configApi.getSessionConversation("thread-1", 25);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://config.test/api/v1/sessions/thread-1/conversation?limit=25",
+      "/api/v1/sessions/thread-1/conversation?limit=25",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(conversation.sessionId).toBe("thread-1");
@@ -423,7 +419,6 @@ describe("config api adapter", () => {
   });
 
   it("creates a server-side session branch through the config client", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "http://config.test";
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: {
@@ -451,7 +446,7 @@ describe("config api adapter", () => {
     const branch = await configApi.createSessionBranch("thread-1", { runId: "run-1" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://config.test/api/v1/sessions/thread-1/branches",
+      "/api/v1/sessions/thread-1/branches",
       expect.objectContaining({
         body: JSON.stringify({ runId: "run-1" }),
         method: "POST",
@@ -462,7 +457,6 @@ describe("config api adapter", () => {
   });
 
   it("loads and patches server sessions through the config client", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "http://config.test";
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -506,12 +500,12 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "http://config.test/api/v1/sessions?limit=20&cursor=cursor-1",
+      "/api/v1/sessions?limit=20&cursor=cursor-1",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "http://config.test/api/v1/sessions/thread-1",
+      "/api/v1/sessions/thread-1",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ title: "我的复盘" }),
@@ -519,7 +513,7 @@ describe("config api adapter", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      "http://config.test/api/v1/sessions/thread-1",
+      "/api/v1/sessions/thread-1",
       expect.objectContaining({ method: "DELETE" }),
     );
     expect(list.sessions[0]?.title).toBe("渠道订单分析");
@@ -531,7 +525,6 @@ describe("config api adapter", () => {
   });
 
   it("calls datalink endpoints through the config client", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "http://config.test";
     const fetchMock = vi.fn().mockImplementation(() => new Response(JSON.stringify({
       success: true,
       data: {
@@ -552,17 +545,17 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "http://config.test/api/v1/datalink/servers",
+      "/api/v1/datalink/servers",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "http://config.test/api/v1/datalink/datalink/graph",
+      "/api/v1/datalink/datalink/graph",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      "http://config.test/api/v1/datalink/datalink/explore",
+      "/api/v1/datalink/datalink/explore",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ query: "satscores", focus: "schema" }),
@@ -570,7 +563,7 @@ describe("config api adapter", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      "http://config.test/api/v1/datalink/datalink/tables",
+      "/api/v1/datalink/datalink/tables",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ source: "/data/orders.csv", sourceType: "csv" }),
@@ -578,7 +571,7 @@ describe("config api adapter", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       5,
-      "http://config.test/api/v1/datalink/datalink/tables",
+      "/api/v1/datalink/datalink/tables",
       expect.objectContaining({
         method: "DELETE",
         body: JSON.stringify({ tableId: "table:orders" }),
@@ -586,13 +579,12 @@ describe("config api adapter", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       6,
-      "http://config.test/api/v1/datalink/datalink/rebuild",
+      "/api/v1/datalink/datalink/rebuild",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
   it("calls backend implemented data-task extension endpoints", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "http://config.test";
     const fetchMock = vi.fn().mockImplementation(
       () =>
         new Response(JSON.stringify({ success: true, data: {} }), {
@@ -611,7 +603,7 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "http://config.test/api/v1/runs/run-1/cancel",
+      "/api/v1/runs/run-1/cancel",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ reason: "user-click" }),
@@ -619,7 +611,7 @@ describe("config api adapter", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "http://config.test/api/v1/artifacts/artifact-1/export",
+      "/api/v1/artifacts/artifact-1/export",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ format: "xlsx", idempotencyKey: "same-export" }),
@@ -627,28 +619,27 @@ describe("config api adapter", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      "http://config.test/api/v1/files?scope=workspace&origin=uploaded%2Csaved",
+      "/api/v1/files?scope=workspace&origin=uploaded%2Csaved",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      "http://config.test/api/v1/datasources/db-1/schema?q=orders&includeStats=true",
+      "/api/v1/datasources/db-1/schema?q=orders&includeStats=true",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       5,
-      "http://config.test/api/v1/query-history?sessionId=thread-1&datasourceId=db-1&favorite=true",
+      "/api/v1/query-history?sessionId=thread-1&datasourceId=db-1&favorite=true",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       6,
-      "http://config.test/api/v1/query-history/query-1/favorite",
+      "/api/v1/query-history/query-1/favorite",
       expect.objectContaining({ method: "POST" }),
     );
   });
 
   it("builds datasource table preview requests", async () => {
-    process.env.NEXT_PUBLIC_CONFIG_API_URL = "http://config.test";
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,
       data: {
@@ -668,7 +659,7 @@ describe("config api adapter", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://config.test/api/v1/datasources/sales-pg/tables/orders/preview?schema=public&limit=25&offset=50&orderBy=created_at",
+      "/api/v1/datasources/sales-pg/tables/orders/preview?schema=public&limit=25&offset=50&orderBy=created_at",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(preview.rows[0]?.order_id).toBe("A001");

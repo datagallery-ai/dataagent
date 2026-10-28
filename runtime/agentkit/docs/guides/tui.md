@@ -1,42 +1,25 @@
 # TUI
 
-TUI 是仓库里的 `apps/tui`。`--v2` 让它启动并管理 AgentKit 后端。运行时目录里没有另一套终端界面。
+TUI 是仓库里的 `apps/tui`，只保留 v2。与 Web 共用会话列表。没有参数时，按 `config.json` 拉起 `dataagent serve`，或者连上已经在跑的那一份。
 
-## 启动自己的后端
-
-在仓库根目录：
+## 启动
 
 ```bash
-uv sync --project runtime/agentkit --locked
-npm run start:tui -- --v2
+npm run start:tui
 ```
 
-常用参数：
+地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起，主机必须是 `server.host` 或 `127.0.0.1`。
 
 ```bash
-npm run start:tui -- --v2 --env-file .env --workspace "$PWD"
-npm run start:tui -- --v2 --config runtime/agentkit/examples/config.json
-npm run start:tui -- --v2 --resume
-npm run start:tui -- --v2 --resume <threadId>
+npm run start:tui -- --resume
+npm run start:tui -- --resume <threadId>
+npm run start:tui -- --workspace /existing/data
+npm run start:tui -- --runtime-url http://127.0.0.1:8790
 ```
 
-相对路径以启动 npm 的目录为基准。这个目录只解析路径，不发现配置或扩展。
+`--runtime-url` 不能和 `--config`、`--env-file`、`--workspace`、`--user`、`--session` 一起用。后面这几项会拉起后端。部署栈已经在跑时也可以 `./deploy.sh tui`。
 
-`/exit` 关闭界面，并停止由它启动的后端。Ctrl+C 需要按两次才退出。
-
-## 连接已经运行的后端
-
-```bash
-npm run start:tui -- --v2 --runtime-url http://127.0.0.1:8790/dataagent/stream
-```
-
-这个模式不登录，也不带令牌。TUI 不拥有该服务，退出时不会停止它。不要同时使用 `--config`、`--env-file` 或 `--workspace`。
-
-先单独启动后端：
-
-```bash
-uv run --project runtime/agentkit dataagent serve
-```
+`/exit` 会停掉这次 TUI 拉起的后端。用 `--runtime-url` 连上的控制面不会被停掉。Ctrl+C 需要按两次才退出。
 
 ## 命令
 
@@ -47,6 +30,7 @@ uv run --project runtime/agentkit dataagent serve
 | `/help` | 显示帮助。别名 `h`、`?` |
 | `/clear` | 开始新对话。不删除已有会话 |
 | `/resume` | 打开会话列表 |
+| `/resume list` | 打开会话列表 |
 | `/resume <threadId>` | 恢复该会话 |
 | `/resume latest` | 恢复最近会话 |
 | `/outputs` | 打开当前会话的产物列表。别名 `output` |

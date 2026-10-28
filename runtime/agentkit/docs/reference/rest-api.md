@@ -1,6 +1,6 @@
 # HTTP 接口
 
-默认监听 `127.0.0.1:8787`。`API_HOST` 可以改成其他地址，`API_PORT` 可以改端口。`/healthz` 返回实际使用的 DataAgent Home，供 TUI 底栏显示；不返回输入目录或 `stateDir`。
+默认监听 `127.0.0.1:8790`，来自 `config.json` 的 `server.host` 和 `server.port`。`/healthz` 返回实际使用的 DataAgent Home，供 TUI 底栏显示；不返回输入目录或 `stateDir`。
 
 ## `GET /healthz`
 

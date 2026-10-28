@@ -7,7 +7,9 @@ test("defaults to deploy", () => {
     command: "deploy",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: null
+    runtimeUrl: null,
+    webHost: null,
+    webPort: null
   });
 });
 
@@ -16,19 +18,25 @@ test("accepts flags before or after deploy", () => {
     command: "deploy",
     reconfigure: false,
     nonInteractive: true,
-    runtimeUrl: null
+    runtimeUrl: null,
+    webHost: null,
+    webPort: null
   });
   assert.deepEqual(parseDeployArgs(["deploy", "--reconfigure"]), {
     command: "deploy",
     reconfigure: true,
     nonInteractive: false,
-    runtimeUrl: null
+    runtimeUrl: null,
+    webHost: null,
+    webPort: null
   });
   assert.deepEqual(parseDeployArgs(["--reconfigure", "deploy"]), {
     command: "deploy",
     reconfigure: true,
     nonInteractive: false,
-    runtimeUrl: null
+    runtimeUrl: null,
+    webHost: null,
+    webPort: null
   });
 });
 
@@ -43,20 +51,39 @@ test("tui accepts optional --runtime-url", () => {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: null
+    runtimeUrl: null,
+    webHost: null,
+    webPort: null
   });
   assert.deepEqual(parseDeployArgs(["tui", "--runtime-url", "http://127.0.0.1:9000/api/copilotkit"]), {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://127.0.0.1:9000/api/copilotkit"
+    runtimeUrl: "http://127.0.0.1:9000/api/copilotkit",
+    webHost: null,
+    webPort: null
   });
   assert.deepEqual(parseDeployArgs(["--runtime-url", "http://example/api/copilotkit", "tui"]), {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://example/api/copilotkit"
+    runtimeUrl: "http://example/api/copilotkit",
+    webHost: null,
+    webPort: null
   });
+});
+
+test("start accepts web host and port", () => {
+  assert.deepEqual(parseDeployArgs(["start", "--web-host", "127.0.0.1", "--web-port", "3310"]), {
+    command: "start",
+    reconfigure: false,
+    nonInteractive: false,
+    runtimeUrl: null,
+    webHost: "127.0.0.1",
+    webPort: "3310"
+  });
+  assert.throws(() => parseDeployArgs(["status", "--web-port", "3000"]), /only valid with deploy, start, or restart/);
+  assert.throws(() => parseDeployArgs(["start", "--web-port"]), /--web-port requires a value/);
 });
 
 test("rejects unknown commands and invalid flag combinations", () => {
@@ -67,7 +94,7 @@ test("rejects unknown commands and invalid flag combinations", () => {
     /mutually exclusive/
   );
   assert.throws(() => parseDeployArgs(["deploy", "--runtime-url", "http://x"]), /--runtime-url is only valid with tui/);
-  assert.throws(() => parseDeployArgs(["tui", "--runtime-url"]), /--runtime-url requires a URL value/);
+  assert.throws(() => parseDeployArgs(["tui", "--runtime-url"]), /--runtime-url requires a value/);
   assert.throws(() => parseDeployArgs(["wat"]), /Unknown command/);
 });
 

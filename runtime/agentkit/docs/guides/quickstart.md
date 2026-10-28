@@ -5,9 +5,9 @@
 ## 环境
 
 - macOS 或 Linux
-- Python 3.12
 - uv
-- Node.js 22+，以及仓库根目录已安装的 Node 依赖
+- Node.js 22+
+- Python 3.12，由 `npm install` 通过 uv 安装
 
 请为 AgentKit 使用独立的 Python 环境。包的导入名是 `dataagent`。
 
@@ -16,13 +16,15 @@
 在仓库根目录：
 
 ```bash
-uv sync --project runtime/agentkit --locked
 npm install
+npm run build
 ```
+
+`npm install` 结束后执行 `uv sync --project runtime/agentkit --frozen --no-dev --python 3.12`。`npm run build` 编译网页和 TUI。
 
 ## 最小配置
 
-首次 `npm run start:tui -- --v2` 会创建 Home。默认 Home 是 `~/.dataagent`，可用进程环境变量 `DATAAGENT_HOME` 改到其他目录。
+控制面首次启动时创建 Home。默认 Home 是 `~/.dataagent`，可用进程环境变量 `DATAAGENT_HOME` 改到其他目录。TUI 拉起后端时也会走到这次初始化。
 
 初始化只在目标文件不存在时写入模板，权限为目录 `0700`、文件 `0600`。已有文件保持原样。
 
@@ -36,19 +38,19 @@ LLM_API_KEY=replace-with-your-key
 
 模板 `config.json` 把模型名、地址和密钥写成 `$env{LLM_MODEL}`、`$env{LLM_BASE_URL}`、`$env{LLM_API_KEY}`。引用写在 JSON 字符串里，形式是 `$env{NAME}`。
 
-也可以不初始化 Home 里的密钥，直接使用仓库根目录已有的 `.env`：
-
-```bash
-npm run start:tui -- --v2 --env-file .env
-```
+仓库根目录 `.env` 可以由 `npm run start` 或 `./deploy.sh start` 读取。TUI 自己拉起后端时，用 `--env-file` 把这份文件传给它。
 
 ## 第一次运行
 
+直接启动 TUI，由它拉起后端：
+
 ```bash
-npm run start:tui -- --v2
+npm run start:tui
 ```
 
-TUI 会启动自己的 Python 后端，检查身份，然后打开对话。输入：
+地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
+
+TUI 打开对话。输入：
 
 ```text
 Summarize 1, 2, 3.
@@ -68,9 +70,7 @@ uv run --project runtime/agentkit dataagent serve
 
 `--workspace` 指向已经存在的只读输入目录。可以重复。相对路径以启动 npm 的目录为基准。未指定时输入列表为空，启动不会创建默认输入目录。
 
-```bash
-npm run start:tui -- --v2 --env-file .env --workspace "$PWD"
-```
+TUI 拉起后端时可以重复 `--workspace`。连到已有控制面时，输入目录由那份控制面决定。工作目录由控制面的 `DATAAGENT_HOME` 决定。
 
 系统提示要求模型把这些目录当作只读输入，并把生成文件写到当前会话的 `outputs/`。文件工具和 shell 使用后端进程的权限，见 [安全](../architecture/security-boundaries.md)。
 

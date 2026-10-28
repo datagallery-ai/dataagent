@@ -38,7 +38,7 @@
 TUI：
 
 ```bash
-npm run start:tui -- --v2 --resume <threadId>
+npm run start:tui -- --resume <threadId>
 ```
 
 或在界面里使用 `/resume`。

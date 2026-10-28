@@ -109,25 +109,26 @@ DataFoundry 仅支持基于 Cookie 的密码会话。每个注册用户拥有个
 
 ## 正式态部署边界
 
-默认部署路径是正式态（`build` / `start`），不要跑 `npm run dev`。正式测试与真实生产启动命令相同：
+正式测试与真实生产启动命令相同：
 
 ```bash
-npm run build && npm run build:web
-npm run start:api
-npm run start:web
+npm run build
+npm run start
 ```
 
-| 环境 | 邮箱 | 公网地址 |
-| --- | --- | --- |
-| 正式测试 | `AUTH_EMAIL_DELIVERY=test` | 本机 / 内网 |
-| 真实生产 | `AUTH_EMAIL_DELIVERY=smtp` | 公网 HTTPS + 反代 |
+分开启动用 `npm run start:api`，再 `npm run start:web`。网页转发读 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。
+
+| 环境 | 网络 |
+| --- | --- |
+| 正式测试 | 本机 / 内网 |
+| 真实生产 | 公网 HTTPS + 反代 |
 
 浏览器经 Next 同源 BFF 访问 REST 与 CopilotKit SSE。探针区分：
 
 - `GET /healthz`：进程存活
 - `GET /ready`：Mastra 与 builtin 资源就绪（响应含 `startup_ms` / `phases`）
 
-反代样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径不压缩、不缓冲。贡献者热更新见 [快速开始附录](../quick-start.md)。
+反代样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径不压缩、不缓冲。
 
 真实生产通常还需要补充：
 

@@ -1,4 +1,4 @@
-import { configApi, getConfigApiBaseUrl } from "../../lib/config-api";
+import { configApi } from "../../lib/config-api";
 import type { ArtifactExportFormat, JobDto } from "../../lib/config-api";
 import { hasCapability } from "./data-task-state";
 
@@ -12,10 +12,6 @@ export type ArtifactExportMeta = {
 export const artifactExportClient = {
   isReady(): boolean {
     return hasCapability("artifact.export");
-  },
-
-  getBaseUrl(): string {
-    return getConfigApiBaseUrl();
   },
 
   async getArtifactMeta(id: string): Promise<ArtifactExportMeta> {
@@ -47,16 +43,16 @@ export const artifactExportClient = {
   },
 
   previewUrl(id: string): string {
-    return `${getConfigApiBaseUrl()}/api/v1/artifacts/${encodeURIComponent(id)}/preview`;
+    return `/api/v1/artifacts/${encodeURIComponent(id)}/preview`;
   },
 
   downloadUrl(id: string, format?: ArtifactExportFormat): string {
     const query = format ? `?format=${encodeURIComponent(format)}` : "";
-    return `${getConfigApiBaseUrl()}/api/v1/artifacts/${encodeURIComponent(id)}/download${query}`;
+    return `/api/v1/artifacts/${encodeURIComponent(id)}/download${query}`;
   },
 
   /** Inline content URL (Content-Disposition: inline) — used as <img>/<iframe> src. */
   contentUrl(id: string): string {
-    return `${getConfigApiBaseUrl()}/api/v1/artifacts/${encodeURIComponent(id)}/content`;
+    return `/api/v1/artifacts/${encodeURIComponent(id)}/content`;
   },
 };

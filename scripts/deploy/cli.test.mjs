@@ -9,11 +9,13 @@ import {
   collectManagedPorts,
   createDeployLogWriter,
   formatStartBlocked,
+  healthProbeUrls,
   inspectWritablePath,
+  managedWebStartArgs,
   prepareStartEnvironment,
-  resolveAuthPublicBaseUrl,
   resolveTuiRuntimeUrl,
-  runDeploymentDoctor
+  runDeploymentDoctor,
+  webListenFromState
 } from "./cli.mjs";
 
 function createAsk(answers) {
@@ -23,6 +25,41 @@ function createAsk(answers) {
     return queue.shift();
   };
 }
+
+test("health probes use the configured web and api hosts", () => {
+  const env = {
+    DATAAGENT_HOME: "/no/such/dataagent-home",
+    DATAAGENT_CONFIG: new URL("../fixtures/server-listen.json", import.meta.url).pathname
+  };
+  assert.deepEqual(healthProbeUrls(env, { host: "::1", port: "3000" }), {
+    apiBaseUrl: "http://0.0.0.0:8877",
+    webUrl: "http://[::1]:3000"
+  });
+  assert.equal(
+    resolveTuiRuntimeUrl(env),
+    "http://0.0.0.0:8877/dataagent/stream"
+  );
+});
+
+test("a running deployment remembers the web listen host", () => {
+  assert.deepEqual(
+    webListenFromState({ ports: { web: 3000 }, listen: { webHost: "::1" } }),
+    { host: "::1", port: "3000" }
+  );
+  assert.deepEqual(
+    webListenFromState({ ports: { web: 3000 } }, { host: "127.0.0.1", port: "3000" }),
+    { host: "127.0.0.1", port: "3000" }
+  );
+});
+
+test("deploy start uses the same web host and port flags as npm run start", () => {
+  assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3310" }), [
+    "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3310"
+  ]);
+  assert.deepEqual(managedWebStartArgs({}), [
+    "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3000"
+  ]);
+});
 
 test("first run selects Web and API ports with defaults", async () => {
   const lines = [];
@@ -37,28 +74,15 @@ test("first run selects Web and API ports with defaults", async () => {
     print: (line) => lines.push(String(line)),
     probe: async () => ({ available: true, owner: null })
   });
-  assert.equal(result.env.WEB_PORT, "3000");
-  assert.equal(result.env.API_PORT, undefined);
+  assert.equal(result.web.port, "3000");
   assert.equal(result.listen.port, "8790");
-  assert.doesNotMatch(result.envText, /API_PORT/);
+  assert.equal(result.envText.trim(), "");
 });
 
 test("existing complete config skips prompts unless reconfigure", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = [
-    "WEB_PORT=3310",
-    "API_PORT=8877",
-    "AUTH_SESSION_SECRET=existing-session-secret-value",
-    "SECRET_MASTER_KEY=existing-master-secret-value",
-    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
-    "AUTH_REGISTRATION_MODE=open",
-    "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=127.0.0.1",
-    "API_HOST=127.0.0.1",
-    "STORAGE_ROOT_DIR=storage",
-    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
-  ].join("\n");
+  const source = "LLM_MODEL=qwen-plus\n";
   let asked = 0;
   const result = await configureDeploymentInteractively({
     root,
@@ -73,25 +97,14 @@ test("existing complete config skips prompts unless reconfigure", async () => {
     probe: async () => ({ available: true, owner: null })
   });
   assert.equal(asked, 0);
-  assert.equal(result.env.WEB_PORT, "3310");
+  assert.equal(result.web.port, "3000");
+  assert.match(result.envText, /LLM_MODEL=qwen-plus/);
 });
 
-test("legacy complete env missing AUTH_REGISTRATION_MODE fills default and skips prompts", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-legacy-reg-"));
+test("an existing env file skips prompts and keeps its lines", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-kept-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = [
-    "WEB_PORT=3310",
-    "API_PORT=8877",
-    "AUTH_SESSION_SECRET=existing-session-secret-value",
-    "SECRET_MASTER_KEY=existing-master-secret-value",
-    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
-    "DATAFOUNDRY_AUTH_MODE=password",
-    "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=0.0.0.0",
-    "API_HOST=127.0.0.1",
-    "STORAGE_ROOT_DIR=storage",
-    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
-  ].join("\n");
+  const source = "NOTE=left-alone\n";
   let asked = 0;
   const result = await configureDeploymentInteractively({
     root,
@@ -106,11 +119,8 @@ test("legacy complete env missing AUTH_REGISTRATION_MODE fills default and skips
     probe: async () => ({ available: true, owner: null })
   });
   assert.equal(asked, 0);
-  assert.equal(result.env.WEB_PORT, "3310");
-  assert.equal(result.env.AUTH_REGISTRATION_MODE, "open");
-  assert.match(result.envText, /^AUTH_REGISTRATION_MODE=open$/m);
-  assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
-  assert.doesNotMatch(result.envText, /DATAFOUNDRY_AUTH_MODE/);
+  assert.equal(result.web.port, "3000");
+  assert.match(result.envText, /NOTE=left-alone/);
 });
 
 test("partial .env is not treated as complete before fill and still prompts", async () => {
@@ -129,7 +139,7 @@ test("partial .env is not treated as complete before fill and still prompts", as
     probe: async () => ({ available: true, owner: null })
   });
   assert.match(result.envText, /CUSTOM=keep-me/);
-  assert.ok(asked > 0);
+  assert.equal(asked, 0);
 });
 
 test("non-interactive never calls ask and uses loopback defaults", async () => {
@@ -144,31 +154,26 @@ test("non-interactive never calls ask and uses loopback defaults", async () => {
     print: () => {},
     probe: async () => ({ available: true, owner: null })
   });
-  assert.equal(result.env.WEB_PORT, "3000");
-  assert.equal(result.env.WEB_HOST, "127.0.0.1");
-  assert.equal(result.env.API_HOST, undefined);
-  assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "http://127.0.0.1:3000");
-  assert.equal(result.env.DATAFOUNDRY_AUTH_MODE, undefined);
-  assert.equal(result.env.DATALINK_ENABLED, undefined);
+  assert.equal(result.web.port, "3000");
+  assert.equal(result.web.host, "127.0.0.1");
+  assert.equal(result.envText.trim(), "");
 });
 
-test("non-interactive rejects wildcard bind hosts", async () => {
+test("non-interactive does not copy process env into .env", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  await assert.rejects(
-    () =>
-      configureDeploymentInteractively({
-        root,
-        sourceText: "",
-        reconfigure: false,
-        nonInteractive: true,
-        processEnv: { WEB_HOST: "0.0.0.0" },
-        ask: async () => assert.fail("must not prompt"),
-        print: () => {},
-        probe: async () => ({ available: true, owner: null })
-      }),
-    /WEB_HOST|loopback|SSH|TLS/i
-  );
+  const result = await configureDeploymentInteractively({
+    root,
+    sourceText: "",
+    reconfigure: false,
+    nonInteractive: true,
+    processEnv: { UNRELATED: "1" },
+    ask: async () => assert.fail("must not prompt"),
+    print: () => {},
+    probe: async () => ({ available: true, owner: null })
+  });
+  assert.equal(result.web.host, "127.0.0.1");
+  assert.doesNotMatch(result.envText, /UNRELATED/);
 });
 
 test("port menu rejects n with explicit hint", async () => {
@@ -209,18 +214,7 @@ test("port menu aborts after too many invalid choices", async () => {
 test("reconfigure creates backup and keeps secrets", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = [
-    "WEB_PORT=3000",
-    "API_PORT=8787",
-    "AUTH_SESSION_SECRET=existing-session-secret-value",
-    "SECRET_MASTER_KEY=existing-master-secret-value",
-    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000",
-    "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=127.0.0.1",
-    "API_HOST=127.0.0.1",
-    "STORAGE_ROOT_DIR=storage",
-    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
-  ].join("\n");
+  const source = "LLM_MODEL=qwen-plus\n";
   await writeFile(path.join(root, ".env"), `${source}\n`);
   const result = await configureDeploymentInteractively({
     root,
@@ -233,7 +227,7 @@ test("reconfigure creates backup and keeps secrets", async () => {
     write: true,
     timestamp: "20260722-150000"
   });
-  assert.match(result.envText, /AUTH_SESSION_SECRET=existing-session-secret-value/);
+  assert.match(result.envText, /LLM_MODEL=qwen-plus/);
   assert.equal(
     await readFile(path.join(root, ".env.backup-20260722-150000"), "utf8"),
     `${source}\n`
@@ -242,13 +236,13 @@ test("reconfigure creates backup and keeps secrets", async () => {
 
 test("collectManagedPorts ignores bare .env ports without a verified running state", async () => {
   const bare = await collectManagedPorts(
-    { WEB_PORT: "3310", API_PORT: "8877" },
+    {},
     null
   );
   assert.deepEqual([...bare], []);
 
   const deadPid = await collectManagedPorts(
-    { WEB_PORT: "3310", API_PORT: "8877" },
+    {},
     {
       pid: 99999999,
       launchId: "launch-1",
@@ -260,7 +254,7 @@ test("collectManagedPorts ignores bare .env ports without a verified running sta
 
 test("collectManagedPorts marks state ports only when pid is alive and launchId verifies", async () => {
   const unmanaged = await collectManagedPorts(
-    { WEB_PORT: "3310", API_PORT: "8877" },
+    {},
     {
       pid: process.pid,
       launchId: "expected-launch",
@@ -274,7 +268,7 @@ test("collectManagedPorts marks state ports only when pid is alive and launchId 
   assert.deepEqual([...unmanaged], []);
 
   const managed = await collectManagedPorts(
-    { WEB_PORT: "3000", API_PORT: "8787" },
+    {},
     {
       pid: process.pid,
       launchId: "launch-1",
@@ -291,19 +285,7 @@ test("collectManagedPorts marks state ports only when pid is alive and launchId 
 test("non-interactive fails when ports are occupied without a running managed state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-occupied-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = [
-    "WEB_PORT=3310",
-    "API_PORT=8877",
-    "AUTH_SESSION_SECRET=existing-session-secret-value",
-    "SECRET_MASTER_KEY=existing-master-secret-value",
-    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
-    "DATAFOUNDRY_AUTH_MODE=password",
-    "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=0.0.0.0",
-    "API_HOST=127.0.0.1",
-    "STORAGE_ROOT_DIR=storage",
-    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
-  ].join("\n");
+  const source = "LLM_MODEL=qwen-plus\n";
 
   await assert.rejects(
     () =>
@@ -325,18 +307,7 @@ test("reconfigure reuses managed listening ports only for a verified running sta
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
   await mkdir(path.join(root, "storage/run"), { recursive: true });
-  const source = [
-    "WEB_PORT=3310",
-    "API_PORT=8877",
-    "AUTH_SESSION_SECRET=existing-session-secret-value",
-    "SECRET_MASTER_KEY=existing-master-secret-value",
-    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3310",
-    "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=127.0.0.1",
-    "API_HOST=127.0.0.1",
-    "STORAGE_ROOT_DIR=storage",
-    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
-  ].join("\n");
+  const source = "LLM_MODEL=qwen-plus\n";
   const home = path.join(root, "dataagent-home");
   await mkdir(home, { recursive: true });
   await writeFile(
@@ -368,102 +339,19 @@ test("reconfigure reuses managed listening ports only for a verified running sta
       readLaunchId: async () => "launch-managed",
       forceLaunchIdCheck: true
     },
-    processEnv: { DATAAGENT_HOME: home }
+    processEnv: { DATAAGENT_HOME: home },
+    web: { host: "127.0.0.1", port: "3310" }
   });
-  assert.equal(result.env.WEB_PORT, "3310");
-  assert.equal(result.env.API_PORT, undefined);
+  assert.equal(result.web.port, "3310");
   assert.equal(result.listen.port, "8877");
   assert.ok(probes.includes(3310));
   assert.ok(probes.includes(8877));
 });
 
-test("process env does not silently overwrite existing non-empty secrets", async () => {
-  const { overlayProcessEnv } = await import("./cli.mjs");
-  const source = [
-    "WEB_PORT=3000",
-    "API_PORT=8787",
-    "AUTH_SESSION_SECRET=disk-session-secret-value-32chars",
-    "SECRET_MASTER_KEY=disk-master-secret-value-32charsxx",
-    "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000"
-  ].join("\n");
-
-  const overlaid = overlayProcessEnv(source, {
-    WEB_PORT: "3310",
-    AUTH_SESSION_SECRET: "process-session-secret-should-not-win",
-    SECRET_MASTER_KEY: "process-master-secret-should-not-win"
-  });
-  const env = (await import("./config.mjs")).parseDeploymentEnvironment(overlaid);
-  assert.equal(env.WEB_PORT, "3310");
-  assert.equal(env.AUTH_SESSION_SECRET, "disk-session-secret-value-32chars");
-  assert.equal(env.SECRET_MASTER_KEY, "disk-master-secret-value-32charsxx");
-});
-
-test("process env may inject secrets only when disk is empty/placeholder or explicitly allowed", async () => {
-  const { overlayProcessEnv } = await import("./cli.mjs");
-  const { parseDeploymentEnvironment } = await import("./config.mjs");
-
-  const fromPlaceholder = overlayProcessEnv(
-    "AUTH_SESSION_SECRET=change-me\nSECRET_MASTER_KEY=\n",
-    {
-      AUTH_SESSION_SECRET: "ci-session-secret-value-at-least-32",
-      SECRET_MASTER_KEY: "ci-master-secret-value-at-least-32x"
-    }
-  );
-  const placeholderEnv = parseDeploymentEnvironment(fromPlaceholder);
-  assert.equal(placeholderEnv.AUTH_SESSION_SECRET, "ci-session-secret-value-at-least-32");
-  assert.equal(placeholderEnv.SECRET_MASTER_KEY, "ci-master-secret-value-at-least-32x");
-
-  const explicit = overlayProcessEnv(
-    "AUTH_SESSION_SECRET=disk-session-secret-value-32chars\nSECRET_MASTER_KEY=disk-master-secret-value-32charsxx\n",
-    {
-      AUTH_SESSION_SECRET: "ci-session-secret-value-at-least-32",
-      SECRET_MASTER_KEY: "ci-master-secret-value-at-least-32x",
-      DATAFOUNDRY_ALLOW_PROCESS_SECRET_OVERLAY: "1"
-    },
-    { allowProcessSecretOverlay: true }
-  );
-  const explicitEnv = parseDeploymentEnvironment(explicit);
-  assert.equal(explicitEnv.AUTH_SESSION_SECRET, "ci-session-secret-value-at-least-32");
-  assert.equal(explicitEnv.SECRET_MASTER_KEY, "ci-master-secret-value-at-least-32x");
-});
-test("resolveAuthPublicBaseUrl preserves HTTPS proxy URLs without explicit port", () => {
-  assert.equal(
-    resolveAuthPublicBaseUrl("https://prod.example.com", "3000", "3001"),
-    "https://prod.example.com"
-  );
-  assert.equal(
-    resolveAuthPublicBaseUrl("http://127.0.0.1:3000", "3000", "3001"),
-    "http://127.0.0.1:3001"
-  );
-  assert.equal(
-    resolveAuthPublicBaseUrl("https://prod.example.com:8443", "8443", "3001"),
-    "https://prod.example.com:8443"
-  );
-  assert.equal(
-    resolveAuthPublicBaseUrl("https://prod.example.com:3000", "3000", "3001"),
-    "https://prod.example.com:3000"
-  );
-  assert.equal(
-    resolveAuthPublicBaseUrl("http://example.com:3000", "3000", "3310"),
-    "http://example.com:3000"
-  );
-});
-
-test("reconfigure keeps HTTPS public URL when ports are unchanged", async () => {
+test("reconfigure leaves an existing public URL line unchanged", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = [
-    "WEB_PORT=3000",
-    "API_PORT=8787",
-    "AUTH_SESSION_SECRET=existing-session-secret-value",
-    "SECRET_MASTER_KEY=existing-master-secret-value",
-    "AUTH_PUBLIC_BASE_URL=https://prod.example.com",
-    "AUTH_EMAIL_DELIVERY=test",
-    "WEB_HOST=127.0.0.1",
-    "API_HOST=127.0.0.1",
-    "STORAGE_ROOT_DIR=storage",
-    "METADATA_DB_PATH=storage/metadata/workbench.sqlite"
-  ].join("\n");
+  const source = "LLM_MODEL=qwen-plus\n";
   const result = await configureDeploymentInteractively({
     root,
     sourceText: source,
@@ -473,13 +361,14 @@ test("reconfigure keeps HTTPS public URL when ports are unchanged", async () => 
     print: () => {},
     probe: async () => ({ available: true, owner: null })
   });
-  assert.equal(result.env.AUTH_PUBLIC_BASE_URL, "https://prod.example.com");
+  assert.equal(result.env.LLM_MODEL, "qwen-plus");
+  assert.match(result.envText, /LLM_MODEL=qwen-plus/);
 });
 
 test("createDeployLogWriter redacts secrets and updates deploy-latest.log", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-log-"));
   const writer = await createDeployLogWriter(root, { timestamp: "20260722143000" });
-  await writer.append("AUTH_SESSION_SECRET=fixture-deploy-secret-at-least-32-chars\nnpm ci output\n");
+  await writer.append("LLM_API_KEY=fixture-deploy-secret-at-least-32-chars\nnpm ci output\n");
   await writer.finalize();
   const logText = await readFile(path.join(root, "storage/logs/deploy-20260722143000.log"), "utf8");
   const latestText = await readFile(path.join(root, "storage/logs/deploy-latest.log"), "utf8");
@@ -492,12 +381,12 @@ test("createDeployLogWriter redacts secrets and updates deploy-latest.log", asyn
 test("createDeployLogWriter redacts secrets split across append chunks", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-log-chunk-"));
   const writer = await createDeployLogWriter(root, { timestamp: "20260722143001" });
-  await writer.append("AUTH_SESSION_SECRET=fixture-deploy-secret-");
+  await writer.append("LLM_API_KEY=fixture-deploy-secret-");
   await writer.append("at-least-32-chars\nnpm ci output\n");
   await writer.finalize();
   const logText = await readFile(path.join(root, "storage/logs/deploy-20260722143001.log"), "utf8");
   assert.doesNotMatch(logText, /fixture-deploy-secret-at-least-32-chars/);
-  assert.match(logText, /AUTH_SESSION_SECRET=\*{4,8}/);
+  assert.match(logText, /LLM_API_KEY=\*{4,8}/);
   assert.match(logText, /npm ci output/);
 });
 
@@ -506,13 +395,7 @@ test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pi
   await mkdir(path.join(root, "storage"), { recursive: true });
   await writeFile(
     path.join(root, ".env"),
-    [
-      "WEB_PORT=3000",
-      "API_PORT=8787",
-      "AUTH_SESSION_SECRET=existing-session-secret-value",
-      "SECRET_MASTER_KEY=existing-master-secret-value",
-      "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000"
-    ].join("\n")
+    "LLM_MODEL=qwen-plus\n"
   );
   const beforeEntries = await readdir(path.join(root, "storage"));
   const lines = [];
@@ -531,7 +414,7 @@ test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pi
   assert.match(joined, /^arch: /m);
   assert.match(joined, /dependency node: ok/);
   assert.match(joined, /config: ok/);
-  assert.match(joined, /registration=open/);
+  assert.match(joined, /config web=http:\/\/127\.0\.0\.1:3000/);
   assert.match(joined, /port web 3000: available/);
   assert.match(joined, /permissions storage: writable/);
   assert.match(joined, /disk free:/);
@@ -563,13 +446,7 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
   await mkdir(path.join(root, "storage/run"), { recursive: true });
   await writeFile(
     path.join(root, ".env"),
-    [
-      "WEB_PORT=3000",
-      "API_PORT=8787",
-      "AUTH_SESSION_SECRET=existing-session-secret-value",
-      "SECRET_MASTER_KEY=existing-master-secret-value",
-      "AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000"
-    ].join("\n")
+    "LLM_MODEL=qwen-plus\n"
   );
   await writeFile(
     path.join(root, "storage/run/deployment.json"),
@@ -604,54 +481,34 @@ test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
       DATAAGENT_HOME: "/no/such/dataagent-home",
       DATAAGENT_CONFIG: new URL("../fixtures/server-listen.json", import.meta.url).pathname,
     }),
-    "http://127.0.0.1:8877/dataagent/stream"
+    "http://0.0.0.0:8877/dataagent/stream"
   );
   assert.equal(
-    resolveTuiRuntimeUrl({ API_PORT: "1" }, "http://example/api/copilotkit"),
+    resolveTuiRuntimeUrl({}, "http://example/api/copilotkit"),
     "http://example/api/copilotkit"
   );
 });
 
 const COMPLETE_ENV = {
-  WEB_PORT: "3310",
-  API_PORT: "8877",
-  API_HOST: "127.0.0.1",
-  AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3310",
-  AUTH_REGISTRATION_MODE: "open",
-  AUTH_SESSION_SECRET: "existing-session-secret-value",
-  SECRET_MASTER_KEY: "existing-master-secret-value"
+  LLM_MODEL: "qwen-plus"
 };
 
 test("start names missing .env variables and does not write .env.local", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
   await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
-  await assert.rejects(
-    () => prepareStartEnvironment(root, {}),
-    (error) => {
-      assert.match(error.message, /缺少合法完整的 \.env 配置，缺：/);
-      assert.match(error.message, /WEB_PORT/);
-      assert.match(error.message, /AUTH_PUBLIC_BASE_URL/);
-      assert.match(error.message, /AUTH_REGISTRATION_MODE/);
-      assert.match(error.message, /AUTH_SESSION_SECRET/);
-      assert.match(error.message, /SECRET_MASTER_KEY/);
-      assert.match(error.message, /请先运行 \.\/deploy\.sh deploy/);
-      return true;
-    }
-  );
-  assert.equal(existsSync(path.join(root, "apps/web/.env.local")), false);
+  await prepareStartEnvironment(root, {});
   assert.equal(
-    formatStartBlocked(["AUTH_SESSION_SECRET"], ["apps/web/.next/BUILD_ID"]),
-    "缺少合法完整的 .env 配置，缺：AUTH_SESSION_SECRET；缺少文件：apps/web/.next/BUILD_ID。请先运行 ./deploy.sh deploy"
+    formatStartBlocked(["EXAMPLE"], ["apps/web/.next/BUILD_ID"]),
+    "缺少合法完整的 .env 配置，缺：EXAMPLE；缺少文件：apps/web/.next/BUILD_ID。请先运行 ./deploy.sh deploy"
   );
 });
 
-test("start writes apps/web/.env.local from a complete .env without new secrets", async () => {
+test("start with a complete .env does not write a web env file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
   await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
   await prepareStartEnvironment(root, COMPLETE_ENV);
-  const webEnv = await readFile(path.join(root, "apps/web/.env.local"), "utf8");
-  assert.match(webEnv, /API_PROXY_TARGET=http:\/\/127\.0\.0\.1:8790/);
+  assert.equal(existsSync(path.join(root, "apps/web/.env.local")), false);
   assert.equal(existsSync(path.join(root, ".env")), false);
 });

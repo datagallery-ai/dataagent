@@ -6,7 +6,7 @@
 uv sync --project runtime/agentkit --locked
 uv run --project runtime/agentkit ruff check runtime/agentkit
 uv run --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
-npm test --workspace @datafoundry/tui
+npm run test:tui
 ```
 
 持有模型凭据时，可额外运行带 `-m live` 的测试，见 [测试](testing.md)。

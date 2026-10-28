@@ -6,20 +6,24 @@
 
 ## 快速启动
 
-需要 macOS 或 Linux、Python 3.12、uv，以及仓库的 Node.js 依赖。在仓库根目录：
+需要 macOS 或 Linux、uv 和 Node.js 22。Python 要求 3.12，由安装命令通过 uv 安装。在仓库根目录：
 
 ```bash
-uv sync --project runtime/agentkit --locked
-npm run start:tui -- --v2
+npm install
+npm run build
 ```
 
-首次启动创建 `~/.dataagent/config.json`、`.env`、`skills/`、`hooks/` 和 `plugins/`，不覆盖已有文件。在 `~/.dataagent/.env` 填写 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`，再运行一次。
+`npm install` 结束后执行 `uv sync --project runtime/agentkit --frozen --no-dev --python 3.12`。`npm run build` 编译网页和 TUI。
 
-沿用仓库根目录的 `.env` 时：
+直接启动 TUI，由它拉起后端：
 
 ```bash
-npm run start:tui -- --v2 --env-file .env --workspace "$PWD"
+npm run start:tui
 ```
+
+地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。
+
+在 `DATAAGENT_HOME`（默认 `~/.dataagent`）里填写 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
 
 手动启动后端：
 

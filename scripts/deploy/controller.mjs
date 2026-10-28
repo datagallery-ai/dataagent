@@ -51,10 +51,6 @@ export function createDeploymentController(deps) {
       await deps.installProject(config, parsed);
       calls.push("install");
 
-      stage = "build-typescript";
-      await deps.buildTypeScript(config, parsed);
-      calls.push("build-typescript");
-
       stage = "build-web";
       await deps.buildWeb(config, parsed);
       calls.push("build-web");

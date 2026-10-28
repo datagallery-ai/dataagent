@@ -107,11 +107,6 @@ async function main() {
 
   const env = {
     ...process.env,
-    WEB_HOST: "127.0.0.1",
-    WEB_PORT: String(webPort),
-    AUTH_PUBLIC_BASE_URL: `http://127.0.0.1:${webPort}`,
-    AUTH_SESSION_SECRET: FIXTURE_SECRET,
-    SECRET_MASTER_KEY: FIXTURE_SECRET,
     CI: "true",
     SKIP_POSTINSTALL_BUILD: "1",
     DATAAGENT_HOME: path.join(tempRoot, "dataagent-home")
@@ -135,7 +130,7 @@ async function main() {
     const redactProbe = await createDeployLogWriter(tempRoot, { timestamp: "smoke-redact-probe" });
     await redactProbe.append(
       [
-        `AUTH_SESSION_SECRET=${FIXTURE_SECRET}`,
+        `LLM_API_KEY=${FIXTURE_SECRET}`,
         `Authorization: Bearer ${FIXTURE_SECRET}`,
         `{"apiKey":"${FIXTURE_SECRET}"}`,
         `https://user:${FIXTURE_SECRET}@example.com/callback`,
@@ -149,10 +144,10 @@ async function main() {
       "utf8"
     );
     scanForSecrets(probeLog);
-    assert.match(probeLog, /AUTH_SESSION_SECRET=\*+/);
+    assert.match(probeLog, /LLM_API_KEY=\*+/);
     assert.match(probeLog, /Authorization: Bearer \*+/i);
 
-    run("bash", ["./deploy.sh", "deploy", "--non-interactive"], {
+    run("bash", ["./deploy.sh", "deploy", "--non-interactive", "--web-port", String(webPort)], {
       cwd: tempRoot,
       env,
       timeout: 25 * 60_000
@@ -171,11 +166,10 @@ async function main() {
     assert.ok(web.ok, `Web should be reachable, got ${web.status}`);
 
     const envText = await readFile(path.join(tempRoot, ".env"), "utf8");
-    assert.match(envText, new RegExp(`^AUTH_SESSION_SECRET=${FIXTURE_SECRET}$`, "m"));
     assert.doesNotMatch(envText, /^LLM_API_KEY=.+$/m);
     assert.doesNotMatch(envText, /^LLM_MODEL=.+$/m);
 
-    run("bash", ["./deploy.sh", "restart"], { cwd: tempRoot, env, timeout: 10 * 60_000 });
+    run("bash", ["./deploy.sh", "restart", "--web-port", String(webPort)], { cwd: tempRoot, env, timeout: 10 * 60_000 });
     const statusAfterRestart = run("bash", ["./deploy.sh", "status"], { cwd: tempRoot, env });
     scanForSecrets(`${statusAfterRestart.stdout}\n${statusAfterRestart.stderr}`);
     assert.match(statusAfterRestart.stdout, /进程\s+running/);

@@ -47,7 +47,7 @@ DATAAGENT_SEMANTIC_LIVE_ENV=/absolute/path/to/.env \
 ## TUI
 
 ```bash
-npm test --workspace @datafoundry/tui
+npm run test:tui
 ```
 
 改 Ink 全屏光标之前，先跑 Python 套件里的 PTY 探针。若上游已经修好一行偏移，删掉补丁，不要叠第二层。

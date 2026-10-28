@@ -127,7 +127,7 @@ function sleep(ms) {
 export async function verifySelectedPorts(services, options = {}) {
   const {
     managedPorts = new Set(),
-    probe = (port) => probePort("0.0.0.0", port),
+    probe = (port, host = "0.0.0.0") => probePort(host, port),
     retries = 5,
     retryDelayMs = 200
   } = options;
@@ -138,7 +138,7 @@ export async function verifySelectedPorts(services, options = {}) {
 
     let lastResult = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
-      lastResult = await probe(port);
+      lastResult = await probe(port, service.host || "0.0.0.0");
       if (lastResult.available) break;
       if (attempt < retries) await sleep(retryDelayMs);
     }
