@@ -385,6 +385,20 @@ class TestContextReferenceRewriterHelpers:
         assert "不要误选数组第一个" in recent_prompt
         assert "刚才" in recent_prompt
 
+    def test_prompts_do_not_bind_business_references_to_trajectory_nodes(self) -> None:
+        """「这家公司」等指代业务主体，不能被替换成上一轮的结果节点而缩小查询范围。"""
+        query = "这家公司去年的情况呢？"
+        analyze_prompt = _build_analyze_prompt(query)
+        assert "业务主体、属性、地域与期间指代（如「这家公司」" in analyze_prompt
+        assert "若只有这类指代，needs_rewrite=false" in analyze_prompt
+
+        rewrite_prompt = _build_llm_prompt(
+            query,
+            [{"node_id": "Table(table00000)", "node_type": "Table", "path": "/workspace/top10.csv"}],
+            temporal_hint="recent",
+        )
+        assert "不能将「这家公司」「该产品」「当地」「同期」绑定到 Table、Response 或 State" in rewrite_prompt
+
     def test_validate_rewrite_plan_success(self) -> None:
         parsed = {
             "decision": "rewrite",
