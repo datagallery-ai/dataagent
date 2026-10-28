@@ -20,6 +20,17 @@ from loguru import logger
 from sqlglot import exp
 
 
+def validate_sql_syntax(content: str) -> list[str]:
+    """Parse the original SQL using the Spark dialect."""
+    if not content.strip():
+        return ["SQL 文件不能为空"]
+    try:
+        sqlglot.parse(content, read="hive", error_level=sqlglot.errors.ErrorLevel.RAISE)
+    except sqlglot.errors.ParseError as exc:
+        return [f"SQL语法校验失败：{exc}"]
+    return []
+
+
 def _extract_columns_block(content: str) -> str | None:
     """
     使用深度感知解析提取 CREATE TABLE 字段列表块。
