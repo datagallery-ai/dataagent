@@ -1,6 +1,7 @@
 """Validate SQL artifacts with migrated static checks and the host's native model."""
 
 import json
+from pathlib import Path
 
 from langchain.tools import ToolRuntime
 from utils.checks import _validate_ddl_comprehensive, _validate_dml
@@ -33,10 +34,8 @@ async def validate_deliverables(
             "dml": dml.read_text(),
             "evidence": evidence,
         }
-        instruction = (
-            "依据给定元数据、需求和 SQL 检查数据工程交付。检查目标字段顺序、类型、粒度、JOIN、过滤和口径。"
-            "不能把缺少证据当作错误或已通过；明确标注未验证项。只返回 JSON："
-            '{"warnings": ["有证据的问题或未验证项"], "suggestions": ["可选改进"]}。'
+        instruction = (Path(__file__).resolve().parents[1] / "prompts/quality_check.md").read_text(
+            encoding="utf-8"
         )
         try:
             model = runtime.context.get_model(settings.get("model", "primary"))

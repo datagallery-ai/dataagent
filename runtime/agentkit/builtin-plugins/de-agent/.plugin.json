@@ -51,6 +51,14 @@
       {
         "entrypoint": "hooks/files.py:check_ddl",
         "matcher": "edit_file"
+      },
+      {
+        "entrypoint": "hooks/files.py:check_insert_syntax",
+        "matcher": "write_file"
+      },
+      {
+        "entrypoint": "hooks/files.py:check_insert_syntax",
+        "matcher": "edit_file"
       }
     ],
     "before_tool": [

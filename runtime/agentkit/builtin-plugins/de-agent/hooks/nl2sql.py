@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import sqlglot
+from loguru import logger
 from sqlglot import exp
 from utils.checks import _validate_ddl_comprehensive
 from utils.evidence import model_evidence
@@ -48,7 +49,7 @@ def prepare_input(state, runtime, *, params):
     if errors:
         raise ValueError("Fix target DDL before generating INSERT: " + "; ".join(errors))
     rules = (
-        Path(__file__).resolve().parents[1] / "skills/feature-engineering/references/SQL_RULES.md"
+        Path(__file__).resolve().parents[1] / "skills/sql-rules/references/dml_rules.md"
     ).read_text(encoding="utf-8")
     evidence = {
         "source_table": source_table,
@@ -116,8 +117,9 @@ def finish_output(result, runtime, *, params):
     if result.get("error"):
         return result
     sql = result.get("sql", "").strip()
+    dialect = "hive"
     # Scheduler substitutions are not SQL tokens; normalize only the parse copy.
-    parsed = sqlglot.parse(re.sub(r"\$\{[^}]+\}", "scheduler_value", sql), read="hive")
+    parsed = sqlglot.parse(re.sub(r"\$\{[^}]+\}", "scheduler_value", sql), read=dialect)
     if len(parsed) != 1 or not isinstance(parsed[0], exp.Insert):
         raise ValueError("NL2SQL must return exactly one INSERT statement")
     target = parsed[0].this
@@ -130,6 +132,15 @@ def finish_output(result, runtime, *, params):
     actual = f"{target.db}.{target.name}"
     if actual.casefold() != expected.casefold():
         raise ValueError(f"INSERT target {actual} differs from target DDL {expected}")
+    try:
+        sql = sqlglot.parse_one(sql, read=dialect).sql(pretty=True)
+    except Exception:
+        try:
+            import sqlparse
+
+            sql = sqlparse.format(sql, reindent=True, keyword_case="upper")
+        except Exception:
+            logger.warning("SQL cannot be reformatted.")
     folder = runtime.context.session.outputs / "sql"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"insert_{actual}.sql"
