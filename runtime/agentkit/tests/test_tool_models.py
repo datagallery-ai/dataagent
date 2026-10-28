@@ -267,7 +267,7 @@ async def test_sdk_owned_context_reaches_root_and_child_tools(tool_runtime, chil
 
 
 @pytest.mark.parametrize("child", [False, True])
-async def test_http_preserves_owned_context_and_traces_nested_model(tool_runtime, child):
+async def test_http_preserves_owned_context_without_tracing_nested_model(tool_runtime, child):
     model = ScriptedModel(responses=[*agent_responses(child), *agent_responses(child)])
     helper = ScriptedModel(responses=[AIMessage(content="Only helper output") for _ in range(2)])
     with patch("dataagent.models.build_model", return_value=helper) as create:
@@ -289,7 +289,10 @@ async def test_http_preserves_owned_context_and_traces_nested_model(tool_runtime
     nested_models = [item for item in records if attributes(item).get("langsmith.span.kind") == "llm"
                      and item.get("parentSpanId") in by_id
                      and by_id[item["parentSpanId"]]["name"] == "llm-utils__summarize_text"]
-    assert nested_models  # runtime.config preserved the real tool -> model parent link.
+    assert not nested_models
+    assert any(item["name"] == "llm-utils__summarize_text" for item in records)
+    models = [item for item in records if attributes(item).get("langsmith.span.kind") == "llm"]
+    assert len(models) == (4 if child else 2)  # Keep root and subagent model calls.
 
 
 async def test_http_unknown_alias_is_real_error_without_fallback(tool_runtime):
