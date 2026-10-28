@@ -21,57 +21,42 @@ description: |
 
 ## Core Constraints (Must Follow)
 
-1. **`partition_filter` 可省略,工具自动按"系统前一周 + 表后缀"生成**。DataOps SQL 校验器要求
-   `WHERE/ON` 出现分区列(readbook 第 13-15 节 + `verify.py` L107-108),工具默认会
-   按表名后缀规则自动补一份默认值(详见 §"默认 partition_filter");**但 LLM 仍
-   应优先通过 metadata_recall/get_table_schema 确认分区列名**,仅当工具默认拼出的
-   形态不符合业务时(例如要查"今天"、跨天、近 7 天),才**显式传** `partition_filter`
-   覆盖。成功返回里会带 `auto_partition_filter` 字段,告诉你工具实际用了什么。
-2. **`partition_filter` 必须是已落地的字面日期**,格式严格按工具白名单,详见 §"partition_filter 格式"。
-3. **绝对不要**在 `partition_filter` 里写 `$date` / `$hour` / `$minute` 占位符。DataOps 后端**不会**替换
-   这些占位符(它们是 DDL/DML 调度时的模板替换机制,probe 是临时 SELECT 探索,不走同一套机制),
-   工具层也会白名单拒绝。如果写了,工具返回 `invalid_partition_filter`,你得自己改对。
-4. **不要拼日期**。工具不做日期计算;你(SKILL 层)必须把"今天"显式写成 8 位字符串。
-5. **`columns` 必须显式传(不允许 None)**。DataOps 平台禁止 `SELECT *`,LLM 必须先
-   通过 metadata_recall/get_table_schema 拿到表的所有列名,再选要探查的列传入。
-   `columns=None` / `columns=[]` 会直接返回 `invalid_columns`,你得先查 schema 再重试。
-   如果你只需要看"某几列的值",也必须全部列出来(校验更严,白名单通过才用反引号引用)。
-6. **超时与重试**:probe 内部已经做了 timeout 夹紧(<= 300s)和 status 映射。**不要**在
-   agent loop 里看到 `status=running` 之外的非 `completed` 结果时盲目重试,直接读 `reason`/`errorLog` 给
-   用户解释,或换一张相邻表。
+1. **`partition_filter` 只能是 `pt_d = 'YYYYMMDD'` 一种形态**。小时/分钟分区
+   (`pt_h` / `pt_i`)、`dt` / `p_date` 等其它列名**一律不认** —— 哪怕表是
+   `_hm` / `_im` 后缀的小时表也只用 `pt_d` 探查（探查目的是确认「列名拼写 /
+   值域 / 是否有数据」，落到某个具体时刻没有意义）。
+2. **绝对不要**写 `$date` / `$hour` / `$minute` 占位符。DataOps 后端**不会**替换
+   这些占位符（它们是 DDL/DML 调度时的模板替换机制，probe 是临时 SELECT 探索，
+   不走同一套机制），工具层也会白名单拒绝。写了会返回 `invalid_partition_filter`。
+3. **不要拼日期**。工具不做日期计算；你必须把"今天"显式写成 8 位字符串。
+4. **`columns` 必须显式传(不允许 None)**。DataOps 平台禁止 `SELECT *`，LLM 必须先
+   通过 metadata_recall/get_table_schema 拿到表的所有列名，再选要探查的列传入。
+   `columns=None` / `columns=[]` 会直接返回 `invalid_columns`，你得先查 schema 再重试。
+   如果你只需要看"某几列的值"，也必须全部列出来（校验更严，白名单通过才用反引号引用）。
+5. **不要盲目重试**。看到非 `completed` 结果时直接读 `reason`/`errorLog` 给用户
+   解释，或换一张相邻表。
 
-## partition_filter 格式
+## partition_filter 规则
 
-工具层只接受下面 3 种**整串**形式(任何空格变体都允许,但 token 顺序和列名固定):
+工具层只接受下面这**一种**整串形式（空格变体允许，但列名固定）：
 
 | 形态 | 例 | 适用 |
 |---|---|---|
-| 仅天 | `pt_d = '20261012'` | 后缀为 `_dm` / `_ds` / 无后缀的天表 |
-| 天+小时 | `pt_d = '20261012' AND pt_h = '2026101214'` | 后缀为 `_hm` 的小时表 |
-| 天+小时+分钟 | `pt_d = '20261012' AND pt_h = '2026101214' AND pt_i = '202610121430'` | 后缀为 `_im` 的分钟表 |
+| 仅天 | `pt_d = '20261012'` | **所有表**(含 `_hm` / `_im` 后缀的小时/分钟表) |
 
-日期数字必须语义合法(`date(...)` 二次校验):月份 1-12、日期 1-31、小时 0-23、分钟 0-59。
-**字符串合法但语义非法**(`pt_d = '20261301'`)会被工具拒掉。
+日期数字必须语义合法（`date(...)` 二次校验）：月份 1-12、日期 1-31。
+**字符串合法但语义非法**（`pt_d = '20261301'`）会被工具拒掉。
 
-## 默认 partition_filter
+**缺省时工具自动生成**（避免 LLM 漏传导致 DataOps 平台 "partition condition
+not found"）：日期 = 系统当前日期 - 7 天（默认探查"前一周"，数据已稳定落盘；
+今天 20261012 → 默认查 20261005），形态恒为 `pt_d = 'YYYYMMDD'`，**不按表名
+后缀区分**。成功返回里会带 `auto_partition_filter` 字段告诉你实际用了什么。
 
-`partition_filter` 缺省时,工具按下列规则自动生成(避免 LLM 漏传导致 DataOps 平台
-"partition condition not found"):
+需要覆盖默认值时显式传 `partition_filter`：
 
-1. **日期** = 系统当前日期 - 7 天(默认探查"前一周",数据已稳定落盘)。
-   - 例:今天 20261012 → 工具默认查 20261006。
-   - 跨月/跨年自动处理(`timedelta(days=7)`)。
-2. **形态** = 按表名最后一个 `_xxx` 段:
-   - `_im` → `pt_d = 'YYYYMMDD' AND pt_h = 'YYYYMMDD00' AND pt_i = 'YYYYMMDD0000'`(00 时/0000 分是兜底)
-   - `_hm` → `pt_d = 'YYYYMMDD' AND pt_h = 'YYYYMMDD00'`
-   - 其他(`_dm` / `_ds` / 无后缀) → `pt_d = 'YYYYMMDD'`
-3. **覆盖场景**:工具默认拼出来不符合业务时,LLM 显式传 `partition_filter` 覆盖。常见场景:
-   - 用户明确要"今天"或"前 N 天" → 自己计算 yyyymmdd 后传入。
-   - 业务侧已确认分区列不是 `pt_d`(如 `dt` / `p_date`) → 工具白名单不接受,
-     改用普通 SQL 工具(`sql_reader` / `dataops_execute_sql`)。
-4. **不熟悉的表** —— 先 `get_table_desc` 看是不是 `pt_d` 分区,再判断要不要覆盖默认。
-   如果列名是 `dt` / `p_date` / `partition_key` 等**非白名单**列名,工具**没法**接受 —— 这是已知的
-   工具局限,这种情况下用普通 SQL 工具(`sql_reader` / `dataops_execute_sql`)做更灵活探查。
+- 用户明确要"今天"或"前 N 天" → 自己计算 yyyymmdd 后传入。
+- 业务侧已确认分区列不是 `pt_d` → 工具白名单不接受，改用普通 SQL 工具
+  （`sql_reader` / `dataops_execute_sql`）。
 
 ## 典型调用
 
@@ -84,10 +69,11 @@ dataops_probe_table(
     sample_size=5,
 )
 
-# 分钟表
+# 小时表 / 分钟表 —— 同样只用 pt_d,不要传 pt_h / pt_i
 dataops_probe_table(
     table="dws.user_action_im",
-    partition_filter="pt_d = '20261012' AND pt_h = '2026101214' AND pt_i = '202610121430'",
+    columns=["user_id", "action_type"],
+    partition_filter="pt_d = '20261012'",
 )
 ```
 
@@ -101,7 +87,7 @@ dataops_probe_table(
 
 ## 已知工具局限(写交付物时回退到 readbook)
 
-- 只接 `pt_d` / `pt_h` / `pt_i` 列名,其他分区列名不支持。
+- **只接 `pt_d` 一个分区列名**。`pt_h` / `pt_i` / `dt` / `p_date` 等都不支持。
 - 只支持字面日期,**不支持** `pt_d BETWEEN 'x' AND 'y'`、IN 列表、相对时间(`NOW() - INTERVAL 1 DAY`)。
 - 不支持带函数的 WHERE、`OR` 串联、IN 子查询(都被正则拒绝)。
 - 超过这些限制的探查,直接写 `SELECT ... FROM ... WHERE ...` 走标准 SQL 工具,但注意 DataOps 仍

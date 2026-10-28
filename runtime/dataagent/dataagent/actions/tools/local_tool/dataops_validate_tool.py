@@ -49,6 +49,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.actions.tools.local_tool.dataops_log_utils import (
+    bound_error_excerpt,
+    bound_error_fields,
+    bound_text,
+)
 from dataagent.core.managers import llm_manager
 from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 from dataagent.utils.log import logger
@@ -60,12 +65,46 @@ if TYPE_CHECKING:
 # ============================================================================
 # Retry / best-effort constants (shared by dataops_validate_sql_with_log_analysis)
 # ============================================================================
-MAX_VALIDATE_ATTEMPTS = 3
+MAX_VALIDATE_ATTEMPTS = 10
 _VALIDATION_REPORT_FILENAME = "validate_{table}.json"
 _DELIVERY_WARNING_FILENAME = "delivery_warning.md"
 _DELIVERY_WARNING_HEADER = (
     "⚠️ 本次交付物未通过 DataOps 校验（重试 {n} 次仍失败），仅作 best-effort，下游使用前必须人工复核"
 )
+
+# OBS 调度日志的防御性长度上限。``_analyze_log_directly`` 只会把日志头部
+# (异常抛出处)截到 32KB 再喂 LLM,所以这里留一个更宽松的上限即可。
+_MAX_OBS_LOG_CHARS = 256_000
+
+
+# ============================================================================
+# 分区日期策略
+#
+# 两条链路刻意使用**不同**的分区日期，互不共享：
+#
+#   - 语法校验链路（``validate_deliverables`` → ``dataops_validate_sql_with_log_analysis``）
+#     用「一年之后」的日期。校验只关心 SQL 能不能跑通；写入的分区在未来，
+#     不会与真实分区 / 真实数据发生任何冲突。
+#   - 交付后质量校验链路（post-hook → ``trial_compute_table``）
+#     用「一周之前」的日期。质量校验要看真实产出，一周前的分区已经稳定落盘。
+#
+# 注意：``_replace_target_table`` 只替换 ``= '$date'`` 这种**等值**形态，
+# ``<=`` / ``>=`` 形态和 ``${start_time,-30,yyyyMMdd}`` 这类宏它都匹配不到。
+# DataOps 后端也不替换这些占位符（见 dataops_probe_tool 的说明），所以
+# 源表上的范围过滤在质量校验链路里由 ``_collapse_pt_d_range`` 收敛成单日。
+# ============================================================================
+_VALIDATION_PARTITION_OFFSET_DAYS = 365
+_QUALITY_PARTITION_OFFSET_DAYS = -7
+
+
+def partition_date_for_validation() -> str:
+    """语法校验链路的分区日期：一年之后（``today + 365``）。"""
+    return (date.today() + timedelta(days=_VALIDATION_PARTITION_OFFSET_DAYS)).strftime("%Y%m%d")
+
+
+def partition_date_for_quality() -> str:
+    """交付后质量校验链路的分区日期：一周之前（``today - 7``）。"""
+    return (date.today() + timedelta(days=_QUALITY_PARTITION_OFFSET_DAYS)).strftime("%Y%m%d")
 
 
 def _get_dataops_resource(runtime):
@@ -179,7 +218,10 @@ def _build_failure_response(
 
     response_data = {
         "passed": False,
-        "error": error_msg or f"dataops rejected SQL (status={result_status})",
+        "error": bound_error_excerpt(
+            error_msg or f"dataops rejected SQL (status={result_status})",
+            label="error",
+        ),
         "job_id": job_id,
     }
 
@@ -247,7 +289,12 @@ def _is_create_sql(sql: str) -> bool:
     return bool(_CREATE_RE.search(sql))
 
 
-def _build_drop_sql(original_sql: str, user_account: str, table_suffix: str) -> str | None:
+def _build_drop_sql(
+    original_sql: str,
+    user_account: str,
+    table_suffix: str,
+    partition_date: str | None = None,
+) -> str | None:
     """Build DROP TABLE IF EXISTS statement for the temporary table.
 
     This is used when submitting CREATE TABLE to ensure clean table creation
@@ -257,12 +304,13 @@ def _build_drop_sql(original_sql: str, user_account: str, table_suffix: str) -> 
         original_sql: The original CREATE TABLE statement (before rewriting)
         user_account: User account for temp table naming
         table_suffix: Table suffix from resource metadata
+        partition_date: 分区日期（``YYYYMMDD``）；``None`` 时用语法校验链路的默认日期。
 
     Returns:
         DROP TABLE IF EXISTS statement for the temp table, or None if extraction fails.
     """
     # First rewrite to get the temp table name
-    rewritten = _replace_target_table(original_sql, user_account, table_suffix)
+    rewritten = _replace_target_table(original_sql, user_account, table_suffix, partition_date)
 
     # Extract the temp table name from the rewritten CREATE statement
     # Pattern: CREATE [EXTERNAL] TABLE [IF NOT EXISTS] temp_table (...)
@@ -279,29 +327,39 @@ def _build_drop_sql(original_sql: str, user_account: str, table_suffix: str) -> 
     return f"DROP TABLE IF EXISTS {temp_table}"
 
 
-def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str:
+def _replace_target_table(
+    sql: str,
+    user_account: str,
+    table_suffix: str,
+    partition_date: str | None = None,
+) -> str:
     """Replace target table names (CREATE TABLE, INSERT OVERWRITE) with temporary table format.
 
     Temporary table format: adhoctemp.tmp_{user_account}_{date}_{table_suffix}
 
-    Also replaces pt_d = '$date' (and other partition columns) with one year from today.
+    Also replaces pt_d = '$date' (and other partition columns) with ``partition_date``.
 
     Examples:
         CREATE TABLE biads.ads_xxx → CREATE TABLE adhoctemp.tmp_user_date_ads_xxx
         INSERT OVERWRITE TABLE biads.ads_yyy → INSERT OVERWRITE TABLE adhoctemp.tmp_user_date_ads_yyy
         INSERT OVERWRITE EXTERNAL TABLE xxx → INSERT OVERWRITE TABLE adhoctemp.tmp_user_date_xxx
         pt_d = '$date' → pt_d = 'YYYYMMDD'
+
+    Args:
+        partition_date: 分区日期（``YYYYMMDD``）。``None`` 时用语法校验链路的默认日期
+            （一年之后）。质量校验链路必须显式传入「一周之前」的日期。
     """
-    one_year_later = (date.today() + timedelta(days=365)).strftime("%Y%m%d")
+    if not partition_date:
+        partition_date = partition_date_for_validation()
     sql = re.sub(
         r"(\w+)\s*=\s*'\$date'",
-        lambda m: f"{m.group(1)} = '{one_year_later}'",
+        lambda m: f"{m.group(1)} = '{partition_date}'",
         sql,
         flags=re.IGNORECASE,
     )
     sql = re.sub(
         r"(\w+)\s*=\s*'\$\{date\}'",
-        lambda m: f"{m.group(1)} = '{one_year_later}'",
+        lambda m: f"{m.group(1)} = '{partition_date}'",
         sql,
         flags=re.IGNORECASE,
     )
@@ -353,7 +411,7 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
         )
 
         table_name = create_match.group(2)
-        temp_table = _get_temp_table_name(table_name, user_account, one_year_later, table_suffix)
+        temp_table = _get_temp_table_name(table_name, user_account, partition_date, table_suffix)
 
         # Find parentheses content
         paren_start = full_match.find("(", create_match.end())
@@ -383,7 +441,7 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
 
         db_name = insert_match.group(1)
         table_name = insert_match.group(2)
-        temp_table = _get_temp_table_name(table_name, user_account, one_year_later, table_suffix)
+        temp_table = _get_temp_table_name(table_name, user_account, partition_date, table_suffix)
 
         # Replace original table name
         original = f"{db_name}.{table_name}" if db_name else table_name
@@ -413,6 +471,129 @@ def _replace_target_table(sql: str, user_account: str, table_suffix: str) -> str
     return result
 
 
+# ---------------------------------------------------------------------------
+# pt_d 范围过滤 → 单日收敛（**仅**交付后质量校验链路）
+# ---------------------------------------------------------------------------
+#
+# 背景：交付物里的 DML 常用**范围**分区过滤来表达时间窗口：
+#
+#     WHERE pt_d <= '$date' AND pt_d >= '${start_time,-30,yyyyMMdd}'
+#
+# 这类写法在两条链路上都有问题：
+#   1. ``_replace_target_table`` 只替换 ``= '$date'``（正则要求 ``=``），
+#      ``<=`` / ``>=`` 匹配不到；``${start_time,...}`` 更是没人解析。
+#   2. DataOps 后端**不**替换这些占位符（见 dataops_probe_tool 的说明），
+#      于是比较的是字符串字面量：``'20261021' <= '$date'`` 恒为 False
+#      （``'2' > '$'``），源表被过滤成**空集** —— 试算扫不到任何行。
+#
+# 质量校验只关心「产出的数据长什么样」，不关心时间窗口的宽度，所以把范围
+# 收敛成**某一天**即可，既能扫到数据，又不用做宏解析。
+#
+# 收敛策略：取范围里的**上界**（``<=`` / ``<`` 的右值）作为那一天。
+#  - ``pt_d <= '20261021'``           → ``pt_d = '20261021'``
+#  - ``pt_d <  '20261021'``           → ``pt_d = '20261020'``（不含上界，前一天）
+#  - 上界是宏/占位符时用 ``partition_date``（质量校验链路的基准日）
+#
+# 只在**质量校验链路**启用：语法校验链路要保留原始范围语义（它只验证
+# 「SQL 能不能跑通」），而且它用的是「一年之后」的日期，收敛反而会掩盖问题。
+
+#: 识别 ``pt_d`` 与比较运算符 + 引号值（含 ``$date`` / ``${start_time,...}`` 宏）
+_RANGE_PARTITION_RE = re.compile(
+    r"(?P<col>\bpt_d\b)\s*(?P<op><=|>=|<|>|=)\s*'(?P<val>[^']*)'",
+    re.IGNORECASE,
+)
+
+#: 形如 ``${start_time,-30,yyyyMMdd}`` / ``${date}`` 的调度宏
+_SCHEDULER_MACRO_RE = re.compile(r"\$\{[^{}]*\}|\$\w+")
+
+
+def _is_scheduler_placeholder(value: str) -> bool:
+    """判断一个分区值是否是调度占位符（``$date`` / ``${start_time,-30,yyyyMMdd}``）。"""
+    return bool(_SCHEDULER_MACRO_RE.search(value or ""))
+
+
+def _shift_one_day_before(value: str) -> str:
+    """把 ``YYYYMMDD`` 往前挪一天；解析失败时原样返回。"""
+    try:
+        return (date(int(value[:4]), int(value[4:6]), int(value[6:8])) - timedelta(days=1)).strftime("%Y%m%d")
+    except (ValueError, IndexError):
+        return value
+
+
+def _collapse_pt_d_range(sql: str, partition_date: str) -> str:
+    """把 ``pt_d`` 的**范围**过滤收敛成 ``pt_d = '<某一天>'``。
+
+    只处理**范围**形态（``<=`` / ``>=`` / ``<`` / ``>``）的 ``pt_d`` 条件；
+    已经是 ``=`` 的单日条件保持原样。
+
+    **就地改写**，不删除任何条件：把范围内的每一条 ``pt_d`` 比较都换成同一天的
+    等值条件。这样不会出现「删掉条件后 ``AND``/``OR`` 链断裂」的语法问题，
+    也不会误伤 INSERT 目标表自己的 ``PARTITION(pt_d = ...)`` 声明。
+
+    收敛到哪一天：取范围的**上界**（``<=`` / ``<`` 的右值）。
+      - 上界是字面日期 → 用它；``<``（不含上界）→ 往前挪一天，仍落在原范围内；
+      - 上界是占位符/宏（``$date`` / ``${start_time,...}``）→ 用 ``partition_date``。
+
+    Args:
+        sql: 原始 SQL。
+        partition_date: 质量校验链路的基准日（``YYYYMMDD``），作为上界是占位符时的兜底。
+
+    Returns:
+        收敛后的 SQL。没有范围条件时原样返回。
+    """
+    if not sql or "pt_d" not in sql:
+        return sql
+
+    matches = list(_RANGE_PARTITION_RE.finditer(sql))
+    if not matches:
+        return sql
+
+    # --- 1) 先定下收敛到哪一天 -------------------------------------------
+    target: str | None = None
+    for match in matches:
+        op = match.group("op")
+        if op not in ("<=", "<"):
+            continue
+        value = match.group("val").strip()
+        if value and not _is_scheduler_placeholder(value):
+            target = _shift_one_day_before(value) if op == "<" else value
+            break
+        if target is None:
+            # 上界是占位符/宏 → 用质量校验链路的基准日
+            target = partition_date
+    if target is None:
+        return sql
+
+    logger.debug(
+        f"[_collapse_pt_d_range] collapsed pt_d range to pt_d = '{target}' (partition_date={partition_date})",
+    )
+
+    # --- 2) 就地把每条范围条件换成等值条件 --------------------------------
+    def _replace(match: re.Match) -> str:
+        if match.group("op") == "=":
+            return match.group(0)  # 单日条件不动
+        return f"{match.group('col')} = '{target}'"
+
+    result = _RANGE_PARTITION_RE.sub(_replace, sql)
+
+    # 收敛后可能出现重复的同一条条件（``pt_d <= X AND pt_d >= Y`` → 两遍
+    # ``pt_d = 'Z'``）。语义没错，但读着别扭，顺手去重。
+    result = re.sub(
+        rf"(\bpt_d\s*=\s*'{re.escape(target)}')"
+        rf"(\s+AND\s+\bpt_d\s*=\s*'{re.escape(target)}')+",
+        r"\1",
+        result,
+        flags=re.IGNORECASE,
+    )
+    return result
+
+
+# CTE 展开（LLM 内联）的等待上限（秒）。
+# 60s 偏紧：一次大 SQL 的 CTE 内联经常跑更久，超时后回退原始 SQL（仍带 CTE），
+# 提交给 DataOps 就会报 "table(s) agapdw._src do not exist"。
+# 300s 与非流式 LLM 调用默认超时（DEFAULT_LLM_NON_STREAM_TIMEOUT）一致。
+_CTE_EXPANSION_MAX_TIMEOUT_SEC = 300
+
 _CTE_SYSTEM_PROMPT = """Transform SQL for adHoc engines that do NOT support WITH AS (CTE) before INSERT.
 Rules:
 1. If no WITH AS clause → return unchanged.
@@ -438,15 +619,21 @@ def _has_cte(sql: str) -> bool:
     return with_pos != -1 and (insert_pos == -1 or with_pos < insert_pos)
 
 
-async def _expand_cte_for_dml(sql: str, timeout_sec: int = 30, runtime=None) -> str:
+async def _expand_cte_for_dml(sql: str, timeout_sec: int = _CTE_EXPANSION_MAX_TIMEOUT_SEC, runtime=None) -> str:
     """Expand WITH AS (CTE) in DML INSERT statements to equivalent inline subqueries.
 
     Only processes DML INSERT statements that contain WITH AS clauses.
     Returns the original SQL unchanged if no CTE is detected or if an error occurs.
     Does not modify the original saved file.
+
+    ``timeout_sec`` 上限为 :data:`_CTE_EXPANSION_MAX_TIMEOUT_SEC`（300s），并**真正生效**：
+    超时/失败都回退原始 SQL（仍带 CTE），提交给 DataOps 会报
+    ``table(s) agapdw._src do not exist``，所以这个上限要留足。
     """
     if not _has_cte(sql):
         return sql
+
+    timeout_sec = max(1, min(int(timeout_sec), _CTE_EXPANSION_MAX_TIMEOUT_SEC))
 
     try:
         if runtime is not None:
@@ -462,9 +649,12 @@ async def _expand_cte_for_dml(sql: str, timeout_sec: int = 30, runtime=None) -> 
             {"role": "user", "content": f"Transform this SQL:\n{sql}"},
         ]
         logger.debug(
-            f"[_expand_cte_for_dml] expanding CTE, original[:120]={sql[:120]!r}",
+            f"[_expand_cte_for_dml] expanding CTE (timeout={timeout_sec}s), original[:120]={sql[:120]!r}",
         )
-        response = await asyncio.to_thread(llm.invoke, messages)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(llm.invoke, messages),
+            timeout=timeout_sec,
+        )
         expanded = str(response.content).strip()
 
         # Strip markdown code fences if LLM wrapped output
@@ -484,7 +674,7 @@ async def _expand_cte_for_dml(sql: str, timeout_sec: int = 30, runtime=None) -> 
 
 
 # ---------------------------------------------------------------------------
-# Helpers for post-validate SELECT count(*) second-phase check
+# Constants for reasonable-check
 # ---------------------------------------------------------------------------
 
 _POST_VALIDATE_PARTITION_COL = "pt_d"
@@ -499,15 +689,19 @@ def _extract_temp_table_name(
     sql: str,
     user_account: str,
     table_suffix: str,
+    partition_date: str | None = None,
 ) -> str | None:
     """Extract the adhoctemp target table name from any rewritten SQL (CREATE or INSERT).
 
     Unified extractor for cleanup purposes. Returns None for SELECT-like SQL
     that doesn't materialize a temp table.
+
+    ``partition_date`` must match the value used when the SQL was rewritten,
+    otherwise the derived temp table name will not exist.
     """
     if _is_create_sql(sql):
         # CREATE: parse the rewritten CREATE statement
-        rewritten = _replace_target_table(sql, user_account, table_suffix)
+        rewritten = _replace_target_table(sql, user_account, table_suffix, partition_date)
         match = re.search(
             r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.`_-]+)",
             rewritten,
@@ -517,13 +711,14 @@ def _extract_temp_table_name(
             return None
         return match.group(1).strip().strip("`").strip("'").strip('"') or None
 
-    return _extract_insert_target_table(sql, user_account, table_suffix)
+    return _extract_insert_target_table(sql, user_account, table_suffix, partition_date)
 
 
 def _extract_insert_target_table(
     sql: str,
     user_account: str,
     table_suffix: str,
+    partition_date: str | None = None,
 ) -> str | None:
     """Extract the adhoctemp target table name from a rewritten INSERT sql.
 
@@ -531,7 +726,7 @@ def _extract_insert_target_table(
     then extracts the table identifier that was substituted.
     Returns None if no INSERT clause or table name is found.
     """
-    rewritten = _replace_target_table(sql, user_account, table_suffix)
+    rewritten = _replace_target_table(sql, user_account, table_suffix, partition_date)
     # The rewritten INSERT has the temp table in the INSERT clause.
     # Pattern: INSERT ... INTO <adhoctemp.tmp_...>
     m = re.search(
@@ -545,240 +740,6 @@ def _extract_insert_target_table(
     # Remove backtick/quotes if any
     table_ref = table_ref.strip("`").strip("'").strip('"')
     return table_ref if table_ref else None
-
-
-def _build_count_sql(rewritten_insert_sql: str, partition_col: str = _POST_VALIDATE_PARTITION_COL) -> str | None:
-    """Build SELECT count(*) FROM <adhoctemp tmp table> WHERE partition_col='<today>'.
-
-    The adhoctemp table name is extracted directly from the INSERT clause
-    (between INSERT and SELECT), not from the SELECT source.
-    """
-    one_year_later = (date.today() + timedelta(days=365)).strftime("%Y%m%d")
-    # Strip any trailing semicolon and whitespace
-    sql = rewritten_insert_sql.rstrip("; \t\r\n")
-
-    # Match the target table: between "INSERT [OVERWRITE|INTO] ..." and "SELECT"
-    # Use a greedy match for the table name (may contain dots/underscores/hyphens)
-    m = re.search(
-        r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?([\w.`_-]+)",
-        sql,
-        re.IGNORECASE,
-    )
-    if not m:
-        return None
-    target_table = m.group(1).strip().strip("`").strip("'").strip('"')
-    if not target_table:
-        return None
-    return f"SELECT count(*) FROM {target_table} WHERE {partition_col} = '{one_year_later}'"
-
-
-def _parse_count_from_collect(result: dict[str, Any]) -> int | None:
-    """Extract integer count from a completed collect result.
-
-    Tries ``data`` first (list of row dicts from CSV parse), then falls back
-    to trying to read the first numeric value found.
-    Returns None if parsing fails.
-    """
-    # 1. Try explicit data rows
-    data = result.get("data")
-    if isinstance(data, list) and len(data) > 0:
-        first_row = data[0]
-        if isinstance(first_row, dict):
-            for v in first_row.values():
-                try:
-                    val = float(str(v).strip())
-                    if val == int(val):
-                        return int(val)
-                    return int(val)
-                except (ValueError, TypeError):
-                    continue
-        elif first_row is not None:
-            try:
-                return int(float(str(first_row).strip()))
-            except (ValueError, TypeError):
-                pass
-
-    # 2. Fall back to data_meta.row_count
-    meta = result.get("data_meta")
-    if isinstance(meta, dict):
-        row_count = meta.get("row_count")
-        if isinstance(row_count, int):
-            return row_count
-        if isinstance(row_count, str):
-            try:
-                return int(float(row_count.strip()))
-            except (ValueError, TypeError):
-                pass
-
-    return None
-
-
-async def _analyze_count_zero_with_llm(
-    original_query: str,
-    generated_sql: str,
-    runtime=None,
-) -> dict[str, Any]:
-    """Ask LLM whether the INSERT SQL semantically matches the original NL query.
-
-    Returns ``{"has_mismatch": bool, "mismatch_reason": str, "fix_suggestion": str}``.
-    """
-    system_prompt = (
-        "You are a Spark SQL / NL2SQL analyst. Given:\n"
-        "1. The original natural language query from the user\n"
-        "2. A generated INSERT SQL statement\n"
-        "Determine whether the SQL faithfully implements the user's intent.\n\n"
-        "Return EXACTLY this JSON object (no markdown, no prose):\n"
-        "{\n"
-        '  "has_mismatch": true|false,\n'
-        '  "mismatch_reason": "<one sentence, <= 300 chars, empty string if no mismatch>",\n'
-        '  "fix_suggestion": "<actionable SQL correction, <= 200 chars, empty string if no mismatch>"\n'
-        "}\n\n"
-        "Common mismatch patterns to detect:\n"
-        "- WHERE/ON condition is too restrictive (filters out all rows)\n"
-        "- Wrong source or target table\n"
-        "- Incorrect join keys causing empty result\n"
-        "- Wrong date/partition value\n"
-        "- Logic is inverted (e.g., WHERE NOT condition when it should be WHERE condition)\n"
-        "- Missing GROUP BY or JOIN causing empty aggregation\n"
-        "- SELECT columns don't match what user asked for"
-    )
-    user_prompt = (
-        f"=== Original Natural Language Query ===\n{original_query}\n\n"
-        f"=== Generated INSERT SQL ===\n{generated_sql}\n\n"
-        f"=== Task ===\n"
-        f"Does the SQL faithfully implement the user's intent? If the SQL inserts 0 rows,\n"
-        f"what is the most likely cause?\n"
-    )
-
-    llm = None
-    llm_source = "none"
-    if runtime is not None:
-        runtime_llm_getter = getattr(runtime, "llm", None)
-        if callable(runtime_llm_getter):
-            with contextlib.suppress(Exception):  # noqa: BLE001
-                llm = runtime_llm_getter("planner")
-            llm_source = "runtime.planner"
-
-    if llm is None:
-        try:
-            llm = llm_manager.get_default_llm()
-        except Exception:  # noqa: BLE001
-            llm = None
-        else:
-            llm_source = "llm_manager"
-
-    if llm is None:
-        logger.debug("[_analyze_count_zero_with_llm] no LLM available, defaulting to no mismatch")
-        return {"has_mismatch": False, "mismatch_reason": "", "fix_suggestion": ""}
-
-    try:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        logger.debug(
-            f"[_analyze_count_zero_with_llm] invoking LLM source={llm_source} "
-            f"query_len={len(original_query)} sql_len={len(generated_sql)}"
-        )
-        raw_text = (await collect_llm_stream(llm, messages)).strip()
-        logger.debug(f"[_analyze_count_zero_with_llm] LLM response[:200]={raw_text[:200]!r}")
-
-        raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text, flags=re.IGNORECASE).strip()
-        raw_text = re.sub(r"\s*```$", "", raw_text).strip()
-        parsed = json.loads(raw_text)
-        return {
-            "has_mismatch": bool(parsed.get("has_mismatch", False)),
-            "mismatch_reason": str(parsed.get("mismatch_reason", "") or ""),
-            "fix_suggestion": str(parsed.get("fix_suggestion", "") or ""),
-        }
-    except Exception as exc:  # noqa: BLE001
-        logger.debug(f"[_analyze_count_zero_with_llm] LLM call failed: {exc}, defaulting to no mismatch")
-        return {"has_mismatch": False, "mismatch_reason": "", "fix_suggestion": ""}
-
-
-async def _run_post_validate(
-    coordinator,
-    count_sql: str,
-    original_sql: str = "",
-    *,
-    timeout_sec: int,
-    poll_interval: float,
-    runtime=None,
-    original_query: str = "",
-) -> dict[str, Any]:
-    """Submit SELECT count(*) → poll → collect → parse count.
-
-    When count is 0 and original_query is available, also runs a semantic mismatch
-    check via LLM.
-
-    Returns ``{"ok": bool, "count": int|None, "error": str|None, "job_id": str|None,
-    "has_mismatch": bool, "mismatch_reason": str, "fix_suggestion": str}``.
-    """
-    count_timeout = min(timeout_sec, 120)
-    try:
-        submit_result = coordinator.submit_job(
-            resource_id="dataops",
-            command=count_sql,
-            task_type="sql_validate",
-            timeout_sec=count_timeout,
-        )
-        count_job_id = submit_result.get("job_id")
-        if submit_result.get("status") == "ERROR" or not count_job_id:
-            return {
-                "ok": False,
-                "count": None,
-                "error": submit_result.get("message") or "count submit failed",
-                "job_id": None,
-            }
-    except Exception as exc:
-        return {"ok": False, "count": None, "error": f"count submit error: {exc}", "job_id": None}
-
-    result_status, result = await _poll_until_done(coordinator, count_job_id, count_timeout, poll_interval)
-
-    if result_status == "timed_out":
-        return {
-            "ok": False,
-            "count": None,
-            "error": f"count query timed out after {count_timeout}s",
-            "job_id": count_job_id,
-        }
-    if result is None:
-        return {"ok": False, "count": None, "error": "count collect returned no result", "job_id": count_job_id}
-    if result.get("status") != "completed":
-        error_msg = result.get("error") or result.get("summary") or f"count job status={result.get('status')}"
-        return {"ok": False, "count": None, "error": error_msg, "job_id": count_job_id}
-
-    count = _parse_count_from_collect(result)
-    if count is None:
-        return {
-            "ok": False,
-            "count": None,
-            "error": "count result parse failed",
-            "job_id": count_job_id,
-            "has_mismatch": False,
-            "mismatch_reason": "",
-            "fix_suggestion": "",
-        }
-
-    if count == 0 and original_query:
-        analysis = await _analyze_count_zero_with_llm(original_query, original_sql or count_sql, runtime=runtime)
-        return {
-            "ok": True,
-            "count": 0,
-            "error": None,
-            "job_id": count_job_id,
-            **analysis,
-        }
-
-    return {
-        "ok": True,
-        "count": count,
-        "error": None,
-        "job_id": count_job_id,
-        "has_mismatch": False,
-        "mismatch_reason": "",
-        "fix_suggestion": "",
-    }
 
 
 # ============================================================================
@@ -825,64 +786,17 @@ async def _submit_and_poll(
         return "error", None, {"error": f"dataops MCP call failed: {exc}"}
 
 
-async def _handle_post_validate(
-    coordinator,
-    sql_for_submit: str,
-    original_sql: str,
-    user_account: str,
-    table_suffix: str,
-    resource: Any,
-    runtime: Any,
-    timeout_sec: int,
-    poll_interval: float,
-) -> dict[str, Any] | None:
-    """Run post-validation for INSERT SQL: SELECT count(*) against temp table.
-
-    Returns None if not an INSERT or if temp table extraction failed.
-    Returns the post-validate dict with 'ok', 'count', 'error', etc.
-    """
-    # 统一门控:环境变量 DATAOPS_ENABLE_POST_VALIDATE=false 时完全跳过 count 校验
-    if not _is_post_validate_enabled():
-        logger.debug("[dataops_validate_sql] post-validate disabled by DATAOPS_ENABLE_POST_VALIDATE")
-        return None
-
-    if not _is_insert_sql(original_sql):
-        return None
-
-    original_query = ""
-    if runtime is not None:
-        original_query = str(getattr(runtime, "user_query", "") or "").strip()
-        if not original_query:
-            original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
-
-    temp_table = _extract_insert_target_table(original_sql, user_account, table_suffix)
-    if not temp_table:
-        logger.debug("[dataops_validate_sql] post-validate skipped: could not extract target table")
-        return None
-
-    count_sql = _build_count_sql(sql_for_submit, _POST_VALIDATE_PARTITION_COL)
-    if not count_sql:
-        return None
-
-    return await _run_post_validate(
-        coordinator,
-        count_sql,
-        sql_for_submit,
-        timeout_sec=timeout_sec,
-        poll_interval=poll_interval,
-        runtime=runtime,
-        original_query=original_query,
-    )
-
-
 # ============================================================================
 # Main validation entry points
 # ============================================================================
 
 
 async def dataops_validate_sql(
-    sql: str,
+    sql: str | None = None,
     *,
+    sql_file_path: str | os.PathLike[str] | None = None,
+    _partition_date: str | None = None,
+    _collapse_partition_range: bool = False,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Validate one SQL statement against the DataOps adHoc API.
@@ -895,7 +809,16 @@ async def dataops_validate_sql(
     quality self-check on the generated SQL.
 
     Args:
-        sql: SQL statement to validate.
+        sql: SQL statement to validate. 可选,提供时与 ``sql_file_path`` 至少一个非空。
+        sql_file_path: 工作区内 SQL 文件路径。可选,提供时优先于 ``sql``（推荐用法,
+            避免大段 SQL 进 chat history）。
+        _partition_date: 内部参数。分区日期（``YYYYMMDD``），同时用于临时表命名与
+            ``$date`` 占位符替换。``None`` 时用语法校验链路的默认日期（一年之后）；
+            交付后的质量校验链路需要显式传入「一周之前」，以对齐它自己写的临时表。
+        _collapse_partition_range: 内部参数。``True`` 时把源表上的 ``pt_d`` **范围**
+            过滤（``<=`` / ``>=`` / ``<`` / ``>``）收敛成单日等值条件 —— 只在
+            **交付后质量校验链路**开启（试算只关心产出数据长什么样，不需要保留
+            时间窗口宽度）。语法校验链路保持原样。
 
     Returns:
         A dict with at least ``passed`` (bool).
@@ -907,6 +830,14 @@ async def dataops_validate_sql(
         NOTE: This tool does NOT auto-fetch OBS log to avoid polluting context.
         Use ``dataops_validate_sql_with_log_analysis`` if you want log analysis.
     """
+    partition_date = _partition_date or partition_date_for_validation()
+
+    # --- Resolve SQL input (file path preferred) ----------------------------
+    try:
+        sql = _resolve_sql_input(sql, sql_file_path)
+    except ValueError as exc:
+        return {"passed": False, "error": f"dataops_validate_sql: {exc}"}
+
     runtime = _tool_context.runtime
 
     # --- Environment routing -------------------------------------------------
@@ -914,7 +845,13 @@ async def dataops_validate_sql(
     logger.debug(f"[dataops_validate_sql] env routing: DATAOPS_ENV={env!r} (set={bool(os.environ.get('DATAOPS_ENV'))})")
     if env == "prod":
         logger.debug("[dataops_validate_sql] routing to PROD path (official MCP flat flow)")
-        return await _dataops_validate_sql_prod(sql, _tool_context=_tool_context)
+        return await _dataops_validate_sql_prod(
+            sql,
+            _tool_context=_tool_context,
+            sql_file_path=sql_file_path,
+            partition_date=partition_date,
+            collapse_partition_range=_collapse_partition_range,
+        )
     logger.debug("[dataops_validate_sql] routing to INTEGRATION path (resource-coordinator flow)")
 
     # --- Skip / setup ---
@@ -933,14 +870,25 @@ async def dataops_validate_sql(
     table_suffix = resource.metadata.get("table_suffix", "")
 
     # --- SQL rewrite ---
-    sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
-    sql_for_submit = await _expand_cte_for_dml(sql_for_submit, timeout_sec=min(timeout_sec, 60), runtime=runtime)
+    sql_for_submit = _replace_target_table(sql, user_account, table_suffix, partition_date)
+    # 质量校验链路：把源表上的 pt_d **范围**过滤收敛成单日。
+    # 必须在 CTE 展开之前做 —— 展开后的 SQL 交给 LLM 改写，范围条件容易被改花。
+    if _collapse_partition_range:
+        sql_for_submit = _collapse_pt_d_range(sql_for_submit, partition_date)
+    sql_for_submit = await _expand_cte_for_dml(
+        sql_for_submit,
+        timeout_sec=min(timeout_sec, _CTE_EXPANSION_MAX_TIMEOUT_SEC),
+        runtime=runtime,
+    )
 
-    # --- Pre-submit: DROP temp table for CREATE TABLE (when enabled) ---
+    # --- Pre-submit: DROP temp table for CREATE TABLE (default enabled) ---
+    # 默认开启：DDL 重跑时同名 adhoctemp 表可能已存在（上次 CREATE 失败留下），
+    # 不先 DROP 会报 "Table already exists"。
+    # 生产路径 (_dataops_validate_sql_prod) 无条件执行同样的预清理。
     drop_job_id: str | None = None
-    if bool(resource.metadata.get("drop_before_create", False)):
+    if _is_drop_before_create_enabled(resource.metadata):
         drop_job_id = await _pre_drop_for_create(
-            coordinator, sql, user_account, table_suffix, timeout_sec, poll_interval
+            coordinator, sql, user_account, table_suffix, timeout_sec, poll_interval, partition_date
         )
 
     # --- Lifecycle ---
@@ -964,20 +912,6 @@ async def dataops_validate_sql(
         if drop_job_id:
             final_result["drop_job_id"] = drop_job_id
 
-        pv = await _handle_post_validate(
-            coordinator,
-            sql_for_submit,
-            sql,
-            user_account,
-            table_suffix,
-            resource,
-            runtime,
-            timeout_sec,
-            poll_interval,
-        )
-        if pv is not None:
-            _apply_post_validate_result(final_result, pv, resource)
-
         # NOTE: temp-table cleanup is NOT done here. Single-attempt
         # entry point must leave the adhoctemp.tmp_* table in place
         # so the corresponding DML (INSERT OVERWRITE) on the same table
@@ -997,6 +931,7 @@ async def _pre_drop_for_create(
     table_suffix: str,
     timeout_sec: int,
     poll_interval: float,
+    partition_date: str | None = None,
 ) -> str | None:
     """For CREATE TABLE, drop existing temp table first to ensure clean creation.
 
@@ -1005,7 +940,7 @@ async def _pre_drop_for_create(
     if not _is_create_sql(sql):
         return None
 
-    drop_sql = _build_drop_sql(sql, user_account, table_suffix)
+    drop_sql = _build_drop_sql(sql, user_account, table_suffix, partition_date)
     if not drop_sql:
         return None
 
@@ -1049,6 +984,7 @@ async def _cleanup_temp_table(
     poll_interval: float,
     *,
     context_label: str = "dataops_validate_sql",
+    partition_date: str | None = None,
 ) -> str | None:
     """Drop the adhoctemp temporary table after a validation attempt completes.
 
@@ -1072,7 +1008,7 @@ async def _cleanup_temp_table(
         )
         return None
 
-    temp_table = _extract_temp_table_name(sql, user_account, table_suffix)
+    temp_table = _extract_temp_table_name(sql, user_account, table_suffix, partition_date)
     if not temp_table:
         logger.debug(f"[{context_label}] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}")
         return None
@@ -1113,6 +1049,7 @@ async def _cleanup_temp_table_prod(
     user_account: str,
     table_suffix: str,
     timeout_sec: int,
+    partition_date: str | None = None,
 ) -> str | None:
     """Production counterpart of :func:`_cleanup_temp_table` — drops the adhoctemp
     temp table via official MCP after each validation attempt. Fire-and-forget.
@@ -1133,7 +1070,7 @@ async def _cleanup_temp_table_prod(
         prod_get_query_result,
     )
 
-    temp_table = _extract_temp_table_name(sql, user_account, table_suffix)
+    temp_table = _extract_temp_table_name(sql, user_account, table_suffix, partition_date)
     if not temp_table:
         logger.debug(
             f"[dataops_validate_sql_prod] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}"
@@ -1178,6 +1115,7 @@ async def _cleanup_temp_table_wrapper(
     sql: str,
     *,
     _tool_context: ToolExecutionContext,
+    partition_date: str | None = None,
 ) -> str | None:
     """Cleanup dispatcher for ``dataops_validate_sql_with_log_analysis``.
 
@@ -1185,6 +1123,11 @@ async def _cleanup_temp_table_wrapper(
     DATAOPS_ENV, with shared gating (DATAOPS_DISABLE_TEMP_CLEANUP) and
     identical fire-and-forget semantics. Returns the drop job_id if a
     DROP was submitted, otherwise None.
+
+    Args:
+        partition_date: 分区日期（``YYYYMMDD``），必须与当初改写 SQL 时用的值一致，
+            否则推导出的临时表名不匹配，DROP 会落空。``None`` 时用语法校验链路的
+            默认日期（一年之后）。
 
     Note: this is only invoked by the wrapper, AFTER the wrapper has
     already determined that this is the final outcome (passed, or
@@ -1195,7 +1138,7 @@ async def _cleanup_temp_table_wrapper(
         user_account = _get_user_account(runtime)
         table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
         timeout_sec = 30 * 60
-        return await _cleanup_temp_table_prod(sql, user_account, table_suffix, timeout_sec)
+        return await _cleanup_temp_table_prod(sql, user_account, table_suffix, timeout_sec, partition_date)
 
     # Integration path
     resource = _get_dataops_resource(runtime)
@@ -1220,46 +1163,17 @@ async def _cleanup_temp_table_wrapper(
         timeout_sec,
         poll_interval,
         context_label="dataops_validate_sql_with_log_analysis",
+        partition_date=partition_date,
     )
 
 
-def _apply_post_validate_result(final_result: dict[str, Any], pv: dict[str, Any], resource: Any) -> None:
-    """Merge post-validate result into final_result, mutating final_result in place."""
-    if not pv["ok"]:
-        final_result["passed"] = False
-        final_result["error"] = f"post_validate error: {pv['error']}"
-        return
-
-    if pv["count"] == 0:
-        skip_count_zero = bool(resource.metadata.get("skip_post_validate_count_zero", False))
-        if skip_count_zero:
-            final_result["passed"] = True
-            return
-
-        if pv.get("has_mismatch") and pv.get("fix_suggestion"):
-            final_result["passed"] = False
-            final_result["error"] = (
-                f"INSERT validated but target table is empty (0 rows on "
-                f"{_POST_VALIDATE_PARTITION_COL}=<today>): "
-                f"{pv['mismatch_reason']}"
-            )
-            final_result["count_zero_analysis"] = {
-                "has_mismatch": True,
-                "mismatch_reason": pv["mismatch_reason"],
-                "fix_suggestion": pv["fix_suggestion"],
-            }
-        else:
-            final_result["passed"] = False
-            final_result["error"] = (
-                f"INSERT validated but target table is empty (0 rows on {_POST_VALIDATE_PARTITION_COL}=<today>)"
-            )
-
-
 async def dataops_validate_sql_with_log_analysis(
-    sql: str,
+    sql: str | None = None,
     *,
+    sql_file_path: str | os.PathLike[str] | None = None,
     attempt: int = 1,
     prior_attempts: list[dict[str, Any]] | None = None,
+    _partition_date: str | None = None,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Validate SQL and fetch + analyze OBS log on failure in a single tool call.
@@ -1274,22 +1188,37 @@ async def dataops_validate_sql_with_log_analysis(
     3. Returning structured error analysis (error_type, location, suggestions)
 
     **Retry contract (de_agent invariant):**
-    - Per SQL, the caller may invoke this at most ``MAX_VALIDATE_ATTEMPTS`` (3)
+    - Per SQL, the caller may invoke this at most ``MAX_VALIDATE_ATTEMPTS`` (10)
       times (including the first call). Each invocation must pass
-      ``attempt`` = 1, 2, or 3, and ``prior_attempts`` = the ``attempts`` list
+      ``attempt`` = 1..10, and ``prior_attempts`` = the ``attempts`` list
       returned by the previous call (empty list on first call).
     - When ``attempt > MAX_VALIDATE_ATTEMPTS`` the call is rejected without
-      touching DataOps; the caller must not initiate a 4th call.
+      touching DataOps; the caller must not initiate an 11th call.
     - When the final attempt (``attempt == MAX_VALIDATE_ATTEMPTS``) still
       returns ``passed: false``, this wrapper auto-dumps
       ``validate_<table>.json`` + ``delivery_warning.md`` to the workspace
       and adds ``failed_after_max_retries: true`` to the response.
 
+    **数据正确性校验（quality check）说明：**
+    - 本链路**不**执行数据正确性校验（空值率 / 单一值比率）。
+    - 校验只在交付后的 post-hook 中跑一次
+      （``de_agent/hooks/dataops_quality_check_post.py`` → ``trial_compute_table``），
+      因此静态校验阶段保持"快"，不拖慢 agent 迭代修 SQL 的循环。
+    - 响应中不再包含 ``reasonable_check`` 字段。
+
+    **分区日期：**
+    本链路是**语法校验**，用「一年之后」的日期（``today + 365``）。写入的分区在未来，
+    不会与真实分区/真实数据冲突；这里只关心 SQL 能不能跑通。交付后的质量校验链路
+    用「一周之前」的日期（见 ``partition_date_for_quality``），两者刻意不同。
+
     Args:
-        sql: SQL statement to validate.
+        sql: SQL statement to validate. 可选,与 ``sql_file_path`` 至少一个非空。
+        sql_file_path: 工作区内 SQL 文件路径。推荐用法,避免大段 SQL 进 chat history。
         attempt: 1-indexed attempt number for this call (caller-managed).
         prior_attempts: Returned ``attempts`` list from the previous call
             (empty/None on first call).
+        _partition_date: 内部参数。分区日期（``YYYYMMDD``）；``None`` 时用语法校验链路的
+            默认日期（一年之后）。
 
     Returns:
         Same as ``dataops_validate_sql``, but on failure also includes:
@@ -1317,23 +1246,41 @@ async def dataops_validate_sql_with_log_analysis(
         logger.warning(
             f"[dataops_validate_sql_with_log_analysis] attempt={attempt} exceeds "
             f"MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; refusing. "
-            f"Caller must not initiate a 4th call."
+            f"Caller must not initiate an 11th call."
         )
         return {
             "passed": False,
             "failed_after_max_retries": True,
-            "error": (f"exceeded MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; caller must not initiate a 4th call"),
+            "error": (f"exceeded MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; caller must not initiate an 11th call"),
+            "attempts": prior_attempts,
+        }
+
+    partition_date = _partition_date or partition_date_for_validation()
+
+    # --- Resolve SQL input (file path preferred) ----------------------------
+    try:
+        sql = _resolve_sql_input(sql, sql_file_path)
+    except ValueError as exc:
+        return {
+            "passed": False,
+            "failed_after_max_retries": True,
+            "error": f"dataops_validate_sql_with_log_analysis: {exc}",
             "attempts": prior_attempts,
         }
 
     logger.debug(
         f"[dataops_validate_sql_with_log_analysis] === START attempt={attempt} "
-        f"prior_attempts={len(prior_attempts)} sql={sql[:100]}"
+        f"prior_attempts={len(prior_attempts)} partition_date={partition_date} sql={sql[:100]}"
     )
 
     # Step 1: Validate SQL
     logger.debug("[dataops_validate_sql_with_log_analysis] Calling dataops_validate_sql...")
-    validate_result = await dataops_validate_sql(sql, _tool_context=_tool_context)
+    validate_result = await dataops_validate_sql(
+        sql,
+        _tool_context=_tool_context,
+        sql_file_path=sql_file_path,
+        _partition_date=partition_date,
+    )
     logger.debug(
         "[dataops_validate_sql_with_log_analysis] Validate done passed={} job_id={}".format(
             validate_result.get("passed"),
@@ -1347,11 +1294,19 @@ async def dataops_validate_sql_with_log_analysis(
         logger.debug(
             f"[dataops_validate_sql_with_log_analysis] === END (passed) attempt={attempt} elapsed={elapsed:.2f}s ==="
         )
+
+        # NOTE: 数据正确性校验（空值率 / 单一值比率）**不在本链路执行**。
+        # 它只在交付后的 post-hook（``dataops_quality_check_post`` →
+        # ``trial_compute_table``）里跑一次。这样静态校验阶段保持"快"，
+        # 昂贵的采样统计不拖慢 agent 的迭代修 SQL 循环。
+
         # Cleanup: only drop the temp table when the SQL is DML (not DDL)
         # and this is the final outcome. CREATE TABLE leaves the temp
         # table in place so the corresponding INSERT OVERWRITE can target it.
         if not _is_create_sql(sql):
-            cleanup_job_id = await _cleanup_temp_table_wrapper(sql, _tool_context=_tool_context)
+            cleanup_job_id = await _cleanup_temp_table_wrapper(
+                sql, _tool_context=_tool_context, partition_date=partition_date
+            )
             if cleanup_job_id:
                 validate_result["cleanup_job_id"] = cleanup_job_id
         return validate_result
@@ -1374,7 +1329,9 @@ async def dataops_validate_sql_with_log_analysis(
             f"[dataops_validate_sql_with_log_analysis] === END (no log_info) "
             f"attempt={attempt} elapsed={elapsed:.2f}s ==="
         )
-        return validate_result
+        # NOTE: 这里也要收敛错误文本 —— 提前 return 会绕过末尾的 errorLog 截断,
+        # 而生产端的 ``error`` 可能就是整份 Spark 日志。
+        return bound_error_fields(validate_result)
 
     job_id = validate_result.get("job_id")
     raw_error = validate_result.get("error", "")
@@ -1455,7 +1412,9 @@ async def dataops_validate_sql_with_log_analysis(
         # DDL is NEVER dropped here — its temp table must remain for the
         # matching DML (which may run on a separate wrapper invocation).
         if not _is_create_sql(sql):
-            cleanup_job_id = await _cleanup_temp_table_wrapper(sql, _tool_context=_tool_context)
+            cleanup_job_id = await _cleanup_temp_table_wrapper(
+                sql, _tool_context=_tool_context, partition_date=partition_date
+            )
             if cleanup_job_id:
                 validate_result["cleanup_job_id"] = cleanup_job_id
 
@@ -1500,13 +1459,19 @@ async def dataops_validate_sql_with_log_analysis(
 
     MAX_LEN_ERROR_LOG = 250
     if len(ordered_result.get("errorLog", "")) > MAX_LEN_ERROR_LOG:
-        ordered_result["errorLog"] = (
-            ordered_result.get("errorLog", "")[:MAX_LEN_ERROR_LOG] + f"... truncated at {MAX_LEN_ERROR_LOG} chars."
+        ordered_result["errorLog"] = bound_text(
+            ordered_result["errorLog"],
+            max_chars=MAX_LEN_ERROR_LOG,
+            label="errorLog",
         )
 
     MAX_LEN_ERROR = 500
     if len(ordered_result.get("error", "")) > MAX_LEN_ERROR:
-        ordered_result["error"] = ordered_result["error"][:MAX_LEN_ERROR] + f"... truncated at {MAX_LEN_ERROR} chars."
+        ordered_result["error"] = bound_text(
+            ordered_result["error"],
+            max_chars=MAX_LEN_ERROR,
+            label="error",
+        )
 
     elapsed = time.time() - start_time
     logger.debug(
@@ -1820,7 +1785,15 @@ async def dataops_fetch_obs_log(
                 }
             return {
                 "status": "success",
-                "log_content": response.text,
+                # 防御性上限:OBS 上的调度日志可能有几百 KB。调用方
+                # ``_analyze_log_directly`` 只需要头部(异常在头部),且它自己
+                # 还会截到 32KB 再喂 LLM。这里留一个宽松的上限,避免异常大的
+                # 响应占满内存/工具结果。
+                "log_content": bound_text(
+                    response.text,
+                    max_chars=_MAX_OBS_LOG_CHARS,
+                    label="log_content",
+                ),
             }
     except httpx.HTTPError as exc:
         logger.debug(
@@ -1836,24 +1809,6 @@ async def dataops_fetch_obs_log(
 
 _PROD_ENV = "prod"
 _VALID_DATAOPS_ENVS = frozenset({"prod", "integration"})
-
-# 控制是否在 INSERT 校验通过后再跑一次 SELECT count(*) 后置校验。
-# 默认 True（保持现状,向后兼容）。关闭后,联调和生产两条路径都不再触发 count SQL。
-# 接受 (case-insensitive) true/false/1/0/yes/no/on/off,其它值按 True 处理。
-_DISABLE_POST_VALIDATE_VALUES = frozenset({"false", "0", "no", "off", "n", "f"})
-
-
-def _is_post_validate_enabled() -> bool:
-    """读取 DATAOPS_ENABLE_POST_VALIDATE,默认 True(向后兼容)。
-
-    Returns:
-        True  -> 跑 SELECT count(*) 后置校验(默认)
-        False -> 完全跳过 count SQL 的 submit/poll/collect
-    """
-    raw = os.environ.get("DATAOPS_ENABLE_POST_VALIDATE", "").strip().lower()
-    if not raw:
-        return True
-    return raw not in _DISABLE_POST_VALIDATE_VALUES
 
 
 # 控制是否在每次校验后自动 DROP adhoctemp 临时表。
@@ -1888,15 +1843,53 @@ def _get_dataops_env() -> str:
     return raw
 
 
+_DISABLE_DROP_BEFORE_CREATE_VALUES = frozenset({"false", "0", "no", "off", "n", "f"})
+
+
+def _is_drop_before_create_enabled(metadata: dict | None = None) -> bool:
+    """Whether to DROP the scratch table before submitting a CREATE TABLE.
+
+    默认开启（True）。DDL 重跑时同名 adhoctemp 表可能已存在（上次 CREATE
+    失败留下），不先 DROP 会报 "Table already exists"。
+
+    可以用两种方式关闭：
+        - resource metadata: ``drop_before_create: false``
+        - 环境变量: ``DATAOPS_ENABLE_DROP_BEFORE_CREATE=false``
+
+    接受 (case-insensitive) true/false/1/0/yes/no/on/off；metadata 优先于
+    环境变量；两者都未设置时返回 True（默认开启）。
+    """
+    raw_meta = (metadata or {}).get("drop_before_create")
+    if raw_meta is not None:
+        return str(raw_meta).strip().lower() not in _DISABLE_DROP_BEFORE_CREATE_VALUES
+
+    raw_env = os.environ.get("DATAOPS_ENABLE_DROP_BEFORE_CREATE", "").strip().lower()
+    if not raw_env:
+        return True
+    return raw_env not in _DISABLE_DROP_BEFORE_CREATE_VALUES
+
+
 async def _dataops_validate_sql_prod(
-    sql: str,
+    sql: str | None = None,
     *,
+    sql_file_path: str | os.PathLike[str] | None = None,
+    partition_date: str | None = None,
+    collapse_partition_range: bool = False,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Production-environment validation entry point.
 
     与联调路径完全独立:不走 submit -> poll -> collect,直接调官方 MCP 工具。
     """
+    if not partition_date:
+        partition_date = partition_date_for_validation()
+
+    # --- Resolve SQL input (file path preferred) ----------------------------
+    try:
+        sql = _resolve_sql_input(sql, sql_file_path)
+    except ValueError as exc:
+        return {"passed": False, "error": f"dataops_validate_sql(prod): {exc}"}
+
     runtime = _tool_context.runtime
 
     # --- Empty SQL shortcut ---
@@ -1915,17 +1908,26 @@ async def _dataops_validate_sql_prod(
     logger.debug(f"[_dataops_validate_sql_prod] user_account={user_account!r} table_suffix={table_suffix!r}")
 
     # --- SQL rewrite (与联调相同) ---
-    sql_for_submit = _replace_target_table(sql, user_account, table_suffix)
-    sql_for_submit = await _expand_cte_for_dml(sql_for_submit, timeout_sec=min(timeout_sec, 60), runtime=runtime)
+    sql_for_submit = _replace_target_table(sql, user_account, table_suffix, partition_date)
+    # 质量校验链路：把源表上的 pt_d **范围**过滤收敛成单日（与联调一致）。
+    if collapse_partition_range:
+        sql_for_submit = _collapse_pt_d_range(sql_for_submit, partition_date)
+    sql_for_submit = await _expand_cte_for_dml(
+        sql_for_submit,
+        timeout_sec=min(timeout_sec, _CTE_EXPANSION_MAX_TIMEOUT_SEC),
+        runtime=runtime,
+    )
 
-    # --- Pre-submit: DROP temp table for CREATE TABLE (无条件,DROP 失败仅记录警告) ---
+    # --- Pre-submit: DROP temp table for CREATE TABLE (默认开启,DROP 失败仅记录警告) ---
     # 生产环境下 DROP-before-CREATE 为硬约束:即使 adhoctemp 已存在残留 tmp_*,CREATE
     # 也会再次失败,因此必须先尝试清理。DROP 自身出错时静默继续 CREATE,把责任
     # 交给 CREATE 阶段的 DataOps 报错。
+    # 与联调路径共用同一个开关(默认开启);生产路径没有 resource metadata,
+    # 因此这里只读环境变量 DATAOPS_ENABLE_DROP_BEFORE_CREATE。
     drop_job_id: str | None = None
-    if _is_create_sql(sql):
+    if _is_create_sql(sql) and _is_drop_before_create_enabled(None):
         drop_job_id = await _pre_drop_for_create_prod(
-            sql, user_account, table_suffix, timeout_sec, poll_interval
+            sql, user_account, table_suffix, timeout_sec, poll_interval, partition_date
         )
 
     # --- Execute -> poll -> collect (扁平函数) ---
@@ -1956,17 +1958,6 @@ async def _dataops_validate_sql_prod(
 
     if result_status == "completed":
         final_result: dict[str, Any] = {"passed": True, "job_id": job_id}
-        if drop_job_id:
-            final_result["drop_job_id"] = drop_job_id
-        pv = await _run_post_validate_prod(
-            sql_for_submit,
-            sql,
-            timeout_sec=timeout_sec,
-            poll_interval=poll_interval,
-            runtime=runtime,
-        )
-        if pv is not None:
-            _apply_post_validate_result_prod(final_result, pv)
         # NOTE: temp-table cleanup is NOT done here. Single-attempt
         # entry point must leave the adhoctemp.tmp_* table in place
         # so the corresponding DML on the same table can run.
@@ -1986,6 +1977,7 @@ async def _pre_drop_for_create_prod(
     table_suffix: str,
     timeout_sec: int,
     poll_interval: float,
+    partition_date: str | None = None,
 ) -> str | None:
     """生产环境下的 pre-drop:对 CREATE TABLE 先 DROP TABLE IF EXISTS adhoctemp 临时表。
 
@@ -2005,7 +1997,7 @@ async def _pre_drop_for_create_prod(
     if not _is_create_sql(original_sql):
         return None
 
-    drop_sql = _build_drop_sql(original_sql, user_account, table_suffix)
+    drop_sql = _build_drop_sql(original_sql, user_account, table_suffix, partition_date)
     if not drop_sql:
         return None
 
@@ -2102,164 +2094,6 @@ async def _submit_and_poll_prod(
     return "timed_out", job_id, None
 
 
-async def _run_post_validate_prod(
-    sql_for_submit: str,
-    original_sql: str,
-    *,
-    timeout_sec: int,
-    poll_interval: float,
-    runtime: Any,
-) -> dict[str, Any] | None:
-    """生产端后置验证:count 校验 + 0 行 LLM 分析。
-
-    与联调版 _run_post_validate 逻辑对齐,但执行层走生产 MCP 扁平函数(不耦合 coordinator)。
-    """
-    from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
-        prod_collect_result,
-        prod_execute_sql,
-        prod_get_query_result,
-    )
-
-    # 统一门控:环境变量 DATAOPS_ENABLE_POST_VALIDATE=false 时完全跳过 count 校验
-    # 与联调路径读取同一个开关,避免联调/生产行为分叉
-    if not _is_post_validate_enabled():
-        logger.debug("[dataops_validate_sql_prod] post-validate disabled by DATAOPS_ENABLE_POST_VALIDATE")
-        return None
-
-    if not _is_insert_sql(original_sql):
-        return None
-
-    count_sql = _build_count_sql(sql_for_submit, _POST_VALIDATE_PARTITION_COL)
-    if not count_sql:
-        logger.debug("[post_validate] _build_count_sql returned None, skipping")
-        return None
-
-    logger.debug(f"[post_validate] count_sql (first 200 chars): {count_sql[:200]}")
-    count_timeout = min(timeout_sec, 120)
-
-    # Submit count query
-    try:
-        submit_result = await prod_execute_sql(count_sql)
-        logger.debug(f"[post_validate] count submit raw submit_result={submit_result}")
-        if not submit_result["success"]:
-            return {
-                "ok": False,
-                "count": None,
-                "error": submit_result.get("error") or "count submit failed",
-                "job_id": None,
-            }
-        count_job_id = submit_result["job_id"]
-    except Exception as exc:
-        return {"ok": False, "count": None, "error": f"count submit error: {exc}", "job_id": None}
-
-    # Poll count query
-    deadline = asyncio.get_event_loop().time() + count_timeout
-    poll_count = 0
-    while asyncio.get_event_loop().time() < deadline:
-        poll_count += 1
-        polled = await prod_get_query_result(count_job_id)
-        logger.debug(f"[post_validate] count_job_id={count_job_id} poll_count={poll_count} raw polled={polled}")
-        if polled["status"] == "completed":
-            count_result = await prod_collect_result(count_job_id)
-            logger.debug(f"[post_validate] count_job_id={count_job_id} count completed raw count_result={count_result}")
-            break
-        if polled["status"] == "error":
-            return {
-                "ok": False,
-                "count": None,
-                "error": polled.get("error", "count poll error"),
-                "job_id": count_job_id,
-            }
-        await asyncio.sleep(poll_interval)
-    else:
-        logger.debug(
-            f"[post_validate] count_job_id={count_job_id} poll timed out after {count_timeout}s, "
-            f"poll_count={poll_count}"
-        )
-        return {
-            "ok": False,
-            "count": None,
-            "error": f"count query timed out after {count_timeout}s",
-            "job_id": count_job_id,
-        }
-
-    # Parse count
-    count = _parse_count_from_collect(count_result)
-    logger.debug(f"[post_validate] count_job_id={count_job_id} parsed count={count!r}")
-    if count is None:
-        raw_r = count_result.get("raw_result", {})
-        logger.error(f"[post_validate] parse_failed raw_result={raw_r}")
-        return {
-            "ok": False,
-            "count": None,
-            "error": "count result parse failed",
-            "job_id": count_job_id,
-            "has_mismatch": False,
-            "mismatch_reason": "",
-            "fix_suggestion": "",
-        }
-
-    # 0 行 LLM 分析(复用联调版 LLM 调用)
-    if count == 0:
-        original_query = ""
-        if runtime is not None:
-            original_query = str(getattr(runtime, "user_query", "") or "").strip()
-            if not original_query:
-                original_query = str(getattr(runtime, "parent_user_query", "") or "").strip()
-        logger.debug(
-            f"[post_validate] count_job_id={count_job_id} count=0, "
-            f"original_query={original_query[:100]!r} calling LLM analysis"
-        )
-        if original_query:
-            analysis = await _analyze_count_zero_with_llm(original_query, original_sql or count_sql, runtime=runtime)
-            logger.debug(
-                f"[post_validate] count_job_id={count_job_id} LLM analysis result keys={list(analysis.keys())}"
-            )
-            return {
-                "ok": True,
-                "count": 0,
-                "error": None,
-                "job_id": count_job_id,
-                **analysis,
-            }
-
-    logger.debug(f"[post_validate] count_job_id={count_job_id} final result ok=True count={count}")
-    return {
-        "ok": True,
-        "count": count,
-        "error": None,
-        "job_id": count_job_id,
-        "has_mismatch": False,
-        "mismatch_reason": "",
-        "fix_suggestion": "",
-    }
-
-
-def _apply_post_validate_result_prod(
-    final_result: dict[str, Any],
-    pv: dict[str, Any],
-) -> None:
-    """将后置验证结果合并到生产路径的 final_result(与联调版镜像,不需要 resource)。"""
-    if pv.get("error") and not pv.get("ok"):
-        # 验证出错时,不阻塞上层(参考联调版逻辑,只 attach 字段)
-        final_result["post_validate"] = {
-            "ok": False,
-            "error": pv.get("error"),
-            "job_id": pv.get("job_id"),
-        }
-        return
-
-    final_result["post_validate"] = {
-        "ok": pv.get("ok", True),
-        "count": pv.get("count"),
-        "job_id": pv.get("job_id"),
-    }
-    if pv.get("has_mismatch"):
-        final_result["post_validate"]["has_mismatch"] = True
-        final_result["post_validate"]["mismatch_reason"] = pv.get("mismatch_reason", "")
-        final_result["post_validate"]["fix_suggestion"] = pv.get("fix_suggestion", "")
-
-
 def _build_failure_response_prod(
     result_status: str,
     job_id: str,
@@ -2274,10 +2108,13 @@ def _build_failure_response_prod(
     error_log = (result or {}).get("errorLog") or ""
     response_data: dict[str, Any] = {
         "passed": False,
-        "error": error_msg,
+        "error": bound_error_excerpt(error_msg, label="error"),
         "job_id": job_id,
     }
     if error_log:
+        # NOTE: 这里**不能**截断 errorLog —— 下游 ``_analyze_log_directly`` 需要
+        # 完整日志才能分类错误。截断发生在 agent 边界(见
+        # ``dataops_validate_sql_with_log_analysis`` 末尾),原始日志不会进对话。
         response_data["errorLog"] = error_log
         response_data["log_source"] = "inline"
     return response_data
@@ -2316,6 +2153,75 @@ def _extract_original_target_table(sql: str) -> str | None:
     return None
 
 
+def extract_insert_target_table(sql: str) -> str | None:
+    """提取 INSERT 的**真实目标表**（``db.table``），不做任何临时表替换。
+
+    与 :func:`_extract_insert_target_table` 的区别：后者会把目标改写成
+    ``adhoctemp.tmp_*`` 临时表名；本函数只做**只读解析**，返回原始目标表 ——
+    独立「数据验证」skill 需要直接对真实表做统计。
+
+    Args:
+        sql: INSERT 语句文本。
+
+    Returns:
+        ``db.table`` 形式的目标表名；解析不出时返回 ``None``。
+    """
+    if not sql:
+        return None
+    sql_no_comment = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    pattern = (
+        r"\bINSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?"
+        r"([`\w.-]+(?:\.[`\w.-]+)+)"
+    )
+    m = re.search(pattern, sql_no_comment, re.IGNORECASE)
+    if not m:
+        return None
+    ref = m.group(1).strip().strip("`").strip("'").strip('"')
+    return ref or None
+
+
+def extract_insert_partition_filter(sql: str) -> str:
+    """提取 INSERT 语句里**写死的**天分区过滤条件（形如 ``pt_d = '20261020'``）。
+
+    独立数据验证 skill 拿到的 INSERT 往往已经带了具体的分区条件（而不是
+    ``$date`` 占位符），直连真实表统计时必须沿用它 —— 否则会扫到别的分区。
+
+    **只认天分区 ``pt_d``**：小时/分钟分区（``pt_h`` / ``pt_i``）会把统计
+    落到某一个具体时刻上，与本仓库其它链路（数据探查、质量校验统一用
+    ``pt_d``）的口径不一致；这里统一归一化成 ``pt_d``。
+
+    Args:
+        sql: INSERT 语句文本。
+
+    Returns:
+        分区过滤条件文本（可直接放进 WHERE）；找不到时返回 ``""``。
+    """
+    if not sql:
+        return ""
+    sql_no_comment = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+
+    # 只认已经写成字面日期的条件 —— ``$date`` 占位符由调度时替换，
+    # 这里拿不到真实日期，交给调用方兜底。
+    #
+    # 分区列优先级：``pt_d`` > ``pt`` > 其它 ``pt_*``。
+    # 命中任何一个都归一化成 ``pt_d``：小时分区是 10 位、分钟分区是 12 位，
+    # 取前 8 位当天分区日期。
+    for col_pattern in (r"pt_d", r"pt", r"pt_\w+"):
+        m = re.search(
+            rf"\b({col_pattern})\s*=\s*'(\d{{8,12}})'",
+            sql_no_comment,
+            re.IGNORECASE,
+        )
+        if not m:
+            continue
+        value = m.group(2)
+        # 只接受真正的分区列，避免误抓业务字段的等值条件。
+        if not m.group(1).lower().startswith("pt"):
+            return ""
+        return f"pt_d = '{value[:8]}'"
+    return ""
+
+
 def _summarize_attempt(
     attempt: int,
     validate_result: dict[str, Any],
@@ -2326,6 +2232,11 @@ def _summarize_attempt(
     The summary is intentionally stripped of bulky fields (raw log_file_info,
     full log analysis, raw errorLog) — those are not needed for the caller to
     decide what to fix on the next attempt; ``log_analysis_summary`` is enough.
+
+    NOTE: ``attempts`` is echoed back to the agent as ``prior_attempts`` on the
+    next attempt, so every byte here is multiplied by the retry count. The
+    ``error`` fallback is therefore bounded — without this, a single huge
+    Spark ``errorLog`` is replayed into the conversation up to 10 times.
     """
     elapsed = max(0.0, time.time() - start_time)
     analysis = validate_result.get("log_analysis") or {}
@@ -2335,9 +2246,15 @@ def _summarize_attempt(
         "job_id": validate_result.get("job_id"),
         "elapsed_sec": round(elapsed, 2),
         "error_type": analysis.get("error_type"),
-        "error_message": analysis.get("error_message") or validate_result.get("error"),
+        "error_message": bound_error_excerpt(
+            analysis.get("error_message") or validate_result.get("error"),
+            label="error_message",
+        ),
         "suggestions": list(analysis.get("suggestions") or []),
-        "log_analysis_summary": validate_result.get("log_analysis_summary"),
+        "log_analysis_summary": bound_error_excerpt(
+            validate_result.get("log_analysis_summary"),
+            label="log_analysis_summary",
+        ),
     }
 
 
@@ -2348,6 +2265,12 @@ def _resolve_workspace_dir(_tool_context: ToolExecutionContext | None) -> Path |
       1. ``runtime.workspace_dir`` (preferred — same dir the agent writes SQL into)
       2. ``DATAOPS_VALIDATION_REPORT_DIR`` env var (manual override)
       3. ``None`` (caller falls back to logging-only mode)
+
+    ``runtime.workspace_dir`` is only honoured when it is a real ``str``/``Path``.
+    Test doubles (``MagicMock``) auto-generate a truthy, path-like attribute whose
+    ``__fspath__`` yields a junk relative path (``MagicMock/mock.workspace_dir/<id>``);
+    accepting it would scatter validation artifacts into a bogus directory instead
+    of the intended workspace.
     """
     env_dir: Path | None = None
     raw = os.environ.get("DATAOPS_VALIDATION_REPORT_DIR", "").strip()
@@ -2355,7 +2278,7 @@ def _resolve_workspace_dir(_tool_context: ToolExecutionContext | None) -> Path |
         env_dir = Path(raw).expanduser().resolve()
     runtime = getattr(_tool_context, "runtime", None) if _tool_context is not None else None
     runtime_ws = getattr(runtime, "workspace_dir", None) if runtime is not None else None
-    if runtime_ws:
+    if isinstance(runtime_ws, (str, Path)) and str(runtime_ws).strip():
         return Path(runtime_ws).expanduser().resolve()
     return env_dir
 
@@ -2435,3 +2358,255 @@ def _dump_validation_artifacts(
         logger.warning(f"[_dump_validation_artifacts] failed to write warning {warning_path}: {exc}")
 
     return result
+
+
+def _load_sql_from_path(sql_file_path: str | os.PathLike[str] | None) -> str:
+    """从工作区文件加载 SQL 文本。
+
+    设计意图：避免上游 LLM 在 chat history 中把整段 SQL 重复一遍（可能很长，
+    还会被中间 token 截断/改写），统一以文件路径作为入参，由工具侧一次性读完。
+    行为：
+      - 路径不存在 / 读失败 -> 抛 ``FileNotFoundError`` / ``OSError``，由调用方决定
+        是否包装为 ``{"passed": False, "error": ...}`` 返回。
+      - 读到的 bytes 用 ``utf-8`` 解析（DataOps 平台默认 utf-8）。
+      - 自动 strip 首尾空白。
+    """
+    if sql_file_path is None:
+        raise ValueError("sql_file_path must not be None when called")
+    p = Path(sql_file_path).expanduser()
+    if not p.exists():
+        raise FileNotFoundError(f"sql_file_path not found: {p}")
+    if not p.is_file():
+        raise IsADirectoryError(f"sql_file_path is not a regular file: {p}")
+    text = p.read_text(encoding="utf-8")
+    return text.strip()
+
+
+def _resolve_sql_input(
+    sql: str | None,
+    sql_file_path: str | os.PathLike[str] | None,
+) -> str:
+    """把 ``sql`` / ``sql_file_path`` 两种入参统一收敛为 SQL 文本。
+
+    优先用 ``sql_file_path``（避免大 SQL 重复进 chat history）；
+    若两者都为空字符串则返回 ``""``（让调用方的"empty SQL → skipped"逻辑接管，
+    而不是抛 ValueError）。
+    """
+    if sql_file_path:
+        try:
+            loaded = _load_sql_from_path(sql_file_path)
+        except (FileNotFoundError, IsADirectoryError, OSError) as exc:
+            raise ValueError(f"failed to load SQL from sql_file_path: {exc}") from exc
+        return loaded  # 允许空文件 → 走 skipped
+    if sql is not None and str(sql).strip():
+        return str(sql).strip()
+    # 都没给 → 返回空串,沿用 _check_skip_conditions / _dataops_validate_sql_prod 的 skipped 路径
+    return ""
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    """按**顶层**逗号切分 SELECT 投影列表。
+
+    括号内、字符串字面量里的逗号不是分隔符 ——
+    ``SUM(IF(a = '1', 1, 0)) AS cnt`` 必须整体作为一个投影项。
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    quote: str | None = None
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote is not None:
+            buf.append(ch)
+            if ch == "\\" and i + 1 < n:
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _select_projection(sql: str) -> str | None:
+    """取出一条 SELECT 语句的投影列表文本（``SELECT`` 与顶层 ``FROM`` 之间）。
+
+    只认**顶层**的 FROM —— 投影里的标量子查询自带 FROM，不能当成语句的 FROM。
+    """
+    m = re.search(r"\bSELECT\b", sql, re.IGNORECASE)
+    if not m:
+        return None
+    start = m.end()
+    depth = 0
+    quote: str | None = None
+    i = start
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
+        if quote is not None:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+            i += 1
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if depth == 0 and sql[i : i + 4].upper() == "FROM":
+            after = sql[i + 4 : i + 5]
+            if not after or not (after.isalnum() or after == "_"):
+                return sql[start:i].strip()
+        i += 1
+    return None
+
+
+def _extract_fields_from_insert_sql(sql: str, exclude_fields: frozenset) -> list[str]:
+    """从 INSERT ... SELECT ... 解析出要校验的字段列表。
+
+    返回的是**目标表里真实存在的列名**（即 INSERT 投影的别名），因为质量校验
+    是去查这些列的统计值。
+
+    支持：
+      - 普通字段：``col1`` -> ``col1``
+      - 字段别名：``col1 AS c1`` -> ``c1``；``col1 c1`` -> ``c1``
+      - 表达式别名：``SUM(IF(a = '1', 1, 0)) AS cnt`` -> ``cnt``（聚合列同样要校验）
+      - 无别名表达式：``col1 + col2`` -> 跳过（推不出列名）
+      - 常量：``1 AS dummy`` -> 跳过（无统计意义）
+      - ``SELECT *`` -> 返回空（无法在 SQL 文本中知道列名，调用方会跳过）
+      - 重复列：去重保序
+
+    注意（CTE 场景）：字段必须取自 **INSERT 自己的 SELECT 投影**，也就是
+    临时表里真正落地的列。语句可能写成
+    ``WITH cte AS (SELECT ... FROM src) INSERT OVERWRITE TABLE t SELECT ... FROM cte``，
+    此时第一个 ``SELECT`` 属于 CTE，拿到的是 CTE 的列（临时表里根本没有），
+    而 INSERT 的投影才是要校验的列。所以先定位 INSERT，再从它后面找 SELECT。
+    """
+    if not sql:
+        return []
+    text = sql.rstrip("; \t\r\n")
+    # 先定位 INSERT 的位置，再在其后找 SELECT —— 否则会命中 CTE 里的 SELECT。
+    insert_m = re.search(r"\bINSERT\b", text, re.IGNORECASE)
+    tail = text[insert_m.end() :] if insert_m else text
+    select_list = _select_projection(tail)
+    if not select_list:
+        return []
+    parts = _split_top_level_commas(select_list)
+    fields: list[str] = []
+    seen: set[str] = set()
+    excluded = {c.lower() for c in exclude_fields}
+    identifier_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    # 常量字面量：数字 / 字符串 / NULL / TRUE / FALSE —— 不落成有意义的列
+    literal_re = re.compile(
+        r"^(?:[-+]?\d+(?:\.\d+)?|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|NULL|TRUE|FALSE)$",
+        re.IGNORECASE,
+    )
+    for part in parts:
+        # 取出列名 / 别名
+        name = None
+        # 形式：``expr AS alias`` / ``expr alias`` / ``expr``
+        # 先去掉尾部 AS 别名
+        as_match = re.search(r"\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", part, re.IGNORECASE)
+        if as_match:
+            before_as = re.sub(r"\bAS\s+[A-Za-z_][A-Za-z0-9_]*\s*$", "", part, flags=re.IGNORECASE).strip()
+            if literal_re.match(before_as):
+                # 常量：``1 AS dummy`` —— 没有统计意义，跳过
+                continue
+            # 带 AS 时别名就是目标表里的列名：
+            #   ``col1 AS c1``       -> c1
+            #   ``SUM(...) AS cnt``  -> cnt（聚合列同样要校验）
+            name = as_match.group(1)
+        else:
+            # 无 AS 的形式只有两种：
+            #   ``col1``      -> col1（单个标识符）
+            #   ``col1 c1``   -> c1（表达式 + 裸别名）
+            # 其它（``col1 + col2`` 等）推不出列名，跳过。
+            # 注意不能简单取最后一个 token —— 那样 ``col1 + col2`` 会被误判成
+            # 别名 ``col2``，而目标表里根本没有这一列。
+            tokens = part.split()
+            if len(tokens) == 1:
+                if identifier_re.match(tokens[0]):
+                    name = tokens[0]
+            elif len(tokens) == 2 and identifier_re.match(tokens[0]) and identifier_re.match(tokens[1]):
+                # ``col1 c1`` —— 简单字段 + 裸别名
+                name = tokens[1]
+            else:
+                continue
+        if not name or name in seen:
+            continue
+        if name.lower() in excluded:
+            continue
+        seen.add(name)
+        fields.append(name)
+    return fields
+
+
+# ============================================================================
+# Data quality check (null-value / single-value coverage)
+# ============================================================================
+#
+# The implementation lives in ``dataops_quality_check``, which owns an
+# extensible checker registry. It is **not** invoked from this validation
+# chain any more: the data quality check runs only in the delivery post-hook
+# (``de_agent/hooks/dataops_quality_check_post.py`` → ``trial_compute_table``).
+# See ``dataops_quality_check`` for the checker registry and configuration.
+
+
+# ============================================================================
+# Backward-compatible lazy re-exports
+# ============================================================================
+#
+# These names now live in ``dataops_quality_check``. They are re-exported via
+# PEP 562 module ``__getattr__`` rather than a module-level import, because
+# ``dataops_quality_check`` imports *from this module* at import time — a
+# module-level import here would be circular. Resolved values are cached in
+# ``globals()`` so the lookup cost is paid only once.
+
+_COMPAT_REEXPORTS = frozenset({
+    "_build_reasonable_check_sql",
+    "_parse_reasonable_check_result",
+    "_is_reasonable_check_enabled",
+    "_REASONABLE_CHECK_DEFAULT_EXCLUDE_COLS",
+    "run_quality_check",
+    "resolve_config",
+})
+
+
+def __getattr__(name: str):
+    if name not in _COMPAT_REEXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from dataagent.actions.tools.local_tool import dataops_quality_check as _qc
+
+    value = getattr(_qc, name)
+    globals()[name] = value
+    return value

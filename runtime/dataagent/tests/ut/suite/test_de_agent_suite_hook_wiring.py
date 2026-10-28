@@ -29,6 +29,7 @@ SUITE_NAME = "data_engineering"  # suite.yaml manifest name；目录名为 de_ag
 HOOK_WIRING = (
     ("hooks.hitl_auto_resolver.hitl_auto_resolver", "nodes.human_feedback.pre"),
     ("hooks.text_question_guard.text_question_guard", "nodes.planner.post"),
+    ("hooks.dataops_quality_check_post.dataops_quality_check_post", "agent.post"),
 )
 
 

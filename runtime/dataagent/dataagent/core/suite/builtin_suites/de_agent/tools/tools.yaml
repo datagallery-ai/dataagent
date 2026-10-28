@@ -128,3 +128,90 @@ TOOLS:
       function: "dataops_probe_table"
       config:
         default_sample_size: 5
+    # 独立数据验证：给一条现成的 INSERT 语句，直接对它写入的**真实目标表**做
+    # 数据正确性校验（空值覆盖率 / 单一值比率 / 异常值占比）。
+    # 与 trial_compute_table 的区别：不建表、不插入、不用临时表替换 —— 只读。
+    - name: "dataops_validate_data"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.dataops_validate_data_tool"
+      function: "validate_data"
+      config:
+        quality_check:
+          # 生效的校验项（可扩展：新增校验只需在 dataops_quality_check
+          # 的 _BUILTIN_CHECKERS 注册，这里按名称启用）
+          checks:
+            - "null_rate"
+            - "single_value_ratio"
+            - "outlier_ratio"
+          # 采样行数：只对目标表 LIMIT N 行统计，避免全表扫描
+          sample_size: 10000
+          thresholds:
+            # 非空率下限：低于此值产出 warning
+            null_rate_threshold: 0.80
+            # 单一值比率上限：高于此值产出 warning
+            single_value_threshold: 0.95
+            # 异常值占比上限：仅对比率类字段生效，参考值 0（出现 <0 或 >1 即告警）
+            outlier_ratio_threshold: 0.0
+          # 比率类字段识别：字段名（小写）包含任一模式即视为比率类。
+          # 配置了 ratio_fields 时以显式清单为准，不再走模式匹配。
+          ratio_field_patterns:
+            - "ratio"
+          # 显式声明的比率类字段（可选）；示例：
+          # ratio_fields:
+          #   - "app_dl_retention_ratio_1d_udid"
+          #   - "app_class_dl_retention_ratio_7d_udid"
+          # 默认排除字段（分区列 / 时间戳 / 主键 ID）
+          exclude_fields:
+            - "pt_d"
+            - "pt"
+            - "pt_h"
+            - "create_time"
+            - "update_time"
+            - "modify_time"
+            - "id"
+            - "uuid"
+            - "udid"
+            - "guid"
+            - "row_key"
+    # 数据试算：把 workspace 里的 INSERT 试算到临时表，并复用
+    # dataops_quality_check 的数据正确性校验能力（空值覆盖率 / 单一值覆盖率 / 异常值占比）
+    - name: "trial_compute_table"
+      module: "dataagent.core.suite.builtin_suites.de_agent.tools.dataops_trial_compute_tool"
+      function: "trial_compute_table"
+      config:
+        quality_check:
+          # 生效的校验项（可扩展：新增校验只需在 dataops_quality_check
+          # 的 _BUILTIN_CHECKERS 注册，这里按名称启用）
+          checks:
+            - "null_rate"
+            - "single_value_ratio"
+            - "outlier_ratio"
+          # 采样行数：只对临时表 LIMIT N 行统计，避免全表扫描
+          sample_size: 10000
+          thresholds:
+            # 非空率下限：低于此值产出 warning
+            null_rate_threshold: 0.80
+            # 单一值比率上限：高于此值产出 warning
+            single_value_threshold: 0.95
+            # 异常值占比上限：仅对比率类字段生效，参考值 0（出现 <0 或 >1 即告警）
+            outlier_ratio_threshold: 0.0
+          # 比率类字段识别：字段名（小写）包含任一模式即视为比率类。
+          # 配置了 ratio_fields 时以显式清单为准，不再走模式匹配。
+          ratio_field_patterns:
+            - "ratio"
+          # 显式声明的比率类字段（可选）；示例：
+          # ratio_fields:
+          #   - "app_dl_retention_ratio_1d_udid"
+          #   - "app_class_dl_retention_ratio_7d_udid"
+          # 默认排除字段（分区列 / 时间戳 / 主键 ID）
+          exclude_fields:
+            - "pt_d"
+            - "pt"
+            - "pt_h"
+            - "create_time"
+            - "update_time"
+            - "modify_time"
+            - "id"
+            - "uuid"
+            - "udid"
+            - "guid"
+            - "row_key"

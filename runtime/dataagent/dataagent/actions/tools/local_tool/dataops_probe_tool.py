@@ -34,6 +34,10 @@ from typing import Any
 from dataagent.actions.tools.context import ToolExecutionContext
 
 # Reused, do not redeclare.
+from dataagent.actions.tools.local_tool.dataops_log_utils import (
+    bound_error_excerpt,
+    bound_error_fields,
+)
 from dataagent.actions.tools.local_tool.dataops_validate_tool import (
     _check_skip_conditions,
     _get_dataops_env,
@@ -59,10 +63,11 @@ _INTEGRATION_POLL_INTERVAL_SEC = 1.0
 #
 # 接受的格式(整串匹配):
 #   pt_d = 'YYYYMMDD'
+# 只接受天分区 pt_d —— 小时/分钟分区(pt_h / pt_i)一律拒绝,与数据探查、
+# 质量校验链路的 pt_d 口径保持一致。
 # 默认值自动生成规则(``partition_filter=None`` 时):
 #   - 当前日期为 ``dt``,``target = dt - 7 days``(默认探查近一周,数据已落盘)
-#   - 所有表统一只约束 pt_d,不再区分 _dm/_hm/_im 等后缀;
-#     业务如需特定小时/分钟粒度探查,可显式传 ``partition_filter`` 覆盖。
+#   - 所有表统一只约束 pt_d,不区分 _dm/_hm/_im 等后缀。
 _PARTITION_FILTER_RE = re.compile(
     r"^\s*pt_d\s*=\s*'(?P<d>\d{8})'\s*$"
 )
@@ -96,12 +101,13 @@ async def dataops_probe_table(
                多段(用 . 分隔)时每段都需通过白名单。
         columns: 可选列名清单。``None`` 或空列表 → ``SELECT *``;
                  非空时按白名单校验后用反引号引用。
-        partition_filter: 分区过滤字面串,**必须**已是 yyyyMMdd 形式(由调用方
-            通过 skill 知识生成,如"今天=20261012");格式白名单见
-            ``_PARTITION_FILTER_RE``。DataOps SQL 校验器要求
+        partition_filter: 分区过滤字面串,**必须**是 ``pt_d = 'yyyyMMdd'`` 形式
+            (由调用方通过 skill 知识生成,如"今天=20261012");格式白名单见
+            ``_PARTITION_FILTER_RE``。**只接受天分区 pt_d**,小时/分钟分区
+            (``pt_h`` / ``pt_i``)一律拒绝。DataOps SQL 校验器要求
             WHERE/ON 出现分区列(readbook 第 13-15 节 + verify.py L107-108);
             DataOps 后端**不**替换 $date/$hour/$minute 等占位符,工具也
-            拒绝接受它们。``None`` 时按"非分区表"处理,不拼 WHERE 分区。
+            拒绝接受它们。``None`` 时自动生成 ``pt_d``(系统前 7 天)。
         sample_size: 抽样行数,默认 5,上限 50。超出会自动夹紧到上限。
         timeout_sec: 整个 submit+poll+collect 硬超时,默认 60s,上限 300s。
 
@@ -144,7 +150,7 @@ async def dataops_probe_table(
             if not m:
                 return _err(common, "invalid_partition_filter", start=start,
                             error=f"partition_filter={partition_filter!r} 不符合白名单 "
-                                  f"pt_d=... [AND pt_h=...] [AND pt_i=...]")
+                                  f"pt_d = 'YYYYMMDD'（只支持天分区 pt_d，不支持 pt_h/pt_i 等小时/分钟分区）")
             # 进一步校验日期数字合法(避免 20261301 这种字符串合法但语义非法的值)
             try:
                 date(int(m["d"][:4]), int(m["d"][4:6]), int(m["d"][6:8]))
@@ -458,8 +464,8 @@ def _build_probe_sql(
     不接受字符串注入。
 
     ``partition_filter`` 已被 ``_PARTITION_FILTER_RE`` 白名单校验过(整串匹配,
-    只可能由 ``pt_d = '...'( AND pt_h = '...')? (AND pt_i = '...')?`` 组成,
-    不含任何用户控制字符),所以这里直接拼接是安全的。
+    只可能由 ``pt_d = 'YYYYMMDD'`` 组成,不含任何用户控制字符),所以这里直接
+    拼接是安全的。
     """
     cols_clause = ", ".join(f"`{c}`" for c in columns) if columns else "*"
     # 拆段:每段独立加反引号
@@ -477,7 +483,12 @@ def _err(
     job_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """构造统一的失败响应。``common`` 通常是 ``{"table": table}``。"""
+    """构造统一的失败响应。``common`` 通常是 ``{"table": table}``。
+
+    错误文本在这里统一收敛：DataOps 失败时 ``errorLog`` 可能是几百 KB 的
+    Spark 日志（驱动栈 + 每个失败 task 的栈），原样返回会淹没 agent 上下文。
+    头尾保留 + 中间省略，根因（异常抛出处，多在头部）不会丢。
+    """
     payload: dict[str, Any] = {
         "ok": False,
         "skipped": True,
@@ -486,9 +497,10 @@ def _err(
         "elapsed_sec": round(time.monotonic() - start, 3),
     }
     if error is not None:
-        payload["error"] = error
+        payload["error"] = bound_error_excerpt(error, label="error")
     if job_id is not None:
         payload["job_id"] = job_id
     if extra:
         payload.update(extra)
-    return payload
+    # ``extra`` 可能带 errorLog（见 prod 路径），统一收敛
+    return bound_error_fields(payload)

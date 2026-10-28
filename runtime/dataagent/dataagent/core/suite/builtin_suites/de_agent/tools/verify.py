@@ -31,11 +31,10 @@ from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 # ============================================================================
 # validate_deliverables orchestration constants
 #
-# [设计] validate_deliverables 把"静态校验 + DataOps 语义校验"合并成单一入口,
-#        整个工具在一次会话内最多跑 MAX_VALIDATE_DELIVERABLES_ATTEMPTS 次。
-#        之前 DataOps 内部对每条 SQL 最多重试 3 次的设计废弃:
-#        现在 retry 由 validate_deliverables 在工具层统一调度,
-#        DataOps wrapper 内部 3 次上限保留作为兜底防御。
+# validate_deliverables 把"静态校验 + DataOps 语义校验"合并成单一入口,
+# 整个工具在一次会话内最多跑 MAX_VALIDATE_DELIVERABLES_ATTEMPTS 次。
+# retry 由 validate_deliverables 在工具层统一调度,
+# DataOps wrapper 内部 3 次上限保留作为兜底防御。
 # ============================================================================
 MAX_VALIDATE_DELIVERABLES_ATTEMPTS = 3
 _VALIDATE_DELIVERABLES_STATE_KEY = "validate_deliverables_state"
@@ -548,48 +547,18 @@ def _merge_warnings(static_warn: str, dataops_warn: str) -> str:
 
 
 # ============================================================================
-# DDL 重跑时预清理（fire-and-forget）
+# DDL 预清理
 #
-# 当 agent 修改 SQL 后再次调用 validate_deliverables 时：
-#   - DDL 重跑时 adhoctemp 临时表已存在（上次 CREATE 失败但表留下了）
-#   - dataops wrapper 的 drop_before_create 需要 resource.metadata 控制，
-#     不一定每次都开启
-# → 因此在提交 DDL 之前主动 DROP 同名 adhoctemp 表，不等返回、不阻塞主流程
+# DDL 重跑时 adhoctemp 临时表可能已存在（上次 CREATE 失败但表留下了），
+# 直接重跑会报 "Table already exists"。
+#
+# 预清理由 ``dataops_validate_sql`` 内部的 ``_pre_drop_for_create`` /
+# ``_pre_drop_for_create_prod`` 负责 —— 那里会**同步等 DROP 真正执行完**
+# 再提交 CREATE。这里曾有一个 fire-and-forget 的并行实现（后台线程提交
+# DROP 后立即返回），它有两个问题，故已移除：
+#   1. DROP 的实际执行可能晚于 CREATE，于是把刚建好的表删掉；
+#   2. 不等完成 → 无法保证 CREATE 前同名表已消失。
 # ============================================================================
-
-
-def _ddl_pre_cleanup(ddl_sql: str, _tool_context: ToolExecutionContext) -> None:
-    """从 DDL SQL 提取 adhoctemp 临时表名并 fire-and-forget DROP。
-
-    不影响后续 dataops wrapper 校验结果；若 DROP 失败（表不存在 / 权限问题）
-    也只记 debug 日志，不抛异常。
-    """
-    import threading
-
-    def _fire():
-        try:
-            from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
-                prod_execute_sql,
-            )
-            from dataagent.actions.tools.local_tool.dataops_validate_tool import (
-                _build_drop_sql,
-                _get_user_account,
-            )
-
-            user_account = _get_user_account(_tool_context.runtime)
-            table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
-            drop_sql = _build_drop_sql(ddl_sql, user_account, table_suffix)
-            if not drop_sql:
-                logger.debug("[validate_deliverables] _ddl_pre_cleanup: could not extract temp table")
-                return
-            logger.info(f"[validate_deliverables] pre-DROP before DDL retry: {drop_sql}")
-            # 同步调用，fire-and-forget 变体：在线程里跑，不 join 回主线程
-            asyncio.run(prod_execute_sql(drop_sql))
-        except Exception as exc:
-            logger.debug(f"[validate_deliverables] _ddl_pre_cleanup failed (ignored): {exc}")
-
-    thread = threading.Thread(target=_fire, daemon=True)
-    thread.start()
 
 
 def _run_dataops_validation_round(
@@ -635,21 +604,21 @@ def _run_dataops_validation_round(
         return summary
 
     # ------------------------------------------------------------------
-    # DDL 重跑时，adhoctemp 临时表可能已被上次失败的 CREATE TABLE 创建，
-    # 直接重跑会报"Table already exists"。在正式提交 DDL 之前先
-    # fire-and-forget 清理同名的 adhoctemp 表，不影响主流程。
+    # DDL 重跑时 adhoctemp 临时表可能已被上次失败的 CREATE TABLE 创建，
+    # 直接重跑会报 "Table already exists"。
+    #
+    # 预清理由 dataops_validate_sql 内部的 _pre_drop_for_create(联调) /
+    # _pre_drop_for_create_prod(生产) 负责 —— 那里会同步等 DROP 真正执行完
+    # 再提交 CREATE，确保 CREATE 之前同名表已消失，且不会在 CREATE 之后
+    # 把刚建好的表误删。
     # ------------------------------------------------------------------
-    for kind, path in sql_jobs:
-        if kind == "ddl":
-            ddl_sql_text = path.read_text(encoding="utf-8")
-            _ddl_pre_cleanup(ddl_sql_text, _tool_context)
-            break
 
     # 对每条 SQL 各跑一次 wrapper；wrapper 内部会按 attempt 维护历史。
     # 因为每次 validate_deliverables 都从 attempt=1 开始，prior_attempts
     # 这里也总是空列表。
     for kind, path in sql_jobs:
-        sql_text = path.read_text(encoding="utf-8")
+        # 直接传文件路径,避免把整段 SQL 重复塞进 chat history;
+        # 工具侧(_resolve_sql_input)会优先用 sql_file_path 读 SQL。
         try:
             # dataops_validate_sql_with_log_analysis 是 async coro;
             # validate_deliverables 是 sync tool,正常情况下用 asyncio.run 创建临时 loop。
@@ -668,7 +637,7 @@ def _run_dataops_validation_round(
                     result = _pool.submit(
                         asyncio.run,
                         dataops_validate_sql_with_log_analysis(
-                            sql_text,
+                            sql_file_path=path,
                             attempt=1,
                             prior_attempts=[],
                             _tool_context=_tool_context,
@@ -677,7 +646,7 @@ def _run_dataops_validation_round(
             else:
                 result = asyncio.run(
                     dataops_validate_sql_with_log_analysis(
-                        sql_text,
+                        sql_file_path=path,
                         attempt=1,
                         prior_attempts=[],
                         _tool_context=_tool_context,

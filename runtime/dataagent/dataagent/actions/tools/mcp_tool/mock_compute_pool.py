@@ -49,6 +49,11 @@ from loguru import logger
 from mcp.server.fastmcp import FastMCP
 
 _POLLS_BEFORE_COMPLETE = 2
+# Tools that intentionally block on the server side so a caller can race a
+# client-side cancel against them (used by cancellation regression tests).
+# Keep this short enough that a hung call still reaps when the test process
+# exits, but long enough to outlast any reasonable "wait for cancel" delay.
+_DEFAULT_BLOCK_SECONDS = 3600.0
 
 
 @dataclass
@@ -205,6 +210,23 @@ def create_server(*, host: str, port: int) -> FastMCP:
         payload = _STORE.cancel(job_id)
         logger.info("cancel_job job_id={} status={}", job_id, payload.get("status"))
         return payload
+
+    @server.tool()
+    def wait_for_cancel(seconds: float = _DEFAULT_BLOCK_SECONDS) -> dict[str, Any]:
+        """Block on the server side until either ``seconds`` elapses or the
+        client disconnects.
+
+        Used by cancellation regression tests to guarantee that the call is
+        still in flight when the client cancels its task. ``poll_job`` returns
+        instantly in the mock, so a 200ms ``asyncio.sleep`` window can race
+        ahead of a fast localhost loopback. Blocking here removes that race.
+        """
+        deadline = time.monotonic() + max(0.0, float(seconds))
+        # Cooperative wait: poll in 50ms slices so we exit quickly when the
+        # process is torn down and don't busy-loop.
+        while time.monotonic() < deadline:
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        return {"status": "completed", "waited": seconds}
 
     return server
 

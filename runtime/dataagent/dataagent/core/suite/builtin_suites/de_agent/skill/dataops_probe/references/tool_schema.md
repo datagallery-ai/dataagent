@@ -20,10 +20,11 @@ dataops_probe_table(
 ## partition_filter whitelist (regex)
 
 ```
-^\s*pt_d\s*=\s*'(?P<d>\d{8})'
-(?:\s+AND\s+pt_h\s*=\s*'(?P<h>\d{10})')?
-(?:\s+AND\s+pt_i\s*=\s*'(?P<i>\d{12})')?\s*$
+^\s*pt_d\s*=\s*'(?P<d>\d{8})'\s*$
 ```
+
+Only the day partition `pt_d` is accepted. `pt_h` / `pt_i` (hour / minute
+partitions) and any other partition column name are rejected.
 
 Any deviation → `{"ok": False, "skipped": True, "reason": "invalid_partition_filter", ...}`.
 
@@ -61,7 +62,7 @@ Failed (backend fail):
   "skipped": false,
   "table": "db.tbl",
   "reason": "status_failed" | "poll_timeout" | "unknown_error" | "submit_failed",
-  "errorLog": "raw backend error log",
+  "errorLog": "backend error log excerpt (head+tail, bounded — not the full log)",
   "elapsed_sec": 60.1
 }
 ```
