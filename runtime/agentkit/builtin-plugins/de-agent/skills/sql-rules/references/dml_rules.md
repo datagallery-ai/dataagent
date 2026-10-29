@@ -84,7 +84,7 @@
    - 使用DATE_ADD或DATE_SUB时需要注意日期格式，例如使用 `pt_d` 做计算时需要先使用 `bicoredata.DateFormat` UDF将其从 `yyyyMMdd` 格式转换为 `yyyy-MM-dd` 格式。
 11. **不同单位的时间戳必须换算后才能对比/排序**：
    - unix 秒时间戳与 unix 毫秒时间戳不能直接比较或排序；参与 WHERE 过滤、ORDER BY、窗口函数排序、时间差计算之前，必须先换算到同一单位（如毫秒/1000 或 秒*1000）。
-   - 换算基准以元数据证据或用户口径为准；单位不明的字段先通过 metadata_recall 确认，不要凭字段名猜测。
+   - 换算基准以元数据证据或用户口径为准；单位不明的字段先通过 `task(subagent_type="metadata-recall", description=完整检索需求)` 确认，不要凭字段名猜测。
 12. **宏表达式中绝对不能出现算术运算**:
    - 宏表达式的偏移量必须是数字常量，不支持算术运算（如 -5*365 需预计算为 -1825）。
 13. **遵循以下按时间进行的表分区规则**：
@@ -120,7 +120,7 @@
 20. **用户要求输出位次时，需要的是位次编号，而不是原始值。同时对应的列名中也要携带rank关键字。**
 21. **用户要求进行非零过滤时，使用 CAST(col AS DOUBLE) != 0.0 进行判断，避免精度丢失**
 22. **使用JOIN拼接不同时间窗口/不同分区范围的数据时，必须先判断各侧用户（实体）集合的包含关系，再选择JOIN类型与基准侧。**
-   - 多表关联必须用 `metadata_recall` 或 schema/主键证据说明 JOIN key、JOIN 类型、左右粒度；不能证明唯一的一侧必须先去重或预聚合。
+   - 多表关联必须用 `task(subagent_type="metadata-recall", description=完整检索需求)` 或 schema/主键证据说明 JOIN key、JOIN 类型、左右粒度；不能证明唯一的一侧必须先去重或预聚合。
    - 仅当能证明左表数据一定包含右表全部数据（左表实体集合是右表的超集，如时间窗口最大的表经过过滤后仍包含所有小窗口的用户）时，才允许使用LEFT JOIN并以左表为基准。
    - 无法证明任意一侧包含另一侧时（如各时间窗口各有独立过滤、用户集合互不为子集），禁止把某一侧的表作为左表LEFT JOIN其他侧——这会丢失只在其他侧出现的数据。
    - 此时必须使用更保守的拼接方式：用FULL OUTER JOIN直接拼接；或先把各窗口的用户（实体）集合做UNION得到全部用户作为基准表，再对每个窗口的结果LEFT JOIN基准表。
@@ -154,7 +154,7 @@
    - 参与序列拼接的业务对象为空时，先过滤；空对象不得进入 `ConcatWithRank`。
    - `HAVING seq IS NOT NULL AND seq != ''` 这类最终判空应优先改为上游对象过滤 + `ConcatWithRank` 结果校验，避免掩盖明细质量问题。
 6. **判空函数大小写和证据**：
-   - UDF 手册中有 `bicoredata.IsEmpty` / `bicoredata.isDeviceIdLegal` 线索；实际函数名、大小写、参数必须通过 `metadata_recall` 确认。
+   - UDF 手册中有 `bicoredata.IsEmpty` / `bicoredata.isDeviceIdLegal` 线索；实际函数名、大小写、参数必须通过 `task(subagent_type="metadata-recall", description=完整检索需求)` 确认。
    - 同一条 SQL 中判空 UDF 大小写尽量保持一致；若沿用参考 SQL 的大小写，需在说明证据来源。
 
 ## SQL 构造

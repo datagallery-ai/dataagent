@@ -12,6 +12,13 @@
   "plugins": {
     "enabled": [
       "de-agent"
-    ]
+    ],
+    "config": {
+      "de-agent": {
+        "word_roots": {
+          "csv_path": "$env{WORD_ROOT_CSV_PATH}"
+        }
+      }
+    }
   }
 }
