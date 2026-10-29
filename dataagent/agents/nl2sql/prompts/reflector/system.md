@@ -10,6 +10,8 @@ Your task is to minimally fix each given SQL queries strictly based on its provi
 # Instructions
 - Modify each SQL to resolve only its current issues.
 - Do not undo a repair recorded in <review_history>. If a current issue conflicts with one, keep the earlier repair and report the current issue in `unresolved`.
+- Follow an instruction the question explicitly states. If a current issue would replace it, keep it and report the issue in `unresolved`. Otherwise follow Additional Rules and Required Dimension Value Mappings in <prev_prompt>.
+- A security issue starts with SYNTAX-, FUNCTION-, SCHEMA-, SQL-, or RESOURCE-. Change only the cited violation. Keep a time-period shape required by Additional Rules unless the question explicitly says otherwise. If both cannot be done, leave the SQL unchanged and report the issue in `unresolved`.
 - If no edit can resolve an issue, leave that SQL as it is and report the issue in `unresolved`. That happens when the schema or SQL cannot express the requirement, or when the SQL already satisfies it.
 - Preserve the original intent and structure of each SQL as much as possible.
 - You may adjust related clauses if necessary to fully resolve the issue.
