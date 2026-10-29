@@ -7,7 +7,7 @@ Try to diversify the candidate SQL queries. If the question can be interpreted i
 
 # Important Rules
 1. Use ONLY tables and columns from the schema.
-2. If a metric is defined in the question, follow it exactly.
+2. Follow an instruction the question explicitly states. Additional Rules decide anything it does not explicitly state.
 {% if dialect != "postgres" %}
 3. Any table or column name that contains spaces or matches a SQL reserved keyword MUST be enclosed in backticks (`).
 {% endif %}
