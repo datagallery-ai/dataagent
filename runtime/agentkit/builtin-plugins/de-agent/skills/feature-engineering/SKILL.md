@@ -14,14 +14,14 @@ description: |
 - 根据查询到的相关规范内容，对生成的SQL进行校验，是否符合规范和要求
 - 在你认为SQL质量无问题后，将SQL打印出来给用户看，与用户交互确认是否完成任务，等待用户确认是否结束
 - 结束之前告诉用户生成的文件、工作目录在哪里。
-- 当你需要写INSERT SQL语句的时候，你必须要使用wrapped_nl2sql_sub_agent_tool工具。
-- 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用前已经调用过metadata_recall工具。
-- 你需要保证在wrapped_nl2sql_sub_agent_tool工具调用后调用过1次或多次validate_deliverables工具。
+- 当你需要写INSERT SQL语句的时候，你必须要使用 `task(subagent_type="nl2sql")` 子agent。
+- 你需要保证在 `task(subagent_type="nl2sql")` 调用前已经调用过 `task(subagent_type="metadata_recall", description=完整检索需求)` 子agent。
+- 你需要保证在 `task(subagent_type="nl2sql")` 子agent调用后调用过1次或多次 `validate_deliverables` 工具。
 - **数据探查**（写 SQL 前确认字段真实存在 / 取值分布 / 空值情况）：
   - 何时调、调用硬约束（`partition_filter` / `columns` / 占位符）、返回结果解读、工具签名，详见 `skill/dataops_probe/SKILL.md`。
   - 调用入口：`dataops_probe_table`，仅 SELECT LIMIT，失败自动跳过不抛错。
   - 与 metadata_recall 的分工：metadata_recall 回答"表/列是什么"，dataops_probe_table 回答"字段实际长什么样"。
-- wrapped_nl2sql_sub_agent_tool 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
+-  `task(subagent_type="nl2sql")`  调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
   - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
   - 最终输出列语义 = 已确认特征主键（identity.components，必选前缀，即使未出现在 output_features 中）+ expand(output_features) 业务/指标语义；多时间窗口 × 多特征等交叉场景必须以 IR 中确定性展开后的字段条数为准（如 3×3=9），不得在 query 中压缩成更少的“代表列”。IR 给出的展开列名（field_name / name_pattern）仅供主 Agent 对照参考，query/SQL/DDL **不要求**照抄同名。
   - **主键/分组键防重复**：identity.components 是主键列唯一权威；禁止在 output_features（measures/extras/features）再写同名输出列。aggregation.grain 可引用主键 field_ref（表示按该键聚合），这不等于还要再输出一列同名键。query 中也不要把主键既当“已确认主键前缀”又当“业务特征列”各写一遍。

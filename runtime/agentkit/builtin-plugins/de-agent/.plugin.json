@@ -40,10 +40,21 @@
     },
     "validate_deliverables": {
       "entrypoint": "tools/deliverables.py:validate_deliverables"
+    },
+    "validate_word_roots": {
+      "entrypoint": "tools/word_roots.py:validate_word_roots"
     }
   },
   "hooks": {
     "after_tool": [
+      {
+        "entrypoint": "hooks/word_roots.py:check_word_roots",
+        "matcher": "write_file"
+      },
+      {
+        "entrypoint": "hooks/word_roots.py:check_word_roots",
+        "matcher": "edit_file"
+      },
       {
         "entrypoint": "hooks/files.py:check_ddl",
         "matcher": "write_file"

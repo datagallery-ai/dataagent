@@ -5,7 +5,16 @@
         "allowed_databases": [],
         "quality_gate": true,
         "quality_gate_include_suggestions": false,
-        "model": "primary"
+        "model": "primary",
+        "word_roots": {
+          "english_name_column": "词根英文名",
+          "chinese_name_column": "词根中文名",
+          "description_column": "描述",
+          "type_column": "词根类型",
+          "regex_column": "特殊词根规则",
+          "special_type_value": "特殊词根",
+          "llm_model": "primary"
+        }
       },
       "nl2sql": {
         "model": "primary",
