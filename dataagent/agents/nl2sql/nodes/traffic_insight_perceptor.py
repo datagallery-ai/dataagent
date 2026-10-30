@@ -70,9 +70,9 @@ class TrafficInsightPerceptorNode(PerceptorNode):
         if explicit_granularity:
             state["sql_rules"] += (
                 "\n\n## 时间粒度"
-                "\n- 问题明确要求了时间粒度：`time` 必须出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
-                "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不得把结果压成单行。"
-                "\n- 不得从 SELECT 或 GROUP BY 移除 `time`，任何要求移除 `time` 的意见都应判为无效。"
+                "\n- 显式时间粒度主要用于选表；问题要求「按时间分组」「按时间」一类表达时，`time` 应出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
+                "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不宜把结果压成单行。"
+                "\n- 建议保留 SELECT 与 GROUP BY 中的 `time`。"
             )
         state["schema"] = schema
         state["joins"] = joins

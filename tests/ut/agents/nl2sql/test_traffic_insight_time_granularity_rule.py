@@ -44,9 +44,9 @@ async def test_named_granularity_makes_time_mandatory(monkeypatch: pytest.Monkey
 
     rules = result["sql_rules"]
     assert "\n\n## 时间粒度" in rules
-    assert "`time` 必须出现在 SELECT 和 GROUP BY" in rules
-    assert "不得把结果压成单行" in rules
-    assert "任何要求移除 `time` 的意见都应判为无效" in rules
+    assert "主要用于选表" in rules
+    assert "`time` 应出现在 SELECT 和 GROUP BY" in rules
+    assert "建议保留 SELECT 与 GROUP BY 中的 `time`" in rules
 
 
 @pytest.mark.asyncio
