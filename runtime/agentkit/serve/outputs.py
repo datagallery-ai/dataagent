@@ -43,8 +43,10 @@ def list_outputs(root: Path) -> list[dict]:
 
     for directory, dirs, names in os.walk(root, onerror=on_error, followlinks=False):
         parent = Path(directory)
-        dirs[:] = [name for name in dirs if not (parent / name).is_symlink()
-                   and (parent / name).relative_to(root).as_posix() not in _INTERNAL]
+        for entries in (dirs, names):
+            entries[:] = [name for name in entries
+                          if (parent / name).relative_to(root).as_posix() not in _INTERNAL]
+        dirs[:] = [name for name in dirs if not (parent / name).is_symlink()]
         for name in names:
             path = parent / name
             try:

@@ -1,6 +1,7 @@
 """Outputs come from session files, not custom AG-UI artifact events."""
 
 import os
+from dataclasses import replace
 
 import pytest
 from conftest import ScriptedModel, call
@@ -10,7 +11,10 @@ from test_api import client_for, query, sse, terminal
 from serve.outputs import PREVIEW_BYTES, list_outputs
 
 
-async def test_native_output_listing_and_preview_survive_restart(runtime):
+@pytest.mark.parametrize("custom", [False, True])
+async def test_native_output_listing_and_preview_survive_restart(runtime, tmp_path, custom):
+    if custom:
+        runtime = replace(runtime, paths=replace(runtime.paths, output_root=tmp_path / "reports"))
     model = ScriptedModel(responses=[
         call("write_file", {"file_path": str(runtime.paths.for_session("thread-1").outputs / "销售报告.md"),
                             "content": "# Sales\n\nTotal: 42"}),
@@ -26,14 +30,16 @@ async def test_native_output_listing_and_preview_survive_restart(runtime):
         assert [file["path"] for file in response.json()["files"]] == ["销售报告.md"]
         assert response.json()["files"][0]["size"] > 0
 
-    async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
+    restarted = replace(runtime, paths=replace(runtime.paths, output_root=tmp_path / "new-reports"))
+    async with client_for(restarted, ScriptedModel(responses=[])) as (client, app):
         assert (await client.get("/sessions/thread-1/outputs")).json() == response.json()
         preview = await client.get("/sessions/thread-1/outputs/preview", params={"path": "销售报告.md"})
         assert preview.json()["content"] == "# Sales\n\nTotal: 42"
         assert not app.state.agents.cache  # Listing/preview never assembles an Agent.
 
 
-async def test_outputs_only_list_current_session_regular_business_files(runtime, tmp_path):
+@pytest.mark.parametrize("internal_directories", [True, False])
+async def test_outputs_only_list_current_session_regular_business_files(runtime, tmp_path, internal_directories):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
         for thread in ("one", "two"):
             runtime.paths.open_session(thread, create=True)
@@ -44,8 +50,12 @@ async def test_outputs_only_list_current_session_regular_business_files(runtime,
         (root / "nested").mkdir()
         (root / "nested" / "result.csv").write_text("name,total\na,42")
         for name in ("conversation_history", "large_tool_results"):
-            (root / "artifacts" / name).mkdir()
-            (root / "artifacts" / name / "internal.txt").write_text("internal")
+            path = root / "artifacts" / name
+            if internal_directories:
+                path.mkdir()
+                (path / "internal.txt").write_text("internal")
+            else:
+                path.write_text("internal")
         (root / "artifacts" / "chart.svg").write_text("<svg/>")
         (root / "link.txt").symlink_to(other / "private.txt")
         (root / "linked-directory").symlink_to(other, target_is_directory=True)
@@ -53,10 +63,11 @@ async def test_outputs_only_list_current_session_regular_business_files(runtime,
         files = (await client.get("/sessions/one/outputs")).json()["files"]
         assert {file["path"] for file in files} == {"nested/result.csv", "artifacts/chart.svg"}
         for path in ("link.txt", "linked-directory/private.txt", "pipe", "missing.txt",
+                     "artifacts/conversation_history", "artifacts/large_tool_results",
                      "artifacts/conversation_history/internal.txt"):
             result = await client.get("/sessions/one/outputs/preview", params={"path": path})
             assert result.status_code == 404
-        for path in ("../session.json", str(other / "private.txt"), "nested/../../session.json"):
+        for path in ("../private-state", str(other / "private.txt"), "nested/../../private-state"):
             result = await client.get("/sessions/one/outputs/preview", params={"path": path})
             assert result.status_code == 400
         await app.state.sessions.start("someone-else", "foreign", "run", "test")

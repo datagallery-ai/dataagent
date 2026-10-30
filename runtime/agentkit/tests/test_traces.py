@@ -16,7 +16,7 @@ from langchain_core.messages import AIMessage
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 from test_api import client_for, query, sse, terminal
 
-from dataagent import build_agent
+from dataagent import build_agent, create_agent
 from dataagent.extensions.tracing import LocalLangChainTracer
 
 
@@ -296,6 +296,54 @@ async def test_parallel_subagents_have_distinct_parent_tools(runtime):
     assert {s["parentSpanId"] for s in children} == {s["spanId"] for s in tools}
     assert {json.loads(attributes(s)["gen_ai.prompt"])["messages"][0]["content"]
             for s in children} == {"job-left", "job-right"}
+
+
+async def test_sdk_trace_keeps_automatic_general_purpose_messages(runtime):
+    runtime = replace(runtime, settings=runtime.settings.model_copy(update={
+        "plugins": runtime.settings.plugins.model_copy(update={"enabled": ()}),
+    }))
+    model = ScriptedModel(responses=[
+        call("task", {"subagent_type": "general-purpose", "description": "child input"}),
+        AIMessage(content="child answer"), AIMessage(content="root answer"),
+    ])
+    with create_agent(runtime, model=model) as agent:
+        await agent.ainvoke({"messages": [("user", "delegate")]})
+    path, = runtime.paths.for_session("sdk").traces.glob("*.json")
+    records = spans(validate_file(path))
+    child, = [s for s in records if s["name"] == "general-purpose"]
+    assert "child input" in attributes(child)["gen_ai.prompt"]
+    assert "child answer" in attributes(child)["gen_ai.completion"]
+    assert len([s for s in records if attributes(s).get("langsmith.span.kind") == "llm"]) == 3
+
+
+async def test_sdk_trace_keeps_nested_compiled_subagent_messages(runtime, monkeypatch):
+    from dataagent.agent import create_deep_agent, load_extensions
+
+    model = ScriptedModel(responses=[
+        call("task", {"subagent_type": "outer", "description": "outer input"}),
+        call("task", {"subagent_type": "nested-specialist", "description": "nested input"}),
+        AIMessage(content="nested answer"), AIMessage(content="outer answer"),
+        AIMessage(content="root answer"),
+    ])
+    nested = create_deep_agent(model, name="outer", subagents=[{
+        "name": "nested-specialist", "description": "A nested specialist", "system_prompt": "Help.",
+    }])
+
+    def extensions(*args, **kwargs):
+        compiled = load_extensions(*args, **kwargs)
+        compiled["subagents"] = [{"name": "outer", "description": "Delegate", "runnable": nested}]
+        return compiled
+
+    monkeypatch.setattr("dataagent.agent.load_extensions", extensions)
+    with create_agent(runtime, model=model) as agent:
+        await agent.ainvoke({"messages": [("user", "delegate twice")]})
+    path, = runtime.paths.for_session("sdk").traces.glob("*.json")
+    records = spans(validate_file(path))
+    for name, label in (("outer", "outer"), ("nested-specialist", "nested")):
+        child, = [s for s in records if s["name"] == name]
+        assert f"{label} input" in attributes(child)["gen_ai.prompt"]
+        assert f"{label} answer" in attributes(child)["gen_ai.completion"]
+    assert len([s for s in records if attributes(s).get("langsmith.span.kind") == "llm"]) == 5
 
 
 async def test_tool_failure_and_nested_traceable_are_exported(runtime):

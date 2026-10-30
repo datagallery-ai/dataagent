@@ -27,7 +27,7 @@ npm run test:tui
 ## 状态兼容
 
 - Checkpoint 保存在 `<home>/runtime/checkpoints.sqlite`，使用 LangGraph 的 Sqlite saver。修改 `DeepAgentState` 或私有状态键之后，确认已有会话仍能 `aget_state`。
-- `session.json` 在会话创建时写入，之后保持不变。调整字段时，要么继续读懂已有文件，要么明确拒绝并提示用户新建会话。
+- `session_bindings` 是会话固定输入和输出绑定的唯一来源；首版不支持旧文件格式的兼容读取或迁移。
 - 进程启动时，索引里仍为 `running` 的会话改为 `interrupted`。这些轮次不会自动重放。
 - Trace 使用 OTLP JSON。更早的自定义轨迹文件保持原样。
 - 长工具结果的路径写在消息里。修改 `artifacts/large_tool_results` 前缀后，旧消息中的路径会失效。

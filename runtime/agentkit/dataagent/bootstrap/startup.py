@@ -25,11 +25,12 @@ from dataagent.bootstrap.paths import (
     WorkspaceInput,
     absolute,
     directory,
+    find_session_binding,
     home_path,
     initialize_home,
     opaque_id,
-    read_session_binding,
-    session_paths,
+    session_root,
+    validate_workspace_binding,
 )
 from dataagent.bootstrap.runtime import Runtime, StartupReport
 from dataagent.plugin_config import contained_path, resolve_plugins
@@ -90,7 +91,9 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
             workspaces,
             explicit=explicit_inputs,
         )
-    paths = RuntimePaths.resolve(home, workspaces, user_id=user_id)
+    paths = RuntimePaths.resolve(
+        home, workspaces, user_id=user_id, output_root=settings.dataagent.output_root,
+    )
 
     # Step3. Only Home supplies automatic user extensions; cwd and inputs are data paths.
     for name in ("skills", "hooks", "plugins"):
@@ -198,25 +201,18 @@ def _resume_workspaces(
     explicit: bool,
 ) -> tuple[WorkspaceInput, ...]:
     """Use the saved input list. An explicit different list is a startup error, not a rebind."""
-    session = session_paths(home, user_id, thread_id)
-    if not session.session_file.is_file():
+    binding = find_session_binding(session_root(home, user_id, thread_id))
+    if binding is None:
         raise ValueError(
             f"Session {thread_id} is not in profile {user_id}. "
             "Choose an existing session for this profile or start a new one."
         )
-    binding = read_session_binding(session)
     if binding.user_id != user_id or binding.thread_id != thread_id:
         raise ValueError(
             f"Session {thread_id} is not in profile {user_id}. "
             "Choose an existing session for this profile or start a new one."
         )
-    if explicit:
-        launched_paths = tuple(directory(item.path, required=True) for item in launched)
-        if launched_paths != tuple(item.path for item in binding.workspaces):
-            raise ValueError(
-                f"Session {thread_id} is bound to a different workspace list. "
-                "Start a new session to use different inputs."
-            )
+    validate_workspace_binding(binding, launched if explicit else None)
     return binding.workspaces
 
 

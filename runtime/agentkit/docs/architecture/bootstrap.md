@@ -19,6 +19,8 @@ flowchart LR
 
 `init_home=True` 时创建 `config.json`、`.env`、`skills/`、`hooks/`、`plugins/`、`runtime/`。已有文件不覆盖。CLI 开启它。SDK 默认关闭。导入包、`--help` 和默认 SDK 准备都不会创建 Home。
 
+`RuntimePaths.resolve` 将省略或为 `null` 的 `output_root` 解析为 `<home>/outputs`，不创建目录。打开新会话时才创建 `<output_root>/<user>/<thread>/`；控制面的会话目录只创建 `traces/`。详见 [会话与产物](../guides/sessions-and-outputs.md)。
+
 ## 环境与配置
 
 环境文件顺序是 Home `.env`，显式配置旁边的 `.env`，然后 `--env-file`，最后进程环境覆盖。细节见 [命令与环境变量](../reference/cli-and-environment.md)。
@@ -29,7 +31,7 @@ flowchart LR
 
 ## 输入
 
-CLI 的 workspace 列表优先。否则看 `DATAAGENT_WORKSPACE`。否则用配置里的 `dataagent.workspaces`。恢复会话时，若调用方又给了输入，路径列表必须和 `session.json` 一致；没给则直接采用绑定。
+CLI 的 workspace 列表优先。否则看 `DATAAGENT_WORKSPACE`。否则用配置里的 `dataagent.workspaces`。恢复会话时，若调用方又给了输入，路径列表必须和 `sessions.sqlite` 的 `session_bindings` 表 一致；没给则直接采用绑定。
 
 每个路径必须是可读目录。名称和路径都不能重复。
 

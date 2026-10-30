@@ -20,11 +20,15 @@ Trace 会遮盖常见的 API key 和 Bearer 形态。Trace 文件里仍有系统
 
 ## 文件和 shell
 
-文件工具和 shell 使用 `LocalShellBackend`，`virtual_mode` 为 false。它们可以读写后端进程有权访问的路径。默认工作目录是当前会话的 `outputs/`。shell 继承后端进程的环境变量，超时、输出截断和退出码遵循该后端的行为。
+文件工具和 shell 使用 `LocalShellBackend`，`virtual_mode` 为 false。它们可以读写后端进程有权访问的路径。默认工作目录是当前会话的产物目录，未配置时为 `<home>/outputs/<user>/<thread>/`。shell 继承后端进程的环境变量，超时、输出截断和退出码遵循该后端的行为。
 
 系统提示要求模型把输入目录当作只读，并把新文件写到 `outputs/`。提示不改变操作系统权限。HTTP 列举产物时拒绝符号链接、`..`，并跳过 `artifacts/large_tool_results` 与 `artifacts/conversation_history`。这项检查只作用于预览接口。
 
 新建的 Home 目录模式为 `0700`，生成的 `config.json` 和 `.env` 为 `0600`。已有文件保持原来的权限。
+
+控制数据保留在 `runtime/`，默认产物放在 Home 的 `outputs/`。产物目录不得与 Home 重叠，只有 `<home>/outputs` 区域例外，防止产物落入扩展目录后被自动加载。`runtime/` 下的目录、Home 的 `outputs/` 及其第一层目录固定为 `0700`；会话产物目录及 `artifacts/` 保留已有权限，新建时遵循 umask。Home 默认产物区之外的自定义输出目录及其上级权限不修改。
+
+目录分区不是沙箱。同一 OS 用户运行的 Agent 仍能按绝对路径访问控制数据；本次调整没有增加文件工具或 shell 的访问限制。未来 sandbox 应只挂载当前会话产物和只读资源，不挂载 `runtime/`、配置或凭据。见 [Home 布局](../development/home-layout.md)。
 
 ## 扩展
 

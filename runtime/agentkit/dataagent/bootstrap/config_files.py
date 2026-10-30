@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 
 from pydantic import ValidationError, create_model
 
-from dataagent.bootstrap.paths import absolute
+from dataagent.bootstrap.paths import absolute, output_directory
 from dataagent.declarations import StrictModel, normalize_hooks
 from dataagent.settings import (
     SECTION_MODELS,
@@ -268,6 +268,11 @@ def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer 
     agent_data = data.get("dataagent")
     if isinstance(agent_data, dict) and "workspaces" in agent_data:
         agent_data["workspaces"] = _resolve_workspace_entries(agent_data["workspaces"], path)
+    if isinstance(agent_data, dict) and agent_data.get("output_root") is not None:
+        try:
+            agent_data["output_root"] = output_directory(agent_data["output_root"])
+        except ValueError as error:
+            raise ValueError(f"{path}: dataagent.output_root: {error}") from error
     return Layer(scope=scope, path=path, data=freeze(data), env=env, home=home)
 
 

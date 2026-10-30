@@ -72,6 +72,13 @@ def _build_otlp_exporter(endpoint: str, headers: dict[str, str] | None = None) -
 
     return OTLPSpanExporter(endpoint=endpoint, headers=headers)
 
+
+def _is_agent_run(name, extra, agent_names) -> bool:
+    """Recognize declared entries and native Agent roots, not their internal nodes."""
+    metadata = (extra or {}).get("metadata") or {}
+    return name in agent_names or bool(name and name == metadata.get("lc_agent_name"))
+
+
 class _LocalOTELClient(Client):
     def __init__(self, *args, agent_names=(), **kwargs):
         self.agent_names = agent_names
@@ -96,7 +103,7 @@ class _LocalOTELClient(Client):
         }
         result = {**kwargs, "extra": extra}
         if (kwargs.get("run_type") == "chain" and kwargs.get("parent_run_id")
-                and kwargs.get("name") not in self.agent_names):
+                and not _is_agent_run(kwargs.get("name"), extra, self.agent_names)):
             # Internal middleware requests contain live model/runtime objects,
             # not just this invocation's messages. Keep their timing, not reprs.
             result.update(inputs={}, outputs={})
@@ -187,8 +194,8 @@ class LocalLangChainTracer(LangChainTracer):
             return
         parent = self.run_map.get(str(run.parent_run_id))
         while parent is not None:
-            # A registered subagent is a new boundary, even below the task tool.
-            if parent.run_type == "chain" and parent.name in self.agent_names:
+            # Native Agent metadata also covers automatic and nested subagents.
+            if parent.run_type == "chain" and _is_agent_run(parent.name, parent.extra, self.agent_names):
                 return
             if parent.run_type == "tool":
                 # langchain-core 1.6.1 checks this before both POST and PATCH. Keep

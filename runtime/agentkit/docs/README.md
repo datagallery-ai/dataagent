@@ -13,7 +13,7 @@ AgentKit 是本地数据 Agent 运行时。你可以用终端界面提问，用 
 | 安装并完成第一次对话 | [快速启动](guides/quickstart.md) |
 | 配置模型、限额和输入目录 | [配置](guides/configuration.md)，字段见 [配置参考](reference/configuration.md) |
 | 使用终端界面 | [TUI](guides/tui.md)、[会话与产物](guides/sessions-and-outputs.md) |
-| 在 Python 里调用 | [SDK](guides/sdk.md)、[Python API](reference/python-api.md) |
+| 在 Python 里调用 | [SDK](guides/sdk.md)、[Python API](reference/python-api.md)、[会话与产物](guides/sessions-and-outputs.md) |
 | 增加工具或流程 | [扩展](extensions/overview.md) |
 | 查看接口和事件 | [HTTP 接口](reference/rest-api.md)、[事件](reference/events.md) |
 | 了解运行过程 | [架构概览](architecture/overview.md) |
@@ -26,7 +26,7 @@ AgentKit 是本地数据 Agent 运行时。你可以用终端界面提问，用 
 | [快速启动](guides/quickstart.md) | 安装、最小配置、第一次运行 |
 | [配置](guides/configuration.md) | 配置文件、环境变量和优先级 |
 | [TUI](guides/tui.md) | 启动、命令、连接已有后端 |
-| [会话与产物](guides/sessions-and-outputs.md) | 恢复会话、输入目录、查看产物 |
+| [会话与产物](guides/sessions-and-outputs.md) | 会话身份、产物目录规则、恢复会话、输入目录、查看产物 |
 | [SDK](guides/sdk.md) | 接入和生命周期 |
 | [故障排查](guides/troubleshooting.md) | 启动、模型、连接和恢复 |
 

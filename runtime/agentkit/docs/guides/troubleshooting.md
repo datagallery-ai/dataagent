@@ -48,7 +48,9 @@
 | `Session is currently running` 或 HTTP 409 | 等当前轮结束。同一会话不能并行两轮 |
 | `Run replay is not supported` | 使用新的 `runId`，并发送一条新的用户消息 |
 | `Extension reload failed` | 这一轮拒绝新查询。正在跑的轮次仍用旧图。修好插件或 Hook 后再发 |
+| `Output directory ... is used by session ...` | 产物目录已属于另一个会话（可能在另一个 Home）。换目录；确认对方不再使用时，删除报错中的标记文件。见 [会话与产物](sessions-and-outputs.md#常见报错) |
+| `Output directory ... already contains files that no session owns` | `output_root` 派生的目录里已有不明文件。清空它，或用 SDK `output_dir` 显式接管 |
 
 ## 产物是空的
 
-`/outputs` 只列出当前会话 `outputs/` 下的普通文件。它排除 `artifacts/conversation_history` 和 `artifacts/large_tool_results`，也不跟随符号链接。文件若写到了其他路径，列表里不会出现。列出权限错误时会报错，而不是显示空列表。
+`/outputs` 只列出当前会话产物目录下的普通文件。产物目录可能不在 Home 内，实际位置见 Home 下 `sessions.sqlite` 的 `session_bindings` 表。列表排除 `artifacts/conversation_history` 和 `artifacts/large_tool_results`，也不跟随符号链接。文件若写到了其他路径，列表里不会出现。列出权限错误时会报错，而不是显示空列表。

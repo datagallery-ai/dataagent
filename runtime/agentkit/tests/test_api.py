@@ -118,7 +118,8 @@ async def test_empty_inputs_write_and_restore_outputs_after_restart(runtime):
     async with client_for(runtime, model) as (client, _):
         assert terminal(sse(await client.post("/dataagent/stream", json=query()))) == ["RUN_FINISHED"]
     assert (session.outputs / "result.txt").read_text() == "saved-output"
-    assert json.loads(session.session_file.read_text())["workspaces"] == []
+    from dataagent.bootstrap.paths import read_session_binding
+    assert read_session_binding(session).workspaces == ()
 
     model = ScriptedModel(responses=[
         call("read_file", {"file_path": output}), AIMessage(content="restored"),

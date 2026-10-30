@@ -42,6 +42,20 @@ async def test_same_session_reuses_graph_and_history_other_sessions_do_not(runti
             assert [m.content for m in model.requests[2] if isinstance(m, HumanMessage)] == ["isolated"]
 
 
+async def test_agent_assembly_does_not_need_another_write_lock(runtime):
+    async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
+        await asyncio.to_thread(runtime.paths.open_session, "new-task", create=True)
+        # Keep another request's write reservation for the entire assembly.
+        # The saved binding can be read without waiting for that request to commit.
+        await app.state.sessions.db.execute("BEGIN IMMEDIATE")
+        try:
+            result = await asyncio.wait_for(app.state.agents.get("new-task", create=True), 2)
+            assert result is not None
+            assert (await client.get("/healthz")).status_code == 200
+        finally:
+            await app.state.sessions.db.rollback()
+
+
 async def test_skill_install_and_remove_refresh_checkpointed_metadata(runtime):
     model = ScriptedModel(responses=[AIMessage(content="done")] * 3)
     with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
@@ -308,7 +322,7 @@ async def test_refresh_keeps_compiled_entry(runtime, tmp_path):
 
 def test_revision_ignores_business_outputs_and_bytecode(runtime):
     revision = extension_revision(runtime)
-    outputs = runtime.paths.home / "runtime/users/default/sessions/test/outputs"
+    outputs = runtime.paths.for_session("test").outputs
     outputs.mkdir(parents=True)
     (outputs / "report.csv").write_text("generated data")
     assert extension_revision(runtime) == revision
