@@ -116,29 +116,23 @@ def test_detects_only_standalone_final_select_dimensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rewrites_dimension_and_augments_downstream_context() -> None:
+async def test_rewrites_dimension_deterministically_and_augments_downstream_context() -> None:
     original = (
         "SELECT time, county, SUM(uplink_traffic) AS uplink_traffic FROM fact_metric "
         "WHERE county = 10 GROUP BY time, county ORDER BY county"
     )
     rewritten = (
-        "SELECT f.time, d.county_value, SUM(f.uplink_traffic) AS uplink_traffic FROM fact_metric f "
-        "INNER JOIN dim_exp_county d ON f.county = d.county_key "
-        "WHERE f.county = 10 GROUP BY f.time, d.county_value ORDER BY d.county_value"
+        "SELECT time, dim_exp_county.county_value AS county, SUM(uplink_traffic) AS uplink_traffic "
+        "FROM fact_metric INNER JOIN dim_exp_county ON fact_metric.county = dim_exp_county.county_key "
+        "WHERE fact_metric.county = 10 GROUP BY time, dim_exp_county.county_value "
+        "ORDER BY dim_exp_county.county_value"
     )
-    llm = SimpleNamespace(
-        ainvoke=AsyncMock(
-            side_effect=[
-                SimpleNamespace(content=f"```sql\n{original}\n```"),
-                SimpleNamespace(content=f"```sql\n{rewritten}\n```"),
-            ]
-        )
-    )
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content=f"```sql\n{original}\n```")))
 
     with patch.object(llm_manager, "get_default_llm", return_value=llm):
         result = await _node()._aprocess(_state())
 
-    assert llm.ainvoke.await_count == 2
+    assert llm.ainvoke.await_count == 1
     assert result["sql"] == rewritten
     assert result["generation_results"][0].need_ref is False
     assert result["schema"]["dim_exp_county"]["columns"].keys() >= {"county_key", "county_value"}
@@ -149,9 +143,27 @@ async def test_rewrites_dimension_and_augments_downstream_context() -> None:
     assert check_sql(rewritten, dialect="postgres", schema=result["schema"]).violations == []
     assert check_sql(rewritten, dialect="postgres", schema=_state()["schema"]).violations[0].rule_id == "SCHEMA-001"
 
-    rewrite_prompts = llm.ainvoke.await_args_list[1].args[0]
-    assert '"county":{"dimension_table":"dim_exp_county"' in rewrite_prompts[1]["content"]
-    assert "Keep existing `WHERE` and `HAVING` predicates on the fact key" in rewrite_prompts[0]["content"]
+
+@pytest.mark.asyncio
+async def test_backfills_dimension_grouped_but_not_projected() -> None:
+    original = (
+        "SELECT time, SUM(uplink_traffic) AS uplink_traffic FROM fact_metric WHERE county = 10 GROUP BY time, county"
+    )
+    rewritten = (
+        "SELECT time, dim_exp_county.county_value AS county, SUM(uplink_traffic) AS uplink_traffic "
+        "FROM fact_metric INNER JOIN dim_exp_county ON fact_metric.county = dim_exp_county.county_key "
+        "WHERE fact_metric.county = 10 GROUP BY time, dim_exp_county.county_value"
+    )
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content=f"```sql\n{original}\n```")))
+
+    with patch.object(llm_manager, "get_default_llm", return_value=llm):
+        result = await _node()._aprocess(_state())
+
+    assert llm.ainvoke.await_count == 1
+    assert result["sql"] == rewritten
+    assert result["generation_results"][0].need_ref is False
+    assert result["schema"]["dim_exp_county"]["columns"].keys() >= {"county_key", "county_value"}
+    assert "When `county` is projected" in result["sql_rules"]
 
 
 @pytest.mark.asyncio
@@ -177,7 +189,8 @@ async def test_skips_rewrite_when_final_select_has_no_dimension() -> None:
     ids=["llm-error", "invalid-sql"],
 )
 async def test_keeps_original_and_requests_reflection_when_rewrite_fails(rewrite_outcome) -> None:
-    original = "SELECT county, SUM(uplink_traffic) FROM fact_metric WHERE time > 0 GROUP BY county"
+    # Ordinal GROUP BY declines the deterministic path, so the LLM rewrite runs.
+    original = "SELECT county, SUM(uplink_traffic) FROM fact_metric WHERE time > 0 GROUP BY 1"
     llm = SimpleNamespace(
         ainvoke=AsyncMock(
             side_effect=[
@@ -195,6 +208,83 @@ async def test_keeps_original_and_requests_reflection_when_rewrite_fails(rewrite
     assert candidate.need_ref is True
     assert "dim_exp_county" in result["schema"]
     assert "dim_exp_county" in candidate.prompt
+
+
+@pytest.mark.asyncio
+async def test_reverts_half_applied_llm_rewrite() -> None:
+    """A rewrite that joins and regroups but leaves the bare fact column projected is rejected."""
+    original = (
+        "SELECT time, county, SUM(uplink_traffic) AS uplink_traffic FROM fact_metric "
+        "WHERE county = 10 GROUP BY 1, county"
+    )
+    half_rewritten = (
+        "SELECT time, county, SUM(uplink_traffic) AS uplink_traffic FROM fact_metric "
+        "INNER JOIN dim_exp_county ON fact_metric.county = dim_exp_county.county_key "
+        "WHERE fact_metric.county = 10 GROUP BY time, dim_exp_county.county_value"
+    )
+    llm = SimpleNamespace(
+        ainvoke=AsyncMock(
+            side_effect=[
+                SimpleNamespace(content=f"```sql\n{original}\n```"),
+                SimpleNamespace(content=f"```sql\n{half_rewritten}\n```"),
+            ]
+        )
+    )
+
+    with patch.object(llm_manager, "get_default_llm", return_value=llm):
+        result = await _node()._aprocess(_state())
+
+    candidate = result["generation_results"][0]
+    assert llm.ainvoke.await_count == 2
+    assert candidate.sql == original
+    assert candidate.need_ref is True
+    assert "dim_exp_county" in result["schema"]
+    assert "dim_exp_county" in candidate.prompt
+
+
+@pytest.mark.asyncio
+async def test_skips_rewrite_when_dimension_already_joined() -> None:
+    original = (
+        "SELECT time, dim_exp_county.county_value AS county, SUM(uplink_traffic) AS uplink_traffic "
+        "FROM fact_metric INNER JOIN dim_exp_county ON fact_metric.county = dim_exp_county.county_key "
+        "WHERE fact_metric.county = 10 GROUP BY time, dim_exp_county.county_value ORDER BY county"
+    )
+    llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content=f"```sql\n{original}\n```")))
+
+    with patch.object(llm_manager, "get_default_llm", return_value=llm):
+        result = await _node()._aprocess(_state())
+
+    assert llm.ainvoke.await_count == 1
+    assert result["sql"] == original
+    assert "dim_exp_county" not in result["schema"]
+
+
+@pytest.mark.asyncio
+async def test_falls_back_to_llm_for_subquery_from() -> None:
+    original = (
+        "SELECT county, SUM(uplink_traffic) FROM "
+        "(SELECT county, uplink_traffic FROM fact_metric WHERE time > 0) t GROUP BY county"
+    )
+    rewritten = (
+        "SELECT d.county_value, SUM(t.uplink_traffic) FROM "
+        "(SELECT county, uplink_traffic FROM fact_metric WHERE time > 0) t "
+        "INNER JOIN dim_exp_county d ON t.county = d.county_key GROUP BY d.county_value"
+    )
+    llm = SimpleNamespace(
+        ainvoke=AsyncMock(
+            side_effect=[
+                SimpleNamespace(content=f"```sql\n{original}\n```"),
+                SimpleNamespace(content=f"```sql\n{rewritten}\n```"),
+            ]
+        )
+    )
+
+    with patch.object(llm_manager, "get_default_llm", return_value=llm):
+        result = await _node()._aprocess(_state())
+
+    assert llm.ainvoke.await_count == 2
+    assert result["sql"] == rewritten
+    assert result["generation_results"][0].need_ref is False
 
 
 def test_add_dimension_context_appends_only_newly_discovered_dimension() -> None:

@@ -22,9 +22,9 @@ from dataagent.config.config_manager import ConfigManager
 from dataagent.core.managers.llm_manager import llm_manager
 from dataagent.core.managers.prompt_manager import PromptTemplate
 
+# Ordinal GROUP BY declines the deterministic rewriter, so these tests exercise the LLM path.
 BARE_SQL = (
-    "SELECT time, county, SUM(uplink_traffic) AS uplink_traffic FROM fact_metric "
-    "WHERE county = 10 GROUP BY time, county"
+    "SELECT time, county, SUM(uplink_traffic) AS uplink_traffic FROM fact_metric WHERE county = 10 GROUP BY 1, county"
 )
 REWRITTEN_SQL = (
     "SELECT f.time, d.county_value, SUM(f.uplink_traffic) AS uplink_traffic FROM fact_metric f "

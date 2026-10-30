@@ -112,6 +112,11 @@ def _preference_groups(extraction: Mapping[str, Any]) -> list[Sequence[str]]:
     if metrics & _MOS_TRIGGER_METRICS or dimensions & _MOS_TRIGGER_DIMENSIONS:
         groups.append(_route_by_dimension(dimensions, mos["routes"]))
 
+    # 高铁体验：crh_group 是唯一的字段级高铁信号（guarantee_group 通用业务也携带，不作触发），
+    # 指标含乘坐/用户数以外的体验指标时，按 experience_routes 顺序在池内消歧（用户视角优先）。
+    if "crh_group" in dimensions and metrics - _HIGH_RAIL_RIDE_METRICS - _HIGH_RAIL_USER_METRICS:
+        groups.append(_HIGH_RAIL_RULES["experience_routes"])
+
     if metrics & _ORDINARY_EXTENDED_METRICS:
         if "default5qi_group" in dimensions:
             groups.append(_ORDINARY_RULES["default5qi_routes"])
