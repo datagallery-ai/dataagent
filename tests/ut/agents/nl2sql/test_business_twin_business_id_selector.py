@@ -113,6 +113,21 @@ def test_extraction_normalizes_case_deviated_columns() -> None:
         ("查询高铁分群用户数", ["crh_users", "crh_group"], "dw1745159030"),
         ("查询高铁乘坐次数", ["crh_ride_times", "gpsi"], "dw1745159012"),
         (
+            "查询高铁用户保障总时长",
+            ["assurance_duration", "crh_group", "guarantee_group", "1d_granularity"],
+            "dw1745159011",
+        ),
+        (
+            "查询高铁站点保障总时长",
+            ["assurance_duration", "crh_group", "crh_station_id", "1d_granularity"],
+            "dw1745159032",
+        ),
+        (
+            "查询保障用户保障总时长",
+            ["assurance_duration", "guarantee_group", "1d_granularity"],
+            "dw1745159007",
+        ),
+        (
             "查询高铁首次N23会话创建上报次数",
             ["crh_trigger_first_n23_create_times", "gnb"],
             "dw1745159031",

@@ -426,6 +426,7 @@ class BusinessTwinPerceptorNode(PerceptorNode):
             {"question": question},
             action="filter_business_twin_business_id_",
         )
+        logger.info(f"payload={payload}")
         try:
             return select_business_twin_business_id(question, payload)
         except (TypeError, ValueError) as exc:
