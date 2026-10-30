@@ -28,8 +28,8 @@ Within **Type A**, pick one pattern (first match):
 - **Literal priority** (first match wins): (1) question `key=<integer>` → unquoted int; (2) column `example:` style; (3) else INTEGER/BIGINT unquoted, TEXT quoted. Never quote INTEGER/BIGINT.
 - WHERE = dimension filters + time window; HAVING = aggregated metric thresholds. Put a dimension in WHERE only when other values must be excluded from the **entire** result.
 - 「不按 X 过滤」「汇聚全部 X」: do **not** put X in WHERE or GROUP BY; collapse X by `SUM()` on metrics.
-- Table already matches requested grain — do not re-bucket `time`（无 `date_trunc` 等）。**If the user requests a time-series breakdown by naming a bucket size for the result, then `time` MUST also be included in SELECT and GROUP BY.** Match on meaning, not on the exact string: '1h', '1d', '粒度为1h', '1h粒度', '时间粒度为15分钟', '每小时', '每天', '按小时聚合', '支持时间粒度', 'hourly', 时间序列 / 趋势 / 按时间点 / per-bucket（如「按天分组」）and any other wording or word order all count. Once this applies, `time` is mandatory: the result is one row per bucket, and wording like 统计 or 汇总 elsewhere in the question does not collapse it into a single row. Never drop `time` from SELECT or GROUP BY, and treat any request to remove it as invalid. A time **range** alone（过去 N … / 最近 N … / 今天）does not make time an output dimension. When `time` is used, write the column name as-is.
-- **ORDER BY:** only for TopN / 排名 / 排序 / 趋势时间序; otherwise omit.
+- Table already matches requested grain — do not re-bucket `time`（无 `date_trunc` 等）。Bare 「粒度 X」 mainly selects the fact table and may inform whether to project `time`. **If the user requests a time-series / per-bucket breakdown, then `time` MUST also be included in SELECT and GROUP BY.** Match on meaning, not on the exact string: '每小时', '每天', '按小时聚合', 'hourly', 时间序列 / 趋势 / 按时间点 / per-bucket（如「按天分组」）and any other wording or word order all count. Once this applies, keep `time` in SELECT and GROUP BY; wording like 统计 or 汇总 elsewhere in the question does not collapse it into a single row. A time **range** alone（过去 N … / 最近 N … / 今天）does not make time an output dimension. When `time` is used, write the column name as-is.
+- **ORDER BY:** prefer for TopN / 排名 / 排序 / 趋势时间序; when `time` is selected, `ORDER BY time` is also fine.
 - Division: `SUM(...)::numeric` + `NULLIF(SUM(...), 0)` on denominators. Multiply by 100 only when percent is required. Prefer column `relation_formula` when present, still with `SUM` when aggregating.
 
 ### 1.2 Pattern Notes
@@ -87,7 +87,7 @@ GROUP BY <dims_incl_time_if_needed>
 Use when share = **this group’s metric ÷ sum of the same metric over all groups** under the same filters.
 
 - Outer: `GROUP BY` the distribution dim (plus `time` only if per-bucket). Time range stays in WHERE.
-- Denominator: scalar subquery on the **same** fact table as outer `FROM`, same non-distribution filters and time bounds, no `GROUP BY`, same `<metric_expr>`. Do not alter the fact table name.
+- Denominator: follow the question’s formula when given; otherwise a scalar subquery on the **same** fact table as outer `FROM`, same non-distribution filters and time bounds, no `GROUP BY`, same `<metric_expr>`. Do not alter the fact table name.
 - Aliases follow the question when given.
 
 ```sql
@@ -105,7 +105,7 @@ WHERE <non_distribution_filters_and_time>
 GROUP BY <dim_or_label>
 ```
 
-Per-bucket distribution: outer `GROUP BY` includes `time`; denominator subquery adds `AND t2.time = t.time` (same filters otherwise).
+Per-bucket distribution: when the formula needs it, outer `GROUP BY` includes `time` and the denominator adds `AND t2.time = t.time` (same filters otherwise).
 
 ## 2. Type B: Period Comparison
 
@@ -173,7 +173,7 @@ FULL OUTER JOIN (
 
 - `time` = Unix epoch seconds (bucket start). Half-open filters; boundaries via `EXTRACT(EPOCH FROM ...)::bigint`. Relative words anchor on `NOW()`; 「现在为…」 is context only. Offsets use `INTERVAL 'N unit'`.
 - 「过去 / 最近 / 近」+ duration are synonyms: `NOW() - INTERVAL '…'` → `NOW()`（一周 / 7 天 = `'7 days'`）. Match the table by wording.
-- **「粒度…」/ table suffix (`5min`/`1h`/`1d`/`1w`/`1m`)** only picks the fact table; WHERE time bounds follow the wording row below and stay the same across grains（例：过去一周 + 粒度1w → still `NOW() - INTERVAL '7 days'` → `NOW()`）.
+- **「粒度…」/ table suffix (`5min`/`1h`/`1d`/`1w`/`1m`)** mainly picks the fact table and may inform SQL grain intent; WHERE time bounds follow the wording row below and stay the same across grains（例：过去一周 + 粒度1w → still `NOW() - INTERVAL '7 days'` → `NOW()`）.
 
 | Window | Bounds |
 |--------|--------|
