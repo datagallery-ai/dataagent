@@ -247,7 +247,8 @@ def test_sdk_does_not_close_borrowed_client(runtime):
     assert client.client.is_closed
 
 
-def test_sdk_build_failure_closes_owned_client(runtime, monkeypatch):
+@pytest.mark.parametrize("explicit_session", [False, True])
+def test_sdk_build_failure_closes_owned_client(runtime, monkeypatch, explicit_session):
     """Release a newly created pool if graph assembly fails before returning a handle."""
     from dataagent import client as sdk
 
@@ -265,7 +266,9 @@ def test_sdk_build_failure_closes_owned_client(runtime, monkeypatch):
     monkeypatch.setattr(SemanticServiceClient, "from_settings", record)
     monkeypatch.setattr(sdk, "build_agent", fail)
     with pytest.raises(ValueError, match="assembly failed"):
-        create_agent(_with_semantic(runtime))
+        kwargs = {"session": runtime.paths.for_session("explicit")} if explicit_session else {}
+        with create_agent(_with_semantic(runtime), **kwargs) as agent:
+            agent.invoke({"messages": []}, {"configurable": {"thread_id": "task"}})
     assert len(created) == 1 and created[0].client.is_closed
 
 

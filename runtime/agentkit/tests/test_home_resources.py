@@ -1,11 +1,13 @@
 """Real native graph checks for automatic resources and native file access."""
 
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from test_launch import MODEL, config, options
+from test_launch import MODEL, config
+from test_launch import options as launch_options
 
 from dataagent import safe_error
 from dataagent.agent import build_agent
@@ -15,6 +17,12 @@ from dataagent.core.graph import create_deep_agent
 from dataagent.declarations import PluginSpec
 from dataagent.extensions import select_plugins
 from dataagent.settings import PluginSettings
+
+
+def options(tmp_path, **kwargs):
+    workspace = tmp_path / "inputs"
+    workspace.mkdir(exist_ok=True)
+    return replace(launch_options(tmp_path, **kwargs), workspace=workspace)
 
 
 def skill(root, name, content="Read this independent Skill."):
@@ -360,7 +368,7 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
     config(home / "config.json", MODEL)
     (home / ".env").write_text("SECRET_MARKER=secret-content\n")
     (home / "public.txt").write_text("public-evidence\n")
-    runtime = prepare_runtime(LaunchOptions(cwd=workspace, workspace=home))
+    runtime = prepare_runtime(LaunchOptions(cwd=workspace, workspace=workspace))
     calls = [
         call("read_file", {"file_path": str(home / ".env")}),
         call("read_file", {"file_path": str(home / "config.json")}),

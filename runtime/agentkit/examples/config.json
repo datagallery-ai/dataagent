@@ -33,7 +33,8 @@
         }
       ],
       "after_tool": []
-    }
+    },
+    "output_root": null
   },
   "models": {
     "primary": {

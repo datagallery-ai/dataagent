@@ -38,7 +38,7 @@ class SessionAgents:
                 if changed:
                     candidate = refresh_extensions(candidate)
                 revision = extension_revision(candidate) if changed else self.revision
-                opened = candidate.paths.open_session(thread_id, create=create)
+                opened = await asyncio.to_thread(candidate.paths.open_session, thread_id, create=create)
                 if opened is None:
                     return None
                 session, workspaces = opened
@@ -51,8 +51,10 @@ class SessionAgents:
                     and candidate.extensions.mcp_servers != self.runtime.extensions.mcp_servers
                 ):
                     tools = await load_mcp_tools(candidate)
-                agent = create_agent(
-                    candidate,
+                # Keep synchronous file/database reads and plugin factories off
+                # the event loop; this session's binding has already been registered.
+                agent = await asyncio.to_thread(
+                    create_agent, candidate,
                     checkpointer=self.checkpointer,
                     model=self.model,
                     session=session,

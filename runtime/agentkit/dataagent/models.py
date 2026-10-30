@@ -4,7 +4,7 @@ Agent supplies ModelContext through native invocation arguments, never through
 messages, checkpoint state or client-supplied configuration. No global client cache.
 """
 
-from _thread import LockType
+from contextlib import AbstractContextManager
 from copy import deepcopy
 from threading import Lock
 
@@ -70,7 +70,7 @@ class ModelContext(BaseModel):
     _runtime: Runtime = PrivateAttr()
     _session: SessionPaths = PrivateAttr()
     _models: dict[str, BaseChatModel] = PrivateAttr(default_factory=dict)
-    _lock: LockType = PrivateAttr(default_factory=Lock)
+    _lock: AbstractContextManager = PrivateAttr(default_factory=Lock)
     _semantic_client: SemanticServiceClient | None = PrivateAttr(default=None)
 
     def __init__(
@@ -93,6 +93,12 @@ class ModelContext(BaseModel):
     def session(self) -> SessionPaths:
         """Return the immutable session paths bound to this Agent handle."""
         return self._session
+
+    def for_session(self, session: SessionPaths) -> "ModelContext":
+        """Select session paths while sharing model clients, their lock and services."""
+        context = self.model_copy()
+        context._session = session
+        return context
 
     @property
     def semantic_client(self) -> SemanticServiceClient | None:

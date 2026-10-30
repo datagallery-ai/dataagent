@@ -57,7 +57,7 @@ def test_home_is_working_root_without_synthetic_input_workspaces(tmp_path):
     opened, inputs = default.paths.open_session("empty-inputs", create=True)
     assert inputs == ()
     assert runtime_for(tmp_path, session_id="empty-inputs").paths.workspaces == ()
-    assert opened.outputs == default.paths.home / "runtime/users/default/sessions/empty-inputs/outputs"
+    assert opened.outputs == default.paths.home / "outputs/default/empty-inputs"
 
 
 def test_explicit_workspace_does_not_create_profile_default(tmp_path):

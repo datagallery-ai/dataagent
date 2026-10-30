@@ -27,6 +27,7 @@
 | `limits.tool_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的工具次数上限 |
 | `hooks` | 分组对象或列表 | `[]` | 见 [扩展声明](extension-schema.md)。跨配置层追加 |
 | `workspaces` | 数组 | `[]` | 只读输入。空数组不创建目录 |
+| `output_root` | 路径或 `null` | `null` | 新会话的产物根目录，只接受绝对路径或 `~/` 开头的路径。会话产物写入 `<output_root>/<user>/<thread>/`；`null` 时根目录为 `<home>/outputs`。已有会话保留创建时的位置。见 [会话与产物](../guides/sessions-and-outputs.md#产物目录的位置) |
 | `entry` | 字符串或省略 | 省略 | `[a-z][a-z0-9_-]*`。已启用插件里某个编译型子代理的 `name`。省略则装配 Deep Agents 根。见 [入口模式](../extensions/subagents.md#入口模式) |
 
 `workspaces[]`：

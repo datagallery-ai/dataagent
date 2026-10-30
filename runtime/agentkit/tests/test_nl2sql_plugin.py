@@ -436,14 +436,15 @@ def test_node_sections_default_to_full_chain_and_require_prefix():
         NL2SQLConfig({**base, "perceptor": {}}).enabled_nodes
 
 
-async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path):
+@pytest.mark.parametrize("custom_output", [False, True])
+async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path, custom_output):
     db_path, schema_path = _sqlite_fixture(tmp_path)
     config = tmp_path / "config.json"
     config.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
-        "dataagent": {"entry": "nl2sql"},
+        "dataagent": {"entry": "nl2sql", "output_root": str(tmp_path / "reports") if custom_output else None},
         "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": _plugin_params(db_path, schema_path)}},
     }))
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config))
@@ -457,6 +458,11 @@ async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path):
     result_file = Path(payload["result_file"])
     assert result_file.is_file()
     assert result_file.parent == runtime.paths.for_session("sdk").outputs / "nl2sql"
+    session = runtime.paths.for_session("sdk")
+    from dataagent.bootstrap.paths import read_session_binding
+    assert read_session_binding(session).outputs == session.outputs
+    if custom_output:
+        assert session.outputs == tmp_path / "reports/default/sdk"
     assert result_file.name == f"{payload['query_id']}.csv"
 
 

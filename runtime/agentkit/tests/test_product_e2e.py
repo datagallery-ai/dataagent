@@ -118,10 +118,12 @@ class Terminal:
 
 @contextmanager
 def product(config, environment, resume=None, env_file=None):
+    workspace = config.parent / "inputs"
+    workspace.mkdir(exist_ok=True)
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
     arguments = ["npm", "run", "start:tui", "--", "--config", os.path.relpath(config, REPOSITORY),
-                 "--workspace", str(config.parent)]
+                 "--workspace", str(workspace)]
     if env_file:
         arguments += ["--env-file", os.path.relpath(env_file, REPOSITORY)]
     if resume:
@@ -315,7 +317,7 @@ async def saved_messages(workspace, row):
         settings = Settings.model_validate({"models": {
             "primary": {"name": "checkpoint-reader", "base_url": "https://example.invalid/v1", "api_key": "unused"},
         }})
-        paths = RuntimePaths.resolve(home, (WorkspaceInput("workspace-0", Path(workspace)),))
+        paths = RuntimePaths.resolve(home, (WorkspaceInput("workspace-0", Path(workspace) / "inputs"),))
         builtin = tuple(sorted(child for child in paths.builtin_plugins.iterdir() if child.is_dir()))
         runtime = Runtime(settings, paths,
                           StartupReport((), ()),

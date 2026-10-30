@@ -120,7 +120,7 @@ async def conversation_lifespan(app, runtime: Runtime, *, model=None):
                 resources.push_async_callback(asyncio.to_thread, semantic_client.close)
             mcp_tools = await load_mcp_tools(runtime)
             async with (
-                Sessions(runtime.paths.state_dir / "sessions.sqlite") as sessions,
+                Sessions(runtime.paths.sessions_db) as sessions,
                 AsyncSqliteSaver.from_conn_string(
                     str(runtime.paths.state_dir / "checkpoints.sqlite")
                 ) as saver,

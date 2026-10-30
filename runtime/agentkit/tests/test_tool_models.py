@@ -96,14 +96,18 @@ def test_model_access_is_not_an_llm_argument(tool_runtime):
 def test_agui_inspects_compiled_graph_without_unbinding_execution(tool_runtime):
     graph = create_agent(tool_runtime, model=ScriptedModel(responses=[]))
     adapter = graph.as_agui(name="test")
-    native = LangGraphAgent(name="test", graph=graph.graph)
+    assert adapter.graph is None
     config = {"configurable": {"thread_id": "schema-test"}}
     keys = adapter.get_schema_keys(config)
+    native = LangGraphAgent(name="test", graph=graph.graph_for("schema-test"))
     assert keys == native.get_schema_keys(config)
     assert "messages" in keys["output"]
     assert keys["context"] == []
-    assert adapter.graph is graph.graph
-    assert adapter.get_stream_kwargs({}, context={"model": "client-value"})["context"] is graph.context
+    assert adapter.graph is graph.graph_for("schema-test")
+    assert not tool_runtime.paths.for_session("sdk").root.exists()
+    context = adapter.get_stream_kwargs({}, context={"model": "client-value"})["context"]
+    assert context is not graph.context
+    assert context.get_model() is graph.context.get_model()
     assert graph.as_agui() is not adapter
 
 
@@ -354,7 +358,7 @@ async def test_sdk_checkpoint_resume_rebuilds_owned_context_not_serialized_clien
         for _ in range(2):
             graph = create_agent(tool_runtime, model=ScriptedModel(responses=agent_responses(False)), checkpointer=saver)
             await graph.ainvoke({"messages": [("user", "summarize")]}, config)
-    state = await graph.graph.aget_state(config)
+    state = await graph.graph_for("resume-models").aget_state(config)
     assert len([m for m in state.values["messages"] if m.type == "human"]) == 2
     assert "ModelContext" not in repr(await saver.aget_tuple(config))
 

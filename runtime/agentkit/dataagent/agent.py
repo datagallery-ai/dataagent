@@ -57,6 +57,34 @@ def build_native_middleware(
     ]
 
 
+def _check_extension_inputs(runtime, mcp_tools):
+    settings, extensions = runtime.settings, runtime.extensions
+    if extensions.mcp_servers and mcp_tools is None:
+        raise ValueError(
+            "MCP is configured: await load_mcp_tools(runtime), then pass mcp_tools to build_agent"
+        )
+    if tuple(binding.spec for binding in extensions.hooks) != settings.dataagent.hooks:
+        raise ValueError(
+            "Independent Hook bindings do not match settings.dataagent.hooks; "
+            "use prepare_runtime() or update both settings and extensions.hooks"
+        )
+
+
+def check_agent_configuration(runtime, *, semantic_client, mcp_tools=None) -> None:
+    """Reject what build_agent would reject, without creating sessions or running factories."""
+    if runtime.settings.semantic is not None and semantic_client is None:
+        raise ValueError(
+            "Semantic service is configured: use create_agent(), or supply a ModelContext "
+            "with a host-owned semantic_client to build_agent() and native graph invocations"
+        )
+    _check_extension_inputs(runtime, mcp_tools)
+    if runtime.settings.dataagent.entry:
+        _require_declared_entry(runtime, runtime.settings.dataagent.entry)
+        return
+    for root, spec in select_plugins(runtime.settings.plugins, runtime.extensions.plugin_roots):
+        load_declared_subagents(root, spec)
+
+
 def load_extensions(
     runtime: Runtime,
     *,
@@ -76,15 +104,7 @@ def load_extensions(
     result files; build_agent supplies the session's ``outputs``.
     """
     settings, extensions = runtime.settings, runtime.extensions
-    if extensions.mcp_servers and mcp_tools is None:
-        raise ValueError(
-            "MCP is configured: await load_mcp_tools(runtime), then pass mcp_tools to build_agent"
-        )
-    if tuple(binding.spec for binding in extensions.hooks) != settings.dataagent.hooks:
-        raise ValueError(
-            "Independent Hook bindings do not match settings.dataagent.hooks; "
-            "use prepare_runtime() or update both settings and extensions.hooks"
-        )
+    _check_extension_inputs(runtime, mcp_tools)
     a2a_tools = ()
     if settings.a2a.agents:
         from a2a_server.client import load_a2a_tools
@@ -151,7 +171,6 @@ def build_entry_graph(runnable, *, entry, checkpointer, session, context):
 def _build_compiled_entry(runtime, *, checkpointer, session, context, mcp_tools):
     """Resolve ``dataagent.entry`` and mount it with ``build_entry_graph``."""
     entry = runtime.settings.dataagent.entry
-    _require_declared_entry(runtime, entry)
     kwargs = load_extensions(
         runtime, mcp_tools=mcp_tools, semantic_client=context.semantic_client,
         model_resolver=context.get_model, outputs_dir=session.outputs,
@@ -184,26 +203,35 @@ def build_agent(
     context: ModelContext | None = None,
 ):
     """Return the native graph; raw callers pass context on invocation or use create_agent."""
-    session = session or (
-        context.session if context is not None else runtime.paths.for_session("sdk")
-    )
+    explicit_session = session or (context.session if context is not None else None)
+    session = explicit_session or runtime.paths.for_session("sdk")
     context = (
         context if context is not None else ModelContext(runtime, model=model, session=session)
     )
     if context.session != session:
         raise ValueError("Agent context and filesystem must refer to the same session")
     settings = runtime.settings
-    if settings.semantic is not None and context.semantic_client is None:
-        raise ValueError(
-            "Semantic service is configured: use create_agent(), or supply a ModelContext "
-            "with a host-owned semantic_client to build_agent() and native graph invocations"
-        )
+    check_agent_configuration(runtime, semantic_client=context.semantic_client, mcp_tools=mcp_tools)
+    if explicit_session is not None:
+        expected = runtime.paths.for_session(session.root.name)
+        if session.root != expected.root:
+            raise ValueError("session.root must match this profile's Home runtime path")
+        if session.traces != expected.traces:
+            raise ValueError("session.traces must use the standard Home path")
+    # Raw graph callers use the same registration entry as SDK/HTTP. Already-open
+    # sessions only validate their saved paths; assembly never writes bindings directly.
+    session, workspaces = runtime.paths.open_session(
+        session.root.name, create=True,
+        output_dir=explicit_session.outputs if explicit_session is not None else None,
+        input_workspaces=input_workspaces,
+    )
+    if context.session != session:
+        context = context.for_session(session)
     if settings.dataagent.entry:
         return _build_compiled_entry(
             runtime, checkpointer=checkpointer, session=session, context=context,
             mcp_tools=mcp_tools,
         )
-    workspaces = runtime.paths.workspaces if input_workspaces is None else input_workspaces
     kwargs = load_extensions(
         runtime,
         mcp_tools=mcp_tools,

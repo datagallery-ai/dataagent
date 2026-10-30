@@ -6,13 +6,12 @@
 | --- | --- | --- |
 | 消息和图状态 | `<home>/runtime/checkpoints.sqlite` | LangGraph Sqlite saver |
 | 会话索引 | `<home>/runtime/sessions.sqlite` | REST `Sessions` |
-| 输入绑定 | `users/<user>/sessions/<thread>/session.json` | 第一次打开会话时写一次 |
-| 产物 | 同会话 `outputs/` | Agent 文件工具和 shell |
-| Trace | 同会话 `traces/<run_id>.json` | 根运行结束时的本地导出器 |
+| 输入和输出绑定 | `sessions.sqlite` 的 `session_bindings` 表 | AgentKit bootstrap |
+| 产物 | 默认 `<home>/outputs/<user>/<thread>/`，可配置 | Agent 文件工具和 shell |
+| Trace | `<home>/runtime/users/<user>/sessions/<thread>/traces/<run_id>.json` | 根运行结束时的本地导出器 |
 | 后端日志 | `<home>/runtime/logs/backend.log` | REST 日志 |
-| 会话 `logs/` | 同会话目录 | 打开会话时创建该目录 |
 
-SDK 不打开 REST 的会话索引。未指定会话时，Trace 和产物落在 `users/<user>/sessions/sdk/`。
+SDK 与 REST 共用数据库文件，但不读写 REST 的 `sessions` 索引表。SDK 未指定会话时使用 `sdk` 作为 thread ID，按上表分别保存 Trace 和产物。控制面的会话目录只保留 `traces/`，不创建 `logs/` 或 `outputs/`。
 
 ## 会话索引
 
@@ -24,11 +23,15 @@ SDK 不打开 REST 的会话索引。未指定会话时，Trace 和产物落在 
 
 ## 绑定
 
-`session.json` 用 `O_EXCL` 创建，模式 `0600`。已存在的文件不会被替换。内容是 `user_id`、`thread_id` 和输入目录列表。读取时再次检查每个目录存在且可读。
+`session_bindings` 是 user、thread、输入列表和输出目录绑定的唯一来源。只有 `open_session(create=True)` 在缺少绑定时登记：短连接在 `BEGIN IMMEDIATE` 事务中检查目录重叠并插入，不切换日志模式。绑定已存在时只查询本会话、校验路径并确保目录存在，不申请写锁或扫描其他会话。`build_agent` 和 `create_agent` 都通过 `open_session` 准备会话，不直接写表。
+
+只读查询不创建数据库；首版不读取或迁移旧文件格式。恢复执行时检查输入目录存在且可读。REST 将打开会话和装配 Agent 都放到工作线程，避免同步 I/O 阻塞事件循环。
 
 ## 产物
 
-`outputs/` 和 `outputs/artifacts/` 在打开会话时创建，目录模式 `0700`。REST 列举只返回普通文件，跳过符号链接和两处内部卸载目录。
+产物目录和其中的 `artifacts/` 在打开会话时创建。未指定 SDK `output_dir` 时使用 `<output_root>/<user>/<thread>/`，`output_root` 默认是 `<home>/outputs`。
+
+Home 的 `outputs/` 及其第一层目录固定为 `0700`。会话产物目录和 `artifacts/` 保留已有权限，新建时遵循进程 umask；Home 默认产物区之外的自定义目录及上级权限不修改。产物不能与 Home 重叠，只有 `<home>/outputs` 区域例外。REST 列举只返回普通文件，跳过符号链接和两处内部卸载目录。
 
 Checkpoint 可能引用这些文件。删除产物会使后续 `read_file` 找不到卸载内容。
 

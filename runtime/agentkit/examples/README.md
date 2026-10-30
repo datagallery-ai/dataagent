@@ -140,9 +140,9 @@ workspace 优先级：CLI `--workspace`（可重复）> 有效 `DATAAGENT_WORKSP
 默认 user 是 `default`。显式 workspace 不追加用户/session 子目录；恢复 session 使用已保存的输入绑定。
 Home 由进程 `DATAAGENT_HOME` 指定，默认 `~/.dataagent`；它同时决定配置、扩展和运行状态根。cwd 只解析相对参数，cwd 和输入目录都不提供自动配置层。
 
-模型直接使用 workspace 的真实绝对路径读取输入，产出写入 `<home>/runtime/users/<user>/sessions/<session>/outputs/`。
+模型直接使用 workspace 的真实绝对路径读取输入，产出写入 `<home>/outputs/<user>/<session>/`。
 文件工具和 shell 使用相同的真实路径；shell 的 cwd 是当前 session 的 outputs，无虚拟路径转换。
-检查点、会话索引和后端日志留在 Home runtime；session 的 `logs/`、`traces/` 目前仅预留目录。
+检查点、会话索引和后端日志留在 Home runtime；控制面会话目录只保留 `traces/`，用于保存运行轨迹。
 `--user` 仅选择本地资源 profile，不是登录；没有 Bearer token 验证。
 
 独立 Skills 仅自动发现于 Home；任意 `--config` 旁的 `skills/` 不会自动发现。

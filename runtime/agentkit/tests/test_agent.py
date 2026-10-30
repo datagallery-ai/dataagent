@@ -173,14 +173,16 @@ async def test_run_limit_resets_across_turns_and_overflow_is_error(runtime):
 async def test_workspace_readonly_is_a_prompt_convention_not_a_tool_restriction(runtime, tmp_path):
     from dataagent.bootstrap.paths import WorkspaceInput
 
-    target = tmp_path / "native-write.txt"
+    source = tmp_path / "inputs"
+    source.mkdir()
+    target = source / "native-write.txt"
     output = runtime.paths.for_session("sdk").outputs / "result.csv"
     model = ScriptedModel(responses=[
         call("write_file", {"file_path": str(target), "content": "native"}),
         call("write_file", {"file_path": str(output), "content": "ok"}),
         AIMessage(content="Done"),
     ])
-    result = await build_agent(runtime, model=model, input_workspaces=(WorkspaceInput("input", tmp_path),)).ainvoke({
+    result = await build_agent(runtime, model=model, input_workspaces=(WorkspaceInput("input", source),)).ainvoke({
         "messages": [HumanMessage(content="test")],
     })
     assert target.read_text() == "native"

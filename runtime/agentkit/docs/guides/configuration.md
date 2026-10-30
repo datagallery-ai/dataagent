@@ -82,6 +82,25 @@
 
 **加入只读输入。** 在 `dataagent.workspaces` 写 `name`、已存在的 `path` 和 `"read_only": true`。命令行 `--workspace` 和环境变量 `DATAAGENT_WORKSPACE` 会盖过配置里的列表。
 
+**指定产物根目录。** 在配置中增加：
+
+```json
+{
+  "dataagent": {
+    "output_root": "~/reports"
+  }
+}
+```
+
+`output_root` 是根目录，不是某个会话的目录。新会话写入 `<output_root>/<user>/<thread>/`，例如 alice 的 task-a 写入 `~/reports/alice/task-a/`。省略或设为 `null` 时，根目录为 `<home>/outputs`，产物写入 `<home>/outputs/<user>/<thread>/`。
+
+- 只接受绝对路径或 `~/` 开头的路径，其他相对路径报错。
+- 实际位置保存在 `sessions.sqlite` 的 `session_bindings` 表。之后修改配置只影响新会话，已有会话继续使用原目录。
+- 派生出的目录里已有不明来源的文件时，创建会话会报错，不会接管。
+- SDK 可以用 `output_dir` 为单个任务直接指定最终目录，优先于本配置，见 [SDK 用法](sdk.md#每个任务指定产物目录)。
+
+完整规则（会话身份、独占、所有者标记、常见报错）见 [会话与产物](sessions-and-outputs.md)。
+
 **启用插件。** 把插件目录放到 `<home>/plugins/<id>/`，或把插件自身目录写进 `plugins.paths`。再把 ID 写入 `plugins.enabled`。只加路径不会启用。示例见 [插件](../extensions/plugins.md)。
 
 **接入语义服务。** 增加 `semantic` 对象。客户端用法、认证和 TLS 见 [语义服务](../extensions/semantic-service.md)。字段见配置参考。未配置 `semantic` 时，运行时不创建客户端。

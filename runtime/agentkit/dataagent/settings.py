@@ -43,6 +43,8 @@ class AgentSettings(StrictModel):
     limits: Limits = Field(default_factory=Limits)
     hooks: tuple[HookSpec, ...] = ()  # Independent registrations accumulate across config layers.
     workspaces: tuple[WorkspaceSettings, ...] = ()
+    # New sessions use <output_root>/<user>/<session>; None means <home>/outputs.
+    output_root: Path | None = None
     # Compiled subagent used as the whole graph. None keeps the Deep Agents root.
     entry: str | None = Field(default=None, pattern=f"^{RESOURCE_ID_PATTERN}$")
 
