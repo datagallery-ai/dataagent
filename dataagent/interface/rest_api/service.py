@@ -17,7 +17,7 @@ import hashlib
 import re
 import tempfile
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -148,6 +148,37 @@ class DataAgentService:
             msg = f"{tool_name}: {status}".strip(": ")
             return f"{msg} - {summary}" if summary else msg
         return str(data.get("summary") or data.get("content") or "") or None
+
+    @staticmethod
+    def _open_stream(agent: DataAgent, query: str, request: dict[str, Any]) -> AsyncIterator[Any]:
+        """Open the agent stream, seeding session/workspace state from the request scope."""
+        initial_state: dict[str, Any] = {"user_query": query}
+        if not request:
+            return agent.astream(initial_state=initial_state, stream_mode=["updates", "custom", "values"])
+        initial_state["session_id"] = request.get("session_id")
+        workspace = request.get("workspace")
+        if workspace is not None:
+            initial_state["workspace"] = workspace
+        return agent.astream(
+            initial_state=initial_state,
+            session_id=request.get("session_id"),
+            stream_mode=["updates", "custom", "values"],
+        )
+
+    @staticmethod
+    def _unpack_stream_item(item: tuple[Any, ...]) -> tuple[Any, Any]:
+        """Return (stream_mode, data) from a 2- or 3-tuple stream item."""
+        if len(item) == 3:
+            return item[1], item[2]
+        return item[0], item[1]
+
+    @staticmethod
+    def _merge_update_state(data: Any, update_state: dict[str, Any]) -> None:
+        """Merge the dict values of one ``updates`` chunk into update_state."""
+        if isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, dict):
+                    update_state.update(value)
 
     @staticmethod
     def _normalize_sql_security_errors(error: dict[str, Any]) -> list[dict[str, str]]:
@@ -313,76 +344,13 @@ class DataAgentService:
 
     async def stream_query(self, query: str, scenario: str | None = None):
         """Stream one DataAgent query as message/result events."""
-        final_state: Any = None
-        update_state: dict[str, Any] = {}
-        last_message: str | None = None
         agent: DataAgent | None = None
-
         try:
             agent = self._select(scenario)
             with self._request_scope(agent) as request:
-                if request:
-                    initial_state = {"user_query": query, "session_id": request.get("session_id")}
-                    workspace = request.get("workspace")
-                    if workspace is not None:
-                        initial_state["workspace"] = workspace
-                    stream = agent.astream(
-                        initial_state=initial_state,
-                        session_id=request.get("session_id"),
-                        stream_mode=["updates", "custom", "values"],
-                    )
-                else:
-                    stream = agent.astream(
-                        initial_state={"user_query": query}, stream_mode=["updates", "custom", "values"]
-                    )
-                async for item in stream:
-                    if isinstance(item, dict) and "error" in item:
-                        yield {
-                            "event": "result",
-                            "data": self._normalize_error_payload(item.get("error"), agent=agent),
-                        }
-                        return
-
-                    if isinstance(item, tuple) and len(item) == 3:
-                        _, stream_mode, data = item
-                    elif isinstance(item, tuple) and len(item) == 2:
-                        stream_mode, data = item
-                    else:
-                        message = str(item)
-                        if message and message != last_message:
-                            yield {"event": "message", "data": {"message": message}}
-                            last_message = message
-                        continue
-
-                    if stream_mode == "values":
-                        final_state = data
-                        continue
-
-                    if stream_mode == "updates":
-                        if isinstance(data, dict):
-                            for value in data.values():
-                                if isinstance(value, dict):
-                                    update_state.update(value)
-                        message = self._extract_stream_message(data)
-                        if message and message != last_message:
-                            yield {"event": "message", "data": {"message": message}}
-                            last_message = message
-                        continue
-
-                    if stream_mode == "custom":
-                        message = self._extract_custom_message(data)
-                        if message and message != last_message:
-                            yield {"event": "message", "data": {"message": message}}
-                            last_message = message
-
-            result_state = final_state if final_state is not None else update_state
-            if result_state:
-                yield {"event": "result", "data": self._format_result(result_state, agent=agent)}
-            else:
-                yield {
-                    "event": "result",
-                    "data": self._format_error("Agent returned an empty stream result", agent=agent),
-                }
+                stream = self._open_stream(agent, query, request)
+                async for event in self._stream_events(agent, stream):
+                    yield event
         except UnknownScenarioError:
             raise
         except Exception as exc:
@@ -606,6 +574,51 @@ class DataAgentService:
                 payload["result"]["errors"] = security_errors
             return payload
         return self._format_error(str(error), agent=agent)
+
+    async def _stream_events(self, agent: DataAgent, stream: AsyncIterator[Any]) -> AsyncIterator[dict[str, Any]]:
+        """Consume one agent stream: yield message events, then one final result event."""
+        last_message: str | None = None
+        final_state: Any = None
+        update_state: dict[str, Any] = {}
+        async for item in stream:
+            if isinstance(item, dict) and "error" in item:
+                yield {
+                    "event": "result",
+                    "data": self._normalize_error_payload(item.get("error"), agent=agent),
+                }
+                return
+
+            if not isinstance(item, tuple) or len(item) not in (2, 3):
+                message = str(item)
+                if message and message != last_message:
+                    yield {"event": "message", "data": {"message": message}}
+                    last_message = message
+                continue
+            stream_mode, data = self._unpack_stream_item(item)
+
+            if stream_mode == "values":
+                final_state = data
+                continue
+
+            if stream_mode == "updates":
+                self._merge_update_state(data, update_state)
+                message = self._extract_stream_message(data)
+            elif stream_mode == "custom":
+                message = self._extract_custom_message(data)
+            else:
+                continue
+            if message and message != last_message:
+                yield {"event": "message", "data": {"message": message}}
+                last_message = message
+
+        result_state = final_state if final_state is not None else update_state
+        if result_state:
+            yield {"event": "result", "data": self._format_result(result_state, agent=agent)}
+        else:
+            yield {
+                "event": "result",
+                "data": self._format_error("Agent returned an empty stream result", agent=agent),
+            }
 
     def _agent_error_code(self, agent: DataAgent | None = None) -> str:
         """Return the fallback agent error code."""

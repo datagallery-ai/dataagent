@@ -83,9 +83,8 @@ def write_prompt_file(path: Path, markdown: str) -> str:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(markdown)
         os.replace(tmp, path)
-    except Exception:
+    finally:
         tmp.unlink(missing_ok=True)
-        raise
     return _mtime_to_iso(path)
 
 
