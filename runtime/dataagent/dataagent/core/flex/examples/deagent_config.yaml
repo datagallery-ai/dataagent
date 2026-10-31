@@ -7,6 +7,8 @@ AGENT_CONFIG:
   hitl_task_index_path: "评测集task.json的完整路径"
   hitl_auto_resolve: false
   debug: true
+  word_roots:
+    csv_path: ""
 
 SUITE:
   include:
