@@ -31,7 +31,7 @@ TOOLS:
       name: "validate_word_roots"
       category: "semantic"
       config:
-        # csv_path: 可省略；默认读取仓库根目录的 word_dict_list.csv
+        # CSV 路径在外部 AGENT_CONFIG.word_roots.csv_path 配置；兼容此处 csv_path
         english_name_column: "词根英文名"
         chinese_name_column: "词根中文名"
         description_column: "描述"
@@ -41,6 +41,8 @@ TOOLS:
         llm_model: "planner"
         llm_call_params:
           enable_thinking: false
+          response_format:
+            type: "json_object"
     # golden schema linking 召回子 agent
     # - name: "metadata_recall"
     #   module: "dataagent.core.suite.builtin_suites.de_agent.tools.golden_schema_metadata_recall"

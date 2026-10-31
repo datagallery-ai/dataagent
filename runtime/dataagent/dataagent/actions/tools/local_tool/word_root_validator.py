@@ -81,7 +81,8 @@ async def validate_word_root(
         chinese_description: Optional Chinese description used for semantic candidate search.
         k: Maximum number of candidate records to return (1-20, default 5).
         _tool_context: Injected DataAgent context. Configure this tool with
-            ``csv_path`` and, if needed, CSV column names in its YAML ``config``.
+            ``AGENT_CONFIG.word_roots.csv_path`` for the dictionary path; CSV column
+            names remain in the tool YAML ``config``. Legacy ``config.csv_path`` is supported.
 
     Returns:
         A JSON-serializable result containing exact/regex matches or ranked candidates.
@@ -97,7 +98,7 @@ async def validate_word_root(
     if not 1 <= k <= _MAX_K:
         raise ValueError(f"k must be between 1 and {_MAX_K}")
 
-    config = dict(_tool_context.tool_config or {})
+    config = _word_root_config(_tool_context)
     try:
         table = _load_word_root_table(config)
     except FileNotFoundError as exc:
@@ -234,7 +235,7 @@ async def validate_word_roots(
             f"items must contain no more than {_MAX_BATCH_QUERY_ITEMS} unique entries"
         )
 
-    config = dict(_tool_context.tool_config or {})
+    config = _word_root_config(_tool_context)
     try:
         table = _load_word_root_table(config)
     except FileNotFoundError as exc:
@@ -394,6 +395,16 @@ def _llm_call_params(config: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError) as exc:
         raise ValueError("llm_call_params values must be JSON-serializable") from exc
     return params
+
+
+def _word_root_config(context: ToolExecutionContext) -> dict[str, Any]:
+    """Override only the CSV path from deployment configuration; keep tool defaults."""
+    config = dict(context.tool_config or {})
+    if context.config_manager is not None:
+        csv_path = str(context.config_manager.get("AGENT_CONFIG.word_roots.csv_path", "") or "").strip()
+        if csv_path:
+            config["csv_path"] = csv_path
+    return config
 
 
 def _load_word_root_table(config: dict[str, Any]) -> _WordRootTable:
