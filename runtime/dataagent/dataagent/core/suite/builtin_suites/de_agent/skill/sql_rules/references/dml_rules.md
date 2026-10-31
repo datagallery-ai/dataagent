@@ -179,3 +179,6 @@
 - 禁止 `INSERT INTO`、`INSERT OR REPLACE`、SQLite `PRIMARY KEY` 语法。
 - 输出：INSERT 草案。
 - JOIN 类型：明确写出 JOIN 的类型，如 LEFT JOIN , FULL OUTER JOIN 。事实表关联维表必须使用 LEFT JOIN，任何情况下（包括过滤空值或源表已聚合时）都不能使用 INNER JOIN，这是为了避免丢弃事实表中未匹配的记录。注意：该 LEFT JOIN 规则仅适用于事实表关联维表（维表是主键超集）；多时间窗口/多分区范围的事实数据拼接不属于此场景，必须先按规则 22 判断各侧集合包含关系再选 JOIN 类型，禁止直接套用“事实表一律作左表”。
+
+## SQL 编码风格
+1. SELECT 子句中，将区分不同列的逗号置于缩进后的行首，例如`  ,col1`
