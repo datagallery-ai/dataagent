@@ -1,0 +1,21 @@
+# =============================================================================
+# suite.yaml — 表格编辑 DLC（SpreadsheetBench / workspace xlsx）
+# =============================================================================
+
+name: spreadsheet
+
+version: "0.1.0"
+
+display_name: "Spreadsheet"
+
+description: >
+  Workspace 内 xlsx/xlsm 读写与原地编辑。提供 inspect_xlsx / read_xlsx /
+  execute_xlsx，不依赖 COM。依赖可选 extra ``wps`` 中的 openpyxl。
+
+priority: 50
+
+enabled: true
+
+requires: []
+
+conflicts: []
