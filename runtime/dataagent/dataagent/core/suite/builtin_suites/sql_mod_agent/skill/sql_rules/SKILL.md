@@ -101,9 +101,7 @@ description: |
       - 写法B(起始端开放, 终止端开放): pt_d < '$date' AND pt_d > '$ {start_time,-N-1,yyyyMMdd}'
         示例: N=7 → pt_d < '$date' AND pt_d > '$ {start_time,-8,yyyyMMdd}'
 10. **使用间隙和孤岛算法计算连续日期**：
-   - 按升序或者降序来选择其中一种算法即可
-      - 使用 `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ... DESC) AS rn` 为日期排序计算出倒序排序号，再使用 `DATE_ADD(..., rn) AS grp_date` 计算日期和排序号之和，最后再根据和值做分组获得连续日期区间。
-      - 使用 `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ... ASC) AS rn` 为日期排序计算出升序排序号，再使用 `DATE_SUBTRACT(..., rn) AS grp_date` 计算日期和排序号之和，最后再根据和值做分组获得连续日期区间。
+   - 使用 `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ... DESC) AS rn` 为日期排序计算出倒序排序号，再使用 `DATE_ADD(..., rn) AS grp_date` 计算日期和排序号之和，最后再根据和值做分组获得连续日期区间。
    - 计算日期和行号之和时不能将日期 CAST 为数字再直接与排序号求和，因为数字求和和日期求和不一定等价。
    - 使用DATE_ADD时需要注意日期格式，例如使用 `pt_d` 做计算时需要先使用 `bicoredata.DateFormat` UDF将其从 `yyyyMMdd` 格式转换为 `yyyy-MM-dd` 格式。
 11. **宏表达式中绝对不能出现算术运算**:
