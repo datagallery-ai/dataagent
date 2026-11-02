@@ -8,7 +8,7 @@ DataFoundry welcomes focused contributions that improve the workbench, docs, exa
 - Reproducible bugs with logs, traces, and screenshots.
 - Datasource or connector improvements with clear setup and validation notes.
 - Scenario cases that show how teams use DataFoundry for real data-agent workflows.
-- Tests and smoke checks that protect core behavior such as read-only SQL execution, datasource registration, and traceability.
+- Tests and smoke checks that protect the control plane: one `dataagent serve` process, Web and TUI against `POST /dataagent/stream`, and Home configuration.
 
 ## Pull request expectations
 

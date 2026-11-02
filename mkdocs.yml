@@ -74,7 +74,7 @@ nav:
       - Guides:
           - Web workbench: en/guides/web-workbench.md
           - TUI: en/guides/tui.md
-          - Data sources: en/guides/data-sources.md
+          - Where data comes from: en/guides/data-sources.md
           - DataLink: en/guides/datalink.md
   - Developer Guide:
       - Architecture:
@@ -82,9 +82,9 @@ nav:
       - Security: en/security.md
   - API Reference:
       - REST API: en/reference/rest-api.md
-      - Configuration API: en/reference/configuration-api.md
+      - Configuration: en/reference/configuration-api.md
       - Agent Runtime: en/reference/agent-runtime.md
-      - Supported data sources: en/reference/supported-datasources.md
+      - Supported inputs: en/reference/supported-datasources.md
   - Release Notes:
       - v0.2.0: en/releases/v0.2.0.md
   - Community:

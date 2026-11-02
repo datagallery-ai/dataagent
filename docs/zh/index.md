@@ -1,6 +1,6 @@
 # 用户指南
 
-DataAgent 是面向数据分析场景的 AI 工作台，把自然语言提问、数据源管理、只读 SQL 执行、分析追溯和结果产出放在同一个工作流里。
+这是一个本地控制面，Web 和 TUI 是它的两种展示。
 
 <div class="df-grid" markdown>
 
@@ -13,7 +13,7 @@ DataAgent 是面向数据分析场景的 AI 工作台，把自然语言提问、
 
 <div class="df-card" markdown>
 <p class="df-card-title">快速开始</p>
-启动本地工作台，接入数据源后跑通第一次分析。
+写入模型密钥，在网页或 TUI 里完成第一次提问。
 
 [本地启动](quick-start.md)
 </div>
@@ -23,10 +23,10 @@ DataAgent 是面向数据分析场景的 AI 工作台，把自然语言提问、
 ## 推荐体验路径
 
 1. 阅读 [产品概览](overview.md)，确认 DataAgent 解决的问题和能力边界。
-2. 按 [快速开始](quick-start.md)：Ubuntu / Debian 推荐 `./deploy.sh`；Windows / macOS 及其他环境用手动 npm（`npm install` → 配置 → `build` / `start`）。登录 Web 后创建模型 Profile，注册数据源，再跑通第一个问题。
-3. 查看 [能力全览](capabilities.md)，了解 Web 工作台、TUI 和后端 API 的能力覆盖。
+2. 按 [快速开始](quick-start.md)：Ubuntu / Debian 推荐 `./deploy.sh`；Windows / macOS 及其他环境用手动 npm（`npm install` → 配置 → `build` / `start`）。把模型密钥写入 `.env`，打开 `/data-tasks` 或 TUI 提问。
+3. 查看 [能力全览](capabilities.md)，了解 Web、TUI 和控制面实际提供的接口。
 4. 根据使用入口选择 [Web 工作台指南](guides/web-workbench.md) 或 [TUI 指南](guides/tui.md)。
-5. 需要接入自有数据时，再阅读 [数据源指南](guides/data-sources.md)。
+5. 需要让模型读本机目录时，阅读 [数据从哪里来](guides/data-sources.md)。
 
 ## 文档边界
 

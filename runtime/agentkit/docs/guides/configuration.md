@@ -72,7 +72,7 @@
 }
 ```
 
-`provider` 取值为 `openai`。OpenAI 兼容服务使用同一取值。`base_url` 写到服务商要求的 API 根，通常包含 `/v1`，止于该根路径。
+`provider` 取值为 `openai`。OpenAI 兼容服务使用同一取值。`base_url` 写到服务商要求的 API 根，通常包含 `/v1`，止于该根路径。需要时再写 `temperature`（0 到 2）、`max_tokens` 或 `extra_body`；省略前两项就用服务商默认值。
 
 ## 常见改动
 

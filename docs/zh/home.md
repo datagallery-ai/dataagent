@@ -61,21 +61,21 @@ Web 工作台适合可视化复盘，TUI 适合 SSH 和终端工作流，API / A
 
 <div class="df-card" markdown>
 ### 本地试用
-启动工作台，注册数据源后完成第一次数据分析。
+启动控制面，在网页或 TUI 里完成第一次提问。
 
 [开始快速体验](quick-start.md){ .df-card-action }
 </div>
 
 <div class="df-card" markdown>
 ### 理解系统
-了解运行时、安全边界和 Data Gateway 架构。
+一个控制面、两种展示、Home 目录和工作区。
 
 [查看架构概览](architecture/overview.md){ .df-card-action }
 </div>
 
 <div class="df-card" markdown>
 ### 接入 API
-使用 REST 配置 API 与 Agent Runtime / AG-UI 入口。
+调用控制面的 `POST /dataagent/stream` 和会话接口。
 
 [查看 API 参考](reference/rest-api.md){ .df-card-action }
 </div>

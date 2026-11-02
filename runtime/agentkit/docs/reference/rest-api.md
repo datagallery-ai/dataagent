@@ -1,5 +1,7 @@
 # HTTP 接口
 
+这篇对照 `serve/` 的实现，给改控制面的人。对外产品站的 `docs/*/reference/rest-api.md` 给集成方看同一份路径和请求约束。改路径、状态码或请求体时两处一起改。
+
 默认监听 `127.0.0.1:8790`，来自 `config.json` 的 `server.host` 和 `server.port`。`/healthz` 返回实际使用的 DataAgent Home，供 TUI 底栏显示；不返回输入目录或 `stateDir`。
 
 ## `GET /healthz`

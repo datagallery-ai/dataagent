@@ -1,13 +1,13 @@
 # 快速开始
 
-这篇文档面向第一次部署 DataFoundry 的用户。正式态有两条路径，**启动后都是** `password` 认证的 Web 工作台：
+这篇文档面向第一次部署的用户。正式态有两条路径，启动后都是同一个控制面。网页和 TUI 是它的两种展示：
 
 | 路径 | 适用环境 | 入口 |
 | --- | --- | --- |
 | **推荐：一键部署** | Ubuntu / Debian | `./deploy.sh`（配置、依赖、构建含 TUI、detached 后台启动 Web/API 与健康检查一次完成） |
 | **手动 npm** | Windows、macOS、其他 Linux，或需要手改环境变量时 | `npm install` → 配置 `.env` → `npm run build` → `npm run start` |
 
-部署完成后在 Web 中配置模型，注册数据源，再跑通一次分析。本版本**不提供** Docker / Compose。
+部署完成后把 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY` 写入仓库根目录 `.env`（`npm run start` 会载入进程环境）或 Home `~/.dataagent/.env`。然后打开网页或 TUI 提问。本版本**不提供** Docker / Compose，控制面也没有注册登录。
 
 ## 环境要求
 
@@ -29,7 +29,7 @@ cd datafoundry
 
 部署成功后 Web + API 在后台常驻（独立进程组）。关闭终端，或在 `./deploy.sh logs` 中按 `Ctrl+C`，**都不会**停止 DataFoundry——停止请用 `./deploy.sh stop`。一键部署会一并构建 TUI，但 TUI **不会**随 stack 后台常驻；需要时另开终端按成功提示启动（见下文「启动 TUI」）。
 
-打开 `http://127.0.0.1:3000/login`（若端口被改过，以脚本打印的 Web 地址为准），注册并登录，在模型配置中创建、测试并启用 OpenAI-compatible Profile，然后进入 `/data-tasks`。
+打开 `http://127.0.0.1:3000/data-tasks`（若网页端口被改过，以脚本打印的地址为准，路径仍是 `/data-tasks`）。模型来自 `config.json` 和环境变量，不在网页里创建 Profile。
 
 ### 交互与配置规则
 
@@ -66,18 +66,7 @@ cd datafoundry
 
 ### 外置 DataLink（可选）
 
-一键部署**只启动** Web + API，**不会**安装、启动或健康检查 DataLink。
-
-若需要语义能力，请单独运行 [DataLink](guides/datalink.md)（常见为 MCP `:8080` + REST `:8081`），再在 Web 工作台的 MCP 设置中添加外部服务，例如：
-
-| 字段 | 示例 |
-| --- | --- |
-| `serverUrl` | `http://127.0.0.1:8080/mcp` |
-| `apiUrl` | `http://127.0.0.1:8081` |
-| `transport` | `streamable-http` |
-| `toolManifest` | `[{ "name": "datalink_explore" }]` |
-
-名称/id 包含 `datalink` 即可被 DataLink 面板识别。
+一键部署**只启动** Web 和控制面，**不会**安装或启动 DataLink。控制面也不提供 DataLink 路由。需要这套独立服务时，按 [DataLink](guides/datalink.md) 单独运行。
 
 ## Windows / macOS / 其他：手动 npm 部署
 
@@ -107,7 +96,7 @@ npm install
 cp .env.example .env
 ```
 
-打开根目录 `.env`，可填写可选的服务端默认模型（也可仅在 Web 中配置）：
+打开根目录 `.env`，填写模型。网页里不能改模型：
 
 ```bash
 LLM_MODEL=qwen-plus
@@ -154,30 +143,19 @@ curl http://127.0.0.1:8790/healthz
 curl http://127.0.0.1:8790/ready
 ```
 
-打开 [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login)（真实生产则打开你的公网域名）注册或登录后进入 `/data-tasks`。
+打开 [http://127.0.0.1:3000/data-tasks](http://127.0.0.1:3000/data-tasks)。控制面没有注册登录。
 
 ## 跑通第一个问题
 
-打开 `/data-tasks` 后：
-
-1. 点击「新建数据任务」。
-2. 选择已注册的数据源。
-3. 在输入框旁选择「服务端默认」或你配置的模型。
-4. 发送第一个问题。
+打开 `/data-tasks` 后直接发送问题。模型、插件和工作区使用控制面启动时已经加载的配置。
 
 推荐问题：
 
 ```text
-帮我查看数据源里有哪些表，并说明每张表的主要字段。
+用三句话说明你现在能做什么。
 ```
 
-统计问题：
-
-```text
-对比各渠道的 GMV、毛利、投放和退款，并说明下一轮预算应优先增加到哪个渠道。
-```
-
-你看到 schema 检查、SQL 执行和结果产出后，说明链路已经跑通。
+如果配置了只读工作区，可以改问那个目录里有哪些文件。看到流式回复后，说明网页到控制面的链路已经跑通。数据库类问题只有在相应插件启用之后才有意义。
 
 ## 启动 TUI
 
@@ -263,7 +241,7 @@ curl http://127.0.0.1:8790/ready
 - 检查 `.env` 中的 `LLM_API_KEY`。
 - 检查 `LLM_BASE_URL` 是否以模型服务的兼容接口为准。
 - 检查 `LLM_MODEL` 是否在你的账号下可用。
-- 在 Web 工作台的模型配置里执行测试动作。
+- 改完后重启控制面。网页里没有模型测试接口。
 
 ### 端口冲突
 
@@ -276,16 +254,15 @@ curl http://127.0.0.1:8790/ready
 
 如果端口被占用，先停止占用进程，或改 `config.json` 的 `server.port`。`npm run start:web` 会读这个端口。
 
-### 数据库连接失败
+### 模型读不到本机目录
 
-- PostgreSQL / MySQL 等服务端数据库需要网络可达。
-- SQLite、CSV、Excel、DuckDB 文件需要使用后端进程能访问的路径。
-- 首次接入建议使用只读账号或测试库。
-- 凭据只在创建或更新资源时提交，读接口不会回传明文。
+- 控制面没有数据源注册。把目录写进 `dataagent.workspaces`，或启动时传 `--workspace`。
+- 目录必须在启动前存在，并且进程可以读取和进入。
+- 新会话会把当时的目录列表写入 `sessions.sqlite` 的 `session_bindings`。改列表后要开新会话。
 
 ## 下一步
 
 - 使用 Web 界面：[Web 工作台指南](guides/web-workbench.md)
 - 使用终端界面：[TUI 指南](guides/tui.md)
-- 连接自己的数据：[数据源指南](guides/data-sources.md)
+- 把本机目录交给模型：[数据从哪里来](guides/data-sources.md)
 - 查看能力边界：[能力全览](capabilities.md)

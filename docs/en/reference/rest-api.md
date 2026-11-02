@@ -1,246 +1,63 @@
-# REST API reference
+# REST API
 
-This reference is for client developers and integrators. After reading it, you can find the local API base URL, response format, auth headers, resource endpoints, session endpoints, and artifact endpoints.
+This page is for integrators calling the control plane. It does not describe internal modules. The control plane listens on `http://127.0.0.1:8790` by default, from `server.host` and `server.port` in Home `config.json`. There is no access token. The Web app proxies the same paths to that address.
 
-Default service address:
+## Envelope
 
-```text
-http://127.0.0.1:8787
-```
-
-## General conventions
-
-Most JSON endpoints return an envelope:
+`/healthz`, `/ready`, and `/api/v1/*` use an envelope.
 
 ```json
-{
-  "success": true,
-  "data": {}
-}
+{"success": true, "data": {}}
 ```
-
-Error responses:
 
 ```json
-{
-  "success": false,
-  "error": {
-    "code": "RESOURCE_NOT_FOUND",
-    "message": "resource not found"
-  }
-}
+{"success": false, "error": {"code": "RESOURCE_NOT_FOUND", "message": "Route not found."}}
 ```
 
-File downloads and artifact downloads return binary responses; upload endpoints use `multipart/form-data`.
+`/sessions` and the output routes return their own JSON, without that envelope. `POST /api/v1/runs/{runId}/cancel` returns an empty 204 on success.
 
-## Identity and auth
+Unknown paths return 404 with `RESOURCE_NOT_FOUND`. Conversation paths return 503 with `CONVERSATION_UNAVAILABLE` while the engine is not ready.
 
-Only password session cookies and CSRF are supported. Business requests need the `df_session` cookie from login; unsafe methods also need `X-CSRF-Token` from the `df_csrf` cookie:
-
-```text
-X-CSRF-Token: <token_from_df_csrf_cookie>
-```
-
-Web v1 does not expose workspace switching; custom integrations should use the workspace bound to the login session unless they manage workspace routing themselves. `/api/v1/*` and `POST /api/copilotkit` must share the same session, or sessions, resources, files, artifacts, and run events can appear under different users.
-
-## Identity endpoints
+## Health and identity
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/me` | Read the current user and workspace. |
+| GET | `/healthz` | Always 200. When the engine is ready, `data.conversation` includes `ready`, `home`, `model`, `plugins`, `entry`, `user`, and `timeoutSeconds`. Otherwise `conversation` is only `ready: false`. |
+| GET | `/ready` | 200 when the engine is ready. `data.status` and `data.control_plane` are both `ready`. Otherwise 503. |
+| GET | `/api/v1/me` | The current `--user`. The id is `default` when the engine is not ready. There is no signed-in account. |
 
-## Password auth endpoints
+`/healthz` does not return input directories, the state directory, or the configuration body.
 
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/auth/status` | Read public auth status (`registrationEnabled`; no secrets). |
-| POST | `/api/v1/auth/register` | Create a user account and verification token. |
-| POST | `/api/v1/auth/login` | Sign in and set `df_session` and `df_csrf` cookies. |
-| POST | `/api/v1/auth/verify-email` | Verify an email token. |
-| POST | `/api/v1/auth/password/forgot` | Request a password reset. |
-| POST | `/api/v1/auth/password/reset` | Reset a password with a token. |
-| GET | `/api/v1/auth/csrf` | Read the current CSRF token. |
-| POST | `/api/v1/auth/logout` | Sign out the current session. |
-| POST | `/api/v1/auth/logout-all` | Revoke all sessions for the current user. |
-| GET | `/api/v1/auth/sessions` | List active sessions for the current user. |
-| DELETE | `/api/v1/auth/sessions/:id` | Revoke one session. |
-| POST | `/api/v1/auth/password/change` | Change the current user's password. |
-
-## Health and capabilities
+## Sessions and runs
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Process liveness. |
-| GET | `/ready` | Readiness: Mastra / builtins finished; response includes `startup_ms` and `phases`. |
-| GET | `/api/v1/capabilities` | Read backend capability switches. |
-| GET | `/api/v1/me` | Read current identity. |
+| GET | `/api/v1/sessions?limit=` | Sessions for the current user, inside the envelope. `limit` is 1 to 100, default 50. |
+| GET | `/api/v1/sessions/{threadId}/conversation` | User and assistant messages for the Web UI. An unknown session returns an empty message list. |
+| GET | `/sessions?limit=` | The same index as `{"sessions":[...]}`. The TUI uses this route. |
+| GET | `/sessions/{threadId}` | List fields plus `messages`, `newThreadRequired`, and `notice`. 409 while a run is active or the binding cannot be opened. 404 for another user's session. |
+| GET | `/sessions/{threadId}/outputs` | Output files. Skips symlinks, `artifacts/conversation_history`, and `artifacts/large_tool_results`. |
+| GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB. Non-text is 415. |
+| POST | `/api/v1/runs/{runId}/cancel` | Cancel the active turn. 404 when that run is not executing. |
 
-```bash
-curl http://127.0.0.1:8787/healthz
-curl http://127.0.0.1:8787/ready
-curl http://127.0.0.1:8787/api/v1/capabilities
-```
+These paths are not implemented: login, `/api/v1/capabilities`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
 
-## Agent Runtime
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/api/copilotkit` | Start an agent run; returns AG-UI event stream. |
-| POST | `/api/v1/runs/:id/cancel` | Cancel a running agent run. |
-
-`POST /api/copilotkit` uses CopilotKit / AG-UI `RunAgentInput`. See [Agent Runtime and AG-UI reference](agent-runtime.md).
-
-## Sessions
+## Conversation
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/v1/sessions` | List server sessions. Supports `limit`, `cursor`. |
-| PATCH | `/api/v1/sessions/:sessionId` | Update session title. |
-| DELETE | `/api/v1/sessions/:sessionId` | Permanently delete a session and its conversation, runs, artifacts, and child branches. |
-| GET | `/api/v1/sessions/:sessionId/conversation` | Read authoritative server conversation history. Supports `limit`. |
-| GET | `/api/v1/sessions/:sessionId/checkpoints` | List persisted context checkpoints. Supports `limit`. |
-| GET | `/api/v1/sessions/:sessionId/trace-dag` | Read the semantic run/step/tool/output graph. Supports `limit`. |
-| POST | `/api/v1/sessions/:sessionId/branches` | Create a persistent branch from an ended run or checkpoint. Body: `{ "runId": "..." }` or `{ "checkpointId": "..." }`. |
-| GET | `/api/v1/checkpoints/:checkpointId` | Read checkpoint metadata. |
-| GET | `/api/v1/checkpoints/:checkpointId/context-package` | Read checkpoint metadata and its context snapshot. |
+| POST | `/dataagent/stream` | One turn. The body is one AG-UI input; extra fields are rejected. Success is `text/event-stream`. |
+| POST | `/api/copilotkit` | Another entry on the same process and the same graph. The Web path does not use it. |
+| GET | `/api/copilotkit/info` | CopilotKit runtime info. |
 
-Session APIs restore history for Web/TUI, display titles, read tool-call pairings, and support re-asking from checkpoints. The `conversation` response includes `messages`, `runEventRefs`, `toolCalls`, and may include `checkpoints`, `branch`, and `branches`. Each checkpoint is derived from existing run, message, and run-event records and includes `runId`, `status`, message position bounds, event seq bounds, start/finish times, and optional error text; it marks the recoverable history boundary for one run. Branch sessions reference parent history up to the fork checkpoint instead of copying messages, so reading a branch returns the visible parent prefix plus the branch's own messages.
+Constraints for `POST /dataagent/stream`:
 
-## Workspace configuration
+- `threadId` and `runId` are safe ids of at most 128 characters
+- `messages` is exactly one item, `role` is `user`, and `content` is a nonempty string
+- `state` is `null` or `{}`
+- `tools`, `context`, and `forwardedProps` are empty
+- `resume` and `parentRunId` are not accepted
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/workspace-config` | Read workspace resource defaults. |
-| PATCH | `/api/v1/workspace-config` | Update default enablement. |
-| GET | `/api/v1/run-defaults` | Read run default configuration. |
+One session runs one turn at a time. Validation failures are usually 422. Business rejections are usually 409 with `{"detail":"..."}`. After the stream has started with 200, a run failure is an event, not a changed HTTP status.
 
-## Data Link
-
-These routes proxy a compatible Data Link or DataGraph MCP resource configured in the current workspace. They do not provide an embedded graph service.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/datalink/servers` | List compatible configured servers. |
-| GET | `/api/v1/datalink/:serverId/graph` | Read and normalize the workspace graph. |
-| POST | `/api/v1/datalink/:serverId/explore` | Explore the graph from a natural-language query. |
-| POST | `/api/v1/datalink/:serverId/tables` | Add a table source through the configured service. |
-| DELETE | `/api/v1/datalink/:serverId/tables/:tableId` | Remove a table through the configured service. |
-| POST | `/api/v1/datalink/:serverId/rebuild` | Rebuild the external graph. |
-
-`/api/v1/datagraph/*` is accepted as an alias for `/api/v1/datalink/*`.
-
-## Data sources
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/datasource-types` | Discover supported data source types and field schema. |
-| GET | `/api/v1/datasources` | List data sources. |
-| POST | `/api/v1/datasources` | Create a data source. |
-| GET | `/api/v1/datasources/:id` | Read data source details. |
-| PATCH | `/api/v1/datasources/:id` | Update a data source. |
-| DELETE | `/api/v1/datasources/:id` | Delete a data source. |
-| POST | `/api/v1/datasources/:id/test` | Test connection. |
-| POST | `/api/v1/datasources/:id/introspect` | Fetch schema; returns a job. |
-| GET | `/api/v1/datasources/:id/schema` | Read schema snapshot. Supports `q`, `includeStats`. |
-| GET | `/api/v1/datasources/:id/tables/:table/preview` | Preview table data. Supports `schema`, `limit`, `offset`, `orderBy`. |
-
-The backend does not expose arbitrary SQL REST endpoints. SQL analysis runs through agent tools.
-
-## Models
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/model-profiles` | List model profiles. |
-| POST | `/api/v1/model-profiles` | Create a model profile. |
-| GET | `/api/v1/model-profiles/:id` | Read a model profile. |
-| PATCH | `/api/v1/model-profiles/:id` | Update a model profile. |
-| DELETE | `/api/v1/model-profiles/:id` | Delete a model profile. |
-| POST | `/api/v1/model-profiles/:id/test` | Test provider. |
-
-## Knowledge bases
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/knowledge-bases` | List knowledge bases. |
-| POST | `/api/v1/knowledge-bases` | Create a knowledge base. |
-| GET | `/api/v1/knowledge-bases/:id` | Read a knowledge base. |
-| PATCH | `/api/v1/knowledge-bases/:id` | Update a knowledge base. |
-| DELETE | `/api/v1/knowledge-bases/:id` | Delete a knowledge base. |
-| POST | `/api/v1/knowledge-bases/:id/test` | Validate configuration. |
-| GET | `/api/v1/knowledge-bases/:id/files` | List documents. |
-| POST | `/api/v1/knowledge-bases/:id/files` | Upload documents. |
-| DELETE | `/api/v1/knowledge-bases/:id/files/:documentId` | Hard-delete one document (cascades chunks/FTS/embeddings). |
-| POST | `/api/v1/knowledge-bases/:id/files/:documentId/reindex` | Reindex one document; success sets status to `ready`. |
-| POST | `/api/v1/knowledge-bases/:id/files/import` | Import from FileAssetRef. |
-| POST | `/api/v1/knowledge-bases/:id/search` | Retrieval debug. |
-| POST | `/api/v1/knowledge-bases/:id/reindex` | Rebuild index; returns a job. Success marks documents `ready`. |
-
-## MCP and Skills
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET / POST | `/api/v1/mcp-servers` | List or create MCP servers. |
-| GET / PATCH / DELETE | `/api/v1/mcp-servers/:id` | Read, update, or delete MCP servers. |
-| POST | `/api/v1/mcp-servers/:id/test` | Test MCP server. |
-| GET | `/api/v1/mcp-servers/:id/tools` | Fetch tools manifest. |
-| GET / POST | `/api/v1/skills` | List or upload Skills. |
-| POST | `/api/v1/skills/select` | Preview Skill filtering for a run. |
-| GET / PATCH / DELETE | `/api/v1/skills/:id` | Read, update, or delete Skills. |
-| POST | `/api/v1/skills/:id/test` | Test Skill. |
-| POST | `/api/v1/skills/:id/validate` | Validate Skill. |
-| POST | `/api/v1/skills/:id/replace` | Replace Skill package. |
-
-## Files
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/files` | List file assets. Supports `scope`, `origin`, `source`, `sessionId`. |
-| POST | `/api/v1/files` | Batch upload files. Session id required in multipart field or header. |
-| GET | `/api/v1/files/:id` | Read file reference. |
-| POST | `/api/v1/files/:id/promote` | Promote session-scoped file to cross-session workspace file. |
-| DELETE | `/api/v1/files/:id` | Delete file reference. |
-| GET | `/api/v1/files/:id/download` | Download file content. |
-| POST | `/api/v1/chat/uploads` | Upload chat attachments for the current conversation. |
-
-## Artifacts
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/artifacts?sessionId=:sessionId` | List outputs for a session. |
-| GET | `/api/v1/artifacts/:id` | Read artifact details. |
-| GET | `/api/v1/artifacts/:id/preview` | Read preview JSON. |
-| GET | `/api/v1/artifacts/:id/content` | Read inline content. |
-| GET | `/api/v1/artifacts/:id/download` | Download artifact. Optional `format`. |
-| POST | `/api/v1/artifacts/:id/promote` | Add file artifact to workspace files. |
-| POST | `/api/v1/artifacts/:id/export` | Export specified format; returns a job. |
-
-## Query history
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/query-history` | List SQL query history. Supports `sessionId`, `datasourceId`, `favorite`, `limit`. |
-| POST | `/api/v1/query-history/:id/favorite` | Favorite a query. |
-| POST | `/api/v1/query-history/:id/unfavorite` | Remove favorite. |
-| PATCH | `/api/v1/query-history/:id` | Update favorite with `{ "favorite": true \| false }`. |
-
-## Jobs
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/jobs/:id` | Query async job status. |
-| POST | `/api/v1/jobs/:id/cancel` | Cancel async job. |
-
-## Write conventions
-
-- Default JSON body limit is 1 MiB.
-- `PATCH` supports optimistic concurrency with `revision` or `If-Match`.
-- Schema fetch, index rebuild, and artifact export may use `Idempotency-Key`.
-- Credentials are submitted only when creating or updating resources.
-- Read APIs do not return plaintext passwords, tokens, or full connection strings.
-
-## Further reading
-
-- Resource and model boundaries: [Configuration API reference](configuration-api.md)
-- Data source connection: [Data sources guide](../guides/data-sources.md)
-- Agent runs: [Agent Runtime and AG-UI reference](agent-runtime.md)
+The same process also serves `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`, without an extra Bearer token.

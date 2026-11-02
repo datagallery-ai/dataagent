@@ -6,7 +6,7 @@ AgentKit 在本机运行。服务地址是 `127.0.0.1`，调用方与后端位�
 
 `--user` 和 `LaunchOptions.user_id` 选择 `runtime/users/<id>/`。ID 由字母、数字、下划线和连字符组成，最长 128 个字符。它用来划分会话目录，不是登录账号。
 
-HTTP API 不校验访问令牌。`/healthz` 返回 Home、输入目录和状态目录的路径，不返回配置正文或密钥。
+HTTP API 不校验访问令牌。`/healthz` 在引擎就绪时返回 Home 路径、启用插件、模型名、`dataagent.entry` 和 user id，不返回输入目录、`stateDir` 或配置正文。
 
 会话索引把 `threadId` 绑定到创建它的 user。其他 user 不能通过 API 读取该会话或它的产物。同一台机器上能读取 Home 目录的进程，仍然可以直接打开这些文件。
 

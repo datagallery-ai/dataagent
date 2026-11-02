@@ -1,136 +1,40 @@
 # Architecture overview
 
-DataFoundry uses a local-first workbench architecture. Web and TUI are user entry points; the backend unifies Agent Runtime, configuration management, data source access, knowledge retrieval, files, and artifact management.
+The product is one local control plane and two presentations. Web and TUI both talk to the same `dataagent serve` process. They do not start separate runtimes.
 
-## High-level structure
+## One service, two presentations
 
 ```text
-Web workbench / TUI / other clients
-  -> CopilotKit / AG-UI agent run
-  -> REST configuration and resource API
-  -> Agent Runtime
-  -> Data Gateway / Knowledge / MCP / Skill / Files / Artifacts
-  -> Metadata and audit storage
+Browser apps/web
+  -> Next same-origin proxy for /dataagent/stream and /api/v1/*
+  -> dataagent serve (config.json server.host:server.port, default 127.0.0.1:8790)
+  <- apps/tui calls that same process directly
 ```
 
-A curated architecture diagram is available in the repository home runtime flow image: [`docs/assets/readme/runtime-flow.png`](../../assets/readme/runtime-flow.png).
+| Presentation | Start | Open |
+| --- | --- | --- |
+| Web | `npm run start` or `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
+| TUI | `npm run start:tui` | The terminal. The TUI starts the control plane when nothing is listening. |
 
-## Main modules
+The Python SDK can skip HTTP and prepare the same runtime in process. The conversation HTTP entry is `POST /dataagent/stream`. `POST /api/copilotkit` still runs the same graph in this process; the Web path does not use it.
+
+## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `apps/web` | Web data task workbench: graphical conversation, resource management, trace, and outputs. |
-| `apps/tui` | Terminal UI: CLI conversation, data source and Skill selection, stats, and outputs. |
-| `runtime/agentkit/serve` | Backend HTTP service: `/api/copilotkit`, `/dataagent/stream`, and `/api/v1/*`. |
-| Agent Runtime | Creates DataFoundry, manages tools, run context, and AG-UI events. |
-| Data Gateway | Data sources, schema checks, preview, and read-only SQL execution. |
-| Knowledge | Knowledge base documents, chunking, retrieval, and citation boundaries. |
-| MCP | External tool services with allowlist and timeout policy. |
-| Skills | Parse, store, select, and materialize Skill packages in the run workspace. |
-| Files | Reusable file assets and in-run file references. |
-| Artifacts | Agent-generated tables, charts, reports, and downloadable files. |
-| Metadata | Users, workspace, session, run, events, resource configuration, secret references, and audit records. |
+| `apps/web` | Browser presentation. Proxies conversation and `/api/v1/*` to the control plane. |
+| `apps/tui` | Terminal presentation. Connects to the control plane and uses slash commands for sessions and outputs. |
+| `runtime/agentkit/serve` | The only HTTP control plane: health, sessions, the event stream, and A2A. |
+| `runtime/agentkit` | Loads configuration, assembles models and plugins, and runs one turn. |
+| Home `~/.dataagent` | Configuration, Skills, plugins, and all session state. |
+| `dataagent.workspaces` | Read-only input directories bound when the process starts. They are not inside Home. |
 
-## Two northbound interfaces
+The control plane does not expose datasource registration, a knowledge base, cookie login, or a separate configuration REST API.
 
-The backend exposes two interface types to clients:
+## Where configuration and data live
 
-| Interface | Path | Description |
-| --- | --- | --- |
-| Agent run | `/dataagent/stream` | Start one agent analysis run; returns an AG-UI event stream. Web and TUI both use this path. `/api/copilotkit` remains for CopilotKit runtime info. |
-| REST configuration API | `/api/v1/*` | Manage workspace resources, files, tasks, outputs, and configuration. |
+What you edit to deploy is `config.json` and `.env` under Home `~/.dataagent`, plus the repository `.env`. The model fields and listen address you must set are in [Configuration](../reference/configuration-api.md).
 
-Web and TUI do not read backend internal SQLite, Data Gateway implementation classes, or Knowledge implementation classes directly. They interact only through HTTP.
+To let the model read a local directory, use a workspace. There is no datasource file inside Home. Steps are in [Where data comes from](../guides/data-sources.md). New files go to that session's `outputs/`.
 
-## Data analysis run flow
-
-```text
-User asks a question
-  -> Client sends AG-UI RunAgentInput
-  -> Backend parses threadId, runId, messages, and run_config
-  -> Merge workspace defaults, per-run overrides, and server policy
-  -> Agent inspects schema
-  -> Agent runs read-only SQL or calls other controlled tools
-  -> Backend writes run events, SQL audit, and artifacts
-  -> Client shows text, steps, trace, and outputs
-```
-
-Key points:
-
-- `threadId` is the session; `runId` is a single run.
-- `run_config` selects data sources, models, knowledge bases, MCP, Skills, and files for this run.
-- The backend rebuilds authoritative server conversation history; clients do not resend full history on every run.
-- The same AG-UI event stream is returned to the client and persisted for replay and audit.
-
-## Data access boundary
-
-Data Gateway sits between the agent and real data sources. It handles:
-
-- Data source registration and connection tests.
-- Schema introspection.
-- Preview and read-only SQL execution.
-- SQL guard, limits, timeouts, allowlists, and field masking.
-- SQL audit and result artifact creation.
-
-Clients do not receive database credentials; the agent cannot bypass Data Gateway to access databases directly.
-
-## Configuration and credentials
-
-Workspace configuration uses `/api/v1/*` REST APIs. Resource credentials are submitted only on create or update; the backend stores secret references and read APIs do not return plaintext.
-
-Effective configuration for one run combines three layers:
-
-```text
-workspace defaults
-  + per-run overrides
-  + server policy
-  = effective run config
-```
-
-This keeps left-panel workspace configuration, per-conversation selection, and backend security policy separate.
-
-## Identity scope
-
-DataFoundry only supports cookie-based password sessions. Each registered user gets a personal workspace; Web v1 keeps workspace switching out of the UI and scopes browser state by user. REST configuration requests and CopilotKit AG-UI runs must use the same authenticated session.
-
-`/api/v1/auth/*` covers registration, login, email verification, password reset, logout, and session revocation. Unsafe methods require CSRF checks.
-
-## Files, knowledge bases, and outputs
-
-Files can be stored as reusable FileAssetRef or enter the session workspace as chat attachments. During agent runs, controlled workspace tools read files.
-
-Knowledge bases are managed by backend services for documents, chunking, and retrieval. The agent sees only policy-controlled retrieval summaries and citations.
-
-Artifacts are managed by the Artifact service—common types include tables, charts, SQL, reports, and files. Web suits preview, download, and export; TUI suits command-line viewing.
-
-## Formal deploy boundary
-
-Formal test and real production share the same start commands:
-
-```bash
-npm run build
-npm run start
-```
-
-Start them separately with `npm run start:api`, then `npm run start:web`. The web proxy reads `server.host` and `server.port` from `config.json`, default `http://127.0.0.1:8790`.
-
-| Environment | Network |
-| --- | --- |
-| Formal test | Local / private |
-| Real production | Public HTTPS + reverse proxy |
-
-The browser reaches REST and CopilotKit SSE through the same-origin Next BFF. Probes:
-
-- `GET /healthz` — process liveness
-- `GET /ready` — Mastra and builtin resources ready (response includes `startup_ms` / `phases`)
-
-Reverse-proxy sample: [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; leave the SSE path uncompressed and unbuffered.
-
-Real production typically also needs:
-
-- Secret management such as KMS or Vault.
-- Deployment, monitoring, and audit policies.
-- Real-environment E2E validation against external databases.
-- RBAC, organization policies, and multi-workspace UI if your deployment needs more than one personal workspace.
-
-These do not block formal-test acceptance but should be evaluated before external delivery.
+A `.dataagent/` directory in the current working directory is not read. HTTP does not check a token, and there is no registration API.

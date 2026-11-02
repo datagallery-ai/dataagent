@@ -1,6 +1,6 @@
 # AgentKit
 
-本地数据 Agent 运行时。它使用内置 Deep Agents 图、LangChain 和 AG-UI。前端是仓库里的 `apps/tui`。Python 包名、分发名和命令名都是 `dataagent`。
+本地数据 Agent 运行时。它使用内置 Deep Agents 图、LangChain 和 AG-UI。宿主是仓库里的 `apps/web` 和 `apps/tui`，都连接这一个进程。Python 包名、分发名和命令名都是 `dataagent`。产品部署在仓库 `docs/`；本目录的文档讲配置、扩展和运行时。
 
 服务监听 `127.0.0.1`。文件工具和 shell 使用后端进程的权限，默认工作目录是当前会话的 `outputs/`。请在可信的本机环境中运行。
 

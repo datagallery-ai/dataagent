@@ -1,13 +1,13 @@
 # Quick start
 
-This guide is for first-time DataFoundry deployers. Formal mode has two paths; **both** start the Web workbench with `password` auth:
+This guide is for a first deploy. Formal mode has two paths. Both start the same control plane. Web and TUI are its two presentations:
 
 | Path | Hosts | Entry |
 | --- | --- | --- |
 | **Recommended: one-click** | Ubuntu / Debian | `./deploy.sh` (config, dependencies, build including TUI, detached Web/API start, and health checks in one flow) |
 | **Manual npm** | Windows, macOS, other Linux, or hand-edited env files | `npm install` → configure `.env` → `npm run build` → `npm run start` |
 
-After deploy, configure a model in the Web UI, register a data source, and run an analysis. Docker / Compose is **not** shipped in this release.
+After deploy, put `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in the repository `.env` (`npm run start` loads it into the process environment) or in Home `~/.dataagent/.env`. Then ask from the Web UI or the TUI. Docker / Compose is **not** shipped, and the control plane has no registration.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ cd datafoundry
 
 On success Web + API keep running in the background (detached process group). Closing the terminal or pressing `Ctrl+C` in `./deploy.sh logs` does **not** stop DataFoundry — use `./deploy.sh stop`. One-click deploy also builds the TUI, but the TUI does **not** stay running with the stack; start it in another terminal when needed (see “Start the TUI” below).
 
-Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the port differs), register and sign in, create/test/enable an OpenAI-compatible model profile, then go to `/data-tasks`.
+Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL the script prints and keep the `/data-tasks` path). The model comes from `config.json` and the environment, not from a profile created in the Web UI.
 
 ### Configuration rules
 
@@ -66,18 +66,7 @@ Open `http://127.0.0.1:3000/login` (or the Web URL printed by the script if the 
 
 ### External DataLink (optional)
 
-One-click deploy starts **only** Web + API. It does **not** install, start, or health-check DataLink.
-
-To use semantic features, run [DataLink](guides/datalink.md) as a separate service (typically MCP on `:8080` and REST on `:8081`), then in the Web workbench MCP settings add an external server, for example:
-
-| Field | Example |
-| --- | --- |
-| `serverUrl` | `http://127.0.0.1:8080/mcp` |
-| `apiUrl` | `http://127.0.0.1:8081` |
-| `transport` | `streamable-http` |
-| `toolManifest` | `[{ "name": "datalink_explore" }]` |
-
-Use a name/id containing `datalink` so the DataLink panel can recognize it.
+One-click deploy starts **only** Web and the control plane. It does **not** install or start DataLink, and the control plane does not serve DataLink routes. To run that separate service, follow [DataLink](guides/datalink.md).
 
 ## Windows / macOS / other: manual npm deploy
 
@@ -107,7 +96,7 @@ npm install
 cp .env.example .env
 ```
 
-Edit the root `.env` for an optional server-default model (you can also configure the model only in the Web UI):
+Edit the root `.env` and set the model. The Web UI cannot change it:
 
 ```bash
 LLM_MODEL=qwen-plus
@@ -154,30 +143,19 @@ curl http://127.0.0.1:8790/healthz
 curl http://127.0.0.1:8790/ready
 ```
 
-Open [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login) (or your public origin in real production), register or sign in, then go to `/data-tasks`.
+Open [http://127.0.0.1:3000/data-tasks](http://127.0.0.1:3000/data-tasks). The control plane has no registration or login.
 
 ## Run your first question
 
-On `/data-tasks`:
-
-1. Click **New data task**.
-2. Select a registered data source.
-3. Select **Server default** or your configured model next to the input box.
-4. Send your first question.
+On `/data-tasks`, send a question. The model, plugins, and workspaces are the configuration the control plane loaded at startup.
 
 Suggested prompt:
 
 ```text
-Show me the tables in this datasource and explain the main fields of each.
+In three sentences, say what you can do right now.
 ```
 
-Aggregation prompt:
-
-```text
-Compare GMV, gross margin, ad spend, and refunds by channel. Explain which channel should receive the next budget increment.
-```
-
-When you see schema inspection, SQL execution, and result output, the path is working.
+If a read-only workspace is configured, ask which files are in that directory. A streamed reply means the Web path to the control plane is working. Database questions only make sense after the matching plugin is enabled.
 
 ## Start the TUI
 
@@ -263,7 +241,7 @@ Fix:
 - Check `LLM_API_KEY` in `.env`.
 - Confirm `LLM_BASE_URL` matches your provider's compatible endpoint.
 - Confirm `LLM_MODEL` is available on your account.
-- Run the test action in the Web workbench model configuration.
+- Restart the control plane after editing. The Web UI has no model test route.
 
 ### Port conflict
 
@@ -276,16 +254,15 @@ Default ports:
 
 Stop the conflicting process, or change `server.port` in `config.json`. `npm run start:web` reads that port.
 
-### Database connection failed
+### The model cannot read a local directory
 
-- Server databases such as PostgreSQL / MySQL must be reachable.
-- SQLite, CSV, Excel, and DuckDB files must use paths the API process can read.
-- Prefer a read-only account or a test database for the first connection.
-- Credentials are submitted only on create/update; read APIs do not return plaintext secrets.
+- The control plane has no datasource registry. Put the directory in `dataagent.workspaces`, or pass `--workspace` at startup.
+- The directory must exist before startup, and the process must be able to read and enter it.
+- A new session writes that list into the `session_bindings` table in `sessions.sqlite`. After changing the list, start a new session.
 
 ## Next steps
 
 - Use the Web UI: [Web workbench guide](guides/web-workbench.md)
 - Use the terminal UI: [TUI guide](guides/tui.md)
-- Connect your own data: [Data sources guide](guides/data-sources.md)
+- Give the model a local directory: [Where data comes from](guides/data-sources.md)
 - Review capability boundaries: [Capabilities](capabilities.md)

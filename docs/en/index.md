@@ -1,6 +1,6 @@
 # User Guide
 
-DataAgent is an AI workbench for data analysis. It brings natural-language questions, data source management, read-only SQL execution, analysis traceability, and result delivery into one workflow.
+This is one local control plane. Web and TUI are its two presentations.
 
 <div class="df-grid" markdown>
 
@@ -13,7 +13,7 @@ Understand where DataAgent fits and which problems it addresses.
 
 <div class="df-card" markdown>
 <p class="df-card-title">Quick start</p>
-Start the local workbench, connect a data source, and run a first analysis.
+Set the model key, then ask the first question in the Web UI or the TUI.
 
 [Start locally](quick-start.md)
 </div>
@@ -23,10 +23,10 @@ Start the local workbench, connect a data source, and run a first analysis.
 ## Recommended path
 
 1. Read [Product overview](overview.md) to confirm the problem space and capability boundaries.
-2. Follow [Quick start](quick-start.md): on Ubuntu / Debian prefer `./deploy.sh`; on Windows / macOS and other hosts use manual npm (`npm install` → configure → `build` / `start`). Then create a model profile in the Web UI, register a data source, and run the first question.
-3. Read [Capabilities](capabilities.md) to see coverage across Web, TUI, and backend API.
-4. Choose [Web workbench guide](guides/web-workbench.md) or [TUI guide](guides/tui.md) based on your entry point.
-5. When you need your own data, read [Data sources guide](guides/data-sources.md).
+2. Follow [Quick start](quick-start.md): on Ubuntu / Debian prefer `./deploy.sh`; on Windows / macOS and other hosts use manual npm (`npm install` → configure → `build` / `start`). Put the model key in `.env`, then ask from `/data-tasks` or the TUI.
+3. Read [Capabilities](capabilities.md) for the routes Web, TUI, and the control plane actually serve.
+4. Choose [Web workbench guide](guides/web-workbench.md) or [TUI guide](guides/tui.md).
+5. To let the model read a local directory, read [Where data comes from](guides/data-sources.md).
 
 ## Documentation scope
 
