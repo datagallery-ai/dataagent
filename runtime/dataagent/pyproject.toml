@@ -90,7 +90,10 @@ test = [
     "pytest-asyncio>=1.2.0",
     "diff-cover>=7.5",
     "pytest-html==2.1.1",
-    "py"
+    "py",
+    # xlsx unit tests import openpyxl at collection time. Do not pull the
+    # whole wps extra: pywin32 does not install on the Linux codecov agent.
+    "openpyxl>=3.1.5",
 ]
 a2a-server = [
     "grpcio>=1.60.0",

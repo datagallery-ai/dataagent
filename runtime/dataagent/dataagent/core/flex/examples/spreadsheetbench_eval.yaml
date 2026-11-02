@@ -1,0 +1,51 @@
+# SpreadsheetBench 评测用 Agent。激活 spreadsheet Suite 以获得 xlsx 工具。
+AGENT_CONFIG:
+  name: "spreadsheetbench_eval"
+  version: "1.0"
+  description: "Edit an xlsx workbook in the workspace"
+  backend: "langgraph"
+  type: "react"
+  enable_human_feedback: false
+  debug: false
+
+SUITE:
+  include:
+    - spreadsheet
+
+MODEL:
+  chat_model:
+    model_type: "chat"
+    provider: "bailian"
+    params:
+      # base_url / api_key 走环境变量 BAILIAN_BASE_URL / BAILIAN_API_KEY
+      model: "GLM-5.2"
+      temperature: 0.3
+      timeout: 3600
+
+SCENARIO:
+  chat:
+    input: "a spreadsheet task and one xlsx workbook in the workspace"
+    task: "edit that workbook so the requested cells are correct"
+    instructions: "Use inspect_xlsx to see sheets and used ranges, read_xlsx to read values and formulas, and execute_xlsx to edit the workbook with openpyxl. Save in place under the original filename. Do not create a second workbook and do not rename sheets. Prefer formulas when a cell is computed from other cells."
+    output_format: "a short summary of what changed"
+
+TOOLS:
+  builtin:
+    - name: "bash"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "bash"
+    - name: "glob"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "glob"
+    - name: "grep"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "grep"
+
+ACTOR_LOOP:
+  - node: "planner"
+    module: "dataagent.core.flex.nodes.planner.Planner"
+    chat_model:
+      name: "chat_model"
+  - node: "executor"
+    module: "dataagent.core.flex.nodes.executor.Executor"
+    max_tool_result_length: 16384

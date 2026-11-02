@@ -1,0 +1,15 @@
+# =============================================================================
+# tools/tools.yaml — Spreadsheet Suite 工具
+# =============================================================================
+
+TOOLS:
+  local_functions:
+    - module: "dataagent.actions.tools.local_tool.xlsx_tools"
+      function: "inspect_xlsx"
+      description: "Inspect workbook structure: sheet names, used range, row/column counts"
+    - module: "dataagent.actions.tools.local_tool.xlsx_tools"
+      function: "read_xlsx"
+      description: "Read a sheet region: stored values and formulas"
+    - module: "dataagent.actions.tools.local_tool.xlsx_tools"
+      function: "execute_xlsx"
+      description: "Edit a workspace workbook in place with restricted openpyxl"
