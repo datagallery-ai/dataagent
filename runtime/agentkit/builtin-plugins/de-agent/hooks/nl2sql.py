@@ -1,3 +1,15 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
 """Adapt data-engineering evidence at NL2SQL's per-task boundaries."""
 
 import json
@@ -8,6 +20,8 @@ import sqlglot
 from loguru import logger
 from sqlglot import exp
 from utils.checks import _validate_ddl_comprehensive
+from utils.data_task_ir.core import get_ir_context
+from utils.data_task_ir.runtime import ir_enabled
 from utils.evidence import model_evidence
 
 
@@ -57,6 +71,9 @@ def prepare_input(state, runtime, *, params):
         "target_ddl": ddl.read_text(encoding="utf-8"),
         "semantic": supporting,
     }
+    ir_context = get_ir_context(context) if ir_enabled(context) else ""
+    if ir_context:
+        evidence["data_task_ir"] = ir_context
     return {
         "question": question,
         "schema_str": json.dumps(

@@ -43,6 +43,9 @@
     },
     "validate_word_roots": {
       "entrypoint": "tools/word_roots.py:validate_word_roots"
+    },
+    "read_ir": {
+      "entrypoint": "tools/ir.py:read_ir"
     }
   },
   "hooks": {
@@ -70,6 +73,10 @@
       {
         "entrypoint": "hooks/files.py:check_insert_syntax",
         "matcher": "edit_file"
+      },
+      {
+        "entrypoint": "hooks/ir.py:update_ir",
+        "matcher": "write_todos"
       }
     ],
     "before_tool": [
@@ -80,6 +87,14 @@
       {
         "entrypoint": "hooks/files.py:guard_insert",
         "matcher": "write_file"
+      },
+      {
+        "entrypoint": "hooks/ir.py:ensure_ir_ready",
+        "matcher": "task"
+      },
+      {
+        "entrypoint": "hooks/ir.py:ensure_ir_ready",
+        "matcher": "validate_deliverables"
       }
     ]
   }

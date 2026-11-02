@@ -1,3 +1,15 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
 """Configured native models and process-local dependencies for ToolRuntime.context.
 
 Agent supplies ModelContext through native invocation arguments, never through
@@ -7,6 +19,7 @@ messages, checkpoint state or client-supplied configuration. No global client ca
 from contextlib import AbstractContextManager
 from copy import deepcopy
 from threading import Lock
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
@@ -72,6 +85,7 @@ class ModelContext(BaseModel):
     _models: dict[str, BaseChatModel] = PrivateAttr(default_factory=dict)
     _lock: AbstractContextManager = PrivateAttr(default_factory=Lock)
     _semantic_client: SemanticServiceClient | None = PrivateAttr(default=None)
+    _plugin_states: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict)
 
     def __init__(
         self,
@@ -118,6 +132,17 @@ class ModelContext(BaseModel):
         if plugin_id not in self._runtime.settings.plugins.enabled:
             raise ValueError(f"Plugin {plugin_id!r} is not enabled")
         return deepcopy(self._runtime.settings.plugins.config.get(plugin_id, {}))
+
+    def get_plugin_state(self, plugin_id: str) -> dict[str, Any]:
+        """Return private, in-memory state owned by this Agent context, never checkpointed.
+
+        Plugins synchronize their own async operations. The host lock only protects
+        initial creation, and is released before any plugin work or model calls.
+        """
+        if plugin_id not in self._runtime.settings.plugins.enabled:
+            raise ValueError(f"Plugin {plugin_id!r} is not enabled")
+        with self._lock:
+            return self._plugin_states.setdefault(plugin_id, {})
 
     def get_model(self, name: str | None = None) -> BaseChatModel:
         """Return the configured, unbound model without changing Agent model selection."""

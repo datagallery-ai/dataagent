@@ -14,6 +14,18 @@
           "regex_column": "特殊词根规则",
           "special_type_value": "特殊词根",
           "llm_model": "primary"
+        },
+        "data_task_ir": {
+          "enabled": false,
+          "model": "primary",
+          "refresh_policy": "eager",
+          "max_concurrency": 8,
+          "completion_batch_size": 1,
+          "completion_policy": "always",
+          "concise_rationale": false,
+          "compact_json": false,
+          "field_order": "template",
+          "semantic_field_reuse": false
         }
       },
       "nl2sql": {
