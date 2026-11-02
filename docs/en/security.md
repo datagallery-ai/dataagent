@@ -1,77 +1,21 @@
 # Security
 
-This guide is for trial users, integration developers, and maintainers preparing public demos. After reading it, you will know how credentials appear in public docs, data source connection boundaries, and local development security limits.
+The control plane listens on `127.0.0.1` by default. Callers and the backend are on the same machine. HTTP does not check an access token.
 
-## Credential examples in docs
+## Secrets
 
-Public docs and examples must use placeholder values only:
+Public examples use placeholders such as `replace-with-your-key`. Do not commit real model keys, semantic-service passwords, or MCP tokens, and do not put them in docs or screenshots.
 
-```text
-replace-with-your-key
-your-api-key
-```
+Put secrets in the process environment or Home `.env`, and reference them with `$env{...}`. Logs and error text replace secrets the runtime knows. Trace files still contain the system prompt, the conversation, and tool results.
 
-Do not put real model keys, database passwords, MCP tokens, private keys, cookies, personal access tokens, or internal network addresses in README, docs, issue examples, or screenshots.
+`POST /dataagent/stream` rejects `context`, `state`, and `forwardedProps`. Do not put secrets in the user message.
 
-## Agent run boundaries
+## Identity and files
 
-When starting a run, clients send resource IDs and selection only:
+`--user` only selects `runtime/users/<id>/`. It is not a login. Another user cannot read that session through the API. A local process that can read Home can still open the files directly.
 
-- `activeDatasourceId`
-- `enabledDatasourceIds`
-- `enabledKnowledgeIds`
-- `enabledMcpServerIds`
-- `enabledSkillIds`
-- `fileIds`
+New Home directories are mode `0700`. `config.json` and `.env` created at init are mode `0600`. Existing files keep their mode.
 
-Do not put database passwords, model API keys, MCP tokens, or full connection strings in AG-UI `messages`, `context`, `state`, or `forwardedProps`.
+Workspaces are marked read-only in configuration. The system prompt tells the model to write new files under the session `outputs/`. The prompt does not change operating-system permissions. File tools and the shell use the control-plane process permissions. The default working directory is that session's `outputs/`.
 
-## Resource configuration boundaries
-
-Credentials for data sources, models, MCP servers, and Skills are submitted only when creating or updating resources. Read APIs return `secretRef`, `hasSecret`, or equivalent markers—not plaintext credentials.
-
-When creating resources through REST API, put credentials in resource configuration fields—not in natural-language questions:
-
-```json
-{
-  "id": "sales-pg",
-  "name": "Sales PostgreSQL",
-  "type": "postgresql",
-  "config": {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "database": "sales",
-    "username": "readonly"
-  },
-  "credentials": {
-    "password": "replace-with-your-key"
-  }
-}
-```
-
-## Data source connection recommendations
-
-- Use read-only accounts or test databases for first integration.
-- Grant minimum permissions for PostgreSQL, MySQL, SQL Server, Oracle, Snowflake, BigQuery, and other external services.
-- Set reasonable `maxRows` and `timeoutMs` for queries.
-- Configure `maskFields` for email, phone, ID numbers, and similar fields.
-- Use allowlists for sensitive databases and tables.
-- SQLite, CSV, Excel, and DuckDB file paths must be accessible to the backend process.
-
-## Identity and sessions
-
-The workbench does not read accounts, mail, or database paths from environment variables. Optional server model settings are `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY`. The control plane address is `server.host` and `server.port` in Home `config.json`. The web address uses `--web-host` and `--web-port`, default `127.0.0.1:3000`.
-
-The browser uses the same-origin proxy. Start with `npm run build && npm run start`. Split processes use `npm run start:api` and `npm run start:web`.
-
-Real production also needs secret management, audit export, access control, and operations monitoring.
-
-## Documentation release checks
-
-Before publishing public docs, run at least:
-
-```bash
-npm run smoke:docs
-```
-
-Maintainers should also scan locally for source-sensitive terms, personal paths, real credentials, and release-blocked wording. If a scan hits real sensitive content, remove it or replace with example values. Do not explain the origin of sensitive content in public docs.
+Enabling a plugin loads and runs its Python in this process. MCP stdio commands also run in this process.

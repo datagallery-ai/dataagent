@@ -1,6 +1,8 @@
 # AgentKit
 
-AgentKit 是本地数据 Agent 运行时。你可以用终端界面提问，用 Python SDK 接到自己的程序，或通过 HTTP 接收 AG-UI 事件流。Python 包名和命令名是 `dataagent`，代码在 `runtime/agentkit`。
+这套文档给要改配置字段、写扩展或改运行时的人。产品部署、网页用法和中英说明在仓库 `docs/`，不要把 `deploy.sh` 的步骤抄到这里。
+
+AgentKit 是本地数据 Agent 运行时。Python 包名和命令名是 `dataagent`，代码在 `runtime/agentkit`。Web 和 TUI 都是它的宿主；本目录讲运行时本身，以及 SDK、插件和 HTTP 实现。
 
 运行时读取 JSON 配置和本机 Home 目录，调用已配置的模型，并按会话保存对话、产物和 Trace。插件、Skill、Hook、子代理和 MCP 用来增加工具与流程。语义服务客户端用来查询已经部署的语义服务。
 
@@ -16,7 +18,7 @@ AgentKit 是本地数据 Agent 运行时。你可以用终端界面提问，用 
 | 在 Python 里调用 | [SDK](guides/sdk.md)、[Python API](reference/python-api.md)、[会话与产物](guides/sessions-and-outputs.md) |
 | 增加工具或流程 | [扩展](extensions/overview.md) |
 | 查看接口和事件 | [HTTP 接口](reference/rest-api.md)、[事件](reference/events.md) |
-| 了解运行过程 | [架构概览](architecture/overview.md) |
+| 了解运行过程 | [架构概览](architecture/overview.md)、[Home 与工作区](architecture/home-layout.md) |
 | 修改运行时并验证 | [开发环境](development/setup.md) |
 
 ## 使用
@@ -60,7 +62,8 @@ AgentKit 是本地数据 Agent 运行时。你可以用终端界面提问，用 
 
 | 文档 | 内容 |
 | --- | --- |
-| [概览](architecture/overview.md) | 分层和模块职责 |
+| [概览](architecture/overview.md) | 分层、一个服务和两种展示 |
+| [Home 与工作区](architecture/home-layout.md) | `~/.dataagent`、会话目录、只读输入 |
 | [启动](architecture/bootstrap.md) | 配置加载、资源发现和 Runtime |
 | [执行](architecture/execution.md) | 从 HTTP 到模型与工具 |
 | [上下文](architecture/context-management.md) | 摘要、长结果卸载和提示 |

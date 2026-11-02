@@ -1,56 +1,36 @@
 # Product overview
 
-DataFoundry is a local-first data analysis workbench. An AI agent connects the full flow from asking questions, understanding data, running read-only queries, explaining results, to preserving deliverables.
+This is one local control plane and two presentations: Web in the browser, and TUI in the terminal. Both connect to the same `dataagent serve`.
 
-It fits teams that need to understand data quickly, validate metrics, and explore business questions. Users describe problems in natural language; the agent inspects table structure, generates and runs read-only SQL, and surfaces the analysis process and results.
+## What you can do
 
-## Problems it addresses
+After the model is configured, ask in the browser or the terminal. The runtime loads the model, plugins, Skills, and MCP from Home `config.json`, streams the reply, and keeps the session and outputs under `~/.dataagent`.
 
-Common friction in traditional data analysis:
+If read-only workspaces are configured, the model can read files in those directories. New files go to that session's `outputs/`.
 
-- Unfamiliarity with database schemas, leading to repeated lookups or documentation searches.
-- Clear business questions but no immediate ability to write correct SQL.
-- Opaque analysis processes that make conclusions hard to trust.
-- Results scattered across chat, SQL, tables, and screenshots, making review and export difficult.
+## Entries
 
-DataFoundry puts these steps in one workbench: the user asks a question, the agent understands the data structure, runs queries within read-only boundaries, and shows tool calls, SQL, result tables, charts, or reports as traceable outputs.
-
-## Core workflow
-
-```text
-Choose data source and model
-  -> Ask an analysis question in natural language
-  -> Agent inspects schema and plans analysis steps
-  -> Run read-only queries or read relevant knowledge
-  -> Show trace, SQL, tables, charts, and conclusions
-  -> Export or reuse analysis outputs
-```
-
-## Entry points
-
-DataFoundry currently offers two main entry points:
-
-| Entry | Best for | Notes |
+| Entry | Fit | Notes |
 | --- | --- | --- |
-| Web workbench | Product trials, customer demos, daily analysis | Three-column UI suited for trace, outputs, and multi-task sessions. |
-| TUI | Terminal users, remote environments, script-friendly workflows | Chat, configuration, stats, and export inside the command line. |
+| Web | Conversation and sessions in a browser | `http://127.0.0.1:3000/data-tasks`. There is no registration. |
+| TUI | SSH and terminals | `npm run start:tui`. It starts the control plane when nothing is listening. |
 
-The backend also exposes REST API and CopilotKit / AG-UI runtime endpoints for Web, TUI, and other clients.
+The backend defaults to `http://127.0.0.1:8790`. Integrators call that control plane directly.
 
-## Capability boundaries
+## Boundaries
 
-DataFoundry emphasizes data safety and traceability by default:
+- Configuration is files, not Web forms.
+- There is no datasource registration API and no knowledge-base API.
+- Workspaces are read-only directories bound at startup. A conversation request cannot change them.
+- HTTP does not check a token. The default listen address is loopback.
+- Database questions depend on an enabled plugin. They are not built into the control plane.
 
-- Data queries run through controlled tools; there is no arbitrary SQL REST passthrough.
-- The agent must inspect table structure before executing SQL.
-- Queries are read-only by default, with SQL guard, row limits, timeouts, field masking, and audit.
-- Data source credentials are submitted only on create or update; read APIs do not return plaintext secrets.
+## Next
 
-Public docs cover local trials, open-source integration, development demos, and the built-in password-auth path. Production deployments still need deployment-specific access policy, centralized secret management, monitoring, and operations design.
-
-## Next steps
-
-- Quick trial: [Quick start](quick-start.md)
-- Capability coverage: [Capabilities](capabilities.md)
-- Graphical UI: [Web workbench guide](guides/web-workbench.md)
-- Terminal UI: [TUI guide](guides/tui.md)
+- Run it locally: [Quick start](quick-start.md)
+- What each presentation can do: [Capabilities](capabilities.md)
+- Browser: [Web workbench guide](guides/web-workbench.md)
+- Terminal: [TUI guide](guides/tui.md)
+- Configuration and workspaces: [Configuration](reference/configuration-api.md)
+- HTTP: [REST API](reference/rest-api.md), [Agent Runtime](reference/agent-runtime.md)
+- Structure: [Architecture overview](architecture/overview.md)

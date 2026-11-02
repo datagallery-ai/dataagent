@@ -1,8 +1,8 @@
-# DataFoundry Documentation
+# Documentation
 
-DataFoundry is an AI workbench for data analysis. It brings natural-language questions, data source management, read-only SQL execution, analysis traceability, and result delivery into a single workflow—so you can move through exploratory data analysis faster.
+This is the product guide: how to deploy, how to use Web and TUI, and what the external HTTP API accepts. The runtime field table, plugins, and SDK are not in this tree.
 
-These docs are for product trials, customer demos, open-source visitors, and integration developers. Public documentation is available in English and Chinese.
+The product is one local control plane plus two presentations, Web and TUI. Both connect to the same `dataagent serve`. English and Chinese are both maintained.
 
 ## Start here
 
@@ -13,9 +13,9 @@ These docs are for product trials, customer demos, open-source visitors, and int
 | See what Web, TUI, and API support | [Capabilities](capabilities.md) |
 | Use the graphical workbench | [Web workbench guide](guides/web-workbench.md) |
 | Use the terminal interface | [TUI guide](guides/tui.md) |
-| Connect your own data sources | [Data sources guide](guides/data-sources.md) |
-| Browse supported data sources | [Supported data sources](reference/supported-datasources.md) |
-| Learn about APIs and integration | [REST API reference](reference/rest-api.md), [Configuration API reference](reference/configuration-api.md), and [Agent Runtime reference](reference/agent-runtime.md) |
+| Give the model a local directory | [Where data comes from](guides/data-sources.md) |
+| See which inputs you can configure | [Supported inputs](reference/supported-datasources.md) |
+| Learn the API and configuration | [REST API](reference/rest-api.md), [Configuration](reference/configuration-api.md), and [Agent Runtime](reference/agent-runtime.md) |
 | Understand system structure | [Architecture overview](architecture/overview.md) |
 | Review security boundaries | [Security](security.md) |
 
@@ -23,14 +23,12 @@ These docs are for product trials, customer demos, open-source visitors, and int
 
 For a first trial, read in this order:
 
-1. Read [Product overview](overview.md) to confirm the problem space and capability boundaries.
-2. Follow [Quick start](quick-start.md) to configure a model API key, register a data source, and run your first question.
-3. Read [Capabilities](capabilities.md) to see coverage across Web, TUI, and backend API.
-4. Choose [Web workbench guide](guides/web-workbench.md) or [TUI guide](guides/tui.md) based on your entry point.
-5. When you need your own data, read [Data sources guide](guides/data-sources.md).
+1. Read [Product overview](overview.md) to confirm there is one control plane and two presentations.
+2. Follow [Quick start](quick-start.md) to set the model key, then ask from the Web UI or the TUI.
+3. Read [Capabilities](capabilities.md) to separate routes the control plane serves from leftover UI that returns 404.
+4. Choose [Web workbench guide](guides/web-workbench.md) or [TUI guide](guides/tui.md).
+5. To let the model read a local directory, read [Where data comes from](guides/data-sources.md).
 
 ## Documentation scope
 
-This directory focuses on the public reading experience. It does not include project management notes, implementation plans, AI collaboration logs, historical refactor logs, or source-sensitive early discussions. Public docs describe only capabilities confirmed by current code, configuration, scripts, and local README files.
-
-If you are extending or integrating the product, start with `reference/` and `architecture/`. If you are just trying the product, `overview.md`, `quick-start.md`, `capabilities.md`, and `guides/` cover the main paths.
+Start a trial with `overview.md`, `quick-start.md`, `capabilities.md`, and `guides/`. Read `reference/` when you call HTTP. This tree does not document plugin manifests, hooks, or bootstrap order.

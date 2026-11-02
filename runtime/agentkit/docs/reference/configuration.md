@@ -1,6 +1,6 @@
 # 配置字段
 
-这是产品 `config.json` 的权威字段表。操作步骤在 [配置操作](../guides/configuration.md)。
+这是 `config.json` 的字段全表，给改配置和写插件的人。操作步骤在 [配置操作](../guides/configuration.md)。对外产品站只保留部署时要改的文件和最小模型示例，不重复这份表。
 
 文件是标准 JSON。未知字段、重复键、错误类型和非有限数值都会失败。`schema_version` 必须是 `3`。省略时按 `3` 校验；写成其他值会要求迁移。
 
@@ -51,8 +51,11 @@
 | `base_url` | 字符串 | 必填 | 非空。API 根地址 |
 | `api_key` | 字符串 | 必填 | 非空。建议 `$env{LLM_API_KEY}` |
 | `max_retries` | 整数 | `2` | 大于等于 0。HTTP 重试次数，首次请求另计。`0` 关闭 |
+| `temperature` | 数或省略 | 省略 | 0 到 2。省略时用服务商默认值 |
+| `max_tokens` | 整数或省略 | 省略 | 大于 0。省略时用服务商默认值 |
+| `extra_body` | 对象 | `{}` | 原样传给 Chat Completions 的 `extra_body` |
 
-没有 `temperature`、`max_tokens` 或 `response_format`。模型固定走 Chat Completions（`use_responses_api=False`）。
+没有 `response_format`。模型固定走 Chat Completions（`use_responses_api=False`）。`temperature`、`max_tokens` 和 `extra_body` 只在写了的时候传给客户端。
 
 启动只展开 `model.default` 指向的那一组环境引用。其他模型保留原文，到 `get_model` 时再用启动快照展开。
 
@@ -62,6 +65,7 @@
 | --- | --- | --- | --- |
 | `enabled` | 字符串数组 | `[]` | 高层整表替换。ID 不能重复。`[]` 清空低层 |
 | `paths` | 字符串数组 | `[]` | 高层整表替换。每项是插件自身目录 |
+| `config` | 对象 | `{}` | 按插件 ID 合并。键是插件 ID，值由该插件自己校验 |
 
 启用 ID 必须正好匹配一个候选目录，且目录名等于 `.plugin.json` 的 `id`。
 
@@ -112,8 +116,9 @@
 
 由低到高：内置默认、Home `config.json`、`--config`。
 
-- 对象按字段递归合并，包括每个模型 ID
+- 对象按字段递归合并，包括每个模型 ID 和 `plugins.config.<id>`
 - `dataagent.hooks` 追加。空列表不清除低层
+- `plugins.config.<id>.hooks` 里的 `before_run` 和 `after_run` 也跨层追加
 - 其他数组和标量由高层替换，包括 `dataagent.entry`
 - 同一真实文件被 `--config` 指到时，去掉它作为 Home 层的那一次
 

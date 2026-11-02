@@ -77,7 +77,7 @@ The TUI sends natural-language input to the control plane's `/dataagent/stream` 
 2. Ask a question:
 
 ```text
-List tables in the current data source and compute GMV by channel from the orders table.
+In three sentences, say what you can do right now.
 ```
 
 3. Watch streaming replies and tool calls in Chat.
@@ -91,7 +91,7 @@ List tables in the current data source and compute GMV by channel from the order
 | Environment | Browser, local demos, business analysis. | SSH, remote servers, terminal workflows. |
 | Interaction | Clicks, input box, console. | Keyboard and slash commands. |
 | Trace | Right console, step details, trace list. | Chat transcript and `/outputs` page. |
-| Resources | Forms for create, test, import, preview. | `/resume` for sessions and `/outputs` for files. |
+| Configuration | Cannot be edited in the page. Both use the `config.json` loaded when the control plane started. | Same. `/resume` restores a session and `/outputs` lists files. |
 
 Use the Web workbench for full visual demos. Use the TUI to verify agent runtime over SSH or lightweight terminal environments.
 

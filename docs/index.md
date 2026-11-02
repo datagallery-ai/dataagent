@@ -61,21 +61,21 @@ Use the Web workbench for visual analysis review, the TUI for SSH and terminal w
 
 <div class="df-card" markdown>
 ### Try locally
-Run the workbench and ask your first question against the built-in DuckDB demo.
+Start the control plane and ask the first question in the Web UI or the TUI.
 
 [Open quick start](en/quick-start.md){ .df-card-action }
 </div>
 
 <div class="df-card" markdown>
 ### Understand the system
-Review the runtime, security boundary, and Data Gateway architecture.
+One control plane, two presentations, Home layout, and workspaces.
 
 [Read architecture](en/architecture/overview.md){ .df-card-action }
 </div>
 
 <div class="df-card" markdown>
 ### Integrate APIs
-Use REST configuration APIs and the Agent Runtime / AG-UI entry point.
+Call `POST /dataagent/stream` and the session routes on the control plane.
 
 [View API reference](en/reference/rest-api.md){ .df-card-action }
 </div>

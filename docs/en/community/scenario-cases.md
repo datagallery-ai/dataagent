@@ -1,6 +1,6 @@
 # Scenario cases
 
-Scenario cases help users understand how DataFoundry handles realistic data-agent tasks across schema inspection, read-only SQL, trace evidence, and final operating decisions.
+Scenario cases record a way of using the product. The current control plane has no built-in datasource registry or read-only SQL gateway. If a case depends on those, name the plugin. Do not describe them as control-plane routes.
 
 ## What makes a good case
 

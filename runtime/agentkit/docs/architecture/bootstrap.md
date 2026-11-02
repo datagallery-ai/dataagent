@@ -19,6 +19,8 @@ flowchart LR
 
 `init_home=True` 时创建 `config.json`、`.env`、`skills/`、`hooks/`、`plugins/`、`runtime/`。已有文件不覆盖。CLI 开启它。SDK 默认关闭。导入包、`--help` 和默认 SDK 准备都不会创建 Home。
 
+`hooks/` 只是目录，不会被扫描。当前工作目录下的 `.dataagent/` 也不是配置根。目录含义见 [Home 与工作区](home-layout.md)。
+
 `RuntimePaths.resolve` 将省略或为 `null` 的 `output_root` 解析为 `<home>/outputs`，不创建目录。打开新会话时才创建 `<output_root>/<user>/<thread>/`；控制面的会话目录只创建 `traces/`。详见 [会话与产物](../guides/sessions-and-outputs.md)。
 
 ## 环境与配置
