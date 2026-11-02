@@ -122,6 +122,11 @@ TOOLS:
         max_model_calls: 6
         # 开启后由 checker 内部依次调用 DataOps 校验 DDL/DML；关闭时不访问 DataOps。
         dataops_validation_enabled: true
+        # 每条 SQL 在 DataOps 上的最大提交次数（跨工具调用累计，修改 SQL 不重置预算）。
+        # 有效范围 [1, 20]，越界会被截断；非法值回退到默认值 5。
+        dataops_max_attempts: 5
+        # 是否允许模型思考（默认 false）。规则修复是定向打补丁，不需要深思。
+        enable_thinking: false
     # Schema linking 数据探查:对单表拉 LIMIT N 行样例(SELECT only)
     # 注意:de_agent 当前未声明 dataops RESOURCE,联调环境会返回 no_dataops_resource 自动跳过;
     #   生产环境(DATAOPS_ENV=prod)不受影响,直接调官方 MCP
@@ -144,6 +149,7 @@ TOOLS:
             - "null_rate"
             - "single_value_ratio"
             - "outlier_ratio"
+            - "row_count"
           # 采样行数：只对目标表 LIMIT N 行统计，避免全表扫描
           sample_size: 10000
           thresholds:
@@ -153,6 +159,8 @@ TOOLS:
             single_value_threshold: 0.95
             # 异常值占比上限：仅对比率类字段生效，参考值 0（出现 <0 或 >1 即告警）
             outlier_ratio_threshold: 0.0
+            # 数据行数下限：低于此值产出 warning（表级指标，全量 COUNT，不采样）
+            row_count_threshold: 1
           # 比率类字段识别：字段名（小写）包含任一模式即视为比率类。
           # 配置了 ratio_fields 时以显式清单为准，不再走模式匹配。
           ratio_field_patterns:
@@ -175,11 +183,14 @@ TOOLS:
             - "guid"
             - "row_key"
     # 数据试算：把 workspace 里的 INSERT 试算到临时表，并复用
-    # dataops_quality_check 的数据正确性校验能力（空值覆盖率 / 单一值覆盖率 / 异常值占比）
+    # dataops_quality_check 的数据正确性校验能力（空值覆盖率 / 单一值覆盖率 /
+    # 异常值占比 / 数据行数）
     - name: "trial_compute_table"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.dataops_trial_compute_tool"
       function: "trial_compute_table"
       config:
+        # 是否允许模型思考（默认 false）。试算链路里的 CTE 内联是机械改写。
+        enable_thinking: false
         quality_check:
           # 生效的校验项（可扩展：新增校验只需在 dataops_quality_check
           # 的 _BUILTIN_CHECKERS 注册，这里按名称启用）
@@ -187,7 +198,11 @@ TOOLS:
             - "null_rate"
             - "single_value_ratio"
             - "outlier_ratio"
-          # 采样行数：只对临时表 LIMIT N 行统计，避免全表扫描
+            - "row_count"
+          # 采样行数：只对临时表 LIMIT N 行统计，避免全表扫描。
+          # 试算的**写入量上限也跟随这个值**（试算 INSERT 会被加上 LIMIT N），
+          # 两者必须一致，否则「采样量 > 写入量」会让校验看到的样本不完整。
+          # 设为 0 表示不采样（全量扫描统计），此时试算不截断写入。
           sample_size: 10000
           thresholds:
             # 非空率下限：低于此值产出 warning
@@ -196,6 +211,9 @@ TOOLS:
             single_value_threshold: 0.95
             # 异常值占比上限：仅对比率类字段生效，参考值 0（出现 <0 或 >1 即告警）
             outlier_ratio_threshold: 0.0
+            # 数据行数下限：低于此值产出 warning（表级指标，全量 COUNT，不采样）。
+            # 注意：试算写入被截断到 sample_size 行，所以这里的行数只是**下界**。
+            row_count_threshold: 1
           # 比率类字段识别：字段名（小写）包含任一模式即视为比率类。
           # 配置了 ratio_fields 时以显式清单为准，不再走模式匹配。
           ratio_field_patterns:

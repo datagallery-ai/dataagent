@@ -53,10 +53,75 @@ description: |
 试算与校验**共用**临时表命名(改写/分区日期)和执行路由(生产/联调),
 所以试算结果和校验结果不可能漂移。
 
+## 试算写入量会被截断(这正是试算的意义)
+
+质量校验只对产出数据做 **`LIMIT sample_size`** 的采样统计(默认 10000 行)。
+写入超过 10000 行的那部分数据**永远不会被校验看到**,所以试算的 INSERT 会加上
+`LIMIT N`(N = `quality_check.sample_size`),省掉全量写入的耗时。
+
+**校验结论不变**:临时表里前 N 行与全量写入的前 N 行**完全是同一批行**,
+校验读到的样本一模一样,变的只有试算耗时。
+
+举例,交付物 `insert_ads_user_profile_ds.sql` 是:
+
+```sql
+INSERT OVERWRITE TABLE ads_user_profile_ds PARTITION (pt_d = '${date}')
+SELECT
+  udid_sha256,
+  bicoredata.SHA256(udid) AS udid_sha256,
+  CASE WHEN pay_cnt > 0 THEN CAST(pay_cnt AS DOUBLE) / total_cnt ELSE 0 END AS pay_ratio
+FROM dws.src_user_profile_dm
+WHERE pt_d = '${date}'
+```
+
+试算时实际提交给 DataOps 的是(表名换成临时表、分区日期换成分区校验日期,
+末尾多了 `LIMIT 10000`):
+
+```sql
+INSERT OVERWRITE TABLE adhoctemp.tmp_neizha_20261022_ads_user_profile_ds
+PARTITION (pt_d = '20261022')
+SELECT
+  udid_sha256,
+  bicoredata.SHA256(udid) AS udid_sha256,
+  CASE WHEN pay_cnt > 0 THEN CAST(pay_cnt AS DOUBLE) / total_cnt ELSE 0 END AS pay_ratio
+FROM dws.src_user_profile_dm
+WHERE pt_d = '20261022'
+LIMIT 10000
+```
+
+实现见 `dataops_validate_tool._limit_insert_rows`,特点:
+
+- **纯文本插入**:只在查询末尾插一段 `LIMIT N`,SQL 其余部分**逐字节保持原样**
+  (平台 UDF `!bicoredata.IsEmpty`、注释、`LATERAL VIEW` 等一律不动)。
+- **保守**:不是 INSERT、`INSERT ... VALUES`、查询顶层已有 `LIMIT` 时**一律不改**
+  (宁可慢,也不能提交一条被改坏的 SQL)。
+- **只作用于质量校验链路**。语法校验链路(`validate_deliverables`)要验证 SQL 的
+  **真实行为**,加 LIMIT 会掩盖数据量/性能问题 —— 它保持原样。
+- `sample_size <= 0`(不采样,全量扫描)时**不截断** —— 此时校验读的就是全量数据。
+
+要放开/收紧截断量,调 `tools.yaml` 里 `trial_compute_table.config.quality_check.sample_size`
+(截断量自动跟随它,两者必须一致,否则「采样量 > 写入量」会让校验看到的样本不完整)。
+
 ## 校验项
 
 **一个校验项 = 一条 SQL 语句**,逐条执行;每条 SQL 内部用条件聚合一次算完
 它负责的所有字段(不做「字段 × 校验项」的 UNION ALL 展开)。
+
+**四个校验项,两种作用域**:
+
+| 校验项 | 作用域 | 采样 | 说明 |
+|---|---|---|---|
+| `null_rate` | 字段级 | 是 | 逐字段 |
+| `single_value_ratio` | 字段级 | 是 | 逐字段 |
+| `outlier_ratio` | 字段级 | 是 | 逐字段(仅比率类) |
+| `row_count` | **表级** | **否** | 整表行数,不挂字段 |
+
+**字段级三项都基于同一批采样行** `(SELECT ... LIMIT sample_size) AS _src`,
+`COUNT(1)` 只是这批采样行里的分母。
+
+**表级一项(`row_count`)是全量 COUNT** —— 行数不是比率,采样算不出真实行数
+(前 10000 行永远是 10000),所以它**不采样**,是本链路里唯一一条全表扫描的语句。
+它**不挂在字段上**,结果写进 `table_metrics`,单独一张表展示。
 
 ### SQL 形状约束(生产 adHoc 踩过的坑)
 
@@ -71,6 +136,7 @@ description: |
 3. **`LIMIT` 必须落在派生表内部**。`SELECT COUNT(1) FROM t WHERE ... LIMIT N`
    的 `LIMIT` 作用在**聚合结果**上(只有 1 行),根本限制不了扫描量 ——
    采样是假的。只有放进派生表才真正只取前 N 行。
+   (例外:`row_count` 本来就要数全量,**不能**加 LIMIT。)
 
 ### 空值覆盖率 `null_rate`
 
@@ -99,6 +165,22 @@ description: |
      例如 `app_dl_retention_ratio_1d_udid`、`app_class_dl_retention_ratio_7d_udid`
      会被识别为比率类;`pay_cnt_udid` 这类非比率字段不出现在该校验项的 SQL 里,不参与告警。
 - **告警文案**: `字段 'x' 异常值占比 0.0500 > 阈值 0.00(存在 <0 或 >1 的比率取值)`
+
+### 数据行数 `row_count`(表级指标)
+
+- **含义**: 校验对象(临时表或真实目标表)在这个分区里到底有多少行
+  `SELECT COUNT(1) FROM <表> WHERE <分区条件>`
+- **不采样**: 行数不是比率 —— 采样算出来的「前 N 行」永远是 N,没有意义。
+  这条是**全量 COUNT**,是本链路唯一一条全表扫描的语句。
+- **不挂字段**: 结果写进 `table_metrics`,**不**进逐字段的 `details`,
+  也**不**进那张比率表 —— 它单独一张表(`| 表级指标 | 值 |`)。
+- **默认阈值**: 行数 ≥ 1(下限)。行数太少通常是 JOIN 写错(INNER JOIN 丢数据)、
+  分区过滤条件写错、或上游数据没落盘。
+- **告警文案**: `数据行数 0 < 阈值 1(疑似 JOIN 丢数据 / 分区过滤条件写错 / 上游数据未落盘)`
+- **试算链路的注意事项**: 试算 INSERT 被截断到 `sample_size` 行,所以临时表的
+  行数只是**下界**(真实数据可能更多)。结果里带 `row_count_truncated: true`,
+  表格里会标注「≥，试算写入被截断」。直连真实目标表时不受这个影响。
+- **关掉它**: 从 `checks` 里去掉 `"row_count"`,或把 `row_count_threshold` 调低。
 
 ### 默认排除字段
 
@@ -136,12 +218,18 @@ Markdown 表格渲染器（`render_metrics_table`），所以产出的表格形�
     "ok": false,
     "warnings": ["字段 'x' 非空率 0.45 < 阈值 0.80(空值率 0.55)"],
     "details": { "x": {"null_rate": 0.45, "single_value_ratio": 0.12, "outlier_ratio": null} },
+    "table_metrics": { "row_count": 10000 },
     "sampled": true, "sample_size": 10000, "job_id": "...",
-    "checks": ["null_rate", "single_value_ratio", "outlier_ratio"],
+    "checks": ["null_rate", "single_value_ratio", "outlier_ratio", "row_count"],
+    "row_count_truncated": true, "row_limit": 10000,
     "temp_table": "adhoctemp.tmp_xxx_20261015_ads_yyy", "partition_date": "20261015"
   }
 }
 ```
+
+- `details` —— **字段级**指标（三个比率校验项）
+- `table_metrics` —— **表级**指标（`row_count`），不挂字段
+- `row_count_truncated` —— 为 `true` 时行数只是**下界**（试算写入被截断过）
 
 | 字段 | 你的下一步 |
 |---|---|
@@ -163,6 +251,7 @@ Markdown 表格渲染器（`render_metrics_table`），所以产出的表格形�
    试算链路保证了这一顺序(先校验、后 DROP)。
 5. **采样而非全表**。默认 `LIMIT 10000` 行,不代表全量分布;极端倾斜数据请调大
    `tools.yaml` 里 `trial_compute_table.config.quality_check.sample_size`。
+   调大采样量的同时,试算的写入量上限也会跟着调大(见上文「试算写入量会被截断」)。
 6. **DDL 不做数据校验**。`CREATE TABLE` 没有数据可查,只试算执行。
 
 ## 扩展:新增第 N 种校验
@@ -179,6 +268,7 @@ Markdown 表格渲染器（`render_metrics_table`），所以产出的表格形�
 | `violates` | `(实测值, 阈值) -> 是否违规`(支持大于/小于两种方向) |
 | `format_warning` | 生成人类可读 warning |
 | `applies_to` | (可选)`(字段名, 配置) -> 是否适用于该字段`;不适用字段不出现在该 checker 的 SQL 里,也不告警。用于"只对某一类字段生效"的校验 |
+| `scope` | (可选)`"field"`(默认)或 `"table"`。表级指标(如数据行数)不挂字段,结果写进 `table_metrics` |
 
 **执行规则(已在编排层实现,无需关心):一个 checker 一条 SQL,并发提交。**
 不会把「checker × 字段」拼成一条 `UNION ALL` 大查询 —— 那种 SQL 又长又难读,
@@ -186,10 +276,27 @@ Markdown 表格渲染器（`render_metrics_table`），所以产出的表格形�
 
 **为什么是并发而不是顺序**:DataOps 不支持把多个校验项合并成一条语句。
 顺序跑的话,第一条挂掉后面的全不跑,整轮校验直接被判成「未执行」。
-并发提交(`asyncio.gather`)后三条各自独立轮询,互不影响 —— 一条失败
-仍会如实报 `sampled=false`,但另外两条的结果不会白白丢掉。
+并发提交(`asyncio.gather`)后各条各自独立轮询,互不影响 —— 一条失败
+仍会如实报 `sampled=false`,但其它条的结果不会白白丢掉。
 
 配置优先级:`tool_config` (tools.yaml) > `dataops` resource metadata > 环境变量 > 默认值。
+
+## 思考模式开关
+
+校验链路里的 LLM 调用(CTE 内联、失败日志分析)走 per-call kwargs,
+**默认关闭思考模式** —— 这些都是「短提示 + 结构化输出」的任务,思考链只
+拉长响应、放大 token 消耗,还可能把 `<think>` 片段混进 JSON 正文。
+
+开关**按工具配置**控制(不做全局控制),在 `tools.yaml` 的对应条目里加
+`config.enable_thinking`:
+
+```yaml
+- name: "trial_compute_table"
+  config:
+    enable_thinking: false    # 默认就是关闭的
+```
+
+改一个工具的配置不会影响其它链路,更不会影响主 Agent 的 planner。
 
 ## 相关文档
 

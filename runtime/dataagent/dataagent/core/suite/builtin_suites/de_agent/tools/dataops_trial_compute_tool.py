@@ -22,7 +22,8 @@ Flow (single pass, no retry):
                                     its own scratch table, and it used a
                                     different partition date anyway)
       └─ execute  (shared dataops_validate_sql: prod MCP or
-                   resource-coordinator, incl. CTE expansion + drop-before-create)
+                   resource-coordinator, incl. CTE expansion + drop-before-create
+                   + row limit — see below)
           ├─ data quality check   (shared run_quality_check, see
           │                         dataops_quality_check) — runs while the
           │                         scratch table still exists
@@ -32,6 +33,13 @@ Flow (single pass, no retry):
 Because the scratch-table naming and execution routing are shared with the
 DataOps validation path, a trial run and a validation run cannot drift apart:
 same rewrite, same execution routing.
+
+**The trial write is row-limited.**
+The quality check only reads the first ``quality_check.sample_size`` rows of
+the produced data (default 10000), so rows past that are never seen. The trial
+INSERT is therefore capped at the sample size (see
+``dataops_validate_tool._limit_insert_rows``): the sampled rows are identical
+to a full write's, only the elapsed time changes.
 
 **Partition date differs from the static validation chain on purpose.**
 The static validation chain (``validate_deliverables``) only asks "does this SQL
@@ -107,7 +115,9 @@ async def trial_compute_table(
 
     # Lazy imports: these pull in the dataops backend, which should not be
     # imported at module load for tests that mock them out.
+    from dataagent.actions.tools.local_tool.dataops_quality_check import resolve_config
     from dataagent.actions.tools.local_tool.dataops_validate_tool import (
+        _clamp_row_limit,
         _is_create_sql,
         dataops_validate_sql,
         partition_date_for_quality,
@@ -118,12 +128,30 @@ async def trial_compute_table(
     # 用同一个日期，否则临时表名对不上，校验会静默读到空表。
     partition_date = partition_date_for_quality()
 
+    # --- 试算写入行数上限 -------------------------------------------------
+    # 质量校验只对产出数据做 **LIMIT sample_size** 的采样统计 —— 写入超过
+    # sample_size 的那部分数据**永远不会被校验看到**。所以试算时把写入量截断
+    # 到采样量级：校验读到的行与全量写入时读到的行完全一致（前 N 行），
+    # 结论不变，但试算耗时大幅下降。
+    #
+    # 截断量跟随 ``quality_check.sample_size``（默认 10000）；两者必须一致，
+    # 否则「采样量 > 写入量」会让校验看到的样本不完整。
+    # ``sample_size <= 0`` 表示不采样（全量扫描），此时不能截断。
+    quality_config = resolve_config(_tool_context)
+    row_limit = _clamp_row_limit(quality_config.sample_size) if quality_config.sample_size > 0 else 0
+    # DDL 没有数据可写 —— 不截断（``CREATE TABLE ... LIMIT`` 是语法错误）。
+    if _is_create_sql(sql):
+        row_limit = 0
+
     payload: dict[str, Any] = {
         "passed": False,
         "skipped": False,
         "trigger": "trial_compute",
         "target_table": (target_table or "").strip() or None,
         "partition_date": partition_date,
+        # 试算写入行数上限（= 校验采样量）。写进 payload 便于排查时知道
+        # 「这次试算只写了前 N 行」。
+        "row_limit": row_limit,
     }
 
     # --- 0) Re-create the scratch table ------------------------------------
@@ -171,6 +199,9 @@ async def trial_compute_table(
             # 源表会被过滤成空集 → 试算扫不到任何行。质量校验只关心产出数据
             # 长什么样，不需要保留时间窗口宽度，收敛成单日即可。
             _collapse_partition_range=True,
+            # 质量校验链路专有：把试算的写入量截断到采样量级（= row_limit）。
+            # 校验只读前 N 行，写入更多行既看不到也白等。
+            _row_limit=row_limit,
         )
 
         payload["passed"] = bool(validate_result.get("passed"))
@@ -199,6 +230,9 @@ async def trial_compute_table(
                 sql,
                 _tool_context=_tool_context,
                 _partition_date=partition_date,
+                # 试算写入被截断到 row_limit 行 —— 数据行数只是下界，
+                # 校验结果里会带 row_count_truncated 标记。
+                row_limit=row_limit,
             )
             if quality_result is not None:
                 payload["quality_check"] = quality_result

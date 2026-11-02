@@ -299,6 +299,46 @@ class TestRenderReport:
         # 不能报成「全部通过」
         assert "全部通过" not in report
 
+    def test_table_metrics_rendered_as_a_separate_table(self):
+        """表级指标（数据行数）单独一张表 —— 不混进比率表。"""
+        report = hook._render_report(
+            dml_path=Path("x.sql"),
+            result={
+                "passed": True,
+                "quality_check": {
+                    "ok": True,
+                    "sampled": True,
+                    "checks": ["null_rate", "row_count"],
+                    "sample_size": 10000,
+                    "warnings": [],
+                    "details": {"pay_cnt_udid": {"null_rate": 0.95}},
+                    "table_metrics": {"row_count": 10000.0},
+                },
+            },
+        )
+        assert "| 表级指标 | 值 |" in report
+        assert "| 数据行数 | 10000 |" in report
+
+    def test_truncated_row_count_is_marked_as_lower_bound(self):
+        """试算写入被截断时，行数只是下界 —— 报告里要注明。"""
+        report = hook._render_report(
+            dml_path=Path("x.sql"),
+            result={
+                "passed": True,
+                "quality_check": {
+                    "ok": True,
+                    "sampled": True,
+                    "checks": ["row_count"],
+                    "sample_size": 10000,
+                    "warnings": [],
+                    "details": {},
+                    "table_metrics": {"row_count": 10000.0},
+                    "row_count_truncated": True,
+                },
+            },
+        )
+        assert "试算写入被截断" in report
+
 
 # ============================================================================
 # Markdown table rendering

@@ -81,10 +81,10 @@ def test_deliverables_quality_gate_streaming(inside_event_loop, real_llm, monkey
         request_modes.append(json.loads(request.content).get("stream", False))
         return await original_send(client, request, **kwargs)
 
-    async def record_stream(prompts):
+    async def record_stream(prompts, **kwargs):
         """Record genuine chunks and verify context survives the sync-to-async bridge."""
         assert get_current_sandbox() is sandbox
-        async for chunk in original_stream(prompts):
+        async for chunk in original_stream(prompts, **kwargs):
             chunks.append(chunk)
             yield chunk
         stream_finished.append(True)
@@ -155,9 +155,8 @@ def test_deliverables_quality_gate_streaming(inside_event_loop, real_llm, monkey
     )
 
 
-@pytest.mark.parametrize("analysis_kind", ["count_zero", "error_log"])
-def test_deliverables_dataops_analysis_streaming(analysis_kind, real_llm, monkeypatch, tmp_path):
-    """Validate both downstream analysis paths with real streamed structured judgments."""
+def test_deliverables_dataops_analysis_streaming(real_llm, monkeypatch, tmp_path):
+    """Validate the log-analysis path with real streamed structured judgments."""
     from dataagent.actions.tools.local_tool import dataops_validate_tool
 
     request_modes, responses = [], []
@@ -169,9 +168,9 @@ def test_deliverables_dataops_analysis_streaming(analysis_kind, real_llm, monkey
         request_modes.append(json.loads(request.content).get("stream", False))
         return await original_send(client, request, **kwargs)
 
-    async def record_stream(prompts):
+    async def record_stream(prompts, **kwargs):
         """Retain the normalized response for comparison with the parsed result."""
-        async for chunk in original_stream(prompts):
+        async for chunk in original_stream(prompts, **kwargs):
             if chunk.final_response is not None:
                 responses.append(chunk.final_response)
             yield chunk
@@ -179,37 +178,26 @@ def test_deliverables_dataops_analysis_streaming(analysis_kind, real_llm, monkey
     monkeypatch.setattr(httpx.AsyncClient, "send", record_request)
     monkeypatch.setattr(real_llm, "astream", record_stream)
     runtime = SimpleNamespace(llm=lambda name: real_llm)
-    if analysis_kind == "count_zero":
-        result = asyncio.run(
-            dataops_validate_tool._analyze_count_zero_with_llm(
-                "Insert every user's total downloads. Never exclude users with downloads.",
-                "INSERT INTO user_downloads SELECT user_id, SUM(downloads) FROM downloads WHERE 1=0 GROUP BY user_id;",
-                runtime=runtime,
-            )
+    result = asyncio.run(
+        dataops_validate_tool._analyze_log_directly(
+            None,
+            "streaming-e2e",
+            "ColumnNotFoundException: column missing_downloads not found",
+            raw_log="AnalysisException: cannot resolve column 'missing_downloads' in downloads "
+            "(user_id, downloads); line 1 pos 7",
+            _tool_context=SimpleNamespace(runtime=runtime),
         )
-        assert result.get("has_mismatch") is True
-        assert result.get("fix_suggestion")
-    else:
-        result = asyncio.run(
-            dataops_validate_tool._analyze_log_directly(
-                None,
-                "streaming-e2e",
-                "ColumnNotFoundException: column missing_downloads not found",
-                raw_log="AnalysisException: cannot resolve column 'missing_downloads' in downloads "
-                "(user_id, downloads); line 1 pos 7",
-                _tool_context=SimpleNamespace(runtime=runtime),
-            )
-        )
-        assert result.get("status") == "ok"
-        analysis = result.get("analysis", {})
-        assert "missing_downloads" in analysis.get("location", {}).get("columns", [])
-        assert analysis.get("suggestions")
+    )
+    assert result.get("status") == "ok"
+    analysis = result.get("analysis", {})
+    assert "missing_downloads" in analysis.get("location", {}).get("columns", [])
+    assert analysis.get("suggestions")
     assert request_modes == [True]
     assert len(responses) == 1
     assert isinstance(json.loads(responses[0].content.strip()), dict)
     (tmp_path / "result.json").write_text(
         json.dumps(
-            {"analysis_kind": analysis_kind, "stream_flags": request_modes, "result": result},
+            {"analysis_kind": "error_log", "stream_flags": request_modes, "result": result},
             ensure_ascii=False,
             indent=2,
         ),

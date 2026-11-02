@@ -222,14 +222,34 @@ class TestDirectTargetValidation:
 
     @pytest.mark.asyncio
     async def test_no_checkable_fields_is_a_friendly_skip(self):
+        """没有任何可校验项时（字段级 + 表级都关掉）友好跳过。"""
+        ctx = _ctx()
+        ctx.tool_config = {"checks": ["null_rate"]}
         with patch.object(tool, "run_quality_check", AsyncMock()):
             result = await tool.validate_data(
-                "INSERT OVERWRITE TABLE biads.t SELECT 1 FROM src", _tool_context=_ctx()
+                "INSERT OVERWRITE TABLE biads.t SELECT 1 FROM src", _tool_context=ctx
             )
 
         assert result["data"]["skipped"] is True
         assert result["data"]["reason"] == "no_checkable_fields"
         assert "无法从 INSERT 的 SELECT 投影中解析出可校验字段" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_table_level_checker_runs_without_parsed_fields(self):
+        """表级指标（数据行数）不依赖字段 —— 字段解析不出来时它仍然可以跑。"""
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(
+                "INSERT OVERWRITE TABLE biads.t SELECT 1 FROM src", _tool_context=_ctx()
+            )
+
+        assert result["data"].get("skipped") is not True
+        assert captured["direct_table"] == "biads.t"
 
     @pytest.mark.asyncio
     async def test_check_not_run_is_not_reported_as_pass(self):

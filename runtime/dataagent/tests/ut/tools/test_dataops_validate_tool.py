@@ -1051,6 +1051,87 @@ class TestAnalyzeLogDirectly:
             assert forbidden not in result, f"raw log leaked: {forbidden!r}"
         collected_stream.assert_awaited_once_with(llm, ANY)
 
+    def test_prompt_states_sql_is_the_rewritten_submitted_version(self, collected_stream):
+        """The analyzer must be told the log shows the rewritten SQL.
+
+        The SQL executed by DataOps has the target table replaced with a temp
+        table name and CTEs inlined as subqueries. Without that hint the model
+        reports the rewritten temp table as a missing/typo'd table.
+        """
+        captured_prompt = {}
+
+        def _capture_stream(_model, messages):
+            captured_prompt["content"] = messages[1].get("content", "")
+            return '{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}'
+
+        llm = object()
+        collected_stream.side_effect = _capture_stream
+        with (
+            patch.object(
+                vt,
+                "dataops_fetch_obs_log",
+                return_value={"status": "success", "log_content": _SAMPLE_LOG},
+            ),
+            patch.object(vt, "llm_manager") as mock_llm_manager,
+        ):
+            mock_llm_manager.get_default_llm.return_value = llm
+            asyncio.run(
+                vt._analyze_log_directly(
+                    log_file_info={"url": "https://x", "headers": {"a": "b"}},
+                    job_id="job-rewritten",
+                    raw_error="x",
+                )
+            )
+
+        content = captured_prompt.get("content", "")
+        assert "adhoctemp.tmp_*" in content
+        assert "CTEs have been inlined" in content
+        assert "temp table name" in content
+
+    def test_prompt_names_the_source_file_and_table_mapping(self, collected_stream):
+        """The analyzer must be told which file the executed SQL came from.
+
+        The submitted SQL is a rewritten copy of a workspace file (temp table +
+        inlined CTEs). Without the file name and the real-table → temp-table
+        mapping the model cannot point the agent at the right file to fix.
+        """
+        captured_prompt = {}
+
+        def _capture_stream(_model, messages):
+            captured_prompt["content"] = messages[1].get("content", "")
+            return '{"error_type":"AnalysisException","error_message":"x","location":{},"suggestions":[]}'
+
+        llm = object()
+        collected_stream.side_effect = _capture_stream
+        with (
+            patch.object(
+                vt,
+                "dataops_fetch_obs_log",
+                return_value={"status": "success", "log_content": _SAMPLE_LOG},
+            ),
+            patch.object(vt, "llm_manager") as mock_llm_manager,
+        ):
+            mock_llm_manager.get_default_llm.return_value = llm
+            asyncio.run(
+                vt._analyze_log_directly(
+                    log_file_info={"url": "https://x", "headers": {"a": "b"}},
+                    job_id="job-rewritten",
+                    raw_error="x",
+                    source_file="insert_ads_result.sql",
+                    original_target_table="biads.ads_result",
+                    rewritten_target_table="adhoctemp.tmp_u1_20270101_ads_result",
+                )
+            )
+
+        content = captured_prompt.get("content", "")
+        # 告诉 LLM 报错对应哪个文件
+        assert "insert_ads_result.sql" in content
+        assert "REWRITTEN copy" in content
+        # 告诉 LLM 真实表名和临时表名的对应关系
+        assert "biads.ads_result" in content
+        assert "adhoctemp.tmp_u1_20270101_ads_result" in content
+        assert "map it back" in content
+
     def test_log_truncated_at_32kb(self, collected_stream):
         """Huge logs are capped at 32KB before being sent to the LLM."""
         huge_log = "X" * 50_000
@@ -1504,7 +1585,10 @@ class TestDataopsValidateSqlWithLogAnalysis:
         ctx = _make_context(runtime)
 
         # Stub prod flow: submit OK, poll failed, collect yields inline errorLog
-        async def _fake_prod(sql=None, *, _tool_context, sql_file_path=None, partition_date=None, collapse_partition_range=False):
+        async def _fake_prod(
+            sql=None, *, _tool_context, sql_file_path=None, partition_date=None,
+            collapse_partition_range=False, row_limit=None, enable_thinking=False,
+        ):
             return {
                 "passed": False,
                 "error": "AnalysisException: cannot resolve 'foo'",
@@ -1552,7 +1636,10 @@ class TestDataopsValidateSqlWithLogAnalysis:
         runtime = _make_runtime(resource=None, coordinator=None)
         ctx = _make_context(runtime)
 
-        async def _fake_prod(sql=None, *, _tool_context, sql_file_path=None, partition_date=None, collapse_partition_range=False):
+        async def _fake_prod(
+            sql=None, *, _tool_context, sql_file_path=None, partition_date=None,
+            collapse_partition_range=False, row_limit=None, enable_thinking=False,
+        ):
             return {
                 "passed": False,
                 "error": "submission failed",
@@ -1646,6 +1733,37 @@ class TestExtractInsertTargetTable:
         )
         assert t is not None
         assert "v1" in t
+
+
+class TestExtractSqlTargetTable:
+    """extract_sql_target_table 返回**真实**目标表（不改写成临时表）。"""
+
+    def test_create_table(self):
+        sql = "CREATE EXTERNAL TABLE IF NOT EXISTS biads.ads_x (a STRING) STORED AS ORC"
+        assert vt.extract_sql_target_table(sql) == "biads.ads_x"
+
+    def test_create_table_without_external(self):
+        sql = "CREATE TABLE IF NOT EXISTS biads.ads_x (a STRING)"
+        assert vt.extract_sql_target_table(sql) == "biads.ads_x"
+
+    def test_insert_overwrite(self):
+        sql = "INSERT OVERWRITE TABLE biads.ads_y PARTITION (pt_d='x') SELECT 1"
+        assert vt.extract_sql_target_table(sql) == "biads.ads_y"
+
+    def test_insert_without_table_keyword(self):
+        sql = "INSERT OVERWRITE biads.ads_y PARTITION (pt_d='x') SELECT 1"
+        assert vt.extract_sql_target_table(sql) == "biads.ads_y"
+
+    def test_select_returns_none(self):
+        assert vt.extract_sql_target_table("SELECT 1 FROM biads.x") is None
+
+    def test_empty_returns_none(self):
+        assert vt.extract_sql_target_table("") is None
+
+    def test_ignores_temp_table_names(self):
+        """临时表名不应被当成真实目标表返回。"""
+        sql = "INSERT OVERWRITE TABLE adhoctemp.tmp_u1_20270101_ads_y SELECT 1"
+        assert vt.extract_sql_target_table(sql) == "adhoctemp.tmp_u1_20270101_ads_y"
 
 
 # ===========================================================================

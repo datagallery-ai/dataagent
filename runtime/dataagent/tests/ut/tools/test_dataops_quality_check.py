@@ -116,6 +116,7 @@ class TestCheckerRegistry:
             "null_rate",
             "single_value_ratio",
             "outlier_ratio",
+            "row_count",
         ]
 
     def test_select_checkers_by_name(self):
@@ -128,6 +129,7 @@ class TestCheckerRegistry:
             "null_rate",
             "single_value_ratio",
             "outlier_ratio",
+            "row_count",
         ]
 
     def test_select_checkers_none_returns_all(self):
@@ -135,12 +137,21 @@ class TestCheckerRegistry:
             "null_rate",
             "single_value_ratio",
             "outlier_ratio",
+            "row_count",
         ]
 
     def test_alias_format(self):
         assert qc.NULL_RATE_CHECKER.alias("col1") == "null_rate__col1"
         assert qc.SINGLE_VALUE_CHECKER.alias("col1") == "single_value_ratio__col1"
         assert qc.OUTLIER_RATIO_CHECKER.alias("col1") == "outlier_ratio__col1"
+        assert qc.ROW_COUNT_CHECKER.alias("total") == "row_count__total"
+
+    def test_scope_field_vs_table(self):
+        """字段级 checker 挂在字段上；表级 checker（数据行数）不挂字段。"""
+        assert qc.NULL_RATE_CHECKER.scope == qc._SCOPE_FIELD
+        assert qc.SINGLE_VALUE_CHECKER.scope == qc._SCOPE_FIELD
+        assert qc.OUTLIER_RATIO_CHECKER.scope == qc._SCOPE_FIELD
+        assert qc.ROW_COUNT_CHECKER.scope == qc._SCOPE_TABLE
 
     def test_column_is_backtick_quoted(self):
         ctx = qc.CheckContext(
@@ -171,6 +182,7 @@ class TestBuildQualityCheckSqls:
             "null_rate",
             "single_value_ratio",
             "outlier_ratio",
+            "row_count",
         ]
 
     def test_no_union_all_monster(self):
@@ -223,11 +235,17 @@ class TestBuildQualityCheckSqls:
         ``SELECT COUNT(1) FROM t WHERE ... LIMIT 10000`` 的 LIMIT 作用在
         **聚合结果**上（1 行），全表照样扫 —— 采样是假的。
         正确写法是把 LIMIT 放进派生表：``FROM (SELECT ... LIMIT 10000) AS _src``。
+
+        **表级 checker（数据行数）例外** —— 它本来就是要数全量，不能采样。
         """
         statements = qc.build_quality_check_sqls(
             "adhoctemp.tmp_x", ["col1"], "pt_d", "20261010", 10000
         )
-        for _name, sql in statements:
+        for name, sql in statements:
+            if name == "row_count":
+                # 行数必须全量统计 —— 采样出来的「前 N 行」没有意义。
+                assert "LIMIT" not in sql
+                continue
             assert "LIMIT 10000" in sql
             # LIMIT 出现时，括号还没闭合 → 说明它在派生表内部。
             head = sql[: sql.index("LIMIT 10000")]
@@ -290,8 +308,13 @@ class TestBuildQualityCheckSqls:
         for field in ("col1", "col2", "col3"):
             assert f"AS {field}" in sql
 
-    def test_empty_fields_returns_no_statements(self):
-        assert qc.build_quality_check_sqls("adhoctemp.tmp_x", [], "pt_d", "20261010", 10000) == []
+    def test_empty_fields_still_generates_table_level_statement(self):
+        """没有可校验字段时，字段级 checker 不生成 SQL —— 但表级 checker 照跑。
+
+        表级指标（数据行数）不依赖字段，所以空字段不该把它一起干掉。
+        """
+        statements = qc.build_quality_check_sqls("adhoctemp.tmp_x", [], "pt_d", "20261010", 10000)
+        assert [name for name, _ in statements] == ["row_count"]
 
     def test_empty_checkers_returns_no_statements(self):
         assert qc.build_quality_check_sqls(
@@ -329,7 +352,11 @@ class TestBuildQualityCheckSqls:
         statements = qc.build_quality_check_sqls(
             "adhoctemp.tmp_x", ["pay_cnt"], "pt_d", "20261010", 10000
         )
-        assert [name for name, _ in statements] == ["null_rate", "single_value_ratio"]
+        assert [name for name, _ in statements] == [
+            "null_rate",
+            "single_value_ratio",
+            "row_count",
+        ]
 
 
 # ============================================================================
@@ -689,9 +716,16 @@ class TestResolveConfig:
         assert config.sample_size == qc._DEFAULT_SAMPLE_SIZE
         assert config.partition_col == qc._DEFAULT_PARTITION_COL
         assert config.exclude_fields == qc.DEFAULT_EXCLUDE_FIELDS
-        assert config.checker_names == ("null_rate", "single_value_ratio", "outlier_ratio")
+        assert config.checker_names == (
+            "null_rate",
+            "single_value_ratio",
+            "outlier_ratio",
+            "row_count",
+        )
         assert config.ratio_fields == frozenset()
         assert config.ratio_field_patterns == ("ratio",)
+        # 数据行数的默认阈值是「下限 1」—— 一行都没写进去就告警。
+        assert config.threshold_for(qc.ROW_COUNT_CHECKER) == 1
 
     def test_tool_config_wins_over_resource_metadata(self):
         tool_cfg = {"quality_check": {"sample_size": 42, "thresholds": {"null_rate_threshold": 0.5}}}
@@ -858,13 +892,13 @@ class TestRunQualityCheckWiring:
         assert result["sampled"] is True
         assert result["ok"] is False
         assert result["warnings"], "a null_rate of 0.10 must raise a warning"
-        # 三条 SQL 逐条执行（异常值占比没有比率字段时不生成）。
-        assert len(executed) == 2
+        # 四条 SQL 逐条执行（异常值占比没有比率字段时不生成）。
+        assert len(executed) == 3
         assert "UNION ALL" not in "".join(executed)
 
     @pytest.mark.asyncio
-    async def test_all_three_checks_run_when_ratio_field_present(self, monkeypatch):
-        """有比率类字段时，三条校验 SQL 各执行一次。"""
+    async def test_all_checks_run_when_ratio_field_present(self, monkeypatch):
+        """有比率类字段时，四条校验 SQL 各执行一次。"""
         monkeypatch.setenv("DATAOPS_ENV", "integration")
         ctx = ToolExecutionContext(runtime=self._fake_runtime(), tool_config={})
 
@@ -881,19 +915,24 @@ class TestRunQualityCheckWiring:
             )
 
         assert result is not None
-        assert len(executed) == 3
+        assert len(executed) == 4
         assert result["details"]["x_ratio"]["null_rate"] == 1.0
         assert result["details"]["x_ratio"]["single_value_ratio"] == 1.0
         assert result["details"]["x_ratio"]["outlier_ratio"] == 1.0
-        assert result["checks"] == ["null_rate", "single_value_ratio", "outlier_ratio"]
+        assert result["checks"] == [
+            "null_rate",
+            "single_value_ratio",
+            "outlier_ratio",
+            "row_count",
+        ]
 
     @pytest.mark.asyncio
     async def test_checks_are_submitted_concurrently(self, monkeypatch):
-        """三条校验 SQL 必须**并发**提交，不能顺序跑。
+        """校验 SQL 必须**并发**提交，不能顺序跑。
 
         DataOps 不支持把多个校验项合并成一条语句；顺序跑的话第一条挂了就
         后面的全不跑，整轮校验直接被判成「未执行」。
-        并发提交后三条各自独立轮询，互不影响。
+        并发提交后各自独立轮询，互不影响。
         """
         monkeypatch.setenv("DATAOPS_ENV", "integration")
         ctx = ToolExecutionContext(runtime=self._fake_runtime(), tool_config={})
@@ -905,7 +944,7 @@ class TestRunQualityCheckWiring:
             nonlocal in_flight, max_in_flight
             in_flight += 1
             max_in_flight = max(max_in_flight, in_flight)
-            # 让出控制权，确保三条任务都能同时在飞。
+            # 让出控制权，确保所有任务都能同时在飞。
             await asyncio.sleep(0.05)
             in_flight -= 1
             return "completed", "job-x", {"data": [{"x_ratio": 1.0}]}
@@ -918,8 +957,8 @@ class TestRunQualityCheckWiring:
 
         assert result is not None
         assert result["sampled"] is True
-        assert max_in_flight == 3, (
-            f"三条校验 SQL 应并发提交，实际最大并发数 {max_in_flight}"
+        assert max_in_flight == 4, (
+            f"校验 SQL 应并发提交，实际最大并发数 {max_in_flight}"
         )
 
     @pytest.mark.asyncio
@@ -992,7 +1031,7 @@ class TestRunQualityCheckWiring:
             )
 
         assert result is not None
-        assert result["checks"] == ["null_rate", "single_value_ratio"]
+        assert result["checks"] == ["null_rate", "single_value_ratio", "row_count"]
         assert result["details"]["col1"]["outlier_ratio"] is None
 
     @pytest.mark.asyncio
@@ -1123,6 +1162,134 @@ class TestRenderMetricsTable:
         )
         assert "⚠️ 告警" in table
         assert "未完成" in table
+
+
+# ============================================================================
+# row_count —— 表级指标（数据行数）
+# ============================================================================
+class TestRowCountChecker:
+    def test_sql_is_full_table_count(self):
+        """行数必须全量 COUNT —— 不能有派生表、不能有 LIMIT。
+
+        采样算比率，算不出真实行数：前 10000 行永远是 10000。
+        """
+        statements = qc.build_quality_check_sqls(
+            "adhoctemp.tmp_x", ["col1"], "pt_d", "20261010", 10000
+        )
+        sql = dict(statements)["row_count"]
+        assert "COUNT(1) AS row_count" in sql
+        assert "FROM adhoctemp.tmp_x" in sql
+        assert "WHERE pt_d = '20261010'" in sql
+        assert "LIMIT" not in sql
+        assert "_src" not in sql
+
+    def test_uses_explicit_partition_filter(self):
+        """直连模式传入的分区条件优先（跟其它校验项同一口径）。"""
+        statements = qc.build_quality_check_sqls(
+            "biads.ads_t",
+            ["col1"],
+            "pt_d",
+            "20261010",
+            10000,
+            partition_filter="pt_d = '20261020'",
+        )
+        assert "WHERE pt_d = '20261020'" in dict(statements)["row_count"]
+
+    def test_parsing_writes_to_table_metrics_not_details(self):
+        """行数是表级指标 —— 写进 table_metrics，不挂在字段上。"""
+        parsed = qc.parse_checker_result(
+            {"data": [{"row_count": 1234}]},
+            qc.ROW_COUNT_CHECKER,
+            ["col1", "col2"],
+        )
+        assert parsed["table_metrics"] == {"row_count": 1234.0}
+        assert parsed["details"] == {}
+        assert parsed["ok"] is True
+        assert parsed["warnings"] == []
+
+    def test_zero_rows_raises_warning(self):
+        """0 行 → 低于默认阈值 1 → 告警。"""
+        parsed = qc.parse_checker_result(
+            {"data": [{"row_count": 0}]},
+            qc.ROW_COUNT_CHECKER,
+            ["col1"],
+        )
+        assert parsed["ok"] is False
+        assert len(parsed["warnings"]) == 1
+        assert "行数" in parsed["warnings"][0]
+
+    def test_threshold_is_a_lower_bound(self):
+        """阈值语义是「下限」—— 行数**少于**阈值才违规。"""
+        config = qc.QualityCheckConfig(
+            thresholds={"row_count_threshold": 100.0},
+            checker_names=("row_count",),
+        )
+        # 50 < 100 → 违规
+        low = qc.parse_checker_result(
+            {"data": [{"row_count": 50}]}, qc.ROW_COUNT_CHECKER, ["col1"], config
+        )
+        assert low["ok"] is False
+        # 500 > 100 → 不违规
+        high = qc.parse_checker_result(
+            {"data": [{"row_count": 500}]}, qc.ROW_COUNT_CHECKER, ["col1"], config
+        )
+        assert high["ok"] is True
+
+    def test_merge_keeps_table_metrics_separate(self):
+        merged = qc.merge_checker_results(
+            [
+                (
+                    "null_rate",
+                    qc.parse_checker_result(
+                        {"data": [{"col1": 0.9}]}, qc.NULL_RATE_CHECKER, ["col1"]
+                    ),
+                ),
+                (
+                    "row_count",
+                    qc.parse_checker_result(
+                        {"data": [{"row_count": 500}]}, qc.ROW_COUNT_CHECKER, ["col1"]
+                    ),
+                ),
+            ],
+            ["col1"],
+        )
+        assert merged["table_metrics"] == {"row_count": 500.0}
+        # 字段级 details 不该被表级指标污染。
+        assert "row_count" not in merged["details"]["col1"]
+
+    def test_failed_table_check_does_not_mark_fields_incomplete(self):
+        """表级 checker 失败不该把逐字段指标标成「未完成」。"""
+        merged = qc.merge_checker_results(
+            [("null_rate", qc.parse_checker_result(
+                {"data": [{"col1": 0.9}]}, qc.NULL_RATE_CHECKER, ["col1"]
+            ))],
+            ["col1"],
+        )
+        assert merged["table_metrics"] == {"row_count": None}
+
+
+# ============================================================================
+# render_table_metrics —— 表级指标的 Markdown 表格
+# ============================================================================
+class TestRenderTableMetrics:
+    def test_empty_returns_blank(self):
+        assert qc.render_table_metrics({}) == ""
+        assert qc.render_table_metrics(None) == ""
+
+    def test_row_count_rendered_as_integer(self):
+        table = qc.render_table_metrics({"row_count": 1234.0})
+        assert "| 数据行数 | 1234 |" in table
+        assert table.splitlines()[0] == "| 表级指标 | 值 |"
+
+    def test_none_renders_as_not_completed(self):
+        table = qc.render_table_metrics({"row_count": None})
+        assert "| 数据行数 | 未完成 |" in table
+
+    def test_truncated_marker_notes_lower_bound(self):
+        """试算写入被截断时，行数只是下界 —— 表格里要注明。"""
+        table = qc.render_table_metrics({"row_count": 10000.0}, truncated=True)
+        assert "试算写入被截断" in table
+        assert "| 10000 |" in table
 
 
 # ============================================================================
