@@ -27,6 +27,7 @@ from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
 from dataagent.core.managers.llm_manager import ChatModel, llm_manager
 from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
+from dataagent.core.managers.llm_manager.thinking import thinking_enabled_from_config, validation_llm_kwargs
 
 # ============================================================================
 # validate_deliverables orchestration constants
@@ -34,9 +35,9 @@ from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 # validate_deliverables 把"静态校验 + DataOps 语义校验"合并成单一入口,
 # 整个工具在一次会话内最多跑 MAX_VALIDATE_DELIVERABLES_ATTEMPTS 次。
 # retry 由 validate_deliverables 在工具层统一调度,
-# DataOps wrapper 内部 3 次上限保留作为兜底防御。
+# DataOps wrapper 内部 MAX_VALIDATE_ATTEMPTS 次上限保留作为兜底防御。
 # ============================================================================
-MAX_VALIDATE_DELIVERABLES_ATTEMPTS = 3
+MAX_VALIDATE_DELIVERABLES_ATTEMPTS = 5
 _VALIDATE_DELIVERABLES_STATE_KEY = "validate_deliverables_state"
 _DELIVERY_DELIVERABLES_WARNING_FILENAME = "validate_deliverables_warning.md"
 _DELIVERY_DELIVERABLES_WARNING_HEADER = (
@@ -320,12 +321,12 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
     - The full check (static checks + DataOps semantic validation) runs as
       one unit. If validation fails, **fix the SQL in workspace** and call
       this tool again.
-    - This tool will run **at most MAX_VALIDATE_DELIVERABLES_ATTEMPTS (3)
+    - This tool will run **at most MAX_VALIDATE_DELIVERABLES_ATTEMPTS (5)
       times per session**; after that it returns best-effort verdict and
       stops accepting further calls.
     - The internal per-SQL DataOps retry budget is preserved as a safety
-      net (wrapper enforces its own 3-attempt cap) but is normally unused
-      because each ``validate_deliverables`` invocation starts the DataOps
+      net (wrapper enforces its own MAX_VALIDATE_ATTEMPTS cap) but is normally
+      unused because each ``validate_deliverables`` invocation starts the DataOps
       wrapper from attempt=1.
 
     Args:
@@ -363,6 +364,7 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
     logger.info(f"[validate_deliverables] === START attempt={current_attempt}/{MAX_VALIDATE_DELIVERABLES_ATTEMPTS} ===")
 
     include_suggestions = _resolve_quality_gate_include_suggestions(_tool_context)
+    enable_thinking = thinking_enabled_from_config(getattr(_tool_context, "tool_config", None))
 
     # === Step 1: 静态校验（DDL/DML 文件存在性 + 规范 + LLM 质量门禁） ===
     static_passed, static_err, static_warn = _validate_deliverables(
@@ -370,6 +372,7 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
         user_query=query,
         include_suggestions=include_suggestions,
         _tool_context=_tool_context,
+        enable_thinking=enable_thinking,
     )
 
     # 静态校验失败 → 不跑 dataops（先解决 schema/语法问题），保存状态后让 agent 修
@@ -773,6 +776,7 @@ def _validate_deliverables(
     user_query: str = "",
     include_suggestions: bool = False,
     _tool_context: ToolExecutionContext | None = None,
+    enable_thinking: bool = False,
 ) -> tuple[bool, str, str]:
     """校验最终产物是否存在且符合规范。"""
     errors = []
@@ -796,7 +800,9 @@ def _validate_deliverables(
 
     # LLM 质量门禁校验（仅在 DDL 和 DML 都存在且非空时调用）
     if DDL is not None and DML is not None and not _is_empty(DDL) and not _is_empty(DML):
-        _validate_deliverables_quality_gate(DDL, DML, warnings, user_query, include_suggestions, _tool_context)
+        _validate_deliverables_quality_gate(
+            DDL, DML, warnings, user_query, include_suggestions, _tool_context, enable_thinking=enable_thinking
+        )
 
     err_msg = "Deliverables checks fail. Errors:\n- " + "\n- ".join(errors) if errors else ""
     warn_msg = "Deliverables checks have suggestions:\n- " + "\n- ".join(warnings) if warnings else ""
@@ -804,16 +810,16 @@ def _validate_deliverables(
     return (len(errors) == 0, err_msg, warn_msg)
 
 
-def _run_quality_gate_stream(llm: ChatModel, prompts: list[dict[str, str]]) -> str:
+def _run_quality_gate_stream(llm: ChatModel, prompts: list[dict[str, str]], **kwargs) -> str:
     """Bridge the synchronous tool to streaming while retaining tracing and model context."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(collect_llm_stream(llm, prompts))
+        return asyncio.run(collect_llm_stream(llm, prompts, **kwargs))
 
     context = copy_context()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(context.run, asyncio.run, collect_llm_stream(llm, prompts)).result()
+        return pool.submit(context.run, asyncio.run, collect_llm_stream(llm, prompts, **kwargs)).result()
 
 
 def _validate_deliverables_quality_gate(
@@ -823,6 +829,7 @@ def _validate_deliverables_quality_gate(
     user_query: str = "",
     include_suggestions: bool = False,
     _tool_context: ToolExecutionContext | None = None,
+    enable_thinking: bool = False,
 ) -> None:
     """
     通过 LLM 对 DDL/DML 进行质量门禁校验。
@@ -835,6 +842,8 @@ def _validate_deliverables_quality_gate(
     4. 交付前检查项和验证。
 
     注意：此函数仅将结果追加到 warnings，不阻塞交付流程。
+
+    ``enable_thinking`` 由调用方从**工具配置**读取（默认关闭）。
     """
     # 获取 workspace 根目录
     from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
@@ -875,10 +884,13 @@ def _validate_deliverables_quality_gate(
         ddl_content, dml_content, metadata_content, user_query, rendered_ir, nl2sql_detail
     )
     llm = llm_manager.get_default_llm()
+    llm_kwargs = validation_llm_kwargs(llm, enable_thinking=enable_thinking)
     for attempt in range(2):
         try:
             content = _run_quality_gate_stream(
-                llm, [{"role": "user", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+                llm,
+                [{"role": "user", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                **llm_kwargs,
             )
             raw_result = content.strip()
             _parse_quality_gate_result(raw_result, warnings, include_suggestions)

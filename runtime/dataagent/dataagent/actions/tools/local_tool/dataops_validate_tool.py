@@ -56,6 +56,7 @@ from dataagent.actions.tools.local_tool.dataops_log_utils import (
 )
 from dataagent.core.managers import llm_manager
 from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
+from dataagent.core.managers.llm_manager.thinking import resolve_thinking, validation_llm_kwargs
 from dataagent.utils.log import logger
 
 if TYPE_CHECKING:
@@ -588,6 +589,252 @@ def _collapse_pt_d_range(sql: str, partition_date: str) -> str:
     return result
 
 
+# ---------------------------------------------------------------------------
+# 试算 INSERT 的行数上限（只影响写入量，不改 SQL 语义）
+# ---------------------------------------------------------------------------
+# 质量校验只采样产出数据的前 N 行（默认 10000），写入超过 N 行的部分永远不会被
+# 校验看到，所以试算的 INSERT 会加 ``LIMIT N`` 截断写入量，省掉全量写入的耗时。
+#
+# 三条硬约束：
+#   1. 只作用于质量校验链路；语法校验链路（validate_deliverables）要验证 SQL 的
+#      真实行为，加 LIMIT 会掩盖数据量/性能问题，保持原样。
+#   2. 用词法扫描定位插入点，只**插入一段文本**，SQL 其余部分逐字节保持原样
+#      （平台 UDF ``!bicoredata.IsEmpty``、注释、LATERAL VIEW 等一律不动）——
+#      比「解析成 AST 再重新生成」安全得多。
+#   3. 任何不确定的情况都回退原 SQL（宁可慢，也不能提交被改坏的 SQL）。
+#
+# LIMIT 加在整个查询末尾（UNION ALL 最后一个分支之后）——Spark 里 LIMIT 属于
+# queryOrganization，作用于整个 queryTerm，所以「总共写 N 行」正是想要的。
+
+#: 试算 INSERT 的默认写入行数上限，与质量校验的默认采样量一致。
+_DEFAULT_TRIAL_ROW_LIMIT = 10000
+
+#: 写入行数上限的硬上限（防止配置写错导致写入几百万行）。
+_MAX_TRIAL_ROW_LIMIT = 1_000_000
+
+
+def _clamp_row_limit(limit: Any, default: int = _DEFAULT_TRIAL_ROW_LIMIT) -> int:
+    """把行数上限夹紧到 ``[1, _MAX_TRIAL_ROW_LIMIT]``；非法值回退默认值。"""
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        return default
+    if value <= 0:
+        return default
+    return min(value, _MAX_TRIAL_ROW_LIMIT)
+
+
+def _scan_sql_tokens(sql: str) -> list[tuple[int, int, int, str]]:
+    """把 SQL 切成「有效 token」，供结构分析用。
+
+    词法规则（覆盖 Hive/Spark 常见形态）：
+
+    - ``'...'`` / ``"..."``：字符串字面量（``\\`` 转义、``''`` 双写转义）
+    - `` `...` ``：反引号标识符（```` `` `````` 双写转义）
+    - ``-- ...``：行注释（到行尾）
+    - ``/* ... */``：块注释
+    - 括号：跟踪深度（``depth``），用于区分「顶层」与「子查询里」
+
+    Returns:
+        ``[(start, end, depth, word), ...]``。``word`` 是**大写**的单词
+        （标识符/关键字），非单词 token（标点、字符串、括号）为 ``""``；
+        分号是 ``";"``。注释与空白**不出现在结果里**。
+    """
+    tokens: list[tuple[int, int, int, str]] = []
+    i = 0
+    n = len(sql)
+    depth = 0
+
+    while i < n:
+        ch = sql[i]
+
+        # --- 注释 ---
+        if sql.startswith("--", i):
+            newline = sql.find("\n", i)
+            i = n if newline == -1 else newline + 1
+            continue
+        if sql.startswith("/*", i):
+            close = sql.find("*/", i + 2)
+            i = n if close == -1 else close + 2
+            continue
+
+        # --- 字符串 / 反引号标识符 ---
+        if ch in ("'", '"', "`"):
+            quote = ch
+            j = i + 1
+            while j < n:
+                if sql[j] == "\\" and quote != "`":
+                    j += 2
+                    continue
+                if sql[j] == quote:
+                    # 双写转义：'' / "" / ``
+                    if j + 1 < n and sql[j + 1] == quote:
+                        j += 2
+                        continue
+                    break
+                j += 1
+            end = min(j + 1, n)
+            tokens.append((i, end, depth, ""))
+            i = end
+            continue
+
+        # --- 括号 ---
+        if ch == "(":
+            depth += 1
+            tokens.append((i, i + 1, depth, ""))
+            i += 1
+            continue
+        if ch == ")":
+            depth = max(0, depth - 1)
+            tokens.append((i, i + 1, depth, ""))
+            i += 1
+            continue
+
+        # --- 空白 ---
+        if ch.isspace():
+            i += 1
+            continue
+
+        # --- 分号（语句分隔符）---
+        if ch == ";":
+            tokens.append((i, i + 1, depth, ";"))
+            i += 1
+            continue
+
+        # --- 单词 ---
+        if ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (sql[j].isalnum() or sql[j] in "_$"):
+                j += 1
+            tokens.append((i, j, depth, sql[i:j].upper()))
+            i = j
+            continue
+
+        # --- 其它标点 ---
+        tokens.append((i, i + 1, depth, ""))
+        i += 1
+
+    return tokens
+
+
+def _is_keyword_token(
+    sql: str,
+    token: tuple[int, int, int, str],
+    tokens: list[tuple[int, int, int, str]],
+    index: int,
+) -> bool:
+    """判断某个 token 是否可当作**关键字**（而不是标识符）。
+
+    排除两种误判：
+
+    - ``t.limit`` —— 前面有 ``.``，是限定名的一部分，不是关键字；
+    - ``limit(...)`` —— 后面紧跟 ``(``，是函数调用，不是 LIMIT 子句。
+    """
+    start, end, _depth, word = token
+    if not word:
+        return False
+    # 前一个字符是 '.' → 限定名
+    if start > 0 and sql[start - 1] == ".":
+        return False
+    # 下一个非空白字符是 '(' → 函数调用
+    j = end
+    while j < len(sql) and sql[j].isspace():
+        j += 1
+    if j < len(sql) and sql[j] == "(":
+        return False
+    # 紧邻的 '.' 之前不能是标识符字符（``a.limit``）
+    if start > 0 and (sql[start - 1].isalnum() or sql[start - 1] == "_"):
+        return False
+    # 前一个 token 不能是 '.' （``db.`` + 关键字）
+    if index > 0:
+        prev_start, prev_end, _pd, _pw = tokens[index - 1]
+        if prev_end == start and sql[prev_start:prev_end] == ".":
+            return False
+    return True
+
+
+def _limit_insert_rows(sql: str, limit: int) -> str:
+    """给 INSERT 语句的投影加行数上限（``LIMIT N``）。
+
+    这是**试算链路专有**的改写：只影响「写多少行」，不影响「写什么行」——
+    前 N 行与全量写入的前 N 行完全相同，所以基于前 N 行的采样校验结论不变。
+
+    实现方式是**纯文本插入**：先用词法扫描定位 INSERT 查询的结尾位置，
+    再在那里插入 ``LIMIT N``。SQL 的其余部分**逐字节保持原样**。
+
+    Args:
+        sql: 原始 SQL（可以是 INSERT，也可以是别的语句）。
+        limit: 行数上限；``<= 0`` 时原样返回。
+
+    Returns:
+        加上 ``LIMIT N`` 的 SQL；以下情况**原样返回**（宁可慢，也不能提交一条
+        被改坏的 SQL）：
+
+        - 不是 INSERT；
+        - INSERT 后面没有顶层 ``SELECT``（例如 Hive 的 ``INSERT ... VALUES``，
+          加 LIMIT 会破坏语法）；
+        - 查询顶层已经有 ``LIMIT``（保留交付物自己写的上限）；
+        - 词法扫描异常（括号不配对等）。
+    """
+    if limit <= 0 or not sql or not sql.strip():
+        return sql
+
+    try:
+        tokens = _scan_sql_tokens(sql)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[_limit_insert_rows] tokenize failed; skipping row limit: {exc}")
+        return sql
+
+    # --- 定位顶层 INSERT ---
+    insert_idx: int | None = None
+    for idx, token in enumerate(tokens):
+        if token[2] == 0 and token[3] == "INSERT" and _is_keyword_token(sql, token, tokens, idx):
+            insert_idx = idx
+            break
+    if insert_idx is None:
+        return sql
+
+    # --- 定位 INSERT 自己的顶层 SELECT（跳过 CTE 里的 SELECT）---
+    select_idx: int | None = None
+    for idx in range(insert_idx + 1, len(tokens)):
+        token = tokens[idx]
+        if token[2] == 0 and token[3] == "SELECT" and _is_keyword_token(sql, token, tokens, idx):
+            select_idx = idx
+            break
+    if select_idx is None:
+        # INSERT ... VALUES —— 不截断
+        return sql
+
+    # --- 顶层已经有 LIMIT？保留交付物自己写的上限 ---
+    for idx in range(select_idx + 1, len(tokens)):
+        token = tokens[idx]
+        if token[2] == 0 and token[3] == "LIMIT" and _is_keyword_token(sql, token, tokens, idx):
+            logger.debug("[_limit_insert_rows] query already has a top-level LIMIT; keeping original")
+            return sql
+
+    # --- 语句结束位置（顶层分号；没有则到字符串末尾）---
+    stmt_end = len(sql)
+    for idx in range(select_idx + 1, len(tokens)):
+        start, _end, depth, word = tokens[idx]
+        if depth == 0 and word == ";":
+            stmt_end = start
+            break
+
+    # --- 插入点：语句内最后一个有效 token 的结尾 ---
+    insert_at: int | None = None
+    for idx in range(insert_idx, len(tokens)):
+        start, end, _depth, _word = tokens[idx]
+        if start >= stmt_end:
+            break
+        insert_at = end
+    if insert_at is None:
+        return sql
+
+    rewritten = sql[:insert_at] + f" LIMIT {limit}" + sql[insert_at:]
+    logger.debug(f"[_limit_insert_rows] added LIMIT {limit} to INSERT")
+    return rewritten
+
+
 # CTE 展开（LLM 内联）的等待上限（秒）。
 # 60s 偏紧：一次大 SQL 的 CTE 内联经常跑更久，超时后回退原始 SQL（仍带 CTE），
 # 提交给 DataOps 就会报 "table(s) agapdw._src do not exist"。
@@ -619,7 +866,12 @@ def _has_cte(sql: str) -> bool:
     return with_pos != -1 and (insert_pos == -1 or with_pos < insert_pos)
 
 
-async def _expand_cte_for_dml(sql: str, timeout_sec: int = _CTE_EXPANSION_MAX_TIMEOUT_SEC, runtime=None) -> str:
+async def _expand_cte_for_dml(
+    sql: str,
+    timeout_sec: int = _CTE_EXPANSION_MAX_TIMEOUT_SEC,
+    runtime=None,
+    enable_thinking: bool = False,
+) -> str:
     """Expand WITH AS (CTE) in DML INSERT statements to equivalent inline subqueries.
 
     Only processes DML INSERT statements that contain WITH AS clauses.
@@ -629,6 +881,8 @@ async def _expand_cte_for_dml(sql: str, timeout_sec: int = _CTE_EXPANSION_MAX_TI
     ``timeout_sec`` 上限为 :data:`_CTE_EXPANSION_MAX_TIMEOUT_SEC`（300s），并**真正生效**：
     超时/失败都回退原始 SQL（仍带 CTE），提交给 DataOps 会报
     ``table(s) agapdw._src do not exist``，所以这个上限要留足。
+
+    ``enable_thinking`` 由调用方从**工具配置**读取（默认关闭）。
     """
     if not _has_cte(sql):
         return sql
@@ -648,11 +902,12 @@ async def _expand_cte_for_dml(sql: str, timeout_sec: int = _CTE_EXPANSION_MAX_TI
             {"role": "system", "content": _CTE_SYSTEM_PROMPT},
             {"role": "user", "content": f"Transform this SQL:\n{sql}"},
         ]
+        llm_kwargs = validation_llm_kwargs(llm, enable_thinking=enable_thinking)
         logger.debug(
             f"[_expand_cte_for_dml] expanding CTE (timeout={timeout_sec}s), original[:120]={sql[:120]!r}",
         )
         response = await asyncio.wait_for(
-            asyncio.to_thread(llm.invoke, messages),
+            asyncio.to_thread(llm.invoke, messages, **llm_kwargs),
             timeout=timeout_sec,
         )
         expanded = str(response.content).strip()
@@ -676,8 +931,6 @@ async def _expand_cte_for_dml(sql: str, timeout_sec: int = _CTE_EXPANSION_MAX_TI
 # ---------------------------------------------------------------------------
 # Constants for reasonable-check
 # ---------------------------------------------------------------------------
-
-_POST_VALIDATE_PARTITION_COL = "pt_d"
 
 
 def _is_insert_sql(sql: str) -> bool:
@@ -797,6 +1050,8 @@ async def dataops_validate_sql(
     sql_file_path: str | os.PathLike[str] | None = None,
     _partition_date: str | None = None,
     _collapse_partition_range: bool = False,
+    _row_limit: int | None = None,
+    _enable_thinking: bool | None = None,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Validate one SQL statement against the DataOps adHoc API.
@@ -819,6 +1074,13 @@ async def dataops_validate_sql(
             过滤（``<=`` / ``>=`` / ``<`` / ``>``）收敛成单日等值条件 —— 只在
             **交付后质量校验链路**开启（试算只关心产出数据长什么样，不需要保留
             时间窗口宽度）。语法校验链路保持原样。
+        _row_limit: 内部参数。``INSERT`` 的**写入行数上限**（给投影加 ``LIMIT N``）。
+            只在**交付后质量校验链路**开启：试算只为了拿到能采样统计的产出数据，
+            写入超过采样量的行永远不会被校验看到，截断后能大幅缩短试算耗时。
+            ``None`` 表示不限制。语法校验链路必须保持原样（它要验证 SQL 的真实
+            行为，加 LIMIT 会掩盖数据量/性能问题）。
+        _enable_thinking: 内部参数。是否允许模型思考；``None`` 时从工具配置读取
+            （``config.enable_thinking``），缺省关闭。
 
     Returns:
         A dict with at least ``passed`` (bool).
@@ -840,6 +1102,9 @@ async def dataops_validate_sql(
 
     runtime = _tool_context.runtime
 
+    # --- 思考模式开关：显式参数优先，否则读工具配置（缺省关闭）--------------
+    enable_thinking = resolve_thinking(getattr(_tool_context, "tool_config", None), _enable_thinking)
+
     # --- Environment routing -------------------------------------------------
     env = _get_dataops_env()
     logger.debug(f"[dataops_validate_sql] env routing: DATAOPS_ENV={env!r} (set={bool(os.environ.get('DATAOPS_ENV'))})")
@@ -851,6 +1116,8 @@ async def dataops_validate_sql(
             sql_file_path=sql_file_path,
             partition_date=partition_date,
             collapse_partition_range=_collapse_partition_range,
+            row_limit=_row_limit,
+            enable_thinking=enable_thinking,
         )
     logger.debug("[dataops_validate_sql] routing to INTEGRATION path (resource-coordinator flow)")
 
@@ -879,7 +1146,13 @@ async def dataops_validate_sql(
         sql_for_submit,
         timeout_sec=min(timeout_sec, _CTE_EXPANSION_MAX_TIMEOUT_SEC),
         runtime=runtime,
+        enable_thinking=enable_thinking,
     )
+    # 质量校验链路：给 INSERT 投影加 LIMIT，截断写入量（详见 _limit_insert_rows）。
+    # 放在 CTE 展开**之后** —— LLM 内联 CTE 时可能重排投影，加在它后面才能
+    # 精确落在最终查询的末尾。
+    if _row_limit and _row_limit > 0:
+        sql_for_submit = _limit_insert_rows(sql_for_submit, _row_limit)
 
     # --- Pre-submit: DROP temp table for CREATE TABLE (default enabled) ---
     # 默认开启：DDL 重跑时同名 adhoctemp 表可能已存在（上次 CREATE 失败留下），
@@ -1167,6 +1440,45 @@ async def _cleanup_temp_table_wrapper(
     )
 
 
+def _resolve_rewrite_identity(
+    sql: str,
+    *,
+    runtime,
+    partition_date: str | None,
+) -> tuple[str | None, str | None]:
+    """解析「真实目标表 → 临时表名」的映射。
+
+    与清理链路用同一套推导（``_extract_temp_table_name``），保证分析器看到的
+    临时表名与实际提交给 DataOps 的完全一致。
+
+    Returns:
+        ``(original_target_table, rewritten_target_table)``；解析不出时为
+        ``(None, None)``。
+    """
+    original = extract_sql_target_table(sql)
+    if not original:
+        return None, None
+
+    if _get_dataops_env() == "prod":
+        user_account = _get_user_account(runtime)
+        table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
+    else:
+        try:
+            resource = _get_dataops_resource(runtime)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[_resolve_rewrite_identity] resource unavailable: {exc}")
+            return original, None
+        user_account = resource.metadata.get("exec_user") or _get_user_account(runtime) or "anonymous"
+        table_suffix = resource.metadata.get("table_suffix", "")
+
+    try:
+        rewritten = _extract_temp_table_name(sql, user_account, table_suffix, partition_date)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[_resolve_rewrite_identity] temp table derivation failed: {exc}")
+        rewritten = None
+    return original, rewritten
+
+
 async def dataops_validate_sql_with_log_analysis(
     sql: str | None = None,
     *,
@@ -1174,6 +1486,7 @@ async def dataops_validate_sql_with_log_analysis(
     attempt: int = 1,
     prior_attempts: list[dict[str, Any]] | None = None,
     _partition_date: str | None = None,
+    _enable_thinking: bool | None = None,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Validate SQL and fetch + analyze OBS log on failure in a single tool call.
@@ -1219,6 +1532,8 @@ async def dataops_validate_sql_with_log_analysis(
             (empty/None on first call).
         _partition_date: 内部参数。分区日期（``YYYYMMDD``）；``None`` 时用语法校验链路的
             默认日期（一年之后）。
+        _enable_thinking: 内部参数。是否允许模型思考；``None`` 时从工具配置读取
+            （``config.enable_thinking``），缺省关闭。
 
     Returns:
         Same as ``dataops_validate_sql``, but on failure also includes:
@@ -1280,6 +1595,7 @@ async def dataops_validate_sql_with_log_analysis(
         _tool_context=_tool_context,
         sql_file_path=sql_file_path,
         _partition_date=partition_date,
+        _enable_thinking=_enable_thinking,
     )
     logger.debug(
         "[dataops_validate_sql_with_log_analysis] Validate done passed={} job_id={}".format(
@@ -1349,12 +1665,25 @@ async def dataops_validate_sql_with_log_analysis(
     # The raw log and LLM messages stay private to this tool invocation, so the
     # main agent's chat history is never polluted with raw log content. Only the
     # structured analysis (error_type, error_message, location, suggestions) is returned.
+    # 提交给 DataOps 的是**原始 SQL 文件的改写版本**（目标表换成临时表、CTE 内联）。
+    # 把「来自哪个文件」和「真实表名 → 临时表名」的映射一起告诉分析器，
+    # 它才能把日志里的临时表名还原成用户该改的文件和真实表名。
+    original_target_table, rewritten_target_table = _resolve_rewrite_identity(
+        sql,
+        runtime=getattr(_tool_context, "runtime", None),
+        partition_date=partition_date,
+    )
+
     fetch_and_analyze = await _analyze_log_directly(
         log_file_info if log_file_info else None,
         job_id,
         raw_error,
         raw_log=inline_error_log if (not log_file_info and inline_error_log) else None,
+        source_file=str(sql_file_path) if sql_file_path else None,
+        original_target_table=original_target_table,
+        rewritten_target_table=rewritten_target_table,
         _tool_context=_tool_context,
+        enable_thinking=resolve_thinking(getattr(_tool_context, "tool_config", None), _enable_thinking),
     )
     direct_status = fetch_and_analyze.get("status")
     logger.debug(
@@ -1521,7 +1850,11 @@ async def _analyze_log_directly(
     raw_error: str,
     *,
     raw_log: str | None = None,
+    source_file: str | None = None,
+    original_target_table: str | None = None,
+    rewritten_target_table: str | None = None,
     _tool_context: ToolExecutionContext | None = None,
+    enable_thinking: bool = False,
 ) -> dict[str, Any]:
     """Analyze an error log with LLM in-process.
 
@@ -1534,10 +1867,16 @@ async def _analyze_log_directly(
     Only the structured analysis (error_type, error_message, location, suggestions)
     is returned to the caller.
 
+    ``source_file`` names the workspace file the SQL was read from; the executed
+    SQL is a rewritten copy of it (temp table + inlined CTEs), so the analyzer
+    must be told which file to blame and how to map names back.
+
     LLM resolution order (first non-None wins):
       1. ``_tool_context.runtime.llm("planner")`` — reuse the main agent's LLM
       2. ``llm_manager.get_default_llm()``        — module-level singleton
       3. ``_parse_analysis_from_text(...)``        — pure-regex fallback
+
+    ``enable_thinking`` 由调用方从**工具配置**读取（默认关闭）。
 
     Returns:
         dict with keys: status, analysis (optional), error (optional).
@@ -1589,8 +1928,34 @@ async def _analyze_log_directly(
         "}\n"
         "Output ONLY the JSON object, no prose, no markdown fences."
     )
+    # 告诉 LLM 提交给 DataOps 的 SQL 是**哪个文件**的改写版本 —— 否则它无从
+    # 把日志里的临时表名映射回真实表名/文件，也就无法给出可执行的修复建议。
+    rewrite_notes: list[str] = []
+    if source_file:
+        rewrite_notes.append(
+            f"- The executed SQL is a REWRITTEN copy of the file `{source_file}`. "
+            "Report the error against that file: name it in `location` and "
+            "refer to its real table/column names, not the rewritten ones."
+        )
+    if original_target_table and rewritten_target_table:
+        rewrite_notes.append(
+            f"- The target table `{original_target_table}` was rewritten to "
+            f"`{rewritten_target_table}`. If the error mentions the rewritten "
+            f"table, map it back to `{original_target_table}`."
+        )
+    rewrite_notes.append(
+        "- The target table has been rewritten to a temp table name "
+        "(adhoctemp.tmp_*), and CTEs have been inlined as subqueries. "
+        "Do not report the rewritten temp table name as a missing/typo'd table."
+    )
+
     user_prompt = (
-        f"job_id={job_id}\nraw_error={raw_error[:500]}\n=== EXECUTION LOG ===\n{truncated_log}\n=== END LOG ==="
+        f"job_id={job_id}\nraw_error={raw_error[:500]}\n"
+        "NOTE: the SQL shown in the execution log is the version actually submitted "
+        "to DataOps, not the original source file.\n"
+        + "\n".join(rewrite_notes)
+        + "\n"
+        f"=== EXECUTION LOG ===\n{truncated_log}\n=== END LOG ==="
     )
 
     # Resolve LLM: prefer the main agent's LLM (same model, no extra instantiation)
@@ -1630,7 +1995,9 @@ async def _analyze_log_directly(
         logger.debug(
             f"[_analyze_log_directly] Invoking LLM job_id={job_id!r} source={llm_source} prompt_len={len(user_prompt)}",
         )
-        raw_text = (await collect_llm_stream(llm, messages)).strip()
+        raw_text = (
+            await collect_llm_stream(llm, messages, **validation_llm_kwargs(llm, enable_thinking=enable_thinking))
+        ).strip()
         logger.debug(
             f"[_analyze_log_directly] LLM responded job_id={job_id!r} response_len={len(raw_text)}",
         )
@@ -1875,6 +2242,8 @@ async def _dataops_validate_sql_prod(
     sql_file_path: str | os.PathLike[str] | None = None,
     partition_date: str | None = None,
     collapse_partition_range: bool = False,
+    row_limit: int | None = None,
+    enable_thinking: bool = False,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """Production-environment validation entry point.
@@ -1916,7 +2285,12 @@ async def _dataops_validate_sql_prod(
         sql_for_submit,
         timeout_sec=min(timeout_sec, _CTE_EXPANSION_MAX_TIMEOUT_SEC),
         runtime=runtime,
+        enable_thinking=enable_thinking,
     )
+    # 质量校验链路：给 INSERT 投影加 LIMIT，截断写入量（与联调一致）。
+    # 放在 CTE 展开之后 —— LLM 内联 CTE 时可能重排投影。
+    if row_limit and row_limit > 0:
+        sql_for_submit = _limit_insert_rows(sql_for_submit, row_limit)
 
     # --- Pre-submit: DROP temp table for CREATE TABLE (默认开启,DROP 失败仅记录警告) ---
     # 生产环境下 DROP-before-CREATE 为硬约束:即使 adhoctemp 已存在残留 tmp_*,CREATE
@@ -2150,6 +2524,33 @@ def _extract_original_target_table(sql: str) -> str | None:
             ref = m.group(1).strip().strip("`").strip("'").strip('"')
             # Take last segment after a dot if multi-segment, otherwise full
             return ref.replace(".", "_").replace("-", "_") if ref else None
+    return None
+
+
+def extract_sql_target_table(sql: str) -> str | None:
+    """提取 SQL 的**真实目标表**（``db.table``），不做任何临时表替换。
+
+    同时支持 DDL（``CREATE TABLE``）和 DML（``INSERT OVERWRITE/INTO``）——
+    两者在提交给 DataOps 前都会被改写成 ``adhoctemp.tmp_*`` 临时表。
+
+    Args:
+        sql: CREATE 或 INSERT 语句文本。
+
+    Returns:
+        ``db.table`` 形式的目标表名；解析不出时返回 ``None``。
+    """
+    if not sql:
+        return None
+    sql_no_comment = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    for pattern in (
+        r"\bCREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`\w.-]+(?:\.[`\w.-]+)+)",
+        r"\bINSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?([`\w.-]+(?:\.[`\w.-]+)+)",
+    ):
+        m = re.search(pattern, sql_no_comment, re.IGNORECASE)
+        if m:
+            ref = m.group(1).strip().strip("`").strip("'").strip('"')
+            if ref:
+                return ref
     return None
 
 

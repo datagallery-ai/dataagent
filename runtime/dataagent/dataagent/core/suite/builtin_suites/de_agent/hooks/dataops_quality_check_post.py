@@ -58,7 +58,10 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from loguru import logger
 
-from dataagent.actions.tools.local_tool.dataops_quality_check import render_metrics_table
+from dataagent.actions.tools.local_tool.dataops_quality_check import (
+    render_metrics_table,
+    render_table_metrics,
+)
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.context import get_stream_writer
@@ -491,6 +494,15 @@ def _render_report(*, dml_path: Path, result: dict[str, Any] | None) -> str:
         lines.append(
             render_metrics_table(details, warnings, quality.get("failed_metrics") or {})
         )
+
+    # 表级指标（数据行数）—— 单独一张表，它的语义跟比率表不同。
+    table_metrics_md = render_table_metrics(
+        quality.get("table_metrics") or {},
+        bool(quality.get("row_count_truncated")),
+    )
+    if table_metrics_md:
+        lines.append("")
+        lines.append(table_metrics_md)
 
     if failed_checks:
         lines.append("")

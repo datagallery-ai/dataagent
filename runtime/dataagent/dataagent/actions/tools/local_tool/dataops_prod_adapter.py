@@ -176,7 +176,7 @@ async def prod_collect_result(job_id: str) -> dict[str, Any]:
     raw = polled.get("raw") or {}
 
     if polled["status"] == "completed":
-        # 将官方返回转换为 list[dict],供后置验证的 _parse_count_from_collect 使用。
+        # 将官方返回转换为 list[dict],供调用方(如数据探查工具)读取行数据。
         # 兼容多种官方返回格式:
         #   - {"data": {"headers": [...], "rows": [[...]]}}   ← 文档示例
         #   - {"data": [...]}                                  ← 直接 list

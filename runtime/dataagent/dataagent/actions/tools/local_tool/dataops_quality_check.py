@@ -98,12 +98,24 @@ _DEFAULT_NULL_RATE_THRESHOLD = 0.80
 _DEFAULT_SINGLE_VALUE_THRESHOLD = 0.95
 # 异常值占比阈值：参考值 0 —— 只要出现一个 <0 或 >1 的比率取值即告警。
 _DEFAULT_OUTLIER_RATIO_THRESHOLD = 0.0
+# 数据行数阈值（**下限**）：行数少于它就告警。
+# 默认 1 —— 「一行都没写进去」是最明确的数据丢失信号。
+# 想更严格（要求至少 N 行）就调大 `row_count_threshold`。
+_DEFAULT_ROW_COUNT_THRESHOLD = 1
 # 比率类字段的默认识别规则：字段名包含 "ratio"。
 # 可通过 tool_config / resource metadata 的 ratio_fields、ratio_field_patterns 覆盖。
 _DEFAULT_RATIO_FIELD_PATTERNS: tuple[str, ...] = ("ratio",)
 
 # 环境变量开关沿用历史命名，向后兼容
 _ENABLE_VALUES = frozenset({"true", "1", "yes", "on", "y", "t"})
+
+#: 校验作用域 —— 逐字段指标（默认）vs 表级指标。
+#:
+#: 逐字段指标（空值率 / 单一值比率 / 异常值占比）都是**比率**，可以基于
+#: ``LIMIT N`` 的采样行计算。表级指标（数据行数）**不是比率** —— 它描述的是
+#: 整张表有多少行，采样得出来的「前 N 行」没有意义，所以必须走**全量 COUNT**。
+_SCOPE_FIELD = "field"
+_SCOPE_TABLE = "table"
 
 
 # ============================================================================
@@ -208,6 +220,11 @@ class QualityChecker:
     #: (字段名, 配置) -> 该 checker 是否适用于该字段；``None`` 表示对所有字段适用。
     #: 用于「只对某一类字段生效」的校验（如异常值占比只针对比率类字段）。
     applies_to: Callable[[str, QualityCheckConfig], bool] | None = None
+    #: 校验作用域：
+    #:   ``"field"``（默认）—— 逐字段指标，结果写进 ``details[field][metric_key]``；
+    #:   ``"table"`` —— 表级指标（如数据行数），结果写进 ``table_metrics[metric_key]``，
+    #:     不参与逐字段的表格渲染。
+    scope: str = _SCOPE_FIELD
 
     def applies_to_field(self, field_name: str, config: QualityCheckConfig) -> bool:
         """该 checker 是否适用于给定字段。"""
@@ -434,11 +451,77 @@ OUTLIER_RATIO_CHECKER = QualityChecker(
 )
 
 
+# ---------------------------------------------------------------------------
+# 内置 checker：数据行数（表级指标）
+# ---------------------------------------------------------------------------
+#
+# 口径：``SELECT COUNT(1) FROM <表> WHERE <分区条件>``
+#
+# **这是表级指标，不是字段级比率** —— 它回答「这张表（这个分区）里到底有多少
+# 行数据」，而不是「某个字段的取值分布好不好」。所以：
+#
+# 1. **不走采样**。采样能算比率，算不出真实行数 —— 前 10000 行永远是 10000。
+#    这条 SQL 是全量 COUNT，是本链路里唯一一条全表扫描的语句。
+# 2. **不挂在字段上**。结果写进 ``table_metrics['row_count']``，不参与逐字段
+#    的 Markdown 表格（那个表格的列都是比率）。
+# 3. **阈值语义是「下限」**。行数太少通常意味着 JOIN 写错了（INNER JOIN 丢数据）、
+#    分区过滤条件写错、或者上游数据没落盘 —— 所以违规方向是 ``< 阈值``。
+#
+# 默认阈值 1（意为「一行都没有」就告警）。想更严格就调大
+# ``row_count_threshold``；想彻底关掉这个校验就把 ``checks`` 里去掉
+# ``row_count``（或设 ``row_count_enabled: false``）。
+
+
+def _build_row_count_sql(ctx: CheckContext) -> str:
+    """数据行数 SQL —— 表级 COUNT。
+
+    形状::
+
+        SELECT COUNT(1) AS row_count
+        FROM <表>
+        WHERE <分区条件>
+
+    **没有派生表、没有 LIMIT** —— 行数必须数全量。分区条件用与其它校验项
+    同一个来源（``ctx.partition_filter()``），保证口径一致：同一个分区。
+    """
+    return (
+        "SELECT\n"
+        "  COUNT(1) AS row_count\n"
+        f"FROM {ctx.temp_table}\n"
+        f"WHERE {ctx.partition_filter()}"
+    )
+
+
+def _row_count_violates(value: float, threshold: float) -> bool:
+    # 行数**少于**阈值即违规（行数太少 = 数据丢了 / 过滤条件写错）。
+    return value < threshold
+
+
+def _row_count_warning(field_name: str, value: float, threshold: float) -> str:
+    return (
+        f"数据行数 {int(value)} < 阈值 {int(threshold)}"
+        f"（疑似 JOIN 丢数据 / 分区过滤条件写错 / 上游数据未落盘）"
+    )
+
+
+ROW_COUNT_CHECKER = QualityChecker(
+    name="row_count",
+    metric_key="row_count",
+    threshold_key="row_count_threshold",
+    default_threshold=_DEFAULT_ROW_COUNT_THRESHOLD,
+    build_sql=_build_row_count_sql,
+    violates=_row_count_violates,
+    format_warning=_row_count_warning,
+    scope=_SCOPE_TABLE,
+)
+
+
 # 全部内置 checker —— 新增校验只需在这里追加一项
 _BUILTIN_CHECKERS: tuple[QualityChecker, ...] = (
     NULL_RATE_CHECKER,
     SINGLE_VALUE_CHECKER,
     OUTLIER_RATIO_CHECKER,
+    ROW_COUNT_CHECKER,
 )
 
 _BUILTIN_BY_NAME: dict[str, QualityChecker] = {c.name: c for c in _BUILTIN_CHECKERS}
@@ -674,7 +757,12 @@ def _resolve_config_locked(tool_cfg: dict[str, Any], resource_cfg: dict[str, Any
         if isinstance(candidate, dict):
             raw_thresholds.update(candidate)
     for source in (tool_cfg, resource_cfg):
-        for key in ("null_rate_threshold", "single_value_threshold", "outlier_ratio_threshold"):
+        for key in (
+            "null_rate_threshold",
+            "single_value_threshold",
+            "outlier_ratio_threshold",
+            "row_count_threshold",
+        ):
             if key in source:
                 raw_thresholds[key] = source[key]
 
@@ -801,9 +889,10 @@ def build_quality_check_sqls(
     ``partition_filter`` 显式给出分区过滤条件（形如 ``pt_d = '20261020'``），
     用于**直连真实目标表**的模式；为 ``None`` 时用 ``partition_col`` +
     ``partition_date`` 拼（临时表模式，临时表只写了一个分区）。
+
+    **表级 checker**（``scope == "table"``，如数据行数）不依赖字段 ——
+    即使 ``fields`` 为空也会生成 SQL，所以这里的空字段短路只针对字段级 checker。
     """
-    if not fields:
-        return []
     ctx = build_check_context(
         temp_table=temp_table,
         fields=fields,
@@ -880,6 +969,10 @@ def parse_checker_result(
     所以这里按字段名取值；旧的 ``null_rate__col1`` 形式也一并兼容。
 
     ``details[field][checker.metric_key]`` —— 与历史返回结构保持一致。
+
+    **表级 checker**（``scope == "table"``，如数据行数）走另一条路：结果行里
+    是 ``{列名: 值}``（如 ``{"row_count": 1234}``），不挂在字段上，而是写进
+    ``table_metrics[checker.metric_key]``。此时 ``details`` 为空 dict。
     """
     cfg = config or resolve_config(None)
 
@@ -888,8 +981,26 @@ def parse_checker_result(
     if isinstance(data, list) and data and isinstance(data[0], dict):
         row = data[0]
 
+    # --- 表级指标（如数据行数）---
+    if checker.scope == _SCOPE_TABLE:
+        value = _coerce_float(row.get(checker.metric_key))
+        if value is None:
+            # 兼容别名写法（如 ``row_count__total``）。
+            value = _coerce_float(row.get(checker.alias("total")))
+        warnings: list[str] = []
+        if value is not None:
+            threshold = cfg.threshold_for(checker)
+            if checker.violates(value, threshold):
+                warnings.append(checker.format_warning("table", value, threshold))
+        return {
+            "ok": len(warnings) == 0,
+            "warnings": warnings,
+            "details": {},
+            "table_metrics": {checker.metric_key: value},
+        }
+
     details: dict[str, dict[str, Any]] = {}
-    warnings: list[str] = []
+    warnings = []
 
     for field_name in fields:
         if not checker.applies_to_field(field_name, cfg):
@@ -965,25 +1076,42 @@ def merge_checker_results(
     ``details`` 的形状是**稳定的**：每个字段都带上全部生效 checker 的 metric key。
     某个 checker 没跑（比如没有比率类字段，异常值占比那条 SQL 压根没生成）
     或该字段不适用时，对应的值是 ``None`` —— 而不是缺这个 key。
+
+    **表级 checker**（``scope == "table"``，如数据行数）的指标不进 ``details``，
+    而是合并进 ``table_metrics``（``{metric_key: value}``）。
     """
     cfg = config or resolve_config(None)
     active = tuple(checkers) if checkers is not None else cfg.checkers
     by_name = {checker.name: checker for checker in active}
 
+    field_scoped = [c for c in active if c.scope != _SCOPE_TABLE]
+    table_scoped = [c for c in active if c.scope == _SCOPE_TABLE]
+
     details: dict[str, dict[str, Any]] = {
-        name: {checker.metric_key: None for checker in active} for name in fields
+        name: {checker.metric_key: None for checker in field_scoped} for name in fields
     }
+    table_metrics: dict[str, Any] = {checker.metric_key: None for checker in table_scoped}
     warnings: list[str] = []
 
     for checker_name, parsed in parsed_results:
         checker = by_name.get(checker_name)
         metric_key = checker.metric_key if checker is not None else checker_name
+        if checker is not None and checker.scope == _SCOPE_TABLE:
+            value = (parsed.get("table_metrics") or {}).get(metric_key)
+            table_metrics[metric_key] = value
+            warnings.extend(parsed.get("warnings") or [])
+            continue
         for field_name in fields:
             metrics = (parsed.get("details") or {}).get(field_name) or {}
             details.setdefault(field_name, {})[metric_key] = metrics.get(metric_key)
         warnings.extend(parsed.get("warnings") or [])
 
-    return {"ok": len(warnings) == 0, "warnings": warnings, "details": details}
+    return {
+        "ok": len(warnings) == 0,
+        "warnings": warnings,
+        "details": details,
+        "table_metrics": table_metrics,
+    }
 
 
 # ============================================================================
@@ -997,6 +1125,51 @@ def merge_checker_results(
 # 列：字段名 / 非空率(覆盖率) / 单一值比率 / 异常值占比 / 状态。
 # ``None`` 表示该指标**不适用**（非比率类字段不参与异常值占比；或该 checker
 # 没生成对应 SQL）—— 渲染成 ``—``，而不是 0（0 会被误读成「真的算出是 0」）。
+#
+# **表级指标**（数据行数）不进这张表 —— 它的列语义不同（不是比率），
+# 单独用 :func:`render_table_metrics` 渲染成表级的一行。
+
+
+def render_table_metrics(
+    table_metrics: dict[str, Any] | None,
+    truncated: bool = False,
+) -> str:
+    """把**表级指标**（如数据行数）渲染成一行 Markdown 表格。
+
+    表级指标不是比率，语义上跟逐字段的比率表不同 —— 单独一张表更清楚，
+    也避免把「10000 行」这种绝对值混进一列全是 0~1 比率的表里。
+
+    Args:
+        table_metrics: ``{metric_key: value | None}``。``None`` 表示该指标
+            没算出来（执行失败/超时），渲染成 ``未完成``。
+        truncated: 为 ``True`` 时注明行数只是**下界**（试算写入被截断过，
+            真实数据可能更多）。
+
+    Returns:
+        Markdown 表格文本；无表级指标时返回空串（调用方按需拼接）。
+    """
+    if not table_metrics:
+        return ""
+    rows = []
+    for metric_key, value in table_metrics.items():
+        label = _TABLE_METRIC_LABELS.get(metric_key, metric_key)
+        if value is None:
+            cells = "未完成"
+        elif float(value).is_integer():
+            cells = str(int(value))
+        else:
+            cells = f"{float(value):.4f}"
+        if truncated and metric_key == "row_count":
+            label = f"{label}（≥，试算写入被截断）"
+        rows.append(f"| {label} | {cells} |")
+    header = "| 表级指标 | 值 |\n|---|---|"
+    return "\n".join([header, *rows])
+
+
+#: 表级 metric_key → 中文列名
+_TABLE_METRIC_LABELS: dict[str, str] = {
+    "row_count": "数据行数",
+}
 
 
 def render_metrics_table(
@@ -1195,6 +1368,7 @@ async def run_quality_check(
     _partition_date: str | None = None,
     direct_table: str | None = None,
     partition_filter: str | None = None,
+    row_limit: int = 0,
 ) -> dict[str, Any] | None:
     """对 INSERT 落地的表跑一轮数据正确性校验。
 
@@ -1222,6 +1396,9 @@ async def run_quality_check(
             直接对这张真实表做统计。
         partition_filter: 直连模式下的分区过滤条件（形如 ``pt_d = '20261020'``）。
             为 ``None`` 时用默认分区列 + 分区日期。
+        row_limit: 试算写入时的行数上限（> 0 表示临时表只写了前 N 行）。
+            传这个值时，数据行数只是**下界**（真实数据可能更多），结果里会
+            带上 ``row_count_truncated`` 标记，报告里也会注明。
 
     Returns:
         ``None`` 表示跳过；否则返回
@@ -1237,6 +1414,7 @@ async def run_quality_check(
             partition_date=_partition_date,
             direct_table=direct_table,
             partition_filter=partition_filter,
+            row_limit=row_limit,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[quality_check] unexpected failure (ignored): {exc}")
@@ -1252,6 +1430,7 @@ async def _run_quality_check_impl(
     partition_date: str | None,
     direct_table: str | None = None,
     partition_filter: str | None = None,
+    row_limit: int = 0,
 ) -> dict[str, Any] | None:
     if not config.enabled:
         logger.debug("[quality_check] disabled by config")
@@ -1303,12 +1482,13 @@ async def _run_quality_check_impl(
         target_table = temp_table
         filter_expr = ""
 
+    checkers = config.checkers
     fields = _extract_fields_from_insert_sql(sql, config.exclude_fields)
-    if not fields:
+    # 表级 checker（数据行数）不依赖字段 —— 字段解析不出来时它仍然可以跑。
+    if not fields and not any(c.scope == _SCOPE_TABLE for c in checkers):
         logger.debug("[quality_check] skipped: no checkable fields in INSERT")
         return None
 
-    checkers = config.checkers
     # 字段类型来自交付的 DDL —— 决定判空写法（STRING 用 bicoredata.IsEmpty，
     # 数值等用 IS NOT NULL）。读不到就退回 IS NOT NULL。
     column_types = parse_ddl_column_types(_find_ddl_in_workspace(runtime))
@@ -1408,6 +1588,9 @@ async def _run_quality_check_impl(
         checker = checker_by_name.get(item["name"])
         if checker is None:
             continue
+        if checker.scope == _SCOPE_TABLE:
+            # 表级指标不挂在字段上 —— 它失败就是「整表行数未知」。
+            continue
         for field_name in fields:
             if checker.applies_to_field(field_name, config):
                 failed_metrics.setdefault(field_name, []).append(checker.metric_key)
@@ -1420,6 +1603,8 @@ async def _run_quality_check_impl(
         "ok": merged["ok"] and not failed_checks,
         "warnings": merged["warnings"],
         "details": merged["details"],
+        # 表级指标（如数据行数）—— 不在逐字段的 details 里，单独一层。
+        "table_metrics": merged.get("table_metrics") or {},
         "sampled": True,
         "sample_size": config.sample_size,
         "job_id": job_ids[-1] if job_ids else None,
@@ -1439,6 +1624,10 @@ async def _run_quality_check_impl(
         "partition_date": pt_date,
         # 直连模式额外标记：本轮校验的是真实目标表（没走临时表）。
         "direct": bool(direct_table),
+        # 试算链路写入被截断（只写了前 N 行）—— 此时行数只是**下界**，
+        # 真实数据可能更多。直连真实表时这个标记恒为 False。
+        "row_count_truncated": bool(row_limit and row_limit > 0 and not direct_table),
+        "row_limit": row_limit if row_limit and row_limit > 0 and not direct_table else None,
     }
 
 

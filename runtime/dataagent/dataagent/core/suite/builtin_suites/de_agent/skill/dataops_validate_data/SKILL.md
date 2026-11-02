@@ -7,7 +7,7 @@ description: |
     2. 目标表已有历史产出 —— 想直接对那张真实表做数据体检,而不是再跑一遍试算。
   本 skill **只做数据验证**:不建表、不插入、不用临时表替换,直接查真实目标表。
   能力:空值覆盖率(non-null rate) + 单一值覆盖率(single-value ratio)
-    + 异常值占比(outlier ratio,仅比率类字段)。
+    + 异常值占比(outlier ratio,仅比率类字段) + 数据行数(row count,表级)。
   实现:工具 `dataops_validate_data`(`de_agent/tools/dataops_validate_data_tool.py`),
     校验器注册表在 `actions/tools/local_tool/dataops_quality_check.py`。
   NOT for: 建表 + 试算 + 交付后自动校验(那是 dataops_quality_check skill 的活);
@@ -30,7 +30,8 @@ description: |
         │
         ├─ null_rate          空值覆盖率
         ├─ single_value_ratio 单一值覆盖率
-        └─ outlier_ratio      异常值占比（仅比率类字段）
+        ├─ outlier_ratio      异常值占比（仅比率类字段）
+        └─ row_count          数据行数（表级指标，不挂字段）
         │
         ▼
    Markdown 表格 → 前端展示
@@ -94,8 +95,9 @@ dataops_validate_data(
    要查别的分区，显式传 `partition_filter`（同样只支持 `pt_d`）。
 5. **采样而非全表**。默认 `LIMIT 10000` 行统计，极端倾斜数据请调大
    `tools.yaml` 里 `dataops_validate_data.config.quality_check.sample_size`。
-6. **三条 SQL 并发执行**。DataOps 不支持把多个校验项合并成一条语句，所以
-   空值率 / 单一值比率 / 异常值占比是**三条独立语句并发提交**的。
+   （例外：数据行数 `row_count` 是表级指标，必须全量 COUNT，不采样。）
+6. **多条 SQL 并发执行**。DataOps 不支持把多个校验项合并成一条语句，所以
+   空值率 / 单一值比率 / 异常值占比 / 数据行数是**多条独立语句并发提交**的。
 
 ## 返回结果解读
 
@@ -108,6 +110,7 @@ dataops_validate_data(
 | `reason` | 跳过原因：`no_sql` / `not_insert_sql` / `no_target_table` / `no_checkable_fields` |
 | `warnings` | 告警列表（人类可读） |
 | `details` | `{字段名: {null_rate, single_value_ratio, outlier_ratio}}` |
+| `table_metrics` | `{row_count: N}` —— **表级**指标（数据行数），不挂字段 |
 | `markdown` | 渲染好的 Markdown 表格 + 结论（前端展示用） |
 
 `frontend_msg` 里就是那张 Markdown 表格：
@@ -120,6 +123,14 @@ dataops_validate_data(
 ```
 
 `—` 表示该指标**不适用**（例如非比率类字段不参与异常值占比）。
+
+表级指标单独一张表：
+
+```
+| 表级指标 | 值 |
+|---|---|
+| 数据行数 | 12345 |
+```
 
 ## 扩展：新增第 N 种校验
 

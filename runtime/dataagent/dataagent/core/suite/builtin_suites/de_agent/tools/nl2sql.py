@@ -34,6 +34,7 @@ from dataagent.actions.tools.semantic_tool.get_table_desc import get_table_descr
 from dataagent.actions.tools.semantic_tool.search_tables_with_schema import get_table_schema
 from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServiceClient
 from dataagent.core.managers.llm_manager import llm_manager
+from dataagent.core.managers.llm_manager.thinking import validation_llm_kwargs
 from dataagent.core.suite.builtin_suites.de_agent.tools.schema_ddl import schema_to_ddl
 from dataagent.utils.runtime_paths import dataagent_package_root
 
@@ -171,7 +172,7 @@ async def nl2sql_sub_agent_tool(
     }
 
 
-def _validate_nl2sql_metadata_grounding(nl_request: str) -> dict[str, Any]:
+def _validate_nl2sql_metadata_grounding(nl_request: str, enable_thinking: bool = False) -> dict[str, Any]:
     """
     Validate whether the metadata entities referenced in the NL2SQL request
     are grounded in the retrieved metadata context before invoking
@@ -351,7 +352,10 @@ Output format:
     # =========================
     llm = llm_manager.get_default_llm()
     try:
-        response = llm.invoke([{"role": "user", "content": system_prompt}, {"role": "user", "content": user_prompt}])
+        response = llm.invoke(
+            [{"role": "user", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            **validation_llm_kwargs(llm, enable_thinking=enable_thinking),
+        )
         raw_result = response.content.split("</think>")[-1].strip()
         result_json = json.loads(raw_result)
         tokens_used = getattr(response, "usage_metadata", {}).get("total_tokens", 0)

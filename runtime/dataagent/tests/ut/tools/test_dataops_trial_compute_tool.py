@@ -94,7 +94,9 @@ class TestExecution:
 
         seen: list[bool] = []
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             seen.append(_collapse_partition_range)
             return {"passed": True, "job_id": "j-1"}
 
@@ -107,13 +109,131 @@ class TestExecution:
         assert seen == [True]
 
     @pytest.mark.asyncio
+    async def test_dml_row_limit_matches_sample_size(self, tmp_path):
+        """试算的写入量必须被截断到**校验采样量**。
+
+        校验只读前 ``sample_size`` 行，写入更多行既看不到也白等（大分区全量
+        写入动辄几十分钟）。
+        """
+        path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
+
+        seen: list[int | None] = []
+
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
+            seen.append(_row_limit)
+            return {"passed": True, "job_id": "j-1"}
+
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
+            return {"ok": True, "warnings": [], "details": {}}
+
+        with (
+            patch(f"{_VALIDATE}.dataops_validate_sql", side_effect=fake_validate),
+            patch(f"{_VALIDATE}._cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch(f"{_QUALITY}.run_quality_check", side_effect=fake_quality),
+        ):
+            result = await tct.trial_compute_table(dml_path=str(path), _tool_context=_ctx())
+
+        # 默认 sample_size = 10000 → 试算也只写 10000 行
+        assert seen == [10000]
+        assert result["row_limit"] == 10000
+
+    @pytest.mark.asyncio
+    async def test_row_limit_follows_configured_sample_size(self, tmp_path):
+        """采样量被配置改过时，试算的截断量要跟着走。"""
+        path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
+
+        seen: list[int | None] = []
+
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
+            seen.append(_row_limit)
+            return {"passed": True, "job_id": "j-1"}
+
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
+            return {"ok": True, "warnings": [], "details": {}}
+
+        ctx = _ctx()
+        ctx = ToolExecutionContext(
+            runtime=ctx.runtime,  # type: ignore[arg-type]
+            tool_config={"quality_check": {"sample_size": 500}},
+        )
+
+        with (
+            patch(f"{_VALIDATE}.dataops_validate_sql", side_effect=fake_validate),
+            patch(f"{_VALIDATE}._cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch(f"{_QUALITY}.run_quality_check", side_effect=fake_quality),
+        ):
+            await tct.trial_compute_table(dml_path=str(path), _tool_context=ctx)
+
+        assert seen == [500]
+
+    @pytest.mark.asyncio
+    async def test_no_row_limit_when_sampling_is_disabled(self, tmp_path):
+        """``sample_size <= 0`` = 全量扫描统计 —— 这时不能截断写入。"""
+        path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
+
+        seen: list[int | None] = []
+
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
+            seen.append(_row_limit)
+            return {"passed": True, "job_id": "j-1"}
+
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
+            return {"ok": True, "warnings": [], "details": {}}
+
+        ctx = _ctx()
+        ctx = ToolExecutionContext(
+            runtime=ctx.runtime,  # type: ignore[arg-type]
+            tool_config={"quality_check": {"sample_size": 0}},
+        )
+
+        with (
+            patch(f"{_VALIDATE}.dataops_validate_sql", side_effect=fake_validate),
+            patch(f"{_VALIDATE}._cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch(f"{_QUALITY}.run_quality_check", side_effect=fake_quality),
+        ):
+            result = await tct.trial_compute_table(dml_path=str(path), _tool_context=ctx)
+
+        assert seen == [0]
+        assert result["row_limit"] == 0
+
+    @pytest.mark.asyncio
+    async def test_ddl_is_not_row_limited(self, tmp_path):
+        """DDL 没有数据可写，不该被加 LIMIT。"""
+        path = _write_sql(tmp_path, "CREATE TABLE biads.x (col1 string)")
+
+        seen: list[int | None] = []
+
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
+            seen.append(_row_limit)
+            return {"passed": True, "job_id": "j-1"}
+
+        with (
+            patch(f"{_VALIDATE}.dataops_validate_sql", side_effect=fake_validate),
+            patch(f"{_VALIDATE}._cleanup_temp_table_wrapper", return_value="j-cleanup"),
+        ):
+            await tct.trial_compute_table(dml_path=str(path), _tool_context=_ctx())
+
+        # 建表那一次不带行数上限（DDL 加 LIMIT 是语法错误）
+        assert seen == [0]
+
+    @pytest.mark.asyncio
     async def test_pass_runs_quality_check_and_drops_scratch(self, tmp_path):
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": True, "job_id": "j-1"}
 
-        async def fake_quality(sql, *, _tool_context, _partition_date=None):
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
             return {"ok": True, "warnings": [], "details": {}}
 
         cleanup = MagicMock()
@@ -141,12 +261,14 @@ class TestExecution:
     async def test_failure_skips_quality_check(self, tmp_path):
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": False, "error": "syntax error", "job_id": "j-2"}
 
         quality = MagicMock()
 
-        async def fake_quality(sql, *, _tool_context, _partition_date=None):
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
             quality(sql)
             return {"ok": True}
 
@@ -165,7 +287,9 @@ class TestExecution:
     async def test_failure_surfaces_log_analysis(self, tmp_path):
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {
                 "passed": False,
                 "error": "boom",
@@ -192,10 +316,12 @@ class TestQualityCheckNonBlocking:
     async def test_warnings_do_not_flip_passed(self, tmp_path):
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": True, "job_id": "j-3"}
 
-        async def fake_quality(sql, *, _tool_context, _partition_date=None):
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
             return {
                 "ok": False,
                 "warnings": ["字段 'col1' 非空率 0.4500 < 阈值 0.80"],
@@ -225,7 +351,9 @@ class TestScratchTableLifecycle:
         """质量校验链路:不管成功与否,临时表都必须删掉。"""
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": False, "error": "syntax error", "job_id": "j-4"}
 
         cleanup = MagicMock()
@@ -250,7 +378,9 @@ class TestScratchTableLifecycle:
         """DDL 本身没有数据可查,但它建的临时表同样要清理。"""
         path = _write_sql(tmp_path, "CREATE TABLE adhoctemp.tmp_x (col1 string)")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": True, "job_id": "j-4"}
 
         cleanup = MagicMock()
@@ -261,7 +391,7 @@ class TestScratchTableLifecycle:
 
         quality = MagicMock()
 
-        async def fake_quality(sql, *, _tool_context, _partition_date=None):
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
             quality(sql)
             return {"ok": True}
 
@@ -282,7 +412,9 @@ class TestScratchTableLifecycle:
     async def test_cleanup_failure_does_not_break_result(self, tmp_path):
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": True, "job_id": "j-5"}
 
         async def fake_cleanup(sql, *, _tool_context, partition_date=None):
@@ -314,7 +446,9 @@ class TestScratchTableRecreation:
 
         calls: list[str] = []
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             calls.append(sql)
             return {"passed": True, "job_id": f"j-{len(calls)}"}
 
@@ -338,7 +472,9 @@ class TestScratchTableRecreation:
 
         calls: list[str] = []
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             calls.append(sql)
             return {"passed": True, "job_id": "j-1"}
 
@@ -362,7 +498,9 @@ class TestScratchTableRecreation:
 
         calls: list[str] = []
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             calls.append(sql)
             return {"passed": False, "error": "table exists", "job_id": "j-c"}
 
@@ -405,11 +543,13 @@ class TestPartitionDate:
 
         seen: dict[str, str | None] = {}
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             seen["validate"] = _partition_date
             return {"passed": True, "job_id": "j-pd"}
 
-        async def fake_quality(sql, *, _tool_context, _partition_date=None):
+        async def fake_quality(sql, *, _tool_context, _partition_date=None, row_limit=0):
             seen["quality"] = _partition_date
             return {"ok": True}
 
@@ -430,7 +570,9 @@ class TestPartitionDate:
 
         path = _write_sql(tmp_path, "INSERT OVERWRITE TABLE biads.x SELECT col1 FROM src")
 
-        async def fake_validate(sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False):
+        async def fake_validate(
+            sql, *, _tool_context, _partition_date=None, _collapse_partition_range=False, _row_limit=None
+        ):
             return {"passed": True, "job_id": "j-pd2"}
 
         with (

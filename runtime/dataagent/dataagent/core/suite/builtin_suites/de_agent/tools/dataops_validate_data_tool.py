@@ -39,7 +39,9 @@ from typing import Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.dataops_quality_check import (
+    _SCOPE_TABLE,
     render_metrics_table,
+    render_table_metrics,
     resolve_config,
     run_quality_check,
 )
@@ -125,7 +127,9 @@ async def validate_data(
     # --- 解析可校验字段 -------------------------------------------------
     config = resolve_config(_tool_context)
     fields = _extract_fields_from_insert_sql(resolved_sql, config.exclude_fields)
-    if not fields:
+    # 表级校验（数据行数）不依赖字段 —— 字段解析不出来时它仍然可以跑。
+    has_table_checker = any(c.scope == _SCOPE_TABLE for c in config.checkers)
+    if not fields and not has_table_checker:
         return _fmt(
             f"{_REPORT_PREFIX}无法从 INSERT 的 SELECT 投影中解析出可校验字段，已跳过。"
             "请确认 SELECT 里有具名的输出列（`col` 或 `expr AS alias`）。",
@@ -203,6 +207,13 @@ async def validate_data(
         )
 
     body = "\n".join([summary, "", table_md])
+    # 表级指标（数据行数）—— 单独一张表。
+    table_metrics_md = render_table_metrics(
+        result.get("table_metrics") or {},
+        bool(result.get("row_count_truncated")),
+    )
+    if table_metrics_md:
+        body += "\n\n" + table_metrics_md
     if failed_checks:
         body += "\n\n" + "未完成的校验项：\n" + "\n".join(
             f"- {item.get('name')}：{item.get('reason') or item.get('status')}"
@@ -229,6 +240,7 @@ async def validate_data(
             "sample_size": result.get("sample_size"),
             "warnings": warnings,
             "details": details,
+            "table_metrics": result.get("table_metrics") or {},
             "markdown": body,
         },
     )

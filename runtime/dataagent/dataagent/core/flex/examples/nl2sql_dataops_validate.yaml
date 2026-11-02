@@ -62,8 +62,6 @@ RESOURCES:
     category: executable
     metadata:
       enabled: true
-      # 关闭 INSERT 后 post-validate 的空值校验（count=0 不再报错）
-      skip_post_validate_count_zero: true
     transport:
       type: mcp
       url: $env{DATAOPS_MCP_URL}
