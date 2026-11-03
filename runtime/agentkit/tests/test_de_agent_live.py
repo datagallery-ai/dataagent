@@ -34,7 +34,10 @@ def _live_runtime(tmp_path):
                 },
                 "dataagent": {"limits": {"timeout_seconds": 180, "model_calls_per_agent": 25}},
                 "semantic": {"base_url": semantic_url, "timeout": 30},
-                "plugins": {"enabled": ["de-agent"]},
+                "plugins": {
+                    "enabled": ["de-agent"],
+                    "config": {"de-agent": {"dataops": {"enabled": False}}},
+                },
             }
         )
     )
@@ -58,7 +61,7 @@ async def test_de_agent_native_tasks_generate_artifact(tmp_path):
                             "使用 Hive EXTERNAL TABLE，row_total BIGINT COMMENT '总行数'，"
                             "分区 pt_d STRING COMMENT '日期分区'，静态分区值 '20261020'，STORED AS ORC。"
                             "先用 task 的 metadata-recall 获取该表实际 schema，再 write_file 写 create DDL，"
-                            "再通过 task 的 nl2sql 生成 INSERT，最后 validate_deliverables。"
+                            "再通过 task 的 nl2sql 生成 INSERT，最后 check_and_repair_sql。"
                             "只生成文件不执行 SQL。按此明确需求直接完成，不需要确认。"
                         ),
                     }
@@ -92,15 +95,15 @@ async def test_de_agent_native_tasks_generate_artifact(tmp_path):
         assert artifact.is_relative_to(agent.context.session.outputs)
         assert "INSERT" in artifact.read_text().upper()
         assert list((agent.context.session.outputs / "metadata").glob("schema_*.json"))
-        assert any(call.get("name") == "de-agent__validate_deliverables" for call in calls)
+        assert any(call.get("name") == "de-agent__check_and_repair_sql" for call in calls)
         validations = [
             json.loads(message.content)
             for message in response.get("messages", [])
             if isinstance(message, ToolMessage)
-            and message.name == "de-agent__validate_deliverables"
+            and message.name == "de-agent__check_and_repair_sql"
         ]
-        assert validations[-1].get("valid"), validations[-1]
-        assert validations[-1].get("quality_status") == "completed", validations[-1]
+        assert validations[-1].get("passed"), validations[-1]
+        assert validations[-1].get("status") == "PASS", validations[-1]
         assert not list(runtime.paths.for_session("another-session").outputs.rglob("*.sql"))
     finally:
         await agent.aclose()

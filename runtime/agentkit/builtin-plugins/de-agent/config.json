@@ -3,8 +3,6 @@
     "config": {
       "de-agent": {
         "allowed_databases": [],
-        "quality_gate": true,
-        "quality_gate_include_suggestions": false,
         "model": "primary",
         "word_roots": {
           "english_name_column": "词根英文名",
@@ -26,6 +24,39 @@
           "compact_json": false,
           "field_order": "template",
           "semantic_field_reuse": false
+        },
+        "dataops": {
+          "enabled": true,
+          "model": "primary",
+          "timeout_s": 1800,
+          "poll_interval_ms": 30000,
+          "drop_before_create": true,
+          "auto_trial_compute": true,
+          "quality_check": {
+            "enabled": true,
+            "checks": [
+              "null_rate",
+              "single_value_ratio",
+              "outlier_ratio"
+            ],
+            "sample_size": 10000,
+            "thresholds": {
+              "null_rate_threshold": 0.8,
+              "single_value_threshold": 0.95,
+              "outlier_ratio_threshold": 0.0
+            },
+            "ratio_field_patterns": [
+              "ratio"
+            ]
+          }
+        },
+        "sql_checkers": {
+          "model": "primary",
+          "max_model_calls": 6,
+          "repair_attempts": 2,
+          "timeout_seconds": 600,
+          "disabled_rules": [],
+          "dataops_validation_enabled": true
         }
       },
       "nl2sql": {
