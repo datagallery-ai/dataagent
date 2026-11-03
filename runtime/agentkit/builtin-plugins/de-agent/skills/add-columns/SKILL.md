@@ -97,7 +97,7 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 - 如修改涉及前置原始表，需包含 `alter_<origin_table_name>.sql` 和 `modified_insert_<origin_table_name>.sql`
 - 检查生成的 DDL/DML 是否满足用户需求
 - 对照 `sql-rules` skill 中的 `references/ddl_rules.md` 和 `references/dml_rules.md` 中适用的规范检查 DDL/DML，跳过新建表专属规则；新列的类型和 COMMENT、ALTER 与 INSERT 的新列顺序、前置原始表和目标表的字段衔接需逐项核对
-- **`validate_deliverables` 不适用 ALTER 场景，不要调用；不要调用未注册的旧版 SQL 校验工具**
+- **`check_and_repair_sql` 不适用 ALTER 场景，不要调用；不要调用未注册的旧版 SQL 校验工具**
 - 如存在真实校验失败，修正并保存文件后重新检查；字典缺失、服务不可用等非结论性异常按 DDL 规则降级，不反复写入重试
 
 ### Step 9: 输出变更 Diff

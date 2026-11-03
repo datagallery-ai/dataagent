@@ -38,14 +38,23 @@
     "query_sql_process": {
       "entrypoint": "tools/metadata.py:query_sql_process"
     },
-    "validate_deliverables": {
-      "entrypoint": "tools/deliverables.py:validate_deliverables"
-    },
     "validate_word_roots": {
       "entrypoint": "tools/word_roots.py:validate_word_roots"
     },
     "read_ir": {
       "entrypoint": "tools/ir.py:read_ir"
+    },
+    "dataops_probe_table": {
+      "entrypoint": "tools/dataops.py:dataops_probe_table"
+    },
+    "trial_compute_table": {
+      "entrypoint": "tools/dataops.py:trial_compute_table"
+    },
+    "dataops_validate_data": {
+      "entrypoint": "tools/dataops.py:dataops_validate_data"
+    },
+    "check_and_repair_sql": {
+      "entrypoint": "tools/sql_checkers.py:check_and_repair_sql"
     }
   },
   "hooks": {
@@ -95,6 +104,11 @@
       {
         "entrypoint": "hooks/ir.py:ensure_ir_ready",
         "matcher": "validate_deliverables"
+      }
+    ],
+    "after_agent": [
+      {
+        "entrypoint": "hooks/dataops_quality_check_post.py:dataops_quality_check_post"
       }
     ]
   }
