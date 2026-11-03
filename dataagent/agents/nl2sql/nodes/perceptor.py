@@ -11,7 +11,6 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -23,6 +22,7 @@ from dataagent.agents.nl2sql.utils.nl2sql_utils import (
     iter_semantic_column_payloads,
     schema_to_ddl,
 )
+from dataagent.agents.nl2sql.utils.prompt_files import persisted_prompt_file
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState
 from dataagent.core.managers.prompt_manager import PromptTemplate
 from dataagent.utils.constants import (
@@ -173,31 +173,17 @@ class PerceptorNode(BaseNL2SQLNode):
         return state
 
     def _load_prompt(self, name: str | None) -> str:
-        """Load a user-supplied prompt file by name.
+        """读 ``$DATAAGENT_PROMPT_DIR/<name>.md``（文件存在时），否则读包内种子。
 
-        Resolution order:
-        1. If ``name`` is an existing file path → read it directly.
-        2. If ``WORKSPACE.path`` is configured → look for ``<workspace>/<name>``;
-           if found, read it.
-        3. Fall back to the package-bundled prompt at
-           ``nl2sql/prompts/user/<name>`` (via :class:`PromptTemplate`).
-
-        This fallback prevents ``FileNotFoundError`` when the referenced prompt
-        file exists in the package but has not been copied to the workspace.
+        当前目录和 ``WORKSPACE.path`` 不参与。
         """
         if not name:
             return ""
         name = name if name.endswith(".md") else f"{name}.md"
-        prompt_path = Path(name) if Path(name).is_file() else None
-        if prompt_path is not None:
-            logger.info(f"nl2sql load prompt (absolute): {prompt_path}")
-            return prompt_path.read_text(encoding="utf-8")
-        workspace = self._get_agent_config("WORKSPACE.path")
-        if workspace:
-            ws_path = Path(workspace) / name
-            if ws_path.is_file():
-                logger.info(f"nl2sql load prompt (workspace): {ws_path}")
-                return ws_path.read_text(encoding="utf-8")
+        persisted = persisted_prompt_file(name)
+        if persisted is not None:
+            logger.info(f"nl2sql load prompt (persisted): {persisted}")
+            return persisted.read_text(encoding="utf-8")
         logger.info(f"nl2sql load prompt (package fallback): {name}")
         return PromptTemplate.from_package_relative(f"{NL2SQL_PROMPT_PREFIX}/user/{name}").content
 

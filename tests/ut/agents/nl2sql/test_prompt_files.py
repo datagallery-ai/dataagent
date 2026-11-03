@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,8 +29,10 @@ from dataagent.agents.nl2sql.utils import prompt_files as prompt_files_module
 from dataagent.agents.nl2sql.utils.prompt_files import (
     DEFAULT_EDITABLE_PROMPT,
     editable_prompt_path,
+    read_effective_prompt_file,
     read_prompt_file,
     write_prompt_file,
+    write_prompt_override,
 )
 
 
@@ -42,6 +45,9 @@ def package_prompts_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     monkeypatch.setattr(
         prompt_files_module, "dataagent_package_path", lambda *parts: tmp_path.joinpath("package", *parts)
     )
+    prompt_dir = tmp_path / "prompt-dir"
+    prompt_dir.mkdir()
+    monkeypatch.setenv(prompt_files_module.PROMPT_DIR_ENV, str(prompt_dir))
     return prompts_dir
 
 
@@ -125,3 +131,77 @@ def test_write_prompt_file_rejects_missing_target(package_prompts_dir: Path) -> 
         write_prompt_file(package_prompts_dir / "sql_rules_missing.md", "# rules")
     # 目标不存在时不创建新文件
     assert not (package_prompts_dir / "sql_rules_missing.md").exists()
+
+
+def _override_file(name: str) -> Path:
+    return Path(os.environ[prompt_files_module.PROMPT_DIR_ENV]) / name
+
+
+def test_load_prompt_ignores_cwd_and_workspace(
+    package_prompts_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """当前目录和 WORKSPACE.path 里的同名文件不参与；环境变量目录里有文件时才用它。"""
+    from dataagent.agents.nl2sql.nodes.perceptor import PerceptorNode
+
+    class _Seed:
+        content = "# demo rules\n"
+
+        @classmethod
+        def from_package_relative(cls, path: str) -> _Seed:
+            return cls()
+
+    monkeypatch.setattr("dataagent.agents.nl2sql.nodes.perceptor.PromptTemplate", _Seed)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sql_rules_demo.md").write_text("# from cwd\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "sql_rules_demo.md").write_text("# from workspace\n", encoding="utf-8")
+    node = PerceptorNode()
+    node._config_manager = type("Cfg", (), {"get": lambda self, key, default=None: str(workspace)})()
+
+    assert node._load_prompt("sql_rules_demo") == "# demo rules\n"
+    monkeypatch.delenv(prompt_files_module.PROMPT_DIR_ENV, raising=False)
+    assert node._load_prompt("sql_rules_demo") == "# demo rules\n"
+
+    monkeypatch.setenv(prompt_files_module.PROMPT_DIR_ENV, str(tmp_path / "prompt-dir"))
+    write_prompt_override(package_prompts_dir / "sql_rules_demo.md", "# persisted rules\n")
+
+    assert node._load_prompt("sql_rules_demo") == "# persisted rules\n"
+
+
+def test_write_prompt_override_keeps_package_seed(package_prompts_dir: Path) -> None:
+    """在线修改写到 DATAAGENT_PROMPT_DIR，包内种子不变。"""
+    package_file = package_prompts_dir / "sql_rules_demo.md"
+
+    updated_at = write_prompt_override(package_file, "# persisted rules\n")
+
+    override = _override_file("sql_rules_demo.md")
+    assert package_file.read_text(encoding="utf-8") == "# demo rules\n"
+    assert override.read_text(encoding="utf-8") == "# persisted rules\n"
+    markdown, read_at = read_effective_prompt_file(package_file)
+    assert markdown == "# persisted rules\n"
+    assert read_at == updated_at
+
+
+def test_write_prompt_override_without_env_edits_package(
+    package_prompts_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """未设置 DATAAGENT_PROMPT_DIR 时，update 仍改包内种子。"""
+    monkeypatch.delenv(prompt_files_module.PROMPT_DIR_ENV, raising=False)
+    package_file = package_prompts_dir / "sql_rules_demo.md"
+
+    write_prompt_override(package_file, "# edited seed\n")
+
+    assert package_file.read_text(encoding="utf-8") == "# edited seed\n"
+    markdown, _updated_at = read_effective_prompt_file(package_file)
+    assert markdown == "# edited seed\n"
+
+
+def test_write_prompt_override_rejects_missing_package_file(package_prompts_dir: Path) -> None:
+    """包内没有种子时，不在环境变量目录里新建文件。"""
+    missing = package_prompts_dir / "sql_rules_missing.md"
+
+    with pytest.raises(FileNotFoundError):
+        write_prompt_override(missing, "# rules")
+
+    assert not _override_file("sql_rules_missing.md").exists()

@@ -23,7 +23,11 @@ from typing import Any
 import yaml
 
 from dataagent.utils.constants import NL2SQL_PROMPT_PREFIX
+from dataagent.utils.env_utils import get_env
 from dataagent.utils.runtime_paths import dataagent_package_path
+
+#: 在线修改的目录。未设置时，view、update、查询都只用包内种子。
+PROMPT_DIR_ENV = "DATAAGENT_PROMPT_DIR"
 
 
 @dataclass(frozen=True)
@@ -67,16 +71,53 @@ def editable_prompt_path(document: str, yaml_path: Path) -> Path:
     return dataagent_package_path(*parts)
 
 
+def _prompt_dir() -> Path | None:
+    raw = (get_env(PROMPT_DIR_ENV) or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
+def persisted_prompt_file(file_name: str) -> Path | None:
+    """环境变量目录里已有的同名文件。未设置、名字不是裸文件名、或文件不存在时返回 None。"""
+    root = _prompt_dir()
+    if root is None or not file_name or file_name in {".", ".."} or file_name != Path(file_name).name:
+        return None
+    path = root / file_name
+    return path if path.is_file() else None
+
+
 def read_prompt_file(path: Path) -> tuple[str, str]:
     """读取可编辑 md 文件内容，返回 (markdown, mtime_iso)"""
     markdown = path.read_text(encoding="utf-8")
     return markdown, _mtime_to_iso(path)
 
 
+def read_effective_prompt_file(package_path: Path) -> tuple[str, str]:
+    """优先读环境变量目录中的修改，否则读包内种子。"""
+    return read_prompt_file(persisted_prompt_file(package_path.name) or package_path)
+
+
 def write_prompt_file(path: Path, markdown: str) -> str:
     """写入可编辑 md 文件内容，返回 mtime_iso"""
     if not path.is_file():
         raise FileNotFoundError(f"prompt file not found: {path}")
+    return _atomic_write(path, markdown)
+
+
+def write_prompt_override(package_path: Path, markdown: str) -> str:
+    """有 ``DATAAGENT_PROMPT_DIR`` 时写到该目录，否则改包内种子。包内种子必须已存在。"""
+    if not package_path.is_file():
+        raise FileNotFoundError(f"prompt file not found: {package_path}")
+    root = _prompt_dir()
+    if root is None:
+        return write_prompt_file(package_path, markdown)
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    return _atomic_write(root / package_path.name, markdown)
+
+
+def _atomic_write(path: Path, markdown: str) -> str:
+    """同目录临时文件原子替换，返回新的 mtime。"""
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
