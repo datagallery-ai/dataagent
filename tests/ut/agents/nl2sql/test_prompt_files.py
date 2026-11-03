@@ -126,6 +126,25 @@ def test_write_prompt_file_replaces_whole_file(package_prompts_dir: Path) -> Non
     assert not list(package_prompts_dir.glob(".*.tmp"))
 
 
+def test_atomic_write_deletes_temp_file_when_replace_fails(
+    package_prompts_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """替换失败时删掉 mkstemp 留下的临时文件，目标文件保持原样。"""
+    path = package_prompts_dir / "sql_rules_demo.md"
+    original = path.read_text(encoding="utf-8")
+
+    def _fail_replace(src: str, dst: Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(prompt_files_module.os, "replace", _fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        write_prompt_file(path, "# nope\n")
+
+    assert path.read_text(encoding="utf-8") == original
+    assert not list(package_prompts_dir.glob(".*.tmp"))
+
+
 def test_write_prompt_file_rejects_missing_target(package_prompts_dir: Path) -> None:
     with pytest.raises(FileNotFoundError):
         write_prompt_file(package_prompts_dir / "sql_rules_missing.md", "# rules")

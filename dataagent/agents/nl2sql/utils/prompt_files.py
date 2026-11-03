@@ -12,6 +12,7 @@
 # ============================================================================
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from collections.abc import Mapping
@@ -117,15 +118,15 @@ def write_prompt_override(package_path: Path, markdown: str) -> str:
 
 
 def _atomic_write(path: Path, markdown: str) -> str:
-    """同目录临时文件原子替换，返回新的 mtime。"""
+    """同目录临时文件原子替换，返回新的 mtime。临时文件在返回前删除。"""
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(markdown)
-        os.replace(tmp, path)
+        os.replace(tmp_name, path)
     finally:
-        tmp.unlink(missing_ok=True)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(tmp_name)
     return _mtime_to_iso(path)
 
 
