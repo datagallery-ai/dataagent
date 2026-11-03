@@ -148,10 +148,10 @@ def test_query_endpoint_requires_type_and_content(client: TestClient) -> None:
 
 
 def test_query_endpoint_accepts_type_query(client: TestClient) -> None:
-    """Query body is type + content{query, stream}. Output shape stays the same."""
+    """Query body is type + content{query, stream, scenario}. Output shape stays the same."""
     response = client.post(
         OPERATION_PATH,
-        json={"type": "query", "content": {"query": "hello", "stream": False}},
+        json={"type": "query", "content": {"query": "hello", "stream": False, "scenario": "business_twin"}},
     )
 
     assert response.status_code == 200
@@ -226,7 +226,11 @@ def test_query_endpoint_rejects_unknown_body_fields(client: TestClient) -> None:
 def test_operation_endpoint_rejects_unknown_body_fields(client: TestClient) -> None:
     response = client.post(
         OPERATION_PATH,
-        json={"type": "query", "content": {"query": "hello"}, "unknown_field": True},
+        json={
+            "type": "query",
+            "content": {"query": "hello", "scenario": "business_twin"},
+            "unknown_field": True,
+        },
     )
 
     assert response.status_code == 422
@@ -256,7 +260,7 @@ def test_query_endpoint_returns_detailed_sql_security_error() -> None:
     try:
         response = TestClient(app).post(
             OPERATION_PATH,
-            json={"type": "query", "content": {"query": "show missing column"}},
+            json={"type": "query", "content": {"query": "show missing column", "scenario": "business_twin"}},
         )
     finally:
         app.dependency_overrides.pop(get_data_agent_service, None)
@@ -271,7 +275,10 @@ def test_streaming_query_returns_detailed_sql_security_error() -> None:
     try:
         response = TestClient(app).post(
             OPERATION_PATH,
-            json={"type": "query", "content": {"query": "show missing column", "stream": True}},
+            json={
+                "type": "query",
+                "content": {"query": "show missing column", "stream": True, "scenario": "business_twin"},
+            },
         )
     finally:
         app.dependency_overrides.pop(get_data_agent_service, None)
@@ -358,6 +365,58 @@ def test_update_operation_rejects_overlong_markdown(client: TestClient) -> None:
     detail = response.json()["detail"][0]
     assert detail["type"] == "string_too_long"
     assert detail["loc"][-1] == "markdown"
+
+
+def test_query_operation_requires_scenario(client: TestClient) -> None:
+    """content.scenario is mandatory for type=query. Omission does not use the default scene."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "hello"}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "missing"
+    assert detail["loc"][-1] == "scenario"
+
+
+def test_query_operation_rejects_empty_scenario(client: TestClient) -> None:
+    """An empty scenario is rejected instead of falling back to the default."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "hello", "scenario": ""}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_short"
+    assert detail["loc"][-1] == "scenario"
+
+
+def test_semantic_status_requires_scenario(client: TestClient) -> None:
+    """content.scenario is mandatory for type=semantic_status."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "semantic_status", "content": {}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "missing"
+    assert detail["loc"][-1] == "scenario"
+
+
+def test_semantic_status_rejects_empty_scenario(client: TestClient) -> None:
+    """An empty scenario is rejected before any semantic call."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "semantic_status", "content": {"scenario": ""}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_short"
+    assert detail["loc"][-1] == "scenario"
 
 
 def test_view_operation_requires_scenario(client: TestClient) -> None:

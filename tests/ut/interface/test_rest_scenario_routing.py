@@ -152,7 +152,9 @@ def test_missing_config_and_blank_name_fail(tmp_path: Path) -> None:
         build_startup_plan(["=scene.yaml"])
 
 
-def test_query_uses_default_and_operation_selects_scenario(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_legacy_query_uses_default_and_operation_requires_scenario(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     business = _scene(tmp_path, "business_twin")
     traffic = _scene(tmp_path, "traffic_insight")
     plan = build_startup_plan([f"business_twin={business}", f"traffic_insight={traffic}"])
@@ -175,6 +177,10 @@ def test_query_uses_default_and_operation_selects_scenario(tmp_path: Path, monke
             json={"type": "query", "content": {"query": "named", "scenario": "traffic_insight"}},
         )
         omitted = client.post("/api/agent/operation", json={"type": "query", "content": {"query": "plain"}})
+        empty = client.post(
+            "/api/agent/operation",
+            json={"type": "query", "content": {"query": "plain", "scenario": ""}},
+        )
         unknown = client.post(
             "/api/agent/operation",
             json={"type": "query", "content": {"query": "nope", "scenario": "missing"}},
@@ -184,7 +190,11 @@ def test_query_uses_default_and_operation_selects_scenario(tmp_path: Path, monke
     assert old.json()["result"]["message"] == "business_twin:old"
     assert named.status_code == 200
     assert named.json()["result"]["message"] == "traffic_insight:named"
-    assert omitted.json()["result"]["message"] == "business_twin:plain"
+    assert omitted.status_code == 422
+    assert omitted.json()["detail"][0]["type"] == "missing"
+    assert omitted.json()["detail"][0]["loc"][-1] == "scenario"
+    assert empty.status_code == 422
+    assert empty.json()["detail"][0]["type"] == "string_too_short"
     assert unknown.status_code == 422
     assert unknown.json()["detail"] == "unknown scenario: missing"
 

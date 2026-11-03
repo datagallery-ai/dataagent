@@ -143,7 +143,7 @@ def _assert_failure(response, message: str) -> None:
     assert response.json() == {"result": {**_AGENT_FAILURE, "message": message}}
 
 
-def test_semantic_status_up_uses_default_scenario_base_url(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_semantic_status_uses_named_scenario_base_url(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     service = _routed_service(
         tmp_path,
         {
@@ -153,20 +153,23 @@ def test_semantic_status_up_uses_default_scenario_base_url(tmp_path, monkeypatch
     )
     with _install(monkeypatch, service) as client:
         _Http.response = _Response({"status": "UP", "timestamp": "2026-07-31T19:35:05Z"})
-        response = client.post(OPERATION_PATH, json={"type": "semantic_status", "content": {}})
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "semantic_status", "content": {"scenario": "traffic_insight"}},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"result": {"success": True, "status": "UP"}}
     assert _Http.calls == [
         {
-            "url": "http://default.example:1/api/semantic/v1/health",
+            "url": "http://traffic.example:2/api/semantic/v1/health",
             "params": None,
             "headers": None,
         }
     ]
 
 
-def test_semantic_status_on_bare_config_uses_that_base_url(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_semantic_status_on_bare_config_is_unknown_scenario(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "only.yaml"
     path.write_text("{}", encoding="utf-8")
     service = DataAgentService(config_path=path)
@@ -174,13 +177,14 @@ def test_semantic_status_on_bare_config_uses_that_base_url(tmp_path, monkeypatch
     service._cached_agent_type = "nl2sql"
 
     with _install(monkeypatch, service) as client:
-        _Http.response = _Response({"status": "UP"})
-        response = client.post(OPERATION_PATH, json={"type": "semantic_status", "content": {}})
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "semantic_status", "content": {"scenario": "traffic_insight"}},
+        )
 
-    assert response.status_code == 200
-    assert response.json()["result"] == {"success": True, "status": "UP"}
-    assert _Http.calls[0]["url"] == "http://only.example:9/api/semantic/v1/health"
-    assert _Http.calls[0]["headers"] is None
+    assert response.status_code == 422
+    assert response.json() == {"detail": "unknown scenario: traffic_insight"}
+    assert _Http.calls == []
 
 
 @pytest.mark.parametrize(
@@ -200,7 +204,10 @@ def test_semantic_status_downstream_failure_returns_agent_envelope(
 
     with _install(monkeypatch, service) as client:
         _Http.response = response_body
-        response = client.post(OPERATION_PATH, json={"type": "semantic_status", "content": {}})
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "semantic_status", "content": {"scenario": "business_twin"}},
+        )
 
     downstream = response_body.json()
     assert response.status_code == response_body.status_code
@@ -292,7 +299,7 @@ def test_ingestion_status_omits_header_when_scenario_unset(tmp_path, monkeypatch
     assert _Http.calls[0]["headers"] is None
 
 
-def test_semantic_status_ignores_configured_scenario(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_semantic_status_health_omits_scenario_header(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     service = _routed_service(
         tmp_path,
         {"business_twin": "http://default.example:1"},
@@ -301,7 +308,10 @@ def test_semantic_status_ignores_configured_scenario(tmp_path, monkeypatch: pyte
 
     with _install(monkeypatch, service) as client:
         _Http.response = _Response({"status": "UP", "timestamp": "2026-07-31T19:35:05Z"})
-        response = client.post(OPERATION_PATH, json={"type": "semantic_status", "content": {}})
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "semantic_status", "content": {"scenario": "business_twin"}},
+        )
 
     assert response.status_code == 200
     assert _Http.calls == [
@@ -311,6 +321,39 @@ def test_semantic_status_ignores_configured_scenario(tmp_path, monkeypatch: pyte
             "headers": None,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("content", "error_type"),
+    [({}, "missing"), ({"scenario": ""}, "string_too_short")],
+)
+def test_semantic_status_rejects_missing_or_empty_scenario(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, content: dict[str, str], error_type: str
+) -> None:
+    service = _routed_service(tmp_path, {"business_twin": "http://default.example:1"})
+
+    with _install(monkeypatch, service) as client:
+        response = client.post(OPERATION_PATH, json={"type": "semantic_status", "content": content})
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == error_type
+    assert detail["loc"][-1] == "scenario"
+    assert _Http.calls == []
+
+
+def test_semantic_status_unknown_scenario_is_422(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+
+    with _install(monkeypatch, service) as client:
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "semantic_status", "content": {"scenario": "missing"}},
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "unknown scenario: missing"}
+    assert _Http.calls == []
 
 
 def test_ingestion_status_unknown_scenario_is_422(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

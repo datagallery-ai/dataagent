@@ -40,13 +40,13 @@ class DataAgentQueryRequest(BaseModel):
 
 
 class QueryContent(BaseModel):
-    """Body of the query operation. stream belongs here, not on other types."""
+    """Body of the query operation. scenario is required; stream stays on this type only."""
 
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
     stream: bool = False
-    scenario: str | None = None
+    scenario: str = Field(min_length=1)
 
 
 class QueryRequest(BaseModel):
@@ -94,9 +94,11 @@ class UpdateRequest(BaseModel):
 
 
 class SemanticStatusContent(BaseModel):
-    """semantic_status takes no fields. Health is not scenario-routed."""
+    """Body of semantic_status. scenario selects the yaml; health omits X-Semantic-Scenario."""
 
     model_config = ConfigDict(extra="forbid")
+
+    scenario: str = Field(min_length=1)
 
 
 class SemanticStatusRequest(BaseModel):
@@ -288,7 +290,7 @@ async def agent_operation(
     if isinstance(request, UpdateRequest):
         return await _run_operation(service.update_prompt(request.content.scenario, request.content.markdown))
     if isinstance(request, SemanticStatusRequest):
-        return await _run_operation(service.semantic_status())
+        return await _run_operation(service.semantic_status(request.content.scenario))
     if isinstance(request, IngestionStatusRequest):
         return await _run_operation(service.ingestion_status(request.content.scenario, request.content.traceId))
     raise AssertionError(f"unsupported type: {getattr(request, 'type', request)}")

@@ -276,12 +276,14 @@ class DataAgentService:
         """Return True when the underlying agent has been initialized."""
         return self._agent is not None
 
-    async def semantic_status(self) -> dict[str, Any]:
-        """Report whether the default scenario's semantic service process is UP."""
+    async def semantic_status(self, scenario: str) -> dict[str, Any]:
+        """Report whether the selected scenario's semantic service process is UP."""
         agent: DataAgent | None = None
         try:
-            agent = self._default_agent()
+            agent = self._select(scenario)
             payload = await asyncio.to_thread(self._semantic_get, agent, "health")
+        except UnknownScenarioError:
+            raise
         except SemanticServiceError as exc:
             logger.warning("semantic status failed: status={} error_code={}", exc.status_code, exc.error_code)
             return self._format_downstream_error(exc, fallback=_SEMANTIC_NOT_UP, agent=agent)
@@ -393,14 +395,6 @@ class DataAgentService:
             )
             return self._format_error(str(exc), agent=agent)
         return {"result": {"success": True, "updated_at": updated_at}}
-
-    def _default_agent(self) -> DataAgent:
-        """Return the agent for the first ``--config``. A bare path has no scenario table."""
-        if self._agent is None:
-            self.initialize()
-        if self._agent is None:
-            raise RuntimeError("DataAgent service is not initialized.")
-        return self._agent
 
     def _select(self, scenario: str | None) -> DataAgent:
         """Return the agent for this request. An empty scenario uses the default agent."""
