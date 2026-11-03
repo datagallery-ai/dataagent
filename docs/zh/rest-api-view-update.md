@@ -32,13 +32,13 @@ uv run -m dataagent \
 
 两个场景写入目标：
 
-| `content.scenario` | yaml 里的配置 | 写入的文件 |
+| `content.scenario` | yaml 里的配置 | 写入的文件（已设置 `DATAAGENT_PROMPT_DIR`） |
 | --- | --- | --- |
-| `business_twin` | `CORE.perceptor.user_sql_rules: sql_rules_business_twin` | `dataagent/agents/nl2sql/prompts/user/sql_rules_business_twin.md` |
-| `traffic_insight` | `CORE.perceptor.user_sql_rules: sql_rules_traffic_insight` | `dataagent/agents/nl2sql/prompts/user/sql_rules_traffic_insight.md` |
+| `business_twin` | `CORE.perceptor.user_sql_rules: sql_rules_business_twin` | `$DATAAGENT_PROMPT_DIR/sql_rules_business_twin.md` |
+| `traffic_insight` | `CORE.perceptor.user_sql_rules: sql_rules_traffic_insight` | `$DATAAGENT_PROMPT_DIR/sql_rules_traffic_insight.md` |
 
 - 写入目标由 yaml 里的 `CORE.perceptor.user_sql_rules` 决定，配置的是包内文件名（不带 `.md`，加载时自动补后缀），不是外部绝对路径；这条解析规则同样登记在 `EDITABLE_PROMPTS` 开放清单里（文档名 `sql_rules`）。
-- 覆盖包内文件要求进程能写安装目录；镜像重建会恢复旧文件。生产环境改前建议先备份原文件。
+- 设置 `DATAAGENT_PROMPT_DIR` 后，在线修改写到 `$DATAAGENT_PROMPT_DIR/<文件名>.md`，不改镜像里的包内种子。容器把这个目录挂成卷，重建后修改还在。未设置该变量时，view、update 和查询都只读写包内种子。
 - **前置条件**：operation 上的 `view`、`update`、`query` 都要带已登记的 `content.scenario`，只在 `--config 场景名=yaml` 下可用。单配置启动（`--config path` 不带等号）时没有场景名，这些请求一律 422。旧的 `POST /api/agent/query` 不带 `scenario`，不受影响
 
 ### 2.2 操作一：查看 prompt（type=view）
@@ -124,8 +124,8 @@ jq -n --arg scenario business_twin --rawfile markdown ./sql_rules_business_twin.
 
 ## 3. 规格约束与边界
 
-1. update 是整份替换：`content.markdown` 携带全文，服务端原样覆盖包内 md
-2. 在线更新确实生效的机制：`PerceptorNode._aprocess` 每次感知都调用 `_load_prompt`，后者每次对目标文件执行 `read_text(encoding="utf-8")`，进程内不缓存正文。加载顺序是 绝对路径 → `<WORKSPACE.path>/<name>` → 包内 `nl2sql/prompts/user/<name>.md`。因此 update 写入后无需重启，下一次 query 即读到新内容；反向也成立：若 `<WORKSPACE.path>` 存在同名文件，加载顺序优先于包内文件，update 写入的包内文件会被盖过
+1. update 是整份替换：`content.markdown` 携带全文，服务端原样覆盖目标 md
+2. 在线更新确实生效的机制：`PerceptorNode._load_prompt` 每次查询都重新读文件，进程内不缓存正文。view、update、查询走同一条路线，只看两处：`$DATAAGENT_PROMPT_DIR/<name>.md` 存在就用它，否则用包内 `nl2sql/prompts/user/<name>.md`。当前目录和 `WORKSPACE.path` 不参与。设置了环境变量时，update 只写环境变量目录，包内种子保持镜像原样；目录里还没有文件时，view 和查询先读包内种子，第一次 update 再创建环境变量下的文件。未设置环境变量时，三处都读写包内种子。
 3. view/update 两个操作的目标由 `scenario` 固定映射到包内文件，调用方不能指定别的路径；服务端也不打开调用方给的任何路径（请求里发的是全文，不是文件路径）。目标文件路径在进程内缓存：服务运行中修改 yaml 里的 `user_sql_rules` 值不会改变 view/update 的目标文件，重启进程后才切换。
 4. `updated_at` 是目标文件的 mtime（UTC ISO 8601，含微秒）。view 返回当前文件 mtime；update 成功后也回写该值。它不是审计记录：安装/升级、镜像重建、绕过接口直接改文件都会刷新它，回答的是"当前这份内容何时落盘"。
 5. 场景路由边界：请求里的 `scenario` 必须和启动参数 `--config` 等号左边的场景名一致。没有这项名字时返回 **422**，响应体与 query 相同的 `{"detail": "unknown scenario: <名字>"}`（两个操作在同一路径上行为一致）。同一个场景名在启动参数里出现两次，启动失败，后一次不覆盖前一次。
@@ -147,7 +147,7 @@ jq -n --arg scenario business_twin --rawfile markdown ./sql_rules_business_twin.
    | 场景路由 | 未登记的 `scenario` | 请求里的 `scenario` 未在启动参数登记 | 422，`{"detail": "unknown scenario: ..."}`，与 query 一致 |
    | 文件层（失败包） | 场景 yaml 未配置 `CORE.perceptor.user_sql_rules` | yaml 里删掉该键 | code `WORKFLOW-AGENT-001`，HTTP 500 |
    | 文件层（失败包） | yaml 配了带目录的名字 | `user_sql_rules: "../xxx"` | code `WORKFLOW-AGENT-001`，HTTP 500，文件不写入 |
-   | 文件层（失败包） | 目标包内文件不存在（view 同样适用）/ 写入失败（如安装目录只读） | yaml 指向未随包发布的文件名 | code `WORKFLOW-AGENT-001`，HTTP 500，原文件保持完好 |
+   | 文件层（失败包） | 包内种子文件不存在（view 同样适用），或 `DATAAGENT_PROMPT_DIR` 不可写 | yaml 指向未随包发布的文件名 | code `WORKFLOW-AGENT-001`，HTTP 500，种子文件保持完好 |
 
    失败包示例（文件层错误使用，外层仍是 `{"result": ...}`，`success: false`，字段与现有 operation 失败包一致：`code`、`message`、`http_status`、`component`、`retryable`）：
 
@@ -206,9 +206,9 @@ jq -n --arg scenario business_twin --rawfile markdown ./sql_rules_business_twin.
 
 ### 4.6 预期现象（免责，非缺陷）
 
-- `<WORKSPACE.path>` 下存在同名 md 时加载优先级高于包内文件：update 后 query 不生效属预期（见 §3 第 2 条）
+- 在线修改落在 `DATAAGENT_PROMPT_DIR`。未设置该变量，或目录没有挂卷时，容器重建后 view 回到包内种子（见 §2.1、§3 第 2 条）
 - 服务运行中改 yaml 的 `user_sql_rules` 值不改变 view/update 目标（进程内缓存），需重启（见 §3 第 3 条）
-- `updated_at` 不是审计记录：镜像重建、绕过接口手改文件都会刷新它；镜像重建后 view 内容回到镜像内版本（见 §3 第 4 条）
+- `updated_at` 不是审计记录：绕过接口手改持久化文件会刷新它（见 §3 第 4 条）
 
 ### 4.7 自动化回归入口
 

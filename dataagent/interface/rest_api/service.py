@@ -26,8 +26,8 @@ from dataagent.actions.tools.semantic_tool.semantic_client import SemanticServic
 from dataagent.agents.nl2sql.utils.prompt_files import (
     DEFAULT_EDITABLE_PROMPT,
     editable_prompt_path,
-    read_prompt_file,
-    write_prompt_file,
+    read_effective_prompt_file,
+    write_prompt_override,
 )
 from dataagent.core.context.context import ContextFactory
 from dataagent.interface.rest_api.start_service import ScenarioTable, UnknownScenarioError
@@ -365,7 +365,7 @@ class DataAgentService:
         agent = self._agents.get(scenario) or self._agent
         try:
             path = self._prompt_target(scenario, document)
-            markdown, updated_at = await asyncio.to_thread(read_prompt_file, path)
+            markdown, updated_at = await asyncio.to_thread(read_effective_prompt_file, path)
         except UnknownScenarioError:
             raise
         except Exception as exc:
@@ -383,7 +383,7 @@ class DataAgentService:
         agent = self._agents.get(scenario) or self._agent
         try:
             path = self._prompt_target(scenario, document)
-            updated_at = await asyncio.to_thread(write_prompt_file, path, markdown)
+            updated_at = await asyncio.to_thread(write_prompt_override, path, markdown)
         except UnknownScenarioError:
             raise
         except Exception as exc:

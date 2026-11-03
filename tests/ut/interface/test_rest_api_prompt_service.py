@@ -44,6 +44,9 @@ def package_prompts_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     prompts_dir = root / "agents/nl2sql/prompts/user"
     prompts_dir.mkdir(parents=True)
     monkeypatch.setattr(prompt_files_module, "dataagent_package_path", lambda *parts: root.joinpath(*parts))
+    prompt_dir = tmp_path / "prompt-dir"
+    prompt_dir.mkdir()
+    monkeypatch.setenv(prompt_files_module.PROMPT_DIR_ENV, str(prompt_dir))
     return prompts_dir
 
 
@@ -110,8 +113,10 @@ async def test_update_prompt_replaces_whole_file(
 
     result = await service.update_prompt("business_twin", MARKDOWN)
 
-    assert target.read_text(encoding="utf-8") == MARKDOWN
-    assert result == {"result": {"success": True, "updated_at": _mtime_iso(target)}}
+    override = Path(os.environ[prompt_files_module.PROMPT_DIR_ENV]) / target.name
+    assert target.read_text(encoding="utf-8") == "# old rules\n"
+    assert override.read_text(encoding="utf-8") == MARKDOWN
+    assert result == {"result": {"success": True, "updated_at": _mtime_iso(override)}}
     assert result["result"]["updated_at"] != datetime.fromtimestamp(1000000000, tz=UTC).isoformat()
 
 
@@ -130,7 +135,8 @@ async def test_update_then_view_round_trip(
     assert viewed["result"]["success"] is True
     assert viewed["result"]["markdown"] == MARKDOWN
     assert viewed["result"]["updated_at"] == updated["result"]["updated_at"]
-    assert target.read_text(encoding="utf-8") == MARKDOWN
+    assert target.read_text(encoding="utf-8") == "# old rules\n"
+    assert (Path(os.environ[prompt_files_module.PROMPT_DIR_ENV]) / target.name).read_text(encoding="utf-8") == MARKDOWN
 
 
 @pytest.mark.asyncio
