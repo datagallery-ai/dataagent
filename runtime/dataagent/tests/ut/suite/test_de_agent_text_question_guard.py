@@ -95,6 +95,20 @@ class TestTextQuestionGuard:
         assert last_ai.tool_calls and last_ai.tool_calls[-1]["name"] == "request_human_feedback"
         assert "请问您确认" in last_ai.tool_calls[-1]["args"]["pending_action"]
 
+    def test_converts_bare_ai_message_result(self):
+        """post-hook 真实形态回归：planner._build_result 的 messages 是单条
+        AIMessage（非列表）——v37_test1q 冒烟 NO_SQL 的根因（_replace_last_ai
+        只认列表，静默早退）。修复后裸消息同样完成转换。"""
+        state = _state(_ai(self.DEAD_END))
+        runtime = _RuntimeStub()
+        result = text_question_guard(state, runtime)  # type: ignore[arg-type]
+        assert result["complete"] is False
+        assert result["need_human_feedback"] is True
+        messages = result["messages"]
+        assert isinstance(messages, list) and len(messages) == 1
+        assert messages[0].tool_calls and messages[0].tool_calls[-1]["name"] == "request_human_feedback"
+        assert "请问您确认" in messages[0].tool_calls[-1]["args"]["pending_action"]
+
     def test_delivery_passes_through(self):
         state = _state([HumanMessage(content="需求"), _ai("已完成，SQL 写入 x.sql，共 8 列。")])
         runtime = _RuntimeStub()

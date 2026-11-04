@@ -12,7 +12,7 @@
 # ============================================================================
 """Planner post-hook that rescues final text questions from terminating the actor loop.
 
-背景（v3.2 Q34-Q71 run，2026-09-17）：agent 在最终回复文本里向用户提问
+背景（Q34-Q71 run，2026-09-17）：agent 在最终回复文本里向用户提问
 （"请问您确认使用方案 A 吗？"）而不调用 request_human_feedback 工具——
 planner 对无工具调用的消息置 complete=True，actor loop 随即结束，问题无人
 回答、SQL 未写，直接产出到 NO_SQL（~12/38 题）。本 hook 在完成前检测
@@ -155,7 +155,7 @@ def _tool_calls(message: AIMessage) -> list[Any]:
 def _ends_awaiting_user(content: str) -> bool:
     """判定回复是否以"等待用户答复"收尾。
 
-    规则（校准自 v3.2 run 的 NO_SQL/PASS/FAIL 最终回复对比）：
+    规则：
     最后一个非空行需含强提问标记，且以问号/吗/呢收尾或含 请问/请确认/请您——
     交付说明（"…已修正为 X。"）不命中。
     """
@@ -173,6 +173,7 @@ def _ends_awaiting_user(content: str) -> bool:
 
 
 def _replace_last_ai(messages: Any, updated: AIMessage) -> list[Any] | None:
+    # post-hook 收到的 result["messages"] 是节点增量输出：planner._build_result
     # 直接给单条 AIMessage（非列表）。裸消息形态返回 [updated]，由
     # BaseNode.aprocess 归一化合并（[*state.messages, *result_msgs]）。
     if isinstance(messages, AIMessage):

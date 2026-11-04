@@ -35,6 +35,12 @@ class FlexState(BaseState):
     feedback: str = ""  # Accumulated user feedback
     terminal_mode: bool = False  # Terminal mode for local debugging
     hitl_count: Annotated[int, add] = 0  # Number of HITL rounds (累加器)
+    # HITL 每题交互预算上限。无 reducer=整写整读，运行期只读；
+    # 注入方=SDK _initialize_state 读 AGENT_CONFIG.hitl_budget。未声明时 LangGraph
+    # 在 graph 输入处静默丢弃该键、消费方恒得 DEFAULT_HITL_BUDGET=4
+    # 此默认值仅为 TypedDict 构造缺省；运行期未注入时
+    # 键缺省，兜底由 hitl_common.DEFAULT_HITL_BUDGET 提供。
+    hitl_budget: int = 4
 
     # Internal control fields
     __hitl_in_current_turn__: bool = False  # Prevent re-entry in same turn
