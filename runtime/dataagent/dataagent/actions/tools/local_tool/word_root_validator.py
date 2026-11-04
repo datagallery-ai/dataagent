@@ -29,9 +29,10 @@ from pathlib import Path
 from typing import Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
+from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 from loguru import logger
 
-_PROMPT_VERSION = "word-root-candidate-ranking-full-table-topk-v3"
+_PROMPT_VERSION = "word-root-candidate-ranking-semantic-columns-v1"
 _MAX_K = 20
 _MAX_BATCH_QUERY_ITEMS = 20
 _DEFAULT_LLM_BATCH_SIZE = 5
@@ -61,6 +62,7 @@ class _WordRootTable:
     description_column: str
     type_column: str
     regex_column: str
+    llm_columns: tuple[str, ...]
 
 
 async def validate_word_root(
@@ -151,6 +153,7 @@ async def validate_word_root(
         english_name=english_name,
         chinese_description=chinese_description,
         k=k,
+        candidate_columns=table.llm_columns,
         llm_call_params=llm_call_params,
     )
     candidates = [
@@ -301,13 +304,15 @@ async def validate_word_roots(
         pools: dict[str, list[tuple[_WordRootRecord, float]]] = {}
         for offset in range(0, len(pending), llm_batch_size):
             query_batch = pending[offset : offset + llm_batch_size]
-            pools.update(await _rank_candidate_queries(
+            ranked_pool = await _rank_candidate_queries(
                 llm=llm,
                 records=normal_records,
                 queries=query_batch,
                 k=k,
+                candidate_columns=table.llm_columns,
                 llm_call_params=llm_call_params,
-            ))
+            )
+            pools.update(ranked_pool)
         ranked_candidates = {
             query_id: [
                 {"record": record.values, "relevance": score}
@@ -372,7 +377,7 @@ def _candidate_cache_key(
     llm_call_params: dict[str, Any],
 ) -> tuple[str, str, str, int, str, str, str]:
     model_name = str(config.get("llm_model") or "planner").strip()
-    version = _PROMPT_VERSION
+    version = f"{_PROMPT_VERSION}:{','.join(table.llm_columns)}"
     return (
         table.fingerprint,
         _normalize_name(english_name),
@@ -420,6 +425,7 @@ def _load_word_root_table(config: dict[str, Any]) -> _WordRootTable:
     description_column = str(config.get("description_column") or "描述")
     type_column = str(config.get("type_column") or "词根类型")
     regex_column = str(config.get("regex_column") or "特殊词根规则")
+    abbreviation_column = str(config.get("abbreviation_column") or "词根简称")
     special_value = str(config.get("special_type_value") or "特殊词根").strip().casefold()
     delimiter = str(config.get("delimiter") or "")
 
@@ -433,6 +439,7 @@ def _load_word_root_table(config: dict[str, Any]) -> _WordRootTable:
         description_column,
         type_column,
         regex_column,
+        abbreviation_column,
         special_value,
         delimiter,
     )
@@ -448,6 +455,7 @@ def _load_word_root_table_cached(
     description_column: str,
     type_column: str,
     regex_column: str,
+    abbreviation_column: str,
     special_value: str,
     configured_delimiter: str,
 ) -> _WordRootTable:
@@ -499,6 +507,16 @@ def _load_word_root_table_cached(
         description_column=description_column,
         type_column=type_column,
         regex_column=regex_column,
+        llm_columns=tuple(
+            column for column in (
+                english_column,
+                chinese_name_column,
+                abbreviation_column,
+                type_column,
+                description_column,
+            )
+            if column in headers
+        ),
     )
 
 
@@ -525,6 +543,7 @@ async def _rank_candidates(
     english_name: str,
     chinese_description: str,
     k: int,
+    candidate_columns: tuple[str, ...],
     llm_call_params: dict[str, Any],
 ) -> list[tuple[_WordRootRecord, float]]:
     if not records:
@@ -539,6 +558,7 @@ async def _rank_candidates(
         records=records,
         queries=[query],
         k=k,
+        candidate_columns=candidate_columns,
         llm_call_params=llm_call_params,
     )
     return pools.get("q0", [])[:k]
@@ -550,14 +570,16 @@ async def _rank_candidate_queries(
     records: list[_WordRootRecord],
     queries: list[dict[str, Any]],
     k: int,
+    candidate_columns: tuple[str, ...],
     llm_call_params: dict[str, Any],
 ) -> dict[str, list[tuple[_WordRootRecord, float]]]:
     """Send the full ordinary-root table once and retrieve final Top-k results."""
     if not records:
         return {query["query_id"]: [] for query in queries}
+    messages = _batch_messages_for_queries(records, queries, k, candidate_columns)
     payload = await _invoke_json(
         llm,
-        _batch_messages_for_queries(records, queries, k),
+        messages,
         llm_call_params=llm_call_params,
     )
     records_by_query = {query["query_id"]: {} for query in queries}
@@ -581,23 +603,28 @@ async def _rank_candidate_queries(
             if record is not None and row_id not in ranked_for_query and len(ranked_for_query) < k:
                 ranked_for_query[row_id] = (record, _score(candidate.get("score")))
 
-    return {
+    ranked = {
         query_id: sorted(ranked.values(), key=lambda item: item[1], reverse=True)
         for query_id, ranked in records_by_query.items()
     }
+    return ranked
 
 
 def _batch_messages_for_queries(
     records: list[_WordRootRecord],
     queries: list[dict[str, Any]],
     k: int,
+    candidate_columns: tuple[str, ...],
 ) -> list[dict[str, str]]:
-    columns = list(records[0].values)
+    columns = [column for column in candidate_columns if column in records[0].values]
     csv_buffer = io.StringIO(newline="")
     writer = csv.DictWriter(csv_buffer, fieldnames=["_candidate_id", *columns])
     writer.writeheader()
     writer.writerows(
-        {"_candidate_id": record.row_id, **record.values}
+        {
+            "_candidate_id": record.row_id,
+            **{column: record.values.get(column, "") for column in columns},
+        }
         for record in records
     )
     queries_payload = [
@@ -612,8 +639,9 @@ def _batch_messages_for_queries(
         {
             "role": "system",
             "content": (
-                "For every query, independently select and rank the final semantically related word roots from the complete supplied CSV table. "
-                "Use all relevant columns, especially the English name and Chinese description when provided. "
+                "For every query, independently select and rank the final semantically related word roots from the supplied table. "
+                "The table includes the English name, Chinese name, abbreviation when available, type, and description. "
+                "Use these semantic fields to judge relevance; metadata such as status, source, creator, and timestamps is omitted. "
                 "If a query has no Chinese description, rely on its English name and the candidate table; do not invent a description. "
                 "Never invent candidates or IDs. Return only JSON: "
                 "{\"results\":[{\"query_id\":string,\"candidates\":[{\"id\":string,\"score\":number}]}]}. "
@@ -622,7 +650,7 @@ def _batch_messages_for_queries(
         },
         {
             "role": "user",
-            "content": "Complete CSV table (all ordinary-root records and columns):\n" + csv_buffer.getvalue(),
+            "content": "Complete ordinary-root table (selected semantic columns):\n" + csv_buffer.getvalue(),
         },
         {
             "role": "user",
@@ -638,9 +666,8 @@ async def _invoke_json(
     *,
     llm_call_params: dict[str, Any],
 ) -> dict[str, Any]:
-    response = await asyncio.to_thread(llm.invoke, messages, **llm_call_params)
-    content = getattr(response, "content", response)
-    return _parse_json_object(str(content))
+    content_text = await collect_llm_stream(llm, messages, **llm_call_params)
+    return _parse_json_object(content_text)
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
