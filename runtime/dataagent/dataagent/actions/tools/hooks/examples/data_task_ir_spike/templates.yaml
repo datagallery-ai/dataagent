@@ -3,6 +3,15 @@
 template_id: data_task_ir
 template_version: 1.0.0
 language: zh-CN
+consistency_contract:
+- 最终输出由 identity.components 主键前缀与 output_features 业务列共同组成；不得因为主键未在 output_features 重复出现而报告漏列或要求双写。
+- 遵循本模板 output_features 对 grain 的约定：用户明确要求不去重时 grain 允许保持 null；不得仅凭 grain=null 就把 identity 已表达的结果主键判为遗漏。常规聚合已明确的分组信息仍需核对。
+- predicate_protocol.operands 按协议用字符串存储；字符串形式的数字不是数据库字段类型证据，没有元数据类型依据时不得仅比较 JSON 字符串/数字形式就判定业务冲突。
+- DataTaskIR 记录语义而不是可执行 SQL。自然语言时间范围必须与 time_context 的窗口、方向、边界语义一致，但不要求它本身是可执行 SQL 或重复计算具体日期常量。
+- 多轮原话按时间排序，最新用户修改或撤销覆盖先前要求；不能同时要求新旧时间窗口、已取消和仍保留的过滤都实现。
+- 按实体分组统计事件行数不要求源表在分组键上唯一；只有用户要求去重实体数时才核对 DISTINCT/去重证据，不为普通 COUNT 强加唯一性或去重。
+- 相等过滤已排除所有其它值，例如 flag=0 已排除 flag=2，不要求再重复添加 flag!=2。元数据已明确的枚举映射不因名称简称再次要求澄清。
+- 复合分类替换可由 calc.intent/description 表达条件与分支来源，不强制额外增加模板没有的可执行表达式槽位；仍须检查语义是否完整。
 contract:
 - 每个 field unit 独立调用模型；只能修改当前 writable_template 中出现的字段。
 - 输出必须是单个 JSON 对象；field_id、value、rationale 必填；unresolved/question 按需。
@@ -35,6 +44,10 @@ predicate_protocol:
   - ne
   - in
   - not_in
+  - like
+  - not_like
+  - contains
+  - not_contains
   - gt
   - gte
   - lt
@@ -45,6 +58,7 @@ predicate_protocol:
   - not
   - null
   mapping_rules_inherited:
+  - 字符串字面子串匹配用 contains/not_contains，operands 保存原始子串（例如英文点号为 ["."]），不当正则或通配符；SQL 可使用经元数据确认的 INSTR/LOCATE 等函数。SQL LIKE 模式匹配用 like/not_like（例如 ["%.%"]），两者不可混淆。
   - “非零/不等于零/忽略为零” → operator=ne, operands=["0"]；禁止写成 gt
   - 字符串类型空值判断（“为空/非空/不为空/过滤空值”且字段为字符串存储）→ 统一用 bicoredata.IsEmpty：判空表达 `bicoredata.IsEmpty(xxx)`；判非空为 operator=not, operands=["bicoredata.IsEmpty(xxx)"]（或经元数据确认的等价写法）。禁止对 STRING 字段用 is_null / is_not_null 或 IS NULL / IS NOT NULL、= '' / <> '' 凑合
   - 区分存储类型与业务语义：① 语义非字符串但按字符串存储（时间/次数/金额等存 STRING）→ 仍映射 bicoredata.IsEmpty；② 元数据证实为非字符串类型存储 → 不适用 bicoredata.IsEmpty，用 is_null / is_not_null。不得用业务语义代替 schema
@@ -278,6 +292,10 @@ fields:
                     - ne
                     - in
                     - not_in
+                    - like
+                    - not_like
+                    - contains
+                    - not_contains
                     - gt
                     - gte
                     - lt
@@ -1056,6 +1074,10 @@ fields:
                     - ne
                     - in
                     - not_in
+                    - like
+                    - not_like
+                    - contains
+                    - not_contains
                     - gt
                     - gte
                     - lt

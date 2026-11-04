@@ -83,32 +83,34 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
             ir_hooks.get_ir_context(self.runtime)
         await asyncio.gather(ir_hooks.ensure_ir_ready(self.inv), ir_hooks.ensure_ir_ready(self.inv))
         self.assertEqual(self.fill_mock.await_count, 1)
-        for output in ["window 7", "window 14", "window 30"]:
-            self.assertIn(output, self.fill_mock.await_args.kwargs["tool_evidence"])
+        evidence = self.fill_mock.await_args.kwargs["tool_evidence"]
+        self.assertIn("window 30", evidence)
+        for output in ["window 7", "window 14"]:
+            self.assertNotIn(output, evidence)
         self.assertIn("DataTaskIR", ir_hooks.get_ir_context(self.runtime))
-        # Consumer sees new inputs even without a todo/update_ir call.
+        # Superseded results are not inputs; changing the latest result is.
         self.nodes[0].output = "withdraw old window"
+        await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertEqual(self.fill_mock.await_count, 1)
+        self.nodes[-1].output = "withdraw current window"
         await ir_hooks.ensure_ir_ready(self.inv)
         self.assertEqual(self.fill_mock.await_count, 2)
         self.assertIsNone(self.fill_mock.await_args.kwargs["current_values"])
 
-    async def test_deferred_failure_blocks_stale_read_and_retries(self):
+    async def test_deferred_failure_falls_back_and_retries_only_with_new_input(self):
         self.use_on_consume()
         await ir_hooks.update_ir(self.inv)
         self.fill_mock.side_effect = TimeoutError
-        # Soft-fail swallows the fill crash; first-time empty IR still needs a
-        # successful refresh before on_consume consumers commit a signature.
-        with self.assertRaisesRegex(RuntimeError, "consistency check incomplete"):
-            await ir_hooks.ensure_ir_ready(self.inv)
-        with self.assertRaises(RuntimeError):
-            ir_hooks.get_ir_context(self.runtime)
-        self.assertFalse(self.runtime.get_cache("ir_refresh_failed"))
+        await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertEqual(ir_hooks.get_ir_context(self.runtime), "")
+        self.assertTrue(self.runtime.get_cache("ir_refresh_failed"))
         self.fill_mock.side_effect = None
         await ir_hooks.ensure_ir_ready(self.inv)
-        self.assertIn("DataTaskIR", ir_hooks.get_ir_context(self.runtime))
-        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.fill_mock.await_count, 1)
+        self.inv.state["user_query"] = "past 30 days"
         await ir_hooks.ensure_ir_ready(self.inv)
-        self.assertEqual(self.fill_mock.await_count, 2)  # Failure + retry; unchanged input skips.
+        self.assertIn("DataTaskIR", ir_hooks.get_ir_context(self.runtime))
+        self.assertEqual(self.fill_mock.await_count, 2)
         self.assertFalse(self.runtime.get_cache("ir_dirty"))
 
     async def test_consumer_hook_does_not_enable_disabled_ir(self):
@@ -116,6 +118,7 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
         await ir_hooks.ensure_ir_ready(self.inv)
         self.fill_mock.assert_not_awaited()
         self.runtime.set_cache("ir_initialized", True)
+        self.runtime.set_cache("ir_enabled", False)
         self.runtime.get_config = lambda key, default=None: default
         await ir_hooks.ensure_ir_ready(self.inv)
         self.fill_mock.assert_not_awaited()
@@ -123,8 +126,11 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
     async def test_deferred_gate_failure_blocks_consumer_and_retries_only_gate(self):
         self.use_on_consume()
         await ir_hooks.update_ir(self.inv)
+        self.runtime.get_config = lambda key, default=None: {
+            "DATA_TASK_IR.refresh_policy": "on_consume", "DATA_TASK_IR.failure_policy": "strict"
+        }.get(key, default)
         self.gate_mock.side_effect = [(["failed"], False), ([], True)]
-        with self.assertRaisesRegex(RuntimeError, "consistency check incomplete"):
+        with self.assertRaisesRegex(RuntimeError, "尚未通过"):
             await ir_hooks.ensure_ir_ready(self.inv)
         with self.assertRaises(RuntimeError):
             ir_hooks.get_ir_context(self.runtime)
@@ -239,15 +245,14 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
                                           success=True, output="first"))
         await ir_hooks.update_ir(self.inv)
         previous = deepcopy(self.runtime.get_cache("ir_evidence_parts"))
-        previous_context = ir_hooks.get_ir_context(self.runtime)
         self.nodes[0].output = "corrected"
         self.fill_mock.side_effect = TimeoutError
         await ir_hooks.update_ir(self.inv)
         self.assertEqual(self.runtime.get_cache("ir_evidence_parts"), previous)
-        self.assertFalse(self.runtime.get_cache("ir_refresh_failed"))
-        # Previous IR stays consumable for NL2SQL; evidence commit is not advanced.
-        self.assertEqual(ir_hooks.get_ir_context(self.runtime), previous_context)
+        self.assertTrue(self.runtime.get_cache("ir_refresh_failed"))
+        self.assertEqual(ir_hooks.get_ir_context(self.runtime), "")
         self.fill_mock.side_effect = None
+        self.nodes[0].output = "corrected again"
         await ir_hooks.update_ir(self.inv)
         self.assertIn("corrected", self.fill_mock.await_args.kwargs["tool_evidence"])
         self.assertIsNone(self.fill_mock.await_args.kwargs["current_values"])
@@ -263,30 +268,32 @@ class IncrementalIRTests(unittest.IsolatedAsyncioTestCase):
             await ir_hooks.update_ir(self.inv)
             self.assertEqual(self.fill_mock.await_count, before + 1)
 
-    async def test_gate_failure_retries_gate_without_refilling(self):
+    async def test_strict_gate_failure_retries_only_gate_then_blocks_unchanged_input(self):
+        self.runtime.get_config = lambda key, default=None: {
+            "DATA_TASK_IR.failure_policy": "strict", "DATA_TASK_IR.consistency_policy": "enforce",
+        }.get(key, default)
         self.gate_mock.side_effect = [(["check failed"], False), (["conflicting window"], True)]
-        await ir_hooks.update_ir(self.inv)
-        self.assertEqual(self.runtime.get_cache("ir_gate_warnings"), ["check failed"])
-        self.assertNotIn("check failed", ir_hooks.get_ir_context(self.runtime))
-        self.assertIsNone(self.runtime.get_cache("ir_input_signature"))
-        await ir_hooks.update_ir(self.inv)
-        await ir_hooks.update_ir(self.inv)
+        for _ in range(3):
+            with self.assertRaises(ir_hooks.IRRefreshError):
+                await ir_hooks.update_ir(self.inv)
+            with self.assertRaises(RuntimeError):
+                ir_hooks.get_ir_context(self.runtime)
         self.assertEqual(self.fill_mock.await_count, 1)
         self.assertEqual(self.gate_mock.await_count, 2)
         self.assertEqual(self.runtime.get_cache("ir_gate_warnings"), ["conflicting window"])
-        self.assertNotIn("conflicting window", ir_hooks.get_ir_context(self.runtime))
 
-    async def test_fill_failure_keeps_previous_ir_consumable(self):
+    async def test_fill_failure_never_keeps_previous_ir_consumable(self):
         await ir_hooks.update_ir(self.inv)
-        previous = ir_hooks.get_ir_context(self.runtime)
-        self.assertIn("DataTaskIR", previous)
+        self.assertIn("DataTaskIR", ir_hooks.get_ir_context(self.runtime))
         self.inv.state["user_query"] = "changed"
         self.fill_mock.side_effect = TimeoutError
         await ir_hooks.update_ir(self.inv)
-        # Total fill crash must not permanently block NL2SQL consumers.
-        self.assertFalse(self.runtime.get_cache("ir_refresh_failed"))
-        self.assertIn("DataTaskIR", ir_hooks.get_ir_context(self.runtime))
+        self.assertTrue(self.runtime.get_cache("ir_refresh_failed"))
+        self.assertEqual(ir_hooks.get_ir_context(self.runtime), "")
         self.fill_mock.side_effect = None
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.fill_mock.await_count, 2)
+        self.inv.state["user_query"] = "new evidence confirmed"
         await ir_hooks.update_ir(self.inv)
         self.assertIn("DataTaskIR", ir_hooks.get_ir_context(self.runtime))
 
@@ -767,10 +774,31 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("window conflict", text)
         self.assertNotIn("口径一致性风险提示", text)
         self.assertEqual(runtime.get_cache("ir_gate_warnings"), ["window conflict"])
+        self.assertEqual(text, render.render_constraint_context([FIELD], warnings=['window conflict']))
         self.assertEqual(text, render.render_constraint_context([FIELD]))
+        self.assertIn('【DataTaskIR 强制约束说明】', text)
+        self.assertIn('已确认口径约束', text)
         self.assertIn("事实记录身份不等于去重", text)
         self.assertEqual(render.render_constraint_context([]), "")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PredicateProtocolRegressionTests(unittest.TestCase):
+    def test_string_predicate_protocol_matches_schema_and_is_visible_to_model(self):
+        templates = list_field_templates(load_template_catalog())
+        template = next(t for t in templates if t["field_id"] == "sources")
+        messages = fill.build_field_messages(template, user_query="应用ID不含英文点号", tool_evidence="")
+        prompt = messages[-1]["content"]
+        self.assertIn("过滤谓词协议", prompt)
+        for operator, operand in [("contains", "."), ("not_contains", "."), ("like", "%.%"), ("not_like", "%.%")]:
+            self.assertIn(operator, prompt)
+            result = {"value": {"facts": [{"source_ref": "events", "filters": [
+                {"field_ref": "app_id", "operator": operator, "operands": [operand]}
+            ]}]}}
+            self.assertEqual(fill.field_structural_errors(template, result), [])
+        self.assertEqual(fill.field_structural_errors(template, {"value": None}), [])
+        self.assertEqual(fill.field_structural_errors(template, {"value": {"facts": 123}}),
+                         [p for p in fill.CRITICAL_PATHS["sources"] if p.startswith("facts[]")])

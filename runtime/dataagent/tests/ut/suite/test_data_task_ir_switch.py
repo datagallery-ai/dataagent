@@ -41,13 +41,21 @@ def ir_config(create: bool, update: bool, section: str = "builtin") -> dict:
     return {"TOOLS": {section: entries}}
 
 
+def runtime_for_config(config):
+    cache = {}
+    return SimpleNamespace(
+        get_all_config=lambda: config, get_cache=cache.get, set_cache=cache.__setitem__,
+        get_config=lambda key, default=None: config.get("DATA_TASK_IR", {}).get(key.split(".")[-1], default),
+    )
+
+
 class IRSwitchConfigTests(unittest.TestCase):
     def setUp(self):
         self.hook = load_ir_config_hook()
 
     def check_config(self, config):
         state = {"user_query": "你好"}
-        self.assertIs(self.hook(state, SimpleNamespace(get_all_config=lambda: config)), state)
+        self.assertIs(self.hook(state, runtime_for_config(config)), state)
 
     def test_all_configurations_load_but_single_hook_is_rejected_before_the_turn(self):
         with TemporaryDirectory() as temp:
@@ -130,7 +138,7 @@ class IRSwitchConfigTests(unittest.TestCase):
                     agent._pre_hooks = [
                         agent._resolve_hook_callable(hooks[0]["name"], location="agent.pre"), metadata_check,
                     ]
-                    runtime = SimpleNamespace(get_all_config=manager.get_all)
+                    runtime = runtime_for_config(manager.get_all())
                     state = {"user_query": "你好"}
                     if create != update:
                         with self.assertRaisesRegex(ValueError, "DataTaskIR 配置错误"):
@@ -156,7 +164,7 @@ class IRSwitchRuntimeTests(unittest.IsolatedAsyncioTestCase):
                             "hooks": {"pre": [IR_PREFIX + "ensure_ir_ready"]},
                         })
                     validate_merged_config(config)
-                    load_ir_config_hook()({}, SimpleNamespace(get_all_config=lambda config=config: config))
+                    load_ir_config_hook()({}, runtime_for_config(config))
                     cache = {}
                     runtime = SimpleNamespace(
                         workspace_dir=Path(temp), get_cache=cache.get,

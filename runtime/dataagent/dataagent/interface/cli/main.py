@@ -319,7 +319,7 @@ async def _run_terminal_chat_loop(
         # 同一次 CLI 进程内所有轮次共享同一 session；格式对齐 DataAgent.chat()
         session_id_resolved = datetime.datetime.now(tz=TZ_CN).strftime("%Y%m%d_%H%M%S_") + str(uuid.uuid4())
 
-    run_id = 0
+    from dataagent.interface.cli.session_runs import reserve_run_id
     stream_enabled = bool(getattr(getattr(agent, "_chat_agent", None), "debug", False))
     skip_display = stream_enabled and RICH_AVAILABLE
     try:
@@ -339,7 +339,7 @@ async def _run_terminal_chat_loop(
 
                 initial_state: dict = {
                     "user_query": user_input,
-                    "run_id": run_id,
+                    "run_id": reserve_run_id(agent.config.get_all(), user_id=uid, session_id=session_id_resolved),
                     "session_id": session_id_resolved,
                 }
                 # 仅 CLI 显式开启时写入；否则由 FlexAgent 从 AGENT_CONFIG.enable_portrait 注入
@@ -373,7 +373,6 @@ async def _run_terminal_chat_loop(
                         )
                         console.print()
                 _print_turn_summary(console, response, elapsed_sec)
-                run_id += 1
 
             except KeyboardInterrupt:
                 logger.error("\n\n程序被用户中断")

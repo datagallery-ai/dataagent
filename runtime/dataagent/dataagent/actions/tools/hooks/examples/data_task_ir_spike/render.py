@@ -68,18 +68,13 @@ def render_constraint_context(
     """Render the complete consumer contract; keep policy out of SQL tool adapters."""
     if not field_outputs:
         return ""
-    rendered = (
+    intro = (
         "【DataTaskIR 强制约束说明】\n"
         "以下DataTaskIR记录了此任务的**已确认口径约束**，你生成的SQL**必须严格遵循**：\n\n"
-        + render_context(field_outputs) + "\n\n" + _SQL_CONSTRAINT_RULES
     )
-    if False and warnings:
-        rendered += (
-            "\n【口径一致性风险提示（未确认，生成 SQL 时需谨慎）】\n"
-            "以下风险涉及的口径不得视为已确认强制约束；必须先报告冲突或完成核对，不得自行取舍：\n"
-            + "\n".join(f"- {warning}" for warning in warnings)
-        )
-    return rendered
+    # Retain the warnings parameter for diagnostics compatibility; warnings stay
+    # in logs/trace/snapshots and do not change the rendered constraint contract.
+    return intro + render_context(field_outputs) + "\n\n" + _SQL_CONSTRAINT_RULES
 
 
 def render_context(field_outputs: list[dict[str, Any]]) -> str:

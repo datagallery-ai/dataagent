@@ -22,6 +22,8 @@ HOOKS:
       - name: dataagent.core.flex.hooks.organize_workspace.organize_workspace
   nodes:
     planner:
+      pre:
+        - name: hooks.ir_config.prepare_data_task_context
       post:
         # 最终回复以"等待用户答复"收尾（文本提问、未走 HITL 工具）时，把提问
         # 转换为 request_human_feedback 交由 hitl_auto_resolver 受 budget 约束作答，
