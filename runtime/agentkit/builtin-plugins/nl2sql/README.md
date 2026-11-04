@@ -12,7 +12,7 @@
 
 ```
 nl2sql/                      插件根
-├── .plugin.json             V2 插件清单（id=nl2sql，声明子代理与主代理路由提示）
+├── .plugin.json             插件清单（id=nl2sql，声明子代理与主代理路由提示）
 ├── prompts/routing.md       注入主代理系统提示：只能经 nl2sql 查已配置的库，不搜文件、不用 shell 查库
 ├── subagents/
 │   ├── nl2sql.json          SubAgentSpec（kind=compiled，指向图工厂与描述文件）

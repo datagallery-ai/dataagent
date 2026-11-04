@@ -193,7 +193,7 @@ def test_real_backend_discovers_mcp_before_ready_then_sigterm(tmp_path):
         sys.executable, "-m", "serve", "serve", "--config", str(path),
     ], listener, env={
         **os.environ,
-        "DATAAGENT_V2_INSTANCE_ID": "mcp-startup-test",
+        "DATAAGENT_INSTANCE_ID": "mcp-startup-test",
     }, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         wait_ready(

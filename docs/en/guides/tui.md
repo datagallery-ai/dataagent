@@ -1,16 +1,16 @@
 # TUI guide
 
-This guide is for terminal users, remote server users, and developers. After reading it, you can start the V2 TUI, restore sessions, and view runs and outputs in the terminal.
+This guide is for terminal users, remote server users, and developers. After reading it, you can start the TUI, restore sessions, and view runs and outputs in the terminal.
 
 ## How to start
 
-The TUI is V2 only. With no extra flags it connects to `/dataagent/stream` from `config.json`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
+With no extra flags it connects to `/dataagent/stream` from `config.json`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
 
 ```bash
 npm run start:tui
 ```
 
-The address comes from Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. `--runtime-url` only attaches; its host must be `server.host` or `127.0.0.1`.
+The address comes from Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. `--runtime-url` only attaches. Its host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 
 Resume the latest server session:
 
@@ -98,7 +98,7 @@ Use the Web workbench for full visual demos. Use the TUI to verify agent runtime
 ## Troubleshooting
 
 - Cannot connect: run `npm run start:tui`. It uses `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`, and starts a backend when nothing is listening there.
-- Attach without starting: pass `--runtime-url`. The host must be `server.host` or `127.0.0.1`.
+- Attach without starting: pass `--runtime-url`. The host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 - Model not responding: check `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
 - Session restore fails: confirm `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) answers. The TUI sends that request with no authentication.
 - Command has no effect: run `/help` and check errors in the command hint area.

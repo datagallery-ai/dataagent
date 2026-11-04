@@ -1,6 +1,6 @@
 # TUI
 
-TUI 是仓库里的 `apps/tui`，只保留 v2。与 Web 共用会话列表。没有参数时，按 `config.json` 拉起 `dataagent serve`，或者连上已经在跑的那一份。
+TUI 是仓库里的 `apps/tui`，与 Web 共用会话列表。没有参数时，按 `config.json` 拉起 `dataagent serve`，或者连上已经在跑的那一份。
 
 ## 启动
 
@@ -8,7 +8,7 @@ TUI 是仓库里的 `apps/tui`，只保留 v2。与 Web 共用会话列表。没
 npm run start:tui
 ```
 
-地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起，主机必须是 `server.host` 或 `127.0.0.1`。
+地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起。主机可以是 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
 ```bash
 npm run start:tui -- --resume
@@ -23,7 +23,7 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 
 ## 命令
 
-输入 `/` 打开命令，Tab 补全。V2 提供：
+输入 `/` 打开命令，Tab 补全。可用命令：
 
 | 命令 | 作用 |
 | --- | --- |
@@ -36,13 +36,13 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 | `/outputs` | 打开当前会话的产物列表。别名 `output` |
 | `/exit` | 退出 |
 
-Enter 发送。Shift+Enter、Alt+Enter 和 Ctrl+J 换行。V2 直接启用 CSI-u，启动时不做探测。若 iTerm2 让 Enter 和 Shift+Enter 都发送 CR，把 Shift+Enter 绑成 ESC + `[13;2u`，或改用 Ctrl+J。
+Enter 发送。Shift+Enter、Alt+Enter 和 Ctrl+J 换行。直接启用 CSI-u，启动时不做探测。若 iTerm2 让 Enter 和 Shift+Enter 都发送 CR，把 Shift+Enter 绑成 ESC + `[13;2u`，或改用 Ctrl+J。
 
 输入框从一行向上长到六行，再在内部滚动。模型页脚在 60 列和 80 列时仍留在底部。对话始终单列。
 
 运行中继续输入的消息会排队。`NO_COLOR=1` 关闭颜色。Ctrl+Z 后再 `fg`，会恢复终端状态并重新测量光标。Ctrl+O 展开或收起工具的输入输出。
 
-日志路径 `DATAAGENT_V2_LOG_PATH` 必须设在 TUI 进程环境里。
+日志路径 `DATAAGENT_TUI_LOG_PATH` 必须设在 TUI 进程环境里。
 
 ## 你应该看到什么
 

@@ -37,10 +37,10 @@ import { classifyError, formatErrorMessage, errorLogger } from '../protocol/erro
 import { commandProcessor } from '../commands/index.js';
 import type { CommandContext, CommandResult } from '../commands/types.js';
 import { ConfigClientError, type ConfigClient, type Datasource, type SessionListItem, type Skill } from '../config/index.js';
-import { restoreV2Messages, type V2AppContext } from '../protocol/v2-session-client.js';
+import { restoreMessages, type TuiContext } from '../protocol/session-client.js';
 import type { Message } from '@ag-ui/core';
-import { V2_COMMANDS } from '../v2.js';
-import { useV2TerminalLifecycle } from '../v2-terminal.js';
+import { TUI_COMMANDS } from '../connect.js';
+import { useTerminalLifecycle } from '../terminal-lifecycle.js';
 import { AguiClientError } from '../protocol/agui-client.js';
 import { getLogger } from '../utils/logger.js';
 import { installFullscreenCursorCorrection } from './fullscreen-cursor.js';
@@ -49,7 +49,7 @@ type AppExitReason = 'exit';
 
 interface AppProps {
   client: AgentClient;
-  v2?: V2AppContext | undefined;
+  tui?: TuiContext | undefined;
   configClient?: ConfigClient | undefined;
   onExit?: ((reason: AppExitReason) => void) | undefined;
   datasourceId: string | undefined;
@@ -328,14 +328,14 @@ const findSkillPickerItem = (
 
 export const App: React.FC<AppProps> = ({
   client,
-  v2,
+  tui,
   configClient,
   onExit,
   datasourceId,
   initialDatasourceId,
   initialResume,
 }) => {
-  const { suspended, suspending } = useV2TerminalLifecycle(Boolean(v2));
+  const { suspended, suspending } = useTerminalLifecycle(Boolean(tui));
   const { exit } = useApp();
   const { stdin } = useStdin();
   const { stdout, write: writeToStdout } = useStdout();
@@ -401,8 +401,8 @@ export const App: React.FC<AppProps> = ({
   const handleAgentQueryRef = useRef<((input: string) => Promise<void>) | null>(null);
   const runClockRef = useRef<{ runId: string; startedAt: number } | null>(null);
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
-  const modelName = v2?.model ?? resolveModelName(state);
-  const directory = formatDirectory(v2?.home ?? process.env.PWD ?? process.cwd());
+  const modelName = tui?.model ?? resolveModelName(state);
+  const directory = formatDirectory(tui?.home ?? process.env.PWD ?? process.cwd());
   const startup = {
     threadId: state.threadId,
     connectionStatus: state.connectionStatus,
@@ -466,11 +466,11 @@ export const App: React.FC<AppProps> = ({
   const chatViewportRowCount = scrollableRowCount;
   const inputDisabled = isRestoringSession;
   const inputCommands = useMemo(
-    () => v2 ? V2_COMMANDS : uniqueStrings([
+    () => tui ? TUI_COMMANDS : uniqueStrings([
       ...DEFAULT_COMMANDS,
       ...skillShortcutItems.map((item) => `/${item.id}`),
     ]),
-    [skillShortcutItems, v2],
+    [skillShortcutItems, tui],
   );
 
   const resolveDefaultDatasourceId = useCallback(async (): Promise<string | undefined> => {
@@ -768,18 +768,18 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (v2) {
+    if (tui) {
       setResumeLoadingSessionId(requestedSessionId ?? 'latest');
       try {
-        const id = requestedSessionId ?? (await v2.sessions.listSessions({ limit: 1 })).sessions[0]?.threadId;
+        const id = requestedSessionId ?? (await tui.sessions.listSessions({ limit: 1 })).sessions[0]?.threadId;
         if (!id) {
           setCommandNotice({ kind: 'info', message: 'No saved sessions yet.' });
           return;
         }
-        const session = await v2.sessions.getSession(id);
+        const session = await tui.sessions.getSession(id);
         clearQueuedPrompts();
         if (session.newThreadRequired) store.startNewSession(createThreadId());
-        else store.restoreSession({ threadId: id, ...restoreV2Messages(session.messages) });
+        else store.restoreSession({ threadId: id, ...restoreMessages(session.messages) });
         chatAreaRef.current?.reset();
         setCommandNotice({ kind: 'info', message: session.notice ?? `Restored: ${session.title}` });
       } catch (error) {
@@ -844,7 +844,7 @@ export const App: React.FC<AppProps> = ({
   }
 
   async function openSessionPicker(): Promise<void> {
-    const sessionClient = v2?.sessions ?? configClient;
+    const sessionClient = tui?.sessions ?? configClient;
     if (store.getState().runStatus === 'running') {
       setCommandNotice({
         kind: 'error',
@@ -1160,7 +1160,7 @@ export const App: React.FC<AppProps> = ({
     store.clearInputBuffer();
     setCommandNotice(null);
 
-    if (v2) {
+    if (tui) {
       const [command, argument, ...extra] = input.trim().split(/\s+/);
       if (command === '/exit' && !argument) {
         exitApplication('exit');
@@ -1175,7 +1175,7 @@ export const App: React.FC<AppProps> = ({
         }
         setCommandNotice({ kind: 'info', message: 'Loading session outputs…' });
         try {
-          const files = await v2.sessions.listOutputs(threadId);
+          const files = await tui.sessions.listOutputs(threadId);
           if (store.getState().threadId !== threadId) return;
           setSessionOutputs({ threadId, files });
           setCommandNotice(null);
@@ -1196,7 +1196,7 @@ export const App: React.FC<AppProps> = ({
         if (!argument || argument === 'list') await openSessionPicker();
         else await restoreHistoricalSession(argument === 'latest' ? undefined : argument);
       } else {
-        setCommandNotice({ kind: 'error', message: 'This command is not supported in V2. Use /help.' });
+        setCommandNotice({ kind: 'error', message: 'This command is not supported. Use /help.' });
       }
       return;
     }
@@ -1312,7 +1312,7 @@ export const App: React.FC<AppProps> = ({
 
     const createRunInput = (): RunAgentInput => {
       const runId = `run-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      if (v2) {
+      if (tui) {
         return {
           threadId, runId, messages: messages.filter((message) => message.role === 'user').slice(-1),
           tools: [], context: [], state: {}, forwardedProps: {},
@@ -1386,7 +1386,7 @@ export const App: React.FC<AppProps> = ({
         const eventRunId = event ? runIdFromEvent(event) : undefined;
         if (!eventRunId) return true;
         if (acceptedRunIds.has(eventRunId)) return true;
-        if (v2) return false;
+        if (tui) return false;
 
         // A backend may normalize the run id for resume/canonical identity.
         // While this attempt is still current, treat the first new run id from
@@ -1481,7 +1481,7 @@ export const App: React.FC<AppProps> = ({
             const delta = (event as { delta?: unknown }).delta;
             if (typeof delta === 'string' && delta) {
               const messageId = typeof runtimeEvent.messageId === 'string' ? runtimeEvent.messageId : undefined;
-              if (v2 && (addedSnapshotText || (lastStreamMessageId && messageId !== lastStreamMessageId))) {
+              if (tui && (addedSnapshotText || (lastStreamMessageId && messageId !== lastStreamMessageId))) {
                 startNextTextSegment();
                 store.finalizeAssistantMessage();
                 store.addAssistantMessage('', true);
@@ -1506,7 +1506,7 @@ export const App: React.FC<AppProps> = ({
             flushTextBuffer(false);
             store.finalizeReasoningMessage();
             storeCurrentRunEvent(runtimeEvent);
-            if (v2) {
+            if (tui) {
               store.addRunSummary(threadId, runId, 'completed', performance.now() - startedAt);
             }
           } else if (event.type === 'RUN_ERROR') {
@@ -1517,9 +1517,9 @@ export const App: React.FC<AppProps> = ({
             const errorMessage = typeof message === 'string' ? message : 'Agent run failed';
             storeCurrentRunEvent(runtimeEvent);
 
-            if (v2) {
+            if (tui) {
               const code = typeof runtimeEvent.code === 'string' ? runtimeEvent.code : 'RUN_ERROR';
-              getLogger().error('V2 run failed', { threadId, runId, code, message: errorMessage });
+              getLogger().error('Run failed', { threadId, runId, code, message: errorMessage });
               store.appendToAssistantMessage(`\n\nError [${code}]: ${errorMessage}`);
               store.finalizeAssistantMessage();
               store.addRunSummary(threadId, runId, 'failed', performance.now() - startedAt);
@@ -1529,16 +1529,16 @@ export const App: React.FC<AppProps> = ({
               const friendlyMessage = formatErrorMessage(classifiedError);
               store.updateAssistantMessage(`Error: ${friendlyMessage}`, false);
             }
-          } else if (v2 && event.type === 'MESSAGES_SNAPSHOT') {
+          } else if (tui && event.type === 'MESSAGES_SNAPSHOT') {
             flushTextBuffer(false);
             // AG-UI result deltas omit LangChain's error status; the authoritative
             // snapshot carries it. Combine it with payload errors using the live
             // result rules, without replacing the streamed text.
-            store.reconcileToolResults(restoreV2Messages(runtimeEvent.messages as Message[]).toolCalls);
+            store.reconcileToolResults(restoreMessages(runtimeEvent.messages as Message[]).toolCalls);
             const snapshot = runtimeEvent.messages as Message[];
             const boundary = snapshot.findIndex((message) => message.role === 'user' && message.id === userMessageId);
             if (boundary < 0) {
-              getLogger().warn('V2 snapshot missing current user boundary', { threadId, runId, userMessageId });
+              getLogger().warn('Snapshot missing current user boundary', { threadId, runId, userMessageId });
             } else {
               for (const answer of snapshot.slice(boundary + 1)) {
                 if (answer.role !== 'assistant' || typeof answer.content !== 'string'
@@ -1568,7 +1568,7 @@ export const App: React.FC<AppProps> = ({
         // Ensure run is marked as finished
         const finalState = store.getState();
         if (finalState.runStatus === 'running') {
-          if (v2 && !receivedTerminal) throw new Error('INCOMPLETE_STREAM: connection ended without a terminal event');
+          if (tui && !receivedTerminal) throw new Error('INCOMPLETE_STREAM: connection ended without a terminal event');
           handleCurrentRunEvent({ type: 'RUN_FINISHED', runId: currentAttemptRunId() });
         }
 
@@ -1582,11 +1582,11 @@ export const App: React.FC<AppProps> = ({
           return;
         }
 
-        if (v2) {
+        if (tui) {
           const message = error instanceof Error ? error.message : String(error);
           const code = error instanceof AguiClientError ? error.code : 'TRANSPORT_ERROR';
           store.handleLiveRunEvent({ type: 'RUN_ERROR', runId: currentAttemptRunId(), message });
-          getLogger().error('V2 stream failed', { threadId, runId, code, message });
+          getLogger().error('Stream failed', { threadId, runId, code, message });
           store.appendToAssistantMessage(`\n\nError [${code}]: ${message}`);
           store.finalizeAssistantMessage();
           store.addRunSummary(threadId, runId,
@@ -1699,7 +1699,7 @@ export const App: React.FC<AppProps> = ({
   };
 
   const visibleArtifacts = state.artifacts;
-  const outputArtifacts = v2
+  const outputArtifacts = tui
     ? (sessionOutputs && sessionOutputs.threadId === state.threadId ? sessionOutputs.files : [])
     : visibleArtifacts;
   const liveActivity = state.runStatus === 'running'
@@ -1814,8 +1814,8 @@ export const App: React.FC<AppProps> = ({
             columns={Math.max(20, terminalColumns - 2)}
             rows={workspaceRows}
             fetchArtifactPreview={
-              v2 && sessionOutputs
-                ? (path) => v2.sessions.getOutputPreview(sessionOutputs.threadId, path)
+              tui && sessionOutputs
+                ? (path) => tui.sessions.getOutputPreview(sessionOutputs.threadId, path)
                 : configClient
                 ? (artifactId) => configClient.getArtifactPreview(artifactId)
                 : undefined
@@ -1853,12 +1853,12 @@ export const App: React.FC<AppProps> = ({
                     overflowY="hidden"
                   >
                     <HomeSplash
-                      mounts={v2?.mounts}
+                      mounts={tui?.mounts}
                       rows={scrollableRowCount}
                       columns={chatPaneColumns}
                       startup={startup}
-                      canResume={Boolean(configClient || v2)}
-                      localAgent={Boolean(v2)}
+                      canResume={Boolean(configClient || tui)}
+                      localAgent={Boolean(tui)}
                       input={(promptWidth) => (
                         <EnhancedInputBox
                           onChange={handleInputChange}
@@ -1874,9 +1874,9 @@ export const App: React.FC<AppProps> = ({
                           cursorActive={!pickerOpen && !suspended}
                           disabled={inputDisabled}
                           commands={inputCommands}
-                          restrictCommands={Boolean(v2)}
-                          hideDatasource={Boolean(v2)}
-                          placeholder={v2 ? 'Ask a question… "Summarize 1, 2, 3"' : undefined}
+                          restrictCommands={Boolean(tui)}
+                          hideDatasource={Boolean(tui)}
+                          placeholder={tui ? 'Ask a question… "Summarize 1, 2, 3"' : undefined}
                           modelName={modelName}
                           directory={directory}
                           datasourceId={activeDatasourceId}
@@ -1884,10 +1884,10 @@ export const App: React.FC<AppProps> = ({
                           history={inputHistoryRef.current}
                           onShortcut={(shortcut) => {
                             if (shortcut === '1') {
-                              void handleSubmit(v2 ? 'Summarize the numbers 1, 2, 3.' : 'Show tables');
+                              void handleSubmit(tui ? 'Summarize the numbers 1, 2, 3.' : 'Show tables');
                               return true;
                             }
-                            if (shortcut === '2' && (configClient || v2)) {
+                            if (shortcut === '2' && (configClient || tui)) {
                               void handleCommandExecution('/resume latest');
                               return true;
                             }
@@ -1977,9 +1977,9 @@ export const App: React.FC<AppProps> = ({
                   onLayoutChange={requestControlsMeasurement}
                   disabled={inputDisabled}
                   commands={inputCommands}
-                  restrictCommands={Boolean(v2)}
-                  hideDatasource={Boolean(v2)}
-                  placeholder={v2 ? 'Ask a question… "Summarize 1, 2, 3"' : undefined}
+                  restrictCommands={Boolean(tui)}
+                  hideDatasource={Boolean(tui)}
+                  placeholder={tui ? 'Ask a question… "Summarize 1, 2, 3"' : undefined}
                   modelName={modelName}
                   directory={directory}
                   datasourceId={activeDatasourceId}

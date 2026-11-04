@@ -7,9 +7,9 @@ import { installTerminalRedrawOptimizer } from "./terminal-redraw-optimizer.js";
 import { restoreTerminalForParentShell, withAlternateScreen } from "./terminal-screen.js";
 import { App } from "./ui/App.js";
 import type { AgentClient } from "./protocol/types.js";
-import type { V2AppContext } from "./protocol/v2-session-client.js";
-import { normalizeRuntimeUrl, runV2Tui } from "./v2.js";
-import { configuredListen, formatListenBase, startV2Backend } from "./v2-backend.js";
+import type { TuiContext } from "./protocol/session-client.js";
+import { normalizeRuntimeUrl, connectTui } from "./connect.js";
+import { configuredListen, formatListenBase, startBackend } from "./backend.js";
 import { terminalText } from "./utils/terminal-text.js";
 
 export type AppExitReason = "exit";
@@ -19,7 +19,7 @@ export type RunTuiOptions = {
   fetchImpl?: typeof fetch;
   renderApp?: typeof renderTuiApp;
   env?: NodeJS.ProcessEnv;
-  startBackend?: typeof startV2Backend;
+  startBackend?: typeof startBackend;
 };
 
 export type RenderAppOptions = {
@@ -28,13 +28,13 @@ export type RenderAppOptions = {
   datasourceId: string | undefined;
   initialDatasourceId: string | undefined;
   initialResume?: { enabled: boolean; sessionId?: string | undefined };
-  v2?: V2AppContext | undefined;
+  tui?: TuiContext | undefined;
   shutdownSignal?: AbortSignal | undefined;
   onExit: (reason: AppExitReason) => void;
 };
 
 async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
-  if (options.v2 && !process.stdin.isTTY) {
+  if (options.tui && !process.stdin.isTTY) {
     throw new Error("The TUI requires an interactive terminal. Use the serve command for headless access.");
   }
   let exitReason: AppExitReason = "exit";
@@ -50,7 +50,7 @@ async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
           configClient: options.configClient,
           datasourceId: options.datasourceId,
           initialDatasourceId: options.initialDatasourceId,
-          v2: options.v2,
+          tui: options.tui,
           onExit: (reason) => {
             exitReason = reason;
             options.onExit(reason);
@@ -69,7 +69,7 @@ async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
           // sequence. Ctrl+J remains the newline fallback. Ink restores the
           // protocol on exit/suspend.
           // Windows ConPTY: kitty keyboard has caused host/session teardown on exit.
-          ...(options.v2 && process.platform !== "win32"
+          ...(options.tui && process.platform !== "win32"
             ? { kittyKeyboard: { mode: "enabled" as const } }
             : {}),
         },
@@ -77,11 +77,11 @@ async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
       const stop = () => {
         instance.unmount();
       };
-      if (options.v2 && process.platform !== "win32") {
+      if (options.tui && process.platform !== "win32") {
         process.once("SIGTERM", stop);
         process.once("SIGHUP", stop);
       }
-      if (options.v2) {
+      if (options.tui) {
         options.shutdownSignal?.addEventListener("abort", stop, { once: true });
         if (options.shutdownSignal?.aborted) stop();
       }
@@ -112,14 +112,16 @@ Usage:
 
 Options:
   --config <path>         Additional config above Home defaults
-  --env-file <path>       Optional V2 environment file, resolved by the backend
-  --user <id>             V2 local profile (default: default)
-  --workspace <path>      V2 read-only input; repeat to mount more than one
-  --session <id>          Resume a V2 session in the selected profile
+  --env-file <path>       Optional environment file, resolved by the backend
+  --user <id>             Local profile (default: default)
+  --workspace <path>      Read-only input; repeat to mount more than one
+  --session <id>          Resume a session in the selected profile
   --runtime-url <url>     Attach to this control plane and do not start
                           a backend. Omit it to use config.json
-                          server.host and server.port
-  --resume [sessionId]    Resume a V2 session
+                          server.host and server.port. The host may be
+                          that name, a loopback address, or another IP.
+                          0.0.0.0 and :: connect through loopback
+  --resume [sessionId]    Resume a session
   --help, -h              Show this help message
 
 Examples:
@@ -131,8 +133,9 @@ Notes:
   With no arguments the TUI uses config.json server.host and server.port
   (default http://127.0.0.1:8790). It starts dataagent serve when that
   address is down, and connects when it is already up. --runtime-url
-  attaches and does not start a backend. Its host must be server.host
-  or 127.0.0.1.
+  attaches and does not start a backend. Its host may be server.host,
+  a loopback address, or another IP. 0.0.0.0 and :: connect through
+  loopback.
 `);
 }
 
@@ -166,7 +169,7 @@ function resolveResumeRequest(
 
 const VALUE_FLAGS = ["--config", "--env-file", "--workspace", "--user", "--session", "--runtime-url"] as const;
 
-/** Accept the V2 flags. Anything else is an unknown option. */
+/** Accept the startup flags. Anything else is an unknown option. */
 export function parseTuiArgs(args: string[]): void {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -202,7 +205,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   const args = options.argv ?? process.argv.slice(2);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const renderApp = options.renderApp ?? renderTuiApp;
-  const launchBackend = options.startBackend ?? startV2Backend;
+  const launchBackend = options.startBackend ?? startBackend;
 
   if (args.includes("--help") || args.includes("-h")) {
     printHelp();
@@ -228,8 +231,17 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     let attachUrl = runtimeUrl;
     if (!attachUrl && !localStartup) {
       const listen = configuredListen(env);
-      const baseUrl = formatListenBase(listen.host, listen.port);
-      if (await controlPlaneIsRunning(fetchImpl, baseUrl)) attachUrl = normalizeRuntimeUrl(baseUrl, env);
+      const configuredUrl = formatListenBase(listen.host, listen.port);
+      // $env{SERVER_HOST} is not a client URL until the backend expands it.
+      // Normalization failure is a failed probe: start the backend anyway.
+      let streamUrl: string | undefined;
+      try {
+        streamUrl = normalizeRuntimeUrl(configuredUrl, env);
+      } catch {
+        streamUrl = undefined;
+      }
+      const probeUrl = streamUrl ? new URL(streamUrl).origin : configuredUrl;
+      if (await controlPlaneIsRunning(fetchImpl, probeUrl) && streamUrl) attachUrl = streamUrl;
     }
     const backend = attachUrl ? undefined : await launchBackend({
       configPath: getOptionalArg(args, "--config"),
@@ -239,7 +251,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
       session,
     });
     try {
-      const code = await runV2Tui({
+      const code = await connectTui({
         runtimeUrl: backend?.runtimeUrl ?? attachUrl!,
         fetchImpl,
         renderApp,
@@ -255,7 +267,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") return 130;
-    console.error(`DataAgent V2: ${terminalText(error instanceof Error ? error.message : String(error))}`);
+    console.error(`DataAgent: ${terminalText(error instanceof Error ? error.message : String(error))}`);
     return 1;
   }
 }

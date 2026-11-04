@@ -31,7 +31,7 @@ npm run start:web -- --web-host 127.0.0.1 --web-port 3000
 npm run start:tui -- --runtime-url http://127.0.0.1:8790
 ```
 
-主机必须是 `server.host` 或 `127.0.0.1`。
+主机可以是 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
 `--config`、`--env-file`、`--workspace`、`--user`、`--session` 会传给这次拉起的后端，不能和 `--runtime-url` 一起用。
 

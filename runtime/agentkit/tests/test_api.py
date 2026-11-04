@@ -78,7 +78,7 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
         assert (await client.get("/healthz")).json()["data"]["conversation"] == {
             "ready": True,
-            "status": "ready", "protocol": "dataagent-v2", "instanceId": "test-instance",
+            "status": "ready", "protocol": "dataagent", "instanceId": "test-instance",
             "model": "replacement-model", "plugins": [],
             "home": str(runtime.paths.home), "entry": None,
             "user": runtime.paths.user_id,
@@ -374,7 +374,7 @@ async def test_native_child_progress_visible_but_internal_content_hidden(runtime
         assert any(event["type"] == "SUBAGENT_FINISHED" and event["subagentRunId"] == sid for event in events)
         assert not any("child-private-answer" in event.get("delta", "") for event in events)
         starts = {name: details for name, event, details in recorder.events if event == "on_chain_start"}
-        root, child = starts["dataagent-v2"], starts["general-purpose"]
+        root, child = starts["dataagent"], starts["general-purpose"]
         assert child["parent_run_id"] is not None
         assert child["run_id"] != root["run_id"]
         assert child["thread_id"] == root["thread_id"] == "thread-1"

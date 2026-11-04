@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 from process_helpers import stop_child, wait_ready
 
-from serve.__main__ import check_port
+from serve.__main__ import check_port, runtime_url
 from serve.sessions import workspace_lock
 
 
@@ -54,6 +54,15 @@ def config_file(tmp_path, listener=None):
     return path, port
 
 
+def test_ready_url_brackets_ipv6_bind_addresses():
+    assert runtime_url("127.0.0.1", 8790) == "http://127.0.0.1:8790/dataagent/stream"
+    assert runtime_url("0.0.0.0", 8790) == "http://0.0.0.0:8790/dataagent/stream"
+    assert runtime_url("::", 8790) == "http://[::]:8790/dataagent/stream"
+    assert runtime_url("::0", 8790) == "http://[::0]:8790/dataagent/stream"
+    assert runtime_url("::1", 8790) == "http://[::1]:8790/dataagent/stream"
+    assert runtime_url("[::1]", 8790) == "http://[::1]:8790/dataagent/stream"
+
+
 def test_occupied_port_is_untouched():
     with socket.socket() as original:
         original.bind(("127.0.0.1", 0))
@@ -83,7 +92,7 @@ def test_real_backend_ready_and_graceful_cleanup(tmp_path):
         listener,
         env={
             **os.environ,
-            "DATAAGENT_V2_INSTANCE_ID": identity,
+            "DATAAGENT_INSTANCE_ID": identity,
         },
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )

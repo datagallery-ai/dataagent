@@ -51,7 +51,7 @@ function stream(events: object[], byteByByte = false) {
   }), { headers: { "content-type": "text/event-stream" } });
 }
 
-describe("V2 direct AG-UI transport", () => {
+describe("Direct AG-UI transport", () => {
   it("sends only the newest user message and handles split UTF-8 / CRLF", async () => {
     let payload: unknown;
     const client = new AguiClient("http://127.0.0.1:8787/dataagent/stream", async (_url, init) => {

@@ -37,7 +37,7 @@ async def test_healthz_returns_ok_envelope(client) -> None:
     assert body["success"] is True
     assert body["data"]["status"] == "ok"
     assert body["data"]["conversation"]["ready"] is True
-    assert body["data"]["conversation"]["protocol"] == "dataagent-v2"
+    assert body["data"]["conversation"]["protocol"] == "dataagent"
 
 
 async def test_ready_returns_control_plane_status(client) -> None:

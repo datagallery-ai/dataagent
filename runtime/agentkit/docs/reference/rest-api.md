@@ -16,7 +16,7 @@
     "conversation": {
       "ready": true,
       "status": "ready",
-      "protocol": "dataagent-v2",
+      "protocol": "dataagent",
       "instanceId": "<uuid-or-launch-id>",
       "model": "<provider model name>",
       "plugins": ["common"],

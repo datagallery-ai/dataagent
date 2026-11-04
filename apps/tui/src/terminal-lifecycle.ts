@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useInput, useStdout } from 'ink';
 
-/** Keep V2 job-control behavior local; Ink owns raw mode and the redraw. */
-export function useV2TerminalLifecycle(enabled: boolean) {
+/** Keep job-control behavior local; Ink owns raw mode and the redraw. */
+export function useTerminalLifecycle(enabled: boolean) {
   const { suspendTerminal, exit } = useApp();
   const { stdout } = useStdout();
   const suspending = useRef(false);

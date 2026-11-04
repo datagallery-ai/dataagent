@@ -50,6 +50,24 @@ async def client_for(runtime, model, **kwargs):
             yield client
 
 
+def test_agent_card_publishes_a_dialable_url():
+    from a2a.server.request_handlers.response_helpers import agent_card_to_dict
+    from a2a_server.agent_card import build_agent_card
+
+    def published(host):
+        card = agent_card_to_dict(build_agent_card(host=host, port=9999))
+        return card["supportedInterfaces"][0]["url"]
+
+    assert published("127.0.0.1") == "http://127.0.0.1:9999/a2a/jsonrpc"
+    assert published("0.0.0.0") == "http://127.0.0.1:9999/a2a/jsonrpc"
+    assert published("::") == "http://127.0.0.1:9999/a2a/jsonrpc"
+    assert published("::0") == "http://127.0.0.1:9999/a2a/jsonrpc"
+    assert published("[::]") == "http://127.0.0.1:9999/a2a/jsonrpc"
+    assert published("::1") == "http://[::1]:9999/a2a/jsonrpc"
+    assert published("[::1]") == "http://[::1]:9999/a2a/jsonrpc"
+    assert published("10.0.0.8") == "http://10.0.0.8:9999/a2a/jsonrpc"
+
+
 def test_final_text_prefers_the_last_ai_message():
     assert final_text({"messages": [
         AIMessage(content="older"),

@@ -79,7 +79,7 @@ export function configuredListenPort(env: NodeJS.ProcessEnv = process.env, confi
   return configuredListen(env).port;
 }
 
-const identity = { protocol: z.literal("dataagent-v2"), instanceId: z.string().min(1) };
+const identity = { protocol: z.literal("dataagent"), instanceId: z.string().min(1) };
 const startupSchema = z.object({
   ...identity, type: z.literal("ready"), runtimeUrl: z.string(),
 }).strict();
@@ -164,7 +164,7 @@ function spawnDefaultBackend(
 }
 
 /** Start only the backend: this Node process is already the actual TUI. */
-export async function startV2Backend(options: {
+export async function startBackend(options: {
   configPath?: string | undefined;
   envFile?: string | undefined;
   workspace?: string | undefined;
@@ -187,7 +187,7 @@ export async function startV2Backend(options: {
   for (const path of workspaces) args.push("--workspace", resolve(cwd, path));
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
-  const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_V2_INSTANCE_ID: instanceId };
+  const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_INSTANCE_ID: instanceId };
   const launchOpts = { cwd, env };
   let windowsPython: string | undefined;
   if (!options.spawnBackend && process.platform === "win32") {
@@ -220,7 +220,7 @@ export async function startV2Backend(options: {
     child.once("close", () => {
       finished = true;
       if (!closing) shutdown.abort(new Error(safe(
-        "V2 backend exited. " + (stderr.trim() || "Inspect Home runtime/logs/backend.log."),
+        "Backend exited. " + (stderr.trim() || "Inspect Home runtime/logs/backend.log."),
       )));
       done();
     });
@@ -264,7 +264,7 @@ export async function startV2Backend(options: {
       aborted = () => reject(shutdown.signal.reason);
       shutdown.signal.addEventListener("abort", aborted, { once: true });
       if (shutdown.signal.aborted) { aborted(); return; }
-      timer = setTimeout(() => reject(new Error("V2 backend readiness timed out")), options.readinessTimeoutMs ?? 30_000);
+      timer = setTimeout(() => reject(new Error("Backend readiness timed out")), options.readinessTimeoutMs ?? 30_000);
       readOutput = (chunk) => {
         if (settled) return;
         buffer += chunk;

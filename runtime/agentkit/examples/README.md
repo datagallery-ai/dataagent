@@ -39,7 +39,7 @@ Deep Agents 原生 `SKILL.md` 的 YAML frontmatter。`session.json` 已是 JSON�
 nl2sql 入口示例不带 Hook：
 
 ```bash
-npm run start:tui -- --v2 --config runtime/agentkit/examples/nl2sql-entry.json
+npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 ```
 
 除模型的 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` 外，再设置 `SEMANTIC_BASE_URL` 和 `NL2SQL_DATABASE_PATH`。

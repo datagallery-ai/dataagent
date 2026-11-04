@@ -6,13 +6,13 @@ import { it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ensureWindowsBackendPython,
-  startV2Backend,
+  startBackend,
   windowsVenvPython,
-} from "./v2-backend.js";
+} from "./backend.js";
 import { terminalText } from "./utils/terminal-text.js";
 
 const header = `
-const identity = {protocol:'dataagent-v2',instanceId:process.env.DATAAGENT_V2_INSTANCE_ID};
+const identity = {protocol:'dataagent',instanceId:process.env.DATAAGENT_INSTANCE_ID};
 const ready = {...identity,type:'ready',runtimeUrl:'http://127.0.0.1:8790/dataagent/stream'};
 const emit = value => process.stdout.write(JSON.stringify(value)+'\\n');
 process.stdin.resume();
@@ -28,12 +28,12 @@ function fake(script: string) {
 it("startup only forwards explicit paths, user and session without an interactive decision", async () => {
   let captured: string[] = [];
   const cwd = process.env.INIT_CWD ?? process.cwd();
-  const backend = await startV2Backend({
+  const backend = await startBackend({
     envFile: "provider.env", workspaces: [".", "data"], user: "alice", session: "saved",
     spawnBackend: (args, options) => {
       captured = args;
       assert.equal(options.cwd, cwd);
-      assert.equal(typeof options.env.DATAAGENT_V2_INSTANCE_ID, "string");
+      assert.equal(typeof options.env.DATAAGENT_INSTANCE_ID, "string");
       return fake("emit(ready);")(args, options);
     },
   });
@@ -53,7 +53,7 @@ it("startup only forwards explicit paths, user and session without an interactiv
 });
 
 it("startup JSON handles fragmentation with no input workspaces", async () => {
-  const backend = await startV2Backend({ spawnBackend: (args, options) => {
+  const backend = await startBackend({ spawnBackend: (args, options) => {
     assert(!args.includes("--workspace"));
     return fake(`
       const text = JSON.stringify(ready)+'\\n';
@@ -67,7 +67,7 @@ it("startup JSON handles fragmentation with no input workspaces", async () => {
 
 it("readiness timeout cleans up the owned process", async () => {
   let pid: number | undefined;
-  await assert.rejects(startV2Backend({
+  await assert.rejects(startBackend({
     readinessTimeoutMs: 150,
     spawnBackend: (args, options) => {
       const child = fake("")(args, options); pid = child.pid; return child;
@@ -88,7 +88,7 @@ for (const [name, script] of [
 ] as const) {
   it(`rejects ${name} and cleans up the owned process`, async () => {
     let pid: number | undefined;
-    await assert.rejects(startV2Backend({
+    await assert.rejects(startBackend({
       spawnBackend: (args, options) => {
         const child = fake(script)(args, options); pid = child.pid; return child;
       },
@@ -99,7 +99,7 @@ for (const [name, script] of [
 }
 
 it("backend startup failure preserves a sanitized diagnostic", async () => {
-  await assert.rejects(startV2Backend({
+  await assert.rejects(startBackend({
     spawnBackend: fake("process.stderr.write('model failed sk-abcdefghijklmnopqrstuv'); process.exit(1);"),
   }), /model failed \[REDACTED\]/);
   assert.equal(terminalText("/中文 path/\x1b[31mbad\n\x07"), "/中文 path/bad");

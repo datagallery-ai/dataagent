@@ -120,7 +120,7 @@ async def test_trace_preserves_subagent_model_tool_tree_and_redacts(runtime):
     data = read_trace(runtime, body)
     assert model.cursor == 4
     records = spans(data)
-    assert root(data)["name"] == "dataagent-v2"
+    assert root(data)["name"] == "dataagent"
     task, = [s for s in records if s["name"] == "task"]
     child, = [s for s in records if s["name"] == "general-purpose"]
     assert child["parentSpanId"] == task["spanId"]

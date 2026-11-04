@@ -1,4 +1,4 @@
-"""DataAgent V2 core. Install in its own environment, not alongside the legacy package.
+"""DataAgent core. Install in its own environment, not alongside the legacy package.
 
 Layout, by phase:
 

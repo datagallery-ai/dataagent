@@ -29,7 +29,7 @@ uv run --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
 产品通路：
 
 ```bash
-DATAAGENT_V2_LIVE_ENV=/absolute/path/to/.env \
+DATAAGENT_LIVE_ENV=/absolute/path/to/.env \
   uv run --project runtime/agentkit pytest runtime/agentkit/tests/test_product_e2e.py -m live -q
 ```
 

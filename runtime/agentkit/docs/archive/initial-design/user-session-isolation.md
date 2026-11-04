@@ -1,10 +1,10 @@
-# DataAgent V2 用户与多 Session 资源隔离设计
+# DataAgent 用户与多 Session 资源隔离设计
 
 > 当前仅做资源分目录组织，不做工具访问隔离。本文的“输入只读”和“产出写入 outputs”均为 prompt 约定；文件工具与 Shell 直接使用原生 LocalShellBackend，按宿主权限执行。
 
 ## 1. 背景与目标
 
-当前 V2 使用 LangGraph 的 `thread_id` 保存一段对话的 checkpoint，但 `thread_id`
+当前实现使用 LangGraph 的 `thread_id` 保存一段对话的 checkpoint，但 `thread_id`
 只隔离图状态，不隔离文件系统。新的设计将用户配置的一个或多个 workspace 作为只读输入
 源，将所有 Agent 写入、中间产物、日志和 trace 统一放入 Home 下的用户/session 运行目录。
 这样不同 session 可以读取相同输入文件，但不会在输入 workspace 中互相覆盖或写入内部状态。
@@ -308,7 +308,7 @@ TUI 使用 `--user` 选择 profile（省略即 `default`），使用 `--workspac
 
 ## 8. 实施范围与顺序
 
-由于 V2 尚未对外发布，本设计直接作为首版目标实现，不保留旧目录、旧数据库 schema 或
+由于当时尚未对外发布，本设计直接作为首版目标实现，不保留旧目录、旧数据库 schema 或
 单 workspace 可写模式。实施顺序如下：
 
 1. 定义 `UserProfile`、`WorkspaceInput` 和 `SessionPaths`；配置层只接受 workspace 列表，

@@ -1,4 +1,4 @@
-# DataAgent V2：架构、模块职责与配置机制
+# DataAgent：架构、模块职责与配置机制
 
 本文描述当前代码的架构与配置机制。六类 Python Hook 与薄 Compiler 的函数契约、迁移边界和验收记录见 [实施文档](plugin-compiler-native-hooks.md)。用户、Session 与文件资源隔离的设计见 [用户与多 Session 资源隔离设计](user-session-isolation.md)。产品配置为版本 3，插件清单为版本 2；旧版资料仍可从 Git 历史恢复。
 
@@ -242,7 +242,7 @@ common 是内部测试/外部插件示例，不再内置或默认启用。需将
 | [config.example.json](../config.example.json)、[.env.example](../.env.example) | 供复制/显式指定的配置样例；它们不会仅因位于源码目录就自动生效 |
 | [tests/](../tests/) | `test_launch/config/home_resources` 验证配置与资源；`test_declarations/compiler/contract/id_contract/layering` 验证声明、编译和分层；`test_agent/hooks/native_context` 验证原生执行；`test_api/launcher/home_startup/product_e2e/tui_cursor` 验证协议、进程、恢复和终端；`conftest.py`、`process_helpers.py` 提供隔离 fixture 和进程辅助 |
 
-本项目中没有 `runtime/agentkit/tui`、`gui` 或 `dataagent/cli.py`。前端接入相关文件位于仓库的 `apps/tui/src/`：`index.tsx` 选择 V2 路径，`v2-backend.ts` 监督后端，`v2.ts` 完成 health/日志接入，`protocol/agui-client.ts` 与 `protocol/v2-session-client.ts` 分别处理事件流和会话恢复；已有 state 与 Ink UI 负责渲染。
+本项目中没有 `runtime/agentkit/tui`、`gui` 或 `dataagent/cli.py`。前端接入相关文件位于仓库的 `apps/tui/src/`：`index.tsx` 负责启动，`backend.ts` 监督后端，`connect.ts` 完成 health/日志接入，`protocol/agui-client.ts` 与 `protocol/session-client.ts` 分别处理事件流和会话恢复；已有 state 与 Ink UI 负责渲染。
 
 ## 4. 各包 __init__.py 的原始 docstring
 
@@ -251,7 +251,7 @@ common 是内部测试/外部插件示例，不再内置或默认启用。需将
 ### 4.1 dataagent/__init__.py
 
 ```python
-"""DataAgent V2 core. Install in its own environment, not alongside the legacy package.
+"""DataAgent core. Install in its own environment, not alongside the legacy package.
 
 Layout, by phase:
 
@@ -310,7 +310,7 @@ filesystem_backend assembles real-path file access, session guards and shell exe
 
 **Agent 执行中不重新装配扩展。** `prepare_runtime` 固化宿主启动输入，`build_agent` 创建原生图。
 REST/TUI 在下一轮请求前检查扩展变化：未变化复用 session 图，变化则校验后重建。
-模型、限额及宿主路径/服务配置仍需重启；没有 V2 `/model` 菜单。详见[扩展刷新](extension-refresh.md)。
+模型、限额及宿主路径/服务配置仍需重启；没有 `/model` 菜单。详见[扩展刷新](extension-refresh.md)。
 
 模型参数不是 dotenv 中的变量名自动映射出来的：JSON 必须写 `"name": "$env{LLM_MODEL}"` 等引用。只设置 `LLM_MODEL` 但完全没有 `models` 配置，或 JSON 把 `name` 写成固定字符串，都不会由这个变量自动生成/覆盖模型字段。
 
@@ -389,7 +389,7 @@ Home/.env < --config 旁的 .env < --env-file < 进程环境
 
 JSON 的替换语法是 `$env{VARIABLE}`，支持字符串中的引用；变量缺失时启动失败并指出配置文件、字段和 Home `.env`。它不是 shell 表达式，也不会执行命令。
 
-以下变量不允许从 dotenv 改写：`DATAAGENT_HOME`、`DATAAGENT_V2_INSTANCE_ID`。它们只来自进程环境；写进文件会被忽略并提示。TUI 的 `DATAAGENT_V2_LOG_PATH`、`INIT_CWD` 等前端选项也由 Node 进程读取，不会因为传了后端 `--env-file` 就改变前端环境。
+以下变量不允许从 dotenv 改写：`DATAAGENT_HOME`、`DATAAGENT_INSTANCE_ID`。它们只来自进程环境；写进文件会被忽略并提示。TUI 的 `DATAAGENT_TUI_LOG_PATH`、`INIT_CWD` 等前端选项也由 Node 进程读取，不会因为传了后端 `--env-file` 就改变前端环境。
 
 这不意味着插件 Python 的 `os.getenv()` 能看到有效环境：Compiler 未将 `.env` 合并结果注入进程。工具需要的额外凭证由扩展作者明确处理，例如从宿主进程环境读取，不能假设核心会把产品配置注入工具。插件清单本身不执行产品 JSON 的 `$env{...}` 展开；插件 `hooks[].params` 是原始声明字典，不能把其中的环境占位符误认为已经解析的密钥。
 
@@ -572,7 +572,7 @@ REST 文件下载路径校验、会话归属检查和 Home 私有目录权限不
 | 插件 SubAgent JSON | 编译工具/Skill/middleware，common 的 general-purpose 也走同一路径 | `subagents` |
 | limits + Hook 声明 | Compiler 将 Hooks 编译成原生 middleware；agent.py 加独立宿主治理 | `middleware` |
 | REST 的 AsyncSqliteSaver 或 SDK 显式注入 | 由宿主管理生命周期 | `checkpointer` |
-| 固定根名称 | `ROOT_AGENT_NAME` | `name="dataagent-v2"` |
+| 固定根名称 | `ROOT_AGENT_NAME` | `name="dataagent"` |
 
 Compiler 只返回一个能力 kwargs 字典；model/backend/checkpointer/宿主治理由 agent.py 补齐。其他上游参数没有自动暴露。SDK 需要原生追踪时可以直接调用 `build_agent(runtime).with_config(callbacks=[handler])`，不经插件配置。
 
@@ -724,11 +724,11 @@ REST 整轮时限保留；同步 Python 线程不能强杀。重复声明会重�
 
 ```bash
 uv sync --project runtime/agentkit --locked
-npm run start:tui -- --v2 --workspace /absolute/existing/project
+npm run start:tui -- --workspace /absolute/existing/project
 ```
 
 前置条件是 macOS/Linux、Python 3.12、uv、Node 与已安装的仓库 npm 依赖。发行包、CLI 和 Python SDK 包名统一为 `dataagent`。
-TUI 的 Node 进程已经是前端，它只拉起 `uv ... dataagent serve --stdio-ready` 后端，不再从 Python 反向启动另一份 TUI。内部 `dataagent-v2` 协议与图名称保持不变，与发行包名无关。
+TUI 的 Node 进程已经是前端，它只拉起 `uv ... dataagent serve --stdio-ready` 后端，不再从 Python 反向启动另一份 TUI。协议与根图名称都是 `dataagent`。
 
 后端 CLI 使用 `init_home=True`；首次缺失时生成 Home 模板，不覆盖已有项。空模型配置会明确失败，当前没有首次启动模型配置向导。可先复制/填写模板再启动。
 
@@ -760,7 +760,7 @@ REST 为整轮流设置 timeout，成功完成后才更新会话索引的 last_c
 
 ### 7.3 SDK：复用核心，不隐式获得 HTTP 宿主能力
 
-下面展示调用方主动管理持久化和整轮超时。运行前仍需准备第 5 节的合法配置，显式输入目录必须存在；无输入也可运行；使用 V2 独立 Python 环境，避免与旧版同名 `dataagent` 包混装。
+下面展示调用方主动管理持久化和整轮超时。运行前仍需准备第 5 节的合法配置，显式输入目录必须存在；无输入也可运行；使用独立 Python 环境，避免与旧版同名 `dataagent` 包混装。
 
 ```python
 import asyncio

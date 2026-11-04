@@ -169,7 +169,7 @@ async def test_registered_hooks_skip_root_lookup_on_structural_errors(tmp_path, 
     hooks = compile_hooks(
         [(PLUGIN, entry) for entry in spec.hooks
          if entry.event == "after_tool" and entry.matcher == "write_file"],
-        loader, agent_name="dataagent-v2",
+        loader, agent_name="dataagent",
     )
     (tmp_path / "create_invalid.sql").write_text("CREATE TABLE db.users (user_id STRING)")
     request = SimpleNamespace(

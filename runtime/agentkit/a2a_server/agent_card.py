@@ -14,9 +14,14 @@ JSONRPC_PATH = "/a2a/jsonrpc"
 
 def _card_host(host: str) -> str:
     """Publish a dialable host. A wildcard bind address is not a client URL."""
-    if host in {"0.0.0.0", "::", ""}:
+    bare = host.strip()
+    if bare.startswith("[") and bare.endswith("]"):
+        bare = bare[1:-1].strip()
+    if bare in {"0.0.0.0", "::", "::0", ""}:
         return "127.0.0.1"
-    return host
+    if ":" in bare:
+        return f"[{bare}]"
+    return bare
 
 
 def build_agent_card(

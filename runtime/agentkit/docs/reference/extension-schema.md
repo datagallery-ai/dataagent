@@ -10,7 +10,7 @@
 | 插件内工具 ID | `[a-z][a-z0-9_]*` |
 | 保留插件 ID | `user`、`cli` |
 
-根 Agent 名固定为 `dataagent-v2`，不能作为子代理名。
+根 Agent 名固定为 `dataagent`，不能作为子代理名。
 
 ## 插件 `.plugin.json`
 

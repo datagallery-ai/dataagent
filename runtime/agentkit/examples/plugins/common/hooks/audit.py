@@ -9,7 +9,7 @@ logger = logging.getLogger("dataagent.audit")
 
 
 def _record(event, params):
-    logger.info("hook.%s agent=%s", event, params.get("agent", "dataagent-v2"))
+    logger.info("hook.%s agent=%s", event, params.get("agent", "dataagent"))
 
 
 def before_agent(state, runtime, *, params):
@@ -30,9 +30,9 @@ def after_model(state, runtime, *, params):
 
 def before_tool(request, *, params):
     logger.info("hook.before_tool agent=%s tool=%s call=%s",
-                params.get("agent", "dataagent-v2"), request.tool_call["name"], request.tool_call["id"])
+                params.get("agent", "dataagent"), request.tool_call["name"], request.tool_call["id"])
 
 
 def after_tool(request, result, *, params):
     logger.info("hook.after_tool agent=%s tool=%s call=%s",
-                params.get("agent", "dataagent-v2"), request.tool_call["name"], request.tool_call["id"])
+                params.get("agent", "dataagent"), request.tool_call["name"], request.tool_call["id"])

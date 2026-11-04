@@ -22,6 +22,20 @@ from dataagent import LaunchOptions, Runtime, prepare_runtime, safe_error
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 
 
+def http_origin(host: str, port: int) -> str:
+    """HTTP origin for a bind address. IPv6 literals are bracketed so the URL parses."""
+    bare = host.strip()
+    if bare.startswith("[") and bare.endswith("]"):
+        bare = bare[1:-1].strip()
+    shown = f"[{bare}]" if ":" in bare else bare
+    return f"http://{shown}:{port}"
+
+
+def runtime_url(host: str, port: int) -> str:
+    """Ready-message URL. The client rewrites wildcard binds; this only keeps the URL legal."""
+    return f"{http_origin(host, port)}/dataagent/stream"
+
+
 def check_port(host: str, port: int):
     with socket.socket() as probe:
         try:
@@ -159,7 +173,7 @@ def _prepare(args):
 
 
 def _instance_id() -> str:
-    return (os.environ.get("DATAAGENT_V2_INSTANCE_ID") or "").strip() or str(uuid4())
+    return (os.environ.get("DATAAGENT_INSTANCE_ID") or "").strip() or str(uuid4())
 
 
 def _listen(runtime: Runtime | None) -> tuple[str, int]:
@@ -187,7 +201,7 @@ def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = 
 
     from serve.app import create_app
 
-    if stdio_ready and not os.environ.get("DATAAGENT_V2_INSTANCE_ID"):
+    if stdio_ready and not os.environ.get("DATAAGENT_INSTANCE_ID"):
         raise ValueError("A launch instance identity is required for the startup protocol")
     inherited = inherited_listener(host, port)
     if inherited is None:
@@ -205,9 +219,9 @@ def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = 
             if server.started:
                 print(json.dumps({
                     "type": "ready",
-                    "protocol": "dataagent-v2",
-                    "instanceId": os.environ.get("DATAAGENT_V2_INSTANCE_ID"),
-                    "runtimeUrl": f"http://{host}:{port}/dataagent/stream",
+                    "protocol": "dataagent",
+                    "instanceId": os.environ.get("DATAAGENT_INSTANCE_ID"),
+                    "runtimeUrl": runtime_url(host, port),
                 }), flush=True)
                 return
 
@@ -244,7 +258,7 @@ def serve_a2a(runtime: Runtime, args) -> int:
     check_port(args.host, args.port)
     configure_logging(runtime)
     logging.getLogger("dataagent.a2a").info(
-        "A2A JSON-RPC http://%s:%s%s", args.host, args.port, JSONRPC_PATH
+        "A2A JSON-RPC %s%s", http_origin(args.host, args.port), JSONRPC_PATH
     )
     run_a2a_server(runtime, host=args.host, port=args.port, auth_token=args.auth_token)
     return 0

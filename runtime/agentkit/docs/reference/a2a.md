@@ -7,7 +7,7 @@
 | Agent Card | `GET /.well-known/agent-card.json` |
 | JSON-RPC | `POST /a2a/jsonrpc` |
 
-Card 只声明 JSON-RPC，并且 `streaming` 为 false：执行器要等整张图结束才返回最终文本。接口 URL 按请求的 `Host` 填写。绑定 `0.0.0.0` 时，未带 Host 的默认值是 `127.0.0.1`。
+Card 只声明 JSON-RPC，并且 `streaming` 为 false：执行器要等整张图结束才返回最终文本。接口 URL 按请求的 `Host` 填写。绑定 `0.0.0.0`、`::` 或 `::0` 时，未带 Host 的默认值是 `127.0.0.1`。其他 IPv6 地址写成带方括号的 URL。
 
 `dataagent serve` 在已有会话和检查点的进程上挂这组路由，默认 `127.0.0.1:8790`。`dataagent serve-a2a` 是只跑这组路由的独立进程，默认 `127.0.0.1:9999`。这些进程都占用 `backend.lock`，不要对同一个 Home 同时启动。
 

@@ -40,7 +40,7 @@ def configured_hooks(runtime, tmp_path, *, child=None, events=EVENTS):
                  "params": {"output": str(output), "event": event, "scope": scope}}
                 for event in events]
 
-    spec = {"schema_version": 2, "id": "trace", "hooks": hooks("dataagent-v2")}
+    spec = {"schema_version": 2, "id": "trace", "hooks": hooks("dataagent")}
     if child:
         (root / "child.md").write_text("Compute the delegated statistics with tools.")
         (root / "child.json").write_text(json.dumps({
@@ -85,7 +85,7 @@ async def test_configured_hooks_follow_native_lifecycle(runtime, tmp_path, scena
         assert after_tool["status"] == ("error" if scenario == "tool_error" else "success")
         assert recorder.events[-1][1] == "on_chain_end"
     assert [item["event"] for item in values] == expected
-    assert {item["scope"] for item in values} == {"dataagent-v2"}
+    assert {item["scope"] for item in values} == {"dataagent"}
     assert not recorder.active
 
 
@@ -96,16 +96,16 @@ async def test_explicit_child_hooks_keep_native_scope(runtime, tmp_path):
         call("common__summarize_numbers", {"numbers": [1, 2]}),
         AIMessage(content="child result"), AIMessage(content="root result"),
     ])
-    recorder = RecordingCallback(agents=("dataagent-v2", "traced-statistics"))
+    recorder = RecordingCallback(agents=("dataagent", "traced-statistics"))
     graph = build_agent(runtime, model=model).with_config(callbacks=[recorder])
     await graph.ainvoke({"messages": [HumanMessage(content="delegate")]},
                        {"configurable": {"thread_id": "scoped"}})
     values = recorded(output)
-    assert [item["scope"] for item in values if item["event"] == "before_agent"] == ["dataagent-v2", "traced-statistics"]
+    assert [item["scope"] for item in values if item["event"] == "before_agent"] == ["dataagent", "traced-statistics"]
     tools = [(item["scope"], item["tool"]) for item in values if item["event"] == "before_tool"]
-    assert tools == [("dataagent-v2", "task"), ("traced-statistics", "common__summarize_numbers")]
+    assert tools == [("dataagent", "task"), ("traced-statistics", "common__summarize_numbers")]
     terminals = [item for item in values if item["event"] == "after_agent"]
-    assert [item["scope"] for item in terminals] == ["traced-statistics", "dataagent-v2"]
+    assert [item["scope"] for item in terminals] == ["traced-statistics", "dataagent"]
     completed = [details for _, event, details in recorder.events if event == "on_chain_end"]
     assert len(completed) == 2 and len({item["run_id"] for item in completed}) == 2
     assert completed[0]["parent_run_id"] is not None
@@ -125,7 +125,7 @@ async def test_root_hooks_do_not_implicitly_apply_to_general_purpose(runtime, tm
     graph = build_agent(runtime, model=model).with_config(callbacks=[recorder])
     await graph.ainvoke({"messages": [HumanMessage(content="delegate")]})
     values = recorded(output)
-    assert {item["scope"] for item in values} == {"dataagent-v2"}
+    assert {item["scope"] for item in values} == {"dataagent"}
     assert [item["tool"] for item in values if item["event"] == "before_tool"] == ["task"]
     assert ("general-purpose", "on_chain_end") in [(name, event) for name, event, _ in recorder.events]
     assert not recorder.active
