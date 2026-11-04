@@ -117,3 +117,40 @@ class TestOverrideChain:
 
         assert _make(overrides=[override]).classify("") == "DEFAULT"
         assert called == []
+
+
+class TestOverrideLogging:
+    """v47：override 生效时打 INFO 日志（``[hitl_classifier] override <name>: A -> B``）。
+
+    追问式改判:在无人值守 run 里的观测缺口——下次 run 可直接
+    grep 统计各 override 的触发面，不再需要从 action 分布间接推断。
+    """
+
+    def test_override_change_is_logged(self):
+        from loguru import logger as loguru_logger
+
+        messages: list[str] = []
+        sink_id = loguru_logger.add(messages.append, format="{message}", level="INFO")
+
+        def my_override(question: str, base_action: str):
+            return "REROUTED"
+
+        try:
+            clf = _make(overrides=[my_override])
+            assert clf.classify("alpha") == "REROUTED"
+        finally:
+            loguru_logger.remove(sink_id)
+        assert len(messages) == 1
+        assert "[hitl_classifier] override my_override: ACTION_A -> REROUTED" in messages[0]
+
+    def test_no_log_when_override_returns_none(self):
+        from loguru import logger as loguru_logger
+
+        messages: list[str] = []
+        sink_id = loguru_logger.add(messages.append, format="{message}", level="INFO")
+        try:
+            clf = _make(overrides=[lambda q, a: None])
+            assert clf.classify("alpha") == "ACTION_A"
+        finally:
+            loguru_logger.remove(sink_id)
+        assert messages == []

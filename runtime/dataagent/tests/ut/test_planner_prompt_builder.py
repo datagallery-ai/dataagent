@@ -15,7 +15,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import dataagent.core.flex.utils.planner_prompt_builder as planner_prompt_builder
 import dataagent.utils.messages_utils as messages_utils
@@ -1225,3 +1225,218 @@ def test_prepare_flex_planner_prompt_does_not_apply_rolling_ir(monkeypatch, tmp_
     assert len(tool_messages) == 1
     assert "old raw" in str(tool_messages[0].content)
     assert "[IR Summary]" not in str(tool_messages[0].content)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HITL 预算状态消息（v3.4 改动3：budget 感知提问优先级）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestBuildHitlBudgetMessage:
+    """_build_hitl_budget_message：HITL 启用后按剩余预算分档提示提问纪律。"""
+
+    def _call(self, **overrides):
+        from dataagent.core.flex.utils.planner_prompt_builder import _build_hitl_budget_message
+
+        state = {
+            "enable_human_feedback": True,
+            "hitl_count": 0,
+            "hitl_budget": 4,
+        }
+        state.update(overrides)
+        return _build_hitl_budget_message(state)
+
+    def _content(self, **overrides) -> str:
+        msg = self._call(**overrides)
+        assert msg is not None
+        return str(msg.content)
+
+    def test_skips_when_human_feedback_disabled(self):
+        assert self._call(enable_human_feedback=False, hitl_count=2) is None
+
+    def test_skips_when_no_hitl_round_yet(self):
+        assert self._call(hitl_count=0) is None
+
+    def test_skips_when_hitl_count_missing(self):
+        assert self._call(hitl_count=None) is None
+
+    def test_plenty_remaining_tier_mentions_priority(self):
+        content = self._content(hitl_count=1, hitl_budget=4)
+        assert "已用 1/4" in content
+        assert "剩余 3 次" in content
+        assert "提问优先级" in content
+
+    def test_remaining_two_tier_directs_rationing(self):
+        content = self._content(hitl_count=2, hitl_budget=4)
+        assert "已用 2/4" in content
+        assert "剩余 2 次" in content
+        assert "最高优先级" in content
+
+    def test_remaining_one_tier_marks_last_chance(self):
+        content = self._content(hitl_count=3, hitl_budget=4)
+        assert "已用 3/4" in content
+        assert "最后一次" in content
+        assert "自主决策" in content
+
+    def test_exhausted_tier_forbids_further_asking(self):
+        content = self._content(hitl_count=4, hitl_budget=4)
+        assert "已用尽" in content
+        assert "不要再调用 request_human_feedback" in content
+
+    def test_over_budget_still_exhausted_tier(self):
+        content = self._content(hitl_count=6, hitl_budget=4)
+        assert "已用尽" in content
+
+    def test_budget_from_state_overrides_default(self):
+        content = self._content(hitl_count=2, hitl_budget=8)
+        assert "已用 2/8" in content
+        assert "剩余 6 次" in content
+
+    def test_default_budget_is_resolver_default(self):
+        from dataagent.core.flex.hooks.hitl_common import DEFAULT_HITL_BUDGET
+        from dataagent.core.flex.utils.planner_prompt_builder import _get_hitl_budget_for_prompt
+
+        assert _get_hitl_budget_for_prompt({"hitl_budget": None}) == DEFAULT_HITL_BUDGET
+        assert _get_hitl_budget_for_prompt({}) == DEFAULT_HITL_BUDGET
+
+    def test_invalid_budget_falls_back_to_default(self):
+        from dataagent.core.flex.hooks.hitl_common import DEFAULT_HITL_BUDGET
+        from dataagent.core.flex.utils.planner_prompt_builder import _get_hitl_budget_for_prompt
+
+        assert _get_hitl_budget_for_prompt({"hitl_budget": "abc"}) == DEFAULT_HITL_BUDGET
+
+    def test_string_budget_is_coerced(self):
+        content = self._content(hitl_count=1, hitl_budget="5")
+        assert "已用 1/5" in content
+
+
+def test_prepare_flex_planner_prompt_appends_hitl_budget_message(monkeypatch, tmp_path):
+    """HITL 启用且 hitl_count≥1 时，预算状态消息应作为最后一条消息注入。"""
+    from dataagent.core.context.context import ContextFactory
+    from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+
+    ContextFactory.clear_context()
+    monkeypatch.setattr(planner_prompt_builder.llm_manager, "get_default_llm", lambda: None)
+
+    context = ContextFactory.get_context(user_id="u", session_id="s", run_id=1, sub_id=0)
+    context.register_query("开发序列特征", [])
+
+    class _Runtime:
+        instructions = ""
+        flex_planner_user_sync_pending = True
+        env = SimpleNamespace(environment_description="")
+
+        def __init__(self) -> None:
+            self._cache = {}
+
+        def get_cache(self, key, default=None):
+            return self._cache.get(key, default)
+
+        def set_cache(self, key, value):
+            self._cache[key] = value
+
+        def get_all_config(self) -> dict:
+            return {}
+
+        def get_runtime_env_prompt(self) -> str:
+            return ""
+
+        def list_builtin_skills(self):
+            return []
+
+        def list_user_skills(self):
+            return []
+
+        def clear_flex_planner_user_sync_pending(self) -> None:
+            self.flex_planner_user_sync_pending = False
+
+    state = {
+        "user_id": "u",
+        "session_id": "s",
+        "run_id": 1,
+        "sub_id": 0,
+        "user_query": "开发序列特征",
+        "messages": [],
+        "planner_user_sync_pending": True,
+        "enable_human_feedback": True,
+        "hitl_count": 3,
+        "hitl_budget": 4,
+    }
+    messages = prepare_flex_planner_prompt(
+        context,
+        state,
+        system_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/system"),
+        user_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/user"),
+        runtime=_Runtime(),
+        workspace=str(tmp_path),
+    )
+
+    last = messages[-1]
+    assert isinstance(last, HumanMessage)
+    content = str(last.content)
+    assert "HITL 交互预算" in content
+    assert "已用 3/4" in content
+    assert "最后一次" in content
+
+
+def test_prepare_flex_planner_prompt_skips_budget_message_before_first_hitl(monkeypatch, tmp_path):
+    """hitl_count=0（尚未交互）时不应注入预算消息，避免首轮噪音。"""
+    from dataagent.core.context.context import ContextFactory
+    from dataagent.core.flex.utils.planner_prompt_builder import prepare_flex_planner_prompt
+
+    ContextFactory.clear_context()
+    monkeypatch.setattr(planner_prompt_builder.llm_manager, "get_default_llm", lambda: None)
+
+    context = ContextFactory.get_context(user_id="u", session_id="s", run_id=1, sub_id=0)
+    context.register_query("开发序列特征", [])
+
+    class _Runtime:
+        instructions = ""
+        flex_planner_user_sync_pending = True
+        env = SimpleNamespace(environment_description="")
+
+        def __init__(self) -> None:
+            self._cache = {}
+
+        def get_cache(self, key, default=None):
+            return self._cache.get(key, default)
+
+        def set_cache(self, key, value):
+            self._cache[key] = value
+
+        def get_all_config(self) -> dict:
+            return {}
+
+        def get_runtime_env_prompt(self) -> str:
+            return ""
+
+        def list_builtin_skills(self):
+            return []
+
+        def list_user_skills(self):
+            return []
+
+        def clear_flex_planner_user_sync_pending(self) -> None:
+            self.flex_planner_user_sync_pending = False
+
+    state = {
+        "user_id": "u",
+        "session_id": "s",
+        "run_id": 1,
+        "sub_id": 0,
+        "user_query": "开发序列特征",
+        "messages": [],
+        "planner_user_sync_pending": True,
+        "enable_human_feedback": True,
+        "hitl_count": 0,
+    }
+    messages = prepare_flex_planner_prompt(
+        context,
+        state,
+        system_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/system"),
+        user_prompt=PromptTemplate.from_package_relative(f"{PROMPT_MD_PREFIX}/planner/user"),
+        runtime=_Runtime(),
+        workspace=str(tmp_path),
+    )
+
+    assert all("HITL 交互预算" not in str(m.content) for m in messages)

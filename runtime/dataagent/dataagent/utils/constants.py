@@ -157,7 +157,8 @@ POLL_WATCH_MAX_EVENT_LIMIT: int = 200
 """``poll_subagent`` 单次 poll 最大 events 条数。"""
 
 HUMAN_FEEDBACK_CONDITION_ACTION_SUFFIX: str = (
-    "请调用request_human_feedback工具，询问用户是否需要进一步的指导或是否同意操作。"
+    "请调用request_human_feedback工具，并在提问中给出你倾向的具体方案和1-2个候选"
+    "（含表名/字段名/时间窗口/列数等具体值），让用户确认或选择，禁止开放式提问。"
 )
 """``human_feedback_conditions`` 每条条件展开后追加的固定动作说明。"""
 

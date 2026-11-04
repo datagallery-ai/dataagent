@@ -150,6 +150,10 @@ def prepare_flex_planner_prompt(
     if todo_message:
         messages.append(todo_message)
 
+    hitl_budget_message = _build_hitl_budget_message(state)
+    if hitl_budget_message is not None:
+        messages.append(hitl_budget_message)
+
     return messages
 
 
@@ -240,6 +244,62 @@ def _build_plan_enforcement_message(todo_plan_vars: dict[str, Any]) -> HumanMess
             )
         )
     return None
+
+
+def _get_hitl_budget_for_prompt(state: Any) -> int:
+    """读取 HITL 交互预算，与 ``hitl_common.get_hitl_budget`` 同源同缺省。"""
+    from dataagent.core.flex.hooks.hitl_common import DEFAULT_HITL_BUDGET
+
+    raw = state.get("hitl_budget", DEFAULT_HITL_BUDGET)
+    try:
+        return int(raw) if raw else DEFAULT_HITL_BUDGET
+    except (TypeError, ValueError):
+        return DEFAULT_HITL_BUDGET
+
+
+def _build_hitl_budget_message(state: Any) -> HumanMessage | None:
+    """HITL 启用且已发生交互后，向 planner 提示剩余交互预算与对应提问纪律。
+
+    ``hitl_count`` 是 FlexState 真实累加器（human_feedback 节点每完成一轮 +1，
+    含自动解析路径）。planner 据此感知"还能获得答复的提问次数"，把剩余机会
+    留给最致命的未决口径（具体优先级阶梯由各 agent 配置的提问纪律定义），
+    低价值确认改为自主决策，避免预算耗尽后被强制收敛。
+    """
+    if state.get("enable_human_feedback") is not True:
+        return None
+    try:
+        used = int(state.get("hitl_count", 0) or 0)
+    except (TypeError, ValueError):
+        used = 0
+    if used <= 0:
+        return None
+
+    budget = _get_hitl_budget_for_prompt(state)
+    remaining = budget - used
+    if remaining >= 3:
+        content = (
+            f"[SYSTEM] HITL 交互预算：已用 {used}/{budget}，剩余 {remaining} 次可获得答复的提问。"
+            "按交互规范的提问优先级使用机会：只问最阻塞、最致命的未决口径；"
+            "可自行查证或低价值的事项（格式、命名类）自主决策，不要消耗提问机会。"
+        )
+    elif remaining == 2:
+        content = (
+            f"[SYSTEM] HITL 交互预算：已用 {used}/{budget}，剩余 2 次提问机会。"
+            "只把机会留给尚未确认的最高优先级口径；"
+            "其余事项基于元数据与已确认结论自主决策。"
+        )
+    elif remaining == 1:
+        content = (
+            f"[SYSTEM] HITL 交互预算：已用 {used}/{budget}，下一次提问将是最后一次可获得答复的机会。"
+            "只问当前最致命的一个未决口径；"
+            "其余全部基于已有信息自主决策，并在最终交付中说明所做假设。"
+        )
+    else:
+        content = (
+            f"[SYSTEM] HITL 交互预算已用尽（{budget} 次全部使用）。"
+            "不要再调用 request_human_feedback；基于已确认结论与元数据证据完成最终交付。"
+        )
+    return HumanMessage(content=content)
 
 
 def _build_skill_entries_prompt(skills: list[dict[str, Any]], *, section_title: str) -> str:

@@ -39,7 +39,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +70,9 @@ from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets import (
     _ACTION_PROMPTS,
     _CALIBER_DECISION_RE,
+    _CALIBER_GAP_ASK_MARKERS,
+    _CALIBER_GAP_FOLLOWUP_MARKERS,
+    _DEDUP_ASK_RE,
     _CLAUSE_DELIM_RE,
     _CLAUSE_NEGATION_RE,
     _CLAUSE_QUESTION_RE,
@@ -75,6 +80,9 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
     _CONFIRM_DIRECTIVE_RE,
     _CONFIRMED_REFERENCE_MARKERS,
     _FIELD_CONCEPT_MAP,
+    _REQUEST_CONFIRM_FORM_RE,
+    _SCHEMA_DERIVATION_MARKERS,
+    _TABLE_CONVERGENCE_MARKERS,
     _HITL_AUTO_RESOLVER_PROMPT,
     _IDENTIFIER_FIELD_CANDIDATES,
     _TABLE_LAYER_PREFIXES,
@@ -83,6 +91,7 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
     _TABLE_SUFFIX_GRAINS,
     _TIME_RHS_TOKEN,
     _TIME_VAR_SEMANTICS,
+    _VARIANT_TOKEN_CONCEPTS,
     _VET_IDENTIFIER_FIELD_CONCEPT,
     _VET_ZH_CONCEPT_KEYWORDS,
     HITL_ACTION_KEYWORDS,
@@ -92,8 +101,14 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
 
 
 def _tables_are_confirmed_references(hil_question: str) -> bool:
-    """问题中的表名是否为对已确认源表的引用（而非新候选提案）。"""
-    return any(marker in hil_question for marker in _CONFIRMED_REFERENCE_MARKERS)
+    """问题中的表名是否为对已确认源表的引用（而非新候选提案）。
+
+    极性修正：先剥离确认请求形（"请您确认/需要您确认/请问您确认使用"）再查
+    引用标记——请求形中的"您确认/确认使用"是待确认提案的礼貌措辞而非已确认引用。
+    剥离后"按您确认的源表""已确认使用 X"等真引用形不受影响。
+    """
+    cleaned = _REQUEST_CONFIRM_FORM_RE.sub("", hil_question or "")
+    return any(marker in cleaned for marker in _CONFIRMED_REFERENCE_MARKERS)
 
 
 def _asks_caliber_decision(hil_question: str) -> bool:
@@ -102,7 +117,12 @@ def _asks_caliber_decision(hil_question: str) -> bool:
 
 
 def _proposes_table_candidates(hil_question: str) -> bool:
-    """提问是否在提出新的表候选（表名是待选对象而非上下文引用）。"""
+    """提问是否在提出新的表候选（表名是待选对象而非上下文引用）。
+
+    裸"候选"只认后接表字/db.table 名的结构形，
+    标识字段候选枚举（"三个候选：device_id"）与否定形（"没有其他候选"）不算
+    表提案——否则口径决策问被拦住改判失败，TABLE_CONFIRM 模板答非所问。
+    """
     return bool(_TABLE_PROPOSAL_RE.search(hil_question or ""))
 
 
@@ -113,10 +133,25 @@ def _mixed_question_override(hil_question: str, base_action: str) -> str | None:
     - 表名均为已确认引用 → 实际阻塞点在口径；
     - 口径决策提问且无新表候选提案表述（表名仅作上下文）→ 阻塞点在口径，
     均转 AMBIGUITY_CLARIFY。
+    口径信号：除 AMBIGUITY 关键词外，追问式提问（引用已确认结论标记）
+    含口径缺口信号同样视为口径信号——"源表已定，……是否需要去重"式追问中
+    裸"去重"不是 AMBIGUITY 关键词（"去重口径"才是），无此扩展会被
+    TABLE_CONFIRM 模板答非所问。仅在引用已确认结论时生效，不碰无引用标记
+    的新表候选提案问型；"去重"只认疑问形（_DEDUP_ASK_RE）——陈述形
+    （"维度去重两个口径问题"类）在历史语料属 TABLE_CONFIRM，改判会破回放门。
     """
     if base_action != "TABLE_CONFIRM":
         return None
-    if not any(kw.lower() in hil_question.lower() for kw in HITL_ACTION_KEYWORDS["AMBIGUITY_CLARIFY"]):
+    has_caliber_signal = any(
+        kw.lower() in hil_question.lower() for kw in HITL_ACTION_KEYWORDS["AMBIGUITY_CLARIFY"]
+    ) or (
+        _tables_are_confirmed_references(hil_question)
+        and (
+            _DEDUP_ASK_RE.search(hil_question or "")
+            or any(marker in (hil_question or "") for marker in _CALIBER_GAP_FOLLOWUP_MARKERS)
+        )
+    )
+    if not has_caliber_signal:
         return None
     tables_mentioned = _extract_agent_tables(hil_question)
     if not tables_mentioned or _tables_are_confirmed_references(hil_question):
@@ -126,10 +161,71 @@ def _mixed_question_override(hil_question: str, base_action: str) -> str | None:
     return None
 
 
+def _caliber_gap_override(hil_question: str, base_action: str) -> str | None:
+    """口径缺口问型改判：UNA → AMBIGUITY_CLARIFY。
+
+    序列去重 / 指标产生机制 / 名称映射字典 / 业务词取值 / 明细-聚合取用层级
+    这类业务口径问题不含任何 action 关键词，base 分类落 default UNA 会被拒答——
+    agent 按纪律提问却拿不到答复，白耗交互预算。仅对 base=UNA 改判（已分类为
+    TABLE_CONFIRM / OUTPUT / AMBIGUITY 的问题不受影响，回放门零回归前提）。
+    标记见 hitl_resolver_assets._CALIBER_GAP_ASK_MARKERS，与 planner 纪律 13
+    的提问措辞模板对齐。
+    """
+    if base_action != "UNA":
+        return None
+    if any(marker in (hil_question or "") for marker in _CALIBER_GAP_ASK_MARKERS):
+        return "AMBIGUITY_CLARIFY"
+    return None
+
+
+def _table_proposal_una_override(hil_question: str, base_action: str) -> str | None:
+    """收敛确认误路由修正：UNA → TABLE_CONFIRM。
+
+    v46_test13q q55 Q3 实证：检索上限后的收敛确认问（"候选池中最接近的表 X
+    ...请您确认是否接受"）不含"源表/数据源/候选表"关键词——"候选池"与关键词
+    "候选表"子串差一字不匹配——base 落 UNA 拿通用拒答白耗一轮；同型 Q4 带
+    "数据源表选择"字样即正确路由。对 base=UNA 且含收敛确认标记（
+    hitl_resolver_assets._TABLE_CONVERGENCE_MARKERS：表为确认对象的签名）
+    且带确认/选择/接受动词的问题改判 TABLE_CONFIRM——程序化 TABLE_CONFIRM
+    按 golden 给确认锁或拒源重检索，均可执行。仅动 UNA 侧（历史回放 3 UNA
+    问=q56/q64/q66 均不含收敛确认标记，回放门验证；不直接复用 _TABLE_PROPOSAL_RE
+    ——其"计划使用"等表提案信号对"计划使用 X，请确认这个理解是否正确"型口径问
+    过宽，q64"我倾向于理解为"实证口径歧义问混入风险；收敛确认的签名=表为确认
+    对象。 已从 _TABLE_PROPOSAL_RE 移除"我倾向"等裸歧义信号，本 override 的
+    收敛标记+确认动词双条件维持不变）。
+    """
+    if base_action != "UNA":
+        return None
+    q = hil_question or ""
+    if not any(marker in q for marker in _TABLE_CONVERGENCE_MARKERS):
+        return None
+    if not any(verb in q for verb in ("确认", "选择", "接受")):
+        return None
+    return "TABLE_CONFIRM"
+
+
+def _schema_derivation_una_override(hil_question: str, base_action: str) -> str | None:
+    """
+    标记见 hitl_resolver_assets._SCHEMA_DERIVATION_MARKERS；改判后按 golden
+    程序化给"期望输出 N 列"/粒度答复。仅动 UNA 侧，回放门验证。
+    """
+    if base_action != "UNA":
+        return None
+    ql = (hil_question or "").lower()
+    if any(marker in ql for marker in _SCHEMA_DERIVATION_MARKERS):
+        return "OUTPUT_SCHEMA_PREVIEW"
+    return None
+
+
 _HITL_CLASSIFIER = HitlQuestionClassifier(
     HITL_ACTION_SPECS,
     default_action=HITL_DEFAULT_ACTION,
-    overrides=(_mixed_question_override,),
+    overrides=(
+        _mixed_question_override,
+        _caliber_gap_override,
+        _table_proposal_una_override,
+        _schema_derivation_una_override,
+    ),
 )
 
 
@@ -468,14 +564,51 @@ def _extract_agent_column_count(text: str) -> int | None:
     return None
 
 
-def _count_golden_output_columns(golden_sql: str) -> int | None:
-    """统计 golden 顶层 SELECT 输出列数（按第一个 select...from 块的顶层逗号计）。"""
+def _extract_output_select_block(golden_sql: str) -> str:
+    """提取 golden 最终输出 SELECT 的列清单文本（SELECT 与其后第一个顶层 FROM 之间）。
+
+    修正：原实现取第一个 select...from 块——WITH-CTE 开头的 golden取到的是首个 CTE 的列而非输出列。现取最后一个括号深度 0 的
+    SELECT：INSERT...SELECT 的输出 SELECT 是全文最后一个顶层 SELECT，CTE 体与
+    子查询的 SELECT 均在括号内（深度>0）不入选；纯 SELECT golden（无 INSERT）
+    唯一的顶层 SELECT 同样命中。字符串字面量与 -- 注释先剥离，防字面量内
+    逗号/关键字误计。无顶层 SELECT 或其后无顶层 FROM 时返回空串。
+    """
     if not golden_sql:
+        return ""
+    s = re.sub(r"--[^\n]*", " ", golden_sql)
+    s = re.sub(r"'(?:[^'\\]|\\.)*'", "''", s)
+    s = re.sub(r'"(?:[^"\\]|\\.)*"', '""', s)
+    tokens: list[tuple[str, int, int]] = []
+    depth = 0
+    for m in re.finditer(r"[()]|\b(?:SELECT|FROM)\b", s, re.IGNORECASE):
+        word = m.group(0)
+        if word == "(":
+            depth += 1
+        elif word == ")":
+            depth -= 1
+        else:
+            tokens.append((word.upper(), depth, m.start()))
+    last_sel = None
+    for tok in tokens:
+        if tok[0] == "SELECT" and tok[1] == 0:
+            last_sel = tok
+    if last_sel is None:
+        return ""
+    for word, d, pos in tokens:
+        if word == "FROM" and d == 0 and pos > last_sel[2]:
+            return s[last_sel[2] + 6: pos]
+    return ""
+
+
+def _count_golden_output_columns(golden_sql: str) -> int | None:
+    """统计 golden 最终输出 SELECT 的顶层列数（顶层逗号 + 1）。
+
+    经 _extract_output_select_block 定位输出 SELECT（原"第一个
+    select...from"在 WITH-CTE golden 上取到 CTE 列数。解析不出返回 None（调用方退其他分支/LLM）。
+    """
+    select_block = _extract_output_select_block(golden_sql)
+    if not select_block.strip():
         return None
-    m = re.search(r"select\s+(.*?)\s+from\s", golden_sql, re.IGNORECASE | re.DOTALL)
-    if not m:
-        return None
-    select_block = m.group(1)
     depth = 0
     commas = 0
     for ch in select_block:
@@ -485,18 +618,18 @@ def _count_golden_output_columns(golden_sql: str) -> int | None:
             depth -= 1
         elif ch == "," and depth == 0:
             commas += 1
-    if not select_block.strip():
-        return None
     return commas + 1
 
 
 def _extract_golden_schema_summary(golden_sql: str) -> str:
-    """从 golden SQL 提取输出 schema 概要（SELECT 列 + 目标表）。"""
+    """从 golden SQL 提取输出 schema 概要（输出 SELECT 列 + 目标表）。
+
+    列清单改用 _extract_output_select_block（输出 SELECT 而非首 CTE），
+    防止 LLM 兜底 prompt 里的"SELECT 列"预览展示 CTE 列误导 persona。
+    """
     if not golden_sql:
         return ""
-    # 提取 SELECT 到 FROM 之间的列
-    select_match = re.search(r"select\s+(.*?)\s+from", golden_sql, re.IGNORECASE | re.DOTALL)
-    columns = select_match.group(1).strip() if select_match else ""
+    columns = _extract_output_select_block(golden_sql).strip()
     # 提取目标表（INSERT OVERWRITE TABLE x）
     target_match = re.search(r"insert\s+overwrite\s+table\s+([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)", golden_sql, re.IGNORECASE)
     target = target_match.group(1) if target_match else ""
@@ -760,15 +893,21 @@ def _read_golden_sql_from_state(
     return golden_sql, task_meta
 
 
-def _customer_restate_query(original_query: str, limit: int = 80) -> str:
-    """客户口吻的需求复述素材：截断原始 query，只作复述用。"""
+def _customer_restate_query(original_query: str, limit: int = 300) -> str:
+    """客户口吻的需求复述素材：截断原始 query，只作复述用。
+
+    实证 80 字会把需求尾部的筛选条件/窗口要求截丢，放宽到
+    300 字以覆盖完整需求。
+    """
     text = re.sub(r"\s+", " ", (original_query or "")).strip()
     if len(text) > limit:
         text = text[:limit] + "…"
     return text
 
 
-def _table_rejection_reply(correct: list[str], wrong: list[str], query_head: str) -> str:
+def _table_rejection_reply(
+    correct: list[str], wrong: list[str], query_head: str, variant_hint: str = ""
+) -> str:
     """源表判错的客户口吻拒绝模板（程序化分支与 LLM 兜底防线共用）。"""
     parts = []
     if correct:
@@ -780,6 +919,8 @@ def _table_rejection_reply(correct: list[str], wrong: list[str], query_head: str
         "请你基于元数据再检索一下（换用需求里的业务词重新检索，不要原样重复刚才的候选），"
         "给我 2-3 个候选数据源选项（说明各自记录的数据和适用场景），我来选。"
     )
+    if variant_hint:
+        parts.append(variant_hint)
     return "".join(parts)
 
 
@@ -847,11 +988,313 @@ def _escalated_table_rejection_reply(
     )
 
 
+def _table_name_tokens(table: str) -> set[str]:
+    """表名 token 集（裸名按 _ 切分、小写；db 前缀不参与近变体判别）。"""
+    bare = str(table).lower().rsplit(".", 1)[-1]
+    return {tok for tok in bare.split("_") if tok}
+
+
+def _token_jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _near_variant_caliber_hint(golden_tables: list[str] | set[str], rejected: list[str]) -> str:
+    """近变体口径判别提示：被拒表与 golden 表的 token 差集经概念表
+    转译为客户口吻口径词（golden 侧独有 = 我要的口径，被拒侧独有 = 不要的），
+    注入 TABLE_CONFIRM 拒绝/升级答复。
+
+    实证失分型：q51 billing/event 流水互选、q57 oCPD/oCPC、q64 30d/1y+ubr
+    窗口口径近变体——agent 主题词检索正确、族内选错口径，客户把"要什么口径/
+    不要什么口径"说破即可收窄族内判别。零泄漏边界与层级/粒度标签同源：只输出
+    业务口径词，完整表名/db/字段仍禁。token Jaccard ≥ 1/3 才判近变体（防完全
+    无关表误伤）；差集双向都无概念映射时返回空串，回落现行为。
+    """
+    golden_token_sets = [(g, _table_name_tokens(g)) for g in golden_tables]
+    if not golden_token_sets:
+        return ""
+    want: list[str] = []
+    avoid: list[str] = []
+    for rej in rejected:
+        rej_tokens = _table_name_tokens(rej)
+        if not rej_tokens:
+            continue
+        best_tokens = max(golden_token_sets, key=lambda kv: _token_jaccard(rej_tokens, kv[1]))[1]
+        if _token_jaccard(rej_tokens, best_tokens) < 1 / 3:
+            continue
+        for tok in sorted(best_tokens - rej_tokens):
+            phrase = _VARIANT_TOKEN_CONCEPTS.get(tok, "")
+            if phrase and phrase not in want:
+                want.append(phrase)
+        for tok in sorted(rej_tokens - best_tokens):
+            phrase = _VARIANT_TOKEN_CONCEPTS.get(tok, "")
+            if phrase and phrase not in avoid:
+                avoid.append(phrase)
+    if not want and not avoid:
+        return ""
+    want_phrase = f"我要的是{'、'.join(want)}的数据" if want else ""
+    avoid_phrase = f"{'；' if want else ''}不是{'、'.join(avoid)}的" if avoid else ""
+    return (
+        "另外把数据口径说得再具体些，免得选错："
+        + want_phrase
+        + avoid_phrase
+        + "。请按这个口径去核对、检索候选数据源，口径不符的表不要再提。"
+    )
+
+
+def _near_variant_want_tokens(golden_tables: list[str] | set[str], rejected: list[str]) -> list[str]:
+    """近变体判别的 golden 侧口径 token（与 _near_variant_caliber_hint
+    同判据：每个被拒表找 Jaccard≥1/3 的最近 golden，取差集）。
+
+    只保留有概念映射的判别性 token（xtr/list/stat 这类口径词）——app/adv/dm
+    等 ubiquitous token 不产生口径对照信号（池内几乎每张 ads 表都含它们，
+    对照等于噪声）。无映射 token 时返回空列表（无对照基础）。
+    """
+    golden_token_sets = [(g, _table_name_tokens(g)) for g in golden_tables]
+    if not golden_token_sets:
+        return []
+    want: set[str] = set()
+    for rej in rejected:
+        rej_tokens = _table_name_tokens(rej)
+        if not rej_tokens:
+            continue
+        best_tokens = max(golden_token_sets, key=lambda kv: _token_jaccard(rej_tokens, kv[1]))[1]
+        if _token_jaccard(rej_tokens, best_tokens) < 1 / 3:
+            continue
+        want.update(tok for tok in (best_tokens - rej_tokens) if tok in _VARIANT_TOKEN_CONCEPTS)
+    return sorted(want)
+
+
+def _load_retrieved_pool_tables(workspace_root: Path | None) -> list[str]:
+    """读 workspace/.semantic/semantic_retrieve_context_*.json 的 tables
+    并集 = agent 已检索池（基础池 + 扩池，全部 context 文件的表清单）。"""
+    if workspace_root is None:
+        return []
+    tables: list[str] = []
+    seen: set[str] = set()
+    try:
+        for path in sorted((workspace_root / ".semantic").glob("semantic_retrieve_context_*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            entries = payload.get("tables") if isinstance(payload, dict) else None
+            for t in entries if isinstance(entries, list) else []:
+                if isinstance(t, str) and t.strip() and t not in seen:
+                    seen.add(t)
+                    tables.append(t)
+    except Exception as exc:
+        logger.debug(f"[hitl_auto_resolver] 已检索池读取失败: {exc}")
+    return tables
+
+
+def _match_pool_tables_by_tokens(
+    pool_tables: list[str],
+    want_tokens: list[str],
+    rejected: list[str],
+    *,
+    limit: int = 3,
+) -> list[str]:
+    """池内表名 token 对照：含任一口径 token 的池内表（剔除被拒表），按命中
+    token 数降序——golden 通常命中全部口径 token 自然居首。上限 3 张。"""
+    want_set = set(want_tokens)
+    if not want_set or not pool_tables:
+        return []
+    matches: list[tuple[int, str]] = []
+    for table in pool_tables:
+        if any(_tables_match(table, r) for r in rejected):
+            continue
+        hit = _table_name_tokens(table) & want_set
+        if hit:
+            matches.append((len(hit), table))
+    matches.sort(key=lambda kv: (-kv[0], kv[1]))
+    return [t for _, t in matches[:limit]]
+
+
+def _pool_token_hint(
+    workspace_root: Path | None,
+    golden_tables: list[str] | set[str],
+    rejected: list[str],
+) -> str:
+    """拒绝答复追加"池内表名 token 对照"段。
+
+    q55 型死局的 agent 侧根因：口径词（"列表清单/统计汇总/xTR"）已随 v42 hint
+    送达，但 agent 无把口径词映射回表名的能力，池首 golden 全程未被提案。
+    本段把口径 token 对照到 agent 已检索池（.semantic context 文件并集），
+    指名道姓给"优先核对"候选。边界注记：对照表全部来自 agent 自己检索到的
+    池（agent 上下文内已有），非 golden 直读；只作核对建议、不否定其它候选。
+    口径 token 无映射或池内无命中时返回空串（回落现行为）。
+    """
+    want_tokens = _near_variant_want_tokens(golden_tables, rejected)
+    if not want_tokens:
+        return ""
+    matches = _match_pool_tables_by_tokens(
+        _load_retrieved_pool_tables(workspace_root), want_tokens, rejected
+    )
+    if not matches:
+        return ""
+    return (
+        "为帮你把口径落到实处——你此前检索到的候选里，表名 token 与我要的口径"
+        f"（{'、'.join(want_tokens)}）直接对应的有：{'、'.join(matches)}。"
+        "请优先用 get_table_schema 核对这几张的列级证据是否匹配任务需求；"
+        "这只是核对建议、不排除其它候选；核对后仍不符的，再换业务词检索。"
+    )
+
+
+def _resolve_agent_workspace_root(state: Any, runtime: Any) -> Path | None:
+    """解析当前 agent 的 workspace 根目录（state["workspace"] 优先，runtime 兜底）。"""
+    workspace = None
+    if isinstance(state, dict):
+        workspace = state.get("workspace")
+    if not workspace:
+        workspace = getattr(runtime, "workspace_dir", None)
+    if not workspace:
+        return None
+    try:
+        return Path(str(workspace)).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _write_expand_retrieve_marker(
+    workspace_root: Path | None,
+    rejected_tables: list[str],
+    original_query: str,
+    round_index: int,
+) -> None:
+    """L1b-heavy：源表被拒时写入扩池检索标记，供 mr 子代理 loader 消费。
+
+    背景：重端点 semantic/retrieve 的唯一入口是 metadata_recall
+    子代理的 semantic_retrieve_context_loader，其 query 被 get_current_query 锁死
+    为原始任务 query（sha256 同键全走缓存）——拒绝循环里 agent 换的业务词从不
+    产生第二个 context 文件，评测侧 recalled 池（= 全部 context 文件并集）无法
+    扩池。拒绝时写此标记，loader 见标记即用本轮子代理 query 的业务词再打一次
+    重端点：新 query → 新缓存键 → 新 context 文件 → 池单调扩大。
+
+    标记内容只含 agent 已知信息（其自提候选表名 + 任务原文），无 golden 泄漏。
+    """
+    if workspace_root is None or not rejected_tables:
+        return
+    try:
+        semantic_dir = workspace_root / ".semantic"
+        semantic_dir.mkdir(parents=True, exist_ok=True)
+        marker_path = semantic_dir / "hitl_expand_retrieve_request.json"
+        payload = {
+            "trigger": "table_confirm_rejected",
+            "rejected_tables": list(rejected_tables),
+            "original_query": str(original_query or "")[:2000],
+            "rejection_round": int(round_index),
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        marker_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info(
+            f"[hitl_expand_retrieve] 源表被拒（round={round_index}），写入扩池检索标记: "
+            f"rejected={rejected_tables}"
+        )
+    except Exception as exc:
+        logger.warning(f"[hitl_expand_retrieve] 扩池检索标记写入失败: {exc}")
+
+
+def _record_confirmed_tables(workspace_root: Path | None, agent_tables: list[str]) -> None:
+    """L4 确认贯穿性：TABLE_CONFIRM 确认（部分/全部）时累积记录已确认源表清单。
+
+    记录到 workspace/.memory/hitl_confirmed_tables.json（跨轮 union，只增不减）；
+    delivery_guard 在 planner 收尾前比对交付 SQL 实际引用的源表与此清单，
+    已确认却未使用的表触发提醒——清单只引用 agent 自己确认过的表，无 golden 泄漏。
+    确认过的表不会再被拒绝（判定确定性），union 不会引入后被推翻的表。
+    """
+    if workspace_root is None or not agent_tables:
+        return
+    try:
+        memory_dir = workspace_root / ".memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        record_path = memory_dir / "hitl_confirmed_tables.json"
+        record: dict[str, Any] = {}
+        if record_path.is_file():
+            try:
+                loaded = json.loads(record_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    record = loaded
+            except Exception:
+                record = {}
+        confirmed = [t for t in record.get("confirmed_tables", []) if isinstance(t, str)]
+        for table in agent_tables:
+            if table not in confirmed:
+                confirmed.append(table)
+        record["confirmed_tables"] = confirmed
+        record["rounds"] = int(record.get("rounds", 0)) + 1
+        record["updated_at"] = datetime.now(UTC).isoformat()
+        record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info(f"[hitl_auto_resolver] 已确认源表清单更新（round={record['rounds']}）: {confirmed}")
+    except Exception as exc:
+        logger.warning(f"[hitl_auto_resolver] 已确认源表清单写入失败: {exc}")
+
+
+def _record_rejected_tables(
+    workspace_root: Path | None,
+    rejected_tables: list[str],
+    golden_tables: list[str] | set[str],
+) -> None:
+    """被拒源表持久台账（.memory/hitl_rejected_tables.json，跨轮 union）。
+
+    现扩池标记（hitl_expand_retrieve_request.json）单次消费、无持久记录——
+    被拒表在后续任何轮次（基础池注入/mr 自调检索）回流时无人记得它被拒过
+    （v44_test2q q55：被拒样本表经 mr 基础 context 长期回流为候选首位）。
+    消费方：semantic_retrieve_context_loader（注入前过滤）、metadata_recall
+    工具（拒后轮次帽 + 口径对照提示）。
+
+    同时写入近变体判别出的口径契约（want_tokens/want_phrases/avoid_phrases，
+    golden 侧独有 token 与概念转译——与 _near_variant_caliber_hint 同判据），
+    供工具侧把口径词对照到池内表名（P0-2 的 agent 可见通道，工具侧无 golden）。
+    台账只引用 agent 自己提过的表名与口径词，无 golden 表名泄漏。
+    被拒表不可能随后被确认（wrong = 不在 golden 集，判定确定性），union 安全。
+    """
+    if workspace_root is None or not rejected_tables:
+        return
+    want_tokens = _near_variant_want_tokens(golden_tables, rejected_tables)
+    try:
+        memory_dir = workspace_root / ".memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        record_path = memory_dir / "hitl_rejected_tables.json"
+        record: dict[str, Any] = {}
+        if record_path.is_file():
+            try:
+                loaded = json.loads(record_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    record = loaded
+            except Exception:
+                record = {}
+        rejected = [t for t in record.get("rejected_tables", []) if isinstance(t, str)]
+        for table in rejected_tables:
+            if table not in rejected:
+                rejected.append(table)
+        record["rejected_tables"] = rejected
+        record["rounds"] = int(record.get("rounds", 0)) + 1
+        if want_tokens:
+            phrases = [
+                _VARIANT_TOKEN_CONCEPTS.get(tok, "")
+                for tok in want_tokens
+                if _VARIANT_TOKEN_CONCEPTS.get(tok, "")
+            ]
+            record["want_tokens"] = want_tokens
+            record["want_phrases"] = phrases
+        record["updated_at"] = datetime.now(UTC).isoformat()
+        record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info(
+            f"[hitl_auto_resolver] 已拒绝源表台账更新（round={record['rounds']}）: "
+            f"{rejected}，口径 token: {want_tokens}"
+        )
+    except Exception as exc:
+        logger.warning(f"[hitl_auto_resolver] 已拒绝源表台账写入失败: {exc}")
+
+
 def _answer_table_confirm_programmatic(
     golden_sql: str,
     hil_question: str,
     original_query: str = "",
     messages: list | None = None,
+    workspace_root: Path | None = None,
 ) -> str | None:
     """TABLE_CONFIRM：客户口吻零泄漏源表判定（程序化）。
 
@@ -868,6 +1311,10 @@ def _answer_table_confirm_programmatic(
       需求自查是否遗漏数据（不报缺哪些表）；
     - agent 提到的表与 golden 一致 → 确认 agent 的表 + 推进锚；
     - agent 没提表名 → 要求 agent 基于元数据给出候选选项（固定模板，不走 LLM）。
+
+    除"先做功课"模板外，各判定出口经 _with_caliber 追加提问内嵌的口径
+    子问答复（标识/时间/去重）——复合提问（表提案+口径确认）原先只答表判定、口径子问被整段丢弃，agent 被拒表后拿不到口径，
+    失去"表不完美但口径正确"的交付路径。
     """
     golden_tables = _extract_golden_tables_set(golden_sql)
     if not golden_tables:
@@ -889,26 +1336,70 @@ def _answer_table_confirm_programmatic(
     missing = [g for g in golden_tables if not any(_tables_match(a, g) for a in agent_tables)]
     correct = [t for t in agent_tables if any(_tables_match(t, g) for g in golden_tables)]
     if wrong:
+        # L1b-heavy：拒绝即写扩池标记，mr 子代理 loader 消费后按新业务词再检索一次
+        _write_expand_retrieve_marker(
+            workspace_root, wrong, original_query, _prior_rejection_rounds(messages) + 1
+        )
+        # 被拒表持久台账（跨轮 union + 口径契约）——扩池标记单次
+        # 消费无持久记录，被拒表在基础池注入/mr 自调检索回流时无人记得它被拒
+        _record_rejected_tables(workspace_root, wrong, golden_tables)
+        # 记录缺口修复：部分正确轮的正确表已被口头锁定（"就此定下来"），
+        # 同样累积进确认清单——否则 delivery_guard 的确认贯穿核对对这些表失明
+        # （实证 12/17 任务有口头确认无记录）
+        if correct:
+            _record_confirmed_tables(workspace_root, correct)
+        # L1 近变体口径判别：差集 token 转译口径词注入拒绝/升级答复；
+        # 口径 token 对照到池内表名，指名道姓给"优先核对"候选
+        hint_tail = _near_variant_caliber_hint(golden_tables, wrong) + _pool_token_hint(
+            workspace_root, golden_tables, wrong
+        )
         # 连续选错：升级为特征级指引（给新检索轴），避免同一句拒绝让 agent
         # 在原候选池打转（golden 表可能根本不在其检索候选池里）
         if not correct:
             prior_rejects = _prior_rejection_rounds(messages)
+            # P0-4（顽疾六 grounding 死锁出口）：第 3 轮起候选仍全错时，
+            # 停止索要新候选、切换"自主决策交付"最终话术——防泄漏下 resolver
+            # 只能拒不能引导，池缺 golden 时"再给候选"是死循环指令。与纪律 0/守卫文案同链。
+            if prior_rejects >= 2:
+                return _with_caliber(
+                    (
+                        f"{'、'.join(wrong)} 还是不符合，这已经是我第三次否掉你的候选了——"
+                        "不用再检索、也不用再来问我数据源的事。请基于你已检索到的元数据，"
+                        "自主选择与我需求最接近的候选表（已确认过的表优先，避开我明确"
+                        "否定过的），直接完成 SQL 交付；你的选择理由、假设与需求的差距，"
+                        "写进交付说明供我复核。这是我关于数据源的最终答复。"
+                    ) + hint_tail,
+                    golden_sql,
+                    hil_question,
+                )
             if prior_rejects >= 1:
                 escalated = _escalated_table_rejection_reply(golden_sql, hil_question, wrong, prior_rejects)
                 if escalated:
-                    return escalated
-        return _table_rejection_reply(correct, wrong, query_head)
-    if missing:
-        return (
-            f"{'、'.join(agent_tables)} 这些表符合我的需求，就此定下来——"
-            "不用再就这些表来问我，请直接基于它们推进下一步（该核对字段口径或写 SQL 了）。"
-            "推进的同时请对照我的任务需求自查一下是否还有遗漏的数据"
-            "（比如是否还需要其他类型的明细数据或维表）；"
-            "如果确需补充数据源，给我候选选项，我来确认。"
+                    return _with_caliber(escalated + hint_tail, golden_sql, hil_question)
+        return _with_caliber(
+            _table_rejection_reply(correct, wrong, query_head, hint_tail), golden_sql, hil_question
         )
-    return (
-        f"确认：就用 {'、'.join(agent_tables)}。数据源这块可以定了，"
-        "接下来如需确认输出结构或统计口径，整理成具体选项再来问我。"
+    # wrong 为空：本轮 agent 所列源表全部正确（部分确认或全部确认）→ 累积记录确认清单
+    _record_confirmed_tables(workspace_root, agent_tables)
+    if missing:
+        return _with_caliber(
+            (
+                f"{'、'.join(agent_tables)} 这些表符合我的需求，就此定下来——"
+                "不用再就这些表来问我，请直接基于它们推进下一步（该核对字段口径或写 SQL 了）。"
+                "推进的同时请对照我的任务需求自查一下是否还有遗漏的数据"
+                "（比如是否还需要其他类型的明细数据或维表）；"
+                "如果确需补充数据源，给我候选选项，我来确认。"
+            ),
+            golden_sql,
+            hil_question,
+        )
+    return _with_caliber(
+        (
+            f"确认：就用 {'、'.join(agent_tables)}。数据源这块可以定了，"
+            "接下来如需确认输出结构或统计口径，整理成具体选项再来问我。"
+        ),
+        golden_sql,
+        hil_question,
     )
 
 
@@ -1086,7 +1577,14 @@ def _vet_llm_confirmation(
                 wrong_tables = _vet_table_offending_tables(clause, golden_tables, agent_tables)
                 if wrong_tables:
                     if not table_redirected:
-                        out.append(_table_rejection_reply([], wrong_tables, query_head))
+                        out.append(
+                            _table_rejection_reply(
+                                [],
+                                wrong_tables,
+                                query_head,
+                                _near_variant_caliber_hint(golden_tables, wrong_tables),
+                            )
+                        )
                         table_redirected = True
                         logger.info(
                             f"[hitl_auto_resolver] LLM 假确认防线：源表假确认纠正（被错误确认: {wrong_tables}）"
@@ -1110,9 +1608,11 @@ def _answer_output_schema_programmatic(
     golden_cols = _count_golden_output_columns(golden_sql)
     # 1) 列数对比（agent 明说了列数且 golden 列数可解析）
     if agent_cols is not None and golden_cols is not None and agent_cols != golden_cols:
-        return (
+        return _with_caliber(
             f"输出列数需要修正：期望输出 {golden_cols} 列，你计划输出 {agent_cols} 列，"
-            f"请按任务要求的输出结构（{golden_cols} 列）调整。"
+            f"请按任务要求的输出结构（{golden_cols} 列）调整。",
+            golden_sql,
+            hil_question,
         )
     # 2) 聚合粒度转向（对应"37 列 vs 8 列"明细宽表失败模式）；
     #    粒度键概念化（agent 未提到的字段名不报，见 _grain_concept_phrase）
@@ -1134,10 +1634,25 @@ def _answer_output_schema_programmatic(
         if golden_cols is not None:
             hint += f"，期望输出 {golden_cols} 列"
         hint += "。不是逐明细的宽表，请确认你的输出粒度与此一致。"
-        return hint
-    # 3) 仅有列数信息
+        return _with_caliber(hint, golden_sql, hil_question)
+    # 3) 仅有列数信息。细化：纯主体/主键/粒度问（不含列数/列构成语义，且
+    #    golden 无 GROUP BY/粒度特征、分支 2 未触发）程序化给不出所问信息——
+    #    回 None 退 OUTPUT persona LLM（其角色约束本就聚焦"按什么粒度聚合、
+    #    一行代表什么"）。混合问（主键+列构成，q50 型 PASS 路径）保留列数
+    #    程序化答复不动。
     if golden_cols is not None:
-        return f"期望输出 {golden_cols} 列。请确认你的输出列数与任务要求一致后继续。"
+        ql = (hil_question or "").lower()
+        grain_ask = any(k in ql for k in ("主体", "主键", "粒度", "一行"))
+        col_ask = any(k in ql for k in ("列数", "列构成", "列方案", "几列", "列名")) or bool(
+            re.search(r"\d+\s*列", hil_question or "")
+        )
+        if grain_ask and not col_ask:
+            return None
+        return _with_caliber(
+            f"期望输出 {golden_cols} 列。请确认你的输出列数与任务要求一致后继续。",
+            golden_sql,
+            hil_question,
+        )
     return None
 
 
@@ -1146,18 +1661,16 @@ def _is_column_enumeration_ask(hil_question: str) -> bool:
     return bool(_COLUMN_ENUMERATION_ASK_PATTERN.search(hil_question or ""))
 
 
-def _answer_ambiguity_clarify_programmatic(
-    golden_sql: str,
-    hil_question: str,
-) -> str | None:
-    """AMBIGUITY_CLARIFY：标识字段/时间口径回答（程序化优先，零泄漏）。
+def _build_caliber_answer_parts(golden_sql: str, hil_question: str) -> str | None:
+    """从提问中解析口径子问（标识/时间/去重）并按 golden 特征作答，无信号返回 None。
 
-    混合提问（标识 + 时间在同一问里）给组合答复，两部分口径分别确认。
-    - agent 在标识字段间纠结且 golden 标识恰在选项中 → 客户从选项中选定；
-    - golden 标识不在 agent 选项中 → 概念化转向：报业务概念粒度（如"账号ID"），
-      不报字段名——此前交给 LLM 兜底时实测有顺着 agent 假确认的迎合风险；
-    - agent 问时间口径 → 按 golden 特征给口径提示；
-    - 标识与时间都解析不出 → 返回 None 退回 LLM 兜底。
+    提取自 _answer_ambiguity_clarify_programmatic 原体：口径子问常内嵌在
+    TABLE_CONFIRM/OUTPUT 提问里（"我自主决策选了表X——标识用 user_id 还是 imei、
+    时间窗口怎么算"），这些 action 的程序化应答原先
+    只做表判定/列数对比，内嵌口径子问被整段丢弃——agent 被拒表后拿不到口径，
+    失去"表不完美但口径正确"的交付路径。提取为独立 builder 供 _with_caliber
+    复合应答复用。泄漏防线沿用原语：golden 标识字段仅在 agent 自己给出的选项中
+    才选定；时间分区字段名仅在 agent 提过时才复述，其余走概念化转向。
     """
     golden_id = _extract_golden_identifier_field(golden_sql)
     # 提问中出现的标识字段（词边界）
@@ -1165,9 +1678,10 @@ def _answer_ambiguity_clarify_programmatic(
         f for f in _IDENTIFIER_FIELD_CANDIDATES
         if re.search(rf"\b{re.escape(f)}\b", hil_question, re.IGNORECASE)
     ]
-    # Mid 阶段混合提问（"标识字段用哪个 + 时间窗口怎么算"）改成组合答复——
+    # Mid 阶段混合提问（"标识字段用哪个 + 时间窗口怎么算"）给组合答复——
     # 两部分口径分别确认，避免先命中的分支提前 return 把另一半问题晾着不答。
     parts: list[str] = []
+    traits = _infer_golden_calliber_traits(golden_sql)
     # 仅当 golden 标识字段是 agent 提供的选项之一时才直接选定（客户从选项中选）；
     # golden 字段不在选项中时不报字段名（泄漏），改报业务概念粒度把字段核对
     # 交还给 agent（注意同名字段常有主标识/二代标识等变体）。
@@ -1181,8 +1695,28 @@ def _answer_ambiguity_clarify_programmatic(
             "请回到源表字段清单，按字段说明核对哪个字段对应这一粒度"
             "（注意同名字段可能存在主标识/二代标识等变体），确认后再使用。"
         )
+    elif mentioned and _asks_identifier_choice(hil_question) and not golden_id:
+        # golden 无用户标识字段（应用/站点级聚合，q34 型）时，标识选择问
+        # 此前两条分支都因 golden_id 为空跳过——标识子问静默不答，答复被时间
+        # 口径段独占。按 golden 聚合键给"非用户
+        # 粒度"转向答复。守卫：聚合键含标识样字段（含下划线分词后命中候选，
+        # 如 imei_sha256/usid 变体）时golden可能用了候选清单外的用户标识，
+        # 不做断言退回原行为，防误导。
+        gb_keys = traits.get("group_by_keys") or []
+        id_like = {c.lower() for c in _IDENTIFIER_FIELD_CANDIDATES}
+        def _key_is_identifier_like(key: str) -> bool:
+            k = str(key).strip().strip("`\"' ").lower()
+            k = re.sub(r"^[a-z_][a-z0-9_]*\.", "", k)
+            if k in id_like:
+                return True
+            return any(tok in id_like for tok in re.split(r"[_0-9]+", k) if tok)
+        if gb_keys and not any(_key_is_identifier_like(k) for k in gb_keys):
+            parts.append(
+                "标识口径：本场景不按用户标识字段聚合——这几个标识字段都不是统计主体，"
+                f"输出按{_grain_concept_phrase(gb_keys, hil_question)}粒度统计（单 key 单行），"
+                "无需在这几个标识字段中选择，也不要把标识字段加进输出主键。"
+            )
     # 时间口径（推断 golden 具体窗口语义，含/不含边界明确化）
-    traits = _infer_golden_calliber_traits(golden_sql)
     time_field = traits.get("time_field")
     asks_time = any(kw in hil_question for kw in ("时间", "当天", "窗口", "自然日", "昨天", "日期", "分区"))
     if time_field and asks_time:
@@ -1196,9 +1730,51 @@ def _answer_ambiguity_clarify_programmatic(
                 f"时间口径：{field_prefix}口径与任务描述的时间范围一致"
                 "（含任务指定的起止日期，不做额外滚动窗口偏移）。"
             )
+    # 序列去重口径（query 缺口分析模式 D）：agent 问"键值对是否去重"时按
+    # golden 聚合函数给确定性答复（collect_set=去重 / collect_list=保留全部）；
+    # 两者都出现或都没有时不答（列级语义可能混合），退 LLM 兜底。
+    if "去重" in hil_question:
+        sql_l = (golden_sql or "").lower()
+        has_set = "collect_set" in sql_l
+        has_list = "collect_list" in sql_l
+        if has_set and not has_list:
+            parts.append("去重口径：序列中的键值对需要去重——同一个键只保留一条，相同键的重复值不要重复拼接。")
+        elif has_list and not has_set:
+            parts.append("去重口径：序列保留全部元素，不需要去重（同键重复值按原样保留）。")
     if parts:
         return "".join(parts) + " 请按以上口径继续。"
     return None
+
+
+def _with_caliber(base: str, golden_sql: str, hil_question: str) -> str:
+    """TABLE_CONFIRM/OUTPUT 程序化应答出口追加口径子问答复。
+
+    提问无口径信号时原样返回（纯表提案/纯列数问零影响）。
+    """
+    seg = _build_caliber_answer_parts(golden_sql, hil_question)
+    if not seg:
+        return base
+    return f"{base}\n另外，你问题里带到的口径我一并答复：{seg}"
+
+
+def _answer_ambiguity_clarify_programmatic(
+    golden_sql: str,
+    hil_question: str,
+) -> str | None:
+    """AMBIGUITY_CLARIFY：标识字段/时间口径回答（程序化优先，零泄漏）。
+
+    混合提问（标识 + 时间在同一问里）给组合答复，两部分口径分别确认。
+    - agent 在标识字段间纠结且 golden 标识恰在选项中 → 客户从选项中选定；
+    - golden 标识不在 agent 选项中 → 概念化转向：报业务概念粒度（如"账号ID"），
+      不报字段名——此前交给 LLM 兜底时实测有顺着 agent 假确认的迎合风险；
+    - agent 问时间口径 → 按 golden 特征给口径提示；
+    - agent 问序列去重 → 按 golden 聚合函数给确定性答复；
+    - 标识与时间都解析不出 → 返回 None 退回 LLM 兜底。
+
+    口径 parts 构建在 _build_caliber_answer_parts（TABLE_CONFIRM/OUTPUT
+    经 _with_caliber 复用同一套口径原语与泄漏防线），本函数为 AMBIGUITY 直连。
+    """
+    return _build_caliber_answer_parts(golden_sql, hil_question)
 
 
 def _load_golden_sql_for_reply(matched_task: dict, state: Any, runtime: Any) -> tuple[str, str]:
@@ -1299,7 +1875,13 @@ def _generate_and_inject_reply_v2(
             "整理成具体选项再来确认。"
         )
     elif action == "TABLE_CONFIRM":
-        programmatic_answer = _answer_table_confirm_programmatic(golden_sql, hil_question, original_query, messages)
+        programmatic_answer = _answer_table_confirm_programmatic(
+            golden_sql,
+            hil_question,
+            original_query,
+            messages,
+            workspace_root=_resolve_agent_workspace_root(state, runtime),
+        )
     elif action == "OUTPUT_SCHEMA_PREVIEW":
         programmatic_answer = _answer_output_schema_programmatic(golden_sql, hil_question)
     elif action == "AMBIGUITY_CLARIFY":

@@ -22,15 +22,18 @@
    首个返回非 None 的 override 生效（场景侧在此实现依赖问题语义的修正，
    如"混合提问"判定）。override 收到的是原始 question（未小写），
    需要自行 lower；返回 None 表示不修正、交由下一个 override / 保留基类。
+   override 生效时打 INFO 日志（``[hitl_classifier] override <name>: A -> B``），
+   供无人值守 run 做改判触发面分析。
 
-注册顺序即关键词匹配优先级——迁移场景类别时必须保持既有顺序
-（回放门 182 问分布的行为等价前提）。
+注册顺序即关键词匹配优先级——迁移场景类别时必须保持既有顺序。
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+
+from loguru import logger
 
 
 @dataclass(frozen=True)
@@ -72,5 +75,9 @@ class HitlQuestionClassifier:
         for override in self._overrides:
             result = override(question, action)
             if result is not None:
+                logger.info(
+                    f"[hitl_classifier] override "
+                    f"{getattr(override, '__name__', repr(override))}: {action} -> {result}"
+                )
                 return result
         return action

@@ -2708,10 +2708,29 @@ def request_human_feedback(reason: str, pending_action: str = "") -> str:
     list them explicitly. Do not guess business meaning or silently choose among plausible interpretations
     when human input is required.
 
+    How to ask (question quality rules):
+    1. Propose, do not ask open-endedly. `pending_action` must state your preferred option plus
+       1-2 concrete alternatives with specific values (table names, field names, time windows,
+       column counts), so the user can confirm or pick one. Never ask "is this correct?" or
+       "do you agree?" without stating the concrete proposal being confirmed.
+    2. One blocking point per call. If several points need answers, ask the most blocking one
+       first and wait for the reply; do not re-ask a point already answered in this session —
+       build on confirmed conclusions instead.
+    3. Reference prior confirmations. When following up, quote what was already confirmed
+       (e.g. "per the confirmed source table X, next I need to confirm the aggregation grain").
+    4. Verify before asking. If a point can be resolved from metadata, table schemas, or task
+       documents, check it yourself first; only ask the user about business caliber that
+       cannot be verified from available information.
+    5. Spend questions wisely. The interaction budget is limited; the system reports the
+       remaining count after each round. Reserve questions for the most critical unresolved
+       caliber (source-table choice and time-window semantics first); decide lower-priority
+       or self-verifiable points yourself and state your assumptions in the delivery.
+
     Args:
         reason: Why human input is required before continuing.
         pending_action: The concrete content or action that needs user confirmation.
-            It must state what the user is actually being asked to confirm, not just say "please confirm".
+            It must state your preferred option and 1-2 concrete alternatives with specific
+            values (table/field names, time windows, column counts), not just "please confirm".
             Avoid context-dependent references such as "the following", "the above", or "this plan"
             unless the referenced details are included in this same field.
 

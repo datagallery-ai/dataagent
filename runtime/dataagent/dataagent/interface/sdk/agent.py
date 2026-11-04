@@ -455,6 +455,15 @@ class DataAgent:
             if key not in initial_state:
                 initial_state[key] = default_val
 
+        # AGENT_CONFIG.hitl_budget → state。
+        # 消费方 hitl_auto_resolver / planner 预算提示均只读 state["hitl_budget"]
+        # （get_hitl_budget，无 runtime 通道）；未配置时不写键 → 框架缺省不变。
+        agent_config = self.config.get("AGENT_CONFIG", {}) or {}
+        if isinstance(agent_config, dict):
+            hitl_budget = agent_config.get("hitl_budget")
+            if hitl_budget is not None and "hitl_budget" not in initial_state:
+                initial_state["hitl_budget"] = hitl_budget
+
         if getattr(self, "type", None) == "bird":
             from dataagent.agents.bird.context_dump import validate_bird_path_inputs
 
