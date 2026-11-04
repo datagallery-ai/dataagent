@@ -189,7 +189,9 @@ def build_messages(
     max_turn = max(turn_indices) if turn_indices else 0
 
     for i, message in enumerate(messages):
-        if isinstance(message, AIMessage):
+        # Runtime hooks may supply current business context as a SystemMessage.
+        # Do not silently discard it before the Planner sees the prompt.
+        if isinstance(message, (AIMessage, SystemMessage)):
             new_messages.append(message)
         if isinstance(message, ToolMessage):
             if context is not None and should_replace(

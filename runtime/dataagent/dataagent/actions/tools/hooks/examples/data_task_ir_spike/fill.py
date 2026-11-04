@@ -95,6 +95,7 @@ def _degraded_field_output(
     err = (error or "unknown error").strip() or "unknown error"
     if isinstance(previous, dict) and isinstance(previous.get("value"), dict):
         output = deepcopy(previous)
+        output["_extraction_error"] = err
         output["field_id"] = field_id
         unresolved = [str(item) for item in (output.get("unresolved") or []) if str(item).strip()]
         note = f"本轮重新提取失败，暂沿用上一轮结果（{err}）"
@@ -114,6 +115,7 @@ def _degraded_field_output(
         return output
     return {
         "field_id": field_id,
+        "_extraction_error": err,
         "value": {},
         "rationale": f"字段提取失败，本轮跳过该字段：{err}",
         "unresolved": [f"字段提取失败：{err}"],
@@ -265,6 +267,10 @@ unresolved 只能记录当前 Field Unit 的直接问题；其他字段的缺失
         "字段 Few-shots": _model_visible_few_shots(field_template),
         "可写模板": writable,
     }
+    if field_template.get("predicate_protocol"):
+        # These fields refer to the shared protocol by name. Without its actual
+        # definition, the model invents keys/operators and repairs them blindly.
+        field_sections["过滤谓词协议"] = field_template["predicate_protocol"]
     def render_sections(sections):
         chunks = []
         for title, content in sections.items():
@@ -835,6 +841,24 @@ def _find_missing_critical_paths(field_template: dict[str, Any], value: Any) -> 
     mapping = value if isinstance(value, dict) else {}
     schema = field_template.get("value_schema", {})
     return [path for path in paths if not _has_structural_path(mapping, schema, path.split("."))]
+
+
+def field_structural_errors(field_template: dict[str, Any], result: dict[str, Any]) -> list[str]:
+    """Check known critical values before publishing, allowing unknown business slots.
+
+    Recompute from values rather than trusting model-written unresolved text.
+    This retains CRITICAL_PATHS scope; it is not full JSON Schema validation.
+    """
+    value = result.get("value")
+    if value is not None and not isinstance(value, dict):
+        return ["value"]
+    normalized = _normalize_field_value(
+        value, field_template.get("value_schema", {}),
+        field_template.get("writable_template", {}).get("value", {}),
+    )
+    if normalized is None:
+        return []
+    return _find_missing_critical_paths(field_template, normalized)
 
 
 def _has_structural_path(value: Any, schema: Any, parts: list[str]) -> bool:

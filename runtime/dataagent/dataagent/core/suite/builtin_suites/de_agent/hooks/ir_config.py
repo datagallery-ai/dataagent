@@ -25,11 +25,28 @@ def validate_data_task_ir_config(state: FlexState, runtime: Runtime) -> FlexStat
     Runs at the beginning of each Agent turn, rather than during config loading.
     Raising stops this turn; the terminal chat loop may still accept new input.
     """
-    validate_data_task_ir_hooks(runtime.get_all_config())
+    enabled = validate_data_task_ir_hooks(runtime.get_all_config())
+    runtime.set_cache("ir_enabled", enabled)
+    if enabled:
+        from dataagent.actions.tools.hooks.examples.data_task_ir_spike.session import prepare_turn
+        from dataagent.actions.tools.hooks.examples.ir_hooks import ir_consistency_policy, ir_failure_policy
+
+        ir_failure_policy(runtime)
+        ir_consistency_policy(runtime)
+        if runtime.get_config("DATA_TASK_IR.refresh_policy", "eager") not in {"eager", "on_consume"}:
+            raise ValueError("DataTaskIR 配置错误：refresh_policy 必须为 eager 或 on_consume")
+        return prepare_turn(state, runtime)
     return state
 
 
-def validate_data_task_ir_hooks(config: Mapping[str, Any]) -> None:
+def prepare_data_task_context(state: FlexState, runtime: Runtime) -> FlexState:
+    """Resolve task context once, before the first Planner call of this turn."""
+    from dataagent.actions.tools.hooks.examples.data_task_ir_spike.session import prepare_task_context
+
+    return prepare_task_context(state, runtime)
+
+
+def validate_data_task_ir_hooks(config: Mapping[str, Any]) -> bool:
     """Check effective tool registrations after default/Suite/user merging.
 
     Builtin entries are registered first and local_functions may replace them,
@@ -37,7 +54,7 @@ def validate_data_task_ir_hooks(config: Mapping[str, Any]) -> None:
     """
     tools = config.get("TOOLS")
     if not isinstance(tools, Mapping):
-        return
+        return False
 
     effective_tools: dict[str, Mapping[str, Any]] = {}
     replaces = tools.get("_replaces") or []
@@ -76,3 +93,4 @@ def validate_data_task_ir_hooks(config: Mapping[str, Any]) -> None:
             "DataTaskIR 配置错误：create_ir 和 update_ir 必须同时配置或同时关闭；"
             f"当前缺少 {missing}。请检查合并后的 TOOLS.builtin / TOOLS.local_functions 工具 hooks.post 配置。"
         )
+    return configured == required

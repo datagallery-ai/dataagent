@@ -87,6 +87,8 @@ TOOLS:
       hooks:
         pre:
           - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready
+        post:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.record_ir_diagnostics
       config:
         llm_model: "chat_model"
         suite_name: "data_engineering"
@@ -116,6 +118,11 @@ TOOLS:
     - name: "check_and_repair_sql"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.sql_checkers"
       function: "check_and_repair_sql"
+      hooks:
+        pre:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.ensure_ir_ready
+        post:
+          - dataagent.actions.tools.hooks.examples.ir_hooks.record_ir_diagnostics
       config:
         suite_name: "data_engineering"
         runtime_llm: "planner"
