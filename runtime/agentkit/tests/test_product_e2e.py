@@ -1,6 +1,6 @@
 """Opt-in real-provider acceptance through the public CLI and existing Ink TUI.
 
-DATAAGENT_V2_LIVE_ENV=/absolute/path/to/.env uv run --project runtime/agentkit \
+DATAAGENT_LIVE_ENV=/absolute/path/to/.env uv run --project runtime/agentkit \
     pytest runtime/agentkit/tests/test_product_e2e.py -q
 
 Only synthetic prompts are sent. Credentials remain in the child environment;
@@ -235,8 +235,8 @@ def test_tui_backend_cleanup_when_node_parent_is_killed(tmp_path):
 
     config, port = config_file(tmp_path)
     source = f"""
-import {{startV2Backend}} from {json.dumps((REPOSITORY / 'apps/tui/dist/v2-backend.js').as_uri())};
-const backend = await startV2Backend({{configPath: process.argv[1], workspace: process.argv[2]}});
+import {{startBackend}} from {json.dumps((REPOSITORY / 'apps/tui/dist/backend.js').as_uri())};
+const backend = await startBackend({{configPath: process.argv[1], workspace: process.argv[2]}});
 console.log('BACKEND_READY');
 await new Promise(() => {{}});
 """
@@ -274,7 +274,7 @@ def test_tui_restores_terminal_when_its_backend_exits(tmp_path):
         command = subprocess.check_output(["ps", "-ww", "-p", str(backend_pid), "-o", "command="], text=True)
         assert "serve --stdio-ready" in command and str(config) in command
         os.kill(backend_pid, signal.SIGTERM)
-        terminal.read_until("V2 backend exited", timeout=10)
+        terminal.read_until("Backend exited", timeout=10)
         terminal.wait_for_exit(expected_code=1)
         assert termios.tcgetattr(terminal.descriptor)[3] & termios.ICANON
     check_port("127.0.0.1", port)
@@ -372,7 +372,7 @@ def exercise_query_and_resume(tmp_path, values):
             if event:
                 records.append({"event": event, **dict(item.split("=", 1) for item in line.split() if "=" in item)})
         assert {record["agent"] for record in records if record["event"] == "hook.before_agent"} == {
-            "dataagent-v2", "general-purpose",
+            "dataagent", "general-purpose",
         }
         children = [record for record in records if record["event"] == "hook.before_tool"
                     and record.get("agent") == "general-purpose"]
@@ -405,9 +405,9 @@ def exercise_query_and_resume(tmp_path, values):
 
 @pytest.mark.live
 def test_real_cli_tool_delegation_and_restart_resume(tmp_path, common_plugin):
-    source = os.environ.get("DATAAGENT_V2_LIVE_ENV")
+    source = os.environ.get("DATAAGENT_LIVE_ENV")
     if not source:
-        pytest.skip("Set DATAAGENT_V2_LIVE_ENV to explicitly opt into provider calls")
+        pytest.skip("Set DATAAGENT_LIVE_ENV to explicitly opt into provider calls")
     exercise_query_and_resume(tmp_path, {**dotenv_values(source), **os.environ})
 
 

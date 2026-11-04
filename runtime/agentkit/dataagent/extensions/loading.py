@@ -20,7 +20,7 @@ def select_plugins(settings: PluginSettings, plugin_roots=()) -> list[tuple[Path
     return resolve_plugins(settings, plugin_roots)
 
 
-_PLUGIN_NAMESPACE = "_dataagent_v2_plugin_"
+_PLUGIN_NAMESPACE = "_dataagent_plugin_"
 _loader_ids = count()
 
 

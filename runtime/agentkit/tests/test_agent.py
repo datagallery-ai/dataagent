@@ -43,7 +43,7 @@ async def test_builtin_audit_uses_six_hooks_without_logging_payloads(runtime, ca
         "hook.before_agent", "hook.before_model", "hook.after_model", "hook.before_tool",
         "hook.after_tool", "hook.before_model", "hook.after_model", "hook.after_agent",
     ]
-    assert all("agent=dataagent-v2" in record for record in records)
+    assert all("agent=dataagent" in record for record in records)
     assert not any(value in "\n".join(records) for value in ("private-question", "private-answer", "98765", "test-secret"))
 
 
@@ -82,7 +82,7 @@ async def test_task_skill_tool_chain_and_child_hooks(runtime, caplog):
         ("task", "on_tool_end"),
     ]
     scopes = {agent: details for agent, event, details in hooks.events if event == "on_chain_start"}
-    root, child = scopes["dataagent-v2"], scopes["general-purpose"]
+    root, child = scopes["dataagent"], scopes["general-purpose"]
     assert root["parent_run_id"] is None
     assert child["parent_run_id"] is not None  # Native parent can be an internal task run.
     assert child["run_id"] != root["run_id"]
@@ -227,7 +227,7 @@ async def test_child_model_limit_emits_child_and_root_error(runtime, child):
         await build_agent(runtime, model=model).with_config(callbacks=[hooks]).ainvoke({
             "messages": [HumanMessage(content="delegate")],
         })
-    assert {agent for agent, event, _ in hooks.events if event == "on_chain_error"} == {child, "dataagent-v2"}
+    assert {agent for agent, event, _ in hooks.events if event == "on_chain_error"} == {child, "dataagent"}
     assert not any(event == "on_chain_end" for _, event, _ in hooks.events)
     assert not hooks.active
 
@@ -268,7 +268,7 @@ async def test_tool_limit_is_per_agent_invocation(runtime, child):
     hooks = RecordingCallback()
     with pytest.raises(Exception, match="Tool call limit"):
         await build_agent(runtime, model=model).with_config(callbacks=[hooks]).ainvoke({"messages": [HumanMessage(content="test")]})
-    assert (child or "dataagent-v2", "on_chain_error") in [(name, event) for name, event, _ in hooks.events]
+    assert (child or "dataagent", "on_chain_error") in [(name, event) for name, event, _ in hooks.events]
     assert not hooks.active
     model = ScriptedModel(responses=[tool_call, AIMessage(content="one"), tool_call, AIMessage(content="two")])
     graph = build_agent(runtime, model=model, checkpointer=InMemorySaver())

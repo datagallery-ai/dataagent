@@ -14,7 +14,7 @@ RUN_ERROR run=<run_id> thread=<thread_id> stage=agent_stream code=<code> message
 
 `code` 是异常类名。空消息仍保留类型。不写原始 traceback，也不把请求体打进这条日志。
 
-TUI 自己的日志路径由 `DATAAGENT_V2_LOG_PATH` 决定，与后端文件分开。
+TUI 自己的日志路径由 `DATAAGENT_TUI_LOG_PATH` 决定，与后端文件分开。
 
 ## Trace
 

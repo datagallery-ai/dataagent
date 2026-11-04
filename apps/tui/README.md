@@ -12,13 +12,13 @@ npm install
 npm run start:tui
 ```
 
-`npm run start:tui` is V2. It connects to `/dataagent/stream` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused. It does not open `/api/copilotkit`.
+`npm run start:tui` connects to `/dataagent/stream` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused. It does not open `/api/copilotkit`.
 
-## DataAgent V2
+## Home
 
 Home defaults live in `~/.dataagent`. Add `--resume` or `--resume <threadId>` to restore a session. `--config`, `--env-file`, `--workspace`, `--user` and `--session` are forwarded to a backend this TUI starts, so they do not attach to one that is already running.
 
-`--runtime-url` attaches and does not start a backend. The host must be `server.host` from `config.json`, or `127.0.0.1`.
+`--runtime-url` attaches and does not start a backend. The host may be `server.host` from `config.json`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 
 ```bash
 npm run start:tui -- --runtime-url http://127.0.0.1:8790
@@ -29,7 +29,7 @@ There is no project configuration layer or trust prompt. Logs/checkpoints live i
 Existing session input bindings are retained; no files are migrated or deleted. TUI theme
 and log variables stay in the TUI process environment. `--env-file` is forwarded to the backend that this TUI starts.
 
-See the [V2 configuration and plugin guide](../../runtime/agentkit/README.md).
+See the [configuration and plugin guide](../../runtime/agentkit/README.md).
 
 ## Chat and keyboard behavior
 
@@ -42,11 +42,11 @@ is four rows. Both home and chat support
 - Enter submits. Shift+Enter (CSI-u or xterm modifyOtherKeys), Alt+Enter and Ctrl+J insert a newline.
 - Multi-line bracketed paste stays one editable draft; large pastes keep the existing fold/expand behavior.
 - Up/Down navigate the draft and command history. Messages entered during a run remain queued.
-- `/` opens commands and Tab completes. V2 exposes `/help`, `/clear`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/resume` and `/resume list` open the session picker.
+- `/` opens commands and Tab completes. The TUI exposes `/help`, `/clear`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/resume` and `/resume list` open the session picker.
 - `/outputs` opens the full output list at any width. Enter previews a result; Esc returns to the list, then chat; q closes the view. Chat always uses a single column, with no output sidebar or extra footer indicators.
-- Ctrl+C keeps the existing two-press exit flow; Ctrl+Z/fg restores the terminal and input cursor in V2.
+- Ctrl+C keeps the existing two-press exit flow; Ctrl+Z/fg restores the terminal and input cursor in the TUI.
 
-V2 shows `Running…` with elapsed time while the full response stream is pending.
+The TUI shows `Running…` with elapsed time while the full response stream is pending.
 
 User messages share the composer's surface and text alignment. Assistant text
 uses a single bullet without repeated role/timestamp headers. Tools show an

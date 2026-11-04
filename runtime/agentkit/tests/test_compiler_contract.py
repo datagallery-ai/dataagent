@@ -40,7 +40,7 @@ def write_skill(source, name):
     path.write_text(f"---\nname: {name}\ndescription: Contract skill\n---\nUse the tool.\n")
 
 
-def hook(event, label, agent="dataagent-v2"):
+def hook(event, label, agent="dataagent"):
     handler = event if event in {"before_tool", "after_tool"} else "agent_hook"
     return {"event": event, "entrypoint": f"extensions.py:{handler}",
             "params": {"label": label, "event": event, "agent": agent}}
@@ -90,7 +90,7 @@ def compile_contract(contract, *, hook_entries=None):
 def test_native_contract_order_and_repeat_isolation(contract):
     kwargs, namespace = compile_contract(contract)
     assert set(kwargs) == {"name", "system_prompt", "tools", "skills", "subagents", "middleware"}
-    assert kwargs["name"] == "dataagent-v2"
+    assert kwargs["name"] == "dataagent"
     assert kwargs["system_prompt"] == "Root plugin prompt.\n"
     tool = kwargs["tools"][0]
     assert tool.name == "contract__increment" and tool.description == "Increment an integer."
@@ -114,9 +114,9 @@ def test_native_contract_order_and_repeat_isolation(contract):
             ))],
         ]
     assert [item.name for item in kwargs["middleware"]] == [
-        "ConfiguredHook__dataagent-v2__before_agent__0",
-        "ConfiguredHook__dataagent-v2__after_agent__1",
-        "ConfiguredHook__dataagent-v2__before_agent__2",
+        "ConfiguredHook__dataagent__before_agent__0",
+        "ConfiguredHook__dataagent__after_agent__1",
+        "ConfiguredHook__dataagent__before_agent__2",
     ]
     assert namespace["trace"] == []
     again, other_namespace = compile_contract(contract)
@@ -138,8 +138,8 @@ async def test_native_graph_child_hooks_scope_and_order(contract):
     )
     assert result["messages"][-1].content == "Done"
     assert [entry for entry in namespace["trace"] if entry[0] == "hook"] == [
-        ("hook", "plugin", "before_agent", "dataagent-v2", None),
-        ("hook", "product", "before_agent", "dataagent-v2", None),
+        ("hook", "plugin", "before_agent", "dataagent", None),
+        ("hook", "product", "before_agent", "dataagent", None),
         ("hook", "child", "before_agent", "first", None),
         ("hook", "child", "before_model", "first", None),
         ("hook", "child", "after_model", "first", None),
@@ -148,7 +148,7 @@ async def test_native_graph_child_hooks_scope_and_order(contract):
         ("hook", "child", "before_model", "first", None),
         ("hook", "child", "after_model", "first", None),
         ("hook", "child", "after_agent", "first", None),
-        ("hook", "plugin", "after_agent", "dataagent-v2", None),
+        ("hook", "plugin", "after_agent", "dataagent", None),
     ]
 
 
@@ -182,7 +182,7 @@ async def test_standalone_resources_need_no_plugin_or_bindings(contract):
     assert kwargs["system_prompt"] == ""
     assert kwargs["tools"] == kwargs["subagents"] == []
     compiled_hook, = kwargs["middleware"]
-    assert compiled_hook.name == "ConfiguredHook__dataagent-v2__before_agent__0"
+    assert compiled_hook.name == "ConfiguredHook__dataagent__before_agent__0"
     await compiled_hook.abefore_agent({}, None)
 
 

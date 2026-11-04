@@ -15,7 +15,7 @@ from dataagent.extensions.subagents import collect_subagents, materialize_subage
 from dataagent.extensions.tools import collect_tools
 from dataagent.semantic_client import SemanticServiceClient
 
-ROOT_AGENT_NAME = "dataagent-v2"
+ROOT_AGENT_NAME = "dataagent"
 
 
 def compile_extensions(

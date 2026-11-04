@@ -116,8 +116,8 @@ def test_plain_python_hook_needs_no_langchain_and_duplicate_declarations_remain(
     assert len(hooks) == 2
     assert all(isinstance(item, AgentMiddleware) for item in hooks)
     assert [item.name for item in hooks] == [
-        "ConfiguredHook__dataagent-v2__before_agent__0",
-        "ConfiguredHook__dataagent-v2__before_agent__1",
+        "ConfiguredHook__dataagent__before_agent__0",
+        "ConfiguredHook__dataagent__before_agent__1",
     ]
     assert "callbacks" not in kwargs
 

@@ -83,7 +83,7 @@ REST/TUI 支持[轮次边界的配置刷新](extension-refresh.md)，不轮询�
 
 ```bash
 export MCP_PYTHON="$PWD/runtime/agentkit/.venv/bin/python"
-npm run start:tui -- --v2
+npm run start:tui
 ```
 
 然后输入：`Use mcp__user__math_add to add 12 and 30.`

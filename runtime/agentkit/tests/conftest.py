@@ -16,7 +16,7 @@ from dataagent.bootstrap import LaunchOptions, prepare_runtime
 class RecordingCallback(AsyncCallbackHandler):
     """Observe native IDs and lifecycle methods without an application HookRuntime."""
 
-    def __init__(self, agents=("dataagent-v2", "general-purpose")):
+    def __init__(self, agents=("dataagent", "general-purpose")):
         self.agents = set(agents)
         self.events = []
         self.active = {}
@@ -63,7 +63,7 @@ class ScriptedModel(BaseChatModel):
 
     @property
     def _llm_type(self):
-        return "dataagent-v2-test"
+        return "dataagent-test"
 
     def bind_tools(self, tools, **kwargs):
         self.tool_schemas.append([tool.name for tool in tools])

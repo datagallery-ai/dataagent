@@ -22,12 +22,12 @@ def _acquire_workspace_lock(handle) -> None:
         try:
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
-            raise RuntimeError("Another DataAgent V2 backend owns this workspace") from None
+            raise RuntimeError("Another DataAgent backend owns this workspace") from None
         return
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        raise RuntimeError("Another DataAgent V2 backend owns this workspace") from None
+        raise RuntimeError("Another DataAgent backend owns this workspace") from None
 
 
 def _release_workspace_lock(handle) -> None:

@@ -37,7 +37,7 @@ def test_backend_ready_without_project_handshake_and_eof_cleanup(tmp_path):
         sys.executable, "-m", "serve", "serve", "--stdio-ready", "--config", str(path),
     ], cwd=cwd, env={
         **os.environ,
-        "DATAAGENT_V2_INSTANCE_ID": identity,
+        "DATAAGENT_INSTANCE_ID": identity,
     },
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True)

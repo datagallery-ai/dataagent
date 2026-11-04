@@ -14,7 +14,7 @@
 }
 ```
 
-`name` 匹配 `[a-z][a-z0-9_-]*`。`description` 不能空。描述较长时改用 `description_file`（相对插件根的文件，内容不能空），两者只能写一个。`system_prompt` 是相对插件根的文件。名称不能和根名 `dataagent-v2` 或其他子代理重复。
+`name` 匹配 `[a-z][a-z0-9_-]*`。`description` 不能空。描述较长时改用 `description_file`（相对插件根的文件，内容不能空），两者只能写一个。`system_prompt` 是相对插件根的文件。名称不能和根名 `dataagent` 或其他子代理重复。
 
 ## 继承
 
@@ -72,7 +72,7 @@
 - `dataagent.hooks`、`limits.model_calls_per_agent` / `limits.tool_calls_per_agent`、`workspaces`，以及插件里的 Skill、工具（含 MCP）、`system_prompt`、其他子代理和根中间件，仍按原路径编译或留在配置里，不装进入口图，也不因此报错。`limits.timeout_seconds` 仍然是整轮时限。
 - 不要用同一个 `thread_id` 在 Deep Agents 根和入口图之间恢复。两边的 Checkpoint 状态形状不同，根图还有 `messages` 以外的通道。
 - 只保证异步调用（`ainvoke`、`astream`）。nl2sql 这类只实现了 async 的 Runnable，同步 `invoke` / `stream` 可能失败。
-- Trace 的根名称变成入口名，不再是 `dataagent-v2`。
+- Trace 的根名称变成入口名，不再是 `dataagent`。
 - 入口不隐藏内部流。节点不设置 `emit-messages` 或 `emit-tool-calls`。工厂使用 `ModelContext.get_model` 返回的原模型。正文 token、工具调用和推理是否出现，跟这次模型调用的 chunk 一致。节点返回的回复仍在最终 `MESSAGES_SNAPSHOT`。`STEP_STARTED` 和 `STEP_FINISHED` 仍会发出。
 - 名字在插件工厂之前对照声明核对。写错的名字不会被某个工厂的参数错误盖住。MCP 连接和全部插件工厂仍会执行；名字对上之后，工厂失败仍使这次装配失败。MCP 在 REST 进程启动时连接，失败则进程起不来。
 - 错误的入口名不会让 `/healthz` 失败。响应里的 `entry` 是配置值，未设置时为 `null`。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。`POST /api/copilotkit` 对同一次装配错误返回 HTTP 400。

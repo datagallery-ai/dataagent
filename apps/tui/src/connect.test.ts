@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { it } from "node:test";
 import { runTui } from "./index.js";
 import { store } from "./state/store.js";
-import { normalizeRuntimeUrl, resolveTuiLogPath, runV2Tui, v2Transport } from "./v2.js";
-import { restoreV2Messages, V2SessionClient } from "./protocol/v2-session-client.js";
+import { normalizeRuntimeUrl, resolveTuiLogPath, connectTui, sessionTransport } from "./connect.js";
+import { restoreMessages, SessionClient } from "./protocol/session-client.js";
 import { createInitialLiveRun, reduceLiveRunEvent } from "./state/live-run-state.js";
 
 function startedBackend(runtimeUrl = "http://127.0.0.1:8790/dataagent/stream") {
@@ -19,8 +19,8 @@ function startedBackend(runtimeUrl = "http://127.0.0.1:8790/dataagent/stream") {
   };
 }
 
-it("no arguments start the V2 backend", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-default-"));
+it("no arguments start the backend", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-default-"));
   let started = 0;
   let probed = "";
   const code = await runTui({
@@ -36,7 +36,7 @@ it("no arguments start the V2 backend", async () => {
       return Response.json(readyHealth);
     },
     renderApp: async (options) => {
-      assert.equal(options.v2?.model, "GLM-5.2");
+      assert.equal(options.tui?.model, "GLM-5.2");
       return "exit";
     },
   });
@@ -46,7 +46,7 @@ it("no arguments start the V2 backend", async () => {
 });
 
 it("an already running control plane is attached instead of started", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-busy-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-busy-"));
   const probed: string[] = [];
   const code = await runTui({
     argv: [],
@@ -57,7 +57,7 @@ it("an already running control plane is attached instead of started", async () =
       return Response.json(readyHealth);
     },
     renderApp: async (options) => {
-      assert.equal(options.v2?.model, "GLM-5.2");
+      assert.equal(options.tui?.model, "GLM-5.2");
       return "exit";
     },
   });
@@ -90,7 +90,7 @@ const readyHealth = {
     status: "ok",
     conversation: {
       ready: true,
-      protocol: "dataagent-v2",
+      protocol: "dataagent",
       status: "ready",
       instanceId: "00000000-0000-4000-8000-000000000001",
       model: "GLM-5.2",
@@ -100,7 +100,7 @@ const readyHealth = {
 };
 
 it("attaches to server.host and server.port from config.json when already up", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-host-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-host-"));
   await writeFile(join(directory, "config.json"), JSON.stringify({
     server: { host: "10.0.0.8", port: 8802 },
   }));
@@ -123,7 +123,7 @@ it("attaches to server.host and server.port from config.json when already up", a
 });
 
 it("attaches to the configured server.host", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-attach-host-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-attach-host-"));
   await writeFile(join(directory, "config.json"), JSON.stringify({
     server: { host: "10.0.0.8", port: 8802 },
   }));
@@ -143,7 +143,7 @@ it("attaches to the configured server.host", async () => {
 });
 
 it("attaches to the port from config.json", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-port-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-port-"));
   await writeFile(join(directory, "config.json"), JSON.stringify({ server: { port: 8796 } }));
   const probed: string[] = [];
   const code = await runTui({
@@ -163,8 +163,185 @@ it("attaches to the port from config.json", async () => {
   ]);
 });
 
+function eventStream(events: object[]): Response {
+  const body = events.map((event) => `data: ${JSON.stringify(event)}\r\n\r\n`).join("");
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+it("a backend started by the TUI is reached through loopback when ready announces 0.0.0.0", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-ready-wildcard-"));
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    server: { host: "0.0.0.0", port: 8790 },
+  }));
+  const requested: string[] = [];
+  let started = 0;
+  const code = await runTui({
+    argv: [],
+    env: { DATAAGENT_HOME: directory },
+    startBackend: async () => {
+      started += 1;
+      return startedBackend("http://0.0.0.0:8790/dataagent/stream");
+    },
+    fetchImpl: async (url) => {
+      const href = String(url);
+      requested.push(href);
+      assert.equal(href.includes("0.0.0.0"), false, href);
+      if (href.endsWith("/healthz") && started === 0) throw new Error("connect ECONNREFUSED");
+      if (href.endsWith("/healthz")) return Response.json(readyHealth);
+      if (href === "http://127.0.0.1:8790/sessions?limit=1") return Response.json({ sessions: [] });
+      if (href === "http://127.0.0.1:8790/dataagent/stream") {
+        return eventStream([
+          { type: "RUN_STARTED", threadId: "thread", runId: "run" },
+          { type: "RUN_FINISHED", threadId: "thread", runId: "run" },
+        ]);
+      }
+      throw new Error(`unexpected ${href}`);
+    },
+    renderApp: async (options) => {
+      assert.ok(options.tui);
+      await options.tui.sessions.listSessions({ limit: 1 });
+      const seen: string[] = [];
+      for await (const event of options.client.runAgent({
+        threadId: "thread",
+        runId: "run",
+        messages: [{ id: "m", role: "user", content: "hi" }],
+      })) seen.push(event.type);
+      assert.deepEqual(seen, ["RUN_STARTED", "RUN_FINISHED"]);
+      return "exit";
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(started, 1);
+  assert.deepEqual(requested, [
+    "http://127.0.0.1:8790/healthz",
+    "http://127.0.0.1:8790/healthz",
+    "http://127.0.0.1:8790/sessions?limit=1",
+    "http://127.0.0.1:8790/dataagent/stream",
+  ]);
+});
+
+it("a backend started with --config is reached through loopback when ready announces 0.0.0.0", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-config-wildcard-"));
+  const configPath = join(directory, "selected.json");
+  await writeFile(configPath, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
+  const requested: string[] = [];
+  const code = await runTui({
+    argv: ["--config", configPath],
+    env: { DATAAGENT_HOME: directory },
+    startBackend: async () => startedBackend("http://0.0.0.0:8877/dataagent/stream"),
+    fetchImpl: async (url) => {
+      const href = String(url);
+      requested.push(href);
+      assert.equal(href.includes("0.0.0.0"), false, href);
+      if (href.endsWith("/healthz")) return Response.json(readyHealth);
+      if (href === "http://127.0.0.1:8877/sessions?limit=1") return Response.json({ sessions: [] });
+      throw new Error(`unexpected ${href}`);
+    },
+    renderApp: async (options) => {
+      assert.ok(options.tui);
+      await options.tui.sessions.listSessions({ limit: 1 });
+      return "exit";
+    },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(requested, [
+    "http://127.0.0.1:8877/healthz",
+    "http://127.0.0.1:8877/sessions?limit=1",
+  ]);
+});
+
+it("an unexpanded $env host still starts the backend when nothing is listening", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-env-host-"));
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    server: { host: "$env{SERVER_HOST}", port: 8790 },
+  }));
+  await writeFile(join(directory, ".env"), "SERVER_HOST=127.0.0.1\n");
+  const requested: string[] = [];
+  let started = 0;
+  let rendered = false;
+  const code = await runTui({
+    argv: [],
+    env: { DATAAGENT_HOME: directory, SERVER_HOST: "127.0.0.1" },
+    startBackend: async () => {
+      started += 1;
+      return startedBackend("http://127.0.0.1:8790/dataagent/stream");
+    },
+    fetchImpl: async (url) => {
+      const href = String(url);
+      requested.push(href);
+      if (started === 0) throw new Error("connect ECONNREFUSED");
+      if (href.endsWith("/healthz")) return Response.json(readyHealth);
+      throw new Error(`unexpected ${href}`);
+    },
+    renderApp: async (options) => {
+      rendered = true;
+      assert.ok(options.tui);
+      return "exit";
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(started, 1);
+  assert.equal(rendered, true);
+  assert.deepEqual(requested, [
+    "http://$env{SERVER_HOST}:8790/healthz",
+    "http://127.0.0.1:8790/healthz",
+  ]);
+});
+
+it("a backend started by the TUI is reached through IPv6 loopback when ready announces ::", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-ready-ipv6-"));
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    server: { host: "::", port: 8790 },
+  }));
+  const requested: string[] = [];
+  let started = 0;
+  const code = await runTui({
+    argv: [],
+    env: { DATAAGENT_HOME: directory },
+    startBackend: async () => {
+      started += 1;
+      return startedBackend("http://[::]:8790/dataagent/stream");
+    },
+    fetchImpl: async (url) => {
+      const href = String(url);
+      requested.push(href);
+      assert.equal(href.includes("[::]:"), false, href);
+      if (href.endsWith("/healthz") && started === 0) throw new Error("connect ECONNREFUSED");
+      if (href.endsWith("/healthz")) return Response.json(readyHealth);
+      if (href === "http://[::1]:8790/sessions?limit=1") return Response.json({ sessions: [] });
+      if (href === "http://[::1]:8790/dataagent/stream") {
+        return eventStream([
+          { type: "RUN_STARTED", threadId: "thread", runId: "run" },
+          { type: "RUN_FINISHED", threadId: "thread", runId: "run" },
+        ]);
+      }
+      throw new Error(`unexpected ${href}`);
+    },
+    renderApp: async (options) => {
+      assert.ok(options.tui);
+      await options.tui.sessions.listSessions({ limit: 1 });
+      const seen: string[] = [];
+      for await (const event of options.client.runAgent({
+        threadId: "thread",
+        runId: "run",
+        messages: [{ id: "m", role: "user", content: "hi" }],
+      })) seen.push(event.type);
+      assert.deepEqual(seen, ["RUN_STARTED", "RUN_FINISHED"]);
+      return "exit";
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(started, 1);
+  assert.deepEqual(requested, [
+    "http://[::1]:8790/healthz",
+    "http://[::1]:8790/healthz",
+    "http://[::1]:8790/sessions?limit=1",
+    "http://[::1]:8790/dataagent/stream",
+  ]);
+});
+
 it("accepts an explicit HTTP port 80 and an omitted port", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-port80-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-port80-"));
   await writeFile(join(directory, "config.json"), JSON.stringify({
     server: { host: "127.0.0.1", port: 80 },
   }));
@@ -180,7 +357,7 @@ it("accepts an explicit HTTP port 80 and an omitted port", async () => {
 });
 
 it("attaches to a configured IPv6 listen address", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-ipv6-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-ipv6-"));
   await writeFile(join(directory, "config.json"), JSON.stringify({
     server: { host: "::1", port: 8790 },
   }));
@@ -220,23 +397,23 @@ it("an origin URL attaches without starting a backend", async () => {
 });
 
 it("an explicit stream URL attaches without starting a backend", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-attach-"));
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-attach-"));
   const code = await runTui({
     argv: ["--runtime-url", "http://127.0.0.1:8790/dataagent/stream"],
     fetchImpl: async () => Response.json({
-      protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "GLM-5.2",
+      protocol: "dataagent", status: "ready", instanceId: "test", model: "GLM-5.2",
       home: directory, stateDir: join(directory, ".dataagent/state"), timeoutSeconds: 180,
     }),
     renderApp: async (options) => {
-      assert.ok(options.v2);
+      assert.ok(options.tui);
       return "exit";
     },
   });
   assert.equal(code, 0);
 });
 
-it("V2 startup bypasses auth and legacy config, retaining actual model/Home", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-tui-"));
+it("Startup bypasses auth and legacy config, retaining actual model/Home", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-tui-"));
   const calls: string[] = [];
   const code = await runTui({
     argv: ["--runtime-url", "http://127.0.0.1:8790/dataagent/stream", "--resume", "saved"],
@@ -244,15 +421,15 @@ it("V2 startup bypasses auth and legacy config, retaining actual model/Home", as
       calls.push(String(url));
       assert.equal(new Headers(init?.headers).get("authorization"), null);
       assert.equal(init?.redirect, "error");
-      return Response.json({ protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "GLM-5.2", home: directory,
+      return Response.json({ protocol: "dataagent", status: "ready", instanceId: "test", model: "GLM-5.2", home: directory,
         workspaces: [{ name: "inputs", path: "/business/中文 data" }],
         stateDir: join(directory, ".dataagent/state"), timeoutSeconds: 180 });
     },
     renderApp: async (options) => {
       assert.equal(options.configClient, undefined);
-      assert.equal(options.v2?.model, "GLM-5.2");
-      assert.equal(options.v2?.home, directory);
-      assert.equal(options.v2?.mounts, "inputs: /business/中文 data");
+      assert.equal(options.tui?.model, "GLM-5.2");
+      assert.equal(options.tui?.home, directory);
+      assert.equal(options.tui?.mounts, "inputs: /business/中文 data");
       assert.equal(options.initialResume?.sessionId, "saved");
       assert.deepEqual(store.getState().workspaceConfig.skill, []);
       assert.deepEqual(store.getState().workspaceConfig.db, []);
@@ -263,8 +440,8 @@ it("V2 startup bypasses auth and legacy config, retaining actual model/Home", as
   assert.deepEqual(calls, ["http://127.0.0.1:8790/healthz"]);
 });
 
-it("V2 output paths are session-relative, not fabricated virtual mounts", async () => {
-  const sessions = new V2SessionClient("http://127.0.0.1:8790", async () => Response.json({
+it("Output paths are session-relative, not fabricated virtual mounts", async () => {
+  const sessions = new SessionClient("http://127.0.0.1:8790", async () => Response.json({
     files: [{ path: "reports/销售.md", size: 42, modifiedAt: "2026-09-23T00:00:00Z" }],
   }));
   const [file] = await sessions.listOutputs("test");
@@ -274,12 +451,12 @@ it("V2 output paths are session-relative, not fabricated virtual mounts", async 
   });
 });
 
-it("V2 accepts health without filesystem paths", async () => {
+it("Health check accepts without filesystem paths", async () => {
   let rendered = false;
-  const code = await runV2Tui({
+  const code = await connectTui({
     runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
     fetchImpl: async () => Response.json({
-      protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "test",
+      protocol: "dataagent", status: "ready", instanceId: "test", model: "test",
       timeoutSeconds: 180,
     }),
     renderApp: async () => {
@@ -297,24 +474,24 @@ it("log path ignores health stateDir and the shared temp directory", () => {
     "/home/dev/.dataagent/runtime/logs/tui.log",
   );
   assert.equal(
-    resolveTuiLogPath({ DATAAGENT_V2_LOG_PATH: "/home/dev/tui.log", DATAAGENT_HOME: "/ignored" }),
+    resolveTuiLogPath({ DATAAGENT_TUI_LOG_PATH: "/home/dev/tui.log", DATAAGENT_HOME: "/ignored" }),
     "/home/dev/tui.log",
   );
   const fallback = resolveTuiLogPath({});
   assert.equal(fallback.endsWith(`${join(".datafoundry", "tui.log")}`), true);
   assert.equal(fallback.includes(tmpdir()), false);
-  assert.throws(() => resolveTuiLogPath({ DATAAGENT_V2_LOG_PATH: "relative.log" }), /absolute/);
+  assert.throws(() => resolveTuiLogPath({ DATAAGENT_TUI_LOG_PATH: "relative.log" }), /absolute/);
 });
 
-it("V2 rejects a relative stateDir without rendering", async () => {
-  await assert.rejects(runV2Tui({
+it("A relative stateDir without rendering", async () => {
+  await assert.rejects(connectTui({
     runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
     fetchImpl: async () => Response.json({
-      protocol: "dataagent-v2", status: "ready", instanceId: "test", model: "test",
+      protocol: "dataagent", status: "ready", instanceId: "test", model: "test",
       home: "/workspace", stateDir: "relative/state", timeoutSeconds: 180,
     }),
     renderApp: async () => { assert.fail("Invalid health must not enter Ink"); },
-  }), /Invalid V2 health response/);
+  }), /Invalid health response/);
 });
 
 it("an unknown option does not start the backend", async () => {
@@ -337,27 +514,27 @@ it("an unknown option does not start the backend", async () => {
   }
 });
 
-it("V2 rejects missing path values before starting", async () => {
+it("Missing path values before starting", async () => {
   for (const args of [["--workspace"], ["--config"], ["--env-file"]]) {
     assert.equal(await runTui({ argv: args }), 1);
   }
 });
 
-it("V2 requests cannot escape the configured origin", async () => {
+it("Requests cannot escape the configured origin", async () => {
   let calls = 0;
-  const transport = v2Transport("http://127.0.0.1:8790/dataagent/stream", async () => {
+  const transport = sessionTransport("http://127.0.0.1:8790/dataagent/stream", async () => {
     calls++; return Response.json({});
   });
   await assert.rejects(transport("https://example.com/healthz"), /another origin/);
   assert.equal(calls, 0);
   assert.throws(
-    () => v2Transport("http://example.com/dataagent/stream", transport, { DATAAGENT_HOME: "" }),
+    () => sessionTransport("http://example.com/dataagent/stream", transport, { DATAAGENT_HOME: "" }),
     /configured listen URL/,
   );
 });
 
 it("native AG-UI session history restores interleaved text and tool results", () => {
-  const result = restoreV2Messages([
+  const result = restoreMessages([
     { id: "u", role: "user", content: "Compute" },
     { id: "a1", role: "assistant", content: "Computing", toolCalls: [{ id: "tool", type: "function", function: { name: "common__summarize_numbers", arguments: '{"numbers":[1]}' } }] },
     { id: "t", role: "tool", toolCallId: "tool", content: '{"mean":1}' },
@@ -369,7 +546,7 @@ it("native AG-UI session history restores interleaved text and tool results", ()
 });
 
 it("restored error ToolMessages remain failed instead of becoming successful", () => {
-  const restored = restoreV2Messages([
+  const restored = restoreMessages([
     { id: "a", role: "assistant", toolCalls: [{ id: "call", type: "function", function: { name: "common__summarize_numbers", arguments: '{}' } }] },
     { id: "t", role: "tool", toolCallId: "call", content: "Invalid input", error: "error" },
   ]);
@@ -397,7 +574,7 @@ for (const [payload, expected] of [
       type: "TOOL_CALL_START", toolCallId: "call", toolCallName: "task",
     });
     live = reduceLiveRunEvent(live, { type: "TOOL_CALL_RESULT", toolCallId: "call", content });
-    const restored = restoreV2Messages([
+    const restored = restoreMessages([
       { id: "a", role: "assistant", toolCalls: [{ id: "call", type: "function", function: { name: "task", arguments: '{"subagent_type":"nl2sql"}' } }] },
       { id: "t", role: "tool", toolCallId: "call", content },
     ]);

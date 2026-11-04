@@ -15,9 +15,9 @@ const session = summary.extend({
   messages: z.array(z.unknown().transform((value) => MessageSchema.parse(value))),
   newThreadRequired: z.boolean(), notice: z.string().nullable(),
 });
-export type V2Session = z.infer<typeof session>;
+export type SessionDetail = z.infer<typeof session>;
 
-export class V2SessionClient {
+export class SessionClient {
   constructor(private baseUrl: string, private fetchImpl: typeof fetch) {}
 
   private async read(path: string): Promise<unknown> {
@@ -35,7 +35,7 @@ export class V2SessionClient {
     return { sessions: value.sessions.map((entry) => ({ ...entry, id: entry.threadId })) };
   }
 
-  async getSession(id: string): Promise<V2Session> {
+  async getSession(id: string): Promise<SessionDetail> {
     return session.parse(await this.read(`/sessions/${encodeURIComponent(id)}`));
   }
 
@@ -57,7 +57,7 @@ export class V2SessionClient {
 }
 
 /** Translate native AG-UI history directly into the existing Ink presentation model. */
-export function restoreV2Messages(input: Message[]) {
+export function restoreMessages(input: Message[]) {
   const messages: DisplayMessage[] = [];
   const tools = new Map<string, LiveToolCallRecord>();
   const timestamp = Date.now();
@@ -94,8 +94,8 @@ export function restoreV2Messages(input: Message[]) {
   return { messages, toolCalls: [...tools.values()], artifacts: [] };
 }
 
-export interface V2AppContext {
-  sessions: V2SessionClient;
+export interface TuiContext {
+  sessions: SessionClient;
   model: string;
   home: string;
   mounts?: string | undefined;

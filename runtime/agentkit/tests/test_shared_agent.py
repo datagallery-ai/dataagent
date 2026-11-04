@@ -422,14 +422,14 @@ def test_configuration_preflight_never_imports_plugin_python(runtime, tmp_path, 
     if compiled:
         runtime, _ = _runtime_with_entry(runtime, tmp_path, "direct")
     paths = list(sys.path)
-    modules = {key: value for key, value in sys.modules.items() if key.startswith("_dataagent_v2_plugin_")}
+    modules = {key: value for key, value in sys.modules.items() if key.startswith("_dataagent_plugin_")}
     with patch.object(PythonLoader, "load", side_effect=AssertionError("preflight imported Python")):
         with create_agent(runtime, model=ScriptedModel(responses=[])) as agent:
             adapter = agent.as_agui()
             assert adapter.graph is None
             assert not agent._graphs
     assert sys.path == paths
-    assert {key: value for key, value in sys.modules.items() if key.startswith("_dataagent_v2_plugin_")} == modules
+    assert {key: value for key, value in sys.modules.items() if key.startswith("_dataagent_plugin_")} == modules
     assert not runtime.paths.sessions_db.exists()
 
 

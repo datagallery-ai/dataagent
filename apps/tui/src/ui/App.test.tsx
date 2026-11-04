@@ -9,15 +9,15 @@ import type { AgentEvent } from '../protocol/agui-events.js';
 import { App } from './App.js';
 import { store } from '../state/store.js';
 import { getMessageTextContent } from '../state/message-history.js';
-import { V2SessionClient } from '../protocol/v2-session-client.js';
+import { SessionClient } from '../protocol/session-client.js';
 import type { AgentClient, RunAgentInput } from '../protocol/types.js';
 
 const views: Array<ReturnType<typeof render>> = [];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function view(client: AgentClient, columns = 80, rows = 24, sessions?: V2SessionClient) {
+function view(client: AgentClient, columns = 80, rows = 24, sessions?: SessionClient) {
   store.setWorkspaceConfig({ llm: [], db: [], skill: [], kb: [], mcp: [] });
-  store.startNewSession('v2-ui-test');
+  store.startNewSession('ui-test');
   store.setConnectionStatus('connected');
   const stdin = Object.assign(new PassThrough(), {
     isTTY: true, isRaw: false,
@@ -28,9 +28,9 @@ function view(client: AgentClient, columns = 80, rows = 24, sessions?: V2Session
   const stderr = Object.assign(new PassThrough(), { isTTY: true, columns, rows });
   const frames: string[] = [];
   stdout.on('data', (chunk) => frames.push(String(chunk)));
-  const result = render(<App client={client} datasourceId={undefined} v2={{
-    model: 'GLM-5.2', home: '/tmp/v2-home',
-    sessions: sessions ?? new V2SessionClient('http://127.0.0.1:8790', async () => { throw new Error('Unexpected session call'); }),
+  const result = render(<App client={client} datasourceId={undefined} tui={{
+    model: 'GLM-5.2', home: '/tmp/tui-home',
+    sessions: sessions ?? new SessionClient('http://127.0.0.1:8790', async () => { throw new Error('Unexpected session call'); }),
   }} />, {
     stdin: stdin as unknown as NodeJS.ReadStream,
     stdout: stdout as unknown as NodeJS.WriteStream,
@@ -51,7 +51,7 @@ afterEach(() => {
   for (const current of views.splice(0)) { current.unmount(); current.cleanup(); }
 });
 
-it('Ink V2 submits Chinese text, renders a streamed answer once and shows total duration', async () => {
+it('Ink submits Chinese text, renders a streamed answer once and shows total duration', async () => {
   const requests: RunAgentInput[] = [];
   const client: AgentClient = {
     async *runAgent(input) {
@@ -86,7 +86,7 @@ it('Ink V2 submits Chinese text, renders a streamed answer once and shows total 
   assert.doesNotMatch(current.frames.join(''), /no datasource/);
 });
 
-it('Ink V2 preserves partial output on stream failure and never retries', async () => {
+it('Ink preserves partial output on stream failure and never retries', async () => {
   let attempts = 0;
   const current = view({
     async *runAgent() {
@@ -111,7 +111,7 @@ it('Ink V2 preserves partial output on stream failure and never retries', async 
   assert.equal(store.getState().runStatus, 'failed');
 });
 
-it('Ink V2 uses a final snapshot when the provider emits no text deltas', async () => {
+it('Ink uses a final snapshot when the provider emits no text deltas', async () => {
   const current = view({
     async *runAgent(input) {
       yield { type: 'MESSAGES_SNAPSHOT', messages: [...input.messages, { id: 'a', role: 'assistant', content: 'Snapshot answer' }] } as BaseEvent;
@@ -126,9 +126,9 @@ it('Ink V2 uses a final snapshot when the provider emits no text deltas', async 
   assert.match(store.getState().messages.map(getMessageTextContent).join('\n'), /Snapshot answer/);
 });
 
-it('Ink V2 resumes native saved messages, rejects unsupported commands, and clears to a new thread', async () => {
+it('Ink resumes native saved messages, rejects unsupported commands, and clears to a new thread', async () => {
   const requests: string[] = [];
-  const sessions = new V2SessionClient('http://127.0.0.1:8790', async (url) => {
+  const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
     requests.push(String(url));
     if (String(url).endsWith('/outputs')) {
       assert.equal(String(url), 'http://127.0.0.1:8790/sessions/saved-thread/outputs');
@@ -164,15 +164,15 @@ it('Ink V2 resumes native saved messages, rejects unsupported commands, and clea
   current.stdin.write('\x1b');
   await until(() => latestOutputFrame(current).includes('GLM-5.2'));
   await submit('/model');
-  await until(() => current.frames.join('').includes('not supported in V2'));
+  await until(() => current.frames.join('').includes('not supported'));
   await submit('/clear');
   await until(() => store.getState().threadId !== 'saved-thread');
   assert.equal(store.getState().messages.length, 0);
 });
 
-it('V2 /resume list opens the picker and does not load a session id named list', async () => {
+it('/resume list opens the picker and does not load a session id named list', async () => {
   const requests: string[] = [];
-  const sessions = new V2SessionClient('http://127.0.0.1:8790', async (url) => {
+  const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
     requests.push(String(url));
     const href = String(url);
     if (href.includes('/sessions?')) {
@@ -196,7 +196,7 @@ it('V2 /resume list opens the picker and does not load a session id named list',
   await tick();
   await submit(current, '/resume list');
   await until(() => shown().includes('Resume Session') && shown().includes('Saved statistics'));
-  assert.equal(store.getState().threadId, 'v2-ui-test');
+  assert.equal(store.getState().threadId, 'ui-test');
   assert.ok(requests.some((url) => url.includes('/sessions?limit=50')));
   assert.ok(requests.every((url) => !url.includes('/sessions/list')));
   current.stdin.write('\x1b');
@@ -205,14 +205,14 @@ it('V2 /resume list opens the picker and does not load a session id named list',
   await submit(current, '/resume');
   await until(() => shown().includes('Resume Session'));
   assert.ok(requests.some((url) => url.includes('/sessions?limit=50')));
-  assert.equal(store.getState().threadId, 'v2-ui-test');
+  assert.equal(store.getState().threadId, 'ui-test');
   current.stdin.write('\x1b');
   await until(() => shown().includes('GLM-5.2') && !shown().includes('Resume Session'));
   requests.length = 0;
   await submit(current, '/resume missing-id');
   await until(() => shown().includes('Resume failed'));
   assert.ok(requests.some((url) => url.endsWith('/sessions/missing-id')));
-  assert.equal(store.getState().threadId, 'v2-ui-test');
+  assert.equal(store.getState().threadId, 'ui-test');
   requests.length = 0;
   await submit(current, '/resume latest');
   await until(() => store.getState().threadId === 'saved-thread');
@@ -220,7 +220,7 @@ it('V2 /resume list opens the picker and does not load a session id named list',
   assert.ok(requests.some((url) => url.endsWith('/sessions/saved-thread')));
 });
 
-it('Ink V2 accepts Chinese multiline input and Shift+Enter does not submit', async () => {
+it('Ink accepts Chinese multiline input and Shift+Enter does not submit', async () => {
   const requests: RunAgentInput[] = [];
   const current = view({ async *runAgent(input) {
     requests.push(input);
@@ -239,7 +239,7 @@ it('Ink V2 accepts Chinese multiline input and Shift+Enter does not submit', asy
   assert.equal(requests[0]?.messages[0]?.content, '你好\n世界');
 });
 
-it('Ink V2 reconciles failed tool status from the authoritative final snapshot', async () => {
+it('Ink reconciles failed tool status from the authoritative final snapshot', async () => {
   const current = view({ async *runAgent(input) {
     yield { type: 'TOOL_CALL_START', toolCallId: 'bad-call', toolCallName: 'common__summarize_numbers' } as BaseEvent;
     yield { type: 'TOOL_CALL_RESULT', toolCallId: 'bad-call', messageId: 't', content: 'Invalid input' } as BaseEvent;
@@ -261,7 +261,7 @@ it('Ink V2 reconciles failed tool status from the authoritative final snapshot',
 });
 
 for (const error of [null, 'Query failed']) {
-  it(`Ink V2 keeps nl2sql outcome stable through result, snapshot and completion (error=${error})`, async () => {
+  it(`Ink keeps nl2sql outcome stable through result, snapshot and completion (error=${error})`, async () => {
     let releaseSnapshot!: () => void;
     let releaseFinish!: () => void;
     const snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
@@ -316,7 +316,7 @@ async function submit(current: ReturnType<typeof view>, text: string) {
 const transcript = () => store.getState().messages.map(getMessageTextContent).join('\n');
 const summaries = () => store.getState().messages.filter((message) => message.runSummary);
 
-it('V2 shows native child progress before the task, expands steps and keeps child output out of the answer', async () => {
+it('shows native child progress before the task, expands steps and keeps child output out of the answer', async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const current = view({ async *runAgent(input) {
@@ -370,7 +370,7 @@ it('V2 shows native child progress before the task, expands steps and keeps chil
   }
 });
 
-it('V2 keeps repeated deltas and interleaved tools once across repeated snapshots', async () => {
+it('keeps repeated deltas and interleaved tools once across repeated snapshots', async () => {
   const current = view({ async *runAgent(input) {
     yield { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: '哈哈' } as BaseEvent;
     yield { type: 'TEXT_MESSAGE_CONTENT', messageId: 'a', delta: '哈哈' } as BaseEvent;
@@ -541,7 +541,7 @@ for (const [columns, rows] of [[60, 24], [80, 24], [160, 40]] as const) it(`home
   checkFrame(60, 24);
 });
 
-it('V2 renders streamed tool targets and Ctrl+O reveals the hidden output without another request', async () => {
+it('renders streamed tool targets and Ctrl+O reveals the hidden output without another request', async () => {
   const { stripVTControlCharacters } = await import('node:util');
   let requests = 0;
   const current = view({ async *runAgent(input) {
@@ -572,7 +572,7 @@ it('V2 renders streamed tool targets and Ctrl+O reveals the hidden output withou
   assert.equal(requests, 1);
 });
 
-it('V2 slash menu, completion and help expose only supported commands including outputs', async () => {
+it('slash menu, completion and help expose only supported commands including outputs', async () => {
   const current = view({ async *runAgent() { throw new Error('Must not call the model'); } });
   await tick();
   current.stdin.write('/');
@@ -603,12 +603,12 @@ function outputClient(requests: RunAgentInput[]): AgentClient {
 for (const columns of [60, 80, 160]) it(`/outputs opens and closes the full view without a sidebar at ${columns} columns`, async () => {
   const requests: RunAgentInput[] = [];
   const calls: string[] = [];
-  const sessions = new V2SessionClient('http://127.0.0.1:8790', async (url) => {
+  const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
     calls.push(String(url));
     if (String(url).includes('/outputs/preview?')) {
       return Response.json({ type: 'file', path: '销售报告.md', content: '# Sales\n\nTotal: 42' });
     }
-    assert.equal(String(url), 'http://127.0.0.1:8790/sessions/v2-ui-test/outputs');
+    assert.equal(String(url), 'http://127.0.0.1:8790/sessions/ui-test/outputs');
     return Response.json({ files: [{ path: '销售报告.md', size: 20, modifiedAt: '2026-09-23T00:00:00Z' }] });
   });
   const current = view(outputClient(requests), columns, 24, sessions);
@@ -637,8 +637,8 @@ for (const columns of [60, 80, 160]) it(`/outputs opens and closes the full view
   assert.equal(calls.length, 3); // Reopening refreshes files instead of caching the list.
 });
 
-it('V2 /outputs opens the empty view and q returns to the home composer', async () => {
-  const sessions = new V2SessionClient('http://127.0.0.1:8790', async () => Response.json({ files: [] }));
+it('/outputs opens the empty view and q returns to the home composer', async () => {
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => Response.json({ files: [] }));
   const current = view({ async *runAgent() { throw new Error('Must not call the model'); } }, 160, 24, sessions);
   const frame = () => latestOutputFrame(current);
   await tick();
@@ -649,8 +649,8 @@ it('V2 /outputs opens the empty view and q returns to the home composer', async 
   assert.doesNotMatch(frame(), /Outputs \(0\)|Ctrl\+G/);
 });
 
-it('V2 /outputs reports backend failures instead of displaying an empty list', async () => {
-  const sessions = new V2SessionClient('http://127.0.0.1:8790', async () =>
+it('/outputs reports backend failures instead of displaying an empty list', async () => {
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () =>
     Response.json({ detail: 'Unable to list session outputs' }, { status: 500 }));
   const current = view({ async *runAgent() { throw new Error('Must not call the model'); } }, 160, 24, sessions);
   await tick();
@@ -659,23 +659,23 @@ it('V2 /outputs reports backend failures instead of displaying an empty list', a
   assert.doesNotMatch(latestOutputFrame(current), /Outputs \(0\)/);
 });
 
-it('V2 discards output responses from a session that has been cleared', async () => {
+it('discards output responses from a session that has been cleared', async () => {
   let finish!: (response: Response) => void;
   const response = new Promise<Response>((resolve) => { finish = resolve; });
-  const sessions = new V2SessionClient('http://127.0.0.1:8790', async () => response);
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => response);
   const current = view({ async *runAgent() { throw new Error('Must not call the model'); } }, 160, 24, sessions);
   await tick();
   await submit(current, '/outputs');
   await until(() => latestOutputFrame(current).includes('Loading session outputs'));
   await submit(current, '/clear');
-  await until(() => store.getState().threadId !== 'v2-ui-test');
+  await until(() => store.getState().threadId !== 'ui-test');
   finish(Response.json({ files: [{ path: 'old.txt', size: 4, modifiedAt: '2026-09-23T00:00:00Z' }] }));
   await tick();
   await tick();
   assert.doesNotMatch(latestOutputFrame(current), /Outputs \(1\)|old.txt/);
 });
 
-for (const status of [401, 403, 409, 422]) it(`V2 HTTP ${status} produces one failure summary without retry or login UI`, async () => {
+for (const status of [401, 403, 409, 422]) it(`HTTP ${status} produces one failure summary without retry or login UI`, async () => {
   const { AguiClientError } = await import('../protocol/agui-client.js');
   let attempts = 0;
   const current = view({ async *runAgent() { attempts++; throw new AguiClientError('Rejected request', 'HTTP_ERROR', status); } });

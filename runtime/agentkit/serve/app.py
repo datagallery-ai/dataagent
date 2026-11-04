@@ -95,7 +95,7 @@ def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
     """Read model and plugin readiness from an in-process runtime. Does not start a process."""
     return {
         "status": "ready",
-        "protocol": "dataagent-v2",
+        "protocol": "dataagent",
         "instanceId": instance_id,
         "model": runtime.model_name,
         "plugins": runtime.settings.plugins.enabled,
@@ -492,7 +492,7 @@ def register_conversation_routes(
             encoder = EventEncoder()
             started = time.monotonic()
             adapter = agent.as_agui(
-                name="dataagent-v2",
+                name="dataagent",
                 emit_raw_events=False,
                 subagent_visibility="attributed",
             )
@@ -648,7 +648,7 @@ def register_conversation_routes(
 
         async def gui_events():
             adapter = agent.as_agui(
-                name="dataagent-v2", config=config, emit_raw_events=False,
+                name="dataagent", config=config, emit_raw_events=False,
             )
             upstream = None
             finished_event = None

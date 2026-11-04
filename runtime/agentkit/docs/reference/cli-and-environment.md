@@ -54,7 +54,7 @@ SDK 的 `LaunchOptions` 还有 `cwd`、`init_home` 和单个 `workspace`。`work
 
 ## TUI
 
-TUI 只保留 v2。没有参数时拉起本机后端并连接 `/dataagent/stream`。
+没有参数时拉起本机后端并连接 `/dataagent/stream`。
 
 | 参数 | 作用 |
 | --- | --- |
@@ -69,8 +69,8 @@ TUI 只保留 v2。没有参数时拉起本机后端并连接 `/dataagent/stream
 | --- | --- | --- |
 | `DATAAGENT_HOME` | 后端进程环境 | Home。默认 `~/.dataagent`。相对值相对启动 cwd。写在 env 文件里会被忽略并警告 |
 | `DATAAGENT_WORKSPACE` | 后端有效环境 | 单个只读输入。低于 CLI `--workspace`，高于配置 `workspaces` |
-| `DATAAGENT_V2_INSTANCE_ID` | 后端进程环境 | TUI 拉起后端时写入的实例 ID。env 文件不能设置 |
-| `DATAAGENT_V2_LOG_PATH` | TUI 进程 | 界面日志。后端 `--env-file` 不生效 |
+| `DATAAGENT_INSTANCE_ID` | 后端进程环境 | TUI 拉起后端时写入的实例 ID。env 文件不能设置 |
+| `DATAAGENT_TUI_LOG_PATH` | TUI 进程 | 界面日志。后端 `--env-file` 不生效 |
 | `INIT_CWD` | TUI 进程 | 路径基准相关。必须在 TUI 进程里 |
 | `NO_COLOR` | TUI 进程 | `1` 时关闭颜色 |
 | `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` | 配置里的 `$env{...}` | 模板使用的三个名字。你可以改用别的名字，只要引用一致 |

@@ -1,6 +1,6 @@
 # 事件
 
-`POST /dataagent/stream` 使用 AG-UI SSE。编码来自 `ag_ui.encoder.EventEncoder`。适配器是 `ag_ui_langgraph`，名称为 `dataagent-v2`，`emit_raw_events` 为 false，`subagent_visibility` 为 `attributed`。
+`POST /dataagent/stream` 使用 AG-UI SSE。编码来自 `ag_ui.encoder.EventEncoder`。适配器是 `ag_ui_langgraph`，名称为 `dataagent`，`emit_raw_events` 为 false，`subagent_visibility` 为 `attributed`。
 
 服务自己发送权威的开始和结束事件。适配器发出的 `RUN_STARTED`、`MESSAGES_SNAPSHOT` 和 `STATE_SNAPSHOT` 会被丢掉，避免把恢复用的旧 Checkpoint 再快照一次。
 
