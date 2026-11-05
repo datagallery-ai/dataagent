@@ -207,8 +207,8 @@ async def test_prepare_input_scopes_each_task_without_changing_session_evidence(
         "PARTITIONED BY (pt_d STRING COMMENT '日期分区') STORED AS ORC;"
     )
     for table in ("warehouse.events", "warehouse.users", "other.events"):
-        save(context, "schema", table, {f"{table}.id": {"type": "string"}})
-    save(context, "schema", "warehouse.events", {"warehouse.events.id": {"type": "bigint"}})
+        save(context, "schema", table, {f"{table}.id": {"value_type": "string"}})
+    save(context, "schema", "warehouse.events", {"warehouse.events.id": {"value_type": "bigint"}})
     save(
         context,
         "retrieve",
@@ -250,11 +250,16 @@ async def test_prepare_input_scopes_each_task_without_changing_session_evidence(
             )
         }
     )
-    schemas = json.loads(result.get("schema_str"))
+    schemas = result.get("schema_str")
     evidence = json.loads(result.get("evidence"))
     assert result.get("question") == question
-    assert list(schemas) == ["warehouse.events", "warehouse.users"]
-    assert schemas.get("warehouse.events") == {"warehouse.events.id": {"type": "bigint"}}
+    assert schemas.index("CREATE TABLE `warehouse`.`events`") < schemas.index(
+        "CREATE TABLE `warehouse`.`users`"
+    )
+    assert "`id` bigint" in schemas
+    assert "`id` string" in schemas
+    assert "Known identifier relationship" in schemas
+    assert "FOREIGN KEY" not in schemas
     assert evidence.get("source_table") == ["warehouse.events", "warehouse.users"]
     assert "other.events" not in result.get("evidence") + result.get("schema_str")
     assert "CountValues(string)" in result.get("evidence")
@@ -273,7 +278,7 @@ async def test_prepare_input_scopes_each_task_without_changing_session_evidence(
     other = await hook.ainvoke(
         {"question": json.dumps({"question": question, "source_table": ["other.events"]})}
     )
-    assert list(json.loads(other.get("schema_str"))) == ["other.events"]
+    assert "CREATE TABLE `other`.`events`" in other.get("schema_str")
     assert "warehouse.events" not in other.get("evidence") + other.get("schema_str")
     assert originals == {path: path.read_bytes() for path in (tmp_path / "metadata").glob("*.json")}
 
@@ -296,7 +301,7 @@ def test_prepare_input_rejects_partial_schema_evidence(tmp_path):
     save = loader.load(PLUGIN, "utils/evidence.py:save_evidence")
     prepare = loader.load(PLUGIN, "hooks/nl2sql.py:prepare_input")
     context = _context(tmp_path)
-    save(context, "schema", "warehouse.events", {"warehouse.events.id": {"type": "string"}})
+    save(context, "schema", "warehouse.events", {"warehouse.events.id": {"value_type": "string"}})
     with pytest.raises(
         ValueError, match=r"Missing source schema evidence for \['warehouse.users'\]"
     ):
