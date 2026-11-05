@@ -2,7 +2,7 @@
 
 ## 🎉 实现完成
 
-slash 命令补全弹窗功能已经完整实现并集成到 DataFoundry TUI 的主应用中！
+slash 命令补全弹窗功能已经完整实现并集成到 DataGallery TUI 的主应用中！
 
 ## 📋 完成清单
 
@@ -69,7 +69,7 @@ slash 命令补全弹窗功能已经完整实现并集成到 DataFoundry TUI 的
 
 ### 启动应用
 ```bash
-cd /data2/zhangh/code/dev_datafoundry/datafoundry
+cd /data2/zhangh/code/dev_datagallery/datagallery
 npm run start:tui
 ```
 
@@ -94,7 +94,7 @@ npm run start:tui
 
 ### 新增文件
 ```
-datafoundry/apps/tui/
+datagallery/apps/tui/
 ├── src/ui/
 │   └── SlashCommandPopover.tsx                    (127 行)
 ├── SLASH_COMMAND_POPOVER.md                       (技术文档)
@@ -107,7 +107,7 @@ datafoundry/apps/tui/
 
 ### 修改文件
 ```
-datafoundry/apps/tui/src/ui/
+datagallery/apps/tui/src/ui/
 ├── InputBox.tsx                 (+120 行，支持但未被主应用使用)
 └── components/
     └── EnhancedInputBox.tsx     (+150 行，主应用实际使用) ⭐
@@ -168,11 +168,11 @@ Tab → 弹窗打开时禁用 > 命令补全
 ### 功能测试
 ```bash
 # 测试独立组件
-cd /data2/zhangh/code/dev_datafoundry/datafoundry/apps/tui
+cd /data2/zhangh/code/dev_datagallery/datagallery/apps/tui
 tsx test-slash-popover.tsx
 
 # 测试主应用
-cd /data2/zhangh/code/dev_datafoundry/datafoundry
+cd /data2/zhangh/code/dev_datagallery/datagallery
 npm run start:tui
 ```
 

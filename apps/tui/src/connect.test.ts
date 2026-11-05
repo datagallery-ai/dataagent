@@ -478,7 +478,7 @@ it("log path ignores health stateDir and the shared temp directory", () => {
     "/home/dev/tui.log",
   );
   const fallback = resolveTuiLogPath({});
-  assert.equal(fallback.endsWith(`${join(".datafoundry", "tui.log")}`), true);
+  assert.equal(fallback.endsWith(`${join(".datagallery", "tui.log")}`), true);
   assert.equal(fallback.includes(tmpdir()), false);
   assert.throws(() => resolveTuiLogPath({ DATAAGENT_TUI_LOG_PATH: "relative.log" }), /absolute/);
 });

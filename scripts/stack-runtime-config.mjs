@@ -65,7 +65,7 @@ export function webLaunch(config, env = {}) {
 }
 
 export function formatStackEndpoints(config, enabled) {
-  const lines = ["DataFoundry endpoints:"];
+  const lines = ["DataGallery endpoints:"];
   if (enabled.startWeb) lines.push(`  GUI: ${httpOrigin(config.webHost, config.webPort)}`);
   if (enabled.startApi) lines.push(`  API: ${httpOrigin(config.apiHost, config.apiPort)}`);
   if (enabled.tuiReady) lines.push("  TUI: npm run start:tui");

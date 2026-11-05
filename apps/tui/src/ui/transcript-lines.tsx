@@ -1204,7 +1204,7 @@ function pushStartupLines(
     </Text>,
   );
   push('startup:border:top', <Text key="startup:border:top" color={inkColors.border}>{`╭${'─'.repeat(width - 2)}╮`}</Text>);
-  row('startup:title', '›_ DataFoundry', true);
+  row('startup:title', '›_ DataGallery', true);
   row('startup:space', '');
   row('startup:model', `model:     ${startup.modelName}`);
   row('startup:dir', `directory: ${startup.directory}`);

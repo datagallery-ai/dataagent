@@ -23,7 +23,7 @@ class Logger {
   private currentLogLevel: LogLevel;
 
   constructor(config?: Partial<LoggerConfig>) {
-    const defaultLogDir = path.join(os.homedir(), '.datafoundry');
+    const defaultLogDir = path.join(os.homedir(), '.datagallery');
 
     this.config = {
       logDir: config?.logDir || defaultLogDir,

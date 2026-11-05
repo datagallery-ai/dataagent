@@ -81,10 +81,10 @@ export function deploymentHelp() {
 
 deploy   Configure, install, build (including TUI), start, and verify. Existing deployments use a maintenance window.
 start    Start an existing build. Does not install or build. Web defaults to 127.0.0.1:3000.
-stop     Stop only the managed DataFoundry process group. Keeps configuration and data.
+stop     Stop only the managed DataGallery process group. Keeps configuration and data.
 restart  Stop and start an existing build. Does not install or build.
 status   Read process state and probe actual service health.
-logs     Show recent runtime logs and continue following them. Ctrl+C does not stop DataFoundry.
+logs     Show recent runtime logs and continue following them. Ctrl+C does not stop DataGallery.
 doctor   Run read-only dependency, configuration, port, permission, disk, and health checks.
 tui      Start the local TUI in the foreground. It connects to the control plane /dataagent/stream and does not use /api/copilotkit.
 help     Show this help.

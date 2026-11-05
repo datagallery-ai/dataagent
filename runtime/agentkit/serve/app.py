@@ -739,7 +739,7 @@ def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model
             app.state.checkpointer = None
             yield
 
-    app = FastAPI(title="DataFoundry API", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="DataGallery API", version="0.3.0", lifespan=lifespan)
     app.state.conversation_runtime = runtime
     app.state.conversation_instance_id = identity
     app.add_middleware(ConversationReadyGuard)

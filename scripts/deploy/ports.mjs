@@ -112,7 +112,7 @@ export async function selectDeploymentPort(options) {
     }
 
     const owner = result.owner || "unknown process";
-    print(`端口 ${candidate} 已被未知进程占用（${owner}）。DataFoundry 不会结束该进程。`);
+    print(`端口 ${candidate} 已被未知进程占用（${owner}）。DataGallery 不会结束该进程。`);
     const answer = String(await ask("请输入其他端口，或输入 q 退出：")).trim();
     if (answer.toLowerCase() === "q") throw new Error("port selection cancelled");
     candidate = parsePort(answer, label);

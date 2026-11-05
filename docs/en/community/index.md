@@ -1,6 +1,6 @@
 # Community
 
-DataFoundry is built for teams that want data-agent workflows to be reproducible, governable, and easy to operate. The community space collects the channels and contribution paths for users, integration developers, and scenario partners.
+DataGallery is built for teams that want data-agent workflows to be reproducible, governable, and easy to operate. The community space collects the channels and contribution paths for users, integration developers, and scenario partners.
 
 <div class="df-grid" markdown>
 
@@ -47,4 +47,4 @@ Good community contributions usually include:
 
 ## Working principles
 
-DataFoundry docs and examples should make it clear which capabilities are already implemented, which workflows are experimental, and which ideas belong on the roadmap. Community discussions are most useful when they stay evidence-based and reproducible.
+DataGallery docs and examples should make it clear which capabilities are already implemented, which workflows are experimental, and which ideas belong on the roadmap. Community discussions are most useful when they stay evidence-based and reproducible.

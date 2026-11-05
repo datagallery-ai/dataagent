@@ -30,7 +30,7 @@ import {
   useConversationRestoreGate,
   useLiveRun,
   useLiveRunSetters,
-} from "../../use-data-foundry-run";
+} from "../../use-data-gallery-run";
 import {
   clearConversationBranchSnapshot,
   setConversationBranchSnapshot,

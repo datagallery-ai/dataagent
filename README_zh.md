@@ -136,7 +136,7 @@ npm run start        # 网页默认 127.0.0.1:3000，可用 --web-host / --web-p
 
 你会看到完整的一条链路：schema 检查 → 只读 SQL → SQL 审计 → 表格产出 → 可回放的 run history。
 
-真实生产请再配 SMTP 与反代：[`deploy/nginx.datafoundry.conf.example`](deploy/nginx.datafoundry.conf.example)（静态 gzip/brotli；`/api/copilotkit` 关压缩与缓冲以保护 SSE）。
+真实生产请再配 SMTP 与反代：[`deploy/nginx.datagallery.conf.example`](deploy/nginx.datagallery.conf.example)（静态 gzip/brotli；`/api/copilotkit` 关压缩与缓冲以保护 SSE）。
 
 > 完整步骤与两种环境对照见 [快速开始](docs/zh/quick-start.md)。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
 

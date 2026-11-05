@@ -1,6 +1,6 @@
-# Data Task UI (`@datafoundry/web`)
+# Data Task UI (`@datagallery/web`)
 
-Next.js data-task workspace in the datafoundry monorepo.
+Next.js data-task workspace in the datagallery monorepo.
 
 - **User guide:** [Web 工作台指南](../../docs/zh/guides/web-workbench.md)
 - **Quick start:** [快速开始](../../docs/zh/quick-start.md)

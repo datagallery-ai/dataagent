@@ -21,7 +21,7 @@ function runBash(args, options = {}) {
 }
 
 async function makeFakePath(binaries) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "datafoundry-path-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "datagallery-path-"));
   for (const [name, body] of Object.entries(binaries)) {
     const filePath = path.join(dir, name);
     await writeFile(filePath, body, { mode: 0o755 });
@@ -45,11 +45,11 @@ test("./deploy.sh help delegates without installing when Node 22+ exists", () =>
 });
 
 test("unsupported OS exits 1 with a precise message", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "datafoundry-os-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "datagallery-os-"));
   const osRelease = path.join(dir, "os-release");
   await writeFile(osRelease, 'ID=fedora\nVERSION_ID="40"\n');
   const result = runBash([DEPLOY_SH, "help"], {
-    env: { DATAFOUNDRY_OS_RELEASE_FILE: osRelease }
+    env: { DATAAGENT_OS_RELEASE_FILE: osRelease }
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Unsupported operating system: fedora/);
@@ -57,7 +57,7 @@ test("unsupported OS exits 1 with a precise message", async () => {
 
 test("unsupported architecture exits 1 with a precise message", async () => {
   const result = runBash([DEPLOY_SH, "help"], {
-    env: { DATAFOUNDRY_UNAME_M: "ppc64le" }
+    env: { DATAAGENT_UNAME_M: "ppc64le" }
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Unsupported architecture: ppc64le/);

@@ -543,7 +543,7 @@ function createRealDeps(context) {
       const web = current.web ?? { host: "127.0.0.1", port: "3000" };
       const probes = healthProbeUrls(current.env, web);
       const webUrl = probes.webUrl;
-      print(`DataFoundry is healthy at ${webUrl}`);
+      print(`DataGallery is healthy at ${webUrl}`);
       const ready = await probeHttp(`${probes.apiBaseUrl}/ready`);
       if (!(ready.ok && ready.status === 200)) {
         print("Next: put LLM_MODEL, LLM_BASE_URL and LLM_API_KEY in .env, then run ./deploy.sh restart and open the Web UI.");

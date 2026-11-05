@@ -27,7 +27,7 @@ cd datafoundry
 ./deploy.sh
 ```
 
-部署成功后 Web + API 在后台常驻（独立进程组）。关闭终端，或在 `./deploy.sh logs` 中按 `Ctrl+C`，**都不会**停止 DataFoundry——停止请用 `./deploy.sh stop`。一键部署会一并构建 TUI，但 TUI **不会**随 stack 后台常驻；需要时另开终端按成功提示启动（见下文「启动 TUI」）。
+部署成功后 Web + API 在后台常驻（独立进程组）。关闭终端，或在 `./deploy.sh logs` 中按 `Ctrl+C`，**都不会**停止 DataGallery——停止请用 `./deploy.sh stop`。一键部署会一并构建 TUI，但 TUI **不会**随 stack 后台常驻；需要时另开终端按成功提示启动（见下文「启动 TUI」）。
 
 打开 `http://127.0.0.1:3000/data-tasks`（若网页端口被改过，以脚本打印的地址为准，路径仍是 `/data-tasks`）。模型来自 `config.json` 和环境变量，不在网页里创建 Profile。
 
@@ -112,7 +112,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=你的_API_Key
 ```
 
-对外入口请用反代，样例见 [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example)：静态资源压缩，SSE 路径 `/dataagent/stream` 与 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
+对外入口请用反代，样例见 [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example)：静态资源压缩，SSE 路径 `/dataagent/stream` 与 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
 
 ### 3. 构建并启动（正式测试 / 真实生产相同）
 

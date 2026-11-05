@@ -9,14 +9,14 @@ hide:
 
 <section class="df-home-hero" markdown>
 
-# DataFoundry
+# DataGallery
 
 企业级 Data Agent 工作台 —— 用统一语义读懂业务口径，在只读安全边界内执行多表、多步的复杂分析，每一步可审计、可回放，把一句提问变成一次可信的数据分析。
 
 </section>
 
 <figure class="df-home-shot" markdown>
-![DataFoundry Web 工作台](../assets/readme/gui-demo.gif){ .df-shot }
+![DataGallery Web 工作台](../assets/readme/gui-demo.gif){ .df-shot }
 <figcaption>Web 工作台、终端工作流和后端运行时共享同一套受控任务模型。</figcaption>
 </figure>
 
@@ -49,8 +49,8 @@ Web 工作台适合可视化复盘，TUI 适合 SSH 和终端工作流，API / A
 [TUI 指南](guides/tui.md) · [观看终端演示](../assets/readme/tui-demo.gif)
 </div>
 
-<a class="df-tui-preview" href="../../assets/readme/tui-demo.gif" aria-label="观看 DataFoundry TUI 演示">
-  <img src="../../assets/readme/tui-demo.gif" alt="DataFoundry TUI 演示" loading="lazy">
+<a class="df-tui-preview" href="../../assets/readme/tui-demo.gif" aria-label="观看 DataGallery TUI 演示">
+  <img src="../../assets/readme/tui-demo.gif" alt="DataGallery TUI 演示" loading="lazy">
 </a>
 
 </section>

@@ -8,18 +8,18 @@ import {
 } from "./authenticated-test-client.mjs";
 
 test("resolveApiUrl keeps deployment path prefix", () => {
-  const url = resolveApiUrl("https://example.com/datafoundry", "api/v1/me");
-  assert.equal(url.href, "https://example.com/datafoundry/api/v1/me");
+  const url = resolveApiUrl("https://example.com/datagallery", "api/v1/me");
+  assert.equal(url.href, "https://example.com/datagallery/api/v1/me");
 });
 
 test("resolveApiUrl strips search and hash from base", () => {
-  const url = resolveApiUrl("https://example.com/datafoundry?x=1#frag", "/api/v1/me");
-  assert.equal(url.href, "https://example.com/datafoundry/api/v1/me");
+  const url = resolveApiUrl("https://example.com/datagallery?x=1#frag", "/api/v1/me");
+  assert.equal(url.href, "https://example.com/datagallery/api/v1/me");
 });
 
 test("resolveApiUrl preserves query from relative path", () => {
-  const url = resolveApiUrl("https://example.com/datafoundry", "/api/v1/sessions/s1/conversation?limit=10");
-  assert.equal(url.href, "https://example.com/datafoundry/api/v1/sessions/s1/conversation?limit=10");
+  const url = resolveApiUrl("https://example.com/datagallery", "/api/v1/sessions/s1/conversation?limit=10");
+  assert.equal(url.href, "https://example.com/datagallery/api/v1/sessions/s1/conversation?limit=10");
 });
 
 test("adds cookie and csrf to unsafe requests", async () => {
@@ -109,7 +109,7 @@ test("auth errors omit cookie secrets", async () => {
 test("verifyCurrentUser calls GET /api/v1/me only", async () => {
   const calls = [];
   const client = createAuthenticatedTestClient({
-    baseUrl: "http://127.0.0.1:8787/datafoundry",
+    baseUrl: "http://127.0.0.1:8787/datagallery",
     fetchImpl: async (url, init) => {
       calls.push({ url: String(url), method: init?.method ?? "GET" });
       return new Response(
@@ -128,7 +128,7 @@ test("verifyCurrentUser calls GET /api/v1/me only", async () => {
   const me = await client.verifyCurrentUser();
   assert.equal(me.user.id, "u1");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "http://127.0.0.1:8787/datafoundry/api/v1/me");
+  assert.equal(calls[0].url, "http://127.0.0.1:8787/datagallery/api/v1/me");
   assert.equal(calls[0].method, "GET");
   assert.ok(!calls.some((call) => call.url.includes("/api/v1/auth/me")));
 });

@@ -102,7 +102,7 @@ async function preserveFailureLogs(tempRoot) {
 async function main() {
   const webPort = await reservePort();
   const apiPort = await reservePort();
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "datafoundry-native-deploy-"));
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "datagallery-native-deploy-"));
   let stopped = false;
 
   const env = {
@@ -190,7 +190,7 @@ async function main() {
     );
 
     for (const relative of [
-      "storage/logs/datafoundry.log",
+      "storage/logs/datagallery.log",
       "storage/logs/deploy-latest.log",
       "storage/logs/deploy-smoke-redact-probe.log"
     ]) {

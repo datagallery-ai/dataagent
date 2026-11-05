@@ -1,6 +1,6 @@
-# DataFoundry TUI (`@datafoundry/tui`)
+# DataGallery TUI (`@datagallery/tui`)
 
-Terminal interface for the datafoundry monorepo.
+Terminal interface for the datagallery monorepo.
 
 - **User guide:** [TUI 指南](../../docs/zh/guides/tui.md)
 - **Quick start:** [快速开始](../../docs/zh/quick-start.md)

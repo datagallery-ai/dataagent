@@ -229,7 +229,7 @@ import {
   LiveRunProvider,
   useConversationRestoreGate,
   useLiveRun,
-} from "./use-data-foundry-run";
+} from "./use-data-gallery-run";
 import {
   DataTaskIdentityProvider,
   DataTaskUserBar,
@@ -349,7 +349,7 @@ const EnsureSessionAgentContext = createContext<(threadId: string) => void>(() =
 /** Config CRUD is not on the Python control plane. Keep the components, hide the entries. */
 const workspaceResourceNavEnabled = false;
 
-function reportDataFoundryRunError(
+function reportDataGalleryRunError(
   error: unknown,
   threadId?: string | null,
   options?: { source?: "client" | "runtime" },
@@ -359,7 +359,7 @@ function reportDataFoundryRunError(
     return;
   }
   window.dispatchEvent(
-    new CustomEvent("datafoundry-run-error", {
+    new CustomEvent("datagallery-run-error", {
       detail: {
         message,
         threadId: threadId ?? null,
@@ -486,7 +486,7 @@ function StableDataTaskChatInput({
       onUploadFailed: ({ message }) => {
         const error = new Error(message);
         setSubmitError(message);
-        reportDataFoundryRunError(error, bindings.activeThreadId, { source: "client" });
+        reportDataGalleryRunError(error, bindings.activeThreadId, { source: "client" });
       },
     },
   });
@@ -499,7 +499,7 @@ function StableDataTaskChatInput({
     if (isSessionRunBusyMessage(message)) {
       return;
     }
-    reportDataFoundryRunError(error, bindings.activeThreadId, { source: "client" });
+    reportDataGalleryRunError(error, bindings.activeThreadId, { source: "client" });
   }, [bindings.activeThreadId]);
 
   const fetchForeignActiveRun = useCallback(async (): Promise<SessionActiveRunDto | null> => {
@@ -648,8 +648,8 @@ function StableDataTaskChatInput({
       restoreRejectedSend(lastSentTextRef.current);
       setSubmitError("HTTP 409 Conflict");
     };
-    window.addEventListener("datafoundry-session-busy", onBusy);
-    return () => window.removeEventListener("datafoundry-session-busy", onBusy);
+    window.addEventListener("datagallery-session-busy", onBusy);
+    return () => window.removeEventListener("datagallery-session-busy", onBusy);
   }, [bindings.activeThreadId, restoreRejectedSend]);
 
   useEffect(() => {
@@ -1054,7 +1054,7 @@ function DataTasksCopilotShell() {
         }
         if (isSessionRunBusyMessage(message)) {
           window.dispatchEvent(
-            new CustomEvent("datafoundry-session-busy", {
+            new CustomEvent("datagallery-session-busy", {
               detail: { threadId: threadIdFromDataTaskSessionAgentId(contextAgentId) },
             }),
           );
@@ -1068,7 +1068,7 @@ function DataTasksCopilotShell() {
         }
         console.error("[data-tasks]", event);
         window.dispatchEvent(
-          new CustomEvent("datafoundry-run-error", {
+          new CustomEvent("datagallery-run-error", {
             detail: {
               message,
               threadId: threadIdFromDataTaskSessionAgentId(contextAgentId),
@@ -2779,7 +2779,7 @@ function ToolResultMissingCard({ name }: { name: string }) {
          tool observation has not reached the frontend thread. If the right-side Trace already has SQL audit or step
          status, this usually means the AG-UI{" "}
         <code className="text-[11px]">TOOL_CALL_RESULT</code>{" "}
-         terminal event is missing. Refresh and retry, or inspect the dataFoundry runtime bridge.
+         terminal event is missing. Refresh and retry, or inspect the DataGallery runtime bridge.
       </p>
     </div>
   );
@@ -3239,12 +3239,12 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
         agent.setState(buildAgentRunStatePatch(forwardedProps, agent.state));
         agent.addMessage({ id: createClientId("msg"), role: "user", content: text });
         void copilotkit.runAgent({ agent, forwardedProps }).catch((error) => {
-          reportDataFoundryRunError(error, chatConfig?.threadId);
+          reportDataGalleryRunError(error, chatConfig?.threadId);
         });
       }
       setEditing(false);
     } catch (error) {
-      reportDataFoundryRunError(error, chatConfig?.threadId);
+      reportDataGalleryRunError(error, chatConfig?.threadId);
     } finally {
       setBusy(false);
     }
@@ -5099,8 +5099,8 @@ function SessionPaneContent({
       }
     >
       <div className="flex h-16 items-center gap-3 border-b border-border px-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-sm font-semibold text-foreground shadow-[var(--shadow-card)]">
-          D
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-xs font-semibold tracking-tight text-foreground shadow-[var(--shadow-card)]">
+          DG
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold text-foreground">{t("sidebar.brand")}</h1>
@@ -7634,7 +7634,7 @@ function PendingBranchRunDispatcher({
       agent.addMessage({ id: createClientId("msg"), role: "user", content: pending.text });
       onDispatched();
       void copilotkit.runAgent({ agent, forwardedProps }).catch((error) => {
-        reportDataFoundryRunError(error, chatConfig?.threadId);
+        reportDataGalleryRunError(error, chatConfig?.threadId);
       });
     }, 0);
     return () => window.clearTimeout(timeout);

@@ -20,8 +20,8 @@ it('restores in reverse order with redraw optimizer, suspends, and never removes
   const chunks: string[] = [];
   output.on('data', (chunk) => chunks.push(String(chunk)));
   const original = stdout.write;
-  const oldSetting = process.env.DATAFOUNDRY_TUI_OPTIMIZE_ERASE_LINES;
-  process.env.DATAFOUNDRY_TUI_OPTIMIZE_ERASE_LINES = '1';
+  const oldSetting = process.env.DATAAGENT_TUI_OPTIMIZE_ERASE_LINES;
+  process.env.DATAAGENT_TUI_OPTIMIZE_ERASE_LINES = '1';
   try {
     for (let i = 0; i < 3; i++) {
       const restoreOptimizer = installTerminalRedrawOptimizer(stdout);
@@ -51,8 +51,8 @@ it('restores in reverse order with redraw optimizer, suspends, and never removes
     assert.equal(chunks.at(-1), suffix, 'a removed patch is inert even inside another writer');
   } finally {
     stdout.write = original;
-    if (oldSetting === undefined) delete process.env.DATAFOUNDRY_TUI_OPTIMIZE_ERASE_LINES;
-    else process.env.DATAFOUNDRY_TUI_OPTIMIZE_ERASE_LINES = oldSetting;
+    if (oldSetting === undefined) delete process.env.DATAAGENT_TUI_OPTIMIZE_ERASE_LINES;
+    else process.env.DATAAGENT_TUI_OPTIMIZE_ERASE_LINES = oldSetting;
   }
 });
 

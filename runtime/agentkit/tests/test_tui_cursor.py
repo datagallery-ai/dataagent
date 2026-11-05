@@ -69,7 +69,7 @@ def fixture(*arguments, optimize=False, expected_exit=0):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     environment = {**os.environ, "TERM": "xterm-256color", "NO_COLOR": "1",
-                   "DATAFOUNDRY_TUI_OPTIMIZE_ERASE_LINES": "1" if optimize else "0"}
+                   "DATAAGENT_TUI_OPTIMIZE_ERASE_LINES": "1" if optimize else "0"}
     environment.pop("CI", None)
     environment.pop("FORCE_COLOR", None)
     process = subprocess.Popen(["node", str(REPO / "apps/tui/dist/ui/cursor-pty.fixture.js"), *arguments],

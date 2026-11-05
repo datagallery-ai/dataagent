@@ -51,7 +51,7 @@
     "chineseShort": "中"
   },
   "sidebar": {
-    "brand": "DataFoundry",
+    "brand": "DataGallery",
     "sessionCount": "{{count}} sessions",
     "workspaceResources": "Workspace Resources",
     "newTask": "New data task",
@@ -228,7 +228,7 @@
     "metricOutputs": "Outputs",
     "metricItems": "{{count}} items",
     "currentQuestion": "Current question",
-    "startPrompt": "Send a question to start dataFoundry.",
+    "startPrompt": "Send a question to start DataGallery.",
     "steps": "Steps",
     "stepsSession": "Steps (session)",
     "successRate": "Success rate",
@@ -484,7 +484,7 @@
     "mcpNotesRemote": "Remote services commonly use SSE / Streamable HTTP URLs, for example https://host/mcp",
     "mcpNotesPersist": "Configuration is persisted through POST /api/v1/mcp-servers; tokens are stored in secretRef",
     "mcpNotesRuns": "Runs use run_config.enabledMcpServerIds to mount MCP tools",
-    "llmNotesTitle": "AG-UI / dataFoundry alignment notes",
+    "llmNotesTitle": "AG-UI / DataGallery alignment notes",
     "llmNotesEnv": "Server env: LLM_MODEL, LLM_BASE_URL, LLM_API_KEY",
     "llmNotesPersist": "Model profiles are managed through POST /api/v1/model-profiles; API keys are stored in secretRef",
     "llmNotesRuns": "Runs switch models through run_config.activeLlmProfileId",

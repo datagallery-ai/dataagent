@@ -333,7 +333,7 @@ test("reconfigure reuses managed listening ports only for a verified running sta
     print: () => {},
     probe: async (port) => {
       probes.push(port);
-      return { available: false, owner: `datafoundry pid=${process.pid}` };
+      return { available: false, owner: `datagallery pid=${process.pid}` };
     },
     collectManagedPortsOptions: {
       readLaunchId: async () => "launch-managed",

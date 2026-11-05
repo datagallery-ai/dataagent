@@ -557,9 +557,9 @@ export function LiveRunEventSubscriber({
       });
     };
 
-    window.addEventListener("datafoundry-run-error", onError);
+    window.addEventListener("datagallery-run-error", onError);
     return () => {
-      window.removeEventListener("datafoundry-run-error", onError);
+      window.removeEventListener("datagallery-run-error", onError);
     };
   }, [setLiveRunForThread, syncRunningThreadStatus, threadId]);
 

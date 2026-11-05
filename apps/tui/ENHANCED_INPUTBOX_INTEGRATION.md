@@ -151,7 +151,7 @@ return (
 
 ### 基本测试
 ```bash
-cd /data2/zhangh/code/dev_datafoundry/datafoundry
+cd /data2/zhangh/code/dev_datagallery/datagallery
 npm run start:tui
 ```
 

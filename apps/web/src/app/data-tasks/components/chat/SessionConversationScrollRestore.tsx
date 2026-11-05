@@ -11,7 +11,7 @@ import {
   consumeConversationScrollIntent,
   type ConversationScrollIntent,
 } from "../../conversation-branch-scroll";
-import { useConversationRestoreGate } from "../../use-data-foundry-run";
+import { useConversationRestoreGate } from "../../use-data-gallery-run";
 
 /**
  * After a historical thread is restored (switch session or full page refresh),

@@ -30,7 +30,7 @@ test("leaves existing env lines unchanged", () => {
 });
 
 test("reconfigure creates a backup and atomically writes .env", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "datafoundry-config-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "datagallery-config-"));
   await writeFile(path.join(root, ".env"), "LLM_API_KEY=old-secret\n");
   const result = ensureDeploymentEnvironment(await readFile(path.join(root, ".env"), "utf8"));
   const written = await writeDeploymentConfiguration(root, result.text, {
@@ -84,7 +84,7 @@ test("redactSensitiveText masks JSON keys, bearer tokens, URL userinfo, and toke
 });
 
 test("writeDeploymentConfiguration backs up existing secrets even without reconfigure", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "datafoundry-config-secret-backup-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "datagallery-config-secret-backup-"));
   const existing = "LLM_API_KEY=existing-secret-value\nNOTE=3000";
   await writeFile(path.join(root, ".env"), `${existing}\n`);
 

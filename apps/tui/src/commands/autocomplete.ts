@@ -2,7 +2,7 @@
  * Command Autocomplete Module
  *
  * Provides intelligent autocomplete suggestions for commands, subcommands,
- * flags, and parameter values in the DataFoundry TUI.
+ * flags, and parameter values in the DataGallery TUI.
  */
 
 import type { CommandRegistry, CommandDefinition, ParameterDefinition } from './command-parser.js';

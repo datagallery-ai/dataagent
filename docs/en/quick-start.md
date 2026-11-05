@@ -27,7 +27,7 @@ cd datafoundry
 ./deploy.sh
 ```
 
-On success Web + API keep running in the background (detached process group). Closing the terminal or pressing `Ctrl+C` in `./deploy.sh logs` does **not** stop DataFoundry — use `./deploy.sh stop`. One-click deploy also builds the TUI, but the TUI does **not** stay running with the stack; start it in another terminal when needed (see “Start the TUI” below).
+On success Web + API keep running in the background (detached process group). Closing the terminal or pressing `Ctrl+C` in `./deploy.sh logs` does **not** stop DataGallery — use `./deploy.sh stop`. One-click deploy also builds the TUI, but the TUI does **not** stay running with the stack; start it in another terminal when needed (see “Start the TUI” below).
 
 Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL the script prints and keep the `/data-tasks` path). The model comes from `config.json` and the environment, not from a profile created in the Web UI.
 
@@ -112,7 +112,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=your-api-key
 ```
 
-Put a reverse proxy in front for a public host; see [`deploy/nginx.datafoundry.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datafoundry.conf.example) — compress static assets; keep `/dataagent/stream` and `/api/copilotkit` uncompressed and unbuffered for SSE.
+Put a reverse proxy in front for a public host; see [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example) — compress static assets; keep `/dataagent/stream` and `/api/copilotkit` uncompressed and unbuffered for SSE.
 
 ### 3. Build and start (same for formal test and real production)
 

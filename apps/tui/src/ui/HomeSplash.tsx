@@ -19,7 +19,7 @@ export function HomeSplash({ rows, columns, startup, input, canResume = false, l
   const cardWidth = Math.min(70, width);
   const valueWidth = Math.max(1, cardWidth - 15);
   const hasDataSource = startup.datasourceId && startup.datasourceId !== 'undefined';
-  const title = localAgent ? 'DataAgent' : 'DataFoundry';
+  const title = 'DataGallery';
 
   return (
     <Box width="100%" height={rows} flexDirection="column" overflowY="hidden">

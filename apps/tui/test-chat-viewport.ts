@@ -212,12 +212,12 @@ const startupLines = buildChatLines({
     connectionStatus: 'connected',
     runStatus: 'idle',
     modelName: 'test-model',
-    directory: '/tmp/datafoundry',
+    directory: '/tmp/datagallery',
   },
 });
 const startupTexts = startupLines.map(visualLineText);
 check(startupLines[0]?.key === 'startup:border:top', 'startup transcript begins with the banner border');
-check(startupTexts.some((line) => line.includes('DataFoundry')), 'startup banner includes the DataFoundry wordmark');
+check(startupTexts.some((line) => line.includes('DataGallery')), 'startup banner includes the DataGallery wordmark');
 check(
   startupTexts.every((line) => textWidth(line) <= chatContentWidth(80)),
   'startup banner rows fit within chat content width',

@@ -97,7 +97,7 @@
   const zhTextByEnglish = new Map([
     ["Home", "首页"],
     ["User Guide", "用户指南"],
-    ["DataFoundry Documentation", "中文文档"],
+    ["DataGallery Documentation", "中文文档"],
     ["Product overview", "产品概览"],
     ["Quick start", "快速开始"],
     ["Capabilities", "能力全览"],

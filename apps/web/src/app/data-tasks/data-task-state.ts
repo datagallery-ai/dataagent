@@ -250,7 +250,7 @@ export function emptyStepPayload(kind: DataStepKind): DataStepPayload {
 
 /**
  * Client-side chat session. Each session owns a `threadId`; the UI registers a
- * session-local CopilotKit agent id for that thread and routes it to dataFoundry.
+ * session-local CopilotKit agent id for that thread and routes it to datagallery.
  */
 /** Per-session disabled resource ids (store "off" list; default = all enabled). */
 export type SessionDisabledMap = Record<
