@@ -2577,7 +2577,12 @@ def extract_insert_target_table(sql: str) -> str | None:
     m = re.search(pattern, sql_no_comment, re.IGNORECASE)
     if not m:
         return None
-    ref = m.group(1).strip().strip("`").strip("'").strip('"')
+    # 逐段剥引号 —— 只 strip 首尾的话，``\`biads\`.\`ads_x\``` 会留下中间的
+    # 反引号变成 ``biads`.`ads_x``，拿这个名字去查表必然查不到。
+    ref = ".".join(
+        part.strip().strip("`").strip("'").strip('"')
+        for part in m.group(1).split(".")
+    )
     return ref or None
 
 

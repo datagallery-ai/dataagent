@@ -300,6 +300,30 @@ class TestBuildQualityCheckSqls:
         assert "IS NOT NULL" in sql
         assert "bicoredata.IsEmpty" not in sql
 
+    def test_varchar_field_uses_is_empty_udf(self):
+        """``varchar(n)`` 也是字符串存储 —— 空串必须算作「空」。"""
+        sql = qc.build_quality_check_sqls(
+            "adhoctemp.tmp_x",
+            ["name"],
+            "pt_d",
+            "20261010",
+            10000,
+            column_types={"name": "varchar(32)"},
+        )[0][1]
+        assert "SUM(IF(!bicoredata.IsEmpty(`name`), 1, 0)) / COUNT(1) AS name" in sql
+
+    def test_column_type_lookup_is_case_insensitive(self):
+        """DDL / semantic 的列名大小写与 INSERT 投影不一致时，也要能查到类型。"""
+        sql = qc.build_quality_check_sqls(
+            "adhoctemp.tmp_x",
+            ["device_id"],
+            "pt_d",
+            "20261010",
+            10000,
+            column_types={"DEVICE_ID": "string"},
+        )[0][1]
+        assert "bicoredata.IsEmpty" in sql
+
     def test_all_fields_in_one_statement(self):
         """一条 SQL 里一次算完所有字段（条件聚合，不做字段×校验项展开）。"""
         sql = qc.build_quality_check_sqls(
