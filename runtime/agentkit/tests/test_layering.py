@@ -121,6 +121,7 @@ def test_bootstrap_types_live_with_their_concern_without_reverse_dependencies():
     assert core_imports(CORE / "bootstrap/discovery.py") <= FOUNDATION | {
         "dataagent.bootstrap.paths",
         "dataagent.bootstrap.config_files",
+        "dataagent.bootstrap.environment",
     }
     assert core_imports(CORE / "bootstrap/config_files.py") <= FOUNDATION | {
         "dataagent.bootstrap.paths",
@@ -137,7 +138,7 @@ def test_bootstrap_class_ownership_is_explicit():
         "options": {"LaunchOptions"},
         "runtime": {"Runtime", "StartupReport"},
         "discovery": {"ExtensionLocations", "HookBinding", "RunHookBinding"},
-        "config_files": {"ConfigSource", "Layer"},
+        "config_files": {"ConfigSource", "ConfigurationLoadError", "Layer"},
     }
     for module, names in expected.items():
         tree = ast.parse((CORE / f"bootstrap/{module}.py").read_text())

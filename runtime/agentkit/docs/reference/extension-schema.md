@@ -27,8 +27,6 @@
 | `subagents` | 相对路径数组 | `[]` | 每个路径是一份子代理 JSON |
 | `hooks` | 分组对象或列表 | `[]` | 只作用于根 Agent |
 
-`hook_handlers`，或 Hook 条目里的 `handler` / `events`，会要求迁移到版本 2。
-
 入口路径相对插件根，解析后必须仍在根内。`file.py:symbol` 的 `symbol` 必须是标识符。
 工具 `scope` 默认 `all`；`subagents` 只保留在子代理可引用的注册表中，不加入根 Agent 工具列表。
 
@@ -43,11 +41,11 @@
 | 字段 | 约束 |
 | --- | --- |
 | `entrypoint` | 非空。`相对.py:函数` |
-| `params` | JSON 对象，默认 `{}`。字段名是 `params` |
+| `params` | JSON 对象，默认 `{}` |
 | `matcher` | 仅工具事件。非空字符串，精确匹配工具全名 |
 | `event` | 扁平列表必填。分组里禁止再写 |
 
-声明使用 `event`、`entrypoint`、`params` 和 `matcher`。`command`、`timeout_seconds`、`handler`、`events`、`match` 不能出现在条目里。
+声明使用 `event`、`entrypoint`、`params` 和 `matcher`。
 
 函数契约见 [Hook](../extensions/hooks.md)。
 

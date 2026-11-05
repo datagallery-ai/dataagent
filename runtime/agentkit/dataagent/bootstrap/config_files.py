@@ -1,8 +1,9 @@
 """Read, validate and merge configuration layers into effective Settings.
 
-File precedence: Home < explicit CLI config. Dictionaries merge by
-field; independent Hooks accumulate in layer order. Other lists and scalars replace
-earlier values. Defaults fill only missing fields.
+The product file is Home `config.json`, or the explicit `--config` file when
+that flag is set. Plugin `plugins.config` is merged underneath the chosen file.
+Dictionaries merge by field; independent Hooks accumulate in layer order. Other
+lists and scalars replace earlier values. Defaults fill only missing fields.
 """
 
 import re
@@ -29,6 +30,10 @@ ENV_REFERENCE = re.compile(r"\$env\{([A-Za-z_][A-Za-z0-9_]*)\}")
 Scope = Literal["user", "cli", "plugin"]
 
 
+class ConfigurationLoadError(ValueError):
+    """The selected product file was not loaded."""
+
+
 @dataclass(frozen=True)
 class ConfigSource:
     """A configuration file's participation record, without its content or credentials."""
@@ -46,6 +51,7 @@ class Layer:
     env: Mapping = field(repr=False)
     home: Path
     base_dir: Path | None = None
+    dotenv: Path | None = None
 
 
 def freeze(value):
@@ -88,7 +94,8 @@ def validate_against(model, value, source):
         raise ValueError(f"{source}: {details}") from None
 
 
-def expand_env(value, env, *, source, home, location=()):
+def expand_env(value, env, *, source, home, location=(), dotenv=None):
+    hint = home / ".env" if dotenv is None else dotenv
     if isinstance(value, str):
 
         def replace(match):
@@ -96,19 +103,23 @@ def expand_env(value, env, *, source, home, location=()):
             if not env.get(name):
                 raise ValueError(
                     f"{source}: missing environment variable {name} for "
-                    f"{'.'.join(map(str, location))}; configure {home / '.env'}"
+                    f"{'.'.join(map(str, location))}; configure {hint}"
                 )
             return env[name]
 
         return ENV_REFERENCE.sub(replace, value)
     if isinstance(value, Mapping):
         return {
-            key: expand_env(item, env, source=source, home=home, location=(*location, key))
+            key: expand_env(
+                item, env, source=source, home=home, location=(*location, key), dotenv=dotenv
+            )
             for key, item in value.items()
         }
     if isinstance(value, (tuple, list)):
         return [
-            expand_env(item, env, source=source, home=home, location=(*location, index))
+            expand_env(
+                item, env, source=source, home=home, location=(*location, index), dotenv=dotenv
+            )
             for index, item in enumerate(value)
         ]
     return value
@@ -129,14 +140,26 @@ def _expand_model_value(value, field_sources, location):
             for key, item in value.items()
         }
     source = field_sources[location]
-    return expand_env(value, source.env, source=source.path, home=source.home, location=location)
+    return expand_env(
+        value,
+        source.env,
+        source=source.path,
+        home=source.home,
+        location=location,
+        dotenv=source.dotenv,
+    )
 
 
-def load_layers(home: Path, env: Mapping, cli_config: Path | None) -> tuple[Layer, ...]:
-    """Load present files in low-to-high order: Home, explicit config."""
+def load_layers(
+    home: Path, env: Mapping, cli_config: Path | None, *, dotenv: Path | None = None
+) -> tuple[Layer, ...]:
+    """Load the selected product file: explicit `--config`, otherwise Home."""
     layers = []
     for scope, path in _config_sources(home, cli_config):
-        layer = _load_layer(scope, path, env=env, home=home)
+        try:
+            layer = _load_layer(scope, path, env=env, home=home, dotenv=dotenv)
+        except ValueError as error:
+            raise ConfigurationLoadError(str(error)) from None
         if layer is not None:
             layers.append(layer)
     return tuple(layers)
@@ -175,7 +198,7 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
                 target[key] = value
                 field_sources[location] = source
 
-    # load_layers supplies Home -> CLI. Later layers have higher priority.
+    # Callers supply plugin defaults first, then the one selected product file.
     for layer in layers:
         overlay(merged, layer.data, layer)
 
@@ -191,16 +214,15 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
 
 
 def _config_sources(home: Path, cli_config: Path | None) -> list[tuple[Scope, Path]]:
-    """Order Home < CLI; an explicit file replaces its automatic occurrence."""
-    candidates: list[tuple[Scope, Path]] = [("user", home / "config.json")]
+    """Use `--config` by itself. Otherwise use Home `config.json`."""
     if cli_config is not None:
-        cli_real = cli_config.resolve()
-        candidates = [(scope, path) for scope, path in candidates if path.resolve() != cli_real]
-        candidates.append(("cli", cli_config))
-    return candidates
+        return [("cli", cli_config)]
+    return [("user", home / "config.json")]
 
 
-def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer | None:
+def _load_layer(
+    scope: Scope, path: Path, *, env: Mapping, home: Path, dotenv: Path | None = None
+) -> Layer | None:
     """Read one file; only an absent automatic configuration may be skipped."""
     if not path.exists() and not path.is_symlink():
         if scope == "cli":
@@ -216,24 +238,6 @@ def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer 
         or set(raw.get("plugins", {})) - {"config"}
     ):
         raise ValueError(f"{path}: plugin defaults may only contribute plugins.config")
-    # File-level migration checks; individual Hook declarations use the shared schema below.
-    if raw.get("schema_version", 3) != 3:
-        raise ValueError(
-            f"{path}: configuration schema_version must be 3; migrate hooks to "
-            "event + Python entrypoint and remove hook_handlers/handler/events/match"
-        )
-    agent = raw.get("dataagent", {})
-    if isinstance(agent, Mapping) and (removed := {"middleware", "callbacks"} & agent.keys()):
-        raise ValueError(
-            f"{path}: dataagent.{', dataagent.'.join(sorted(removed))} is unsupported; "
-            "remove these fields (including empty lists) and use hooks with "
-            "event + Python entrypoint + params"
-        )
-    if isinstance(agent, Mapping) and "hook_handlers" in agent:
-        raise ValueError(
-            f"{path}: legacy hook configuration is unsupported; use hooks with "
-            "event + Python entrypoint + params"
-        )
 
     data = {}
     for key, value in raw.items():
@@ -246,7 +250,9 @@ def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer 
                 value = {**value, "hooks": normalize_hooks(value["hooks"])}
             except ValueError as error:
                 raise ValueError(f"{path}: dataagent.hooks: {error}") from None
-        data[key] = expand_env(value, env, source=path, home=home, location=(key,))
+        data[key] = expand_env(
+            value, env, source=path, home=home, location=(key,), dotenv=dotenv
+        )
 
     # Validate without filling defaults: omitted fields must not override lower layers.
     validate_against(_partial(Settings), data, path)
@@ -273,7 +279,7 @@ def _load_layer(scope: Scope, path: Path, *, env: Mapping, home: Path) -> Layer 
             agent_data["output_root"] = output_directory(agent_data["output_root"])
         except ValueError as error:
             raise ValueError(f"{path}: dataagent.output_root: {error}") from error
-    return Layer(scope=scope, path=path, data=freeze(data), env=env, home=home)
+    return Layer(scope=scope, path=path, data=freeze(data), env=env, home=home, dotenv=dotenv)
 
 
 def _resolve_workspace_entries(entries, source: Path):

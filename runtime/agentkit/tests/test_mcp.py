@@ -64,7 +64,7 @@ def test_two_sources_only_disabled_plugins_and_adjacent_configs_ignored(tmp_path
     plugin = home / "plugins/analytics"
     config(plugin / ".plugin.json", {"id": "analytics"})
     config(plugin / ".mcp.json", {"mcpServers": {"calc": stdio()}})
-    external = config(tmp_path / "config.json", {"plugins": {"enabled": ["analytics"]}})
+    external = config(tmp_path / "config.json", {**MODEL, "plugins": {"enabled": ["analytics"]}})
     runtime = prepare(tmp_path, {"calc": stdio()}, config=external, workspace=tmp_path / "input")
     assert list(runtime.extensions.mcp_servers) == ["mcp__user__calc", "mcp__analytics__calc"]
     assert runtime.extensions.mcp_servers["mcp__analytics__calc"]["cwd"] == str(plugin)
@@ -84,6 +84,7 @@ def test_env_uses_existing_layers_and_relative_command_anchors_to_mcp_file(tmp_p
     assert connection["env"] == {"VALUE": "file-secret"}
     assert "file-secret" not in repr(runtime)
     assert "file-secret" in runtime.redaction_secrets
+    assert "home-secret" not in runtime.redaction_secrets
     monkeypatch.setenv("MCP_TEST_VALUE", "process-secret")
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, env_file=explicit))
     assert runtime.extensions.mcp_servers["mcp__user__calc"]["env"]["VALUE"] == "process-secret"
@@ -309,7 +310,7 @@ async def test_plugin_subagent_allowlist_hooks_and_namespaces(tmp_path):
             "params": {"file": str(marker)},
         }]},
     })
-    explicit = config(tmp_path / "override.json", {"plugins": {"enabled": ["analytics"]}})
+    explicit = config(tmp_path / "override.json", {**MODEL, "plugins": {"enabled": ["analytics"]}})
     runtime = prepare(tmp_path, {"calc": stdio()}, config=explicit)
     tools = await load_mcp_tools(runtime)
     assert by_name(tools, "mcp__user__calc_add") and by_name(tools, "mcp__analytics__calc_add")

@@ -135,7 +135,7 @@ LaunchOptions + 环境
 | `runtime.resources.protected_paths` | `runtime.paths.protected_paths` |
 | `runtime.resources.hooks[i][0/1]` | `runtime.resources.hooks[i].base_dir/.spec` |
 
-middleware/callbacks 已在后续 Hooks 收口中移除，不再迁移为具名绑定。JSON schema version、磁盘目录、CLI 参数与 TUI 代码不变；旧工厂字段需要显式删除。
+middleware/callbacks 已在后续 Hooks 收口中移除，不再迁移为具名绑定。JSON schema version、磁盘目录、CLI 参数与 TUI 代码不变。
 
 ## 5. 验收
 
@@ -193,10 +193,10 @@ Runtime 的四组信息统一为：
 
 ### 8.2 独立 Hooks 累加与逐条来源绑定
 
-独立 Hooks 必须按 Home → 已加载项目 → CLI 累加。此前根据覆盖逻辑将所有 Hooks 归到一个 `hooks_base_dir` 的简化不成立，已撤回。保留具体的 `HookBinding(base_dir, spec)`，不恢复泛型 ExtensionSource，也不单独新增 bindings 文件。
+独立 Hooks 来自选中的那一份产品文件，绑定到该文件所在目录。此前根据覆盖逻辑将所有 Hooks 归到一个 `hooks_base_dir` 的简化不成立，已撤回。保留具体的 `HookBinding(base_dir, spec)`，不恢复泛型 ExtensionSource，也不单独新增 bindings 文件。
 
 ```python
-runtime.settings.dataagent.hooks       # 各配置层按顺序累加的有效声明
+runtime.settings.dataagent.hooks       # 选中产品文件里的有效声明
 runtime.extensions.hooks[i].base_dir   # 第 i 条声明所属配置的目录
 runtime.extensions.hooks[i].spec       # 引用 settings 中同一个 HookSpec，不复制
 ```

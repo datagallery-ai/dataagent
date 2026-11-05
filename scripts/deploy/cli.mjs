@@ -35,15 +35,32 @@ import {
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const TUI_ENTRY = "apps/tui/dist/index.js";
 
-export function resolveTuiRuntimeUrl(env = {}, runtimeUrl = null) {
-  const explicit = String(runtimeUrl ?? "").trim();
-  if (explicit) return explicit;
-  const listen = readServerListen(env);
-  return `${httpOrigin(listen.host, listen.port)}/dataagent/stream`;
+/** Host and port recorded when the stack started. An incomplete record has no snapshot. */
+export function apiListenFromState(state) {
+  const host = typeof state?.listen?.apiHost === "string" ? state.listen.apiHost.trim() : "";
+  const port = state?.ports?.api;
+  if (!host || port == null || port === "") return null;
+  const parsed = Number(port);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return null;
+  return { host, port: String(parsed) };
 }
 
-export function healthProbeUrls(env = {}, web = {}) {
-  const api = readServerListen(env);
+function clientListenHost(host) {
+  const value = String(host ?? "").trim();
+  if (value === "0.0.0.0") return "127.0.0.1";
+  if (value === "::" || value === "::0") return "::1";
+  return value;
+}
+
+export function resolveTuiRuntimeUrl(env = {}, runtimeUrl = null, apiListen = null) {
+  const explicit = String(runtimeUrl ?? "").trim();
+  if (explicit) return explicit;
+  const listen = apiListen ?? readServerListen(env);
+  return `${httpOrigin(clientListenHost(listen.host), listen.port)}/dataagent/stream`;
+}
+
+export function healthProbeUrls(env = {}, web = {}, apiListen = null) {
+  const api = apiListen ?? readServerListen(env);
   return {
     apiBaseUrl: httpOrigin(api.host, api.port),
     webUrl: httpOrigin(web.host || "127.0.0.1", web.port || "3000")
@@ -92,10 +109,12 @@ export function webListenFromArgs(parsed = {}) {
   return { host, port: String(parsedPort) };
 }
 
-export function managedWebStartArgs(web = {}) {
+export function managedWebStartArgs(web = {}, configPath) {
   const webHost = String(web.host || "127.0.0.1").trim() || "127.0.0.1";
   const webPort = String(web.port || "3000").trim() || "3000";
-  return ["run", "start", "--", "--web-host", webHost, "--web-port", webPort];
+  const args = ["run", "start", "--", "--web-host", webHost, "--web-port", webPort];
+  if (configPath) args.push("--config", configPath);
+  return args;
 }
 
 /** Managed ports come from deployment.json when the pid is alive and launchId matches. */
@@ -214,6 +233,8 @@ export async function configureDeploymentInteractively(options) {
   } = options;
 
   const listenEnv = processEnv ?? { DATAAGENT_HOME: "" };
+  const configPath = typeof options.configPath === "string" ? options.configPath.trim() : "";
+  const selectedListen = readServerListen(listenEnv, configPath || undefined);
   let text = sourceText ?? "";
   const originalEnv = parseDeploymentEnvironment(text);
   const completeBeforeFill = isCompleteDeploymentConfig(originalEnv);
@@ -232,7 +253,7 @@ export async function configureDeploymentInteractively(options) {
       env,
       envText: text,
       wrote: false,
-      listen: readServerListen(listenEnv),
+      listen: { host: selectedListen.host, port: selectedListen.port },
       web: savedWeb
     };
   }
@@ -245,6 +266,7 @@ export async function configureDeploymentInteractively(options) {
   );
 
   const reserved = new Set();
+  if (configPath) reserved.add(Number(selectedListen.port));
   const webPort = await selectPortWithHint({
     label: "Web",
     defaultPort: Number(savedWeb.port || 3000),
@@ -256,20 +278,22 @@ export async function configureDeploymentInteractively(options) {
     probe
   });
   reserved.add(webPort);
-  const apiPort = await selectPortWithHint({
-    label: "API",
-    defaultPort: Number(readServerListen(listenEnv).port),
-    reserved,
-    managedPorts,
-    nonInteractive,
-    ask,
-    print,
-    probe
-  });
-  reserved.add(apiPort);
+  const apiPort = configPath
+    ? Number(selectedListen.port)
+    : await selectPortWithHint({
+        label: "API",
+        defaultPort: Number(selectedListen.port),
+        reserved,
+        managedPorts,
+        nonInteractive,
+        ask,
+        print,
+        probe
+      });
+  if (!configPath) reserved.add(apiPort);
 
   const web = { host: savedWeb.host || "127.0.0.1", port: String(webPort) };
-  const listen = { host: readServerListen(listenEnv).host, port: String(apiPort) };
+  const listen = { host: selectedListen.host, port: String(apiPort) };
 
   ensured = ensureDeploymentEnvironment(text);
   text = ensured.text;
@@ -363,6 +387,7 @@ function runCommand(command, args, options = {}) {
 
 function createRealDeps(context) {
   const { root, parsed, ask, print } = context;
+
   let config = null;
   let deployLog = null;
 
@@ -409,7 +434,8 @@ function createRealDeps(context) {
         print,
         processEnv: process.env,
         write: false,
-        web: webListenFromArgs(parsed)
+        web: webListenFromArgs(parsed),
+        configPath: parsed.config
       });
       config = { ...current, ...configured };
       return config;
@@ -430,7 +456,7 @@ function createRealDeps(context) {
         // Redeploy without --reconfigure must not silently lose disk secrets.
         backupExistingSecrets: !parsed.reconfigure
       });
-      if (current.listen) {
+      if (current.listen && !parsed.config) {
         writeServerListen(
           { DATAAGENT_HOME: process.env.DATAAGENT_HOME || path.join(os.homedir(), ".dataagent") },
           current.listen
@@ -467,7 +493,8 @@ function createRealDeps(context) {
       }
     },
     async checkApiForTui(current) {
-      const apiBaseUrl = healthProbeUrls(current.env, current.web).apiBaseUrl;
+      const state = await readDeploymentState(root).catch(() => null);
+      const apiBaseUrl = healthProbeUrls(current.env, current.web, apiListenFromState(state)).apiBaseUrl;
       const health = await probeHttp(`${apiBaseUrl}/healthz`);
       if (!(health.ok && health.status === 200)) {
         throw new Error(
@@ -477,7 +504,12 @@ function createRealDeps(context) {
     },
     async startTui(current, parsed) {
       ask.close?.();
-      const runtimeUrl = resolveTuiRuntimeUrl(current.env, parsed?.runtimeUrl);
+      const state = await readDeploymentState(root).catch(() => null);
+      const runtimeUrl = resolveTuiRuntimeUrl(
+        current.env,
+        parsed?.runtimeUrl,
+        apiListenFromState(state),
+      );
       print(`Starting TUI against ${runtimeUrl} (foreground client; Ctrl+C exits TUI only).`);
       await runCommand("npm", ["run", "start:tui", "--", "--runtime-url", runtimeUrl], {
         cwd: root,
@@ -487,7 +519,7 @@ function createRealDeps(context) {
 
     async verifyPorts(current) {
       const web = current.web ?? { host: "127.0.0.1", port: "3000" };
-      const api = readServerListen(current.env);
+      const api = readServerListen(current.env, parsed.config);
       const services = [
         { label: "Web", host: web.host, port: web.port },
         { label: "API", host: api.host, port: api.port }
@@ -504,26 +536,28 @@ function createRealDeps(context) {
     },
     async start(current) {
       const web = current.web ?? webListenFromArgs(parsed);
-      const args = managedWebStartArgs(web);
+      const args = managedWebStartArgs(web, parsed.config);
+      const api = readServerListen(current.env, parsed.config);
       await startManagedStack(root, {
         env: { ...process.env, ...current.env },
         args,
         ports: {
           web: Number(web.port),
-          api: Number(readServerListen(current.env).port)
+          api: Number(api.port)
         },
-        listen: { webHost: web.host }
+        listen: { webHost: web.host, apiHost: api.host }
       });
     },
     async waitForHealth(current) {
       try {
         const web = current.web ?? webListenFromArgs(parsed);
+        const api = readServerListen(current.env, parsed.config);
         return await waitForDeployment({
           checkProcessAlive: async () => {
             const inspection = await inspectManagedRuntime(root);
             return inspection.running;
           },
-          ...healthProbeUrls(current.env, web)
+          ...healthProbeUrls(current.env, web, api)
         });
       } catch (error) {
         const latest = await readDeploymentState(root);
@@ -541,7 +575,8 @@ function createRealDeps(context) {
       await writeDeploymentState(root, { ...inspection.state, status: "healthy" });
       if (deployLog) await deployLog.finalize();
       const web = current.web ?? { host: "127.0.0.1", port: "3000" };
-      const probes = healthProbeUrls(current.env, web);
+      const api = readServerListen(current.env, parsed.config);
+      const probes = healthProbeUrls(current.env, web, api);
       const webUrl = probes.webUrl;
       print(`DataGallery is healthy at ${webUrl}`);
       const ready = await probeHttp(`${probes.apiBaseUrl}/ready`);
@@ -565,7 +600,7 @@ function createRealDeps(context) {
         : (config?.web ?? webListenFromArgs(parsed));
       const summary = await collectDeploymentHealth({
         checkProcessAlive: async () => inspection.running,
-        ...healthProbeUrls(env, web)
+        ...healthProbeUrls(env, web, apiListenFromState(state))
       });
       print(`进程        ${summary.process}`);
       print(`API         ${summary.apiHealth}/${summary.apiReady}`);
@@ -617,7 +652,7 @@ export async function runDeploymentDoctor(root, options = {}) {
 
   const inspection = await inspectManagedRuntime(root);
   const state = inspection.state;
-  const api = readServerListen(env);
+  const api = apiListenFromState(state) ?? readServerListen(env);
   const web = inspection.running
     ? webListenFromState(state, options.web ?? { host: "127.0.0.1", port: "3000" })
     : (options.web ?? { host: "127.0.0.1", port: "3000" });
@@ -708,7 +743,7 @@ export async function runDeploymentDoctor(root, options = {}) {
     const summary = await collectDeploymentHealth(
       {
         processAlive: true,
-        ...healthProbeUrls(env, web)
+        ...healthProbeUrls(env, web, api)
       },
       options.healthOptions
     );

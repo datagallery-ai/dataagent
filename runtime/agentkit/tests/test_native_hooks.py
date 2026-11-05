@@ -133,7 +133,7 @@ def test_generator_functions_and_callable_instances_are_not_plain_hooks():
     ],
 )
 def test_invalid_tool_signatures_fail_at_compilation(event, handler):
-    with pytest.raises(TypeError, match="migrate old handle"):
+    with pytest.raises(TypeError, match="handle\\("):
         compile_function(event, handler)
 
 

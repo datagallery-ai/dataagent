@@ -13,16 +13,16 @@ npm run test:tui
 
 构建使用 hatchling。wheel 包含 `dataagent` 和 `serve`，并把 `builtin-plugins` 装到 `dataagent/builtin-plugins`。
 
-## 配置兼容
+## 配置版本
 
 | 对象 | 版本 | 读取规则 |
 | --- | --- | --- |
 | 产品 `config.json` | `schema_version` 3 | 其他版本会导致启动失败，程序不改写该文件 |
-| 插件 `.plugin.json` | 2 | `hook_handlers` 会导致加载失败 |
-| Hook | 六个事件和 Python 入口 | `command`、`middleware`、`callbacks` 会导致校验失败 |
+| 插件 `.plugin.json` | `schema_version` 2 | 其他版本会导致加载失败 |
+| Hook | 六个事件和 Python 入口 | 声明字段是 `event`、`entrypoint`、`params` |
 | MCP | `.mcp.json` 的 `mcpServers` | 连接写在该文件中，不写在产品配置里 |
 
-已有 Home 不会在启动时迁移。请把配置保存为上述 JSON。环境引用的写法是 `$env{NAME}`。
+启动不改写已有配置文件。环境引用的写法是 `$env{NAME}`。
 
 ## 状态兼容
 

@@ -251,12 +251,12 @@ async def test_other_profile_cannot_read_the_same_context(tmp_path, common_plugi
 
     from dataagent import LaunchOptions, prepare_runtime
 
-    (tmp_path / "home/config.json").write_text(json.dumps({"plugins": {"enabled": ["common"]}}))
     path = tmp_path / "test-config.json"
     path.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
+        "plugins": {"enabled": ["common"]},
     }))
     alice = prepare_runtime(LaunchOptions(cwd=tmp_path, config=path, user_id="alice"))
     bob = prepare_runtime(LaunchOptions(cwd=tmp_path, config=path, user_id="bob"))

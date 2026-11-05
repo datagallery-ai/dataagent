@@ -203,7 +203,7 @@ def test_model_settings_come_from_home_env(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
     monkeypatch.setenv("DATAAGENT_HOME", str(home))
-    for key in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "DATAAGENT_CONFIG", "DATAAGENT_WORKSPACE"):
+    for key in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "DATAAGENT_WORKSPACE"):
         monkeypatch.delenv(key, raising=False)
 
     from dataagent import LaunchOptions, prepare_runtime

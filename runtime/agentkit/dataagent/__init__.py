@@ -26,12 +26,14 @@ from dataagent.bootstrap import (
     prepare_runtime,
     refresh_extensions,
 )
+from dataagent.bootstrap.config_files import ConfigurationLoadError
 from dataagent.diagnostics import safe_error
 
 __version__ = "0.1.0"
 
 __all__ = [
     "SemanticServiceClient",
+    "ConfigurationLoadError",
     "DataAgentError",
     "LaunchOptions",
     "Runtime",
@@ -60,10 +62,6 @@ _LAZY = {
 
 
 def __getattr__(name):
-    if name in {"deny", "HookDecision"}:
-        raise AttributeError(
-            f"{name} was removed: Python hooks reject execution by raising an exception"
-        )
     if name in _LAZY:
         from importlib import import_module
 

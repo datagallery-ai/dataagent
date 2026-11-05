@@ -45,16 +45,33 @@ function pickPort(value, fallback) {
   return fallback;
 }
 
-/** Listen address from Home config.json, with DATAAGENT_CONFIG overlaid. */
-export function readServerListen(env = process.env) {
+function listenFromServer(server) {
+  return {
+    host: pickHost(server.host, DEFAULT_SERVER_HOST),
+    port: pickPort(server.port, DEFAULT_SERVER_PORT),
+  };
+}
+
+function readExplicitListen(file) {
+  if (!existsSync(file)) throw new Error(`Configuration file does not exist: ${file}`);
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Configuration file is not valid JSON (${file}): ${reason}`);
+  }
+  if (!isPlainObject(parsed)) throw new Error(`Configuration file is not a JSON object: ${file}`);
+  return listenFromServer(isPlainObject(parsed.server) ? parsed.server : {});
+}
+
+/** Listen address from `--config` when set, otherwise Home config.json. */
+export function readServerListen(env = process.env, configPath) {
+  const explicit = typeof configPath === "string" ? configPath.trim() : "";
+  if (explicit) return readExplicitListen(explicit);
   const home = homeDir(env);
   const base = home ? readServerSection(join(home, "config.json")) : {};
-  const explicit = env.DATAAGENT_CONFIG?.trim();
-  const over = explicit ? readServerSection(explicit) : {};
-  return {
-    host: pickHost(over.host, pickHost(base.host, DEFAULT_SERVER_HOST)),
-    port: pickPort(over.port, pickPort(base.port, DEFAULT_SERVER_PORT)),
-  };
+  return listenFromServer(base);
 }
 
 function isPlainObject(value) {

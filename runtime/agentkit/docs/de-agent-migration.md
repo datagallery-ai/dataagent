@@ -10,7 +10,7 @@
 flowchart TB
     C["Agent JSON 配置"] --> H["宿主：模型 / semantic client / session"]
     C --> P["插件发现：de-agent requires nl2sql"]
-    P --> M["配置合并：依赖默认值 → 插件默认值 → Home → 显式配置"]
+    P --> M["配置合并：插件 plugins.config → 选中的产品文件"]
     M --> A["主 Deep Agent"]
     H --> A
     A -->|"task 前置 Hook：原始问题，成功结果缓存"| R["metadata-recall"]

@@ -167,7 +167,7 @@ npm run start:tui
 
 地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
 
-部署栈已经在跑时也可以 `./deploy.sh tui`。
+部署栈已经在跑时也可以 `./deploy.sh tui`。它连接这次启动记下的 API 地址。
 
 恢复最近的服务端会话：
 

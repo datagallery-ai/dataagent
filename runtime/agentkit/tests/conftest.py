@@ -106,14 +106,15 @@ def common_plugin(tmp_path):
 
 @pytest.fixture
 def runtime(tmp_path, common_plugin):
-    (tmp_path / "home/config.json").write_text(json.dumps({"plugins": {"enabled": ["common"]}}))
-    path = tmp_path / "test-config.json"
+    path = tmp_path / "home/config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
+        "plugins": {"enabled": ["common"]},
     }))
-    return prepare_runtime(LaunchOptions(cwd=tmp_path, config=path))
+    return prepare_runtime(LaunchOptions(cwd=tmp_path))
 
 
 @pytest.fixture

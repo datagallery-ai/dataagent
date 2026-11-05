@@ -167,7 +167,7 @@ npm run start:tui
 
 The address comes from `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches. `--runtime-url` only attaches and does not start a backend.
 
-`./deploy.sh tui` also attaches when the deployed stack is already running.
+`./deploy.sh tui` also attaches when the deployed stack is already running. It uses the API address recorded at start.
 
 Resume the latest server session:
 

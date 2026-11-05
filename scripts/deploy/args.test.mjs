@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 
@@ -9,7 +10,8 @@ test("defaults to deploy", () => {
     nonInteractive: false,
     runtimeUrl: null,
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
 });
 
@@ -20,7 +22,8 @@ test("accepts flags before or after deploy", () => {
     nonInteractive: true,
     runtimeUrl: null,
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
   assert.deepEqual(parseDeployArgs(["deploy", "--reconfigure"]), {
     command: "deploy",
@@ -28,7 +31,8 @@ test("accepts flags before or after deploy", () => {
     nonInteractive: false,
     runtimeUrl: null,
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
   assert.deepEqual(parseDeployArgs(["--reconfigure", "deploy"]), {
     command: "deploy",
@@ -36,7 +40,8 @@ test("accepts flags before or after deploy", () => {
     nonInteractive: false,
     runtimeUrl: null,
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
 });
 
@@ -53,7 +58,8 @@ test("tui accepts optional --runtime-url", () => {
     nonInteractive: false,
     runtimeUrl: null,
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
   assert.deepEqual(parseDeployArgs(["tui", "--runtime-url", "http://127.0.0.1:9000/api/copilotkit"]), {
     command: "tui",
@@ -61,7 +67,8 @@ test("tui accepts optional --runtime-url", () => {
     nonInteractive: false,
     runtimeUrl: "http://127.0.0.1:9000/api/copilotkit",
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
   assert.deepEqual(parseDeployArgs(["--runtime-url", "http://example/api/copilotkit", "tui"]), {
     command: "tui",
@@ -69,7 +76,8 @@ test("tui accepts optional --runtime-url", () => {
     nonInteractive: false,
     runtimeUrl: "http://example/api/copilotkit",
     webHost: null,
-    webPort: null
+    webPort: null,
+    config: null
   });
 });
 
@@ -80,9 +88,22 @@ test("start accepts web host and port", () => {
     nonInteractive: false,
     runtimeUrl: null,
     webHost: "127.0.0.1",
-    webPort: "3310"
+    webPort: "3310",
+    config: null
   });
+  assert.deepEqual(parseDeployArgs(["start", "--config", "team.json"]), {
+    command: "start",
+    reconfigure: false,
+    nonInteractive: false,
+    runtimeUrl: null,
+    webHost: null,
+    webPort: null,
+    config: path.resolve("team.json")
+  });
+  assert.throws(() => parseDeployArgs(["start", "--config", "   "]), /--config requires a value/);
   assert.throws(() => parseDeployArgs(["status", "--web-port", "3000"]), /only valid with deploy, start, or restart/);
+  assert.throws(() => parseDeployArgs(["tui", "--config", "team.json"]), /--config is only valid with deploy, start, or restart/);
+  assert.throws(() => parseDeployArgs(["start", "--config"]), /--config requires a value/);
   assert.throws(() => parseDeployArgs(["start", "--web-port"]), /--web-port requires a value/);
 });
 

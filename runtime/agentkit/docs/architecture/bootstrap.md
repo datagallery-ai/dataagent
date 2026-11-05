@@ -25,9 +25,9 @@ flowchart LR
 
 ## 环境与配置
 
-环境文件顺序是 Home `.env`，显式配置旁边的 `.env`，然后 `--env-file`，最后进程环境覆盖。细节见 [命令与环境变量](../reference/cli-and-environment.md)。
+环境文件只读一份：`--env-file`，否则 Home `.env`。`--config` 不改变这个选择。进程里的非空值覆盖这份文件。细节见 [命令与环境变量](../reference/cli-and-environment.md)。
 
-配置层是 Home `config.json`，然后 `--config`。缺席的 Home 文件可以跳过。显式文件缺失则失败。合并规则见 [配置字段](../reference/configuration.md)。
+未传 `--config` 时用 Home `config.json`，缺席可以跳过。传了 `--config` 就只用那份文件，缺失则失败。插件 `plugins.config` 在选中的产品文件下面。合并规则见 [配置字段](../reference/configuration.md)。
 
 默认模型的 `$env{...}` 在合并之后展开。展开所用的环境快照只保留各模型字段里引用到、且当时已存在的变量名。
 

@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { readServerListen } from "../server-listen.mjs";
+import { pythonControlPlaneLaunch, resolveStackRuntimeConfig } from "../stack-runtime-config.mjs";
+import { parseDeployArgs } from "./args.mjs";
 import {
   configureDeploymentInteractively,
   collectManagedPorts,
   createDeployLogWriter,
   formatStartBlocked,
+  apiListenFromState,
   healthProbeUrls,
   inspectWritablePath,
   managedWebStartArgs,
@@ -27,18 +31,70 @@ function createAsk(answers) {
 }
 
 test("health probes use the configured web and api hosts", () => {
-  const env = {
-    DATAAGENT_HOME: "/no/such/dataagent-home",
-    DATAAGENT_CONFIG: new URL("../fixtures/server-listen.json", import.meta.url).pathname
-  };
-  assert.deepEqual(healthProbeUrls(env, { host: "::1", port: "3000" }), {
-    apiBaseUrl: "http://0.0.0.0:8877",
-    webUrl: "http://[::1]:3000"
-  });
-  assert.equal(
-    resolveTuiRuntimeUrl(env),
-    "http://0.0.0.0:8877/dataagent/stream"
-  );
+  const home = mkdtempSync(path.join(os.tmpdir(), "df-listen-"));
+  writeFileSync(path.join(home, "config.json"), JSON.stringify({
+    server: { host: "0.0.0.0", port: 8877 }
+  }));
+  const env = { DATAAGENT_HOME: home };
+  try {
+    assert.deepEqual(healthProbeUrls(env, { host: "::1", port: "3000" }), {
+      apiBaseUrl: "http://0.0.0.0:8877",
+      webUrl: "http://[::1]:3000"
+    });
+    assert.equal(
+      resolveTuiRuntimeUrl(env),
+      "http://127.0.0.1:8877/dataagent/stream"
+    );
+    writeFileSync(path.join(home, "config.json"), JSON.stringify({
+      server: { host: "::", port: 8877 }
+    }));
+    assert.deepEqual(healthProbeUrls(env, { host: "::", port: "3000" }), {
+      apiBaseUrl: "http://[::]:8877",
+      webUrl: "http://[::]:3000"
+    });
+    assert.equal(
+      resolveTuiRuntimeUrl(env),
+      "http://[::1]:8877/dataagent/stream"
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("later commands use the API address recorded at start", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "df-listen-"));
+  writeFileSync(path.join(home, "config.json"), JSON.stringify({
+    server: { host: "127.0.0.1", port: 8790 }
+  }));
+  const env = { DATAAGENT_HOME: home };
+  const saved = { host: "0.0.0.0", port: "8877" };
+  try {
+    assert.deepEqual(healthProbeUrls(env, { host: "127.0.0.1", port: "3000" }, saved), {
+      apiBaseUrl: "http://0.0.0.0:8877",
+      webUrl: "http://127.0.0.1:3000"
+    });
+    assert.equal(
+      resolveTuiRuntimeUrl(env, null, saved),
+      "http://127.0.0.1:8877/dataagent/stream"
+    );
+    assert.equal(
+      resolveTuiRuntimeUrl(env, null, { host: "10.0.0.8", port: "8802" }),
+      "http://10.0.0.8:8802/dataagent/stream"
+    );
+    assert.deepEqual(
+      apiListenFromState({
+        listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.json" },
+        ports: { web: 3000, api: 8877 }
+      }),
+      { host: "0.0.0.0", port: "8877" }
+    );
+    assert.equal(
+      apiListenFromState({ ports: { api: 8787 }, listen: { webHost: "127.0.0.1" } }),
+      null
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("a running deployment remembers the web listen host", () => {
@@ -52,12 +108,54 @@ test("a running deployment remembers the web listen host", () => {
   );
 });
 
+test("a relative --config stays the caller's file after the stack cwd changes", () => {
+  const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), "df-caller-")));
+  const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "df-repo-")));
+  const selected = path.join(outside, "review-team.json");
+  writeFileSync(selected, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
+  const previous = process.cwd();
+  try {
+    process.chdir(outside);
+    const parsed = parseDeployArgs(["start", "--config", "./review-team.json"]);
+    assert.equal(parsed.config, selected);
+    assert.deepEqual(readServerListen({}, parsed.config), { host: "0.0.0.0", port: "8877" });
+    const startArgs = managedWebStartArgs({ host: "127.0.0.1", port: "3000" }, parsed.config);
+    assert.deepEqual(startArgs.slice(-2), ["--config", selected]);
+
+    process.chdir(repo);
+    assert.deepEqual(readServerListen({}, parsed.config), { host: "0.0.0.0", port: "8877" });
+    assert.throws(
+      () => readServerListen({}, "review-team.json"),
+      /Configuration file does not exist: review-team\.json/,
+    );
+    writeFileSync(
+      path.join(repo, "review-team.json"),
+      JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }),
+    );
+    assert.equal(readServerListen({}, "review-team.json").port, "1");
+    const child = resolveStackRuntimeConfig({}, startArgs.slice(startArgs.indexOf("--")));
+    assert.equal(child.configPath, selected);
+    assert.equal(child.apiPort, "8877");
+    assert.deepEqual(
+      pythonControlPlaneLaunch(repo, {}, false, child.configPath).args.slice(-2),
+      ["--config", selected],
+    );
+  } finally {
+    process.chdir(previous);
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("deploy start uses the same web host and port flags as npm run start", () => {
   assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3310" }), [
     "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3310"
   ]);
   assert.deepEqual(managedWebStartArgs({}), [
     "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3000"
+  ]);
+  assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3000" }, "team.json"), [
+    "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3000", "--config", "team.json"
   ]);
 });
 
@@ -348,6 +446,35 @@ test("reconfigure reuses managed listening ports only for a verified running sta
   assert.ok(probes.includes(8877));
 });
 
+test("deploy --config takes the API listen from that file", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
+  const home = path.join(root, "home");
+  const selected = path.join(root, "team.json");
+  await mkdir(home, { recursive: true });
+  await writeFile(
+    path.join(home, "config.json"),
+    `${JSON.stringify({ server: { host: "10.0.0.1", port: 8801 } })}\n`
+  );
+  await writeFile(
+    selected,
+    `${JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } })}\n`
+  );
+  const result = await configureDeploymentInteractively({
+    root,
+    sourceText: "LLM_MODEL=qwen-plus\n",
+    reconfigure: true,
+    nonInteractive: true,
+    ask: async () => assert.fail("must not prompt"),
+    print: () => {},
+    probe: async () => ({ available: true, owner: null }),
+    processEnv: { DATAAGENT_HOME: home },
+    configPath: selected,
+    web: { host: "127.0.0.1", port: "3000" }
+  });
+  assert.equal(result.listen.host, "0.0.0.0");
+  assert.equal(result.listen.port, "8877");
+});
+
 test("reconfigure leaves an existing public URL line unchanged", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
@@ -475,14 +602,59 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
   assert.match(joined, /\.\/deploy\.sh stop/);
   assert.match(joined, /permissions \.env: present mode=/);
 });
-test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
-  assert.equal(
-    resolveTuiRuntimeUrl({
-      DATAAGENT_HOME: "/no/such/dataagent-home",
-      DATAAGENT_CONFIG: new URL("../fixtures/server-listen.json", import.meta.url).pathname,
-    }),
-    "http://0.0.0.0:8877/dataagent/stream"
+test("runDeploymentDoctor reports the API address recorded at start", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-home-"));
+  await writeFile(path.join(home, "config.json"), JSON.stringify({
+    server: { host: "127.0.0.1", port: 8790 }
+  }));
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-saved-"));
+  await mkdir(path.join(root, "storage/run"), { recursive: true });
+  await writeFile(
+    path.join(root, ".env"),
+    `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${home}\n`
   );
+  await writeFile(
+    path.join(root, "storage/run/deployment.json"),
+    `${JSON.stringify({
+      pid: 99999999,
+      launchId: "not-this-process",
+      status: "healthy",
+      startedAt: "2026-07-26T00:00:00.000Z",
+      ports: { web: 3000, api: 8877 },
+      listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.json" }
+    })}\n`
+  );
+  rmSync(path.join(home, "config.json"));
+
+  const lines = [];
+  await runDeploymentDoctor(root, {
+    print: (line) => lines.push(line),
+    run: async (command, args = []) => {
+      const key = [command, ...args].join(" ");
+      if (key === "node --version") return { stdout: "v22.14.0\n" };
+      if (key === "npm --version") return { stdout: "10.9.0\n" };
+      throw new Error(`missing mock for ${key}`);
+    },
+    probe: async () => ({ available: true, owner: null })
+  });
+  const joined = lines.join("\n");
+  assert.match(joined, /config web=http:\/\/127\.0\.0\.1:3000 api=http:\/\/0\.0\.0\.0:8877/);
+  assert.match(joined, /port api 8877: available/);
+});
+
+test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), "df-listen-"));
+  writeFileSync(path.join(home, "config.json"), JSON.stringify({
+    server: { host: "0.0.0.0", port: 8877 }
+  }));
+  try {
+    assert.equal(
+      resolveTuiRuntimeUrl({ DATAAGENT_HOME: home }),
+      "http://127.0.0.1:8877/dataagent/stream"
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
   assert.equal(
     resolveTuiRuntimeUrl({}, "http://example/api/copilotkit"),
     "http://example/api/copilotkit"

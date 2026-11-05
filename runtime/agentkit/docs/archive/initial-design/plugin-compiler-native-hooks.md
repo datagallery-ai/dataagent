@@ -115,8 +115,8 @@ def handle(state, runtime, *, params):
 
 ## 3. 来源、顺序与作用域
 
-1. 配置层优先级：默认值 → Home → 显式配置；不再发现项目配置层。
-   `dataagent.hooks` 按 Home → 显式配置累加，`[]` 只表示这一层不追加，不清空低层；不对注册去重。模型字段和插件列表保持原覆盖规则。
+1. 配置层优先级：程序默认值 → 插件 `plugins.config` → 选中的一份产品文件（Home `config.json` 或 `--config`）。不再发现项目配置层，Home 与 `--config` 不同时读取。
+   `dataagent.hooks` 只来自这份产品文件。`plugins.config.<id>.hooks.before_run` / `after_run` 按层追加，`[]` 只表示这一层不追加；不对注册去重。对象按字段合并，其他数组和标量整段替换。
 2. 插件按 `plugins.enabled` 顺序编译，再追加有效产品配置的 Hooks。
    两条相同声明就是两个节点，按原生顺序执行两次。
 3. 每条独立 Hook 通过 HookBinding 保留其声明配置文件目录；相同的相对 entrypoint 在不同目录可以指向不同函数。插件及其 SubAgent

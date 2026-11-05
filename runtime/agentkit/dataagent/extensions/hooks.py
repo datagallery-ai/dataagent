@@ -55,17 +55,14 @@ def _validate_handler(event: str, handler: Callable) -> None:
         )
         raise TypeError(
             f"Hook {event} must be a plain def/async def with signature "
-            f"handle({arguments}, *, params); migrate old handle(event, config) hooks"
+            f"handle({arguments}, *, params)"
         )
 
 
 def _state_result(result):
     action = result.get("action") if isinstance(result, dict) else None
     if isinstance(action, str) and action in ("continue", "deny"):
-        raise TypeError(
-            "Hook action continue/deny was removed; return a native state update/Command, "
-            "or raise an exception to reject execution"
-        )
+        raise TypeError("State Hook must return None, a native state-update dict, or Command")
     if result is not None and not isinstance(result, (dict, Command)):
         if inspect.iscoroutine(result):
             result.close()

@@ -49,7 +49,7 @@ LEGACY_MCP_API_KEY=replace-with-your-service-api-key
 ```
 
 环境引用格式是 `$env{NAME}`，不是 `${NAME}`；被保留条目引用的变量缺失会启动失败。
-环境来源优先级：进程环境 > `--env-file` > 显式产品配置旁 `.env` > Home `.env`。
+环境文件只读一份：`--env-file`，否则 Home `.env`。`--config` 不改变这个选择。进程里的非空值覆盖这份文件。
 插件旁 `.env` 不自动加载；HTTP/SSE 的 `headers` 不会自动从进程环境生成，需明确声明引用。
 
 ## 启动后的行为

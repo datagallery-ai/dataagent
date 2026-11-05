@@ -42,15 +42,13 @@ function pickPort(value: unknown, fallback: string): string {
   return fallback;
 }
 
-/** Listen address from Home config.json, with DATAAGENT_CONFIG overlaid. */
+/** Listen address from Home config.json. */
 export function configuredListen(env: NodeJS.ProcessEnv = process.env): { host: string; port: string } {
   const home = homeDir(env);
   const base = readServer(home ? join(home, "config.json") : null);
-  const explicit = env.DATAAGENT_CONFIG?.trim();
-  const over = explicit ? readServer(explicit) : {};
   return {
-    host: pickHost(over.host, pickHost(base.host, DEFAULT_SERVER_HOST)),
-    port: pickPort(over.port, pickPort(base.port, DEFAULT_SERVER_PORT)),
+    host: pickHost(base.host, DEFAULT_SERVER_HOST),
+    port: pickPort(base.port, DEFAULT_SERVER_PORT),
   };
 }
 
@@ -72,11 +70,6 @@ export function readHttpListen(value: string): { host: string; port: string } | 
   if (url.protocol !== "http:" || url.username || url.password || url.search || url.hash) return null;
   if (path !== "" && path !== "/dataagent/stream") return null;
   return { host: bareHost(url.hostname), port: url.port || "80" };
-}
-
-export function configuredListenPort(env: NodeJS.ProcessEnv = process.env, configPath?: string): string {
-  if (configPath) return pickPort(readServer(configPath).port, DEFAULT_SERVER_PORT);
-  return configuredListen(env).port;
 }
 
 const identity = { protocol: z.literal("dataagent"), instanceId: z.string().min(1) };

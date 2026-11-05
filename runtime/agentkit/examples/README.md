@@ -45,15 +45,15 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 除模型的 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` 外，再设置 `SEMANTIC_BASE_URL` 和 `NL2SQL_DATABASE_PATH`。
 `NL2SQL_DATABASE_PATH` 是 sqlite 文件路径。这一层会把 `plugins.enabled` 换成 `["nl2sql"]`。
 它只写入口会用到的限额：`limits.timeout_seconds` 是 REST 整轮时限，`plugins.config.nl2sql.model_call_budget` 是单次任务的模型调用上限。
-低层里的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 留在配置中，不装进这张图。
+这份文件省略的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 来自插件默认值和程序默认值，留在配置里，不装进这张图。
 
-配置由低到高：字段默认值 → Home `config.json` → `--config`。
-启动目录的 `config.json` 不会自动读取。相同真实文件被显式选择时，只在最高层应用一次。
+未传 `--config` 时用字段默认值、插件 `plugins.config` 和 Home `config.json`。传了 `--config` 就用字段默认值、插件 `plugins.config` 和这份文件。
+启动目录的 `config.json` 不会自动读取。
 
 - 字典按字段合并；标量和普通列表由后层覆盖。省略字段表示继承；普通列表 `[]` 可以清空。
 - 例外：`dataagent.hooks` 按层追加。`"hooks": []` 或空事件分组只表示本层不追加，不清除低层注册。
 - 完整示例列出了默认值，作为最高层使用会覆盖低层相应字段。
-- 环境变量优先级：进程 > `--env-file` > 显式配置旁的 `.env` > Home `.env`。空值不覆盖低层非空值。
+- 环境文件只读一份：`--env-file`，否则 Home `.env`。`--config` 不改变这个选择。进程里的非空值覆盖这份文件。空值不写入有效环境。
 - 引用写为 JSON 字符串 `"$env{LLM_MODEL}"`，不是 `${LLM_MODEL}`。启动时仅展开默认模型的环境引用；工具选择其他模型时延迟解析。
 - 扩展相关配置在 REST/TUI 的下一轮请求前刷新；模型、宿主路径、`dataagent.entry` 和服务配置仍需重启。
   具体范围见[扩展生命周期](../docs/architecture/extension-lifecycle.md)。未知字段、重复键（含嵌套对象）、非法 JSON 和非有限数值都会报错。字段表见[配置参考](../docs/reference/configuration.md)。
@@ -123,7 +123,7 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 使用普通 `def` / `async def`，不传装饰后的 middleware 对象。四种 state Hook 可返回 `None`、原生 state-update dict 或 `Command`；
 两种 tool Hook 只返回 `None`。拒绝调用用异常，不返回 `action: deny`；异步 Hook 需用 `ainvoke` / `astream`。
 
-插件根 Hooks 先装配，独立 Hooks 按 Home → 显式配置追加；before 正序、after 逆序，重复声明不去重。
+插件清单里的 Hook 先装配，随后是选中产品文件里的 `dataagent.hooks`。before 正序、after 逆序，重复声明不去重。
 根 Hooks 不自动继承到子 Agent；子 Agent 在自己的 JSON 中注册。
 
 ## 插件、路径和内部状态
@@ -152,7 +152,6 @@ Tools、SubAgents 和 Prompts 在插件 `.plugin.json` 中声明，不是顶层�
 REST 整轮 `timeout_seconds` 包括请求、重试等待及工具耗时；SDK 直接调用由调用方控制整轮时限。
 模型调用限额统计 Agent 循环次数，不统计同一次模型请求内部的 HTTP 重试。重试可能增加等待和服务端费用。
 没有 `temperature`、`max_tokens`、`response_format`、`memory`、任意 backend 或 sandbox 配置入口。
-Hooks 不支持 command、handler/events/match、单 Hook timeout、middleware/callbacks 工厂或 error 事件。
 
 ## MCP
 

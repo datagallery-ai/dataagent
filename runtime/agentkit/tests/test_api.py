@@ -576,12 +576,14 @@ def _write_entry_stream_plugin(root, *, model_source="services"):
 
 def _entry_runtime(runtime, tmp_path, **plugin):
     _write_entry_stream_plugin(tmp_path / "home" / "plugins" / "direct", **plugin)
-    (tmp_path / "home" / "config.json").write_text(json.dumps({
+    (runtime.paths.home / "config.json").write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
+        }},
         "plugins": {"enabled": ["direct"]},
         "dataagent": {"entry": "direct"},
     }))
-    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
-    return prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    return prepare_runtime(LaunchOptions(cwd=tmp_path))
 
 
 def _assert_model_stream_visible(events):

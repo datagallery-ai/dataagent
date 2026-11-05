@@ -103,7 +103,9 @@ def test_retry_config_defaults_and_layer_override(tmp_path):
     config(home / "config.json", MODEL)
     assert prepare_runtime().settings.models["primary"].max_retries == 2
     config(home / "config.json", {"models": {"primary": {**MODEL["models"]["primary"], "max_retries": 4}}})
-    override = config(tmp_path / "override.json", {"models": {"primary": {"max_retries": 0}}})
+    override = config(tmp_path / "override.json", {"models": {"primary": {
+        **MODEL["models"]["primary"], "max_retries": 0,
+    }}})
     assert prepare_runtime().settings.models["primary"].max_retries == 4
     assert prepare_runtime(LaunchOptions(config=override)).settings.models["primary"].max_retries == 0
 

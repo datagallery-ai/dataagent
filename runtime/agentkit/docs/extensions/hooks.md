@@ -6,7 +6,7 @@ Hook 是一个普通 Python 函数，挂在六个生命周期点上。用异常�
 
 ## 在配置里登记
 
-Home 或显式配置：
+登记在选中的产品文件里。未传 `--config` 时是 Home `config.json`，传了就只用那份文件：
 
 ```json
 {
@@ -56,7 +56,7 @@ Home 或显式配置：
 
 ## 顺序和错误
 
-声明顺序就是编译顺序。插件 Hook 在前，独立 Hook 按 Home、再显式配置追加。重复声明会执行多次，不会去重。
+声明顺序就是编译顺序。已启用插件清单里的 Hook 在前，然后是选中产品文件里的 `dataagent.hooks`。重复声明会执行多次，不会去重。
 
 `before_*` 按声明顺序执行。`after_*` 按相反顺序执行。
 
@@ -72,8 +72,6 @@ Home 或显式配置：
 Hook 抛出的异常会传播。运行时不吞掉、不重试，也没有单条超时。REST 的整轮 `timeout_seconds` 仍然包住整个流。
 
 根 Agent 的 Hook 只作用于根 Agent。子代理在自己的声明里写 `hooks`。宿主的模型次数和工具次数限制对每个声明出来的 Agent 单独生效。
-
-`command`、`timeout_seconds`、`handler` / `events` / `match`、`middleware` 和 `callbacks` 会在校验时失败。
 
 ## 编译工作流的输入与结果 Hook
 

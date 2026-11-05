@@ -8,7 +8,7 @@ TUI 是仓库里的 `apps/tui`，与 Web 共用会话列表。没有参数时，
 npm run start:tui
 ```
 
-地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起。主机可以是 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
 ```bash
 npm run start:tui -- --resume
@@ -17,7 +17,7 @@ npm run start:tui -- --workspace /existing/data
 npm run start:tui -- --runtime-url http://127.0.0.1:8790
 ```
 
-`--runtime-url` 不能和 `--config`、`--env-file`、`--workspace`、`--user`、`--session` 一起用。后面这几项会拉起后端。部署栈已经在跑时也可以 `./deploy.sh tui`。
+`--runtime-url` 不能和 `--config`、`--env-file`、`--workspace`、`--user`、`--session` 一起用。后面这几项会拉起后端。部署栈已经在跑时也可以 `./deploy.sh tui`，它连接这次 `./deploy.sh start` 记下的 API 地址。
 
 `/exit` 会停掉这次 TUI 拉起的后端。用 `--runtime-url` 连上的控制面不会被停掉。Ctrl+C 需要按两次才退出。
 

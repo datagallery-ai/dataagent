@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
+import { configuredListen } from "./backend.js";
 import { runTui } from "./index.js";
 import { store } from "./state/store.js";
 import { normalizeRuntimeUrl, resolveTuiLogPath, connectTui, sessionTransport } from "./connect.js";
@@ -337,6 +338,89 @@ it("a backend started by the TUI is reached through IPv6 loopback when ready ann
     "http://[::1]:8790/healthz",
     "http://[::1]:8790/sessions?limit=1",
     "http://[::1]:8790/dataagent/stream",
+  ]);
+});
+
+it("reads the listen address from Home config.json", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-listen-"));
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    server: { host: "0.0.0.0", port: 8877 },
+  }));
+  assert.deepEqual(configuredListen({ DATAAGENT_HOME: directory }), {
+    host: "0.0.0.0",
+    port: "8877",
+  });
+});
+
+it("connects a wildcard bind address through loopback and accepts another IP", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-client-host-"));
+  await writeFile(join(directory, "config.json"), JSON.stringify({
+    server: { host: "127.0.0.1", port: 8790 },
+  }));
+  const env = { DATAAGENT_HOME: directory };
+  assert.equal(
+    normalizeRuntimeUrl("http://0.0.0.0:8877/dataagent/stream", env),
+    "http://127.0.0.1:8877/dataagent/stream",
+  );
+  assert.equal(
+    normalizeRuntimeUrl("http://[::]:8790/dataagent/stream", env),
+    "http://[::1]:8790/dataagent/stream",
+  );
+  assert.equal(
+    normalizeRuntimeUrl("http://10.0.0.8:8802/dataagent/stream", env),
+    "http://10.0.0.8:8802/dataagent/stream",
+  );
+});
+
+it("a backend started with --config shares one loopback client URL and stops with the TUI", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-ready-config-wildcard-"));
+  const configPath = join(directory, "selected.json");
+  await writeFile(configPath, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
+  const requested: string[] = [];
+  let rendered = false;
+  let stopped = false;
+  const code = await runTui({
+    argv: ["--config", configPath],
+    env: { DATAAGENT_HOME: directory },
+    startBackend: async () => {
+      const backend = startedBackend("http://0.0.0.0:8877/dataagent/stream");
+      return { ...backend, stop: async () => { stopped = true; } };
+    },
+    fetchImpl: async (url) => {
+      const href = String(url);
+      requested.push(href);
+      assert.equal(href.includes("0.0.0.0"), false, href);
+      if (href.endsWith("/healthz")) return Response.json(readyHealth);
+      if (href === "http://127.0.0.1:8877/sessions?limit=1") return Response.json({ sessions: [] });
+      if (href === "http://127.0.0.1:8877/dataagent/stream") {
+        return eventStream([
+          { type: "RUN_STARTED", threadId: "thread", runId: "run" },
+          { type: "RUN_FINISHED", threadId: "thread", runId: "run" },
+        ]);
+      }
+      throw new Error(`unexpected ${href}`);
+    },
+    renderApp: async (options) => {
+      rendered = true;
+      assert.ok(options.tui);
+      await options.tui.sessions.listSessions({ limit: 1 });
+      const seen: string[] = [];
+      for await (const event of options.client.runAgent({
+        threadId: "thread",
+        runId: "run",
+        messages: [{ id: "m", role: "user", content: "hi" }],
+      })) seen.push(event.type);
+      assert.deepEqual(seen, ["RUN_STARTED", "RUN_FINISHED"]);
+      return "exit";
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(rendered, true);
+  assert.equal(stopped, true);
+  assert.deepEqual(requested, [
+    "http://127.0.0.1:8877/healthz",
+    "http://127.0.0.1:8877/sessions?limit=1",
+    "http://127.0.0.1:8877/dataagent/stream",
   ]);
 });
 

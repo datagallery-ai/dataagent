@@ -23,8 +23,8 @@ from dataagent.settings import SemanticSettings, SemanticTLSSettings
 from serve.app import create_app
 
 
-def test_config_layers_merge_auth_and_resolve_tls_paths(tmp_path):
-    """Resolve individual certificate fields against their own configuration file."""
+def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
+    """Certificate paths resolve against the selected file, not Home."""
     home, explicit = tmp_path / "home", tmp_path / "explicit"
     home.mkdir()
     explicit.mkdir()
@@ -39,8 +39,8 @@ def test_config_layers_merge_auth_and_resolve_tls_paths(tmp_path):
                     }
                 },
                 "semantic": {
-                    "base_url": "http://semantic.test",
-                    "username": "reader",
+                    "base_url": "http://home.test",
+                    "username": "home-reader",
                     "timeout": 12,
                     "tls": {"verify_server": True, "ca_file": "ca.pem", "client_cert": "cert.pem"},
                 },
@@ -50,15 +50,35 @@ def test_config_layers_merge_auth_and_resolve_tls_paths(tmp_path):
     override = explicit / "config.json"
     override.write_text(
         json.dumps(
-            {"semantic": {"password": "$env{SEMANTIC_PASSWORD}", "tls": {"client_key": "key.pem"}}}
+            {
+                "models": {
+                    "primary": {
+                        "name": "unused",
+                        "base_url": "https://unused.invalid",
+                        "api_key": "unused",
+                    }
+                },
+                "semantic": {
+                    "base_url": "http://semantic.test",
+                    "username": "reader",
+                    "password": "$env{SEMANTIC_PASSWORD}",
+                    "tls": {
+                        "verify_server": True,
+                        "ca_file": "ca.pem",
+                        "client_cert": "cert.pem",
+                        "client_key": "key.pem",
+                    },
+                },
+            }
         )
     )
     settings = merge(load_layers(home, {"SEMANTIC_PASSWORD": "private-password"}, override))
     semantic = settings.semantic
-    assert semantic.timeout == 12
+    assert semantic.base_url == "http://semantic.test"
+    assert semantic.timeout == 30
     assert semantic.password.get_secret_value() == "private-password"
-    assert semantic.tls.ca_file == home / "ca.pem"
-    assert semantic.tls.client_cert == home / "cert.pem"
+    assert semantic.tls.ca_file == explicit / "ca.pem"
+    assert semantic.tls.client_cert == explicit / "cert.pem"
     assert semantic.tls.client_key == explicit / "key.pem"
     assert "private-password" not in repr(settings)
 
@@ -74,11 +94,11 @@ def test_null_semantic_can_disable_or_be_overridden(tmp_path):
     }
     automatic = home / "config.json"
     override = tmp_path / "config.json"
-    automatic.write_text(json.dumps({**base, "semantic": {"base_url": "http://semantic.test"}}))
-    override.write_text(json.dumps({"semantic": None}))
+    automatic.write_text(json.dumps({**base, "semantic": {"base_url": "http://home.test"}}))
+    override.write_text(json.dumps({**base, "semantic": None}))
     assert merge(load_layers(home, {}, override)).semantic is None
     automatic.write_text(json.dumps({**base, "semantic": None}))
-    override.write_text(json.dumps({"semantic": {"base_url": "http://semantic.test"}}))
+    override.write_text(json.dumps({**base, "semantic": {"base_url": "http://semantic.test"}}))
     assert merge(load_layers(home, {}, override)).semantic.base_url == "http://semantic.test"
 
 

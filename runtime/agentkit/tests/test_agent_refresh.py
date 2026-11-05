@@ -15,9 +15,12 @@ from serve import agents
 
 
 def home_config(runtime, value):
+    """Patch the selected Home file. Models and untouched sections stay in that file."""
     path = runtime.paths.home / "config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value))
+    current = json.loads(path.read_text()) if path.is_file() else {}
+    current.update(value)
+    path.write_text(json.dumps(current))
 
 
 async def ask(client, text="hello", thread="thread-1"):
@@ -299,8 +302,7 @@ def _write_direct_entry(root):
 async def test_refresh_keeps_compiled_entry(runtime, tmp_path):
     _write_direct_entry(runtime.paths.home / "plugins" / "direct")
     home_config(runtime, {"plugins": {"enabled": ["direct"]}, "dataagent": {"entry": "direct"}})
-    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
     assert runtime.settings.dataagent.entry == "direct"
     model = ScriptedModel(responses=[])
     with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
