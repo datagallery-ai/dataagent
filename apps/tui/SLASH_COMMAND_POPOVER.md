@@ -2,7 +2,7 @@
 
 ## 概述
 
-本次改进为 DataFoundry TUI 添加了类似 OpenCode 的 slash 命令补全弹窗功能。当用户输入 `/` 时，会在输入框上方展开一个详细的命令面板，显示所有可用命令及其描述。
+本次改进为 DataGallery TUI 添加了类似 OpenCode 的 slash 命令补全弹窗功能。当用户输入 `/` 时，会在输入框上方展开一个详细的命令面板，显示所有可用命令及其描述。
 
 ## 改进前后对比
 
@@ -139,7 +139,7 @@ const availableCommands: Command[] = React.useMemo(() => {
 ## 参考实现
 
 本实现参考了 OpenCode v1.17.14 的 `slash-popover.tsx` 组件设计：
-- 文件位置：`/data2/zhangh/code/dev_datafoundry/ref/opencode-v1.17.14/packages/app/src/components/prompt-input/slash-popover.tsx`
+- 文件位置：`/data2/zhangh/code/dev_datagallery/ref/opencode-v1.17.14/packages/app/src/components/prompt-input/slash-popover.tsx`
 - 主要借鉴：
   - 弹窗布局和样式设计
   - 命令列表展示方式
@@ -147,7 +147,7 @@ const availableCommands: Command[] = React.useMemo(() => {
 
 ## 适配说明
 
-由于 DataFoundry TUI 使用 Ink（终端 UI 库），而 OpenCode 使用 SolidJS（Web UI），实现上做了以下适配：
+由于 DataGallery TUI 使用 Ink（终端 UI 库），而 OpenCode 使用 SolidJS（Web UI），实现上做了以下适配：
 
 1. **布局适配**：
    - Web: 使用 absolute positioning 和 transform
@@ -165,7 +165,7 @@ const availableCommands: Command[] = React.useMemo(() => {
 
 运行测试脚本：
 ```bash
-cd /data2/zhangh/code/dev_datafoundry/datafoundry/apps/tui
+cd /data2/zhangh/code/dev_datagallery/datagallery/apps/tui
 tsx test-slash-popover.tsx
 ```
 
@@ -204,5 +204,5 @@ tsx test-slash-popover.tsx
 ## 截图位置
 
 参考截图：
-- 当前实现：`/home/zhangh/code/dev_datafoundry/slash命令的补全提示.png`
-- 期望效果：`/home/zhangh/code/dev_datafoundry/slash命令补全参考_opencode.png`
+- 当前实现：`/home/zhangh/code/dev_datagallery/slash命令的补全提示.png`
+- 期望效果：`/home/zhangh/code/dev_datagallery/slash命令补全参考_opencode.png`

@@ -1,6 +1,6 @@
 # Collaboration policy
 
-DataFoundry is an open-source project for governed data-agent workflows. Community collaboration should make the project easier to understand, reproduce, and operate.
+DataGallery is an open-source project for governed data-agent workflows. Community collaboration should make the project easier to understand, reproduce, and operate.
 
 ## Principles
 

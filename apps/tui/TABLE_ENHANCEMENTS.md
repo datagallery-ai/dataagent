@@ -40,7 +40,7 @@ Useful patterns from `ref/codex-rust-v0.142.5/codex-rs/tui`:
 
 - Keep table rows pre-wrapped to exact terminal cell widths so viewport slicing stays stable.
 - Use Unicode box drawing sparingly for structure, and dim borders so data remains the focus.
-- Treat wide/narrative cells as a layout problem, not only a truncation problem. The current DataFoundry implementation starts with hidden-column notes; a future version can add Codex-style record/key-value fallback for cramped tables.
+- Treat wide/narrative cells as a layout problem, not only a truncation problem. The current DataGallery implementation starts with hidden-column notes; a future version can add Codex-style record/key-value fallback for cramped tables.
 
 ### OpenCode TUI
 

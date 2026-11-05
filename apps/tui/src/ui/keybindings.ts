@@ -1,5 +1,5 @@
 /**
- * Keyboard shortcuts system for DataFoundry TUI
+ * Keyboard shortcuts system for DataGallery TUI
  * Provides centralized keybinding management with history, completion, and navigation
  */
 

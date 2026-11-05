@@ -5,7 +5,7 @@ function positiveIntegerFromEnv(value: string | undefined, fallback: number): nu
 }
 
 export const WHEEL_LINES_PER_TICK = positiveIntegerFromEnv(
-  process.env.DATAFOUNDRY_TUI_WHEEL_LINES_PER_TICK,
+  process.env.DATAAGENT_TUI_WHEEL_LINES_PER_TICK,
   3,
 );
 const MAX_MOUSE_SEQUENCE_LENGTH = 50;

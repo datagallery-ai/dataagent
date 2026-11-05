@@ -18,4 +18,4 @@ Use GitHub as the default coordination channel so product questions, bugs, and c
 - Check whether the problem reproduces on the latest `main` branch.
 - Include enough context for maintainers to reproduce the problem without access to private systems.
 
-For public examples, keep screenshots and logs sanitized. DataFoundry is designed around governed data work, so community reports should follow the same discipline.
+For public examples, keep screenshots and logs sanitized. DataGallery is designed around governed data work, so community reports should follow the same discipline.

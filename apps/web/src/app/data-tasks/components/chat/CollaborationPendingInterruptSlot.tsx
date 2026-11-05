@@ -3,7 +3,7 @@
 import { useAgent, useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
 import type { Message } from "@ag-ui/core";
 import { messageHostsPendingCollaborationSlot } from "../../collaboration-recap";
-import { useLiveRun } from "../../use-data-foundry-run";
+import { useLiveRun } from "../../use-data-gallery-run";
 import { usePendingCollaborationInterrupt } from "./pending-collaboration-interrupt";
 
 /** Inline HITL card anchored to the collaboration step / last message. */
@@ -14,7 +14,7 @@ export function CollaborationPendingInterruptSlot({
 }) {
   const chatConfig = useCopilotChatConfiguration();
   const threadId = chatConfig?.threadId;
-  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? "dataFoundry" });
+  const { agent } = useAgent({ agentId: chatConfig?.agentId ?? "datagallery" });
   const { liveRun } = useLiveRun(threadId);
   const pendingInterrupt = usePendingCollaborationInterrupt(threadId);
   const allMessages = agent.messages ?? [];

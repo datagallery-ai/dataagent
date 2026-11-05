@@ -68,7 +68,7 @@ export function resolveTuiLogPath(env: NodeJS.ProcessEnv = process.env): string 
   }
   const envHome = env.DATAAGENT_HOME?.trim();
   if (envHome && isAbsolute(envHome)) return join(envHome, "runtime", "logs", "tui.log");
-  return join(homedir(), ".datafoundry", "tui.log");
+  return join(homedir(), ".datagallery", "tui.log");
 }
 
 /** Accept the control-plane envelope and the standalone `dataagent serve` health body. */

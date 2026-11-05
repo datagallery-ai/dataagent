@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { configApi } from "../../../../lib/config-api";
 import { hasCapability } from "../../data-task-state";
 import { reconcileLiveRunArtifacts, reduceLiveRunEvent } from "../../live-run-state";
-import { useLiveRun, useLiveRunSetters } from "../../use-data-foundry-run";
+import { useLiveRun, useLiveRunSetters } from "../../use-data-gallery-run";
 
 export function SessionArtifactsRestore({
   capabilitiesReady,

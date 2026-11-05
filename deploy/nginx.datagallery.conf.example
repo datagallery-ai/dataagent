@@ -1,4 +1,4 @@
-# DataFoundry production / test reverse proxy
+# DataGallery production / test reverse proxy
 #
 # Next keeps `compress: false` so AG-UI SSE (`/dataagent/stream`,
 # `/api/copilotkit`) is never gzip-buffered. Terminate TLS and compress static
@@ -9,7 +9,7 @@
 #   upstream api  -> backend    :8787
 #   browser       -> this nginx :443 (or :80)
 
-upstream datafoundry_web {
+upstream datagallery_web {
     server 127.0.0.1:3000;
     keepalive 32;
 }
@@ -61,7 +61,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
-        proxy_pass http://datafoundry_web;
+        proxy_pass http://datagallery_web;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
@@ -76,7 +76,7 @@ server {
         proxy_cache off;
         gzip off;
         proxy_read_timeout 3600s;
-        proxy_pass http://datafoundry_web;
+        proxy_pass http://datagallery_web;
     }
 
     location /api/copilotkit {
@@ -89,7 +89,7 @@ server {
         proxy_cache off;
         gzip off;
         proxy_read_timeout 3600s;
-        proxy_pass http://datafoundry_web;
+        proxy_pass http://datagallery_web;
     }
 
     # Same-origin BFF for password-mode cookies (Next proxies to API).
@@ -99,7 +99,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_pass http://datafoundry_web;
+        proxy_pass http://datagallery_web;
     }
 
     location / {
@@ -108,6 +108,6 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_pass http://datafoundry_web;
+        proxy_pass http://datagallery_web;
     }
 }

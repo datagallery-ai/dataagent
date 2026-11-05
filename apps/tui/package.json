@@ -1,13 +1,13 @@
 {
-  "name": "@datafoundry/tui",
+  "name": "@datagallery/tui",
   "version": "0.2.0",
-  "description": "Terminal UI for DataFoundry - CopilotKit protocol client",
+  "description": "Terminal UI for DataGallery - CopilotKit protocol client",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "datafoundry-tui": "./dist/index.js"
+    "datagallery-tui": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -18,7 +18,7 @@
     "clean": "rm -rf dist"
   },
   "keywords": [
-    "datafoundry",
+    "datagallery",
     "tui",
     "copilotkit",
     "terminal",

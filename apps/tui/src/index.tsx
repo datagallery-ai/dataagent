@@ -60,7 +60,7 @@ async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
         {
           exitOnCtrlC: false,
           incrementalRendering:
-            process.env.DATAFOUNDRY_TUI_INCREMENTAL_RENDERING !== "0",
+            process.env.DATAAGENT_TUI_INCREMENTAL_RENDERING !== "0",
           maxFps: 30,
           patchConsole: false,
           // "enabled" opts into CSI-u immediately. Ink's "auto" mode probes for
@@ -105,10 +105,10 @@ const LOCAL_START_FLAGS = ["--config", "--env-file", "--workspace", "--user", "-
 
 function printHelp(): void {
   console.log(`
-DataFoundry TUI - Terminal User Interface for DataFoundry
+DataGallery TUI - Terminal User Interface for DataGallery
 
 Usage:
-  datafoundry-tui [options]
+  datagallery-tui [options]
 
 Options:
   --config <path>         Additional config above Home defaults
@@ -125,9 +125,9 @@ Options:
   --help, -h              Show this help message
 
 Examples:
-  datafoundry-tui
-  datafoundry-tui --workspace /existing/data
-  datafoundry-tui --runtime-url http://127.0.0.1:8790
+  datagallery-tui
+  datagallery-tui --workspace /existing/data
+  datagallery-tui --runtime-url http://127.0.0.1:8790
 
 Notes:
   With no arguments the TUI uses config.json server.host and server.port
@@ -267,7 +267,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") return 130;
-    console.error(`DataAgent: ${terminalText(error instanceof Error ? error.message : String(error))}`);
+    console.error(`DataGallery: ${terminalText(error instanceof Error ? error.message : String(error))}`);
     return 1;
   }
 }

@@ -56,7 +56,7 @@ export function installTerminalRedrawOptimizer(
   // This rewrite is intentionally opt-in. It changes Ink's bottom-up
   // eraseLines() sequence into a top-down pass; that is not equivalent when the
   // cursor is near the top of the terminal and can leave previous frames behind.
-  if (process.env.DATAFOUNDRY_TUI_OPTIMIZE_ERASE_LINES !== "1") {
+  if (process.env.DATAAGENT_TUI_OPTIMIZE_ERASE_LINES !== "1") {
     return () => {};
   }
 

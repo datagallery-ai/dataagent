@@ -1,7 +1,7 @@
 import type { HttpAgent } from "@ag-ui/client";
 import { StreamHttpAgent } from "./stream-http-agent";
 
-export const runtimeAgentId = "dataFoundry";
+export const runtimeAgentId = "datagallery";
 const sessionAgentIdPrefix = `${runtimeAgentId}:session:`;
 
 export function dataTaskSessionAgentId(threadId: string): string {

@@ -1,6 +1,6 @@
 <svg width="1200" height="690" viewBox="0 0 1200 690" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Supported datasource wall</title>
-  <desc id="desc">A colorful wall of real logos for supported DataFoundry datasource adapters.</desc>
+  <desc id="desc">A colorful wall of real logos for supported DataGallery datasource adapters.</desc>
   <defs>
     <filter id="shadow" x="-12" y="-12" width="1224" height="714" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
       <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#0F172A" flood-opacity="0.065"/>

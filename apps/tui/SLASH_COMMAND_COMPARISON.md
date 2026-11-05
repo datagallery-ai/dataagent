@@ -207,7 +207,7 @@ if (showSlashPopover) {
   - 键盘导航模式
 
 ### 适配说明
-| 方面 | OpenCode (Web) | DataFoundry (Terminal) |
+| 方面 | OpenCode (Web) | DataGallery (Terminal) |
 |------|----------------|------------------------|
 | UI 框架 | SolidJS | React + Ink |
 | 布局 | Absolute positioning | Flexbox |

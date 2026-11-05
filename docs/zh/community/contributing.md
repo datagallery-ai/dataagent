@@ -1,13 +1,13 @@
 # 参与贡献
 
-DataFoundry 欢迎能够改进工作台、文档、示例、连接器和运行时可靠性的聚焦贡献。
+DataGallery 欢迎能够改进工作台、文档、示例、连接器和运行时可靠性的聚焦贡献。
 
 ## 可以贡献什么
 
 - 让首次体验更清晰的产品和文档修复。
 - 带有日志、trace 和截图的可复现缺陷。
 - 数据源或连接器改进，并附带清楚的配置和验证说明。
-- 展示团队如何使用 DataFoundry 处理真实数据 Agent 工作流的场景案例。
+- 展示团队如何使用 DataGallery 处理真实数据 Agent 工作流的场景案例。
 - 保护当前控制面的测试和 smoke：一个 `dataagent serve`、Web 与 TUI 走 `POST /dataagent/stream`、Home 配置。
 
 ## Pull request 期望

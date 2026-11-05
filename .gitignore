@@ -1,4 +1,4 @@
-# DataFoundry (repo root)
+# DataGallery (repo root)
 .venv/
 .venv-docs/
 venv/
@@ -27,7 +27,7 @@ storage/
 *.tsbuildinfo
 docs/public/assets/
 
-# DataAgent (runtime/dataagent) — scoped so they do not hide DataFoundry sources
+# DataAgent (runtime/dataagent) — scoped so they do not hide DataGallery sources
 qa_*
 filtered*
 *.pid

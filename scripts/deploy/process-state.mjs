@@ -10,8 +10,8 @@ export function deploymentPaths(root) {
   return {
     logsDir: path.join(root, "storage/logs"),
     runDir: path.join(root, "storage/run"),
-    runtimeLog: path.join(root, "storage/logs/datafoundry.log"),
-    pidFile: path.join(root, "storage/run/datafoundry.pid"),
+    runtimeLog: path.join(root, "storage/logs/datagallery.log"),
+    pidFile: path.join(root, "storage/run/datagallery.pid"),
     deploymentJson: path.join(root, "storage/run/deployment.json")
   };
 }
@@ -92,7 +92,7 @@ export async function rotateRuntimeLog(logPath, options = {}) {
 async function readLaunchIdFromProcAsync(pid) {
   try {
     const environ = await readFile(`/proc/${pid}/environ`);
-    const match = /DATAFOUNDRY_LAUNCH_ID=([^\0]+)/.exec(environ.toString("utf8"));
+    const match = /DATAAGENT_LAUNCH_ID=([^\0]+)/.exec(environ.toString("utf8"));
     return match?.[1] ?? null;
   } catch {
     return null;
@@ -172,7 +172,7 @@ export async function startManagedStack(root, options = {}) {
   if (existing?.pid && isProcessAlive(existing.pid)) {
     const healed = await healStaleDeploymentState(root, options);
     if (!healed.stale) {
-      throw new Error(`DataFoundry is already running with pid ${existing.pid}`);
+      throw new Error(`DataGallery is already running with pid ${existing.pid}`);
     }
   } else if (existing?.pid && !isProcessAlive(existing.pid)) {
     await clearDeploymentState(root);
@@ -188,7 +188,7 @@ export async function startManagedStack(root, options = {}) {
   const args = options.args ?? ["run", "start"];
   const env = {
     ...(options.env ?? process.env),
-    DATAFOUNDRY_LAUNCH_ID: launchId
+    DATAAGENT_LAUNCH_ID: launchId
   };
 
   const logFd = await open(paths.runtimeLog, "a", 0o600);

@@ -136,7 +136,7 @@ Show me the tables in this datasource and explain the main fields of each.
 
 You will see the full chain: schema inspection → read-only SQL → SQL audit → table output → replayable run history.
 
-For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.datafoundry.conf.example`](deploy/nginx.datafoundry.conf.example) (gzip/brotli static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE).
+For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.datagallery.conf.example`](deploy/nginx.datagallery.conf.example) (gzip/brotli static assets; keep `/api/copilotkit` uncompressed and unbuffered for SSE).
 
 > Full steps, the two-environment matrix, and optional external DataLink notes: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
 

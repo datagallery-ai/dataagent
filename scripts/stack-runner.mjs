@@ -55,11 +55,11 @@ export async function runStack({ args = [] }) {
   const children = [];
   if (startApi) {
     const launch = pythonControlPlaneLaunch(root, process.env);
-    children.push(spawnProcess("DataFoundry API", launch.command, launch.args, launch.env));
+    children.push(spawnProcess("DataGallery API", launch.command, launch.args, launch.env));
   }
   if (startWeb) {
     const launch = webLaunch(runtimeConfig, process.env);
-    children.push(spawnProcess("DataFoundry Web", launch.command, launch.args, launch.env));
+    children.push(spawnProcess("DataGallery Web", launch.command, launch.args, launch.env));
   }
 
   if (children.length === 0) {

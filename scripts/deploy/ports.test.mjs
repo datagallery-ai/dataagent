@@ -96,7 +96,7 @@ test("managed ports may be selected during update preflight", async () => {
     managedPorts: new Set([3000]),
     nonInteractive: true,
     ask: async () => assert.fail("must not prompt"),
-    probe: async () => ({ available: false, owner: "datafoundry pid=1" })
+    probe: async () => ({ available: false, owner: "datagallery pid=1" })
   });
   assert.equal(selected, 3000);
 });
@@ -126,7 +126,7 @@ test("verifySelectedPorts skips ports still held by the managed stack", async ()
       probe: async (port) => {
         if (port === 3000) {
           probed = true;
-          return { available: false, owner: "datafoundry pid=1" };
+          return { available: false, owner: "datagallery pid=1" };
         }
         return { available: true, owner: null };
       }

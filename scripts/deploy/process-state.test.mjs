@@ -44,7 +44,7 @@ test("isProcessAlive detects live and stale pids", () => {
 
 test("rotateRuntimeLog keeps five archives at 20 MiB", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-log-"));
-  const logPath = path.join(root, "datafoundry.log");
+  const logPath = path.join(root, "datagallery.log");
   await writeFile(logPath, "x".repeat(20 * 1024 * 1024 + 1));
   for (let i = 1; i <= 5; i += 1) {
     await writeFile(`${logPath}.${i}`, `old-${i}`);

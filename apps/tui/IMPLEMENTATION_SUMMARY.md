@@ -56,7 +56,7 @@
 ## 📁 修改的文件
 
 ```
-datafoundry/apps/tui/
+datagallery/apps/tui/
 ├── src/
 │   └── ui/
 │       ├── SlashCommandPopover.tsx    (新增，127 行)
@@ -73,7 +73,7 @@ datafoundry/apps/tui/
 
 ### 方法 1：直接运行测试脚本
 ```bash
-cd /data2/zhangh/code/dev_datafoundry/datafoundry/apps/tui
+cd /data2/zhangh/code/dev_datagallery/datagallery/apps/tui
 tsx test-slash-popover.tsx
 ```
 
@@ -151,7 +151,7 @@ import { InputBox } from './src/ui/InputBox.js';
 - 使用 Ink 的 Box 组件替代 Web 的 div
 - 使用 flexbox 布局替代 absolute positioning
 - 保持键盘交互，移除鼠标交互
-- 统一使用 DataFoundry 的主题配色
+- 统一使用 DataGallery 的主题配色
 
 ---
 
@@ -201,7 +201,7 @@ import { InputBox } from './src/ui/InputBox.js';
 - 忘记命令时，直接输入 `/` 查看
 
 ### 给设计师
-- 当前使用 DataFoundry 统一主题色
+- 当前使用 DataGallery 统一主题色
 - 可以在 `theme.ts` 中调整配色
 - 边框样式可以修改为其他 Ink borderStyle
 
@@ -225,7 +225,7 @@ import { InputBox } from './src/ui/InputBox.js';
 
 ## ✨ 总结
 
-这次改进成功地将 OpenCode 的优秀交互设计引入到 DataFoundry TUI 中，大幅提升了 slash 命令的可发现性和使用效率。通过在输入框上方展开详细的命令面板，用户无需记忆所有命令，也无需查阅文档，就能快速找到并使用所需功能。
+这次改进成功地将 OpenCode 的优秀交互设计引入到 DataGallery TUI 中，大幅提升了 slash 命令的可发现性和使用效率。通过在输入框上方展开详细的命令面板，用户无需记忆所有命令，也无需查阅文档，就能快速找到并使用所需功能。
 
 **核心价值：**
 - 🎯 **更易发现** - 所有命令一目了然

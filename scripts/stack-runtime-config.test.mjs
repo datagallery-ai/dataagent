@@ -106,9 +106,9 @@ test("api and web scripts use the same stack entry as one-click start", () => {
     "uv sync --project runtime/agentkit --frozen --no-dev --python 3.12.8",
   );
   assert.throws(() => pythonEnvironmentSyncCommand({ UV_PYTHON: "3.12;rm -rf /" }), /Python version/);
-  assert.equal(scripts["build:web"], "npm --workspace @datafoundry/web run build");
-  assert.equal(scripts["build:tui"], "npm --workspace @datafoundry/tui run build");
-  assert.equal(scripts["test:tui"], "npm --workspace @datafoundry/tui run test");
+  assert.equal(scripts["build:web"], "npm --workspace @datagallery/web run build");
+  assert.equal(scripts["build:tui"], "npm --workspace @datagallery/tui run build");
+  assert.equal(scripts["test:tui"], "npm --workspace @datagallery/tui run test");
   assert.match(scripts["test:deploy"], /scripts\/password-only-cutover\.test\.mjs/);
   assert.equal(scripts["start:api"], "node scripts/start.mjs --api");
   assert.equal(scripts["start:web"], "node scripts/start.mjs --web");
