@@ -1,0 +1,8 @@
+{
+  "_comment": "step2_3 清洗决策的唯一阈值源：数值只在这里声明，禁止在 SQL 模板或门禁脚本中另写。",
+  "null_rate_drop_threshold_percent": 50,
+  "constant_drop_max_unique": 1,
+  "protected_role_keys": ["user_id", "label", "age", "gender"],
+  "report_sql_max_bytes": 245000,
+  "report_batch_columns": 50
+}

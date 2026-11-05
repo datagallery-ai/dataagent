@@ -1,0 +1,16 @@
+{
+  "_comment": "references/data_source.md 的机器可读镜像。展开脚本用它把 SQL 模板里的仓占位符（<catalog_columns> / <catalog_tables>）绑定成当前仓取值，Agent 不再手工替换。改仓时同时改本文件与 references/data_source.md。",
+  "resource_id": "sql_warehouse",
+  "warehouse": "ClickHouse",
+  "table_kind": "warehouse_table",
+  "uri_scheme": "clickhouse",
+  "catalog_tables": "system.tables",
+  "catalog_columns": "system.columns",
+  "columns": {
+    "database": "database",
+    "table": "table",
+    "column": "name",
+    "type": "type",
+    "position": "position"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "_comment": "step2_2 聚合决策的唯一来源：聚合函数与阈值只在这里声明，禁止在 SQL 模板或门禁脚本中另写。delimiter 为 # / ^ 的字段走列表分支（二元展开 + _list_length + _is_empty），不进 aggregation_rules，也不得出现在 dropped（原列是被替换而非丢弃）。",
+  "policy_version": 1,
+  "string_max_unique": 50,
+  "id_ratio_threshold": 0.9,
+  "term_fetch_limit": 101,
+  "term_query_batch_size": 1,
+  "dimension_row_limit_threshold": 1,
+  "term_top_by_total": [
+    {"max_terms": 10, "take": "all"},
+    {"max_terms": 100, "take": 10},
+    {"max_terms": null, "take": 50}
+  ],
+  "string_sample_limit": 200,
+  "string_numeric_ratio": 0.95,
+  "string_comma_ratio": 0.5,
+  "numeric_types": ["Int8", "Int16", "Int32", "Int64", "Int128", "Int256", "UInt8", "UInt16", "UInt32", "UInt64", "UInt128", "UInt256", "Float32", "Float64", "BFloat16", "Decimal"],
+  "datetime_types": ["Date", "Date32", "DateTime", "DateTime64", "DateTime32"],
+  "bool_types": ["Bool", "Boolean"],
+  "low_card_string_types": ["String", "LowCardinality(String)", "FixedString"],
+  "drop_types": ["Array", "Map", "Tuple", "Nested", "Enum", "AggregateFunction", "SimpleAggregateFunction"],
+  "aggregation_rules": [
+    {"match": "numeric", "aggregation": "sum", "null_policy": {"kind": "fill", "value": 0}},
+    {"match": "datetime", "aggregation": "max", "null_policy": {"kind": "preserve"}},
+    {"match": "bool", "aggregation": "max", "null_policy": {"kind": "preserve"}},
+    {"match": "low_card_string", "aggregation": "max", "null_policy": {"kind": "preserve"}}
+  ],
+  "string_cast_rules": {
+    "numeric": {"aggregation": "sum", "expression": "toFloat64OrNull(trimBoth(toString({col})))", "output_type": "Float64", "null_policy": {"kind": "fill", "value": 0}},
+    "comma_list": {"output_suffixes": ["_list_length", "_is_empty"]},
+    "datetime": {"aggregation": "max", "expression": "parseDateTimeBestEffortOrNull({col})", "output_type": "DateTime", "null_policy": {"kind": "preserve"}},
+    "low_cardinality": {"aggregation": "max", "expression": "CAST({col} AS LowCardinality(String))", "output_type": "LowCardinality(String)", "null_policy": {"kind": "preserve"}}
+  },
+  "drop_reasons": {
+    "already_aggregated_column": "该列是聚合 GROUP BY 键，不产出特征",
+    "high_cardinality_string": "String 且 n_unique 超过 string_max_unique，聚合后无信息量",
+    "identifier_like": "n_unique/total_rows 超过 id_ratio_threshold，判定为标识符",
+    "unsupported_type": "类型落在 drop_types，不支持按用户聚合"
+  }
+}

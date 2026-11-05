@@ -16,7 +16,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from step2_3_city_tier_sql import raw_city_columns  # noqa: E402
+from step2_2_city_tier_sql import raw_city_columns  # noqa: E402
 
 
 ALLOWED_PLAN_KINDS = {"entity", "user_aggregation", "scalar"}
@@ -96,8 +96,14 @@ def validate_contract(
     schema: dict[str, Any],
     csv_columns: list[str],
     expanded_sql: Path,
+    cleaned_columns: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Validate deployment-contract structure against schema and wide-table columns."""
+    """Validate deployment-contract structure against schema and wide-table columns.
+
+    ``cleaned_columns`` is the DROP set applied by step2_3 after the contract was
+    written in step2_2; a contract feature that is absent from the final CSV is
+    accepted only when it appears there (cleaned, not lost).
+    """
     errors: list[str] = []
     warnings: list[str] = []
     table_columns = _schema_tables(schema)
@@ -234,7 +240,7 @@ def validate_contract(
                 )
             expression_fields.append(("entity_key_expression", key_expression))
         for field_name, value in expression_fields:
-            unknown_parameters = _parameters(value) - {"target_game"}
+            unknown_parameters = _parameters(value) - {"target"}
             if unknown_parameters:
                 errors.append(
                     f"relation_plans.{plan_id}.{field_name}: unsupported parameters "
@@ -270,7 +276,7 @@ def validate_contract(
         expression = str(raw_feature.get("expression") or "").strip()
         if not expression:
             errors.append(f"features.{feature}: expression is required")
-        unknown_parameters = _parameters(expression) - {"target_game"}
+        unknown_parameters = _parameters(expression) - {"target"}
         if unknown_parameters:
             errors.append(
                 f"features.{feature}: unsupported parameters "
@@ -341,8 +347,12 @@ def validate_contract(
     excluded = {entity_key, label_column}
     expected_features = csv_set - excluded
     actual_features = set(map(str, features))
+    # step2_3 cleans the aggregated wide table after step2_2 wrote the contract, so a
+    # contract feature may be legitimately absent from the final CSV — but only if step2_3
+    # actually dropped it. Anything else absent is a real gap.
+    cleaned = set(cleaned_columns or ())
     missing_features = sorted(expected_features - actual_features)
-    extra_features = sorted(actual_features - expected_features)
+    extra_features = sorted(actual_features - expected_features - cleaned)
     if entity_key and entity_key not in csv_set:
         errors.append(f"wide CSV does not contain entity key {entity_key!r}")
     if label_column and label_column not in csv_set:
@@ -400,27 +410,64 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+_USAGE_EXAMPLE = (
+    "python skill/feature-engineer/scripts/step2_2_validate_deployment_contract.py "
+    "--contract step2_2_deployment_feature_contract.json "
+    "--schema schema_resolution.json "
+    "--wide-csv step2_4_wide_userfiltered.csv "
+    "--expanded-sql step2_2_feature_aggregation_expanded.sql "
+    "--cleaning-report step2_3_cleaning_report.json"
+)
+
+
 def main() -> None:
     """Run the CLI validator and persist its result into the contract atomically."""
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "可复制示例：\n"
+            "  " + _USAGE_EXAMPLE + "\n"
+            "必填：--contract --schema --wide-csv --expanded-sql。"
+        ),
+    )
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--wide-csv", type=Path, required=True)
     parser.add_argument("--expanded-sql", type=Path, required=True)
     parser.add_argument(
+        "--cleaning-report",
+        type=Path,
+        help="step2_3_cleaning_report.json; its DROP set explains any contract feature "
+        "absent from the final CSV (cleaning happens after the contract is written)",
+    )
+    parser.add_argument(
         "--enforce",
         action="store_true",
         help="return a non-zero exit status when the structural check fails",
     )
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except SystemExit:
+        print("\n请按下面完整命令补齐必填参数：", file=sys.stderr)
+        print("  " + _USAGE_EXAMPLE, file=sys.stderr)
+        raise
 
     contract = _read_json(args.contract)
     schema = _read_json(args.schema)
+    cleaned_columns: set[str] = set()
+    if args.cleaning_report and args.cleaning_report.is_file():
+        report = _read_json(args.cleaning_report)
+        cleaned_columns = {
+            str(feature).strip()
+            for feature in (report.get("drop_features") or [])
+            if str(feature).strip()
+        }
     validation = validate_contract(
         contract,
         schema,
         _csv_columns(args.wide_csv),
         args.expanded_sql,
+        cleaned_columns,
     )
     contract["validation"] = {
         "structural_validation": validation,
