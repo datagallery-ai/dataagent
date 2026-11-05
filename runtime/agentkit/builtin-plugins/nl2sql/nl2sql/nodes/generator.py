@@ -16,6 +16,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
+from dataagent.model_stream import collect_model_stream
 from nl2sql.constants import (
     DEFAULT_NL2SQL_NUM_SAMPLES,
     DEFAULT_NL2SQL_NUM_WORKERS,
@@ -45,7 +46,7 @@ class GeneratorNode(BaseNL2SQLNode):
             f"{NL2SQL_PROMPT_PREFIX}/generator/{strategy}_user"
         ).apply_prompt_template(**context)
         content = (
-            await self.model.ainvoke([
+            await collect_model_stream(self.model, [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ])

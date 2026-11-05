@@ -28,6 +28,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from dataagent.model_stream import collect_model_stream
 from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.constants import NL2SQL_PROMPT_PREFIX
 from nl2sql.errors import DataAgentError
@@ -103,7 +104,7 @@ class BaseNL2SQLNode:
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/{self.name}/{action}user"
         ).apply_prompt_template(**context)
-        response = await self.model.ainvoke([
+        response = await collect_model_stream(self.model, [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
         ])

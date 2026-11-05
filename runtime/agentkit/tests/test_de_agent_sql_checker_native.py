@@ -31,6 +31,10 @@ DML = "INSERT OVERWRITE biads.ads_result PARTITION (pt_d='$date') SELECT user_id
 
 
 def setup(tmp_path, *, config=None, model=None):
+    if model is not None:
+        async def stream(messages, **kwargs):
+            yield await model.ainvoke(messages, **kwargs)
+        model.astream = stream
     loader = PythonLoader()
     tool = loader.load(PLUGIN, "tools/sql_checkers.py:check_and_repair_sql")
     module = sys.modules[tool.__module__]

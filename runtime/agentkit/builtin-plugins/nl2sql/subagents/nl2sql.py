@@ -91,6 +91,14 @@ class _BudgetedModel:
             counter.spend()
         return await self._model.ainvoke(messages, config, **kwargs)
 
+    async def astream(self, messages, config=None, **kwargs):
+        """Charge one call per model stream, not once per returned chunk."""
+        counter = _current_counter.get()
+        if counter is not None:
+            counter.spend()
+        async for chunk in self._model.astream(messages, config, **kwargs):
+            yield chunk
+
 
 def _message_text(message: Any) -> str:
     """Extract the text of one chat message (string or content-block content)."""

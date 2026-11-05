@@ -25,6 +25,7 @@ from utils.dataops_mcp import dataops_settings
 from utils.dataops_validate_tool import dataops_validate_sql_with_log_analysis
 from utils.evidence import model_evidence, output_file
 
+from dataagent.model_stream import collect_model_stream
 from dataagent.models import ModelContext
 
 
@@ -63,7 +64,7 @@ async def validate_deliverables(
             ).read_text(encoding="utf-8")
         try:
             model = runtime.context.get_model(settings.get("model", "primary"))
-            response = await model.ainvoke(
+            response = await collect_model_stream(model,
                 [
                     {"role": "system", "content": instruction},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
