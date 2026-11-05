@@ -10,6 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from dataagent.bootstrap.config_files import Layer
+from dataagent.bootstrap.environment import selected_env_path
 from dataagent.bootstrap.paths import RuntimePaths
 from dataagent.declarations import HookSpec, RunHookSpec
 from dataagent.settings import Settings
@@ -31,11 +32,12 @@ def extension_revision(runtime) -> str:
     reading large plugin assets every query. Directory symlink cycles are skipped.
     """
     home = runtime.paths.home
-    roots = {home / "skills", home / ".mcp.json", home / ".env"}
+    roots = {
+        home / "skills",
+        home / ".mcp.json",
+        selected_env_path(home, runtime.report.env_file),
+    }
     roots.update(item.path for item in runtime.report.configs)
-    roots.update(item.path.with_name(".env") for item in runtime.report.configs)
-    if runtime.report.env_file:
-        roots.add(runtime.report.env_file)
     roots.update(
         root
         for root in (*runtime.extensions.plugin_roots, *runtime.settings.plugins.paths)

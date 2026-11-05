@@ -10,7 +10,7 @@
 | --- | --- |
 | `<home>/config.json` | 个人配置。Home 默认是 `~/.dataagent` |
 | `<home>/.env` | 模型名、地址和密钥 |
-| 仓库根目录 `.env` | `npm run start` 和 `./deploy.sh` 把它载入进程环境。进程环境盖过 Home `.env` |
+| 仓库根目录 `.env` | `npm run start` 和 `./deploy.sh` 把它载入进程环境。进程里的非空值盖过这次选中的环境文件。没传 `--env-file` 时选中 Home `.env`，`--config` 不改变它 |
 
 `DATAAGENT_HOME` 只认进程环境。启动目录里的 `config.json`，以及当前目录下的 `.dataagent/`，都不会被读取。
 

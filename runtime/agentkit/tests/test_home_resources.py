@@ -59,8 +59,9 @@ async def test_loose_skills_have_distinct_labels_and_are_actually_read(
 ):
     user = skill(tmp_path / "home/skills", "personal", "User skill evidence 42.")
     skill(tmp_path / ".dataagent/skills", "project-guide", "Ignored cwd skill evidence 73.")
-    config(tmp_path / "home/config.json", {"plugins": {"enabled": ["common"]}})
-    runtime = prepare_runtime(options(tmp_path))
+    selected = options(tmp_path)
+    config(selected.config, {**MODEL, "plugins": {"enabled": ["common"]}})
+    runtime = prepare_runtime(selected)
     kwargs = compile_runtime(runtime)
     assert [label for _, label in kwargs["skills"]] == ["common", "User"]
     (general,) = kwargs["subagents"]
@@ -187,7 +188,7 @@ def test_reserved_plugin_names(name):
         PluginSpec(id=name)
 
 
-async def test_hook_sources_accumulate_and_repeated_registrations_all_execute(tmp_path):
+async def test_explicit_config_runs_only_its_own_hooks(tmp_path):
     output = tmp_path / "observed.txt"
     for scope, root in [("user", tmp_path / "home"), ("cli", tmp_path)]:
         hook = root / "hooks/audit.py"
@@ -199,7 +200,7 @@ async def test_hook_sources_accumulate_and_repeated_registrations_all_execute(tm
         config(
             root / "config.json",
             {
-                **(MODEL if scope == "user" else {}),
+                **MODEL,
                 "dataagent": {
                     "hooks": [
                         {"entrypoint": "hooks/audit.py:handle", "event": "before_agent"},
@@ -214,7 +215,7 @@ async def test_hook_sources_accumulate_and_repeated_registrations_all_execute(tm
             "messages": [HumanMessage(content="hello")],
         }
     )
-    assert output.read_text().splitlines() == ["user", "user", "cli", "cli"]
+    assert output.read_text().splitlines() == ["cli", "cli"]
 
 
 @pytest.mark.parametrize("transport", ["sdk", "http"])
@@ -243,7 +244,7 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
         config(
             root / "config.json",
             {
-                **(MODEL if scope == "user" else {}),
+                **MODEL,
                 "dataagent": {
                     "hooks": [
                         {
@@ -285,15 +286,11 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
         "after_model",
         "after_agent",
     )
-    assert output.read_text().splitlines() == [
-        f"{event}:{scope}"
-        for event in phases
-        for scope in (("user", "cli") if event.startswith("before_") else ("cli", "user"))
-    ]
+    assert output.read_text().splitlines() == [f"{event}:cli" for event in phases]
 
 
 @pytest.mark.parametrize("upper_hooks", [None, []])
-async def test_missing_or_empty_upper_hooks_do_not_disable_user_hook(tmp_path, upper_hooks):
+async def test_explicit_config_does_not_run_home_hooks(tmp_path, upper_hooks):
     output = tmp_path / "observed.txt"
     home = tmp_path / "home"
     home.mkdir()
@@ -316,14 +313,14 @@ async def test_missing_or_empty_upper_hooks_do_not_disable_user_hook(tmp_path, u
         },
     )
     upper = {"dataagent": {"hooks": upper_hooks}} if upper_hooks is not None else {}
-    cli = config(tmp_path / "config.json", upper)
+    cli = config(tmp_path / "config.json", {**MODEL, **upper})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
         {
             "messages": [HumanMessage(content="test")],
         }
     )
-    assert output.read_text() == "user hook executed"
+    assert not output.exists()
 
 
 def test_standalone_skills_accumulate_even_when_plugins_are_disabled(tmp_path):

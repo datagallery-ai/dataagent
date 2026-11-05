@@ -74,8 +74,8 @@ def test_invalid_or_duplicate_skills_fail_instead_of_native_silent_skip(runtime,
     {"hook_handlers": {}},
     {"hooks": [{"handler": "audit", "events": ["agent.after"]}]},
 ])
-def test_old_plugin_configuration_requires_explicit_migration(declaration):
-    with pytest.raises(ValidationError, match="Migrate plugin to schema_version: 2"):
+def test_plugin_schema_rejects_unknown_shape(declaration):
+    with pytest.raises(ValidationError):
         PluginSpec.model_validate({"id": "old", **declaration})
 
 

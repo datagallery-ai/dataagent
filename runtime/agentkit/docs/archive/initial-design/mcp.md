@@ -28,7 +28,7 @@
 - 不支持 `cwd`、`disabled`、OAuth、WebSocket、动态 headers 或自定义超时字段。
   删除服务条目即停用；插件 MCP 随插件启停。请求超时沿用产品 `timeout_seconds`。
 - 环境引用统一沿用本产品的 `$env{NAME}`，**不是 Claude 的 `${NAME}`**；缺失即启动报错。
-  使用现有环境优先级：进程 > `--env-file` > 显式 config 同目录 `.env` > Home `.env`。
+  环境文件只读一份：`--env-file`，否则 Home `.env`。`--config` 不改变这个选择。进程里的非空值覆盖这份文件。
   不自动读取插件旁 `.env`；不把整个宿主环境复制进 JSON 或日志。
 - stdio 的 cwd 固定为该 `.mcp.json` 所在目录；相对可执行文件/脚本参数以此为基准。
   `command` 是单个可执行程序，`args` 是参数列表，不经过 shell。依赖由用户预先安装。

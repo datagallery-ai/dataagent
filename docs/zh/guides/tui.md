@@ -10,7 +10,7 @@
 npm run start:tui
 ```
 
-地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起。主机可以是 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连已经起来的那一个，用 `--runtime-url`。`./deploy.sh tui` 连接这次 `./deploy.sh start` 记下的 API 地址。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
 恢复最近的服务端会话：
 
@@ -24,7 +24,7 @@ npm run start:tui -- --resume
 npm run start:tui -- --resume thread-001
 ```
 
-`--config`、`--env-file`、`--workspace`、`--user`、`--session` 会传给拉起的后端。
+`--config` 用那份文件代替 Home `config.json`，并拉起后端，不附着已经在跑的控制面。`--env-file`、`--workspace`、`--user`、`--session` 同样传给这次拉起的后端。
 
 查看 CLI 参数：
 
@@ -99,8 +99,8 @@ TUI 把自然语言输入发到控制面的 `/dataagent/stream`，与 Web 共用
 
 ## 排查
 
-- 无法连接：直接 `npm run start:tui`。它连 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；那里没有控制面时会拉起一个。
-- 只想连接、不要拉起：用 `--runtime-url`。主机可以是 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+- 无法连接：直接 `npm run start:tui`。它连 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；那里没有控制面时会拉起一个。已经用另一份 `--config` 启动的控制面，用 `--runtime-url` 连接。`./deploy.sh` 管的栈用 `./deploy.sh tui`，它走启动时记下的 API 地址。
+- 只想连接、不要拉起：用 `--runtime-url`。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 - 模型无响应：检查根目录 `.env` 中的 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
 - 会话无法恢复：确认流地址所在源（`http://<server.host>:<server.port>`）上的 `GET /sessions` 可访问。TUI 调用该接口时不带登录凭证。
 - 命令没有效果：运行 `/help` 查看当前注册命令，再检查命令提示区的错误信息。

@@ -5,10 +5,15 @@ import pytest
 from pydantic import ValidationError
 
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
-from dataagent.bootstrap.config_files import Layer, freeze, load_layers, merge
+from dataagent.bootstrap.config_files import (
+    ConfigurationLoadError,
+    Layer,
+    freeze,
+    load_layers,
+    merge,
+)
 from dataagent.bootstrap.paths import RuntimePaths, WorkspaceInput
 from dataagent.strict_json import read_json
-
 
 NL2SQL_ENTRY = Path(__file__).resolve().parents[1] / "examples/nl2sql-entry.json"
 
@@ -42,13 +47,24 @@ def test_config_environment_precedence_and_path_anchor(tmp_path, monkeypatch):
         "plugins": {"paths": ["./extra"]},
     }))
     config.with_name(".env").write_text("LLM_MODEL=file-model\nLLM_API_KEY=not-for-output\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text("LLM_MODEL=from-home\nLLM_API_KEY=home-secret\n")
     monkeypatch.setenv("LLM_MODEL", "environment-model")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     settings = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config)).settings
     assert settings.models["primary"].name == "environment-model"
+    assert settings.models["primary"].api_key.get_secret_value() == "home-secret"
     assert settings.plugins.paths == (tmp_path / "extra",)
     assert "not-for-output" not in repr(settings)
     assert "LLM_API_KEY" not in __import__("os").environ
+    (home / ".env").write_text("LLM_MODEL=from-home\n")
+    with pytest.raises(ValueError, match="LLM_API_KEY") as error:
+        prepare_runtime(LaunchOptions(cwd=tmp_path, config=config))
+    message = str(error.value)
+    assert str(home / ".env") in message
+    assert str(config.with_name(".env")) not in message
+    assert "not-for-output" not in message
 
 
 def test_default_does_not_read_cwd_config(tmp_path, monkeypatch):
@@ -70,25 +86,6 @@ def test_duplicate_json_and_unknown_settings(tmp_path, settings):
 def test_import_comes_from_agentkit():
     import dataagent
     assert Path(dataagent.__file__).parent.parent.name == "agentkit"
-
-
-@pytest.mark.parametrize("legacy, expected", [
-    ({"schema_version": 2}, "migrate hooks"),
-    ({"dataagent": {"hook_handlers": {"audit": {"entrypoint": "hooks/audit.py:handle"}}}},
-     "use hooks with event + python entrypoint + params"),
-    ({"dataagent": {"hooks": [{"handler": "audit", "events": ["agent.before"]}]}},
-     "python functions only: use event + entrypoint + params"),
-    *(({"dataagent": {"hooks": [{"event": "before_agent", "entrypoint": "hooks/audit.py:handle", **field}]}},
-       "python functions only: use event + entrypoint + params")
-      for field in [{"handler": "audit"}, {"events": ["agent.before"]}, {"match": {"tools": ["tool"]}}]),
-])
-def test_legacy_hook_configuration_has_migration_error(tmp_path, legacy, expected):
-    path = tmp_path / "old-config.json"
-    path.write_text(json.dumps(legacy))
-    with pytest.raises(ValueError) as error:
-        prepare_runtime(LaunchOptions(cwd=tmp_path, config=path))
-    message = str(error.value).lower()
-    assert str(path).lower() in message and expected in message
 
 
 @pytest.mark.parametrize("hook", [
@@ -113,7 +110,7 @@ def layer_paths(tmp_path):
 def test_load_layers_skips_missing_automatic_files_but_requires_cli(layer_paths):
     assert load_layers(layer_paths.home, {}, None) == ()
     missing = layer_paths.home.parent / "missing.json"
-    with pytest.raises(ValueError, match="Configuration file does not exist") as error:
+    with pytest.raises(ConfigurationLoadError, match="Configuration file does not exist") as error:
         load_layers(layer_paths.home, {}, missing)
     assert str(missing) in str(error.value)
 
@@ -128,7 +125,7 @@ def test_load_layers_does_not_skip_invalid_file_shapes(layer_paths, scope, shape
         path.mkdir()
     else:
         path.symlink_to(layer_paths.home.parent / "missing-target.json")
-    with pytest.raises(ValueError, match="Expected a configuration file") as error:
+    with pytest.raises(ConfigurationLoadError, match="Expected a configuration file") as error:
         load_layers(layer_paths.home, {}, path if scope == "cli" else None)
     assert str(path) in str(error.value)
 
@@ -267,11 +264,19 @@ def test_entry_config_file_is_accepted_and_overridden(tmp_path):
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "k",
         }},
         "dataagent": {"entry": "lower"},
+        "server": {"port": 8802},
     }))
     assert prepare_runtime(LaunchOptions(cwd=tmp_path)).settings.dataagent.entry == "lower"
     override = tmp_path / "override.json"
-    override.write_text(json.dumps({"dataagent": {"entry": "higher"}}))
-    assert prepare_runtime(LaunchOptions(cwd=tmp_path, config=override)).settings.dataagent.entry == "higher"
+    override.write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "k",
+        }},
+        "dataagent": {"entry": "higher"},
+    }))
+    selected = prepare_runtime(LaunchOptions(cwd=tmp_path, config=override))
+    assert selected.settings.dataagent.entry == "higher"
+    assert selected.settings.server.port == 8790
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"dataagent": {"entry": "Not-valid"}}))
     with pytest.raises(ValueError, match="dataagent.entry"):

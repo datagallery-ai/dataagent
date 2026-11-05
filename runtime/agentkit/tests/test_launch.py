@@ -110,7 +110,7 @@ def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path)
             },
         },
     )
-    cli = config(tmp_path / "empty.json", {"dataagent": {"workspaces": []}})
+    cli = config(tmp_path / "empty.json", {**MODEL, "dataagent": {"workspaces": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.paths.workspaces == runtime.settings.dataagent.workspaces == ()
     assert not (runtime.paths.home / "workspaces").exists()
@@ -192,7 +192,7 @@ def test_template_error_has_variable_field_and_help_path_without_values(tmp_path
     assert not (tmp_path / ".dataagent").exists()
 
 
-def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
+def test_explicit_config_replaces_home_config(tmp_path):
     cli = options(tmp_path).config
     config(
         tmp_path / "home/config.json",
@@ -211,12 +211,19 @@ def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
                 "hooks": [{"entrypoint": "hooks/audit.py:handle", "event": "after_agent"}],
             },
             "plugins": {"enabled": ["common"], "paths": ["./user-extra"]},
+            "server": {"host": "10.0.0.1"},
         },
     )
     config(
         cli,
         {
-            "models": {"primary": {"name": "explicit-model"}},
+            "models": {
+                "primary": {
+                    "name": "explicit-model",
+                    "base_url": "https://example.invalid/v1",
+                    "api_key": "k",
+                }
+            },
             "plugins": {"enabled": []},
             "server": {"port": 8801},
             "dataagent": {
@@ -226,18 +233,16 @@ def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
     )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspace=tmp_path, config=cli))
     assert runtime.model_name == "explicit-model"
+    assert runtime.settings.server.host == "127.0.0.1"
     assert runtime.settings.server.port == 8801
-    assert runtime.timeout_seconds == 90
+    assert runtime.timeout_seconds == 180
+    assert "unused" not in runtime.settings.models
     assert runtime.settings.plugins.enabled == ()
-    assert runtime.settings.plugins.paths == (tmp_path / "home/user-extra",)
+    assert runtime.settings.plugins.paths == ()
     assert [hook.entrypoint for hook in runtime.settings.dataagent.hooks] == [
-        "hooks/audit.py:handle",
         "hooks/cli.py:handle",
     ]
-    assert [binding.base_dir for binding in runtime.extensions.hooks] == [
-        tmp_path / "home",
-        tmp_path,
-    ]
+    assert [binding.base_dir for binding in runtime.extensions.hooks] == [tmp_path]
     assert all(
         binding.spec is spec
         for binding, spec in zip(
@@ -246,7 +251,7 @@ def test_two_layers_append_hooks_but_replace_plugin_lists_and_scalars(tmp_path):
     )
     with pytest.raises(FrozenInstanceError):
         runtime.extensions.hooks[0].base_dir = tmp_path / "other"
-    assert [item.scope for item in runtime.report.configs if item.applied] == ["user", "cli"]
+    assert [item.scope for item in runtime.report.configs if item.applied] == ["cli"]
 
 
 @pytest.mark.parametrize("scope", ["user", "cli"])
@@ -255,7 +260,7 @@ def test_workspace_field_is_rejected_in_every_layer(tmp_path, scope):
     path = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
     config(path, {**MODEL, "workspace": {"path": str(tmp_path)}})
     with pytest.raises(ValueError) as error:
-        prepare_runtime(opts)
+        prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
     assert str(path) in str(error.value) and "--workspace" in str(error.value)
 
 
@@ -265,7 +270,7 @@ def test_invalid_overridden_fields_still_fail_at_their_source(tmp_path, scope):
     path = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
     config(path, {"dataagent": {"limits": {"model_calls_per_agent": "secret-invalid-value"}}})
     with pytest.raises(ValueError) as error:
-        prepare_runtime(opts)
+        prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
     assert str(path) in str(error.value)
     assert "secret-invalid-value" not in str(error.value)
 
@@ -277,36 +282,38 @@ def test_duplicate_plugins_fail_at_source_even_when_cli_overrides_them(tmp_path,
     path = tmp_path / ("home/config.json" if scope == "user" else "explicit.json")
     config(path, {"plugins": {"enabled": ["common", "common"]}})
     with pytest.raises(ValueError) as error:
-        prepare_runtime(opts)
+        prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
     assert str(error.value) == f"{path}: plugins.enabled contains duplicates"
 
 
-def test_environment_precedence_empty_values_dedup_and_process_unchanged(
-    tmp_path, monkeypatch, capsys
-):
+def test_config_keeps_home_env_until_env_file_replaces_it(tmp_path, monkeypatch, capsys):
     opts = options(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
     (home / ".env").write_text("LLM_MODEL=home\nLLM_API_KEY=home-key\n")
-    (tmp_path / ".env").write_text("LLM_MODEL=sibling\nLLM_API_KEY=\n")
+    (tmp_path / ".env").write_text("LLM_MODEL=sibling\nLLM_API_KEY=sibling-key\n")
     env_file = tmp_path / "explicit.env"
-    env_file.write_text("LLM_MODEL=explicit\nDATAAGENT_HOME=/ignored\n")
-    config(
-        opts.config,
-        {
-            "models": {
-                "primary": {
-                    "name": "$env{LLM_MODEL}",
-                    "base_url": "https://example.invalid",
-                    "api_key": "$env{LLM_API_KEY}",
-                }
+    env_file.write_text("LLM_MODEL=explicit\nLLM_API_KEY=explicit-key\nDATAAGENT_HOME=/ignored\n")
+    selected = {
+        "models": {
+            "primary": {
+                "name": "$env{LLM_MODEL}",
+                "base_url": "https://example.invalid",
+                "api_key": "$env{LLM_API_KEY}",
             }
-        },
-    )
+        }
+    }
+    config(opts.config, selected)
+    configured = prepare_runtime(opts)
+    assert configured.model_name == "home"
+    assert configured.redaction_secrets == ("home-key",)
+
     before = dict(os.environ)
     runtime = prepare_runtime(replace(opts, env_file=env_file))
     assert runtime.model_name == "explicit"
-    assert runtime.redaction_secrets == ("home-key",)
+    assert runtime.redaction_secrets == ("explicit-key",)
+    assert "home-key" not in runtime.redaction_secrets
+    assert "sibling-key" not in runtime.redaction_secrets
     assert dict(os.environ) == before
     stderr = capsys.readouterr().err
     assert "DATAAGENT_HOME" in stderr
@@ -315,6 +322,80 @@ def test_environment_precedence_empty_values_dedup_and_process_unchanged(
     assert prepare_runtime(replace(opts, env_file=env_file)).model_name == "process"
     monkeypatch.setenv("LLM_MODEL", "")
     assert prepare_runtime(replace(opts, env_file=env_file)).model_name == "explicit"
+
+    config(home / "config.json", selected)
+    home_runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspace=tmp_path))
+    assert home_runtime.model_name == "home"
+    assert home_runtime.redaction_secrets == ("home-key",)
+
+
+def test_missing_variable_names_the_selected_env_file(tmp_path):
+    from dataagent.models import build_model
+
+    cli = config(
+        tmp_path / "team/config.json",
+        {
+            "models": {
+                "primary": {
+                    "name": "$env{LLM_MODEL}",
+                    "base_url": "https://example.invalid",
+                    "api_key": "k",
+                },
+                "fast": {
+                    "name": "$env{MISSING_FAST}",
+                    "base_url": "https://example.invalid",
+                    "api_key": "k",
+                },
+            }
+        },
+    )
+    with pytest.raises(ValueError, match="LLM_MODEL") as error:
+        prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    assert str(tmp_path / "home/.env") in str(error.value)
+    assert str(cli.with_name(".env")) not in str(error.value)
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text("LLM_MODEL=from-home\n")
+    cli.with_name(".env").write_text("LLM_MODEL=from-sibling\n")
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    assert runtime.model_name == "from-home"
+    with pytest.raises(ValueError, match="MISSING_FAST") as error:
+        build_model(runtime, "fast")
+    assert str(home / ".env") in str(error.value)
+
+    env_file = tmp_path / "provider.env"
+    env_file.write_text("LLM_MODEL=named\n")
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli, env_file=env_file))
+    assert runtime.model_name == "named"
+    with pytest.raises(ValueError, match="MISSING_FAST") as error:
+        build_model(runtime, "fast")
+    assert str(env_file) in str(error.value)
+    assert str(home / ".env") not in str(error.value)
+
+
+def test_extension_revision_tracks_only_the_selected_env_file(tmp_path):
+    from dataagent import extension_revision
+
+    cli = config(tmp_path / "team/config.json", MODEL)
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    before = extension_revision(runtime)
+    cli.with_name(".env").write_text("LLM_MODEL=sibling\n")
+    assert extension_revision(runtime) == before
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    (home / ".env").write_text("LLM_MODEL=home\n")
+    assert extension_revision(runtime) != before
+
+    env_file = tmp_path / "provider.env"
+    env_file.write_text("LLM_MODEL=explicit\n")
+    explicit = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli, env_file=env_file))
+    marked = extension_revision(explicit)
+    cli.with_name(".env").write_text("LLM_MODEL=changed-sibling\n")
+    (home / ".env").write_text("LLM_MODEL=changed-home\n")
+    assert extension_revision(explicit) == marked
+    env_file.write_text("LLM_MODEL=changed-explicit\n")
+    assert extension_revision(explicit) != marked
 
 
 def test_workspace_precedence_and_missing_directory(tmp_path, monkeypatch):
@@ -360,9 +441,17 @@ def test_relative_workspace_from_env_uses_launch_cwd_not_env_directory(tmp_path,
     }[source]
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text("DATAAGENT_WORKSPACE=work\n")
-    runtime = prepare_runtime(
-        LaunchOptions(cwd=cwd, config=cli, env_file=env_file if source == "explicit" else None)
-    )
+    if source == "home":
+        config(tmp_path / "home/config.json", MODEL)
+        options = LaunchOptions(cwd=cwd)
+    elif source == "config":
+        config(tmp_path / "home/config.json", MODEL)
+        (tmp_path / "home/.env").write_text("DATAAGENT_WORKSPACE=work\n")
+        env_file.write_text("DATAAGENT_WORKSPACE=ignored-sibling\n")
+        options = LaunchOptions(cwd=cwd, config=cli)
+    else:
+        options = LaunchOptions(cwd=cwd, config=cli, env_file=env_file)
+    runtime = prepare_runtime(options)
     assert runtime.paths.workspaces[0].path == workspace
     assert not (env_file.parent / "work").exists()
 
@@ -490,22 +579,20 @@ def test_same_environment_file_only_applied_once_at_highest_position(tmp_path):
         load_env((), tmp_path / "missing.env")
 
 
-def test_empty_list_replaces_but_absent_list_preserves(tmp_path):
-    config(tmp_path / "home/config.json", {**MODEL, "plugins": {"enabled": [], "paths": ["./one"]}})
-    cli = config(tmp_path / "override.json", {"plugins": {"paths": []}})
+def test_explicit_config_does_not_keep_home_plugin_paths(tmp_path):
+    config(tmp_path / "home/config.json", {**MODEL, "plugins": {"enabled": ["common"], "paths": ["./one"]}})
+    cli = config(tmp_path / "override.json", {**MODEL, "plugins": {"paths": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.settings.plugins.enabled == () and runtime.settings.plugins.paths == ()
 
 
-def test_empty_hook_list_adds_nothing_and_preserves_lower_layer_without_importing(tmp_path):
+def test_explicit_empty_hook_list_does_not_keep_home_hooks(tmp_path):
     entry = {"entrypoint": "missing.py:handle", "event": "before_agent"}
     config(tmp_path / "home/config.json", {**MODEL, "dataagent": {"hooks": [entry]}})
-    cli = config(tmp_path / "override.json", {"dataagent": {"hooks": []}})
+    cli = config(tmp_path / "override.json", {**MODEL, "dataagent": {"hooks": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    (hook,) = runtime.settings.dataagent.hooks
-    assert hook.entrypoint == "missing.py:handle"
-    (binding,) = runtime.extensions.hooks
-    assert binding.base_dir == tmp_path / "home" and binding.spec is hook
+    assert runtime.settings.dataagent.hooks == ()
+    assert runtime.extensions.hooks == ()
 
 
 def test_hook_merge_is_repeatable_without_mutating_layers_or_hook_config(tmp_path):
@@ -552,23 +639,21 @@ def test_removed_factory_fields_fail_at_every_source_even_when_overridden(
     source = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
     config(source, {**MODEL, "dataagent": {field: value}})
     with pytest.raises(ValueError) as caught:
-        prepare_runtime(opts)
+        prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
     assert str(source) in str(caught.value)
     assert f"dataagent.{field}" in str(caught.value)
-    assert "use hooks" in str(caught.value)
+    assert "Extra inputs" in str(caught.value)
 
 
 @pytest.mark.parametrize("scope", ["user", "cli"])
-def test_hook_lists_accumulate_with_each_declarations_own_directory(tmp_path, scope):
+def test_selected_config_keeps_its_own_hook_directory(tmp_path, scope):
     roots = {"user": tmp_path / "home", "cli": tmp_path / "explicit"}
     config(roots["user"] / "config.json", MODEL)
-    applied = []
     for layer in ("user", "cli"):
-        applied.append(layer)
         config(
             roots[layer] / "hooks.json" if layer == "cli" else roots[layer] / "config.json",
             {
-                **(MODEL if layer == "user" else {}),
+                **MODEL,
                 "dataagent": {
                     "hooks": [
                         {"event": event, "entrypoint": f"{layer}.py:handle"}
@@ -586,16 +671,17 @@ def test_hook_lists_accumulate_with_each_declarations_own_directory(tmp_path, sc
             config=roots["cli"] / "hooks.json" if scope == "cli" else None,
         )
     )
+    selected = ["cli"] if scope == "cli" else ["user"]
     assert [binding.base_dir for binding in runtime.extensions.hooks] == [
-        roots[layer] for layer in applied for _ in range(2)
+        roots[layer] for layer in selected for _ in range(2)
     ]
     assert [hook.entrypoint for hook in runtime.settings.dataagent.hooks] == [
-        f"{layer}.py:handle" for layer in applied for _ in range(2)
+        f"{layer}.py:handle" for layer in selected for _ in range(2)
     ]
     assert [hook.event for hook in runtime.settings.dataagent.hooks] == [
         "before_agent",
         "after_agent",
-    ] * len(applied)
+    ] * len(selected)
     assert all(
         binding.spec is spec
         for binding, spec in zip(
@@ -605,7 +691,7 @@ def test_hook_lists_accumulate_with_each_declarations_own_directory(tmp_path, sc
     assert not hasattr(runtime.extensions, "hooks_base_dir")
 
 
-def test_higher_layer_without_hooks_preserves_lower_hook_directory(tmp_path):
+def test_explicit_config_without_hooks_does_not_keep_home_hooks(tmp_path):
     config(
         tmp_path / "home/config.json",
         {
@@ -623,14 +709,15 @@ def test_higher_layer_without_hooks_preserves_lower_hook_directory(tmp_path):
     cli = config(
         tmp_path / "explicit/config.json",
         {
+            **MODEL,
             "dataagent": {
                 "limits": {"timeout_seconds": 60},
             }
         },
     )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    assert runtime.extensions.hooks[0].base_dir == tmp_path / "home"
-    assert runtime.settings.dataagent.hooks[0].entrypoint == "hooks/audit.py:handle"
+    assert runtime.settings.dataagent.hooks == ()
+    assert runtime.extensions.hooks == ()
     assert runtime.timeout_seconds == 60
 
 

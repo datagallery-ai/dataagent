@@ -421,15 +421,24 @@ def _write_direct_plugin(root: Path):
     }))
 
 
+def _select_home(runtime, tmp_path, body):
+    (runtime.paths.home / "config.json").write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
+        }},
+        **body,
+    }))
+    return prepare_runtime(LaunchOptions(cwd=tmp_path))
+
+
 def _runtime_with_entry(runtime, tmp_path, entry):
     _write_direct_plugin(tmp_path / "home" / "plugins" / "direct")
     evidence = tmp_path / "evidence.json"
-    (tmp_path / "home" / "config.json").write_text(json.dumps({
+    prepared = _select_home(runtime, tmp_path, {
         "plugins": {"enabled": ["direct"], "config": {"direct": {"evidence": str(evidence)}}},
         "dataagent": {"entry": entry},
-    }))
-    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
-    return prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli)), evidence
+    })
+    return prepared, evidence
 
 
 async def test_entry_leaves_root_settings_unmounted(runtime, tmp_path):
@@ -447,7 +456,7 @@ async def test_entry_leaves_root_settings_unmounted(runtime, tmp_path):
         "    Path(params['marker']).write_text('ran', encoding='utf-8')\n",
         encoding="utf-8",
     )
-    (tmp_path / "home" / "config.json").write_text(json.dumps({
+    prepared = _select_home(runtime, tmp_path, {
         "plugins": {"enabled": ["direct"], "config": {"direct": {"evidence": str(evidence)}}},
         "dataagent": {
             "entry": "direct",
@@ -458,9 +467,7 @@ async def test_entry_leaves_root_settings_unmounted(runtime, tmp_path):
                 "params": {"marker": str(marker)},
             }]},
         },
-    }))
-    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
-    prepared = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    })
     assert prepared.settings.dataagent.limits.model_calls_per_agent == 3
     assert prepared.settings.dataagent.workspaces[0].name == "input"
     assert prepared.settings.dataagent.hooks
@@ -487,12 +494,10 @@ def test_unknown_entry_fails_before_a_broken_factory(runtime, tmp_path):
         "    raise RuntimeError('factory exploded')\n",
         encoding="utf-8",
     )
-    (tmp_path / "home" / "config.json").write_text(json.dumps({
+    prepared = _select_home(runtime, tmp_path, {
         "plugins": {"enabled": ["direct"]},
         "dataagent": {"entry": "missing"},
-    }))
-    cli = next(item.path for item in runtime.report.configs if item.scope == "cli")
-    prepared = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+    })
     with pytest.raises(ValueError, match="missing") as error:
         build_agent(prepared, model=ScriptedModel(responses=[]))
     message = str(error.value)

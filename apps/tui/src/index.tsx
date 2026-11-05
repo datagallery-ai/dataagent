@@ -111,13 +111,13 @@ Usage:
   datagallery-tui [options]
 
 Options:
-  --config <path>         Additional config above Home defaults
+  --config <path>         Use this file instead of Home config.json
   --env-file <path>       Optional environment file, resolved by the backend
   --user <id>             Local profile (default: default)
   --workspace <path>      Read-only input; repeat to mount more than one
   --session <id>          Resume a session in the selected profile
   --runtime-url <url>     Attach to this control plane and do not start
-                          a backend. Omit it to use config.json
+                          a backend. Omit it to use Home config.json
                           server.host and server.port. The host may be
                           that name, a loopback address, or another IP.
                           0.0.0.0 and :: connect through loopback
@@ -130,9 +130,10 @@ Examples:
   datagallery-tui --runtime-url http://127.0.0.1:8790
 
 Notes:
-  With no arguments the TUI uses config.json server.host and server.port
-  (default http://127.0.0.1:8790). It starts dataagent serve when that
-  address is down, and connects when it is already up. --runtime-url
+  With no arguments the TUI uses Home config.json server.host and
+  server.port (default http://127.0.0.1:8790). It starts dataagent serve
+  when that address is down, and connects when it is already up.
+  A server started with another --config is left alone. --runtime-url
   attaches and does not start a backend. Its host may be server.host,
   a loopback address, or another IP. 0.0.0.0 and :: connect through
   loopback.

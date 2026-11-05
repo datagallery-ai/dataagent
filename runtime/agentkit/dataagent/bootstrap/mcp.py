@@ -11,7 +11,9 @@ from dataagent.declarations import MCPConfig, StdioMCPServer
 from dataagent.strict_json import read_json
 
 
-def load_mcp_config(home: Path, plugin_roots: Sequence[Path], env: Mapping) -> Mapping:
+def load_mcp_config(
+    home: Path, plugin_roots: Sequence[Path], env: Mapping, *, dotenv: Path | None = None
+) -> Mapping:
     connections = {}
     sources = [("user", home), *((root.name, root) for root in plugin_roots)]
     for scope, root in sources:
@@ -20,7 +22,7 @@ def load_mcp_config(home: Path, plugin_roots: Sequence[Path], env: Mapping) -> M
             continue
         if not path.is_file():
             raise ValueError(f"Expected an MCP configuration file: {path}")
-        data = expand_env(read_json(path), env, source=path, home=home)
+        data = expand_env(read_json(path), env, source=path, home=home, dotenv=dotenv)
         config = validate_against(MCPConfig, data, path)
         for name, server in config.mcpServers.items():
             identity = f"mcp__{scope}__{name}"

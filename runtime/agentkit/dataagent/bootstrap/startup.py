@@ -17,7 +17,7 @@ from dataagent.bootstrap.config_files import (
     merge,
 )
 from dataagent.bootstrap.discovery import locate_extensions
-from dataagent.bootstrap.environment import load_env
+from dataagent.bootstrap.environment import load_env, selected_env_path
 from dataagent.bootstrap.mcp import load_mcp_config
 from dataagent.bootstrap.options import LaunchOptions
 from dataagent.bootstrap.paths import (
@@ -50,13 +50,11 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     if options.init_home:
         initialize_home(home)
 
-    cli_config = _explicit_file(options.config, cwd, "Configuration")
-    env_file = _explicit_file(options.env_file, cwd, "Environment", must_exist=False)
-    env_paths = [home / ".env"]
-    if cli_config is not None:
-        env_paths.append(cli_config.with_name(".env"))
-    environment = load_env(tuple(env_paths), env_file)
-    layers = load_layers(home, environment.values, cli_config)
+    cli_config = _explicit_file(options.config, cwd)
+    env_file = _explicit_file(options.env_file, cwd)
+    dotenv = selected_env_path(home, env_file)
+    environment = load_env(() if env_file is not None else (dotenv,), env_file)
+    layers = load_layers(home, environment.values, cli_config, dotenv=dotenv)
     settings = merge(layers)
 
     # Step2. Inputs are a list. CLI and DATAAGENT_WORKSPACE override configured defaults.
@@ -99,7 +97,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     for name in ("skills", "hooks", "plugins"):
         directory(home / name)
     settings, extensions, plugin_origins, plugin_sources = _configure_plugins(
-        paths, layers, settings, environment.values
+        paths, layers, settings, environment.values, dotenv
     )
     mcp_roots = tuple(
         dict.fromkeys(
@@ -109,7 +107,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
         )
     )
     extensions = replace(
-        extensions, mcp_servers=load_mcp_config(home, mcp_roots, environment.values)
+        extensions, mcp_servers=load_mcp_config(home, mcp_roots, environment.values, dotenv=dotenv)
     )
 
     # Step4. Keep applied configuration sources visible in the returned Runtime.
@@ -152,9 +150,10 @@ def refresh_extensions(runtime: Runtime) -> Runtime:
     """
     home = runtime.paths.home
     cli_config = next((item.path for item in runtime.report.configs if item.scope == "cli"), None)
-    env_paths = (home / ".env", *([cli_config.with_name(".env")] if cli_config else []))
-    environment = load_env(env_paths, runtime.report.env_file)
-    layers = load_layers(home, environment.values, cli_config)
+    env_file = runtime.report.env_file
+    dotenv = selected_env_path(home, env_file)
+    environment = load_env(() if env_file is not None else (dotenv,), env_file)
+    layers = load_layers(home, environment.values, cli_config, dotenv=dotenv)
     loaded = merge(layers)
     settings = runtime.settings.model_copy(
         update={
@@ -166,7 +165,7 @@ def refresh_extensions(runtime: Runtime) -> Runtime:
         }
     )
     settings, extensions, origins, plugin_sources = _configure_plugins(
-        runtime.paths, layers, settings, environment.values
+        runtime.paths, layers, settings, environment.values, dotenv
     )
     roots = tuple(
         dict.fromkeys(
@@ -175,7 +174,9 @@ def refresh_extensions(runtime: Runtime) -> Runtime:
             if root.name in settings.plugins.enabled
         )
     )
-    extensions = replace(extensions, mcp_servers=load_mcp_config(home, roots, environment.values))
+    extensions = replace(
+        extensions, mcp_servers=load_mcp_config(home, roots, environment.values, dotenv=dotenv)
+    )
     applied = {layer.scope for layer in layers}
     report = replace(
         runtime.report,
@@ -216,16 +217,13 @@ def _resume_workspaces(
     return binding.workspaces
 
 
-def _explicit_file(value, cwd: Path, kind: str, *, must_exist: bool = True) -> Path | None:
+def _explicit_file(value, cwd: Path) -> Path | None:
     if value is None:
         return None
-    path = absolute(value, cwd)
-    if must_exist and not path.is_file():
-        raise ValueError(f"{kind} file does not exist or is not a file: {path}")
-    return path
+    return absolute(value, cwd)
 
 
-def _configure_plugins(paths, layers, settings, environment):
+def _configure_plugins(paths, layers, settings, environment, dotenv):
     candidates, _ = locate_extensions(paths, layers, settings)
     selected = resolve_plugins(settings.plugins, candidates.plugin_roots)
     defaults = []
@@ -236,6 +234,7 @@ def _configure_plugins(paths, layers, settings, environment):
                 contained_path(root, spec.config),
                 env=environment,
                 home=paths.home,
+                dotenv=dotenv,
             )
             defaults.append(replace(layer, base_dir=root))
     combined = (*defaults, *layers)

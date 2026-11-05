@@ -16,15 +16,17 @@ uv run --project runtime/agentkit dataagent serve \
 
 | 参数 | 默认 | 作用 |
 | --- | --- | --- |
-| `--config` | 无 | Home 之上的额外配置层。文件必须存在 |
+| `--config` | 无 | 使用这份文件，不再读 Home `config.json`。文件必须存在 |
 | `--user` | `default` | 本地 profile。决定 `runtime/users/<user>/` |
 | `--workspace` | 无 | 可重复。已存在的只读输入。与配置列表互斥于更高优先级 |
 | `--session` | 无 | 恢复属于该 profile 的会话，并沿用其输入绑定 |
-| `--env-file` | 无 | 后端读取的环境文件。文件必须存在 |
+| `--env-file` | 无 | 只用这份环境文件，代替 Home `.env`。文件必须存在 |
 | `--reload` | 关 | 源码变化时重启 `serve`、`dataagent`、`a2a_server`。`npm run start` 和 `./deploy.sh` 不传。继承了监听套接字时忽略 |
 | `--stdio-ready` | 关 | TUI 拉起后端时使用的隐藏握手。帮助里不显示 |
 
-没有 `--host`。`npm run start`、`./deploy.sh`、网页转发和 TUI 都读 `config.json` 的 `server.host` 与 `server.port`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。
+没有 `--host`。`npm run start`、网页转发和无参数 TUI 在启动时读所选配置的 `server.host` 与 `server.port`：传了 `--config` 用那份文件，否则用 Home `config.json`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。`npm run start -- --config <path>` 和 `./deploy.sh start --config <path>` 把同一路径交给 `dataagent serve`。`./deploy.sh` 把当时解析出的 API 主机名和端口写入部署状态。之后的 `tui`、`status`、`doctor` 使用这份地址。
+
+选中的配置文件不存在、不是普通文件，或内容不是合法 JSON 时，`dataagent serve` 与 `dataagent serve-a2a` 以退出码 1 结束。标准错误有一行 `DataAgent:`。进程不监听端口。配置文件已经读入、模型环境变量尚未提供时，进程仍会监听：`/healthz` 为 200，`conversation.ready` 为 false，`/ready` 为 503。
 
 ## `dataagent serve-a2a`
 
@@ -77,6 +79,6 @@ SDK 的 `LaunchOptions` 还有 `cwd`、`init_home` 和单个 `workspace`。`work
 
 `$env{NAME}` 的名字必须匹配 `[A-Za-z_][A-Za-z0-9_]*`。
 
-有效环境优先级：进程非空值，然后 `--env-file`，然后显式配置旁边的 `.env`，然后 Home `.env`。更低层先载入，高层覆盖。空值不覆盖已有非空值。同一真实文件只保留优先级更高的那一次。
+环境文件只读一份。传了 `--env-file` 就用它。没传时用 Home `.env`，`--config` 不改变这个选择。Home `.env` 可以不存在；`--env-file` 必须存在。进程里的非空值覆盖文件里的值。空值不写入有效环境。
 
-输入目录和当前工作目录里的 `.env` 不会自动加入，除非它正好是上述某一层。
+输入目录、当前工作目录，以及 `--config` 旁边的 `.env` 不会自动加入。

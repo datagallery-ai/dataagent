@@ -9,6 +9,8 @@
  *
  * Web defaults to 127.0.0.1:3000. Override on start or start:web:
  *   --web-host <host> --web-port <port>
+ * Optional product config, used instead of Home config.json:
+ *   --config <path>
  */
 import { runStack } from "./stack-runner.mjs";
 

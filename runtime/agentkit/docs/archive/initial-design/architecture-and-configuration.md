@@ -1,6 +1,8 @@
 # DataAgent：架构、模块职责与配置机制
 
-本文描述当前代码的架构与配置机制。六类 Python Hook 与薄 Compiler 的函数契约、迁移边界和验收记录见 [实施文档](plugin-compiler-native-hooks.md)。用户、Session 与文件资源隔离的设计见 [用户与多 Session 资源隔离设计](user-session-isolation.md)。产品配置为版本 3，插件清单为版本 2；旧版资料仍可从 Git 历史恢复。
+当前产品文件只在 Home `config.json` 与 `--config` 中取一份，字段合并见 [配置字段](../../reference/configuration.md)。下文保留当时的设计记录。
+
+本文描述当时的代码结构。六类 Python Hook 与薄 Compiler 的函数契约、迁移边界和验收记录见 [实施文档](plugin-compiler-native-hooks.md)。用户、Session 与文件资源隔离的设计见 [用户与多 Session 资源隔离设计](user-session-isolation.md)。产品配置为版本 3，插件清单为版本 2；旧版资料仍可从 Git 历史恢复。
 
 产品配置、插件清单和 SubAgent 声明统一使用标准 JSON；文件清单、字段说明和格式迁移注意事项见
 [JSON 配置说明](../examples/README.md)。`.env` 和 Deep Agents 原生 `SKILL.md` frontmatter 不变。
@@ -151,8 +153,8 @@ runtime/agentkit/
 | [runtime.py](../dataagent/bootstrap/runtime.py) | `Runtime`、`StartupReport` | 定义准备结果及启动报告；分别保存 settings、paths、extensions、report；展示信息从 settings 派生，不存会话或 Agent 执行状态 |
 | [paths.py](../dataagent/bootstrap/paths.py) | `RuntimePaths`、`home_path`、`initialize_home`、`builtin_plugins_path`、`absolute`、`directory` | 解析和校验运行路径；仅显式调用 `initialize_home` 时创建 Home 目录与模板，独占创建且不覆盖已有文件；不扫描项目扩展、不执行模型权限策略 |
 | [mcp.py](../dataagent/bootstrap/mcp.py) | `load_mcp_config` | 读取 Home 和启用插件的 `.mcp.json`，展开已有环境引用并校验 schema，输出冻结的原生连接 dict；不导入 MCP SDK、不启动进程 |
-| [environment.py](../dataagent/bootstrap/environment.py) | `Environment`、`load_env` | 解析 dotenv，按优先级合并有效环境并保留文件来源；不写回 `os.environ` |
-| [config_files.py](../dataagent/bootstrap/config_files.py) | `ConfigSource`、`Layer`、`load_layers`、`merge`、`expand_env`、`validate_against` | 按 Home → CLI 读取并逐层校验，字典递归合并，独立 Hooks 按层累加，其他列表和标量由后层覆盖；最后展开选中模型并校验完整 Settings、补齐默认值 |
+| [environment.py](../dataagent/bootstrap/environment.py) | `Environment`、`load_env`、`selected_env_path` | 启动只传入一份 dotenv；`load_env` 仍按传入顺序合并并保留文件来源；不写回 `os.environ` |
+| [config_files.py](../dataagent/bootstrap/config_files.py) | `ConfigSource`、`Layer`、`load_layers`、`merge`、`expand_env`、`validate_against` | 产品文件只取 Home 或 `--config` 一份，再与插件 `plugins.config` 合并。对象按字段合并，`dataagent.hooks` 与插件 `before_run` / `after_run` 追加，其他列表和标量整段替换；最后展开选中模型并校验完整 Settings、补齐默认值 |
 | [discovery.py](../dataagent/bootstrap/discovery.py) | `HookBinding`、`ExtensionLocations`、`locate_extensions` | 配置合并后整理内置/Home/显式插件目录、累加独立 Skill 源、关联每条 Hook 与各自配置目录；HookBinding 引用 Settings 中的声明，不复制；不读插件清单、不导入 Python |
 | [startup.py](../dataagent/bootstrap/startup.py) | `prepare_runtime` | 固定顺序调用上述步骤，生成 `Runtime`；不接触终端、HTTP 或插件执行 |
 | [templates/config.json](../dataagent/bootstrap/templates/config.json)、[templates/env.example](../dataagent/bootstrap/templates/env.example) | Home 初始化源文件 | 仅由显式初始化复制为 Home 的 `config.json` 和 `.env`，不是每次读取的隐含配置层 |
@@ -160,7 +162,7 @@ runtime/agentkit/
 这几个文件按读者的使用顺序组织：
 
 - `paths.py`：先看 `RuntimePaths` 的输出结构，再看 `home_path` 路径解析及紧随其后的 `initialize_home` 显式初始化，随后是内置插件/保护路径解析，最后是 `absolute`、`directory` 基础辅助函数。导入模块和解析路径均不创建文件；只有 `initialize_home` 创建 Home 目录与模板，且不覆盖已有文件。`absolute` 保留词法路径；`directory` 解析符号链接并检查目录类型，只有 `required=True` 时才要求存在。workspace 选择优先级及是否初始化 Home 仍由 `startup.py` 决定。
-- `discovery.py`：结果类型在前，随后是 `locate_extensions` 和私有辅助函数。只发现内置/Home/显式插件及 Home Skills；独立 Hooks 按 Home → CLI 绑定各自配置目录，不自动执行目录中的 Python 文件。
+- `discovery.py`：结果类型在前，随后是 `locate_extensions` 和私有辅助函数。只发现内置插件、Home `plugins/` 和选中产品文件里的 `plugins.paths`，以及 Home `skills/`。独立 Hook 绑定到声明它的那一份产品文件的目录，不自动执行目录中的 Python 文件。
 - `options.py`：仅定义启动输入 `LaunchOptions`，不含项目模式或信任决定。
 - `runtime.py`：先看核心结果 `Runtime` 及其派生属性，再看仅服务于诊断的 `StartupReport`。runtime 依赖发现结果和配置记录，discovery/config_files 不反向依赖 runtime 或 startup。
 - `startup.py`：主入口在前、辅助函数在后；依次解析 Home、环境、配置、只读输入和扩展，最后装配四组结果。不再为寻找项目配置而预读取一遍 workspace 声明。
@@ -208,7 +210,7 @@ kwargs = compile_extensions(
 
 `build_agent()` 在进入 Compiler 前验证绑定与有效声明的内容及顺序一致。手动构造 Runtime 或通过 SDK 替换 Hooks 时，应同时更新声明和绑定；不一致时明确报错，不以 cwd 猜测或静默使用旧声明。优先修改配置后重新 prepare_runtime。
 
-插件 Hooks 按启用顺序先加入，随后是 Home → CLI 累加的独立 Hooks；每层内部保持声明顺序，重复注册不去重。Compiler 不再自行合并配置层。传空插件列表仍可编译独立扩展。没有虚拟插件、CompilerInput 或新的执行 IR。
+插件 Hooks 按启用顺序先加入，随后是选中产品文件里的 `dataagent.hooks`；各自保持声明顺序，重复注册不去重。Compiler 不再自行合并配置层。传空插件列表仍可编译独立扩展。没有虚拟插件、CompilerInput 或新的执行 IR。
 
 Hook 适配属于能力编译，宿主默认策略属于 Agent 装配，因此不再保留独立的 `governance/` 包。
 这里没有两套 Hook 实现：`compile_hooks` 加载声明后直接调用同文件的 `compile_hook`，适配器由原生图执行。
@@ -332,12 +334,12 @@ REST/TUI 在下一轮请求前检查扩展变化：未变化复用 session 图�
 
 | 文件 | 是否必需 / 何时读取 | 责任 |
 |---|---|---|
-| `<Home>/config.json` | 存在时作为 user 层自动读取 | 个人模型、默认限额、插件选择和扩展声明 |
+| `<Home>/config.json` | 未传 `--config` 时读取；可以不存在 | 个人模型、默认限额、插件选择和扩展声明 |
 | `<Home>/.mcp.json` / 启用插件根的 `.mcp.json` | 存在时在准备阶段解析；REST 就绪前连接发现工具 | 不参与产品配置层合并，服务名使用来源命名空间 |
-| `<Home>/.env` | 存在时自动读取 | 模型凭证与 JSON 引用的环境值，可提供 `DATAAGENT_WORKSPACE` |
-| `--config <文件>` | 显式指定则必须是文件，作为最高 cli 层读取 | 额外配置层，不替换整个 Home 加载流程 |
-| `--config` 同目录的 `.env` | 指定 config 且该 `.env` 存在时自动读取 | 该启动方案的环境值；文件名固定为 `.env`，不是 JSON 同名 `.env` |
-| `--env-file <文件>` | 显式指定必须存在，独立于配置文件层 | 最高优先级文件环境；不是一层 JSON，也不改变 Home |
+| `<Home>/.env` | 未传 `--env-file` 时读取；可以不存在。`--config` 不改变这个选择 | 模型凭证与 JSON 引用的环境值，可提供 `DATAAGENT_WORKSPACE` |
+| `--config <文件>` | 显式指定则必须是文件 | 用这份文件代替 Home `config.json`，两份不同时读取。不改变环境文件 |
+| `--config` 同目录的 `.env` | 不自动读取 | 要使用另一份环境文件时传 `--env-file` |
+| `--env-file <文件>` | 显式指定必须存在 | 只用这一份环境文件，代替 Home `.env`。不是一层 JSON，也不改变 Home |
 | 启动目录的 `config.json` / `.env` | **不因 cwd 身份自动读取** | 只有同时符合 Home/显式配置等规则才读取 |
 | `config.example.json` / `.env.example` | 不自动读取 | 样例，不是兜底配置 |
 | `bootstrap/templates/config.json` / `env.example` | `initialize_home` 时作为复制源读取 | 生成初始 Home 文件，不覆盖已有配置 |
@@ -352,42 +354,42 @@ REST/TUI 在下一轮请求前检查扩展变化：未变化复用 session 图�
 优先级从低到高：
 
 ```text
-字段默认值 < Home/config.json (user)
-           < --config 指定文件 (cli)
+字段默认值 < 插件 plugins.config < 选中的一份产品文件
 ```
+
+产品文件是 Home `config.json`，或者 `--config` 指定的文件。两份不同时读取。选中文件没写的 `server.host` 用程序默认值，不从另一份产品文件继承。
 
 “字段默认值”来自 Pydantic，而不是额外隐藏 JSON。逐文件局部模型不填默认值，合并后才补齐默认值，所以未声明和显式空列表不一样。
 
 代码中的优先级分两步实现，均在 `config_files.py` 内：
 
-1. `_config_sources()` / `load_layers()` 按 `user → cli` 返回存在且允许加载的层。
-2. `merge()` 不再按 scope 排序，直接按传入顺序处理：独立 Hooks 累加；其他标量与列表由最后声明它的层决定。
-
-例如 Home 配置 `{"server": {"host": "127.0.0.1", "port": 8790}}`，CLI 配置
-`{"server": {"port": 8801}}`：最终 host 保留为 `127.0.0.1`，port 为 `8801`。
-CLI 未声明的字段不会被默认值覆盖。
+1. `_config_sources()` / `load_layers()` 在 `--config` 和 Home `config.json` 里只返回一份。
+2. `merge()` 不再按 scope 排序，直接按传入顺序处理：先插件默认值，再选中的产品文件。`dataagent.hooks` 与插件 `before_run` / `after_run` 追加；其他标量与列表由后写的那一层整段替换。
 
 - 标量由高层覆盖，mapping 按字段递归合并，`models` 按模型 ID 和字段合并。
 - 普通列表整体替换，包括 `plugins.enabled`、`plugins.paths`。用户想在 common 之外启用新插件，需完整声明 `[common, my-plugin]`。
-- `dataagent.hooks` 按 Home → CLI 累加，`"hooks": []` 不追加且不清空；同事件、同函数的多次注册保留，每条相对路径以各自配置目录为基准。最终产品 Hooks 排在启用插件 Hooks 之后。middleware/callbacks 配置字段已移除，包括空列表也会报错。
+- `dataagent.hooks` 只来自选中的那一份产品文件，按声明顺序保留。`"hooks": []` 不追加。插件 `plugins.config.<id>.hooks.before_run` / `after_run` 在插件默认值和这份产品文件之间追加，空数组不清除已有 Hook。同事件、同函数的多次注册保留，相对路径以声明文件所在目录为基准。产品 Hooks 排在启用插件清单 Hooks 之后。
 - 独立 Skills 从 Home 的 `skills/` 目录累加，再与启用插件 Skills 组合；没有 `dataagent.skills` 配置列表。同一真实目录去重，不同文件声明同名 Skill 报错，不静默覆盖。
 - 不再维护 handler 命名空间或订阅表；每条 Hook 声明直接引用普通 Python 函数。
 - `plugins.enabled: []` 只关闭完整插件，不关闭独立 Skill 或配置定义的 Hook。
 - 每个文件先单独校验。未知字段、非法类型、重复插件、重复 JSON 键不能因为后续覆盖就被忽略。
-- 显式 config 与 Home 配置是同一真实文件时，自动层跳过该文件，只以 cli 层应用一次；路径始终相对于声明文件目录。
+- 传了 `--config` 就不再读 Home `config.json`。路径始终相对于声明文件目录。
 - 非 models 字段逐层展开环境引用；models 字段只在合并后展开最终选中的模型。未选中模型仍必须符合结构 schema，但其中的 `$env{MISSING}` 不要求实际存在。
 
 ### 5.5 环境变量的合并顺序
 
-优先级从低到高：
+环境文件只读一份：
 
 ```text
-Home/.env < --config 旁的 .env < --env-file < 进程环境
+--env-file
+否则 Home/.env
 ```
 
-空字符串按未定义处理，不擦除低优先级非空值；同一真实环境文件只在最高位置读取一次。有效环境作为只读结果传递，不修改进程 `os.environ`。
+`--config` 只替换产品 JSON，不替换环境文件。
 
-JSON 的替换语法是 `$env{VARIABLE}`，支持字符串中的引用；变量缺失时启动失败并指出配置文件、字段和 Home `.env`。它不是 shell 表达式，也不会执行命令。
+进程里的非空值覆盖这份文件。空字符串按未定义处理，不写入有效环境。有效环境作为只读结果传递，不修改进程 `os.environ`。
+
+JSON 的替换语法是 `$env{VARIABLE}`，支持字符串中的引用；变量缺失时启动失败并指出配置文件、字段和这次选中的环境文件。它不是 shell 表达式，也不会执行命令。
 
 以下变量不允许从 dotenv 改写：`DATAAGENT_HOME`、`DATAAGENT_INSTANCE_ID`。它们只来自进程环境；写进文件会被忽略并提示。TUI 的 `DATAAGENT_TUI_LOG_PATH`、`INIT_CWD` 等前端选项也由 Node 进程读取，不会因为传了后端 `--env-file` 就改变前端环境。
 
@@ -584,7 +586,7 @@ Compiler 只返回一个能力 kwargs 字典；model/backend/checkpointer/宿主
 
 目录名必须等于清单 `id`；插件 ID 和 SubAgent 名允许小写字母开头及数字、下划线、连字符；Tool ID 不允许连字符。`user`、`cli` 继续保留为宿主来源标识，不能作为插件 ID。
 
-产品 JSON `schema_version: 3` 与插件 `.plugin.json` 的 `schema_version: 2` 是两套声明版本。插件字段为 `id/system_prompt/tools/skills/subagents/hooks` 及 schema_version，不接受任意执行 DSL。旧 middleware/callbacks 字段必须显式删除，不能用提高版本号代替迁移。
+产品 JSON `schema_version: 3` 与插件 `.plugin.json` 的 `schema_version: 2` 是两套声明版本。插件字段为 `id/system_prompt/tools/skills/subagents/hooks` 及 schema_version，不接受任意执行 DSL。
 
 例如外部示例 common 的关键引用为：
 

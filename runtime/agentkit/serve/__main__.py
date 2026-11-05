@@ -15,7 +15,7 @@ from uuid import uuid4
 # the event loop (no model calls, /healthz hangs).
 os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
 
-from dataagent import LaunchOptions, Runtime, prepare_runtime, safe_error
+from dataagent import ConfigurationLoadError, LaunchOptions, Runtime, prepare_runtime, safe_error
 
 # Reload watches source only. The project root also holds .venv, which the
 # polling reloader would rescan every tick.
@@ -115,10 +115,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dataagent", description="DataAgent backend")
     commands = parser.add_subparsers(dest="command", required=True)
     api = commands.add_parser("serve", help="Run the product backend")
-    config_default = os.environ.get("DATAAGENT_CONFIG", "").strip() or None
     api.add_argument(
-        "--config", default=config_default,
-        help="Additional configuration above Home defaults",
+        "--config",
+        help="Use this file instead of Home config.json",
     )
     api.add_argument("--user", default="default", help="Local profile id (default: default)")
     api.add_argument(
@@ -139,8 +138,8 @@ def _parser() -> argparse.ArgumentParser:
     api.add_argument("--stdio-ready", action="store_true", help=argparse.SUPPRESS)
     a2a = commands.add_parser("serve-a2a", help="Expose this agent over the A2A 1.0 protocol")
     a2a.add_argument(
-        "--config", default=config_default,
-        help="Additional configuration above Home defaults",
+        "--config",
+        help="Use this file instead of Home config.json",
     )
     a2a.add_argument("--user", default="default", help="Local profile id (default: default)")
     a2a.add_argument(
@@ -156,7 +155,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _prepare(args):
     try:
-        runtime = prepare_runtime(LaunchOptions(
+        return prepare_runtime(LaunchOptions(
             config=args.config or None,
             workspaces=tuple(args.workspace or ()),
             user_id=args.user,
@@ -164,12 +163,12 @@ def _prepare(args):
             env_file=args.env_file,
             init_home=True,
         ))
-    except KeyboardInterrupt:
-        raise
+    except ConfigurationLoadError as error:
+        print(f"DataAgent: {safe_error(error, ())['message']}", file=sys.stderr, flush=True)
+        raise SystemExit(1) from None
     except Exception as error:
         print(f"DataAgent: {safe_error(error, ())['message']}", file=sys.stderr, flush=True)
         return None
-    return runtime
 
 
 def _instance_id() -> str:

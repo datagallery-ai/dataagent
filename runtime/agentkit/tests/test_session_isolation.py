@@ -15,13 +15,16 @@ from dataagent.core.backends import LocalShellBackend
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
 
 
-def runtime_for(tmp_path, *workspaces, user_id="default", session_id=None):
+def runtime_for(tmp_path, *workspaces, user_id="default", session_id=None, extra=None):
     path = tmp_path / f"config-{user_id}.json"
-    path.write_text(json.dumps({
+    body = {
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
-    }))
+    }
+    if extra:
+        body.update(extra)
+    path.write_text(json.dumps(body))
     return prepare_runtime(LaunchOptions(
         cwd=tmp_path, workspaces=workspaces, user_id=user_id, session_id=session_id,
         config=path,
@@ -148,8 +151,7 @@ async def test_session_outputs_have_separate_cwd_not_access_isolation(tmp_path):
 async def test_file_tools_and_shell_share_real_paths(tmp_path, child, common_plugin):
     root = tmp_path / "中文 space {data}[1]"
     root.mkdir()
-    (tmp_path / "home/config.json").write_text(json.dumps({"plugins": {"enabled": ["common"]}}))
-    runtime = runtime_for(tmp_path, root)
+    runtime = runtime_for(tmp_path, root, extra={"plugins": {"enabled": ["common"]}})
     session = runtime.paths.for_session("same-path")
     output = session.outputs / "自我介绍 [1].md"
     if sys.platform == "win32":

@@ -131,24 +131,6 @@ class HookSpec(ExtensionConfig):
     entrypoint: str = Field(min_length=1)
     matcher: str | None = Field(default=None, min_length=1)
 
-    @model_validator(mode="before")
-    @classmethod
-    def reject_legacy_protocol(cls, value):
-        if isinstance(value, Mapping) and "config" in value:
-            raise ValueError("Hook params field is now `params`; rename `config` to `params`")
-        if isinstance(value, Mapping) and set(value) & {
-            "command",
-            "timeout_seconds",
-            "handler",
-            "events",
-            "match",
-        }:
-            raise ValueError(
-                "Hooks support Python functions only: use event + entrypoint + params; "
-                "command, per-hook timeout_seconds and handler/events/match are unsupported"
-            )
-        return value
-
     @model_validator(mode="after")
     def validate_matcher(self):
         if self.matcher is not None and self.event not in {"before_tool", "after_tool"}:
@@ -263,22 +245,9 @@ class PluginSpec(StrictModel):
 
     @model_validator(mode="before")
     @classmethod
-    def reject_legacy_hooks(cls, value):
-        if isinstance(value, dict) and "hooks" in value:
-            value = {**value, "hooks": normalize_hooks(value["hooks"])}
-        hooks = value.get("hooks", []) if isinstance(value, dict) else []
-        hooks = hooks if isinstance(hooks, (list, tuple)) else []
-        if isinstance(value, dict) and (
-            value.get("schema_version", 2) != 2
-            or "hook_handlers" in value
-            or any(
-                isinstance(item, dict) and ("handler" in item or "events" in item) for item in hooks
-            )
-        ):
-            raise ValueError(
-                "Migrate plugin to schema_version: 2 and hooks with event plus "
-                "Python entrypoint; hook_handlers and handler/events are no longer supported"
-            )
+    def normalize_declared_hooks(cls, value):
+        if isinstance(value, Mapping) and "hooks" in value:
+            return {**value, "hooks": normalize_hooks(value["hooks"])}
         return value
 
     @model_validator(mode="after")

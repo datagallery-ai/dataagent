@@ -155,6 +155,6 @@ updated = refresh_extensions(runtime)
 
 ## 和环境的关系
 
-SDK 准备过程不修改 `os.environ`。`LaunchOptions.env_file` 和 Home `.env` 的优先级与 CLI 相同，见 [命令与环境变量](../reference/cli-and-environment.md)。
+SDK 准备过程不修改 `os.environ`。`LaunchOptions.env_file` 和 Home `.env` 二选一，与 CLI 相同。`LaunchOptions.config` 不改变环境文件。见 [命令与环境变量](../reference/cli-and-environment.md)。
 
 请把 AgentKit 装在独立环境。旧运行时使用同一个导入名 `dataagent`。

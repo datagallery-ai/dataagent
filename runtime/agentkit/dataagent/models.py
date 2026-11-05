@@ -27,6 +27,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from dataagent.bootstrap import Runtime
 from dataagent.bootstrap.config_files import expand_env, validate_against
+from dataagent.bootstrap.environment import selected_env_path
 from dataagent.bootstrap.paths import SessionPaths
 from dataagent.semantic_client import SemanticServiceClient
 from dataagent.settings import ModelSettings
@@ -49,6 +50,7 @@ def build_model(runtime: Runtime, name: str | None = None) -> BaseChatModel:
             source=f"models.{alias}",
             home=runtime.paths.home,
             location=("models", alias),
+            dotenv=selected_env_path(runtime.paths.home, runtime.report.env_file),
         ),
         f"models.{alias}",
     )

@@ -54,7 +54,7 @@ export async function runStack({ args = [] }) {
 
   const children = [];
   if (startApi) {
-    const launch = pythonControlPlaneLaunch(root, process.env);
+    const launch = pythonControlPlaneLaunch(root, process.env, false, runtimeConfig.configPath);
     children.push(spawnProcess("DataGallery API", launch.command, launch.args, launch.env));
   }
   if (startWeb) {

@@ -1,7 +1,9 @@
-"""Effective environment: process variables over an explicit env file over automatic `.env` files.
+"""Effective environment: non-empty process variables over one selected dotenv file.
 
-Values are returned, never written back to `os.environ`, so concurrent SDK callers cannot
-pollute each other.
+``load_env`` still merges every path it is given, lowest first. Startup and
+``refresh_extensions`` pass exactly one file from ``selected_env_path``.
+Values are returned, never written back to ``os.environ``, so concurrent SDK
+callers cannot pollute each other.
 """
 
 import os
@@ -26,8 +28,17 @@ class Environment:
     files: tuple[Path, ...] = ()
 
 
+def selected_env_path(home: Path, env_file: Path | None) -> Path:
+    """``--env-file`` replaces Home ``.env``. ``--config`` does not choose a dotenv."""
+    return env_file if env_file is not None else home / ".env"
+
+
 def load_env(paths: tuple[Path, ...], env_file: Path | None = None) -> Environment:
-    """Load low-to-high priority automatic files, then the explicit file, then the process."""
+    """Merge the given files lowest-first, then the explicit file, then the process.
+
+    Missing automatic files are skipped. The explicit file must exist.
+    Empty values are ignored and never shadow another value.
+    """
     candidates = [*paths, *([env_file] if env_file else [])]
     # A repeated real file keeps its highest-priority position.
     resolved = [path.resolve() for path in candidates]

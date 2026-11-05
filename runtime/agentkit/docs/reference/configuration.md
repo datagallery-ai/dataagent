@@ -2,7 +2,7 @@
 
 这是 `config.json` 的字段全表，给改配置和写插件的人。操作步骤在 [配置操作](../guides/configuration.md)。对外产品站只保留部署时要改的文件和最小模型示例，不重复这份表。
 
-文件是标准 JSON。未知字段、重复键、错误类型和非有限数值都会失败。`schema_version` 必须是 `3`。省略时按 `3` 校验；写成其他值会要求迁移。
+文件是标准 JSON。未知字段、重复键、错误类型和非有限数值都会失败。`schema_version` 必须是 `3`。省略时按 `3` 校验。
 
 相对路径以该配置文件所在目录为基准，并解析 `~/`。
 
@@ -40,8 +40,6 @@
 
 `entry` 由高层替换；省略则继承低层。改它要重启进程，`refresh_extensions` 不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
 
-`middleware`、`callbacks`、`hook_handlers` 以及 Hook 上的 `command`、`handler`、`events`、`match` 会使该文件校验失败。
-
 ## `models.<id>`
 
 | 字段 | 类型 | 默认 | 约束 |
@@ -57,7 +55,7 @@
 
 没有 `response_format`。模型固定走 Chat Completions（`use_responses_api=False`）。`temperature`、`max_tokens` 和 `extra_body` 只在写了的时候传给客户端。
 
-启动只展开 `model.default` 指向的那一组环境引用。其他模型保留原文，到 `get_model` 时再用启动快照展开。
+启动只展开 `model.default` 指向的那一组环境引用。其他模型保留原文，到 `get_model` 时再用启动快照展开。`$env{...}` 只从一份环境文件取值：`--env-file`，否则 Home `.env`。`--config` 不改变这个选择。进程里的非空值覆盖这份文件。
 
 ## `plugins`
 
@@ -71,7 +69,7 @@
 
 ## `server`
 
-`npm run start`、`./deploy.sh`、网页转发和 TUI 都读这里。首次部署在 Home 没有 `config.json` 时，用 `dataagent/bootstrap/templates/config.json` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。
+`npm run start`、网页转发和无参数 TUI 在启动时读所选产品文件的 `server`：传了 `--config` 用那份文件，否则用 Home `config.json`。`./deploy.sh start` 也在启动当时解析同一地址，把主机名写入 `storage/run/deployment.json` 的 `listen.apiHost`，把端口写入 `ports.api`。之后的 `./deploy.sh tui`、`status`、`doctor` 使用这份地址。首次部署在 Home 没有 `config.json` 时，用 `dataagent/bootstrap/templates/config.json` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。改了监听地址后，重新执行 `./deploy.sh start` 或 `restart` 才会记下新地址。
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
@@ -114,12 +112,10 @@
 
 ## 合并
 
-由低到高：内置默认、Home `config.json`、`--config`。
+产品文件二选一：未传 `--config` 时用 Home `config.json`，传了就只用那份文件。插件 `plugins.config` 在选中的产品文件下面。
 
-- 对象按字段递归合并，包括每个模型 ID 和 `plugins.config.<id>`
-- `dataagent.hooks` 追加。空列表不清除低层
-- `plugins.config.<id>.hooks` 里的 `before_run` 和 `after_run` 也跨层追加
-- 其他数组和标量由高层替换，包括 `dataagent.entry`
-- 同一真实文件被 `--config` 指到时，去掉它作为 Home 层的那一次
+- 对象按字段递归合并，包括每个模型 ID 和 `plugins.config.<id>`。没写的字段保留插件默认值；插件也没写时用程序默认值。
+- `dataagent.hooks`，以及 `plugins.config.<id>.hooks.before_run` / `after_run`，按层追加。`[]` 或空事件组只表示这一层不追加。
+- 其他数组和标量由选中文件整段替换，包括 `dataagent.entry`、`plugins.enabled`、`plugins.paths`。`[]` 清空。
 
-配置来自内置默认值、Home `config.json` 和 `--config`。启动目录中的 `config.json` 不参与合并。
+启动目录中的 `config.json` 不参与。

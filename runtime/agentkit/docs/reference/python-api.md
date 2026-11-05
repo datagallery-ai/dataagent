@@ -35,7 +35,7 @@
 | `user_id` | `"default"` | 本地 profile |
 | `session_id` | `None` | 恢复会话 |
 | `config` | `None` | 显式配置文件 |
-| `env_file` | `None` | 显式环境文件 |
+| `env_file` | `None` | 显式环境文件。设置后用这一份代替 Home `.env` |
 | `init_home` | `False` | `True` 时创建 Home 模板，不覆盖已有文件 |
 
 ## `Runtime.paths.open_session`

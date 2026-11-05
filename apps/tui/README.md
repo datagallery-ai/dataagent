@@ -16,7 +16,7 @@ npm run start:tui
 
 ## Home
 
-Home defaults live in `~/.dataagent`. Add `--resume` or `--resume <threadId>` to restore a session. `--config`, `--env-file`, `--workspace`, `--user` and `--session` are forwarded to a backend this TUI starts, so they do not attach to one that is already running.
+Home defaults live in `~/.dataagent`. Add `--resume` or `--resume <threadId>` to restore a session. `--config` selects that file instead of Home `config.json`. `--config`, `--env-file`, `--workspace`, `--user` and `--session` are forwarded to a backend this TUI starts, so they do not attach to one that is already running.
 
 `--runtime-url` attaches and does not start a backend. The host may be `server.host` from `config.json`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 

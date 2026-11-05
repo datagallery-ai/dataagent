@@ -7,12 +7,11 @@
 | 现象 | 处理 |
 | --- | --- |
 | `Cannot determine user home; set DATAAGENT_HOME` | 在进程环境设置 `DATAAGENT_HOME` 为可写目录 |
-| `Configuration file does not exist` | 检查 `--config` 路径。相对路径相对启动命令的工作目录 |
-| `schema_version must be 3` | 把产品配置改为 JSON，并把 Hook 改成事件加 Python 入口。只改后缀不够 |
-| `unknown field` 或重复键 | 删掉未知字段。JSON 不允许重复键，包括嵌套对象 |
-| `missing environment variable LLM_...` | 在 Home `.env`、`--env-file` 或进程环境中提供该变量 |
+| `Configuration file does not exist`、`Expected a configuration file`、`Invalid JSON` | 进程以退出码 1 结束，不监听端口。检查 `--config` 指向的文件。相对路径相对启动命令的工作目录 |
+| `unknown field` 或重复键 | 删掉未知字段。JSON 不允许重复键，包括嵌套对象。`schema_version` 只能是产品配置的 `3` 或插件清单的 `2` |
+| `missing environment variable LLM_...` | 在这次选中的环境文件或进程环境中提供该变量。传了 `--env-file` 用那份文件，否则用 Home `.env` |
 | `Port 127.0.0.1:8790 is occupied` | 改 `config.json` 的 `server.port`，或停掉占用进程。启动不会接管已有服务 |
-| 引擎未就绪 | 进程仍在。`/healthz` 为 200，`data.conversation.ready` 为 false。`/ready` 和对话返回 503。看标准错误里的 `DataAgent:` |
+| 引擎未就绪 | 配置文件已经读入，对话引擎没有起来。进程仍在。`/healthz` 为 200，`data.conversation.ready` 为 false。`/ready` 和对话返回 503。标准错误里有 `DataAgent:`，常见原因是模型环境变量还没填 |
 | `Another DataAgent backend owns this workspace` | 同一个 `stateDir` 已有后端持有 `backend.lock`。停掉它，或换 `DATAAGENT_HOME` |
 | `Expected a directory` | Home 下的 `skills`、`hooks`、`plugins` 或 `runtime` 被文件占用 |
 
@@ -33,7 +32,7 @@
 
 | 现象 | 处理 |
 | --- | --- |
-| TUI 连不上 | 无参数时连 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。先确认 `/healthz` 里 `conversation.ready` 为 true。只连接、不拉起时用 `--runtime-url`。主机可以是 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址 |
+| TUI 连不上 | 无参数时连 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。先确认 `/healthz` 里 `conversation.ready` 为 true。只连接、不拉起时用 `--runtime-url`。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。部署栈用 `./deploy.sh tui` |
 | 带 `--workspace` 等参数时端口已被占用 | 这些参数会再拉起一个后端。要连已有控制面就去掉它们，只运行 `npm run start:tui` |
 | MCP 发现失败 | 修正 `<home>/.mcp.json` 或插件 `.mcp.json` 后重启。发现失败时进程仍在，对话路径返回 503 |
 | 语义服务 TLS 失败 | `verify_server` 为 false 时不校验服务端证书。要校验时同时提供可达的 `ca_file`。客户端证书和私钥必须成对出现 |

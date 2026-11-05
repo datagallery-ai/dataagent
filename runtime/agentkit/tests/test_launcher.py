@@ -4,15 +4,12 @@ import socket
 import subprocess
 import sys
 import threading
-import time
-import urllib.error
-import urllib.request
 from uuid import uuid4
 
 import pytest
 from process_helpers import stop_child, wait_ready
 
-from serve.__main__ import check_port, runtime_url
+from serve.__main__ import _parser, _prepare, check_port, runtime_url
 from serve.sessions import workspace_lock
 
 
@@ -112,42 +109,64 @@ def test_real_backend_ready_and_graceful_cleanup(tmp_path):
         pass
 
 
-def test_missing_config_stays_up_without_an_engine(tmp_path):
-    port = 8790
+def _run_serve(tmp_path, *args):
+    """Start ``dataagent serve`` against an isolated Home and return when it exits."""
     log_path = tmp_path / "stderr.txt"
     log_file = log_path.open("w")
+    env = {**os.environ, "DATAAGENT_HOME": str(tmp_path / "home")}
+    for name in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
+        env.pop(name, None)
     child = subprocess.Popen(
-        [sys.executable, "-m", "serve", "serve", "--config", str(tmp_path / "missing.json")],
-        env=os.environ,
+        [sys.executable, "-m", "serve", "serve", *args],
+        env=env,
         stdout=subprocess.DEVNULL, stderr=log_file, start_new_session=True,
     )
     try:
-        deadline = time.monotonic() + 15
-        body = None
-        while time.monotonic() < deadline:
-            if child.poll() is not None:
-                log_file.flush()
-                pytest.fail(f"Backend exited {child.returncode}.\n{log_path.read_text()}")
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=0.5) as response:
-                    body = json.load(response)
-                break
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-                time.sleep(0.1)
-        else:
-            log_file.flush()
-            pytest.fail(f"healthz was not served.\n{log_path.read_text()}")
-        assert body["success"] is True
-        assert body["data"]["conversation"]["ready"] is False
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/ready", timeout=2)
-            pytest.fail("/ready succeeded while the engine was down")
-        except urllib.error.HTTPError as error:
-            assert error.code == 503
+            code = child.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            log_file.flush()
+            pytest.fail(f"Backend stayed up.\n{log_path.read_text()}")
+        log_file.flush()
+        return code, log_path.read_text()
     finally:
-        stop_child(child, process_group=True)
+        if child.poll() is None:
+            stop_child(child, process_group=True)
         log_file.close()
-    assert "DataAgent:" in log_path.read_text()
+
+
+def test_missing_config_exits_without_listening(tmp_path):
+    code, text = _run_serve(tmp_path, "--config", str(tmp_path / "missing.json"))
+    assert code == 1
+    assert "DataAgent:" in text
+    assert "Configuration file does not exist" in text
+    assert "missing.json" in text
+
+
+def test_invalid_config_exits_without_listening(tmp_path):
+    path = tmp_path / "broken.json"
+    path.write_text("{")
+    code, text = _run_serve(tmp_path, "--config", str(path))
+    assert code == 1
+    assert "DataAgent:" in text
+    assert "Invalid JSON" in text
+
+
+def test_loaded_config_without_model_env_stays_unready(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
+    for name in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    assert _prepare(_parser().parse_args(["serve"])) is None
+    assert "missing environment variable" in capsys.readouterr().err
+
+
+def test_serve_config_comes_only_from_the_flag():
+    serve = _parser().parse_args(["serve"])
+    a2a = _parser().parse_args(["serve-a2a"])
+    chosen = _parser().parse_args(["serve", "--config", "/tmp/chosen.json"])
+    assert serve.config is None
+    assert a2a.config is None
+    assert chosen.config == "/tmp/chosen.json"
 
 
 def test_backend_entrypoints_share_serve_module():

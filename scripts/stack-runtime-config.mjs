@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { httpOrigin, readServerListen } from "./server-listen.mjs";
 
 function port(value, fallback, name) {
@@ -9,14 +9,28 @@ function port(value, fallback, name) {
   return String(parsed);
 }
 
+function configPathFromArgs(args) {
+  let configPath;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== "--config") continue;
+    const value = args[index + 1];
+    if (value == null || value.startsWith("-")) throw new Error("--config requires a value");
+    index += 1;
+    configPath = resolve(value.trim());
+  }
+  return configPath;
+}
+
 export function resolveStackRuntimeConfig(env = process.env, args = []) {
-  const listen = readServerListen(env);
+  const configPath = configPathFromArgs(args);
+  const listen = readServerListen(env, configPath);
   const web = webListen(args);
   return {
     apiHost: listen.host,
     apiPort: listen.port,
     webHost: web.host,
-    webPort: web.port
+    webPort: web.port,
+    configPath,
   };
 }
 
@@ -36,11 +50,12 @@ function webListen(args) {
   return { host, port: port(overrides.port, 3000, "--web-port") };
 }
 
-export function pythonControlPlaneLaunch(root, env, reload = false) {
+export function pythonControlPlaneLaunch(root, env, reload = false, configPath) {
   return {
     command: "uv",
     args: [
       "run", "--project", join(root, "runtime/agentkit"), "dataagent", "serve",
+      ...(configPath ? ["--config", configPath] : []),
       ...(reload ? ["--reload"] : []),
     ],
     env,

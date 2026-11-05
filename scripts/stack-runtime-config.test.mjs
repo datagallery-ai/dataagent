@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { readServerListen } from "./server-listen.mjs";
 import { controlPlaneIsRunning, ensurePythonEnvironment, PYTHON_ENVIRONMENT_SYNC, pythonEnvironmentSyncCommand } from "./stack-runner.mjs";
 import {
   formatStackEndpoints,
@@ -35,13 +36,20 @@ test("web launch passes host and port only as next arguments", () => {
 });
 
 test("prints actual configured endpoints", () => {
-  const config = resolveStackRuntimeConfig({
-    DATAAGENT_HOME: "/no/such/dataagent-home",
-    DATAAGENT_CONFIG: new URL("./fixtures/server-listen.json", import.meta.url).pathname,
-  }, ["--web-port", "3310"]);
-  const output = formatStackEndpoints(config, { startApi: true, startWeb: true });
-  assert.match(output, /http:\/\/0\.0\.0\.0:8877/);
-  assert.match(output, /http:\/\/127\.0\.0\.1:3310/);
+  const home = mkdtempSync(join(tmpdir(), "dataagent-listen-"));
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    server: { host: "0.0.0.0", port: 8877 },
+  }));
+  try {
+    const config = resolveStackRuntimeConfig({
+      DATAAGENT_HOME: home,
+    }, ["--web-port", "3310"]);
+    const output = formatStackEndpoints(config, { startApi: true, startWeb: true });
+    assert.match(output, /http:\/\/0\.0\.0\.0:8877/);
+    assert.match(output, /http:\/\/127\.0\.0\.1:3310/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("rejects invalid ports", () => {
@@ -130,14 +138,74 @@ test("dev and start:api both default the API to loopback", () => {
   assert.deepEqual(manualReload.args.slice(-3), ["dataagent", "serve", "--reload"]);
 });
 
+test("--config replaces Home server and is passed to dataagent serve", () => {
+  const home = mkdtempSync(join(tmpdir(), "dataagent-listen-"));
+  const selected = join(home, "selected.json");
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    server: { host: "10.1.2.3", port: 1 },
+  }));
+  writeFileSync(selected, JSON.stringify({
+    server: { host: "0.0.0.0", port: 8877 },
+  }));
+  const env = { DATAAGENT_HOME: home };
+  try {
+    const config = resolveStackRuntimeConfig(env, ["--config", selected]);
+    const startApi = pythonControlPlaneLaunch("/repo", env, false, config.configPath);
+    assert.equal(config.apiHost, "0.0.0.0");
+    assert.equal(config.apiPort, "8877");
+    assert.deepEqual(startApi.args.slice(-4), ["dataagent", "serve", "--config", selected]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+  assert.throws(() => resolveStackRuntimeConfig({}, ["--config"]), /--config requires a value/);
+});
+
+test("start anchors a relative --config to the caller before the stack cwd changes", () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), "df-caller-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "df-repo-")));
+  const selected = join(outside, "team.json");
+  writeFileSync(selected, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
+  const previous = process.cwd();
+  try {
+    process.chdir(outside);
+    const config = resolveStackRuntimeConfig({}, ["--api", "--config", "team.json"]);
+    assert.equal(config.configPath, selected);
+    assert.equal(config.apiPort, "8877");
+    process.chdir(repo);
+    const launch = pythonControlPlaneLaunch(repo, {}, false, config.configPath);
+    assert.deepEqual(launch.args.slice(-2), ["--config", selected]);
+    assert.equal(readServerListen({}, config.configPath).port, "8877");
+    writeFileSync(join(repo, "team.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
+    assert.equal(readServerListen({}, "team.json").port, "1");
+    assert.equal(readServerListen({}, config.configPath).port, "8877");
+  } finally {
+    process.chdir(previous);
+    rmSync(outside, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("server.host and server.port come from config.json", () => {
-  const env = {
-    DATAAGENT_HOME: "/no/such/dataagent-home",
-    DATAAGENT_CONFIG: new URL("./fixtures/server-listen.json", import.meta.url).pathname,
-  };
-  const dev = resolveStackRuntimeConfig(env);
-  const startApi = pythonControlPlaneLaunch("/repo", env);
-  assert.equal(dev.apiHost, "0.0.0.0");
-  assert.equal(dev.apiPort, "8877");
-  assert.equal(startApi.env.DATAAGENT_CONFIG, env.DATAAGENT_CONFIG);
+  const home = mkdtempSync(join(tmpdir(), "dataagent-listen-"));
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    server: { host: "0.0.0.0", port: 8877 },
+  }));
+  const env = { DATAAGENT_HOME: home };
+  try {
+    const dev = resolveStackRuntimeConfig(env);
+    const startApi = pythonControlPlaneLaunch("/repo", env);
+    assert.equal(dev.apiHost, "0.0.0.0");
+    assert.equal(dev.apiPort, "8877");
+    assert.equal(webLaunch(dev).env.API_PROXY_TARGET, "http://0.0.0.0:8877");
+    writeFileSync(join(home, "config.json"), JSON.stringify({
+      server: { host: "::", port: 8877 },
+    }));
+    const ipv6 = resolveStackRuntimeConfig(env);
+    assert.equal(webLaunch(ipv6).env.API_PROXY_TARGET, "http://[::]:8877");
+    assert.match(formatStackEndpoints(ipv6, { startApi: true, startWeb: false, tuiReady: false }), /http:\/\/\[::\]:8877/);
+    assert.equal(startApi.env, env);
+    assert.deepEqual(startApi.args.slice(-2), ["dataagent", "serve"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

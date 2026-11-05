@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { writeServerListen } from "./server-listen.mjs";
+import { readServerListen, writeServerListen } from "./server-listen.mjs";
 
 const agentkit = fileURLToPath(new URL("../runtime/agentkit", import.meta.url));
 
@@ -45,6 +45,31 @@ function loadPrimaryModel(home) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
 }
+
+test("listen address comes from Home config.json", () => {
+  const home = tempHome();
+  try {
+    writeFileSync(join(home, "config.json"), JSON.stringify({
+      server: { host: "0.0.0.0", port: 8877 },
+    }));
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }), {
+      host: "0.0.0.0",
+      port: "8877",
+    });
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: "" }), {
+      host: "127.0.0.1",
+      port: "8790",
+    });
+    const selected = join(home, "selected.json");
+    writeFileSync(selected, JSON.stringify({ plugins: { enabled: [] } }));
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }, selected), {
+      host: "127.0.0.1",
+      port: "8790",
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("a new Home gets the full template and can load its model", () => {
   const home = tempHome();
