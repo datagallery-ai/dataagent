@@ -73,9 +73,9 @@ CORE_REQUIRED_INPUTS = (
     "step3_6_model_report.json",
 )
 LEGACY_LINEAGE_INPUTS = (
-    "step2_3_feature_derivation.md",
+    "step2_2_feature_derivation.md",
 )
-DEPLOYMENT_FEATURE_CONTRACT = "step2_3_deployment_feature_contract.json"
+DEPLOYMENT_FEATURE_CONTRACT = "step2_2_deployment_feature_contract.json"
 
 FORBIDDEN_SQL_PATTERNS = (
     (re.compile(r"\bWITH\b", re.I), "CTE/WITH"),
@@ -707,8 +707,7 @@ def _sql_scan_boundaries(sql: str, end: int) -> tuple[int, list[tuple[int, int]]
 
 def _aggregation_alias_expressions() -> tuple[dict[str, str], str | None]:
     candidates = (
-        "step2_3_feature_aggregation_expanded.sql",
-        "step2_3_feature_aggregation.sql",
+        "step2_2_feature_aggregation_expanded.sql",
     )
     path = next((OUTPUT_DIR / name for name in candidates if (OUTPUT_DIR / name).is_file()), None)
     if path is None:
@@ -837,7 +836,7 @@ def normalize_feature_derivation(
     contract: RuntimeContract,
     high_cardinality_check: dict[str, Any],
 ) -> dict[str, Any]:
-    markdown_path = OUTPUT_DIR / "step2_3_feature_derivation.md"
+    markdown_path = OUTPUT_DIR / "step2_2_feature_derivation.md"
     markdown = markdown_path.read_text(encoding="utf-8-sig")
     lines = markdown.splitlines()
     known_tables = list(contract.table_columns)
@@ -1028,7 +1027,7 @@ def normalize_feature_derivation(
 
     normalized = {
         "version": 1,
-        "source": "step2_3_feature_derivation.md",
+        "source": "step2_2_feature_derivation.md",
         "aggregation_sql_source": aggregation_source,
         "entity": {
             "base_table": contract.user_table,
@@ -1142,7 +1141,7 @@ def load_deployment_feature_contract(
     errors: list[str] = []
     if deployment.get("contract_version") != 1:
         errors.append("contract_version must equal 1")
-    if deployment.get("source_artifact") != "step2_3_feature_aggregation_expanded.sql":
+    if deployment.get("source_artifact") != "step2_2_feature_aggregation_expanded.sql":
         errors.append("source_artifact must identify the Step2 expanded SQL")
     validation = _structural_validation(deployment)
     if validation.get("passed") is not True:
@@ -3404,15 +3403,9 @@ def main() -> None:
     _ensure_executed_generator_artifact()
     contract = load_runtime_contract()
     generator_provenance = _generator_provenance()
-    high_cardinality_path = OUTPUT_DIR / "step2_3_high_cardinality_check.json"
-    high_cardinality_check = (
-        _read_json(
-            "step2_3_high_cardinality_check.json",
-            allow_safe_repairs=True,
-        )
-        if high_cardinality_path.is_file()
-        else {"status": "not_transferred_when_deployment_contract_is_available"}
-    )
+    high_cardinality_check = {
+        "status": "not_transferred_when_deployment_contract_is_available"
+    }
     upstream_reports = {
         "lightgbm_teacher": _read_json("step3_4_model_report.json"),
         "decision_tree": _read_json("step3_5_model_report.json"),
@@ -3427,7 +3420,7 @@ def main() -> None:
     else:
         if (OUTPUT_DIR / DEPLOYMENT_FEATURE_CONTRACT).is_file():
             INPUT_NORMALIZATION_WARNINGS.append(
-                "step2_3_deployment_feature_contract.json: structural validation "
+                "step2_2_deployment_feature_contract.json: structural validation "
                 "did not pass; used legacy lineage fallback"
             )
         lineage = normalize_feature_derivation(contract, high_cardinality_check)

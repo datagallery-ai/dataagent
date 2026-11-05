@@ -1,0 +1,39 @@
+# 特征工程（feature_engineer）场景绑定。
+# 只保留 feature_engineer 脚本实际读取的键；采样策略在 skill/user_sampling/config.yaml，不在本文件。
+# 换场景只改本文件的值，不要把业务表名/列名写进 Skill 正文或 scripts/*.sql。
+
+scene_id: game_user_targeting
+
+# 运行时以 step1 schema 的 column_aliases.user_id_columns 为准；此处仅场景缺省别名。
+# 读取方：step2_0_0_generate_schema.py
+user_id_aliases:
+  - usid
+  - rank_flg
+  - dsid
+
+# 实体键列：step2_0 用它回填 schema_resolution.entity_key。
+# 读取方：step2_0_2_generate_schema.py
+entity:
+  key_column: game_id
+
+# 标签列别名：step2_0 推断 <label> 列时使用。
+# 读取方：step2_0_0_generate_schema.py
+sampling:
+  prelabeled:
+    label_column_aliases:
+      - label
+
+# 地理列：宽表与最终 CSV 只允许保留 {col}_tier，地理原列必须改写为分级列（防过拟合）。
+# 读取方：step2_2_city_tier_sql.py（生成分级 CASE 与校验匹配 SQL）、step2_2_validation.sql 门禁
+geo_columns:
+  name_patterns:
+    - city
+    - city_name
+    - reside_city
+    - user_city
+  name_contains:
+    - 城市
+  exclude_patterns:
+    - cityhash
+    - hash_city
+  output_suffix: _tier

@@ -1,5 +1,5 @@
--- step2_2: 清洗结果完整性门禁（单条 SELECT）
--- 本文件必须在 cleaning_report 与 wide_cleaned 两个 CREATE 完成后独立提交。
+-- step2_2: 聚合宽表用户键门禁（单条 SELECT）
+-- 本文件必须在 step2_2_wide_aggregated CREATE 完成后独立提交。
 
 SELECT
     count() AS n_rows,
@@ -7,30 +7,55 @@ SELECT
     count() = uniqExact(<user_id>) AS user_key_unique,
     (
         SELECT count()
-        FROM {{output_database}}.step2_2_cleaning_report
-    ) AS profiled_columns,
-    (
-        SELECT count()
-        FROM system.columns
-        WHERE database = '{{output_database}}'
-          AND table = 'step2_1_wide_simple'
-    ) AS expected_columns,
-    profiled_columns = expected_columns AS column_coverage_ok
-FROM {{output_database}}.step2_2_wide_cleaned;
+        FROM {{output_database}}.step2_1_wide_joined
+    ) AS expected_rows,
+    n_rows = expected_rows AS row_count_unchanged
+FROM {{output_database}}.step2_2_wide_aggregated
+FORMAT JSON;
 
--- step2_2 清洗决策正确性门禁（独立提交，单条 SELECT）
--- ⛔ 高缺失率字段残留检测：查出 cleaning_report 中 recommendation='KEEP' 但 null_rate > 50 的字段。
--- null_rate 存储为百分比数值（0-100 范围，50 = 50%），不是 0-1 比例。
--- cleaning_report 的数据来自 step2_0_column_profile（预计算结果），不存在"抽样误差"问题。
--- 如果返回任何行，说明 cleaning_report.sql 中的 CASE WHEN 被绕过（直接写了字符串字面量 'KEEP'）。
--- 必须回退修正 cleaning_report.sql，重新建表。
+-- step2_2 字符串高基数门禁（独立提交，单条 SELECT）
+-- 检查 step2_2_wide_aggregated 中是否残留未转换的 String / Nullable(String)。
+-- LowCardinality(String) 是允许的落点（版本等非数值分类）。地理原列不行：必须只留 *_tier。
+-- 门禁改为返回 countIf 计数：始终返回单行 JSON，命中列数为 0 才通过，
+-- 避免「预期无结果」查询返回空结果集触发非 JSON 误报（0916 step2_2 门禁耗 57s）。
+--
+-- 占位符绑定规范：本模板的三个动态块只由 `step2_2_driver.py finalize` 绑定。
+-- **禁止手工 sed、禁止提交含 /*__...__*/ 的版本**。
+--   /*__LIST_FIELD_NAMES__*/     = list_fields.txt 的带引号字段列表
+--   /*__ALLOWED_STRING_COLUMNS__*/ = 物理 schema 中全部 String 列（本查询的放行清单）
+--
+-- 放行清单语义：`AND name NOT IN (...)` 里的列不触发门禁（1:1/维度表字符串列原样透传）。
+-- 宽表新产出的派生 String 列（如 `{n_to_one_table}_<col>`）不在清单内，必须先经
+-- `string_cast_plan.txt` 采样转换，否则本查询会命中它。
 
 SELECT
-    feature AS column_name,
-    null_rate,
-    recommendation,
-    'ERROR: null_rate > 50 but KEEP — CASE WHEN bypassed, likely hard-coded string literal' AS diagnosis
-FROM {{output_database}}.step2_2_cleaning_report
-WHERE recommendation = 'KEEP'
-  AND null_rate > 50
-FORMAT TSVWithNames;
+    countIf(name IN (/*__LIST_FIELD_NAMES__*/)) AS n_list_fields_leaked,
+    countIf(
+        name NOT IN (/*__LIST_FIELD_NAMES__*/)
+        AND (
+            type IN ('String', 'Nullable(String)')
+            OR (
+                position(type, 'String') > 0
+                AND position(type, 'LowCardinality') = 0
+            )
+        )
+    ) AS n_unconverted_string_columns
+FROM <catalog_columns>
+WHERE database = '{{output_database}}'
+  AND table = 'step2_2_wide_aggregated'
+  AND name NOT IN (/*__ALLOWED_STRING_COLUMNS__*/)
+FORMAT JSON;
+
+-- step2_2 地理原列门禁（独立提交，单条 SELECT）
+-- step2_2_wide_aggregated / 最终 CSV 只允许 {col}_tier。
+-- 列名匹配规则只存在于 references/scene.yaml 的 geo_columns；本模板禁止写死场景列名。
+-- /*__GEO_COLUMN_MATCH__*/ 由 `step2_2_driver.py finalize` 调用
+-- `step2_2_city_tier_sql.py --geo-match-sql` 绑定，**禁止手工替换**。
+-- 门禁改为返回 countIf 计数：始终返回单行 JSON，泄漏列数为 0 才通过。
+
+SELECT
+    countIf(name NOT LIKE '%_tier' AND (/*__GEO_COLUMN_MATCH__*/)) AS n_geo_columns_leaked
+FROM <catalog_columns>
+WHERE database = '{{output_database}}'
+  AND table = 'step2_2_wide_aggregated'
+FORMAT JSON;

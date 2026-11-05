@@ -58,10 +58,9 @@ decision_tree_scorecard_fusion
 ### Feature Engineering
 
 - `schema_resolution.json`
-- `step2_3_deployment_feature_contract.json`（新版首选且唯一需要流转的特征血缘输入）
-- `step2_3_feature_derivation.md`（契约缺失时的旧版兼容输入）
-- `step2_3_high_cardinality_check.json`（契约缺失时的旧版兼容输入）
-- `step2_3_feature_aggregation_expanded.sql` / `step2_3_feature_aggregation.sql`（旧版兼容时可选）
+- `step2_2_deployment_feature_contract.json`（新版首选且唯一需要流转的特征血缘输入）
+- `step2_2_feature_derivation.md`（契约缺失时的旧版兼容输入）
+- `step2_2_feature_aggregation_expanded.sql`（旧版兼容时可选）
 
 用途：
 
@@ -71,7 +70,7 @@ decision_tree_scorecard_fusion
   `relation_plans` 渲染；不得再从 Markdown 或 expanded SQL 猜测血缘。
 - 新版契约按物理 SQL scope 记录多表 JOIN，因此不得把多个 `source_tables` 推断成
   `UNION ALL`，也不得改写契约中的 alias。
-- 新版契约不存在或结构检查未通过时，将 `step2_3_feature_derivation.md` 标准化为
+- 新版契约不存在或结构检查未通过时，将 `step2_2_feature_derivation.md` 标准化为
   `step2_3_feature_derivation.json`，并按 expanded SQL → Schema/schema_resolution → Markdown
   的旧版权威顺序兼容历史轨迹。不得根据常识补造表、字段或表达式。
 

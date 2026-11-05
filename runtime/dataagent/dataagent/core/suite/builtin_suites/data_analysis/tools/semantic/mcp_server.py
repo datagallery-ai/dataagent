@@ -4,7 +4,9 @@ import json
 import sys
 from typing import Any
 
-from dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.client import semantic_retrieve
+from dataagent.core.suite.builtin_suites.data_analysis.tools.semantic.client import (
+    semantic_retrieve,
+)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 SERVER_NAME = "data-analysis-semantic"
@@ -66,10 +68,13 @@ def _handle_request(payload: dict[str, Any]) -> dict[str, Any] | None:
     if method == "tools/call":
         tool_name = str(params.get("name") or "").strip()
         arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-        if tool_name != "semantic_retrieve":
+        if tool_name == "semantic_retrieve":
+            handler_args = (str(arguments.get("query") or ""),)
+            handler = semantic_retrieve
+        else:
             return _error(request_id, f"unknown tool: {tool_name or '<empty>'}")
         try:
-            bundle = semantic_retrieve(str(arguments.get("query") or ""))
+            bundle = handler(*handler_args)
             encoded = json.dumps(bundle, ensure_ascii=False)
             return _response(
                 request_id,

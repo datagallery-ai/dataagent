@@ -23,6 +23,7 @@ dependencies = [
     "pydantic==2.12.5",
     "PyYAML==6.0.2",
     "jieba>=0.42.1",
+    "pypinyin>=0.53.0",
     # ---- tools/skills ----
     "matplotlib==3.10.1",
     # ---- 数据库驱动（核心 Agent / NL2SQL 等共用） ----
