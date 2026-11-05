@@ -153,6 +153,23 @@ class CheckContext:
         """反引号包裹列名（已包裹的不重复包裹）。"""
         return field_name if field_name.startswith("`") else f"`{field_name}`"
 
+    def _column_type(self, field_name: str) -> str:
+        """查字段类型（**大小写不敏感**）。
+
+        DDL / semantic 层返回的列名大小写不统一（``UDID`` vs ``udid``），
+        而 INSERT 投影里的别名是另一种大小写 —— 精确匹配会漏掉类型，
+        静默退回 ``IS NOT NULL``，让 STRING 字段的空串被算成「非空」。
+        """
+        types = self.column_types
+        declared = types.get(field_name)
+        if declared is None:
+            lowered = field_name.lower()
+            for key, value in types.items():
+                if key.lower() == lowered:
+                    declared = value
+                    break
+        return (declared or "").lower()
+
     def is_string_field(self, field_name: str) -> bool:
         """字段是否按 **STRING** 存储。
 
@@ -160,9 +177,11 @@ class CheckContext:
         数值/时间戳等非字符串存储则用 ``IS NOT NULL``。
         类型未知（没拿到 DDL）时按非字符串处理 —— ``IS NOT NULL`` 对所有类型都成立，
         比误用 IsEmpty 安全。
+
+        ``varchar(n)`` / ``char(n)`` 也算字符串存储 —— 它们同样是变长/定长字符串，
+        空串必须参与「非空率」统计。
         """
-        declared = self.column_types.get(field_name, "")
-        return declared.startswith("string")
+        return self._column_type(field_name).startswith(("string", "varchar", "char"))
 
     def is_ratio_field(self, field_name: str) -> bool:
         """判断字段是否属于「比率类」（只对这些字段做异常值占比校验）。
@@ -640,6 +659,31 @@ def _find_ddl_in_workspace(runtime: Any) -> str:
                 except OSError:
                     return ""
     return ""
+
+
+def _column_types_for_table(runtime: Any, target_table: str) -> dict[str, str]:
+    """从 workspace 的 DDL 里取**指定那张表**的列类型。
+
+    直连真实目标表时，workspace 里的 ``create_*.sql`` 可能是**另一张表**的
+    （比如 agent 这次只交付了 DML，或者同时交付了多张表的 DDL）。拿别表的类型
+    套到目标表的同名列上，会把 STRING 列当成数值列 —— 判空口径直接错
+    （STRING 要用 ``bicoredata.IsEmpty``，空串才算空）。
+
+    所以这里只在 **DDL 的表名与目标表一致**时才采用它的类型；否则返回空 dict，
+    调用方退回 ``IS NOT NULL``（对所有类型都成立，比用错类型安全）。
+    """
+    ddl_sql = _find_ddl_in_workspace(runtime)
+    if not ddl_sql:
+        return {}
+    # 延迟导入避免循环依赖（dataops_table_schema → dataops_quality_check）。
+    from dataagent.actions.tools.local_tool.dataops_table_schema import (
+        extract_ddl_target_table,
+    )
+
+    ddl_table = extract_ddl_target_table(ddl_sql)
+    if not ddl_table or ddl_table.lower() != str(target_table or "").lower():
+        return {}
+    return parse_ddl_column_types(ddl_sql)
 
 
 # ============================================================================
@@ -1369,11 +1413,15 @@ async def run_quality_check(
     direct_table: str | None = None,
     partition_filter: str | None = None,
     row_limit: int = 0,
+    fields: list[str] | None = None,
+    column_types: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """对 INSERT 落地的表跑一轮数据正确性校验。
 
     **契约（两条链路共用，务必保持）：**
     - 只校验 INSERT 类 SQL；CREATE / SELECT / 空 SQL 一律返回 ``None``（跳过）。
+      —— 唯一的例外：调用方**显式传了** ``fields``（独立数据验证从 DDL /
+      semantic 层解析到的字段），此时不要求 SQL 是 INSERT。
     - 失败（阈值超标、执行报错、超时）都只体现在返回值里，**不抛异常**，
       **不会**让调用方的 ``passed`` 翻成 False。
     - 临时表模式下，调用方必须在临时表被 DROP **之前**调用本函数。
@@ -1399,6 +1447,11 @@ async def run_quality_check(
         row_limit: 试算写入时的行数上限（> 0 表示临时表只写了前 N 行）。
             传这个值时，数据行数只是**下界**（真实数据可能更多），结果里会
             带上 ``row_count_truncated`` 标记，报告里也会注明。
+        fields: **显式指定**要校验的字段。非空时用它替代从 SQL 解析的字段
+            （独立数据验证从 DDL / semantic 层拿到字段的场景）。
+        column_types: 字段类型映射（``{字段名: 小写类型}``）。决定判空写法 ——
+            STRING 用 ``bicoredata.IsEmpty``，数值类用 ``IS NOT NULL``。
+            为 ``None`` 时回退到从 workspace 的 DDL 里读。
 
     Returns:
         ``None`` 表示跳过；否则返回
@@ -1415,6 +1468,8 @@ async def run_quality_check(
             direct_table=direct_table,
             partition_filter=partition_filter,
             row_limit=row_limit,
+            fields=fields,
+            column_types=column_types,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[quality_check] unexpected failure (ignored): {exc}")
@@ -1431,11 +1486,19 @@ async def _run_quality_check_impl(
     direct_table: str | None = None,
     partition_filter: str | None = None,
     row_limit: int = 0,
+    fields: list[str] | None = None,
+    column_types: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if not config.enabled:
         logger.debug("[quality_check] disabled by config")
         return None
-    if not _is_insert_sql(sql or ""):
+    # ``fields is not None`` 表示「调用方已经自己解析好字段了」（DDL / semantic /
+    # DML 三条来源）—— 此时**不再要求 SQL 是 INSERT**。
+    #
+    # 注意：空的字段列表（``[]``）也算「显式指定」—— 只有表级校验项（数据行数）
+    # 在启用时，字段一个都没有也应该能跑。
+    explicit_fields = list(fields) if fields is not None else None
+    if explicit_fields is None and not _is_insert_sql(sql or ""):
         return None
 
     runtime = _tool_context.runtime
@@ -1483,25 +1546,38 @@ async def _run_quality_check_impl(
         filter_expr = ""
 
     checkers = config.checkers
-    fields = _extract_fields_from_insert_sql(sql, config.exclude_fields)
+    # 字段来源：显式传入（DDL / semantic 层解析）优先于从 INSERT 投影解析。
+    if explicit_fields is not None:
+        resolved_fields = list(explicit_fields)
+    else:
+        resolved_fields = _extract_fields_from_insert_sql(sql, config.exclude_fields)
     # 表级 checker（数据行数）不依赖字段 —— 字段解析不出来时它仍然可以跑。
-    if not fields and not any(c.scope == _SCOPE_TABLE for c in checkers):
-        logger.debug("[quality_check] skipped: no checkable fields in INSERT")
+    if not resolved_fields and not any(c.scope == _SCOPE_TABLE for c in checkers):
+        logger.debug("[quality_check] skipped: no checkable fields")
         return None
 
-    # 字段类型来自交付的 DDL —— 决定判空写法（STRING 用 bicoredata.IsEmpty，
-    # 数值等用 IS NOT NULL）。读不到就退回 IS NOT NULL。
-    column_types = parse_ddl_column_types(_find_ddl_in_workspace(runtime))
+    # 字段类型决定判空写法（STRING 用 bicoredata.IsEmpty，数值等用 IS NOT NULL）。
+    # 优先级：显式传入 > 交付的 DDL > 读不到（退回 IS NOT NULL）。
+    if column_types is not None:
+        resolved_column_types = dict(column_types)
+    elif direct_table:
+        # 直连模式：workspace 里的 DDL **可能是另一张表的** —— 拿它的类型套到
+        # 目标表的同名列上，会把 STRING 列判成数值（判空口径直接错）。
+        # 所以只认「表名对得上」的那份 DDL。
+        resolved_column_types = _column_types_for_table(runtime, direct_table)
+    else:
+        # 临时表模式：临时表就是按 workspace 的 DDL 建的，那份 DDL 是权威来源。
+        resolved_column_types = parse_ddl_column_types(_find_ddl_in_workspace(runtime))
     statements = build_quality_check_sqls(
         temp_table=target_table,
-        fields=fields,
+        fields=resolved_fields,
         partition_col=config.partition_col,
         partition_date=pt_date,
         sample_size=config.sample_size,
         checkers=checkers,
         ratio_fields=config.ratio_fields,
         ratio_field_patterns=config.ratio_field_patterns,
-        column_types=column_types,
+        column_types=resolved_column_types,
         partition_filter=filter_expr or None,
     )
     if not statements:
@@ -1564,7 +1640,7 @@ async def _run_quality_check_impl(
         if checker is None:  # pragma: no cover - 理论上不会发生
             continue
         parsed_results.append(
-            (checker_name, parse_checker_result(result, checker, fields, config))
+            (checker_name, parse_checker_result(result, checker, resolved_fields, config))
         )
 
     if not parsed_results:
@@ -1579,7 +1655,7 @@ async def _run_quality_check_impl(
             or "no check completed",
         )
 
-    merged = merge_checker_results(parsed_results, fields, config, checkers)
+    merged = merge_checker_results(parsed_results, resolved_fields, config, checkers)
 
     # 失败的 checker 覆盖到的字段，其对应指标是「未知」而不是「不适用」——
     # 单独记一份，供渲染时把状态列标成「未完成」，避免读成「查过了，通过」。
@@ -1591,7 +1667,7 @@ async def _run_quality_check_impl(
         if checker.scope == _SCOPE_TABLE:
             # 表级指标不挂在字段上 —— 它失败就是「整表行数未知」。
             continue
-        for field_name in fields:
+        for field_name in resolved_fields:
             if checker.applies_to_field(field_name, config):
                 failed_metrics.setdefault(field_name, []).append(checker.metric_key)
 

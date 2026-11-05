@@ -16,9 +16,10 @@ The contracts under test:
 
 1. **Read-only** — the tool never creates/inserts/drops and never rewrites the
    target into a scratch table; it queries the *real* target table.
-2. **Graceful exit** — no SQL / non-INSERT SQL / unresolvable target table are
-   friendly skips, not exceptions and not raw error dumps.
-3. **Markdown table** — the metrics are rendered as a Markdown table that the
+2. **Graceful exit** — no input / unresolvable target table / unavailable schema
+   are friendly skips, not exceptions and not raw error dumps.
+3. **Three field sources** — DML projection, DDL column list, semantic metadata.
+4. **Markdown table** — the metrics are rendered as a Markdown table that the
    frontend can display directly.
 """
 
@@ -35,6 +36,12 @@ _INSERT_SQL = (
     "INSERT OVERWRITE TABLE biads.ads_user_profile_ds "
     "SELECT udid, app_dl_retention_ratio_1d_udid, pay_cnt_udid "
     "FROM dws.src WHERE pt_d = '20261020'"
+)
+
+_DDL_SQL = (
+    "CREATE TABLE biads.ads_user_profile_ds ("
+    "device_id STRING, app_dl_retention_ratio_1d_udid DOUBLE, pay_cnt_udid BIGINT"
+    ")"
 )
 
 
@@ -69,18 +76,18 @@ def _ok_result(**overrides):
 
 
 # ============================================================================
-# Graceful exit — no SQL
+# Graceful exit — no usable input
 # ============================================================================
 class TestGracefulExit:
     @pytest.mark.asyncio
-    async def test_no_sql_at_all_is_a_friendly_skip(self):
+    async def test_no_sql_and_no_table_is_a_friendly_skip(self):
         result = await tool.validate_data("", _tool_context=_ctx())
 
         assert result["data"]["skipped"] is True
         assert result["data"]["reason"] == "no_sql"
         assert result["data"]["ok"] is True
         # 必须是人话，不是异常堆栈
-        assert "未检测到可用的 INSERT 语句" in result["frontend_msg"]
+        assert "未检测到可用的校验输入" in result["frontend_msg"]
         assert "Traceback" not in result["frontend_msg"]
 
     @pytest.mark.asyncio
@@ -91,21 +98,13 @@ class TestGracefulExit:
         assert result["data"]["reason"] == "no_sql"
 
     @pytest.mark.asyncio
-    async def test_non_insert_sql_is_a_friendly_skip(self):
+    async def test_select_sql_without_target_table_is_a_friendly_skip(self):
+        """纯 SELECT 既没有目标表也没有字段 —— 友好跳过。"""
         result = await tool.validate_data("SELECT a, b FROM t", _tool_context=_ctx())
 
         assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "not_insert_sql"
-        assert "不是 INSERT 语句" in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_create_sql_is_a_friendly_skip(self):
-        result = await tool.validate_data(
-            "CREATE TABLE biads.x (a int)", _tool_context=_ctx()
-        )
-
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "not_insert_sql"
+        assert result["data"]["reason"] == "no_target_table"
+        assert "无法确定要校验的目标表" in result["frontend_msg"]
 
     @pytest.mark.asyncio
     async def test_insert_without_target_table_is_a_friendly_skip(self):
@@ -113,7 +112,7 @@ class TestGracefulExit:
 
         assert result["data"]["skipped"] is True
         assert result["data"]["reason"] == "no_target_table"
-        assert "无法从 INSERT 语句中解析出目标表" in result["frontend_msg"]
+        assert "无法确定要校验的目标表" in result["frontend_msg"]
 
     @pytest.mark.asyncio
     async def test_missing_sql_file_is_a_friendly_skip(self, tmp_path):
@@ -232,7 +231,7 @@ class TestDirectTargetValidation:
 
         assert result["data"]["skipped"] is True
         assert result["data"]["reason"] == "no_checkable_fields"
-        assert "无法从 INSERT 的 SELECT 投影中解析出可校验字段" in result["frontend_msg"]
+        assert "无法解析出可校验的字段" in result["frontend_msg"]
 
     @pytest.mark.asyncio
     async def test_table_level_checker_runs_without_parsed_fields(self):
@@ -281,6 +280,292 @@ class TestDirectTargetValidation:
 
         assert result["data"]["ok"] is False
         assert "partition condition not found" in result["frontend_msg"]
+
+
+# ============================================================================
+# Field sources — DML / DDL / semantic
+# ============================================================================
+class TestFieldSources:
+    @pytest.mark.asyncio
+    async def test_dml_projection_provides_fields(self):
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+
+        assert result["data"]["field_source"] == "dml"
+        assert captured["fields"] == [
+            "app_dl_retention_ratio_1d_udid",
+            "pay_cnt_udid",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_ddl_provides_fields_and_types(self):
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(_DDL_SQL, _tool_context=_ctx())
+
+        assert result["data"]["skipped"] is False
+        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
+        assert result["data"]["field_source"] == "ddl"
+        assert captured["fields"] == [
+            "device_id",
+            "app_dl_retention_ratio_1d_udid",
+            "pay_cnt_udid",
+        ]
+        assert captured["column_types"]["device_id"] == "string"
+        assert captured["column_types"]["pay_cnt_udid"] == "bigint"
+
+    @pytest.mark.asyncio
+    async def test_table_name_alone_uses_semantic_metadata(self):
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        semantic_fields = ["device_id", "pay_cnt_udid"]
+        semantic_types = {"device_id": "string", "pay_cnt_udid": "bigint"}
+
+        with (
+            patch.object(tool, "run_quality_check", _fake_run),
+            patch.object(
+                tool,
+                "fetch_semantic_columns",
+                return_value=(semantic_fields, semantic_types),
+            ),
+        ):
+            result = await tool.validate_data(
+                target_table="biads.ads_user_profile_ds", _tool_context=_ctx()
+            )
+
+        assert result["data"]["skipped"] is False
+        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
+        assert result["data"]["field_source"] == "semantic"
+        assert captured["fields"] == semantic_fields
+        assert captured["column_types"] == semantic_types
+        assert captured["direct_table"] == "biads.ads_user_profile_ds"
+
+    @pytest.mark.asyncio
+    async def test_semantic_unavailable_is_a_friendly_skip(self):
+        from dataagent.actions.tools.local_tool.dataops_table_schema import (
+            SchemaResolutionError,
+        )
+
+        with patch.object(
+            tool,
+            "fetch_semantic_columns",
+            side_effect=SchemaResolutionError("表 `x` 在元数据中不存在或没有字段。"),
+        ):
+            result = await tool.validate_data(
+                target_table="biads.missing_table", _tool_context=_ctx()
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "schema_unavailable"
+        assert "元数据中不存在" in result["frontend_msg"]
+        assert "Traceback" not in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_unexpected_semantic_exception_does_not_escape(self):
+        """semantic 抛非 SchemaResolutionError 的异常时，不能冒泡给调用方。
+
+        回归点：``except SchemaResolutionError`` 之外没有兜底，形态异常的
+        元数据会打穿工具的「永不抛异常」契约。
+        """
+        with patch.object(
+            tool,
+            "fetch_semantic_columns",
+            side_effect=RuntimeError("metavisor exploded"),
+        ):
+            result = await tool.validate_data(
+                target_table="biads.some_table", _tool_context=_ctx()
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "schema_unavailable"
+        assert "Traceback" not in result["frontend_msg"]
+        assert "metavisor exploded" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_resolution_failure_does_not_escape(self):
+        """解析阶段整体挂掉时，也要变成友好跳过而不是抛异常。"""
+        with patch.object(
+            tool,
+            "_resolve_target_and_fields",
+            side_effect=ValueError("bad input"),
+        ):
+            result = await tool.validate_data(
+                target_table="biads.some_table", _tool_context=_ctx()
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "resolution_failed"
+        assert "Traceback" not in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_excluded_fields_are_dropped(self):
+        """分区列 / 时间戳 / 主键 ID 不参与校验。"""
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        ddl = (
+            "CREATE TABLE biads.t ("
+            "device_id STRING, pt_d STRING, create_time TIMESTAMP, pay_cnt_udid BIGINT)"
+        )
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(ddl, _tool_context=_ctx())
+
+        assert result["data"]["skipped"] is False
+        assert captured["fields"] == ["device_id", "pay_cnt_udid"]
+
+    @pytest.mark.asyncio
+    async def test_empty_field_list_still_runs_table_level_checks(self):
+        """字段一个都没有时，表级校验项（数据行数）仍要能跑。
+
+        回归点：``fields=[]`` 曾被当成「没传字段」，导致整轮校验被跳过。
+        """
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result(table_metrics={"row_count": 42})
+
+        ctx = _ctx()
+        ctx.tool_config = {"checks": ["row_count"]}
+        with (
+            patch.object(tool, "run_quality_check", _fake_run),
+            patch.object(tool, "fetch_semantic_columns", return_value=([], {})),
+        ):
+            result = await tool.validate_data(
+                target_table="biads.ads_user_profile_ds", _tool_context=ctx
+            )
+
+        assert result["data"]["skipped"] is False
+        # 传的是**列表**（可能是空的），不是 None —— None 表示「字段由调用方自己解析」。
+        assert captured["fields"] == []
+
+    @pytest.mark.asyncio
+    async def test_ddl_with_bare_table_name_is_recognised_as_ddl(self):
+        """裸表名的 DDL 也要被识别为 DDL（不能误走 semantic 路径）。
+
+        回归点：``looks_like_ddl`` 曾要求表名带库名，导致裸表名 DDL 被丢掉。
+        """
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(
+                "CREATE TABLE ads_user_profile_ds (device_id STRING)",
+                target_table="biads.ads_user_profile_ds",
+                _tool_context=_ctx(),
+            )
+
+        assert result["data"]["skipped"] is False
+        assert result["data"]["field_source"] == "ddl"
+        assert captured["fields"] == ["device_id"]
+        assert captured["direct_table"] == "biads.ads_user_profile_ds"
+
+    @pytest.mark.asyncio
+    async def test_backtick_quoted_insert_target_is_normalised(self):
+        """反引号包裹的目标表要解析成 ``db.table``。
+
+        回归点：只 ``strip("`")`` 剥首尾的话，``\\`biads\\`.\\`ads_x\\``` 会留下
+        中间的反引号变成 ``biads`.`ads_x`` —— 拿这个名字去查表必然查不到。
+        """
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        sql = "INSERT OVERWRITE TABLE `biads`.`ads_user_profile_ds` SELECT device_id FROM src"
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(sql, _tool_context=_ctx())
+
+        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
+        assert captured["direct_table"] == "biads.ads_user_profile_ds"
+
+    @pytest.mark.asyncio
+    async def test_ddl_comment_mentioning_create_table_is_not_misdetected(self):
+        """注释里写 ``create table`` 不应把 INSERT 误判成 DDL。"""
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        sql = (
+            "-- create table biads.something\n"
+            "INSERT OVERWRITE TABLE biads.t SELECT device_id FROM src"
+        )
+        with patch.object(tool, "run_quality_check", _fake_run):
+            result = await tool.validate_data(sql, _tool_context=_ctx())
+
+        assert result["data"]["field_source"] == "dml"
+        assert captured["fields"] == ["device_id"]
+
+    @pytest.mark.asyncio
+    async def test_dml_path_enriches_types_from_semantic(self):
+        """DML 路径也去 semantic 补一次列类型 —— 判空写法的口径靠它。"""
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        with (
+            patch.object(tool, "run_quality_check", _fake_run),
+            patch.object(
+                tool,
+                "fetch_semantic_columns",
+                return_value=(["device_id"], {"device_id": "string"}),
+            ),
+        ):
+            await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+
+        assert captured["column_types"] == {"device_id": "string"}
+
+    @pytest.mark.asyncio
+    async def test_dml_path_degrades_gracefully_when_semantic_unavailable(self):
+        """semantic 查不到类型时不能抛异常 —— 降级成 None（退回 DDL / IS NOT NULL）。"""
+        from dataagent.actions.tools.local_tool.dataops_table_schema import (
+            SchemaResolutionError,
+        )
+
+        captured = {}
+
+        async def _fake_run(sql, **kwargs):
+            captured.update(kwargs)
+            return _ok_result()
+
+        with (
+            patch.object(tool, "run_quality_check", _fake_run),
+            patch.object(
+                tool,
+                "fetch_semantic_columns",
+                side_effect=SchemaResolutionError("查不到"),
+            ),
+        ):
+            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+
+        assert result["data"]["skipped"] is False
+        assert captured["column_types"] is None
 
 
 # ============================================================================
