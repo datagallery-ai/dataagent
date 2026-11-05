@@ -23,6 +23,7 @@ from utils.checks import _validate_ddl_comprehensive
 from utils.data_task_ir.core import get_ir_context
 from utils.data_task_ir.runtime import ir_enabled
 from utils.evidence import model_evidence
+from utils.schema_ddl import source_schemas_to_ddl
 
 
 def prepare_input(state, runtime, *, params):
@@ -74,10 +75,15 @@ def prepare_input(state, runtime, *, params):
     ir_context = get_ir_context(context) if ir_enabled(context) else ""
     if ir_context:
         evidence["data_task_ir"] = ir_context
+    join_relations = [
+        relation
+        for record in supporting if record.get("kind") == "joins"
+        for relation in record.get("payload", [])
+    ]
     return {
         "question": question,
-        "schema_str": json.dumps(
-            {table: schemas.get(table) for table in source_table}, ensure_ascii=False
+        "schema_str": source_schemas_to_ddl(
+            {table: schemas[table] for table in source_table}, join_relations
         ),
         "evidence": json.dumps(evidence, ensure_ascii=False),
         "sql_rules": rules + "\n只生成与目标 DDL 完全对应的一条 INSERT SQL。禁止执行 SQL。",
