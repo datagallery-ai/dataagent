@@ -1065,6 +1065,25 @@ def test_check_sql_allows_filtered_base_reads_inside_query_tree(sql: str) -> Non
     assert result.blocked is False
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id, (SELECT 1 FROM customers WHERE id = 1) FROM orders",
+        "SELECT o.id FROM orders o, (SELECT 1 AS x FROM customers WHERE id = 1) s",
+        "SELECT id FROM orders CROSS JOIN (SELECT 1 AS x FROM customers WHERE id = 1) s",
+        "SELECT id FROM orders o, (SELECT 1 FROM customers WHERE id = 1) s UNION ALL SELECT 1",
+    ],
+)
+def test_check_sql_rejects_outer_base_read_hidden_by_subquery_where(sql: str) -> None:
+    """A WHERE inside a subquery does not filter an outer base-table read."""
+    schema = {"orders": {"columns": {"id": {}}}, "customers": {"columns": {"id": {}}}}
+
+    result = check_sql(sql, dialect="postgres", schema=schema)
+
+    assert result.blocked is True
+    assert "RESOURCE-009" in [violation.rule_id for violation in result.violations]
+
+
 def test_flat_and_chain_is_resource_008() -> None:
     cond = " AND ".join(["1=1"] * 1200)
     result = check_sql(

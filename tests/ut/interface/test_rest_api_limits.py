@@ -29,9 +29,11 @@ from dataagent.interface.rest_api.middleware import (
     RestApiLimits,
     SecurityLimitsMiddleware,
     _client_ip,
+    _escape_log_field,
     load_rest_api_limits,
 )
 from dataagent.interface.rest_api.service import DataAgentService
+from dataagent.utils.log import logger
 
 
 async def _ok(request: Request) -> JSONResponse:
@@ -109,6 +111,29 @@ def _http_request(*, client: tuple[str, int] | None, forwarded_for: str | None =
             "server": ("test", 80),
         }
     )
+
+
+def test_access_log_escapes_control_characters_in_path():
+    """A decoded newline in the request path must stay inside one audit line."""
+    messages: list[str] = []
+    sink_id = logger.add(lambda message: messages.append(str(message)), format="{message}")
+    try:
+        middleware = SecurityLimitsMiddleware(lambda *_args, **_kwargs: None, limits=RestApiLimits())
+        middleware._log_access(
+            "req\nid",
+            "127.0.0.1",
+            "/api/\nFORGED\rrequest_id=fake",
+            JSONResponse({"ok": False}, status_code=404),
+            time.perf_counter(),
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert len(messages) == 1
+    assert "\n" not in messages[0].rstrip("\n")
+    assert r"/api/\nFORGED\rrequest_id=fake" in messages[0]
+    assert r"request_id=req\nid" in messages[0]
+    assert _escape_log_field("a\nb\rc\x00") == "a\\nb\\rc\\x00"
 
 
 def test_client_ip_uses_socket_peer_when_xff_absent():

@@ -165,7 +165,7 @@ async def get_data_agent_request(http_request: Request) -> OperationRequest:
         return _DATA_AGENT_REQUEST_ADAPTER.validate_python(payload)
     except ValidationError as exc:
         errors = []
-        for err in exc.errors():
+        for err in exc.errors(include_url=False):
             loc = err.get("loc", ())
             if not loc or loc[0] != "body":
                 err = {**err, "loc": ("body", *loc)}

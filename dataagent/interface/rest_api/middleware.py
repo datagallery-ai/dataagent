@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 import uuid
 from collections import defaultdict, deque
@@ -41,6 +42,7 @@ _DOWNSTREAM_EXECUTION_SCOPE_KEY = "dataagent_downstream_execution"
 _DOWNSTREAM_CANCEL_REQUESTED_KEY = "dataagent_downstream_cancel_requested"
 # Cap distinct peer IPs in the sliding window. Does not change the per-IP threshold.
 _MAX_RATE_LIMIT_CLIENTS = 4096
+_LOG_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 @dataclass(frozen=True)
@@ -296,9 +298,9 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
         """Emit a structured rest.access audit log line."""
         logger.info(
             "rest.access request_id={} ip={} path={} status={} elapsed_ms={:.1f}",
-            request_id,
-            client_ip,
-            path,
+            _escape_log_field(request_id),
+            _escape_log_field(client_ip),
+            _escape_log_field(path),
             getattr(response, "status_code", "-"),
             (time.perf_counter() - started) * 1000,
         )
@@ -394,6 +396,22 @@ class SecurityLimitsMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
             hits.append(now)
         return None
+
+
+def _escape_log_field(value: str) -> str:
+    """Render ASCII controls as visible escapes so one request cannot forge extra log lines."""
+
+    def replace(match: re.Match[str]) -> str:
+        char = match.group(0)
+        if char == "\n":
+            return "\\n"
+        if char == "\r":
+            return "\\r"
+        if char == "\t":
+            return "\\t"
+        return f"\\x{ord(char):02x}"
+
+    return _LOG_CONTROL_CHAR_RE.sub(replace, value)
 
 
 def _client_ip(request: Request) -> str:
