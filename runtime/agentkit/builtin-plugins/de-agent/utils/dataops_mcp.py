@@ -16,12 +16,13 @@ import json
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import timedelta
 from typing import Any
 
+import httpx
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
+from dataagent.model_stream import collect_model_stream
 from dataagent.models import ModelContext
 
 # Bound by the public tool for this invocation, isolated across concurrent sessions.
@@ -41,15 +42,14 @@ async def call_mcp(
         config.get("request_timeout_seconds", os.environ.get("DATAOPS_MCP_TIMEOUT", "300"))
     )
     headers = {"Authorization": auth} if auth else {}
-    async with streamablehttp_client(
-        url,
+    async with httpx.AsyncClient(
         headers=headers,
-        timeout=timedelta(seconds=timeout),
-        sse_read_timeout=timedelta(seconds=timeout),
-    ) as (read, write, _):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(name, arguments)
+        timeout=httpx.Timeout(timeout, read=timeout),
+    ) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(name, arguments)
     return normalize_mcp_result(result)
 
 
@@ -135,7 +135,7 @@ def getenv(name: str, default: str = "") -> str:
 
 
 async def invoke_model_text(model, messages) -> str:
-    response = await model.ainvoke(messages)
+    response = await collect_model_stream(model, messages)
     return response.content if isinstance(response.content, str) else response.text
 
 

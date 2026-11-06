@@ -29,6 +29,7 @@ from typing import Any
 
 from loguru import logger
 
+from dataagent.model_stream import collect_model_stream
 from dataagent.models import ModelContext
 
 _PROMPT_VERSION = "word-root-candidate-ranking-full-table-topk-v3"
@@ -631,7 +632,7 @@ async def _invoke_json(
     *,
     llm_call_params: dict[str, Any],
 ) -> dict[str, Any]:
-    response = await llm.ainvoke(messages, **llm_call_params)
+    response = await collect_model_stream(llm, messages, **llm_call_params)
     content = getattr(response, "content", response)
     return _parse_json_object(str(content))
 

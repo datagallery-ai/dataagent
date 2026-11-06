@@ -147,6 +147,9 @@ async def test_raw_tool_csv_matching_and_async_candidates(tmp_path):
         {"results": [{"query_id": "q2", "candidates": [{"id": "row-2", "score": 90}]}]}
     ))))
     ctx = context(tmp_path, {"csv_path": str(csv), "llm_call_params": {}})
+    async def stream(messages, **kwargs):
+        yield await model.ainvoke(messages, **kwargs)
+    model.astream = stream
     ctx.get_model = lambda name: model
     result = await tool([{"english_name": "user"}, {"english_name": "n123"},
                          {"english_name": "usr", "chinese_description": "用户"}], SimpleNamespace(context=ctx))

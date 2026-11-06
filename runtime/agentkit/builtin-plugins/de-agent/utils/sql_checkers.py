@@ -26,6 +26,7 @@ from typing import Any
 from uuid import uuid4
 
 from dataagent.errors import DataAgentError
+from dataagent.model_stream import collect_model_stream
 from dataagent.models import ModelContext
 from utils import dataops_validate_tool
 from utils.dataops_mcp import dataops_settings
@@ -367,7 +368,7 @@ class SQLCheckerPipeline:
 
     async def _invoke(self, prompt: str) -> tuple[str, dict[str, Any]]:
         llm = self.llm() if callable(self.llm) else self.llm
-        response = await llm.ainvoke(
+        response = await collect_model_stream(llm,
             [
                 {"role": "system", "content": _REPAIR_SYSTEM},
                 {"role": "user", "content": prompt},
