@@ -12,6 +12,8 @@
 # ============================================================================
 """UT: LLMConfig construction helpers (no live LLM calls)."""
 
+import pytest
+
 from dataagent.core.managers.llm_manager import LLMConfig
 
 
@@ -49,3 +51,9 @@ def test_llm_config_from_dict():
     assert config.model_type == "chat"
     assert config.client_kwargs["base_url"] == "https://api.openai.com/v1"
     assert config.client_kwargs["temperature"] == 0.5
+
+
+def test_llm_config_rejects_unknown_model_type_with_the_given_value():
+    """非法 model_type 的错误信息写出传入值，而不是内置 type。"""
+    with pytest.raises(ValueError, match="不支持的模型类型: rerank，支持的类型为: chat, embedding"):
+        LLMConfig(name="x", provider="openai", model_type="rerank")  # type: ignore[arg-type]

@@ -324,6 +324,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         workers=args.workers,
+        server_header=False,
         **ssl_kwargs,
     )
 

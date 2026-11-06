@@ -199,6 +199,16 @@ def test_operation_endpoint_rejects_unknown_type(client: TestClient) -> None:
     assert response.status_code == 422
     detail = response.json()["detail"][0]
     assert detail["type"] == "union_tag_invalid"
+    assert "url" not in detail
+    assert "errors.pydantic.dev" not in response.text
+
+
+def test_legacy_query_validation_error_omits_pydantic_error_url(client: TestClient) -> None:
+    """Original /query validation stays free of the Pydantic error URL."""
+    response = client.post(LEGACY_QUERY_PATH, json={})
+
+    assert response.status_code == 422
+    assert "errors.pydantic.dev" not in response.text
 
 
 def test_query_endpoint_rejects_legacy_field_names(client: TestClient) -> None:

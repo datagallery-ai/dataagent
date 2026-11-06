@@ -245,6 +245,26 @@ def test_parse_args_and_main_publish_the_route_table(tmp_path: Path, monkeypatch
     assert set(table.routes) == {"business_twin", "traffic_insight"}
 
 
+def test_main_omits_uvicorn_server_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The REST process must not advertise its ASGI server name."""
+    business = _scene(tmp_path, "business_twin")
+    monkeypatch.setattr(sys, "argv", ["dataagent", "--config", f"business_twin={business}"])
+    monkeypatch.setattr(
+        "dataagent.interface.rest_api.start_service.resolve_cert_key_passwords",
+        lambda cert: {},
+    )
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.build_ssl_kwargs", lambda *args, **kwargs: {})
+    captured: dict[str, object] = {}
+
+    def _run(*args: object, **kwargs: object) -> None:
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.uvicorn.run", _run)
+    main()
+
+    assert captured["kwargs"]["server_header"] is False
+
+
 def test_main_exits_when_the_table_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["dataagent", "--config", str(tmp_path / "missing.yaml")])
     with pytest.raises(SystemExit) as caught:

@@ -132,7 +132,7 @@ class LLMConfig:
         self.provider = provider
         self.model_type = model_type
         if self.model_type not in ["chat", "embedding"]:
-            raise ValueError(f"不支持的模型类型: {type}，支持的类型为: chat, embedding")
+            raise ValueError(f"不支持的模型类型: {self.model_type}，支持的类型为: chat, embedding")
         self.section = section or name
 
         # 所有其他参数都存储在 extra_params 字典中

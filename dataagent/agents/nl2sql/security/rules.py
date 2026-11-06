@@ -631,31 +631,13 @@ def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
         return False
     if isinstance(statement, exp.Union):
         return _union_returns_unfiltered_rows(statement)
-    scopes = traverse_scope(statement)
+    scopes = list(traverse_scope(statement))
     if not any(any(_is_base_relation(source) for source in scope.sources.values()) for scope in scopes):
         return False
-    if statement.find(exp.Where) is not None or statement.find(exp.Having) is not None:
-        return False
-    if statement.args.get("limit") is not None:
-        return False
-    if statement.find(exp.TableSample):
-        return False
-    if isinstance(statement, exp.Select) and (
-        statement.args.get("group") is None
-        and statement.find(exp.AggFunc)
-        and not statement.find(exp.Window)
-        and all(
-            column.find_ancestor(exp.AggFunc) is not None
-            for scope in traverse_scope(statement)
-            for column in scope.columns
-        )
-    ):
-        return False
-    if isinstance(statement, exp.Select) and _is_grouped_aggregate(statement):
-        return False
-    if isinstance(statement, exp.Select):
-        return not all(isinstance(expression.unnest(), exp.Exists) for expression in statement.expressions)
-    return True
+    root = next((scope for scope in scopes if scope.expression is statement), None)
+    if root is not None:
+        return not _scope_output_is_restricted(root)
+    return not any(statement.args.get(name) is not None for name in ("where", "having", "limit"))
 
 
 def _is_grouped_aggregate(statement: exp.Select) -> bool:
@@ -689,9 +671,7 @@ def _union_returns_unfiltered_rows(statement: exp.Union) -> bool:
         scope = scope_by_expression.get(id(branch))
         if scope is None or not _scope_contains_base_relation(scope):
             continue
-        if _scope_contains_row_restriction(scope) or _scope_is_single_row_aggregate(scope):
-            continue
-        if all(isinstance(expression.unnest(), exp.Exists) for expression in branch.expressions):
+        if _scope_output_is_restricted(scope):
             continue
         return True
     return False
@@ -718,20 +698,58 @@ def _scope_contains_base_relation(scope: Any) -> bool:
     return False
 
 
-def _scope_contains_row_restriction(scope: Any) -> bool:
-    expression = scope.expression
-    if isinstance(expression, exp.Select) and any(
-        expression.args.get(name) is not None for name in ("where", "having", "limit")
-    ):
+def _scope_output_is_restricted(
+    scope: Any,
+    *,
+    cache: dict[int, bool] | None = None,
+    stack: set[int] | None = None,
+) -> bool:
+    """Whether this scope's output rows are filtered, limited, or collapsed.
+
+    A WHERE inside a scalar subquery or a joined subquery does not filter a base
+    table read in the same scope. A derived table or CTE counts only when its own
+    output is restricted, or when this scope adds WHERE, HAVING, or LIMIT.
+    """
+    if cache is None:
+        cache = {}
+    if stack is None:
+        stack = set()
+    marker = id(scope)
+    cached = cache.get(marker)
+    if cached is not None:
+        return cached
+    if marker in stack:
+        return False
+    stack.add(marker)
+    restricted = _scope_output_restriction(scope, cache=cache, stack=stack)
+    stack.remove(marker)
+    cache[marker] = restricted
+    return restricted
+
+
+def _scope_output_restriction(scope: Any, *, cache: dict[int, bool], stack: set[int]) -> bool:
+    expression = getattr(scope, "expression", None)
+    if isinstance(expression, exp.Select):
+        if all(isinstance(item.unnest(), exp.Exists) for item in expression.expressions):
+            return True
+        if _is_grouped_aggregate(expression) or _scope_is_single_row_aggregate(scope):
+            return True
+        if any(expression.args.get(name) is not None for name in ("where", "having", "limit")):
+            return True
+    direct_base = False
+    nested_sources: list[Any] = []
+    for source in getattr(scope, "sources", {}).values():
+        if _is_base_relation(source):
+            direct_base = True
+            if isinstance(source, exp.Table) and source.args.get("sample") is not None:
+                return True
+        elif hasattr(source, "sources"):
+            nested_sources.append(source)
+    if direct_base:
+        return False
+    if not nested_sources:
         return True
-    for _, source in scope.selected_sources.values():
-        if isinstance(source, exp.Table) and source.args.get("sample") is not None:
-            return True
-        if hasattr(source, "selected_sources") and (
-            _scope_contains_row_restriction(source) or _scope_is_single_row_aggregate(source)
-        ):
-            return True
-    return False
+    return all(_scope_output_is_restricted(source, cache=cache, stack=stack) for source in nested_sources)
 
 
 def _scope_is_single_row_aggregate(scope: Any) -> bool:
