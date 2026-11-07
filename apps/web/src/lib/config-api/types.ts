@@ -570,6 +570,18 @@ export type SessionActiveRunDto = {
   userInputPreview: string;
 };
 
+/** Same document as `GET /sessions/{threadId}`. */
+export type NativeSessionDetail = {
+  threadId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  status: "running" | "complete" | "error" | "interrupted";
+  hasCheckpoint: boolean;
+  messages: Array<{ id?: string; role?: string; content?: unknown }>;
+  notice: string | null;
+};
+
 export type SessionConversationDto = {
   sessionId: string;
   title?: string;

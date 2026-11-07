@@ -28,7 +28,13 @@ from dataagent import Runtime, SemanticServiceClient, load_mcp_tools, safe_error
 from serve.agents import SessionAgents
 from serve.outputs import list_outputs, preview_output
 from serve.product import ConversationReadyGuard, register_not_found, register_product_routes
-from serve.sessions import Sessions, SessionTurn, public_session, workspace_lock
+from serve.sessions import (
+    Sessions,
+    SessionTurn,
+    continuation_configurable,
+    public_session,
+    workspace_lock,
+)
 
 logger = logging.getLogger("dataagent.api")
 
@@ -277,45 +283,46 @@ def _public_run_error(event, secrets: tuple[str, ...]) -> RunErrorEvent:
     return RunErrorEvent(message=message, code=code)
 
 
-async def load_session_checkpoint(app, user_id: str, thread_id: str, *, latest: bool = False):
-    """Return the session row and AG-UI messages.
+async def load_session_checkpoint(app, user_id: str, thread_id: str):
+    """Return the session row and the messages the next turn continues from.
 
-    The TUI path keeps the last successful checkpoint. Web refresh passes
-    ``latest=True`` so the transcript matches the thread state the model sees,
-    including a user message from a run that was stopped.
+    A saved checkpoint is that continuation. Without one, the latest graph state
+    on this same thread is. Web and TUI both use this read, including while a
+    turn is still running.
     """
     row = await app.state.sessions.get(user_id, thread_id)
     if row is None:
         raise HTTPException(404, "Session not found")
-    busy = getattr(app.state, "conversation_busy", ())
-    if (user_id, thread_id) in busy and not latest:
-        raise HTTPException(409, "Session is currently running")
     try:
         opened = await app.state.agents.get(thread_id, create=False)
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
     if opened is None:
         raise HTTPException(409, "Session binding is missing. Start a new conversation.")
-    if (user_id, thread_id) in busy and not latest:
-        raise HTTPException(409, "Session is currently running")
     _, agent, _ = opened
-
-    async def read_messages(configurable: dict) -> list:
-        state = await agent.graph.aget_state({"configurable": configurable})
-        return [
-            message.model_dump(by_alias=True)
-            for message in langchain_messages_to_agui(state.values.get("messages", []))
-        ]
-
-    messages = []
-    if latest:
-        messages = await read_messages({"thread_id": thread_id})
-    elif row["last_checkpoint_id"]:
-        messages = await read_messages({
-            "thread_id": thread_id,
-            "checkpoint_id": row["last_checkpoint_id"],
-        })
+    state = await agent.graph.aget_state({
+        "configurable": continuation_configurable(thread_id, row),
+    })
+    messages = [
+        message.model_dump(by_alias=True)
+        for message in langchain_messages_to_agui(state.values.get("messages", []))
+    ]
     return row, messages
+
+
+def session_detail(row: dict, messages: list) -> dict:
+    """Session document both clients load. Messages are the AG-UI continuation."""
+    incomplete = row["status"] in {"interrupted", "error"}
+    return {
+        **public_session(row),
+        "messages": messages,
+        "notice": (
+            None if not incomplete
+            else "Previous run did not complete. Restored the saved checkpoint."
+            if row["last_checkpoint_id"]
+            else "No checkpoint was saved. Continue this conversation."
+        ),
+    }
 
 
 async def _acquire_run(app, sessions, busy, user_id: str, thread_id: str, *, rejected_status: int):
@@ -417,19 +424,7 @@ def register_conversation_routes(
     async def get_session(thread_id: str):
         user_id = local_user_id()
         row, messages = await load_session_checkpoint(app, user_id, thread_id)
-        interrupted = row["status"] != "complete"
-        return {
-            **public_session(row),
-            "messages": messages,
-            "newThreadRequired": not bool(row["last_checkpoint_id"]),
-            "notice": (
-                "Previous run did not complete. Restored the saved checkpoint."
-                if interrupted and messages
-                else "No successful checkpoint exists. Start a new conversation."
-                if interrupted
-                else None
-            ),
-        }
+        return session_detail(row, messages)
 
     @app.post("/dataagent/stream")
     async def stream(body: QueryInput):
@@ -458,14 +453,10 @@ def register_conversation_routes(
             if row:
                 if row["last_run_id"] == body.run_id:
                     raise HTTPException(409, "Run replay is not supported; use a new runId")
-                # A missing checkpoint is a failed or not-yet-saved turn. Resume
-                # from the latest graph state so a recovered model can accept a
-                # new message on this thread. Replay of the same message stays rejected.
-                read_config = {"configurable": {"thread_id": thread_id}}
-                if row["last_checkpoint_id"]:
-                    read_config["configurable"]["checkpoint_id"] = row["last_checkpoint_id"]
-                    config["configurable"]["checkpoint_id"] = row["last_checkpoint_id"]
-                state = await graph.aget_state(read_config)
+                # Replay of the same message stays rejected. The checkpoint itself
+                # comes from continuation_configurable.
+                config["configurable"] = continuation_configurable(thread_id, row)
+                state = await graph.aget_state({"configurable": config["configurable"]})
                 if any(
                     message.id == body.messages[0].id
                     for message in state.values.get("messages", [])

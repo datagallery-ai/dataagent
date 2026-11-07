@@ -418,6 +418,33 @@ describe("config api adapter", () => {
     expect(conversation.toolCalls[0]?.toolName).toBe("inspect_schema");
   });
 
+  it("loads the native session document through the config client", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: {
+        threadId: "thread-1",
+        title: "keep-me",
+        createdAt: "now",
+        updatedAt: "now",
+        status: "interrupted",
+        hasCheckpoint: true,
+        messages: [{ id: "m1", role: "user", content: "keep-me" }],
+        notice: "Previous run did not complete. Restored the saved checkpoint.",
+      },
+    }), { headers: { "Content-Type": "application/json" }, status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const session = await configApi.getNativeSession("thread-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/thread-1/conversation",
+      expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
+    );
+    expect(session.threadId).toBe("thread-1");
+    expect(session.messages[0]?.content).toBe("keep-me");
+    expect(session.notice).toContain("Restored the saved checkpoint");
+  });
+
   it("creates a server-side session branch through the config client", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,

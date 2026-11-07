@@ -158,7 +158,7 @@ npm run start:tui -- --resume <threadId>
 uv run --project runtime/agentkit dataagent serve --session <threadId>
 ```
 
-恢复读取该会话最后一次成功的 Checkpoint。若上次运行没有完成，界面会说明已恢复到最后成功点，不会重放未完成的工作。没有成功 Checkpoint 时，需要新开对话。
+恢复留在原来的 `threadId`。行上有 Checkpoint 时读取它；没有时读取该线程最新图状态。停止和连接断开都记成 `interrupted`，不另开线程。未完成的工作不会自动重放。
 
 同一会话同时只接受一轮运行。重复使用同一个 `runId`，或重发已经在历史里的消息，会被拒绝。
 

@@ -33,9 +33,9 @@ Unknown paths return 404 with `RESOURCE_NOT_FOUND`. Conversation paths return 50
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/sessions?limit=` | Sessions for the current user, inside the envelope. `limit` is 1 to 100, default 50. |
-| GET | `/api/v1/sessions/{threadId}/conversation` | User and assistant messages for the Web UI. An unknown session returns an empty message list. |
+| GET | `/api/v1/sessions/{threadId}/conversation` | The same document as `GET /sessions/{threadId}` (AG-UI `messages`, `status`, `notice`) inside `{success, data}`. An unknown session is 404. A running turn can still be read. |
 | GET | `/sessions?limit=` | The same index as `{"sessions":[...]}`. The TUI uses this route. |
-| GET | `/sessions/{threadId}` | List fields plus `messages`, `newThreadRequired`, and `notice`. 409 while a run is active or the binding cannot be opened. 404 for another user's session. |
+| GET | `/sessions/{threadId}` | List fields plus `messages` and `notice`. Messages come from the saved checkpoint when the row has one, otherwise from the latest graph state on that thread. 409 when the binding cannot be opened. 404 for another user's session. A running turn can still be read. |
 | GET | `/sessions/{threadId}/outputs` | Output files. Skips symlinks, `artifacts/conversation_history`, and `artifacts/large_tool_results`. |
 | GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB. Non-text is 415. |
 | POST | `/api/v1/runs/{runId}/cancel` | Cancel the active turn. 404 when that run is not executing. |

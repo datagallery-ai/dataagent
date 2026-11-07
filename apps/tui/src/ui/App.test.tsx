@@ -136,7 +136,7 @@ it('Ink resumes native saved messages, rejects unsupported commands, and clears 
     }
     return Response.json({
       threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
-      status: 'interrupted', hasCheckpoint: true, newThreadRequired: false,
+      status: 'interrupted', hasCheckpoint: true,
       notice: 'Restored the last successful checkpoint; no work was replayed.',
       messages: [
         { id: 'saved-user', role: 'user', content: 'Previous question' },
@@ -170,6 +170,60 @@ it('Ink resumes native saved messages, rejects unsupported commands, and clears 
   assert.equal(store.getState().messages.length, 0);
 });
 
+it('Ink keeps the saved thread when the session has no checkpoint', async () => {
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => Response.json({
+    threadId: 'saved-thread', title: 'Unfinished', createdAt: '', updatedAt: '',
+    status: 'interrupted', hasCheckpoint: false,
+    notice: 'No checkpoint was saved. Continue this conversation.',
+    messages: [{ id: 'kept-user', role: 'user', content: 'Kept question' }],
+  }));
+  const current = view({ async *runAgent() { throw new Error('Resume must not invoke the model'); } }, 80, 24, sessions);
+  await tick();
+  current.stdin.write('/resume saved-thread');
+  await tick();
+  current.stdin.write('\r');
+  await until(() => store.getState().threadId === 'saved-thread');
+  assert.match(getMessageTextContent(store.getState().messages[0]!), /Kept question/);
+  assert.match(current.frames.join(''), /Continue this conversation/);
+});
+
+it('/stop cancels the active run and stays on this thread', async () => {
+  let release: () => void = () => {};
+  const hanging = new Promise<void>((resolve) => { release = resolve; });
+  const cancels: string[] = [];
+  let cancelled = false;
+  const sessions = new SessionClient('http://127.0.0.1:8790', async (url, init) => {
+    cancels.push(`${init?.method ?? 'GET'} ${String(url)}`);
+    if (String(url).includes('/cancel')) return new Response(null, { status: 204 });
+    throw new Error(`Unexpected session call ${String(url)}`);
+  });
+  const current = view({
+    cancelActive() { cancelled = true; release(); },
+    async *runAgent() {
+      await hanging;
+    },
+  }, 80, 24, sessions);
+  await tick();
+  current.stdin.write('keep going');
+  await tick();
+  current.stdin.write('\r');
+  await until(() => store.getState().runStatus === 'running');
+  const threadId = store.getState().threadId;
+  const runId = store.getState().runId;
+  assert.ok(runId);
+  current.stdin.write('/stop');
+  await tick();
+  current.stdin.write('\r');
+  await until(() => store.getState().runStatus !== 'running');
+  assert.equal(cancelled, true);
+  assert.equal(store.getState().threadId, threadId);
+  assert.equal(cancels[0], `POST http://127.0.0.1:8790/api/v1/runs/${runId}/cancel`);
+  const text = store.getState().messages.map(getMessageTextContent).join('\n');
+  assert.match(text, /keep going/);
+  assert.doesNotMatch(text, /INCOMPLETE_STREAM/);
+  assert.equal(store.getState().messages.at(-1)?.runSummary?.status, 'interrupted');
+});
+
 it('/resume list opens the picker and does not load a session id named list', async () => {
   const requests: string[] = [];
   const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
@@ -184,7 +238,7 @@ it('/resume list opens the picker and does not load a session id named list', as
     if (href.endsWith('/sessions/saved-thread')) {
       return Response.json({
         threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
-        status: 'complete', hasCheckpoint: true, newThreadRequired: false, notice: null,
+        status: 'complete', hasCheckpoint: true, notice: null,
         messages: [{ id: 'saved-user', role: 'user', content: 'Previous question' }],
       });
     }

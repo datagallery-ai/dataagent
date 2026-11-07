@@ -30,14 +30,14 @@
 | 终止 | 会话状态 | 客户端 |
 | --- | --- | --- |
 | `RUN_FINISHED` | `complete`，并记下新的 Checkpoint | 用最后的 `MESSAGES_SNAPSHOT` 作为该轮消息。可以显示 `durationMs` |
-| `RUN_ERROR` | `error`。成功 Checkpoint 仍是上一轮的 | 保留已显示的部分输出和错误码。不要用同一个 `runId` 重放 |
-| 连接断开，没有终止事件 | `interrupted` | 完成情况未知。恢复时服务回到最后成功 Checkpoint，不重放 |
+| `RUN_ERROR` | `error`。图里已经有消息时，索引指向这一轮到达的 Checkpoint | 保留已显示的部分输出和错误码。不要用同一个 `runId` 重放。下一轮留在同一线程 |
+| 显式取消或连接断开，没有终止事件 | `interrupted` | 和停止同一条存储结果。有 Checkpoint 就从它继续，否则读该线程最新图状态。不新开线程 |
 
 同一 `threadId` 在运行中再发请求会得到 HTTP 409。等这轮结束或确认中断后，用新的 `runId` 和新的用户消息继续。
 
 消息 ID 若已在 Checkpoint 里，服务拒绝编辑和重放。
 
-TUI 把这三种结果画成完成、失败或 `Interrupted — completion unknown`。这些摘要不写回 Checkpoint。
+TUI 把这三种结果画成完成、失败或 `Interrupted — continue this conversation`。这些摘要不写回 Checkpoint。
 
 ## 流的范围
 

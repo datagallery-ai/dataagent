@@ -276,6 +276,7 @@ import {
 } from "./components/chat/DataTaskWelcome";
 import { SessionHeaderResourceChips } from "./components/chat/SessionResourceSummary";
 import { SessionConversationRestore } from "./components/chat/SessionConversationRestore";
+import { useSessionNotice } from "./components/chat/session-notice";
 import { SessionConversationScrollRestore } from "./components/chat/SessionConversationScrollRestore";
 import { SessionArtifactsRestore } from "./components/chat/SessionArtifactsRestore";
 import { CollaborationInterruptHandler } from "./components/chat/CollaborationInterruptHandler";
@@ -7555,6 +7556,16 @@ function ProcessToolGroupSync({
   return null;
 }
 
+function SessionNoticeLine({ threadId }: { threadId: string }) {
+  const notice = useSessionNotice(threadId);
+  if (!notice) return null;
+  return (
+    <p className="px-4 pt-2 text-sm text-muted" data-testid="session-notice">
+      {notice}
+    </p>
+  );
+}
+
 function ChatWelcomeOverlay({
   liveRunStatus,
   onUseExamplePrompt,
@@ -7735,13 +7746,14 @@ function SessionChatRuntime({
         threadId={threadId}
         capabilitiesReady={capabilitiesReady}
       />
-      <div className="relative flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {isActive ? (
           <ChatWelcomeOverlay
             liveRunStatus={liveRunStatus}
             onUseExamplePrompt={onUseExamplePrompt}
           />
         ) : null}
+        {isActive ? <SessionNoticeLine threadId={threadId} /> : null}
         <CopilotChat
           agentId={agentId}
           threadId={threadId}

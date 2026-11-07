@@ -56,7 +56,7 @@ TUI 打开对话。输入：
 Summarize 1, 2, 3.
 ```
 
-成功时，等待期间显示 `Running…`。流结束后单独显示 `✓ Run completed · …s`。失败显示 `✗ Run failed · …s`，并保留已输出的内容和错误码。中断显示 `Interrupted — completion unknown · …s`。计时从请求发出到流结束，不含排队时间。
+成功时，等待期间显示 `Running…`。流结束后单独显示 `✓ Run completed · …s`。失败显示 `✗ Run failed · …s`，并保留已输出的内容和错误码。停止或连接断开显示 `Interrupted — continue this conversation · …s`。计时从请求发出到流结束，不含排队时间。
 
 只启动后端：
 

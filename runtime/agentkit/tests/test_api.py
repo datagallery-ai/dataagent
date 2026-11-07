@@ -14,6 +14,17 @@ from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from serve.app import create_app
 
 
+def test_continuation_configurable_is_the_saved_checkpoint_or_the_thread_head():
+    from serve.sessions import continuation_configurable
+
+    assert continuation_configurable("thread-1", None) == {"thread_id": "thread-1"}
+    assert continuation_configurable("thread-1", {"last_checkpoint_id": None}) == {"thread_id": "thread-1"}
+    assert continuation_configurable("thread-1", {"last_checkpoint_id": "cp-1"}) == {
+        "thread_id": "thread-1",
+        "checkpoint_id": "cp-1",
+    }
+
+
 def query(text="hello", thread="thread-1", **kwargs):
     return {
         "threadId": thread, "runId": str(uuid4()), "state": {},
@@ -101,7 +112,6 @@ async def test_stream_two_rounds_and_restart(runtime):
     async with client_for(runtime, ScriptedModel(responses=[AIMessage(content="after restart")])) as (client, app):
         restored = (await client.get("/sessions/thread-1")).json()
         assert len(restored["messages"]) == 4
-        assert restored["newThreadRequired"] is False
         events = sse(await client.post("/dataagent/stream", json=query("third")))
         assert terminal(events) == ["RUN_FINISHED"]
         assert len((await client.get("/sessions/thread-1")).json()["messages"]) == 6
@@ -125,7 +135,7 @@ async def test_empty_inputs_write_and_restore_outputs_after_restart(runtime):
         call("read_file", {"file_path": output}), AIMessage(content="restored"),
     ])
     async with client_for(runtime, model) as (client, _):
-        assert (await client.get("/sessions/thread-1")).json()["newThreadRequired"] is False
+        assert (await client.get("/sessions/thread-1")).json()["threadId"] == "thread-1"
         assert terminal(sse(await client.post("/dataagent/stream", json=query("read it")))) == ["RUN_FINISHED"]
     assert any("saved-output" in str(message.content) for message in model.requests[-1]
                if message.type == "tool" and message.name == "read_file")
@@ -275,8 +285,44 @@ async def test_cancel_before_completion_keeps_the_user_message(runtime):
         assert "RUN_FINISHED" not in response.text
         restored = (await client.get("/sessions/thread-1")).json()
         assert restored["status"] == "interrupted"
-        assert restored["newThreadRequired"] is False
         assert any(message.get("content") == "keep-me" for message in restored["messages"])
+        follow = sse(await client.post("/dataagent/stream", json=query("next")))
+        assert terminal(follow) == ["RUN_FINISHED"]
+        assert any(message.content == "keep-me" for message in model.requests[-1] if getattr(message, "type", None) == "human")
+
+
+async def test_session_reads_match_while_running_and_after_cancel(runtime):
+    ready = asyncio.Event()
+    calls = {"n": 0}
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                ready.set()
+                await asyncio.Event().wait()
+            return await super()._agenerate(*args, **kwargs)
+
+    model = WaitingModel(responses=[AIMessage(content="continued")])
+    async with client_for(runtime, model) as (client, _):
+        body = query("keep-me")
+        running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+        await asyncio.wait_for(ready.wait(), 5)
+        tui_view = (await client.get("/sessions/thread-1")).json()
+        web_view = (await client.get("/api/v1/sessions/thread-1/conversation")).json()
+        assert tui_view["status"] == "running"
+        assert "newThreadRequired" not in tui_view
+        assert tui_view["notice"] is None
+        assert web_view["success"] is True
+        assert web_view["data"] == tui_view
+        assert (await client.post(f"/api/v1/runs/{body['runId']}/cancel")).status_code == 204
+        await asyncio.wait_for(running, 5)
+        tui_after = (await client.get("/sessions/thread-1")).json()
+        web_after = (await client.get("/api/v1/sessions/thread-1/conversation")).json()
+        assert tui_after["status"] == "interrupted"
+        assert "Restored the saved checkpoint" in tui_after["notice"]
+        assert web_after["data"] == tui_after
+        assert any(message.get("content") == "keep-me" for message in tui_after["messages"])
         follow = sse(await client.post("/dataagent/stream", json=query("next")))
         assert terminal(follow) == ["RUN_FINISHED"]
         assert any(message.content == "keep-me" for message in model.requests[-1] if getattr(message, "type", None) == "human")
@@ -303,12 +349,16 @@ async def test_cancel_after_success_keeps_the_cancelled_message_for_the_next_tur
         body = query("BLUE-42")
         running = asyncio.create_task(client.post("/dataagent/stream", json=body))
         await asyncio.wait_for(ready.wait(), 5)
+        mid = (await client.get("/sessions/thread-1")).json()
+        web_mid = (await client.get("/api/v1/sessions/thread-1/conversation")).json()
+        assert mid["status"] == "running"
+        assert web_mid["data"] == mid
+        assert "saved" in [message.get("content") for message in mid["messages"]]
         assert (await client.post(f"/api/v1/runs/{body['runId']}/cancel")).status_code == 204
         response = await asyncio.wait_for(running, 5)
         assert "RUN_FINISHED" not in response.text
         restored = (await client.get("/sessions/thread-1")).json()
         assert restored["status"] == "interrupted"
-        assert restored["newThreadRequired"] is False
         contents = [message.get("content") for message in restored["messages"]]
         assert "saved" in contents and "BLUE-42" in contents
         follow = sse(await client.post("/dataagent/stream", json=query("what was the code")))

@@ -13,7 +13,7 @@ const summary = z.object({
 });
 const session = summary.extend({
   messages: z.array(z.unknown().transform((value) => MessageSchema.parse(value))),
-  newThreadRequired: z.boolean(), notice: z.string().nullable(),
+  notice: z.string().nullable(),
 });
 export type SessionDetail = z.infer<typeof session>;
 
@@ -37,6 +37,22 @@ export class SessionClient {
 
   async getSession(id: string): Promise<SessionDetail> {
     return session.parse(await this.read(`/sessions/${encodeURIComponent(id)}`));
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST", signal: AbortSignal.timeout(10_000) },
+    );
+    if (response.status === 204 || response.status === 404) return;
+    const body = await response.json().catch(() => ({})) as {
+      detail?: unknown;
+      error?: { message?: string };
+    };
+    const message = typeof body.detail === "string"
+      ? body.detail
+      : body.error?.message ?? `Cancel failed (${response.status})`;
+    throw new AguiClientError(message, "HTTP_ERROR", response.status);
   }
 
   async listOutputs(threadId: string): Promise<DataArtifact[]> {

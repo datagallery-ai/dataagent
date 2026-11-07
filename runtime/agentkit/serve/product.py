@@ -70,34 +70,19 @@ def register_product_routes(app: FastAPI) -> None:
     async def session_conversation(thread_id: str) -> JSONResponse:
         if getattr(app.state, "sessions", None) is None or getattr(app.state, "agents", None) is None:
             return error("CONVERSATION_UNAVAILABLE", "对话引擎未就绪。", 503)
-        from serve.app import load_session_checkpoint
+        from serve.app import load_session_checkpoint, session_detail
 
         try:
             row, messages = await load_session_checkpoint(
-                app, _local_user_id(app), thread_id, latest=True,
+                app, _local_user_id(app), thread_id,
             )
         except HTTPException as exc:
             if exc.status_code == 404:
-                return success({
-                    "sessionId": thread_id,
-                    "title": "",
-                    "messages": [],
-                    "toolCalls": [],
-                    "runEventRefs": [],
-                    "agentMessages": [],
-                })
+                return error("RESOURCE_NOT_FOUND", str(exc.detail), 404)
             if exc.status_code == 409:
                 return error("CONFLICT", str(exc.detail), 409)
             raise
-        visible = [message for message in messages if message.get("role") in {"user", "assistant"}]
-        return success({
-            "sessionId": thread_id,
-            "title": row["title"],
-            "messages": [_conversation_message(message, index) for index, message in enumerate(visible)],
-            "toolCalls": [],
-            "runEventRefs": [],
-            "agentMessages": messages,
-        })
+        return success(session_detail(row, messages))
 
     @app.post("/api/v1/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> Response:
@@ -138,34 +123,6 @@ def _local_user_id(app: FastAPI) -> str:
         app.state, "conversation_runtime", None
     )
     return str(getattr(getattr(runtime, "paths", None), "user_id", None) or "default")
-
-
-def _conversation_message(message: Mapping[str, Any], position: int) -> dict[str, Any]:
-    role = message.get("role")
-    message_id = str(message.get("id") or f"m{position}")
-    return {
-        "id": message_id,
-        "messageId": message_id,
-        "role": role,
-        "contentText": _content_text(message.get("content")),
-        "position": position,
-    }
-
-
-def _content_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            parts.append(item)
-        elif isinstance(item, Mapping):
-            text = item.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-    return "".join(parts)
 
 
 def _session_item(row: Mapping[str, Any]) -> dict[str, Any]:

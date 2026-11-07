@@ -23,6 +23,7 @@ import type {
   RunCancelDto,
   RunDefaultsDto,
   SessionBranchDto,
+  NativeSessionDetail,
   SessionConversationDto,
   SessionListResponseDto,
   SessionTitleDto,
@@ -261,6 +262,12 @@ export const configApi = {
       size: number;
       mimeType: string;
     }>(response);
+  },
+
+  getNativeSession(sessionId: string): Promise<NativeSessionDetail> {
+    return requestEnvelope<NativeSessionDetail>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/conversation`,
+    );
   },
 
   getSessionConversation(sessionId: string, limit?: number): Promise<SessionConversationDto> {

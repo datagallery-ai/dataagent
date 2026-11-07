@@ -22,7 +22,7 @@ from a2a_server.agent_card import JSONRPC_PATH, build_agent_card
 from a2a_server.agent_executor import AgentKitExecutor
 from a2a_server.task_store import create_task_store
 from dataagent.bootstrap import Runtime
-from serve.sessions import SessionTurn
+from serve.sessions import SessionTurn, continuation_configurable
 
 _FOREIGN_SESSION = (
     "Session {thread_id} is not in profile {user_id}. "
@@ -105,8 +105,7 @@ class AgentHost:
         if owner is not None and owner != user_id:
             raise ValueError(_FOREIGN_SESSION.format(thread_id=thread_id, user_id=user_id))
         row = await sessions.get(user_id, thread_id)
-        if row and row["last_checkpoint_id"]:
-            config["configurable"]["checkpoint_id"] = row["last_checkpoint_id"]
+        config["configurable"] = continuation_configurable(thread_id, row)
         turn = SessionTurn(sessions, user_id, thread_id)
         await turn.start(run_id, text)
         return turn, config
