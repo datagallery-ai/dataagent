@@ -84,10 +84,11 @@ async def dataops_validate_data(
     target_table: str = "",
     partition_filter: str = "",
 ) -> dict:
-    """Read-only data quality checks on the real target table identified by INSERT SQL.
+    """Read-only data quality checks from a target table name, CREATE DDL or INSERT SQL.
 
     Does not execute the INSERT or create/drop tables. Prefer sql_file_path for a
-    session output artifact. Optional target_table/partition_filter override extraction.
+    session output artifact. A table name alone resolves columns through semantic metadata.
+    Optional target_table/partition_filter override SQL extraction.
     """
     with dataops_settings(runtime.context) as context:
         if dataops_options(context).get("enabled", True) is False:
