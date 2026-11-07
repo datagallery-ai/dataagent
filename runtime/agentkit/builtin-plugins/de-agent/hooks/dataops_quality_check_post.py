@@ -19,7 +19,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 from utils.dataops_mcp import dataops_settings
-from utils.dataops_quality_check import render_metrics_table
+from utils.dataops_quality_check import render_metrics_table, render_table_metrics
 from utils.dataops_trial_compute_tool import trial_compute_once
 
 _REPORT_PREFIX = "[DataOps 数据质量检查] "
@@ -150,6 +150,12 @@ def _render_report(*, dml_path: Path, result: dict[str, Any] | None) -> str:
     if details:
         lines.append("")
         lines.append(render_metrics_table(details, warnings, quality.get("failed_metrics") or {}))
+
+    table_metrics_md = render_table_metrics(
+        quality.get("table_metrics") or {}, bool(quality.get("row_count_truncated"))
+    )
+    if table_metrics_md:
+        lines.extend(["", table_metrics_md])
 
     if failed_checks:
         lines.append("")

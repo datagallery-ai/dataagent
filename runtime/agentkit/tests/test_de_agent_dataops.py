@@ -71,7 +71,7 @@ async def test_delivery_orders_sql_and_does_not_treat_skipped_as_passed(
     ddl, dml = artifacts(tmp_path)
     calls = []
 
-    async def validate(sql, *, attempt, prior_attempts, context):
+    async def validate(sql, *, attempt, prior_attempts, context, _enable_thinking=False):
         kind = "ddl" if sql.startswith("CREATE") else "dml"
         calls.append((kind, attempt))
         return {"passed": kind != failure, "skipped": failure == "skipped", "error": "fix column"}
@@ -87,16 +87,16 @@ async def test_budget_survives_sql_changes_and_is_scoped_to_file_pair(tmp_path, 
     ddl, dml = artifacts(tmp_path)
     remote = AsyncMock(return_value={"passed": False, "error": "bad ddl"})
     monkeypatch.setattr(module, "dataops_validate_sql_with_log_analysis", remote)
-    for index in range(4):
+    for index in range(6):
         ddl.write_text(f"CREATE TABLE db.t (id STRING) -- {index}")
         result = await function(ddl, dml, runtime(tmp_path).context, "q")
-    assert remote.await_count == 3
-    assert [c.kwargs["attempt"] for c in remote.await_args_list] == [1, 2, 3]
+    assert remote.await_count == 5
+    assert [c.kwargs["attempt"] for c in remote.await_args_list] == [1, 2, 3, 4, 5]
     assert result["reason"] == "attempts_exhausted"
     other = tmp_path / "create_other.sql"
     other.write_text(ddl.read_text())
     await function(other, dml, runtime(tmp_path).context, "q")
-    assert remote.await_count == 4
+    assert remote.await_count == 6
 
 
 async def test_successful_unchanged_sql_reused_and_cancellation_reserves_attempt(
@@ -314,7 +314,7 @@ async def test_quality_checks_run_concurrently_and_preserve_partial_metrics(tmp_
         nonlocal started
         index = started
         started += 1
-        if started == 3:
+        if started == 4:
             all_started.set()
         await asyncio.wait_for(all_started.wait(), 1)
         if index == 1:
@@ -327,10 +327,10 @@ async def test_quality_checks_run_concurrently_and_preserve_partial_metrics(tmp_
         direct_table="db.t",
         context=runtime(tmp_path).context,
     )
-    assert started == 3
+    assert started == 4
     assert result["sampled"] is True and result["partial"] is True
     assert result["ok"] is False
-    assert result["completed_checks"] == ["null_rate", "outlier_ratio"]
+    assert result["completed_checks"] == ["null_rate", "outlier_ratio", "row_count"]
     assert result["failed_checks"][0]["name"] == "single_value_ratio"
     assert result["details"]["score_ratio"]["null_rate"] == 0.1
     assert result["warnings"]

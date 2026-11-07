@@ -27,6 +27,7 @@ PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 LOADER = PythonLoader()
 SQLCheckerPipeline = LOADER.load(PLUGIN, "utils/sql_checkers.py:SQLCheckerPipeline")
 checker_module = sys.modules[SQLCheckerPipeline.__module__]
+DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS = checker_module.DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS
 RuleDetector = checker_module.RuleDetector
 RULES = PLUGIN / "skills/sql-rules/references"
 
@@ -200,7 +201,7 @@ def test_verification_rejects_reworded_issue_and_more_instances():
     detector.verify_repair(before, [write], header)
 
 
-def _dataops_pipeline(workspace, enabled=True):
+def _dataops_pipeline(workspace, enabled=True, **extra_config):
     for kind, sql in (("create", DDL), ("insert", DML)):
         path = workspace / f"{kind}.sql"
         if not path.exists():
@@ -212,7 +213,7 @@ def _dataops_pipeline(workspace, enabled=True):
         workspace,
         None,
         RULES,
-        {"dataops_validation_enabled": enabled},
+        {"dataops_validation_enabled": enabled, **extra_config},
         context=context,
     )
 
@@ -278,7 +279,7 @@ def test_dataops_order_and_persistent_retry_budget(tmp_path, monkeypatch, failin
 
     calls = []
 
-    async def service_result(sql, *, attempt, prior_attempts, context):
+    async def service_result(sql, *, attempt, prior_attempts, context, _enable_thinking=False):
         """Return a backend fixture to isolate retry and sequencing code from network execution."""
         kind = "ddl" if sql.startswith("CREATE") else "dml"
         calls.append((kind, attempt, len(prior_attempts)))
@@ -287,7 +288,8 @@ def test_dataops_order_and_persistent_retry_budget(tmp_path, monkeypatch, failin
     monkeypatch.setattr(
         dataops_validate_tool, "dataops_validate_sql_with_log_analysis", service_result
     )
-    for attempt_index in range(4):
+    max_attempts = checker_module.DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS
+    for attempt_index in range(max_attempts + 1):
         report = asyncio.run(_dataops_pipeline(tmp_path).run("create.sql", "insert.sql"))
         if failing_kind:
             # An Agent editing the SQL must not silently get a fresh retry budget.
@@ -298,12 +300,12 @@ def test_dataops_order_and_persistent_retry_budget(tmp_path, monkeypatch, failin
         assert report.get("dataops", {}).get("reused") is True
     else:
         kinds = ("ddl",) if failing_kind == "ddl" else ("ddl", "dml")
-        assert calls == [(kind, attempt, attempt - 1) for attempt in (1, 2, 3) for kind in kinds]
+        assert calls == [(kind, attempt, attempt - 1) for attempt in range(1, max_attempts + 1) for kind in kinds]
         assert report.get("status") == "BLOCKED"
         assert report.get("dataops", {}).get("reason") == "attempts_exhausted"
     assert (tmp_path / "create.sql").read_text() == DDL
     assert (tmp_path / "insert.sql").read_text() == (
-        DML + " -- revision 3" if failing_kind else DML
+        DML + f" -- revision {max_attempts}" if failing_kind else DML
     )
 
 
@@ -323,3 +325,32 @@ def test_dataops_exception_is_bounded_and_does_not_expose_provider_text(tmp_path
     assert report.get("dataops", {}).get("status") == "ERROR"
     assert "private-provider-error" not in json.dumps(report)
     assert not list((tmp_path / ".runtime/sql_checkers").glob("*.lock"))
+
+
+def test_dataops_attempt_budget_defaults_to_five(tmp_path):
+    """缺省每条 SQL 最多提交 5 次。"""
+    pipeline = _dataops_pipeline(tmp_path)
+    assert pipeline._max_dataops_attempts == DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS == 5
+
+
+def test_dataops_attempt_budget_is_configurable(tmp_path):
+    """配置文件里的 dataops_max_attempts 覆盖默认值。"""
+    pipeline = _dataops_pipeline(tmp_path, dataops_max_attempts=2)
+    assert pipeline._max_dataops_attempts == 2
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (0, 1),  # 下界
+        (-3, 1),
+        (999, 20),  # 上界
+        ("not-a-number", DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),
+        (None, DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),
+    ],
+)
+def test_dataops_attempt_budget_is_clamped_and_validated(configured, expected):
+    """非法/越界配置必须被夹紧或回退，不能让预算失效。"""
+    _resolve_max_dataops_attempts = checker_module._resolve_max_dataops_attempts
+
+    assert _resolve_max_dataops_attempts({"dataops_max_attempts": configured}) == expected
