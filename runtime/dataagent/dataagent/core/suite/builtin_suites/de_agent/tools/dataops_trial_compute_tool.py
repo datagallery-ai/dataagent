@@ -63,6 +63,7 @@ See skill: ``de_agent/skill/dataops_quality_check/SKILL.md``.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -159,9 +160,11 @@ async def trial_compute_table(
     # 日期，跟本链路的临时表压根不是同一张表）。本链路要往一张**存在**的临时表
     # 里写数据才能做质量校验，所以先按交付物里的 DDL 再建一次。
     ddl_path = _find_ddl(_tool_context)
+    ddl_sql = ""
     if ddl_path is not None:
+        ddl_sql = ddl_path.read_text(encoding="utf-8")
         create_result = await dataops_validate_sql(
-            ddl_path.read_text(encoding="utf-8"),
+            ddl_sql,
             _tool_context=_tool_context,
             _partition_date=partition_date,
         )
@@ -179,7 +182,11 @@ async def trial_compute_table(
             if create_result.get("log_analysis"):
                 payload["log_analysis"] = create_result["log_analysis"]
             # 清理：建表失败也可能留下半成品临时表。
-            await _drop_scratch_table(sql, _tool_context, partition_date, payload)
+            # **DDL 与 DML 都要清** —— 本链路的建表是我们自己刚做的，
+            # 不像语法校验链路那样要把表留给后续 DML 用。
+            await _drop_scratch_tables(
+                [sql, ddl_sql], _tool_context, partition_date, payload
+            )
             payload["summary"] = _build_summary(payload)
             return payload
 
@@ -243,36 +250,66 @@ async def trial_compute_table(
                     )
     finally:
         # --- 3) Drop the scratch table -------------------------------------
-        # 不管成功与否都删。DDL/DML 都删 —— 本链路的临时表是我们自己刚建的，
-        # 不像语法校验链路那样需要留给后续 DML 使用。
-        await _drop_scratch_table(sql, _tool_context, partition_date, payload)
+        # 不管成功与否都删。**DDL 与 DML 都删** —— 本链路的临时表是我们自己
+        # 刚建的，不像语法校验链路那样需要留给后续 DML 使用。
+        await _drop_scratch_tables(
+            [sql, ddl_sql], _tool_context, partition_date, payload
+        )
 
     payload["summary"] = _build_summary(payload)
     return payload
 
 
-async def _drop_scratch_table(
-    sql: str,
+async def _drop_scratch_tables(
+    sqls: list[str],
     _tool_context: ToolExecutionContext,
     partition_date: str,
     payload: dict[str, Any],
 ) -> None:
-    """Drop the adhoctemp scratch table; never raises."""
+    """Drop every adhoctemp scratch table these SQLs created; never raises.
+
+    **两条 SQL 都要清**：DDL 建的那张 + DML 写的那张。早先这里只清 DML 推导
+    出来的那一张 —— 而 DDL 与 DML 指向**不同**目标表时（并非罕见），
+    DDL 建出来的临时表就永远留在 adhoctemp 里。
+
+    **绝不抛异常。** 这里在 ``trial_compute_table`` 的 ``finally`` 里被调用 ——
+    抛异常会替换掉已经算好的试算结论（``payload["passed"]`` / ``summary``）。
+
+    ``except Exception`` 接不住 ``asyncio.CancelledError``（继承自
+    ``BaseException``）—— 所以这里显式捕获并**重新抛出**它。
+
+    注意：这里是 ``await`` 在调用方的任务里的，所以**不能吞掉**取消信号 ——
+    吞掉会让任务「正常结束」，``task.cancelled()`` 变成 ``False``，
+    被取消的作业于是假装跑完了。
+    """
     from dataagent.actions.tools.local_tool.dataops_validate_tool import (
-        _cleanup_temp_table_wrapper,
+        cleanup_temp_tables,
     )
 
     try:
-        cleanup_job_id = await _cleanup_temp_table_wrapper(
-            sql,
+        cleanup_job_ids = await cleanup_temp_tables(
+            [text for text in sqls if (text or "").strip()],
             _tool_context=_tool_context,
             partition_date=partition_date,
+            context_label="trial_compute",
         )
+    except asyncio.CancelledError:
+        # 取消必须继续往外传 —— 吞掉它会让「被取消的作业」假装正常结束。
+        logger.warning(
+            "[trial_compute] scratch table cleanup cancelled; "
+            "adhoctemp scratch tables may remain"
+        )
+        raise
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[trial_compute] scratch table cleanup failed (ignored): {exc}")
+        # 兜底：清理失败**绝不能**影响试算结论。
+        logger.warning(
+            f"[trial_compute] scratch table cleanup failed (ignored): {exc!r}; "
+            "adhoctemp scratch tables may remain"
+        )
         return
-    if cleanup_job_id:
-        payload["cleanup_job_id"] = cleanup_job_id
+    if cleanup_job_ids:
+        payload["cleanup_job_ids"] = cleanup_job_ids
+        payload["cleanup_job_id"] = cleanup_job_ids[0]
 
 
 def _find_ddl(_tool_context: ToolExecutionContext) -> Path | None:

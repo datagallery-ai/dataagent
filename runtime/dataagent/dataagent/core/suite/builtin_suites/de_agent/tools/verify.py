@@ -619,73 +619,151 @@ def _run_dataops_validation_round(
     # 对每条 SQL 各跑一次 wrapper；wrapper 内部会按 attempt 维护历史。
     # 因为每次 validate_deliverables 都从 attempt=1 开始，prior_attempts
     # 这里也总是空列表。
-    for kind, path in sql_jobs:
-        # 直接传文件路径,避免把整段 SQL 重复塞进 chat history;
-        # 工具侧(_resolve_sql_input)会优先用 sql_file_path 读 SQL。
-        try:
-            # dataops_validate_sql_with_log_analysis 是 async coro;
-            # validate_deliverables 是 sync tool,正常情况下用 asyncio.run 创建临时 loop。
-            # 但若上游恰好在 running loop 里调用本工具,asyncio.run 会 RuntimeError,
-            # 这里做兜底:有 running loop 时改用 thread 隔离 + asyncio.run。
+    #
+    # **一轮结束后必须把这一轮留下的临时表全清掉** —— DML 的临时表由 wrapper
+    # 每次尝试结束时清（成功/失败都清），但 **DDL 的临时表没人清**：它必须
+    # 活到配对的 INSERT OVERWRITE 跑完，所以 wrapper 故意不删它。于是
+    # 「DDL 成功 + DML 没跑」或「DDL 与 DML 指向不同表」时，DDL 的临时表
+    # 就永远留在 adhoctemp 里。这里在轮次收尾统一清一次。
+    try:
+        for kind, path in sql_jobs:
+            # 直接传文件路径,避免把整段 SQL 重复塞进 chat history;
+            # 工具侧(_resolve_sql_input)会优先用 sql_file_path 读 SQL。
             try:
-                asyncio.get_running_loop()
-                in_running_loop = True
-            except RuntimeError:
-                in_running_loop = False
+                # dataops_validate_sql_with_log_analysis 是 async coro;
+                # validate_deliverables 是 sync tool,正常情况下用 asyncio.run 创建临时 loop。
+                # 但若上游恰好在 running loop 里调用本工具,asyncio.run 会 RuntimeError,
+                # 这里做兜底:有 running loop 时改用 thread 隔离 + asyncio.run。
+                try:
+                    asyncio.get_running_loop()
+                    in_running_loop = True
+                except RuntimeError:
+                    in_running_loop = False
 
-            if in_running_loop:
-                import concurrent.futures as _cf
+                if in_running_loop:
+                    import concurrent.futures as _cf
 
-                with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
-                    result = _pool.submit(
-                        asyncio.run,
+                    with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+                        result = _pool.submit(
+                            asyncio.run,
+                            dataops_validate_sql_with_log_analysis(
+                                sql_file_path=path,
+                                attempt=1,
+                                prior_attempts=[],
+                                _tool_context=_tool_context,
+                            ),
+                        ).result()
+                else:
+                    result = asyncio.run(
                         dataops_validate_sql_with_log_analysis(
                             sql_file_path=path,
                             attempt=1,
                             prior_attempts=[],
                             _tool_context=_tool_context,
-                        ),
-                    ).result()
-            else:
-                result = asyncio.run(
-                    dataops_validate_sql_with_log_analysis(
-                        sql_file_path=path,
-                        attempt=1,
-                        prior_attempts=[],
-                        _tool_context=_tool_context,
+                        )
                     )
-                )
-        except Exception as exc:
-            logger.exception(f"[validate_deliverables] dataops call crashed kind={kind}")
-            result = {"passed": False, "error": f"dataops wrapper crashed: {exc}"}
+            except Exception as exc:
+                logger.exception(f"[validate_deliverables] dataops call crashed kind={kind}")
+                result = {"passed": False, "error": f"dataops wrapper crashed: {exc}"}
 
-        # 记录到 state 里（跨 validate_deliverables 调用累计）
-        state["dataops_attempts"].append(
-            {
-                "kind": kind,
-                "sql_path": str(path),
-                "passed": bool(result.get("passed")),
-                "skipped": bool(result.get("skipped")),
-                "error": (result.get("error") or "")[:500],
-                "job_id": result.get("job_id"),
-                "log_summary": result.get("log_analysis_summary") or "",
-                "attempts": result.get("attempts"),
-                "failed_after_max_retries": bool(result.get("failed_after_max_retries")),
-            }
+            # 记录到 state 里（跨 validate_deliverables 调用累计）
+            state["dataops_attempts"].append(
+                {
+                    "kind": kind,
+                    "sql_path": str(path),
+                    "passed": bool(result.get("passed")),
+                    "skipped": bool(result.get("skipped")),
+                    "error": (result.get("error") or "")[:500],
+                    "job_id": result.get("job_id"),
+                    "log_summary": result.get("log_analysis_summary") or "",
+                    "attempts": result.get("attempts"),
+                    "failed_after_max_retries": bool(result.get("failed_after_max_retries")),
+                }
+            )
+
+            # 短路：失败立即返回
+            passed = bool(result.get("passed"))
+            skipped = bool(result.get("skipped"))
+            if not (passed or skipped):
+                summary["passed"] = False
+                summary["error"] = (
+                    result.get("error") or (result.get("log_analysis_summary") or "DataOps validation failed (no detail)")
+                )[:800]
+                summary["log_summary"] = result.get("log_analysis_summary") or ""
+                return summary
+
+        return summary
+    finally:
+        # 无论成功、失败还是异常退出，都清掉这一轮的临时表。
+        _cleanup_round_temp_tables(sql_jobs, _tool_context=_tool_context)
+
+
+def _cleanup_round_temp_tables(
+    sql_jobs: list[tuple[str, Path]],
+    *,
+    _tool_context: ToolExecutionContext,
+) -> None:
+    """Drop the scratch tables this validation round created; never raises.
+
+    **绝不抛异常。** 这个函数在 ``_run_dataops_validation_round`` 的 ``finally``
+    里被调用 —— 它一旦抛异常，就会**替换掉已经算好的 summary**，让调用方
+    ``validate_deliverables`` 直接抛异常，而不是拿到「通过 / 失败」的结论。
+
+    曾经的 bug：``except Exception`` 接不住 ``asyncio.CancelledError``
+    （它继承自 ``BaseException``，不是 ``Exception``）。于是清理协程被取消时，
+    异常会从 ``finally`` 里逃逸 —— 明明校验已经跑完并得出结论，调用方拿到的
+    却是一个 ``CancelledError``，真实的校验结论被吞掉。
+
+    所以这里显式捕获 ``(Exception, asyncio.CancelledError)``，保证 summary 一定被返回。
+    注意**不**吞 ``KeyboardInterrupt`` / ``SystemExit`` —— 那两个必须继续往外传。
+
+    清理失败**不静默**：记 warning 日志，让「临时表泄漏」在日志里可见
+    （否则 helper 名字写错 / 参数不匹配时，泄漏完全无声无息）。
+    """
+    try:
+        from dataagent.actions.tools.local_tool.dataops_validate_tool import cleanup_temp_tables
+
+        sqls: list[str] = []
+        for _kind, path in sql_jobs:
+            try:
+                sqls.append(path.read_text(encoding="utf-8"))
+            except OSError as exc:
+                logger.debug(f"[validate_deliverables] cannot read {path} for cleanup: {exc}")
+        if not sqls:
+            return
+        cleanup_job_ids = _run_coroutine(
+            cleanup_temp_tables(sqls, _tool_context=_tool_context)
+        )
+        if cleanup_job_ids:
+            logger.info(
+                f"[validate_deliverables] cleanup dropped {len(cleanup_job_ids)} scratch table(s)"
+            )
+    except (Exception, asyncio.CancelledError) as exc:
+        # CancelledError 继承 BaseException —— `except Exception` 接不住它。
+        # 但它逃出 finally 会吞掉校验结论，所以这里吞掉并记日志。
+        # 清理没做完 = 临时表可能残留，但**校验结论更重要**，必须照常返回。
+        # 注意：这个清理跑在独立线程 + 独立事件循环里（_run_coroutine），
+        # 所以吞掉 CancelledError 不会丢掉调用方的取消信号。
+        logger.warning(
+            f"[validate_deliverables] scratch table cleanup failed (ignored): {exc!r}; "
+            "adhoctemp scratch tables may remain"
         )
 
-        # 短路：失败立即返回
-        passed = bool(result.get("passed"))
-        skipped = bool(result.get("skipped"))
-        if not (passed or skipped):
-            summary["passed"] = False
-            summary["error"] = (
-                result.get("error") or (result.get("log_analysis_summary") or "DataOps validation failed (no detail)")
-            )[:800]
-            summary["log_summary"] = result.get("log_analysis_summary") or ""
-            return summary
 
-    return summary
+def _run_coroutine(coro):
+    """Run a coroutine from sync code, tolerating a running event loop."""
+    try:
+        asyncio.get_running_loop()
+        in_running_loop = True
+    except RuntimeError:
+        in_running_loop = False
+
+    if in_running_loop:
+        import concurrent.futures as _cf
+
+        with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+            return _pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
 
 
 def _dump_validate_deliverables_artifacts(

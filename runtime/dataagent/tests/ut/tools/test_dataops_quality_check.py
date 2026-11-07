@@ -855,20 +855,24 @@ class TestRunQualityCheckWiring:
         runtime.workspace_dir = None
         return runtime
 
-    def test_check_timeout_cap_is_30_minutes(self):
-        """校验 SQL 的超时上限必须是 30 分钟。
+    def test_check_timeout_cap_is_one_hour(self):
+        """校验 SQL 的超时上限必须是 1 小时。
 
-        回归防护：这里曾是 180s（3 分钟）。质量校验 SQL 在 Spark 上聚合多个指标，
-        千万级分区下单条要跑十几分钟 —— 3 分钟的帽子会让校验在跑完前被判定
-        timed_out，整个校验报「未能执行」，一个质量结论都拿不到。表现上像是
-        「agent 已经超时」，实际是校验子任务先超时了。
-        """
-        assert qc._MAX_CHECK_TIMEOUT_SEC == 30 * 60
+    回归防护：这里曾是 180s（3 分钟）。质量校验 SQL 在 Spark 上聚合多个指标，
+    千万级分区下单条要跑十几分钟 —— 3 分钟的帽子会让校验在跑完前被判定
+    timed_out，整个校验报「未能执行」，一个质量结论都拿不到。表现上像是
+    「agent 已经超时」，实际是校验子任务先超时了。
+
+    后又从 30 分钟（1800s）提到 1 小时（3600s）：质量校验往往是本轮交付
+    链路里最慢的一步（试算 INSERT + 多个校验项聚合），30 分钟不够跑完时
+    就会整轮被判超时，前端拿不到任何质量结论。
+    """
+        assert qc._MAX_CHECK_TIMEOUT_SEC == 60 * 60
         assert qc._MAX_CHECK_TIMEOUT_SEC == qc._MAX_MAIN_TIMEOUT_SEC
 
     @pytest.mark.asyncio
     async def test_check_sql_receives_the_full_timeout_budget(self, monkeypatch):
-        """传给校验 SQL 的 timeout 必须是 30 分钟，不能被 3 分钟的旧帽子砍掉。"""
+        """传给校验 SQL 的 timeout 必须是 1 小时，不能被旧的 3 分钟/30 分钟帽子砍掉。"""
         monkeypatch.setenv("DATAOPS_ENV", "integration")
 
         ctx = ToolExecutionContext(runtime=self._fake_runtime(), tool_config={})
@@ -886,7 +890,7 @@ class TestRunQualityCheckWiring:
             )
 
         assert seen_timeouts, "check SQL must have been executed"
-        assert all(t == 30 * 60 for t in seen_timeouts), seen_timeouts
+        assert all(t == 60 * 60 for t in seen_timeouts), seen_timeouts
 
     @pytest.mark.asyncio
     async def test_check_actually_executes_and_reports_warnings(self, monkeypatch):

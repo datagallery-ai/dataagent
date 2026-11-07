@@ -84,7 +84,7 @@ _SAFE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 async def dataops_probe_table(
     table: str,
-    columns: list[str] | None = None,
+    columns: list[str],
     *,
     partition_filter: str | None = None,
     sample_size: int = _DEFAULT_SAMPLE_SIZE,
@@ -98,9 +98,12 @@ async def dataops_probe_table(
 
     Args:
         table: 目标表名,形如 "db.tbl"。仅允许 ``[A-Za-z][A-Za-z0-9_]*``,
-               多段(用 . 分隔)时每段都需通过白名单。
-        columns: 可选列名清单。``None`` 或空列表 → ``SELECT *``;
-                 非空时按白名单校验后用反引号引用。
+            多段(用 . 分隔)时每段都需通过白名单。
+        columns: **必填**。要探查的列名清单,按白名单校验后用反引号引用。
+            DataOps 平台**禁止** ``SELECT *``,因此这里不允许省略或传空列表,
+            必须先通过 metadata_recall / get_table_schema 拿到真实列名再显式列出。
+            只能写**单段**列名(不能带 ``库.表.`` 前缀)。
+            例:``columns=["user_id", "action_type"]``。
         partition_filter: 分区过滤字面串,**必须**是 ``pt_d = 'yyyyMMdd'`` 形式
             (由调用方通过 skill 知识生成,如"今天=20261012");格式白名单见
             ``_PARTITION_FILTER_RE``。**只接受天分区 pt_d**,小时/分钟分区
@@ -158,23 +161,29 @@ async def dataops_probe_table(
                 return _err(common, "invalid_partition_filter", start=start,
                             error=f"partition_filter 日期段 {m['d']!r} 不合法")
 
-        # 校验 columns(不允许 None —— DataOps 平台禁止 SELECT *,LLM 必须先通过
-        # metadata_recall 拿到表的列名列表再显式传入)。空 list [] 按 None 处理。
-        validated_columns: list[str] | None
-        if columns is None or (isinstance(columns, list) and len(columns) == 0):
+        # 校验 columns(DataOps 平台禁止 SELECT *,LLM 必须先通过 metadata_recall
+        # 拿到表的列名列表再显式传入)。空 list [] 同样拒绝。
+        # 列名只允许单段标识符 —— 不接受 ``库.表.列`` 这种带库表前缀的写法,
+        # 因为它会被原样反引号包成 `` `库.表.列` ``,DataOps 侧无法解析。
+        validated_columns: list[str]
+        if columns is None:
             return _err(common, "invalid_columns", start=start,
                         error="columns 不允许为空或 None。请先通过 metadata_recall/get_table_schema "
                               "获取表的所有列名,然后选取你要探查的列显式传入 columns=[...]。"
                               "示例:columns=['col_a','col_b','col_c']")
-        else:
-            if not isinstance(columns, list):
-                return _err(common, "invalid_columns", start=start,
-                            error=f"columns 必须是 list[str] 或 None,实际 {type(columns).__name__}")
-            bad = [c for c in columns if not (isinstance(c, str) and _is_safe_identifier(c))]
-            if bad:
-                return _err(common, "invalid_columns", start=start,
-                            error=f"非法列名: {bad!r}")
-            validated_columns = [str(c) for c in columns]
+        if not isinstance(columns, list):
+            return _err(common, "invalid_columns", start=start,
+                        error=f"columns 必须是 list[str],实际 {type(columns).__name__}")
+        if len(columns) == 0:
+            return _err(common, "invalid_columns", start=start,
+                        error="columns 不允许为空列表。DataOps 平台禁止 SELECT *,"
+                              "必须显式列出至少一个列名。示例:columns=['col_a','col_b']")
+        bad = [c for c in columns if not (isinstance(c, str) and _is_safe_column_name(c))]
+        if bad:
+            return _err(common, "invalid_columns", start=start,
+                        error=f"非法列名: {bad!r}。列名只允许单段 [A-Za-z][A-Za-z0-9_]*,"
+                              "不能带库/表前缀(如 'db.tbl.col'),也不能是 '*'。")
+        validated_columns = [str(c) for c in columns]
 
         # --- 2. 路由:prod / integration ---
         sql = _build_probe_sql(table, validated_columns, sample_size, partition_filter)
@@ -399,7 +408,7 @@ async def _probe_integration(
 
 
 def _is_safe_identifier(s: str) -> bool:
-    """表名/列名白名单校验。
+    """表名白名单校验。
 
     支持多段(``db.tbl`` 或 ``db.schema.tbl``),每段都必须匹配
     ``^[A-Za-z][A-Za-z0-9_]*$``。空段直接拒绝(避免 ``"db."``)。
@@ -410,6 +419,20 @@ def _is_safe_identifier(s: str) -> bool:
     if any(not p for p in parts):  # 拒绝空段
         return False
     return all(_SAFE_ID_RE.match(p) for p in parts)
+
+
+def _is_safe_column_name(s: str) -> bool:
+    """列名白名单校验 —— **只接受单段标识符**。
+
+    与表名不同,列名不允许带 ``库.表.`` 前缀:DataOps 的列引用是单段标识符,
+    写成 ``db.tbl.col`` 会被反引号包成 `` `db.tbl.col` ``,后端解析不出来。
+    ``*`` 同样拒绝(DataOps 平台禁止 ``SELECT *``)。
+    """
+    if not isinstance(s, str) or not s.strip():
+        return False
+    if "." in s or "*" in s:
+        return False
+    return bool(_SAFE_ID_RE.match(s))
 
 
 def _clamp_int(v: Any, default: int, lo: int, hi: int) -> int:
@@ -447,7 +470,7 @@ def _default_partition_filter(table: str) -> str:
 
 def _build_probe_sql(
     table: str,
-    columns: list[str] | None,
+    columns: list[str],
     sample_size: int,
     partition_filter: str | None = None,
 ) -> str:
@@ -460,6 +483,10 @@ def _build_probe_sql(
         所以这种"整体加反引号"实际跑不通。
       - 列名单元素分别加反引号(单段名,不存在歧义)。
 
+    ``columns`` **不允许为空** —— DataOps 平台禁止 ``SELECT *``,所以这里没有
+    ``else "*"`` 兜底分支。调用方必须在传入前完成非空校验
+    (见 ``dataops_probe_table`` 中的 ``invalid_columns`` 分支)。
+
     ``sample_size`` 已被 _clamp_int 夹紧到 [1, 50],这里是整数路径,
     不接受字符串注入。
 
@@ -467,7 +494,9 @@ def _build_probe_sql(
     只可能由 ``pt_d = 'YYYYMMDD'`` 组成,不含任何用户控制字符),所以这里直接
     拼接是安全的。
     """
-    cols_clause = ", ".join(f"`{c}`" for c in columns) if columns else "*"
+    if not columns:
+        raise ValueError("columns must not be empty: DataOps forbids SELECT *")
+    cols_clause = ", ".join(f"`{c}`" for c in columns)
     # 拆段:每段独立加反引号
     table_quoted = ".".join(f"`{part}`" for part in table.split("."))
     where_clause = f" WHERE {partition_filter}" if partition_filter else ""

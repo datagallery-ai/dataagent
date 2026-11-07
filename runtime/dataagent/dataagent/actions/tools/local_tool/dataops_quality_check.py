@@ -75,9 +75,9 @@ _DEFAULT_SAMPLE_SIZE = 10000
 #
 # 质量校验的 SQL 走的是 Spark adHoc，与主 INSERT 同一个执行引擎，但聚合了
 # 多个指标的统计（count/sum(if(...))/count(1) 等），在千万级分区上单条就能跑
-# 十几分钟。与主链路对齐到 30 分钟，让慢 SQL 有机会跑完。
-_MAX_CHECK_TIMEOUT_SEC = 30 * 60
-_MAX_MAIN_TIMEOUT_SEC = 30 * 60
+# 十几分钟。与主链路对齐到 1 小时，让慢 SQL 有机会跑完。
+_MAX_CHECK_TIMEOUT_SEC = 60 * 60
+_MAX_MAIN_TIMEOUT_SEC = 60 * 60
 
 # 默认排除字段：分区列 / 时间戳 / 主键 ID —— 这些字段做覆盖率统计没有业务含义
 DEFAULT_EXCLUDE_FIELDS = frozenset({
