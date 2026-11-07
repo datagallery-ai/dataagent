@@ -12,7 +12,7 @@ npm install
 npm run start:tui
 ```
 
-`npm run start:tui` connects to `/dataagent/stream` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused. It does not open `/api/copilotkit`.
+`npm run start:tui` connects to `/dataagent/stream` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused.
 
 ## Home
 

@@ -97,7 +97,7 @@ restart  Stop and start an existing build. Does not install or build.
 status   Read process state and probe the API address recorded at start.
 logs     Show recent runtime logs and continue following them. Ctrl+C does not stop DataGallery.
 doctor   Run read-only dependency, configuration, port, permission, disk, and health checks. The API address is the one recorded at start.
-tui      Start the local TUI in the foreground against the API address recorded at start. It uses /dataagent/stream and does not use /api/copilotkit.
+tui      Start the local TUI in the foreground against the API address recorded at start. It uses /dataagent/stream.
 help     Show this help.
 
 One-click deploy builds the TUI so it is ready. Start it in another terminal with ./deploy.sh tui.

@@ -112,7 +112,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=你的_API_Key
 ```
 
-对外入口请用反代，样例见 [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example)：静态资源压缩，SSE 路径 `/dataagent/stream` 与 `/api/copilotkit` 关闭 gzip 与 `proxy_buffering`。
+对外入口请用反代，样例见 [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example)：静态资源压缩，SSE 路径 `/dataagent/stream` 关闭 gzip 与 `proxy_buffering`。
 
 ### 3. 构建并启动（正式测试 / 真实生产相同）
 

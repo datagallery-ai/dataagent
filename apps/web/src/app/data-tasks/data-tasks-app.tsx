@@ -1030,8 +1030,6 @@ function DataTasksCopilotShell() {
     <CopilotKit
       key={scopeKey}
       agent="default"
-      runtimeUrl="/api/copilotkit"
-      useSingleEndpoint={false}
       selfManagedAgents={selfManagedAgents}
       showDevConsole={false}
       enableInspector={false}

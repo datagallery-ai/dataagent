@@ -1,7 +1,7 @@
 # DataGallery production / test reverse proxy
 #
-# Next keeps `compress: false` so AG-UI SSE (`/dataagent/stream`,
-# `/api/copilotkit`) is never gzip-buffered. Terminate TLS and compress static
+# Next keeps `compress: false` so AG-UI SSE (`/dataagent/stream`)
+# is never gzip-buffered. Terminate TLS and compress static
 # assets here instead.
 #
 # Usage sketch:
@@ -67,19 +67,6 @@ server {
 
     # AG-UI SSE: never buffer or compress at the proxy.
     location = /dataagent/stream {
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_cache off;
-        gzip off;
-        proxy_read_timeout 3600s;
-        proxy_pass http://datagallery_web;
-    }
-
-    location /api/copilotkit {
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

@@ -134,13 +134,13 @@ test("optional tui command checks readiness and API then starts foreground clien
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://127.0.0.1:9000/api/copilotkit"
+    runtimeUrl: "http://127.0.0.1:9000/dataagent/stream"
   });
   assert.deepEqual(calls, [
     "load-config",
     "ensure-tui-ready",
     "check-api-for-tui",
-    "start-tui:http://127.0.0.1:9000/api/copilotkit"
+    "start-tui:http://127.0.0.1:9000/dataagent/stream"
   ]);
 });
 

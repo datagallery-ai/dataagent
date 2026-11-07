@@ -25,7 +25,7 @@ describe("startup preflight auth transport", () => {
     };
 
     assert.equal(
-      await preflightRuntimeConnection("http://127.0.0.1:8787/api/copilotkit", fetchImpl),
+      await preflightRuntimeConnection("http://127.0.0.1:8787/api/v1/sessions", fetchImpl),
       true,
     );
     assert.equal(
@@ -77,7 +77,7 @@ describe("startup preflight auth transport", () => {
 
   it("derives config base URL from runtime URL", () => {
     assert.equal(
-      configBaseUrlFromRuntime("http://127.0.0.1:8787/api/copilotkit"),
+      configBaseUrlFromRuntime("http://127.0.0.1:8787/api/v1/sessions"),
       "http://127.0.0.1:8787",
     );
   });

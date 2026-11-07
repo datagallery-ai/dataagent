@@ -166,14 +166,17 @@ async def test_partial_stream_is_not_retried_or_duplicated(runtime, models):
 
 
 async def test_whole_run_timeout_includes_native_retry_backoff(runtime, models):
+    # Graph startup on a busy runner can consume a 0.2s budget before the
+    # provider sees the call. The deadline still has to fire during the
+    # 30s Retry-After sleep, so the native retry never starts.
     runtime = replace(runtime, settings=runtime.settings.model_copy(update={
         "dataagent": runtime.settings.dataagent.model_copy(update={
-            "limits": runtime.settings.dataagent.limits.model_copy(update={"timeout_seconds": 0.2}),
+            "limits": runtime.settings.dataagent.limits.model_copy(update={"timeout_seconds": 3}),
         }),
     }))
     with provider(503, retry_after="30") as (url, requests):
         async with client_for(runtime, models(url)) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query()))
+            events = sse(await client.post("/dataagent/stream", json=query(), timeout=15))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["code"] == "TimeoutError"
     assert len(requests) == 1

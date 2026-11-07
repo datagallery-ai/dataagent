@@ -159,15 +159,7 @@ class _GatedModel(ScriptedModel):
         return await super()._agenerate(messages, stop, run_manager, **kwargs)
 
 
-def gui_turn(thread_id):
-    return {
-        "threadId": thread_id,
-        "runId": str(uuid4()),
-        "messages": [{"id": str(uuid4()), "role": "user", "content": "from gui"}],
-    }
-
-
-async def test_gui_cannot_enter_a_session_while_a2a_is_running(runtime):
+async def test_stream_cannot_enter_a_session_while_a2a_is_running(runtime):
     entered, release = asyncio.Event(), asyncio.Event()
     model = _GatedModel(
         responses=[AIMessage(content="from-a2a"), AIMessage(content="from-gui")],
@@ -183,13 +175,13 @@ async def test_gui_cannot_enter_a_session_while_a2a_is_running(runtime):
         ):
             a2a_task = asyncio.create_task(rpc(a2a_client, message("from a2a", "shared-thread")))
             await asyncio.wait_for(entered.wait(), timeout=5)
-            rejected = await gui_client.post("/api/copilotkit", json=gui_turn("shared-thread"))
+            rejected = await gui_client.post("/dataagent/stream", json=stream_turn("from gui", "shared-thread"))
             assert rejected.status_code == 409
             assert "already active" in rejected.text
             assert len(model.requests) == 0
             release.set()
             completed = task_of(await a2a_task)
-            follow = await gui_client.post("/api/copilotkit", json=gui_turn("shared-thread"))
+            follow = await gui_client.post("/dataagent/stream", json=stream_turn("from gui", "shared-thread"))
             assert follow.status_code == 200
             await follow.aread()
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"

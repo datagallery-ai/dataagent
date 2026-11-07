@@ -16,7 +16,7 @@ Browser apps/web
 | Web | `npm run start` or `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
 | TUI | `npm run start:tui` | The terminal. The TUI starts the control plane when nothing is listening. |
 
-The Python SDK can skip HTTP and prepare the same runtime in process. The conversation HTTP entry is `POST /dataagent/stream`. `POST /api/copilotkit` still runs the same graph in this process; the Web path does not use it.
+The Python SDK can skip HTTP and prepare the same runtime in process. The conversation HTTP entry is `POST /dataagent/stream`.
 
 ## Modules
 

@@ -61,20 +61,20 @@ test("tui accepts optional --runtime-url", () => {
     webPort: null,
     config: null
   });
-  assert.deepEqual(parseDeployArgs(["tui", "--runtime-url", "http://127.0.0.1:9000/api/copilotkit"]), {
+  assert.deepEqual(parseDeployArgs(["tui", "--runtime-url", "http://127.0.0.1:9000/dataagent/stream"]), {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://127.0.0.1:9000/api/copilotkit",
+    runtimeUrl: "http://127.0.0.1:9000/dataagent/stream",
     webHost: null,
     webPort: null,
     config: null
   });
-  assert.deepEqual(parseDeployArgs(["--runtime-url", "http://example/api/copilotkit", "tui"]), {
+  assert.deepEqual(parseDeployArgs(["--runtime-url", "http://example/dataagent/stream", "tui"]), {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://example/api/copilotkit",
+    runtimeUrl: "http://example/dataagent/stream",
     webHost: null,
     webPort: null,
     config: null
