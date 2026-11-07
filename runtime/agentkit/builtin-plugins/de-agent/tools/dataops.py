@@ -19,7 +19,7 @@ from utils.dataops_mcp import dataops_options, dataops_settings
 from utils.dataops_probe_tool import dataops_probe_table as _probe
 from utils.dataops_trial_compute_tool import trial_compute_once as _trial
 from utils.dataops_validate_data_tool import validate_data as _validate_data
-from utils.evidence import output_file
+from utils.evidence import ArtifactPathError, output_file
 
 from dataagent.models import ModelContext
 
@@ -68,7 +68,10 @@ async def trial_compute_table(
     with dataops_settings(runtime.context) as context:
         if dataops_options(context).get("enabled", True) is False:
             return {"passed": False, "skipped": True, "reason": "dataops_disabled"}
-        path = str(output_file(runtime.context, dml_path)) if dml_path else None
+        try:
+            path = str(output_file(runtime.context, dml_path)) if dml_path else None
+        except ArtifactPathError as exc:
+            return {"passed": False, "error": str(exc), "reason": "artifact_outside_outputs"}
         if path is None:
             return {"passed": True, "skipped": True, "reason": "no_dml_path"}
         result, _ = await _trial(
@@ -92,7 +95,10 @@ async def dataops_validate_data(
     with dataops_settings(runtime.context) as context:
         if dataops_options(context).get("enabled", True) is False:
             return {"ok": False, "skipped": True, "reason": "dataops_disabled"}
-        path = str(output_file(runtime.context, sql_file_path)) if sql_file_path else None
+        try:
+            path = str(output_file(runtime.context, sql_file_path)) if sql_file_path else None
+        except ArtifactPathError as exc:
+            return {"ok": False, "error": str(exc), "reason": "artifact_outside_outputs"}
         return await _validate_data(
             sql,
             sql_file_path=path,

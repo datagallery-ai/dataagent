@@ -10,7 +10,7 @@ from langgraph.types import Command
 from loguru import logger
 from sqlglot import exp
 from sqlglot.errors import ParseError, TokenError
-from utils.evidence import output_file
+from utils.evidence import ArtifactPathError, output_file
 from utils.word_root_validator import WordRootContext
 from utils.word_roots import validate_identifier_word_roots
 
@@ -98,6 +98,10 @@ async def check_word_roots(request, result, *, params):
                 # Unexpected non-serializable results are unavailable validation too.
                 json.dumps(payload, ensure_ascii=False)
                 status = "error"
+    except ArtifactPathError as exc:
+        payload = {"file_written": True, "word_roots_valid": False,
+                   "error": "artifact_outside_outputs", "error_msg": str(exc)}
+        status = "error"
     except Exception as exc:
         unavailable = f"{type(exc).__name__}: {exc}"
     if unavailable:

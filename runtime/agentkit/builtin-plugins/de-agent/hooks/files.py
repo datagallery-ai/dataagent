@@ -7,7 +7,29 @@ from pathlib import Path
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 from utils.checks import _validate_ddl_comprehensive, validate_sql_syntax
-from utils.evidence import output_file
+from utils.evidence import ArtifactPathError, output_file
+
+
+def _path_error(request, exc, result=None):
+    message = ToolMessage(
+        content=json.dumps({"error": "artifact_outside_outputs", "message": str(exc)}),
+        tool_call_id=request.tool_call.get("id"),
+        status="error",
+    )
+    if isinstance(result, Command):
+        update = dict(result.update or {})
+        messages = list(update.get("messages", []))
+        for index, original in enumerate(messages):
+            if isinstance(original, ToolMessage) and original.tool_call_id == message.tool_call_id:
+                messages[index] = original.model_copy(
+                    update={"content": message.content, "status": "error"}
+                )
+                break
+        else:
+            messages.append(message)
+        update["messages"] = messages
+        return replace(result, update=update)
+    return message
 
 
 def check_ddl(request, result, *, params):
@@ -17,7 +39,10 @@ def check_ddl(request, result, *, params):
     value = request.tool_call.get("args", {}).get("file_path", "")
     if not value or not Path(value).name.startswith("create_") or Path(value).suffix != ".sql":
         return None
-    path = output_file(request.runtime.context, value)
+    try:
+        path = output_file(request.runtime.context, value)
+    except ArtifactPathError as exc:
+        return _path_error(request, exc, result)
     if not path.name.startswith("create_") or path.suffix != ".sql" or not path.is_file():
         return None
     errors = _validate_ddl_comprehensive(path)
@@ -48,7 +73,10 @@ def guard_insert(request, *, params):
     value = request.tool_call.get("args", {}).get("file_path", "")
     if not value or not Path(value).name.startswith("insert_") or Path(value).suffix != ".sql":
         return None
-    path = output_file(request.runtime.context, value)
+    try:
+        path = output_file(request.runtime.context, value)
+    except ArtifactPathError as exc:
+        return _path_error(request, exc)
     if path.exists():
         return None
     return ToolMessage(
@@ -65,7 +93,10 @@ def check_insert_syntax(request, result, *, params):
     value = request.tool_call.get("args", {}).get("file_path", "")
     if not value or not Path(value).name.startswith("insert_") or Path(value).suffix != ".sql":
         return None
-    path = output_file(request.runtime.context, value)
+    try:
+        path = output_file(request.runtime.context, value)
+    except ArtifactPathError as exc:
+        return _path_error(request, exc, result)
     if not path.is_file():
         return None
     errors = validate_sql_syntax(path.read_text(encoding="utf-8"))
