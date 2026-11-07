@@ -23,7 +23,7 @@ from utils.data_task_ir.runtime import ir_enabled
 from utils.dataops_log_utils import bound_error_excerpt
 from utils.dataops_mcp import dataops_settings
 from utils.dataops_validate_tool import dataops_validate_sql_with_log_analysis
-from utils.evidence import model_evidence, output_file
+from utils.evidence import ArtifactPathError, model_evidence, output_file
 
 from dataagent.model_stream import collect_model_stream
 from dataagent.models import ModelContext
@@ -36,8 +36,11 @@ async def validate_deliverables(
     runtime: ToolRuntime[ModelContext],
 ) -> dict:
     """Check explicit CREATE/INSERT files; quality observations are warnings, not proof of equivalence."""
-    ddl = output_file(runtime.context, ddl_path)
-    dml = output_file(runtime.context, dml_path)
+    try:
+        ddl = output_file(runtime.context, ddl_path)
+        dml = output_file(runtime.context, dml_path)
+    except ArtifactPathError as exc:
+        return {"valid": False, "errors": [str(exc)], "warnings": []}
     if not ddl.is_file() or not dml.is_file():
         return {"valid": False, "errors": ["Both DDL and DML artifacts must exist"], "warnings": []}
     errors = _validate_ddl_comprehensive(ddl)

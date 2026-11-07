@@ -76,13 +76,20 @@ def model_evidence(context) -> list[dict]:
     return list(reversed(records))
 
 
+class ArtifactPathError(ValueError):
+    """An artifact path escapes the current session's outputs directory."""
+
+
 def output_file(context, value: str) -> Path:
     """Resolve one artifact under the current session's output directory."""
     root = context.session.outputs.resolve()
     candidate = Path(value)
     path = (candidate if candidate.is_absolute() else root / candidate).resolve()
     if not path.is_relative_to(root):
-        raise ValueError("Artifact must be inside this session's outputs directory")
+        raise ArtifactPathError(
+            f"Artifact must be inside this session's outputs directory: {root}. "
+            f"Received: {value}; resolved: {path}. Use a path under {root}."
+        )
     return path
 
 
