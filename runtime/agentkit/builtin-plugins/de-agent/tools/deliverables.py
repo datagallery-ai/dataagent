@@ -68,7 +68,7 @@ async def validate_deliverables(
                 [
                     {"role": "system", "content": instruction},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ]
+                ],
             )
             text = (
                 response.content.split("</think>")[-1]
@@ -123,12 +123,12 @@ async def _validate_dataops(ddl, dml, context, query: str) -> dict:
             for kind, path in (("ddl", ddl), ("dml", dml)):
                 previous = state.get(kind, {})
                 attempt = previous.get("attempt", 0) + 1
-                if attempt > 3:
+                if attempt > 5:
                     return {
                         **report,
                         "status": "BLOCKED",
                         "exhausted": True,
-                        "errors": [f"DataOps {kind}: three attempts exhausted"],
+                        "errors": [f"DataOps {kind}: five attempts exhausted"],
                     }
                 state[kind] = {**previous, "attempt": attempt}
                 state_path.write_text(
@@ -167,7 +167,7 @@ async def _validate_dataops(ddl, dml, context, query: str) -> dict:
                     json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
                 if not passed:
-                    report.update(status="BLOCKED", exhausted=attempt >= 3)
+                    report.update(status="BLOCKED", exhausted=attempt >= 5)
                     report["errors"].append(f"DataOps {kind}: {detail or 'validation failed'}")
                     break
             else:

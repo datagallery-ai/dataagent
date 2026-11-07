@@ -134,8 +134,8 @@ def getenv(name: str, default: str = "") -> str:
     return os.environ.get(name, default) if value is None else str(value)
 
 
-async def invoke_model_text(model, messages) -> str:
-    response = await collect_model_stream(model, messages)
+async def invoke_model_text(model, messages, **kwargs) -> str:
+    response = await collect_model_stream(model, messages, **kwargs)
     return response.content if isinstance(response.content, str) else response.text
 
 

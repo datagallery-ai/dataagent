@@ -37,18 +37,21 @@
             "checks": [
               "null_rate",
               "single_value_ratio",
-              "outlier_ratio"
+              "outlier_ratio",
+              "row_count"
             ],
             "sample_size": 10000,
             "thresholds": {
               "null_rate_threshold": 0.8,
               "single_value_threshold": 0.95,
-              "outlier_ratio_threshold": 0.0
+              "outlier_ratio_threshold": 0.0,
+              "row_count_threshold": 1
             },
             "ratio_field_patterns": [
               "ratio"
             ]
-          }
+          },
+          "enable_thinking": false
         },
         "sql_checkers": {
           "model": "primary",
@@ -56,7 +59,9 @@
           "repair_attempts": 2,
           "timeout_seconds": 600,
           "disabled_rules": [],
-          "dataops_validation_enabled": true
+          "dataops_validation_enabled": true,
+          "dataops_max_attempts": 5,
+          "enable_thinking": false
         }
       },
       "nl2sql": {

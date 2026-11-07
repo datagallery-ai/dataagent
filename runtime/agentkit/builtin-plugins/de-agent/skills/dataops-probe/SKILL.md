@@ -82,8 +82,15 @@ dataops_probe_table(
 | `ok` | `skipped` | 含义 | 你的下一步 |
 |---|---|---|---|
 | `True` | 缺省 | 成功拉到 `row_count` 行 | 读 `rows` 字段,做 schema linking 判断 |
-| `False` | `True` | 工具主动跳过(校验失败) | 读 `reason`:`empty_table` / `invalid_table_name` / `invalid_partition_filter`,**自己改对再重试** |
+| `False` | `True` | 工具主动跳过(校验失败) | 读 `reason`,**自己改对再重试** |
 | `False` | 缺省 | 后端执行失败 | 读 `errorLog`,**不要盲目重试**,换相邻表或换查询 |
+
+> **`row_count` 是「这次拉回来的样例行数」,不是表的真实行数。**
+> probe 只执行 `SELECT cols FROM tbl WHERE pt_d = '...' LIMIT N`,
+> **不会**额外跑 `SELECT count(*)` 去查表里有多少行(那是一次全表扫描)。
+> 要真实行数请自己写普通 SQL 查。
+
+完整的 reason 枚举与返回结构见 `references/tool_schema.md`。
 
 ## 已知工具局限(写交付物时回退到 readbook)
 

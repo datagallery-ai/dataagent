@@ -41,7 +41,9 @@ from loguru import logger
 
 from dataagent.models import ModelContext
 from utils.dataops_quality_check import (
+    _SCOPE_TABLE,
     render_metrics_table,
+    render_table_metrics,
     resolve_config,
     run_quality_check,
 )
@@ -140,7 +142,7 @@ async def validate_data(
     # --- 解析可校验字段 -------------------------------------------------
     config = resolve_config(context)
     fields = _extract_fields_from_insert_sql(resolved_sql, config.exclude_fields)
-    if not fields:
+    if not fields and not any(c.scope == _SCOPE_TABLE for c in config.checkers):
         return _fmt(
             f"{_REPORT_PREFIX}无法从 INSERT 的 SELECT 投影中解析出可校验字段，已跳过。"
             "请确认 SELECT 里有具名的输出列（`col` 或 `expr AS alias`）。",
@@ -218,6 +220,11 @@ async def validate_data(
         )
 
     body = "\n".join([summary, "", table_md])
+    table_metrics_md = render_table_metrics(
+        result.get("table_metrics") or {}, bool(result.get("row_count_truncated"))
+    )
+    if table_metrics_md:
+        body += "\n\n" + table_metrics_md
     if failed_checks:
         body += (
             "\n\n"
@@ -248,6 +255,7 @@ async def validate_data(
             "sample_size": result.get("sample_size"),
             "warnings": warnings,
             "details": details,
+            "table_metrics": result.get("table_metrics") or {},
             "markdown": body,
         },
     )
