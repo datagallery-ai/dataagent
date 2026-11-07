@@ -656,8 +656,8 @@ test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
     rmSync(home, { recursive: true, force: true });
   }
   assert.equal(
-    resolveTuiRuntimeUrl({}, "http://example/api/copilotkit"),
-    "http://example/api/copilotkit"
+    resolveTuiRuntimeUrl({}, "http://example/dataagent/stream"),
+    "http://example/dataagent/stream"
   );
 });
 

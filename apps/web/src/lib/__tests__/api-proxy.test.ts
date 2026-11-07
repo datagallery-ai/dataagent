@@ -7,10 +7,8 @@ import {
 } from "../api-proxy";
 
 describe("api-proxy streaming contract", () => {
-  it("recognizes CopilotKit paths as streaming", () => {
+  it("recognizes the conversation stream as streaming", () => {
     expect(isStreamingProxyPath("/dataagent/stream")).toBe(true);
-    expect(isStreamingProxyPath("/api/copilotkit")).toBe(true);
-    expect(isStreamingProxyPath("/api/copilotkit/info")).toBe(true);
     expect(isStreamingProxyPath("/api/v1/sessions")).toBe(false);
   });
 
@@ -41,8 +39,8 @@ describe("api-proxy streaming contract", () => {
     expect(headers.get("X-Accel-Buffering")).toBe(STREAMING_PROXY_HEADERS["X-Accel-Buffering"]);
   });
 
-  it("applies anti-buffering headers for CopilotKit even without event-stream yet", () => {
-    const headers = buildProxyResponseHeaders(new Headers({ "content-type": "application/json" }), "/api/copilotkit");
+  it("applies anti-buffering headers for the conversation stream before the content type arrives", () => {
+    const headers = buildProxyResponseHeaders(new Headers({ "content-type": "application/json" }), "/dataagent/stream");
 
     expect(headers.get("Cache-Control")).toBe(STREAMING_PROXY_HEADERS["Cache-Control"]);
     expect(headers.get("X-Accel-Buffering")).toBe("no");

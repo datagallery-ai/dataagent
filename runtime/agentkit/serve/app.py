@@ -18,8 +18,8 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph.utils import langchain_messages_to_agui
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import ConfigDict, model_validator
 from starlette.background import BackgroundTask
@@ -595,120 +595,6 @@ def register_conversation_routes(
             },
         )
 
-    @app.get("/api/copilotkit/info")
-    async def copilotkit_info():
-        return JSONResponse(_copilotkit_info())
-
-    @app.post("/api/copilotkit")
-    async def copilotkit(request: Request):
-        """Run one GUI turn on the same core graph as ``/dataagent/stream``."""
-        try:
-            payload = await request.json()
-        except ValueError:
-            raise HTTPException(400, "Invalid JSON body.") from None
-        if not isinstance(payload, dict):
-            raise HTTPException(400, "JSON object is required.")
-        try:
-            body = RunAgentInput.model_validate({
-                "tools": [],
-                "context": [],
-                "forwardedProps": {},
-                **payload,
-            })
-        except ValueError:
-            raise HTTPException(400, "Invalid RunAgentInput.") from None
-
-        user_id = local_user_id()
-        thread_id = body.thread_id
-        sessions = app.state.sessions
-        opened = await _acquire_run(
-            app, sessions, busy, user_id, thread_id, rejected_status=400,
-        )
-        _session, agent, run_runtime = opened
-        graph = agent.graph
-        config = {"configurable": {"thread_id": thread_id}}
-        if graph.config and "recursion_limit" in graph.config:
-            config["recursion_limit"] = graph.config["recursion_limit"]
-        turn = SessionTurn(sessions, user_id, thread_id)
-        try:
-            await turn.start(body.run_id, _turn_text(body.messages))
-        except ValueError as error:
-            busy.discard((user_id, thread_id))
-            raise HTTPException(409, str(error)) from None
-        except BaseException:
-            busy.discard((user_id, thread_id))
-            raise
-        encoder = EventEncoder(accept=request.headers.get("accept"))
-        handle = _register_run(app, body.run_id)
-        secrets = agent.context.redaction_secrets
-        release_gui = _release_turn(
-            turn, busy, (user_id, thread_id),
-            unregister=lambda: _unregister_run(app, body.run_id, handle),
-        )
-
-        async def gui_events():
-            adapter = agent.as_agui(
-                name="dataagent", config=config, emit_raw_events=False,
-            )
-            upstream = None
-            finished_event = None
-            try:
-                async with asyncio.timeout(run_runtime.timeout_seconds):
-                    upstream = adapter.run(body)
-                    async for event in _iter_until_cancelled(upstream, handle):
-                        if event is None:
-                            continue
-                        if event.type == EventType.RUN_FINISHED:
-                            finished_event = event
-                            continue
-                        if event.type == EventType.RUN_ERROR:
-                            turn.status = "error"
-                            public = _public_run_error(event, secrets)
-                            logger.error(
-                                "RUN_ERROR run=%s thread=%s stage=copilotkit code=%s message=%s",
-                                body.run_id, thread_id, public.code, public.message,
-                            )
-                            yield encoder.encode(public)
-                            return
-                        yield encoder.encode(event)
-                    if turn.status == "error":
-                        return
-                    if finished_event is None:
-                        raise RuntimeError(
-                            "INCOMPLETE_STREAM: upstream ended without a terminal event"
-                        )
-                    await turn.settle(graph, complete=True)
-                    yield encoder.encode(finished_event)
-            except _RunCancelled:
-                return
-            except (asyncio.CancelledError, GeneratorExit):
-                raise
-            except Exception as error:
-                turn.status = "error"
-                details = safe_error(error, run_runtime.redaction_secrets)
-                logger.error(
-                    "RUN_ERROR run=%s thread=%s stage=copilotkit code=%s message=%s",
-                    body.run_id, thread_id, details["code"], details["message"],
-                )
-                yield encoder.encode(RunErrorEvent(**details))
-            finally:
-                _unregister_run(app, body.run_id, handle)
-                with anyio.CancelScope(shield=True):
-                    if upstream is not None:
-                        await upstream.aclose()
-                    if turn.status in {"interrupted", "error"}:
-                        await _settle(turn, graph)
-
-        return DisconnectAwareResponse(
-            gui_events(),
-            background=BackgroundTask(release_gui),
-            media_type=encoder.get_content_type(),
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
     from a2a_server.server import register_a2a_routes
 
     register_a2a_routes(app, runtime)
@@ -748,8 +634,3 @@ def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model
         register_conversation_routes(app, runtime, instance_id=identity)
     register_not_found(app)
     return app
-
-
-def _copilotkit_info():
-    # Empty agents keeps a client-registered HttpAgent from being replaced.
-    return {"version": "1.0.0", "agents": {}}

@@ -112,7 +112,7 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=your-api-key
 ```
 
-Put a reverse proxy in front for a public host; see [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example) — compress static assets; keep `/dataagent/stream` and `/api/copilotkit` uncompressed and unbuffered for SSE.
+Put a reverse proxy in front for a public host; see [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example) — compress static assets; keep `/dataagent/stream` uncompressed and unbuffered for SSE.
 
 ### 3. Build and start (same for formal test and real production)
 

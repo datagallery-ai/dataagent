@@ -16,7 +16,7 @@
 | Web | `npm run start` 或 `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
 | TUI | `npm run start:tui` | 终端。控制面没在听就由 TUI 拉起 |
 
-Python SDK 可以不经 HTTP，直接准备同一份运行时。对话的 HTTP 入口是 `POST /dataagent/stream`。`POST /api/copilotkit` 仍在同一进程里跑同一张图，网页主路径不走它。
+Python SDK 可以不经 HTTP，直接准备同一份运行时。对话的 HTTP 入口是 `POST /dataagent/stream`。
 
 ## 主要模块
 

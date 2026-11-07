@@ -30,9 +30,7 @@ POST /dataagent/stream
 | `tools`、`context`、`forwardedProps` | 必须为空 |
 | `resume`、`parentRunId` | 不能使用 |
 
-没有 `run_config`，也没有按请求选择数据源、知识库或模型 Profile。模型、插件和工作区来自控制面启动时的配置。
-
-`POST /api/copilotkit` 在同一进程里跑同一张图。网页主路径使用 `/dataagent/stream`。
+没有 `run_config`，也没有按请求选择数据源、知识库或模型 Profile。模型、插件和工作区来自控制面启动时的配置。网页和 TUI 都使用 `/dataagent/stream`。
 
 ## 取消和恢复
 

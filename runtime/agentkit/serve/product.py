@@ -16,13 +16,12 @@ def is_conversation_path(path: str) -> bool:
     """True for agent routes that require a live engine."""
     if path in {
         "/dataagent/stream",
-        "/api/copilotkit",
         "/sessions",
         "/.well-known/agent-card.json",
         "/a2a/jsonrpc",
     }:
         return True
-    return path.startswith(("/dataagent/stream/", "/api/copilotkit/", "/sessions/"))
+    return path.startswith(("/dataagent/stream/", "/sessions/"))
 
 
 def conversation_status(app: FastAPI) -> dict:

@@ -142,7 +142,7 @@ async def test_web_and_tui_writes_are_readable(runtime) -> None:
         async with httpx.AsyncClient(
             transport=transport, base_url="http://127.0.0.1:8787", timeout=30,
         ) as http:
-            web = await http.post("/api/copilotkit", json=_gui("来自网页", "web-thread"))
+            web = await http.post("/dataagent/stream", json=_gui("来自网页", "web-thread"))
             tui = await http.post("/dataagent/stream", json=_gui("来自终端", "tui-thread"))
             web_view = await http.get("/api/v1/sessions/web-thread/conversation")
             tui_view = await http.get("/api/v1/sessions/tui-thread/conversation")
@@ -183,7 +183,7 @@ async def test_agent_messages_keep_tool_calls_in_checkpoint_order(runtime) -> No
         async with httpx.AsyncClient(
             transport=transport, base_url="http://127.0.0.1:8787", timeout=30,
         ) as http:
-            posted = await http.post("/api/copilotkit", json=_gui("tool-1", "tool-thread"))
+            posted = await http.post("/dataagent/stream", json=_gui("tool-1", "tool-thread"))
             view = await http.get("/api/v1/sessions/tool-thread/conversation")
             native = await http.get("/sessions/tool-thread")
     assert posted.status_code == 200, posted.text
@@ -219,14 +219,11 @@ def test_model_settings_come_from_home_env(tmp_path, monkeypatch) -> None:
     assert runtime.model_name == "from-home"
 
 
-async def test_control_plane_serves_gui_chat_on_the_agentkit_routes(client) -> None:
-    info = await client.get("/api/copilotkit/info")
-    assert info.status_code == 200
-    assert info.json() == {"version": "1.0.0", "agents": {}}
-
-    posted = await client.post("/api/copilotkit", json={})
-    assert posted.status_code == 400
-    assert posted.status_code != 404
+async def test_control_plane_serves_conversation_on_the_agentkit_routes(client) -> None:
+    for path in ("/api/copilotkit/info", "/api/copilotkit"):
+        missing = await client.get(path) if path.endswith("/info") else await client.post(path, json={})
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
     stream = await client.post("/dataagent/stream", json={})
     assert stream.status_code == 422
@@ -247,8 +244,8 @@ async def test_same_app_registers_control_plane_and_conversation_routes(client) 
     assert me.json()["success"] is True
     missing = await client.get("/api/v1/capabilities")
     assert missing.status_code == 404
-    info = await client.get("/api/copilotkit/info")
-    assert info.status_code != 404
+    removed = await client.get("/api/copilotkit/info")
+    assert removed.status_code == 404
 
 
 async def test_cancel_unknown_run_is_not_success(client) -> None:
@@ -269,7 +266,8 @@ async def test_engine_failure_keeps_the_control_plane_up() -> None:
         transport = httpx.ASGITransport(app=application)
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as http:
             health = await http.get("/healthz")
-            chat = await http.post("/api/copilotkit", json={"threadId": "t", "runId": "r", "messages": []})
+            chat = await http.post("/dataagent/stream", json={"threadId": "t", "runId": "r", "messages": []})
+            removed = await http.get("/api/copilotkit/info")
             me = await http.get("/api/v1/me")
             cancel = await http.post("/api/v1/runs/run-1/cancel")
             ready = await http.get("/ready")
@@ -278,6 +276,8 @@ async def test_engine_failure_keeps_the_control_plane_up() -> None:
     assert ready.status_code == 503
     assert chat.status_code == 503
     assert chat.json()["error"]["code"] == "CONVERSATION_UNAVAILABLE"
+    assert removed.status_code == 404
+    assert removed.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert me.status_code == 200
     assert me.json()["data"]["user"]["id"] == "default"
     assert cancel.status_code == 404
@@ -339,9 +339,13 @@ async def test_cancel_stops_the_running_turn(client, app, monkeypatch) -> None:
     body = {
         "threadId": "cancel-thread",
         "runId": "cancel-run",
+        "state": {},
         "messages": [{"id": "m1", "role": "user", "content": "hello"}],
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
     }
-    running = asyncio.create_task(client.post("/api/copilotkit", json=body))
+    running = asyncio.create_task(client.post("/dataagent/stream", json=body))
     await asyncio.wait_for(started.wait(), 5)
     user_id = app.state.agents.runtime.paths.user_id
     assert (user_id, "cancel-thread") in app.state.conversation_busy
@@ -359,7 +363,7 @@ async def test_cancel_stops_the_running_turn(client, app, monkeypatch) -> None:
     row = await app.state.sessions.get(user_id, "cancel-thread")
     assert row["status"] == "interrupted"
 
-    follow = await client.post("/api/copilotkit", json={**body, "runId": "cancel-run-2"})
+    follow = await client.post("/dataagent/stream", json={**body, "runId": "cancel-run-2"})
     assert follow.status_code == 200
     assert "RUN_FINISHED" not in follow.text
     assert "second-run" in follow.text

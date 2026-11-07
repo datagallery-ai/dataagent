@@ -40,15 +40,13 @@
 | GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 文本，最多 64 KiB。非文本是 415。 |
 | POST | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。没有这一轮时 404。 |
 
-没有这些路径：登录、`/api/v1/capabilities`、数据源、知识库、工作区配置、会话改名、删除、分支或 trace DAG。调用它们会得到 404 信封。
+没有这些路径：登录、`/api/v1/capabilities`、`/api/copilotkit`、`/api/copilotkit/info`、数据源、知识库、工作区配置、会话改名、删除、分支或 trace DAG。调用它们会得到 404 信封。
 
 ## 对话
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | POST | `/dataagent/stream` | 一轮对话。请求体是一条 AG-UI 输入，多出来的字段会被拒绝。成功响应是 `text/event-stream`。 |
-| POST | `/api/copilotkit` | 同一进程、同一张图上的另一条入口。网页主路径不用它。 |
-| GET | `/api/copilotkit/info` | CopilotKit runtime info。 |
 
 `POST /dataagent/stream` 的约束：
 

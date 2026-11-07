@@ -40,15 +40,13 @@ Unknown paths return 404 with `RESOURCE_NOT_FOUND`. Conversation paths return 50
 | GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB. Non-text is 415. |
 | POST | `/api/v1/runs/{runId}/cancel` | Cancel the active turn. 404 when that run is not executing. |
 
-These paths are not implemented: login, `/api/v1/capabilities`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
+These paths are not implemented: login, `/api/v1/capabilities`, `/api/copilotkit`, `/api/copilotkit/info`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
 
 ## Conversation
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/dataagent/stream` | One turn. The body is one AG-UI input; extra fields are rejected. Success is `text/event-stream`. |
-| POST | `/api/copilotkit` | Another entry on the same process and the same graph. The Web path does not use it. |
-| GET | `/api/copilotkit/info` | CopilotKit runtime info. |
 
 Constraints for `POST /dataagent/stream`:
 

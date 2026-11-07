@@ -44,7 +44,7 @@
 | `GET` | `/api/v1/sessions/{threadId}/conversation` | 网页可读的对话。未知会话返回空消息 |
 | `POST` | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。成功是 204。没有这一轮时是 404 |
 
-未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。对话路径在引擎未就绪时返回 503。
+未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。`/api/copilotkit` 和 `/api/copilotkit/info` 不在其中。对话路径在引擎未就绪时返回 503。
 
 同一个进程还提供 `GET /.well-known/agent-card.json` 和 `POST /a2a/jsonrpc`。约定见 [A2A](a2a.md)。这两条路由和其余本机对话路由一样，不另加 Bearer。
 

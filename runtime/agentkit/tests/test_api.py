@@ -197,13 +197,22 @@ async def test_upstream_run_error_is_also_logged_redacted(runtime, caplog, monke
     from ag_ui.core import RunErrorEvent
 
     async def fail(self, body):
-        yield RunErrorEvent(message="upstream failed: test-secret")
+        yield RunErrorEvent(
+            message="upstream failed: test-secret",
+            code="provider test-secret",
+            raw_event={"apiKey": "test-secret", "detail": "do-not-forward"},
+        )
 
     monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent.run", fail)
     caplog.set_level("ERROR", logger="dataagent.api")
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
         events = sse(await client.post("/dataagent/stream", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
+    assert events[-1]["message"] == "upstream failed: [REDACTED]"
+    assert events[-1]["code"] == "provider [REDACTED]"
+    assert "rawEvent" not in events[-1]
+    assert "raw_event" not in events[-1]
+    assert "do-not-forward" not in json.dumps(events)
     assert "upstream failed: [REDACTED]" in caplog.text
     assert "test-secret" not in caplog.text
 
@@ -225,6 +234,13 @@ async def test_native_child_error_is_redacted_without_becoming_root_terminal(run
     assert child["code"] == "[REDACTED]"
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["message"] == "root failure"
+
+
+async def test_unsafe_thread_id_is_rejected(runtime):
+    async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
+        response = await client.post("/dataagent/stream", json=query(thread="../x"))
+    assert response.status_code == 422
+    assert "safe opaque" in response.text
 
 
 @pytest.mark.parametrize("extra", [
@@ -614,14 +630,10 @@ async def test_unknown_entry_fails_the_request_not_health(runtime):
 @pytest.mark.parametrize("model_source", ["services", "runtime"])
 async def test_compiled_entry_streams_model_chunks(runtime, tmp_path, model_source):
     runtime = _entry_runtime(runtime, tmp_path, model_source=model_source)
-    model = StreamingScriptedModel(responses=[AIMessage(content="secret-token")] * 2)
+    model = StreamingScriptedModel(responses=[AIMessage(content="secret-token")])
     assert type(model)._astream is not ScriptedModel._astream
     async with client_for(runtime, model) as (client, _):
         stream = sse(await client.post(
             "/dataagent/stream", json=query("ask", thread=f"{model_source}-entry"),
         ))
-        gui = sse(await client.post(
-            "/api/copilotkit", json=query("ask", thread=f"{model_source}-gui"),
-        ))
     _assert_model_stream_visible(stream)
-    _assert_model_stream_visible(gui)

@@ -30,9 +30,7 @@ The body is one AG-UI input. Extra fields are rejected. The server keeps history
 | `tools`, `context`, `forwardedProps` | Empty |
 | `resume`, `parentRunId` | Not accepted |
 
-There is no `run_config`, and no per-request choice of datasource, knowledge base, or model profile. The model, plugins, and workspaces come from the configuration loaded when the control plane started.
-
-`POST /api/copilotkit` runs the same graph in the same process. The Web path uses `/dataagent/stream`.
+There is no `run_config`, and no per-request choice of datasource, knowledge base, or model profile. The model, plugins, and workspaces come from the configuration loaded when the control plane started. Web and TUI both use `/dataagent/stream`.
 
 ## Cancel and resume
 
