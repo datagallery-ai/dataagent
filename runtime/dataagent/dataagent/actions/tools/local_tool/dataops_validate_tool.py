@@ -162,8 +162,20 @@ async def _poll_until_done(
     job_id: str,
     timeout_sec: int,
     poll_interval: float,
+    *,
+    cancel_on_timeout: bool = True,
 ) -> tuple[str, dict | None]:
     """Poll job until completion, timeout, or error.
+
+    Args:
+        cancel_on_timeout: 超时时是否取消这个 job。
+
+            默认 True —— 校验 SQL 超时了就该中止，别让它在后台一直跑。
+
+            但**清理用的 DROP 不能取消**：DROP 已经提交给 DataOps 了，取消
+            本地跟踪并不会撤销远端已经排队的 DROP，只会让本地永远失去对它的
+            追踪（表最终大概率还是被删了，但我们既确认不了、也没法重试）。
+            让它自然跑完更稳妥。
 
     Returns:
         (result_status, result_dict_or_None)
@@ -180,10 +192,16 @@ async def _poll_until_done(
             break
         await asyncio.sleep(poll_interval)
     else:
-        try:
-            coordinator.cancel(job_id=job_id)
-        except Exception as cancel_exc:
-            logger.debug(f"[dataops_validate_sql] cancel failed for {job_id}: {cancel_exc}")
+        if cancel_on_timeout:
+            try:
+                coordinator.cancel(job_id=job_id)
+            except Exception as cancel_exc:
+                logger.debug(f"[dataops_validate_sql] cancel failed for {job_id}: {cancel_exc}")
+        else:
+            logger.warning(
+                f"[dataops_validate_sql] job {job_id} did not finish within {timeout_sec}s; "
+                f"leaving it running (cancellation disabled for this call)"
+            )
         return "timed_out", None
 
     result = coordinator.collect(job_id=job_id)
@@ -261,11 +279,125 @@ def _get_user_account(runtime) -> str:
 
 
 def _sanitize_table_name(name: str) -> str:
-    """Replace dots and hyphens in table name with underscores."""
-    return name.replace(".", "_").replace("-", "_")
+    """把名字里的**所有**非字母数字字符换成下划线。
+
+    早先只换 ``.`` 和 ``-``，于是 ``DATAOPS_EXEC_USER=nezha@corp.com`` 这种
+    邮箱形式的执行用户名会原样进入临时表名：
+
+        adhoctemp.tmp_nezha@corp_com_20260101_ads_x
+
+    这个名字有两个问题：
+
+    1. ``@`` 不是合法标识符字符 —— DataOps 侧大概率直接建表失败；
+    2. 清理链路的安全闸门 ``_ADHOC_TEMP_TABLE_RE`` 只放行 ``[A-Za-z0-9_]``，
+       于是**闸门把这个临时表判成「不是 adhoctemp 临时表」→ 跳过清理**，
+       残留表永远删不掉。
+
+    统一收敛成 ``[A-Za-z0-9_]``，建表侧和清理闸门用同一套字符集，两边永远对得上。
+    """
+    return re.sub(r"[^A-Za-z0-9_]", "_", name or "")
+
+
+#: SQL 注释（``--`` 单行 / ``/* */`` 块）由 :func:`_strip_sql_comments` 处理。
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """去掉 SQL 里的注释，只保留可执行代码。
+
+    判定「这条 SQL 是不是 DDL」时必须先剥注释 —— 否则 DML 文件里一句
+    ``-- create table biads.ads_x 的定义见 DDL 文件`` 的说明注释就会被
+    正则命中，导致这条 SQL 被误判成 DDL：
+
+    - wrapper 的 ``needs_cleanup = not _is_create_sql(sql)`` 变成 False → **DML
+      的临时表永远不删**；
+    - ``_extract_temp_table_name`` 走 CREATE 分支，在 DML 里抽不到 CREATE 的
+      表名 → 返回 ``None`` → 轮次收尾的清理也拿不到表名。
+
+    字符串字面量里的 ``--``（例如 ``WHERE name = 'a--b'``）不是注释 ——
+    所以这里**逐字符扫描**，跟踪单引号字符串的开关状态。
+
+    字符串里同时支持两种转义写法（Spark / Hive 都可能出现）：
+
+    - **反斜杠在引号前**：``'it\\'s'`` —— 这里的 ``'`` 是**字面量**，不关闭字符串；
+    - **反斜杠在引号后**：``'it\\'`` —— 同样的意思，只是反斜杠的位置不同。
+
+    早先只认后一种（判断 ``sql[i + 1] == "\\\\"``），于是前一种会被当成
+    字符串结束：**字符串状态整体翻转** → 后面真正的注释反而被当成代码保留
+    → DML 被误判成 DDL → 临时表不再清理。
+
+    另外 ``''``（连续两个单引号）是 SQL 标准里表示「字符串里的一个单引号」
+    的写法，同样不能关闭字符串。
+
+    注释里的内容用等长的空格替换，保持所有偏移量不变（正则匹配不受影响）。
+    """
+    if not sql:
+        return ""
+
+    out: list[str] = []
+    i = 0
+    n = len(sql)
+    in_string = False
+    while i < n:
+        ch = sql[i]
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                # 反斜杠转义：反斜杠 + 下一个字符都原样保留（可能是 \' 或 \\）。
+                out.append(ch)
+                out.append(sql[i + 1])
+                i += 2
+                continue
+            if ch == "'":
+                # ``''`` 是字符串里的一个单引号 —— 不关闭字符串。
+                if i + 1 < n and sql[i + 1] == "'":
+                    out.append(ch)
+                    out.append(sql[i + 1])
+                    i += 2
+                    continue
+                out.append(ch)
+                in_string = False
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "'":
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        # 行注释
+        if ch == "-" and i + 1 < n and sql[i + 1] == "-":
+            j = sql.find("\n", i)
+            j = n if j == -1 else j
+            out.append(" " * (j - i))
+            i = j
+            continue
+
+        # 块注释
+        if ch == "/" and i + 1 < n and sql[i + 1] == "*":
+            j = sql.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            out.append(" " * (j - i))
+            i = j
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
 
 
 _MAX_FULL_TABLE_LEN = 100
+
+#: 清理用 DROP 的最长等待时间（秒）。
+#:
+#: 早先用的是 ``min(timeout_sec, 60)`` —— 而联调链路的轮询间隔是 30s，
+#: 于是 60s 的预算只够**轮询两次**：DROP 稍慢一点就会走到超时分支。
+#: 超时分支以前还会 ``cancel`` 掉这个 DROP —— 远端已经排队的 DROP 被本地
+#: 放弃追踪，临时表就删不掉了。
+_CLEANUP_DROP_TIMEOUT_SEC = 300
 
 
 def _get_temp_table_name(original_table: str, user_account: str, today: str, table_suffix: str) -> str:
@@ -284,10 +416,59 @@ def _get_temp_table_name(original_table: str, user_account: str, today: str, tab
 _INSERT_RE = re.compile(r"\binsert\s+(?:overwrite\s+|into\s+)?(?:table\s+)?", re.IGNORECASE)
 _CREATE_RE = re.compile(r"\bcreate\s+(?:external\s+)?table\b", re.IGNORECASE)
 
+#: 临时表名的合法字符集：库名.表名，段内只允许字母数字下划线。
+#:
+#: 这套字符集必须与 :func:`_sanitize_table_name` 产出的名字**完全一致** ——
+#: 否则建表用的名字过不了这个闸门，清理就会静默跳过（临时表残留）。
+_ADHOC_TEMP_TABLE_RE = re.compile(r"^adhoctemp\.tmp_[A-Za-z0-9_]+$")
+
+#: 单个标识符（允许反引号包裹）：`ads_x` / ads_x / ads-x
+_IDENT_REF = r"`?\w[\w\-]*`?"
+
+#: 带库前缀的表引用：```biads`.`ads_x``` / biads.ads_x / ads_x
+_DOTTED_REF = rf"{_IDENT_REF}(?:\s*\.\s*{_IDENT_REF})*"
+
+#: 建表语句里的表引用（含 ``IF NOT EXISTS``）。
+_CREATE_REF_PATTERN = rf"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<ref>{_DOTTED_REF})"
+
+#: 写入语句里的表引用。
+_INSERT_REF_PATTERN = rf"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?(?P<ref>{_DOTTED_REF})"
+
+
+def _last_identifier_segment(ref: str) -> str:
+    """取表引用里的**最后一段**（表名），并去掉反引号。
+
+    ``biads.ads_x`` → ``ads_x``；```biads`.`ads_x``` → ``ads_x``。
+
+    之前建表/写入的改写正则只认 ``\\w+``，遇到反引号包裹的表名
+    （```biads`.`ads_x```）就匹配不上 —— 于是 SQL **原样**提交给 DataOps，
+    真实表被建出来，临时表却压根不存在（清理链路也就无从下手）。
+    """
+    parts = [part.strip() for part in (ref or "").split(".")]
+    if not parts:
+        return ""
+    return parts[-1].strip().strip("`").strip()
+
+
+def _is_adhoctemp_temp_table(name: str | None) -> bool:
+    """Whether ``name`` is a legit adhoctemp scratch table.
+
+    清理链路的安全闸门：只有 ``adhoctemp.tmp_*`` 才允许被 DROP。
+    万一表名解析出岔（解析失败、SQL 写法怪），宁可**不删** ——
+    误删业务库里的真实表远比残留一张临时表严重。
+    """
+    if not name:
+        return False
+    return bool(_ADHOC_TEMP_TABLE_RE.match(name.strip().strip("`").strip()))
+
 
 def _is_create_sql(sql: str) -> bool:
-    """Return True if sql is a CREATE TABLE statement."""
-    return bool(_CREATE_RE.search(sql))
+    """Return True if sql is a CREATE TABLE statement.
+
+    **只看可执行代码，不看注释** —— 见 :func:`_strip_sql_comments`。DML 文件里
+    一句提到 ``create table`` 的说明注释，不能让整条 SQL 被当成 DDL。
+    """
+    return bool(_CREATE_RE.search(_strip_sql_comments(sql)))
 
 
 def _build_drop_sql(
@@ -308,10 +489,11 @@ def _build_drop_sql(
         partition_date: 分区日期（``YYYYMMDD``）；``None`` 时用语法校验链路的默认日期。
 
     Returns:
-        DROP TABLE IF EXISTS statement for the temp table, or None if extraction fails.
+        DROP TABLE IF EXISTS statement for the temp table, or None if extraction fails
+        **or** the extracted name isn't an ``adhoctemp.tmp_*`` scratch table.
     """
     # First rewrite to get the temp table name
-    rewritten = _replace_target_table(original_sql, user_account, table_suffix, partition_date)
+    rewritten = _replace_target_table(_strip_sql_comments(original_sql), user_account, table_suffix, partition_date)
 
     # Extract the temp table name from the rewritten CREATE statement
     # Pattern: CREATE [EXTERNAL] TABLE [IF NOT EXISTS] temp_table (...)
@@ -323,6 +505,17 @@ def _build_drop_sql(
     temp_table = match.group(1).strip()
     temp_table = temp_table.strip("`").strip("'").strip('"')
     if not temp_table:
+        return None
+
+    if not _is_adhoctemp_temp_table(temp_table):
+        # 安全闸门：只允许 DROP adhoctemp 里的临时表。
+        # 有些建表写法（``CREATE TABLE x LIKE y``、``CREATE TABLE x AS SELECT``）
+        # 走不到改写分支，于是这里抽出来的仍是**真实业务表名** ——
+        # 早先这里会直接生成 ``DROP TABLE IF EXISTS biads.ads_x``，
+        # 把业务表删了。宁可不清临时表，也绝不能删到真实表。
+        logger.warning(
+            f"[dataops_validate_sql] pre-drop skipped: {temp_table!r} is not an adhoctemp scratch table"
+        )
         return None
 
     return f"DROP TABLE IF EXISTS {temp_table}"
@@ -397,8 +590,7 @@ def _replace_target_table(
         full_match = m.group(0)
 
         # Find the table name
-        create_pattern = r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(\w+)\.)?(\w+)"
-        create_match = re.search(create_pattern, full_match, re.IGNORECASE)
+        create_match = re.search(_CREATE_REF_PATTERN, full_match, re.IGNORECASE)
         if not create_match:
             return full_match
 
@@ -411,7 +603,9 @@ def _replace_target_table(
             )
         )
 
-        table_name = create_match.group(2)
+        table_name = _last_identifier_segment(create_match.group("ref"))
+        if not table_name:
+            return full_match
         temp_table = _get_temp_table_name(table_name, user_account, partition_date, table_suffix)
 
         # Find parentheses content
@@ -435,17 +629,19 @@ def _replace_target_table(
         # Find the table name - support db.table-name format
         # Note: TABLE keyword is optional (some SQL dialects omit it)
         # Table name can contain dots and hyphens
-        insert_pattern = r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?(?:(\w+(?:\.\w+)*)\.)?([\w\-]+)"
-        insert_match = re.search(insert_pattern, full_match, re.IGNORECASE)
+        insert_match = re.search(_INSERT_REF_PATTERN, full_match, re.IGNORECASE)
         if not insert_match:
             return full_match
 
-        db_name = insert_match.group(1)
-        table_name = insert_match.group(2)
+        table_name = _last_identifier_segment(insert_match.group("ref"))
+        if not table_name:
+            return full_match
         temp_table = _get_temp_table_name(table_name, user_account, partition_date, table_suffix)
 
-        # Replace original table name
-        original = f"{db_name}.{table_name}" if db_name else table_name
+        # Replace original table name — 替换的是**整段表引用**（含库前缀和
+        # 反引号），不是只替换最后一段，否则 `biads`.`ads_x` 这种写法会留下
+        # 半截原名。
+        original = insert_match.group("ref")
 
         return full_match.replace(original, temp_table, 1)
 
@@ -462,8 +658,10 @@ def _replace_target_table(
     # Match and replace INSERT OVERWRITE/INTO TABLE statements
     # Support table names with dots, hyphens, and underscores
     # Note: TABLE keyword is optional (some SQL dialects omit it)
+    # 表引用允许反引号包裹（```biads`.`ads_x```）—— 早先的模式只认 ``\w``，
+    # 遇到反引号就整条匹配失败，SQL 原样提交给 DataOps（建出了真实表）。
     result = re.sub(
-        r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?(?:(\w+(?:\.\w+)*)\.)?[\w\-]+",
+        rf"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?{_DOTTED_REF}",
         replace_insert,
         result,
         flags=re.IGNORECASE,
@@ -934,8 +1132,12 @@ async def _expand_cte_for_dml(
 
 
 def _is_insert_sql(sql: str) -> bool:
-    """Return True if sql is an INSERT statement."""
-    return bool(_INSERT_RE.search(sql))
+    """Return True if sql is an INSERT statement.
+
+    只看可执行代码，不看注释（见 :func:`_strip_sql_comments`）—— 注释里
+    提到 ``insert overwrite`` 不能让一条纯 DDL 被当成 DML。
+    """
+    return bool(_INSERT_RE.search(_strip_sql_comments(sql)))
 
 
 def _extract_temp_table_name(
@@ -951,20 +1153,80 @@ def _extract_temp_table_name(
 
     ``partition_date`` must match the value used when the SQL was rewritten,
     otherwise the derived temp table name will not exist.
+
+    **一条 SQL 里可能既有 DDL 又有 DML**（交付物把建表和写入写在一个文件里
+    是常见写法）。这时 CREATE 和 INSERT 各自对应**不同的**临时表 ——
+    只抽一个就必然漏掉另一个。所以这里返回**所有**候选表名，由调用方逐个 DROP。
     """
-    if _is_create_sql(sql):
+    names: list[str] = []
+
+    def _remember(name: str | None) -> None:
+        if name and name not in names:
+            names.append(name)
+
+    # 先在**剥掉注释**的代码上判定 DDL —— 否则 DML 里的 ``-- create table ...``
+    # 说明注释会让整条 SQL 走 CREATE 分支，抽到业务表名或 ``None``。
+    code = _strip_sql_comments(sql)
+
+    if _CREATE_RE.search(code):
         # CREATE: parse the rewritten CREATE statement
-        rewritten = _replace_target_table(sql, user_account, table_suffix, partition_date)
+        rewritten = _replace_target_table(code, user_account, table_suffix, partition_date)
         match = re.search(
             r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.`_-]+)",
             rewritten,
             re.IGNORECASE,
         )
-        if not match:
-            return None
-        return match.group(1).strip().strip("`").strip("'").strip('"') or None
+        if match:
+            _remember(match.group(1).strip().strip("`").strip("'").strip('"'))
 
-    return _extract_insert_target_table(sql, user_account, table_suffix, partition_date)
+    # INSERT: 无论上面是不是 DDL，都要抽 —— 混合 DDL+DML 的文件里 DML 写的
+    # 往往是**另一张**表，抽不出来就等于漏删。
+    _remember(_extract_insert_target_table(code, user_account, table_suffix, partition_date))
+
+    if not names:
+        return None
+    if len(names) == 1:
+        return names[0]
+    # 多张表：返回一个合成的列表标记，调用方按 ``_extract_temp_table_names``
+    # 处理。为了向后兼容单表调用方，这里仍返回第一张。
+    return names[0]
+
+
+def _extract_temp_table_names(
+    sql: str,
+    user_account: str,
+    table_suffix: str,
+    partition_date: str | None = None,
+) -> list[str]:
+    """Extract **every** adhoctemp table this SQL could have materialized.
+
+    :func:`_extract_temp_table_name` 只返回第一张；一条 SQL 里同时有
+    ``CREATE TABLE a`` 和 ``INSERT OVERWRITE TABLE b`` 时，会漏掉 b。
+    清理链路用本函数 —— 漏一张就等于残留一张。
+    """
+    names: list[str] = []
+
+    def _remember(name: str | None) -> None:
+        if name and name not in names:
+            names.append(name)
+
+    code = _strip_sql_comments(sql)
+
+    if _CREATE_RE.search(code):
+        rewritten = _replace_target_table(code, user_account, table_suffix, partition_date)
+        for match in re.finditer(
+            r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.`_-]+)",
+            rewritten,
+            re.IGNORECASE,
+        ):
+            _remember(match.group(1).strip().strip("`").strip("'").strip('"'))
+
+    rewritten_code = _replace_target_table(code, user_account, table_suffix, partition_date)
+    for match in re.finditer(_INSERT_REF_PATTERN, rewritten_code, re.IGNORECASE):
+        table_ref = match.group("ref").strip().strip("`").strip("'").strip('"')
+        _remember(table_ref)
+
+    return names
 
 
 def _extract_insert_target_table(
@@ -978,18 +1240,18 @@ def _extract_insert_target_table(
     Runs _replace_target_table internally to get the rewritten INSERT line,
     then extracts the table identifier that was substituted.
     Returns None if no INSERT clause or table name is found.
+
+    只在**剥掉注释**的代码上匹配 —— 否则注释里一句
+    ``-- insert overwrite table biads.ads_x`` 会让提取器抽出一个**从未存在过**
+    的临时表名，清理时 DROP 落空。
     """
-    rewritten = _replace_target_table(sql, user_account, table_suffix, partition_date)
+    rewritten = _replace_target_table(_strip_sql_comments(sql), user_account, table_suffix, partition_date)
     # The rewritten INSERT has the temp table in the INSERT clause.
     # Pattern: INSERT ... INTO <adhoctemp.tmp_...>
-    m = re.search(
-        r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?([\w.`_-]+)",
-        rewritten,
-        re.IGNORECASE,
-    )
+    m = re.search(_INSERT_REF_PATTERN, rewritten, re.IGNORECASE)
     if not m:
         return None
-    table_ref = m.group(1).strip()
+    table_ref = m.group("ref").strip()
     # Remove backtick/quotes if any
     table_ref = table_ref.strip("`").strip("'").strip('"')
     return table_ref if table_ref else None
@@ -1129,7 +1391,7 @@ async def dataops_validate_sql(
     # --- Config ---
     resource = coordinator.catalog.get("dataops")
     POLL_INTERVAL_SEC = 30.0
-    MAX_TIMEOUT_SEC = 30 * 60
+    MAX_TIMEOUT_SEC = 60 * 60
     timeout_sec = min(int(resource.metadata.get("timeout_s", MAX_TIMEOUT_SEC)), MAX_TIMEOUT_SEC)
     poll_interval = max(POLL_INTERVAL_SEC, float(resource.metadata.get("poll_interval_ms", 30_000)) / 1000.0)
 
@@ -1219,11 +1481,12 @@ async def _pre_drop_for_create(
 
     try:
         logger.debug(f"[dataops_validate_sql] Submitting DROP for CREATE TABLE: {drop_sql}")
+        pre_drop_timeout = max(min(timeout_sec, _CLEANUP_DROP_TIMEOUT_SEC), poll_interval * 2 + 15)
         drop_result = coordinator.submit_job(
             resource_id="dataops",
             command=drop_sql,
             task_type="sql_validate",
-            timeout_sec=min(timeout_sec, 60),
+            timeout_sec=pre_drop_timeout,
         )
         drop_job_id = drop_result.get("job_id")
         if drop_result.get("status") == "ERROR" or not drop_job_id:
@@ -1233,7 +1496,15 @@ async def _pre_drop_for_create(
             )
             return None
 
-        drop_status, _ = await _poll_until_done(coordinator, drop_job_id, min(timeout_sec, 60), poll_interval)
+        # cancel_on_timeout=False —— 预清理的 DROP 必须真的跑完，否则同名临时表
+        # 还在，CREATE 就会报 "Table already exists"。取消本地跟踪救不了场。
+        drop_status, _ = await _poll_until_done(
+            coordinator,
+            drop_job_id,
+            pre_drop_timeout,
+            poll_interval,
+            cancel_on_timeout=False,
+        )
         if drop_status == "completed":
             logger.debug(f"[dataops_validate_sql] DROP completed successfully job_id={drop_job_id}")
         else:
@@ -1281,16 +1552,56 @@ async def _cleanup_temp_table(
         )
         return None
 
-    temp_table = _extract_temp_table_name(sql, user_account, table_suffix, partition_date)
-    if not temp_table:
+    temp_tables = _extract_temp_table_names(sql, user_account, table_suffix, partition_date)
+    if not temp_tables:
         logger.debug(f"[{context_label}] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}")
+        return None
+
+    # 一条 SQL 可能建了不止一张临时表（混合 DDL+DML，或 CREATE 与 INSERT 指向
+    # 不同表）。**每张都要删** —— 漏一张就等于残留一张。
+    last_job_id: str | None = None
+    for temp_table in temp_tables:
+        job_id = await _drop_one_temp_table(
+            coordinator,
+            temp_table,
+            timeout_sec,
+            poll_interval,
+            context_label=context_label,
+        )
+        if job_id:
+            last_job_id = job_id
+    return last_job_id
+
+
+async def _drop_one_temp_table(
+    coordinator,
+    temp_table: str,
+    timeout_sec: int,
+    poll_interval: float,
+    *,
+    context_label: str,
+) -> str | None:
+    """Submit and await the DROP for one adhoctemp scratch table.
+
+    Only ``adhoctemp.tmp_*`` tables are ever dropped — see
+    :func:`_is_adhoctemp_temp_table`.
+    """
+    if not _is_adhoctemp_temp_table(temp_table):
+        # 安全闸门：只删 adhoctemp.tmp_*。表名解析出岔时宁可留着临时表，
+        # 也绝不能把 DROP 打到业务库的真实表上。
+        logger.warning(
+            f"[{context_label}] cleanup skipped: {temp_table!r} is not an adhoctemp scratch table"
+        )
         return None
 
     drop_sql = f"DROP TABLE IF EXISTS {temp_table}"
     try:
         logger.debug(f"[{context_label}] cleanup DROP submitting: {drop_sql}")
-        # Cap cleanup timeout so it can't block validation indefinitely
-        cleanup_timeout = min(timeout_sec, 60)
+        # Cap cleanup timeout so it can't block validation indefinitely — but keep
+        # enough room for a few polls. With the 30s poll interval, a 60s budget
+        # only allows **two** polls, which is not enough for a DROP on a
+        # non-trivial table to finish.
+        cleanup_timeout = max(min(timeout_sec, _CLEANUP_DROP_TIMEOUT_SEC), poll_interval * 2 + 15)
         submit_result = coordinator.submit_job(
             resource_id="dataops",
             command=drop_sql,
@@ -1303,7 +1614,15 @@ async def _cleanup_temp_table(
             )
             return None
         drop_job_id = submit_result["job_id"]
-        drop_status, _ = await _poll_until_done(coordinator, drop_job_id, cleanup_timeout, poll_interval)
+        # cancel_on_timeout=False —— DROP 已经排队了，取消本地跟踪并不会撤销
+        # 远端的 DROP，只会让临时表删不掉却又无人认领。让它自然跑完。
+        drop_status, _ = await _poll_until_done(
+            coordinator,
+            drop_job_id,
+            cleanup_timeout,
+            poll_interval,
+            cancel_on_timeout=False,
+        )
         if drop_status == "completed":
             logger.debug(f"[{context_label}] cleanup DROP completed table={temp_table} job_id={drop_job_id}")
         else:
@@ -1337,30 +1656,59 @@ async def _cleanup_temp_table_prod(
         )
         return None
 
+    temp_tables = _extract_temp_table_names(sql, user_account, table_suffix, partition_date)
+    if not temp_tables:
+        logger.debug(
+            f"[dataops_validate_sql_prod] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}"
+        )
+        return None
+
+    # 一条 SQL 可能建了不止一张临时表 —— 每张都要删。
+    last_job_id: str | None = None
+    for temp_table in temp_tables:
+        job_id = await _drop_one_temp_table_prod(
+            temp_table,
+            timeout_sec,
+            context_label="dataops_validate_sql_prod",
+        )
+        if job_id:
+            last_job_id = job_id
+    return last_job_id
+
+
+async def _drop_one_temp_table_prod(
+    temp_table: str,
+    timeout_sec: int,
+    *,
+    context_label: str,
+) -> str | None:
+    """Submit and await the DROP of one adhoctemp scratch table (prod path)."""
     from dataagent.actions.tools.local_tool.dataops_prod_adapter import (
         prod_collect_result,
         prod_execute_sql,
         prod_get_query_result,
     )
 
-    temp_table = _extract_temp_table_name(sql, user_account, table_suffix, partition_date)
-    if not temp_table:
-        logger.debug(
-            f"[dataops_validate_sql_prod] cleanup skipped: no temp table in SQL (SELECT / non-DML); sql={sql[:80]!r}"
+    if not _is_adhoctemp_temp_table(temp_table):
+        # 安全闸门：只删 adhoctemp.tmp_*（详见 ``_cleanup_temp_table``）。
+        logger.warning(
+            f"[{context_label}] cleanup skipped: {temp_table!r} is not an adhoctemp scratch table"
         )
         return None
 
     drop_sql = f"DROP TABLE IF EXISTS {temp_table}"
     try:
-        logger.debug(f"[dataops_validate_sql_prod] cleanup DROP submitting: {drop_sql}")
+        logger.debug(f"[{context_label}] cleanup DROP submitting: {drop_sql}")
         submit_result = await prod_execute_sql(drop_sql)
         if not submit_result.get("success"):
             logger.warning(
-                f"[dataops_validate_sql_prod] cleanup DROP submission failed: {submit_result.get('error', 'unknown')}"
+                f"[{context_label}] cleanup DROP submission failed: {submit_result.get('error', 'unknown')}"
             )
             return None
         drop_job_id = submit_result["job_id"]
-        cleanup_timeout = min(timeout_sec, 60)
+        # 生产链路轮询间隔是 5s —— 60s 预算够轮询十几次，但 DROP 大表可能更慢，
+        # 给足余量。超时后**不取消**：远端 DROP 已排队，取消本地跟踪救不了场。
+        cleanup_timeout = min(timeout_sec, _CLEANUP_DROP_TIMEOUT_SEC)
         deadline = asyncio.get_event_loop().time() + cleanup_timeout
         while asyncio.get_event_loop().time() < deadline:
             polled = await prod_get_query_result(drop_job_id)
@@ -1369,18 +1717,18 @@ async def _cleanup_temp_table_prod(
                 await prod_collect_result(drop_job_id)
                 if status == "completed":
                     logger.debug(
-                        f"[dataops_validate_sql_prod] cleanup DROP completed table={temp_table} job_id={drop_job_id}"
+                        f"[{context_label}] cleanup DROP completed table={temp_table} job_id={drop_job_id}"
                     )
                 else:
                     logger.warning(
-                        f"[dataops_validate_sql_prod] cleanup DROP failed table={temp_table} job_id={drop_job_id}"
+                        f"[{context_label}] cleanup DROP failed table={temp_table} job_id={drop_job_id}"
                     )
                 return drop_job_id
             await asyncio.sleep(5.0)
-        logger.warning(f"[dataops_validate_sql_prod] cleanup DROP timed out table={temp_table} job_id={drop_job_id}")
+        logger.warning(f"[{context_label}] cleanup DROP timed out table={temp_table} job_id={drop_job_id}")
         return drop_job_id
     except Exception as cleanup_exc:
-        logger.warning(f"[dataops_validate_sql_prod] cleanup DROP exception table={temp_table}: {cleanup_exc}")
+        logger.warning(f"[{context_label}] cleanup DROP exception table={temp_table}: {cleanup_exc}")
         return None
 
 
@@ -1410,7 +1758,7 @@ async def _cleanup_temp_table_wrapper(
     if _get_dataops_env() == "prod":
         user_account = _get_user_account(runtime)
         table_suffix = os.environ.get("DATAOPS_TABLE_SUFFIX", "")
-        timeout_sec = 30 * 60
+        timeout_sec = 60 * 60
         return await _cleanup_temp_table_prod(sql, user_account, table_suffix, timeout_sec, partition_date)
 
     # Integration path
@@ -1420,7 +1768,7 @@ async def _cleanup_temp_table_wrapper(
         logger.debug("[dataops_validate_sql_with_log_analysis] cleanup skipped: no resource coordinator available")
         return None
     POLL_INTERVAL_SEC = 30.0
-    MAX_TIMEOUT_SEC = 30 * 60
+    MAX_TIMEOUT_SEC = 60 * 60
     timeout_sec = min(int(resource.metadata.get("timeout_s", MAX_TIMEOUT_SEC)), MAX_TIMEOUT_SEC)
     poll_interval = max(
         POLL_INTERVAL_SEC,
@@ -1438,6 +1786,51 @@ async def _cleanup_temp_table_wrapper(
         context_label="dataops_validate_sql_with_log_analysis",
         partition_date=partition_date,
     )
+
+
+async def cleanup_temp_tables(
+    sqls: list[str] | tuple[str, ...],
+    *,
+    _tool_context: ToolExecutionContext,
+    partition_date: str | None = None,
+    context_label: str = "cleanup_temp_tables",
+) -> list[str]:
+    """Drop every adhoctemp scratch table the given SQLs could have created.
+
+    **一轮校验结束后**由调用方调用，把这一轮留下的所有临时表清干净。
+
+    为什么需要它：DML 的临时表由 wrapper 在每次尝试结束时清掉了（成功/失败
+    都清）。但 **DDL 的临时表没人清** —— 它必须活到配对的 INSERT OVERWRITE
+    跑完，所以 wrapper 故意不删它。于是 DDL 跑成功、DML 没跑（或 DML 与 DDL
+    指向不同的表）时，DDL 的临时表就永远留在 ``adhoctemp`` 里。
+
+    这里对每条 SQL 各自推导临时表名并删除：
+    - DDL → 建表用的那张临时表；
+    - DML → 写入用的那张临时表（与 DDL 通常同名，``DROP ... IF EXISTS``
+      天然幂等）。
+
+    只删 ``adhoctemp.tmp_*``（见 ``_is_adhoctemp_temp_table``）—— 解析出岔时
+    宁可留着，也绝不能删到业务库的真实表。
+
+    Returns:
+        实际提交成功的 DROP 的 job_id 列表（best-effort，失败不影响调用方）。
+    """
+    job_ids: list[str] = []
+    seen: set[str] = set()
+    for sql in sqls:
+        if not (sql or "").strip():
+            continue
+        try:
+            job_id = await _cleanup_temp_table_wrapper(
+                sql, _tool_context=_tool_context, partition_date=partition_date
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[{context_label}] cleanup failed (ignored): {exc}")
+            continue
+        if job_id and job_id not in seen:
+            seen.add(job_id)
+            job_ids.append(job_id)
+    return job_ids
 
 
 def _resolve_rewrite_identity(
@@ -1588,6 +1981,54 @@ async def dataops_validate_sql_with_log_analysis(
         f"prior_attempts={len(prior_attempts)} partition_date={partition_date} sql={sql[:100]}"
     )
 
+    # --- Cleanup policy for the scratch table ------------------------------
+    #
+    # **DML 的临时表必须在本轮结束时删掉 —— 成功与否都要删。**
+    #
+    # 早先这里只在两条路径上清理：成功时、以及 ``attempt >= MAX_VALIDATE_ATTEMPTS``
+    # 时。而两个调用方（``validate_deliverables`` 与 ``check_and_repair_sql``）
+    # **每次调用都从 attempt=1 重新开始**，所以 ``attempt >= MAX_VALIDATE_ATTEMPTS``
+    # 这条分支实际上是死代码 —— 结果就是**每一次失败的尝试都会在 adhoctemp
+    # 里留下一张临时表**，越迭代越多。
+    #
+    # DDL（CREATE TABLE）的临时表**不**在这里删：同一对的 INSERT OVERWRITE
+    # 要写进这张表，它必须活到 DML 跑完。DDL 那一侧的清理由调用方在
+    # 一轮结束后统一做（见 ``cleanup_temp_tables``）。
+    needs_cleanup = not _is_create_sql(sql)
+
+    async def _cleanup_scratch_table() -> str | None:
+        """Drop the DML scratch table; never raises, never affects the verdict.
+
+        **纯 DDL 的临时表永远不在这里删** —— 它必须活到配对的 INSERT OVERWRITE
+        跑完（基线契约：``DDL is NEVER dropped here``）。
+
+        **混合 DDL+DML 的文件也一样不在这里删建表那张。**
+        早先这里写成 ``if not needs_cleanup and not _is_insert_sql(sql): return None``
+        —— 对含 INSERT 的文件守卫放行，于是**建表的那张也被一起删了**，
+        而配对的 INSERT 还没跑 → INSERT 报「表不存在」直接失败。
+
+        真实事故（2026-11-06）：
+            13054156  CREATE TABLE ..._20271106_...   OK
+            13054250  DROP   TABLE ..._20271106_...   OK   <-- DDL 的表被提前删了
+            13054413  INSERT OVERWRITE ..._20271106_... FAIL (table not found)
+
+        所以这里只删**纯 DML**的临时表（这条 SQL 里根本没有 CREATE）。
+        混合文件的清理由**轮次收尾**（``cleanup_temp_tables``）负责 ——
+        那时配对的 INSERT 早就跑完了，删掉不会影响任何人。
+        """
+        if not needs_cleanup:
+            # 含 CREATE 的文件（纯 DDL 或混合 DDL+DML）：一律留给轮次收尾。
+            return None
+        try:
+            return await _cleanup_temp_table_wrapper(
+                sql, _tool_context=_tool_context, partition_date=partition_date
+            )
+        except Exception as cleanup_exc:  # noqa: BLE001
+            logger.warning(
+                f"[dataops_validate_sql_with_log_analysis] scratch table cleanup failed (ignored): {cleanup_exc}"
+            )
+            return None
+
     # Step 1: Validate SQL
     logger.debug("[dataops_validate_sql_with_log_analysis] Calling dataops_validate_sql...")
     validate_result = await dataops_validate_sql(
@@ -1616,15 +2057,11 @@ async def dataops_validate_sql_with_log_analysis(
         # ``trial_compute_table``）里跑一次。这样静态校验阶段保持"快"，
         # 昂贵的采样统计不拖慢 agent 的迭代修 SQL 循环。
 
-        # Cleanup: only drop the temp table when the SQL is DML (not DDL)
-        # and this is the final outcome. CREATE TABLE leaves the temp
-        # table in place so the corresponding INSERT OVERWRITE can target it.
-        if not _is_create_sql(sql):
-            cleanup_job_id = await _cleanup_temp_table_wrapper(
-                sql, _tool_context=_tool_context, partition_date=partition_date
-            )
-            if cleanup_job_id:
-                validate_result["cleanup_job_id"] = cleanup_job_id
+        # Cleanup: DML 的临时表在成功时也要删（见上面的 cleanup policy 注释）。
+        # DDL 的临时表不在这里删 —— 它必须活到配对的 INSERT OVERWRITE 跑完。
+        cleanup_job_id = await _cleanup_scratch_table()
+        if cleanup_job_id:
+            validate_result["cleanup_job_id"] = cleanup_job_id
         return validate_result
 
     # If failed but neither log_file_info (integration) nor inline errorLog (prod)
@@ -1647,6 +2084,11 @@ async def dataops_validate_sql_with_log_analysis(
         )
         # NOTE: 这里也要收敛错误文本 —— 提前 return 会绕过末尾的 errorLog 截断,
         # 而生产端的 ``error`` 可能就是整份 Spark 日志。
+        # 失败也要清临时表（见上面的 cleanup policy 注释）—— 不清理的话
+        # 每一次失败尝试都会在 adhoctemp 里留下一张表。
+        cleanup_job_id = await _cleanup_scratch_table()
+        if cleanup_job_id:
+            validate_result["cleanup_job_id"] = cleanup_job_id
         return bound_error_fields(validate_result)
 
     job_id = validate_result.get("job_id")
@@ -1737,15 +2179,14 @@ async def dataops_validate_sql_with_log_analysis(
             f"report={report_paths.get('validation_report_path')} "
             f"warning={report_paths.get('delivery_warning_path')}"
         )
-        # Cleanup: after exhausting all retries on a DML, drop the temp table.
-        # DDL is NEVER dropped here — its temp table must remain for the
-        # matching DML (which may run on a separate wrapper invocation).
-        if not _is_create_sql(sql):
-            cleanup_job_id = await _cleanup_temp_table_wrapper(
-                sql, _tool_context=_tool_context, partition_date=partition_date
-            )
-            if cleanup_job_id:
-                validate_result["cleanup_job_id"] = cleanup_job_id
+        # Cleanup: 失败也要删 DML 的临时表 —— 统一放在本函数末尾（见上面的
+        # cleanup policy 注释），这里不重复调用。
+
+    # Cleanup: 走到这里说明这次尝试失败了（走完日志分析路径）—— 同样要清
+    # DML 的临时表。见上面的 cleanup policy 注释。
+    cleanup_job_id = await _cleanup_scratch_table()
+    if cleanup_job_id:
+        validate_result["cleanup_job_id"] = cleanup_job_id
 
     # Reorder fields so analysis comes before log_file_info (the latter is bulky and
     # easily truncated when the tool result is displayed in chat history). Putting
@@ -2268,7 +2709,7 @@ async def _dataops_validate_sql_prod(
 
     # --- Config ---
     POLL_INTERVAL_SEC = 5.0  # 比联调(30s)短,官方 MCP 无 per-poll 开销
-    MAX_TIMEOUT_SEC = 30 * 60
+    MAX_TIMEOUT_SEC = 60 * 60
     timeout_sec = MAX_TIMEOUT_SEC
     poll_interval = POLL_INTERVAL_SEC
 
@@ -2375,7 +2816,7 @@ async def _pre_drop_for_create_prod(
     if not drop_sql:
         return None
 
-    drop_timeout = min(timeout_sec, 60)
+    drop_timeout = max(min(timeout_sec, _CLEANUP_DROP_TIMEOUT_SEC), poll_interval * 2 + 15)
     try:
         logger.debug(f"[_pre_drop_for_create_prod] Submitting DROP for CREATE TABLE: {drop_sql}")
         submit_result = await prod_execute_sql(drop_sql)

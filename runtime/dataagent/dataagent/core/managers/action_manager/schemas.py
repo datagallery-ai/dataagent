@@ -17,7 +17,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
+
+# Docstring ``Args:`` section parameter header.
+#
+# A parameter header is ``<python_identifier>`` optionally followed by a
+# parenthesised type hint, and it MUST be terminated by ``:``.
+#
+# The identifier is restricted to ASCII (``[A-Za-z_][A-Za-z0-9_]*``) on
+# purpose: ``\w`` matches CJK characters in Python 3, so a CJK continuation
+# line such as ``多段(用 . 分隔)时每段都需通过白名单。`` used to be parsed as a
+# phantom parameter named ``多段``. Requiring the trailing ``:`` also keeps
+# parenthesis-bearing continuation lines from being mistaken for headers.
+_DOCSTRING_PARAM_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*:")
 
 
 class ParameterType(Enum):
@@ -234,6 +246,18 @@ class ToolSchema:
         Handles formats like:
             a (str): The first parameter.
             b (int): The second parameter.
+            c: The third parameter.
+
+        The parameter name must be a plain Python identifier and the line must
+        carry an explicit ``:`` separator. Anything else is treated as a
+        *continuation* line of the previous parameter.
+
+        Why the strictness matters: the legacy regex ``^\\s*(\\w+)\\s*[:(]``
+        matched any Unicode word character, so in Python 3 a CJK continuation
+        line such as ``多段(用 . 分隔)时每段都需通过白名单。`` was parsed as a
+        phantom parameter named ``多段`` and truncated the preceding
+        parameter's description. It also crashed with ``ValueError`` when a
+        continuation line opened a parenthesis that was never closed.
         """
         result: dict[str, str] = {}
         if not args_section:
@@ -246,12 +270,12 @@ class ToolSchema:
             s = line.rstrip()
             if not s.strip():
                 continue
-            param_match = re.match(r"^\s*(\w+)\s*[:(]", s)
+            param_match = _DOCSTRING_PARAM_RE.match(s)
             if param_match:
                 if current_param:
                     result[current_param] = " ".join(current_desc).strip()
                 current_param = param_match.group(1)
-                desc_part = s[s.index(":") + 1 :].strip() if ":" in s else s[s.index("(") + 1 : s.index(")")].strip()
+                desc_part = s[s.index(":") + 1 :].strip()
                 current_desc = [desc_part] if desc_part else []
             elif current_param and (s.startswith(("    ", "\t", " " * 8)) or not s[0].isalnum()):
                 current_desc.append(s.strip())
@@ -296,13 +320,25 @@ class ToolSchema:
         }
 
     def to_pydantic_model(self) -> type[BaseModel]:
-        """转换为Pydantic模型"""
-        fields = {}
+        """转换为Pydantic模型
+
+        Per-parameter descriptions are carried over via ``Field(description=...)``
+        so that they survive into ``model_json_schema()``. This is the schema
+        LangChain actually sends to the LLM (``StructuredTool.args_schema``),
+        so without it the model only ever sees the tool-level ``description``
+        and has to guess what each argument means.
+        """
+        fields: dict[str, Any] = {}
         for param in self.parameters:
+            description = (param.description or "").strip()
             if param.required:
-                fields[param.name] = (param.type, ...)
+                default: Any = ...
             else:
-                fields[param.name] = (param.type, param.default)
+                default = param.default
+            if description:
+                fields[param.name] = (param.type, Field(default, description=description))
+            else:
+                fields[param.name] = (param.type, default)
 
         return create_model(f"{self.name}Schema", **fields)
 

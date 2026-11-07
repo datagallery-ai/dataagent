@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -2211,3 +2212,845 @@ class TestQualityCheckNotInValidationChain:
         """``_run_reasonable_check_wrapper`` 已从 validate_tool 移除。"""
         assert not hasattr(vt, "_run_reasonable_check_wrapper")
 
+
+
+# ============================================================================
+# 临时表清理：adhoctemp 里不该留下残骸
+# ============================================================================
+
+
+def _scratch_ctx():
+    """A tool context good enough for the scratch-table cleanup paths."""
+    resource = _make_resource()
+    coordinator = MagicMock()
+    coordinator.catalog = _catalog(resource)
+    coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+    coordinator.poll.return_value = {"status": "failed"}
+    coordinator.collect.return_value = {"status": "failed", "job_id": "j-1", "error": "boom"}
+    runtime = _make_runtime(resource=resource, coordinator=coordinator)
+    return _make_context(runtime)
+
+
+class TestTempTableCleanup:
+    """临时表必须在**每一条**校验路径上被删掉 —— 成功、失败、无日志。
+
+    背景：早先只在「成功」与「attempt >= MAX_VALIDATE_ATTEMPTS」两条路径上
+    清理，而两个调用方每次都从 attempt=1 重新开始 —— 于是**每一次失败的
+    尝试都会留下一张临时表**。
+    """
+
+    @staticmethod
+    def _ctx():
+        return _scratch_ctx()
+
+    @pytest.mark.asyncio
+    async def test_failed_validation_cleans_up_temp_table(self, monkeypatch):
+        """校验失败时也要删临时表。"""
+        submitted: list[str] = []
+        ctx = self._ctx()
+
+        async def fake_validate(*_args, **_kwargs):
+            return {
+                "passed": False,
+                "job_id": "j-1",
+                "error": "boom",
+                "log_file_info": {"log_file": "x"},
+            }
+
+        async def fake_cleanup(sql, **_kwargs):
+            submitted.append(sql)
+            return "cleanup-job"
+
+        async def fake_fetch(*_args, **_kwargs):
+            return {"status": "error", "error": "no obs"}
+
+        monkeypatch.setattr(vt, "dataops_validate_sql", fake_validate)
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_cleanup)
+        monkeypatch.setattr(vt, "dataops_fetch_obs_log", fake_fetch)
+
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+            attempt=1,
+            _tool_context=ctx,
+        )
+
+        assert result["passed"] is False
+        # 失败路径必须触发清理
+        assert submitted, "failed validation must clean up the scratch table"
+
+    @pytest.mark.asyncio
+    async def test_no_log_source_path_cleans_up_temp_table(self, monkeypatch):
+        """失败且没有日志来源（提前 return）时也要删临时表。"""
+        submitted: list[str] = []
+        ctx = self._ctx()
+
+        async def fake_validate(*_args, **_kwargs):
+            return {"passed": False, "job_id": "j-1", "error": "boom"}
+
+        async def fake_cleanup(sql, **_kwargs):
+            submitted.append(sql)
+            return "cleanup-job"
+
+        monkeypatch.setattr(vt, "dataops_validate_sql", fake_validate)
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_cleanup)
+
+        await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+            attempt=1,
+            _tool_context=ctx,
+        )
+
+        assert submitted, "no-log-source path must clean up the scratch table"
+
+    @pytest.mark.asyncio
+    async def test_passed_validation_cleans_up_temp_table(self, monkeypatch):
+        """成功时照旧清理。"""
+        submitted: list[str] = []
+        ctx = self._ctx()
+
+        async def fake_validate(*_args, **_kwargs):
+            return {"passed": True, "job_id": "j-1"}
+
+        async def fake_cleanup(sql, **_kwargs):
+            submitted.append(sql)
+            return "cleanup-job"
+
+        monkeypatch.setattr(vt, "dataops_validate_sql", fake_validate)
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_cleanup)
+
+        await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+            attempt=1,
+            _tool_context=ctx,
+        )
+
+        assert submitted
+
+    @pytest.mark.asyncio
+    async def test_ddl_never_dropped_by_wrapper(self, monkeypatch):
+        """DDL 的临时表必须活到配对的 INSERT OVERWRITE 跑完 —— wrapper 不删。"""
+        submitted: list[str] = []
+        ctx = self._ctx()
+
+        async def fake_validate(*_args, **_kwargs):
+            return {"passed": True, "job_id": "j-1"}
+
+        async def fake_cleanup(sql, **_kwargs):
+            submitted.append(sql)
+            return "cleanup-job"
+
+        monkeypatch.setattr(vt, "dataops_validate_sql", fake_validate)
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_cleanup)
+
+        await vt.dataops_validate_sql_with_log_analysis(
+            "CREATE TABLE biads.ads_x (a INT)",
+            attempt=1,
+            _tool_context=ctx,
+        )
+
+        assert not submitted, "DDL scratch table must survive the wrapper"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_does_not_break_validation(self, monkeypatch):
+        """清理抛异常不能影响校验结论。"""
+        ctx = self._ctx()
+
+        async def fake_validate(*_args, **_kwargs):
+            return {"passed": True, "job_id": "j-1"}
+
+        async def boom_cleanup(*_args, **_kwargs):
+            raise RuntimeError("cleanup exploded")
+
+        monkeypatch.setattr(vt, "dataops_validate_sql", fake_validate)
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", boom_cleanup)
+
+        result = await vt.dataops_validate_sql_with_log_analysis(
+            "INSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+            attempt=1,
+            _tool_context=ctx,
+        )
+
+        assert result["passed"] is True
+
+
+class TestAdhocTempTableGuard:
+    """安全闸门：只有 ``adhoctemp.tmp_*`` 才允许被 DROP。"""
+
+    def test_real_business_table_rejected(self):
+        """真实业务表必须被拦住。"""
+        assert vt._is_adhoctemp_temp_table("biads.ads_x") is False
+        assert vt._is_adhoctemp_temp_table("ads_x") is False
+        assert vt._is_adhoctemp_temp_table("") is False
+        assert vt._is_adhoctemp_temp_table(None) is False
+
+    def test_adhoctemp_scratch_table_allowed(self):
+        """adhoctemp 里的临时表放行。"""
+        assert vt._is_adhoctemp_temp_table("adhoctemp.tmp_user_20260101_ads_x") is True
+
+    def test_create_like_does_not_drop_real_table(self):
+        """``CREATE TABLE x LIKE y`` 不能生成对真实表的 DROP。"""
+        drop_sql = vt._build_drop_sql(
+            "CREATE TABLE biads.ads_x LIKE biads.src_x",
+            user_account="nezha",
+            table_suffix="20260101",
+            partition_date="20260101",
+        )
+        assert drop_sql is None, f"must not DROP a real table, got {drop_sql!r}"
+
+    def test_create_table_scratch_is_dropped(self):
+        """正常的 CREATE TABLE 临时表仍然会被预清理。"""
+        drop_sql = vt._build_drop_sql(
+            "CREATE TABLE adhoctemp.tmp_nezha_20260101_ads_x (a INT)",
+            user_account="nezha",
+            table_suffix="20260101",
+            partition_date="20260101",
+        )
+        assert drop_sql is not None
+        assert "adhoctemp.tmp_" in drop_sql
+
+
+class TestBacktickTableRefs:
+    """反引号包裹的表名也要能改写。"""
+
+    def test_insert_with_backticks_rewritten(self):
+        rewritten = vt._replace_target_table(
+            "INSERT OVERWRITE TABLE `biads`.`ads_x` SELECT 1",
+            user_account="nezha",
+            table_suffix="20260101",
+            partition_date="20260101",
+        )
+        assert "adhoctemp.tmp_" in rewritten
+        assert "`biads`.`ads_x`" not in rewritten
+
+    def test_create_with_backticks_rewritten(self):
+        rewritten = vt._replace_target_table(
+            "CREATE TABLE `biads`.`ads_x` (a INT)",
+            user_account="nezha",
+            table_suffix="20260101",
+            partition_date="20260101",
+        )
+        assert "adhoctemp.tmp_" in rewritten
+        assert "`biads`.`ads_x`" not in rewritten
+
+    def test_plain_table_still_rewritten(self):
+        """普通写法不能被改坏。"""
+        rewritten = vt._replace_target_table(
+            "INSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+            user_account="nezha",
+            table_suffix="20260101",
+            partition_date="20260101",
+        )
+        assert "adhoctemp.tmp_" in rewritten
+        assert "biads.ads_x" not in rewritten
+
+
+class TestCleanupTempTablesHelper:
+    """``cleanup_temp_tables`` —— 一轮结束后清掉所有残留临时表。"""
+
+    @staticmethod
+    def _ctx():
+        return _scratch_ctx()
+
+    @pytest.mark.asyncio
+    async def test_cleans_every_sql(self, monkeypatch):
+        """DDL 和 DML 都要清。"""
+        cleaned: list[str] = []
+        ctx = self._ctx()
+
+        async def fake_wrapper(sql, **_kwargs):
+            cleaned.append(sql)
+            return f"job-{len(cleaned)}"
+
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_wrapper)
+
+        job_ids = await vt.cleanup_temp_tables(
+            ["CREATE TABLE biads.a (a INT)", "INSERT OVERWRITE TABLE biads.b SELECT 1"],
+            _tool_context=ctx,
+        )
+
+        assert len(cleaned) == 2
+        assert len(job_ids) == 2
+
+    @pytest.mark.asyncio
+    async def test_blank_sqls_skipped(self, monkeypatch):
+        """空 SQL 不该触发清理。"""
+        cleaned: list[str] = []
+        ctx = self._ctx()
+
+        async def fake_wrapper(sql, **_kwargs):
+            cleaned.append(sql)
+            return "job-1"
+
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_wrapper)
+
+        await vt.cleanup_temp_tables(["", "   "], _tool_context=ctx)
+
+        assert not cleaned
+
+    @pytest.mark.asyncio
+    async def test_wrapper_error_does_not_propagate(self, monkeypatch):
+        """清理失败不能抛给调用方。"""
+        ctx = self._ctx()
+
+        async def boom_wrapper(*_args, **_kwargs):
+            raise RuntimeError("nope")
+
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", boom_wrapper)
+
+        job_ids = await vt.cleanup_temp_tables(
+            ["INSERT OVERWRITE TABLE biads.b SELECT 1"], _tool_context=ctx
+        )
+
+        assert job_ids == []
+
+
+# ============================================================================
+# 临时表泄漏回归：注释误判 / 混合 DDL+DML / 非标识符用户名
+# ============================================================================
+
+
+class TestCommentAwareStatementDetection:
+    """注释里的 ``create table`` 不能把 DML 误判成 DDL。
+
+    早先 ``_is_create_sql`` 直接在原始 SQL 上跑正则 —— DML 文件里一句
+    ``-- create table biads.ads_x 的定义见 DDL 文件`` 的说明注释就会被命中，
+    于是这条 DML 被当成 DDL：wrapper 不再清理它的临时表，清理链路也抽不到
+    表名 —— 临时表永久残留。
+    """
+
+    def test_line_comment_does_not_make_dml_look_like_ddl(self):
+        sql = "-- create table biads.ads_x 的定义见 DDL 文件\nINSERT OVERWRITE TABLE biads.ads_x SELECT 1\n"
+        assert vt._is_create_sql(sql) is False
+
+    def test_block_comment_does_not_make_dml_look_like_ddl(self):
+        sql = "/* create table biads.ads_x */\nINSERT OVERWRITE TABLE biads.ads_x SELECT 1\n"
+        assert vt._is_create_sql(sql) is False
+
+    def test_real_ddl_still_detected(self):
+        sql = "CREATE EXTERNAL TABLE IF NOT EXISTS biads.ads_x (a INT)\n"
+        assert vt._is_create_sql(sql) is True
+
+    def test_string_literal_with_dashes_is_not_a_comment(self):
+        """``'a--b'`` 是字符串字面量，不是注释。"""
+        stripped = vt._strip_sql_comments("SELECT 'a--b' FROM t")
+        assert "'a--b'" in stripped
+
+    def test_comment_text_is_replaced_not_deleted(self):
+        """注释用等长空格替换 —— 偏移量不变，正则匹配不受影响。"""
+        sql = "-- create table x\nINSERT 1"
+        stripped = vt._strip_sql_comments(sql)
+        assert len(stripped) == len(sql)
+
+    @pytest.mark.asyncio
+    async def test_dml_with_create_table_comment_is_cleaned_up(self):
+        """带 DDL 说明注释的 DML，临时表照样要删。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        sql = "-- create table biads.ads_x 见 DDL\nINSERT OVERWRITE TABLE biads.ads_x SELECT 1\n"
+
+        job_ids = await vt.cleanup_temp_tables([sql], _tool_context=ctx)
+
+        assert job_ids, "the DML scratch table must be dropped"
+        drops = [
+            call.kwargs.get("command")
+            for call in coordinator.submit_job.call_args_list
+            if str(call.kwargs.get("command", "")).upper().startswith("DROP")
+        ]
+        assert any("ads_x" in str(drop) for drop in drops), drops
+
+
+class TestEscapedQuoteInStringLiteral:
+    """字符串字面量里的转义引号不能把字符串状态翻过来。
+
+    Spark / Hive 里字符串里的单引号可以用**反斜杠转义**：``'it\\'s'``。
+    早先的 ``_strip_sql_comments`` 判断的是「引号**之后**的字符」是否为
+    反斜杠（``sql[i + 1] == "\\\\"``），而反斜杠实际在引号**之前** ——
+    所以 ``\\'`` 永远识别不出来。
+
+    后果（整条链都实测过）：
+
+    1. 扫描器在 ``\\'`` 处错误地关闭字符串 → 状态翻转；
+    2. 字符串**之后**的真注释（``-- create table ...``）反而被当成代码保留；
+    3. ``_is_create_sql`` 把 DML 误判成 DDL；
+    4. ``needs_cleanup = not _is_create_sql(sql)`` 变成 False → **DML 的临时表
+       永远不删** —— 正是本 PR 要修的 bug 原样复现。
+    """
+
+    ESCAPED = "WHERE note = 'it\\'s fine'"
+
+    def test_escaped_quote_does_not_close_the_string(self):
+        """``\\'`` 是字面量，字符串不能因此关闭。"""
+        stripped = vt._strip_sql_comments(f"SELECT 1 {self.ESCAPED} -- create table x")
+        assert "-- create table x" not in stripped
+        assert self.ESCAPED in stripped
+
+    def test_dml_with_escaped_quote_is_not_misread_as_ddl(self):
+        """带转义引子的 DML 不能被误判成 DDL。"""
+        sql = (
+            "INSERT OVERWRITE TABLE biads.ads_x PARTITION (pt_d = '20260101')\n"
+            "SELECT id FROM biads.src WHERE note = 'it\\'s fine'\n"
+            "-- create table biads.ads_x 定义见 DDL 文件\n"
+        )
+        assert vt._is_create_sql(sql) is False
+
+    def test_dml_with_escaped_quote_is_still_an_insert(self):
+        sql = (
+            "INSERT OVERWRITE TABLE biads.ads_x PARTITION (pt_d = '20260101')\n"
+            "SELECT id FROM biads.src WHERE note = 'it\\'s fine'\n"
+        )
+        assert vt._is_insert_sql(sql) is True
+
+    def test_doubled_quote_escape_does_not_close_the_string(self):
+        """``''`` 是字符串里的一个单引号 —— 同样不能关闭字符串。"""
+        sql = "SELECT 'it''s fine' -- create table x"
+        stripped = vt._strip_sql_comments(sql)
+        assert "-- create table x" not in stripped
+
+    def test_comment_after_escaped_literal_is_stripped(self):
+        """转义引子之后的真注释必须被剥掉。"""
+        sql = "SELECT 1 FROM t WHERE c = 'a\\'b' -- create table x\nSELECT 2"
+        stripped = vt._strip_sql_comments(sql)
+        assert "-- create table x" not in stripped
+        assert "SELECT 2" in stripped
+
+    def test_offsets_are_preserved(self):
+        """剥注释后长度必须不变（等长空格替换）。"""
+        sql = "SELECT 1 FROM t WHERE c = 'a\\'b' -- create table x\nSELECT 2"
+        assert len(vt._strip_sql_comments(sql)) == len(sql)
+
+    def test_trailing_comment_is_stripped_with_escaped_quote(self):
+        """字符串态必须一路保持到真正的收尾引号。"""
+        sql = "SELECT 'a\\'b' -- drop table x"
+        stripped = vt._strip_sql_comments(sql)
+        assert "-- drop table x" not in stripped
+
+    @pytest.mark.asyncio
+    async def test_dml_with_escaped_quote_still_gets_its_scratch_table_dropped(self):
+        """端到端：带转义引子的 DML，临时表照样要删。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        sql = (
+            "INSERT OVERWRITE TABLE biads.ads_x PARTITION (pt_d = '20260101')\n"
+            "SELECT id FROM biads.src WHERE note = 'it\\'s fine'\n"
+            "-- create table biads.ads_x 定义见 DDL 文件\n"
+        )
+
+        job_ids = await vt.cleanup_temp_tables([sql], _tool_context=ctx)
+
+        assert job_ids, "the DML scratch table must be dropped"
+        drops = [
+            call.kwargs.get("command")
+            for call in coordinator.submit_job.call_args_list
+            if str(call.kwargs.get("command", "")).upper().startswith("DROP")
+        ]
+        assert any("ads_x" in str(drop) for drop in drops), drops
+
+
+class TestTempTableNameSanitization:
+    """临时表名里的每个字符都必须是合法标识符字符。
+
+    ``DATAOPS_EXEC_USER`` 可能是邮箱（``nezha@corp.com``）。早先的
+    ``_sanitize_table_name`` 只换 ``.`` 和 ``-``，``@`` 原样进了表名 ——
+    既不是合法标识符，又会被清理链路的安全闸门拒掉，临时表永远删不掉。
+    """
+
+    def test_at_sign_is_replaced(self):
+        name = vt._get_temp_table_name("ads_x", "nezha@corp.com", "20260101", "")
+        assert "@" not in name
+        assert name == "adhoctemp.tmp_nezha_corp_com_20260101_ads_x"
+
+    def test_sanitized_name_passes_the_safety_gate(self):
+        """建表用的名字和清理闸门必须用同一套字符集。"""
+        name = vt._get_temp_table_name("ads_x", "nezha@corp.com", "20260101", "")
+        assert vt._is_adhoctemp_temp_table(name) is True
+
+    def test_dotted_and_hyphenated_names_still_sanitized(self):
+        assert vt._sanitize_table_name("a.b-c") == "a_b_c"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_drops_the_exact_table_that_was_created(self):
+        """清理的目标必须与建表时的名字完全一致。"""
+        resource = _make_resource(exec_user="nezha@corp.com")
+        coordinator = MagicMock()
+        coordinator.catalog = _catalog(resource)
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+        runtime = _make_runtime(resource=resource, coordinator=coordinator)
+        ctx = _make_context(runtime)
+        sql = "INSERT OVERWRITE TABLE biads.ads_x SELECT 1\n"
+
+        expected = vt._get_temp_table_name(
+            "ads_x", "nezha@corp.com", vt.partition_date_for_validation(), ""
+        )
+
+        await vt.cleanup_temp_tables([sql], _tool_context=ctx)
+
+        drops = [
+            call.kwargs.get("command")
+            for call in coordinator.submit_job.call_args_list
+            if str(call.kwargs.get("command", "")).upper().startswith("DROP")
+        ]
+        assert drops == [f"DROP TABLE IF EXISTS {expected}"]
+
+
+class TestMixedDdlDmlCleanup:
+    """一条 SQL 里既有 DDL 又有 DML 时，两张临时表都要删。"""
+
+    MIXED = (
+        "CREATE EXTERNAL TABLE IF NOT EXISTS biads.ads_x (a INT) PARTITIONED BY (pt_d STRING);\n"
+        "INSERT OVERWRITE TABLE biads.other_y PARTITION (pt_d = '20260101') SELECT a FROM src;\n"
+    )
+
+    def test_extract_returns_every_scratch_table(self):
+        names = vt._extract_temp_table_names(
+            self.MIXED, "alice", "", "20260101"
+        )
+        assert len(names) == 2
+        assert any("ads_x" in name for name in names)
+        assert any("other_y" in name for name in names)
+
+    @pytest.mark.asyncio
+    async def test_round_cleanup_drops_both(self):
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+
+        await vt.cleanup_temp_tables([self.MIXED], _tool_context=ctx)
+
+        drops = [
+            call.kwargs.get("command")
+            for call in coordinator.submit_job.call_args_list
+            if str(call.kwargs.get("command", "")).upper().startswith("DROP")
+        ]
+        assert any("ads_x" in str(drop) for drop in drops), drops
+        assert any("other_y" in str(drop) for drop in drops), drops
+
+    @pytest.mark.asyncio
+    async def test_wrapper_does_not_clean_mixed_sql_at_attempt_end(self, monkeypatch):
+        """混合 SQL 的清理**不在 wrapper 里做** —— 建表那张还要给配对的 INSERT 用。
+
+        回归：早先 wrapper 的守卫是 ``not needs_cleanup and not _is_insert_sql``，
+        对含 INSERT 的混合文件放行 → 建表那张被提前删掉 → 配对的 INSERT 报
+        「表不存在」。真实事故（2026-11-06）：
+            CREATE TABLE ..._20271106_...   OK
+            DROP   TABLE ..._20271106_...   OK   <-- 提前删了
+            INSERT OVERWRITE ..._20271106_... FAIL (table not found)
+        """
+        submitted: list[str] = []
+        ctx = _scratch_ctx()
+
+        async def fake_validate(*_args, **_kwargs):
+            return {"passed": True, "job_id": "j-1"}
+
+        async def fake_cleanup(sql, **_kwargs):
+            submitted.append(sql)
+            return "cleanup-job"
+
+        monkeypatch.setattr(vt, "dataops_validate_sql", fake_validate)
+        monkeypatch.setattr(vt, "_cleanup_temp_table_wrapper", fake_cleanup)
+
+        await vt.dataops_validate_sql_with_log_analysis(
+            self.MIXED,
+            attempt=1,
+            _tool_context=ctx,
+        )
+
+        assert not submitted, (
+            "the wrapper must not drop a mixed DDL+DML file's scratch table — "
+            "the paired INSERT still needs it"
+        )
+
+
+class TestDdlTempTableOutlivesItsInsert:
+    """**顺序不变量**：建表出来的临时表必须活到配对的 INSERT 跑完。
+
+    这是 2026-11-06 生产事故的回归测试。基线代码里写着契约：
+
+        # DDL is NEVER dropped here — its temp table must remain for the
+        # matching DML (which may run on a separate wrapper invocation).
+
+    修复「临时表泄漏」时守卫被写成 ``not needs_cleanup and not _is_insert_sql``，
+    对**混合 DDL+DML 文件**放行 → 建表那张在 INSERT 之前被删掉 → INSERT 秒挂。
+    """
+
+    DDL = (
+        "CREATE TABLE IF NOT EXISTS biads.ads_x (a INT) "
+        "PARTITIONED BY (pt_d STRING) STORED AS ORC"
+    )
+    DML = "INSERT OVERWRITE TABLE biads.ads_x PARTITION (pt_d = '20260101') SELECT 1"
+
+    @staticmethod
+    def _submitted_drops(coordinator) -> list[str]:
+        return [
+            str(call.kwargs.get("command", ""))
+            for call in coordinator.submit_job.call_args_list
+            if str(call.kwargs.get("command", "")).upper().startswith("DROP")
+        ]
+
+    @staticmethod
+    def _drops_after_create(coordinator) -> list[str]:
+        """DROPs submitted **after** the CREATE — the ones that can break the INSERT.
+
+        The pre-drop (DROP issued *before* CREATE, to remove a leftover table
+        with the same name) is legitimate and expected — it makes the CREATE
+        deterministic. Only a DROP *after* the CREATE can pull the table out
+        from under the paired INSERT.
+        """
+        commands = [
+            str(call.kwargs.get("command", ""))
+            for call in coordinator.submit_job.call_args_list
+        ]
+        kinds = [c.strip().split()[0].upper() for c in commands if c.strip()]
+        if "CREATE" not in kinds:
+            return []
+        create_idx = kinds.index("CREATE")
+        return [
+            c
+            for c in commands[create_idx + 1 :]
+            if c.strip().upper().startswith("DROP")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pure_ddl_wrapper_does_not_drop_after_create(self, monkeypatch):
+        """纯 DDL：wrapper 不得在 CREATE 之后删掉那张表。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+
+        await vt.dataops_validate_sql_with_log_analysis(
+            self.DDL, attempt=1, _tool_context=ctx
+        )
+
+        assert not self._drops_after_create(coordinator), (
+            "pure DDL's scratch table must survive the wrapper — the paired INSERT needs it"
+        )
+
+    @pytest.mark.asyncio
+    async def test_mixed_file_wrapper_does_not_drop_the_created_table(self, monkeypatch):
+        """混合 DDL+DML：wrapper **同样不删**建表那张（CREATE 之后）。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+
+        mixed = f"{self.DDL};\n{self.DML};"
+        await vt.dataops_validate_sql_with_log_analysis(
+            mixed, attempt=1, _tool_context=ctx
+        )
+
+        assert not self._drops_after_create(coordinator), (
+            "mixed DDL+DML: the wrapper must not drop the created table before the INSERT runs"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pure_dml_wrapper_does_drop(self, monkeypatch):
+        """纯 DML：wrapper 仍然要删（这是防泄漏的核心）。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+
+        await vt.dataops_validate_sql_with_log_analysis(
+            self.DML, attempt=1, _tool_context=ctx
+        )
+
+        drops = self._submitted_drops(coordinator)
+        assert drops, "pure DML's scratch table must be dropped by the wrapper"
+        assert all("adhoctemp.tmp_" in d for d in drops), drops
+
+    @pytest.mark.asyncio
+    async def test_no_drop_between_create_and_insert(self, monkeypatch):
+        """端到端顺序：建表与配对 INSERT 之间**不能**出现针对该表的 DROP。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+
+        # 一轮：DDL 文件 + DML 文件，DDL 先跑（与 validate_deliverables 同序）。
+        await vt.dataops_validate_sql_with_log_analysis(
+            self.DDL, attempt=1, _tool_context=ctx
+        )
+        await vt.dataops_validate_sql_with_log_analysis(
+            self.DML, attempt=1, _tool_context=ctx
+        )
+
+        commands = [
+            str(call.kwargs.get("command", ""))
+            for call in coordinator.submit_job.call_args_list
+        ]
+        kinds = [c.strip().split()[0].upper() for c in commands if c.strip()]
+        create_idx = next((i for i, k in enumerate(kinds) if k == "CREATE"), None)
+        insert_idx = next((i for i, k in enumerate(kinds) if k == "INSERT"), None)
+        assert create_idx is not None and insert_idx is not None, kinds
+
+        target = vt._extract_temp_table_names(
+            self.DDL, "u1", "", vt.partition_date_for_validation()
+        )
+        between = [
+            c
+            for c in commands[create_idx + 1 : insert_idx]
+            if c.strip().upper().startswith("DROP") and any(t in c for t in target)
+        ]
+        assert not between, (
+            f"the DDL's scratch table was dropped between CREATE and INSERT: {between}"
+        )
+
+
+class TestCleanupDropTimeoutDoesNotCancelDrop:
+    """清理用的 DROP 超时了**不能**被取消 —— 那等于放弃删除这张表。"""
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_cancel_the_drop_job(self, monkeypatch):
+        coordinator = MagicMock()
+        coordinator.poll.return_value = {"status": "running"}
+        cancelled: list[str] = []
+
+        def _cancel(*, job_id):
+            cancelled.append(job_id)
+            return {"status": "cancelled"}
+
+        coordinator.cancel = _cancel
+
+        status, _ = await vt._poll_until_done(
+            coordinator,
+            "j-drop",
+            timeout_sec=0,
+            poll_interval=0.01,
+            cancel_on_timeout=False,
+        )
+
+        assert status == "timed_out"
+        assert cancelled == [], "the DROP must be left running"
+
+    @pytest.mark.asyncio
+    async def test_validation_timeout_still_cancels(self):
+        """校验 SQL 超时仍然要取消 —— 这跟清理 DROP 的策略不同。"""
+        coordinator = MagicMock()
+        coordinator.poll.return_value = {"status": "running"}
+        cancelled: list[str] = []
+        coordinator.cancel = lambda *, job_id: cancelled.append(job_id)
+
+        status, _ = await vt._poll_until_done(
+            coordinator,
+            "j-validate",
+            timeout_sec=0,
+            poll_interval=0.01,
+        )
+
+        assert status == "timed_out"
+        assert cancelled == ["j-validate"]
+
+
+class TestOnlyScratchTablesAreDropped:
+    """**不变量**：清理链路永远只删 ``adhoctemp.tmp_*``，绝不删业务表。
+
+    这条不变量比「临时表能删掉」更重要 —— 删错表的代价远大于残留一张
+    临时表。所以这里对**每一条**能产出 DROP 的路径做端到端断言：
+    只要提交出去的语句命中了非 ``adhoctemp.tmp_*`` 的表名，测试就红。
+
+    覆盖的 DROP 产出点：
+      1. ``_build_drop_sql``        —— pre-drop（CREATE 前清同名临时表）
+      2. ``_cleanup_temp_table``    —— 联调链路轮次收尾清理
+      3. ``cleanup_temp_tables``    —— 公共清理入口（三条链路都走它）
+    """
+
+    USERS = ["nezha", "nezha@corp.com", "u-1", "someone with space"]
+
+    SQLS = [
+        "CREATE TABLE biads.ads_x (a INT)",
+        "INSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+        "INSERT OVERWRITE TABLE `biads`.`ads_x` SELECT 1",
+        "INSERT OVERWRITE biads.ads_x SELECT 1",
+        "CREATE EXTERNAL TABLE biads.ads_x (a INT)",
+        "CREATE TABLE IF NOT EXISTS biads.ads_x (a INT)",
+        "CREATE TABLE biads.ads_x LIKE biads.src_x",
+        "CREATE TABLE biads.ads_x AS SELECT * FROM biads.src_x",
+        "-- create table biads.ads_x\nINSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+        "/* create table biads.ads_x */\nINSERT OVERWRITE TABLE biads.ads_x SELECT 1",
+        "CREATE TABLE biads.ads_a (a INT);\nINSERT OVERWRITE TABLE biads.ads_b SELECT 1",
+        "SELECT 1",
+    ]
+
+    @staticmethod
+    def _assert_scratch_only(drop_sql: str, context: str) -> None:
+        match = re.match(r"^DROP TABLE IF EXISTS (.+)$", drop_sql)
+        assert match, f"{context}: unexpected DROP form {drop_sql!r}"
+        target = match.group(1).strip()
+        assert target.startswith("adhoctemp.tmp_"), (
+            f"{context}: DROP would hit a non-scratch table: {target!r}"
+        )
+
+    @pytest.mark.parametrize("user", USERS)
+    @pytest.mark.parametrize("sql", SQLS)
+    def test_build_drop_sql_only_targets_scratch(self, user, sql):
+        """pre-drop 路径：只允许产出 ``adhoctemp.tmp_*`` 的 DROP。"""
+        drop_sql = vt._build_drop_sql(
+            sql, user_account=user, table_suffix="", partition_date="20260101"
+        )
+        if drop_sql is not None:
+            self._assert_scratch_only(drop_sql, f"build_drop_sql({user!r}, {sql!r})")
+
+    @pytest.mark.parametrize("user", USERS)
+    @pytest.mark.parametrize("sql", SQLS)
+    @pytest.mark.asyncio
+    async def test_cleanup_only_submits_scratch_drops(self, user, sql):
+        """联调链路的清理：提交出去的每条 DROP 都必须指向临时表。"""
+        coordinator = MagicMock()
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+
+        await vt._cleanup_temp_table(
+            coordinator,
+            sql,
+            user,
+            "",
+            timeout_sec=5,
+            poll_interval=0.01,
+            context_label="guard-test",
+            partition_date="20260101",
+        )
+
+        for call in coordinator.submit_job.call_args_list:
+            command = call.kwargs.get("command") or ""
+            if command.upper().startswith("DROP"):
+                self._assert_scratch_only(command, f"cleanup({user!r}, {sql!r})")
+
+    @pytest.mark.parametrize("user", USERS)
+    @pytest.mark.parametrize("sql", SQLS)
+    @pytest.mark.asyncio
+    async def test_public_cleanup_helper_only_submits_scratch_drops(self, user, sql):
+        """公共清理入口：三条链路都走它，必须同样只删临时表。"""
+        ctx = _scratch_ctx()
+        coordinator = ctx.runtime.ensure_resource_coordinator.return_value
+        coordinator.submit_job.return_value = {"status": "queued", "job_id": "j-1"}
+        coordinator.poll.return_value = {"status": "completed"}
+        coordinator.collect.return_value = {"status": "completed"}
+
+        await vt.cleanup_temp_tables(
+            [sql], _tool_context=ctx, partition_date="20260101"
+        )
+
+        for call in coordinator.submit_job.call_args_list:
+            command = call.kwargs.get("command") or ""
+            if command.upper().startswith("DROP"):
+                self._assert_scratch_only(command, f"cleanup_temp_tables({user!r}, {sql!r})")
+
+    def test_real_business_table_never_produces_a_drop(self):
+        """真实业务表名直接出现时，绝不能生成 DROP。"""
+        for sql in self.SQLS:
+            drop_sql = vt._build_drop_sql(
+                sql,
+                user_account="nezha",
+                table_suffix="",
+                partition_date="20260101",
+            )
+            if drop_sql:
+                assert "biads." not in drop_sql, (
+                    f"real business table leaked into DROP: {drop_sql!r}"
+                )

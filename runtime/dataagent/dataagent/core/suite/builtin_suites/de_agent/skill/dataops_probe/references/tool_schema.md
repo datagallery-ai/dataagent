@@ -9,13 +9,17 @@
 ```
 dataops_probe_table(
     table: str,
-    columns: list[str] | None = None,
+    columns: list[str],            # REQUIRED — DataOps forbids SELECT *
     *,
     partition_filter: str | None = None,
     sample_size: int = 5,           # clamped to [1, 50]
     timeout_sec: int = 60,          # clamped to [1, 300]
 ) -> dict
 ```
+
+`columns` is a **required** parameter in the generated JSON schema
+(`required: ["table", "columns"]`). It must be a non-empty list of
+single-segment column names — no `*`, no `db.tbl.col` prefixes.
 
 ## partition_filter whitelist (regex)
 
@@ -67,7 +71,7 @@ Failed (uniform shape — always `skipped: true`):
 |---|---|---|---|
 | `empty_table` | true | table is empty/whitespace | pass non-empty `db.tbl` |
 | `invalid_table_name` | true | identifier has non-`[A-Za-z0-9_]` chars or starts with digit | rename or remove bad chars |
-| `invalid_columns` | true | `columns` empty or an element fails the whitelist | fetch schema first, then pass explicit column names |
+| `invalid_columns` | true | `columns` missing/empty, not a list, or an element fails the whitelist (contains `.` or `*`) | fetch schema first, then pass explicit single-segment column names |
 | `invalid_partition_filter` | true | string doesn't match regex, contains `$date`/OR/`;`, or date segment is semantically invalid | rewrite per SKILL.md §"partition_filter 规则" |
 | `no_dataops_resource` | true | no `dataops` resource in the catalog | mount the resource or continue without probing |
 | `dataops_disabled` | true | resource metadata `enabled: false` | set `enabled: true` |

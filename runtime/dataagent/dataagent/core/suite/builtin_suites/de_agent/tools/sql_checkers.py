@@ -323,6 +323,55 @@ class SQLCheckerPipeline:
             return True
         finally:
             lock_path.unlink()
+            # **一轮结束就把这一轮留下的临时表全清掉。**
+            # DML 的临时表由 wrapper 每次尝试结束时清（成功/失败都清）；
+            # DDL 的临时表没人清 —— 它必须活到配对的 INSERT OVERWRITE 跑完，
+            # 所以 wrapper 故意不删它。于是「DDL 成功 + DML 没跑」或
+            # 「DDL 与 DML 指向不同表」时，DDL 的临时表就永远留着。
+            await self._cleanup_round_temp_tables(candidate)
+
+    async def _cleanup_round_temp_tables(self, candidate: dict[str, str]) -> None:
+        """Drop the scratch tables this round created; never raises.
+
+        **绝不抛异常。** 这里在 ``_validate_dataops`` 的 ``finally`` 里被调用 ——
+        抛异常会替换掉已经算好的校验结论（``dataops.status`` / PASS-BLOCKED）。
+
+        ``except Exception`` 接不住 ``asyncio.CancelledError``（继承自
+        ``BaseException``）—— 所以这里显式捕获并**重新抛出**它。
+
+        注意：这里是 ``await`` 在调用方的任务里的，所以**不能吞掉**取消信号 ——
+        吞掉会让任务「正常结束」，``task.cancelled()`` 变成 ``False``，
+        被取消的作业于是假装跑完了。
+        """
+        if self.tool_context is None:
+            return
+        try:
+            from dataagent.actions.tools.local_tool.dataops_validate_tool import cleanup_temp_tables
+
+            sqls = [text for text in candidate.values() if (text or "").strip()]
+            if not sqls:
+                return
+            job_ids = await cleanup_temp_tables(
+                sqls,
+                _tool_context=self.tool_context,
+                context_label="sql_checkers.dataops",
+            )
+            if job_ids:
+                self.report.setdefault("dataops", {})["cleanup_job_ids"] = job_ids
+        except asyncio.CancelledError:
+            # 取消必须继续往外传 —— 吞掉它会让「被取消的作业」假装正常结束。
+            # 清理没做完 = 临时表可能残留，但**取消语义更重要**。
+            logger.warning(
+                "[sql_checkers] scratch table cleanup cancelled; "
+                "adhoctemp scratch tables may remain"
+            )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # 兜底：清理失败**绝不能**影响校验结论。
+            logger.warning(
+                f"[sql_checkers] scratch table cleanup failed (ignored): {exc!r}; "
+                "adhoctemp scratch tables may remain"
+            )
 
     async def _invoke(self, prompt: str) -> tuple[str, dict[str, Any]]:
         llm = self.llm() if callable(self.llm) else self.llm
