@@ -23,6 +23,10 @@ export class AguiClient implements AgentClient {
     this.controllers.clear();
   }
 
+  cancelActive(): void {
+    for (const controller of this.controllers) controller.abort();
+  }
+
   async *runAgent(input: RunAgentInput): AsyncGenerator<AgentEvent> {
     const user = input.messages.filter((message) => message.role === "user").at(-1);
     if (!user) throw new AguiClientError("A new user message is required", "VALIDATION_ERROR");

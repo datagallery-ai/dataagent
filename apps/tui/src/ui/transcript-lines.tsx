@@ -145,7 +145,7 @@ export function buildChatLines(input: BuildChatLinesInput): VisualLine[] {
       const key = `m:${message.id}:summary`;
       const { status, durationMs } = message.runSummary;
       const label = status === 'completed' ? '✓ Run completed' : status === 'failed'
-        ? '✗ Run failed' : 'Interrupted — completion unknown';
+        ? '✗ Run failed' : 'Interrupted — continue this conversation';
       push(key, <Text key={key} color={status === 'completed' ? inkColors.muted : status === 'failed' ? inkColors.error : inkColors.warning}>
         {truncateToWidth(`   ${label} · ${formatRunDuration(durationMs)}`, contentWidth)}
       </Text>);

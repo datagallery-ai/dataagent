@@ -400,6 +400,7 @@ export const App: React.FC<AppProps> = ({
   const drainingQueuedPromptRef = useRef(false);
   const handleAgentQueryRef = useRef<((input: string) => Promise<void>) | null>(null);
   const runClockRef = useRef<{ runId: string; startedAt: number } | null>(null);
+  const stopRequestedRef = useRef(false);
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
   const modelName = tui?.model ?? resolveModelName(state);
   const directory = formatDirectory(tui?.home ?? process.env.PWD ?? process.cwd());
@@ -778,8 +779,7 @@ export const App: React.FC<AppProps> = ({
         }
         const session = await tui.sessions.getSession(id);
         clearQueuedPrompts();
-        if (session.newThreadRequired) store.startNewSession(createThreadId());
-        else store.restoreSession({ threadId: id, ...restoreMessages(session.messages) });
+        store.restoreSession({ threadId: id, ...restoreMessages(session.messages) });
         chatAreaRef.current?.reset();
         setCommandNotice({ kind: 'info', message: session.notice ?? `Restored: ${session.title}` });
       } catch (error) {
@@ -1155,6 +1155,28 @@ export const App: React.FC<AppProps> = ({
     await handleAgentQuery(trimmedInput);
   };
 
+  const stopActiveRun = async () => {
+    const current = store.getState();
+    if (!tui || current.runStatus !== 'running' || !current.runId) {
+      setCommandNotice({ kind: 'info', message: 'No run is active.' });
+      return;
+    }
+    if (stopRequestedRef.current) return;
+    stopRequestedRef.current = true;
+    setCommandNotice({ kind: 'info', message: 'Stopping the current run…' });
+    try {
+      await tui.sessions.cancelRun(current.runId);
+    } catch (error) {
+      stopRequestedRef.current = false;
+      setCommandNotice({
+        kind: 'error',
+        message: `Stop failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return;
+    }
+    client.cancelActive?.();
+  };
+
   // Handle command execution
   const handleCommandExecution = async (input: string) => {
     store.clearInputBuffer();
@@ -1165,7 +1187,7 @@ export const App: React.FC<AppProps> = ({
       if (command === '/exit' && !argument) {
         exitApplication('exit');
       } else if (command === '/help' && !argument) {
-        setCommandNotice({ kind: 'info', message: '/help · /clear (new conversation) · /resume [list|latest|id] · /outputs · /exit' });
+        setCommandNotice({ kind: 'info', message: '/help · /clear (new conversation) · /stop · /resume [list|latest|id] · /outputs · /exit' });
       } else if (command === '/outputs' && !argument) {
         const threadId = store.getState().threadId;
         if (!threadId) {
@@ -1192,6 +1214,8 @@ export const App: React.FC<AppProps> = ({
           store.startNewSession(createThreadId());
           chatAreaRef.current?.reset();
         }
+      } else if (command === '/stop' && !argument) {
+        await stopActiveRun();
       } else if (command === '/resume' && extra.length === 0) {
         if (!argument || argument === 'list') await openSessionPicker();
         else await restoreHistoricalSession(argument === 'latest' ? undefined : argument);
@@ -1365,6 +1389,7 @@ export const App: React.FC<AppProps> = ({
       const acceptedRunIds = new Set<string>([runId]);
       const startedAt = performance.now();
       runClockRef.current = { runId, startedAt };
+      stopRequestedRef.current = false;
 
       // Set run status to running
       store.handleLiveRunEvent({ type: 'RUN_STARTED', runId });
@@ -1579,6 +1604,20 @@ export const App: React.FC<AppProps> = ({
         flushTextBuffer();
         store.finalizeReasoningMessage();
         if (!isCurrentRun()) {
+          return;
+        }
+
+        if (tui && stopRequestedRef.current) {
+          stopRequestedRef.current = false;
+          store.handleLiveRunEvent({
+            type: 'RUN_ERROR', runId: currentAttemptRunId(), message: 'Stopped',
+          });
+          store.addRunSummary(threadId, runId, 'interrupted', performance.now() - startedAt);
+          setRetryCount(0);
+          setCommandNotice({
+            kind: 'info',
+            message: 'Stopped. This conversation stays on the same thread.',
+          });
           return;
         }
 

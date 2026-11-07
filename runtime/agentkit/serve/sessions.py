@@ -175,6 +175,15 @@ class SessionTurn:
         return latest
 
 
+def continuation_configurable(thread_id: str, row: dict | None) -> dict:
+    """Graph address for a load and the next turn. A saved checkpoint wins; otherwise the thread head."""
+    configurable = {"thread_id": thread_id}
+    checkpoint_id = row.get("last_checkpoint_id") if row else None
+    if checkpoint_id:
+        configurable["checkpoint_id"] = checkpoint_id
+    return configurable
+
+
 def public_session(row: dict) -> dict:
     return {
         "threadId": row["thread_id"], "title": row["title"],

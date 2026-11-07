@@ -41,7 +41,7 @@
 | --- | --- | --- |
 | `GET` | `/api/v1/me` | 当前用户。引擎未就绪时 id 为 `default` |
 | `GET` | `/api/v1/sessions` | 当前用户的会话列表，包在成功信封里 |
-| `GET` | `/api/v1/sessions/{threadId}/conversation` | 网页可读的对话。未知会话返回空消息 |
+| `GET` | `/api/v1/sessions/{threadId}/conversation` | 与 `GET /sessions/{threadId}` 同一份文档，包在 `{success, data}` 里。未知会话 404 |
 | `POST` | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。成功是 204。没有这一轮时是 404 |
 
 未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。`/api/copilotkit` 和 `/api/copilotkit/info` 不在其中。对话路径在引擎未就绪时返回 503。
@@ -92,11 +92,10 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `messages` | 最后成功 Checkpoint 里的消息，转成 AG-UI 消息 |
-| `newThreadRequired` | 没有成功 Checkpoint 时为 true |
-| `notice` | 未完成且有消息时，说明已恢复到最后成功点；未完成且无消息时，要求新开对话；完成时为 null |
+| `messages` | 下一轮 `POST /dataagent/stream` 接着用的消息。行上有 `last_checkpoint_id` 时读该 Checkpoint，否则读这个线程的最新图状态 |
+| `notice` | 中断或失败且有 Checkpoint 时说明已恢复到保存点；中断或失败但没有 Checkpoint 时说明继续当前对话；完成或仍在运行时为 null |
 
-会话正在运行时返回 409。绑定缺失或打不开时返回 409。当前用户没有该会话时返回 404。
+运行中也可以读。绑定缺失或打不开时返回 409。当前用户没有该会话时返回 404。`GET /api/v1/sessions/{threadId}/conversation` 的 `data` 与这份文档相同。
 
 ## `GET /sessions/{threadId}/outputs`
 
@@ -128,7 +127,7 @@
 | --- | --- |
 | 400 | 非法会话 ID 或产物路径 |
 | 404 | 会话或文件不存在，或会话属于其他 profile |
-| 409 | 会话正在运行、profile 不匹配、没有 Checkpoint、重复 run、扩展重载失败、输出目录不是普通目录 |
+| 409 | 同一会话已有一轮在跑、profile 不匹配、绑定打不开、重复 run、扩展重载失败、输出目录不是普通目录 |
 | 415 | 预览不是 UTF-8 文本 |
 | 500 | 列目录或读文件时的操作系统错误 |
 

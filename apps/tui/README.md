@@ -42,7 +42,7 @@ is four rows. Both home and chat support
 - Enter submits. Shift+Enter (CSI-u or xterm modifyOtherKeys), Alt+Enter and Ctrl+J insert a newline.
 - Multi-line bracketed paste stays one editable draft; large pastes keep the existing fold/expand behavior.
 - Up/Down navigate the draft and command history. Messages entered during a run remain queued.
-- `/` opens commands and Tab completes. The TUI exposes `/help`, `/clear`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/resume` and `/resume list` open the session picker.
+- `/` opens commands and Tab completes. The TUI exposes `/help`, `/clear`, `/stop`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/stop` cancels the active turn through `POST /api/v1/runs/{runId}/cancel` and stays on the same thread. `/resume` and `/resume list` open the session picker and restore that thread.
 - `/outputs` opens the full output list at any width. Enter previews a result; Esc returns to the list, then chat; q closes the view. Chat always uses a single column, with no output sidebar or extra footer indicators.
 - Ctrl+C keeps the existing two-press exit flow; Ctrl+Z/fg restores the terminal and input cursor in the TUI.
 
@@ -56,7 +56,7 @@ artifacts without a source association appear under Session outputs.
 See the [AgentKit docs](../../runtime/agentkit/docs/README.md)
 for the frontend/backend boundary and workspace configuration.
 
-A separate `Run completed`, `Run failed`, or `Interrupted — completion unknown`
+A separate `Run completed`, `Run failed`, or `Interrupted — continue this conversation`
 summary measures request dispatch through stream completion using a monotonic clock;
 queue waiting time is excluded. Errors retain their code and partial text, and no
 request is replayed automatically. These display summaries are not checkpointed or

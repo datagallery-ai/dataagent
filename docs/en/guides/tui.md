@@ -42,6 +42,7 @@ Type `/` and use `Tab` to complete. Built-in commands:
 | --- | --- | --- |
 | `/help` | List available commands. | `/help` |
 | `/clear` | Start a new conversation. Saved sessions stay on disk. | `/clear` |
+| `/stop` | Stop the current turn. Calls `POST /api/v1/runs/{runId}/cancel`, then aborts the local stream. The session stays on the same thread. | `/stop` |
 | `/outputs` | Open the outputs page for the current session. | `/outputs` |
 | `/resume` | Open the session picker. | `/resume` |
 | `/resume list` | Open the session picker. | `/resume list` |
@@ -69,7 +70,7 @@ Type `/` and use `Tab` to complete. Built-in commands:
 
 The TUI sends natural-language input to the control plane's `/dataagent/stream` and shares the session list with the Web UI. Session outputs are available through `/outputs`.
 
-`/resume` calls `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) with no authentication. There is no login prompt.
+`/resume` calls `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) with no authentication. There is no login prompt. Restore stays on the `threadId` the server returns. `/stop` uses the same cancel route as the Web UI.
 
 ## Typical flow
 

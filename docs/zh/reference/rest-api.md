@@ -33,9 +33,9 @@
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | GET | `/api/v1/sessions?limit=` | 当前 user 的会话，包在信封里。`limit` 为 1 到 100，默认 50。 |
-| GET | `/api/v1/sessions/{threadId}/conversation` | 网页可读的 user/assistant 消息。未知会话返回空消息。 |
+| GET | `/api/v1/sessions/{threadId}/conversation` | 与 `GET /sessions/{threadId}` 同一份文档（AG-UI `messages`、`status`、`notice`），包在 `{success, data}` 里。未知会话 404。运行中也可以读。 |
 | GET | `/sessions?limit=` | 同一份索引，JSON 形如 `{"sessions":[...]}`。TUI 用这条。 |
-| GET | `/sessions/{threadId}` | 列表字段加上 `messages`、`newThreadRequired`、`notice`。正在运行或绑定打不开时 409。其他 user 的会话是 404。 |
+| GET | `/sessions/{threadId}` | 列表字段加上 `messages`、`notice`。有 Checkpoint 时读它，否则读该线程最新图状态。绑定打不开时 409。其他 user 的会话是 404。运行中也可以读。 |
 | GET | `/sessions/{threadId}/outputs` | 产物文件。跳过符号链接，以及 `artifacts/conversation_history` 和 `artifacts/large_tool_results`。 |
 | GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 文本，最多 64 KiB。非文本是 415。 |
 | POST | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。没有这一轮时 404。 |

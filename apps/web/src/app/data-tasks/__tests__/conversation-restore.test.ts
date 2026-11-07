@@ -17,6 +17,7 @@ import {
   shouldCoverTranscriptWithLoading,
   shouldRestoreConversation,
   shouldRestoreConversationMessages,
+  shouldApplyNativeSession,
 } from "../conversation-restore";
 import { ConfigApiError } from "../../../lib/config-api/types";
 import {
@@ -2498,6 +2499,40 @@ describe("preferredRestoredMessages", () => {
     expect(preferredRestoredMessages(dto)).toEqual([
       { id: "msg-user-1", role: "user", content: "keep this question" },
     ]);
+  });
+});
+
+describe("shouldApplyNativeSession", () => {
+  const messages = [{ id: "u1", role: "user", content: "keep-me" }];
+
+  it("applies the session document when the open chat is empty", () => {
+    expect(shouldApplyNativeSession({
+      conversationMemoryEnabled: true,
+      isRunning: false,
+      replaceExistingMessages: true,
+      agentMessages: [],
+      messages,
+    })).toBe(true);
+  });
+
+  it("leaves a live transcript in place", () => {
+    expect(shouldApplyNativeSession({
+      conversationMemoryEnabled: true,
+      isRunning: true,
+      replaceExistingMessages: true,
+      agentMessages: [],
+      messages,
+    })).toBe(false);
+  });
+
+  it("keeps a local message typed after the restored prefix", () => {
+    expect(shouldApplyNativeSession({
+      conversationMemoryEnabled: true,
+      isRunning: false,
+      replaceExistingMessages: true,
+      agentMessages: [...messages, { id: "local", role: "user", content: "draft" }],
+      messages,
+    })).toBe(false);
   });
 });
 

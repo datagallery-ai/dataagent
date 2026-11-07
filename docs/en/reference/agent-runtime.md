@@ -40,7 +40,7 @@ POST /api/v1/runs/<runId>/cancel
 
 Success is 204. 404 when that run is not executing.
 
-Resume by sending the same `threadId`. The server loads the last successful checkpoint. If the previous run did not finish, the UI says it restored that checkpoint. With no successful checkpoint, start a new conversation. One session accepts one turn at a time. A repeated `runId` is rejected.
+Resume by sending the same `threadId`. The next turn continues from the saved checkpoint when the row has one, and otherwise from the latest graph state on that thread. Stop, a dropped connection, and load all stay on this thread. One session accepts one turn at a time. A repeated `runId` is rejected.
 
 ## Events
 

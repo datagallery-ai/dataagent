@@ -119,16 +119,18 @@ def _gui(text: str, thread: str) -> dict:
 
 
 def _texts(payload: dict) -> list[str]:
-    return [item["contentText"] for item in payload["messages"]]
+    texts: list[str] = []
+    for item in payload["messages"]:
+        content = item.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+    return texts
 
 
-async def test_missing_conversation_is_empty(client) -> None:
+async def test_missing_conversation_matches_native_session(client) -> None:
     response = await client.get("/api/v1/sessions/missing-thread/conversation")
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["sessionId"] == "missing-thread"
-    assert data["messages"] == []
-    assert data["agentMessages"] == []
+    native = await client.get("/sessions/missing-thread")
+    assert response.status_code == native.status_code == 404
 
 
 async def test_web_and_tui_writes_are_readable(runtime) -> None:
@@ -156,13 +158,13 @@ async def test_web_and_tui_writes_are_readable(runtime) -> None:
     assert tui_view.status_code == 200
     web_body = web_view.json()["data"]
     tui_body = tui_view.json()["data"]
-    assert web_body["sessionId"] == "web-thread"
-    assert web_body["toolCalls"] == []
+    assert web_body["threadId"] == "web-thread"
     assert "来自网页" in _texts(web_body)
     assert "from-web" in _texts(web_body)
     assert "来自终端" in _texts(tui_body)
     assert "from-tui" in _texts(tui_body)
     assert running.status_code == 200
+    assert running.json()["data"]["threadId"] == "web-thread"
     assert "来自网页" in _texts(running.json()["data"])
 
 
@@ -188,11 +190,13 @@ async def test_agent_messages_keep_tool_calls_in_checkpoint_order(runtime) -> No
             native = await http.get("/sessions/tool-thread")
     assert posted.status_code == 200, posted.text
     assert view.status_code == 200, view.text
-    data = view.json()["data"]
-    roles = [message.get("role") for message in data["agentMessages"]]
+    assert view.json()["data"] == native.json()
+    roles = [message.get("role") for message in view.json()["data"]["messages"]]
     assert "tool" in roles
-    assert any(message.get("toolCalls") or message.get("tool_calls") for message in data["agentMessages"])
-    assert data["agentMessages"] == native.json()["messages"]
+    assert any(
+        message.get("toolCalls") or message.get("tool_calls")
+        for message in view.json()["data"]["messages"]
+    )
 
 
 def test_model_settings_come_from_home_env(tmp_path, monkeypatch) -> None:

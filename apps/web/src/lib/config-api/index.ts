@@ -51,6 +51,7 @@ export type {
   KnowledgeDocumentDto,
   MeResponseDto,
   McpServerDto,
+  NativeSessionDetail,
   ModelProfileDto,
   QueryHistoryItemDto,
   QueryHistoryListResponseDto,

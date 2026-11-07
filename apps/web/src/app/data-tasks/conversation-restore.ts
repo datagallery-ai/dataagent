@@ -273,6 +273,34 @@ export function shouldRestoreConversationMessages(input: {
   return !agentMessagesMatchConversation(input.agentMessages, input.dto);
 }
 
+/** Whether the open chat should take the AG-UI messages from the session document. */
+export function shouldApplyNativeSession(input: {
+  conversationMemoryEnabled: boolean;
+  isRunning: boolean;
+  replaceExistingMessages: boolean;
+  agentMessages: unknown;
+  messages: Array<{ id?: string }>;
+}): boolean {
+  if (!input.conversationMemoryEnabled || input.isRunning || input.messages.length === 0) {
+    return false;
+  }
+  if (
+    !input.replaceExistingMessages &&
+    Array.isArray(input.agentMessages) &&
+    input.agentMessages.length > 0
+  ) {
+    return false;
+  }
+  if (hasLocalMessagesAfterRestoredPrefix(input.agentMessages, input.messages as Message[])) {
+    return false;
+  }
+  if (!Array.isArray(input.agentMessages) || input.agentMessages.length !== input.messages.length) {
+    return true;
+  }
+  const lastAgent = input.agentMessages[input.agentMessages.length - 1] as { id?: string } | undefined;
+  return lastAgent?.id !== input.messages[input.messages.length - 1]?.id;
+}
+
 /** Whether live-run tool timeline should be rebuilt from persisted tool calls. */
 export function shouldHydrateLiveRunFromConversation(
   state: LiveRun,

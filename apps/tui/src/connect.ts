@@ -9,7 +9,7 @@ import { initLogger } from "./utils/logger.js";
 import type { AppExitReason, RenderAppOptions } from "./index.js";
 import { configuredListen, formatListenBase, readHttpListen } from "./backend.js";
 
-export const TUI_COMMANDS = ["/help", "/clear", "/resume", "/outputs", "/exit"];
+export const TUI_COMMANDS = ["/help", "/clear", "/stop", "/resume", "/outputs", "/exit"];
 
 /** Bind-all addresses are not client destinations. Connect through loopback. */
 export function clientListenHost(host: string): string {

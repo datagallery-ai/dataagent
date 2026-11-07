@@ -2,39 +2,24 @@
 
 import { useAgent, useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
 import { useEffect, useLayoutEffect, useRef } from "react";
+import type { Message } from "@ag-ui/core";
 import { configApi } from "../../../../lib/config-api/client";
 import { getRuntimeCapabilities } from "../../../../lib/config-api/capabilities";
 import {
-  collaborationResponsesFromConversation,
-  preferredRestoredMessages,
-  hydrateLiveRunFromConversation,
-  hydratePendingInteractionLiveRun,
-  hydrateSessionUsageFromConversation,
   isIgnorableConversationRestoreError,
   isConversationRestoreRunActive,
-  latestUserQuestionFromConversation,
-  pendingInteractionsFromConversation,
-  shouldRestoreConversationMessages,
+  shouldApplyNativeSession,
 } from "../../conversation-restore";
-import { reconcileSuspendedLiveRunState } from "../../collaboration-recap";
-import {
-  getCollaborationResponsesForThread,
-  hydrateCollaborationResponses,
-} from "./collaboration-responses";
 import {
   clearRestoredInterrupts,
-  hydrateRestoredInterrupts,
 } from "./restored-interrupts";
 import { clearPendingCollaborationInterrupt } from "./pending-collaboration-interrupt";
 import {
   useConversationRestoreGate,
   useLiveRun,
-  useLiveRunSetters,
 } from "../../use-data-gallery-run";
-import {
-  clearConversationBranchSnapshot,
-  setConversationBranchSnapshot,
-} from "../../conversation-branch-store";
+import { clearConversationBranchSnapshot } from "../../conversation-branch-store";
+import { setSessionNotice } from "./session-notice";
 
 export function SessionConversationRestore({
   agentId,
@@ -47,11 +32,6 @@ export function SessionConversationRestore({
   const threadId = chatConfig?.threadId;
   const { agent } = useAgent({ agentId });
   const { liveRun } = useLiveRun(threadId);
-  const {
-    setLiveRunForThread,
-    setLatestQuestionForThread,
-    setSessionUsageForThread,
-  } = useLiveRunSetters();
   const { setThreadRestoring, markThreadRestored } = useConversationRestoreGate();
   const fetchGenerationRef = useRef(0);
   const prevThreadIdRef = useRef<string | undefined>(undefined);
@@ -129,61 +109,29 @@ export function SessionConversationRestore({
 
     void (async () => {
       try {
-        const conversation = await configApi.getSessionConversation(threadId);
+        const session = await configApi.getNativeSession(threadId);
         if (cancelled || fetchGenerationRef.current !== generation || agentRef.current.isRunning) {
           return;
         }
-        setConversationBranchSnapshot(threadId, conversation);
+        setSessionNotice(threadId, session.notice);
 
         const currentAgent = agentRef.current;
         if (
-          shouldRestoreConversationMessages({
+          shouldApplyNativeSession({
             conversationMemoryEnabled,
             isRunning: restoreRunActive,
             replaceExistingMessages:
               messageReplacementThreadRef.current === threadId ||
               (currentAgent.messages?.length ?? 0) === 0,
             agentMessages: currentAgent.messages,
-            dto: conversation,
+            messages: session.messages,
           })
         ) {
-          const restored = preferredRestoredMessages(conversation);
-          if (restored.length > 0) {
-            currentAgent.setMessages(restored);
-          }
-        }
-
-        const restoredCollaboration = collaborationResponsesFromConversation(
-          threadId,
-          conversation,
-        );
-        hydrateCollaborationResponses(restoredCollaboration);
-
-        hydrateRestoredInterrupts(
-          pendingInteractionsFromConversation(threadId, conversation),
-        );
-
-        setSessionUsageForThread(threadId, hydrateSessionUsageFromConversation(conversation));
-
-        const collaborationRecords = getCollaborationResponsesForThread(threadId);
-        setLiveRunForThread(threadId, (current) =>
-          reconcileSuspendedLiveRunState(
-            hydratePendingInteractionLiveRun(
-              hydrateLiveRunFromConversation(current, conversation),
-              threadId,
-              conversation,
-              collaborationRecords,
-            ),
-            collaborationRecords,
-          ),
-        );
-
-        const question = latestUserQuestionFromConversation(conversation);
-        if (question) {
-          setLatestQuestionForThread(threadId, question);
+          currentAgent.setMessages(session.messages as Message[]);
         }
       } catch (error) {
         if (isIgnorableConversationRestoreError(error)) {
+          setSessionNotice(threadId, null);
           return;
         }
         if (typeof window !== "undefined") {
@@ -207,9 +155,6 @@ export function SessionConversationRestore({
     capabilitiesReady,
     markThreadRestored,
     restoreRunActive,
-    setLatestQuestionForThread,
-    setLiveRunForThread,
-    setSessionUsageForThread,
     setThreadRestoring,
     threadId,
   ]);

@@ -44,6 +44,7 @@ TUI 默认停留在 Chat。使用 `/outputs` 可以像 `/resume` 一样打开独
 | --- | --- | --- |
 | `/help` | 查看可用命令。 | `/help` |
 | `/clear` | 开始新对话。已保存的会话仍留在磁盘上。 | `/clear` |
+| `/stop` | 停止当前这一轮。调用 `POST /api/v1/runs/{runId}/cancel`，然后断开本地流。会话留在原线程。 | `/stop` |
 | `/outputs` | 打开当前会话的产出页。 | `/outputs` |
 | `/resume` | 打开会话列表。 | `/resume` |
 | `/resume list` | 打开会话列表。 | `/resume list` |
@@ -71,7 +72,7 @@ TUI 默认停留在 Chat。使用 `/outputs` 可以像 `/resume` 一样打开独
 
 TUI 把自然语言输入发到控制面的 `/dataagent/stream`，与 Web 共用会话列表。会话产出可通过 `/outputs` 查看。
 
-`/resume` 向流地址所在源（`http://<server.host>:<server.port>`）发送 `GET /sessions`，不带登录凭证。
+`/resume` 向流地址所在源（`http://<server.host>:<server.port>`）发送 `GET /sessions`，不带登录凭证。恢复留在服务返回的 `threadId` 上。`/stop` 使用和网页相同的取消接口。
 
 ## 典型流程
 
