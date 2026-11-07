@@ -27,7 +27,7 @@ storage/
 *.tsbuildinfo
 docs/public/assets/
 
-# DataAgent (runtime/dataagent) — scoped so they do not hide DataGallery sources
+# Local Python and tool artifacts
 qa_*
 filtered*
 *.pid
@@ -83,7 +83,6 @@ __marimo__/
 *.DS_Store
 output/
 .workspaces/
-runtime/dataagent/uv.lock
 *.crt
 *.key
 *.pem

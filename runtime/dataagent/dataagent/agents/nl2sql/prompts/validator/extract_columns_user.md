@@ -1,3 +1,0 @@
-<sqls>
-{{ sqls }}
-</sqls>
