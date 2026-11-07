@@ -3,10 +3,7 @@
   "venv": ".venv",
   "pythonVersion": "3.12",
   "include": [
-    "runtime/deepagents",
-    "runtime/dataagent",
-    "runtime/agentkit",
-    "services/datalink"
+    "runtime/agentkit"
   ],
   "exclude": [
     "**/node_modules",
@@ -15,21 +12,7 @@
     "apps/web",
     "docs"
   ],
-  "extraPaths": [
-    "runtime/deepagents/src",
-    "runtime/dataagent"
-  ],
   "executionEnvironments": [
-    {
-      "root": "runtime/deepagents",
-      "extraPaths": ["runtime/deepagents/src"],
-      "pythonVersion": "3.12"
-    },
-    {
-      "root": "runtime/dataagent",
-      "extraPaths": ["runtime/dataagent"],
-      "pythonVersion": "3.11"
-    },
     {
       "root": "runtime/agentkit",
       "extraPaths": ["runtime/agentkit"],

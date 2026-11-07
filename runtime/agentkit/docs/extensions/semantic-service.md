@@ -1,6 +1,6 @@
 # 语义服务客户端
 
-本文说明如何把 AgentKit 连接到已经运行的语义服务。服务本身的安装见 `services/datalink/docs/`。
+本文说明如何把 AgentKit 连接到已经运行的语义服务。服务本身的安装见 `components/datalink/docs/`。
 
 客户端独立于插件注册。配置了 `semantic` 之后，REST 在进程生命周期里创建一个客户端，并放进每个 Agent 的 `ModelContext`。SDK 的 `create_agent` 在未传入客户端时自己创建，并在 `close()` 时关闭。
 
