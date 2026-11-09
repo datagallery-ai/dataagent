@@ -400,7 +400,7 @@ export const App: React.FC<AppProps> = ({
   const drainingQueuedPromptRef = useRef(false);
   const handleAgentQueryRef = useRef<((input: string) => Promise<void>) | null>(null);
   const runClockRef = useRef<{ runId: string; startedAt: number } | null>(null);
-  const stopRequestedRef = useRef(false);
+  const stopRequestedRef = useRef<string | null>(null);
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
   const modelName = tui?.model ?? resolveModelName(state);
   const directory = formatDirectory(tui?.home ?? process.env.PWD ?? process.cwd());
@@ -1157,24 +1157,27 @@ export const App: React.FC<AppProps> = ({
 
   const stopActiveRun = async () => {
     const current = store.getState();
-    if (!tui || current.runStatus !== 'running' || !current.runId) {
+    const runId = current.runId;
+    if (!tui || current.runStatus !== 'running' || !runId) {
       setCommandNotice({ kind: 'info', message: 'No run is active.' });
       return;
     }
-    if (stopRequestedRef.current) return;
-    stopRequestedRef.current = true;
+    if (stopRequestedRef.current === runId) return;
+    stopRequestedRef.current = runId;
     setCommandNotice({ kind: 'info', message: 'Stopping the current run…' });
     try {
-      await tui.sessions.cancelRun(current.runId);
+      await tui.sessions.cancelRun(runId);
     } catch (error) {
-      stopRequestedRef.current = false;
+      if (stopRequestedRef.current === runId) stopRequestedRef.current = null;
       setCommandNotice({
         kind: 'error',
         message: `Stop failed: ${error instanceof Error ? error.message : String(error)}`,
       });
       return;
     }
-    client.cancelActive?.();
+    const latest = store.getState();
+    if (latest.threadId !== current.threadId || latest.runId !== runId) return;
+    client.cancelRun?.(runId);
   };
 
   // Handle command execution
@@ -1389,7 +1392,6 @@ export const App: React.FC<AppProps> = ({
       const acceptedRunIds = new Set<string>([runId]);
       const startedAt = performance.now();
       runClockRef.current = { runId, startedAt };
-      stopRequestedRef.current = false;
 
       // Set run status to running
       store.handleLiveRunEvent({ type: 'RUN_STARTED', runId });
@@ -1607,8 +1609,8 @@ export const App: React.FC<AppProps> = ({
           return;
         }
 
-        if (tui && stopRequestedRef.current) {
-          stopRequestedRef.current = false;
+        if (tui && stopRequestedRef.current === runId) {
+          stopRequestedRef.current = null;
           store.handleLiveRunEvent({
             type: 'RUN_ERROR', runId: currentAttemptRunId(), message: 'Stopped',
           });

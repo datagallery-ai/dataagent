@@ -164,6 +164,35 @@ for (const dispose of [false, true]) it(`cleans reader and timer on ${dispose ? 
   assert.equal(body?.locked, false);
 });
 
+it('cancelRun aborts only the named run', async () => {
+  const signals = new Map<string, AbortSignal>();
+  let opened!: () => void;
+  let pending = 2;
+  const bothOpen = new Promise<void>((resolve) => { opened = resolve; });
+  const client = new AguiClient('http://127.0.0.1/stream', async (_url, options) => {
+    const runId = (JSON.parse(String(options?.body)) as { runId: string }).runId;
+    const signal = options?.signal;
+    if (signal) signals.set(runId, signal);
+    const body = new ReadableStream({ start(controller) {
+      signal?.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')));
+      pending -= 1;
+      if (pending === 0) opened();
+    } });
+    return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const consume = (runId: string) => (async () => {
+    for await (const _event of client.runAgent({ ...input, runId })) { /* hold the stream open */ }
+  })();
+  const first = consume('run-a');
+  const second = consume('run-b');
+  await bothOpen;
+  client.cancelRun('run-a');
+  await assert.rejects(first, { code: 'CANCELLED' });
+  assert.equal(signals.get('run-b')?.aborted, false);
+  client.dispose();
+  await assert.rejects(second, { code: 'CANCELLED' });
+});
+
 it('cancels and releases the reader when its consumer stops early', async () => {
   let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
