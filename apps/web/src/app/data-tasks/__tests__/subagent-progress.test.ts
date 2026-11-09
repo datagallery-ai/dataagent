@@ -85,11 +85,15 @@ describe("subagent progress", () => {
     state = reduceLiveRunEvent(state, {
       type: "CUSTOM",
       name: "subagent",
-      value: { type: "SUBAGENT_ERROR", subagentRunId: "child-nested", message: "bad" },
+      value: { type: "SUBAGENT_ERROR", subagentRunId: "child-nested", message: "bad", code: "QueryError" },
     });
     expect(state.runStatus).toBe("running");
     expect(state.toolCalls[0]?.status).toBe("running");
     expect(state.toolCalls[0]?.progress?.runs.map((run) => run.status)).toEqual(["running", "failed"]);
+    expect(state.toolCalls[0]?.progress?.runs[1]?.errorMessage).toBe("bad (QueryError)");
+    expect(subagentProgressText(state.toolCalls[0]!.progress!, createTranslator("en"))).toContain(
+      "checker: bad (QueryError)",
+    );
     state = reduceLiveRunEvent(state, {
       type: "CUSTOM",
       name: "subagent",
@@ -158,5 +162,21 @@ describe("subagent progress", () => {
     expect(subagentProgressText(progress, t)).toContain("正在返回结果");
     expect(subagentSettledTrail(progress, t)).toBe("nl2sql · generator (2), validator");
     expect(subagentSettledTrail(progress, t)).not.toContain("正在返回结果");
+  });
+
+  it("keeps the child error on the settled line and names a nested agent", () => {
+    const progress: SubagentProgress = {
+      agentName: "nl2sql",
+      runs: [
+        { id: "child", name: "nl2sql", status: "failed" },
+        { id: "nested", name: "checker", status: "failed", errorMessage: "Query failed" },
+      ],
+      nextStepId: 1,
+      updatedAtMs: 0,
+      status: "failed",
+      steps: [{ id: "0", subagentRunId: "nested", name: "validator", status: "failed", startedAtMs: 0, durationMs: 10 }],
+    };
+    const t = createTranslator("zh-CN");
+    expect(subagentSettledTrail(progress, t)).toBe("nl2sql · checker validator · 子代理出错 · Query failed");
   });
 });

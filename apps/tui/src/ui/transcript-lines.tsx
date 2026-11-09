@@ -409,8 +409,16 @@ function pushToolCallLines(
   }
   const parameterRows = toolParameterRows(toolCall);
   if (toolCall.progress?.steps.length) {
-    pushPayloadBlock('Steps', toolCall.progress.steps.map((step) => stepHistoryLabel(step, toolCall.progress!.steps)),
-      width, `${keyBase}:steps`, push);
+    const failures = toolCall.progress.runs
+      .filter((run) => run.status === 'failed' && run.errorMessage)
+      .map((run) => `✗ ${run.name}: ${run.errorMessage}`);
+    pushPayloadBlock(
+      'Steps',
+      [...toolCall.progress.steps.map((step) => stepHistoryLabel(step, toolCall.progress!.steps)), ...failures],
+      width,
+      `${keyBase}:steps`,
+      push,
+    );
   }
   if (parameterRows.length > 0) pushPayloadBlock('Input', parameterRows, width, `${keyBase}:args`, push);
   const resultRows = toolResultRows(toolCall);

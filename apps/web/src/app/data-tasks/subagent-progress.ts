@@ -12,9 +12,17 @@ export type SubagentStep = {
   durationMs?: number;
 };
 
+export type SubagentRun = {
+  id: string;
+  name: string;
+  status: ProgressStatus;
+  /** Sanitized SUBAGENT_ERROR text. Absent when the child ended without an error. */
+  errorMessage?: string;
+};
+
 export type SubagentProgress = {
   agentName: string;
-  runs: Array<{ id: string; name: string; status: ProgressStatus }>;
+  runs: SubagentRun[];
   nextStepId: number;
   updatedAtMs: number;
   status: ProgressStatus;
@@ -82,7 +90,10 @@ export function updateSubagentProgress(
       "type" in event.outcome &&
       event.outcome.type === "suspended";
     const status = type === "SUBAGENT_ERROR" ? "failed" : suspended ? "suspended" : "completed";
-    runs = runs.map((item) => (item.id === id ? { ...item, status } : item));
+    const errorMessage = type === "SUBAGENT_ERROR" ? subagentErrorText(event.message, event.code) : undefined;
+    runs = runs.map((item) =>
+      item.id === id ? { ...item, status, ...(errorMessage ? { errorMessage } : {}) } : item,
+    );
     steps = steps.map((step) =>
       step.subagentRunId === id && step.status === "running"
         ? { ...step, status, durationMs: Math.max(0, now - step.startedAtMs) }
@@ -99,6 +110,22 @@ export function updateSubagentProgress(
         ? "suspended"
         : "completed";
   return { ...current, runs, steps: steps.slice(-100), nextStepId, updatedAtMs: now, status };
+}
+
+/** Collapse control characters and keep the child error short enough for one line. */
+export function subagentErrorText(messageValue: unknown, codeValue?: unknown): string | undefined {
+  const message = publicProgressText(messageValue);
+  const code = publicProgressText(codeValue);
+  if (message && code && code !== message) return `${message} (${code})`;
+  return message ?? code;
+}
+
+/** Name the failed child when it is not the outer agent already shown on the line. */
+export function subagentFailureText(progress: SubagentProgress, shownName?: string): string | undefined {
+  const failed = [...progress.runs].reverse().find((run) => run.status === "failed" && run.errorMessage);
+  if (!failed?.errorMessage) return undefined;
+  if (!failed.name || failed.name === shownName) return failed.errorMessage;
+  return `${failed.name}: ${failed.errorMessage}`;
 }
 
 export function subagentStepLabel(name: string, t: TranslateFn): string {
@@ -129,9 +156,19 @@ export function subagentSettledTrail(progress: SubagentProgress, t: TranslateFn)
     parts.push(count > 1 ? `${titled} (${count})` : titled);
   }
   if (parts.length === 0) return undefined;
+  const namedInSteps = new Set(
+    progress.steps.map((step) => progress.runs.find((run) => run.id === step.subagentRunId)?.name).filter(Boolean),
+  );
+  const failed = [...progress.runs].reverse().find((run) => run.status === "failed" && run.errorMessage);
+  const failure = subagentFailureText(
+    progress,
+    failed && namedInSteps.has(failed.name) ? failed.name : progress.agentName,
+  );
   const tail =
     progress.status === "failed"
-      ? t("chat.subagentError")
+      ? failure
+        ? `${t("chat.subagentError")} · ${failure}`
+        : t("chat.subagentError")
       : progress.status === "suspended"
         ? t("chat.subagentSuspended")
         : "";
@@ -142,10 +179,13 @@ export function subagentSettledTrail(progress: SubagentProgress, t: TranslateFn)
 export function subagentProgressText(progress: SubagentProgress, t: TranslateFn): string {
   const step = [...progress.steps].reverse().find((item) => item.status === "running");
   const agent = progress.runs.find((item) => item.status === "running")?.name ?? progress.agentName;
+  const failure = subagentFailureText(progress, agent);
   if (!step) {
     const detail =
       progress.status === "failed"
-        ? t("chat.subagentError")
+        ? failure
+          ? `${t("chat.subagentError")} · ${failure}`
+          : t("chat.subagentError")
         : progress.status === "suspended"
           ? t("chat.subagentSuspended")
           : progress.status === "completed"
@@ -157,5 +197,13 @@ export function subagentProgressText(progress: SubagentProgress, t: TranslateFn)
     .slice(0, progress.steps.indexOf(step) + 1)
     .filter((item) => item.name === step.name && item.subagentRunId === step.subagentRunId).length;
   const suffix = attempt > 1 ? ` (${attempt})` : "";
-  return `${agent} · ${subagentStepLabel(step.name, t)}${suffix}`;
+  const body = `${agent} · ${subagentStepLabel(step.name, t)}${suffix}`;
+  return failure ? `${body} · ${failure}` : body;
+}
+
+function publicProgressText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!text) return undefined;
+  return text.length > 160 ? `${text.slice(0, 160).trimEnd()}…` : text;
 }

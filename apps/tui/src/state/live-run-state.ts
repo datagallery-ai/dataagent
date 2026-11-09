@@ -591,7 +591,9 @@ function reduceToolEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
       ? "生成并执行 SQL"
       : toolName === "inspect_schema"
         ? "检查数据源 Schema"
-        : toolName;
+        : toolName === "task"
+          ? "Delegate"
+          : toolName;
   const args = recordValue(incomingArgs);
   const sql = stringValue(args?.sql) ?? stringValue(event.delta) ?? "";
   const result = resultPayload;
@@ -637,7 +639,7 @@ function reduceToolEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
     toolName,
     title,
     summary: summarizeGenericResult(result, event.type),
-    thought: "Agent 正在执行一次数据操作。",
+    thought: kind === "delegate" ? "Agent 把这一步交给子代理。" : "Agent 正在执行一次数据操作。",
     payload: {
       description: result || "",
       rawResult: result && result.length > 0 ? result : undefined,

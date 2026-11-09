@@ -10,9 +10,17 @@ export interface SubagentStep {
   durationMs?: number | undefined;
 }
 
+export interface SubagentRun {
+  id: string;
+  name: string;
+  status: ProgressStatus;
+  /** Sanitized SUBAGENT_ERROR text. Absent when the child ended without an error. */
+  errorMessage?: string | undefined;
+}
+
 export interface SubagentProgress {
   agentName: string;
-  runs: Array<{ id: string; name: string; status: ProgressStatus }>;
+  runs: SubagentRun[];
   nextStepId: number;
   updatedAtMs: number;
   status: ProgressStatus;
@@ -64,7 +72,8 @@ export function updateSubagentProgress(
     const suspended = event.outcome && typeof event.outcome === 'object'
       && 'type' in event.outcome && event.outcome.type === 'suspended';
     const status = type === 'SUBAGENT_ERROR' ? 'failed' : suspended ? 'suspended' : 'completed';
-    runs = runs.map((item) => item.id === id ? { ...item, status } : item);
+    const errorMessage = type === 'SUBAGENT_ERROR' ? subagentErrorText(event.message, event.code) : undefined;
+    runs = runs.map((item) => item.id === id ? { ...item, status, ...(errorMessage ? { errorMessage } : {}) } : item);
     steps = steps.map((step) => step.subagentRunId === id && step.status === 'running' ? {
       ...step, status, durationMs: Math.max(0, now - step.startedAtMs),
     } : step);
@@ -73,4 +82,27 @@ export function updateSubagentProgress(
     : runs.some((item) => item.status === 'failed') ? 'failed'
       : runs.some((item) => item.status === 'suspended') ? 'suspended' : 'completed';
   return { ...current, runs, steps: steps.slice(-100), nextStepId, updatedAtMs: now, status };
+}
+
+/** Collapse control characters and keep the child error short enough for one line. */
+export function subagentErrorText(messageValue: unknown, codeValue?: unknown): string | undefined {
+  const message = publicProgressText(messageValue);
+  const code = publicProgressText(codeValue);
+  if (message && code && code !== message) return `${message} (${code})`;
+  return message ?? code;
+}
+
+/** Name the failed child when it is not the agent already shown on the line. */
+export function subagentFailureText(progress: SubagentProgress, shownName?: string): string | undefined {
+  const failed = [...progress.runs].reverse().find((run) => run.status === 'failed' && run.errorMessage);
+  if (!failed?.errorMessage) return undefined;
+  if (!failed.name || failed.name === shownName) return failed.errorMessage;
+  return `${failed.name}: ${failed.errorMessage}`;
+}
+
+function publicProgressText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim();
+  if (!text) return undefined;
+  return text.length > 160 ? `${text.slice(0, 160).trimEnd()}…` : text;
 }

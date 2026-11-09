@@ -27,6 +27,7 @@ export type DataStepKind =
   | "fetch" // table / row fetch
   | "visualize" // chart / visualization
   | "knowledge" // RAG / knowledge retrieval
+  | "delegate" // task tool handing work to a subagent
   | "other"; // any other backend data operation
 
 /** Maps a backend tool name to a tool-agnostic data step kind. */
@@ -41,6 +42,8 @@ export function dataStepKindForTool(toolName?: string): DataStepKind {
       return "fetch";
     case "retrieve_knowledge":
       return "knowledge";
+    case "task":
+      return "delegate";
     default:
       return "other";
   }
@@ -61,6 +64,8 @@ export function dataStepLabel(kind: DataStepKind): string {
       return "可视化";
     case "knowledge":
       return "知识检索";
+    case "delegate":
+      return "子代理";
     case "other":
       return "数据操作";
   }

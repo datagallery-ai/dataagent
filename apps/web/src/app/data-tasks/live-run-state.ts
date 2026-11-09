@@ -918,7 +918,10 @@ function reduceToolEvent(state: LiveRun, event: AgUiLikeEvent): LiveRun {
       toolName: effectiveToolName,
       title,
       summary: summarizeGenericResult(result, event.type),
-      thought: "Agent is running a data operation.",
+      thought:
+        kind === "delegate"
+          ? "Agent delegated this step to a subagent."
+          : "Agent is running a data operation.",
       payload: { description: result || "", rawResult: result || undefined },
       ...(existingEvent?.artifactIds ? { artifactIds: existingEvent.artifactIds } : {}),
       ...(existingEvent?.stepId ? { stepId: existingEvent.stepId } : {}),

@@ -119,6 +119,7 @@
     "subagentStarting": "正在启动",
     "subagentReturning": "正在返回结果",
     "subagentError": "子代理出错",
+    "subagentWaiting": "等待新进度",
     "subagentSuspended": "子代理已暂停",
     "subagentStep": {
       "model": "模型响应",
@@ -140,6 +141,7 @@
     "file_stat": "查看文件信息",
     "execute_command": "运行命令",
     "promote_workspace_file": "提升工作区文件",
+    "task": "委托子代理",
     "task_write": "写入任务",
     "task_update": "更新任务",
     "task_complete": "完成任务",
@@ -1064,6 +1066,7 @@
     "fetch": "取数",
     "visualize": "可视化",
     "knowledge": "知识",
+    "delegate": "子代理",
     "other": "数据操作",
     "stepMeta": "步骤 {{n}} · {{kind}}",
     "stepMetaTools": "步骤 {{n}} · {{kind}} · {{count}} 次工具调用"

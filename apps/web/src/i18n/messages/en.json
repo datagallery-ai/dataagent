@@ -119,6 +119,7 @@
     "subagentStarting": "Starting",
     "subagentReturning": "Returning result",
     "subagentError": "Subagent error",
+    "subagentWaiting": "waiting for update",
     "subagentSuspended": "Subagent suspended",
     "subagentStep": {
       "model": "Model response",
@@ -140,6 +141,7 @@
     "file_stat": "Get file info",
     "execute_command": "Run command",
     "promote_workspace_file": "Promote workspace file",
+    "task": "Delegate",
     "task_write": "Write task",
     "task_update": "Update task",
     "task_complete": "Complete task",
@@ -1064,6 +1066,7 @@
     "fetch": "Fetch",
     "visualize": "Visualize",
     "knowledge": "Knowledge",
+    "delegate": "Subagent",
     "other": "Data operation",
     "stepMeta": "Step {{n}} · {{kind}}",
     "stepMetaTools": "Step {{n}} · {{kind}} · {{count}} tool calls"
