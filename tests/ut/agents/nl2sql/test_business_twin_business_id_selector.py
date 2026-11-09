@@ -272,3 +272,73 @@ def test_value_sensitive_mobile_game_preference_is_removed() -> None:
         ).business_id
         == "dw1745159014"
     )
+
+
+def test_geo_dimension_rule_matches_catalog_dimension_carriers() -> None:
+    catalog_path = dataagent_package_path(
+        "agents",
+        "nl2sql",
+        "utils",
+        "business_twin_business_id_catalog.json",
+    )
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    rule = catalog["business_rules"]["crh_geo"]
+
+    carriers = {
+        business_id
+        for business_id, schema in catalog["business_schemas"].items()
+        if set(schema["dimensions"]) & set(rule["trigger_dimensions"])
+    }
+
+    assert carriers == set(rule["business_ids"])
+
+
+def test_geo_dimension_routes_formula_alias_collision_into_geo_pool() -> None:
+    # 线上案例：用户把公式结果命名为 delay_e2e，与目录同名原始指标冲突（该指标仅由
+    # 池外业务携带）。地理维度命中后候选收敛到高铁地理业务池，指标计数不再把选路带偏。
+    assert (
+        selector.select_business_twin_business_id(
+            "查询上周按高铁站点（crh_station_id）统计的端到端平均时延，该公式结果命名为delay_e2e",
+            ["delay_e2e", "crh_station_id", "1h_granularity", "crh_group"],
+        ).business_id
+        == "dw1745159032"
+    )
+
+
+def test_geo_dimension_pool_survives_alias_plus_component_metrics() -> None:
+    assert (
+        selector.select_business_twin_business_id(
+            "查询上周按高铁站点（crh_station_id）统计的端到端平均时延，该公式结果命名为delay_e2e",
+            [
+                "delay_e2e",
+                "delay_an",
+                "delay_an_times",
+                "delay_dn",
+                "delay_dn_times",
+                "crh_station_id",
+                "1h_granularity",
+                "crh_group",
+            ],
+        ).business_id
+        == "dw1745159032"
+    )
+
+
+@pytest.mark.parametrize(
+    "geo_dimension",
+    ["crh_station_id", "crh_railway_id", "crh_section_id"],
+)
+def test_unmatched_metric_with_geo_dimension_stays_inside_geo_pool(geo_dimension: str) -> None:
+    # 指标未被任一池内业务携带（抽取噪声/公式别名）时，选路也不得跳出地理业务池。
+    result = selector.select_business_twin_business_id(
+        "查询按高铁地理维度统计的端到端平均时延",
+        ["delay_e2e", geo_dimension],
+    )
+
+    assert result.business_id in {
+        "dw1745159030",
+        "dw1745159031",
+        "dw1745159032",
+        "dw1745159033",
+        "dw1745159034",
+    }
