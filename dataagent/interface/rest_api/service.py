@@ -44,6 +44,9 @@ _INGESTION_COMPLETED = {
 }
 _SEMANTIC_NOT_UP = "semantic service is not UP"
 _INGESTION_UNAVAILABLE = "failed to query ingestion status"
+# json.loads accepts "\ud800"-style escapes, so unpaired surrogates can reach both validation
+# error details (echoed input) and downstream error fields; they cannot be UTF-8 encoded.
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
 
 
 def _trace_status(payload: Any) -> str | None:
@@ -84,12 +87,23 @@ def _downstream_json(exc: SemanticServiceError) -> Any | None:
     return None
 
 
+def surrogate_safe(value: Any) -> Any:
+    """Recursively replace unpaired surrogates so payloads always render to UTF-8."""
+    if isinstance(value, str):
+        return _SURROGATE_RE.sub("�", value)
+    if isinstance(value, dict):
+        return {key: surrogate_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [surrogate_safe(item) for item in value]
+    return value
+
+
 def _downstream_text(body: dict[str, Any], *keys: str) -> str | None:
-    """Return the first non-empty string among ``keys``."""
+    """Return the first non-empty string among ``keys``, with unpaired surrogates replaced."""
     for key in keys:
         value = body.get(key)
         if isinstance(value, str) and value.strip():
-            return value
+            return surrogate_safe(value)
     return None
 
 
@@ -558,6 +572,9 @@ class DataAgentService:
         """Normalize agent stream error payloads."""
         if isinstance(error, dict):
             message = error.get("message")
+            if isinstance(message, str):
+                # LLM parse-failure messages embed raw model output, which can carry unpaired surrogates.
+                message = surrogate_safe(message)
             payload = self._format_error(message if isinstance(message, str) else "Agent failed", agent=agent)
             for field, expected_type in _PUBLIC_ERROR_FIELD_TYPES.items():
                 value = error.get(field)

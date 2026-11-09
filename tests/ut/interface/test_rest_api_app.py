@@ -249,6 +249,126 @@ def test_operation_endpoint_rejects_unknown_body_fields(client: TestClient) -> N
     assert detail["loc"][-1] == "unknown_field"
 
 
+def test_operation_endpoint_surrogate_in_field_returns_422(client: TestClient) -> None:
+    """An unpaired surrogate in a string field is rejected; the 422 must still render."""
+    response = client.post(
+        OPERATION_PATH,
+        # Raw bytes with the JSON escape, like a fuzzer sends; httpx json= cannot encode it.
+        content=b'{"type": "semantic_status", "content": {"scenario": "\\ud800"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_unicode"
+    assert detail["loc"][-1] == "scenario"
+    assert detail["input"] == "�"
+
+
+def test_operation_endpoint_surrogate_in_extra_field_returns_422(client: TestClient) -> None:
+    """The echoed extra-field input is sanitized instead of crashing the response encoding."""
+    response = client.post(
+        OPERATION_PATH,
+        content=b'{"type": "ingestion_status", "content": {"scenario": "business_twin", "traceId": "T1", "x": "\\udfff"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "extra_forbidden"
+    assert detail["loc"][-1] == "x"
+    assert detail["input"] == "�"
+
+
+def test_operation_endpoint_surrogate_in_type_returns_422(client: TestClient) -> None:
+    """A surrogate in the type discriminator echoes a sanitized tag, not a bare 500."""
+    response = client.post(
+        OPERATION_PATH,
+        content=b'{"type": "\\udc00", "content": {"query": "hello", "scenario": "business_twin"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "union_tag_invalid"
+    assert "�" in detail["msg"]
+
+
+def test_query_operation_surrogate_in_scenario_returns_422(client: TestClient) -> None:
+    """A surrogate-mutated scenario rejects the request even when the query itself is valid."""
+    response = client.post(
+        OPERATION_PATH,
+        content=b'{"type": "query", "content": {"query": "\\u6628\\u5929", "scenario": "\\udfff"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_unicode"
+    assert detail["loc"][-1] == "scenario"
+    assert detail["input"] == "�"
+
+
+def test_view_operation_surrogate_in_scenario_returns_422(client: TestClient) -> None:
+    """A surrogate in the view operation's scenario is rejected with a sanitized echo."""
+    response = client.post(
+        OPERATION_PATH,
+        content=b'{"type": "view", "content": {"scenario": "\\ud800"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_unicode"
+    assert detail["loc"][-1] == "scenario"
+    assert detail["input"] == "�"
+
+
+def test_update_operation_surrogate_in_markdown_returns_422(client: TestClient) -> None:
+    """A surrogate in the update operation's markdown is rejected with a sanitized echo."""
+    response = client.post(
+        OPERATION_PATH,
+        content=b'{"type": "update", "content": {"scenario": "business_twin", "markdown": "\\udc00"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_unicode"
+    assert detail["loc"][-1] == "markdown"
+    assert detail["input"] == "�"
+
+
+def test_operation_endpoint_raw_surrogate_bytes_return_422(client: TestClient) -> None:
+    """Raw WTF-8 surrogate bytes decode via surrogatepass and are sanitized like escapes."""
+    response = client.post(
+        OPERATION_PATH,
+        content=b'{"type": "view", "content": {"scenario": "\xed\xa0\x80"}}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_unicode"
+    assert detail["loc"][-1] == "scenario"
+    assert detail["input"] == "�"
+
+
+def test_legacy_query_path_surrogate_returns_422(client: TestClient) -> None:
+    """FastAPI-native body validation on /api/agent/query is covered by the same handler."""
+    response = client.post(
+        LEGACY_QUERY_PATH,
+        content=b'{"query": "\\ud800"}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_unicode"
+    assert detail["loc"][-1] == "query"
+    assert detail["input"] == "�"
+
+
 def test_legacy_query_path_returns_detailed_sql_security_error() -> None:
     """Original /query body still returns mapped SQL security details."""
     app.dependency_overrides[get_data_agent_service] = _StubSQLSecurityErrorService

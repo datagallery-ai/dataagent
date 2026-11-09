@@ -16,12 +16,13 @@ from collections.abc import AsyncGenerator, Coroutine
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from dataagent.interface.rest_api.middleware import SecurityLimitsMiddleware, load_rest_api_limits
-from dataagent.interface.rest_api.service import DataAgentService
+from dataagent.interface.rest_api.service import DataAgentService, surrogate_safe
 from dataagent.interface.rest_api.start_service import (
     CONFIG_ENV_NAME,
     ROUTES_ENV_NAME,
@@ -116,7 +117,8 @@ class IngestionStatusContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scenario: str = Field(min_length=1)
-    traceId: str = Field(min_length=1)
+    # 128 chars keeps the percent-encoded query far under httpx's 65536-char URL limit.
+    traceId: str = Field(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")
 
 
 class IngestionStatusRequest(BaseModel):
@@ -208,6 +210,15 @@ async def stream_agent_events(
 
 app = FastAPI(title="DataAgent Service", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 _middleware_installed = False
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Return 422 for malformed bodies; sanitize echoed input instead of crashing on encoding."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": surrogate_safe(jsonable_encoder(exc.errors()))},
+    )
 
 
 def create_app() -> FastAPI:

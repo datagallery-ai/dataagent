@@ -370,6 +370,51 @@ def test_ingestion_status_unknown_scenario_is_422(tmp_path, monkeypatch: pytest.
     assert _Http.calls == []
 
 
+@pytest.mark.parametrize(
+    ("trace_id", "error_type"),
+    [
+        ("A" * 129, "string_too_long"),
+        ("\U00024025" * 277, "string_too_long"),
+        ("T1\n", "string_pattern_mismatch"),
+        ("T1\x00", "string_pattern_mismatch"),
+    ],
+)
+def test_ingestion_status_rejects_invalid_trace_id(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, trace_id: str, error_type: str
+) -> None:
+    """Overlong, all-supplementary, or control-character traceIds are rejected before any semantic call."""
+    service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+
+    with _install(monkeypatch, service) as client:
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "ingestion_status", "content": {"scenario": "traffic_insight", "traceId": trace_id}},
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == error_type
+    assert detail["loc"][-1] == "traceId"
+    assert _Http.calls == []
+
+
+def test_ingestion_status_accepts_max_length_trace_id(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """128 characters is the inclusive upper bound and still reaches the semantic layer."""
+    service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+    trace_id = "t" * 128
+
+    with _install(monkeypatch, service) as client:
+        _Http.response = _Response(_trace_body("normal"))
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "ingestion_status", "content": {"scenario": "traffic_insight", "traceId": trace_id}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"result": {"success": True, "status": "normal", "completed": True}}
+    assert _Http.calls[0]["params"] == {"traceId": trace_id}
+
+
 def test_ingestion_status_on_bare_config_is_unknown_scenario(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "only.yaml"
     path.write_text("{}", encoding="utf-8")
@@ -414,3 +459,29 @@ def test_ingestion_trace_not_found_passes_through_semantic_body(tmp_path, monkey
             "retryable": False,
         }
     }
+
+
+def test_ingestion_trace_not_found_sanitizes_surrogate_in_semantic_message(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A downstream message with an unpaired surrogate must not crash the 404 response."""
+    service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+    body = {
+        "errorCode": "INGESTION_TRACE_NOT_FOUND",
+        "errorMessage": "ingestion trace not found: 𐀀\ud85d",
+    }
+
+    with _install(monkeypatch, service) as client:
+        _Http.response = _Response(body, status_code=404)
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "ingestion_status", "content": {"scenario": "traffic_insight", "traceId": "T1"}},
+        )
+
+    assert response.status_code == 404
+    result = response.json()["result"]
+    assert result["success"] is False
+    assert result["code"] == "INGESTION_TRACE_NOT_FOUND"
+    assert result["http_status"] == 404
+    assert "\ud85d" not in result["message"]
+    assert "�" in result["message"]
