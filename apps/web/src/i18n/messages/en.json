@@ -836,8 +836,7 @@
       },
       "embeddingApiKey": {
         "label": "Embedding API Key",
-        "placeholder": "sk-...",
-        "helpText": "Stored in secretRef. Falls back to server EMBEDDING_* environment variables when unset."
+        "placeholder": "sk-..."
       },
       "vectorStore": {
         "label": "Vector store type"

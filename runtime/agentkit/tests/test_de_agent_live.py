@@ -1,4 +1,7 @@
-"""Opt-in real DeepSeek and deployed semantic-service acceptance; no scripted models."""
+"""Opt-in model and deployed semantic-service acceptance; no scripted models.
+
+The env file named by DATAAGENT_DE_AGENT_LIVE_ENV must define LLM_MODEL, LLM_BASE_URL and LLM_API_KEY.
+"""
 
 import asyncio
 import json
@@ -26,9 +29,9 @@ def _live_runtime(tmp_path):
             {
                 "models": {
                     "primary": {
-                        "name": "deepseek-chat",
-                        "base_url": "$env{DEEPSEEK_BASE_URL}",
-                        "api_key": "$env{DEEPSEEK_API_KEY}",
+                        "name": "$env{LLM_MODEL}",
+                        "base_url": "$env{LLM_BASE_URL}",
+                        "api_key": "$env{LLM_API_KEY}",
                         "temperature": 0,
                     }
                 },

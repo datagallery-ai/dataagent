@@ -64,7 +64,7 @@ def test_tui_starts_without_project_prompt_and_restores_terminal(tmp_path, colum
     process = subprocess.Popen([
         "node", str(REPOSITORY / "apps/tui/dist/index.js"), "--config", str(path),
     ], cwd=cwd, env={
-        **os.environ, "INIT_CWD": str(cwd), "NO_COLOR": "1", "TERM": "xterm-256color",
+        **os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
     },
         stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
         preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))

@@ -134,9 +134,9 @@ nl2sql/                      插件根
   "models": {
     "primary": {
       "provider": "openai",
-      "name": "deepseek-chat",
-      "base_url": "https://api.deepseek.com/v1",
-      "api_key": { "$env": "DEEPSEEK_API_KEY" }
+      "name": "$env{LLM_MODEL}",
+      "base_url": "$env{LLM_BASE_URL}",
+      "api_key": "$env{LLM_API_KEY}"
     }
   },
   "semantic": {

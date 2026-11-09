@@ -451,18 +451,17 @@ async def test_large_parallel_trace_survives_sdk_batch_boundaries(tmp_path):
     assert all(s.get("parentSpanId") == root(data)["spanId"]
                for s in spans(data) if s is not root(data))
 
-def test_resolve_otlp_endpoint_prefers_dataagent_env(monkeypatch):
+def test_resolve_otlp_endpoint_uses_dataagent_env_only(monkeypatch):
     from dataagent.extensions.tracing import resolve_otlp_endpoint
 
     monkeypatch.delenv("DATAAGENT_OTLP_TRACES_ENDPOINT", raising=False)
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:1/v1/traces")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:2")
     assert resolve_otlp_endpoint() is None
     assert resolve_otlp_endpoint(" http://127.0.0.1:9/v1/traces ") == "http://127.0.0.1:9/v1/traces"
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
-    assert resolve_otlp_endpoint() == "http://127.0.0.1:1/v1/traces"
-    monkeypatch.setenv("DATAAGENT_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:2/v1/traces")
-    assert resolve_otlp_endpoint() == "http://127.0.0.1:2/v1/traces"
+    monkeypatch.setenv("DATAAGENT_OTLP_TRACES_ENDPOINT", " http://127.0.0.1:3/v1/traces ")
+    assert resolve_otlp_endpoint() == "http://127.0.0.1:3/v1/traces"
+    assert resolve_otlp_endpoint("http://127.0.0.1:9/v1/traces") == "http://127.0.0.1:9/v1/traces"
 
 
 def _otlp_capture_server():

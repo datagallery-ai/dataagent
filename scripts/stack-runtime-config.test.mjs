@@ -121,6 +121,7 @@ test("api and web scripts use the same stack entry as one-click start", () => {
   assert.equal(scripts["start:api"], "node scripts/start.mjs --api");
   assert.equal(scripts["start:web"], "node scripts/start.mjs --web");
   assert.equal(scripts.start, "node scripts/start.mjs");
+  assert.equal(scripts["start:tui"], "node -- apps/tui/dist/index.js");
   assert.equal(scripts.dev, undefined);
   assert.equal(scripts["dev:api"], undefined);
   assert.equal(scripts["dev:web"], undefined);

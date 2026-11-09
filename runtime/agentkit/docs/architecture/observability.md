@@ -14,11 +14,11 @@ RUN_ERROR run=<run_id> thread=<thread_id> stage=agent_stream code=<code> message
 
 `code` 是异常类名。空消息仍保留类型。不写原始 traceback，也不把请求体打进这条日志。
 
-TUI 自己的日志路径由 `DATAAGENT_TUI_LOG_PATH` 决定，与后端文件分开。
+TUI 日志固定写入 `<home>/runtime/logs/tui.log`，与 `backend.log` 同目录。Home 来自进程环境 `DATAAGENT_HOME`，未设置时是 `~/.dataagent`。
 
 ## Trace
 
-`build_agent` 绑定 `LocalLangChainTracer`。链路是 LangChain tracer、LangSmith SDK 的 OTEL 模式、只含本地文件导出器的 `TracerProvider`。不需要 LangSmith 账号。远程 Trace 环境变量不改变这个导出器的目的地。
+`build_agent` 绑定 `LocalLangChainTracer`。链路是 LangChain tracer、LangSmith SDK 的 OTEL 模式、只含本地文件导出器的 `TracerProvider`。不需要 LangSmith 账号。本地文件的目的地固定。实时推送只认构造参数，或进程环境里的 `DATAAGENT_OTLP_TRACES_ENDPOINT`（完整 traces URL）和 `DATAAGENT_OTLP_HEADERS`。`OTEL_EXPORTER_OTLP_*` 与 `LANGSMITH_TRACING` 不改变这两处。
 
 根运行完成、失败或被正常取消时，写入：
 

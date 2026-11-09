@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
 import { configuredListen } from "./backend.js";
@@ -552,19 +553,38 @@ it("Health check accepts without filesystem paths", async () => {
   assert.equal(rendered, true);
 });
 
-it("log path ignores health stateDir and the shared temp directory", () => {
+it("log path is Home runtime/logs/tui.log and ignores a separate log-path variable", () => {
   assert.equal(
     resolveTuiLogPath({ DATAAGENT_HOME: "/home/dev/.dataagent" }),
     "/home/dev/.dataagent/runtime/logs/tui.log",
   );
   assert.equal(
-    resolveTuiLogPath({ DATAAGENT_TUI_LOG_PATH: "/home/dev/tui.log", DATAAGENT_HOME: "/ignored" }),
-    "/home/dev/tui.log",
+    resolveTuiLogPath({
+      DATAAGENT_HOME: "/home/dev/.dataagent",
+      DATAAGENT_TUI_LOG_PATH: "/home/dev/tui.log",
+    }),
+    "/home/dev/.dataagent/runtime/logs/tui.log",
   );
-  const fallback = resolveTuiLogPath({});
-  assert.equal(fallback.endsWith(`${join(".datagallery", "tui.log")}`), true);
-  assert.equal(fallback.includes(tmpdir()), false);
-  assert.throws(() => resolveTuiLogPath({ DATAAGENT_TUI_LOG_PATH: "relative.log" }), /absolute/);
+  assert.equal(
+    resolveTuiLogPath({}),
+    join(homedir(), ".dataagent", "runtime", "logs", "tui.log"),
+  );
+  assert.equal(
+    resolveTuiLogPath({ DATAAGENT_HOME: "~/agent-home" }),
+    join(homedir(), "agent-home", "runtime", "logs", "tui.log"),
+  );
+  const launch = mkdtempSync(join(tmpdir(), "tui-home-"));
+  const previous = process.cwd();
+  try {
+    process.chdir(launch);
+    assert.equal(
+      resolveTuiLogPath({ DATAAGENT_HOME: "relative-home", INIT_CWD: "/ignored" }),
+      join(launch, "relative-home", "runtime", "logs", "tui.log"),
+    );
+  } finally {
+    process.chdir(previous);
+  }
+  assert.equal(resolveTuiLogPath({}).includes(tmpdir()), false);
 });
 
 it("A relative stateDir without rendering", async () => {

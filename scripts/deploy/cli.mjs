@@ -511,7 +511,7 @@ function createRealDeps(context) {
         apiListenFromState(state),
       );
       print(`Starting TUI against ${runtimeUrl} (foreground client; Ctrl+C exits TUI only).`);
-      await runCommand("npm", ["run", "start:tui", "--", "--runtime-url", runtimeUrl], {
+      await runCommand(process.execPath, [path.join(root, TUI_ENTRY), "--runtime-url", runtimeUrl], {
         cwd: root,
         stdio: "inherit"
       });

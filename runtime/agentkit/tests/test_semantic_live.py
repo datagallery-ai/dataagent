@@ -1,5 +1,6 @@
-"""Real DeepSeek Agent acceptance against local and opt-in deployed semantic services.
+"""Opt-in model acceptance against local and deployed semantic services.
 
+The env file named by DATAAGENT_SEMANTIC_LIVE_ENV must define LLM_BASE_URL and LLM_API_KEY.
 DATAAGENT_SEMANTIC_LIVE_ENV=/absolute/path/to/.env uv run pytest tests/test_semantic_live.py -q
 The fixture verifies client transport and injection, not a deployed semantic-service implementation.
 Set DATAAGENT_SEMANTIC_LIVE_URL as well to exercise a deployed service's read-only typedefs API.
@@ -26,7 +27,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
     """Exercise JSON bootstrap, a real HTTP client, Hook injection, LLM, SSE and shutdown."""
     env_path = os.environ.get("DATAAGENT_SEMANTIC_LIVE_ENV")
     if not env_path:
-        pytest.skip("Set DATAAGENT_SEMANTIC_LIVE_ENV to a real DeepSeek credential file")
+        pytest.skip("Set DATAAGENT_SEMANTIC_LIVE_ENV to an env file with LLM_BASE_URL and LLM_API_KEY")
     marker = "SEMANTIC_CHECK_" + uuid4().hex[:12]
     requests = []
 
@@ -74,8 +75,8 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
                 "models": {
                     "primary": {
                         "name": os.environ.get("DATAAGENT_SEMANTIC_LIVE_MODEL", "deepseek-chat"),
-                        "base_url": "$env{DEEPSEEK_BASE_URL}",
-                        "api_key": "$env{DEEPSEEK_API_KEY}",
+                        "base_url": "$env{LLM_BASE_URL}",
+                        "api_key": "$env{LLM_API_KEY}",
                     }
                 },
                 "dataagent": {"limits": {"timeout_seconds": 120, "model_calls_per_agent": 3}},
@@ -193,8 +194,8 @@ def test_real_deepseek_reads_deployed_semantic_types_without_plugins(tmp_path):
                 "models": {
                     "primary": {
                         "name": os.environ.get("DATAAGENT_SEMANTIC_LIVE_MODEL", "deepseek-chat"),
-                        "base_url": "$env{DEEPSEEK_BASE_URL}",
-                        "api_key": "$env{DEEPSEEK_API_KEY}",
+                        "base_url": "$env{LLM_BASE_URL}",
+                        "api_key": "$env{LLM_API_KEY}",
                     }
                 },
                 "dataagent": {
@@ -385,8 +386,8 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
                 "models": {
                     "primary": {
                         "name": os.environ.get("DATAAGENT_SEMANTIC_LIVE_MODEL", "deepseek-chat"),
-                        "base_url": "$env{DEEPSEEK_BASE_URL}",
-                        "api_key": "$env{DEEPSEEK_API_KEY}",
+                        "base_url": "$env{LLM_BASE_URL}",
+                        "api_key": "$env{LLM_API_KEY}",
                     }
                 },
                 "dataagent": {"limits": {"timeout_seconds": 120, "model_calls_per_agent": 5}},
