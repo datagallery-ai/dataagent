@@ -10,7 +10,7 @@ export class AguiClientError extends Error {
 
 /** Direct AG-UI transport. No CopilotKit envelope, authentication UI or run replay. */
 export class AguiClient implements AgentClient {
-  private controllers = new Set<AbortController>();
+  private controllers = new Map<string, AbortController>();
 
   constructor(
     private runtimeUrl: string,
@@ -19,19 +19,19 @@ export class AguiClient implements AgentClient {
   ) {}
 
   dispose(): void {
-    for (const controller of this.controllers) controller.abort();
+    for (const controller of this.controllers.values()) controller.abort();
     this.controllers.clear();
   }
 
-  cancelActive(): void {
-    for (const controller of this.controllers) controller.abort();
+  cancelRun(runId: string): void {
+    this.controllers.get(runId)?.abort();
   }
 
   async *runAgent(input: RunAgentInput): AsyncGenerator<AgentEvent> {
     const user = input.messages.filter((message) => message.role === "user").at(-1);
     if (!user) throw new AguiClientError("A new user message is required", "VALIDATION_ERROR");
     const controller = new AbortController();
-    this.controllers.add(controller);
+    this.controllers.set(input.runId, controller);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, this.timeoutMs);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -98,7 +98,7 @@ export class AguiClient implements AgentClient {
       controller.abort();
       await reader?.cancel().catch(() => {});
       reader?.releaseLock();
-      this.controllers.delete(controller);
+      if (this.controllers.get(input.runId) === controller) this.controllers.delete(input.runId);
     }
   }
 }

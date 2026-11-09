@@ -191,14 +191,14 @@ it('/stop cancels the active run and stays on this thread', async () => {
   let release: () => void = () => {};
   const hanging = new Promise<void>((resolve) => { release = resolve; });
   const cancels: string[] = [];
-  let cancelled = false;
+  const stopped: string[] = [];
   const sessions = new SessionClient('http://127.0.0.1:8790', async (url, init) => {
     cancels.push(`${init?.method ?? 'GET'} ${String(url)}`);
     if (String(url).includes('/cancel')) return new Response(null, { status: 204 });
     throw new Error(`Unexpected session call ${String(url)}`);
   });
   const current = view({
-    cancelActive() { cancelled = true; release(); },
+    cancelRun(runId) { stopped.push(runId); release(); },
     async *runAgent() {
       await hanging;
     },
@@ -215,13 +215,66 @@ it('/stop cancels the active run and stays on this thread', async () => {
   await tick();
   current.stdin.write('\r');
   await until(() => store.getState().runStatus !== 'running');
-  assert.equal(cancelled, true);
+  assert.deepEqual(stopped, [runId]);
   assert.equal(store.getState().threadId, threadId);
   assert.equal(cancels[0], `POST http://127.0.0.1:8790/api/v1/runs/${runId}/cancel`);
   const text = store.getState().messages.map(getMessageTextContent).join('\n');
   assert.match(text, /keep going/);
   assert.doesNotMatch(text, /INCOMPLETE_STREAM/);
   assert.equal(store.getState().messages.at(-1)?.runSummary?.status, 'interrupted');
+});
+
+it('/stop leaves a queued run alone when its cancel returns after the original stream ends', async () => {
+  let releaseOriginal!: () => void;
+  const originalGate = new Promise<void>((resolve) => { releaseOriginal = resolve; });
+  let cancelStarted!: () => void;
+  const cancelSeen = new Promise<void>((resolve) => { cancelStarted = resolve; });
+  let releaseCancel!: () => void;
+  const cancelGate = new Promise<void>((resolve) => { releaseCancel = resolve; });
+  let releaseQueued!: () => void;
+  const queuedGate = new Promise<void>((resolve) => { releaseQueued = resolve; });
+  const stopped: string[] = [];
+  const runs: string[] = [];
+  const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
+    if (String(url).includes('/cancel')) {
+      cancelStarted();
+      await cancelGate;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected session call ${String(url)}`);
+  });
+  const current = view({
+    cancelRun(runId) { stopped.push(runId); },
+    async *runAgent(input) {
+      runs.push(input.runId);
+      if (runs.length === 1) {
+        await originalGate;
+        yield { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId } as BaseEvent;
+        return;
+      }
+      await queuedGate;
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId: 'queued', delta: 'Queued answer' } as BaseEvent;
+      yield { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId } as BaseEvent;
+    },
+  }, 80, 24, sessions);
+  await tick();
+  await submit(current, 'first question');
+  await until(() => store.getState().runStatus === 'running');
+  const originalRunId = store.getState().runId;
+  await submit(current, 'queued question');
+  await submit(current, '/stop');
+  await cancelSeen;
+  releaseOriginal();
+  await until(() => runs.length === 2 && store.getState().runId !== originalRunId && store.getState().runStatus === 'running');
+  releaseCancel();
+  await tick();
+  assert.deepEqual(stopped, []);
+  releaseQueued();
+  await until(() => store.getState().runStatus === 'completed');
+  const text = store.getState().messages.map(getMessageTextContent).join('\n');
+  assert.match(text, /Queued answer/);
+  assert.doesNotMatch(text, /CANCELLED|The run was cancelled/);
+  assert.equal(store.getState().messages.at(-1)?.runSummary?.status, 'completed');
 });
 
 it('/resume list opens the picker and does not load a session id named list', async () => {

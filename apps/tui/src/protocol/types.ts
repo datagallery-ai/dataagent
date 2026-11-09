@@ -24,8 +24,8 @@ export interface RunAgentInput {
 
 export interface AgentClient {
   runAgent(input: RunAgentInput): AsyncGenerator<CopilotKitEvent>;
-  /** Abort the in-flight stream without disposing the client. */
-  cancelActive?(): void;
+  /** Abort one in-flight stream. A later run keeps its own controller. */
+  cancelRun?(runId: string): void;
 }
 
 export interface CopilotKitError extends Error {
