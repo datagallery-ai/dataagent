@@ -51,6 +51,34 @@ def test_normalize_structured_error_uses_public_field_allowlist() -> None:
     }
 
 
+def test_normalize_error_sanitizes_surrogate_in_agent_message() -> None:
+    """An agent message embedding raw LLM output with a lone surrogate must render safely."""
+    service = DataAgentService()
+    error = {
+        "success": False,
+        "code": "NL2SQL-LLM-002",
+        "message": "Model output format error: JSON parsing failed after 3 attempts: "
+        "No JSON block found in model output, raw content: \ud85d",
+        "http_status": 502,
+        "component": "llm",
+        "retryable": True,
+    }
+
+    result = service._normalize_error_payload(error)
+
+    assert result == {
+        "result": {
+            "success": False,
+            "code": "NL2SQL-LLM-002",
+            "message": "Model output format error: JSON parsing failed after 3 attempts: "
+            "No JSON block found in model output, raw content: �",
+            "http_status": 502,
+            "component": "llm",
+            "retryable": True,
+        }
+    }
+
+
 def test_normalize_sql_security_error_preserves_public_details() -> None:
     """Mapped SQL security errors should cross the REST boundary without internal rule identifiers."""
     service = DataAgentService()
