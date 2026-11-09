@@ -88,4 +88,51 @@ describe("step-tool-summary", () => {
 
     expect(summaries[0]?.label).toBe("Ask user");
   });
+
+  it("names the delegated subagent and the file a tool is touching", () => {
+    const liveRun = {
+      ...createInitialLiveRun(),
+      toolCalls: [
+        {
+          id: "task",
+          name: "task",
+          status: "running" as const,
+          startedAtMs: 1_000,
+          progress: {
+            agentName: "nl2sql",
+            runs: [{ id: "child", name: "nl2sql", status: "running" as const }],
+            nextStepId: 0,
+            updatedAtMs: 0,
+            status: "running" as const,
+            steps: [],
+          },
+        },
+        { id: "read", name: "read_file", status: "success" as const, startedAtMs: 1, finishedAtMs: 50 },
+      ],
+    };
+    const summaries = buildStepToolSummaries({
+      toolCalls: [
+        { id: "task", function: { name: "task", arguments: "{\"subagent_type\":\"nl2sql\"}" } },
+        { id: "read", function: { name: "read_file", arguments: "{\"file_path\":\"/workspace/notes.md\"}" } },
+      ],
+      liveRun,
+      isActive: true,
+      t: (key) => (key === "tools.task" ? "委托子代理" : key === "tools.read_file" ? "读取文件" : key),
+    });
+    expect(summaries.map((item) => item.label)).toEqual([
+      "委托子代理 · nl2sql",
+      "读取文件 · /workspace/notes.md",
+    ]);
+    expect(summaries[0]?.startedAtMs).toBe(1_000);
+  });
+
+  it("shows every tool chip unless a caller sets a limit", () => {
+    const tools = ["A", "B", "C", "D"].map((label) => ({
+      id: label,
+      label,
+      status: "success" as const,
+      durationLabel: "1ms",
+    }));
+    expect(buildToolChipSummaries(tools).map((chip) => chip.label)).toEqual(["A", "B", "C", "D"]);
+  });
 });

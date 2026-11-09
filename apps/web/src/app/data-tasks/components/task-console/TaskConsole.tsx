@@ -73,7 +73,7 @@ import {
 import { ToolFormattedResult, ToolFailureResult } from "../../tool-result-format";
 import { parseSqlToolResult, sqlFromToolPayload } from "../../tool-result-normalize";
 import { toolResultLooksLikeError } from "../../tool-call-display";
-import { SubagentToolProgress } from "../../subagent-progress-line";
+import { SubagentStepHistory, SubagentToolProgress } from "../../subagent-progress-line";
 import {
   btnGhostClass,
   btnPrimaryClass,
@@ -1488,6 +1488,7 @@ function ToolGroupDetailView({
                     {call.name}
                   </span>
                   {call.progress ? <SubagentToolProgress call={call} /> : null}
+                  {call.progress ? <SubagentStepHistory progress={call.progress} /> : null}
                 </span>
                 <span className="shrink-0 text-right text-[10px] text-muted-light">
                   <span className="block">{toolStatusLabel(call.status, t)}</span>

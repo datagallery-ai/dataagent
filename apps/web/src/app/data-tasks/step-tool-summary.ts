@@ -6,7 +6,7 @@ export type StepToolStatus = "running" | "success" | "failed";
 
 type AssistantToolCallLike = {
   id?: string;
-  function?: { name?: string };
+  function?: { name?: string; arguments?: string };
 };
 
 function toolSummaryStatus(callStatus?: LiveRun["toolCalls"][number]["status"]): StepToolStatus {
@@ -31,9 +31,12 @@ export function buildStepToolSummaries(input: {
         : input.isActive
           ? "running"
           : "success";
+      const name = liveCall?.name ?? call.function?.name;
+      const title = toolDisplayTitle(name, input.t);
+      const target = toolCallTarget(name, call.function?.arguments, liveCall?.progress?.agentName);
       return {
         id,
-        label: toolDisplayTitle(liveCall?.name ?? call.function?.name, input.t),
+        label: target ? `${title} · ${target}` : title,
         status,
         durationLabel: liveCall
           ? stepElapsedLabel(liveCall, input.t)
@@ -42,6 +45,7 @@ export function buildStepToolSummaries(input: {
               ? input.t("common.running")
               : "Running"
             : "—",
+        ...(liveCall?.startedAtMs !== undefined ? { startedAtMs: liveCall.startedAtMs } : {}),
       };
     })
     .filter((tool) => tool.label.trim().length > 0);
@@ -52,7 +56,46 @@ export type StepToolSummaryInput = {
   label: string;
   status: StepToolStatus;
   durationLabel: string;
+  startedAtMs?: number;
 };
+
+const TOOL_TARGET_FIELDS = ["subagent_type", "file_path", "path", "command", "pattern", "sql", "query"] as const;
+
+function toolCallTarget(name: string | undefined, rawArguments: string | undefined, agentName?: string): string | undefined {
+  if (name === "task" && agentName) return clipTarget(agentName);
+  const args = parseArguments(rawArguments);
+  if (!args) return undefined;
+  if (name === "task") return clipTarget(stringField(args, "subagent_type"));
+  for (const field of TOOL_TARGET_FIELDS) {
+    if (field === "subagent_type") continue;
+    const value = stringField(args, field);
+    if (value) return clipTarget(value);
+  }
+  return undefined;
+}
+
+function parseArguments(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw || raw === "{}") return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function stringField(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function clipTarget(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const text = value.replace(/\s+/gu, " ").trim();
+  if (!text) return undefined;
+  return text.length > 48 ? `${text.slice(0, 48).trimEnd()}…` : text;
+}
 
 export type ToolChipSummary = StepToolSummaryInput & {
   overflow?: boolean;
@@ -63,6 +106,10 @@ export type StepElapsedInput = {
   startedAtMs?: number;
   finishedAtMs?: number;
 };
+
+export function runningElapsedLabel(startedAtMs: number, now = Date.now()): string {
+  return `${Math.max(0, Math.floor((now - startedAtMs) / 1000))}s`;
+}
 
 export function formatStepDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -93,7 +140,7 @@ export function truncateThinkingPreview(text: string, maxChars = 96): string | u
 
 export function buildToolChipSummaries(
   tools: StepToolSummaryInput[],
-  maxVisible = 3,
+  maxVisible = Number.POSITIVE_INFINITY,
 ): ToolChipSummary[] {
   if (tools.length <= maxVisible) return tools;
   const visibleCount = Math.max(1, maxVisible - 1);

@@ -102,8 +102,9 @@ it('nested children stay under their exact parent and cannot close sibling or ro
     { type: 'RUN_FINISHED' },
     { type: 'STATE_SNAPSHOT', snapshot: { runStatus: 'completed' } },
   ]) assert.equal(reduceLiveRunEvent(state, { ...event, subagentRunId: 'child-nested' }), state);
-  state = reduceLiveRunEvent(state, { type: 'SUBAGENT_ERROR', subagentRunId: 'child-nested', message: 'bad' });
+  state = reduceLiveRunEvent(state, { type: 'SUBAGENT_ERROR', subagentRunId: 'child-nested', message: 'bad', code: 'QueryError' });
   assert.deepEqual(state.toolCalls[0]!.progress?.steps.map((item) => item.status), ['running', 'failed']);
+  assert.equal(state.toolCalls[0]!.progress?.runs[1]?.errorMessage, 'bad (QueryError)');
   assert.equal(state.toolCalls[0]!.status, 'running');
   assert.equal(state.runStatus, 'running');
   state = reduceLiveRunEvent(state, { type: 'SUBAGENT_FINISHED', subagentRunId: 'child-a' });

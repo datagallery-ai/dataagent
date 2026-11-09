@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Text } from 'ink';
-import type { SubagentProgress as Progress, SubagentStep } from '../state/subagent-progress.js';
+import { subagentFailureText, type SubagentProgress as Progress, type SubagentStep } from '../state/subagent-progress.js';
 import { inkColors } from './theme.js';
 import { textWidth, truncateToWidth } from './text-width.js';
 
@@ -30,17 +30,27 @@ export function SubagentProgressLine({ progress, width }: { progress: Progress; 
     return () => clearInterval(timer);
   }, [progress.updatedAtMs]);
   const step = [...progress.steps].reverse().find((item) => item.status === 'running');
+  const agent = progress.runs.find((item) => item.status === 'running')?.name ?? progress.agentName;
+  const failure = subagentFailureText(progress, agent);
   const idleSeconds = Math.max(0, Math.floor((now - progress.updatedAtMs) / 1000));
   const elapsed = Math.max(0, Math.floor((now - (step?.startedAtMs ?? progress.updatedAtMs)) / 1000));
-  const label = step ? stepHistoryLabel(step, progress.steps).replace(/^· /u, '')
-    : progress.status === 'failed' ? 'Subagent error'
+  const stepText = step ? `${agent} · ${stepHistoryLabel(step, progress.steps).replace(/^· /u, '')}` : '';
+  const label = step
+    ? (failure ? `${stepText} · ${failure}` : stepText)
+    : progress.status === 'failed'
+      ? (failure ? `Subagent error · ${failure}` : 'Subagent error')
       : progress.status === 'completed' ? 'Returning result'
         : progress.status === 'suspended' ? 'Subagent suspended' : 'Starting subagent';
   const waiting = idleSeconds >= 30 ? ' · waiting for update' : '';
   const timer = `${elapsed}s`.padStart(6);
-  const budget = Math.max(1, width - 4 - textWidth(timer) - 3);
-  const body = truncateToWidth(label + waiting, budget);
+  const timerWidth = textWidth(timer);
+  const waitingWidth = textWidth(waiting);
+  const chrome = 4 + timerWidth + 3;
+  const reserveWaiting = waitingWidth > 0 && chrome + waitingWidth < width;
+  const budget = Math.max(1, width - chrome - (reserveWaiting ? waitingWidth : 0));
+  const body = truncateToWidth(reserveWaiting ? label : label + waiting, budget);
+  const gap = ' '.repeat(Math.max(0, budget - textWidth(body)));
   return <Text color={progress.status === 'failed' ? inkColors.error : idleSeconds >= 30 ? inkColors.warning : inkColors.muted}>
-    {'  └ ' + body + ' '.repeat(Math.max(0, budget - textWidth(body))) + ' · ' + timer}
+    {'  └ ' + body + gap + (reserveWaiting ? waiting : '') + ' · ' + timer}
   </Text>;
 }

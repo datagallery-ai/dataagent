@@ -31,6 +31,7 @@ export type DataStepKind =
   | "fetch" // table / row fetch
   | "visualize" // chart / visualization
   | "knowledge" // RAG / knowledge retrieval
+  | "delegate" // task tool handing work to a subagent
   | "other"; // any other backend data operation
 
 /** Maps a backend tool name to a tool-agnostic data step kind. */
@@ -45,6 +46,8 @@ export function dataStepKindForTool(toolName?: string): DataStepKind {
       return "fetch";
     case "retrieve_knowledge":
       return "knowledge";
+    case "task":
+      return "delegate";
     default:
       return "other";
   }
@@ -68,6 +71,8 @@ export function dataStepLabel(kind: DataStepKind, t?: TranslateFn): string {
       return "Visualize";
     case "knowledge":
       return "Knowledge";
+    case "delegate":
+      return "Subagent";
     case "other":
       return "Data operation";
   }
@@ -88,6 +93,7 @@ const toolDisplayTitles: Record<string, string> = {
   file_stat: "Get file info",
   execute_command: "Run command",
   promote_workspace_file: "Promote workspace file",
+  task: "Delegate",
   task_write: "Write task plan",
   task_update: "Update task",
   task_complete: "Complete task",

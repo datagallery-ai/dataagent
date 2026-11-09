@@ -247,6 +247,7 @@ import {
   buildCollapsedStepSummary,
   buildStepToolSummaries,
   buildToolChipSummaries,
+  runningElapsedLabel,
   stepElapsedLabel,
   type StepToolStatus,
   type StepToolSummaryInput,
@@ -334,6 +335,7 @@ import {
 } from "../../i18n/config-labels";
 import type { HttpAgent } from "@ag-ui/client";
 import { StreamHttpAgent } from "../../lib/stream-http-agent";
+import { STREAM_RUNTIME_PATH } from "../../lib/stream-run";
 import {
   getBackendCapabilities,
   isResourcePanelSupported,
@@ -347,8 +349,8 @@ import {
 
 const EnsureSessionAgentContext = createContext<(threadId: string) => void>(() => {});
 
-/** Config CRUD is not on the Python control plane. Keep the components, hide the entries. */
-const workspaceResourceNavEnabled = false;
+/** Left rail entries for data sources, knowledge, tools, models, and files. */
+const workspaceResourceNavEnabled = true;
 
 function reportDataGalleryRunError(
   error: unknown,
@@ -1031,6 +1033,8 @@ function DataTasksCopilotShell() {
     <CopilotKit
       key={scopeKey}
       agent="default"
+      runtimeUrl={STREAM_RUNTIME_PATH}
+      useSingleEndpoint={false}
       selfManagedAgents={selfManagedAgents}
       showDevConsole={false}
       enableInspector={false}
@@ -3633,7 +3637,7 @@ function StepAssistantMessage({
     thinking: processContent,
     tools: toolSummaries,
   });
-  const collapsedToolChips = buildToolChipSummaries(toolSummaries, 3);
+  const collapsedToolChips = buildToolChipSummaries(toolSummaries);
   const processGroupId = buildGroupIdForAssistantMessage(message.id, effectiveToolCalls);
   const toolActionLabel = isCollaborationComplete
     ? resolveCollaborationCompletedStepLabel(rawToolNames, linkedCollaboration?.toolName)
@@ -4156,6 +4160,16 @@ function ToolSummaryChip({
   onSelectToolAction: ((toolCallId: string) => void) | null;
 }) {
   const t = useT();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (chip.status !== "running" || chip.startedAtMs === undefined) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [chip.status, chip.startedAtMs]);
+  const durationLabel =
+    chip.status === "running" && chip.startedAtMs !== undefined
+      ? runningElapsedLabel(chip.startedAtMs, now)
+      : chip.durationLabel;
   const tone =
     chip.status === "failed"
       ? "border-step-error/25 bg-step-error/8 text-step-error"
@@ -4180,9 +4194,9 @@ function ToolSummaryChip({
         />
       ) : null}
       <span className="truncate">{chip.label}</span>
-      {!chip.overflow && chip.durationLabel ? (
+      {!chip.overflow && durationLabel ? (
         <span className="shrink-0 font-mono text-[10px] text-muted-light">
-          {chip.durationLabel}
+          {durationLabel}
         </span>
       ) : null}
     </>

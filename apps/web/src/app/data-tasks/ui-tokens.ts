@@ -111,6 +111,13 @@ const stepKindTones = {
     bar: "bg-step-knowledge",
     ring: "ring-step-knowledge/20",
   },
+  delegate: {
+    bg: "bg-primary/10",
+    border: "border-primary/30",
+    text: "text-primary",
+    bar: "bg-primary",
+    ring: "ring-primary/20",
+  },
   other: {
     bg: "bg-surface-subtle",
     border: "border-border",
