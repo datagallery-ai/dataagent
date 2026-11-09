@@ -61,7 +61,7 @@
     "test:web": "npm --workspace @datagallery/web run test",
     "test:tui": "npm --workspace @datagallery/tui run test",
     "test:product": "uv run --project runtime/agentkit python scripts/run_product_tests.py",
-    "start:tui": "npm --workspace @datagallery/tui run start --",
+    "start:tui": "node -- apps/tui/dist/index.js",
     "docs:dev": "python -m mkdocs serve -a 127.0.0.1:8000",
     "docs:build": "python -m mkdocs build --strict",
     "smoke:docs": "node scripts/smoke-doc-links.mjs"

@@ -836,8 +836,7 @@
       },
       "embeddingApiKey": {
         "label": "Embedding API Key",
-        "placeholder": "sk-...",
-        "helpText": "保存在 secretRef。未设置时回退到服务端 EMBEDDING_* 环境变量。"
+        "placeholder": "sk-..."
       },
       "vectorStore": {
         "label": "向量库类型"

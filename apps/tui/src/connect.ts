@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute } from "node:path";
 import { z } from "zod";
+import { resolveTuiLogPath } from "./log-path.js";
 import { AguiClient } from "./protocol/agui-client.js";
 import { SessionClient } from "./protocol/session-client.js";
 import { store } from "./state/store.js";
@@ -59,17 +59,7 @@ export function sessionTransport(
   };
 }
 
-/** Log path comes only from this machine, never from the health response. */
-export function resolveTuiLogPath(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = env.DATAAGENT_TUI_LOG_PATH?.trim();
-  if (explicit) {
-    if (!isAbsolute(explicit)) throw new Error("TUI log path must be absolute");
-    return explicit;
-  }
-  const envHome = env.DATAAGENT_HOME?.trim();
-  if (envHome && isAbsolute(envHome)) return join(envHome, "runtime", "logs", "tui.log");
-  return join(homedir(), ".datagallery", "tui.log");
-}
+export { resolveTuiLogPath } from "./log-path.js";
 
 /** Accept the control-plane envelope and the standalone `dataagent serve` health body. */
 export function healthPayload(body: unknown): unknown {

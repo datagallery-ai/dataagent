@@ -25,9 +25,9 @@ de-agent/
 {
   "models": {
     "primary": {
-      "name": "deepseek-chat",
-      "base_url": "$env{DEEPSEEK_BASE_URL}",
-      "api_key": "$env{DEEPSEEK_API_KEY}"
+      "name": "$env{LLM_MODEL}",
+      "base_url": "$env{LLM_BASE_URL}",
+      "api_key": "$env{LLM_API_KEY}"
     }
   },
   "semantic": {"base_url": "$env{SEMANTIC_BASE_URL}"},

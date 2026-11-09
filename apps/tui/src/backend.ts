@@ -167,7 +167,7 @@ export async function startBackend(options: {
   spawnBackend?: BackendSpawner | undefined;
   readinessTimeoutMs?: number | undefined;
 } = {}) {
-  const cwd = process.env.INIT_CWD ?? process.cwd();
+  const cwd = process.cwd();
   const backendPackage = fileURLToPath(new URL("../../../runtime/agentkit", import.meta.url));
   const instanceId = randomUUID();
   const args = ["run", "--project", backendPackage, "dataagent", "serve", "--stdio-ready"];

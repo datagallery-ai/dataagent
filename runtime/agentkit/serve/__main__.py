@@ -48,35 +48,6 @@ def check_port(host: str, port: int):
             ) from None
 
 
-def inherited_listener(host: str, port: int):
-    """Use a socket the parent kept open across spawn, when DATAAGENT_LISTEN_FD is set.
-
-    The fd is already bound and listening, so startup does not bind a second time
-    and the port is never released between the parent's bind and this process.
-    """
-    raw = os.environ.get("DATAAGENT_LISTEN_FD", "")
-    if raw == "":
-        return None
-    try:
-        fd = int(raw)
-    except ValueError:
-        raise RuntimeError("DATAAGENT_LISTEN_FD must be an integer file descriptor") from None
-    if fd < 3:
-        raise RuntimeError("DATAAGENT_LISTEN_FD must not be stdin, stdout, or stderr")
-    sock = socket.socket(fileno=fd)
-    try:
-        bound_host, bound_port = sock.getsockname()[:2]
-    except OSError:
-        sock.close()
-        raise RuntimeError("DATAAGENT_LISTEN_FD is not a bound TCP socket") from None
-    if (bound_host, bound_port) != (host, port):
-        sock.close()
-        raise RuntimeError(
-            f"DATAAGENT_LISTEN_FD is bound to {bound_host}:{bound_port}, not {host}:{port}"
-        )
-    return sock
-
-
 def configure_logging(runtime: Runtime | None):
     handlers = []
     plain = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -202,9 +173,7 @@ def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = 
 
     if stdio_ready and not os.environ.get("DATAAGENT_INSTANCE_ID"):
         raise ValueError("A launch instance identity is required for the startup protocol")
-    inherited = inherited_listener(host, port)
-    if inherited is None:
-        check_port(host, port)
+    check_port(host, port)
     configure_logging(runtime)
     app = create_app(runtime, instance_id=_instance_id())
     server = uvicorn.Server(uvicorn.Config(
@@ -236,14 +205,9 @@ def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = 
         threading.Thread(target=announce_ready, daemon=True).start()
         threading.Thread(target=watch_frontend, daemon=True).start()
     try:
-        if inherited is None:
-            server.run()
-        else:
-            server.run(sockets=[inherited])
+        server.run()
     finally:
         stopped.set()
-        if inherited is not None:
-            inherited.close()
     return 0 if server.started else 1
 
 
@@ -293,7 +257,6 @@ def _run_reload(argv, host: str, port: int) -> int:
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
-    # An inherited listener cannot survive the reloader subprocess, so the socket wins.
     runtime = None
     try:
         runtime = _prepare(args)
@@ -304,7 +267,7 @@ def main(argv=None) -> int:
         if args.stdio_ready and runtime is None:
             return 1
         host, port = _listen(runtime)
-        if args.reload and not os.environ.get("DATAAGENT_LISTEN_FD"):
+        if args.reload:
             return _run_reload(argv, host, port)
         return serve(runtime, host, port, stdio_ready=args.stdio_ready)
     except KeyboardInterrupt:

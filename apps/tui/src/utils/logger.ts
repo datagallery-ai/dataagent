@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { resolveTuiLogPath } from '../log-path.js';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -23,11 +23,11 @@ class Logger {
   private currentLogLevel: LogLevel;
 
   constructor(config?: Partial<LoggerConfig>) {
-    const defaultLogDir = path.join(os.homedir(), '.datagallery');
+    const defaultLogPath = resolveTuiLogPath();
 
     this.config = {
-      logDir: config?.logDir || defaultLogDir,
-      logFileName: config?.logFileName || 'tui.log',
+      logDir: config?.logDir || path.dirname(defaultLogPath),
+      logFileName: config?.logFileName || path.basename(defaultLogPath),
       maxLogSize: config?.maxLogSize || 10 * 1024 * 1024, // 10MB
       maxLogFiles: config?.maxLogFiles || 5,
       debugMode: config?.debugMode || false,

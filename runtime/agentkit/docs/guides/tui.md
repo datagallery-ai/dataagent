@@ -42,7 +42,7 @@ Enter 发送。Shift+Enter、Alt+Enter 和 Ctrl+J 换行。直接启用 CSI-u，
 
 运行中继续输入的消息会排队。`NO_COLOR=1` 关闭颜色。Ctrl+Z 后再 `fg`，会恢复终端状态并重新测量光标。Ctrl+O 展开或收起工具的输入输出。
 
-日志路径 `DATAAGENT_TUI_LOG_PATH` 必须设在 TUI 进程环境里。
+界面日志写在 `<home>/runtime/logs/tui.log`，与后端 `backend.log` 同目录。
 
 ## 你应该看到什么
 

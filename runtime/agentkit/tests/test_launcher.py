@@ -23,7 +23,7 @@ def open_listener():
     return sock
 
 
-def spawn_inherited(argv, listener, *, env, fd_env="DATAAGENT_LISTEN_FD", **kwargs):
+def spawn_inherited(argv, listener, *, env, fd_env, **kwargs):
     """Hand a still-open listener to the child, then close this process's copy."""
     forwarded = {**env, fd_env: str(listener.fileno())}
     try:
@@ -81,12 +81,10 @@ def test_workspace_lock_is_live_os_lock_not_stale_file(tmp_path):
 
 
 def test_real_backend_ready_and_graceful_cleanup(tmp_path):
-    listener = open_listener()
-    path, port = config_file(tmp_path, listener)
+    path, port = config_file(tmp_path)
     identity = str(uuid4())
-    child = spawn_inherited(
+    child = subprocess.Popen(
         [sys.executable, "-m", "serve", "serve", "--config", str(path), "--workspace", str(tmp_path)],
-        listener,
         env={
             **os.environ,
             "DATAAGENT_INSTANCE_ID": identity,

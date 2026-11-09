@@ -188,11 +188,10 @@ async def test_documented_local_example_is_runnable(tmp_path, monkeypatch):
 
 def test_real_backend_discovers_mcp_before_ready_then_sigterm(tmp_path):
     prepare(tmp_path, {"calc": stdio(env={"MCP_TEST_PIDS": str(tmp_path / "pids")})})
-    listener = open_listener()
-    path, port = config_file(tmp_path, listener)
-    child = spawn_inherited([
+    path, port = config_file(tmp_path)
+    child = subprocess.Popen([
         sys.executable, "-m", "serve", "serve", "--config", str(path),
-    ], listener, env={
+    ], env={
         **os.environ,
         "DATAAGENT_INSTANCE_ID": "mcp-startup-test",
     }, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

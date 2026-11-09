@@ -391,7 +391,7 @@ REST/TUI 在下一轮请求前检查扩展变化：未变化复用 session 图�
 
 JSON 的替换语法是 `$env{VARIABLE}`，支持字符串中的引用；变量缺失时启动失败并指出配置文件、字段和这次选中的环境文件。它不是 shell 表达式，也不会执行命令。
 
-以下变量不允许从 dotenv 改写：`DATAAGENT_HOME`、`DATAAGENT_INSTANCE_ID`。它们只来自进程环境；写进文件会被忽略并提示。TUI 的 `DATAAGENT_TUI_LOG_PATH`、`INIT_CWD` 等前端选项也由 Node 进程读取，不会因为传了后端 `--env-file` 就改变前端环境。
+以下变量不允许从 dotenv 改写：`DATAAGENT_HOME`、`DATAAGENT_INSTANCE_ID`。它们只来自进程环境；写进文件会被忽略并提示。TUI 的 `NO_COLOR` 等前端选项也由 Node 进程读取，不会因为传了后端 `--env-file` 就改变前端环境。
 
 这不意味着插件 Python 的 `os.getenv()` 能看到有效环境：Compiler 未将 `.env` 合并结果注入进程。工具需要的额外凭证由扩展作者明确处理，例如从宿主进程环境读取，不能假设核心会把产品配置注入工具。插件清单本身不执行产品 JSON 的 `$env{...}` 展开；插件 `hooks[].params` 是原始声明字典，不能把其中的环境占位符误认为已经解析的密钥。
 
@@ -477,7 +477,7 @@ LLM_API_KEY=replace-with-your-key
 
 | 路径来源 | 基准与边界 |
 |---|---|
-| CLI / LaunchOptions 的 workspace、config、env_file | 启动 cwd；TUI 使用 `INIT_CWD ?? process.cwd()` 并传绝对路径 |
+| CLI / LaunchOptions 的 workspace、config、env_file | 启动 cwd；TUI 使用进程当前目录并传绝对路径 |
 | `DATAAGENT_HOME`、`DATAAGENT_WORKSPACE` | 启动 cwd；支持开头的 `~`/`~/` 展开 |
 | JSON `plugins.paths` | **声明该字段的配置文件目录**，支持 Home 展开，转成真实路径 |
 | 配置 `hooks` 的 entrypoint | **声明该列表的配置文件目录**；必须为根内相对 Python 路径，不能借符号链接越界 |

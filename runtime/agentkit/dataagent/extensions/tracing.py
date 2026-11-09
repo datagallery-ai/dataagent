@@ -29,25 +29,19 @@ logger = logging.getLogger(__name__)
 # run never reaches the model. Setting an explicit revision skips that subprocess.
 os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
 
-# Eval frameworks inject a per-task receiver URL; standard OTEL_* vars are ignored
-# by this dedicated provider unless we read them explicitly below.
+# This provider does not consult OTEL_EXPORTER_OTLP_*. Live export has one
+# process entry: DATAAGENT_OTLP_TRACES_ENDPOINT, overridden by the explicit argument.
 _OTLP_ENDPOINT_ENV = "DATAAGENT_OTLP_TRACES_ENDPOINT"
 _OTLP_HEADERS_ENV = "DATAAGENT_OTLP_HEADERS"
 
 
 def resolve_otlp_endpoint(explicit: str | None = None) -> str | None:
-    """Return a non-empty OTLP/HTTP traces endpoint, or None to disable live export."""
-    # Flag marks OTEL_EXPORTER_OTLP_ENDPOINT (base URL); do not use `is` on
-    # os.environ values — Unix _Environ may allocate a new str on each get.
-    for candidate, base_url in (
-        (explicit, False),
-        (os.environ.get(_OTLP_ENDPOINT_ENV), False),
-        (os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"), False),
-        (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"), True),
-    ):
+    """Return a non-empty OTLP/HTTP traces endpoint, or None to disable live export.
+
+    The value is the full traces URL. A collector base URL is not rewritten.
+    """
+    for candidate in (explicit, os.environ.get(_OTLP_ENDPOINT_ENV)):
         if candidate and (value := candidate.strip()):
-            if base_url and not value.rstrip("/").endswith("/v1/traces"):
-                value = value.rstrip("/") + "/v1/traces"
             return value
     return None
 

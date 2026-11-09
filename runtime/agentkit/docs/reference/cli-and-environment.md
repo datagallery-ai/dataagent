@@ -21,7 +21,7 @@ uv run --project runtime/agentkit dataagent serve \
 | `--workspace` | 无 | 可重复。已存在的只读输入。与配置列表互斥于更高优先级 |
 | `--session` | 无 | 恢复属于该 profile 的会话，并沿用其输入绑定 |
 | `--env-file` | 无 | 只用这份环境文件，代替 Home `.env`。文件必须存在 |
-| `--reload` | 关 | 源码变化时重启 `serve`、`dataagent`、`a2a_server`。`npm run start` 和 `./deploy.sh` 不传。继承了监听套接字时忽略 |
+| `--reload` | 关 | 源码变化时重启 `serve`、`dataagent`、`a2a_server`。`npm run start` 和 `./deploy.sh` 不传 |
 | `--stdio-ready` | 关 | TUI 拉起后端时使用的隐藏握手。帮助里不显示 |
 
 没有 `--host`。`npm run start`、网页转发和无参数 TUI 在启动时读所选配置的 `server.host` 与 `server.port`：传了 `--config` 用那份文件，否则用 Home `config.json`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。`npm run start -- --config <path>` 和 `./deploy.sh start --config <path>` 把同一路径交给 `dataagent serve`。`./deploy.sh` 把当时解析出的 API 主机名和端口写入部署状态。之后的 `tui`、`status`、`doctor` 使用这份地址。
@@ -72,10 +72,10 @@ SDK 的 `LaunchOptions` 还有 `cwd`、`init_home` 和单个 `workspace`。`work
 | `DATAAGENT_HOME` | 后端进程环境 | Home。默认 `~/.dataagent`。相对值相对启动 cwd。写在 env 文件里会被忽略并警告 |
 | `DATAAGENT_WORKSPACE` | 后端有效环境 | 单个只读输入。低于 CLI `--workspace`，高于配置 `workspaces` |
 | `DATAAGENT_INSTANCE_ID` | 后端进程环境 | TUI 拉起后端时写入的实例 ID。env 文件不能设置 |
-| `DATAAGENT_TUI_LOG_PATH` | TUI 进程 | 界面日志。后端 `--env-file` 不生效 |
-| `INIT_CWD` | TUI 进程 | 路径基准相关。必须在 TUI 进程里 |
 | `NO_COLOR` | TUI 进程 | `1` 时关闭颜色 |
-| `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` | 配置里的 `$env{...}` | 模板使用的三个名字。你可以改用别的名字，只要引用一致 |
+| `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` | 配置里的 `$env{...}` | 模板和示例使用的三个名字。配置里写成别的 `$env{...}` 时，以那个引用为准 |
+| `DATAAGENT_OTLP_TRACES_ENDPOINT` | 后端进程环境 | 实时 OTLP/HTTP traces 的完整 URL。未设置则只写本地 trace 文件 |
+| `DATAAGENT_OTLP_HEADERS` | 后端进程环境 | 实时导出的请求头，逗号分隔的 `key=value` |
 
 `$env{NAME}` 的名字必须匹配 `[A-Za-z_][A-Za-z0-9_]*`。
 

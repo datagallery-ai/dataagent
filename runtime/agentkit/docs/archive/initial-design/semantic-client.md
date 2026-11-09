@@ -93,7 +93,7 @@ DATAAGENT_SEMANTIC_LIVE_ENV=/absolute/path/to/.env \
   uv run pytest tests/test_semantic_live.py -q
 ```
 
-The plugin-refresh test uses real DeepSeek credentials (`DEEPSEEK_BASE_URL`, `DEEPSEEK_API_KEY`) and an actual local HTTP contract fixture. It checks two Agent runs separated by a plugin refresh, semantic context reaching the model, SSE completion, shared client identity, and shutdown. This fixture does not certify the deployed semantic-service backend. Override `DATAAGENT_SEMANTIC_LIVE_MODEL` if the gateway uses a model name other than `deepseek-chat`.
+The plugin-refresh test uses model credentials from the env file (`LLM_BASE_URL`, `LLM_API_KEY`) and an actual local HTTP contract fixture. It checks two Agent runs separated by a plugin refresh, semantic context reaching the model, SSE completion, shared client identity, and shutdown. This fixture does not certify the deployed semantic-service backend. Override `DATAAGENT_SEMANTIC_LIVE_MODEL` if the gateway uses a model name other than `deepseek-chat`.
 
 To check a deployed backend, opt into the read-only `/api/semantic/v1/types/typedefs` smoke test:
 

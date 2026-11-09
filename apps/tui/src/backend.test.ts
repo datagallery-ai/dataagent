@@ -27,7 +27,7 @@ function fake(script: string) {
 
 it("startup only forwards explicit paths, user and session without an interactive decision", async () => {
   let captured: string[] = [];
-  const cwd = process.env.INIT_CWD ?? process.cwd();
+  const cwd = process.cwd();
   const backend = await startBackend({
     envFile: "provider.env", workspaces: [".", "data"], user: "alice", session: "saved",
     spawnBackend: (args, options) => {

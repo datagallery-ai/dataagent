@@ -1737,7 +1737,6 @@ export const WORKSPACE_CONFIG_FIELDS: Record<
       label: "Embedding API Key",
       inputType: "password",
       placeholder: "sk-...",
-      helpText: "Stored in secretRef. Falls back to server EMBEDDING_* environment variables when unset.",
       fullWidth: true,
     },
     {
