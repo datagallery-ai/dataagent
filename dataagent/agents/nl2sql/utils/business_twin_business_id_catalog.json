@@ -778,6 +778,20 @@
         ]
       }
     },
+    "crh_geo": {
+      "business_ids": [
+        "dw1745159030",
+        "dw1745159031",
+        "dw1745159032",
+        "dw1745159033",
+        "dw1745159034"
+      ],
+      "trigger_dimensions": [
+        "crh_station_id",
+        "crh_railway_id",
+        "crh_section_id"
+      ]
+    },
     "high_rail": {
       "default_routes": [
         "dw1745159030"

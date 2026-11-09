@@ -38,6 +38,9 @@ _MOS_TRIGGER_DIMENSIONS = frozenset(_BUSINESS_RULES["mos_analysis"]["trigger_dim
 _ORDINARY_RULES = _BUSINESS_RULES["ordinary_experience"]
 _ORDINARY_EXTENDED_METRICS = frozenset(_ORDINARY_RULES["extended_metrics"])
 _ORDINARY_LOAD_DIMENSIONS = frozenset(_ORDINARY_RULES["load_dimensions"])
+_CRH_GEO_RULES = _BUSINESS_RULES["crh_geo"]
+_CRH_GEO_TRIGGER_DIMENSIONS = frozenset(_CRH_GEO_RULES["trigger_dimensions"])
+_CRH_GEO_BUSINESS_IDS = frozenset(_CRH_GEO_RULES["business_ids"])
 _WILDCARD_METRIC_FIELDS = tuple(field for field in _METRIC_FIELDS if "*" in field)
 _GRANULARITY_FIELD_TO_VALUE = {
     "15min_granularity": "15min",
@@ -154,11 +157,22 @@ def _business_id_order(business_id: str) -> int:
     return int(match.group())
 
 
+def _candidate_schemas(dimensions: frozenset[str]) -> Mapping[str, Any]:
+    """Return the business schemas eligible for scoring."""
+    if dimensions & _CRH_GEO_TRIGGER_DIMENSIONS:
+        return {
+            business_id: schema
+            for business_id, schema in _BUSINESS_SCHEMAS.items()
+            if business_id in _CRH_GEO_BUSINESS_IDS
+        }
+    return _BUSINESS_SCHEMAS
+
+
 def _select_business_id(extraction: Mapping[str, Any]) -> str:
     metrics: frozenset[str] = extraction["metrics"]
     dimensions: frozenset[str] = extraction["dimensions"]
     scores: list[dict[str, Any]] = []
-    for business_id, schema in _BUSINESS_SCHEMAS.items():
+    for business_id, schema in _candidate_schemas(dimensions).items():
         matched_metrics = metrics & schema["metrics"]
         missing_metrics = metrics - schema["metrics"]
         matched_dimensions = dimensions & schema["dimensions"]
