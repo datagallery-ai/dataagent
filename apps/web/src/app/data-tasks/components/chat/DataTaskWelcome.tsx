@@ -1,7 +1,6 @@
 "use client";
 
 import { useT } from "../../../../i18n/locale-context";
-import { chipClass } from "../../ui-tokens";
 
 function DatabaseIcon({ className }: { className?: string }) {
   return (
@@ -39,6 +38,23 @@ function SparkIcon({ className }: { className?: string }) {
   );
 }
 
+function ArrowIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M3.5 8h9M8.5 4l4 4-4 4" />
+    </svg>
+  );
+}
+
 export function DataTaskWelcomeScreen({
   onUsePrompt,
 }: {
@@ -64,53 +80,56 @@ export function DataTaskWelcomeScreen({
   ] as const;
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 py-10">
-      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-surface-subtle text-foreground">
-        <DatabaseIcon className="h-7 w-7" />
+    <div className="mx-auto flex w-full max-w-[792px] flex-1 flex-col justify-center px-4 py-12">
+      <div className="mb-5 flex h-9 w-9 items-center justify-center rounded-[10px] bg-primary text-white">
+        <DatabaseIcon className="h-[18px] w-[18px]" />
       </div>
-      <h2 className="text-center text-lg font-semibold text-foreground">
+      <h2 className="text-[26px] font-semibold leading-tight tracking-[-0.02em] text-foreground">
         {t("welcome.title")}
       </h2>
-      <p className="mt-2 max-w-md text-center text-sm leading-6 text-muted">
+      <p className="mt-2 max-w-[52ch] text-[14.5px] leading-6 text-muted">
         {t("welcome.subtitle")}
       </p>
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        <span className={chipClass}>
-          <SparkIcon className="h-3.5 w-3.5 text-muted-light" />
+      <div className="mt-6 flex flex-wrap gap-x-4 gap-y-1.5 text-[12.5px] text-muted-light">
+        <span className="inline-flex items-center gap-1.5">
+          <SparkIcon className="h-3.5 w-3.5" />
           {t("welcome.chipSql")}
         </span>
-        <span className={chipClass}>{t("welcome.chipSchema")}</span>
-        <span className={chipClass}>{t("welcome.chipTrace")}</span>
+        <span>{t("welcome.chipSchema")}</span>
+        <span>{t("welcome.chipTrace")}</span>
       </div>
-      <div className="mt-8 grid w-full max-w-lg gap-3">
-        {examplePrompts.map((item) => (
-          <button
-            key={item.title}
-            type="button"
-            onClick={() => onUsePrompt?.(item.prompt)}
-            disabled={!onUsePrompt}
-            className="rounded-xl border border-border bg-surface px-4 py-3 text-left shadow-[var(--shadow-card)] transition-colors duration-200 enabled:cursor-pointer enabled:hover:border-primary-light/50 enabled:hover:bg-surface-subtle disabled:cursor-default"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground">{item.title}</div>
-                <p className="mt-0.5 text-xs text-muted-light">{item.description}</p>
-              </div>
-              {onUsePrompt ? (
-                <span className="shrink-0 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] font-semibold text-muted-light">
-                  {t("welcome.useThisPrompt")}
+      <section className="mt-9">
+        <h3 className="mb-1.5 text-[12.5px] font-medium text-muted-light">
+          {t("welcome.examplesTitle")}
+        </h3>
+        <div className="grid">
+          {examplePrompts.map((item) => (
+            <button
+              key={item.title}
+              type="button"
+              onClick={() => onUsePrompt?.(item.prompt)}
+              disabled={!onUsePrompt}
+              title={onUsePrompt ? t("welcome.useThisPrompt") : undefined}
+              className="group flex w-full items-center gap-3 border-t border-border py-3 text-left last:border-b enabled:cursor-pointer disabled:cursor-default"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px] font-medium text-foreground decoration-border-strong underline-offset-[3px] group-enabled:group-hover:underline">
+                  {item.title}
                 </span>
+                <span className="mt-0.5 block truncate text-[13px] text-muted-light">
+                  {item.prompt}
+                </span>
+              </span>
+              {onUsePrompt ? (
+                <ArrowIcon className="h-4 w-4 shrink-0 text-muted-light transition-[color,transform] duration-150 group-hover:translate-x-0.5 group-hover:text-foreground" />
               ) : null}
-            </div>
-            <p className="mt-2 font-mono text-[11px] leading-5 text-muted">
-              "{item.prompt}"
-            </p>
-          </button>
-        ))}
-      </div>
-      <p className="mt-6 text-xs text-muted-light">
+            </button>
+          ))}
+        </div>
+      </section>
+      <p className="mt-5 text-[12.5px] text-muted-light">
         {t("welcome.footerBeforeAt")}{" "}
-        <kbd className="rounded border border-border bg-surface-subtle px-1 py-0.5 font-mono text-[10px]">
+        <kbd className="rounded-[5px] bg-surface-hover px-1.5 py-0.5 font-mono text-[11px] text-muted">
           @
         </kbd>{" "}
         {t("welcome.footerAfterAt")}
@@ -121,7 +140,7 @@ export function DataTaskWelcomeScreen({
 
 export function DatasourceChip({ datasourceId }: { datasourceId: string }) {
   return (
-    <span className="inline-flex max-w-[220px] items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-0.5 text-[11px] font-medium text-muted shadow-[var(--shadow-card)]">
+    <span className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md bg-surface-hover px-2 text-[11.5px] text-muted">
       <DatabaseIcon className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate font-mono">{datasourceId}</span>
     </span>
@@ -134,7 +153,7 @@ export function ChatInitializingState() {
   return (
     <div className="grid flex-1 place-items-center px-6">
       <div className="text-center">
-        <div className="mx-auto mb-3 h-8 w-8 animate-pulse rounded-full bg-surface-subtle ring-1 ring-border" />
+        <div className="mx-auto mb-3 h-7 w-7 animate-pulse rounded-full bg-surface-hover" />
         <p className="text-sm text-muted">{t("chat.initializingSession")}</p>
       </div>
     </div>

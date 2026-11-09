@@ -66,7 +66,7 @@ describe("data task identity menu", () => {
 
     expect(file).toContain("bottom-full");
     expect(file).toContain("account-menu-popover-in");
-    expect(file).toContain("hover:bg-surface/60");
+    expect(file).toContain("hover:bg-surface-hover");
     expect(file).not.toContain("bottom-[calc(100%+8px)]");
     expect(file).not.toContain("rounded-lg border border-border bg-surface px-2 py-2");
   });

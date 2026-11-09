@@ -1507,9 +1507,11 @@ function chartTypeValue(value: unknown): Extract<ArtifactDetail, { type: "chart"
 }
 
 export function artifactDetailNeedsPreviewFetch(
-  artifact: Pick<DataArtifact, "previewAvailable" | "fileId" | "type">,
+  artifact: Pick<DataArtifact, "previewAvailable" | "fileId" | "type" | "logicalKey">,
   detail: ArtifactDetail | undefined,
 ): boolean {
+  // Session output files are previewed when listed; the artifact preview API does not know them.
+  if (artifact.logicalKey?.startsWith("session_file:")) return false;
   const fileBacked = Boolean(artifact.fileId);
   if (!artifact.previewAvailable && !fileBacked) return false;
   if (!detail) return true;

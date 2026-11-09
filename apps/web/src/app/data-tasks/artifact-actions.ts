@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import type { ArtifactExportFormat, JobDto } from "../../lib/config-api";
 import { artifactExportClient } from "./artifact-export-client";
 import type { DataArtifact } from "./data-task-state";
+import { sessionOutputDownload } from "./session-outputs";
 
 export type ArtifactExportBusy = "whole" | ArtifactExportFormat | "job" | null;
 
@@ -29,7 +30,8 @@ export function useArtifactExportActions(onExportJob?: (job: JobDto) => void) {
     setBusy("whole");
     setError(null);
     try {
-      const { blob, filename } = await artifactExportClient.download(artifact.id);
+      const inline = sessionOutputDownload(artifact);
+      const { blob, filename } = inline ?? (await artifactExportClient.download(artifact.id));
       triggerBlobDownload(blob, filename || artifact.title);
     } catch (err) {
       setError(err instanceof Error ? err.message : "DownloadFailed");

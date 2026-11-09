@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
+import { useT } from "../../../../i18n/locale-context";
+import { dataStepKindForTool, dataStepLabel } from "../../data-task-state";
 import type { ArtifactDetail, DataArtifact } from "../../data-task-state";
 import type { LiveRun } from "../../live-run-state";
 import {
   auditStatusLabel,
   buildTraceTimeline,
-  toolKindLabel,
-  toolStatusLabel,
   type TraceEntry,
 } from "../../trace-timeline";
 import {
@@ -13,10 +13,7 @@ import {
   consoleCodeInnerClass,
   consoleScrollXShellClass,
 } from "./console-scroll-styles";
-import {
-  artifactToneForType,
-  sectionLabelClass,
-} from "../../ui-tokens";
+import { sectionLabelClass } from "../../ui-tokens";
 import { toolResultLooksLikeError } from "../../tool-call-display";
 import { ToolFailureResult, ToolFormattedResult } from "../../tool-result-format";
 import {
@@ -24,51 +21,79 @@ import {
   isMarkdownFilePath,
 } from "./ArtifactMarkdownPreview";
 
-function entryKindLabel(entry: TraceEntry): string {
+type Translate = ReturnType<typeof useT>;
+
+function entryKindLabel(entry: TraceEntry, t: Translate): string {
   switch (entry.kind) {
     case "run_started":
-      return "Run";
     case "run_finished":
-      return "Run";
     case "run_suspended":
-      return "Run";
     case "run_failed":
-      return "Run";
+      return t("console.traceKindRun");
     case "tool":
-      return entry.toolName ? toolKindLabel(entry.toolName) : "Data operation";
+      return dataStepLabel(dataStepKindForTool(entry.toolName), t);
     case "artifact":
-      return "Output";
+      return t("console.traceKindOutput");
   }
 }
 
-function entryKindTone(entry: TraceEntry): string {
+/** Run lifecycle titles come from trace-timeline in English; localize them at render time. */
+function entryTitle(entry: TraceEntry, t: Translate): string {
   switch (entry.kind) {
     case "run_started":
-      return "bg-surface-subtle text-muted";
-    case "run_finished":
-      return "bg-step-success/10 text-step-success";
+      return entry.title === "Run resumed" ? t("console.traceRunResumed") : t("console.traceRunStarted");
     case "run_suspended":
-      return "bg-step-warning/10 text-step-warning";
+      return t("console.traceRunPaused");
+    case "run_finished":
+      return t("console.traceRunCompleted");
     case "run_failed":
-      return "bg-step-error/10 text-step-error";
-    case "artifact":
-      return "bg-accent/10 text-step-warning";
-    case "tool":
-      if (entry.toolStatus === "failed") return "bg-step-error/10 text-step-error";
-      if (entry.toolStatus === "running") return "bg-primary-light/10 text-primary";
-      return "bg-step-query/10 text-step-query";
-  }
-}
-
-function toolStatusTone(status: TraceEntry["toolStatus"]): string {
-  switch (status) {
-    case "failed":
-      return "bg-step-error/10 text-step-error";
-    case "running":
-      return "bg-accent/10 text-step-warning";
+      return t("console.traceRunFailed");
     default:
-      return "bg-step-success/10 text-step-success";
+      return entry.title;
   }
+}
+
+function entryShowsSummary(entry: TraceEntry): boolean {
+  return entry.kind === "tool" || entry.kind === "artifact" || entry.kind === "run_failed";
+}
+
+function TraceMarker({ entry }: { entry: TraceEntry }) {
+  const status =
+    entry.kind === "run_failed" || entry.toolStatus === "failed"
+      ? "failed"
+      : entry.toolStatus === "running"
+        ? "running"
+        : entry.kind === "run_suspended"
+          ? "waiting"
+          : entry.kind === "run_started"
+            ? "start"
+            : "done";
+  if (status === "running") {
+    return (
+      <span className="relative flex h-3.5 w-3.5 items-center justify-center" aria-hidden>
+        <span className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-foreground/20" />
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-3.5 w-3.5 items-center justify-center" aria-hidden>
+      <span
+        className={[
+          "h-[7px] w-[7px] rounded-full",
+          status === "failed"
+            ? "bg-danger"
+            : status === "waiting"
+              ? "bg-warn"
+              : status === "start"
+                ? "bg-surface ring-[1.5px] ring-border-strong"
+                : entry.kind === "artifact"
+                  ? "bg-foreground"
+                  : "bg-ok",
+        ].join(" ")}
+      />
+    </span>
+  );
 }
 
 function CompactFilePreview({
@@ -80,9 +105,9 @@ function CompactFilePreview({
   const previewText = detail.content.slice(0, 600);
   const truncated = detail.content.length > previewText.length;
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-border">
-      <div className="border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-semibold text-muted">
-        File preview · {detail.path}
+    <div className="mt-2.5 overflow-hidden rounded-lg border border-border">
+      <div className="border-b border-border px-3 py-2 font-mono text-[11px] text-muted-light">
+        {detail.path}
       </div>
       <div className="p-3">
         {isMarkdownFilePath(detail.path) ? (
@@ -107,16 +132,16 @@ function CompactDatasetPreview({
 }) {
   const previewRows = detail.rows.slice(0, 5);
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-border">
-      <div className="border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-semibold text-muted">
-        Data preview · {detail.rows.length.toLocaleString()} rows x {detail.columns.length} columns
+    <div className="mt-2.5 overflow-hidden rounded-lg border border-border">
+      <div className="border-b border-border px-3 py-2 font-mono text-[11px] text-muted-light">
+        {detail.rows.length.toLocaleString()} × {detail.columns.length}
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-max w-full text-left text-[11px]">
+        <table className="min-w-max w-full text-left text-[12px] tabular-nums">
           <thead className="sticky top-0 bg-surface text-muted-light">
             <tr>
               {detail.columns.map((column) => (
-                <th key={column} className="whitespace-nowrap px-3 py-2 font-semibold">
+                <th key={column} className="whitespace-nowrap px-3 py-1.5 font-medium">
                   {column}
                 </th>
               ))}
@@ -126,7 +151,7 @@ function CompactDatasetPreview({
             {previewRows.map((row, rowIndex) => (
               <tr key={rowIndex} className="border-t border-border">
                 {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} className="whitespace-nowrap px-3 py-2 text-muted">
+                  <td key={cellIndex} className="whitespace-nowrap px-3 py-1.5 text-muted">
                     {cell}
                   </td>
                 ))}
@@ -136,7 +161,7 @@ function CompactDatasetPreview({
         </table>
       </div>
       {detail.rows.length > previewRows.length ? (
-        <div className="border-t border-border bg-surface-subtle px-3 py-2 text-[11px] text-muted-light">
+        <div className="border-t border-border px-3 py-2 text-[11px] text-muted-light">
           Another {detail.rows.length - previewRows.length} rows are hidden. View the full content in Outputs.
         </div>
       ) : null}
@@ -170,15 +195,18 @@ export function TraceEntryCard({
   artifacts,
   entry,
   index,
+  isLast = false,
   onSelectArtifact,
   onSelectEvent,
 }: {
   artifacts: DataArtifact[];
   entry: TraceEntry;
   index: number;
+  isLast?: boolean;
   onSelectArtifact: (artifactId: string) => void;
   onSelectEvent: (eventId: string) => void;
 }) {
+  const t = useT();
   const [showRawResult, setShowRawResult] = useState(false);
   const producedArtifacts = artifacts.filter((artifact) =>
     entry.artifactIds?.includes(artifact.id),
@@ -186,69 +214,60 @@ export function TraceEntryCard({
   const canOpenDetail = entry.eventId !== undefined;
   const datasetDetail = resolveArtifactDetail(entry, producedArtifacts);
   const fileDetail = resolveFileDetail(entry, producedArtifacts);
+  const title = entryTitle(entry, t);
+  const metaChips = [
+    entry.auditStatus ? `Audit ${auditStatusLabel(entry.auditStatus)}` : null,
+    entry.scannedRows !== undefined && entry.scannedRows > 0
+      ? t("console.scannedRowsMeta", { rows: entry.scannedRows.toLocaleString() })
+      : null,
+    entry.durationMs !== undefined && entry.durationMs > 0 ? `${entry.durationMs}ms` : null,
+    entry.datasourceId ?? null,
+  ].filter((chip): chip is string => Boolean(chip));
 
   return (
-    <article className="min-w-0 max-w-full rounded-xl border border-border bg-surface p-4 shadow-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] font-semibold text-muted">
-          {index + 1}
-        </span>
-        <span
-          className={[
-            "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-            entryKindTone(entry),
-          ].join(" ")}
-        >
-          {entryKindLabel(entry)}
-        </span>
-        {entry.toolStatus ? (
-          <span
-            className={[
-              "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-              toolStatusTone(entry.toolStatus),
-            ].join(" ")}
+    <article className="relative min-w-0 max-w-full pb-4 pl-6" data-trace-index={index + 1}>
+      {!isLast ? (
+        <span className="absolute bottom-0 left-[6.5px] top-5 w-px bg-border" aria-hidden />
+      ) : null}
+      <span className="absolute left-0 top-[3px]">
+        <TraceMarker entry={entry} />
+      </span>
+      <div className="flex min-w-0 items-baseline gap-2">
+        {canOpenDetail ? (
+          <button
+            type="button"
+            onClick={() => onSelectEvent(entry.eventId!)}
+            className="min-w-0 cursor-pointer truncate text-left text-[13px] font-medium text-foreground decoration-border-strong underline-offset-[3px] hover:underline"
           >
-            {toolStatusLabel(entry.toolStatus)}
-          </span>
-        ) : null}
-        <span className="ml-auto font-mono text-[11px] font-semibold text-muted-light">
+            {title}
+          </button>
+        ) : (
+          <h3 className="min-w-0 truncate text-[13px] font-medium text-foreground">{title}</h3>
+        )}
+        <span className="shrink-0 rounded px-1.5 text-[11px] leading-[18px] text-muted-light ring-1 ring-inset ring-border">
+          {entryKindLabel(entry, t)}
+        </span>
+        <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-light">
           {entry.ts ?? "—"}
         </span>
-        {entry.toolCallId ? (
-          <span className="font-mono text-[10px] text-muted-light">
-            {entry.toolCallId.slice(0, 8)}
-          </span>
-        ) : null}
       </div>
 
-      {canOpenDetail ? (
-        <button
-          type="button"
-          onClick={() => onSelectEvent(entry.eventId!)}
-          className="mt-2 cursor-pointer text-left text-sm font-semibold text-foreground underline-offset-2 hover:underline"
-        >
-          {entry.title}
-        </button>
-      ) : (
-        <h3 className="mt-2 text-sm font-semibold text-foreground">{entry.title}</h3>
-      )}
-
-      <div className={[consoleScrollXShellClass, "mt-1"].join(" ")}>
-        <p className="min-w-max whitespace-pre text-xs leading-5 text-muted">
+      {entryShowsSummary(entry) && entry.summary ? (
+        <p className="mt-0.5 line-clamp-2 break-words text-[12px] leading-5 text-muted">
           {entry.summary}
         </p>
-      </div>
+      ) : null}
 
       {entry.errorMessage ? (
         <div className={[consoleScrollXShellClass, "mt-2"].join(" ")}>
-          <p className="min-w-max whitespace-pre rounded-lg bg-step-error/10 px-3 py-2 text-xs leading-5 text-step-error">
+          <p className="min-w-max whitespace-pre rounded-lg bg-danger/8 px-3 py-2 text-xs leading-5 text-danger">
             {entry.errorMessage}
           </p>
         </div>
       ) : null}
 
       {entry.sql ? (
-        <div className="mt-3 min-w-0 max-w-full">
+        <div className="mt-2.5 min-w-0 max-w-full">
           <div className={`mb-1.5 ${sectionLabelClass}`}>
             SQL
           </div>
@@ -258,43 +277,23 @@ export function TraceEntryCard({
         </div>
       ) : null}
 
-      {(entry.scannedRows !== undefined ||
-        entry.durationMs !== undefined ||
-        entry.auditStatus ||
-        entry.datasourceId) && (
-        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-          {entry.auditStatus ? (
-            <span className="rounded-full bg-surface-subtle px-2.5 py-1 font-medium text-muted">
-              Audit {auditStatusLabel(entry.auditStatus)}
-            </span>
-          ) : null}
-          {entry.scannedRows !== undefined && entry.scannedRows > 0 ? (
-            <span className="rounded-full bg-surface-subtle px-2.5 py-1 font-medium text-muted">
-              Scanned {entry.scannedRows.toLocaleString()} rows
-            </span>
-          ) : null}
-          {entry.durationMs !== undefined && entry.durationMs > 0 ? (
-            <span className="rounded-full bg-surface-subtle px-2.5 py-1 font-medium text-muted">
-              Duration {entry.durationMs}ms
-            </span>
-          ) : null}
-          {entry.datasourceId ? (
-            <span className="rounded-full bg-surface-subtle px-2.5 py-1 font-medium text-muted">
-              Data source {entry.datasourceId}
-            </span>
-          ) : null}
+      {metaChips.length > 0 ? (
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-light">
+          {metaChips.map((chip) => (
+            <span key={chip}>{chip}</span>
+          ))}
         </div>
-      )}
+      ) : null}
 
       {entry.schemaTables && entry.schemaTables.length > 0 ? (
-        <div className="mt-3 grid gap-2">
+        <div className="mt-2.5 grid gap-2">
           {entry.schemaTables.map((table) => (
-            <div key={table.name} className="rounded-lg border border-border bg-surface-subtle p-3">
-              <div className="font-mono text-xs font-semibold text-foreground">
+            <div key={table.name} className="rounded-lg border border-border px-3 py-2.5">
+              <div className="font-mono text-[12px] font-medium text-foreground">
                 {table.name}
               </div>
               {table.description ? (
-                <p className="mt-1 text-[11px] leading-4 text-muted">
+                <p className="mt-1 text-[11.5px] leading-4 text-muted">
                   {table.description}
                 </p>
               ) : null}
@@ -302,14 +301,14 @@ export function TraceEntryCard({
                 {table.fields.slice(0, 12).map((field) => (
                   <span
                     key={field}
-                    className="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10px] text-muted"
+                    className="rounded px-1.5 font-mono text-[11px] leading-[18px] text-muted ring-1 ring-inset ring-border"
                   >
                     {field}
                   </span>
                 ))}
                 {table.fields.length > 12 ? (
-                  <span className="text-[10px] text-muted-light">
-                    +{table.fields.length - 12} fields
+                  <span className="text-[11px] text-muted-light">
+                    +{table.fields.length - 12}
                   </span>
                 ) : null}
               </div>
@@ -327,7 +326,7 @@ export function TraceEntryCard({
       !fileDetail &&
       !(entry.schemaTables && entry.schemaTables.length > 0) ? (
         entry.toolName ? (
-          <div className="mt-3">
+          <div className="mt-2.5">
             {toolResultLooksLikeError(entry.rawResult) ? (
               <ToolFailureResult toolName={entry.toolName} result={entry.rawResult} />
             ) : (
@@ -339,13 +338,13 @@ export function TraceEntryCard({
             )}
           </div>
         ) : (
-        <div className="mt-3">
+        <div className="mt-2">
           <button
             type="button"
             onClick={() => setShowRawResult((current) => !current)}
-            className="text-[11px] font-semibold text-primary underline-offset-2 hover:underline"
+            className="cursor-pointer text-[12px] text-muted underline decoration-border-strong underline-offset-[3px] hover:text-foreground"
           >
-            {showRawResult ? "Hide raw result" : "View raw result"}
+            {showRawResult ? t("console.hideRawResult") : t("console.showRawResult")}
           </button>
           {showRawResult ? (
             <pre className={[consoleCodeBlockBaseClass, "mt-2 max-h-48"].join(" ")}>
@@ -357,25 +356,17 @@ export function TraceEntryCard({
       ) : null}
 
       {producedArtifacts.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {producedArtifacts.map((artifact) => {
-            const tone = artifactToneForType(artifact.type ?? artifact.kind);
-            return (
-              <button
-                key={artifact.id}
-                type="button"
-                onClick={() => onSelectArtifact(artifact.id)}
-                className={[
-                  "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors duration-200 hover:bg-surface",
-                  tone.bg,
-                  tone.border,
-                  tone.text,
-                ].join(" ")}
-              >
-                {artifact.title}
-              </button>
-            );
-          })}
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {producedArtifacts.map((artifact) => (
+            <button
+              key={artifact.id}
+              type="button"
+              onClick={() => onSelectArtifact(artifact.id)}
+              className="inline-flex h-6 max-w-full cursor-pointer items-center gap-1.5 rounded-md bg-surface-hover px-2 text-[11.5px] text-foreground transition-colors duration-150 hover:bg-border"
+            >
+              <span className="truncate">{artifact.title}</span>
+            </button>
+          ))}
         </div>
       ) : null}
 
@@ -383,9 +374,9 @@ export function TraceEntryCard({
         <button
           type="button"
           onClick={() => onSelectArtifact(entry.artifactIds![0])}
-          className="mt-3 text-xs font-semibold text-primary underline-offset-2 hover:underline"
+          className="mt-2 cursor-pointer text-[12px] text-muted underline decoration-border-strong underline-offset-[3px] hover:text-foreground"
         >
-          View output details →
+          {t("console.viewOutputDetails")} →
         </button>
       ) : null}
     </article>
@@ -409,27 +400,29 @@ export function TraceList({
   onSelectArtifact: (artifactId: string) => void;
   onSelectEvent: (eventId: string) => void;
 }) {
+  const t = useT();
   const entries = useMemo(() => buildTraceTimeline(liveRun), [liveRun]);
 
   if (entries.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border bg-surface-subtle p-5 text-center">
-        <div className="text-sm font-semibold text-foreground">No trace events yet</div>
-        <p className="mt-2 text-xs leading-5 text-muted">
-          {emptyHint ?? "After you send a question, Agent data trail events appear here in time order."}
+      <div className="rounded-lg bg-surface-subtle px-5 py-6 text-center">
+        <div className="text-[13px] font-medium text-foreground">{t("console.traceEmpty")}</div>
+        <p className="mx-auto mt-1.5 max-w-[34ch] text-[12px] leading-5 text-muted-light">
+          {emptyHint ?? t("console.traceEmptyHint")}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="grid min-w-0 gap-3">
+    <div className="grid min-w-0 pt-1">
       {entries.map((entry, index) => (
         <TraceEntryCard
           key={entry.id}
           artifacts={artifacts}
           entry={entry}
           index={index}
+          isLast={index === entries.length - 1}
           onSelectArtifact={onSelectArtifact}
           onSelectEvent={onSelectEvent}
         />

@@ -128,6 +128,20 @@ export function subagentFailureText(progress: SubagentProgress, shownName?: stri
   return `${failed.name}: ${failed.errorMessage}`;
 }
 
+/** Every child error, in run order. The detail list shows these; the chat sentence keeps the latest. */
+export function subagentFailureLines(progress: SubagentProgress): string[] {
+  return progress.runs.flatMap((run) => {
+    if (run.status !== "failed" || !run.errorMessage) return [];
+    if (!run.name || run.name === progress.agentName) return [run.errorMessage];
+    return [`${run.name}: ${run.errorMessage}`];
+  });
+}
+
+/** LangChain agent middleware hooks (e.g. `PatchToolCallsMiddleware.before_agent`) are plumbing, not progress. */
+export function isInternalSubagentStep(name: string): boolean {
+  return /Middleware\.(?:before|after|wrap)_/u.test(name);
+}
+
 export function subagentStepLabel(name: string, t: TranslateFn): string {
   const key = `chat.subagentStep.${name}`;
   const translated = t(key);
@@ -135,57 +149,31 @@ export function subagentStepLabel(name: string, t: TranslateFn): string {
   return name.replace(/[\u0000-\u001f\u007f]/gu, "").replace(/_/gu, " ");
 }
 
-/** Compact history after the parent tool settles. The live line stays on the running tool. */
+/** Outcome sentence after the parent tool settles. Step names stay in the detail list. */
 export function subagentSettledTrail(progress: SubagentProgress, t: TranslateFn): string | undefined {
-  if (progress.steps.length === 0) return undefined;
-  const counts = new Map<string, number>();
-  for (const step of progress.steps) {
-    const key = `${step.subagentRunId}\0${step.name}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+  const visibleSteps = progress.steps.some((step) => !isInternalSubagentStep(step.name));
+  if (progress.status === "failed") {
+    const failure = subagentFailureText(progress, progress.agentName);
+    return failure
+      ? `${progress.agentName} · ${t("chat.subagentError")} · ${failure}`
+      : `${progress.agentName} · ${t("chat.subagentError")}`;
   }
-  const seen = new Set<string>();
-  const parts: string[] = [];
-  for (const step of progress.steps) {
-    const key = `${step.subagentRunId}\0${step.name}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const runName = progress.runs.find((run) => run.id === step.subagentRunId)?.name;
-    const label = subagentStepLabel(step.name, t);
-    const titled = runName && runName !== progress.agentName ? `${runName} ${label}` : label;
-    const count = counts.get(key) ?? 1;
-    parts.push(count > 1 ? `${titled} (${count})` : titled);
+  if (progress.status === "suspended") {
+    return `${progress.agentName} · ${t("chat.subagentSuspended")}`;
   }
-  if (parts.length === 0) return undefined;
-  const namedInSteps = new Set(
-    progress.steps.map((step) => progress.runs.find((run) => run.id === step.subagentRunId)?.name).filter(Boolean),
-  );
-  const failed = [...progress.runs].reverse().find((run) => run.status === "failed" && run.errorMessage);
-  const failure = subagentFailureText(
-    progress,
-    failed && namedInSteps.has(failed.name) ? failed.name : progress.agentName,
-  );
-  const tail =
-    progress.status === "failed"
-      ? failure
-        ? `${t("chat.subagentError")} · ${failure}`
-        : t("chat.subagentError")
-      : progress.status === "suspended"
-        ? t("chat.subagentSuspended")
-        : "";
-  const body = `${progress.agentName} · ${parts.join(", ")}`;
-  return tail ? `${body} · ${tail}` : body;
+  if (!visibleSteps) return undefined;
+  return `${progress.agentName} · ${t("chat.subagentDone")}`;
 }
 
 export function subagentProgressText(progress: SubagentProgress, t: TranslateFn): string {
-  const step = [...progress.steps].reverse().find((item) => item.status === "running");
+  const step = [...progress.steps]
+    .reverse()
+    .find((item) => item.status === "running" && !isInternalSubagentStep(item.name));
   const agent = progress.runs.find((item) => item.status === "running")?.name ?? progress.agentName;
-  const failure = subagentFailureText(progress, agent);
   if (!step) {
     const detail =
       progress.status === "failed"
-        ? failure
-          ? `${t("chat.subagentError")} · ${failure}`
-          : t("chat.subagentError")
+        ? t("chat.subagentError")
         : progress.status === "suspended"
           ? t("chat.subagentSuspended")
           : progress.status === "completed"
@@ -197,8 +185,7 @@ export function subagentProgressText(progress: SubagentProgress, t: TranslateFn)
     .slice(0, progress.steps.indexOf(step) + 1)
     .filter((item) => item.name === step.name && item.subagentRunId === step.subagentRunId).length;
   const suffix = attempt > 1 ? ` (${attempt})` : "";
-  const body = `${agent} · ${subagentStepLabel(step.name, t)}${suffix}`;
-  return failure ? `${body} · ${failure}` : body;
+  return `${agent} · ${subagentStepLabel(step.name, t)}${suffix}`;
 }
 
 function publicProgressText(value: unknown): string | undefined {

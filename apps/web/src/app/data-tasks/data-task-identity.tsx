@@ -16,6 +16,7 @@ import {
 } from "../../lib/config-api/client";
 import { PasswordAuthShell } from "../../components/auth/auth-flow";
 import { LanguageToggle } from "../../i18n/LanguageToggle";
+import { ThemeSegmented, ThemeToggle } from "../../components/theme/ThemeToggle";
 import { useT } from "../../i18n/locale-context";
 
 type DataTaskIdentityContextValue = {
@@ -153,7 +154,7 @@ export function DataTaskUserBar({
 
   if (compact) {
     return (
-      <div className="mt-auto flex flex-col items-center gap-2 border-t border-border px-2 pt-2">
+      <div className="mt-auto flex flex-col items-center gap-2 px-2 pt-2">
         {quickStartGuide}
         <button
           type="button"
@@ -164,13 +165,14 @@ export function DataTaskUserBar({
         >
           {identityInitials(currentUser)}
         </button>
+        <ThemeToggle compact />
         <LanguageToggle compact />
       </div>
     );
   }
 
   return (
-    <div className="relative mt-auto border-t border-border bg-surface-subtle px-2 py-2">
+    <div className="relative mt-auto px-2 py-2">
       {open ? (
         <div className="account-menu-popover-in absolute bottom-full left-2 right-2 z-50 origin-bottom rounded-xl border border-border bg-surface p-1.5 shadow-[var(--shadow-popover)]">
           <div className="border-b border-border px-2 py-2">
@@ -188,6 +190,9 @@ export function DataTaskUserBar({
               </span>
             </div>
           </div>
+          <div className="pt-1">
+            <ThemeSegmented />
+          </div>
           {error ? <p className="mt-2 text-xs text-rose-700">{error}</p> : null}
         </div>
       ) : null}
@@ -195,9 +200,9 @@ export function DataTaskUserBar({
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface/60"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-surface-hover"
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-surface-subtle text-xs font-semibold text-foreground">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-border-strong text-[11px] font-semibold text-foreground">
             {identityInitials(currentUser)}
           </span>
           <span className="min-w-0 flex-1">
@@ -211,6 +216,7 @@ export function DataTaskUserBar({
           </span>
         </button>
         {quickStartGuide}
+        <ThemeToggle />
         <LanguageToggle />
       </div>
     </div>
