@@ -172,6 +172,10 @@
   },
   "chatInput": {
     "placeholder": "Ask a data question…",
+    "add": "Add",
+    "addMenu": "Add content",
+    "uploadFile": "Upload file",
+    "uploadFileHint": "Add an image, table, or document to this chat",
     "model": "Model",
     "modelList": "Model list",
     "selectModel": "Select model",

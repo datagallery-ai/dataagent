@@ -655,9 +655,6 @@ function DynamicStepsList({
                         })
                       : t("steps.stepMeta", { n: group.stepNumber, kind: kindLabel })}
                   </span>
-                  {calls.map((call) =>
-                    call.progress ? <SubagentToolProgress key={call.id} call={call} /> : null,
-                  )}
                 </span>
                 <span className="shrink-0 self-start pt-0.5 text-right text-[11px] text-muted-light">
                   <span className="tabular block font-mono">{groupDuration}</span>
@@ -680,6 +677,13 @@ function DynamicStepsList({
                 >
                   {body}
                 </button>
+                {calls.some((call) => call.progress) ? (
+                  <div className="ml-6 mt-0.5 grid gap-0.5">
+                    {calls.map((call) =>
+                      call.progress ? <SubagentToolProgress key={call.id} call={call} /> : null,
+                    )}
+                  </div>
+                ) : null}
                 {calls.length > 1 ? (
                   <div className="ml-[7px] mt-0.5 grid gap-0.5 border-l border-border pl-3">
                     {calls.map((call) => {

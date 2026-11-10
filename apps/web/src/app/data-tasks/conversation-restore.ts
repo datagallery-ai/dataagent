@@ -25,6 +25,7 @@ import {
   reconcileLiveRunArtifacts,
   reduceLiveRunEvent,
   type LiveRun,
+  type LiveToolCallRecord,
   type SessionUsageStats,
 } from "./live-run-state";
 
@@ -1633,4 +1634,174 @@ export function hydratePendingInteractionLiveRun(
   }
 
   return next;
+}
+
+type NativeSessionMessage = {
+  id?: string;
+  role?: string;
+  content?: unknown;
+  toolCalls?: Array<{
+    id?: string;
+    function?: { name?: string; arguments?: string };
+  }>;
+  toolCallId?: string;
+  tool_call_id?: string;
+  error?: string;
+};
+
+function nativeMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content == null) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return "";
+  }
+}
+
+function nativeToolArguments(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Rebuild the console run from checkpoint messages. Subagent step lists are not
+ * in those messages; mergeStoredLiveRun puts them back from this browser's last stream.
+ */
+export function liveRunFromNativeMessages(
+  messages: NativeSessionMessage[],
+  status?: string,
+): LiveRun {
+  const results = new Map<string, { content: string; failed: boolean }>();
+  for (const message of messages) {
+    if (message.role !== "tool") continue;
+    const toolCallId = message.toolCallId ?? message.tool_call_id;
+    if (!toolCallId) continue;
+    results.set(toolCallId, {
+      content: nativeMessageText(message.content),
+      failed: Boolean(message.error),
+    });
+  }
+
+  let next = reduceLiveRunEvent(createInitialLiveRun(), { type: "RUN_STARTED", runId: "restored" });
+  let sawTool = false;
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.toolCalls?.length) continue;
+    for (const call of message.toolCalls) {
+      if (!call.id) continue;
+      sawTool = true;
+      const name = call.function?.name || "tool";
+      const args = nativeToolArguments(call.function?.arguments);
+      next = reduceLiveRunEvent(next, {
+        type: "TOOL_CALL_START",
+        toolCallId: call.id,
+        toolCallName: name,
+        ...(args ? { args } : {}),
+      });
+      const result = results.get(call.id);
+      if (!result) continue;
+      next = reduceLiveRunEvent(next, {
+        type: "TOOL_CALL_RESULT",
+        toolCallId: call.id,
+        toolCallName: name,
+        result: result.failed
+          ? JSON.stringify({ error: result.content || "error" })
+          : result.content,
+      });
+    }
+  }
+
+  if (!sawTool && !messages.some((message) => message.role === "assistant")) {
+    return createInitialLiveRun();
+  }
+  if (status === "error") {
+    return reduceLiveRunEvent(next, { type: "RUN_ERROR", message: "Previous run failed" });
+  }
+  if (status === "interrupted") {
+    return reduceLiveRunEvent(next, { type: "RUN_FINISHED", status: "canceled" });
+  }
+  return reduceLiveRunEvent(next, { type: "RUN_FINISHED" });
+}
+
+export type StoredLiveRunSnapshot = {
+  runStatus: LiveRun["runStatus"];
+  runStartedAt?: number;
+  runFinishedAt?: number;
+  errorMessage?: string;
+  tools: Array<{
+    id: string;
+    startedAtMs?: number;
+    finishedAtMs?: number;
+    progress?: LiveToolCallRecord["progress"];
+  }>;
+};
+
+export function snapshotLiveRun(run: LiveRun): StoredLiveRunSnapshot {
+  return {
+    runStatus: run.runStatus,
+    ...(run.runStartedAt !== undefined ? { runStartedAt: run.runStartedAt } : {}),
+    ...(run.runFinishedAt !== undefined ? { runFinishedAt: run.runFinishedAt } : {}),
+    ...(run.errorMessage ? { errorMessage: run.errorMessage } : {}),
+    tools: run.toolCalls.map((call) => ({
+      id: call.id,
+      ...(call.startedAtMs !== undefined ? { startedAtMs: call.startedAtMs } : {}),
+      ...(call.finishedAtMs !== undefined ? { finishedAtMs: call.finishedAtMs } : {}),
+      ...(call.progress ? { progress: call.progress } : {}),
+    })),
+  };
+}
+
+export function mergeStoredLiveRun(run: LiveRun, stored: StoredLiveRunSnapshot | null): LiveRun {
+  if (!stored) return run;
+  const saved = new Map(stored.tools.map((tool) => [tool.id, tool]));
+  return {
+    ...run,
+    runStartedAt: stored.runStartedAt ?? run.runStartedAt,
+    runFinishedAt: stored.runFinishedAt ?? run.runFinishedAt,
+    errorMessage: run.errorMessage ?? stored.errorMessage,
+    toolCalls: run.toolCalls.map((call) => {
+      const previous = saved.get(call.id);
+      if (!previous) return call;
+      return {
+        ...call,
+        startedAtMs: previous.startedAtMs ?? call.startedAtMs,
+        finishedAtMs: previous.finishedAtMs ?? call.finishedAtMs,
+        progress: call.progress ?? previous.progress,
+      };
+    }),
+  };
+}
+
+const LIVE_RUN_STORAGE_PREFIX = "data-tasks:live-run:v1:";
+
+export function writeStoredLiveRun(threadId: string, run: LiveRun): void {
+  if (typeof sessionStorage === "undefined") return;
+  if (run.runStatus === "idle" && run.toolCalls.length === 0) return;
+  try {
+    sessionStorage.setItem(
+      `${LIVE_RUN_STORAGE_PREFIX}${threadId}`,
+      JSON.stringify(snapshotLiveRun(run)),
+    );
+  } catch {
+    // The snapshot is a refresh aid. A full quota must not break the live view.
+  }
+}
+
+export function readStoredLiveRun(threadId: string): StoredLiveRunSnapshot | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(`${LIVE_RUN_STORAGE_PREFIX}${threadId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredLiveRunSnapshot;
+    if (!parsed || !Array.isArray(parsed.tools)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }

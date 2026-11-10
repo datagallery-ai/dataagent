@@ -172,6 +172,10 @@
   },
   "chatInput": {
     "placeholder": "输入数据问题…",
+    "add": "添加",
+    "addMenu": "添加内容",
+    "uploadFile": "上传文件",
+    "uploadFileHint": "把图片、表格或文档加到这次对话",
     "model": "模型",
     "modelList": "模型列表",
     "selectModel": "选择模型",

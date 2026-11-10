@@ -18,6 +18,7 @@ import {
   UseAgentUpdate,
 } from "@copilotkit/react-core/v2";
 import type { BaseEvent } from "@ag-ui/client";
+import { writeStoredLiveRun } from "./conversation-restore";
 import {
   accumulateSessionUsage,
   createInitialLiveRun,
@@ -209,6 +210,12 @@ export function LiveRunProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+
+  useEffect(() => {
+    for (const [threadId, run] of Object.entries(liveRunsByThreadId)) {
+      writeStoredLiveRun(threadId, run);
+    }
+  }, [liveRunsByThreadId]);
 
   const setSessionUsageForThread = useCallback(
     (threadId: string | undefined, action: SetStateAction<SessionUsageStats>) => {

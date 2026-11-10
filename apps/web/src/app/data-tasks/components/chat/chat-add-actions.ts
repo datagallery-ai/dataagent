@@ -7,14 +7,18 @@ export type ChatAddAction = {
 
 export function buildChatAddActions({
   openFilePicker,
+  uploadLabel,
+  uploadDescription,
 }: {
   openFilePicker: () => void;
+  uploadLabel: string;
+  uploadDescription: string;
 }): ChatAddAction[] {
   return [
     {
       id: "upload-file",
-      label: "Upload file",
-      description: "Add an image, table, or document to this chat",
+      label: uploadLabel,
+      description: uploadDescription,
       run: openFilePicker,
     },
   ];
