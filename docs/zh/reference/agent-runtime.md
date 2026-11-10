@@ -35,7 +35,7 @@ POST /dataagent/stream
 ## 取消和恢复
 
 ```text
-POST /api/v1/runs/<runId>/cancel
+POST /runs/<runId>/cancel
 ```
 
 成功是 204。这一轮不在执行时是 404。

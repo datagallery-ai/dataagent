@@ -37,7 +37,7 @@ curl http://127.0.0.1:8790/ready
 
 Type a question on `/data-tasks`. The turn goes to `POST /dataagent/stream`. The control plane keeps history by `threadId`. The model, plugins, and workspaces are whatever the process loaded at startup. The page cannot change them.
 
-The session list comes from `GET /api/v1/sessions`. Cancel an active turn with `POST /api/v1/runs/{runId}/cancel`.
+The session list, the session document, and cancel use the control plane paths: `GET /sessions`, `GET /sessions/{threadId}`, and `POST /runs/{runId}/cancel`. Web and TUI call those same paths. A browser request hits the web process first, which forwards that path unchanged.
 
 If the page still shows forms for datasources, knowledge bases, model profiles, or file assets, those requests hit missing routes and return 404. Edit Home `config.json` and restart the control plane. See [Configuration](../reference/configuration-api.md).
 

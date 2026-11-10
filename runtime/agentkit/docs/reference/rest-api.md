@@ -40,9 +40,7 @@
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | `GET` | `/api/v1/me` | 当前用户。引擎未就绪时 id 为 `default` |
-| `GET` | `/api/v1/sessions` | 当前用户的会话列表，包在成功信封里 |
-| `GET` | `/api/v1/sessions/{threadId}/conversation` | 与 `GET /sessions/{threadId}` 同一份文档，包在 `{success, data}` 里。未知会话 404 |
-| `POST` | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。成功是 204。没有这一轮时是 404 |
+| `POST` | `/runs/{runId}/cancel` | 取消正在执行的一轮。成功是 204。没有这一轮时是 404 |
 
 未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。`/api/copilotkit` 和 `/api/copilotkit/info` 不在其中。对话路径在引擎未就绪时返回 503。
 
@@ -95,7 +93,7 @@
 | `messages` | 下一轮 `POST /dataagent/stream` 接着用的消息。行上有 `last_checkpoint_id` 时读该 Checkpoint，否则读这个线程的最新图状态 |
 | `notice` | 中断或失败且有 Checkpoint 时说明已恢复到保存点；中断或失败但没有 Checkpoint 时说明继续当前对话；完成或仍在运行时为 null |
 
-运行中也可以读。绑定缺失或打不开时返回 409。当前用户没有该会话时返回 404。`GET /api/v1/sessions/{threadId}/conversation` 的 `data` 与这份文档相同。
+运行中也可以读。绑定缺失或打不开时返回 409。当前用户没有该会话时返回 404。网页和 TUI 都读这份文档。
 
 ## `GET /sessions/{threadId}/outputs`
 

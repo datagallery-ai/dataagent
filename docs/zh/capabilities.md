@@ -7,9 +7,9 @@
 | 能力 | Web | TUI | 控制面 |
 | --- | --- | --- | --- |
 | 对话 | 打开 `/data-tasks` 后提问 | 直接输入 | `POST /dataagent/stream` |
-| 会话列表 | 与 TUI 共用索引 | `/resume` | `GET /api/v1/sessions`，TUI 用 `GET /sessions` |
+| 会话列表 | 与 TUI 共用索引 | `/resume` | `GET /sessions` |
 | 产物 | 经会话接口查看 | `/outputs` | `GET /sessions/{threadId}/outputs` |
-| 取消一轮 | 调用取消接口 | 断开连接会使该轮中断 | `POST /api/v1/runs/{runId}/cancel` |
+| 取消一轮 | 调用取消接口 | 断开连接会使该轮中断 | `POST /runs/{runId}/cancel` |
 | 模型 | 使用进程已加载的配置 | 同左 | `config.json` 的 `models` 与 `.env` |
 | 只读输入 | 使用进程已绑定的目录 | 同左 | `dataagent.workspaces` 或 `--workspace` |
 | Skill / 插件 / MCP | 使用 Home 里已启用的声明 | 同左 | `<home>/skills`、`plugins`、`.mcp.json` |

@@ -217,7 +217,7 @@ it('/stop cancels the active run and stays on this thread', async () => {
   await until(() => store.getState().runStatus !== 'running');
   assert.deepEqual(stopped, [runId]);
   assert.equal(store.getState().threadId, threadId);
-  assert.equal(cancels[0], `POST http://127.0.0.1:8790/api/v1/runs/${runId}/cancel`);
+  assert.equal(cancels[0], `POST http://127.0.0.1:8790/runs/${runId}/cancel`);
   const text = store.getState().messages.map(getMessageTextContent).join('\n');
   assert.match(text, /keep going/);
   assert.doesNotMatch(text, /INCOMPLETE_STREAM/);

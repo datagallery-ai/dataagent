@@ -37,7 +37,7 @@ curl http://127.0.0.1:8790/ready
 
 在 `/data-tasks` 里输入问题。这一轮发到 `POST /dataagent/stream`。历史由控制面按 `threadId` 保存。模型、插件和工作区用的是控制面启动时读到的配置，不能在页面上改。
 
-会话列表来自 `GET /api/v1/sessions`。取消正在执行的一轮用 `POST /api/v1/runs/{runId}/cancel`。
+会话列表、会话内容和取消一轮都用控制面的同一条路径：`GET /sessions`、`GET /sessions/{threadId}`、`POST /runs/{runId}/cancel`。网页和 TUI 调用的路径相同；浏览器请求先到网页进程，再原样转到控制面。
 
 页面上如果还有数据源、知识库、模型 Profile 或文件资产表单，那些请求会落到不存在的路径，返回 404。要改配置，编辑 Home `config.json` 后重启控制面。见 [配置](../reference/configuration-api.md)。
 

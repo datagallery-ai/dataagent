@@ -41,7 +41,7 @@ export class SessionClient {
 
   async cancelRun(runId: string): Promise<void> {
     const response = await this.fetchImpl(
-      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/cancel`,
+      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/cancel`,
       { method: "POST", signal: AbortSignal.timeout(10_000) },
     );
     if (response.status === 204 || response.status === 404) return;
