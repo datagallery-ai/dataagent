@@ -36,7 +36,7 @@ class DataAgentQueryRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=8000)
     stream: bool = False
 
 
@@ -45,7 +45,9 @@ class QueryContent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=1)
+    # Same bound as DataAgentQueryRequest.query: reject context-overflowing input as 422
+    # before it reaches the workflow and surfaces as a wrapped 500.
+    query: str = Field(min_length=1, max_length=8000)
     stream: bool = False
     scenario: str = Field(min_length=1)
 
@@ -82,7 +84,7 @@ class UpdateContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scenario: str = Field(min_length=1)
-    markdown: str = Field(min_length=1, max_length=65536)
+    markdown: str = Field(min_length=1, max_length=32768)
 
 
 class UpdateRequest(BaseModel):
@@ -211,13 +213,32 @@ async def stream_agent_events(
 app = FastAPI(title="DataAgent Service", version="1.0.0", docs_url=None, redoc_url=None, openapi_url=None)
 _middleware_installed = False
 
+# Bound echoed validation input so one oversized field cannot bloat the 422 body.
+_ECHO_MAX_LENGTH = 256
+
+
+def _truncate_echo(value: Any) -> Any:
+    """Recursively shorten echoed strings; error input can be a nested payload too."""
+    if isinstance(value, str):
+        if len(value) <= _ECHO_MAX_LENGTH:
+            return value
+        return (
+            value[:_ECHO_MAX_LENGTH]
+            + f"...(truncated: showing first {_ECHO_MAX_LENGTH} chars out of {len(value)} chars.)"
+        )
+    if isinstance(value, dict):
+        return {key: _truncate_echo(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_truncate_echo(item) for item in value]
+    return value
+
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Return 422 for malformed bodies; sanitize echoed input instead of crashing on encoding."""
+    """Return 422 for malformed bodies; sanitize and bound echoed input."""
     return JSONResponse(
         status_code=422,
-        content={"detail": surrogate_safe(jsonable_encoder(exc.errors()))},
+        content={"detail": _truncate_echo(surrogate_safe(jsonable_encoder(exc.errors())))},
     )
 
 
