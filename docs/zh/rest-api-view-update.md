@@ -156,13 +156,15 @@ jq -n --arg scenario business_twin --rawfile markdown ./sql_rules_business_twin.
      "result": {
        "success": false,
        "code": "WORKFLOW-AGENT-001",
-       "message": "CORE.perceptor.user_sql_rules is not configured: /path/to/business_twin.yaml",
+       "message": "failed to view prompt",
        "http_status": 500,
        "component": "agent",
        "retryable": false
      }
    }
    ```
+
+   `message` 按操作固定：view 失败为 `"failed to view prompt"`，update 失败为 `"failed to update prompt"`（update 失败即文件未写入）。
 
 8. 扩展机制：本功能不写死 SQL 规则。可在线修改的 md 文档由 `dataagent/agents/nl2sql/utils/prompt_files.py` 的 `EDITABLE_PROMPTS` 开放清单唯一决定（当前仅 `sql_rules`，解析规则 = 场景 yaml 的 `CORE.perceptor.user_sql_rules` 键 → 包内 `agents/nl2sql/prompts/user/` 目录）。后续开放新文档：目标文件名仍由「yaml 某键 → 包内某目录」决定的，在清单里加一条即可；命名规则不同的，扩展 `EditablePromptSpec` 单点支持，并在 REST 请求模型里暴露文档选择参数。
 
@@ -198,6 +200,8 @@ jq -n --arg scenario business_twin --rawfile markdown ./sql_rules_business_twin.
 ### 4.4 文件层失败（500 失败包）
 
 触发条件与期望见 §3 第 7 条错误表，重点覆盖：yaml 删掉 `CORE.perceptor.user_sql_rules` 键、配带目录的名字（`../xxx`）、指向不存在的文件名、安装目录只读。每项确认响应是完整的 `{"result": {"success": false, "code": "WORKFLOW-AGENT-001", ...}}` 失败包，且原文件未被写入 / 保持完好。
+
+失败 `message` 按操作固定为 `"failed to view prompt"` / `"failed to update prompt"`，不同故障类别共用同一文案，不向调用方暴露服务器物理路径或文件结构。
 
 ### 4.5 并发与一致性
 
