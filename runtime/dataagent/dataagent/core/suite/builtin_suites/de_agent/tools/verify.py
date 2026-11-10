@@ -28,16 +28,15 @@ from dataagent.actions.tools.hooks.examples.ir_hooks import get_ir_context
 from dataagent.core.managers.llm_manager import ChatModel, llm_manager
 from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 from dataagent.core.managers.llm_manager.thinking import thinking_enabled_from_config, validation_llm_kwargs
+from dataagent.utils.constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 
 # ============================================================================
 # validate_deliverables orchestration constants
 #
 # validate_deliverables 把"静态校验 + DataOps 语义校验"合并成单一入口,
-# 整个工具在一次会话内最多跑 MAX_VALIDATE_DELIVERABLES_ATTEMPTS 次。
-# retry 由 validate_deliverables 在工具层统一调度,
-# DataOps wrapper 内部 MAX_VALIDATE_ATTEMPTS 次上限保留作为兜底防御。
+# 整个工具在一次会话内最多跑 DEFAULT_DATAOPS_VALIDATION_ATTEMPTS 次。
 # ============================================================================
-MAX_VALIDATE_DELIVERABLES_ATTEMPTS = 5
+MAX_VALIDATE_DELIVERABLES_ATTEMPTS = DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 _VALIDATE_DELIVERABLES_STATE_KEY = "validate_deliverables_state"
 _DELIVERY_DELIVERABLES_WARNING_FILENAME = "validate_deliverables_warning.md"
 _DELIVERY_DELIVERABLES_WARNING_HEADER = (
@@ -321,13 +320,11 @@ def validate_deliverables(*, query: str = "", _tool_context: ToolExecutionContex
     - The full check (static checks + DataOps semantic validation) runs as
       one unit. If validation fails, **fix the SQL in workspace** and call
       this tool again.
-    - This tool will run **at most MAX_VALIDATE_DELIVERABLES_ATTEMPTS (5)
-      times per session**; after that it returns best-effort verdict and
-      stops accepting further calls.
-    - The internal per-SQL DataOps retry budget is preserved as a safety
-      net (wrapper enforces its own MAX_VALIDATE_ATTEMPTS cap) but is normally
-      unused because each ``validate_deliverables`` invocation starts the DataOps
-      wrapper from attempt=1.
+    - This tool will run **at most DEFAULT_DATAOPS_VALIDATION_ATTEMPTS (10)
+      times per session**; after that it returns best-effort verdict and stops
+      accepting further calls.
+    - The internal per-SQL DataOps attempt budget uses the **same** limit, so
+      the two layers never disagree about how many attempts are left.
 
     Args:
         query: The user's original requirement text, used by the LLM quality gate to verify

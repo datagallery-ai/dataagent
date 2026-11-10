@@ -102,6 +102,28 @@ DEFAULT_PRUNER_TOKEN_LIMIT: int = DEFAULT_COMPRESS_TOKEN_LIMIT
 # ============================================================================
 
 
+# ── DataOps 语法校验提交次数上限 ───────────────────────────────────────────
+# 当前定义位置: dataagent/utils/constants.py（本文件是唯一来源）
+# 建议 YAML 路径: 无 —— 三处限制共用这一个常量，不再各设各的。
+
+DEFAULT_DATAOPS_VALIDATION_ATTEMPTS: int = 10
+"""DataOps 语法校验的最大提交次数。
+
+**全仓库唯一的语法校验次数上限。** 下面三处限制共用它：
+
+- ``dataops_validate_tool.MAX_VALIDATE_ATTEMPTS``（wrapper 单次 attempt 上限）
+- ``verify.MAX_VALIDATE_DELIVERABLES_ATTEMPTS``（``validate_deliverables`` 会话级上限）
+- ``sql_checkers.DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS``（``check_and_repair_sql``
+  每条 SQL 的累计提交预算）
+
+三者语义不同但数值上互相牵制：任何一个比另一个小，Agent 就会撞上最小的那个，
+而报告里的提示又指向另外两个，导致「到底还能试几次」无法回答。
+
+取值 10：单条 SQL 提交一次 DataOps 校验成本较高，但 10 次足够覆盖「按日志摘要
+逐轮定位并修好 SQL」的正常迭代节奏，同时仍然是一个硬上限。
+"""
+
+
 # ── 工具调用超时 ─────────────────────────────────────────────────────────────
 # 当前定义位置: dataagent/actions/tools/local_tool/tools.py
 # 建议 YAML 路径: TOOLS.*_timeout

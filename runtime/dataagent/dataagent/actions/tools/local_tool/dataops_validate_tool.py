@@ -57,6 +57,7 @@ from dataagent.actions.tools.local_tool.dataops_log_utils import (
 from dataagent.core.managers import llm_manager
 from dataagent.core.managers.llm_manager.stream_utils import collect_llm_stream
 from dataagent.core.managers.llm_manager.thinking import resolve_thinking, validation_llm_kwargs
+from dataagent.utils.constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 from dataagent.utils.log import logger
 
 if TYPE_CHECKING:
@@ -66,7 +67,7 @@ if TYPE_CHECKING:
 # ============================================================================
 # Retry / best-effort constants (shared by dataops_validate_sql_with_log_analysis)
 # ============================================================================
-MAX_VALIDATE_ATTEMPTS = 10
+MAX_VALIDATE_ATTEMPTS = DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 _VALIDATION_REPORT_FILENAME = "validate_{table}.json"
 _DELIVERY_WARNING_FILENAME = "delivery_warning.md"
 _DELIVERY_WARNING_HEADER = (
@@ -1899,7 +1900,10 @@ async def dataops_validate_sql_with_log_analysis(
       ``attempt`` = 1..10, and ``prior_attempts`` = the ``attempts`` list
       returned by the previous call (empty list on first call).
     - When ``attempt > MAX_VALIDATE_ATTEMPTS`` the call is rejected without
-      touching DataOps; the caller must not initiate an 11th call.
+      touching DataOps; the caller must not initiate attempt 11.
+    - ``MAX_VALIDATE_ATTEMPTS`` (10) is the same limit enforced by
+      ``validate_deliverables``'s session-level cap and ``check_and_repair_sql``'s
+      per-SQL budget.
     - When the final attempt (``attempt == MAX_VALIDATE_ATTEMPTS``) still
       returns ``passed: false``, this wrapper auto-dumps
       ``validate_<table>.json`` + ``delivery_warning.md`` to the workspace
@@ -1954,12 +1958,15 @@ async def dataops_validate_sql_with_log_analysis(
         logger.warning(
             f"[dataops_validate_sql_with_log_analysis] attempt={attempt} exceeds "
             f"MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; refusing. "
-            f"Caller must not initiate an 11th call."
+            f"Caller must not initiate attempt {MAX_VALIDATE_ATTEMPTS + 1}."
         )
         return {
             "passed": False,
             "failed_after_max_retries": True,
-            "error": (f"exceeded MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; caller must not initiate an 11th call"),
+            "error": (
+                f"exceeded MAX_VALIDATE_ATTEMPTS={MAX_VALIDATE_ATTEMPTS}; "
+                f"caller must not initiate attempt {MAX_VALIDATE_ATTEMPTS + 1}"
+            ),
             "attempts": prior_attempts,
         }
 

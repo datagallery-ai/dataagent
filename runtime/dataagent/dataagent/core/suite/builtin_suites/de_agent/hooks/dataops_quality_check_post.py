@@ -10,17 +10,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Agent post-hook: run the delivery's trial compute automatically.
+"""Node-level post-hook: run the delivery's trial compute, then report data quality.
 
 Registered under ``HOOKS.nodes.planner.post`` in de_agent's ``hooks.yaml``.
 When a turn completes with SQL deliverables in the workspace, this hook
 trial-runs the INSERT into a scratch table and reports the data quality check —
 the agent does not have to (and should not) call ``trial_compute_table`` by hand.
 
-Why an agent post-hook rather than a prompt instruction:
-the trial compute talks to DataOps and can take minutes; doing it inside the
-actor loop would stall every turn. Running it at turn end keeps the loop fast
-while still guaranteeing the check happens before delivery is finalized.
+**交付说明与数据质量校验是分开的两件事**:交付说明留在它自己那条 AI 消息里
+(content 不动),校验报告是追加在交付之后的另一条 AI 消息。
+
+**为什么校验消息里还要带一段交付说明?**
+非流式链路(REST ``_format_result`` / A2A non-stream)的最终回复只取
+``state["messages"][-1]``。若最后一条是纯校验报告,交付说明就**丢了**。所以
+校验消息带一个 ``## 最终交付`` 段,保证最终回复里两段都在、且分成清晰的两节。
+
+**流式链路只推报告,不重复推交付说明** —— 交付正文早已由 planner 的
+``output_msg`` 推过一遍;再推一次会让用户看到两遍交付说明。
 
 Safety properties:
   - Never raises. Any failure is logged; the turn's result is left untouched.
@@ -42,9 +48,9 @@ langgraph's runnable context, so ``get_stream_writer()`` resolves and the
 ``RuntimeError("Called get_config outside of a runnable context")`` and the
 stream push fails silently.
 
-The report is **merged into** the last AI message rather than appended as a
-new one: the non-streaming path reads ``messages[-1]``, so appending would
-replace the agent's own delivery summary with the report.
+**时序:校验发生在交付之后。**
+planner 产出交付正文之后本 hook 才启动试算 —— 试算可能要跑几分钟,若放在交付
+之前会把整个交付卡住。流式前端此时已经收到交付气泡,随后才收到校验气泡。
 """
 
 from __future__ import annotations
@@ -73,6 +79,9 @@ _TRIAL_COMPUTE_DONE_KEY = "dataops_trial_compute_done_runs"
 # transcript as machine-generated rather than agent-authored prose.
 _REPORT_PREFIX = "【自动数据试算】"
 
+# 分隔交付说明与数据质量校验结论的标题。
+_DELIVERY_SECTION_TITLE = "## 最终交付"
+
 
 def dataops_quality_check_post(
     state: FlexState,
@@ -80,7 +89,11 @@ def dataops_quality_check_post(
     *,
     original_state: FlexState | None = None,
 ) -> FlexState:
-    """Trial-run the delivered DML and append a data quality report to the turn.
+    """Trial-run the delivered DML and append a **separate** data quality message.
+
+    The delivery summary and the quality report are two distinct things: the
+    delivery stays in its own message (unmodified), and the report is appended
+    as a new message *after* it.
 
     Args:
         state: The node's return delta (node-level post-hook) **or** the full
@@ -110,11 +123,6 @@ def _run_hook(
     # 节点级 post-hook 收到的是**节点返回的增量**（只有 messages/complete/
     # num_turns/curr_iter），不含 run_id 等上下文字段；agent 级收到的是完整
     # 图状态。两者都要能跑，所以下面按「哪个有值用哪个」取值。
-    #
-    # 注意 messages 的形态差异：
-    #   - 节点级增量的 messages 是**单条** AIMessage（planner 返回的形态）；
-    #   - 完整图状态的 messages 是**列表**。
-    # 合并时必须保持各自的形态，否则 reducer 会把消息重复累加。
     full_state: FlexState = state
     if original_state is not None:
         merged_context: dict[str, Any] = dict(original_state)
@@ -145,6 +153,10 @@ def _run_hook(
     _mark_ran(runtime, run_id)
     logger.info("[trial_compute_post] trial-computing {} (run_id={})", dml_path.name, run_id)
 
+    # 先告诉前端「校验正在跑」—— 试算可能耗时几分钟,没有这句提示用户会以为
+    # 交付卡住了。这一条只进流式链路,不进 state(messages 不能被这种进度提示污染)。
+    _emit_progress_notice(dml_path)
+
     result = _invoke_trial_compute(dml_path=dml_path, runtime=runtime)
     report = _render_report(dml_path=dml_path, result=result)
     if not report:
@@ -152,78 +164,108 @@ def _run_hook(
 
     logger.info("[trial_compute_post] {}", report.splitlines()[0])
 
-    # --- 1) 并入最后一条 AI 消息的 content --------------------------------
-    # 非流式链路（chat / REST / A2A non-stream）由 ``state["messages"][-1]``
-    # 取最终回复（见 rest_api/service.py::_format_result）。所以**不能**把报告
-    # 追加成一条新 AIMessage —— 那样会顶掉 agent 自己的交付说明。
-    # 正确做法是并入最后一条 AI 消息的 content：既保留交付说明，又带上表格。
-    merged_state = _merge_report_into_last_message(full_state, report)
+    # --- 1) 交付消息与校验消息**分开** ------------------------------------
+    # 交付说明留在它自己那条 AI 消息里（content 不动）；校验报告作为**新的一条**
+    # AI 消息追加在交付之后。校验消息里带上交付正文（用 ``## 最终交付`` 隔开），
+    # 否则非流式链路的最终回复（取 messages[-1]）会把交付说明丢掉。
+    delivery_text = _extract_delivery_text(full_state, original_state=original_state)
+    new_messages = _append_report_message(full_state, report, delivery_text=delivery_text)
+
     # 只把「变更后的 messages」交回去：节点级 hook 的返回值是**增量**，
     # 若把 full_state 整体返回，run_id/complete 等字段会被 reducer 重复累加。
-    # messages 的形态要跟 state 里原本的一致（单条 AIMessage vs 列表）。
-    new_messages = merged_state.get("messages")
     result_delta: dict[str, Any] = {
         **{k: v for k, v in state.items() if k != "messages"},
         "messages": new_messages,
     }
 
     # --- 2) 推一条 output_msg 到流式前端 ---------------------------------
-    # 流式链路（A2A SSE / Web）靠 stream 事件渲染，state 的变更不会被 yield。
-    # 这里必须额外推一条 output_msg，前端才能看到这张 Markdown 表格。
+    # 只推**报告**，不推交付说明：交付正文早就由 planner 的 output_msg 推过一遍，
+    # 再推一遍用户会看到两遍交付说明。
     _emit_report_to_stream(report)
     return result_delta  # type: ignore[return-value]
 
 
-def _merge_report_into_last_message(state: FlexState, report: str) -> FlexState:
-    """把报告并入最后一条 AI 消息的 content，保持 messages[-1] 仍是最终回复。
+def _extract_delivery_text(
+    state: FlexState,
+    *,
+    original_state: FlexState | None = None,
+) -> str:
+    """取出 agent 自己的交付正文（最后一条有正文的 AI 消息），**不改写、不截断**。
 
-    ``messages`` 的形态要保持不变：
+    ``original_state`` 是节点级 hook 的**输入**状态，里面是完整的历史消息列表。
+    它只在节点增量**根本没有消息**时才作为兜底 —— 若拿历史里的旧消息当交付
+    说明，会把上一轮的结论混进本轮的校验消息。
+    """
+    text = _last_ai_text(state.get("messages"))
+    if text:
+        return text
+
+    if original_state is not None and not state.get("messages"):
+        return _last_ai_text(original_state.get("messages"))
+    return ""
+
+
+def _last_ai_text(messages: Any) -> str:
+    """取 messages 里最后一条有正文的 AI 消息内容。"""
+    candidates: list[Any]
+    if isinstance(messages, AIMessage):
+        candidates = [messages]
+    elif isinstance(messages, list):
+        candidates = list(messages)
+    else:
+        candidates = []
+
+    for message in reversed(candidates):
+        if not isinstance(message, AIMessage):
+            continue
+        content = message.content if isinstance(message.content, str) else str(message.content or "")
+        if content.strip():
+            return content.strip()
+    return ""
+
+
+def _build_report_message(report: str, delivery_text: str) -> AIMessage:
+    """组装「校验消息」—— 交付正文在前，质量校验结论在后。"""
+    if not delivery_text:
+        return AIMessage(content=report)
+
+    return AIMessage(
+        content=(
+            f"{_DELIVERY_SECTION_TITLE}\n\n"
+            f"{delivery_text}\n\n"
+            f"---\n\n"
+            f"{report}"
+        )
+    )
+
+
+def _append_report_message(state: FlexState, report: str, *, delivery_text: str) -> Any:
+    """把校验报告作为**新的一条** AI 消息追加在交付消息之后。
+
+    ``messages`` 的两种形态：
 
     - **节点级** hook 拿到的是节点返回的增量，其 ``messages`` 是**单条**
-      ``AIMessage``（BaseNode.aprocess 之后才会拼成列表）；
-    - **agent 级** hook 拿到的是完整图状态，其 ``messages`` 是**列表**。
+      ``AIMessage``（planner 返回的形态）→ 这里返回**列表** ``[交付, 报告]``。
+      ``BaseNode.aprocess`` 会把 result.messages 拼到历史消息之后
+      （``[*state["messages"], *result_msgs]``），形态自洽。
+    - **agent 级** hook 拿到的是完整图状态，其 ``messages`` 是**列表**
+      → 这里返回 ``[*原列表, 报告]``。
 
-    两种形态都原样返回，避免把单条消息变成列表（或反之）导致 reducer
-    把消息重复累加。
-
-    找不到可并入的 AI 消息时，退回追加一条新 AIMessage（保证报告不丢）。
+    找不到交付消息时（形态 3），退回把报告作为唯一一条消息 —— 保证报告不丢。
     """
     messages = state.get("messages")
+    report_message = _build_report_message(report, delivery_text)
 
     # --- 形态 1：单条 AIMessage（节点级增量）-----------------------------
     if isinstance(messages, AIMessage):
-        return {**state, "messages": _merge_into_message(messages, report)}
+        return [messages, report_message]
 
     # --- 形态 2：列表（agent 级完整状态）----------------------------------
     if isinstance(messages, list):
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            if not isinstance(message, AIMessage):
-                continue
-            new_messages = list(messages)
-            new_messages[index] = _merge_into_message(message, report)
-            return {**state, "messages": new_messages}
-        # 列表里没有 AI 消息 —— 追加一条（下游仍能取到报告）
-        return {**state, "messages": [*messages, AIMessage(content=report)]}
+        return [*messages, report_message]
 
     # --- 形态 3：没有 messages --------------------------------------------
-    return {**state, "messages": AIMessage(content=report)}
-
-
-def _merge_into_message(message: AIMessage, report: str) -> AIMessage:
-    """把报告追加到一条 AI 消息的 content 末尾，保留其余字段。"""
-    content = message.content if isinstance(message.content, str) else str(message.content or "")
-    merged_content = f"{content}\n\n{report}" if content.strip() else report
-    return AIMessage(
-        content=merged_content,
-        additional_kwargs=dict(message.additional_kwargs or {}),
-        response_metadata=dict(message.response_metadata or {}),
-        id=message.id,
-        name=message.name,
-        tool_calls=list(message.tool_calls or []),
-        invalid_tool_calls=list(message.invalid_tool_calls or []),
-        usage_metadata=message.usage_metadata,
-    )
+    return report_message
 
 
 def _emit_report_to_stream(report: str) -> None:
@@ -255,6 +297,32 @@ def _emit_report_to_stream(report: str) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[trial_compute_post] failed to emit report to stream: {exc}")
+
+
+def _emit_progress_notice(dml_path: Path) -> None:
+    """推一条「校验进行中」提示到流式前端（best-effort）。
+
+    **只进流式链路，不进 state** —— 进度提示不是 agent 的正式发言，
+    不能混进 ``messages``（否则会被当成一条回复、并被重新喂回 LLM）。
+    """
+    notice = f"{_REPORT_PREFIX}交付已完成，正在对 `{dml_path.name}` 做数据试算与质量校验，请稍候…"
+    try:
+        writer = get_stream_writer()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[trial_compute_post] stream writer unavailable: {exc}")
+        return
+    if writer is None:
+        return
+    try:
+        writer(
+            {
+                "type": "output_msg",
+                "node_name": "DataAgent",
+                "content": notice,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[trial_compute_post] failed to emit progress notice to stream: {exc}")
 
 
 # ---------------------------------------------------------------------------
