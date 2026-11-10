@@ -136,7 +136,8 @@ async def test_model_error_propagates_without_retry(runtime):
 async def test_default_limits_allow_128_model_and_tool_calls(runtime, child):
     limits = runtime.settings.dataagent.limits
     assert limits.model_calls_per_agent == limits.tool_calls_per_agent == 128
-    calls = [call("common__summarize_numbers", {"numbers": [1]}, id=f"stats-{index}")
+    # Distinct work exercises the call budget without triggering loop protection.
+    calls = [call("common__summarize_numbers", {"numbers": [index]}, id=f"stats-{index}")
              for index in range(128)]
     # Two tools in the first model response leave room for the final model answer.
     responses = [AIMessage(content="", tool_calls=calls[0].tool_calls + calls[1].tool_calls),

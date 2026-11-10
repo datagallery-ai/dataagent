@@ -9,6 +9,10 @@
       "model_calls_per_agent": 128,
       "tool_calls_per_agent": 128
     },
+    "loop_detection": {
+      "enabled": true,
+      "ignored_tools": []
+    },
     "workspaces": [],
     "entry": null,
     "hooks": {

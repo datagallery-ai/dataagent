@@ -17,6 +17,7 @@ from test_traces import assert_collector_empty, attributes, root, spans, validat
 
 from dataagent import create_agent
 from dataagent.agent import create_deep_agent, load_extensions
+from dataagent.extensions.tracing import LocalLangChainTracer
 from dataagent.models import ModelContext
 
 
@@ -125,10 +126,10 @@ async def test_session_graphs_subagent_paths_and_checkpoint_history(runtime, tmp
         assert str(tmp_path / "two") in str(model.requests[5][0].content)
         assert str(tmp_path / "one") not in str(model.requests[5][0].content)
         first = agent.graph_for("one")
-        tracer, = first.config["callbacks"]
+        callbacks = list(first.config["callbacks"])
         await agent.ainvoke({"messages": [("user", "continue")]}, {"configurable": {"thread_id": "one"}})
         assert agent.graph_for("one") is first
-        assert first.config["callbacks"] == [tracer]
+        assert first.config["callbacks"] == callbacks
         assert_collector_empty(first)
         assert len(list(runtime.paths.for_session("one").traces.glob("*.json"))) == 2
         assert [m.content for m in model.requests[-1] if isinstance(m, HumanMessage)] == ["one", "continue"]
@@ -271,7 +272,8 @@ async def test_shared_nl2sql_and_run_hooks_use_current_task(runtime, tmp_path, e
                 assert compile_plugins.call_count == 2
                 if entry:
                     for thread in ("query-a", "query-b"):
-                        tracer, = agent.graph_for(thread).config["callbacks"]
+                        tracer, = (callback for callback in agent.graph_for(thread).config["callbacks"]
+                                   if isinstance(callback, LocalLangChainTracer))
                         assert tracer.agent_names == (entry,)
     for thread, result in zip(("query-a", "query-b"), results, strict=True):
         message = result["messages"][-1] if entry else next(

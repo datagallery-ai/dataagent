@@ -466,6 +466,43 @@ async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path, 
     assert result_file.name == f"{payload['query_id']}.csv"
 
 
+@pytest.mark.parametrize("entry", [True, False])
+@pytest.mark.parametrize("transport", ["sdk", "http"])
+async def test_compiled_nl2sql_propagates_loop_detection(tmp_path, entry, transport):
+    """NL2SQL wraps node errors into a reply; a detected loop must still stop the run."""
+    from test_api import client_for, query, sse, terminal
+
+    from dataagent import LoopDetectedError
+
+    db_path, schema_path = _sqlite_fixture(tmp_path)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
+        }},
+        "dataagent": {"entry": "nl2sql" if entry else None},
+        "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": _plugin_params(db_path, schema_path)}},
+    }))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config))
+    repeated = AIMessage(content="We need to analyze the same question again. " * 60)
+    responses = [repeated]
+    if not entry:
+        responses.insert(0, call("task", {
+            "subagent_type": "nl2sql", "description": "每个部门的员工人数",
+        }))
+    model = ScriptedModel(responses=[*responses, AIMessage(content="must not continue")])
+    if transport == "sdk":
+        async with create_agent(runtime, model=model) as agent:
+            with pytest.raises(LoopDetectedError):
+                await agent.ainvoke({"messages": [HumanMessage(content="每个部门的员工人数")]})
+    else:
+        async with client_for(runtime, model) as (client, _):
+            events = sse(await client.post("/dataagent/stream", json=query("每个部门的员工人数")))
+        assert terminal(events) == ["RUN_ERROR"]
+        assert events[-1]["code"] == "LoopDetectedError"
+    assert len(model.requests) == len(responses)
+
+
 def test_connection_config_strips_reserved_database_keys():
     from nl2sql.config_manager import NL2SQLConfig
 

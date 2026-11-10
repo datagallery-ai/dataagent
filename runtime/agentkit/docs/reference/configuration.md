@@ -25,6 +25,8 @@
 | `limits.timeout_seconds` | 数 | `180` | 大于 0。REST 整轮时限，也是模型请求超时 |
 | `limits.model_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的模型循环上限 |
 | `limits.tool_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的工具次数上限 |
+| `loop_detection.enabled` | 布尔 | `true` | 检测模型输出复读和无进展工具循环。复读命中后终止本轮；工具循环第一次命中先提示模型换方法，第二次命中再终止 |
+| `loop_detection.ignored_tools` | 字符串数组 | `[]` | 不参与工具循环检测的完整工具名，适合有意轮询的工具 |
 | `hooks` | 分组对象或列表 | `[]` | 见 [扩展声明](extension-schema.md)。跨配置层追加 |
 | `workspaces` | 数组 | `[]` | 只读输入。空数组不创建目录 |
 | `output_root` | 路径或 `null` | `null` | 新会话的产物根目录，只接受绝对路径或 `~/` 开头的路径。会话产物写入 `<output_root>/<user>/<thread>/`；`null` 时根目录为 `<home>/outputs`。已有会话保留创建时的位置。见 [会话与产物](../guides/sessions-and-outputs.md#产物目录的位置) |
@@ -38,7 +40,51 @@
 | `path` | 字符串 | 必须是已存在且可读的目录，解析后唯一 |
 | `read_only` | `true` | 只能是 `true` |
 
-`entry` 由高层替换；省略则继承低层。改它要重启进程，`refresh_extensions` 不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
+`entry` 由高层替换；省略则继承低层。改它要重启进程，`refresh_extensions` 不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
+
+### 复读与循环检测
+
+检测只使用本地规则，不产生额外模型调用，不改变模型的流式设置。实现位于 `dataagent/extensions/loop_detection.py`，与 `extensions/tracing.py` 同层，只依赖 LangChain 公开接口。两类检测装在不同的位置：
+
+- **工具循环**由 `LoopDetectionMiddleware` 检查。`agent.py` 的 `build_native_middleware()` 把它装进主代理和标准子代理，位置在调用次数上限之后、插件 Hook 之前。中间件钩子有准确的轮边界，命中时模型 span 已经结束，不会在追踪里留下未闭合的记录。
+- **文本复读**由 `LoopDetectionCallback` 检查。`build_agent()` 和 `build_entry_graph()` 通过 `with_config(callbacks=...)` 安装，LangChain 将其传递给内部模型和子代理调用。只有流式回调能在整段回复被消费完之前停下退化的解码，所以这部分留在回调上。
+
+具体规则：
+
+- **流式文本**：在最近 5,000 个字符中检查 50 字符片段。相同片段密集出现十次且间隔内容也重复时停止。文本和服务商公开的推理内容分开统计，工具参数 JSON 不作为文本检查。代码围栏内以及表格、列表、标题、引用、分隔线等本就会重复的 Markdown 结构行都跳过，避免正常输出触发。只有确认块级标记后才跳过结构行；粗体、斜体和行内代码前缀不豁免正文。围栏按 CommonMark 的行首、同字符和长度规则判断，反引号围栏的信息字符串不能含反引号，结束行在围栏后只能有空格或制表符。支持 LF、CRLF 和 CR 换行，包括跨流式分片的换行。非流式回复中同一通道的所有内容块都会检查；已在流式阶段检查过的通道不重复检查。非流式模型只能在回复完成后检查。
+- **工具循环**：以"一次助手回复"为一步，检查本轮最近 25 步。长度为 1–5 的步骤序列连续重复五遍，且工具名、规范化参数、结果和状态都相同时停止。并行调用属于同一步，不会放大计数；结果按所属回复匹配，复用的 call ID 和并行结果不会串。结果有变化时继续，轮询工具可加入 `ignored_tools`。
+- **工具循环重试**：本轮第一次命中时不终止。中间件追加一条 `name` 为 `loop_detection` 的用户消息，告诉模型同样的调用已重复五遍、结果相同，请换个方法或直接用已有信息回答，然后继续本轮。提示之前的步骤不再计数，提示之后再出现一次完整的循环才终止，所以每轮最多重试一次。提示消息保存在会话历史中。重试的模型调用计入 `model_calls_per_agent` 和 `limits.timeout_seconds`。
+
+配置示例：
+
+```json
+{
+  "dataagent": {
+    "loop_detection": {
+      "enabled": true,
+      "ignored_tools": ["jobs__get_status"]
+    }
+  }
+}
+```
+
+轮边界由 `before_agent` 在每次调用开始时记录，所以其他中间件在轮中插入的消息（摘要、评分复议、媒体占位）不会重置计数，但一次新的用户请求会。复读命中或工具循环第二次命中后，SDK 抛出 `dataagent.LoopDetectedError`，REST 发出 `RUN_ERROR`，错误代码为 `LoopDetectedError`。不会自动重放任务或已完成的工具操作。可查看已完成步骤后发送新请求。异常中不包含原始文本或参数。修改检测配置需重启或重新创建 SDK 实例。
+
+中间件自己发起的模型调用（上下文摘要、Rubric 评分）不是 Agent 的输出，不参与文本检测。
+
+这些检查是启发式保护，有明确的覆盖边界：
+
+- 设了 `dataagent.entry` 时，编译型入口自带图，不经过 `build_native_middleware`，因此**只有文本复读检测**，没有工具循环检测和工具循环重试。该入口的轮数约束仍由它自身的实现和 `limits.timeout_seconds` 承担。入口内部即使捕获异常并返回普通回复（如 NL2SQL），`build_entry_graph()` 也会在入口返回后重新抛出本次调用中记录的 `LoopDetectedError`。
+- 通过 `task` 委派的编译型子代理也只有文本复读检测。它与编译型入口使用相同的异常传播保护：内部即使把循环异常转成普通回复，宿主仍会抛出 `LoopDetectedError` 并终止本轮，父代理不会继续调用模型。
+- 没有插件声明 `general-purpose` 时，核心自动创建的通用子代理不继承自定义中间件，因此**没有工具循环检测**，只有文本复读检测。需要时由插件显式声明 `general-purpose` 子代理。
+- 文本复读不重试。HTTP 接口始终流式输出，重试时前端已经收到了复读文本，AG-UI 没有作废已发文本的事件。临时性模型错误（429、5xx、超时、断连）由模型 SDK 按 `models.<id>.max_retries` 重试，不另加中间件重试。
+- Markdown 结构行豁免意味着整段由相同表格行或列表项组成的复读不会被文本检测拦住。这是为避免误伤正常的数据表输出而刻意保留的取舍，由工具循环检测和 `model_calls_per_agent`、`tool_calls_per_agent` 兜底。
+- 上下文摘要重写历史后，记录的轮起点可能超出重写后的长度，此时检查范围偏短，只会漏报，不会把上一轮的调用算进本轮。
+- 插件自行屏蔽回调的模型调用不在覆盖范围内；不公开的内部推理不可检查。客户端中止流不保证服务商立即停止计算，仍需保留 token、轮数和超时限制。
+
+`enabled: false` 同时关闭两类检测，用于有意生成大量重复文本或有意重复调用工具的任务。
+
+算法参考 [Gemini CLI LoopDetectionService](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/loopDetectionService.ts)，按 dataagent 的原生中间件、回调和错误处理方式独立实现。
 
 ## `models.<id>`
 
