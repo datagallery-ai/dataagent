@@ -30,6 +30,11 @@ class Limits(StrictModel):
     tool_calls_per_agent: int = Field(default=128, gt=0)
 
 
+class LoopDetectionSettings(StrictModel):
+    enabled: bool = Field(default=True, strict=True)
+    ignored_tools: tuple[str, ...] = ()
+
+
 class WorkspaceSettings(StrictModel):
     """A configured read-only input. Writable inputs are rejected in this version."""
 
@@ -41,6 +46,7 @@ class WorkspaceSettings(StrictModel):
 class AgentSettings(StrictModel):
     model: ModelSelection = Field(default_factory=ModelSelection)
     limits: Limits = Field(default_factory=Limits)
+    loop_detection: LoopDetectionSettings = Field(default_factory=LoopDetectionSettings)
     hooks: tuple[HookSpec, ...] = ()  # Independent registrations accumulate across config layers.
     workspaces: tuple[WorkspaceSettings, ...] = ()
     # New sessions use <output_root>/<user>/<session>; None means <home>/outputs.
@@ -204,6 +210,7 @@ SECTION_MODELS = frozenset(
         AgentSettings,
         ModelSelection,
         Limits,
+        LoopDetectionSettings,
         PluginSettings,
         ServerSettings,
         SemanticSettings,

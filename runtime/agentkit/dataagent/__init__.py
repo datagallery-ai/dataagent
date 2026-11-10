@@ -35,6 +35,7 @@ __all__ = [
     "SemanticServiceClient",
     "ConfigurationLoadError",
     "DataAgentError",
+    "LoopDetectedError",
     "LaunchOptions",
     "Runtime",
     "build_agent",
@@ -52,6 +53,7 @@ __all__ = [
 _LAZY = {
     "SemanticServiceClient": ("dataagent.semantic_client", "SemanticServiceClient"),
     "DataAgentError": ("dataagent.errors", "DataAgentError"),
+    "LoopDetectedError": ("dataagent.extensions.loop_detection", "LoopDetectedError"),
     "create_agent": ("dataagent.client", "create_agent"),
     "Agent": ("dataagent.client", "Agent"),
     "ModelContext": ("dataagent.models", "ModelContext"),

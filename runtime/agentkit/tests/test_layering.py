@@ -22,6 +22,7 @@ LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.diagnost
 FOUNDATION = LEAVES | {"dataagent.settings", "dataagent.plugin_config"}
 MODEL_TOOLING = ("langchain", "langgraph", "deepagents", "ag_ui", "mcp")
 EXTENSION_DEPENDENCIES = {
+    "loop_detection": set(),
     "tracing": {"trace_exporter"},
     "trace_exporter": set(),
     "mcp": {"loading"},
@@ -36,6 +37,7 @@ EXTENSION_DEPENDENCIES = {
     "__init__": {"compiler", "loading"},
 }
 EXTENSION_CORE_DEPENDENCIES = {
+    "loop_detection": set(),
     "tracing": {"diagnostics"},
     "trace_exporter": set(),
     "mcp": {"bootstrap", "diagnostics"},

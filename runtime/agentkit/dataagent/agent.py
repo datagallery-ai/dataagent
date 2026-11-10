@@ -25,13 +25,14 @@ from dataagent.core.graph import _RECURSION_LIMIT, create_deep_agent
 from dataagent.core.middleware.filesystem.filesystem import FilesystemMiddleware
 from dataagent.extensions import compile_extensions, select_plugins
 from dataagent.extensions.filesystem_backend import build_filesystem_backend
+from dataagent.extensions.loop_detection import loop_callbacks, loop_middleware, propagate_loops
 from dataagent.extensions.skills import VersionedSkillsMiddleware
 from dataagent.extensions.subagents import load_declared_subagents
 from dataagent.extensions.tracing import LocalLangChainTracer
 from dataagent.models import ModelContext
 from dataagent.prompts import render_agent_prompt, render_filesystem_prompt, render_subagent_prompt
 from dataagent.semantic_client import SemanticServiceClient
-from dataagent.settings import Limits
+from dataagent.settings import Limits, LoopDetectionSettings
 
 
 def _correctable_error(error, request):
@@ -46,12 +47,14 @@ def build_native_middleware(
     *,
     root: bool,
     compiled_hooks: Sequence[AgentMiddleware] = (),
+    loop_detection: LoopDetectionSettings | None = None,
 ) -> list[AgentMiddleware]:
     """Accept compiled adapters, not Python handlers; preserve native execution order."""
     return [
         *([TodoListMiddleware()] if root else []),
         ModelCallLimitMiddleware(run_limit=limits.model_calls_per_agent, exit_behavior="error"),
         ToolCallLimitMiddleware(run_limit=limits.tool_calls_per_agent, exit_behavior="error"),
+        *(loop_middleware(loop_detection) if loop_detection is not None else []),
         *compiled_hooks,
         ToolErrorMiddleware(on_error=_correctable_error),
     ]
@@ -151,8 +154,16 @@ def _require_declared_entry(runtime, entry):
     )
 
 
-def build_entry_graph(runnable, *, entry, checkpointer, session, context):
-    """Mount one compiled-subagent Runnable as the whole graph."""
+def build_entry_graph(runnable, *, entry, checkpointer, session, context, loop_detection):
+    """Mount one compiled-subagent Runnable as the whole graph.
+
+    A compiled entry owns its own graph, so it never receives
+    ``build_native_middleware``; the inherited callback is its only guard and it
+    therefore covers text repetition only. ``propagate_loops`` raises that
+    detection even when the entry catches it and returns a normal reply.
+    """
+    if loop_detection.enabled:
+        runnable = propagate_loops(runnable, entry)
     graph = StateGraph(MessagesState, context_schema=ModelContext)
     graph.add_node(entry, runnable)
     graph.add_edge(START, entry)
@@ -163,7 +174,8 @@ def build_entry_graph(runnable, *, entry, checkpointer, session, context):
         callbacks=[
             LocalLangChainTracer(
                 session.traces, context.redaction_secrets, agent_names=(entry,),
-            )
+            ),
+            *loop_callbacks(loop_detection),
         ],
     )
 
@@ -188,6 +200,7 @@ def _build_compiled_entry(runtime, *, checkpointer, session, context, mcp_tools)
     return build_entry_graph(
         runnable, entry=entry, checkpointer=checkpointer,
         session=session, context=context,
+        loop_detection=runtime.settings.dataagent.loop_detection,
     )
 
 
@@ -243,16 +256,22 @@ def build_agent(
     backend = build_filesystem_backend(runtime, session)
     filesystem_prompt = render_filesystem_prompt(outputs=session.outputs, workspaces=workspaces)
     limits = settings.dataagent.limits
+    loop_detection = settings.dataagent.loop_detection
     for child in kwargs["subagents"]:
         if "runnable" in child:
-            # Compiled subagents arrive as complete runnables; the core applies its own policies.
+            # Compiled children can catch model errors just like compiled entries.
+            if loop_detection.enabled:
+                child["runnable"] = propagate_loops(child["runnable"], child["name"])
             continue
         child["system_prompt"] = render_subagent_prompt(
             filesystem_instructions=filesystem_prompt,
             subagent_instructions=child.get("system_prompt"),
         )
         child["middleware"] = [
-            *build_native_middleware(limits, root=False, compiled_hooks=child["middleware"]),
+            *build_native_middleware(
+                limits, root=False, compiled_hooks=child["middleware"],
+                loop_detection=loop_detection,
+            ),
         ]
         filesystem_tools = child.pop("filesystem_tools", None)
         if filesystem_tools is not None:
@@ -277,7 +296,10 @@ def build_agent(
             extension_instructions=kwargs["system_prompt"],
         ),
         middleware=[
-            *build_native_middleware(limits, root=True, compiled_hooks=kwargs["middleware"]),
+            *build_native_middleware(
+                limits, root=True, compiled_hooks=kwargs["middleware"],
+                loop_detection=loop_detection,
+            ),
         ],
     )
     if extension_revision is not None:
@@ -294,6 +316,7 @@ def build_agent(
                 session.traces,
                 context.redaction_secrets,
                 agent_names=tuple(child["name"] for child in kwargs["subagents"]),
-            )
+            ),
+            *loop_callbacks(loop_detection),
         ],
     )
