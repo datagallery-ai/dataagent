@@ -9,6 +9,7 @@ import type { EvidenceRef } from "../../../../lib/evidence-ref";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {
+  ChatSession,
   FileMentionResource,
   MentionResource,
   PerRunMentionKind,
@@ -16,8 +17,17 @@ import type {
   PerRunSelection,
   SessionStartedHints,
   WorkspaceConfigItem,
+  WorkspaceConfigStore,
+} from "../../data-task-state";
+import {
+  configItemStatusLabel,
+  getLlmDisplayLabel,
+  getLlmOptionSubtitle,
+  isConfigItemUsable,
 } from "../../data-task-state";
 import { MentionChips, useMentionAutocomplete } from "./chat-mentions";
+import { SessionConfigBar } from "./SessionConfigBar";
+import { buildChatAddActions, type ChatAddAction } from "./chat-add-actions";
 import { useT } from "../../../../i18n/locale-context";
 import { AttachmentChips } from "./AttachmentChips";
 import { CHAT_ATTACHMENT_ACCEPT } from "./chat-attachments";
@@ -25,7 +35,6 @@ import { useChatTextareaAutoresize, scheduleChatTextareaResize } from "./use-cha
 import { resolveChatInputWidth } from "../../chat-input-layout";
 import { evidenceChipLabel, evidenceChipTooltip } from "../../evidence";
 import { useDataTaskChatInputBindings } from "./DataTaskChatInputBindingsContext";
-import type { ChatSession, WorkspaceConfigStore } from "../../data-task-state";
 import type { QueuedChatPrompt } from "./queued-chat-runs";
 import { createChatTextareaKeyDownCaptureHandler } from "../../chat-textarea-submit";
 
@@ -177,6 +186,10 @@ function DataTaskChatInputLayout({
   positioning = "static",
   keyboardHeight = 0,
   bottomAnchored = false,
+  llmOptions,
+  activeLlmId,
+  onActiveLlmChange,
+  onOpenLlmConfig,
   mentionResources,
   perRunSelection,
   onTogglePerRunMention,
@@ -190,6 +203,10 @@ function DataTaskChatInputLayout({
   selectedEvidenceRefs,
   onRemoveEvidenceRef,
   onClearEvidenceRefs,
+  workspaceConfig,
+  activeSession,
+  sessionStartedHints,
+  onToggleSessionResource,
   attachmentsApi,
   queuedPrompts,
   onEditQueuedPrompt,
@@ -329,6 +346,12 @@ function DataTaskChatInputLayout({
     focusTextArea(textarea);
   };
 
+  const addActions = buildChatAddActions({
+    openFilePicker: () => attachmentsApi.fileInputRef.current?.click(),
+    uploadLabel: t("chatInput.uploadFile"),
+    uploadDescription: t("chatInput.uploadFileHint"),
+  });
+
   return (
     <div
       data-copilotkit
@@ -445,17 +468,36 @@ function DataTaskChatInputLayout({
             )}
           </div>
           {mode !== "transcribe" && (
-            <div className="flex items-center justify-end gap-2 px-2 pb-2">
-              <input
-                ref={attachmentsApi.fileInputRef}
-                type="file"
-                multiple
-                accept={CHAT_ATTACHMENT_ACCEPT}
-                className="hidden"
-                onChange={attachmentsApi.handleFileUpload}
-              />
-              <div className="shrink-0">{sendButton}</div>
-            </div>
+            <SessionConfigBar
+              workspaceConfig={workspaceConfig}
+              session={activeSession}
+              sessionStartedHints={sessionStartedHints}
+              onToggleSessionResource={onToggleSessionResource}
+              leading={
+                <div className="flex items-center gap-1">
+                  <input
+                    ref={attachmentsApi.fileInputRef}
+                    type="file"
+                    multiple
+                    accept={CHAT_ATTACHMENT_ACCEPT}
+                    className="hidden"
+                    onChange={attachmentsApi.handleFileUpload}
+                  />
+                  <ChatAddMenu actions={addActions} />
+                </div>
+              }
+              trailing={
+                <>
+                  <ChatModelPicker
+                    activeLlmId={activeLlmId}
+                    llmOptions={llmOptions}
+                    onActiveLlmChange={onActiveLlmChange}
+                    onOpenLlmConfig={onOpenLlmConfig}
+                  />
+                  <div className="shrink-0">{sendButton}</div>
+                </>
+              }
+            />
           )}
         </div>
       </div>
@@ -642,6 +684,217 @@ function EvidenceChips({
   );
 }
 
+function ChatAddMenu({ actions }: { actions: ChatAddAction[] }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label={t("chatInput.add")}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={t("chatInput.add")}
+        onClick={() => setOpen((value) => !value)}
+        className="grid h-7 w-7 cursor-pointer place-items-center rounded-md text-muted transition-colors duration-200 hover:bg-surface-subtle hover:text-foreground"
+      >
+        <PlusIcon />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label={t("chatInput.addMenu")}
+          className="absolute bottom-full left-0 z-50 mb-2 w-56 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-lg"
+        >
+          {actions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                action.run();
+                setOpen(false);
+              }}
+              className="flex w-full cursor-pointer items-start gap-2 rounded-lg px-3 py-2 text-left transition-colors duration-200 hover:bg-surface-subtle"
+            >
+              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center text-muted">
+                <PaperclipIcon />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-foreground">{action.label}</span>
+                <span className="mt-0.5 block text-xs leading-4 text-muted-light">{action.description}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChatModelPicker({
+  llmOptions,
+  activeLlmId,
+  onActiveLlmChange,
+  onOpenLlmConfig,
+}: {
+  llmOptions: WorkspaceConfigItem[];
+  activeLlmId: string | null;
+  onActiveLlmChange: (llmId: string) => void;
+  onOpenLlmConfig?: () => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const activeItem = llmOptions.find((item) => item.id === activeLlmId) ?? llmOptions[0] ?? null;
+  const label = activeItem ? getLlmDisplayLabel(activeItem) : t("chatInput.selectModel");
+  const activeUnavailable = activeItem ? !isConfigItemUsable(activeItem) : false;
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative min-w-0 max-w-[min(168px,42vw)]">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={activeUnavailable ? t("chatInput.modelNotTested") : label}
+        onClick={() => setOpen((value) => !value)}
+        className={[
+          "chat-model-picker flex w-full min-w-0 cursor-pointer items-center gap-0.5 px-1 py-1 text-xs font-medium transition-colors duration-200",
+          open ? "text-primary" : "text-foreground hover:text-primary",
+        ].join(" ")}
+      >
+        {activeUnavailable ? (
+          <span className="mr-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-danger" aria-hidden />
+        ) : null}
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDownIcon open={open} />
+      </button>
+      {open ? (
+        <div
+          role="listbox"
+          aria-label={t("chatInput.modelList")}
+          className="absolute bottom-full right-0 z-50 mb-2 w-[min(280px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
+        >
+          <div className="border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-light">
+            {t("chatInput.model")}
+          </div>
+          {llmOptions.length === 0 ? (
+            <p className="px-3 py-4 text-sm text-muted-light">{t("chatInput.enableLlmFirst")}</p>
+          ) : (
+            <ul className="max-h-64 overflow-y-auto py-1">
+              {llmOptions.map((item) => {
+                const selected = item.id === activeItem?.id;
+                const usable = isConfigItemUsable(item);
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      aria-disabled={!usable}
+                      disabled={!usable}
+                      title={usable ? undefined : t("chatInput.modelNotTestedHint")}
+                      onClick={() => {
+                        if (!usable) return;
+                        onActiveLlmChange(item.id);
+                        setOpen(false);
+                      }}
+                      className={[
+                        "flex w-full items-start gap-2 px-3 py-2 text-left transition-colors duration-200",
+                        usable ? "cursor-pointer" : "cursor-not-allowed opacity-60",
+                        selected ? "bg-primary/8" : usable ? "hover:bg-surface-subtle" : "",
+                      ].join(" ")}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-foreground">
+                          {getLlmDisplayLabel(item)}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-muted-light">
+                          {getLlmOptionSubtitle(item)}
+                        </span>
+                      </span>
+                      {usable && selected ? (
+                        <span className="mt-0.5 shrink-0 text-primary">
+                          <CheckIcon />
+                        </span>
+                      ) : null}
+                      {!usable ? (
+                        <span className="mt-0.5 shrink-0 rounded bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                          {configItemStatusLabel(item.status, t)}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {onOpenLlmConfig ? (
+            <div className="border-t border-border p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onOpenLlmConfig();
+                }}
+                className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-xs font-medium text-foreground transition-colors duration-200 hover:bg-surface-subtle hover:text-primary"
+              >
+                {t("chatInput.manageModelConfig")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChevronDownIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className={["h-3.5 w-3.5 shrink-0 transition-transform", open ? "rotate-180" : ""].join(" ")}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M5 7.5 10 12.5 15 7.5" />
+    </svg>
+  );
+}
+
 function CheckIcon() {
   return (
     <svg
@@ -738,6 +991,23 @@ function PlusIcon() {
       aria-hidden
     >
       <path d="M10 4.5v11M4.5 10h11" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M14.5 9.5 9 15a3 3 0 0 1-4.2-4.2l6-6a2 2 0 0 1 2.8 2.8l-6 6a1 1 0 0 1-1.4-1.4l5.3-5.3" />
     </svg>
   );
 }

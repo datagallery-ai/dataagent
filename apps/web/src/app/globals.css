@@ -238,15 +238,15 @@
   background-color: transparent !important;
 }
 
-/* Conversation reads as a document: each question opens a turn, later turns get a hairline. */
+/* User questions sit on the right as bubbles, not as section titles. */
 .copilotKitMessages > .chat-question {
-  padding-top: 20px;
+  padding-top: 8px;
 }
 
 .copilotKitMessages > .chat-question ~ .chat-question {
-  margin-top: 28px;
-  padding-top: 28px;
-  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 0;
 }
 
 /* Process-step rail: start at the first marker and stop at the last one. */

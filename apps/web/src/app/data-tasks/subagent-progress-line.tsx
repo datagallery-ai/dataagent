@@ -137,14 +137,8 @@ export function SubagentToolProgress({
   return <SubagentSettledTrail progress={call.progress} />;
 }
 
-export function SubagentProgressNotes({
-  toolCallIds,
-  liveRun,
-}: {
-  toolCallIds: string[];
-  liveRun: LiveRun | null;
-}) {
-  const notes = toolCallIds.flatMap((id) => {
+function subagentNotes(toolCallIds: string[], liveRun: LiveRun | null) {
+  return toolCallIds.flatMap((id) => {
     const call = liveRun?.toolCalls.find((item) => item.id === id);
     if (!call?.progress) return [];
     if (
@@ -157,11 +151,53 @@ export function SubagentProgressNotes({
     }
     return [];
   });
-  if (notes.length === 0) return null;
+}
+
+function subagentNeedsCaption(call: LiveToolCallRecord): boolean {
+  return call.status === "running" || call.progress?.status === "failed" || call.progress?.status === "suspended";
+}
+
+/** Steps that belong to one tool capsule, not a sibling list under the step. */
+export function SubagentChipBody({
+  call,
+}: {
+  call: Pick<LiveToolCallRecord, "status" | "progress">;
+}) {
+  if (!call.progress || !subagentDetailAvailable(call.progress)) return null;
+  const caption =
+    call.status === "running" ||
+    call.progress.status === "failed" ||
+    call.progress.status === "suspended";
   return (
-    <div className="mt-2 grid gap-1">
-      {notes.map((call) => (
-        <SubagentToolProgress key={call.id} call={call} />
+    <div className="border-t border-border/70 px-2 pb-1.5 pt-1">
+      {caption ? <SubagentToolProgress call={call} /> : null}
+      <SubagentStepHistory progress={call.progress} />
+    </div>
+  );
+}
+
+export function SubagentProgressNotes({
+  toolCallIds,
+  liveRun,
+  detail = false,
+}: {
+  toolCallIds: string[];
+  liveRun: LiveRun | null;
+  /** The parent step is open, so this list is that disclosure. No second chevron. */
+  detail?: boolean;
+}) {
+  const notes = subagentNotes(toolCallIds, liveRun);
+  const visible = detail ? notes : notes.filter(subagentNeedsCaption);
+  if (visible.length === 0) return null;
+  return (
+    <div className="grid gap-1">
+      {visible.map((call) => (
+        <div key={call.id} className="grid gap-0.5">
+          {detail && visible.length === 1 && !subagentNeedsCaption(call) ? null : (
+            <SubagentToolProgress call={call} />
+          )}
+          {detail && call.progress ? <SubagentStepHistory progress={call.progress} /> : null}
+        </div>
       ))}
     </div>
   );

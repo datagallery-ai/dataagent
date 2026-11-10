@@ -236,7 +236,7 @@ import {
   useDataTaskIdentity,
 } from "./data-task-identity";
 import type { LiveRun } from "./live-run-state";
-import { SubagentProgressNotes } from "./subagent-progress-line";
+import { SubagentChipBody, SubagentProgressNotes, subagentDetailAvailable } from "./subagent-progress-line";
 import { shouldCoverTranscriptWithLoading } from "./conversation-restore";
 import {
   buildProcessToolGroups,
@@ -3258,9 +3258,9 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
   if (editing) {
     return (
       <>
-        <div className="copilotKitMessage copilotKitUserMessage chat-question px-1">
+        <div className="copilotKitMessage copilotKitUserMessage chat-question flex w-full justify-end px-1">
           <form
-            className="flex w-full flex-col gap-2 rounded-xl bg-surface-subtle px-4 py-3 text-left text-foreground ring-1 ring-border focus-within:ring-border-strong"
+            className="flex w-full max-w-[min(100%,34rem)] flex-col gap-2 rounded-2xl bg-surface-subtle px-3.5 py-2.5 text-left text-foreground ring-1 ring-border focus-within:ring-border-strong"
             onSubmit={(event) => {
               event.preventDefault();
               void submitRewrite();
@@ -3273,7 +3273,7 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
               onKeyDown={createChatTextareaKeyDownHandler(() => {
                 void submitRewrite();
               })}
-              className="min-h-16 w-full resize-none border-0 bg-transparent p-0 text-[17px] font-medium leading-7 tracking-[-0.01em] text-foreground outline-none placeholder:text-muted-light"
+              className="min-h-16 w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-6 text-foreground outline-none placeholder:text-muted-light"
               disabled={busy}
             />
             <div className="flex justify-end gap-1.5 pt-0.5">
@@ -3305,10 +3305,11 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
 
   return (
     <>
-      <div className="copilotKitMessage copilotKitUserMessage chat-question group px-1">
-        <h3
+      <div className="copilotKitMessage copilotKitUserMessage chat-question group flex w-full justify-end px-1">
+        <div className="flex w-fit max-w-[min(100%,34rem)] flex-col items-end">
+        <div
           className={[
-            "whitespace-pre-wrap break-words text-[19px] font-semibold leading-[1.45] tracking-[-0.01em] text-foreground",
+            "w-fit max-w-full whitespace-pre-wrap break-words rounded-2xl bg-surface-subtle px-3.5 py-2.5 text-left text-[15px] leading-6 text-foreground",
             canRewrite ? "cursor-text" : "",
           ].filter(Boolean).join(" ")}
           onClick={() => {
@@ -3317,8 +3318,8 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
           title={canRewrite ? t("chat.clickToRewrite") : undefined}
         >
           {content}
-        </h3>
-        <div className="-ml-1.5 mt-1 flex h-7 items-center gap-0.5 text-muted-light opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+        </div>
+        <div className="mt-1 flex h-7 items-center justify-end gap-0.5 text-muted-light opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           {branchState && branchState.total > 1 ? (
             <div className="mr-1 flex items-center">
               <button
@@ -3368,6 +3369,7 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
               <PencilMenuIcon />
             </button>
           ) : null}
+        </div>
         </div>
       </div>
       <CollaborationPendingInterruptSlot message={props.message} />
@@ -3795,13 +3797,34 @@ function StepAssistantMessage({
   const stepHeaderMeta =
     displayHasToolCalls && !isActive && stepElapsed !== "—" ? stepElapsed : null;
   const showToolChips = displayHasToolCalls && (effectiveToolCalls.length > 1 || stepFailed);
-  const stepToolChips = (chips: ToolChipSummary[]) => (
-    <div className="flex min-w-0 flex-wrap gap-1.5">
-      {chips.map((chip) => (
-        <ToolSummaryChip key={chip.id} chip={chip} onSelectToolAction={selectToolAction} />
-      ))}
-    </div>
-  );
+  const stepToolChips = (chips: ToolChipSummary[], embedSubagent = false) => {
+    const rendered = chips.map((chip) => {
+      const call = liveRun?.toolCalls.find((item) => item.id === chip.id);
+      const subagent =
+        embedSubagent && call?.progress && subagentDetailAvailable(call.progress) ? (
+          <SubagentChipBody call={call} />
+        ) : null;
+      return { chip, subagent };
+    });
+    const stacked = rendered.some((item) => item.subagent);
+    return (
+      <div
+        className={[
+          "flex min-w-0 gap-1.5",
+          stacked ? "flex-col items-start" : "flex-wrap",
+        ].join(" ")}
+      >
+        {rendered.map(({ chip, subagent }) => (
+          <ToolSummaryChip
+            key={chip.id}
+            chip={chip}
+            onSelectToolAction={selectToolAction}
+            subagent={subagent}
+          />
+        ))}
+      </div>
+    );
+  };
   const stepThoughtClass =
     "text-[13px] leading-6 text-muted [&_code]:rounded [&_code]:bg-surface-subtle [&_code]:px-1 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5";
 
@@ -3982,11 +4005,7 @@ function StepAssistantMessage({
           ) : null}
           {displayHasToolCalls ? (
             <div className="grid gap-1.5">
-              {stepToolChips(toolSummaries)}
-              <SubagentProgressNotes
-                toolCallIds={messageToolCallIds(effectiveToolCalls)}
-                liveRun={liveRun}
-              />
+              {stepToolChips(toolSummaries, true)}
             </div>
           ) : null}
         </div>
@@ -4033,9 +4052,11 @@ function messageToolCallIds(toolCalls: AssistantToolCallLike[]): string[] {
 function ToolSummaryChip({
   chip,
   onSelectToolAction,
+  subagent = null,
 }: {
   chip: ToolChipSummary;
   onSelectToolAction: ((toolCallId: string) => void) | null;
+  subagent?: ReactNode | null;
 }) {
   const t = useT();
   const [now, setNow] = useState(() => Date.now());
@@ -4080,34 +4101,44 @@ function ToolSummaryChip({
     </>
   );
 
-  if (chip.overflow || !onSelectToolAction) {
-    return (
-      <span
-        className={[
-          "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md px-2 text-[11.5px]",
-          tone,
-        ].join(" ")}
+  const row = (
+    className: string,
+  ) =>
+    onSelectToolAction && !chip.overflow ? (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelectToolAction(chip.id);
+        }}
+        className={className}
+        title={t("chat.viewStepDetails")}
       >
         {content}
-      </span>
+      </button>
+    ) : (
+      <span className={className}>{content}</span>
+    );
+
+  if (!subagent) {
+    return row(
+      [
+        "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md px-2 text-[11.5px]",
+        onSelectToolAction && !chip.overflow
+          ? "cursor-pointer transition-colors duration-150 hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
+          : "",
+        tone,
+      ].join(" "),
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelectToolAction(chip.id);
-      }}
-      className={[
-        "inline-flex h-6 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11.5px] transition-colors duration-150 hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
-        tone,
-      ].join(" ")}
-      title={t("chat.viewStepDetails")}
-    >
-      {content}
-    </button>
+    <div className={["grid max-w-full overflow-hidden rounded-md", tone].join(" ")}>
+      {row(
+        "inline-flex h-6 w-full items-center gap-1.5 px-2 text-left text-[11.5px] cursor-pointer hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
+      )}
+      {subagent}
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createTranslator } from "../../../i18n/translate";
 import { createInitialLiveRun, reduceLiveRunEvent } from "../live-run-state";
 import { subagentProgressText, subagentSettledTrail, type SubagentProgress } from "../subagent-progress";
-import { SubagentProgressLine, SubagentStepHistory } from "../subagent-progress-line";
+import { SubagentChipBody, SubagentProgressLine, SubagentProgressNotes, SubagentStepHistory } from "../subagent-progress-line";
 
 vi.mock("../../../i18n/locale-context", () => ({
   useT: () => (key: string) => key,
@@ -232,5 +232,70 @@ describe("subagent progress", () => {
     expect(html).toContain("outer");
     expect(html).toContain("checker: Query failed");
     expect(html).not.toContain("Middleware");
+  });
+
+  it("lets the parent step own the checklist and keeps a settled success line out", () => {
+    const progress: SubagentProgress = {
+      agentName: "nl2sql",
+      runs: [{ id: "child", name: "nl2sql", status: "completed" }],
+      nextStepId: 2,
+      updatedAtMs: 0,
+      status: "completed",
+      steps: [
+        { id: "0", subagentRunId: "child", name: "generator", status: "completed", startedAtMs: 0, durationMs: 1000 },
+      ],
+    };
+    const liveRun = {
+      ...createInitialLiveRun(),
+      toolCalls: [
+        {
+          id: "task",
+          name: "task",
+          status: "success" as const,
+          startedAtMs: 0,
+          progress,
+        },
+      ],
+    };
+    const open = renderToStaticMarkup(
+      createElement(SubagentProgressNotes, { detail: true, toolCallIds: ["task"], liveRun }),
+    );
+    const closed = renderToStaticMarkup(
+      createElement(SubagentProgressNotes, { toolCallIds: ["task"], liveRun }),
+    );
+    expect(open).toContain("generator");
+    expect(open).not.toContain("chat.subagentDone");
+    expect(open).not.toContain("aria-expanded");
+    expect(closed).toBe("");
+  });
+
+  it("renders the step list as the inside of the tool capsule", () => {
+    const html = renderToStaticMarkup(
+      createElement(SubagentChipBody, {
+        call: {
+          status: "success",
+          progress: {
+            agentName: "nl2sql",
+            runs: [{ id: "child", name: "nl2sql", status: "completed" }],
+            nextStepId: 1,
+            updatedAtMs: 0,
+            status: "completed",
+            steps: [
+              {
+                id: "0",
+                subagentRunId: "child",
+                name: "generator",
+                status: "completed",
+                startedAtMs: 0,
+                durationMs: 1000,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(html).toContain("generator");
+    expect(html).toContain("border-t");
+    expect(html).not.toContain("chat.subagentDone");
   });
 });

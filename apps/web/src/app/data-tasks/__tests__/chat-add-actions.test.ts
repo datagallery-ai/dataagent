@@ -4,7 +4,11 @@ import { buildChatAddActions } from "../components/chat/chat-add-actions";
 describe("chat add actions", () => {
   it("puts file upload behind the unified plus menu", () => {
     const openFilePicker = vi.fn();
-    const actions = buildChatAddActions({ openFilePicker });
+    const actions = buildChatAddActions({
+      openFilePicker,
+      uploadLabel: "Upload file",
+      uploadDescription: "Add an image, table, or document to this chat",
+    });
 
     expect(actions).toHaveLength(1);
     expect(actions[0]).toMatchObject({

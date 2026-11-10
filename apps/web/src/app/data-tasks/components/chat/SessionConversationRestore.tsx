@@ -8,6 +8,9 @@ import { getRuntimeCapabilities } from "../../../../lib/config-api/capabilities"
 import {
   isIgnorableConversationRestoreError,
   isConversationRestoreRunActive,
+  liveRunFromNativeMessages,
+  mergeStoredLiveRun,
+  readStoredLiveRun,
   shouldApplyNativeSession,
 } from "../../conversation-restore";
 import {
@@ -17,6 +20,7 @@ import { clearPendingCollaborationInterrupt } from "./pending-collaboration-inte
 import {
   useConversationRestoreGate,
   useLiveRun,
+  useLiveRunSetters,
 } from "../../use-data-gallery-run";
 import { clearConversationBranchSnapshot } from "../../conversation-branch-store";
 import { setSessionNotice } from "./session-notice";
@@ -32,6 +36,7 @@ export function SessionConversationRestore({
   const threadId = chatConfig?.threadId;
   const { agent } = useAgent({ agentId });
   const { liveRun } = useLiveRun(threadId);
+  const { setLiveRunForThread } = useLiveRunSetters();
   const { setThreadRestoring, markThreadRestored } = useConversationRestoreGate();
   const fetchGenerationRef = useRef(0);
   const prevThreadIdRef = useRef<string | undefined>(undefined);
@@ -128,6 +133,15 @@ export function SessionConversationRestore({
           })
         ) {
           currentAgent.setMessages(session.messages as Message[]);
+          const hydrated = mergeStoredLiveRun(
+            liveRunFromNativeMessages(session.messages, session.status),
+            readStoredLiveRun(threadId),
+          );
+          if (hydrated.toolCalls.length > 0 || hydrated.runStatus !== "idle") {
+            setLiveRunForThread(threadId, (current) =>
+              current.toolCalls.length > 0 ? current : hydrated,
+            );
+          }
         }
       } catch (error) {
         if (isIgnorableConversationRestoreError(error)) {
