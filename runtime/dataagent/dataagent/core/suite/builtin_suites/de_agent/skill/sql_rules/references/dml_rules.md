@@ -18,6 +18,28 @@
 当前 SparkSQL 使用的是 3.1 的版本，所以请保证你输出的 SQL 语法是符合这个版本标准的，且额外必须保证WITH/CTE 位于 INSERT OVERWRITE 之前。
 - **禁止使用当前方言不支持的类型做声明或 CAST**：DDL 列类型、`CAST(... AS type)`、`AS type` 等目标类型必须属于当前方言（Hive DDL / Spark DML）支持且符合本规范白名单的类型。禁止把其他引擎类型直接拿来用——典型反例：Hive/Spark **不支持** `REAL`（常见于 PostgreSQL/SQLite），不得写 `CAST(x AS REAL)` 或列类型 `REAL`；应改用本规范允许的 `DOUBLE`（仅过程计算）或 `DECIMAL(p,s)`（落表）。同理禁止方言外的 `NUMERIC`、`MONEY`、`SERIAL`、`TEXT`（应用 `STRING`）等。
 
+## 方言/语法层硬约束（Zero-Tolerance，违反即解析失败）
+以下写法在当前 SparkSQL / Hive 方言下**直接解析失败**，不是「风格不好」，是**语法非法**。写 SQL 前必须逐条内化，产出前必须逐条自检。
+1. **CASE WHEN 必须写全 ELSE 分支**：
+   - Hive 方言硬性拒绝缺 `ELSE` 的 `CASE WHEN`，每个 `CASE` 都必须以 `ELSE` 收尾。
+   - 正例：`CASE WHEN cond THEN a ELSE NULL END`；`ELSE` 的默认值按业务语义取（无数值意义时用 `NULL`，有兜底值时用兜底值）。
+   - 反例：`CASE WHEN cond THEN a END`（缺失 ELSE）。
+2. **禁止嵌套聚合函数**：
+   - `MIN(AVG(x))`、`MAX(SUM(x))`、`AVG(COUNT(x))` 等「聚合套聚合」一律拒绝。
+   - 必须先在子查询/CTE 里把**内层聚合物化成列**，外层再聚合一次。
+   - 正例：`SELECT MAX(avg_score) FROM (SELECT AVG(score) AS avg_score FROM t GROUP BY uid) x`；反例：`SELECT MAX(AVG(score)) FROM t`。
+3. **CASE 分支内禁止内嵌标量子查询**：
+   - `CASE WHEN ... THEN (SELECT MAX(x) FROM t) ... END` 解析失败。
+   - 必须先把子查询结果**预计算成列**（独立 CTE / 子查询 + JOIN），再在 CASE 里引用该列。
+4. **宏只能以裸的偏移量形式出现在条件位置，禁止参与算术表达式**：
+   - 宏偏移量必须是**数字常量**，不支持算术运算；`-5*365` 必须预计算为 `-1825`。
+   - `${iap_app_w}` 这类宏参与乘除/加减同样会破坏解析，不能写成 `${iap_app_w} * 2`、`${start_time,-N,yyyyMMdd} + 1` 之类。
+   - 宏只能出现在「分区过滤 / 直接比较」的完整值位置上（如 `pt_d = '$date'`、`pt_d >= '${start_time,-7,yyyyMMdd}'`）。
+5. **禁止使用方言不支持的 DDL/DML 类型**：
+   - 禁止 `REAL`、`NUMERIC`、`MONEY`、`SERIAL`、`TEXT`。
+   - 替代方案：过程计算用 `DOUBLE`，落表用 `DECIMAL(p,s)`，字符串用 `STRING`，整型用 `TINYINT`/`SMALLINT`/`INT`/`BIGINT`。
+   - 该条同时约束 DDL 列类型、`CAST(... AS type)`、`AS type` 三处目标类型（详见上文「SQL 方言配置」）。
+
 ## 通用 SQL 生成硬规则（从历史问题抽象）
 这些规则只描述可复用的工程模式，不绑定具体表名或具体业务列名。生成 SQL 时必须优先套用，除非用户给出更高优先级的明确业务约束。
 1. **要求排序的序列特征必须先定序再拼接**：

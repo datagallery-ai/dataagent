@@ -130,8 +130,11 @@ TOOLS:
         # 开启后由 checker 内部依次调用 DataOps 校验 DDL/DML；关闭时不访问 DataOps。
         dataops_validation_enabled: true
         # 每条 SQL 在 DataOps 上的最大提交次数（跨工具调用累计，修改 SQL 不重置预算）。
-        # 有效范围 [1, 20]，越界会被截断；非法值回退到默认值 5。
-        dataops_max_attempts: 5
+        # **不在这里设置** —— 提交次数上限只有一个来源：
+        # dataagent.utils.constants.DEFAULT_DATAOPS_VALIDATION_ATTEMPTS。
+        # validate_deliverables 的会话级上限、dataops_validate_tool 的 attempt 上限
+        # 与这里的每-SQL 预算共用同一个常量，三处数值必然一致。
+        # 如需调整，改那一个常量，不要在此处另设一个值。
         # 是否允许模型思考（默认 false）。规则修复是定向打补丁，不需要深思。
         enable_thinking: false
     # Schema linking 数据探查:对单表拉 LIMIT N 行样例(SELECT only)

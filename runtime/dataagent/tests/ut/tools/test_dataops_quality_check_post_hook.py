@@ -402,37 +402,36 @@ class TestMarkdownTable:
 # Frontend delivery
 # ============================================================================
 class TestFrontendDelivery:
-    def test_report_is_merged_into_the_last_ai_message(self, tmp_path):
-        """非流式链路（chat / REST / A2A non-stream）靠 messages[-1] 取最终回复。
+    def _quality(self):
+        return {
+            "passed": True,
+            "quality_check": {
+                "ok": True,
+                "checks": ["null_rate"],
+                "sample_size": 10000,
+                "warnings": [],
+                "details": {"col1": {"null_rate": 1.0, "single_value_ratio": 0.1}},
+            },
+        }
 
-        所以报告必须**并入**最后一条 AI 消息 —— 追加成新消息会顶掉 agent 自己
-        的交付说明（REST 的 _format_result 只取 messages[-1]）。
+    def test_report_is_appended_as_a_separate_message(self, tmp_path):
+        """交付说明与质量校验是**两条消息** —— 校验报告追加在交付消息之后。
+
+        早先的实现把报告并进交付消息的 content，两件事挤在一条消息里，
+        读的人分不清哪段是交付、哪段是校验。
         """
         _deliverable(tmp_path)
         runtime = _runtime(tmp_path)
 
-        with patch.object(
-            hook,
-            "_invoke_trial_compute",
-            return_value={
-                "passed": True,
-                "quality_check": {
-                    "ok": True,
-                    "checks": ["null_rate"],
-                    "sample_size": 10000,
-                    "warnings": [],
-                    "details": {"col1": {"null_rate": 1.0, "single_value_ratio": 0.1}},
-                },
-            },
-        ):
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()):
             result = hook.dataops_quality_check_post(_state(), runtime)
 
-        assert len(result["messages"]) == 1
-        content = result["messages"][0].content
-        assert "| 字段名 |" in content
+        messages = result["messages"]
+        assert len(messages) == 1
+        assert "| 字段名 |" in messages[0].content
 
-    def test_report_does_not_replace_the_agent_delivery_summary(self, tmp_path):
-        """agent 自己的交付说明必须保留 —— 不能被报告顶掉。"""
+    def test_delivery_message_content_is_left_untouched(self, tmp_path):
+        """交付消息的 content 不能被校验报告污染。"""
         from langchain_core.messages import AIMessage
 
         _deliverable(tmp_path)
@@ -443,27 +442,43 @@ class TestFrontendDelivery:
             "messages": [AIMessage(content="已完成交付，SQL 见 sql/insert_x.sql。")],
         }
 
-        with patch.object(
-            hook,
-            "_invoke_trial_compute",
-            return_value={
-                "passed": True,
-                "quality_check": {
-                    "ok": True,
-                    "checks": ["null_rate"],
-                    "sample_size": 10000,
-                    "warnings": [],
-                    "details": {"col1": {"null_rate": 1.0, "single_value_ratio": 0.1}},
-                },
-            },
-        ):
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()):
             result = hook.dataops_quality_check_post(state, runtime)
 
-        assert len(result["messages"]) == 1
-        content = result["messages"][0].content
-        # 交付说明 + 表格，都在最后一条消息里
-        assert "已完成交付" in content
-        assert "| 字段名 |" in content
+        messages = result["messages"]
+        # 交付消息 + 校验消息，两条
+        assert len(messages) == 2
+        # 交付消息内容原样保留
+        assert messages[0].content == "已完成交付，SQL 见 sql/insert_x.sql。"
+        assert "| 字段名 |" not in messages[0].content
+        # 校验在交付之后
+        assert "| 字段名 |" in messages[1].content
+
+    def test_report_message_carries_the_delivery_section(self, tmp_path):
+        """非流式链路的最终回复取 messages[-1] —— 最后一条必须两段都在。
+
+        校验消息里要带一段交付说明（用 ``## 最终交付`` 标题隔开），
+        否则 REST / A2A non-stream 拿到的最终回复就只剩校验报告，
+        agent 自己的交付说明丢了。
+        """
+        from langchain_core.messages import AIMessage
+
+        _deliverable(tmp_path)
+        runtime = _runtime(tmp_path)
+        state = {
+            "complete": True,
+            "run_id": 1,
+            "messages": [AIMessage(content="已完成交付，SQL 见 sql/insert_x.sql。")],
+        }
+
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()):
+            result = hook.dataops_quality_check_post(state, runtime)
+
+        final_content = result["messages"][-1].content
+        # 交付在前、校验在后
+        assert final_content.index("## 最终交付") < final_content.index("| 字段名 |")
+        assert "已完成交付" in final_content
+        assert "| 字段名 |" in final_content
 
     def test_report_is_emitted_to_the_stream(self, tmp_path):
         """流式链路里 state 变更不会再被 yield —— 必须额外推一条 output_msg。"""
@@ -471,25 +486,45 @@ class TestFrontendDelivery:
         runtime = _runtime(tmp_path)
         emitted: list[dict] = []
 
-        with patch.object(
-            hook,
-            "_invoke_trial_compute",
-            return_value={
-                "passed": True,
-                "quality_check": {
-                    "ok": True,
-                    "checks": ["null_rate"],
-                    "sample_size": 10000,
-                    "warnings": [],
-                    "details": {"col1": {"null_rate": 1.0, "single_value_ratio": 0.1}},
-                },
-            },
-        ), patch.object(hook, "get_stream_writer", return_value=emitted.append):
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()), patch.object(
+            hook, "get_stream_writer", return_value=emitted.append
+        ):
             hook.dataops_quality_check_post(_state(), runtime)
 
-        assert len(emitted) == 1
-        assert emitted[0]["type"] == "output_msg"
-        assert "| 字段名 |" in emitted[0]["content"]
+        # 进度提示 + 报告，各一条
+        assert len(emitted) == 2
+        assert all(event["type"] == "output_msg" for event in emitted)
+        assert "| 字段名 |" in emitted[-1]["content"]
+
+    def test_stream_emission_does_not_duplicate_the_delivery_summary(self, tmp_path):
+        """流式链路只推**报告** —— 交付正文已由 planner 推过一遍，不能再推一次。"""
+        from langchain_core.messages import AIMessage
+
+        _deliverable(tmp_path)
+        runtime = _runtime(tmp_path)
+        emitted: list[dict] = []
+        state = {
+            "complete": True,
+            "run_id": 1,
+            "messages": [AIMessage(content="已完成交付，SQL 见 sql/insert_x.sql。")],
+        }
+
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()), patch.object(
+            hook, "get_stream_writer", return_value=emitted.append
+        ):
+            hook.dataops_quality_check_post(state, runtime)
+
+        assert not any("已完成交付" in event["content"] for event in emitted)
+
+    def test_progress_notice_is_not_pushed_into_state(self, tmp_path):
+        """「校验进行中」只是进度提示 —— 不能混进 messages 当成一条回复。"""
+        _deliverable(tmp_path)
+        runtime = _runtime(tmp_path)
+
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()):
+            result = hook.dataops_quality_check_post(_state(), runtime)
+
+        assert all("正在对" not in message.content for message in result["messages"])
 
     def test_stream_emission_failure_does_not_break_the_hook(self, tmp_path):
         """流式推送失败不能影响交付 —— state 路径仍然要拿到报告。"""
@@ -499,20 +534,9 @@ class TestFrontendDelivery:
         def _boom(_event):
             raise RuntimeError("stream closed")
 
-        with patch.object(
-            hook,
-            "_invoke_trial_compute",
-            return_value={
-                "passed": True,
-                "quality_check": {
-                    "ok": True,
-                    "checks": ["null_rate"],
-                    "sample_size": 10000,
-                    "warnings": [],
-                    "details": {"col1": {"null_rate": 1.0, "single_value_ratio": 0.1}},
-                },
-            },
-        ), patch.object(hook, "get_stream_writer", return_value=_boom):
+        with patch.object(hook, "_invoke_trial_compute", return_value=self._quality()), patch.object(
+            hook, "get_stream_writer", return_value=_boom
+        ):
             result = hook.dataops_quality_check_post(_state(), runtime)
 
         assert len(result["messages"]) == 1
@@ -565,13 +589,18 @@ class TestNodeLevelPostHook:
         key, value = runtime.set_cache.call_args[0]
         assert key == hook._TRIAL_COMPUTE_DONE_KEY
         assert 42 in value
-        # 报告进了 messages。
-        # 注意形态：节点级增量的 messages 是**单条** AIMessage，hook 必须原样
-        # 保持（BaseNode.aprocess 之后才会把它拼成列表并并入历史）。
-        message = result["messages"]
-        assert isinstance(message, AIMessage)
-        assert "| 字段名 |" in message.content
-        assert "已完成交付" in message.content
+        # 报告作为**新的一条**消息追加在交付消息之后。
+        # 节点级增量里 messages 是单条 AIMessage，hook 返回**列表**（交付 + 报告），
+        # BaseNode.aprocess 会把它拼到历史消息之后（[*state["messages"], *result_msgs]）。
+        messages = result["messages"]
+        assert isinstance(messages, list)
+        assert len(messages) == 2
+        assert isinstance(messages[0], AIMessage)
+        assert messages[0].content == "已完成交付。"
+        assert "| 字段名 |" in messages[1].content
+        # 校验消息带交付小节 —— 非流式链路取 messages[-1] 时不能丢交付说明
+        assert "已完成交付" in messages[1].content
+        assert "## 最终交付" in messages[1].content
 
     def test_node_delta_return_does_not_duplicate_reducer_fields(self, tmp_path):
         """节点级 hook 的返回值是增量 —— 不能把 original_state 整体带回去。
@@ -605,6 +634,106 @@ class TestNodeLevelPostHook:
 
         key, value = runtime.set_cache.call_args[0]
         assert 9 in value
+
+
+# ============================================================================
+# CLI visibility — CLI 显示的是 messages[-1]，必须两段都在
+# ============================================================================
+class TestCliVisibility:
+    """CLI 没有前端环境，只能看到 ``response["messages"][-1]``（见 cli/main.py）。
+
+    所以必须模拟 ``BaseNode.aprocess`` 的合并语义，验证 CLI 实际打印的那条
+    消息里，交付说明与质量校验结论都在 —— 否则 CLI 用户看不到交付总结。
+    """
+
+    def _merged_final_state(self, tmp_path, delivery: str):
+        """按 BaseNode.aprocess 的语义合并节点增量，得到 CLI 会看到的 final state。"""
+        from langchain_core.messages import AIMessage
+
+        _deliverable(tmp_path)
+        runtime = _runtime(tmp_path)
+        planner_result = {"messages": AIMessage(content=delivery), "complete": True}
+        original_state = {"messages": [], "complete": False, "run_id": 1}
+
+        with patch.object(hook, "_invoke_trial_compute", return_value=TestFrontendDelivery()._quality()):
+            delta = hook.dataops_quality_check_post(
+                planner_result, runtime, original_state=original_state
+            )
+
+        result_msgs = delta.get("messages", [])
+        if result_msgs and not isinstance(result_msgs, list):
+            result_msgs = [result_msgs]
+        return {
+            **{k: v for k, v in delta.items() if k != "messages"},
+            "messages": [*original_state.get("messages", []), *result_msgs],
+        }
+
+    def test_cli_final_message_carries_both_delivery_and_report(self, tmp_path):
+        """CLI 打印的 messages[-1] 必须同时含交付说明与质量校验结论。"""
+        delivery = "已完成交付，SQL 见 sql/insert_x.sql。"
+        final_state = self._merged_final_state(tmp_path, delivery)
+
+        final_content = final_state["messages"][-1].content
+        assert "## 最终交付" in final_content
+        assert delivery in final_content
+        assert "| 字段名 |" in final_content
+
+    def test_cli_final_message_order_is_delivery_then_report(self, tmp_path):
+        """交付在前、校验在后 —— 用户从上往下读就是先交付后校验。"""
+        delivery = "已完成交付，SQL 见 sql/insert_x.sql。"
+        final_state = self._merged_final_state(tmp_path, delivery)
+
+        final_content = final_state["messages"][-1].content
+        assert final_content.index(delivery) < final_content.index("| 字段名 |")
+
+    def test_cli_sees_delivery_and_report_as_two_messages(self, tmp_path):
+        """交付消息与校验消息在 state 里是两条，交付那条的 content 不被污染。"""
+        delivery = "已完成交付，SQL 见 sql/insert_x.sql。"
+        final_state = self._merged_final_state(tmp_path, delivery)
+
+        messages = final_state["messages"]
+        assert len(messages) == 2
+        assert messages[0].content == delivery
+        assert "| 字段名 |" not in messages[0].content
+        assert "| 字段名 |" in messages[1].content
+
+    def test_cli_debug_renderer_shows_delivery_and_report_separately(self, tmp_path):
+        """CLI debug 模式走 StreamRenderer：交付（planner 面板）与校验（DataAgent 面板）分开渲染。"""
+        from dataagent.utils.cli.rich_renderer import StreamRenderer
+
+        _deliverable(tmp_path)
+        runtime = _runtime(tmp_path)
+        emitted: list[dict] = []
+
+        with patch.object(hook, "_invoke_trial_compute", return_value=TestFrontendDelivery()._quality()), patch.object(
+            hook, "get_stream_writer", return_value=emitted.append
+        ):
+            hook.dataops_quality_check_post(_state(), runtime)
+
+        renderer = StreamRenderer()
+        renderer.start(initial_node="planner")
+        try:
+            renderer.handle_event({"type": "planner_stream", "node_name": "planner", "phase": "start"})
+            renderer.handle_event(
+                {
+                    "type": "planner_stream",
+                    "node_name": "planner",
+                    "phase": "content",
+                    "content": "已完成交付，SQL 见 sql/insert_x.sql。",
+                }
+            )
+            renderer.handle_event({"type": "planner_stream", "node_name": "planner", "phase": "end"})
+            for event in emitted:
+                renderer.handle_event(event)
+        finally:
+            renderer.stop()
+
+        # 校验报告走的是 hook 推的 output_msg，节点名 DataAgent（不是 planner）
+        report_events = [event for event in emitted if "| 字段名 |" in event["content"]]
+        assert report_events
+        assert report_events[-1]["node_name"] == "DataAgent"
+        # 交付正文没有被 hook 重复推一遍
+        assert not any("已完成交付" in event["content"] for event in emitted)
 
 
 # ============================================================================

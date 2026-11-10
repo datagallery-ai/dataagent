@@ -52,3 +52,32 @@ def test_hitl_hooks_resolve_via_merged_suite_prefix() -> None:
         fn = agent._try_resolve_suite_hook(f"{SUITE_NAME}.{rel_spec}", location=location)
         assert fn is not None, rel_spec
         assert callable(fn)
+
+
+def _registered_hooks(location: str) -> set[str]:
+    """从 hooks.yaml 原样解析出某个位置注册的 hook 标识集合。
+
+    必须解析真实 YAML 而不是硬编码名字：条目被误写成注释时 YAML 仍能解析成功，
+    但那条 hook 根本没注册，只有解析真实文件才抓得到。
+    """
+    import yaml
+
+    raw = (DE_AGENT_SUITE_ROOT / "hooks" / "hooks.yaml").read_text(encoding="utf-8")
+    document = yaml.safe_load(raw)
+    entries = document["HOOKS"]
+
+    node = location.split(".")
+    for part in node:
+        entries = entries[part]
+
+    names: set[str] = set()
+    for entry in entries:
+        names.add(entry["name"] if isinstance(entry, dict) else entry)
+    return names
+
+
+def test_quality_check_post_hook_is_registered_in_hooks_yaml() -> None:
+    """质量校验 post-hook 必须在 hooks.yaml 里真的注册，否则交付后不会做数据质量校验。"""
+    assert "hooks.dataops_quality_check_post.dataops_quality_check_post" in _registered_hooks(
+        "nodes.planner.post"
+    )

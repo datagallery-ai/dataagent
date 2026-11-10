@@ -262,14 +262,14 @@ def test_dataops_order_and_persistent_retry_budget(tmp_path, monkeypatch, failin
     assert (tmp_path / "insert.sql").read_text() == (DML + f" -- revision {max_attempts}" if failing_kind else DML)
 
 
-def test_dataops_attempt_budget_defaults_to_five(tmp_path):
-    """缺省每条 SQL 最多提交 5 次。"""
+def test_dataops_attempt_budget_defaults_to_the_global_limit(tmp_path):
+    """缺省每条 SQL 的提交预算等于全仓库唯一的那个上限。"""
     pipeline = _dataops_pipeline(tmp_path)
-    assert pipeline._max_dataops_attempts == DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS == 5
+    assert pipeline._max_dataops_attempts == DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS == 10
 
 
 def test_dataops_attempt_budget_is_configurable(tmp_path):
-    """配置文件里的 dataops_max_attempts 覆盖默认值。"""
+    """配置文件里的 dataops_max_attempts 覆盖默认值（只能调低）。"""
     pipeline = _dataops_pipeline(tmp_path, dataops_max_attempts=2)
     assert pipeline._max_dataops_attempts == 2
 
@@ -279,16 +279,38 @@ def test_dataops_attempt_budget_is_configurable(tmp_path):
     [
         (0, 1),  # 下界
         (-3, 1),
-        (999, 20),  # 上界
+        (999, DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),  # 上界 = 全局上限，不能超过
         ("not-a-number", DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),
         (None, DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),
     ],
 )
 def test_dataops_attempt_budget_is_clamped_and_validated(configured, expected):
-    """非法/越界配置必须被夹紧或回退，不能让预算失效。"""
+    """非法/越界配置必须被夹紧或回退，不能让预算失效，也不能超过全局上限。"""
     from dataagent.core.suite.builtin_suites.de_agent.tools.sql_checkers import _resolve_max_dataops_attempts
 
     assert _resolve_max_dataops_attempts({"dataops_max_attempts": configured}) == expected
+
+
+def test_all_dataops_attempt_limits_share_one_source():
+    """三处提交次数限制必须共用同一个常量，否则报错里的次数会互相打架。"""
+    from dataagent.actions.tools.local_tool import dataops_validate_tool
+    from dataagent.core.suite.builtin_suites.de_agent.tools import sql_checkers, verify
+    from dataagent.utils.constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
+
+    assert DEFAULT_DATAOPS_VALIDATION_ATTEMPTS == 10
+    assert dataops_validate_tool.MAX_VALIDATE_ATTEMPTS == DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
+    assert verify.MAX_VALIDATE_DELIVERABLES_ATTEMPTS == DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
+    assert sql_checkers.DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS == DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
+
+
+def test_validate_deliverables_keeps_its_tool_description():
+    """工具描述是 docstring —— f-string docstring 不会写进 __doc__，会把描述弄没。"""
+    from dataagent.core.suite.builtin_suites.de_agent.tools import verify
+
+    doc = verify.validate_deliverables.__doc__
+    assert doc, "validate_deliverables 的 docstring 丢了，工具描述会变成空"
+    assert "validate_deliverables" not in doc  # 只校验描述正文还在
+    assert "DEFAULT_DATAOPS_VALIDATION_ATTEMPTS" in doc
 
 
 def test_dataops_exception_is_bounded_and_does_not_expose_provider_text(tmp_path, monkeypatch):
@@ -305,3 +327,85 @@ def test_dataops_exception_is_bounded_and_does_not_expose_provider_text(tmp_path
     assert report.get("dataops", {}).get("status") == "ERROR"
     assert "private-provider-error" not in json.dumps(report)
     assert not list((tmp_path / ".runtime/sql_checkers").glob("*.lock"))
+
+
+def _utf8_dataops_pipeline(workspace, enabled=True, **extra_config):
+    """Build a DataOps pipeline whose fixture files are written as UTF-8.
+
+    The shared ``_dataops_pipeline`` fixture writes without an explicit
+    encoding, which corrupts the Chinese comments in the SQL on a cp936
+    default-encoding host and makes the DDL partition rule fire. These budget
+    tests need the DDL to be recognised so the failure reaches DataOps.
+    """
+    for kind, sql in (("create", DDL), ("insert", DML)):
+        path = workspace / f"{kind}.sql"
+        if not path.exists():
+            path.write_text(sql, encoding="utf-8")
+    runtime = Runtime(Env(llm_configs={}, tavily_configs={}, modules={}, hooks={}, workspace_dir=workspace))
+    return SQLCheckerPipeline(
+        workspace,
+        None,
+        RULES,
+        {"dataops_validation_enabled": enabled, **extra_config},
+        tool_context=ToolExecutionContext(runtime=runtime),
+    )
+
+
+def _exhaust_the_dataops_budget(tmp_path, monkeypatch, failing_kind="dml"):
+    """Drive the checker past its per-SQL submission budget and return the report."""
+    from dataagent.actions.tools.local_tool import dataops_validate_tool
+
+    async def service_result(sql, *, attempt, prior_attempts, _tool_context):
+        """Fail one SQL kind so every round consumes a submission from the budget."""
+        kind = "ddl" if sql.startswith("CREATE") else "dml"
+        return {"passed": kind != failing_kind, "log_analysis_summary": "分区字段不存在"}
+
+    monkeypatch.setattr(dataops_validate_tool, "dataops_validate_sql_with_log_analysis", service_result)
+    max_attempts = DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS
+    for _ in range(max_attempts + 1):
+        report = asyncio.run(_utf8_dataops_pipeline(tmp_path).run("create.sql", "insert.sql"))
+    return report, max_attempts
+
+
+def test_attempts_exhausted_explains_the_budget_and_the_next_steps(tmp_path, monkeypatch):
+    """attempts_exhausted 必须说清总共几次、用了几次、接下来怎么做。"""
+    report, max_attempts = _exhaust_the_dataops_budget(tmp_path, monkeypatch)
+
+    assert report.get("status") == "BLOCKED"
+    dataops = report.get("dataops", {})
+    assert dataops.get("reason") == "attempts_exhausted"
+    # 总预算、已用次数、触发点都必须结构化给出。
+    assert dataops.get("max_attempts") == max_attempts
+    assert dataops.get("attempts_used") == {"ddl": max_attempts, "dml": max_attempts}
+    assert dataops.get("rejected_attempt") == max_attempts + 1
+    # 接下来该做什么必须成条给出，而不是一句"重新调用 checker"。
+    steps = dataops.get("next_steps") or []
+    assert len(steps) >= 3
+    assert any("DEFAULT_DATAOPS_VALIDATION_ATTEMPTS" in step for step in steps)
+    # 最近一次真正的失败原因要带出来，否则只说"预算用尽"等于没有诊断。
+    assert any(item.get("detail") for item in dataops.get("failure_history") or [])
+
+    summary = report.get("summary", "")
+    assert str(max_attempts) in summary
+    assert "预算已用尽" in summary
+    assert "接下来该怎么做" in summary
+
+
+def test_attempts_exhausted_summary_does_not_tell_the_agent_to_just_retry(tmp_path, monkeypatch):
+    """预算按文件路径累计，改 SQL 不重置 —— 不能建议直接重试。"""
+    report, _ = _exhaust_the_dataops_budget(tmp_path, monkeypatch)
+
+    summary = report.get("summary", "")
+    assert "不要直接重复调用 checker" in summary
+    # 旧的泛泛指引（"处理报告中的问题后重新调用 checker"）必须消失 ——
+    # 预算耗尽时重试只会立刻拿到同样的拒绝。
+    assert "请处理报告中的问题后重新调用 checker" not in summary
+
+
+def test_attempts_exhausted_does_not_leak_raw_provider_text(tmp_path, monkeypatch):
+    """预算耗尽的诊断只能包含摘要，不能把传输层原文搬进报告。"""
+    report, _ = _exhaust_the_dataops_budget(tmp_path, monkeypatch)
+
+    payload = json.dumps(report, ensure_ascii=False)
+    assert "private-provider-error" not in payload
+    assert report.get("dataops", {}).get("explanation")

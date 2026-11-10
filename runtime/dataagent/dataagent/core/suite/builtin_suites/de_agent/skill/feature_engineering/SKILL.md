@@ -42,7 +42,8 @@ description: |
   - DDL 与对应 DML 必须作为同一交付单元，DDL 未通过不得继续提交 DML。
 - **DataOps 校验（checker 内部阶段）**：由 `check_and_repair_sql.config.dataops_validation_enabled` 控制，默认开启；仅需静态检查时设为 `false`。
   - 开启后，程序规则检查通过才会在 DataOps 临时表上按 DDL → DML 顺序校验；DDL 失败不提交 DML。
-  - 失败返回 BLOCKED 及 `dataops.results` 中的日志分析摘要；处理问题后重新调用 checker。同一交付文件对每条 SQL 最多提交 5 次（可用 `check_and_repair_sql.config.dataops_max_attempts` 调整），修改 SQL 不重置预算。
+  - 失败返回 BLOCKED 及 `dataops.results` 中的日志分析摘要；处理问题后重新调用 checker。同一交付文件对每条 SQL 最多提交 10 次，修改 SQL 不重置预算。预算耗尽时报告会写明「总共几次 / 已用几次 / 接下来怎么做」，并附带 `dataops.failure_history` 里最近一次的真实失败摘要 —— 按摘要修根因，不要盲目重复调用。
+  - 提交次数上限全仓库只有一个来源：`dataagent.utils.constants.DEFAULT_DATAOPS_VALIDATION_ATTEMPTS`（=10）。`check_and_repair_sql.config.dataops_max_attempts` 只能在 1-10 之间调低，不能调高。
   - 开启但服务未配置/校验被跳过时不得当作通过；配置关闭时报告 DISABLED，不声称完成 DataOps 验证。
   - checker 未通过时不自动发布候选补丁。
 - 维度表选表经验：
