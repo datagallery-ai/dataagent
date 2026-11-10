@@ -44,6 +44,10 @@ _INGESTION_COMPLETED = {
 }
 _SEMANTIC_NOT_UP = "semantic service is not UP"
 _INGESTION_UNAVAILABLE = "failed to query ingestion status"
+# Prompt view/update failures must not echo exception text: messages from the file layer
+# carry server-side absolute paths. Full details go to the log via logger.exception.
+_PROMPT_VIEW_FAILED = "failed to view prompt"
+_PROMPT_UPDATE_FAILED = "failed to update prompt"
 # json.loads accepts "\ud800"-style escapes, so unpaired surrogates can reach both validation
 # error details (echoed input) and downstream error fields; they cannot be UTF-8 encoded.
 _SURROGATE_RE = re.compile("[\ud800-\udfff]")
@@ -389,7 +393,7 @@ class DataAgentService:
                 "Unexpected prompt view error: {}",
                 {"message": str(exc), "type": exc.__class__.__name__},
             )
-            return self._format_error(str(exc), agent=agent)
+            return self._format_error(_PROMPT_VIEW_FAILED, agent=agent)
         return {"result": {"success": True, "markdown": markdown, "updated_at": updated_at}}
 
     async def update_prompt(
@@ -407,7 +411,7 @@ class DataAgentService:
                 "Unexpected prompt update error: {}",
                 {"message": str(exc), "type": exc.__class__.__name__},
             )
-            return self._format_error(str(exc), agent=agent)
+            return self._format_error(_PROMPT_UPDATE_FAILED, agent=agent)
         return {"result": {"success": True, "updated_at": updated_at}}
 
     def _select(self, scenario: str | None) -> DataAgent:

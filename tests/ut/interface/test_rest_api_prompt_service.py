@@ -215,7 +215,8 @@ async def test_view_prompt_missing_config_key_returns_agent_failure(
 
     result = await service.view_prompt("business_twin")
 
-    _assert_agent_failure(result, "CORE.perceptor.user_sql_rules is not configured")
+    _assert_agent_failure(result, "failed to view prompt")
+    assert str(tmp_path) not in result["result"]["message"]
 
 
 @pytest.mark.asyncio
@@ -229,7 +230,8 @@ async def test_update_prompt_rejects_directory_name_and_keeps_file(
 
     result = await service.update_prompt("business_twin", MARKDOWN)
 
-    _assert_agent_failure(result, "must be a bare file name")
+    _assert_agent_failure(result, "failed to update prompt")
+    assert str(tmp_path) not in result["result"]["message"]
     assert target.read_text(encoding="utf-8") == "# old rules\n"
 
 
@@ -242,7 +244,8 @@ async def test_update_prompt_missing_target_file_returns_agent_failure(
 
     result = await service.update_prompt("business_twin", MARKDOWN)
 
-    _assert_agent_failure(result, "prompt file not found")
+    _assert_agent_failure(result, "failed to update prompt")
+    assert str(tmp_path) not in result["result"]["message"]
     assert not (package_prompts_dir / "sql_rules_missing.md").exists()
 
 
@@ -255,7 +258,8 @@ async def test_view_prompt_missing_target_file_returns_agent_failure(
 
     result = await service.view_prompt("business_twin")
 
-    _assert_agent_failure(result, "sql_rules_missing")
+    _assert_agent_failure(result, "failed to view prompt")
+    assert str(tmp_path) not in result["result"]["message"]
 
 
 @pytest.mark.asyncio
