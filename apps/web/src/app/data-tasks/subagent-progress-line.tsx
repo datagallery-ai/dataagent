@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { useT } from "../../i18n/locale-context";
 import {
+  isInternalSubagentStep,
+  subagentFailureLines,
   subagentFailureText,
   subagentProgressText,
   subagentSettledTrail,
@@ -19,7 +21,9 @@ export function SubagentProgressLine({ progress }: { progress: SubagentProgress 
     const timer = window.setInterval(() => setNow(performance.now()), 1000);
     return () => window.clearInterval(timer);
   }, [progress.status, progress.updatedAtMs]);
-  const step = [...progress.steps].reverse().find((item) => item.status === "running");
+  const step = [...progress.steps]
+    .reverse()
+    .find((item) => item.status === "running" && !isInternalSubagentStep(item.name));
   const elapsed =
     progress.status === "running"
       ? Math.max(0, Math.floor((now - (step?.startedAtMs ?? progress.updatedAtMs)) / 1000))
@@ -28,30 +32,64 @@ export function SubagentProgressLine({ progress }: { progress: SubagentProgress 
     progress.status === "running"
       ? Math.max(0, Math.floor((now - progress.updatedAtMs) / 1000))
       : 0;
+  const failed = progress.status === "failed";
+  const agent = progress.runs.find((item) => item.status === "running")?.name ?? progress.agentName;
+  const reason = failed ? subagentFailureText(progress, agent) : undefined;
   return (
-    <span className="block truncate text-[11px] leading-4 text-muted-light">
-      {subagentProgressText(progress, t)}
-      {elapsed !== undefined ? <span className="font-mono"> · {elapsed}s</span> : null}
-      {idleSeconds >= 30 ? <span> · {t("chat.subagentWaiting")}</span> : null}
+    <span className={["block text-[11px] leading-4", failed ? "text-danger" : "text-muted-light"].join(" ")}>
+      <span className="flex min-w-0 items-baseline gap-1.5">
+        <span className="min-w-0 truncate">{subagentProgressText(progress, t)}</span>
+        {elapsed !== undefined ? (
+          <span className="shrink-0 font-mono tabular">
+            {t("chat.subagentStepElapsed")} {clockLabel(elapsed)}
+          </span>
+        ) : null}
+        {idleSeconds >= 30 ? (
+          <span className="shrink-0">
+            {clockLabel(idleSeconds)} {t("chat.subagentIdle")}
+          </span>
+        ) : null}
+      </span>
+      {reason ? <span className="block truncate">{reason}</span> : null}
     </span>
   );
+}
+
+function clockLabel(seconds: number): string {
+  if (seconds < 1) return "<1s";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
 }
 
 export function SubagentSettledTrail({ progress }: { progress: SubagentProgress }) {
   const t = useT();
   const text = subagentSettledTrail(progress, t);
   if (!text) return null;
-  return <span className="block truncate text-[11px] leading-4 text-muted-light">{text}</span>;
+  const failed = progress.status === "failed";
+  return (
+    <span className={["block truncate text-[11px] leading-4", failed ? "text-danger" : "text-muted-light"].join(" ")}>
+      {text}
+    </span>
+  );
+}
+
+export function subagentDetailAvailable(progress: SubagentProgress): boolean {
+  return (
+    progress.steps.some((step) => !isInternalSubagentStep(step.name)) ||
+    subagentFailureLines(progress).length > 0
+  );
 }
 
 export function SubagentStepHistory({ progress }: { progress: SubagentProgress }) {
   const t = useT();
-  if (progress.steps.length === 0) return null;
+  const steps = progress.steps.filter((step) => !isInternalSubagentStep(step.name));
+  const failures = subagentFailureLines(progress);
+  if (steps.length === 0 && failures.length === 0) return null;
   const multiple = new Set(progress.runs.map((run) => run.name)).size > 1;
-  const failure = subagentFailureText(progress);
   return (
     <ul className="mt-1 grid gap-0.5">
-      {progress.steps.map((step) => {
+      {steps.map((step) => {
         const runName = progress.runs.find((run) => run.id === step.subagentRunId)?.name;
         const titled =
           multiple && runName ? `${runName} ${subagentStepLabel(step.name, t)}` : subagentStepLabel(step.name, t);
@@ -70,9 +108,23 @@ export function SubagentStepHistory({ progress }: { progress: SubagentProgress }
           </li>
         );
       })}
-      {failure ? <li className="truncate text-[10px] leading-4 text-step-error">{failure}</li> : null}
+      {failures.map((failure, index) => (
+        <li key={`${index}-${failure}`} className="truncate text-[10px] leading-4 text-danger">
+          {failure}
+        </li>
+      ))}
     </ul>
   );
+}
+
+export function SubagentDetailProgress({
+  call,
+}: {
+  call: Pick<LiveToolCallRecord, "status" | "progress">;
+}) {
+  if (!call.progress) return null;
+  if (subagentDetailAvailable(call.progress)) return <SubagentStepHistory progress={call.progress} />;
+  return <SubagentToolProgress call={call} />;
 }
 
 export function SubagentToolProgress({
@@ -82,7 +134,6 @@ export function SubagentToolProgress({
 }) {
   if (!call.progress) return null;
   if (call.status === "running") return <SubagentProgressLine progress={call.progress} />;
-  if (call.progress.steps.length === 0) return null;
   return <SubagentSettledTrail progress={call.progress} />;
 }
 
@@ -96,7 +147,14 @@ export function SubagentProgressNotes({
   const notes = toolCallIds.flatMap((id) => {
     const call = liveRun?.toolCalls.find((item) => item.id === id);
     if (!call?.progress) return [];
-    if (call.status === "running" || call.progress.steps.length > 0) return [call];
+    if (
+      call.status === "running" ||
+      call.progress.steps.length > 0 ||
+      call.progress.status === "failed" ||
+      call.progress.status === "suspended"
+    ) {
+      return [call];
+    }
     return [];
   });
   if (notes.length === 0) return null;

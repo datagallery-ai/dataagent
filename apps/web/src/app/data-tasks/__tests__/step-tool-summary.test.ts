@@ -3,6 +3,7 @@ import {
   buildCollapsedStepSummary,
   buildStepToolSummaries,
   buildToolChipSummaries,
+  runningElapsedLabel,
   stepElapsedLabel,
   truncateThinkingPreview,
 } from "../step-tool-summary";
@@ -121,18 +122,43 @@ describe("step-tool-summary", () => {
     });
     expect(summaries.map((item) => item.label)).toEqual([
       "委托子代理 · nl2sql",
-      "读取文件 · /workspace/notes.md",
+      "读取文件 · notes.md",
     ]);
     expect(summaries[0]?.startedAtMs).toBe(1_000);
   });
 
-  it("shows every tool chip unless a caller sets a limit", () => {
+  it("keeps the end of a long command and switches long runs to minutes", () => {
+    const command = `python analyze.py ${"x".repeat(80)}`;
+    const summaries = buildStepToolSummaries({
+      toolCalls: [{ id: "run", function: { name: "execute_command", arguments: JSON.stringify({ command }) } }],
+      liveRun: {
+        ...createInitialLiveRun(),
+        toolCalls: [{ id: "run", name: "execute_command", status: "success", startedAtMs: 0, finishedAtMs: 90_000 }],
+      },
+      isActive: false,
+      t: (key) => (key === "tools.execute_command" ? "运行命令" : key),
+    });
+    expect(summaries[0]?.label.startsWith("运行命令 · …")).toBe(true);
+    expect(summaries[0]?.label.endsWith("x")).toBe(true);
+    expect(summaries[0]?.label.length).toBeLessThanOrEqual("运行命令 · ".length + 48);
+    expect(stepElapsedLabel({ status: "success", startedAtMs: 0, finishedAtMs: 90_000 })).toBe("1m 30s");
+    expect(runningElapsedLabel(0, 400)).toBe("400ms");
+    expect(runningElapsedLabel(0, 90_000)).toBe("1m 30s");
+  });
+
+  it("caps the collapsed chip row and shows every chip when asked", () => {
     const tools = ["A", "B", "C", "D"].map((label) => ({
       id: label,
       label,
       status: "success" as const,
       durationLabel: "1ms",
     }));
-    expect(buildToolChipSummaries(tools).map((chip) => chip.label)).toEqual(["A", "B", "C", "D"]);
+    expect(buildToolChipSummaries(tools).map((chip) => chip.label)).toEqual(["A", "B", "+2"]);
+    expect(buildToolChipSummaries(tools, Number.POSITIVE_INFINITY).map((chip) => chip.label)).toEqual([
+      "A",
+      "B",
+      "C",
+      "D",
+    ]);
   });
 });

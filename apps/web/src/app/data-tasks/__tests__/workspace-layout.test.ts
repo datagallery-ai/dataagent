@@ -9,6 +9,7 @@ import {
   getMinimumWorkspaceWidth,
   getRequiredWorkspaceWidth,
   getWorkspaceGridTemplateColumns,
+  chatGridColumn,
   LEFT_PANEL_DEFAULT_WIDTH,
   LEFT_PANEL_MAX_WIDTH,
   LEFT_PANEL_MIN_WIDTH,
@@ -23,6 +24,12 @@ import {
 } from "../workspace-layout";
 
 describe("workspace layout", () => {
+  it("lets the chat track shrink below its minimum only when the viewport is narrower", () => {
+    expect(chatGridColumn(56, 0)).toBe(
+      `minmax(min(${CHAT_MIN_WIDTH}px, calc(100% - 56px)), 1fr)`,
+    );
+  });
+
   it("uses fixed minmax columns for left and right panels", () => {
     expect(
       getWorkspaceGridTemplateColumns({
@@ -32,7 +39,7 @@ describe("workspace layout", () => {
         rightPanelWidth: 400,
       }),
     ).toBe(
-      `${fixedGridColumn(LEFT_PANEL_DEFAULT_WIDTH)} minmax(${CHAT_MIN_WIDTH}px, 1fr) ${fixedGridColumn(400)}`,
+      `${fixedGridColumn(LEFT_PANEL_DEFAULT_WIDTH)} ${chatGridColumn(LEFT_PANEL_DEFAULT_WIDTH, 400)} ${fixedGridColumn(400)}`,
     );
   });
 
@@ -56,7 +63,7 @@ describe("workspace layout", () => {
         sidebarCollapsed: false,
       }),
     ).toBe(
-      `${fixedGridColumn(LEFT_PANEL_DEFAULT_WIDTH)} minmax(${CHAT_MIN_WIDTH}px, 1fr) ${fixedGridColumn(0)}`,
+      `${fixedGridColumn(LEFT_PANEL_DEFAULT_WIDTH)} ${chatGridColumn(LEFT_PANEL_DEFAULT_WIDTH, 0)} ${fixedGridColumn(0)}`,
     );
   });
 
@@ -68,7 +75,7 @@ describe("workspace layout", () => {
         sidebarCollapsed: false,
       }),
     ).toBe(
-      `${fixedGridColumn(LEFT_PANEL_DEFAULT_WIDTH)} minmax(${CHAT_MIN_WIDTH}px, 1fr) ${fixedGridColumn(0)}`,
+      `${fixedGridColumn(LEFT_PANEL_DEFAULT_WIDTH)} ${chatGridColumn(LEFT_PANEL_DEFAULT_WIDTH, 0)} ${fixedGridColumn(0)}`,
     );
   });
 

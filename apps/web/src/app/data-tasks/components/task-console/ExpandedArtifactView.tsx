@@ -30,6 +30,7 @@ import { ArtifactMarkdownPreview } from "./ArtifactMarkdownPreview";
 import { SelectableDataGrid, SelectableText } from "./evidence-selection";
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
 import { IconSelection } from "./console-icons";
+import { canDownloadArtifact } from "../../session-outputs";
 import { useT } from "../../../../i18n/locale-context";
 
 /** Resolves the full artifact detail, fetching preview data lazily when required. */
@@ -207,7 +208,7 @@ export function ExpandedArtifactView({
             <button type="button" onClick={referenceWhole} className={btnPrimaryClass}>
               {t("console.referenceWhole")}
             </button>
-            {exportReady ? (
+            {exportReady && canDownloadArtifact(artifact) ? (
               formatExport ? (
                 <ActionMenu
                   items={downloadItems}

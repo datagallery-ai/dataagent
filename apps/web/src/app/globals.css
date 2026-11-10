@@ -1,22 +1,32 @@
 @import "tailwindcss";
 
 :root {
-  /* Codex-style neutral workbench palette */
-  --primary: #0d0d0d;
-  --primary-light: #3a3a3a;
-  --accent: #737373;
+  /* Quiet inset-canvas palette: a tinted rail, one white sheet, hairlines and type for
+     hierarchy, color reserved for state. Dark values live under [data-theme="dark"]. */
+  color-scheme: light;
+  --rail: #f4f4f2;
+  --primary: #1a1a19;
+  --primary-light: #3d3d3a;
+  --accent: #87877f;
   --surface: #ffffff;
-  --surface-subtle: #f7f7f8;
-  --border: #ececf0;
-  --foreground: #0d0d0d;
+  --surface-subtle: #f7f7f5;
+  --surface-hover: #efefec;
+  --border: #e9e9e6;
+  --border-strong: #d9d9d5;
+  --foreground: #1a1a19;
   /* Text hierarchy — use --text-* (not --muted) so CopilotKit's [data-copilotkit] scope
      cannot override secondary copy colors (it redefines --muted as a surface tone). */
-  --text-secondary: #4d4d4d;
-  --text-tertiary: #8a8a99;
+  --text-secondary: #5b5b56;
+  --text-tertiary: #87877f;
   --muted: var(--text-secondary);
   --muted-light: var(--text-tertiary);
   --muted-foreground: var(--text-secondary);
-  --code-bg: #171717;
+  --code-bg: #f7f7f5;
+  --code-fg: #3d3d3a;
+  --ok: #2e7d4f;
+  --warn: #a2620a;
+  --danger: #b4372f;
+  --focus-ring: rgb(26 26 25 / 0.14);
 
   /* Semantic step tones — muted, low-chroma jewel palette for a restrained feel */
   --step-inspect: #4d6f96;
@@ -25,19 +35,35 @@
   --step-fetch: #3f769b;
   --step-visualize: #635c8e;
   --step-knowledge: #3f7480;
-  --step-success: #3f7d63;
-  --step-warning: #9a6a30;
-  --step-error: #a24f49;
-  --step-glow: rgb(13 13 13 / 0.08);
+  --step-success: #2e7d4f;
+  --step-warning: #a2620a;
+  --step-error: #b4372f;
+  --step-glow: rgb(26 26 25 / 0.08);
 
-  --radius-card: 0.625rem;
-  --shadow-card: 0 1px 1px rgb(13 13 13 / 0.02);
-  --shadow-card-hover: 0 2px 8px rgb(13 13 13 / 0.04);
+  --radius-card: 0.75rem;
+  --shadow-card: 0 0 0 1px var(--border);
+  --shadow-card-hover: 0 0 0 1px var(--border-strong), 0 2px 8px rgb(0 0 0 / 0.04);
+  --shadow-float: 0 6px 24px rgb(0 0 0 / 0.07), 0 0 0 1px var(--border);
+  --shadow-pop: 0 12px 36px rgb(0 0 0 / 0.14), 0 0 0 1px var(--border);
 
   /* Overlay scrollbars — hidden until the scroll container is hovered/focused */
   --scrollbar-size: 6px;
-  --scrollbar-thumb: rgb(13 13 13 / 0.16);
-  --scrollbar-thumb-hover: rgb(13 13 13 / 0.28);
+  --scrollbar-thumb: rgb(26 26 25 / 0.16);
+  --scrollbar-thumb-hover: rgb(26 26 25 / 0.28);
+
+  /* Tailwind slate is cool blue-grey; retune it to the warm neutral ramp so legacy
+     slate-* utilities match the palette (and flip with the theme below). */
+  --color-slate-50: #f7f7f5;
+  --color-slate-100: #efefec;
+  --color-slate-200: #e4e4e0;
+  --color-slate-300: #d1d1cc;
+  --color-slate-400: #a3a39d;
+  --color-slate-500: #7a7a74;
+  --color-slate-600: #5b5b56;
+  --color-slate-700: #43433f;
+  --color-slate-800: #2b2b29;
+  --color-slate-900: #1a1a19;
+  --color-slate-950: #0f0f0e;
 
   /* Local system stacks — avoid next/font/google (Turbopack + offline CDN failures).
      Include CJK-capable faces so zh-CN copy does not fall back to missing-glyph boxes
@@ -49,18 +75,229 @@
     "Courier New", monospace;
 }
 
+/* Dark theme. The inline script in app/layout.tsx resolves the saved preference (or the
+   OS setting) to data-theme before first paint, so only one dark block is needed. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --rail: #121211;
+  --primary: #ececea;
+  --primary-light: #c8c8c3;
+  --accent: #7a7a73;
+  --surface: #1a1a19;
+  --surface-subtle: #20201f;
+  --surface-hover: #262624;
+  --border: #2b2b29;
+  --border-strong: #383835;
+  --foreground: #ececea;
+  --text-secondary: #a9a9a3;
+  --text-tertiary: #7a7a73;
+  --code-bg: #20201f;
+  --code-fg: #c8c8c3;
+  --ok: #5cbf84;
+  --warn: #e0a54d;
+  --danger: #f0726a;
+  --focus-ring: rgb(236 236 234 / 0.16);
+  --step-inspect: #86a7cc;
+  --step-query: #a596c2;
+  --step-transform: #6fb8b3;
+  --step-fetch: #74abd0;
+  --step-visualize: #9a92c9;
+  --step-knowledge: #74aebb;
+  --step-success: #5cbf84;
+  --step-warning: #e0a54d;
+  --step-error: #f0726a;
+  --step-glow: rgb(236 236 234 / 0.08);
+  --shadow-card-hover: 0 0 0 1px var(--border-strong), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-float: 0 8px 28px rgb(0 0 0 / 0.45), 0 0 0 1px var(--border);
+  --shadow-pop: 0 14px 40px rgb(0 0 0 / 0.6), 0 0 0 1px var(--border);
+  --scrollbar-thumb: rgb(236 236 234 / 0.16);
+  --scrollbar-thumb-hover: rgb(236 236 234 / 0.3);
+
+  /* Flip hard-coded palette utilities so legacy classes stay legible in dark mode:
+     white becomes the sheet, slate inverts, and status tints become dark washes. */
+  --color-white: #1a1a19;
+  --color-slate-50: #20201f;
+  --color-slate-100: #262624;
+  --color-slate-200: #2f2f2c;
+  --color-slate-300: #3c3c39;
+  --color-slate-400: #5f5f5a;
+  --color-slate-500: #8a8a84;
+  --color-slate-600: #a9a9a3;
+  --color-slate-700: #c4c4be;
+  --color-slate-800: #dcdcd7;
+  --color-slate-900: #ececea;
+  --color-slate-950: #f6f6f4;
+  --color-rose-50: #2b1716;
+  --color-rose-100: #351b19;
+  --color-rose-200: #4b2522;
+  --color-rose-500: #e5736b;
+  --color-rose-600: #ec8079;
+  --color-rose-700: #f08f88;
+  --color-rose-800: #f3a19b;
+  --color-rose-900: #f6b3ae;
+  --color-red-50: #2b1716;
+  --color-red-200: #4b2522;
+  --color-red-700: #f08f88;
+  --color-orange-50: #2b1d12;
+  --color-orange-200: #4b3220;
+  --color-orange-700: #f0a768;
+  --color-amber-50: #2a2112;
+  --color-amber-100: #33281a;
+  --color-amber-200: #4a3a1e;
+  --color-amber-300: #6a5228;
+  --color-amber-700: #e6b260;
+  --color-amber-800: #ecc27c;
+  --color-amber-900: #f0cf95;
+  --color-amber-950: #f5ddb1;
+  --color-yellow-50: #29240f;
+  --color-yellow-200: #4a4119;
+  --color-yellow-800: #ead27a;
+  --color-emerald-50: #10241a;
+  --color-emerald-100: #142d20;
+  --color-emerald-200: #1f4430;
+  --color-emerald-700: #6fcb93;
+  --color-emerald-900: #9ddcb6;
+  --color-green-50: #10241a;
+  --color-green-200: #1f4430;
+  --color-green-700: #6fcb93;
+  --color-teal-50: #0f2523;
+  --color-teal-200: #1d433f;
+  --color-teal-700: #6cc9bd;
+  --color-teal-800: #8dd6cc;
+  --color-cyan-50: #0e2328;
+  --color-cyan-200: #1b4049;
+  --color-cyan-700: #6cc3d6;
+  --color-cyan-900: #9dd9e6;
+  --color-cyan-950: #c4e9f1;
+  --color-sky-50: #0f2130;
+  --color-sky-200: #1d3a52;
+  --color-sky-700: #73b6e6;
+  --color-sky-900: #a4cff0;
+  --color-sky-950: #c8e2f6;
+  --color-blue-50: #121d33;
+  --color-blue-200: #22345a;
+  --color-blue-700: #85aaf0;
+  --color-blue-800: #a0bdf4;
+  --color-blue-900: #b8cff7;
+  --color-indigo-50: #171a33;
+  --color-indigo-200: #2a2f5c;
+  --color-indigo-400: #8f97f0;
+  --color-indigo-700: #a3aaf3;
+  --color-violet-50: #1e1833;
+  --color-violet-200: #372c5c;
+  --color-violet-700: #b3a3f3;
+  --color-violet-800: #c3b6f6;
+  --color-violet-900: #d2c8f8;
+  --color-purple-50: #22172f;
+  --color-purple-200: #3d2a55;
+  --color-purple-700: #c49bf0;
+}
+
+/* CopilotKit declares shadcn-style tokens again (--background, --foreground, --primary,
+   --border, ...) on every [data-copilotkit] element, shadowing the app tokens for anything
+   rendered inside it. Snapshot the app values under other names at the root (a custom
+   property cannot reference itself), then point CopilotKit's scope back at them. */
+:root {
+  --app-surface: var(--surface);
+  --app-surface-subtle: var(--surface-subtle);
+  --app-surface-hover: var(--surface-hover);
+  --app-foreground: var(--foreground);
+  --app-primary: var(--primary);
+  --app-border: var(--border);
+  --app-border-strong: var(--border-strong);
+  --app-text-secondary: var(--text-secondary);
+}
+
+/* CopilotKit's stylesheet loads after this one and keys dark tokens off
+   `.dark [data-copilotkit]`, so this override needs the higher specificity to win in both themes. */
+:root [data-copilotkit][data-copilotkit] {
+  color: var(--app-foreground);
+  background-color: transparent;
+  --background: var(--app-surface);
+  --foreground: var(--app-foreground);
+  --card: var(--app-surface);
+  --card-foreground: var(--app-foreground);
+  --popover: var(--app-surface);
+  --popover-foreground: var(--app-foreground);
+  --primary: var(--app-primary);
+  --primary-foreground: var(--app-surface);
+  --secondary: var(--app-surface-hover);
+  --secondary-foreground: var(--app-foreground);
+  --muted: var(--app-surface-subtle);
+  --muted-foreground: var(--app-text-secondary);
+  --accent: var(--app-surface-hover);
+  --accent-foreground: var(--app-foreground);
+  --border: var(--app-border);
+  --input: var(--app-border);
+  --ring: var(--app-border-strong);
+  --cpk-color-white: var(--surface);
+}
+
+/* Let the workbench sheet show through CopilotKit's chat container in both themes. */
+.copilotKitChat {
+  background-color: transparent !important;
+}
+
+/* Conversation reads as a document: each question opens a turn, later turns get a hairline. */
+.copilotKitMessages > .chat-question {
+  padding-top: 20px;
+}
+
+.copilotKitMessages > .chat-question ~ .chat-question {
+  margin-top: 28px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border);
+}
+
+/* Process-step rail: start at the first marker and stop at the last one. */
+.copilotKitMessages > .chat-step:not(.chat-step + .chat-step) > .chat-step-rail {
+  top: 12px;
+}
+
+.copilotKitMessages > .chat-step:not(:has(+ .chat-step)) > .chat-step-rail {
+  bottom: auto;
+  height: 12px;
+}
+
+/* Streamdown inherits Tailwind prose quote marks; answers keep blockquotes plain. */
+[data-copilotkit] blockquote p::before,
+[data-copilotkit] blockquote p::after {
+  content: none !important;
+}
+
+/* Send button follows the ink token in both themes instead of CopilotKit's black/white
+   (:root lifts it over CopilotKit's later `dark:` variants). */
+:root [data-copilotkit] [data-testid="copilot-send-button"] {
+  width: 32px;
+  height: 32px;
+  background-color: var(--primary);
+  color: var(--surface);
+}
+
+:root [data-copilotkit] [data-testid="copilot-send-button"]:disabled {
+  background-color: var(--surface-hover);
+  color: var(--text-tertiary);
+}
+
 @theme inline {
   --color-background: var(--surface-subtle);
   --color-foreground: var(--foreground);
   --color-primary: var(--primary);
   --color-primary-light: var(--primary-light);
   --color-accent: var(--accent);
+  --color-rail: var(--rail);
   --color-surface: var(--surface);
   --color-surface-subtle: var(--surface-subtle);
+  --color-surface-hover: var(--surface-hover);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-muted: var(--text-secondary);
   --color-muted-light: var(--text-tertiary);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
   --color-code-bg: var(--code-bg);
+  --color-code-fg: var(--code-fg);
   --color-step-inspect: var(--step-inspect);
   --color-step-query: var(--step-query);
   --color-step-transform: var(--step-transform);
@@ -75,7 +312,7 @@
 }
 
 body {
-  background: var(--surface-subtle);
+  background: var(--rail);
   color: var(--foreground);
   font-family: var(--font-inter);
 }
@@ -407,18 +644,19 @@ nextjs-portal {
 
 /* CopilotKit stream cursor between assistant turns */
 [data-copilotkit] .chat-stream-cursor {
-  background-color: var(--primary-light);
+  width: 7px !important;
+  height: 7px !important;
+  margin-left: 4px;
+  background-color: var(--text-tertiary);
 }
 
-/* Inline assistant loading row (avatar + pill dots) */
+/* Inline assistant loading row (label + dots) */
 [data-copilotkit] .chat-assistant-loading-pill {
-  color: var(--foreground);
-  border: 1px solid var(--border);
-  background-color: var(--surface-subtle);
+  color: var(--text-tertiary);
 }
 
 .chat-assistant-loading-dot {
-  background-color: var(--primary-light);
+  background-color: var(--text-tertiary);
   animation: chat-loading-dot 1.2s ease-in-out infinite;
 }
 

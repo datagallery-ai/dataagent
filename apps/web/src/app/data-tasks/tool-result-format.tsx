@@ -342,8 +342,8 @@ function TextBlock({
   const className =
     tone === "terminal"
       ? variant === "console"
-        ? "max-h-80 overflow-auto rounded-lg bg-code-bg p-3 font-mono text-xs leading-5 text-slate-100"
-        : "max-h-44 overflow-auto rounded-lg bg-code-bg p-2 font-mono text-xs leading-5 text-slate-100"
+        ? "max-h-80 overflow-auto rounded-lg border border-border bg-code-bg p-3 font-mono text-xs leading-5 text-code-fg"
+        : "max-h-44 overflow-auto rounded-lg border border-border bg-code-bg p-2 font-mono text-xs leading-5 text-code-fg"
       : variant === "console"
         ? "max-h-80 overflow-auto rounded-lg bg-surface-subtle p-3 text-xs leading-5 text-muted"
         : "max-h-44 overflow-auto rounded-lg bg-surface p-2 text-xs leading-5 text-muted";

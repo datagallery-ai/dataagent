@@ -335,7 +335,9 @@ function DataTaskChatInputLayout({
       ref={containerRef}
       className={[
         "pointer-events-none relative z-20",
-        positioning === "absolute" ? "absolute bottom-0 left-0 right-0" : "",
+        positioning === "absolute"
+          ? "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-surface from-60% to-transparent pt-8"
+          : "",
       ].join(" ")}
       style={{
         transform:
@@ -360,7 +362,7 @@ function DataTaskChatInputLayout({
           <div
             role="alert"
             data-testid="chat-submit-error"
-            className="pointer-events-auto mb-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700"
+            className="pointer-events-auto mb-2 rounded-lg bg-danger/8 px-3 py-2 text-xs leading-5 text-danger"
           >
             {submitError}
           </div>
@@ -371,14 +373,14 @@ function DataTaskChatInputLayout({
           onDragOver={attachmentsApi.handleDragOver}
           onDragLeave={attachmentsApi.handleDragLeave}
           onDrop={attachmentsApi.handleDrop}
-          className="pointer-events-auto relative flex w-full flex-col overflow-visible rounded-2xl border border-border bg-surface shadow-[0_8px_28px_-6px_rgba(15,23,42,0.12),0_2px_8px_-2px_rgba(15,23,42,0.05)]"
+          className="pointer-events-auto relative flex w-full flex-col overflow-visible rounded-[14px] bg-surface shadow-[var(--shadow-float)] transition-shadow duration-150 focus-within:shadow-[0_6px_24px_rgb(0_0_0/0.07),0_0_0_1px_var(--border-strong),0_0_0_4px_var(--focus-ring)]"
         >
           {attachmentsApi.dragOver && (
-            <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-primary-light/10 text-sm font-medium text-primary">
+            <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center rounded-[14px] border border-dashed border-border-strong bg-surface-subtle/95 text-sm font-medium text-foreground">
               {t("chatInput.dropFiles")}
             </div>
           )}
-          <div className="w-full px-3 py-1.5">
+          <div className="w-full px-3.5 pt-2">
             <div
               ref={columnRef}
               className="relative flex w-full min-w-0 flex-col gap-1"
@@ -421,8 +423,9 @@ function DataTaskChatInputLayout({
                       "[&_[data-testid=copilot-chat-textarea]]:bg-transparent",
                       "[&_[data-testid=copilot-chat-textarea]]:!px-0.5",
                       "[&_[data-testid=copilot-chat-textarea]]:!py-1.5",
-                      "[&_[data-testid=copilot-chat-textarea]]:text-[15px]",
+                      "[&_[data-testid=copilot-chat-textarea]]:text-[14.5px]",
                       "[&_[data-testid=copilot-chat-textarea]]:leading-6",
+                      "[&_[data-testid=copilot-chat-textarea]]:placeholder:text-muted-light",
                       "[&_[data-testid=copilot-chat-textarea]]:outline-none",
                       "[&_[data-testid=copilot-chat-textarea]]:overflow-y-hidden",
                       "[&_[data-testid=copilot-chat-textarea]:not(:focus)]:caret-transparent",
@@ -442,7 +445,7 @@ function DataTaskChatInputLayout({
             )}
           </div>
           {mode !== "transcribe" && (
-            <div className="mt-1 flex items-center justify-end gap-2 px-2 pb-2">
+            <div className="flex items-center justify-end gap-2 px-2 pb-2">
               <input
                 ref={attachmentsApi.fileInputRef}
                 type="file"
@@ -489,13 +492,13 @@ function QueuedPromptStrip({
           <div
             key={prompt.id}
             className={[
-              "flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-xs",
+              "flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-xs shadow-[var(--shadow-card)]",
               isInterrupting
-                ? "border-primary/40 bg-primary-light/10 text-primary"
-                : "border-border bg-surface-subtle text-muted",
+                ? "bg-surface-hover text-foreground"
+                : "bg-surface text-muted",
             ].join(" ")}
           >
-            <span className="grid h-5 min-w-5 place-items-center rounded-md bg-surface text-[11px] font-semibold text-muted-light">
+            <span className="grid h-5 min-w-5 place-items-center rounded-md bg-surface-subtle text-[11px] font-semibold text-muted-light tabular">
               {index + 1}
             </span>
             {isEditing ? (
@@ -612,7 +615,7 @@ function EvidenceChips({
         <span
           key={ref.id}
           title={evidenceChipTooltip(ref)}
-          className="inline-flex max-w-[220px] items-center gap-1 rounded-md bg-primary-light/12 px-2 py-1 text-xs text-primary"
+          className="inline-flex h-[26px] max-w-[220px] items-center gap-1.5 rounded-[7px] bg-surface-hover pl-2 pr-1 text-xs text-foreground"
         >
           <span className="min-w-0 truncate">{evidenceChipLabel(ref)}</span>
           <button
@@ -620,7 +623,7 @@ function EvidenceChips({
             aria-label={`Remove ${ref.label}`}
             title="Remove evidence"
             onClick={() => onRemove(ref.id)}
-            className="grid h-4 w-4 shrink-0 cursor-pointer place-items-center rounded text-primary/70 hover:bg-primary-light/20"
+            className="grid h-[18px] w-[18px] shrink-0 cursor-pointer place-items-center rounded-[5px] text-muted-light hover:bg-border hover:text-foreground"
           >
             <XIcon />
           </button>

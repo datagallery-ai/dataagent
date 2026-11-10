@@ -727,6 +727,20 @@ export type ArtifactDto = {
   stepId?: string;
 };
 
+/** One file in a session's output directory (`GET /sessions/{id}/outputs`). */
+export type SessionOutputFileDto = {
+  path: string;
+  size: number;
+  modifiedAt: string;
+};
+
+/** UTF-8 text preview of a session output file (`GET /sessions/{id}/outputs/preview`). */
+export type SessionOutputPreviewDto = {
+  type: "file";
+  path: string;
+  content: string;
+};
+
 export type ArtifactVersionDto = {
   id: string;
   version: number;

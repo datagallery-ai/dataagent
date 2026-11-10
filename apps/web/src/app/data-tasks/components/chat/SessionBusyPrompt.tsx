@@ -28,23 +28,24 @@ export function SessionBusyPrompt({
       aria-modal="true"
       aria-labelledby="session-busy-title"
       data-testid="session-busy-prompt"
-      className="pointer-events-auto mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-950 shadow-sm"
+      className="pointer-events-auto mb-2 rounded-xl bg-surface px-3.5 py-3 text-xs leading-5 text-muted shadow-[var(--shadow-float)]"
     >
-      <div id="session-busy-title" className="text-sm font-medium text-amber-950">
+      <div id="session-busy-title" className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
         {t("chatInput.sessionBusyTitle")}
       </div>
-      <p className="mt-1 text-amber-900/90">{t("chatInput.sessionBusyBody")}</p>
+      <p className="mt-1 text-[12.5px] text-muted">{t("chatInput.sessionBusyBody")}</p>
       {preview ? (
-        <p className="mt-2 rounded-lg bg-white/70 px-2 py-1.5 text-[11px] leading-4 text-amber-900/80">
+        <p className="mt-2 rounded-lg bg-surface-subtle px-2.5 py-1.5 text-[12px] leading-5 text-muted">
           {t("chatInput.sessionBusyPreview", { preview })}
         </p>
       ) : null}
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-1.5">
         <button
           type="button"
           disabled={disabled}
           onClick={onWait}
-          className="rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-7 cursor-pointer rounded-lg px-2.5 text-[12px] font-medium text-foreground ring-1 ring-border-strong transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busyAction === "waiting"
             ? t("chatInput.sessionBusyWaiting")
@@ -54,7 +55,7 @@ export function SessionBusyPrompt({
           type="button"
           disabled={disabled}
           onClick={onInterrupt}
-          className="rounded-lg border border-amber-800 bg-amber-900 px-2.5 py-1.5 text-[11px] font-medium text-amber-50 hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-7 cursor-pointer rounded-lg bg-primary px-2.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busyAction === "interrupting"
             ? t("chatInput.sessionBusyInterrupting")
@@ -64,7 +65,7 @@ export function SessionBusyPrompt({
           type="button"
           disabled={disabled}
           onClick={onDismiss}
-          className="rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-amber-900/80 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-7 cursor-pointer rounded-lg px-2.5 text-[12px] text-muted transition-colors hover:bg-surface-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
         >
           {t("chatInput.sessionBusyDismiss")}
         </button>
@@ -84,11 +85,14 @@ export function SessionRemoteBusyBanner({ activeRun }: SessionRemoteBusyBannerPr
     <div
       role="status"
       data-testid="session-remote-busy-banner"
-      className="pointer-events-auto mb-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-950"
+      className="pointer-events-auto mb-2 rounded-lg bg-surface-subtle px-3 py-2 text-xs leading-5 text-muted ring-1 ring-border"
     >
-      <div className="font-medium">{t("chatInput.sessionRemoteBusyBanner")}</div>
+      <div className="flex items-center gap-2 font-medium text-foreground">
+        <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-foreground" aria-hidden />
+        {t("chatInput.sessionRemoteBusyBanner")}
+      </div>
       {preview ? (
-        <div className="mt-1 text-sky-900/80">
+        <div className="mt-1 text-muted-light">
           {t("chatInput.sessionBusyPreview", { preview })}
         </div>
       ) : null}

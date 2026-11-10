@@ -26,6 +26,8 @@ import type {
   NativeSessionDetail,
   SessionConversationDto,
   SessionListResponseDto,
+  SessionOutputFileDto,
+  SessionOutputPreviewDto,
   SessionTitleDto,
   SkillDto,
   TraceDagDto,
@@ -628,6 +630,25 @@ export const configApi = {
 
   getArtifactPreview(id: string): Promise<Record<string, unknown>> {
     return requestEnvelope(`/api/v1/artifacts/${encodeURIComponent(id)}/preview`);
+  },
+
+  /** Files the agent wrote to the session output directory (conversation server, raw JSON). */
+  async listSessionOutputs(sessionId: string): Promise<SessionOutputFileDto[]> {
+    const response = await requestRaw(
+      `/api/sessions/${encodeURIComponent(sessionId)}/outputs`,
+      { headers: { Accept: "application/json" } },
+    );
+    const body = await parseJsonResponse<{ files?: SessionOutputFileDto[] }>(response);
+    return Array.isArray(body.files) ? body.files : [];
+  },
+
+  async previewSessionOutput(sessionId: string, path: string): Promise<SessionOutputPreviewDto> {
+    const params = new URLSearchParams({ path });
+    const response = await requestRaw(
+      `/api/sessions/${encodeURIComponent(sessionId)}/outputs/preview?${params.toString()}`,
+      { headers: { Accept: "application/json" } },
+    );
+    return parseJsonResponse<SessionOutputPreviewDto>(response);
   },
 
   listSessionArtifacts(sessionId: string): Promise<{ artifacts: ArtifactDto[] }> {

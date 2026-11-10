@@ -50,6 +50,14 @@
     "englishShort": "EN",
     "chineseShort": "中"
   },
+  "theme": {
+    "label": "Appearance",
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark",
+    "switchToLight": "Switch to light mode",
+    "switchToDark": "Switch to dark mode"
+  },
   "sidebar": {
     "brand": "DataGallery",
     "sessionCount": "{{count}} sessions",
@@ -87,7 +95,9 @@
     "share": "Share",
     "rename": "Rename",
     "delete": "Delete",
-    "sharingDisabled": "Sharing awaits backend support"
+    "sharingDisabled": "Sharing awaits backend support",
+    "noticeRestored": "The previous run did not finish. Restored the last saved checkpoint.",
+    "noticeNoCheckpoint": "The previous run did not finish and no checkpoint was saved. You can keep going from here."
   },
   "userBar": {
     "currentUser": "Current user",
@@ -119,12 +129,22 @@
     "subagentStarting": "Starting",
     "subagentReturning": "Returning result",
     "subagentError": "Subagent error",
-    "subagentWaiting": "waiting for update",
+    "subagentDone": "Done",
+    "subagentStepElapsed": "step",
+    "subagentIdle": "since update",
     "subagentSuspended": "Subagent suspended",
     "subagentStep": {
       "model": "Model response",
       "tools": "Execute tools"
-    }
+    },
+    "rewrite": "Rewrite",
+    "rewriteFromHere": "Rewrite from here",
+    "refreshQuestion": "Ask this again",
+    "clickToRewrite": "Click to rewrite this question",
+    "previousBranch": "Previous branch",
+    "nextBranch": "Next branch",
+    "stepsDone": "Worked through {{count}} steps",
+    "stepsRunning": "Working · {{count}} steps"
   },
   "tools": {
     "list_data_sources": "List data sources",
@@ -307,7 +327,32 @@
     "searchResultTable": "Search result table",
     "exportFilteredResult": "Export the current filtered / sorted result",
     "sourceStepNotLinked": "Source step not linked",
-    "failedToLoadPreview": "Failed to load preview"
+    "failedToLoadPreview": "Failed to load preview",
+    "traceRunStarted": "Run started",
+    "traceRunResumed": "Run resumed",
+    "traceRunPaused": "Waiting for your reply",
+    "traceRunCompleted": "Run completed",
+    "traceRunFailed": "Run failed",
+    "traceKindRun": "Run",
+    "traceKindOutput": "Output",
+    "traceEmpty": "No trace events yet",
+    "traceEmptyHint": "After you send a question, the data trail appears here in time order.",
+    "viewOutputDetails": "View output details",
+    "showRawResult": "View raw result",
+    "hideRawResult": "Hide raw result",
+    "stepDuration": "Duration",
+    "status": "Status",
+    "callsCount": "{{count}} calls",
+    "itemsCount": "{{count}} items",
+    "openToolDetails": "Tool details",
+    "toolCallNotLinked": "This tool call is not linked to a displayable step event yet.",
+    "usageUnsupported": "Not reported by backend",
+    "usageUnsupportedHint": "Per-step token, model, and cost usage need backend token_usage events. Run-level usage is in Overview.",
+    "usageApproximate": "Approximate match (step number only)",
+    "inputTokens": "Input tokens",
+    "outputTokens": "Output tokens",
+    "usageInput": "Input",
+    "usageOutput": "Output"
   },
   "jobs": {
     "queued": "Queued",
@@ -527,7 +572,9 @@
     "runSqlPrompt": "Query total orders in the last 30 days, grouped by date",
     "analyzeTrends": "Analyze Trends",
     "analyzeTrendsDesc": "Explore metric changes and anomalies",
-    "analyzeTrendsPrompt": "Analyze monthly sales trends and identify the months with the largest swings"
+    "analyzeTrendsPrompt": "Analyze monthly sales trends and identify the months with the largest swings",
+    "eyebrow": "DataGallery",
+    "examplesTitle": "Try asking"
   },
   "schema": {
     "copyTableName": "Copy table name",

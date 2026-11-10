@@ -24,6 +24,7 @@ import type {
 import type { JobDto } from "../../../../lib/config-api";
 import { configApi } from "../../../../lib/config-api";
 import { dataStepKindForTool, dataStepLabel, hasCapability, toolDisplayTitle } from "../../data-task-state";
+import { canDownloadArtifact } from "../../session-outputs";
 import { artifactExportClient } from "../../artifact-export-client";
 import {
   artifactDetailFromPreview,
@@ -73,7 +74,7 @@ import {
 import { ToolFormattedResult, ToolFailureResult } from "../../tool-result-format";
 import { parseSqlToolResult, sqlFromToolPayload } from "../../tool-result-normalize";
 import { toolResultLooksLikeError } from "../../tool-call-display";
-import { SubagentStepHistory, SubagentToolProgress } from "../../subagent-progress-line";
+import { SubagentDetailProgress, SubagentToolProgress } from "../../subagent-progress-line";
 import {
   btnGhostClass,
   btnPrimaryClass,
@@ -227,27 +228,27 @@ export function TaskConsole({
       data-guide-id="run-console"
       className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden border-l border-border bg-surface"
     >
-      <header className="flex h-16 items-center justify-between gap-3 border-b border-border bg-surface px-4">
-        <div className="min-w-0">
-          <h2 className={panelTitleClass}>{t("console.title")}</h2>
-          <div className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-muted-light">
+      <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface pl-4 pr-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <h2 className={`shrink-0 ${panelTitleClass}`}>{t("console.title")}</h2>
+          <div className="flex min-w-0 items-center gap-2 text-[12px] text-muted-light">
             <span className="inline-flex items-center gap-1.5">
               <span
                 className={[
                   "h-1.5 w-1.5 rounded-full",
                   liveRun.runStatus === "running"
-                    ? "bg-primary-light"
+                    ? "animate-pulse bg-ok"
                     : liveRun.runStatus === "failed"
-                      ? "bg-step-error"
+                      ? "bg-danger"
                       : liveRun.runStatus === "completed"
-                        ? "bg-step-success"
-                        : "bg-muted-light",
+                        ? "bg-ok"
+                        : "bg-border-strong",
                 ].join(" ")}
               />
               {runStatusLabel(liveRun.runStatus, t)}
             </span>
-            <span className="text-border">/</span>
-            <span className="tabular">
+            <span className="text-border-strong">·</span>
+            <span className="tabular font-mono text-[11.5px]">
               {liveRun.runStatus !== "idle" ? formatDuration(runUsage.durationMs) : t("common.notStarted")}
             </span>
           </div>
@@ -258,16 +259,16 @@ export function TaskConsole({
             onClick={onClose}
             aria-label={t("console.close")}
             title={t("console.close")}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center ${btnGhostClass}`}
+            className={`flex h-8 w-8 shrink-0 items-center justify-center ${btnGhostClass} !p-0`}
           >
-            <span aria-hidden="true" className="text-lg leading-none">
-              ×
-            </span>
+            <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden>
+              <path d="m4 4 8 8M12 4l-8 8" />
+            </svg>
           </button>
         ) : null}
       </header>
 
-      <nav className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border px-2 py-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <nav className="flex h-10 shrink-0 items-stretch gap-4 overflow-x-auto border-b border-border px-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <TabButton active={activeTab === "overview"} onClick={() => handleTabClick("overview")}>
           {t("console.tabs.overview")}
         </TabButton>
@@ -294,9 +295,9 @@ export function TaskConsole({
         </TabButton>
       </nav>
 
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-6 pt-4">
         {activeTab === "overview" ? (
-          <div className="grid gap-4">
+          <div className="grid gap-6">
             {overviewSections.map((section) => {
               if (section.id === "conclusion") {
                 return (
@@ -398,23 +399,17 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={[
-        "flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200",
+        "-mb-px flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap border-b-[1.5px] text-[13px] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
         active
-          ? "bg-primary text-white"
-          : "text-muted hover:bg-surface-subtle hover:text-foreground",
+          ? "border-foreground font-medium text-foreground"
+          : "border-transparent text-muted-light hover:text-foreground",
       ].join(" ")}
     >
       {children}
       {badge !== undefined && badge > 0 ? (
-        <span
-          className={[
-            "rounded-full px-1.5 text-[10px] font-bold leading-4",
-            active ? "bg-white/20 text-white" : "bg-surface-subtle text-muted",
-          ].join(" ")}
-        >
-          {badge}
-        </span>
+        <span className="tabular text-[11.5px] font-normal text-muted-light">{badge}</span>
       ) : null}
     </button>
   );
@@ -441,7 +436,7 @@ function ConsoleSection({
 
   const headerContent = (
     <>
-      <h3 className={panelTitleClass}>{title}</h3>
+      <h3 className="text-[12.5px] font-medium text-muted-light">{title}</h3>
       <span className="flex min-w-0 shrink-0 items-center gap-2">
         {badge}
         {collapsible ? (
@@ -462,22 +457,20 @@ function ConsoleSection({
   );
 
   return (
-    <section className={panelShellClass}>
+    <section className="min-w-0 max-w-full">
       {collapsible ? (
         <button
           type="button"
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
-          className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg text-left transition-colors duration-200 hover:bg-surface-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-light/50"
+          className="-mx-1.5 flex w-[calc(100%+12px)] cursor-pointer items-center justify-between gap-3 rounded-md px-1.5 py-1 text-left transition-colors duration-150 hover:bg-surface-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
         >
-          <span className="flex min-w-0 flex-1 items-center justify-between gap-3 px-1 py-1">
-            {headerContent}
-          </span>
+          {headerContent}
         </button>
       ) : (
-        <div className="flex items-center justify-between gap-3">{headerContent}</div>
+        <div className="flex min-h-6 items-center justify-between gap-3">{headerContent}</div>
       )}
-      {expanded ? <div className="mt-3">{children}</div> : null}
+      {expanded ? <div className="mt-2">{children}</div> : null}
     </section>
   );
 }
@@ -533,7 +526,7 @@ function ConclusionZone({
     <ConsoleSection title={t("console.sections.summary")}>
       <div>
         <div className={sectionLabelClass}>{t("console.currentQuestion")}</div>
-        <p className="mt-1 text-sm leading-6 text-foreground">
+        <p className="mt-1 text-[14px] font-medium leading-6 text-foreground">
           {currentQuestion ?? (
             <span className="text-muted-light">{t("console.startPrompt")}</span>
           )}
@@ -541,12 +534,12 @@ function ConclusionZone({
       </div>
 
       {liveRun.errorMessage ? (
-        <p className="mt-3 rounded-lg bg-step-error/10 px-3 py-2 text-xs leading-5 text-step-error">
+        <p className="mt-3 rounded-lg bg-danger/8 px-3 py-2 text-xs leading-5 text-danger">
           {liveRun.errorMessage}
         </p>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border ring-1 ring-border">
         <KpiMetric
           label={liveRun.runHistory?.length ? t("console.stepsSession") : t("console.steps")}
           value={hasRun ? formatCount(groupUsage.stepCount) : "—"}
@@ -555,25 +548,25 @@ function ConclusionZone({
               ? t("console.toolCallsMeta", { count: formatCount(groupUsage.toolCallCount) })
               : undefined
           }
-          accentClass="text-primary"
+          accentClass="text-foreground"
         />
         <KpiMetric
           label={t("console.successRate")}
           value={successRate}
           meta={toolRatio}
-          accentClass="text-step-success"
+          accentClass={runUsage.toolCalls.failed > 0 ? "text-warn" : "text-foreground"}
         />
         <KpiMetric
           label={liveRun.runHistory?.length ? t("console.sections.outputsSession") : t("console.sections.outputs")}
           value={hasRun ? formatCount(runUsage.artifactCount) : "—"}
           meta={t("console.itemsMeta")}
-          accentClass="text-step-query"
+          accentClass="text-foreground"
         />
         <KpiMetric
           label={t("console.tokenCost")}
           value={tokenKpi}
           meta={tokenLine}
-          accentClass={tokenReported ? "text-step-knowledge" : "text-muted-light"}
+          accentClass={tokenReported ? "text-foreground" : "text-muted-light"}
           stackMeta
         />
       </div>
@@ -605,7 +598,7 @@ function DynamicStepsList({
     [liveRun.toolCalls],
   );
   const badge = toolGroups.length > 0 ? (
-    <span className="tabular text-xs font-medium text-muted-light">
+    <span className="tabular text-[12px] text-muted-light">
       {toolGroups.filter((group) => group.status === "success").length}/{toolGroups.length}
     </span>
   ) : null;
@@ -618,7 +611,7 @@ function DynamicStepsList({
           description={t("console.empty.noStepsYetDescription")}
         />
       ) : (
-        <ol className={["grid gap-1.5", consoleStepsListClass].join(" ")}>
+        <ol className={["grid gap-0.5", consoleStepsListClass].join(" ")}>
           {toolGroups.map((group) => {
             const calls = group.toolCallIds
               .map((id) => toolCallById.get(id))
@@ -641,22 +634,19 @@ function DynamicStepsList({
                 : group.title;
             const body = (
               <>
-                <span className={["h-8 w-1 shrink-0 rounded-full", tone.bar].join(" ")} />
                 <StepStatusDot status={group.status} />
                 <span className="min-w-0 flex-1">
                   <span
                     className={[
-                      "block truncate text-xs leading-5",
+                      "block truncate text-[13px] leading-5",
                       group.status === "failed"
-                        ? "font-medium text-step-error"
-                        : group.status === "running"
-                          ? "font-medium text-foreground"
-                          : "text-muted",
+                        ? "font-medium text-danger"
+                        : "font-medium text-foreground",
                     ].join(" ")}
                   >
                     {displayTitle}
                   </span>
-                  <span className="text-[10px] text-muted-light">
+                  <span className={["text-[11.5px]", kind === "other" ? "text-muted-light" : tone.text].join(" ")}>
                     {calls.length > 1
                       ? t("steps.stepMetaTools", {
                           n: group.stepNumber,
@@ -669,30 +659,29 @@ function DynamicStepsList({
                     call.progress ? <SubagentToolProgress key={call.id} call={call} /> : null,
                   )}
                 </span>
-                <span className="shrink-0 text-right text-[10px] text-muted-light">
-                  <span className="block">{toolStatusLabel(group.status, t)}</span>
+                <span className="shrink-0 self-start pt-0.5 text-right text-[11px] text-muted-light">
                   <span className="tabular block font-mono">{groupDuration}</span>
+                  <span className="sr-only">{toolStatusLabel(group.status, t)}</span>
                 </span>
               </>
             );
             return (
               <li
                 key={group.id}
-                className={group.status === "running" ? "step-streaming rounded-lg" : "step-enter"}
+                className="step-enter"
               >
                 <button
                   type="button"
                   onClick={() => onSelectToolGroup(group.id)}
                   className={[
-                    "flex w-full cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors duration-200",
-                    tone.border,
-                    group.status === "running" ? tone.bg : "border-transparent hover:bg-surface-subtle",
+                    "-mx-2 flex w-[calc(100%+16px)] cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
+                    group.status === "running" ? "bg-surface-subtle" : "hover:bg-surface-subtle",
                   ].join(" ")}
                 >
                   {body}
                 </button>
                 {calls.length > 1 ? (
-                  <div className="ml-5 mt-1 grid gap-1 border-l border-border pl-2">
+                  <div className="ml-[7px] mt-0.5 grid gap-0.5 border-l border-border pl-3">
                     {calls.map((call) => {
                       const event = eventById.get(call.id);
                       const title = toolDisplayTitle(event?.toolName ?? call.name, t);
@@ -701,7 +690,7 @@ function DynamicStepsList({
                           key={call.id}
                           type="button"
                           onClick={() => onSelectEvent(call.id)}
-                          className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left text-[11px] transition-colors duration-150 hover:bg-surface"
+                          className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] transition-colors duration-150 hover:bg-surface-subtle"
                         >
                           <StepStatusDot status={call.status} compact />
                           <span className="min-w-0 flex-1 truncate text-muted">{title}</span>
@@ -731,7 +720,7 @@ function ToolDistributionZone({ liveRun }: { liveRun: LiveRun }) {
 
   return (
     <ConsoleSection title={t("console.toolDistribution")} collapsible defaultExpanded={false}>
-      <div className="grid gap-1.5">
+      <div className="grid gap-1">
         {entries.map(([name, bucket]) => {
           const kind = dataStepKindForTool(name);
           const kindLabel = dataStepLabel(kind, t);
@@ -740,24 +729,19 @@ function ToolDistributionZone({ liveRun }: { liveRun: LiveRun }) {
             ? Math.max(8, Math.round((bucket.calls / runUsage.toolCalls.total) * 100))
             : 0;
           return (
-            <div
-              key={name}
-              className="grid gap-2 rounded-lg border border-border bg-surface-subtle px-2.5 py-2"
-            >
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-xs text-foreground">{name}</span>
-                  <span className={["text-[10px]", tone.text].join(" ")}>{kindLabel}</span>
-                </span>
-                <span className="tabular shrink-0 text-[11px] text-muted">{bucket.calls} calls</span>
+            <div key={name} className="grid gap-1.5 py-1">
+              <div className="flex items-baseline gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground">{name}</span>
+                <span className={["shrink-0 text-[11.5px]", kind === "other" ? "text-muted-light" : tone.text].join(" ")}>{kindLabel}</span>
+                <span className="tabular shrink-0 font-mono text-[11.5px] text-muted">{bucket.calls}</span>
                 {bucket.failed > 0 ? (
-                  <span className="shrink-0 rounded-full bg-step-error/10 px-2 py-0.5 text-[10px] font-semibold text-step-error">
-                    Failed {bucket.failed}
+                  <span className="shrink-0 text-[11.5px] font-medium text-danger">
+                    {t("common.failed")} {bucket.failed}
                   </span>
                 ) : null}
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-surface">
-                <div className={["h-full rounded-full", tone.bar].join(" ")} style={{ width: `${share}%` }} />
+              <div className="h-1 overflow-hidden rounded-full bg-border">
+                <div className="h-full rounded-full bg-foreground" style={{ width: `${share}%` }} />
               </div>
             </div>
           );
@@ -774,29 +758,26 @@ function StepStatusDot({
   status: LiveToolCallRecord["status"];
   compact?: boolean;
 }) {
-  const tone =
-    status === "success"
-      ? "border-step-success bg-step-success"
-      : status === "running"
-        ? "border-primary-light bg-primary-light/20"
-        : "border-step-error bg-step-error";
+  const size = compact ? "h-3 w-3" : "mt-[3px] h-[14px] w-[14px]";
+  if (status === "success") {
+    return (
+      <svg viewBox="0 0 16 16" className={`${size} shrink-0 text-ok`} fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+        <circle cx="8" cy="8" r="6.25" />
+        <path d="m5.5 8.2 1.7 1.7 3.3-3.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (status === "running") {
+    return (
+      <span className={`${size} relative flex shrink-0 items-center justify-center`} aria-hidden>
+        <span className="absolute h-2.5 w-2.5 animate-ping rounded-full bg-foreground/20" />
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground" />
+      </span>
+    );
+  }
   return (
-    <span
-      className={[
-        "flex shrink-0 items-center justify-center rounded-full border-2",
-        compact ? "h-3 w-3" : "h-4 w-4",
-        tone,
-      ].join(" ")}
-    >
-      {status === "success" ? (
-        <svg viewBox="0 0 12 12" className={compact ? "h-2 w-2 text-white" : "h-2.5 w-2.5 text-white"} fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="m2.5 6.5 2.5 2.5 4.5-5" />
-        </svg>
-      ) : status === "running" ? (
-        <span className={compact ? "h-1 w-1 rounded-full bg-primary-light" : "h-1.5 w-1.5 rounded-full bg-primary-light"} />
-      ) : (
-        <span className="text-[9px] font-bold leading-none text-white">!</span>
-      )}
+    <span className={`${size} flex shrink-0 items-center justify-center rounded-full bg-danger`} aria-hidden>
+      <span className="text-[9px] font-bold leading-none text-white">!</span>
     </span>
   );
 }
@@ -871,14 +852,14 @@ function DeliverablesZone({
   }, [artifacts, sortOrder]);
   const badge = artifacts.length > 0 ? (
     <span className="flex items-center gap-2">
-      <span className="inline-flex overflow-hidden rounded-md border border-border bg-surface text-[10px] font-semibold leading-4 text-muted">
+      <span className="inline-flex gap-0.5 rounded-md bg-surface-hover p-0.5 text-[11.5px] leading-5 text-muted-light">
         <button
           type="button"
           aria-pressed={sortOrder === "oldest"}
           onClick={() => setSortOrder("oldest")}
           className={[
-            "px-1.5 py-0.5 transition-colors",
-            sortOrder === "oldest" ? "bg-primary-light/15 text-primary" : "hover:text-foreground",
+            "cursor-pointer rounded px-1.5 transition-colors",
+            sortOrder === "oldest" ? "bg-surface text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.08)]" : "hover:text-foreground",
           ].join(" ")}
         >
           {t("common.oldest")}
@@ -888,16 +869,14 @@ function DeliverablesZone({
           aria-pressed={sortOrder === "newest"}
           onClick={() => setSortOrder("newest")}
           className={[
-            "border-l border-border px-1.5 py-0.5 transition-colors",
-            sortOrder === "newest" ? "bg-primary-light/15 text-primary" : "hover:text-foreground",
+            "cursor-pointer rounded px-1.5 transition-colors",
+            sortOrder === "newest" ? "bg-surface text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.08)]" : "hover:text-foreground",
           ].join(" ")}
         >
           {t("common.newest")}
         </button>
       </span>
-      <span className="tabular rounded-full bg-primary-light/15 px-1.5 text-[10px] font-bold leading-4 text-primary">
-        {artifacts.length}
-      </span>
+      <span className="tabular text-[12px] text-muted-light">{artifacts.length}</span>
     </span>
   ) : null;
 
@@ -1049,20 +1028,20 @@ function ArtifactCard({
   ];
 
   return (
-    <div className="min-w-0 rounded-xl border border-border bg-surface-subtle">
-      <div className="min-w-0 p-3">
+    <div className="min-w-0 rounded-xl border border-border bg-surface transition-colors duration-150 hover:border-border-strong">
+      <div className="min-w-0 p-3.5">
         <ArtifactCardHeader artifact={artifact} sourceEvent={sourceEvent} />
         <ArtifactStaticSnippet artifact={artifact} />
       </div>
       {error ? (
-        <p className="border-t border-border bg-step-error/10 px-3 py-1.5 text-[11px] text-step-error">
+        <p className="border-t border-border bg-danger/8 px-3 py-1.5 text-[11px] text-danger">
           {error}
         </p>
       ) : null}
       {showHistory ? (
         <ArtifactVersionHistory artifactId={artifact.id} onClose={() => setShowHistory(false)} />
       ) : null}
-      <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-xl border-t border-border bg-surface px-3 py-2">
+      <div className="flex flex-wrap items-center justify-end gap-1.5 rounded-b-xl border-t border-border px-3 py-2">
         <button
           type="button"
           onClick={() => onPreviewArtifact?.(artifact.id)}
@@ -1093,7 +1072,7 @@ function ArtifactCard({
               : t("console.historyCount", { count: artifact.versionCount ?? 0 })}
           </button>
         ) : null}
-        {exportReady ? (
+        {exportReady && canDownloadArtifact(artifact) ? (
           formatExport ? (
             <ActionMenu
               items={downloadItems}
@@ -1443,29 +1422,31 @@ function ToolGroupDetailView({
         : "—";
 
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className={sectionLabelClass}>{t("console.stepDetails", { n: group.stepNumber })}</div>
-          <h3 className="mt-1 text-sm font-semibold text-foreground">
+          <h3 className="mt-1 text-[15px] font-semibold tracking-[-0.01em] text-foreground">
             {group.title}
           </h3>
-          <p className="mt-1 text-xs leading-5 text-muted">{group.summary}</p>
+          {group.summary && group.summary !== group.title ? (
+            <p className="mt-1 text-xs leading-5 text-muted">{group.summary}</p>
+          ) : null}
         </div>
         <button type="button" onClick={onBack} className={btnSecondaryClass}>
           {t("common.back")}
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <Metric label="Step duration" value={groupDuration} />
-        <Metric label="Status" value={toolStatusLabel(group.status, t)} />
-        <Metric label="Tool calls" value={`${calls.length} calls`} />
-        <Metric label="Outputs" value={`${producedArtifacts.length} items`} />
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border ring-1 ring-border">
+        <Metric label={t("console.stepDuration")} value={groupDuration} />
+        <Metric label={t("console.status")} value={toolStatusLabel(group.status, t)} />
+        <Metric label={t("console.toolCalls")} value={t("console.callsCount", { count: calls.length })} />
+        <Metric label={t("console.sections.outputs")} value={t("console.itemsCount", { count: producedArtifacts.length })} />
       </div>
 
       <Panel title={t("console.toolCalls")}>
-        <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
           {calls.map((call) => {
             const event = eventForToolCall(events, call);
             const active = selectedCall?.id === call.id;
@@ -1481,18 +1462,19 @@ function ToolGroupDetailView({
               >
                 <StepStatusDot status={call.status} compact />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium text-foreground">
+                  <span className="block truncate text-[13px] font-medium text-foreground">
                     {toolDisplayTitle(call.name, t)}
                   </span>
-                  <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-light">
-                    {call.name}
-                  </span>
-                  {call.progress ? <SubagentToolProgress call={call} /> : null}
-                  {call.progress ? <SubagentStepHistory progress={call.progress} /> : null}
+                  {toolDisplayTitle(call.name, t) !== call.name ? (
+                    <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-light">
+                      {call.name}
+                    </span>
+                  ) : null}
+                  {call.progress ? <SubagentDetailProgress call={call} /> : null}
                 </span>
-                <span className="shrink-0 text-right text-[10px] text-muted-light">
-                  <span className="block">{toolStatusLabel(call.status, t)}</span>
+                <span className="shrink-0 self-start text-right text-[11px] text-muted-light">
                   <span className="tabular block font-mono">{stepDurationLabel(call, t)}</span>
+                  <span className="sr-only">{toolStatusLabel(call.status, t)}</span>
                 </span>
               </button>
             );
@@ -1521,7 +1503,7 @@ function ToolGroupDetailView({
                 onClick={() => onSelectEvent(selectedEvent.id)}
                 className={btnSecondaryClass}
               >
-                Tool details
+                {t("console.openToolDetails")}
               </button>
             </div>
             <EventPayloadView
@@ -1532,7 +1514,7 @@ function ToolGroupDetailView({
           </div>
         ) : (
           <p className="text-xs leading-5 text-muted-light">
-            This tool call is not yet linked to a displayable step event.
+            {t("console.toolCallNotLinked")}
           </p>
         )}
       </Panel>
@@ -1643,9 +1625,9 @@ function ArtifactDetailPanel({
       </div>
 
       {sourceEvent && (
-        <div className="rounded-lg border border-border bg-surface-subtle p-3">
+        <div className="rounded-lg border border-border px-3 py-2.5">
           <div className={sectionLabelClass}>
-            Source
+            {t("console.viewSource")}
           </div>
           <button
             type="button"
@@ -1709,13 +1691,13 @@ function ActionDetail({
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="grid gap-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className={sectionLabelClass}>
             {dataStepLabel(event.kind, t)} · {event.ts}
           </div>
-          <h3 className="mt-1 text-sm font-semibold text-foreground">
+          <h3 className="mt-1 text-[15px] font-semibold tracking-[-0.01em] text-foreground">
             {toolDisplayTitle(event.toolName, t)}
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted">
@@ -1731,17 +1713,17 @@ function ActionDetail({
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <Metric label="Step duration" value={stepDurationLabel(toolCall, t)} />
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border ring-1 ring-border">
+        <Metric label={t("console.stepDuration")} value={stepDurationLabel(toolCall, t)} />
         <Metric
-          label="Status"
+          label={t("console.status")}
           value={detailStatusLabel(toolCall, event.activityStatus, t)}
         />
       </div>
 
       {event.thought && (
         <Panel title={t("console.reasoning")}>
-          <p className="text-sm italic leading-6 text-muted">
+          <p className="border-l-2 border-border-strong pl-3 text-[13px] leading-6 text-muted">
             {event.thought}
           </p>
         </Panel>
@@ -1776,9 +1758,9 @@ function ActionDetail({
             {sandboxOutputs.map((output, index) => (
               <div
                 key={`${output.kind}-${output.receivedAt}-${index}`}
-                className="rounded-lg border border-border bg-surface-subtle p-2.5"
+                className="rounded-lg border border-border p-2.5"
               >
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-light">
+                <div className="font-mono text-[11px] text-muted-light">
                   {output.kind}
                 </div>
                 <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-4 text-muted">
@@ -1798,7 +1780,7 @@ function ActionDetail({
               return (
                 <div
                   key={artifact.id}
-                  className="overflow-hidden rounded-lg border border-border bg-surface-subtle"
+                  className="overflow-hidden rounded-lg border border-border"
                 >
                   <button
                     type="button"
@@ -1807,7 +1789,7 @@ function ActionDetail({
                         current === artifact.id ? null : artifact.id,
                       )
                     }
-                    className="w-full cursor-pointer px-3 py-2 text-left transition-colors duration-200 hover:bg-surface"
+                    className="w-full cursor-pointer px-3 py-2 text-left transition-colors duration-150 hover:bg-surface-subtle"
                   >
                     <div className="text-xs font-semibold text-foreground">
                       {artifact.title}
@@ -1832,7 +1814,7 @@ function ActionDetail({
               );
             })}
             <p className="text-[11px] leading-4 text-muted-light">
-              See the Outputs tab for the full list.
+              {t("console.seeOutputsTab")}
             </p>
           </div>
         ) : (
@@ -1848,15 +1830,12 @@ function TokenUsagePanel({
 }: {
   usage: ReturnType<typeof resolveTokenUsageForEvent>;
 }) {
+  const t = useT();
   if (!usage.reported) {
     return (
-      <div className="rounded-lg border border-dashed border-border bg-surface-subtle p-3">
-        <div className="mb-2 inline-flex rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-muted-light">
-          Backend unsupported
-        </div>
-        <p className="text-xs leading-5 text-muted-light">
-          Per-step token, model, and cost usage require backend token_usage events. Run-level usage is shown in Overview.
-        </p>
+      <div className="rounded-lg bg-surface-subtle px-3 py-2.5">
+        <div className="text-[12px] font-medium text-muted">{t("console.usageUnsupported")}</div>
+        <p className="mt-0.5 text-[12px] leading-5 text-muted-light">{t("console.usageUnsupportedHint")}</p>
       </div>
     );
   }
@@ -1870,26 +1849,27 @@ function TokenUsagePanel({
   return (
     <div className="grid gap-3">
       {usage.approximate ? (
-        <div className="inline-flex w-fit rounded-full bg-step-warning/10 px-2 py-0.5 text-[10px] font-semibold text-step-warning">
-          Approximate match (step_number only)
+        <div className="inline-flex w-fit items-center gap-1.5 text-[11.5px] text-warn">
+          <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />
+          {t("console.usageApproximate")}
         </div>
       ) : null}
-      <div className="grid grid-cols-2 gap-2">
-        <Metric label="Input tokens" value={formatCount(usage.inputTokens)} />
-        <Metric label="Output tokens" value={formatCount(usage.outputTokens)} />
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border ring-1 ring-border">
+        <Metric label={t("console.inputTokens")} value={formatCount(usage.inputTokens)} />
+        <Metric label={t("console.outputTokens")} value={formatCount(usage.outputTokens)} />
       </div>
-      <div className="grid gap-2 rounded-lg border border-border bg-surface-subtle p-3">
+      <div className="grid gap-2">
         <TokenUsageBar
-          label="Input"
+          label={t("console.usageInput")}
           value={usage.inputTokens}
           width={inputShare}
-          tone="bg-step-knowledge"
+          tone="bg-foreground"
         />
         <TokenUsageBar
-          label="Output"
+          label={t("console.usageOutput")}
           value={usage.outputTokens}
           width={outputShare}
-          tone="bg-primary-light"
+          tone="bg-muted-light"
         />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-light">
@@ -1897,14 +1877,14 @@ function TokenUsagePanel({
           usage.models.map((model) => (
             <span
               key={model}
-              className="rounded-full border border-border bg-surface px-2 py-0.5 font-medium text-muted"
+              className="rounded-md bg-surface-hover px-2 py-0.5 font-mono text-muted"
             >
               {model}
             </span>
           ))
         ) : null}
         {usage.costUsd !== undefined ? (
-          <span className="rounded-full bg-step-knowledge/10 px-2 py-0.5 font-semibold text-step-knowledge">
+          <span className="font-mono text-foreground">
             ${usage.costUsd.toFixed(4)}
           </span>
         ) : null}
@@ -1926,14 +1906,14 @@ function TokenUsageBar({
 }) {
   return (
     <div className="grid grid-cols-[42px_1fr_64px] items-center gap-2">
-      <span className="text-[11px] font-medium text-muted-light">{label}</span>
-      <div className="h-2 overflow-hidden rounded-full bg-surface">
+      <span className="text-[11.5px] text-muted-light">{label}</span>
+      <div className="h-1 overflow-hidden rounded-full bg-border">
         <div
           className={["h-full rounded-full", tone].join(" ")}
           style={{ width: `${width}%` }}
         />
       </div>
-      <span className="tabular text-right text-[11px] font-semibold text-muted">
+      <span className="tabular text-right font-mono text-[11.5px] text-muted">
         {formatCount(value)}
       </span>
     </div>
@@ -2802,50 +2782,34 @@ function ArtifactCardHeader({
     <>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-foreground">
+          <div className="truncate text-[13.5px] font-semibold text-foreground">
             {artifact.title}
           </div>
-          <p className="mt-1 text-xs leading-5 text-muted">
+          <p className="mt-0.5 text-[12px] leading-5 text-muted-light">
             {artifact.summary}
           </p>
         </div>
         <span
           className={[
-            "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold",
-            tone.bg,
-            tone.border,
-            tone.text,
+            "inline-flex shrink-0 items-center gap-1 rounded px-1.5 text-[11px] leading-[18px] ring-1 ring-inset ring-border",
+            tone.text === "text-muted" ? "text-muted-light" : tone.text,
           ].join(" ")}
         >
-          <span className="text-[10px] leading-none">{tone.icon}</span>
           {label}
         </span>
       </div>
-      <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] leading-4">
+      <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11.5px] leading-4 text-muted-light">
+        <span className="shrink-0 font-mono">{artifact.version ?? "v1"}</span>
+        <span className="shrink-0 text-border-strong">·</span>
         {sourceEvent ? (
-          <>
-            <span
-              className={[
-                "shrink-0 rounded-full px-2 py-0.5 font-semibold",
-                stepKindTone(sourceEvent.kind).bg,
-                stepKindTone(sourceEvent.kind).text,
-              ].join(" ")}
-            >
-              {dataStepLabel(sourceEvent.kind, t)}
-            </span>
-            <span
-              className="min-w-0 truncate text-muted-light"
-              title={toolDisplayTitle(sourceEvent.toolName, t)}
-            >
-              From {toolDisplayTitle(sourceEvent.toolName, t)}
-            </span>
-          </>
+          <span className="min-w-0 truncate" title={toolDisplayTitle(sourceEvent.toolName, t)}>
+            <span className={stepKindTone(sourceEvent.kind).text}>{dataStepLabel(sourceEvent.kind, t)}</span>
+            {" · "}
+            {toolDisplayTitle(sourceEvent.toolName, t)}
+          </span>
         ) : (
-          <span className="text-muted-light">{t("console.sourceStepNotLinked")}</span>
+          <span className="min-w-0 truncate">{t("console.sourceStepNotLinked")}</span>
         )}
-      </div>
-      <div className="mt-3 text-[11px] text-muted-light">
-        <span>{artifact.version ?? "v1"}</span>
       </div>
     </>
   );
@@ -2863,15 +2827,9 @@ function EmptyState({
   onAction?: () => void;
 }) {
   return (
-    <div className={`${emptyStateClass} p-5`}>
-      <div
-        aria-hidden="true"
-        className="mx-auto mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-surface text-sm font-semibold text-muted-light"
-      >
-        ·
-      </div>
-      <div className="text-sm font-semibold text-foreground">{title}</div>
-      <p className="mt-2 text-xs leading-5 text-muted">{description}</p>
+    <div className={`${emptyStateClass} px-5 py-6`}>
+      <div className="text-[13px] font-medium text-foreground">{title}</div>
+      <p className="mx-auto mt-1.5 max-w-[34ch] text-[12px] leading-5 text-muted-light">{description}</p>
       {actionLabel && onAction ? (
         <button
           type="button"
@@ -2887,8 +2845,8 @@ function EmptyState({
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className={panelShellClass}>
-      <h3 className={`mb-3 ${panelTitleClass}`}>{title}</h3>
+    <section className="min-w-0 max-w-full">
+      <h3 className="mb-2 text-[12.5px] font-medium text-muted-light">{title}</h3>
       {children}
     </section>
   );
@@ -2896,9 +2854,9 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface-subtle p-3">
+    <div className="min-w-0 bg-surface px-3 py-2.5">
       <div className={metricLabelClass}>{label}</div>
-      <div className={`mt-1 ${metricValueClass}`}>{value}</div>
+      <div className="tabular mt-0.5 truncate text-[15px] font-semibold tracking-[-0.01em] text-foreground">{value}</div>
     </div>
   );
 }
@@ -2917,13 +2875,13 @@ function KpiMetric({
   stackMeta?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-surface-subtle p-3 shadow-sm">
+    <div className="min-w-0 bg-surface px-3 py-2.5">
       <div className={metricLabelClass}>{label}</div>
       {stackMeta ? (
         <div className="mt-1 grid min-w-0 gap-0.5">
           <span className={`${kpiValueClass} ${accentClass}`}>{value}</span>
           {meta ? (
-            <span className="break-words text-[11px] font-medium leading-snug text-muted-light">
+            <span className="break-words text-[11.5px] leading-snug text-muted-light">
               {meta}
             </span>
           ) : null}
@@ -2932,7 +2890,7 @@ function KpiMetric({
         <div className="mt-1 flex min-w-0 items-end gap-1.5">
           <span className={`${kpiValueClass} ${accentClass}`}>{value}</span>
           {meta ? (
-            <span className="mb-1 shrink text-[11px] font-medium text-muted-light">
+            <span className="mb-1 shrink text-[11.5px] text-muted-light">
               {meta}
             </span>
           ) : null}

@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createTranslator } from "../../../i18n/translate";
 import { createInitialLiveRun, reduceLiveRunEvent } from "../live-run-state";
 import { subagentProgressText, subagentSettledTrail, type SubagentProgress } from "../subagent-progress";
-import { SubagentProgressLine } from "../subagent-progress-line";
+import { SubagentProgressLine, SubagentStepHistory } from "../subagent-progress-line";
 
 vi.mock("../../../i18n/locale-context", () => ({
   useT: () => (key: string) => key,
@@ -91,9 +91,7 @@ describe("subagent progress", () => {
     expect(state.toolCalls[0]?.status).toBe("running");
     expect(state.toolCalls[0]?.progress?.runs.map((run) => run.status)).toEqual(["running", "failed"]);
     expect(state.toolCalls[0]?.progress?.runs[1]?.errorMessage).toBe("bad (QueryError)");
-    expect(subagentProgressText(state.toolCalls[0]!.progress!, createTranslator("en"))).toContain(
-      "checker: bad (QueryError)",
-    );
+    expect(subagentProgressText(state.toolCalls[0]!.progress!, createTranslator("en"))).not.toContain("bad");
     state = reduceLiveRunEvent(state, {
       type: "CUSTOM",
       name: "subagent",
@@ -142,7 +140,8 @@ describe("subagent progress", () => {
     expect(subagentProgressText(progress, t)).toBe("nl2sql · generator");
     const html = renderToStaticMarkup(createElement(SubagentProgressLine, { progress }));
     expect(html).toContain("nl2sql · generator");
-    expect(html).toMatch(/ · \d+s/);
+    expect(html).toContain("chat.subagentStepElapsed");
+    expect(html).toMatch(/\d+s|<[1]s/);
   });
 
   it("keeps a settled step trail and does not say the result is still returning", () => {
@@ -160,8 +159,9 @@ describe("subagent progress", () => {
     };
     const t = createTranslator("zh-CN");
     expect(subagentProgressText(progress, t)).toContain("正在返回结果");
-    expect(subagentSettledTrail(progress, t)).toBe("nl2sql · generator (2), validator");
+    expect(subagentSettledTrail(progress, t)).toBe("nl2sql · 完成");
     expect(subagentSettledTrail(progress, t)).not.toContain("正在返回结果");
+    expect(subagentSettledTrail(progress, t)).not.toContain("generator");
   });
 
   it("keeps the child error on the settled line and names a nested agent", () => {
@@ -177,6 +177,60 @@ describe("subagent progress", () => {
       steps: [{ id: "0", subagentRunId: "nested", name: "validator", status: "failed", startedAtMs: 0, durationMs: 10 }],
     };
     const t = createTranslator("zh-CN");
-    expect(subagentSettledTrail(progress, t)).toBe("nl2sql · checker validator · 子代理出错 · Query failed");
+    expect(subagentSettledTrail(progress, t)).toBe("nl2sql · 子代理出错 · checker: Query failed");
+  });
+
+  it("hides agent middleware hooks from the live line and the settled trail", () => {
+    const progress: SubagentProgress = {
+      agentName: "general-purpose",
+      runs: [{ id: "child", name: "general-purpose", status: "completed" }],
+      nextStepId: 4,
+      updatedAtMs: 0,
+      status: "completed",
+      steps: [
+        { id: "0", subagentRunId: "child", name: "PatchToolCallsMiddleware.before_agent", status: "completed", startedAtMs: 0 },
+        { id: "1", subagentRunId: "child", name: "model", status: "completed", startedAtMs: 1 },
+        { id: "2", subagentRunId: "child", name: "tools", status: "completed", startedAtMs: 2 },
+        { id: "3", subagentRunId: "child", name: "model", status: "completed", startedAtMs: 3 },
+      ],
+    };
+    const t = createTranslator("en");
+    expect(subagentSettledTrail(progress, t)).toBe("general-purpose · Done");
+
+    const running: SubagentProgress = {
+      ...progress,
+      runs: [{ id: "child", name: "general-purpose", status: "running" }],
+      status: "running",
+      steps: [
+        { id: "0", subagentRunId: "child", name: "SkillsMiddleware.before_agent", status: "running", startedAtMs: 0 },
+      ],
+    };
+    expect(subagentProgressText(running, t)).toBe("general-purpose · Starting");
+    expect(
+      subagentSettledTrail({ ...progress, steps: running.steps.map((step) => ({ ...step, status: "completed" })) }, t),
+    ).toBeUndefined();
+  });
+
+  it("lists every child error in the detail and hides middleware steps", () => {
+    const progress: SubagentProgress = {
+      agentName: "nl2sql",
+      runs: [
+        { id: "child", name: "nl2sql", status: "failed", errorMessage: "outer" },
+        { id: "nested", name: "checker", status: "failed", errorMessage: "Query failed" },
+      ],
+      nextStepId: 2,
+      updatedAtMs: 0,
+      status: "failed",
+      steps: [
+        { id: "0", subagentRunId: "child", name: "PatchToolCallsMiddleware.before_agent", status: "completed", startedAtMs: 0 },
+        { id: "1", subagentRunId: "nested", name: "validator", status: "failed", startedAtMs: 0, durationMs: 1200 },
+      ],
+    };
+    const html = renderToStaticMarkup(createElement(SubagentStepHistory, { progress }));
+    expect(html).toContain("validator");
+    expect(html).toContain("1.2s");
+    expect(html).toContain("outer");
+    expect(html).toContain("checker: Query failed");
+    expect(html).not.toContain("Middleware");
   });
 });

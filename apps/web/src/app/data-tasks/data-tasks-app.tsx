@@ -7,7 +7,7 @@ import {
   CopilotChatInput,
   CopilotChatReasoningMessage,
   CopilotChatUserMessage,
-  CopilotKit,
+  CopilotKitProvider,
   useAgent,
   useAgentContext,
   useAttachments,
@@ -335,7 +335,6 @@ import {
 } from "../../i18n/config-labels";
 import type { HttpAgent } from "@ag-ui/client";
 import { StreamHttpAgent } from "../../lib/stream-http-agent";
-import { STREAM_RUNTIME_PATH } from "../../lib/stream-run";
 import {
   getBackendCapabilities,
   isResourcePanelSupported,
@@ -1030,14 +1029,11 @@ function DataTasksCopilotShell() {
 
   return (
     <EnsureSessionAgentContext.Provider value={ensureSessionAgent}>
-    <CopilotKit
+    {/* The v1 CopilotKit wrapper requires runtimeUrl; agents here are self-managed over /dataagent/stream. */}
+    <CopilotKitProvider
       key={scopeKey}
-      agent="default"
-      runtimeUrl={STREAM_RUNTIME_PATH}
-      useSingleEndpoint={false}
       selfManagedAgents={selfManagedAgents}
       showDevConsole={false}
-      enableInspector={false}
       properties={copilotProperties}
       onError={(event) => {
         const contextAgentId = (event as { context?: { agentId?: unknown } }).context?.agentId;
@@ -1089,7 +1085,7 @@ function DataTasksCopilotShell() {
           />
         </LiveRunProvider>
       </CollaborationResponsesProvider>
-    </CopilotKit>
+    </CopilotKitProvider>
     </EnsureSessionAgentContext.Provider>
   );
 }
@@ -2161,7 +2157,7 @@ function DataTaskWorkspace({
         data-guide-id="workspace-layout"
         ref={gridRef}
         className={[
-          "grid h-screen min-h-[560px] overflow-hidden bg-surface-subtle text-foreground",
+          "grid h-screen min-h-[560px] overflow-hidden bg-rail text-foreground",
           isRightPanelResizing ||
           isLeftPanelResizing ||
           isAutoLayout ||
@@ -2340,7 +2336,12 @@ function DataTaskWorkspace({
       <ConversationBranchActionsContext.Provider value={conversationBranchActions}>
       <ToolActionSelectionContext.Provider value={handleSelectToolAction}>
       <ToolGroupSelectionContext.Provider value={handleSelectToolGroup}>
-      <div className="relative z-10 min-h-0 min-w-0 overflow-hidden">
+      <div
+        className={[
+          "relative z-10 my-2 min-h-0 min-w-0 overflow-hidden bg-surface shadow-[0_0_0_1px_var(--border)]",
+          canDockRightPanel && rightPanelOpen ? "rounded-l-xl" : "mr-2 rounded-xl",
+        ].join(" ")}
+      >
       <ChatPane
         activeThreadId={activeThreadId}
         sessions={sessions}
@@ -2375,11 +2376,11 @@ function DataTaskWorkspace({
 
       {canDockRightPanel && rightPanelOpen ? (
         <div
-          className="relative z-0 flex h-full min-h-0 shrink-0 isolate overflow-hidden"
+          className="relative z-0 my-2 mr-2 flex min-h-0 shrink-0 isolate overflow-hidden rounded-r-xl border-y border-r border-border bg-surface"
           style={{
-            width: rightPanelWidth,
-            minWidth: rightPanelWidth,
-            maxWidth: rightPanelWidth,
+            width: rightPanelWidth - 8,
+            minWidth: rightPanelWidth - 8,
+            maxWidth: rightPanelWidth - 8,
           }}
         >
           <PanelResizeHandle
@@ -2988,7 +2989,7 @@ function ToolPayloadBlock({
         className={[
           "max-h-44 overflow-auto whitespace-pre-wrap p-2 text-xs leading-5",
           tone === "dark"
-            ? "bg-code-bg text-slate-100"
+            ? "bg-code-bg text-code-fg"
             : "bg-surface text-muted",
         ].join(" ")}
       >
@@ -3186,6 +3187,7 @@ function StepReasoningMessage({
 
 /** Host pending HITL cards below the user turn when suspend lands before assistant bubble. */
 function StepUserMessage(props: CopilotChatUserMessageProps) {
+  const t = useT();
   const chatConfig = useCopilotChatConfiguration();
   const { agent } = useAgent({ agentId: chatConfig?.agentId ?? runtimeAgentId });
   const { copilotkit } = useCopilotKit();
@@ -3256,9 +3258,9 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
   if (editing) {
     return (
       <>
-        <div className="copilotKitMessage copilotKitUserMessage flex flex-col items-end px-3 pt-1">
+        <div className="copilotKitMessage copilotKitUserMessage chat-question px-1">
           <form
-            className="flex w-[min(520px,calc(100%-24px))] max-w-full flex-col gap-2 rounded-[1.35rem] bg-surface-subtle px-4 py-3 text-left text-foreground"
+            className="flex w-full flex-col gap-2 rounded-xl bg-surface-subtle px-4 py-3 text-left text-foreground ring-1 ring-border focus-within:ring-border-strong"
             onSubmit={(event) => {
               event.preventDefault();
               void submitRewrite();
@@ -3266,28 +3268,29 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
           >
             <textarea
               value={draft}
+              autoFocus
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={createChatTextareaKeyDownHandler(() => {
                 void submitRewrite();
               })}
-              className="min-h-16 w-full resize-none rounded-xl border border-transparent bg-transparent p-0 text-base leading-7 text-foreground outline-none transition-colors placeholder:text-muted-light"
+              className="min-h-16 w-full resize-none border-0 bg-transparent p-0 text-[17px] font-medium leading-7 tracking-[-0.01em] text-foreground outline-none placeholder:text-muted-light"
               disabled={busy}
             />
-            <div className="flex justify-end gap-2 pt-0.5">
+            <div className="flex justify-end gap-1.5 pt-0.5">
               <button
                 type="button"
-                className="rounded-md px-2 py-1 text-sm text-muted-light transition-colors hover:text-foreground"
+                className="h-8 cursor-pointer rounded-lg px-3 text-[13px] text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
                 onClick={() => setEditing(false)}
                 disabled={busy}
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 type="submit"
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                className="h-8 cursor-pointer rounded-lg bg-primary px-3 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-default disabled:opacity-40"
                 disabled={busy || draft.trim().length === 0}
               >
-                Rewrite
+                {t("chat.rewrite")}
               </button>
             </div>
           </form>
@@ -3297,31 +3300,32 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
     );
   }
 
+  const questionActionClass =
+    "grid h-7 w-7 cursor-pointer place-items-center rounded-md text-muted-light transition-colors duration-150 hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20";
+
   return (
     <>
-      <div className="copilotKitMessage copilotKitUserMessage flex flex-col items-end px-3 pt-1">
-        <div
+      <div className="copilotKitMessage copilotKitUserMessage chat-question group px-1">
+        <h3
           className={[
-            "group w-fit max-w-[min(520px,calc(100%-24px))] rounded-[1.35rem] bg-surface-subtle px-4 py-3 text-left text-base leading-7 text-foreground",
-            canRewrite ? "cursor-text transition-colors hover:bg-surface-subtle/80" : "",
+            "whitespace-pre-wrap break-words text-[19px] font-semibold leading-[1.45] tracking-[-0.01em] text-foreground",
+            canRewrite ? "cursor-text" : "",
           ].filter(Boolean).join(" ")}
           onClick={() => {
             if (canRewrite) setEditing(true);
           }}
-          title={canRewrite ? "Click to rewrite this question" : undefined}
+          title={canRewrite ? t("chat.clickToRewrite") : undefined}
         >
-          <div className="whitespace-pre-wrap break-words">{content}</div>
-        </div>
-      </div>
-      <div className="flex justify-end px-3 pt-1">
-        <div className="flex items-center gap-1 text-muted-light">
+          {content}
+        </h3>
+        <div className="-ml-1.5 mt-1 flex h-7 items-center gap-0.5 text-muted-light opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           {branchState && branchState.total > 1 ? (
-            <div className="mr-1 flex items-center gap-1">
+            <div className="mr-1 flex items-center">
               <button
                 type="button"
-                className="cursor-pointer rounded-md p-0.5 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
-                title="Previous branch"
-                aria-label="Previous branch"
+                className={questionActionClass}
+                title={t("chat.previousBranch")}
+                aria-label={t("chat.previousBranch")}
                 onClick={() => {
                   if (branchState.previousSessionId) {
                     branchActions?.onSwitchBranch(branchState.previousSessionId, {
@@ -3332,14 +3336,14 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
               >
                 <ChevronIcon direction="left" />
               </button>
-              <span className="min-w-8 text-center text-[11px] tabular-nums">
+              <span className="min-w-8 text-center text-[11.5px] tabular-nums">
                 {branchState.currentIndex + 1}/{branchState.total}
               </span>
               <button
                 type="button"
-                className="cursor-pointer rounded-md p-0.5 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
-                title="Next branch"
-                aria-label="Next branch"
+                className={questionActionClass}
+                title={t("chat.nextBranch")}
+                aria-label={t("chat.nextBranch")}
                 onClick={() => {
                   if (branchState.nextSessionId) {
                     branchActions?.onSwitchBranch(branchState.nextSessionId, {
@@ -3352,13 +3356,13 @@ function StepUserMessage(props: CopilotChatUserMessageProps) {
               </button>
             </div>
           ) : null}
-          <CopyContentButton content={content} />
+          <CopyContentButton content={content} className="grid h-7 w-7 place-items-center hover:bg-surface-hover" />
           {branchState ? (
             <button
               type="button"
-              className="cursor-pointer rounded-md p-0.5 transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
-              title={branchState.branchable ? "Rewrite from here" : "Refresh this question"}
-              aria-label={branchState.branchable ? "Rewrite from here" : "Refresh this question"}
+              className={questionActionClass}
+              title={branchState.branchable ? t("chat.rewriteFromHere") : t("chat.refreshQuestion")}
+              aria-label={branchState.branchable ? t("chat.rewriteFromHere") : t("chat.refreshQuestion")}
               onClick={() => setEditing(true)}
             >
               <PencilMenuIcon />
@@ -3716,94 +3720,108 @@ function StepAssistantMessage({
     toggleCollapsed();
   };
 
+  const answerCaret = (
+    <span
+      className={`caret-blink ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] align-middle ${theme.caret}`}
+    />
+  );
+
   if (isFinalAnswer) {
     return (
       <div
         data-copilotkit
-        className="copilotKitMessage copilotKitAssistantMessage step-enter mb-6 px-1"
+        className="copilotKitMessage copilotKitAssistantMessage chat-answer step-enter mb-2 px-1 pt-3"
       >
-        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-light">
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-light" />
-          <span>{isActive ? t("chat.answering") : t("chat.answer")}</span>
-          {isActive ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] text-muted">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted" />
-              {t("chat.generating")}
-            </span>
-          ) : null}
-          {content ? (
-            <span className="ml-auto">
-              <CopyContentButton content={content} />
-            </span>
-          ) : null}
-        </div>
         {content ? (
           <div className="max-w-none">
             <RichMarkdown content={content} density="chat" />
-            {isActive && (
-              <span
-                className={`caret-blink ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] align-middle ${theme.caret}`}
-              />
-            )}
+            {isActive ? answerCaret : null}
+          </div>
+        ) : null}
+        {content && !isActive ? (
+          <div className="-ml-1.5 mt-2 flex h-7 items-center gap-0.5">
+            <CopyContentButton
+              content={content}
+              className="grid h-7 w-7 place-items-center hover:bg-surface-hover"
+            />
           </div>
         ) : null}
       </div>
     );
   }
 
-  if (hideProcessStepForTimelineCollapse) {
-    return isFirstProcessStep ? (
-      <div className="copilotKitMessage copilotKitAssistantMessage mb-1 mt-4 flex items-center gap-2 px-1 text-xs text-muted-light">
-        <button
-          type="button"
-          onClick={processTimelineCollapse.toggle}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 font-medium transition-colors duration-150 hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
-          aria-expanded={false}
-        >
-          <span>{t("chat.workProcess")}</span>
-          <span className="tabular">
-            {t(processStepCount === 1 ? "chat.stepCount" : "chat.stepCountPlural", {
-              count: processStepCount,
-            })}
+  const latestRunInFlight =
+    nextUserIndex === -1 && (liveRunStatus === "running" || liveRunStatus === "suspended");
+  const latestRunFailed = nextUserIndex === -1 && liveRunStatus === "failed";
+  const latestRunCanceled = nextUserIndex === -1 && liveRunStatus === "canceled";
+  const workProcessToggle = isFirstProcessStep ? (
+    <div className="copilotKitMessage copilotKitAssistantMessage mt-3 flex items-center px-1">
+      <button
+        type="button"
+        onClick={processTimelineCollapse.toggle}
+        className="-ml-1.5 inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-[13px] text-muted-light transition-colors duration-150 hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
+        aria-expanded={!processTimelineCollapse.collapsed}
+      >
+        {latestRunInFlight ? (
+          <span className="relative flex h-3.5 w-3.5 items-center justify-center" aria-hidden>
+            <span className="absolute h-2 w-2 animate-ping rounded-full bg-foreground/25" />
+            <span className="h-1.5 w-1.5 rounded-full bg-foreground" />
           </span>
-          <StepChevron expanded={false} />
-        </button>
-      </div>
-    ) : null;
+        ) : latestRunFailed || latestRunCanceled ? (
+          <span className="flex h-3.5 w-3.5 items-center justify-center" aria-hidden>
+            <span className={`h-1.5 w-1.5 rounded-full ${latestRunFailed ? "bg-danger" : "bg-muted-light"}`} />
+          </span>
+        ) : (
+          <StepDoneGlyph />
+        )}
+        <span>{t("chat.workProcess")}</span>
+        <span className="tabular">
+          {t(processStepCount === 1 ? "chat.stepCount" : "chat.stepCountPlural", {
+            count: processStepCount,
+          })}
+        </span>
+        <StepChevron expanded={!processTimelineCollapse.collapsed} />
+      </button>
+    </div>
+  ) : null;
+
+  if (hideProcessStepForTimelineCollapse) {
+    return workProcessToggle;
   }
+
+  const stepFailed = toolSummaries.some((chip) => chip.status === "failed");
+  const stepHeaderTitle =
+    stepHeaderLabel ?? (toolNames || toolActionLabel || kindLabel);
+  const stepHeaderMeta =
+    displayHasToolCalls && !isActive && stepElapsed !== "—" ? stepElapsed : null;
+  const showToolChips = displayHasToolCalls && (effectiveToolCalls.length > 1 || stepFailed);
+  const stepToolChips = (chips: ToolChipSummary[]) => (
+    <div className="flex min-w-0 flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <ToolSummaryChip key={chip.id} chip={chip} onSelectToolAction={selectToolAction} />
+      ))}
+    </div>
+  );
+  const stepThoughtClass =
+    "text-[13px] leading-6 text-muted [&_code]:rounded [&_code]:bg-surface-subtle [&_code]:px-1 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5";
 
   return (
     <>
-    {isFirstProcessStep ? (
-      <div className="copilotKitMessage copilotKitAssistantMessage mb-1 mt-4 flex items-center gap-2 px-1 text-xs text-muted-light">
-        <button
-          type="button"
-          onClick={processTimelineCollapse.toggle}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 font-medium transition-colors duration-150 hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
-          aria-expanded={!processTimelineCollapse.collapsed}
-        >
-          <span>{t("chat.workProcess")}</span>
-          <span className="tabular">
-            {t(processStepCount === 1 ? "chat.stepCount" : "chat.stepCountPlural", {
-              count: processStepCount,
-            })}
-          </span>
-          <StepChevron expanded={!processTimelineCollapse.collapsed} />
-        </button>
-      </div>
-    ) : null}
+    {workProcessToggle}
     <div
       data-copilotkit
       style={theme.glowVar}
       className={[
-        "copilotKitMessage copilotKitAssistantMessage step-enter relative mb-0 pl-7 pr-1 py-1.5 transition-colors duration-200",
-        isProcessStep ? "" : `rounded-xl border p-3 shadow-[var(--shadow-card)] ${theme.card}`,
+        "copilotKitMessage copilotKitAssistantMessage step-enter relative transition-colors duration-200",
+        isProcessStep
+          ? "chat-step pl-6 pr-1 py-0.5"
+          : `my-2 rounded-xl border px-3 py-2.5 shadow-[var(--shadow-card)] ${theme.card}`,
       ].join(" ")}
     >
       {isProcessStep ? (
         <>
-          <span className="absolute left-[9px] top-0 bottom-0 w-px bg-border" aria-hidden />
-          <span className="absolute left-0 top-2.5">
+          <span className="chat-step-rail absolute bottom-0 left-[7px] top-0 w-px bg-border" aria-hidden />
+          <span className="absolute left-0 top-[9px]">
             <button
               type="button"
               onClick={(event) => {
@@ -3814,7 +3832,7 @@ function StepAssistantMessage({
                   toggleCollapsed();
                 }
               }}
-              className="cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
+              className="flex cursor-pointer rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
               title={
                 displayHasToolCalls
                   ? t("chat.viewStepDetails")
@@ -3838,6 +3856,7 @@ function StepAssistantMessage({
                 isThought={isThought}
                 isCollaboration={isCollaborationStep || isWaitingForUser}
                 isWaitingForUser={isWaitingForUser}
+                isFailed={stepFailed}
               />
             </button>
           </span>
@@ -3855,8 +3874,8 @@ function StepAssistantMessage({
           }
         }}
         className={[
-          "flex w-full cursor-pointer items-center gap-2 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
-          isProcessStep ? "px-2 py-1 hover:bg-surface-subtle" : "",
+          "flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
+          isProcessStep ? "px-2 transition-colors duration-150 hover:bg-surface-subtle" : "",
         ].join(" ")}
       >
         {!isProcessStep ? (
@@ -3870,36 +3889,34 @@ function StepAssistantMessage({
             isWaitingForUser={isWaitingForUser}
           />
         ) : null}
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          {stepHeaderLabel ? (
-            <span className={`shrink-0 text-xs font-semibold ${theme.label}`}>
-              {stepHeaderLabel}
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span
+            className={[
+              "min-w-0 truncate text-[13px] font-medium",
+              stepFailed ? "text-danger" : isActive ? "text-foreground" : theme.label,
+            ].join(" ")}
+          >
+            {stepHeaderTitle}
+          </span>
+          {stepHeaderMeta ? (
+            <span className="shrink-0 font-mono text-[11px] text-muted-light tabular">
+              {stepHeaderMeta}
             </span>
           ) : null}
-          {displayHasToolCalls ? (
-            <span
-              className={[
-                "min-w-0 truncate text-[10px]",
-                stepHeaderLabel ? "text-muted-light" : `font-semibold ${theme.label}`,
-              ].join(" ")}
-            >
-              {t(
-                effectiveToolCalls.length === 1 ? "chat.toolCount" : "chat.toolCountPlural",
-                { count: effectiveToolCalls.length, elapsed: stepElapsed },
-              )}
-            </span>
+          {stepFailed ? (
+            <span className="shrink-0 text-[11.5px] text-danger">{t("common.failed")}</span>
           ) : null}
         </div>
         {isActive && (
           <span
-            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${theme.statusPill}`}
+            className={`inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium ${theme.statusPill}`}
           >
             <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${theme.statusDot}`} />
             {isFinalAnswer ? t("chat.generating") : isWaitingForUser ? t("chat.waitingForInput") : isCollaborationStep ? t("chat.collaborating") : t("common.running")}
           </span>
         )}
         <div className="ml-auto flex items-center gap-0.5">
-          {hasMeaningfulText(processContent) ? (
+          {hasMeaningfulText(processContent) && !collapsed ? (
             <span onClick={(event) => event.stopPropagation()}>
               <CopyContentButton content={processContent} />
             </span>
@@ -3910,7 +3927,7 @@ function StepAssistantMessage({
               event.stopPropagation();
               toggleCollapsed();
             }}
-            className="cursor-pointer rounded-md p-0.5 text-muted-light transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
+            className="cursor-pointer rounded-md text-muted-light transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
             title={collapsed ? t("chat.expandStep") : t("chat.collapseStep")}
             aria-label={collapsed ? t("chat.expandStep") : t("chat.collapseStep")}
           >
@@ -3922,15 +3939,15 @@ function StepAssistantMessage({
       {collapsed ? (
         <div
           className={[
-            "grid gap-1.5 rounded-lg text-left text-xs",
-            isProcessStep ? "px-2 pb-1 text-muted" : "mt-1.5 text-muted-light",
+            "grid gap-1.5 text-left",
+            isProcessStep ? "px-2 pb-1.5 empty:hidden" : "mt-1.5",
           ].join(" ")}
         >
           {collapsedStepSummary.thinkingPreview ? (
             <button
               type="button"
               onClick={openStepDetails}
-              className="line-clamp-2 cursor-pointer text-left leading-5 transition-colors duration-150 hover:text-foreground"
+              className="line-clamp-2 cursor-pointer text-left text-[12.5px] leading-5 text-muted-light transition-colors duration-150 hover:text-foreground"
               title={collapsedStepSummary.thinkingPreview}
             >
               {collapsedStepSummary.thinkingPreview}
@@ -3938,103 +3955,41 @@ function StepAssistantMessage({
           ) : null}
           {displayHasToolCalls ? (
             <>
-              <div className="flex min-w-0 flex-wrap gap-1.5">
-                {collapsedToolChips.map((chip) => (
-                  <ToolSummaryChip
-                    key={chip.id}
-                    chip={chip}
-                    onSelectToolAction={selectToolAction}
-                  />
-                ))}
-              </div>
+              {showToolChips ? stepToolChips(collapsedToolChips) : null}
               <SubagentProgressNotes
                 toolCallIds={messageToolCallIds(effectiveToolCalls)}
                 liveRun={liveRun}
               />
             </>
-          ) : (
+          ) : summary && summary !== stepHeaderTitle ? (
             <button
               type="button"
               onClick={openStepDetails}
-              className="block w-full truncate rounded-lg text-left transition-colors duration-150 hover:text-foreground"
+              className="block w-full cursor-pointer truncate text-left text-[12.5px] leading-5 text-muted-light transition-colors duration-150 hover:text-foreground"
               title={summary}
             >
               {summary}
             </button>
-          )}
+          ) : null}
         </div>
       ) : (
-        <>
-          {processContent && displayHasToolCalls ? (
-            <>
-              <StepSubPanel
-                title={t("chat.thinking")}
-                tone="thought"
-                streaming={isActive}
-                onHeaderClick={displayHasToolCalls ? openStepDetails : undefined}
-              >
-                <div className="text-sm leading-6 text-muted [&_code]:rounded [&_code]:bg-surface-subtle [&_code]:px-1 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5">
-                  <CopilotChatAssistantMessage.MarkdownRenderer content={processContent} />
-                  {isActive && (
-                    <span className="caret-blink ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] bg-muted align-middle" />
-                  )}
-                </div>
-              </StepSubPanel>
-              <StepSubPanel
-                title={t("chat.toolCalls")}
-                tone="tool"
-                badge={effectiveToolCalls.length}
-                busy={isActive}
-                onHeaderClick={openStepDetails}
-              >
-                <div className="flex min-w-0 flex-wrap gap-1.5">
-                  {toolSummaries.map((chip) => (
-                    <ToolSummaryChip
-                      key={chip.id}
-                      chip={chip}
-                      onSelectToolAction={selectToolAction}
-                    />
-                  ))}
-                </div>
-                <SubagentProgressNotes
-                  toolCallIds={messageToolCallIds(effectiveToolCalls)}
-                  liveRun={liveRun}
-                />
-              </StepSubPanel>
-            </>
-          ) : processContent ? (
-            <div className="mt-2 text-sm leading-6 text-muted [&_code]:rounded [&_code]:bg-surface-subtle [&_code]:px-1 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5">
+        <div className={isProcessStep ? "grid gap-2 px-2 pb-2 pt-0.5" : "mt-2 grid gap-2"}>
+          {processContent ? (
+            <div className={stepThoughtClass}>
               <CopilotChatAssistantMessage.MarkdownRenderer content={processContent} />
-              {isActive && (
-                <span
-                  className={`caret-blink ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] align-middle ${theme.caret}`}
-                />
-              )}
+              {isActive && !displayHasToolCalls ? answerCaret : null}
             </div>
-          ) : displayHasToolCalls ? (
-            <StepSubPanel
-              title={t("chat.toolCalls")}
-              tone="tool"
-              badge={effectiveToolCalls.length}
-              busy={isActive}
-              onHeaderClick={openStepDetails}
-            >
-              <div className="flex min-w-0 flex-wrap gap-1.5">
-                {toolSummaries.map((chip) => (
-                  <ToolSummaryChip
-                    key={chip.id}
-                    chip={chip}
-                    onSelectToolAction={selectToolAction}
-                  />
-                ))}
-              </div>
+          ) : null}
+          {displayHasToolCalls ? (
+            <div className="grid gap-1.5">
+              {stepToolChips(toolSummaries)}
               <SubagentProgressNotes
                 toolCallIds={messageToolCallIds(effectiveToolCalls)}
                 liveRun={liveRun}
               />
-            </StepSubPanel>
+            </div>
           ) : null}
-        </>
+        </div>
       )}
     </div>
     {(hostsPendingSlot || isCollaborationStep || (isWaitingForUser && !isCollaborationComplete)) ? (
@@ -4047,104 +4002,27 @@ function StepAssistantMessage({
       <div
         data-copilotkit
         className={[
-          "copilotKitMessage copilotKitAssistantMessage step-enter px-1",
-          isLastAssistantInRun ? "mb-6" : "mb-4",
+          "copilotKitMessage copilotKitAssistantMessage chat-answer step-enter px-1 pt-3",
+          isLastAssistantInRun ? "mb-2" : "mb-4",
         ].join(" ")}
       >
-        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-light">
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-light" />
-          <span>{isFollowUpAnswerActive ? t("chat.answering") : t("chat.answer")}</span>
-          {isFollowUpAnswerActive ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-subtle px-2 py-0.5 text-[10px] text-muted">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted" />
-              {t("chat.generating")}
-            </span>
-          ) : null}
-          <span className="ml-auto">
-            <CopyContentButton content={content} />
-          </span>
-        </div>
         <div className="max-w-none">
           <RichMarkdown content={content} density="chat" />
           {isFollowUpAnswerActive ? (
             <span className="caret-blink ml-0.5 inline-block h-4 w-[2px] -translate-y-[1px] align-middle bg-primary" />
           ) : null}
         </div>
+        {!isFollowUpAnswerActive ? (
+          <div className="-ml-1.5 mt-2 flex h-7 items-center gap-0.5">
+            <CopyContentButton
+              content={content}
+              className="grid h-7 w-7 place-items-center hover:bg-surface-hover"
+            />
+          </div>
+        ) : null}
       </div>
     ) : null}
     </>
-  );
-}
-
-function StepSubPanel({
-  title,
-  tone,
-  badge,
-  streaming,
-  busy,
-  onHeaderClick,
-  children,
-}: {
-  title: string;
-  tone: "thought" | "tool";
-  badge?: number;
-  streaming?: boolean;
-  busy?: boolean;
-  onHeaderClick?: () => void;
-  children: ReactNode;
-}) {
-  const t = useT();
-  const styles =
-    tone === "thought"
-      ? {
-          shell: "border-border bg-surface",
-          header: "border-border bg-surface-subtle",
-          label: "text-muted",
-          dot: "bg-muted-light",
-        }
-      : {
-          shell: "border-border bg-surface",
-          header: "border-border bg-surface-subtle",
-          label: "text-muted",
-          dot: "bg-muted-light",
-        };
-
-  return (
-    <section className={`mt-2 overflow-hidden rounded-xl border ${styles.shell}`}>
-      <button
-        type="button"
-        onClick={onHeaderClick}
-        disabled={!onHeaderClick}
-        className={[
-          `flex w-full items-center gap-2 border-b px-3 py-2 ${styles.header}`,
-          onHeaderClick
-            ? "cursor-pointer transition-colors duration-150 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
-            : "cursor-default",
-        ].join(" ")}
-        title={onHeaderClick ? "View step details in the task console" : undefined}
-      >
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${styles.dot}`} />
-        <span
-          className={`text-[11px] font-semibold uppercase tracking-[0.06em] ${styles.label}`}
-        >
-          {title}
-        </span>
-        {badge !== undefined && badge > 0 ? (
-          <span className="rounded-full border border-border bg-surface px-1.5 py-0.5 text-[10px] font-bold text-muted-light">
-            {badge}
-          </span>
-        ) : null}
-        {(streaming || busy) && (
-          <span
-            className={`ml-auto inline-flex items-center gap-1 text-[10px] font-medium ${styles.label}`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${styles.dot}`} />
-            {streaming ? t("chat.generating") : t("common.running")}
-          </span>
-        )}
-      </button>
-      <div className="px-3 py-2.5">{children}</div>
-    </section>
   );
 }
 
@@ -4172,16 +4050,16 @@ function ToolSummaryChip({
       : chip.durationLabel;
   const tone =
     chip.status === "failed"
-      ? "border-step-error/25 bg-step-error/8 text-step-error"
+      ? "bg-danger/8 text-danger"
       : chip.status === "running"
-        ? "border-border bg-surface text-foreground"
-        : "border-border bg-surface text-muted";
+        ? "bg-surface-hover text-foreground"
+        : "bg-surface-subtle text-muted";
   const dot =
     chip.status === "failed"
-      ? "bg-step-error"
+      ? "bg-danger"
       : chip.status === "running"
-        ? "bg-step-warning"
-        : "bg-step-success";
+        ? "bg-foreground"
+        : "bg-ok";
   const content = (
     <>
       {!chip.overflow ? (
@@ -4195,7 +4073,7 @@ function ToolSummaryChip({
       ) : null}
       <span className="truncate">{chip.label}</span>
       {!chip.overflow && durationLabel ? (
-        <span className="shrink-0 font-mono text-[10px] text-muted-light">
+        <span className="shrink-0 font-mono text-[10.5px] text-muted-light tabular">
           {durationLabel}
         </span>
       ) : null}
@@ -4206,7 +4084,7 @@ function ToolSummaryChip({
     return (
       <span
         className={[
-          "inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+          "inline-flex h-6 max-w-full items-center gap-1.5 rounded-md px-2 text-[11.5px]",
           tone,
         ].join(" ")}
       >
@@ -4223,7 +4101,7 @@ function ToolSummaryChip({
         onSelectToolAction(chip.id);
       }}
       className={[
-        "inline-flex max-w-full cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors duration-150 hover:bg-surface-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
+        "inline-flex h-6 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11.5px] transition-colors duration-150 hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
         tone,
       ].join(" ")}
       title={t("chat.viewStepDetails")}
@@ -4254,7 +4132,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-foreground",
-      statusPill: "border border-border bg-surface-subtle text-foreground",
+      statusPill: "text-foreground",
       statusDot: "bg-foreground",
       caret: "bg-primary",
       glowVar: { ["--step-glow" as string]: "rgb(13 13 13 / 0.12)" },
@@ -4264,7 +4142,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-muted",
-      statusPill: "border border-border bg-surface-subtle text-muted",
+      statusPill: "text-muted",
       statusDot: "bg-muted",
       caret: "bg-primary",
       glowVar: undefined,
@@ -4274,7 +4152,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-foreground",
-      statusPill: "border border-border bg-surface-subtle text-muted",
+      statusPill: "text-muted",
       statusDot: "bg-muted",
       caret: "bg-primary",
       glowVar: undefined,
@@ -4284,7 +4162,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-foreground",
-      statusPill: "border border-border bg-surface-subtle text-foreground",
+      statusPill: "text-foreground",
       statusDot: "bg-foreground",
       caret: "bg-primary",
       glowVar: { ["--step-glow" as string]: "rgb(13 13 13 / 0.12)" },
@@ -4294,7 +4172,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-foreground",
-      statusPill: "border border-border bg-surface-subtle text-foreground",
+      statusPill: "text-foreground",
       statusDot: "bg-foreground",
       caret: "bg-primary",
       glowVar: { ["--step-glow" as string]: "rgb(13 13 13 / 0.1)" },
@@ -4304,7 +4182,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-muted",
-      statusPill: "border border-border bg-surface-subtle text-muted",
+      statusPill: "text-muted",
       statusDot: "bg-muted-light",
       caret: "bg-primary",
       glowVar: undefined,
@@ -4314,7 +4192,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-foreground",
-      statusPill: "border border-border bg-surface-subtle text-foreground",
+      statusPill: "text-foreground",
       statusDot: "bg-foreground",
       caret: "bg-primary",
       glowVar: { ["--step-glow" as string]: "rgb(13 13 13 / 0.1)" },
@@ -4324,7 +4202,7 @@ function getStepCardTheme({
     return {
       card: "border-border bg-surface",
       label: "text-muted",
-      statusPill: "border border-border bg-surface-subtle text-muted",
+      statusPill: "text-muted",
       statusDot: "bg-muted-light",
       caret: "bg-primary",
       glowVar: undefined,
@@ -4333,7 +4211,7 @@ function getStepCardTheme({
   return {
     card: "border-border bg-surface-subtle/80",
     label: "text-muted-light",
-    statusPill: "bg-surface-subtle text-muted",
+    statusPill: "text-muted",
     statusDot: "bg-muted-light",
     caret: "bg-muted",
     glowVar: undefined,
@@ -4359,25 +4237,22 @@ function StepChevron({ expanded }: { expanded: boolean }) {
 }
 
 function ChatAssistantLoadingRow() {
+  const t = useT();
   return (
     <div
       data-copilotkit
-      className="copilotKitMessage copilotKitAssistantMessage mb-4 flex items-center gap-2.5"
+      className="copilotKitMessage copilotKitAssistantMessage mt-3 mb-4 flex items-center gap-2 px-1"
       role="status"
       aria-live="polite"
-      aria-label="Agent thinking"
+      aria-label={t("chat.thinking")}
     >
-      <StepBadge
-        stepNumber={0}
-        isFinalAnswer={false}
-        isStreamingAnswer={false}
-        isActive={true}
-        isThought={true}
-      />
-      <span className="chat-assistant-loading-pill inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium">
-        <span className="chat-assistant-loading-dot h-1.5 w-1.5 rounded-full" />
-        <span className="chat-assistant-loading-dot h-1.5 w-1.5 rounded-full" />
-        <span className="chat-assistant-loading-dot h-1.5 w-1.5 rounded-full" />
+      <span className="chat-assistant-loading-pill inline-flex items-center gap-2 text-[13px]">
+        <span className="inline-flex items-center gap-1" aria-hidden>
+          <span className="chat-assistant-loading-dot h-1.5 w-1.5 rounded-full" />
+          <span className="chat-assistant-loading-dot h-1.5 w-1.5 rounded-full" />
+          <span className="chat-assistant-loading-dot h-1.5 w-1.5 rounded-full" />
+        </span>
+        {t("chat.thinking")}
       </span>
     </div>
   );
@@ -4391,6 +4266,7 @@ function StepBadge({
   isThought,
   isCollaboration,
   isWaitingForUser,
+  isFailed,
 }: {
   stepNumber: number;
   isFinalAnswer: boolean;
@@ -4399,6 +4275,7 @@ function StepBadge({
   isThought?: boolean;
   isCollaboration?: boolean;
   isWaitingForUser?: boolean;
+  isFailed?: boolean;
 }) {
   const presentation = resolveStepBadgePresentation({
     stepNumber,
@@ -4409,19 +4286,21 @@ function StepBadge({
     isCollaboration,
     isWaitingForUser,
   });
+  const shell = "relative flex h-[15px] w-[15px] items-center justify-center rounded-full";
+  const ping = <span className="absolute inset-[-3px] animate-ping rounded-full bg-foreground/15" />;
 
   if (presentation.kind === "waiting") {
     return (
-      <span className="relative flex h-5 w-5 items-center justify-center rounded-full bg-foreground">
-        <span className="absolute inset-0 rounded-full bg-muted-light/45 animate-ping" />
+      <span className={`${shell} bg-foreground`}>
+        {ping}
         <span className="relative text-[9px] font-bold text-white">?</span>
       </span>
     );
   }
   if (presentation.kind === "collaboration") {
     return (
-      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface-subtle text-muted">
-        <svg viewBox="0 0 20 20" className="h-3 w-3" fill="currentColor" aria-hidden>
+      <span className={`${shell} bg-surface text-muted ring-1 ring-border-strong`}>
+        <svg viewBox="0 0 20 20" className="h-2.5 w-2.5" fill="currentColor" aria-hidden>
           <path d="M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4 17v-1a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v1H4Z" />
         </svg>
       </span>
@@ -4429,8 +4308,8 @@ function StepBadge({
   }
   if (presentation.kind === "final") {
     return (
-      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-border bg-surface-subtle text-muted">
-        <svg viewBox="0 0 20 20" className="h-3 w-3" fill="currentColor" aria-hidden>
+      <span className={`${shell} bg-surface text-ok ring-1 ring-border-strong`}>
+        <svg viewBox="0 0 20 20" className="h-2.5 w-2.5" fill="currentColor" aria-hidden>
           <path
             fillRule="evenodd"
             d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.5 7.5a1 1 0 0 1-1.4 0L3.3 9.7a1 1 0 1 1 1.4-1.4l3.1 3.1 6.8-6.8a1 1 0 0 1 1.4 0Z"
@@ -4442,8 +4321,8 @@ function StepBadge({
   }
   if (presentation.kind === "streaming") {
     return (
-      <span className="relative flex h-5 w-5 items-center justify-center rounded-full bg-foreground">
-        <span className="absolute inset-0 rounded-full bg-muted-light/60 animate-ping" />
+      <span className={`${shell} bg-foreground`}>
+        {ping}
         <span className="relative h-1.5 w-1.5 rounded-full bg-white" />
       </span>
     );
@@ -4451,15 +4330,17 @@ function StepBadge({
   if (presentation.kind === "number") {
     return (
       <span
-        className={`relative flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+        className={[
+          shell,
+          "text-[9px] font-semibold tabular",
           isActive
             ? "bg-foreground text-white"
-            : "border border-border bg-surface text-muted"
-        }`}
+            : isFailed
+              ? "bg-surface text-danger ring-1 ring-danger/40"
+              : "bg-surface text-muted-light ring-1 ring-border-strong",
+        ].join(" ")}
       >
-        {isActive && (
-          <span className="absolute inset-0 rounded-full bg-muted-light/60 animate-ping" />
-        )}
+        {isActive ? ping : null}
         <span className="relative">{presentation.value}</span>
       </span>
     );
@@ -4467,23 +4348,31 @@ function StepBadge({
   if (presentation.kind === "thought") {
     return (
       <span
-        className={`relative flex h-5 w-5 items-center justify-center rounded-full ${
-          isActive ? "bg-foreground" : "border border-border bg-surface"
-        }`}
+        className={[
+          shell,
+          isActive ? "bg-foreground" : "bg-surface ring-1 ring-border-strong",
+        ].join(" ")}
       >
-        {isActive && (
-          <span className="absolute inset-0 rounded-full bg-muted-light/60 animate-ping" />
-        )}
+        {isActive ? ping : null}
         <span
-          className={`relative h-1.5 w-1.5 rounded-full ${isActive ? "bg-white" : "bg-muted"}`}
+          className={`relative h-1 w-1 rounded-full ${isActive ? "bg-white" : "bg-muted-light"}`}
         />
       </span>
     );
   }
   return (
-    <span className="flex h-5 w-5 items-center justify-center">
+    <span className="flex h-[15px] w-[15px] items-center justify-center">
       <span className="h-1.5 w-1.5 rounded-full bg-muted-light" />
     </span>
+  );
+}
+
+function StepDoneGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-ok" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="m5.5 8.2 1.7 1.7 3.3-3.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -4504,6 +4393,24 @@ function ChevronIcon({ direction }: { direction: "left" | "right" }) {
       ) : (
         <path d="M7.5 5l5 5-5 5" />
       )}
+    </svg>
+  );
+}
+
+function NewTaskIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" />
+      <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z" />
+    </svg>
+  );
+}
+
+function SearchGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="6" />
+      <path d="M20 20l-4.2-4.2" />
     </svg>
   );
 }
@@ -4839,8 +4746,8 @@ function SessionListItem({
       }}
       title={session.title}
       className={[
-        "group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-150",
-        active ? "bg-surface shadow-[var(--shadow-card)]" : "hover:bg-surface",
+        "group flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 transition-colors duration-150",
+        active ? "bg-surface-hover" : "hover:bg-surface-hover",
       ].join(" ")}
     >
       {iconSlots.leading === "running" ? (
@@ -4850,7 +4757,7 @@ function SessionListItem({
       ) : null}
       <span
         className={[
-          "min-w-0 flex-1 truncate text-left text-sm transition",
+          "min-w-0 flex-1 truncate text-left text-[13px] transition",
           active ? "font-medium text-foreground" : "text-muted group-hover:text-foreground",
         ].join(" ")}
       >
@@ -4941,7 +4848,7 @@ function SessionPane({
     return (
       <aside
         aria-label={collapsedRailCopy.railLabel}
-        className="relative z-30 flex h-full min-h-0 w-14 min-w-14 max-w-14 shrink-0 flex-col items-center border-r border-border bg-surface-subtle py-3"
+        className="relative z-30 flex h-full min-h-0 w-14 min-w-14 max-w-14 shrink-0 flex-col items-center bg-rail py-3"
       >
         <div className="group relative">
           <button
@@ -4949,7 +4856,7 @@ function SessionPane({
             onClick={onToggleCollapse}
             title={collapsedRailCopy.expandLabel}
             aria-label={collapsedRailCopy.expandLabel}
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-surface text-foreground shadow-[var(--shadow-card)] transition-colors duration-200 hover:bg-surface-subtle"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-muted transition-colors duration-200 hover:bg-surface-hover hover:text-foreground"
           >
             <SidebarToggleIcon />
           </button>
@@ -4994,7 +4901,7 @@ function SessionPane({
 
   return (
     <aside
-      className="relative z-30 flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-surface-subtle"
+      className="relative z-30 flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-rail"
       style={{
         width: leftPanelWidth,
         minWidth: leftPanelWidth,
@@ -5111,20 +5018,20 @@ function SessionPaneContent({
           : "flex h-full min-h-0 w-full flex-col overflow-hidden"
       }
     >
-      <div className="flex h-16 items-center gap-3 border-b border-border px-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-xs font-semibold tracking-tight text-foreground shadow-[var(--shadow-card)]">
+      <div className="flex h-14 items-center gap-2.5 px-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-[10.5px] font-semibold tracking-tight text-white">
           DG
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold text-foreground">{t("sidebar.brand")}</h1>
-          <p className="text-xs text-muted-light">{t("sidebar.sessionCount", { count: sessionCount })}</p>
+          <h1 className="truncate text-[13.5px] font-semibold leading-tight text-foreground">{t("sidebar.brand")}</h1>
+          <p className="text-[11.5px] leading-tight text-muted-light">{t("sidebar.sessionCount", { count: sessionCount })}</p>
         </div>
         <button
           type="button"
           onClick={onToggleCollapse}
           title={preview ? t("sidebar.expandToSidebar") : t("sidebar.collapseToRail")}
           aria-label={preview ? t("sidebar.expandToSidebar") : t("sidebar.collapseToRail")}
-          className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-light transition-colors duration-200 hover:bg-surface-subtle hover:text-foreground"
+          className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-light transition-colors duration-200 hover:bg-surface-hover hover:text-foreground"
         >
           <SidebarToggleIcon />
         </button>
@@ -5148,20 +5055,24 @@ function SessionPaneContent({
         </div>
       </div> : null}
 
-      <div className="border-b border-border px-2.5 py-2">
+      <div className="flex flex-col gap-1 px-2 pb-1">
         <button
           type="button"
           onClick={onCreateSession}
-          className="h-9 w-full cursor-pointer rounded-lg bg-primary text-sm font-semibold text-white transition-colors duration-200 hover:bg-primary-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
+          className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 text-[13px] font-medium text-foreground transition-colors duration-150 hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
         >
+          <NewTaskIcon />
           {t("sidebar.newTask")}
         </button>
-        <label className="mt-2 block">
+        <label className="relative block">
           <span className="sr-only">{t("sidebar.searchConversations")}</span>
+          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-light">
+            <SearchGlyph />
+          </span>
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors duration-200 placeholder:text-muted-light focus:border-muted-light focus:bg-surface"
+            className="h-8 w-full rounded-lg border border-transparent bg-transparent pl-8 pr-2.5 text-[13px] text-foreground outline-none transition-colors duration-150 placeholder:text-muted-light hover:bg-surface-hover focus:border-border-strong focus:bg-surface"
             placeholder={t("sidebar.searchConversations")}
           />
         </label>
@@ -5171,10 +5082,10 @@ function SessionPaneContent({
         className={
           preview
             ? previewClassNames.sessionList
-            : "min-h-0 flex-1 overflow-y-auto p-2"
+            : "min-h-0 flex-1 overflow-y-auto px-2 pb-2"
         }
       >
-        <div className="px-2 pb-2 text-xs font-semibold text-muted-light">
+        <div className="px-2 pb-1 pt-3 text-xs text-muted-light">
           {preview ? t("sidebar.history") : t("sidebar.sessions")}
         </div>
         <div className="flex flex-col gap-0.5">
@@ -6894,7 +6805,7 @@ function ConfigItemDetailView({
             type="button"
             disabled={createDisabledFinal}
             onClick={onCreate}
-            className="h-9 rounded-lg bg-code-bg px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-9 rounded-lg bg-primary px-4 text-sm font-medium text-white transition hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
           >
             {createLabel}
           </button>
@@ -6915,7 +6826,7 @@ function ConfigItemDetailView({
             type="button"
             disabled={saveDisabledFinal}
             onClick={onSave}
-            className="h-9 rounded-lg bg-code-bg px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-9 rounded-lg bg-primary px-4 text-sm font-medium text-white transition hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saveBusy ? t("common.saving") : t("common.save")}
           </button>
@@ -7568,12 +7479,24 @@ function ProcessToolGroupSync({
   return null;
 }
 
+/** The conversation server sends these two notices verbatim (serve/app.py session_detail). */
+const KNOWN_SESSION_NOTICES: Record<string, string> = {
+  "Previous run did not complete. Restored the saved checkpoint.": "session.noticeRestored",
+  "No checkpoint was saved. Continue this conversation.": "session.noticeNoCheckpoint",
+};
+
 function SessionNoticeLine({ threadId }: { threadId: string }) {
+  const t = useT();
   const notice = useSessionNotice(threadId);
   if (!notice) return null;
+  const key = KNOWN_SESSION_NOTICES[notice];
   return (
-    <p className="px-4 pt-2 text-sm text-muted" data-testid="session-notice">
-      {notice}
+    <p
+      className="mx-auto flex w-full max-w-[760px] items-center gap-2 px-5 pt-3 text-[12.5px] text-muted-light"
+      data-testid="session-notice"
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
+      {key ? t(key) : notice}
     </p>
   );
 }
@@ -7607,7 +7530,8 @@ function ChatWelcomeOverlay({
         data-testid="conversation-restore-loading"
         className="pointer-events-none absolute inset-x-0 top-0 bottom-32 z-10 flex items-center justify-center"
       >
-        <div className="rounded-lg bg-surface/80 px-3 py-2 text-sm text-muted shadow-[var(--shadow-card)]">
+        <div className="flex items-center gap-2 rounded-lg bg-surface px-3 py-2 text-[13px] text-muted-light shadow-[var(--shadow-float)]">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-light" />
           {t("common.loading")}
         </div>
       </div>
@@ -7618,7 +7542,7 @@ function ChatWelcomeOverlay({
 
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 bottom-32 z-10 overflow-y-auto">
-      <div className="pointer-events-auto min-h-full">
+      <div className="pointer-events-auto flex min-h-full flex-col">
         <DataTaskWelcomeScreen onUsePrompt={onUseExamplePrompt} />
       </div>
     </div>
@@ -7832,6 +7756,7 @@ function ChatPane({
   getRunForwardedProps: () => ReturnType<typeof buildRunForwardedProps>;
   onUserMessageSubmitted: (text: string) => void;
 }) {
+  const t = useT();
   const { containerRef, chatColumnWidth } = useChatColumnWidth();
   const [processTimelineCollapsed, setProcessTimelineCollapsed] = useState(false);
   const [schemaPreviewDatasourceId, setSchemaPreviewDatasourceId] = useState<string | null>(null);
@@ -7907,20 +7832,24 @@ function ChatPane({
       <ChatRunStatusContext.Provider value={liveRunStatus}>
       <ChatLiveRunContext.Provider value={liveRun}>
       <ProcessTimelineCollapseContext.Provider value={processTimelineCollapse}>
-      <header className="flex h-16 items-center justify-between gap-3 border-b border-border bg-surface px-5">
-        <div ref={schemaPreviewRootRef} className="relative min-w-0">
-          <h2 className="truncate text-base font-semibold text-foreground">
+      <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+        <div ref={schemaPreviewRootRef} className="relative flex min-w-0 items-center gap-1.5 text-[13px]">
+          <span className="shrink-0 text-muted-light">{t("sidebar.sessions")}</span>
+          <span className="shrink-0 text-border-strong">/</span>
+          <h2 className="truncate font-medium text-foreground">
             {title}
           </h2>
-          <div className="mt-0.5">
-            <SessionHeaderResourceChips
-              workspaceConfig={workspaceConfig}
-              session={activeSession}
-              onPreviewDatasource={(itemId) =>
-                setSchemaPreviewDatasourceId((current) => (current === itemId ? null : itemId))
-              }
-            />
-          </div>
+          {workspaceResourceNavEnabled ? (
+            <div className="ml-2">
+              <SessionHeaderResourceChips
+                workspaceConfig={workspaceConfig}
+                session={activeSession}
+                onPreviewDatasource={(itemId) =>
+                  setSchemaPreviewDatasourceId((current) => (current === itemId ? null : itemId))
+                }
+              />
+            </div>
+          ) : null}
           {schemaPreviewDatasource ? (
             <DatasourceSchemaPreviewPopover
               datasourceId={schemaPreviewDatasource.id}
@@ -7929,7 +7858,7 @@ function ChatPane({
             />
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1">
           <RunStatusPill status={liveRunStatus} />
           {!rightPanelOpen ? (
             <ChatOpenConsoleButton onOpenRightPanel={onOpenRightPanel} />
@@ -8007,8 +7936,13 @@ function ChatOpenConsoleButton({ onOpenRightPanel }: { onOpenRightPanel: () => v
     <button
       type="button"
       onClick={onOpenRightPanel}
-      className="h-8 cursor-pointer rounded-lg bg-foreground px-3 py-1.5 text-xs font-semibold text-white transition-colors duration-200 hover:bg-foreground/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+      title={t("chat.openConsole")}
+      className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
     >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+        <path d="M14.5 4.5v15" />
+      </svg>
       {t("chat.openConsole")}
     </button>
   );
@@ -8032,26 +7966,25 @@ function RunStatusPill({
             : status === "canceled"
               ? t("common.canceled")
               : t("common.ready");
-  const className =
+  const dotClassName =
     status === "completed"
-      ? "border border-step-success/20 bg-step-success/8 text-step-success"
+      ? "bg-ok"
       : status === "running"
-        ? "border border-border bg-surface-subtle text-foreground"
+        ? "animate-pulse bg-ok"
         : status === "suspended"
-          ? "border border-border bg-surface-subtle text-foreground"
+          ? "bg-warn"
           : status === "failed"
-            ? "border border-step-error/20 bg-step-error/8 text-step-error"
-            : status === "canceled"
-              ? "border border-border bg-surface-subtle text-muted"
-              : "border border-border bg-surface-subtle text-muted";
+            ? "bg-danger"
+            : "bg-border-strong";
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${className}`}
+      className={[
+        "inline-flex h-7 items-center gap-1.5 px-2 text-xs",
+        status === "running" || status === "suspended" ? "font-medium text-foreground" : "text-muted",
+      ].join(" ")}
     >
-      {status === "running" ? (
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-foreground" />
-      ) : null}
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClassName}`} />
       {label}
     </span>
   );

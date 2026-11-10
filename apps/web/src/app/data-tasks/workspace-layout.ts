@@ -101,10 +101,8 @@ export function getWorkspaceGridTemplateColumns({
   rightPanelWidth?: number;
   leftPanelWidth?: number;
 }): string {
-  const leftColumn = fixedGridColumn(
-    getLeftPanelWidth(sidebarCollapsed, leftPanelWidth),
-  );
-  const chatColumn = `minmax(${CHAT_MIN_WIDTH}px, 1fr)`;
+  const leftWidth = getLeftPanelWidth(sidebarCollapsed, leftPanelWidth);
+  const leftColumn = fixedGridColumn(leftWidth);
 
   // Keep the track *count* constant (always three columns) so a CSS transition
   // on `grid-template-columns` can interpolate width smoothly. Removing/adding
@@ -113,9 +111,19 @@ export function getWorkspaceGridTemplateColumns({
   // fixed-width column flush to the page's right edge while the panel DOM node
   // has already unmounted. Collapsing the right track to 0 avoids that gap.
   const rightVisible = !isConfigPanelOpen && isRightPanelOpen;
-  const rightColumn = fixedGridColumn(rightVisible ? rightPanelWidth : 0);
+  const rightWidth = rightVisible ? rightPanelWidth : 0;
+  const rightColumn = fixedGridColumn(rightWidth);
 
-  return `${leftColumn} ${chatColumn} ${rightColumn}`;
+  return `${leftColumn} ${chatGridColumn(leftWidth, rightWidth)} ${rightColumn}`;
+}
+
+/**
+ * The chat track keeps {@link CHAT_MIN_WIDTH} wherever it fits; on phone-width viewports
+ * the minimum shrinks to the space left beside the side columns so the sheet never
+ * overflows the page horizontally.
+ */
+export function chatGridColumn(leftWidth: number, rightWidth: number): string {
+  return `minmax(min(${CHAT_MIN_WIDTH}px, calc(100% - ${leftWidth + rightWidth}px)), 1fr)`;
 }
 
 /**

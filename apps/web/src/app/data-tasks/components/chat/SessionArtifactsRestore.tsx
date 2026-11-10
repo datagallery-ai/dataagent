@@ -4,6 +4,11 @@ import { useEffect, useRef } from "react";
 import { configApi } from "../../../../lib/config-api";
 import { hasCapability } from "../../data-task-state";
 import { reconcileLiveRunArtifacts, reduceLiveRunEvent } from "../../live-run-state";
+import {
+  isSessionOutputKey,
+  sessionOutputArtifactValue,
+  sessionOutputPreviewPaths,
+} from "../../session-outputs";
 import { useLiveRun, useLiveRunSetters } from "../../use-data-gallery-run";
 
 export function SessionArtifactsRestore({
@@ -75,6 +80,60 @@ export function SessionArtifactsRestore({
       cancelled = true;
     };
   }, [capabilitiesReady, setLiveRunForThread, threadId]);
+
+  // Without the /api/v1 artifact API, list the files the agent wrote to the session output
+  // directory instead. Re-list whenever a run settles so new files appear without a reload.
+  const runSettled = liveRun.runStatus !== "running" && liveRun.runStatus !== "suspended";
+  useEffect(() => {
+    if (!threadId || !capabilitiesReady || hasCapability("artifact.list") || !runSettled) {
+      return;
+    }
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    let cancelled = false;
+
+    void (async () => {
+      const files = await configApi.listSessionOutputs(threadId);
+      const previewPaths = new Set(sessionOutputPreviewPaths(files));
+      const previews = new Map(
+        await Promise.all(
+          files
+            .filter((file) => previewPaths.has(file.path))
+            .map(async (file) => {
+              try {
+                return [file.path, await configApi.previewSessionOutput(threadId, file.path)] as const;
+              } catch {
+                return [file.path, undefined] as const;
+              }
+            }),
+        ),
+      );
+      if (cancelled || requestIdRef.current !== requestId) return;
+      setLiveRunForThread(threadId, (current) => {
+        const base = {
+          ...current,
+          artifacts: current.artifacts.filter((artifact) => !isSessionOutputKey(artifact.logicalKey)),
+        };
+        // Oldest first so the newest file wins any ordering ties in the Outputs list.
+        return reconcileLiveRunArtifacts(
+          [...files].reverse().reduce(
+            (state, file) =>
+              reduceLiveRunEvent(state, {
+                type: "CUSTOM",
+                name: "artifact",
+                value: sessionOutputArtifactValue(file, previews.get(file.path)),
+              }),
+            base,
+          ),
+        );
+      });
+    })().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [capabilitiesReady, runSettled, liveRun.runId, setLiveRunForThread, threadId]);
 
   // Re-link artifacts when tool calls arrive after artifact list restore.
   useEffect(() => {

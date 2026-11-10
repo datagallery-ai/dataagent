@@ -314,7 +314,7 @@ function MentionMenu({
     <div
       role="listbox"
       aria-label="Select capabilities (@)"
-      className="absolute bottom-full left-0 z-50 mb-2 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
+      className="absolute bottom-full left-0 z-50 mb-2 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-xl bg-surface shadow-[var(--shadow-pop)]"
       onMouseDown={(event) => event.preventDefault()}
     >
       <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
@@ -355,7 +355,7 @@ function MentionMenu({
             const badgeClass =
               item.type === "resource"
                 ? PER_RUN_MENTION_APPEARANCE[item.resource.kind].badge
-                : "bg-indigo-50 text-indigo-700";
+                : "bg-surface-hover text-muted";
             return (
               <li key={`${item.type}:${resource.id}`}>
                 <button
@@ -369,7 +369,7 @@ function MentionMenu({
                   onClick={() => onPick(item)}
                   className={[
                     "flex w-full items-center gap-2 px-3 py-2 text-left transition",
-                    active ? "bg-slate-100" : "",
+                    active ? "bg-surface-hover" : "",
                   ].join(" ")}
                 >
                   <span
@@ -490,17 +490,17 @@ export function MentionChips({
       {fileChips.map((resource) => (
         <span
           key={`file:${resource.id}`}
-          className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 py-0.5 pl-2 pr-1 text-xs text-indigo-700"
+          className="inline-flex h-[26px] items-center gap-1 rounded-[7px] bg-surface-hover pl-2 pr-1 text-xs text-foreground"
           title={`File: ${resource.name}`}
         >
-          <span className="rounded bg-white/70 px-1 py-px text-[10px] font-semibold uppercase tracking-wide">
+          <span className="rounded bg-surface px-1 py-px text-[10px] font-semibold uppercase tracking-wide">
             @file
           </span>
           <span className="max-w-[140px] truncate font-medium">
             {resource.name}
           </span>
           {!resource.backendSupported ? (
-            <span className="rounded bg-white/70 px-1 py-px text-[10px]">
+            <span className="rounded bg-surface px-1 py-px text-[10px]">
               Backend unsupported
             </span>
           ) : null}
@@ -508,7 +508,7 @@ export function MentionChips({
             type="button"
             aria-label={`Remove ${resource.name}`}
             onClick={() => onRemoveFile?.(resource)}
-            className="ml-0.5 grid h-4 w-4 place-items-center rounded-full text-indigo-400 transition hover:bg-white/70 hover:text-indigo-700"
+            className="ml-0.5 grid h-[18px] w-[18px] place-items-center rounded-[5px] text-muted-light transition hover:bg-border hover:text-foreground"
           >
             <CloseIcon />
           </button>

@@ -60,6 +60,8 @@ export type StepToolSummaryInput = {
 };
 
 const TOOL_TARGET_FIELDS = ["subagent_type", "file_path", "path", "command", "pattern", "sql", "query"] as const;
+const PATH_TARGET_FIELDS = new Set<string>(["file_path", "path"]);
+const END_CLIP_FIELDS = new Set<string>(["command", "sql", "query"]);
 
 function toolCallTarget(name: string | undefined, rawArguments: string | undefined, agentName?: string): string | undefined {
   if (name === "task" && agentName) return clipTarget(agentName);
@@ -69,9 +71,18 @@ function toolCallTarget(name: string | undefined, rawArguments: string | undefin
   for (const field of TOOL_TARGET_FIELDS) {
     if (field === "subagent_type") continue;
     const value = stringField(args, field);
-    if (value) return clipTarget(value);
+    if (!value) continue;
+    if (PATH_TARGET_FIELDS.has(field)) return clipTarget(basename(value));
+    if (END_CLIP_FIELDS.has(field)) return clipEnd(value);
+    return clipTarget(value);
   }
   return undefined;
+}
+
+function basename(value: string): string {
+  const trimmed = value.trim().replace(/[\\/]+$/u, "");
+  const parts = trimmed.split(/[\\/]/u);
+  return parts[parts.length - 1] || trimmed;
 }
 
 function parseArguments(raw: string | undefined): Record<string, unknown> | undefined {
@@ -91,10 +102,21 @@ function stringField(record: Record<string, unknown>, field: string): string | u
 }
 
 function clipTarget(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  const text = value.replace(/\s+/gu, " ").trim();
+  const text = compactTarget(value);
   if (!text) return undefined;
   return text.length > 48 ? `${text.slice(0, 48).trimEnd()}…` : text;
+}
+
+function clipEnd(value: string | undefined): string | undefined {
+  const text = compactTarget(value);
+  if (!text) return undefined;
+  return text.length > 48 ? `…${text.slice(-47)}` : text;
+}
+
+function compactTarget(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const text = value.replace(/\s+/gu, " ").trim();
+  return text || undefined;
 }
 
 export type ToolChipSummary = StepToolSummaryInput & {
@@ -107,8 +129,17 @@ export type StepElapsedInput = {
   finishedAtMs?: number;
 };
 
+export function formatElapsedMs(ms: number): string {
+  const safe = Math.max(0, Math.round(ms));
+  if (safe < 60_000) return formatStepDuration(safe);
+  const totalSeconds = Math.floor(safe / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 export function runningElapsedLabel(startedAtMs: number, now = Date.now()): string {
-  return `${Math.max(0, Math.floor((now - startedAtMs) / 1000))}s`;
+  return formatElapsedMs(now - startedAtMs);
 }
 
 export function formatStepDuration(ms: number): string {
@@ -121,7 +152,7 @@ export function stepElapsedLabel(step: StepElapsedInput, t?: TranslateFn): strin
   if (step.startedAtMs === undefined || step.finishedAtMs === undefined) {
     return "—";
   }
-  return formatStepDuration(Math.max(0, step.finishedAtMs - step.startedAtMs));
+  return formatElapsedMs(Math.max(0, step.finishedAtMs - step.startedAtMs));
 }
 
 export function truncateThinkingPreview(text: string, maxChars = 96): string | undefined {
@@ -140,7 +171,7 @@ export function truncateThinkingPreview(text: string, maxChars = 96): string | u
 
 export function buildToolChipSummaries(
   tools: StepToolSummaryInput[],
-  maxVisible = Number.POSITIVE_INFINITY,
+  maxVisible = 3,
 ): ToolChipSummary[] {
   if (tools.length <= maxVisible) return tools;
   const visibleCount = Math.max(1, maxVisible - 1);

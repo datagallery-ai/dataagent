@@ -50,6 +50,14 @@
     "englishShort": "EN",
     "chineseShort": "中"
   },
+  "theme": {
+    "label": "外观",
+    "system": "跟随系统",
+    "light": "浅色",
+    "dark": "深色",
+    "switchToLight": "切换到浅色模式",
+    "switchToDark": "切换到深色模式"
+  },
   "sidebar": {
     "brand": "DataGallery",
     "sessionCount": "{{count}} 个会话",
@@ -87,7 +95,9 @@
     "share": "分享",
     "rename": "重命名",
     "delete": "删除",
-    "sharingDisabled": "分享功能等待后端支持"
+    "sharingDisabled": "分享功能等待后端支持",
+    "noticeRestored": "上一次运行没有完成，已恢复到最近保存的检查点。",
+    "noticeNoCheckpoint": "上一次运行没有完成，也没有保存检查点。可以直接继续对话。"
   },
   "userBar": {
     "currentUser": "当前用户",
@@ -119,12 +129,22 @@
     "subagentStarting": "正在启动",
     "subagentReturning": "正在返回结果",
     "subagentError": "子代理出错",
-    "subagentWaiting": "等待新进度",
+    "subagentDone": "完成",
+    "subagentStepElapsed": "本步",
+    "subagentIdle": "无新事件",
     "subagentSuspended": "子代理已暂停",
     "subagentStep": {
       "model": "模型响应",
       "tools": "执行工具"
-    }
+    },
+    "rewrite": "重写",
+    "rewriteFromHere": "从这里重写",
+    "refreshQuestion": "重新提问",
+    "clickToRewrite": "点击改写这个问题",
+    "previousBranch": "上一个分支",
+    "nextBranch": "下一个分支",
+    "stepsDone": "完成了 {{count}} 步",
+    "stepsRunning": "进行中 · {{count}} 步"
   },
   "tools": {
     "list_data_sources": "列出数据源",
@@ -307,7 +327,32 @@
     "searchResultTable": "搜索结果表",
     "exportFilteredResult": "导出当前筛选 / 排序结果",
     "sourceStepNotLinked": "未关联来源步骤",
-    "failedToLoadPreview": "加载预览失败"
+    "failedToLoadPreview": "加载预览失败",
+    "traceRunStarted": "开始运行",
+    "traceRunResumed": "继续运行",
+    "traceRunPaused": "等待你的回复",
+    "traceRunCompleted": "运行完成",
+    "traceRunFailed": "运行失败",
+    "traceKindRun": "运行",
+    "traceKindOutput": "输出",
+    "traceEmpty": "暂无轨迹",
+    "traceEmptyHint": "发送问题后，数据轨迹会按时间顺序出现在这里。",
+    "viewOutputDetails": "查看输出详情",
+    "showRawResult": "查看原始结果",
+    "hideRawResult": "收起原始结果",
+    "stepDuration": "耗时",
+    "status": "状态",
+    "callsCount": "{{count}} 次",
+    "itemsCount": "{{count}} 项",
+    "openToolDetails": "工具详情",
+    "toolCallNotLinked": "这次工具调用还没有关联到可展示的步骤事件。",
+    "usageUnsupported": "后端未上报",
+    "usageUnsupportedHint": "单步的 Token、模型与费用需要后端发送 token_usage 事件；整次运行的用量见「概览」。",
+    "usageApproximate": "近似匹配（仅按步骤序号）",
+    "inputTokens": "输入 Token",
+    "outputTokens": "输出 Token",
+    "usageInput": "输入",
+    "usageOutput": "输出"
   },
   "jobs": {
     "queued": "排队中",
@@ -527,7 +572,9 @@
     "runSqlPrompt": "查询最近 30 天的订单总量，按日期分组",
     "analyzeTrends": "分析趋势",
     "analyzeTrendsDesc": "探索指标变化与异常",
-    "analyzeTrendsPrompt": "分析月度销售趋势，并找出波动最大的月份"
+    "analyzeTrendsPrompt": "分析月度销售趋势，并找出波动最大的月份",
+    "eyebrow": "DataGallery",
+    "examplesTitle": "可以这样问"
   },
   "schema": {
     "copyTableName": "复制表名",
