@@ -21,7 +21,6 @@ import { createWheelScrollDecoder, WHEEL_LINES_PER_TICK } from '../input/mouse-w
 import { enableMouseTracking } from '../terminal-screen.js';
 import { inkColors } from './theme.js';
 import {
-  restoreSessionConversation,
   store,
   type TuiAppState,
 } from '../state/index.js';
@@ -749,7 +748,7 @@ export const App: React.FC<AppProps> = ({
     if (!initialResume?.enabled || startupResumeAttempted.current) return;
     if (state.connectionStatus !== 'connected') return;
     startupResumeAttempted.current = true;
-    void restoreHistoricalSession(initialResume.sessionId, true);
+    void restoreHistoricalSession(initialResume.sessionId);
   }, [initialResume?.enabled, initialResume?.sessionId, state.connectionStatus]);
 
   useEffect(() => () => {
@@ -758,7 +757,6 @@ export const App: React.FC<AppProps> = ({
 
   async function restoreHistoricalSession(
     requestedSessionId?: string | undefined,
-    startup = false,
   ): Promise<void> {
     if (store.getState().runStatus === 'running') {
       setResumeLoadingSessionId(null);
@@ -790,61 +788,15 @@ export const App: React.FC<AppProps> = ({
       return;
     }
 
-    if (!configClient) {
-      setResumeLoadingSessionId(null);
-      setCommandNotice({
-        kind: 'error',
-        message: 'Session resume requires a live backend; it is not available in demo mode.',
-      });
-      return;
-    }
-
-    setResumeLoadingSessionId(requestedSessionId ?? 'latest');
+    setResumeLoadingSessionId(null);
     setCommandNotice({
-      kind: 'info',
-      message: requestedSessionId
-        ? `Loading session ${requestedSessionId}...`
-        : 'Loading latest session...',
+      kind: 'error',
+      message: 'Session resume reads GET /sessions from the connected runtime.',
     });
-
-    try {
-      let sessionId = requestedSessionId;
-      if (!sessionId) {
-        const response = await configClient.listSessions({ limit: 1 });
-        sessionId = response.sessions[0]?.threadId ?? response.sessions[0]?.id;
-        if (!sessionId) {
-          setCommandNotice({
-            kind: startup ? 'info' : 'error',
-            message: 'No server sessions found.',
-          });
-          return;
-        }
-      }
-
-      const [conversation, artifactList] = await Promise.all([
-        configClient.getSessionConversation(sessionId),
-        configClient.listSessionArtifacts(sessionId),
-      ]);
-      const restored = restoreSessionConversation(conversation, artifactList.artifacts);
-      clearQueuedPrompts();
-      store.restoreSession(restored);
-      chatAreaRef.current?.reset();
-      setCommandNotice({
-        kind: 'info',
-        message: `↺ 已恢复会话${restored.title ? `：${restored.title}` : ''}`,
-      });
-    } catch (error) {
-      setCommandNotice({
-        kind: 'error',
-        message: `Resume failed: ${formatSessionApiError(error)}`,
-      });
-    } finally {
-      setResumeLoadingSessionId(null);
-    }
   }
 
   async function openSessionPicker(): Promise<void> {
-    const sessionClient = tui?.sessions ?? configClient;
+    const sessionClient = tui?.sessions;
     if (store.getState().runStatus === 'running') {
       setCommandNotice({
         kind: 'error',

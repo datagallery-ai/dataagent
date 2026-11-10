@@ -84,26 +84,23 @@ async def test_session_list_reads_the_agentkit_index(client, app) -> None:
     await app.state.sessions.finish(user_id, "thread-a", "complete", "ckpt-a")
     await app.state.sessions.start("someone-else", "thread-b", "run-b", "B title")
 
-    listed = await client.get("/api/v1/sessions")
+    listed = await client.get("/sessions")
     assert listed.status_code == 200, listed.text
-    sessions = listed.json()["data"]["sessions"]
+    sessions = listed.json()["sessions"]
     assert [item["threadId"] for item in sessions] == ["thread-a"]
-    assert sessions[0]["id"] == "thread-a"
     assert sessions[0]["title"] == "A title"
-    assert sessions[0]["titleSource"] == "fallback"
     assert sessions[0]["hasCheckpoint"] is True
     assert "user_id" not in sessions[0]
-    terminal = await client.get("/sessions")
-    assert [item["threadId"] for item in terminal.json()["sessions"]] == ["thread-a"]
+    assert "titleSource" not in sessions[0]
 
 
 async def test_session_limit_is_validated(client) -> None:
     for raw in ("0", "101", "abc"):
-        response = await client.get("/api/v1/sessions", params={"limit": raw})
+        response = await client.get("/sessions", params={"limit": raw})
         assert response.status_code == 422, response.text
-    empty = await client.get("/api/v1/sessions", params={"limit": "10"})
+    empty = await client.get("/sessions", params={"limit": "10"})
     assert empty.status_code == 200
-    assert empty.json()["data"]["sessions"] == []
+    assert empty.json()["sessions"] == []
 
 
 def _gui(text: str, thread: str) -> dict:
@@ -127,10 +124,12 @@ def _texts(payload: dict) -> list[str]:
     return texts
 
 
-async def test_missing_conversation_matches_native_session(client) -> None:
-    response = await client.get("/api/v1/sessions/missing-thread/conversation")
+async def test_missing_session_is_not_found(client) -> None:
     native = await client.get("/sessions/missing-thread")
-    assert response.status_code == native.status_code == 404
+    removed = await client.get("/api/v1/sessions/missing-thread/conversation")
+    assert native.status_code == 404
+    assert removed.status_code == 404
+    assert removed.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 async def test_web_and_tui_writes_are_readable(runtime) -> None:
@@ -146,26 +145,26 @@ async def test_web_and_tui_writes_are_readable(runtime) -> None:
         ) as http:
             web = await http.post("/dataagent/stream", json=_gui("来自网页", "web-thread"))
             tui = await http.post("/dataagent/stream", json=_gui("来自终端", "tui-thread"))
-            web_view = await http.get("/api/v1/sessions/web-thread/conversation")
-            tui_view = await http.get("/api/v1/sessions/tui-thread/conversation")
+            web_view = await http.get("/sessions/web-thread")
+            tui_view = await http.get("/sessions/tui-thread")
             user_id = (await http.get("/api/v1/me")).json()["data"]["user"]["id"]
             application.state.conversation_busy.add((user_id, "web-thread"))
-            running = await http.get("/api/v1/sessions/web-thread/conversation")
+            running = await http.get("/sessions/web-thread")
 
     assert web.status_code == 200, web.text
     assert tui.status_code == 200, tui.text
     assert web_view.status_code == 200
     assert tui_view.status_code == 200
-    web_body = web_view.json()["data"]
-    tui_body = tui_view.json()["data"]
+    web_body = web_view.json()
+    tui_body = tui_view.json()
     assert web_body["threadId"] == "web-thread"
     assert "来自网页" in _texts(web_body)
     assert "from-web" in _texts(web_body)
     assert "来自终端" in _texts(tui_body)
     assert "from-tui" in _texts(tui_body)
     assert running.status_code == 200
-    assert running.json()["data"]["threadId"] == "web-thread"
-    assert "来自网页" in _texts(running.json()["data"])
+    assert running.json()["threadId"] == "web-thread"
+    assert "来自网页" in _texts(running.json())
 
 
 async def test_agent_messages_keep_tool_calls_in_checkpoint_order(runtime) -> None:
@@ -186,16 +185,14 @@ async def test_agent_messages_keep_tool_calls_in_checkpoint_order(runtime) -> No
             transport=transport, base_url="http://127.0.0.1:8787", timeout=30,
         ) as http:
             posted = await http.post("/dataagent/stream", json=_gui("tool-1", "tool-thread"))
-            view = await http.get("/api/v1/sessions/tool-thread/conversation")
             native = await http.get("/sessions/tool-thread")
     assert posted.status_code == 200, posted.text
-    assert view.status_code == 200, view.text
-    assert view.json()["data"] == native.json()
-    roles = [message.get("role") for message in view.json()["data"]["messages"]]
+    assert native.status_code == 200, native.text
+    roles = [message.get("role") for message in native.json()["messages"]]
     assert "tool" in roles
     assert any(
         message.get("toolCalls") or message.get("tool_calls")
-        for message in view.json()["data"]["messages"]
+        for message in native.json()["messages"]
     )
 
 
@@ -253,15 +250,18 @@ async def test_same_app_registers_control_plane_and_conversation_routes(client) 
 
 
 async def test_cancel_unknown_run_is_not_success(client) -> None:
-    empty = await client.post("/api/v1/runs/run-1/cancel")
+    empty = await client.post("/runs/run-1/cancel")
     explicit = await client.post(
-        "/api/v1/runs/run-1/cancel",
+        "/runs/run-1/cancel",
         content=b"{}",
         headers={"Content-Type": "application/json"},
     )
+    removed = await client.post("/api/v1/runs/run-1/cancel")
     assert empty.status_code == 404
     assert empty.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert explicit.status_code == 404
+    assert removed.status_code == 404
+    assert removed.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
 
 async def test_engine_failure_keeps_the_control_plane_up() -> None:
@@ -273,7 +273,7 @@ async def test_engine_failure_keeps_the_control_plane_up() -> None:
             chat = await http.post("/dataagent/stream", json={"threadId": "t", "runId": "r", "messages": []})
             removed = await http.get("/api/copilotkit/info")
             me = await http.get("/api/v1/me")
-            cancel = await http.post("/api/v1/runs/run-1/cancel")
+            cancel = await http.post("/runs/run-1/cancel")
             ready = await http.get("/ready")
     assert health.status_code == 200
     assert health.json()["data"]["conversation"]["ready"] is False
@@ -314,8 +314,8 @@ async def test_partial_startup_failure_does_not_leave_a_closed_session_index(
     assert health.json()["data"]["conversation"]["ready"] is False
     assert application.state.sessions is None
     assert application.state.checkpointer is None
-    assert sessions.status_code == 503
-    assert sessions.json()["error"]["code"] == "CONVERSATION_UNAVAILABLE"
+    assert sessions.status_code == 404
+    assert sessions.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert native.status_code == 503
 
 
@@ -354,7 +354,7 @@ async def test_cancel_stops_the_running_turn(client, app, monkeypatch) -> None:
     user_id = app.state.agents.runtime.paths.user_id
     assert (user_id, "cancel-thread") in app.state.conversation_busy
 
-    cancel = await client.post("/api/v1/runs/cancel-run/cancel")
+    cancel = await client.post("/runs/cancel-run/cancel")
     assert cancel.status_code == 204
     assert cancel.content == b""
 

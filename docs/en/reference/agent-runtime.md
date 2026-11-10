@@ -35,7 +35,7 @@ There is no `run_config`, and no per-request choice of datasource, knowledge bas
 ## Cancel and resume
 
 ```text
-POST /api/v1/runs/<runId>/cancel
+POST /runs/<runId>/cancel
 ```
 
 Success is 204. 404 when that run is not executing.

@@ -14,7 +14,7 @@
 {"success": false, "error": {"code": "RESOURCE_NOT_FOUND", "message": "Route not found."}}
 ```
 
-`/sessions` 和产物接口返回自己的 JSON，不用这层信封。`POST /api/v1/runs/{runId}/cancel` 成功时是空的 204。
+`/sessions`、产物接口和 `POST /runs/{runId}/cancel` 不在 `/api/v1` 下。取消成功时是空的 204。
 
 未知路径返回 404，错误码 `RESOURCE_NOT_FOUND`。对话路径在引擎未就绪时返回 503，错误码 `CONVERSATION_UNAVAILABLE`。
 
@@ -32,13 +32,11 @@
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/api/v1/sessions?limit=` | 当前 user 的会话，包在信封里。`limit` 为 1 到 100，默认 50。 |
-| GET | `/api/v1/sessions/{threadId}/conversation` | 与 `GET /sessions/{threadId}` 同一份文档（AG-UI `messages`、`status`、`notice`），包在 `{success, data}` 里。未知会话 404。运行中也可以读。 |
-| GET | `/sessions?limit=` | 同一份索引，JSON 形如 `{"sessions":[...]}`。TUI 用这条。 |
+| GET | `/sessions?limit=` | 当前 user 的会话。网页和 TUI 都用这条。`limit` 为 1 到 100，默认 50。 |
 | GET | `/sessions/{threadId}` | 列表字段加上 `messages`、`notice`。有 Checkpoint 时读它，否则读该线程最新图状态。绑定打不开时 409。其他 user 的会话是 404。运行中也可以读。 |
 | GET | `/sessions/{threadId}/outputs` | 产物文件。跳过符号链接，以及 `artifacts/conversation_history` 和 `artifacts/large_tool_results`。 |
 | GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 文本，最多 64 KiB。非文本是 415。 |
-| POST | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮。没有这一轮时 404。 |
+| POST | `/runs/{runId}/cancel` | 取消正在执行的一轮。没有这一轮时 404。 |
 
 没有这些路径：登录、`/api/v1/capabilities`、`/api/copilotkit`、`/api/copilotkit/info`、数据源、知识库、工作区配置、会话改名、删除、分支或 trace DAG。调用它们会得到 404 信封。
 

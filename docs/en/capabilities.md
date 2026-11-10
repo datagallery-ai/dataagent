@@ -7,9 +7,9 @@ The Web UI may still show older resource panels. Those requests return 404 and a
 | Capability | Web | TUI | Control plane |
 | --- | --- | --- | --- |
 | Conversation | Ask from `/data-tasks` | Type in the terminal | `POST /dataagent/stream` |
-| Session list | Shares the index with TUI | `/resume` | `GET /api/v1/sessions`; TUI uses `GET /sessions` |
+| Session list | Shares the index with TUI | `/resume` | `GET /sessions` |
 | Outputs | Through the session routes | `/outputs` | `GET /sessions/{threadId}/outputs` |
-| Cancel one turn | Call the cancel route | Disconnecting interrupts the turn | `POST /api/v1/runs/{runId}/cancel` |
+| Cancel one turn | Call the cancel route | Disconnecting interrupts the turn | `POST /runs/{runId}/cancel` |
 | Model | Uses the configuration already loaded | Same | `models` in `config.json`, plus `.env` |
 | Read-only input | Uses directories bound at startup | Same | `dataagent.workspaces` or `--workspace` |
 | Skills / plugins / MCP | Uses declarations enabled under Home | Same | `<home>/skills`, `plugins`, `.mcp.json` |

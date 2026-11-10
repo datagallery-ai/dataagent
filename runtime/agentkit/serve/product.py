@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -57,33 +54,7 @@ def register_product_routes(app: FastAPI) -> None:
             "workspace": {"id": "local", "name": "Local"},
         })
 
-    @app.get("/api/v1/sessions")
-    async def sessions(limit: int = Query(default=50, ge=1, le=100)) -> JSONResponse:
-        index = getattr(app.state, "sessions", None)
-        if index is None:
-            return error("CONVERSATION_UNAVAILABLE", "对话引擎未就绪。", 503)
-        rows = await index.list(_local_user_id(app), limit)
-        return success({"sessions": [_session_item(row) for row in rows]})
-
-    @app.get("/api/v1/sessions/{thread_id}/conversation")
-    async def session_conversation(thread_id: str) -> JSONResponse:
-        if getattr(app.state, "sessions", None) is None or getattr(app.state, "agents", None) is None:
-            return error("CONVERSATION_UNAVAILABLE", "对话引擎未就绪。", 503)
-        from serve.app import load_session_checkpoint, session_detail
-
-        try:
-            row, messages = await load_session_checkpoint(
-                app, _local_user_id(app), thread_id,
-            )
-        except HTTPException as exc:
-            if exc.status_code == 404:
-                return error("RESOURCE_NOT_FOUND", str(exc.detail), 404)
-            if exc.status_code == 409:
-                return error("CONFLICT", str(exc.detail), 409)
-            raise
-        return success(session_detail(row, messages))
-
-    @app.post("/api/v1/runs/{run_id}/cancel")
+    @app.post("/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> Response:
         from serve.app import cancel_active_run
 
@@ -123,15 +94,3 @@ def _local_user_id(app: FastAPI) -> str:
     )
     return str(getattr(getattr(runtime, "paths", None), "user_id", None) or "default")
 
-
-def _session_item(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "id": row["thread_id"],
-        "threadId": row["thread_id"],
-        "title": row["title"],
-        "titleSource": "fallback",
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-        "status": row["status"],
-        "hasCheckpoint": bool(row["last_checkpoint_id"]),
-    }

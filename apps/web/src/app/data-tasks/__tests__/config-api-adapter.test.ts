@@ -420,24 +420,21 @@ describe("config api adapter", () => {
 
   it("loads the native session document through the config client", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      success: true,
-      data: {
-        threadId: "thread-1",
-        title: "keep-me",
-        createdAt: "now",
-        updatedAt: "now",
-        status: "interrupted",
-        hasCheckpoint: true,
-        messages: [{ id: "m1", role: "user", content: "keep-me" }],
-        notice: "Previous run did not complete. Restored the saved checkpoint.",
-      },
+      threadId: "thread-1",
+      title: "keep-me",
+      createdAt: "now",
+      updatedAt: "now",
+      status: "interrupted",
+      hasCheckpoint: true,
+      messages: [{ id: "m1", role: "user", content: "keep-me" }],
+      notice: "Previous run did not complete. Restored the saved checkpoint.",
     }), { headers: { "Content-Type": "application/json" }, status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const session = await configApi.getNativeSession("thread-1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/sessions/thread-1/conversation",
+      "/sessions/thread-1",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(session.threadId).toBe("thread-1");
@@ -487,19 +484,16 @@ describe("config api adapter", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        success: true,
-        data: {
-          sessions: [
-            {
-              id: "thread-1",
-              threadId: "thread-1",
-              title: "渠道订单分析",
-              titleSource: "llm",
-              updatedAt: "2026-06-27T10:05:00.000Z",
-            },
-          ],
-          nextCursor: "cursor-2",
-        },
+        sessions: [
+          {
+            threadId: "thread-1",
+            title: "渠道订单分析",
+            createdAt: "2026-06-27T10:05:00.000Z",
+            updatedAt: "2026-06-27T10:05:00.000Z",
+            status: "complete",
+            hasCheckpoint: true,
+          },
+        ],
       }), { headers: { "Content-Type": "application/json" }, status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         success: true,
@@ -527,7 +521,7 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/sessions?limit=20&cursor=cursor-1",
+      "/sessions?limit=20",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -543,8 +537,10 @@ describe("config api adapter", () => {
       "/api/v1/sessions/thread-1",
       expect.objectContaining({ method: "DELETE" }),
     );
+    expect(list.sessions[0]?.id).toBe("thread-1");
     expect(list.sessions[0]?.title).toBe("渠道订单分析");
-    expect(list.nextCursor).toBe("cursor-2");
+    expect(list.sessions[0]?.titleSource).toBe("fallback");
+    expect(list.nextCursor).toBeUndefined();
     expect(patched.sessionId).toBe("thread-1");
     expect(patched.titleSource).toBe("user");
     expect(deleted.deleted).toBe(true);
@@ -630,7 +626,7 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/runs/run-1/cancel",
+      "/runs/run-1/cancel",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ reason: "user-click" }),

@@ -42,7 +42,7 @@ Type `/` and use `Tab` to complete. Built-in commands:
 | --- | --- | --- |
 | `/help` | List available commands. | `/help` |
 | `/clear` | Start a new conversation. Saved sessions stay on disk. | `/clear` |
-| `/stop` | Stop the current turn. Calls `POST /api/v1/runs/{runId}/cancel`, then aborts the local stream. The session stays on the same thread. | `/stop` |
+| `/stop` | Stop the current turn. Calls `POST /runs/{runId}/cancel`, then aborts the local stream. The session stays on the same thread. | `/stop` |
 | `/outputs` | Open the outputs page for the current session. | `/outputs` |
 | `/resume` | Open the session picker. | `/resume` |
 | `/resume list` | Open the session picker. | `/resume list` |

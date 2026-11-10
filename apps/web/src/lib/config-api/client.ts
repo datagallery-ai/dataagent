@@ -155,6 +155,22 @@ function queryString(params: URLSearchParams): string {
   return query ? `?${query}` : "";
 }
 
+/** `GET /sessions` returns the session document itself, not the `/api/v1` envelope. */
+async function requestSessionDocument<T>(path: string): Promise<T> {
+  const response = await requestRaw(path, {
+    headers: { Accept: "application/json" },
+  });
+  return parseJsonResponse<T>(response);
+}
+
+type PublicSessionRow = {
+  threadId: string;
+  title?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  hasCheckpoint?: boolean;
+};
+
 export const configApi = {
   register(body: { displayName?: string; email: string; password: string }): Promise<{
     user: { id: string; email?: string; displayName?: string };
@@ -267,8 +283,8 @@ export const configApi = {
   },
 
   getNativeSession(sessionId: string): Promise<NativeSessionDetail> {
-    return requestEnvelope<NativeSessionDetail>(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/conversation`,
+    return requestSessionDocument<NativeSessionDetail>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
     );
   },
 
@@ -302,11 +318,23 @@ export const configApi = {
     });
   },
 
-  listSessions(options: { limit?: number; cursor?: string } = {}): Promise<SessionListResponseDto> {
+  async listSessions(options: { limit?: number; cursor?: string } = {}): Promise<SessionListResponseDto> {
     const params = new URLSearchParams();
     if (options.limit !== undefined) params.set("limit", String(options.limit));
-    if (options.cursor) params.set("cursor", options.cursor);
-    return requestEnvelope<SessionListResponseDto>(`/api/v1/sessions${queryString(params)}`);
+    const body = await requestSessionDocument<{ sessions: PublicSessionRow[] }>(
+      `/sessions${queryString(params)}`,
+    );
+    return {
+      sessions: body.sessions.map((row) => ({
+        id: row.threadId,
+        threadId: row.threadId,
+        title: row.title,
+        // The shared document has no titleSource. The sidebar treats this like an auto title.
+        titleSource: "fallback",
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      })),
+    };
   },
 
   patchSessionTitle(sessionId: string, title: string): Promise<SessionTitleDto> {
@@ -611,7 +639,7 @@ export const configApi = {
   },
 
   cancelRun(id: string, reason?: string): Promise<RunCancelDto> {
-    return requestRaw(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
+    return requestRaw(`/runs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
       body: JSON.stringify(reason ? { reason } : {}),
     }).then((response) => {
@@ -635,7 +663,7 @@ export const configApi = {
   /** Files the agent wrote to the session output directory (conversation server, raw JSON). */
   async listSessionOutputs(sessionId: string): Promise<SessionOutputFileDto[]> {
     const response = await requestRaw(
-      `/api/sessions/${encodeURIComponent(sessionId)}/outputs`,
+      `/sessions/${encodeURIComponent(sessionId)}/outputs`,
       { headers: { Accept: "application/json" } },
     );
     const body = await parseJsonResponse<{ files?: SessionOutputFileDto[] }>(response);
@@ -645,7 +673,7 @@ export const configApi = {
   async previewSessionOutput(sessionId: string, path: string): Promise<SessionOutputPreviewDto> {
     const params = new URLSearchParams({ path });
     const response = await requestRaw(
-      `/api/sessions/${encodeURIComponent(sessionId)}/outputs/preview?${params.toString()}`,
+      `/sessions/${encodeURIComponent(sessionId)}/outputs/preview?${params.toString()}`,
       { headers: { Accept: "application/json" } },
     );
     return parseJsonResponse<SessionOutputPreviewDto>(response);
