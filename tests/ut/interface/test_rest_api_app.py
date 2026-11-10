@@ -457,18 +457,18 @@ def test_update_operation_returns_updated_at() -> None:
 
 
 def test_update_operation_accepts_max_length_markdown() -> None:
-    """65536 characters is the inclusive upper bound and passes validation."""
+    """32768 characters is the inclusive upper bound and passes validation."""
     app.dependency_overrides[get_data_agent_service] = _StubPromptService
     try:
         response = TestClient(app).post(
             OPERATION_PATH,
-            json={"type": "update", "content": {"scenario": "business_twin", "markdown": "x" * 65536}},
+            json={"type": "update", "content": {"scenario": "business_twin", "markdown": "x" * 32768}},
         )
     finally:
         app.dependency_overrides.pop(get_data_agent_service, None)
 
     assert response.status_code == 200
-    assert response.json() == {"result": {"success": True, "updated_at": "update:business_twin:65536"}}
+    assert response.json() == {"result": {"success": True, "updated_at": "update:business_twin:32768"}}
 
 
 def test_update_operation_rejects_empty_markdown(client: TestClient) -> None:
@@ -488,7 +488,7 @@ def test_update_operation_rejects_overlong_markdown(client: TestClient) -> None:
     """One character over the bound is rejected before the service is called; no file write."""
     response = client.post(
         OPERATION_PATH,
-        json={"type": "update", "content": {"scenario": "business_twin", "markdown": "x" * 65537}},
+        json={"type": "update", "content": {"scenario": "business_twin", "markdown": "x" * 32769}},
     )
 
     assert response.status_code == 422
@@ -521,6 +521,108 @@ def test_query_operation_rejects_empty_scenario(client: TestClient) -> None:
     detail = response.json()["detail"][0]
     assert detail["type"] == "string_too_short"
     assert detail["loc"][-1] == "scenario"
+
+
+def test_query_operation_rejects_overlong_query(client: TestClient) -> None:
+    """One character over the bound is rejected as 422 instead of surfacing a wrapped 500."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "x" * 8001, "scenario": "business_twin"}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_long"
+    assert detail["loc"][-1] == "query"
+
+
+def test_query_operation_rejects_fault_sample_pua_query(client: TestClient) -> None:
+    """The fuzz fault sample (9862 private-use-area chars) is rejected before the LLM call."""
+    fault_query = "".join(chr(cp) for cp in range(0xE0001, 0xE0001 + 9862))
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": fault_query, "scenario": "business_twin"}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_long"
+    assert detail["loc"][-1] == "query"
+
+
+def test_query_operation_accepts_max_length_query(client: TestClient) -> None:
+    """8000 characters is the inclusive upper bound and still reaches the agent."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "x" * 8000, "stream": False, "scenario": "business_twin"}},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["query"]) == 8000
+
+
+def test_legacy_query_path_rejects_overlong_query(client: TestClient) -> None:
+    """The original /api/agent/query path enforces the same query bound."""
+    response = client.post(
+        LEGACY_QUERY_PATH,
+        json={"query": "x" * 8001, "stream": False},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "string_too_long"
+    assert detail["loc"][-1] == "query"
+
+
+def test_streaming_query_overlong_returns_422_before_stream(client: TestClient) -> None:
+    """An overlong query is rejected before a stream is opened; no event-stream body."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "x" * 8001, "stream": True, "scenario": "business_twin"}},
+    )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/json")
+    assert "text/event-stream" not in response.headers["content-type"]
+
+
+def test_overlong_query_validation_error_echo_is_truncated(client: TestClient) -> None:
+    """The 422 body bounds the echoed input; the full overlong query is never sent back."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "x" * 8001, "scenario": "business_twin"}},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["input"].endswith("...(truncated: showing first 256 chars out of 8001 chars.)")
+    assert "x" * 8001 not in response.text
+    assert len(response.content) < 2048
+
+
+def test_extra_field_validation_error_echo_is_truncated(client: TestClient) -> None:
+    """A long value in a forbidden extra field is echoed truncated, not in full."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "query", "content": {"query": "hello", "scenario": "business_twin"}, "x": "y" * 5000},
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"][0]
+    assert detail["type"] == "extra_forbidden"
+    assert detail["input"].endswith("...(truncated: showing first 256 chars out of 5000 chars.)")
+
+
+def test_union_error_nested_echo_is_truncated(client: TestClient) -> None:
+    """Strings nested inside an echoed payload dict are truncated too."""
+    response = client.post(
+        OPERATION_PATH,
+        json={"type": "other", "content": {"query": "z" * 6000, "scenario": "business_twin"}},
+    )
+
+    assert response.status_code == 422
+    assert "z" * 6000 not in response.text
+    assert len(response.content) < 2048
 
 
 def test_semantic_status_requires_scenario(client: TestClient) -> None:
