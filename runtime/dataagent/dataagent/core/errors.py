@@ -153,7 +153,7 @@ def _sanitize_text(value: str) -> str:
     return _sanitize_scalar_text(redacted)
 
 
-def _short_exception_text(exc: Exception, *, limit: int = 160) -> str:
+def _short_exception_text(exc: Exception, *, limit: int = 999) -> str:
     """Sanitize and truncate an exception message for fact text."""
     text = _sanitize_text(str(exc)).strip()
     if len(text) > limit:
