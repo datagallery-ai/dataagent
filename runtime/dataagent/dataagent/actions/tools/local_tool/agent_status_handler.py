@@ -12,15 +12,17 @@
 # ============================================================================
 """Subagent stderr status extraction — handler-based dispatch.
 
-Each agent output format (ReAct emoji, NL2SQL bare-print, etc.) is
-encapsulated in its own ``_AgentStatusHandler`` subclass.  The shared
-``_extract_subagent_status`` function iterates registered handlers and
+Each agent output format (ReAct emoji, NL2SQL bare-print, structured
+``DA_SUBAGENT_PROGRESS`` protocol, etc.) is encapsulated here. The shared
+``extract_subagent_status`` function iterates registered handlers and
 returns the first match, deduplicated.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from typing import Any
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -28,6 +30,10 @@ from typing import Any
 _RE_ANSI_ESCAPE = re.compile(r"\x1b(?:\[@[A-Z]|\[[0-9;?]*[A-Za-z]|\].*?\x07|\x1b)")
 # 通用的 loguru 日志级别前缀（跨 agent 类型）
 _RE_LOG_LEVEL = re.compile(r"(WARNING|ERROR|CRITICAL|TRACE)")
+
+# 子进程 → 父进程轻量进度协议：DA_SUBAGENT_PROGRESS\t<kind>\t<escaped_payload>
+SUBAGENT_PROGRESS_PREFIX = "DA_SUBAGENT_PROGRESS"
+_SUBAGENT_PROCESS_NAME = "subagent"
 
 
 def _strip_ansi_codes(text: str) -> str:
@@ -42,6 +48,88 @@ def _extract_log_level(line: str) -> str | None:
         level = m.group(1)
         body = line[m.end() :].strip()
         return f"[{level}] {body}"
+    return None
+
+
+def is_subagent_process() -> bool:
+    """Return whether the current process was launched as a subagent subprocess."""
+    return os.environ.get("DATAAGENT_LOG_PROCESS_NAME") == _SUBAGENT_PROCESS_NAME
+
+
+def _encode_progress_payload(text: str) -> str:
+    """Escape payload so it fits on one stderr line (tab/newline-safe)."""
+    return (
+        str(text)
+        .replace("\\", "\\\\")
+        .replace("\t", "\\t")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
+
+def _decode_progress_payload(text: str) -> str:
+    """Inverse of :func:`_encode_progress_payload`."""
+    out: list[str] = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and i + 1 < len(text):
+            nxt = text[i + 1]
+            if nxt == "n":
+                out.append("\n")
+            elif nxt == "t":
+                out.append("\t")
+            elif nxt == "r":
+                out.append("\r")
+            elif nxt == "\\":
+                out.append("\\")
+            else:
+                out.append(nxt)
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def emit_subagent_progress(kind: str, payload: str = "") -> None:
+    """Write one structured progress line to stderr when running as a subagent.
+
+    No-op outside subagent subprocesses. Payload is escaped onto a single line;
+    content is not summarized or truncated.
+    """
+    if not is_subagent_process():
+        return
+    kind_text = str(kind or "").strip()
+    if not kind_text:
+        return
+    line = f"{SUBAGENT_PROGRESS_PREFIX}\t{kind_text}\t{_encode_progress_payload(payload)}"
+    print(line, file=sys.stderr, flush=True)
+
+
+def _try_parse_progress_protocol(line: str) -> str | None:
+    """Parse ``DA_SUBAGENT_PROGRESS`` lines into UI-facing status text.
+
+    Returns ``None`` when *line* is not a protocol line.
+    """
+    prefix = SUBAGENT_PROGRESS_PREFIX + "\t"
+    if not line.startswith(prefix):
+        return None
+    parts = line.split("\t", 2)
+    if len(parts) < 2:
+        return None
+    kind = parts[1].strip()
+    payload = _decode_progress_payload(parts[2]) if len(parts) > 2 else ""
+    if kind == "tool_start":
+        return f"正在调用 {payload}" if payload else "正在调用工具"
+    if kind == "tool_done":
+        return f"{payload} 完成" if payload else "完成"
+    if kind == "tool_fail":
+        return f"{payload} 执行失败" if payload else "执行失败"
+    if kind == "planner":
+        return payload
+    if kind == "reasoning":
+        return f"思考：\n{payload}" if payload else "思考："
     return None
 
 
@@ -192,24 +280,26 @@ def reset_subagent_status(tool_call_id: str) -> None:
 def extract_subagent_status(line: str, tool_call_id: str, progress_callback: Any) -> None:
     """从子进程 stderr 中提取关键状态行（带去重）。
 
-    遍历所有已注册的 ``_AgentStatusHandler``，首个匹配的 handler 返回状态文本。
+    优先识别 ``DA_SUBAGENT_PROGRESS`` 协议行（允许超长正文）；其余行仍走
+    handler / 日志 fallback，并保留 200 字符上限过滤杂讯。
     """
     if not progress_callback or not tool_call_id:
         return
 
     line = _strip_ansi_codes(line).strip()
-    if not line or len(line) > 200:
+    if not line:
         return
 
-    text: str | None = None
-    for handler in _subagent_handlers:
-        text = handler.try_extract(line, tool_call_id)
-        if text is not None:
-            break
-
-    # Fallback: 通用日志级别检测（任意 agent 类型的 stderr 都可能输出）
+    text = _try_parse_progress_protocol(line)
     if text is None:
-        text = _extract_log_level(line)
+        if len(line) > 200:
+            return
+        for handler in _subagent_handlers:
+            text = handler.try_extract(line, tool_call_id)
+            if text is not None:
+                break
+        if text is None:
+            text = _extract_log_level(line)
 
     if not text:
         return

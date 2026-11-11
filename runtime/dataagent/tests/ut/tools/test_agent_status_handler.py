@@ -17,12 +17,15 @@ from __future__ import annotations
 from typing import Any
 
 from dataagent.actions.tools.local_tool.agent_status_handler import (
+    SUBAGENT_PROGRESS_PREFIX,
     _NL2SQLStatusHandler,
     _ReActStatusHandler,
+    _decode_progress_payload,
+    _encode_progress_payload,
     _subagent_handlers,
     _subagent_last_status,
+    emit_subagent_progress,
     extract_subagent_status,
-    reset_subagent_status,
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -165,6 +168,69 @@ class TestNL2SQLStatusHandler:
         self.handler.try_extract("=== Final Result ===", "tid")
         text = self.handler.try_extract("... and 364 more rows", "tid")
         assert text == "Final Result: ... and 364 more rows"
+
+
+# ====================================================================
+# DA_SUBAGENT_PROGRESS protocol
+# ====================================================================
+
+
+class TestSubagentProgressProtocol:
+    def setup_method(self):
+        _reset_all()
+
+    def test_encode_decode_roundtrip(self):
+        raw = "hello\tworld\nline2\\tail\r"
+        assert _decode_progress_payload(_encode_progress_payload(raw)) == raw
+
+    def test_emit_noop_outside_subagent(self, monkeypatch, capsys):
+        monkeypatch.delenv("DATAAGENT_LOG_PROCESS_NAME", raising=False)
+        emit_subagent_progress("planner", "body")
+        assert capsys.readouterr().err == ""
+
+    def test_emit_writes_stderr_in_subagent(self, monkeypatch, capsys):
+        monkeypatch.setenv("DATAAGENT_LOG_PROCESS_NAME", "subagent")
+        emit_subagent_progress("planner", "a\nb")
+        err = capsys.readouterr().err.strip()
+        assert err.startswith(f"{SUBAGENT_PROGRESS_PREFIX}\tplanner\t")
+        assert "a\\nb" in err
+
+    def test_parse_tool_kinds(self):
+        events, cb = _make_collector()
+        extract_subagent_status(f"{SUBAGENT_PROGRESS_PREFIX}\ttool_start\tget_table_schema", "t1", cb)
+        extract_subagent_status(f"{SUBAGENT_PROGRESS_PREFIX}\ttool_done\tget_table_schema", "t1", cb)
+        extract_subagent_status(f"{SUBAGENT_PROGRESS_PREFIX}\ttool_fail\tget_join_relations", "t1", cb)
+        assert events == [
+            ("t1", "正在调用 get_table_schema"),
+            ("t1", "get_table_schema 完成"),
+            ("t1", "get_join_relations 执行失败"),
+        ]
+
+    def test_parse_full_planner_body_with_newlines(self):
+        events, cb = _make_collector()
+        body = "第一段\n第二段\t含tab"
+        line = f"{SUBAGENT_PROGRESS_PREFIX}\tplanner\t{_encode_progress_payload(body)}"
+        extract_subagent_status(line, "t1", cb)
+        assert events == [("t1", body)]
+
+    def test_parse_reasoning(self):
+        events, cb = _make_collector()
+        extract_subagent_status(
+            f"{SUBAGENT_PROGRESS_PREFIX}\treasoning\t{_encode_progress_payload('why')}",
+            "t1",
+            cb,
+        )
+        assert events == [("t1", "思考：\nwhy")]
+
+    def test_long_protocol_line_not_filtered(self):
+        events, cb = _make_collector()
+        body = "x" * 5000
+        extract_subagent_status(
+            f"{SUBAGENT_PROGRESS_PREFIX}\tplanner\t{_encode_progress_payload(body)}",
+            "t1",
+            cb,
+        )
+        assert events == [("t1", body)]
 
 
 # ====================================================================

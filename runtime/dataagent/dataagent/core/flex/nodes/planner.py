@@ -18,6 +18,7 @@ from typing import Any, cast
 from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 
+from dataagent.actions.tools.local_tool.agent_status_handler import emit_subagent_progress
 from dataagent.core.cbb.base_node import BaseNode
 from dataagent.core.context.context import Context
 from dataagent.core.flex.utils.context_from_state import get_context_for_flex_state
@@ -283,6 +284,12 @@ class Planner(BaseNode):
             logger.trace(f"[{self.name}] reasoning_content:\n{reasoning}")
         if ai_message.content:
             logger.trace(f"[{self.name}] content:\n{ai_message.content}")
+
+        # 子进程：每轮收齐后向父进程 stderr 写出完整正文（不摘要、不做 token 流）
+        if reasoning:
+            emit_subagent_progress("reasoning", str(reasoning))
+        if ai_message.content:
+            emit_subagent_progress("planner", str(ai_message.content))
 
         if terminal_mode and reasoning and not reasoning_already_emitted:
             self._emit_planner_stream_event(writer, phase="reasoning", content=reasoning)

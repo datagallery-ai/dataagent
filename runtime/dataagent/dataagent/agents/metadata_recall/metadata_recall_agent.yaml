@@ -5,7 +5,7 @@ AGENT_CONFIG:
   backend: "langgraph"
   type: "react"
   max_iter: 30
-  debug: false
+  debug: true
 
 SCENARIO:
   chat:
@@ -17,7 +17,6 @@ SCENARIO:
       ## 核心原则
       - 历史SQL路由：若检索需求包含⌈历史SQL⌋，先 read_file `skill/history-sql-retrieval/SKILL.md`，按该 SKILL 的工作流执行并按其固定格式返回；此场景下只使用本地文件工具（glob/grep/read_file/list_files），不走元数据 API
       - 精准检索：根据 query 语义，调用合适的元数据 API 获取信息
-      - 多维召回：表信息、字段信息、指标信息、UDF 信息、Join 关联关系信息可能需要分别检索
       - 宁多勿漏：召回阶段优先保证召回率，过滤由主 Agent 负责
       - 标注来源：每条召回结果必须注明来源（表名、字段名、API 名称）
       - 仅汇报证据：输出内容必须全部出自 `<semantic_retrieve_context>`、`get_table_schema`、`search_udf_function_by_name_keyword`/`search_udf_function_by_dsl`、`get_join_relations` 等检索工具的返回结果；未出现在任何检索结果中的内容一律不得输出

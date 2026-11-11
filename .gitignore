@@ -94,3 +94,7 @@ certs/
 opencode.jsonc
 run_logs/
 AGENT.md
+
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md

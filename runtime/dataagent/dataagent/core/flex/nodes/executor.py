@@ -28,6 +28,7 @@ from dataagent.actions.tools.local_tool.sandbox import (
     reset_current_sandbox,
     set_current_sandbox,
 )
+from dataagent.actions.tools.local_tool.agent_status_handler import emit_subagent_progress
 from dataagent.actions.tools.local_tool.tools import (
     reset_subagent_runtime_context,
     set_file_inspect_workspace,
@@ -1329,6 +1330,10 @@ class Executor(BaseNode):
         if summary:
             event["summary"] = summary
         writer(event)
+        # 子进程无 Rich/astream 时，向父进程 stderr 上报工具起止供 Web 进度展示
+        kind = {"start": "tool_start", "success": "tool_done", "error": "tool_fail"}.get(status)
+        if kind:
+            emit_subagent_progress(kind, tool_name)
 
     def _emit_tool_execution_output(self, execution: NormalizedToolExecution, context, writer) -> None:
         tool_name = execution.tool_name
