@@ -82,11 +82,12 @@ class PerceptorNode(BaseNL2SQLNode):
                 if not isinstance(entry, dict) or not entry:
                     continue
                 parts = next(iter(entry)).split(".")
-                if len(parts) != 3:
-                    logger.warning(f"Perceptor: malformed column_name_search entry (expected d.t.c): {entry}")
+                if len(parts) < 3:
+                    logger.warning(f"Perceptor: malformed column_name_search entry (expected db.table.column): {entry}")
                     continue
-                d, t, c = parts
-                dt_set.add(f"{d}.{t}")
+                dt, c = next(iter(entry)).rsplit(".", 1)
+                t = dt.removeprefix(f"{self.db}.")
+                dt_set.add(dt)
                 tc_set.add(f"{t}.{c}")
         for item in self._get_table_list():
             if not isinstance(item, dict) or not item:
@@ -94,12 +95,12 @@ class PerceptorNode(BaseNL2SQLNode):
             dt, meta = next(iter(item.items()))
             dt_desc[dt] = (meta or {}).get("table_description", "")
         for dt in dt_set:
-            _, t = dt.split(".")
+            t = dt.removeprefix(f"{self.db}.")
             cols = self._get_table_columns_info(dt)
             columns = {}
             schema[t] = {"description": dt_desc.get(dt, ""), "columns": columns}
             for dtc, meta in cols.items():
-                _, _, c = dtc.split(".")
+                c = dtc.removeprefix(f"{dt}.")
                 if f"{t}.{c}" not in tc_set:
                     continue
                 columns[c] = {
@@ -124,21 +125,21 @@ class PerceptorNode(BaseNL2SQLNode):
         """Retrieve the complete schema and joins, optionally limited to selected tables."""
         j_set, dt_desc, schema = set(), {}, {}
         allow_set = {str(t).strip() for t in (allow_tables or []) if str(t).strip()} or None
-        allow_names = {t.split(".", 1)[1] if "." in t else t for t in allow_set} if allow_set else None
+        allow_names = {t.removeprefix(f"{self.db}.") for t in allow_set} if allow_set else None
         for item in self._get_table_list():
             if not isinstance(item, dict) or not item:
                 continue
             dt, meta = next(iter(item.items()))
-            if allow_set and dt not in allow_set and dt.split(".", 1)[1] not in allow_names:
+            if allow_set and dt not in allow_set and dt.removeprefix(f"{self.db}.") not in allow_names:
                 continue
             dt_desc[dt] = (meta or {}).get("table_description", "")
         for dt in dt_desc:
-            t = dt.split(".", 1)[1]
+            t = dt.removeprefix(f"{self.db}.")
             cols = self._get_table_columns_info(dt)
             columns = {}
             schema[t] = {"description": dt_desc.get(dt, ""), "columns": columns}
             for dtc, meta in cols.items():
-                c = dtc.split(".", 2)[2]
+                c = dtc.removeprefix(f"{dt}.")
                 columns[c] = {
                     "description": meta.get("column_short_description", ""),
                     "value_type": meta.get("value_type", ""),

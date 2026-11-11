@@ -202,13 +202,13 @@ def schema_to_ddl(schema_ir, joins=None, relation_catalog=None):
     fk_map = {}
     if joins:
         for left, right in joins:
-            l_tbl, l_col = left.split(".")
-            r_tbl, r_col = right.split(".")
+            l_tbl, l_col = left.rsplit(".", 1)
+            r_tbl, r_col = right.rsplit(".", 1)
             fk_map.setdefault(l_tbl, []).append((l_col, r_tbl, r_col))
     ddl_blocks = []
     for table_name, table_info in schema_ir.items():
         lines = []
-        table_stmt = f"CREATE TABLE `{table_name}` (\n"
+        table_stmt = f"CREATE TABLE {table_name} (\n"
         for col_name, col_info in table_info["columns"].items():
             col_type = _normalize_type(col_info.get("value_type"))
             col_desc = col_info.get("description", "").strip()
@@ -231,7 +231,7 @@ def schema_to_ddl(schema_ir, joins=None, relation_catalog=None):
             lines.append(line)
         fk_lines = []
         for fk_col, ref_table, ref_col in fk_map.get(table_name, []):
-            fk_lines.append(f"    FOREIGN KEY ({format_col(fk_col)}) REFERENCES `{ref_table}`({format_col(ref_col)}),")
+            fk_lines.append(f"    FOREIGN KEY ({format_col(fk_col)}) REFERENCES {ref_table}({format_col(ref_col)}),")
         all_lines = lines + fk_lines
         if all_lines:
             all_lines[-1] = all_lines[-1].rstrip(",")
