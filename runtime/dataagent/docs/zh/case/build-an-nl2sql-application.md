@@ -161,6 +161,35 @@ SEMANTIC_LAYER:
 - 模型的 `api_key` 不建议写入 YAML，优先放到 `.env` 中。
 - `SEMANTIC_LAYER.base_url` 指向已部署的 Semantic Service；`username` / `password` 按实际部署填写，无认证环境可不配置。
 
+### 通过 MCP 执行 SQL
+
+DataAgent 的 NL2SQL 可以使用 MCP 作为 SQL 执行后端。保留原配置中的其他节点和语义服务设置，将 `DATABASE` 改为：
+
+```yaml
+DATABASE:
+  db_id: "your_database"
+  dialect: "mysql"  # 示例；必须改为目标引擎实际兼容的 SQL 方言
+  engine: "mcp"
+  config:
+    path: "http://localhost:18080/mcp"
+    read_tool: "dme_read_query"
+    timeout: 180  # 秒
+```
+
+`engine` 决定连接方式，`dialect` 决定 SQL 生成和解析方式；MCP 本身不是 SQL 方言。执行器通过 DataAgent 自带的 MCP 客户端调用 `read_tool`，传入 `{"query": sql}`，无需 LLM 发起工具调用。客户端使用 Streamable HTTP，每次调用自动初始化并关闭 MCP 会话，不需要手工填写 `Mcp-Session-Id`。
+
+工具应返回以下 JSON（MCP `structuredContent` 或文本内容中的 JSON）：
+
+```json
+{"columns": ["id", "name"], "rows": [{"id": 1, "name": "Alice"}], "row_count": 1}
+```
+
+结果按 `columns` 的顺序转换为原有 SQL 执行结果，空结果仍需包含 `columns` 和 `rows: []`。DME 的 JDBC 连接和 DME 认证由 MCP Server 管理。
+
+开启 `CORE.validator.db_explain`（内置配置默认开启）时，校验器通过同一工具提交 `<explain_prefix> <SQL>`。前缀默认是 DME / Calcite 使用的 `EXPLAIN PLAN FOR`，无需在配置中填写，返回计划结果即校验通过。其他 MCP SQL 后端如需普通 EXPLAIN，可在 `DATABASE.config` 中设置 `explain_prefix: "EXPLAIN"`。实跑反馈中 DME 计划查询耗时约 30 秒以上，建议保留 180 秒超时。工具返回的 SQL 错误（包括 MCP `McpError`）会进入校验/修复流程；连接失败仍作为基础设施错误报告。若其他后端不支持计划查询，可设置 `db_explain: false`；不会用执行原查询来冒充校验。
+
+此后端只接入标准 NL2SQL 的查询执行和校验，不调用 `dme_write_query`。表结构仍来自原有语义服务或用户 schema，需与 DME 实际表名（例如 `catalog.schema.table`）一致；SQLiteEnv 和脚本中的直接 SQLite 访问不会转换成 MCP 调用。
+
 ## 5. 运行专用 Agent
 
 可以通过 SDK 直接加载配置并调用：
