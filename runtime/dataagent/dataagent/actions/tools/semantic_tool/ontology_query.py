@@ -92,16 +92,9 @@ def _client(ctx: ToolExecutionContext) -> SemanticServiceClient:
 
 
 def _table_key(qualified_name: str) -> str:
-    """Reduce a possibly column-qualified name to its owning ``db.table``.
-
-    Business table names are always two dotted segments (``db.table``) and the
-    joinable columns are always three (``db.table.col``), so a plain two-segment
-    heuristic is sufficient; dangling filtering happens separately in
-    :func:`_fetch_relations`.
-    """
+    """Strip the trailing column while preserving catalog/schema table prefixes."""
     name = str(qualified_name or "")
-    parts = name.split(".")
-    return ".".join(parts[:2]) if len(parts) >= 3 else name
+    return name.rsplit(".", 1)[0] if name.count(".") >= 2 else name
 
 
 def _fetch_entities(client: SemanticServiceClient, database: str) -> list[dict[str, Any]]:
