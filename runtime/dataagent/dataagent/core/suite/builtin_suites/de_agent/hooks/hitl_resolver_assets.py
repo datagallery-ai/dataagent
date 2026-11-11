@@ -125,6 +125,22 @@ _CALIBER_GAP_ASK_MARKERS: tuple[str, ...] = (
     "二次加工",     # 引用已有聚合表二次加工
 )
 
+# IR→HITL 提问标记（format_ir_hitl_pending_action 固定前缀/字段标题）：
+# 用于 hitl_auto_resolver 把 DataTaskIR 队列提问路由到可代答 action，避免落 UNA 拒答。
+_IR_HITL_MARKERS: tuple[str, ...] = (
+    "DataTaskIR",
+    "未确认口径",
+)
+_IR_HITL_AMBIGUITY_TITLES: tuple[str, ...] = (
+    "【特征主键】",
+    "【时间上下文】",
+    "【输出特征目录】",
+)
+_IR_HITL_SOURCE_TITLES: tuple[str, ...] = (
+    "【数据源与关联预处理】",
+    "【数据源",
+)
+
 # 追问式改判信号（_mixed_question_override 的口径信号扩展专用）：裸"去重"在
 # 历史语料以陈述形出现（q01"维度去重两个口径问题"、q67"取最新一条去重后
 # 聚合序列"），直接用会把 2 个历史 TABLE_CONFIRM 问改判（回放门 50/47/82/3

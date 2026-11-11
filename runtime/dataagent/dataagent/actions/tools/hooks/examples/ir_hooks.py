@@ -37,7 +37,13 @@ from dataagent.actions.tools.hooks.examples.data_task_ir_spike.fill import (
     write_field_meta,
 )
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.json_llm import ainvoke_json_object
-from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import render_constraint_context, render_context
+from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import (
+    IR_HITL_BLOCKING_FIELDS,
+    collect_ir_hitl_questions,
+    format_ir_hitl_pending_action,
+    render_constraint_context,
+    render_context,
+)
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.template import (
     list_field_templates,
     load_template_catalog,
@@ -47,6 +53,28 @@ from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.context.context import ContextFactory
 from dataagent.core.context.context_ir import ActionNode
 from dataagent.core.managers.action_manager.base import ErrorType
+
+IR_HITL_QUEUE_KEY = "ir_hitl_queue"
+IR_HITL_FINGERPRINT_KEY = "ir_hitl_fingerprint"
+# Digest of HITL replies that informed the last queue sync (keep in sync with ir_question_guard).
+IR_HITL_FEEDBACK_DIGEST_KEY = "ir_hitl_feedback_digest"
+IR_HITL_FINGERPRINT_ASK_COUNTS_KEY = "ir_hitl_fingerprint_ask_counts"
+IR_HITL_FIELD_ASK_COUNTS_KEY = "ir_hitl_field_ask_counts"
+# Fields already clarified (or fused) that must not re-enter the HITL queue.
+IR_HITL_CLEARED_FIELDS_KEY = "ir_hitl_cleared_fields"
+IR_HITL_BEST_EFFORT_KEY = "ir_hitl_best_effort"
+# Same pending fingerprint may be auto-asked this many times before confirmed-only degrade.
+IR_HITL_MAX_SAME_FINGERPRINT_ASKS = 2
+# Same field_id may be auto-asked this many times even when question text drifts.
+IR_HITL_MAX_SAME_FIELD_ASKS = 2
+# Keep in sync with de_agent.hooks.ir_question_guard fire-count gate.
+IR_QUESTION_GUARD_FIRE_COUNT_KEY = "ir_question_guard.fire_count"
+IR_QUESTION_GUARD_MAX_FIRES = 2
+IR_HITL_BEST_EFFORT_NOTE = (
+    "【DataTaskIR 降级消费说明】存在未确认口径已从约束中省略；"
+    "以下仅为已确认口径，请基于这些约束 best-effort 生成 SQL，"
+    "未决项写入交付说明，禁止因未确认而改由主 agent 手写 SQL。"
+)
 
 
 class IRRefreshError(RuntimeError):
@@ -436,6 +464,10 @@ async def ensure_ir_ready(inv: ToolHookInvocation) -> ToolPreHookOutcome:
     This pre-hook must be attached to every consumer when on_consume is enabled.
     Check inputs even if no todo completed since the previous consumer. Merely
     enabling the policy must not activate IR when create/update hooks are absent.
+
+    HITL gate runs only after refresh so a post-answer consumer call under eager
+    policy does not block on a queue that still predates the latest HITL replies.
+    Gate releases when budget is exhausted or ir_question_guard has hit its fire cap.
     """
     runtime = inv.runtime
     if runtime.get_cache("ir_enabled") is False:
@@ -450,11 +482,393 @@ async def ensure_ir_ready(inv: ToolHookInvocation) -> ToolPreHookOutcome:
     if inv.state is None:
         raise RuntimeError("DataTaskIR consumer pre-hook requires current workflow state")
     async with _update_lock(runtime):
+        # Always refresh first: under eager policy the queue is only synced in
+        # update_ir, so a same-todo consumer after HITL would otherwise see stale items.
         await _refresh_with_policy(inv)
+        _raise_if_ir_hitl_blocking(runtime, inv.state)
         if runtime.get_cache("ir_input_signature") is None and not runtime.get_cache("ir_fallback"):
             runtime.set_cache("ir_dirty", True)
             raise RuntimeError("DataTaskIR consistency check incomplete; retry consumer before using IR")
     return ToolPreHookOutcome()
+
+
+def _is_human_feedback_enabled(state: dict | None, runtime: Runtime | None) -> bool:
+    if isinstance(state, dict) and state.get("enable_human_feedback") is not None:
+        return bool(state.get("enable_human_feedback"))
+    getter = getattr(runtime, "get_all_config", None) if runtime is not None else None
+    if not callable(getter):
+        return False
+    try:
+        config = getter() or {}
+        agent_config = config.get("AGENT_CONFIG", {}) if isinstance(config, dict) else {}
+        return bool(agent_config.get("enable_human_feedback", False))
+    except Exception:
+        return False
+
+
+def _hitl_budget_remaining(state: dict | None) -> bool:
+    from dataagent.core.flex.hooks.hitl_common import get_hitl_budget, get_hitl_turn_count
+
+    source = state if isinstance(state, dict) else {}
+    return get_hitl_turn_count(source) < get_hitl_budget(source)
+
+
+def _hitl_feedback_texts(state: dict | None, runtime: Runtime | None) -> list[str]:
+    """Collect completed HITL reply texts from messages and (when present) IR session."""
+    texts: list[str] = []
+    seen: set[str] = set()
+    messages = (state or {}).get("messages") or [] if isinstance(state, dict) else []
+    for message in messages:
+        text = ir_session.feedback_content(message)
+        if not text:
+            continue
+        key = str(getattr(message, "tool_call_id", None) or text)
+        if key in seen:
+            continue
+        seen.add(key)
+        texts.append(text)
+    if runtime is not None and ir_session.enabled(runtime):
+        session = runtime.get_cache("ir_session") or {}
+        for item in session.get("feedback") or []:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            key = str(item.get("tool_call_id") or content)
+            if key in seen:
+                continue
+            seen.add(key)
+            texts.append(content)
+    return texts
+
+
+def _current_hitl_feedback_digest(state: dict | None, runtime: Runtime | None) -> str:
+    return _input_digest(_hitl_feedback_texts(state, runtime))
+
+
+def _ir_hitl_queue_stale(runtime: Runtime, state: dict | None) -> bool:
+    """True when HITL replies arrived after the queue was last synced from a fill."""
+    current = _current_hitl_feedback_digest(state, runtime)
+    stored = runtime.get_cache(IR_HITL_FEEDBACK_DIGEST_KEY)
+    if stored is None:
+        return current != _input_digest([])
+    return current != stored
+
+
+def _ir_hitl_enabled(runtime: Runtime | None) -> bool:
+    """Master switch for IR→HITL queue / consumer gate / question-guard rewrite.
+
+    When false, unresolved fields only affect rendered IR (omitted slots) and do not
+    block nl2sql or force request_human_feedback — same as pre-IR→HITL behavior.
+    """
+    if runtime is None:
+        return True
+    raw = _ir_option(runtime, "enable_ir_hitl", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(raw)
+
+
+def _hitl_blocking_fields(runtime: Runtime) -> frozenset[str]:
+    configured = _ir_option(runtime, "hitl_blocking_fields", None)
+    if configured is None:
+        return IR_HITL_BLOCKING_FIELDS
+    if isinstance(configured, str):
+        parts = [part.strip() for part in configured.split(",") if part.strip()]
+        return frozenset(parts) if parts else IR_HITL_BLOCKING_FIELDS
+    if isinstance(configured, (list, tuple, set, frozenset)):
+        parts = [str(item).strip() for item in configured if str(item).strip()]
+        return frozenset(parts) if parts else IR_HITL_BLOCKING_FIELDS
+    return IR_HITL_BLOCKING_FIELDS
+
+
+def _hitl_max_same_fingerprint_asks(runtime: Runtime) -> int:
+    raw = _ir_option(runtime, "hitl_max_same_fingerprint_asks", IR_HITL_MAX_SAME_FINGERPRINT_ASKS)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return IR_HITL_MAX_SAME_FINGERPRINT_ASKS
+    return max(1, value)
+
+
+def _hitl_max_same_field_asks(runtime: Runtime) -> int:
+    raw = _ir_option(runtime, "hitl_max_same_field_asks", IR_HITL_MAX_SAME_FIELD_ASKS)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return IR_HITL_MAX_SAME_FIELD_ASKS
+    return max(1, value)
+
+
+def _hitl_question_guard_max_fires(runtime: Runtime) -> int:
+    raw = _ir_option(runtime, "hitl_question_guard_max_fires", IR_QUESTION_GUARD_MAX_FIRES)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return IR_QUESTION_GUARD_MAX_FIRES
+    return max(1, value)
+
+
+def _fingerprint_ask_counts(runtime: Runtime) -> dict[str, int]:
+    raw = runtime.get_cache(IR_HITL_FINGERPRINT_ASK_COUNTS_KEY) or {}
+    if not isinstance(raw, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, value in raw.items():
+        try:
+            counts[str(key)] = int(value or 0)
+        except (TypeError, ValueError):
+            counts[str(key)] = 0
+    return counts
+
+
+def _field_ask_counts(runtime: Runtime) -> dict[str, int]:
+    raw = runtime.get_cache(IR_HITL_FIELD_ASK_COUNTS_KEY) or {}
+    if not isinstance(raw, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, value in raw.items():
+        try:
+            counts[str(key)] = int(value or 0)
+        except (TypeError, ValueError):
+            counts[str(key)] = 0
+    return counts
+
+
+def _cleared_hitl_fields(runtime: Runtime) -> set[str]:
+    raw = runtime.get_cache(IR_HITL_CLEARED_FIELDS_KEY) or []
+    if isinstance(raw, (set, frozenset)):
+        return {str(item) for item in raw if str(item)}
+    if isinstance(raw, dict):
+        return {str(key) for key in raw if str(key)}
+    if isinstance(raw, (list, tuple)):
+        return {str(item) for item in raw if str(item)}
+    return set()
+
+
+def _mark_fields_cleared(runtime: Runtime, field_ids: set[str] | list[str]) -> None:
+    cleared = _cleared_hitl_fields(runtime)
+    cleared.update(str(fid) for fid in field_ids if str(fid))
+    runtime.set_cache(IR_HITL_CLEARED_FIELDS_KEY, sorted(cleared))
+
+
+def _queue_field_ids(queue: list | None) -> set[str]:
+    ids: set[str] = set()
+    for item in queue or []:
+        if not isinstance(item, dict):
+            continue
+        field_id = str(item.get("field_id") or "").strip()
+        if field_id:
+            ids.add(field_id)
+    return ids
+
+
+def _ir_hitl_fingerprint_fused(runtime: Runtime) -> bool:
+    queue = runtime.get_cache(IR_HITL_QUEUE_KEY) or []
+    if not queue:
+        return False
+    fingerprint = runtime.get_cache(IR_HITL_FINGERPRINT_KEY) or _input_digest(queue)
+    counts = _fingerprint_ask_counts(runtime)
+    return counts.get(str(fingerprint), 0) >= _hitl_max_same_fingerprint_asks(runtime)
+
+
+def _ir_hitl_field_fused(runtime: Runtime) -> bool:
+    """True when every queued field has already been asked enough times."""
+    queue = runtime.get_cache(IR_HITL_QUEUE_KEY) or []
+    field_ids = _queue_field_ids(queue)
+    if not field_ids:
+        return False
+    cleared = _cleared_hitl_fields(runtime)
+    if field_ids <= cleared:
+        return True
+    counts = _field_ask_counts(runtime)
+    max_asks = _hitl_max_same_field_asks(runtime)
+    return all(counts.get(field_id, 0) >= max_asks for field_id in field_ids)
+
+
+def _mark_ir_hitl_best_effort(runtime: Runtime, reason: str) -> None:
+    if runtime.get_cache(IR_HITL_BEST_EFFORT_KEY):
+        return
+    runtime.set_cache(IR_HITL_BEST_EFFORT_KEY, True)
+    logger.warning("[DataTaskIR] best-effort consume enabled ({})", reason)
+
+
+def _sync_ir_hitl_queue(
+    runtime: Runtime,
+    field_results: list[dict] | None,
+    *,
+    state: dict | None = None,
+) -> list[dict]:
+    """Refresh the pending IR clarification queue from the latest field fill.
+
+    Only critical fields enter the queue. Fuse / confirmed-only when:
+    - the same pending fingerprint was already asked enough times; or
+    - the same field_id was asked enough times (question text may drift); or
+    - HITL feedback was just absorbed but fill still leaves that field unresolved
+      (do not re-ask the same field after an answer — stops fill churn loops).
+
+    When enable_ir_hitl is false, always clear the queue (pre-IR→HITL behavior).
+    """
+    current_digest = _current_hitl_feedback_digest(state, runtime)
+    if not _ir_hitl_enabled(runtime):
+        queue: list[dict] = []
+        runtime.set_cache(IR_HITL_QUEUE_KEY, queue)
+        runtime.set_cache(IR_HITL_FINGERPRINT_KEY, _input_digest(queue))
+        runtime.set_cache(IR_HITL_FEEDBACK_DIGEST_KEY, current_digest)
+        runtime.set_cache(IR_HITL_BEST_EFFORT_KEY, False)
+        runtime.set_cache(IR_HITL_CLEARED_FIELDS_KEY, [])
+        return queue
+
+    previous_queue = runtime.get_cache(IR_HITL_QUEUE_KEY) or []
+    previous_fields = _queue_field_ids(previous_queue)
+    previous_digest = runtime.get_cache(IR_HITL_FEEDBACK_DIGEST_KEY)
+    feedback_advanced = (
+        previous_digest is not None and current_digest != previous_digest
+    )
+
+    collected = collect_ir_hitl_questions(
+        field_results,
+        blocking_fields=_hitl_blocking_fields(runtime),
+    )
+    field_counts = _field_ask_counts(runtime)
+    max_field_asks = _hitl_max_same_field_asks(runtime)
+    cleared = _cleared_hitl_fields(runtime)
+    queue: list[dict] = []
+    dropped_post_answer: set[str] = set()
+    dropped_field_fuse: set[str] = set()
+    for item in collected:
+        if not isinstance(item, dict):
+            continue
+        field_id = str(item.get("field_id") or "").strip()
+        if not field_id:
+            continue
+        if field_id in cleared:
+            dropped_field_fuse.add(field_id)
+            continue
+        if field_counts.get(field_id, 0) >= max_field_asks:
+            dropped_field_fuse.add(field_id)
+            continue
+        # Answer absorbed, fill still unresolved on the same field → do not re-ask.
+        if feedback_advanced and field_id in previous_fields:
+            dropped_post_answer.add(field_id)
+            continue
+        queue.append(item)
+
+    if dropped_post_answer or dropped_field_fuse:
+        _mark_fields_cleared(runtime, dropped_post_answer | dropped_field_fuse)
+        reason_parts: list[str] = []
+        if dropped_post_answer:
+            reason_parts.append(
+                "post-answer same-field still unresolved: "
+                + ",".join(sorted(dropped_post_answer))
+            )
+        if dropped_field_fuse:
+            reason_parts.append(
+                f"same field asked >={max_field_asks} times: "
+                + ",".join(sorted(dropped_field_fuse))
+            )
+        _mark_ir_hitl_best_effort(runtime, "; ".join(reason_parts))
+        logger.warning(
+            "[update_ir] drop ir_hitl fields after same-field fuse/post-answer "
+            "(post_answer={} field_fuse={})",
+            sorted(dropped_post_answer),
+            sorted(dropped_field_fuse),
+        )
+
+    fingerprint = _input_digest(queue)
+    ask_counts = _fingerprint_ask_counts(runtime)
+    max_asks = _hitl_max_same_fingerprint_asks(runtime)
+    if queue and ask_counts.get(fingerprint, 0) >= max_asks:
+        _mark_fields_cleared(runtime, _queue_field_ids(queue))
+        _mark_ir_hitl_best_effort(
+            runtime,
+            f"same hitl fingerprint asked >={max_asks} times",
+        )
+        logger.warning(
+            "[update_ir] clear ir_hitl_queue after fingerprint fuse (asks={} fingerprint={})",
+            ask_counts.get(fingerprint, 0),
+            fingerprint[:12],
+        )
+        queue = []
+        fingerprint = _input_digest(queue)
+    elif not queue and not (dropped_post_answer or dropped_field_fuse):
+        # Truly clean (no blockers) — reset best-effort / cleared for a fresh task phase.
+        runtime.set_cache(IR_HITL_BEST_EFFORT_KEY, False)
+        runtime.set_cache(IR_HITL_CLEARED_FIELDS_KEY, [])
+    runtime.set_cache(IR_HITL_QUEUE_KEY, queue)
+    runtime.set_cache(IR_HITL_FINGERPRINT_KEY, fingerprint)
+    runtime.set_cache(IR_HITL_FEEDBACK_DIGEST_KEY, current_digest)
+    return queue
+
+
+def _ir_question_guard_fires_exhausted(runtime: Runtime) -> bool:
+    """True when ir_question_guard will no longer rewrite turns into HITL asks."""
+    try:
+        fires = int(runtime.get_cache(IR_QUESTION_GUARD_FIRE_COUNT_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        fires = 0
+    return fires >= _hitl_question_guard_max_fires(runtime)
+
+
+def _raise_if_ir_hitl_blocking(runtime: Runtime, state: dict | None) -> None:
+    """Block IR consumers while HITL-enabled pending clarifications remain.
+
+    Release when IR→HITL is disabled, human feedback is off, budget is exhausted,
+    ir_question_guard has hit its fire cap, the same fingerprint/field was already
+    asked enough times, or the queue predates newer HITL replies.
+    """
+    if not _ir_hitl_enabled(runtime):
+        return
+    if not _is_human_feedback_enabled(state, runtime):
+        return
+    if not _hitl_budget_remaining(state):
+        _mark_ir_hitl_best_effort(runtime, "hitl budget exhausted")
+        return
+    if _ir_question_guard_fires_exhausted(runtime):
+        max_fires = _hitl_question_guard_max_fires(runtime)
+        _mark_ir_hitl_best_effort(
+            runtime,
+            f"ir_question_guard fire_count>={max_fires}",
+        )
+        logger.warning(
+            "[ensure_ir_ready] ir_question_guard fire_count>={} reached; "
+            "allow IR consumer despite pending hitl_queue (best-effort)",
+            max_fires,
+        )
+        return
+    if _ir_hitl_fingerprint_fused(runtime):
+        _mark_ir_hitl_best_effort(runtime, "same hitl fingerprint fused")
+        logger.warning(
+            "[ensure_ir_ready] same ir_hitl fingerprint already asked; "
+            "allow IR consumer (confirmed-only best-effort)"
+        )
+        return
+    if _ir_hitl_field_fused(runtime):
+        _mark_fields_cleared(runtime, _queue_field_ids(runtime.get_cache(IR_HITL_QUEUE_KEY) or []))
+        runtime.set_cache(IR_HITL_QUEUE_KEY, [])
+        runtime.set_cache(IR_HITL_FINGERPRINT_KEY, _input_digest([]))
+        _mark_ir_hitl_best_effort(runtime, "same hitl field fused")
+        logger.warning(
+            "[ensure_ir_ready] same ir_hitl field already asked; "
+            "allow IR consumer (confirmed-only best-effort)"
+        )
+        return
+    if _ir_hitl_queue_stale(runtime, state):
+        logger.warning(
+            "[ensure_ir_ready] ir_hitl_queue predates latest HITL feedback; "
+            "allow consumer so refresh can rebuild the queue"
+        )
+        return
+    queue = runtime.get_cache(IR_HITL_QUEUE_KEY) or []
+    if not queue:
+        return
+    pending = format_ir_hitl_pending_action(queue)
+    raise RuntimeError(
+        "DataTaskIR 存在未确认口径，禁止消费 IR / 生成 SQL。"
+        "请先调用 request_human_feedback 澄清下列问题，待 update_ir 刷新后再继续：\n"
+        f"{pending}"
+    )
 
 
 def _input_digest(value: object) -> str:
@@ -644,12 +1058,10 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
         user_query = ir_session.query_context(runtime)
         confirmed_context = ir_session.confirmed_context(runtime, state)
     else:
+        # Prefer session.feedback_content so placeholders / failed tool replies are ignored.
         feedback = [text for message in messages if (text := ir_session.feedback_content(message))]
         if feedback:
             confirmed_context += "\n\n用户澄清：\n" + "\n".join(feedback)
-
-    # 后续把hitl的反馈加入（从tool解析）
-    # confirmed_context += "\n\n Human feedback: \n\n"
 
     field_templates = runtime.get_cache("ir_field_templates")
     if not field_templates:
@@ -765,8 +1177,12 @@ async def _update_ir_locked(inv: ToolHookInvocation) -> None:
     runtime.set_cache("ir_dirty", False)
     if gate_completed:
         runtime.set_cache("ir_input_signature", input_signature)
-    logger.info("[update_ir] completed: fields={} reused={} gate_completed={} elapsed={:.3f}s trace={}",
-                len(field_results), len(reuse_ids), gate_completed, time.perf_counter() - started, trace_dir)
+    queue = _sync_ir_hitl_queue(runtime, field_results, state=state)
+    logger.info(
+        "[update_ir] completed: fields={} reused={} gate_completed={} hitl_queue={} elapsed={:.3f}s trace={}",
+        len(field_results), len(reuse_ids), gate_completed, len(queue),
+        time.perf_counter() - started, trace_dir,
+    )
 
 
 def get_ir_context(runtime: Runtime) -> str:
@@ -783,6 +1199,12 @@ def get_ir_context(runtime: Runtime) -> str:
     rendered = runtime.get_cache("ir_rendered_context")
     if not rendered or rendered == "IR init!":
         rendered = render_constraint_context(fields, warnings=runtime.get_cache("ir_gate_warnings") or [])
+    # Queue still pending or fuse/budget released: annotate confirmed-only consume.
+    if _ir_hitl_enabled(runtime) and (
+        runtime.get_cache(IR_HITL_BEST_EFFORT_KEY) or (runtime.get_cache(IR_HITL_QUEUE_KEY) or [])
+    ):
+        if IR_HITL_BEST_EFFORT_NOTE not in rendered:
+            rendered = f"{IR_HITL_BEST_EFFORT_NOTE}\n\n{rendered}"
     return rendered
 
 

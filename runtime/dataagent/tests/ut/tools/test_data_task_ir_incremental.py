@@ -781,6 +781,303 @@ class RenderTests(unittest.TestCase):
         self.assertIn("事实记录身份不等于去重", text)
         self.assertEqual(render.render_constraint_context([]), "")
 
+    def test_collect_ir_hitl_questions_requires_unresolved_and_question(self):
+        fields = [
+            {"field_id": "identity", "value": {}, "unresolved": ["主键未定"], "question": "主键用 device_id 还是 user_id？"},
+            {"field_id": "sources", "value": {}, "unresolved": ["缺源表"], "question": ""},
+            {"field_id": "time_context", "value": {}, "unresolved": [], "question": "窗口几天？"},
+            {
+                "field_id": "output_features",
+                "value": {},
+                "unresolved": ["指标口径未定"],
+                "question": "计数还是去重计数？",
+            },
+            FIELD,
+        ]
+        items = render.collect_ir_hitl_questions(fields)
+        # Default max_items=1: only highest-priority blocker (identity) enters the queue.
+        self.assertEqual([item["field_id"] for item in items], ["identity"])
+        self.assertIn("device_id", items[0]["question"])
+        text = render.format_ir_hitl_pending_action(items)
+        self.assertIn("DataTaskIR 未确认口径", text)
+        self.assertIn("特征主键", text)
+        self.assertIn("device_id", text)
+        self.assertIn("候选：", text)
+        self.assertNotIn("输出特征目录", text)
+
+    def test_collect_ir_hitl_questions_max_items_can_include_more(self):
+        fields = [
+            {"field_id": "identity", "value": {}, "unresolved": ["主键未定"], "question": "主键用 device_id 还是 user_id？"},
+            {
+                "field_id": "output_features",
+                "value": {},
+                "unresolved": ["指标口径未定"],
+                "question": "计数还是去重计数？",
+            },
+        ]
+        items = render.collect_ir_hitl_questions(fields, max_items=2)
+        self.assertEqual([item["field_id"] for item in items], ["identity", "output_features"])
+
+    def test_collect_ir_hitl_questions_skips_non_blocking_fields(self):
+        fields = [
+            {
+                "field_id": "sequence",
+                "value": {},
+                "unresolved": ["排序未定"],
+                "question": "按时间还是按分数排序？",
+            },
+            {
+                "field_id": "pipeline",
+                "value": {},
+                "unresolved": ["步骤未定"],
+                "question": "是否需要中间落表？",
+            },
+        ]
+        self.assertEqual(render.collect_ir_hitl_questions(fields), [])
+
+    def test_collect_ir_hitl_questions_includes_output_features(self):
+        fields = [{
+            "field_id": "output_features",
+            "value": {},
+            "unresolved": ["指标口径未定"],
+            "question": "计数还是去重计数？",
+        }]
+        items = render.collect_ir_hitl_questions(fields)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["field_id"], "output_features")
+
+
+class IrHitlLoopTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = FakeRuntime()
+        unresolved = {
+            "field_id": "identity",
+            "value": {"components": []},
+            "unresolved": ["主键未定"],
+            "question": "主键用 device_id 还是 user_id？",
+        }
+        self.fill_mock = AsyncMock(return_value=[unresolved])
+        self.gate_mock = AsyncMock(return_value=([], True))
+        self.nodes = []
+        self.inv = SimpleNamespace(
+            runtime=self.runtime,
+            state={
+                "user_query": "每设备下载次数",
+                "messages": [],
+                "enable_human_feedback": True,
+                "hitl_budget": 4,
+                "hitl_count": 0,
+            },
+            execution=SimpleNamespace(success=True),
+            tool_name="complete_current_todo",
+            tool_call_id="test",
+        )
+        for target, replacement in [
+            ("get_action_nodes", lambda runtime: self.nodes),
+            ("fill_ir_fields", self.fill_mock),
+            ("_ir_consistency_gate", self.gate_mock),
+        ]:
+            patcher = patch.object(ir_hooks, target, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def test_update_ir_writes_hitl_queue(self):
+        await ir_hooks.update_ir(self.inv)
+        queue = self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY)
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["field_id"], "identity")
+
+    async def test_ensure_ir_ready_blocks_when_queue_pending(self):
+        await ir_hooks.update_ir(self.inv)
+        with self.assertRaisesRegex(RuntimeError, "未确认口径"):
+            await ir_hooks.ensure_ir_ready(self.inv)
+
+    async def test_ensure_ir_ready_allows_when_hitl_disabled(self):
+        self.inv.state["enable_human_feedback"] = False
+        await ir_hooks.update_ir(self.inv)
+        # eager default: ensure only enforces HITL gate then returns
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_ensure_ir_ready_allows_when_budget_exhausted(self):
+        self.inv.state["hitl_count"] = 4
+        self.inv.state["hitl_budget"] = 4
+        await ir_hooks.update_ir(self.inv)
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_ensure_ir_ready_allows_when_ir_question_guard_fires_exhausted(self):
+        """Guard stop + remaining budget must not permanently block NL2SQL."""
+        await ir_hooks.update_ir(self.inv)
+        self.inv.state["hitl_count"] = 2
+        self.inv.state["hitl_budget"] = 4
+        self.runtime.set_cache(ir_hooks.IR_QUESTION_GUARD_FIRE_COUNT_KEY, ir_hooks.IR_QUESTION_GUARD_MAX_FIRES)
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_ensure_ir_ready_refreshes_before_gate_after_hitl_feedback(self):
+        """Eager path: same-todo consumer after HITL must not block on pre-answer queue."""
+        from langchain_core.messages import ToolMessage
+
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(len(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY)), 1)
+        self.fill_mock.return_value = [{
+            "field_id": "identity",
+            "value": {"components": [{"field_ref": "device_id"}]},
+            "unresolved": [],
+            "question": "",
+        }]
+        self.inv.state["messages"] = [
+            ToolMessage(
+                content="确认使用 device_id 作为主键",
+                tool_call_id="c1",
+                name="request_human_feedback",
+            ),
+        ]
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+
+    async def test_same_fingerprint_fuse_clears_queue_and_annotates_context(self):
+        """Repeated identical blockers should degrade to confirmed-only consume."""
+        await ir_hooks.update_ir(self.inv)
+        fingerprint = self.runtime.get_cache(ir_hooks.IR_HITL_FINGERPRINT_KEY)
+        self.runtime.set_cache(
+            ir_hooks.IR_HITL_FINGERPRINT_ASK_COUNTS_KEY,
+            {fingerprint: ir_hooks.IR_HITL_MAX_SAME_FINGERPRINT_ASKS},
+        )
+        # Force a fresh fill/signature so sync runs again with the same blockers.
+        self.inv.state["user_query"] = "每设备下载次数（再确认）"
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        self.assertTrue(self.runtime.get_cache(ir_hooks.IR_HITL_BEST_EFFORT_KEY))
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+        context = ir_hooks.get_ir_context(self.runtime)
+        self.assertIn("降级消费说明", context)
+        self.assertIn("best-effort", context)
+
+    async def test_post_answer_same_field_still_unresolved_clears_queue(self):
+        """Fill churn on the same field after HITL must not re-block consumers."""
+        from langchain_core.messages import ToolMessage
+
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(
+            [item["field_id"] for item in self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY)],
+            ["identity"],
+        )
+        # Simulate answer absorbed + fill inventing a new hole on the same field.
+        self.fill_mock.return_value = [{
+            "field_id": "identity",
+            "value": {"components": []},
+            "unresolved": ["主键仍未定"],
+            "question": "主键用 device_id 还是 uid？",  # drifted text → new fingerprint
+        }]
+        self.inv.state["messages"] = [
+            ToolMessage(
+                content="确认使用 device_id 作为主键",
+                tool_call_id="c1",
+                name="request_human_feedback",
+            ),
+        ]
+        self.inv.state["user_query"] = "每设备下载次数（答后刷新）"
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        self.assertTrue(self.runtime.get_cache(ir_hooks.IR_HITL_BEST_EFFORT_KEY))
+        self.assertIn("identity", self.runtime.get_cache(ir_hooks.IR_HITL_CLEARED_FIELDS_KEY))
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_same_field_ask_fuse_clears_even_when_fingerprint_drifts(self):
+        """Asking the same field_id enough times fuses despite changing question text."""
+        await ir_hooks.update_ir(self.inv)
+        self.runtime.set_cache(
+            ir_hooks.IR_HITL_FIELD_ASK_COUNTS_KEY,
+            {"identity": ir_hooks.IR_HITL_MAX_SAME_FIELD_ASKS},
+        )
+        self.fill_mock.return_value = [{
+            "field_id": "identity",
+            "value": {"components": []},
+            "unresolved": ["主键未定"],
+            "question": "主键用 oa_id 还是 device_id？",  # different question / fingerprint
+        }]
+        self.inv.state["user_query"] = "每设备下载次数（字段熔断）"
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        self.assertTrue(self.runtime.get_cache(ir_hooks.IR_HITL_BEST_EFFORT_KEY))
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_non_blocking_unresolved_does_not_block_consumer(self):
+        self.fill_mock.return_value = [{
+            "field_id": "pipeline",
+            "value": {},
+            "unresolved": ["步骤未定"],
+            "question": "是否需要中间落表？",
+        }]
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_output_features_unresolved_blocks_consumer(self):
+        self.fill_mock.return_value = [{
+            "field_id": "output_features",
+            "value": {},
+            "unresolved": ["指标口径未定"],
+            "question": "计数还是去重计数？",
+        }]
+        await ir_hooks.update_ir(self.inv)
+        queue = self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY)
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["field_id"], "output_features")
+        with self.assertRaisesRegex(RuntimeError, "未确认口径"):
+            await ir_hooks.ensure_ir_ready(self.inv)
+
+    async def test_yaml_hitl_blocking_fields_override(self):
+        """DATA_TASK_IR.hitl_blocking_fields can shrink the whitelist."""
+        self.runtime.get_config = lambda key, default=None: (
+            ["sources"] if key == "DATA_TASK_IR.hitl_blocking_fields" else default
+        )
+        await ir_hooks.update_ir(self.inv)  # fill returns identity unresolved
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_enable_ir_hitl_false_skips_queue_and_gate(self):
+        """Master switch off: no HITL queue, consumers not blocked (pre-IR→HITL)."""
+        self.runtime.get_config = lambda key, default=None: (
+            False if key == "DATA_TASK_IR.enable_ir_hitl" else default
+        )
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        self.assertFalse(self.runtime.get_cache(ir_hooks.IR_HITL_BEST_EFFORT_KEY))
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+        context = ir_hooks.get_ir_context(self.runtime)
+        self.assertNotIn("降级消费说明", context)
+
+    async def test_hitl_feedback_enters_confirmed_context(self):
+        from langchain_core.messages import ToolMessage
+
+        self.inv.state["messages"] = [
+            ToolMessage(
+                content="确认使用 device_id 作为主键",
+                tool_call_id="c1",
+                name="request_human_feedback",
+            ),
+            ToolMessage(
+                content="Waiting for human feedback...",
+                tool_call_id="c2",
+                name="request_human_feedback",
+            ),
+        ]
+        await ir_hooks.update_ir(self.inv)
+        confirmed = self.fill_mock.await_args.kwargs["confirmed_context"]
+        self.assertIn("用户澄清", confirmed)
+        self.assertIn("device_id", confirmed)
+        self.assertNotIn("Waiting for human feedback", confirmed)
+
 
 if __name__ == "__main__":
     unittest.main()
