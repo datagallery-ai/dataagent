@@ -99,6 +99,7 @@ ModelContext(runtime, *, model=None, semantic_client=None)
 - `get_model(alias)` 使用 `models.<alias>`
 - 传入的 `model` 只覆盖默认别名，便于测试
 - `semantic_client` 可能是 `None`
+- `home` 是已解析的 AgentKit Home 路径，供插件定位跨会话共享资源；会话产物仍使用 `session.outputs`。
 - `session.outputs` 是本轮产物路径；`agent.context` 保存默认会话，不表示最近一次调用
 - 编译型插件工厂按会话创建，使用 `services.outputs_dir` 获取该会话的固定产物目录
 

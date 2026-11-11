@@ -10,7 +10,8 @@
     "skills"
   ],
   "subagents": [
-    "subagents/metadata-recall.json"
+    "subagents/metadata-recall.json",
+    "subagents/history-sql-recall.json"
   ],
   "tools": {
     "get_table_schema": {
@@ -89,6 +90,10 @@
       }
     ],
     "before_tool": [
+      {
+        "entrypoint": "hooks/history_sql.py:prepare_search",
+        "matcher": "task"
+      },
       {
         "entrypoint": "hooks/metadata.py:prepare_recall",
         "matcher": "task"
