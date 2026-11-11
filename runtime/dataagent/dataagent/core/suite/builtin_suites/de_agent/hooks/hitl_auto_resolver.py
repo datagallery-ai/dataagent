@@ -80,6 +80,9 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
     _CONFIRM_DIRECTIVE_RE,
     _CONFIRMED_REFERENCE_MARKERS,
     _FIELD_CONCEPT_MAP,
+    _IR_HITL_AMBIGUITY_TITLES,
+    _IR_HITL_MARKERS,
+    _IR_HITL_SOURCE_TITLES,
     _REQUEST_CONFIRM_FORM_RE,
     _SCHEMA_DERIVATION_MARKERS,
     _TABLE_CONVERGENCE_MARKERS,
@@ -178,6 +181,30 @@ def _caliber_gap_override(hil_question: str, base_action: str) -> str | None:
     return None
 
 
+def _ir_hitl_override(hil_question: str, base_action: str) -> str | None:
+    """DataTaskIR 队列提问改判：避免 IR pending 落 UNA 拒答或答非所问。
+
+    format_ir_hitl_pending_action 固定带 DataTaskIR/未确认口径 与字段标题。
+    - 特征主键 / 时间 / 输出特征 → AMBIGUITY_CLARIFY（口径选择）
+    - 数据源标题且 base=UNA → TABLE_CONFIRM
+    - 其它 IR 标记且 base 为 UNA / OUTPUT_SCHEMA_PREVIEW → AMBIGUITY_CLARIFY
+      （OUTPUT_SCHEMA 程序化模板常回「N 列 + 先去重」，与 IR 口径问冲突）
+    已正确分类的 TABLE_CONFIRM/AMBIGUITY 不改，避免回放回归。
+    """
+    q = hil_question or ""
+    if not any(marker in q for marker in _IR_HITL_MARKERS):
+        return None
+    if any(title in q for title in _IR_HITL_AMBIGUITY_TITLES):
+        return "AMBIGUITY_CLARIFY"
+    if any(title in q for title in _IR_HITL_SOURCE_TITLES):
+        if base_action == "UNA":
+            return "TABLE_CONFIRM"
+        return None
+    if base_action in {"UNA", "OUTPUT_SCHEMA_PREVIEW"}:
+        return "AMBIGUITY_CLARIFY"
+    return None
+
+
 def _table_proposal_una_override(hil_question: str, base_action: str) -> str | None:
     """收敛确认误路由修正：UNA → TABLE_CONFIRM。
 
@@ -221,6 +248,7 @@ _HITL_CLASSIFIER = HitlQuestionClassifier(
     HITL_ACTION_SPECS,
     default_action=HITL_DEFAULT_ACTION,
     overrides=(
+        _ir_hitl_override,  # IR queue markers first — never UNA-reject DataTaskIR asks
         _mixed_question_override,
         _caliber_gap_override,
         _table_proposal_una_override,

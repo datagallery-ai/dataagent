@@ -11,6 +11,39 @@ AGENT_CONFIG:
     csv_path: ""
   hitl_budget: 8
 
+# DataTaskIR 行为调参（需同时启用 create_ir + update_ir；缺省与代码内默认一致）
+DATA_TASK_IR:
+  # eager：todo 完成时立即刷新 IR；on_consume：延迟到 nl2sql 等消费者 pre-hook 再刷新
+  refresh_policy: eager
+  # fallback_without_ir：IR 刷新失败时降级为空约束继续；strict：失败则阻断消费者
+  failure_policy: fallback_without_ir
+  # warn：一致性问题写入诊断仍可消费；enforce：一致性未过则阻断
+  consistency_policy: warn
+
+  # ----- IR→HITL（未确认口径自动澄清）-----
+  # 总开关。true：关键字段 unresolved+question 入队，可拦 wrapped_nl2sql / validate，
+  #   并由 ir_question_guard 改写为 request_human_feedback。
+  # false：不入队、不拦消费者、不改写提问（与引入 IR→HITL 前一致）；IR 仍 fill/渲染，
+  #   未确认槽位照旧从约束中省略。独立于 AGENT_CONFIG.enable_human_feedback。
+  enable_ir_hitl: true
+  # 允许进入 HITL 队列并拦截消费者的字段白名单（须同时有 unresolved 与非空 question）。
+  # 不在名单中的字段即使 unresolved 也只作诊断，不拦 nl2sql。
+  # 可选值：identity / sources / time_context / output_features / pipeline / sequence
+  hitl_blocking_fields:
+    - identity          # 特征主键
+    - sources           # 数据源与关联
+    - time_context      # 时间窗口
+    - output_features   # 输出特征/指标口径
+  # 同一批 pending 问题（指纹）最多自动追问次数；达到后清队列，降级为 confirmed-only
+  # 消费（get_ir_context 附加降级说明），避免反复 HITL 烧光预算仍无 SQL。
+  hitl_max_same_fingerprint_asks: 2
+  # 同一 field_id 最多自动追问次数（即使 fill 换了 question 文案导致指纹漂移）。
+  # 达到后该字段不再入队；若 HITL 已答复而 fill 仍标 unresolved，同步立即清出该字段。
+  hitl_max_same_field_asks: 2
+  # ir_question_guard 将 planner 回合改写为 request_human_feedback 的最多次数；
+  # 达到后不再改写，ensure_ir_ready 同步放行消费者（best-effort）。
+  hitl_question_guard_max_fires: 2
+
 SUITE:
   include:
     - data_engineering
@@ -53,6 +86,7 @@ SCENARIO:
       - "当任务涉及预估/评分类指标但其产生机制（模型输出/系统直采/外部导入）无法从元数据确定时，需向用户确认该指标的产生机制"
       - "当代码→中文名称的对照字典（映射关系）无法从元数据确定且影响输出列取值时，需向用户确认对照字典的来源"
       - "当任务的业务词（筛选项/状态词/分类词）在候选源表的对应取值无法从字段注释确定时，需向用户确认业务词在本表的对应取值"
+      - "当 DataTaskIR 存在未确认口径（关键字段 unresolved 且带 question）时，优先调用 request_human_feedback 澄清后再调用 wrapped_nl2sql_sub_agent_tool / validate_deliverables；若交互预算已用尽、同一未决问题已澄清仍未写入 IR、或系统已降级为 confirmed-only，则必须调用 wrapped_nl2sql_sub_agent_tool，基于已确认口径 best-effort 生成 SQL，把未决项写入交付说明——禁止因 IR 未确认而改由主 agent 手写 SQL"
 
       # ===== Final 阶段：输出 schema 预览（拦输出结构错，最高频失败模式）=====
       - "在调用 validate_deliverables 完成 SQL 校验后、最终交付前，必须向用户确认最终输出表的列数、列名与列顺序是否符合预期"

@@ -341,6 +341,37 @@ class TestClassifyHitlAction:
         )
         assert classify_hitl_action("数据源你倾向方案A还是方案B？") == "TABLE_CONFIRM"
 
+    def test_ir_hitl_identity_routes_to_ambiguity(self):
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
+
+        q = (
+            "DataTaskIR 未确认口径（请给出倾向方案，并附 1-2 个具体候选供确认）：\n"
+            "【特征主键】特征主键 components 尚未确定\n"
+            "请在答复中选定一个具体方案（表名/字段名/时间窗口等具体值），不要只回答“请你自主判断”。"
+        )
+        assert classify_hitl_action(q) == "AMBIGUITY_CLARIFY"
+
+    def test_ir_hitl_sources_una_routes_to_table_confirm(self):
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
+
+        q = (
+            "DataTaskIR 未确认口径：\n"
+            "【数据源与关联预处理】缺少可用事实表证据\n"
+            "请选定具体源表。"
+        )
+        assert classify_hitl_action(q) == "TABLE_CONFIRM"
+
+    def test_ir_hitl_output_features_avoids_output_schema_preview(self):
+        """IR output-feature口径 must not take the OUTPUT_SCHEMA template path."""
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
+
+        q = (
+            "DataTaskIR 未确认口径（请给出倾向方案，并附 1-2 个具体候选供确认）：\n"
+            "【输出特征目录】输出列格式未定，是否需要 TopN？输出列名是什么？\n"
+            "候选：两列宽表 / 先去重再聚合"
+        )
+        assert classify_hitl_action(q) == "AMBIGUITY_CLARIFY"
+
 
 class TestDescribeGoldenTimeWindow:
     def _describe(self, golden_sql: str) -> str:

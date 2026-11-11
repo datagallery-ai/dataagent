@@ -34,6 +34,22 @@ FIELD_TITLES = {
     "sequence": "最终序列后处理",
 }
 
+# Only these fields may block IR consumers via HITL; other unresolved stay warn-only.
+IR_HITL_BLOCKING_FIELDS = frozenset({
+    "identity",
+    "sources",
+    "time_context",
+    "output_features",
+})
+# Ask order when multiple critical fields are unresolved (one HITL turn at a time).
+IR_HITL_FIELD_PRIORITY = (
+    "identity",
+    "sources",
+    "time_context",
+    "output_features",
+)
+IR_HITL_PENDING_MARKER = "DataTaskIR 未确认口径"
+
 _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 1. **已确认值是强制约束**：IR中明确记录的源字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略；**输出列别名（expand 后的 field_name）除外**，见规则 10
 2. **未记录的操作默认为被禁止**：IR中未明确记录的操作（如去重、过滤、JOIN类型变更等）Agent不得自行添加（包括调用方 query 中主Agent附加、但IR未记录的操作），必须先在IR中记录才能执行；用户原始问题原话明确要求且按规则 17 判定可实现的除外
@@ -323,6 +339,99 @@ def _normalize_unresolved(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def collect_ir_hitl_questions(
+    field_results: list[dict] | None,
+    *,
+    blocking_fields: frozenset[str] | set[str] | list[str] | None = None,
+    max_items: int = 1,
+) -> list[dict[str, Any]]:
+    """Collect blocking IR clarifications for HITL (critical unresolved + question).
+
+    Non-whitelist fields may still carry unresolved/question for diagnostics, but they
+    do not enter the HITL queue and must not block nl2sql consumers.
+
+    By default only the highest-priority unresolved field is queued (max_items=1) so
+    HITL / auto-resolver answers one口径 at a time instead of a packed multi-ask.
+    """
+    allowed = (
+        IR_HITL_BLOCKING_FIELDS
+        if blocking_fields is None
+        else frozenset(str(item).strip() for item in blocking_fields if str(item).strip())
+    )
+    items: list[dict[str, Any]] = []
+    for output in field_results or []:
+        if not isinstance(output, dict):
+            continue
+        field_id = str(output.get("field_id") or "").strip()
+        if field_id not in allowed:
+            continue
+        unresolved = _normalize_unresolved(output.get("unresolved"))
+        question = output.get("question")
+        if not unresolved:
+            continue
+        if not isinstance(question, str) or not question.strip():
+            continue
+        items.append({
+            "field_id": field_id,
+            "title": FIELD_TITLES.get(field_id, field_id or "未命名字段"),
+            "question": question.strip(),
+            "unresolved": unresolved,
+        })
+    priority = {field_id: index for index, field_id in enumerate(IR_HITL_FIELD_PRIORITY)}
+    items.sort(key=lambda item: priority.get(str(item.get("field_id") or ""), 99))
+    if max_items is not None and max_items > 0:
+        items = items[:max_items]
+    return items
+
+
+def _extract_choice_hints(question: str) -> list[str]:
+    """Best-effort parse of A/B choices from fill questions (还是/或/)."""
+    text = (question or "").strip()
+    if not text:
+        return []
+    for sep in (" 还是 ", "还是", " 或 ", "或者", " / ", "/"):
+        if sep in text:
+            parts = [part.strip(" ，,。.?？:：;；") for part in text.split(sep)]
+            hints = [part for part in parts if 1 < len(part) <= 80]
+            if len(hints) >= 2:
+                return hints[:3]
+    return []
+
+
+def format_ir_hitl_pending_action(questions: list[dict[str, Any]], *, max_chars: int = 2000) -> str:
+    """Build request_human_feedback pending_action text from IR clarification queue.
+
+    Prefix keeps IR markers for hitl_auto_resolver routing; body asks for a concrete
+    choice (and surfaces options parsed from the fill question when present).
+    """
+    if not questions:
+        return ""
+    lines = [
+        f"{IR_HITL_PENDING_MARKER}（请给出倾向方案，并附 1-2 个具体候选供确认）：",
+    ]
+    for item in questions:
+        title = item.get("title") or item.get("field_id") or "未命名字段"
+        question = str(item.get("question") or "").strip()
+        unresolved = item.get("unresolved") or []
+        lines.append(f"【{title}】{question}")
+        if isinstance(unresolved, list) and unresolved:
+            notes = [str(note).strip() for note in unresolved if str(note).strip()]
+            if notes:
+                lines.append("未决点：" + "；".join(notes[:3]))
+        choices = _extract_choice_hints(question)
+        if choices:
+            lines.append("候选：" + " / ".join(choices))
+        else:
+            lines.append(
+                "请在答复中选定一个具体方案（表名/字段名/时间窗口等具体值），"
+                "不要只回答“请你自主判断”。"
+            )
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        return text[: max_chars - 1] + "…"
+    return text
 
 
 def _prune_value(value: Any, path: str, drop_empty: bool, omitted_paths: list[str]) -> Any:
