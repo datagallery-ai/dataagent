@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 import sqlglot
+from hooks.history_sql import reference_context
 from loguru import logger
 from sqlglot import exp
 from utils.checks import _validate_ddl_comprehensive
@@ -72,6 +73,9 @@ def prepare_input(state, runtime, *, params):
         "target_ddl": ddl.read_text(encoding="utf-8"),
         "semantic": supporting,
     }
+    history_reference = reference_context(context, state.get("question", ""))
+    if history_reference is not None:
+        evidence["history_sql_reference"] = history_reference
     ir_context = get_ir_context(context) if ir_enabled(context) else ""
     if ir_context:
         evidence["data_task_ir"] = ir_context

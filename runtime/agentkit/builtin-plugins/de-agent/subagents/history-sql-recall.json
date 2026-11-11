@@ -1,0 +1,11 @@
+{
+  "name": "history-sql-recall",
+  "description": "按用户行为、输出主键和已确认源表从本地历史 SQL 库检索相似实现；只返回带文件来源的参考摘录。功能默认关闭，未启用时跳过。",
+  "system_prompt": "prompts/history_sql.md",
+  "tools": [],
+  "skills": ["history-skills"],
+  "filesystem_tools": ["ls", "glob", "grep", "read_file"],
+  "hooks": {
+    "before_tool": [{"entrypoint": "hooks/history_sql.py:guard_files"}]
+  }
+}

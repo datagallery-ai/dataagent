@@ -325,6 +325,20 @@ class SemanticServiceClient:
             params["typeName"] = type_name
         return self.get("search/fulltext", params=params)
 
+    def search_entities(self, type_name: str, *, limit: int = 200, offset: int = 0) -> list:
+        """Enumerate entities via GET search/basic (distinct from query POST)."""
+        if not 1 <= limit <= 200 or offset < 0:
+            raise ValueError("Entity paging requires limit in [1, 200] and offset >= 0")
+        payload = self.get(
+            "search/basic", params={"typeName": type_name, "limit": limit, "offset": offset}
+        )
+        entities = payload.get("entities") if isinstance(payload, dict) else payload
+        if not isinstance(entities, list):
+            raise ValueError("search/basic response must contain an entities list")
+        if any(not isinstance(entity, dict) for entity in entities):
+            raise ValueError("search/basic entities must be objects")
+        return entities
+
     def search_basic(self, payload: dict[str, Any]) -> dict:
         """Run semantic-service basic search."""
         return self.post("search/basic", json=payload, headers={"Content-Type": "application/json"})

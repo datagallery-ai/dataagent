@@ -62,6 +62,10 @@
           "dataops_validation_enabled": true,
           "dataops_max_attempts": 5,
           "enable_thinking": false
+        },
+        "history_sql": {
+          "enabled": false,
+          "corpus_path": null
         }
       },
       "nl2sql": {

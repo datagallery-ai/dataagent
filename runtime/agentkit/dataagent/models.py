@@ -18,6 +18,7 @@ messages, checkpoint state or client-supplied configuration. No global client ca
 
 from contextlib import AbstractContextManager
 from copy import deepcopy
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
@@ -104,6 +105,11 @@ class ModelContext(BaseModel):
         self._semantic_client = semantic_client
         if model is not None:
             self._models[runtime.settings.dataagent.model.default] = model
+
+    @property
+    def home(self) -> Path:
+        """Prepared Home for plugin-managed shared, non-session resources."""
+        return self._runtime.paths.home
 
     @property
     def session(self) -> SessionPaths:

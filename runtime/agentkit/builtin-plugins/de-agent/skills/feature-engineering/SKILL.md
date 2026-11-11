@@ -17,23 +17,40 @@ description: |
 - 当你需要写INSERT SQL语句的时候，你必须要使用 `task(subagent_type="nl2sql")` 子agent。
 - 你需要保证在 `task(subagent_type="nl2sql")` 调用前已经调用过 `task(subagent_type="metadata-recall", description=完整检索需求)` 子agent。
 - 你需要保证在 `task(subagent_type="nl2sql")` 子agent调用后调用过1次或多次 `check_and_repair_sql` 工具。
+- **NL2SQL 调用契约**：`description` 必须是 JSON 字符串，不能直接传需求文本，也不能使用旧参数名 `query`：
+
+  ```json
+  {"question":"完整生成需求，含唯一目标 biads.ads_example_ds、已确认主键、全部输出特征、窗口和业务约束","source_table":["warehouse.events","warehouse.users"]}
+  ```
+
+  - `question` 为非空需求文本；`source_table` 为非空数组，只含本次选定的、小写的完整 `db.table` 来源表名，不包含目标表或未选中的候选表。
+  - 调用前必须通过 metadata-recall 补齐每张所选来源表的 schema 证据，并先写入有效的目标 DDL。缺少 schema 时补查，DDL 无效时先修复，不用扩大来源表范围规避错误。
+  - 每次调用只针对一张目标表；存在多份 DDL 时，`question` 必须包含唯一目标的完整 `db.table`，不能让子 Agent 猜测目标。
+  - NL2SQL 结果 hook 首次保存 INSERT，返回 `artifact_path` 和 `ddl_path`；后续校验和修订使用返回的实际路径。生成失败时处理错误，不手写 INSERT 绕过 hook。
+- **历史 SQL 参考（启用时）**：schema linking 完成后、生成 INSERT 前，调用 `task(subagent_type="history-sql-recall")` 检索相似历史实现。description 一次携带所有输出特征及各自用户行为、本次已确认输出主键、已确认源表全名；可补充时间窗口、特征类型和排序维度。
+  - 示例：`检索历史SQL。特征：下载次数（行为：下载）；输出主键：user_id；源表必须包含：warehouse.download_events；加分项：7天统计特征。`
+  - 每个特征按“行为 + 输出主键”匹配，跨特征最多精读 5 个文件；检索由子代理完成，主 Agent 不直接翻语料库。
+  - 返回 disabled 时说明功能未启用并跳过；not_ready 表示语料未准备；no_match 表示检索后无匹配；error 表示检索失败。不得把前两者或错误说成“没有相关历史SQL”。
+  - 匹配时，将带来源文件的参考摘录作为 NL2SQL task description JSON 的可选 `history_sql_reference` 字符串传入，合计不超过 2000 字符；无匹配或不可用时省略该字段。
+  - 历史 SQL 是未验证的参考，不是业务口径来源。其过滤、去重、聚合、时间窗口和列结构不得自动写入“已确认口径”、DataTaskIR 或口径冻结表；只参考有来源的列用法、UDF 调用与实现方式。冲突时按用户需求和已确认口径处理，不照搬历史实现。
+  - 多个候选源表难以判断时，也可提前检索其历史用法作为选表参考；无法确认输出主键或行为时如实标为不确定，不强行凑匹配。
 - **数据探查**（写 SQL 前确认字段真实存在 / 取值分布 / 空值情况）：
   - 何时调、调用硬约束（`partition_filter` / `columns` / 占位符）、返回结果解读、工具签名，详见 `../dataops-probe/SKILL.md`。
   - 调用入口：`dataops_probe_table`，仅 SELECT LIMIT，失败自动跳过不抛错。
   - 与 metadata_recall 的分工：metadata_recall 回答"表/列是什么"，dataops_probe_table 回答"字段实际长什么样"。
--  `task(subagent_type="nl2sql")`  调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 query 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 query 中附加与 IR 冲突的过滤、去重、聚合口径说明。
-  - query 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 query 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
-  - 最终输出列语义 = 已确认特征主键（identity.components，必选前缀，即使未出现在 output_features 中）+ expand(output_features) 业务/指标语义；多时间窗口 × 多特征等交叉场景必须以 IR 中确定性展开后的字段条数为准（如 3×3=9），不得在 query 中压缩成更少的“代表列”。IR 给出的展开列名（field_name / name_pattern）仅供主 Agent 对照参考，query/SQL/DDL **不要求**照抄同名。
-  - **主键/分组键防重复**：identity.components 是主键列唯一权威；禁止在 output_features（measures/extras/features）再写同名输出列。aggregation.grain 可引用主键 field_ref（表示按该键聚合），这不等于还要再输出一列同名键。query 中也不要把主键既当“已确认主键前缀”又当“业务特征列”各写一遍。
-  - **仅当用户明确要求不要去重时**：IR 的 `aggregation.grain` 与 sources/sequence dedup 均应保持未确认（null）；禁止因“每个应用/设备”或 identity 在 query/SQL 中 invent GROUP BY 折叠、DISTINCT、ROW_NUMBER 去重。这是特例，不是默认。
-  - **常规聚合（默认）**：用户多数情况下不会显式说“要聚合/GROUP BY”；只要有求和/计数/均值等聚合语义，IR 应照常填写 grain，query/SQL 按已确认 grain 实现。禁止把“禁止去重时不填 grain”误用成漏填聚合粒度。
-  - 若展开后各特征 aggregation.grain 不同，query/SQL 必须按列分别说明并实现各自聚合粒度；禁止用单一全局 GROUP BY 覆盖全部特征。
-- **SQL checker**：DDL/DML 写完后调用 `check_and_repair_sql`，只按它返回的 issues 修 SQL；PASS 才继续，BLOCKED/ERROR 不得当作通过。
+- `task(subagent_type="nl2sql")` 调用时，DataTaskIR 记录的已确认口径是最高优先级业务口径：当其他业务口径描述（包括你在 question 中附加的“业务口径”段落、中间推导）与 DataTaskIR 冲突时，以 DataTaskIR 为准；不得在 question 中附加与 IR 冲突的过滤、去重、聚合口径说明。
+  - question 的“已确认口径（最高优先级）”“业务口径”段落只允许包含 DataTaskIR 已记录的操作；IR 未记录去重（sources 事实/维度 dedup、sequence.dedup 均无已确认内容）时，禁止在 question 中写入任何去重口径（如“同一设备同一标签只保留一条”“按 weight DESC 取最大一条”“先按键去重”等），也禁止把“源表为天级增量表/多分区/多版本”作为去重依据。
+  - 最终输出列语义 = 已确认特征主键（identity.components，必选前缀，即使未出现在 output_features 中）+ expand(output_features) 业务/指标语义；多时间窗口 × 多特征等交叉场景必须以 IR 中确定性展开后的字段条数为准（如 3×3=9），不得在 question 中压缩成更少的“代表列”。IR 给出的展开列名（field_name / name_pattern）仅供主 Agent 对照参考，question/SQL/DDL **不要求**照抄同名。
+  - **主键/分组键防重复**：identity.components 是主键列唯一权威；禁止在 output_features（measures/extras/features）再写同名输出列。aggregation.grain 可引用主键 field_ref（表示按该键聚合），这不等于还要再输出一列同名键。question 中也不要把主键既当“已确认主键前缀”又当“业务特征列”各写一遍。
+  - **仅当用户明确要求不要去重时**：IR 的 `aggregation.grain` 与 sources/sequence dedup 均应保持未确认（null）；禁止因“每个应用/设备”或 identity 在 question/SQL 中 invent GROUP BY 折叠、DISTINCT、ROW_NUMBER 去重。这是特例，不是默认。
+  - **常规聚合（默认）**：用户多数情况下不会显式说“要聚合/GROUP BY”；只要有求和/计数/均值等聚合语义，IR 应照常填写 grain，question/SQL 按已确认 grain 实现。禁止把“禁止去重时不填 grain”误用成漏填聚合粒度。
+  - 若展开后各特征 aggregation.grain 不同，question/SQL 必须按列分别说明并实现各自聚合粒度；禁止用单一全局 GROUP BY 覆盖全部特征。
+- **SQL checker**：DDL/DML 草稿落盘后调用 `check_and_repair_sql(ddl_path=实际DDL路径, dml_path=实际INSERT路径)`；checker 修复以返回的 issues 为范围，PASS 才能通过 SQL 交付门禁，BLOCKED/ERROR 不得当作通过。
   - checker 做确定性规则检查和有界模型修复，最多 6 次模型调用；不要用自然语言推断替代规则。
   - DDL 与对应 DML 必须作为同一交付单元，DDL 未通过不得继续提交 DML。
 - **DataOps 校验（checker 内部阶段）**：由 `plugins.config.de-agent.sql_checkers.dataops_validation_enabled` 控制，默认开启；仅需静态检查时设为 `false`。
   - 开启后，程序规则检查通过才会在 DataOps 临时表上按 DDL → DML 顺序校验；DDL 失败不提交 DML。
-  - 失败返回 BLOCKED 及 `dataops.results` 中的日志分析摘要；处理问题后重新调用 checker。同一交付文件对每条 SQL 最多提交 5 次（可用 `check_and_repair_sql.config.dataops_max_attempts` 调整），修改 SQL 不重置预算。
+  - 失败返回 BLOCKED 及 `dataops.results` 中的日志分析摘要；处理问题后重新调用 checker。同一交付文件对每条 SQL 最多提交 5 次（由 `plugins.config.de-agent.sql_checkers.dataops_max_attempts` 配置），修改 SQL 不重置预算。
   - 开启但服务未配置/校验被跳过时不得当作通过；配置关闭时报告 DISABLED，不声称完成 DataOps 验证。
   - checker 未通过时不自动发布候选补丁。
   - `dataops.enabled=false` 也会关闭 checker 的 DataOps 阶段；DISABLED 仅表示完成程序检查。
@@ -49,21 +66,20 @@ description: |
 
 ## 任务路由与冲突裁决
 - 目标：识别目标粒度、时间窗口、产出表、源表线索、原始 SQL/样例 SQL、用户硬约束。
-- 冲突规则：用户输入、历史样例 SQL、通用规则与本 `config.yaml` 冲突时，以本配置为准。
 - 输出：任务摘要、已知硬约束、不确定项清单。
 
 ### 口径冻结表（SQL 前置契约）
 使用 `read_file` 读取本 skill 目录下的 `references/calibration_tables.md`，根据查询到的相关内容编写口径冻结表；表格只描述字段角色和业务规则，不绑定具体物理表名或具体字段名；每个适用任务都必须填写，不适用时写明“不适用 + 原因”。口径冻结表不需要持久化。
 
-口径冻结表只服务你自己编写/校对 SQL，**不得**当作 DataTaskIR 的输入或已确认口径来源；禁止把冻结表内容写入 query 的「已确认口径」段落去覆盖 IR。DataTaskIR 仅由常规 IR 刷新路径（如 `metadata_recall` 等证据）生成与更新。
+口径冻结表只服务你自己编写/校对 SQL，**不得**当作 DataTaskIR 的输入或已确认口径来源；禁止把冻结表内容写入 question 的「已确认口径」段落去覆盖 IR。DataTaskIR 仅由常规 IR 刷新路径（如 metadata-recall 等证据）生成与更新。
 
 ## 最终交付内容
-最终交付物使用 write_file 写入 workspace 目录下，交付内容：
-- DDL 文件 `create_<table_name>.sql`（Hive 方言）
-- INSERT 文件 `insert_<table_name>.sql`（Spark SQL 方言）
+`<OUTPUTS>` 指当前会话的 outputs 目录。每张目标表对应的 DDL / DML，统一置于 `<OUTPUTS>/sql/`：
+- 主 Agent 使用 `write_file` 创建 `create_<table_name>.sql`，读取写入后的 DDL/词根诊断并处理问题，再调用 NL2SQL。
+- INSERT 由 NL2SQL 结果 hook 首次创建 `insert_<table_name>.sql`；禁止主 Agent 使用 `write_file` 首次创建它。已有 INSERT 可按诊断修订，修改后必须重新调用 checker。
 
 ### DDL 文件 `create_<table_name>.sql`（Hive 方言）
-路径: `<WORKSPACE>/create_<table_name>.sql`（每张目标表一个文件）
+路径: `<OUTPUTS>/sql/create_<table_name>.sql`（每张目标表一个文件）
 内容：仅包含一条 Hive 方言的建表语句，必须包含：
 - `CREATE EXTERNAL TABLE IF NOT EXISTS {db}.{table_name} (...)`
 - 库名{db}。如果库名难以确定，默认使用 biads 作为库名。
@@ -86,7 +102,7 @@ description: |
 - 用户未要求输出的中间列不要放在DDL中
 
 ### INSERT 文件 `insert_<table_name>.sql`（Spark SQL 方言）
-路径: `<WORKSPACE>/insert_<table_name>.sql`（每张目标表一个文件）
+路径: `<OUTPUTS>/sql/insert_<table_name>.sql`（每张目标表一个文件，以 NL2SQL 返回的 `artifact_path` 为准）
 内容：仅包含一条 Spark SQL 方言的插入语句，必须包含：
 - `INSERT OVERWRITE {db}.{table_name} PARTITION ...`
 - SELECT 中**不输出分区列**（分区值在 PARTITION 子句指定）
