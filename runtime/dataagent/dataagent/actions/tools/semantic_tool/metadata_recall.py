@@ -153,6 +153,35 @@ def _strip_history_sql_route_lines(instructions: str) -> str:
     return result
 
 
+_SEMANTIC_RETRIEVE_HOOK = "semantic_retrieve_context_loader"
+
+
+def _strip_semantic_retrieve_hook(config: dict[str, Any]) -> None:
+    """Remove ``semantic_retrieve_context_loader`` from agent pre-hooks in place.
+
+    History-SQL recall only needs local file tools; running semantic retrieve
+    is unnecessary and can abort the sub-agent when no tables are recalled.
+    """
+    hooks = config.get("HOOKS")
+    if not isinstance(hooks, dict):
+        return
+    agent_hooks = hooks.get("agent")
+    if not isinstance(agent_hooks, dict):
+        return
+    pre = agent_hooks.get("pre")
+    if not isinstance(pre, list):
+        return
+    remaining = [item for item in pre if item != _SEMANTIC_RETRIEVE_HOOK]
+    if remaining:
+        agent_hooks["pre"] = remaining
+    else:
+        agent_hooks.pop("pre", None)
+    if not agent_hooks:
+        hooks.pop("agent", None)
+    if not hooks:
+        config.pop("HOOKS", None)
+
+
 async def metadata_recall(
     query: str,
     add_user_query: bool = False,
@@ -205,6 +234,9 @@ async def metadata_recall(
         tool_config=_tool_context.tool_config,
         workspace_root=workspace_path,
     )
+    # 历史SQL只走本地语料，不需要语义粗召回；摘掉 hook 避免无表时误杀子 Agent
+    if _is_history_sql_query(query):
+        _strip_semantic_retrieve_hook(temp_config)
 
     # 读取主 Agent 保存的 query
     user_query_str = get_current_query(_tool_context.runtime) if _tool_context.runtime else ""
