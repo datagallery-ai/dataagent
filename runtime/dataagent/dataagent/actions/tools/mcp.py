@@ -24,7 +24,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.types import CallToolResult, ImageContent, TextContent
+from mcp.shared.exceptions import McpError
+from mcp.types import CONNECTION_CLOSED, CallToolResult, ImageContent, TextContent
 from mcp.types import Tool as MCPTool
 
 from dataagent.core.errors import DataAgentError
@@ -35,6 +36,18 @@ from dataagent.core.managers.action_manager.base import (
     tool_failure,
 )
 from dataagent.core.managers.action_manager.schemas import ParameterSchema, ToolSchema
+
+
+def _find_mcp_error(exc: Exception) -> McpError | None:
+    """Unwrap tool errors only when every group leaf is an MCP error."""
+    if isinstance(exc, McpError):
+        # The SDK also uses McpError for local timeout/disconnection failures.
+        return None if exc.error.code in {httpx.codes.REQUEST_TIMEOUT, CONNECTION_CLOSED} else exc
+    if isinstance(exc, ExceptionGroup):
+        errors = [_find_mcp_error(child) for child in exc.exceptions]
+        if all(error is not None for error in errors):
+            return errors[0]
+    return None
 
 
 async def _await_close_quietly(awaitable: Any, *, what: str) -> None:
@@ -282,20 +295,35 @@ class MCPClientWrapper:
                 component="tool",
             ) from e
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
-        """调用MCP工具"""
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], *, raise_tool_errors: bool = False
+    ) -> CallToolResult:
+        """Call a tool; optionally preserve server errors for SQL diagnostics."""
 
         async def _operation(session):
-            return await session.call_tool(name=name, arguments=arguments)
+            try:
+                return await session.call_tool(name=name, arguments=arguments)
+            except Exception as exc:
+                if not raise_tool_errors:
+                    raise
+                error = _find_mcp_error(exc)
+                if error is None:
+                    raise
+                # Carry tool errors through normal session cleanup. Initialization
+                # and transport failures must retain infrastructure semantics.
+                return error
 
         try:
-            return await self._execute_with_connection(_operation)
+            response = await self._execute_with_connection(_operation)
         except Exception as e:
             raise DataAgentError(
                 source="tool",
                 fact=f"Failed to call tool '{name}' on MCP server '{self.config.server_id}': {e}",
                 component="tool",
             ) from e
+        if isinstance(response, McpError):
+            raise response
+        return response
 
     async def ping(self) -> bool:
         """检查连接状态"""

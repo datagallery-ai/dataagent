@@ -161,6 +161,35 @@ When configuring, verify:
 - Do not put `api_key` in YAML; use `.env` instead.
 - Point `SEMANTIC_LAYER.base_url` at your deployed Semantic Service; set `username` / `password` for your deployment, or omit them in environments without authentication.
 
+### Execute SQL through MCP
+
+DataAgent NL2SQL can use MCP as its SQL execution backend. Keep the other nodes and semantic-service settings in your configuration, and replace `DATABASE` with:
+
+```yaml
+DATABASE:
+  db_id: "your_database"
+  dialect: "mysql"  # Example only: use the target engine's actual SQL dialect
+  engine: "mcp"
+  config:
+    path: "http://localhost:18080/mcp"
+    read_tool: "dme_read_query"
+    timeout: 180  # Seconds
+```
+
+`engine` selects the connection backend; `dialect` controls SQL generation and parsing. MCP is not a SQL dialect. The executor uses DataAgent's existing MCP client to call `read_tool` with `{"query": sql}`; the LLM does not issue this tool call. The client uses Streamable HTTP and initializes and closes a session per call. Do not configure `Mcp-Session-Id` manually.
+
+The tool must return this JSON shape, either as MCP `structuredContent` or JSON text content:
+
+```json
+{"columns": ["id", "name"], "rows": [{"id": 1, "name": "Alice"}], "row_count": 1}
+```
+
+Rows are converted to the existing SQL result format in `columns` order. Empty results must still include `columns` and `rows: []`. The MCP server manages DME JDBC connections and DME authentication.
+
+When `CORE.validator.db_explain` is enabled (the built-in default), the validator submits `<explain_prefix> <SQL>` through the same tool. The prefix defaults to `EXPLAIN PLAN FOR` for DME / Calcite, so no explicit configuration is needed. For other MCP SQL backends, optionally set `explain_prefix: "EXPLAIN"` in `DATABASE.config`. A successful plan result passes validation. Reported DME plan queries take over 30 seconds, so retaining the 180-second timeout is recommended. SQL tool errors, including MCP `McpError`, feed into validation and repair; connection failures remain infrastructure errors. For backends without plan-query support, set `db_explain: false`. The adapter never executes the original query as a substitute for EXPLAIN.
+
+This backend handles standard NL2SQL query execution and validation only; it does not call `dme_write_query`. Schema still comes from the existing semantic service or user-supplied schema and must match the actual DME tables, including qualified names such as `catalog.schema.table`. SQLiteEnv and scripts that access SQLite directly are not routed through MCP.
+
 ## 5. Run the Dedicated Agent
 
 Load the configuration and invoke via the SDK:

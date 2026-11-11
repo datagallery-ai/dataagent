@@ -461,6 +461,15 @@ class RuntimeEnvironmentCollector:
             logger.warning("runtime_env: DATABASE.config.path is missing; skip database info in prompt.")
             return {}
 
+        if database_cfg.get("engine") == "mcp":
+            # An MCP endpoint is not a SQLAlchemy connection URL. Queries own
+            # their MCP sessions; collecting prompt context must not open one.
+            return {
+                "db_id": database_cfg.get("db_id", "unknown"),
+                "dialect": dialect,
+                "readable": None,
+            }
+
         # SQLAlchemy统一检测
         readable = self._check_db_readable(db_url)
 
@@ -554,7 +563,10 @@ def format_runtime_environment(env_data: dict[str, Any]) -> str:
     # Database
     db = env_data.get("database")
     if db:
-        status = "readable" if db.get("readable") else "unreachable"
+        if "readable" in db and db["readable"] is None:
+            status = "not checked"
+        else:
+            status = "readable" if db.get("readable") else "unreachable"
         lines.append(f"- Database ({db.get('dialect', 'unknown')}): {db.get('db_id', 'unknown')} ({status})")
 
     # planner 模型上下文窗口（token budget 提醒）

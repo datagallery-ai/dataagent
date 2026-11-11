@@ -10,12 +10,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import contextlib
 import json
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+from mcp.shared.exceptions import McpError
 
 from dataagent.core.errors import DataAgentError
 from dataagent.utils.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, DEFAULT_NL2SQL_SQLITE_TIMEOUT
@@ -68,6 +73,28 @@ class CloudCoreConfig:
     def to_conn_kwargs(self) -> dict[str, Any]:
         """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
+
+
+@dataclass
+class MCPConfig:
+    """Streamable HTTP endpoint exposing a SQL read tool."""
+
+    path: str
+    read_tool: str = "dme_read_query"
+    timeout: float = 180.0
+    explain_prefix: str = "EXPLAIN PLAN FOR"
+
+    def __post_init__(self):
+        endpoint = urlsplit(self.path)
+        if endpoint.scheme not in {"http", "https"} or not endpoint.netloc:
+            raise ValueError("MCP path must be an HTTP or HTTPS endpoint URL")
+        if not self.read_tool.strip():
+            raise ValueError("MCP read_tool must not be empty")
+        if not math.isfinite(self.timeout) or self.timeout <= 0:
+            raise ValueError("MCP timeout must be a positive finite number of seconds")
+        self.explain_prefix = self.explain_prefix.strip()
+        if not self.explain_prefix:
+            raise ValueError("MCP explain_prefix must not be empty")
 
 
 @dataclass
@@ -278,6 +305,78 @@ class CloudCoreService(SqlService):
             raise _sql_infra_error(e) from e
 
 
+class MCPSqlService(SqlService):
+    """Adapt a remote MCP SQL read tool to the synchronous NL2SQL service API.
+
+    NL2SQL runs these methods in worker threads. Each call owns its event loop
+    and a short-lived MCP session; the shared client handles initialization and
+    cleanup within the same async task, including cancellation on timeout.
+    """
+
+    def __init__(self, config: MCPConfig):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    async def _call_query_async(self, sql: str):
+        from dataagent.actions.tools.mcp import MCPClientWrapper, MCPServerConfig
+
+        client = MCPClientWrapper(
+            MCPServerConfig(
+                server_id="nl2sql",
+                transport_type="streamable_http",
+                config={
+                    "url": self.config.path,
+                    "timeout": self.config.timeout,
+                },
+            )
+        )
+        try:
+            return await asyncio.wait_for(
+                client.call_tool(self.config.read_tool, {"query": sql}, raise_tool_errors=True),
+                timeout=self.config.timeout,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(f"MCP SQL request timed out after {self.config.timeout} seconds") from exc
+
+    def execute(self, sql: str) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+        try:
+            response = asyncio.run(self._call_query_async(sql))
+            texts = [item.text for item in response.content if getattr(item, "type", None) == "text"]
+            if response.isError:
+                return None, None, "\n".join(texts) or "MCP SQL tool failed"
+
+            payload = getattr(response, "structuredContent", None)
+            if payload is None:
+                if len(texts) != 1:
+                    raise ValueError("MCP SQL tool must return one JSON result or structuredContent")
+                payload = json.loads(texts[0])
+            if not isinstance(payload, dict):
+                raise ValueError("MCP SQL result must be an object")
+            if payload.get("success") is False or payload.get("error"):
+                return None, None, str(payload.get("error") or payload.get("message") or "MCP SQL query failed")
+
+            columns, rows = payload.get("columns"), payload.get("rows")
+            if not isinstance(columns, list) or not all(isinstance(column, str) for column in columns):
+                raise ValueError("MCP SQL result must contain a columns list of strings")
+            if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+                raise ValueError("MCP SQL result must contain a rows list of objects")
+            return columns, [tuple(row.get(column) for column in columns) for row in rows], None
+        except McpError as exc:
+            return None, None, exc.error.message or str(exc)
+        except Exception as exc:
+            raise _sql_infra_error(exc) from exc
+
+    def explain(self, sql: str) -> str | None:
+        """Submit EXPLAIN without falling back to executing the original query."""
+        _, _, error = self.execute(f"{self.config.explain_prefix} {sql}")
+        return error
+
+
 class SparkService(SqlService):
     def __init__(self, config: SparkConfig):
         self.config = config
@@ -326,7 +425,7 @@ class SparkService(SqlService):
         return self._spark
 
 
-def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | CloudCoreService:
+def build_sql_service(engine: str, config: dict[str, Any]) -> SqlService:
     """Construct a SQL service implementation for the given engine."""
     try:
         if engine == "mysql":
@@ -337,6 +436,8 @@ def build_sql_service(engine: str, config: dict[str, Any]) -> BaseService | Clou
             return SQLiteService(SQLiteConfig(**config))
         if engine == "cloud_core":
             return CloudCoreService(CloudCoreConfig(**config))
+        if engine == "mcp":
+            return MCPSqlService(MCPConfig(**config))
         if engine in {"hive", "spark"}:
             return SparkService(SparkConfig(**config))
     except Exception as e:
