@@ -237,7 +237,7 @@ def test_parse_args_and_main_publish_the_route_table(tmp_path: Path, monkeypatch
         lambda cert: {},
     )
     monkeypatch.setattr("dataagent.interface.rest_api.start_service.build_ssl_kwargs", lambda *args, **kwargs: {})
-    monkeypatch.setattr("dataagent.interface.rest_api.start_service.uvicorn.run", lambda *args, **kwargs: None)
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service._serve", lambda config: True)
     main()
 
     assert Path(os.environ[CONFIG_ENV_NAME]) == business.resolve()
@@ -248,6 +248,8 @@ def test_parse_args_and_main_publish_the_route_table(tmp_path: Path, monkeypatch
 
 def test_main_omits_uvicorn_server_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The REST process must not advertise its ASGI server name."""
+    from dataagent.interface.rest_api.start_service import _ZeroingCertConfig
+
     business = _scene(tmp_path, "business_twin")
     monkeypatch.setattr(sys, "argv", ["dataagent", "--config", f"business_twin={business}"])
     monkeypatch.setattr("dataagent.interface.rest_api.start_service.os.geteuid", lambda: 1000)
@@ -258,13 +260,17 @@ def test_main_omits_uvicorn_server_header(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr("dataagent.interface.rest_api.start_service.build_ssl_kwargs", lambda *args, **kwargs: {})
     captured: dict[str, object] = {}
 
-    def _run(*args: object, **kwargs: object) -> None:
-        captured["kwargs"] = kwargs
+    def _serve(config: object) -> bool:
+        captured["config"] = config
+        return True
 
-    monkeypatch.setattr("dataagent.interface.rest_api.start_service.uvicorn.run", _run)
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service._serve", _serve)
     main()
 
-    assert captured["kwargs"]["server_header"] is False
+    config = captured["config"]
+    assert isinstance(config, _ZeroingCertConfig)
+    assert config.server_header is False
+    assert config.cert_password is None
 
 
 def test_main_exits_when_the_table_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

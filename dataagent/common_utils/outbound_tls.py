@@ -30,6 +30,8 @@ from typing import Any, NamedTuple
 
 from loguru import logger
 
+from dataagent.common_utils.secure_password import SecurePassword
+
 ENV_CA_FILE = "DATAAGENT_OUTBOUND_CA_FILE"
 ENV_CLIENT_CERT = "DATAAGENT_OUTBOUND_CLIENT_CERT"
 ENV_CLIENT_KEY = "DATAAGENT_OUTBOUND_CLIENT_KEY"
@@ -171,57 +173,63 @@ def apply_certificate_config(
     certificate: Mapping[str, Any] | None,
     *,
     preserve_existing_on_missing: bool = False,
-    key_password: str | None = None,
+    key_password: SecurePassword | None = None,
 ) -> None:
     """把 ``certificate:`` 段下发为 ``DATAAGENT_OUTBOUND_*``；出站开启时缺材料立即报错。
 
     ``None`` / ``{}`` 与整段不写相同：默认出站开 + mode 3。``preserve_existing_on_missing``
     为真时保持现有 env，不套默认、不校验证件。私钥口令只经 ``key_password``
-    （内部包结果）直传 ``load_cert_chain``，不进 env。
+    （SecurePassword 缓冲区）直传 ``load_cert_chain``，不进 env；**本函数返回前
+    负责清零口令缓冲（含早退/异常路径），调用方不得复用该对象**。
     """
     if not isinstance(certificate, Mapping) or not certificate:
         if preserve_existing_on_missing:
+            if key_password is not None:
+                key_password.zero()
             reset_cache()
             return
         certificate = {}
 
-    password = str(key_password).strip() if key_password else None
+    password = key_password if key_password else None
+    try:
+        services = _resolve_ssl_services(certificate)
+        mode = _parse_outbound_mode(certificate.get("outbound_certificate_mode", _DEFAULT_MODE))
+        ca_file = certificate.get("outbound_ca_cert_file") or certificate.get("ca_cert_file")
+        client_cert = certificate.get("client_cert_file")
+        client_key = certificate.get("client_key_file")
+        ciphers = certificate.get("outbound_cipher_suites")
 
-    services = _resolve_ssl_services(certificate)
-    mode = _parse_outbound_mode(certificate.get("outbound_certificate_mode", _DEFAULT_MODE))
-    ca_file = certificate.get("outbound_ca_cert_file") or certificate.get("ca_cert_file")
-    client_cert = certificate.get("client_cert_file")
-    client_key = certificate.get("client_key_file")
-    ciphers = certificate.get("outbound_cipher_suites")
+        if services:
+            missing = _missing_outbound_files(mode, ca_file=ca_file, client_cert=client_cert, client_key=client_key)
+            if missing:
+                raise ValueError(
+                    f"outbound TLS enabled (outbound_certificate_mode={mode}) but missing: {', '.join(missing)}"
+                )
+            for label, path in (
+                ("ca_cert_file", ca_file),
+                ("client_cert_file", client_cert),
+                ("client_key_file", client_key),
+            ):
+                if path and not os.path.isfile(str(path)):
+                    raise FileNotFoundError(f"certificate.{label} not found: {path}")
 
-    if services:
-        missing = _missing_outbound_files(mode, ca_file=ca_file, client_cert=client_cert, client_key=client_key)
-        if missing:
-            raise ValueError(
-                f"outbound TLS enabled (outbound_certificate_mode={mode}) but missing: {', '.join(missing)}"
-            )
-        for label, path in (
-            ("ca_cert_file", ca_file),
-            ("client_cert_file", client_cert),
-            ("client_key_file", client_key),
-        ):
-            if path and not os.path.isfile(str(path)):
-                raise FileNotFoundError(f"certificate.{label} not found: {path}")
+        mapping = {
+            ENV_SSL_SERVICES: services,
+            ENV_CA_FILE: ca_file,
+            ENV_CLIENT_CERT: client_cert,
+            ENV_CLIENT_KEY: client_key,
+            ENV_CIPHERS: ciphers,
+            ENV_MODE: mode,
+        }
+        for env_name, value in mapping.items():
+            _set_env(env_name, value)
 
-    mapping = {
-        ENV_SSL_SERVICES: services,
-        ENV_CA_FILE: ca_file,
-        ENV_CLIENT_CERT: client_cert,
-        ENV_CLIENT_KEY: client_key,
-        ENV_CIPHERS: ciphers,
-        ENV_MODE: mode,
-    }
-    for env_name, value in mapping.items():
-        _set_env(env_name, value)
-
-    reset_cache()
-    if services:
-        _store_context(_make_context(password=password))
+        reset_cache()
+        if services:
+            _store_context(_make_context(password=password))
+    finally:
+        if password is not None:
+            password.zero()
 
 
 def outbound_ssl_enabled(service: str) -> bool:
@@ -245,8 +253,8 @@ def _store_context(ctx: ssl.SSLContext) -> None:
     _cached_ctx = ctx
 
 
-def _make_context(*, password: str | None = None) -> ssl.SSLContext:
-    """构造出站 TLS 材料；口令仅经参数传入 ``load_cert_chain``。"""
+def _make_context(*, password: SecurePassword | None = None) -> ssl.SSLContext:
+    """构造出站 TLS 材料；口令经 callable 按引用送入 ``load_cert_chain``。"""
     mode = _mode()
     policy = _OUTBOUND_CERT_MODE[mode]
     ca_file = (os.getenv(ENV_CA_FILE) or "").strip()
@@ -275,7 +283,11 @@ def _make_context(*, password: str | None = None) -> ssl.SSLContext:
     ctx.verify_mode = ssl.CERT_REQUIRED if policy.verify_server else ssl.CERT_NONE
 
     if policy.present_client_cert:
-        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key, password=password)
+        ctx.load_cert_chain(
+            certfile=client_cert,
+            keyfile=client_key,
+            password=password.as_ssl_password() if password else None,
+        )
 
     if ciphers:
         ctx.set_ciphers(ciphers)

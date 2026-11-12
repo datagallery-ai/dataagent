@@ -503,6 +503,10 @@ def test_outbound_encrypted_passes_internal_password(monkeypatch, _cert_files):
 
     def _capture(self, certfile, keyfile=None, password=None):
         seen["password"] = password
+        value = password() if callable(password) else password
+        seen["password_type"] = type(value)
+        # callable 返回的是底层缓冲本体，须在调用时拷贝（用后即被清零）
+        seen["password_value"] = bytes(value) if value is not None else None
         return real_load(self, certfile, keyfile, password=None)
 
     monkeypatch.setattr(ssl.SSLContext, "load_cert_chain", _capture)
@@ -513,13 +517,14 @@ def test_outbound_encrypted_passes_internal_password(monkeypatch, _cert_files):
         "client_cert_file": _cert_files["cert"],
         "client_key_file": _cert_files["key"],
     }
-    outbound_tls.apply_certificate_config(
-        cert,
-        key_password=resolve_cert_key_passwords(cert).get("outbound"),
-    )
+    key_password = resolve_cert_key_passwords(cert).get("outbound")
+    outbound_tls.apply_certificate_config(cert, key_password=key_password)
     ctx = outbound_tls.httpx_verify()
     assert isinstance(ctx, ssl.SSLContext)
-    assert seen["password"] == "from-om"
+    assert callable(seen["password"])
+    assert seen["password_type"] is bytearray
+    assert seen["password_value"] == b"from-om"
+    assert key_password.zeroed is True
 
 
 def test_outbound_encrypted_false_omits_password(monkeypatch, _cert_files):

@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping
 
+from dataagent.common_utils.secure_password import SecurePassword
+
 
 def _encrypted(raw: object) -> bool:
     """``inbound_encrypted`` / ``outbound_encrypted``：缺省 / None 为开；显式 false/0/off/no 为关。"""
@@ -72,13 +74,14 @@ def _outbound_needs_password(cert: Mapping) -> bool:
     return _encrypted(cert.get("outbound_encrypted"))
 
 
-def resolve_cert_key_passwords(certificate: object = None) -> dict:
+def resolve_cert_key_passwords(certificate: object = None) -> dict[str, SecurePassword]:
     """按各侧是否实际用私钥 + ``*_encrypted`` 决定是否取内部口令；encrypted 缺省开启。
 
     某侧 ``*_enabled`` 显式关，或出站 ``outbound_ssl_services`` 为空，该侧不取口令。
     两侧都不需要时 ``return {}``，不调内部包。
-    返回 ``{"inbound": pw}`` / ``{"outbound": pw}``，只表示要不要给对应 TLS 带 password。
-    不读取 YAML 口令字段。
+    返回 ``{"inbound": SecurePassword}`` / ``{"outbound": SecurePassword}``，
+    两侧为**独立缓冲区**（一侧清零不影响另一侧）。调用方用完必须
+    ``zero_passwords`` 清零。不读取 YAML 口令字段。
     """
     cert = certificate if isinstance(certificate, Mapping) else {}
     inbound = _inbound_needs_password(cert)
@@ -86,16 +89,16 @@ def resolve_cert_key_passwords(certificate: object = None) -> dict:
     if not inbound and not outbound:
         return {}
     pw = require_internal_cert_password()
-    passwords: dict[str, str] = {}
+    passwords: dict[str, SecurePassword] = {}
     if inbound:
         passwords["inbound"] = pw
     if outbound:
-        passwords["outbound"] = pw
+        passwords["outbound"] = pw.copy() if inbound else pw
     return passwords
 
 
-def require_internal_cert_password() -> str:
-    """从 CertManager 取 encryptKeyFilePwdContent，缺包抛 ImportError。"""
+def require_internal_cert_password() -> SecurePassword:
+    """从 CertManager 取 encryptKeyFilePwdContent，缺包抛 ImportError；空口令抛 ValueError。"""
     from framework_om import CertManager
     from framework_starter import FrameworkStarter
 
@@ -111,7 +114,10 @@ def require_internal_cert_password() -> str:
     raw = getattr(cert_info, "encryptKeyFilePwdContent", None)
     if raw is None and isinstance(cert_info, Mapping):
         raw = cert_info.get("encryptKeyFilePwdContent")
-    text = str(raw).strip() if raw is not None else ""
-    if not text:
+    if not isinstance(raw, (str, bytes, bytearray, memoryview)):
         raise ValueError("encryptKeyFilePwdContent")
-    return text
+    password = SecurePassword(raw)
+    if not password:
+        password.zero()
+        raise ValueError("encryptKeyFilePwdContent")
+    return password

@@ -20,6 +20,7 @@ import types
 import pytest
 
 from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
+from dataagent.common_utils.secure_password import zero_passwords
 
 
 def install_fake_internal_cert(monkeypatch, password: str = "internal-secret"):
@@ -60,8 +61,8 @@ def test_encrypted_default_or_true_fills_both_passwords(monkeypatch, certificate
     calls = install_fake_internal_cert(monkeypatch, "from-om")
     original_argv = list(sys.argv)
     passwords = resolve_cert_key_passwords(certificate)
-    assert passwords["inbound"] == "from-om"
-    assert passwords["outbound"] == "from-om"
+    assert passwords["inbound"].as_bytes() == b"from-om"
+    assert passwords["outbound"].as_bytes() == b"from-om"
     assert calls["query"] == 1
     assert calls["init"] == 1
     assert calls["argv"][-2:] == ["-processType", "datagallery-dataagent"]
@@ -83,7 +84,7 @@ def test_inbound_encrypted_false_fills_outbound_only(monkeypatch, raw):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
     passwords = resolve_cert_key_passwords({"inbound_encrypted": raw})
     assert "inbound" not in passwords
-    assert passwords["outbound"] == "from-om"
+    assert passwords["outbound"].as_bytes() == b"from-om"
     assert calls["query"] == 1
 
 
@@ -91,7 +92,7 @@ def test_inbound_encrypted_false_fills_outbound_only(monkeypatch, raw):
 def test_outbound_encrypted_false_fills_inbound_only(monkeypatch, raw):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
     passwords = resolve_cert_key_passwords({"outbound_encrypted": raw})
-    assert passwords["inbound"] == "from-om"
+    assert passwords["inbound"].as_bytes() == b"from-om"
     assert "outbound" not in passwords
     assert calls["query"] == 1
 
@@ -140,8 +141,8 @@ def test_enabled_on_encrypted_on_still_fetches_passwords(monkeypatch):
             "outbound_encrypted": True,
         }
     )
-    assert passwords["inbound"] == "from-om"
-    assert passwords["outbound"] == "from-om"
+    assert passwords["inbound"].as_bytes() == b"from-om"
+    assert passwords["outbound"].as_bytes() == b"from-om"
     assert calls["query"] == 1
 
 
@@ -149,14 +150,14 @@ def test_inbound_enabled_false_outbound_still_follows_encrypted(monkeypatch):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
     passwords = resolve_cert_key_passwords({"inbound_enabled": False})
     assert "inbound" not in passwords
-    assert passwords["outbound"] == "from-om"
+    assert passwords["outbound"].as_bytes() == b"from-om"
     assert calls["query"] == 1
 
 
 def test_outbound_enabled_false_inbound_still_follows_encrypted(monkeypatch):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
     passwords = resolve_cert_key_passwords({"outbound_enabled": False})
-    assert passwords["inbound"] == "from-om"
+    assert passwords["inbound"].as_bytes() == b"from-om"
     assert "outbound" not in passwords
     assert calls["query"] == 1
 
@@ -164,6 +165,26 @@ def test_outbound_enabled_false_inbound_still_follows_encrypted(monkeypatch):
 def test_inbound_certificate_mode_is_not_master_switch(monkeypatch):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
     passwords = resolve_cert_key_passwords({"inbound_certificate_mode": 0})
-    assert passwords["inbound"] == "from-om"
-    assert passwords["outbound"] == "from-om"
+    assert passwords["inbound"].as_bytes() == b"from-om"
+    assert passwords["outbound"].as_bytes() == b"from-om"
     assert calls["query"] == 1
+
+
+def test_both_sides_are_independent_buffers(monkeypatch):
+    """两侧口令为独立缓冲区：一侧清零不影响另一侧，zero_passwords 全清。"""
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    passwords = resolve_cert_key_passwords({})
+    assert passwords["inbound"] is not passwords["outbound"]
+    passwords["inbound"].zero()
+    assert passwords["outbound"].as_bytes() == b"from-om"
+    zero_passwords(passwords)
+    assert passwords["inbound"].zeroed
+    assert passwords["outbound"].zeroed
+    assert calls["query"] == 1
+
+
+def test_non_text_internal_password_raises_value_error(monkeypatch):
+    """内部包返回非文本类型（如 int）按坏口令处理，不做 str() 万能转换。"""
+    install_fake_internal_cert(monkeypatch, 123)
+    with pytest.raises(ValueError, match="encryptKeyFilePwdContent"):
+        resolve_cert_key_passwords()
