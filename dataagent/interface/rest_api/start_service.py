@@ -291,6 +291,8 @@ def build_ssl_kwargs(
 
 def main() -> None:
     """Start the DataAgent FastAPI server."""
+    if os.geteuid() == 0:
+        raise SystemExit("Refusing to start DataAgent as root. Run as an unprivileged user.")
     args = parse_args()
     try:
         plan = build_startup_plan(args.config)
